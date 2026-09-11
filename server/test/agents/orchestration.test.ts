@@ -240,7 +240,24 @@ describe('agent orchestration contracts', () => {
       )
     ).toThrow('distinct evidence sources')
   })
-  it('accounts child reservations by provider total tokens independently of directional counts', () => {
+  it('reserves aggregate child totals independently from each per-call output ceiling', () => {
+    const reservations = new AgentChildBudgetReservations(
+      {
+        ...DEFAULT_AGENT_ORCHESTRATION_LIMITS,
+        childMaxOutputTokens: 2_048,
+        maxAggregateChildTokens: 12_000
+      },
+      { outputCharacters: 0, totalTokens: 0 }
+    )
+    const first = reservations.reserve(2)
+    const second = reservations.reserve(1)
+    expect(first).toMatchObject({ totalTokens: 6_000, maxOutputTokens: 2_048 })
+    expect(second).toMatchObject({ totalTokens: 6_000, maxOutputTokens: 2_048 })
+    reservations.release(first!, { outputCharacters: 309, totalTokens: 4_580 })
+    reservations.release(second!, { outputCharacters: 0, totalTokens: 0 })
+    expect(reservations.consumed).toEqual({ outputCharacters: 309, totalTokens: 4_580 })
+  })
+  it('rejects a reservation after aggregate child totals are consumed', () => {
     const reservations = new AgentChildBudgetReservations(
       {
         ...DEFAULT_AGENT_ORCHESTRATION_LIMITS,
@@ -250,8 +267,9 @@ describe('agent orchestration contracts', () => {
       { outputCharacters: 0, totalTokens: 0 }
     )
     const reservation = reservations.reserve()
-    expect(reservation).toMatchObject({ totalTokens: 6_000 })
-    reservations.release(reservation!, { outputCharacters: 309, totalTokens: 4_580 })
-    expect(reservations.consumed).toEqual({ outputCharacters: 309, totalTokens: 4_580 })
+    expect(reservation).toMatchObject({ totalTokens: 6_000, maxOutputTokens: 6_000 })
+    reservations.release(reservation!, { outputCharacters: 309, totalTokens: 6_000 })
+    expect(reservations.reserve()).toBeNull()
+    expect(reservations.consumed).toEqual({ outputCharacters: 309, totalTokens: 6_000 })
   })
 })

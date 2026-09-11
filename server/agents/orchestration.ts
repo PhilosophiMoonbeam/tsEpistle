@@ -63,6 +63,7 @@ export interface AgentChildBudgetReservation {
   readonly id: number
   readonly outputCharacters: number
   readonly totalTokens: number
+  readonly maxOutputTokens: number
 }
 
 const childBudgetInteger = (value: number, label: string): number => {
@@ -100,7 +101,8 @@ export class AgentChildBudgetReservations {
     const reservation = {
       id: this.#nextId++,
       outputCharacters: Math.min(MAX_AGENT_CHILD_OUTPUT_CHARACTERS, Math.max(1, Math.floor(remainingOutputCharacters / concurrentSlots))),
-      totalTokens: Math.min(this.#limits.childMaxOutputTokens, Math.max(1, Math.floor(remainingTotalTokens / concurrentSlots)))
+      totalTokens: Math.max(1, Math.floor(remainingTotalTokens / concurrentSlots)),
+      maxOutputTokens: Math.min(this.#limits.childMaxOutputTokens, Math.max(1, Math.floor(remainingTotalTokens / concurrentSlots)))
     }
     this.#active.add(reservation.id)
     this.#reservedOutputCharacters = childBudgetSum(this.#reservedOutputCharacters, reservation.outputCharacters, 'Reserved child output characters')

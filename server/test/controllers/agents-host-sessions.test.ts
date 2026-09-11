@@ -15,6 +15,18 @@ import { AgentRunCoordinator, admitAgentRun, requestAgentRunCancellation, termin
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 import { up as addAgentGoals } from '../../db/migrations/2.5.157.ts'
+const preflightAgentRequest = async (request: Parameters<AgentEngine['preflight']>[0]) => {
+  const inputExposureTokens = 1
+  const outputExposureTokens = Math.max(1, Math.min(request.limits?.maxOutputTokens ?? 1, request.limits?.maxTokens ?? Number.MAX_SAFE_INTEGER))
+  const totalExposureTokens = inputExposureTokens + outputExposureTokens
+  return {
+    admissible: request.limits?.maxTokens === undefined || totalExposureTokens <= request.limits.maxTokens,
+    inputExposureTokens,
+    outputExposureTokens,
+    totalExposureTokens
+  }
+}
+
 interface TestSessionState {
   agentCsrfToken?: string
 }
@@ -449,6 +461,7 @@ describe('ordinary-origin agent session API', () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
     await createTables(db)
     const fakeEngine: AgentEngine = {
+      preflight: preflightAgentRequest,
       async execute(request, sink) {
         engineCurrentPage = request.currentPage
         engineMessages = request.messages.map(message => ({ ...message }))
@@ -1199,6 +1212,7 @@ describe('ordinary-origin agent session API', () => {
           }
         },
         {
+          preflight: preflightAgentRequest,
           async execute(request, sink) {
             engineCalls += 1
             engineMessages = request.messages.map(message => ({ ...message }))
@@ -1471,6 +1485,7 @@ describe('ordinary-origin agent session API', () => {
     })
     const accountingRuntime = makeAccountingRuntime(
       {
+        preflight: preflightAgentRequest,
         async execute(_request, sink) {
           await sink.text('initial goal answer')
           return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 2 }
@@ -1671,6 +1686,7 @@ describe('ordinary-origin agent session API', () => {
     await insertAccountingSession(sessionId)
     const firstRuntime = makeAccountingRuntime(
       {
+        preflight: preflightAgentRequest,
         async execute() {
           throw new Error('the conservative charge must fence continuation before dispatch')
         }
@@ -1692,6 +1708,7 @@ describe('ordinary-origin agent session API', () => {
 
     const recreatedRuntime = makeAccountingRuntime(
       {
+        preflight: preflightAgentRequest,
         async execute() {
           throw new Error('the exhausted goal must not dispatch')
         }
@@ -1719,6 +1736,7 @@ describe('ordinary-origin agent session API', () => {
     await insertAccountingSession(sessionId)
     const accountingRuntime = makeAccountingRuntime(
       {
+        preflight: preflightAgentRequest,
         async execute() {
           throw new Error('the measured usage test does not need provider execution')
         }
@@ -1755,6 +1773,7 @@ describe('ordinary-origin agent session API', () => {
     let providerDispatches = 0
     const accountingRuntime = makeAccountingRuntime(
       {
+        preflight: preflightAgentRequest,
         async execute() {
           providerDispatches += 1
           throw new Error('an overrun goal must not continue')
@@ -1828,6 +1847,7 @@ describe('ordinary-origin agent session API', () => {
     await insertAccountingSession(sessionId)
     const accountingRuntime = makeAccountingRuntime(
       {
+        preflight: preflightAgentRequest,
         async execute(request) {
           executionRunId = request.run.id
           executionMaxTokens = request.limits?.maxTokens
@@ -1871,6 +1891,7 @@ describe('ordinary-origin agent session API', () => {
     await insertAccountingSession(sessionId)
     const accountingRuntime = makeAccountingRuntime(
       {
+        preflight: preflightAgentRequest,
         async execute() {
           throw new Error('a missing terminal ledger must fence dispatch')
         }
@@ -1909,6 +1930,7 @@ describe('ordinary-origin agent session API', () => {
     await insertAccountingSession(sessionId)
     const accountingRuntime = makeAccountingRuntime(
       {
+        preflight: preflightAgentRequest,
         async execute() {
           throw new Error('an unreconciled terminal ledger must fence dispatch')
         }

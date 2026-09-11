@@ -953,6 +953,239 @@ describe('Ax agent engine', () => {
       { evidenceId: 'page:42:revision:20', kind: 'page', label: 'Guide', href: '/en/guide?version=version-quartz' }
     ])
   })
+  it('requires exact field-bound Unicode title proof and rejects altered or mismatched assertions', async () => {
+    const runTitleCase = async (input: {
+      readonly actionName: 'pages.get' | 'pages.getVersion'
+      readonly title: string
+      readonly sourceRevision: string
+      readonly answer: string
+      readonly citationId?: string
+      readonly citationSections?: readonly Readonly<Record<string, string>>[]
+    }) => {
+      const citationId = input.citationId ?? `page:42:revision:${input.sourceRevision}`
+      const providerName = input.actionName === 'pages.get' ? 'wiki_get_page' : 'wiki_get_page_version'
+      const responses: AxChatResponse[] = [
+        {
+          results: [
+            {
+              index: 0,
+              functionCalls: [
+                {
+                  id: 'title-read',
+                  type: 'function',
+                  function: { name: providerName, params: input.actionName === 'pages.get' ? '{"id":42}' : '{"id":42,"versionId":9}' }
+                }
+              ]
+            }
+          ]
+        },
+        { results: [{ index: 0, content: `${input.answer}[[cite:${citationId}]]` }] }
+      ]
+      const chat = vi.fn(async () => responses.shift()!)
+      const factory = {
+        create: async () => ({
+          service: { chat },
+          capabilities: {
+            streaming: false,
+            toolCalling: 'native',
+            parallelToolCalls: true,
+            structuredOutput: 'native-json-schema',
+            usage: 'estimated',
+            cancellation: true,
+            maxContextTokens: 100_000,
+            maxOutputTokens: 4_000
+          },
+          transportKind: 'openai-responses',
+          model: 'gpt-test',
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          pricing
+        })
+      } as unknown as AgentProviderFactory
+      const invoke = vi.fn(async () => ({
+        id: 42,
+        locale: 'en',
+        path: 'home',
+        sourceRevision: input.sourceRevision,
+        title: input.title,
+        contentType: 'markdown',
+        content: `# ${input.title}\n\nThe page is available.`,
+        citation: { evidenceId: citationId, label: input.title, href: '/en/home' },
+        citationSections: input.citationSections ?? []
+      }))
+      const close = vi.fn()
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [
+            {
+              name: input.actionName,
+              title: 'Read page',
+              description: 'Reads a page',
+              parameters: { type: 'object', properties: {} },
+              risk: 'read'
+            }
+          ],
+          invoke,
+          snapshot: async () => ({}),
+          close
+        })
+      }
+      const text = vi.fn(async () => {})
+      const event = vi.fn(async (...args: [string, unknown]) => {
+        void args
+      })
+      const currentPage = { id: 42, locale: 'en', path: 'home', observedUpdatedAt: '2026-08-17T00:00:00.000Z' }
+      let result: unknown
+      let error: unknown
+      try {
+        result = await new AxAgentEngine(factory, actions).execute(
+          {
+            ...request(new AbortController().signal),
+            currentPage,
+            limits: { maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 2_000 }
+          },
+          { text, event }
+        )
+      } catch (caught) {
+        error = caught
+      }
+      return { result, error, text, event, invoke, close }
+    }
+
+    const accepted = await runTitleCase({
+      actionName: 'pages.get',
+      title: 'Homepage |🏘️',
+      sourceRevision: '7',
+      answer: 'The current page title is **Homepage |🏘️**.'
+    })
+    expect(accepted.error).toBeUndefined()
+    expect(accepted.text).toHaveBeenCalledWith('The current page title is **Homepage |🏘️**.[[cite:page:42:revision:7]]')
+    expect(accepted.result).toMatchObject({ citations: [{ evidenceId: 'page:42:revision:7' }] })
+
+    const suffix = 'The current page title is Homepage |🏘️.'
+    const oversizedTailAttack = `The current page title is WRONG ${'x'.repeat(4_100)}${suffix}`
+    for (const answer of [
+      'The current page title is **Homepage |🏠**.',
+      'The current page title is Homepage.',
+      'The current page title is Homepage |🏘️ and deployment is safe.',
+      'The current page title is not Homepage |🏘️.',
+      'The page title is Homepage |🏘️!!',
+      'The page title is Homepage |🏘️?!',
+      '**The page title is Homepage |🏘️**.',
+      '- The page title is Homepage |🏘️.',
+      'Deployment Guide |🏠 is the title.',
+      oversizedTailAttack
+    ]) {
+      const rejected = await runTitleCase({ actionName: 'pages.get', title: 'Homepage |🏘️', sourceRevision: '7', answer })
+      expect(rejected.error).toMatchObject({
+        code: 'AGENT_EVIDENCE_INVALID',
+        stage: 'provider_response',
+        status: 409,
+        message: 'Agent inference failed'
+      })
+      expect(rejected.text).not.toHaveBeenCalled()
+    }
+
+    const historical = await runTitleCase({
+      actionName: 'pages.getVersion',
+      title: 'Archive |📦',
+      sourceRevision: '6',
+      answer: 'The page’s title is “Archive |📦”.'
+    })
+    expect(historical.error).toBeUndefined()
+    expect(historical.text).toHaveBeenCalledWith('The page’s title is “Archive |📦”.[[cite:page:42:revision:6]]')
+    const semanticCurrent = await runTitleCase({
+      actionName: 'pages.get',
+      title: 'Homepage |🏘️',
+      sourceRevision: '12',
+      answer: 'The current page is titled Homepage |🏘️.'
+    })
+    expect(semanticCurrent.error).toBeUndefined()
+
+    const semanticCurrentNamed = await runTitleCase({
+      actionName: 'pages.get',
+      title: 'Homepage |🏘️',
+      sourceRevision: '13',
+      answer: 'The current page is named Homepage |🏘️.'
+    })
+    expect(semanticCurrentNamed.error).toBeUndefined()
+
+    const semanticWrongEmoji = await runTitleCase({
+      actionName: 'pages.get',
+      title: 'Homepage |🏘️',
+      sourceRevision: '14',
+      answer: 'The current page is titled Homepage |🏠.'
+    })
+    expect(semanticWrongEmoji.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+
+    const semanticHistorical = await runTitleCase({
+      actionName: 'pages.getVersion',
+      title: 'Archive |📦',
+      sourceRevision: '15',
+      answer: 'The page is titled Archive |📦.'
+    })
+    expect(semanticHistorical.error).toBeUndefined()
+
+    const semanticHistoricalAsCurrent = await runTitleCase({
+      actionName: 'pages.getVersion',
+      title: 'Archive |📦',
+      sourceRevision: '15',
+      answer: 'The current page is named Archive |📦.'
+    })
+    expect(semanticHistoricalAsCurrent.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+
+    const punctuation = await runTitleCase({
+      actionName: 'pages.get',
+      title: 'Runbook v2.0 — Hello. World',
+      sourceRevision: '8',
+      answer: 'The page title is "Runbook v2.0 — Hello. World".'
+    })
+    const collapsedWhitespace = await runTitleCase({
+      actionName: 'pages.get',
+      title: 'Alpha Beta',
+      sourceRevision: '9',
+      answer: 'The page title is Alpha   Beta.'
+    })
+    expect(collapsedWhitespace.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+
+    const repeatedWhitespace = await runTitleCase({
+      actionName: 'pages.get',
+      title: 'Alpha   Beta',
+      sourceRevision: '10',
+      answer: 'The page title is Alpha   Beta.'
+    })
+    expect(repeatedWhitespace.error).toBeUndefined()
+
+    for (const [title, answer] of [
+      ['Title', 'The page title is **Title!**.'],
+      ['Title!', 'The page title is Title!!'],
+      ['What?', 'The page title is What?!']
+    ] as const) {
+      const rejected = await runTitleCase({ actionName: 'pages.get', title, sourceRevision: '11', answer })
+      expect(rejected.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+    }
+    expect(punctuation.error).toBeUndefined()
+    expect(punctuation.text).toHaveBeenCalledWith('The page title is "Runbook v2.0 — Hello. World".[[cite:page:42:revision:8]]')
+
+    const historicalAsCurrent = await runTitleCase({
+      actionName: 'pages.getVersion',
+      title: 'Archive |📦',
+      sourceRevision: '6',
+      answer: 'The current page title is Archive |📦.'
+    })
+    expect(historicalAsCurrent.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+
+    const sectionCitation = await runTitleCase({
+      actionName: 'pages.get',
+      title: 'Homepage |🏘️',
+      sourceRevision: '7',
+      answer: 'The page title is Homepage |🏘️.',
+      citationId: 'page:42:revision:7:section:1',
+      citationSections: [{ evidenceId: 'page:42:revision:7:section:1', label: 'Homepage', href: '/en/home#homepage' }]
+    })
+    expect(sectionCitation.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+  })
+
 
   it('regenerates a cross-section attribution that does not support the associated claim', async () => {
     const responses: AxChatResponse[] = [

@@ -5,6 +5,7 @@ import {
   AGENT_TOOL_NAMES,
   TOOL_DISCOVERY_CONTROL_NAME,
   type AgentActionName,
+  type AgentCurrentPageHint,
   type AgentEventData,
   type AgentTokenUsage
 } from '../../../shared/agents/contracts.ts'
@@ -126,6 +127,10 @@ interface CitationEvidence {
   readonly sourceActionName: 'pages.get' | 'pages.getVersion' | 'pages.getOkf'
   readonly terms: ReadonlySet<string>
   readonly section: boolean
+  readonly authoritativeTitle: string | null
+  readonly pageId: number | null
+  readonly locale: string | null
+  readonly path: string | null
 }
 
 interface RetrievalTrace {
@@ -143,6 +148,8 @@ interface ClaimProvenance {
   readonly section: boolean | null
   readonly supported: boolean
   readonly matchedTerms: readonly string[]
+  readonly titleAssertion: boolean
+  readonly authoritativeTitle: string | null
 }
 
 interface DraftAssessment {
@@ -323,13 +330,27 @@ const collectPageEvidence = (
   if (!page) return
   const content =
     actionName === 'pages.getOkf' ? (typeof result.document === 'string' ? result.document : '') : typeof result.content === 'string' ? result.content : ''
+  const pageId =
+    typeof result.id === 'number' && Number.isSafeInteger(result.id) && result.id > 0
+      ? result.id
+      : typeof result.pageId === 'number' && Number.isSafeInteger(result.pageId) && result.pageId > 0
+        ? result.pageId
+        : null
+  const locale = typeof result.locale === 'string' ? result.locale : null
+  const path = typeof result.path === 'string' ? result.path : null
+  const authoritativeTitle =
+    (sourceActionName === 'pages.get' || sourceActionName === 'pages.getVersion') && typeof result.title === 'string' ? result.title : null
   registry.set(page.evidenceId, {
     citation: page,
     pageEvidenceId: page.evidenceId,
     terms: new Set(normalizedTerms(`${page.label}\n${content}`)),
     sourceActionCallId: actionCallId,
     sourceActionName,
-    section: false
+    section: false,
+    authoritativeTitle,
+    pageId,
+    locale,
+    path
   })
   const sections = markdownSections(content)
   const unusedSections = new Set(sections.map((_section, index) => index))
@@ -348,25 +369,132 @@ const collectPageEvidence = (
       sourceActionCallId: actionCallId,
       sourceActionName,
       terms: new Set(normalizedTerms(`${citation.label}\n${section?.text ?? ''}`)),
-      section: true
+      section: true,
+      authoritativeTitle: null,
+      pageId,
+      locale,
+      path
     })
   }
 }
 
-const claimBeforeMarker = (content: string, markerIndex: number, previousMarkerEnd: number): string => {
+const TITLE_LOOKING_CLAIM = /\btitle\b/iu
+const SEMANTIC_TITLE_CLAIM = /^(?:the\s+)?(?:(?:current|this)\s+)?page(?:['’]s)?\s+(?:is|was)\s+(?:titled|named)\b/iu
+const MAX_CLAIM_TELEMETRY_CHARACTERS = 512
+const MAX_TITLE_ASSERTION_CHARACTERS = 4_096
+
+interface ClaimBeforeMarker {
+  readonly claim: string
+  readonly titleClaim: string | null
+  readonly titleClaimTooLong: boolean
+}
+
+const claimBeforeMarker = (content: string, markerIndex: number, previousMarkerEnd: number): ClaimBeforeMarker => {
   const prefix = content.slice(previousMarkerEnd, markerIndex).trimEnd()
+  const compactPrefix = prefix.replace(/\s+/gu, ' ').trim()
+  if (TITLE_LOOKING_CLAIM.test(compactPrefix) || SEMANTIC_TITLE_CLAIM.test(compactPrefix)) {
+    const structuralClaim = prefix.trim()
+    return {
+      claim: compactPrefix.slice(-MAX_CLAIM_TELEMETRY_CHARACTERS),
+      titleClaim: structuralClaim.length <= MAX_TITLE_ASSERTION_CHARACTERS ? structuralClaim : null,
+      titleClaimTooLong: structuralClaim.length > MAX_TITLE_ASSERTION_CHARACTERS
+    }
+  }
   let boundary = 0
   for (const match of prefix.matchAll(/(?:[.!?]\s+|\n{2,})/gu)) {
     const end = (match.index ?? 0) + match[0].length
     if (end < prefix.length) boundary = end
   }
-  return prefix
-    .slice(boundary)
-    .replace(/\s+/gu, ' ')
-    .replace(/^[,;:\s]+/u, '')
-    .trim()
-    .slice(-512)
+  return {
+    claim: prefix
+      .slice(boundary)
+      .replace(/\s+/gu, ' ')
+      .replace(/^[,;:\s]+/u, '')
+      .trim()
+      .slice(-MAX_CLAIM_TELEMETRY_CHARACTERS),
+    titleClaim: null,
+    titleClaimTooLong: false
+  }
 }
+interface TitleAssertion {
+  readonly qualifier: 'current' | 'this' | null
+  readonly assertedTitle: string
+}
+
+const titleQualifier = (value: string | undefined): TitleAssertion['qualifier'] =>
+  value === undefined ? null : value.toLowerCase() === 'current' ? 'current' : 'this'
+const parseTitleAssertion = (claim: string): TitleAssertion | null => {
+  const semanticTitle = claim.match(/^(?:the\s+)?(?:(current|this)\s+)?page(?:['’]s)?\s+(?:is|was)\s+(?:titled|named)\s+([\s\S]+)$/iu)
+  if (semanticTitle) return { qualifier: titleQualifier(semanticTitle[1]), assertedTitle: semanticTitle[2]!.trim() }
+  const pageTitle = claim.match(/^(?:the\s+)?(?:(current|this)\s+)?page(?:['’]s)?\s+title\s+is\s+([\s\S]+)$/iu)
+  if (pageTitle) return { qualifier: titleQualifier(pageTitle[1]), assertedTitle: pageTitle[2]!.trim() }
+  const titleOfPage = claim.match(/^(?:the\s+)?title\s+of\s+(?:(current|this)\s+|the\s+)?page\s+is\s+([\s\S]+)$/iu)
+  if (titleOfPage) return { qualifier: titleQualifier(titleOfPage[1]), assertedTitle: titleOfPage[2]!.trim() }
+  const bareTitle = claim.match(/^(?:the\s+)?title\s+is\s+([\s\S]+)$/iu)
+  if (bareTitle) return { qualifier: null, assertedTitle: bareTitle[1]!.trim() }
+  const titleBeforeIs = claim.match(
+    /^([\s\S]+?)\s+is\s+(?:the\s+)?(?:(current|this)\s+)?(?:page\s+)?title(?:\s+of\s+(?:(current|this)\s+|the\s+)?page)?[.!?。！？…]?$/iu
+  )
+  if (titleBeforeIs) return { qualifier: titleQualifier(titleBeforeIs[2]), assertedTitle: titleBeforeIs[1]!.trim() }
+  return null
+}
+
+const TITLE_OUTER_WRAPPERS = [
+  ['**', '**'],
+  ['__', '__'],
+  ['"', '"'],
+  ["'", "'"],
+  ['“', '”'],
+  ['‘', '’'],
+  ['«', '»'],
+  ['‹', '›']
+] as const
+const TITLE_SENTENCE_TERMINATORS = new Set(['.', '!', '?', '。', '！', '？', '…'])
+
+const outerTitleSentenceVariant = (value: string): string | null => {
+  const current = value.trim()
+  const last = [...current].at(-1)
+  if (last === undefined || !TITLE_SENTENCE_TERMINATORS.has(last)) return null
+  const withoutLast = current.slice(0, -last.length).trimEnd()
+  const preceding = [...withoutLast].at(-1)
+  if (preceding !== undefined && TITLE_SENTENCE_TERMINATORS.has(preceding)) return null
+  return withoutLast
+}
+
+const titleAssertionVariants = (value: string): readonly string[] => {
+  const variants = new Set<string>()
+  const pending = [value.trim(), outerTitleSentenceVariant(value)].filter((candidate): candidate is string => candidate !== null)
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    if (variants.has(current)) continue
+    variants.add(current)
+    for (const [opening, closing] of TITLE_OUTER_WRAPPERS) {
+      if (current.startsWith(opening) && current.endsWith(closing) && current.length > opening.length + closing.length)
+        pending.push(current.slice(opening.length, current.length - closing.length).trim())
+    }
+  }
+  return [...variants]
+}
+
+const currentPageMatchesEvidence = (evidence: CitationEvidence, currentPage: AgentCurrentPageHint | undefined): boolean => {
+  if (currentPage === undefined) return false
+  const currentId = Number.isSafeInteger(currentPage.id) && currentPage.id > 0 ? currentPage.id : null
+  if (currentId !== null && evidence.pageId !== null) return evidence.pageId === currentId
+  return evidence.locale === currentPage.locale && evidence.path === currentPage.path
+}
+
+const supportsTitleAssertion = (assertion: TitleAssertion, evidence: CitationEvidence, currentPage: AgentCurrentPageHint | undefined): boolean => {
+  if (
+    evidence.section ||
+    (evidence.sourceActionName !== 'pages.get' && evidence.sourceActionName !== 'pages.getVersion') ||
+    evidence.authoritativeTitle === null
+  )
+    return false
+  if (assertion.qualifier !== null && (evidence.sourceActionName !== 'pages.get' || !currentPageMatchesEvidence(evidence, currentPage))) return false
+  return titleAssertionVariants(assertion.assertedTitle).some(value => value === evidence.authoritativeTitle)
+}
+
+const titleAssertionIssue = (evidenceId: string): string => `Citation ${evidenceId} does not support an exact authorized page title assertion.`
 
 interface DraftCoverage {
   readonly taskGroups: readonly {
@@ -376,7 +504,9 @@ interface DraftCoverage {
   readonly conflictGroups: readonly {
     readonly evidenceIds: readonly string[]
   }[]
+  readonly currentPage?: AgentCurrentPageHint
 }
+
 
 const hasConflictDisclosure = (content: string, evidenceIds: readonly string[]): boolean =>
   content
@@ -391,7 +521,10 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
   let previousMarkerEnd = 0
   for (const match of content.matchAll(citationMarker)) {
     const evidenceId = match[1] ?? ''
-    const claim = claimBeforeMarker(content, match.index ?? 0, previousMarkerEnd)
+    const extractedClaim = claimBeforeMarker(content, match.index ?? 0, previousMarkerEnd)
+    const claim = extractedClaim.claim
+    const titleAssertion = extractedClaim.titleClaim === null ? null : parseTitleAssertion(extractedClaim.titleClaim)
+    const titleAssertionRecognized = extractedClaim.titleClaim !== null || extractedClaim.titleClaimTooLong
     previousMarkerEnd = (match.index ?? 0) + match[0].length
     const evidence = registry.get(evidenceId)
     if (!evidence) {
@@ -404,7 +537,9 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
         sourceActionName: null,
         section: null,
         supported: false,
-        matchedTerms: []
+        matchedTerms: [],
+        titleAssertion: titleAssertionRecognized,
+        authoritativeTitle: null
       })
       continue
     }
@@ -415,7 +550,7 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
       .map(normalizedTerms)
       .filter(terms => terms.length > 0)
     const matchedTerms = claimTerms.filter(term => evidenceTerms.has(term))
-    const supported =
+    const lexicalSupported =
       claimTermGroups.length > 0 &&
       claimTermGroups.every(terms => {
         const matches = terms.filter(term => evidenceTerms.has(term))
@@ -423,6 +558,10 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
         const negationSupported = terms.filter(term => negativeTerms.has(term)).every(term => evidenceTerms.has(term))
         return negationSupported && matches.length >= Math.min(minimumMatches, terms.length) && matches.length / terms.length >= 0.6
       })
+    const supported =
+      !titleAssertionRecognized
+        ? lexicalSupported
+        : titleAssertion !== null && supportsTitleAssertion(titleAssertion, evidence, coverage?.currentPage)
     claims.push({
       claim,
       evidenceId,
@@ -431,9 +570,14 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
       sourceActionName: evidence.sourceActionName,
       section: evidence.section,
       supported,
-      matchedTerms: matchedTerms.slice(0, 8)
+      matchedTerms: titleAssertionRecognized ? [] : matchedTerms.slice(0, 8),
+      titleAssertion: titleAssertionRecognized,
+      authoritativeTitle: evidence.authoritativeTitle
     })
-    if (!supported) issues.push(`Citation ${evidenceId} does not lexically support its immediately preceding claim.`)
+    if (!supported)
+      issues.push(
+        titleAssertionRecognized ? titleAssertionIssue(evidenceId) : `Citation ${evidenceId} does not lexically support its immediately preceding claim.`
+      )
     if (!seenCitationIds.has(evidenceId)) {
       seenCitationIds.add(evidenceId)
       citationIds.push(evidenceId)
@@ -465,7 +609,11 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
   return { valid: issues.length === 0, issues, claims, citationIds }
 }
 
-const assessSubagentDraft = (content: string, registry: ReadonlyMap<string, CitationEvidence>): DraftAssessment => {
+const assessSubagentDraft = (
+  content: string,
+  registry: ReadonlyMap<string, CitationEvidence>,
+  currentPage?: AgentCurrentPageHint
+): DraftAssessment => {
   let value: unknown
   try {
     const trimmed = content.trim()
@@ -474,14 +622,20 @@ const assessSubagentDraft = (content: string, registry: ReadonlyMap<string, Cita
   } catch {
     return { valid: false, issues: ['The evidence packet is not valid JSON.'], claims: [], citationIds: [] }
   }
-  const rawClaims = typeof value === 'object' && value !== null ? Reflect.get(value, 'claims') : undefined
-  const rawConflicts = typeof value === 'object' && value !== null ? Reflect.get(value, 'conflicts') : undefined
+  const rawClaimsValue: unknown = typeof value === 'object' && value !== null ? Reflect.get(value, 'claims') : undefined
+  const rawConflictsValue: unknown = typeof value === 'object' && value !== null ? Reflect.get(value, 'conflicts') : undefined
   const outcome = typeof value === 'object' && value !== null ? Reflect.get(value, 'outcome') : undefined
-  if (!Array.isArray(rawClaims)) return { valid: false, issues: ['The evidence packet does not contain a claims array.'], claims: [], citationIds: [] }
-  if (!Array.isArray(rawConflicts)) return { valid: false, issues: ['The evidence packet does not contain a conflicts array.'], claims: [], citationIds: [] }
-  const assessments = rawClaims.map(raw =>
+  if (!Array.isArray(rawConflictsValue))
+    return { valid: false, issues: ['The evidence packet does not contain a conflicts array.'], claims: [], citationIds: [] }
+  const rawClaims: readonly unknown[] = Array.isArray(rawClaimsValue) ? rawClaimsValue : []
+  const rawConflicts: readonly unknown[] = rawConflictsValue
+  const assessments: DraftAssessment[] = rawClaims.map((raw: unknown): DraftAssessment =>
     typeof raw === 'object' && raw !== null && typeof Reflect.get(raw, 'text') === 'string'
-      ? assessDraft(String(Reflect.get(raw, 'text')), registry)
+      ? assessDraft(String(Reflect.get(raw, 'text')), registry, {
+          taskGroups: [],
+          conflictGroups: [],
+          ...(currentPage === undefined ? {} : { currentPage })
+        })
       : ({ valid: false, issues: ['An evidence packet claim is invalid.'], claims: [], citationIds: [] } satisfies DraftAssessment)
   )
   const issues = assessments.flatMap(assessment => assessment.issues)
@@ -955,6 +1109,74 @@ const serializedProviderRequestBytes = (
   chatPrompt: AxChatRequest['chatPrompt'],
   maxOutputTokens: number
 ): number => Buffer.byteLength(JSON.stringify(providerRequestFor(provider, tools, chatPrompt, maxOutputTokens)), 'utf8')
+interface ProviderExposure {
+  readonly inputExposureTokens: number
+  readonly outputExposureTokens: number
+  readonly totalExposureTokens: number
+  readonly serializedRequestBytes: number
+}
+
+const providerExposureFor = (
+  provider: AgentProviderService,
+  tools: ProviderTools | null,
+  chatPrompt: AxChatRequest['chatPrompt'],
+  maxOutputTokens: number
+): ProviderExposure => {
+  const serializedRequestBytes = serializedProviderRequestBytes(provider, tools, chatPrompt, maxOutputTokens)
+  const inputExposureTokens = Math.max(0, Math.min(provider.capabilities.maxContextTokens - maxOutputTokens, serializedRequestBytes))
+  const outputExposureTokens = maxOutputTokens
+  return {
+    inputExposureTokens,
+    outputExposureTokens,
+    totalExposureTokens: safeUsageAddition(inputExposureTokens, outputExposureTokens, 'Provider exposure'),
+    serializedRequestBytes
+  }
+}
+const boundedAttemptWithinBudget = (
+  provider: AgentProviderService,
+  tools: ProviderTools | null,
+  systemMessage: ChatPromptMessage,
+  conversation: readonly ChatPromptMessage[],
+  latestUserIndex: number,
+  activePrompt: readonly ChatPromptMessage[],
+  bounded: { readonly chatPrompt: AxChatRequest['chatPrompt']; readonly maxOutputTokens: number },
+  maximumAttemptTokens: number | undefined
+): { readonly chatPrompt: AxChatRequest['chatPrompt']; readonly maxOutputTokens: number } => {
+  if (maximumAttemptTokens === undefined) return bounded
+  let current = bounded
+  for (let iteration = 0; iteration < 3; iteration++) {
+    const exposure = providerExposureFor(provider, tools, current.chatPrompt, current.maxOutputTokens)
+    const availableOutputTokens = maximumAttemptTokens - exposure.inputExposureTokens
+    if (exposure.totalExposureTokens <= maximumAttemptTokens || availableOutputTokens < 1 || current.maxOutputTokens <= availableOutputTokens) return current
+    current = boundedChatPrompt(
+      provider,
+      tools,
+      systemMessage,
+      conversation,
+      latestUserIndex,
+      activePrompt,
+      Math.max(1, Math.min(current.maxOutputTokens, availableOutputTokens))
+    )
+  }
+  return current
+}
+
+
+const mandatoryChatPrompt = (
+  systemMessage: ChatPromptMessage,
+  conversation: readonly ChatPromptMessage[],
+  latestUserIndex: number,
+  active: readonly ChatPromptMessage[]
+): AxChatRequest['chatPrompt'] => {
+  const groups: number[][] = []
+  for (let index = 0; index < conversation.length; index++) {
+    if (conversation[index]?.role === 'user' || groups.length === 0) groups.push([])
+    groups[groups.length - 1]!.push(index)
+  }
+  const latestUserGroup = groups.find(group => group.includes(latestUserIndex))
+  const included = new Set(latestUserGroup ?? [])
+  return [systemMessage, ...conversation.flatMap((message, index) => (included.has(index) ? [message] : [])), ...active]
+}
 
 const boundedChatPrompt = (
   provider: AgentProviderService,
@@ -980,7 +1202,7 @@ const boundedChatPrompt = (
   ]
   const maxOutputTokens = requestedMaxOutputTokens
   const maximumInputTokens = provider.capabilities.maxContextTokens - maxOutputTokens
-  const mandatory = selected()
+  const mandatory = mandatoryChatPrompt(systemMessage, conversation, latestUserIndex, active)
   const mandatoryBytes = serializedProviderRequestBytes(provider, tools, mandatory, maxOutputTokens)
   if (maximumInputTokens < 0 || mandatoryBytes > maximumInputTokens) {
     throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'Agent conversation exceeds the selected provider context limit', 413)
@@ -1051,6 +1273,44 @@ const providerDiscoveryEnableResult = (enabled: {
   enabled: true as const,
   tools: enabled.tools.map(tool => ({ name: providerFunctionName(tool.name), description: tool.description }))
 })
+const systemMessageForRequest = (request: AgentEngineRequest, skillCatalog: unknown, tools: ProviderTools | null): ChatPromptMessage => {
+  const categoryIndex = tools === null ? [] : promptToolCategoryIndex(tools)
+  const toolInstructions =
+    tools?.mode === 'prompt'
+      ? promptToolInstructions(promptToolDefinitions(tools), categoryIndex)
+      : categoryIndex.length === 0
+        ? undefined
+        : `Available admitted tool categories (enable with ${TOOL_DISCOVERY_CONTROL_NAME}):\n${JSON.stringify(categoryIndex)}`
+  return {
+    role: 'system',
+    content: prompt(request, skillCatalog, toolInstructions)
+  }
+}
+
+const conversationFor = (
+  request: AgentEngineRequest
+): { readonly conversation: readonly ChatPromptMessage[]; readonly latestUserIndex: number } => {
+  const conversation: ChatPromptMessage[] = request.messages
+    .filter(message => message.content.length > 0)
+    .map(message =>
+      message.role === 'assistant'
+        ? {
+            role: 'assistant' as const,
+            content: message.content,
+            ...(message.providerState?.thoughtBlocks ? { thoughtBlocks: message.providerState.thoughtBlocks.map(block => ({ ...block })) } : {})
+          }
+        : { role: 'user' as const, content: message.content }
+    )
+  let latestUserIndex = -1
+  for (let index = conversation.length - 1; index >= 0; index--) {
+    if (conversation[index]?.role === 'user') {
+      latestUserIndex = index
+      break
+    }
+  }
+  return { conversation, latestUserIndex }
+}
+
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null
 
@@ -1228,6 +1488,40 @@ const fitsProviderResult = (
   }
 }
 
+interface EngineLimits {
+  readonly maxTurns: number
+  readonly maxToolCalls: number
+  readonly maxTokens: number | undefined
+  readonly maxOutputTokens: number | undefined
+}
+
+const engineLimitsFor = (request: AgentEngineRequest): EngineLimits => {
+  const maxTurns = request.limits?.maxTurns ?? MAX_TURNS
+  const maxToolCalls = request.limits?.maxToolCalls ?? MAX_TOOL_CALLS
+  const maxTokens = request.limits?.maxTokens
+  const maxOutputTokens = request.limits?.maxOutputTokens
+  if (
+    !Number.isSafeInteger(maxTurns) ||
+    maxTurns < 1 ||
+    maxTurns > MAX_TURNS ||
+    !Number.isSafeInteger(maxToolCalls) ||
+    maxToolCalls < 0 ||
+    maxToolCalls > MAX_TOOL_CALLS ||
+    (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens < 1)) ||
+    (maxOutputTokens !== undefined && (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 32_768))
+  )
+    throw new AgentRepositoryError('INVALID_ENGINE_LIMITS', 'Agent engine limits are invalid', 500)
+  return { maxTurns, maxToolCalls, maxTokens, maxOutputTokens }
+}
+
+interface PreparedEngineContext {
+  readonly provider: AgentProviderService
+  readonly actionSession: AxActionSession | null
+  readonly discovery: ToolDiscoveryController | null
+  readonly discoveryTurn: ToolDiscoveryTurn | null
+  readonly tools: ProviderTools | null
+  readonly skillCatalog: unknown
+}
 const fitsSynthesisReserve = (
   provider: AgentProviderService,
   systemMessage: ChatPromptMessage,
@@ -1267,6 +1561,117 @@ export class AxAgentEngine implements AgentEngine {
     this.#factory = factory
     this.#actions = actions
   }
+
+  async #prepare(request: AgentEngineRequest, includeSkillCatalog: boolean): Promise<PreparedEngineContext> {
+    let actionSession: AxActionSession | null = null
+    try {
+      if (request.signal.aborted) throw request.signal.reason
+      const provider = await this.#factory.create(request.run.providerProfileVersionId)
+      if (request.purpose !== 'planner' && request.run.executionMode === 'agent' && this.#actions) actionSession = await this.#actions.open(request)
+      let skillCatalog: unknown = null
+      if (includeSkillCatalog && request.purpose !== 'subagent' && actionSession?.functions.some(action => action.name === 'skills.list')) {
+        skillCatalog = await withInvokingAgentRunLease(request.signal, request.run, () =>
+          actionSession!.invoke('skills.list', {}, request.signal, 'skill-catalog-bootstrap')
+        )
+      }
+      let discovery: ToolDiscoveryController | null = null
+      let discoveryTurn: ToolDiscoveryTurn | null = null
+      let tools: ProviderTools | null = null
+      if (actionSession !== null) {
+        const admittedFunctions = actionSession.functions.map(fn => {
+          const group = (fn as unknown as { readonly group?: string }).group
+          return group === undefined ? { ...fn, group: 'core' as const } : fn
+        })
+        discovery = createToolDiscovery(admittedFunctions, { child: request.purpose === 'subagent' })
+        discoveryTurn = discovery.beginTurn()
+        tools = providerTools(actionSession, provider.capabilities.toolCalling, discoveryTurn)
+      }
+      return { provider, actionSession, discovery, discoveryTurn, tools, skillCatalog }
+    } catch (error) {
+      if (actionSession !== null) {
+        try {
+          actionSession.close()
+        } catch {
+          // Preserve setup failure.
+        }
+      }
+      throw classifyAgentExecutionFailure(error, 'setup')
+    }
+  }
+  async preflight(request: AgentEngineRequest): Promise<{
+    readonly admissible: boolean
+    readonly inputExposureTokens: number
+    readonly outputExposureTokens: number
+    readonly totalExposureTokens: number
+  }> {
+    let limits: EngineLimits
+    try {
+      limits = engineLimitsFor(request)
+    } catch (error) {
+      throw classifyAgentExecutionFailure(error, 'setup')
+    }
+    const prepared = await this.#prepare(request, false)
+    let actionSession = prepared.actionSession
+    let actionSessionClosed = false
+    const finalizeActionSession = (): AgentExecutionFailure | undefined => {
+      if (actionSession === null || actionSessionClosed) return undefined
+      const current = actionSession
+      actionSession = null
+      actionSessionClosed = true
+      try {
+        current.close()
+        return undefined
+      } catch {
+        return actionSessionCloseFailure()
+      }
+    }
+    let result:
+      | {
+          readonly admissible: boolean
+          readonly inputExposureTokens: number
+          readonly outputExposureTokens: number
+          readonly totalExposureTokens: number
+        }
+      | undefined
+    let primaryFailure: unknown
+    try {
+      if (request.signal.aborted) throw request.signal.reason
+      const { provider, tools } = prepared
+      const systemMessage = systemMessageForRequest(request, prepared.skillCatalog, tools)
+      const { conversation, latestUserIndex } = conversationFor(request)
+      const activePrompt: ChatPromptMessage[] = []
+      const remainingTokens = limits.maxTokens === undefined ? Number.MAX_SAFE_INTEGER : limits.maxTokens
+      const requestedMaxOutputTokens = Math.min(
+        limits.maxOutputTokens ?? provider.capabilities.maxOutputTokens,
+        provider.capabilities.maxOutputTokens,
+        remainingTokens
+      )
+      let bounded: { readonly chatPrompt: AxChatRequest['chatPrompt']; readonly maxOutputTokens: number }
+      let contextFits = true
+      try {
+        bounded = boundedChatPrompt(provider, tools, systemMessage, conversation, latestUserIndex, activePrompt, requestedMaxOutputTokens)
+      } catch (error) {
+        if (!isContextLimitFailure(error)) throw error
+        contextFits = false
+        bounded = { chatPrompt: mandatoryChatPrompt(systemMessage, conversation, latestUserIndex, activePrompt), maxOutputTokens: requestedMaxOutputTokens }
+      }
+      if (contextFits) bounded = boundedAttemptWithinBudget(provider, tools, systemMessage, conversation, latestUserIndex, activePrompt, bounded, limits.maxTokens)
+      const exposure = providerExposureFor(provider, tools, bounded.chatPrompt, bounded.maxOutputTokens)
+      result = {
+        admissible: contextFits && (limits.maxTokens === undefined || exposure.totalExposureTokens <= limits.maxTokens),
+        inputExposureTokens: exposure.inputExposureTokens,
+        outputExposureTokens: exposure.outputExposureTokens,
+        totalExposureTokens: exposure.totalExposureTokens
+      }
+    } catch (error) {
+      primaryFailure = error instanceof AgentExecutionFailure ? error : classifyAgentExecutionFailure(error, 'setup')
+    }
+    const closeFailure = finalizeActionSession()
+    if (primaryFailure !== undefined) throw primaryFailure
+    if (closeFailure) throw closeFailure
+    return result!
+  }
+
 
   async resumeAction(request: AgentEngineRequest, checkpoint: AgentApprovalContinuationCheckpoint, sink: AgentEngineSink): Promise<AgentEngineResult> {
     if (
@@ -1407,22 +1812,27 @@ export class AxAgentEngine implements AgentEngine {
         appendThoughtBlocks(accumulator, provider, result, limits)
       }
     }
-    const serializedRequestBytes = serializedProviderRequestBytes(provider, tools, chatPrompt, maxOutputTokens)
-    const maximumInputTokens = Math.max(0, Math.min(provider.capabilities.maxContextTokens - maxOutputTokens, serializedRequestBytes))
-    const providerExposureTokens = safeUsageAddition(maximumInputTokens, maxOutputTokens, 'Provider exposure')
-    if (providerExposureTokens < 1 || (maximumDispatchTokens !== undefined && providerExposureTokens > maximumDispatchTokens))
-      throw classifyAgentExecutionFailure(new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent token budget was exhausted', 409), 'dispatch_admission')
-    const admittedCostMicros = agentProviderCostMicros(provider.pricing, 0, 0, providerExposureTokens)
+    const exposure = providerExposureFor(provider, tools, chatPrompt, maxOutputTokens)
+    if (exposure.totalExposureTokens < 1 || (maximumDispatchTokens !== undefined && exposure.totalExposureTokens > maximumDispatchTokens))
+      throw classifyAgentExecutionFailure(
+        new AgentRepositoryError(
+          request.purpose === 'subagent' ? 'AGENT_CHILD_BUDGET_EXCEEDED' : 'AGENT_BUDGET_LIMITED',
+          'Agent token budget was exhausted',
+          409
+        ),
+        'dispatch_admission'
+      )
+    const admittedCostMicros = agentProviderCostMicros(provider.pricing, 0, 0, exposure.totalExposureTokens)
     const dispatchBudget = request.dispatchBudget
     let dispatchReservation: AgentDispatchBudgetReservation | undefined
     try {
-      dispatchReservation = await dispatchBudget?.reserve({ tokens: providerExposureTokens, costMicros: admittedCostMicros })
+      dispatchReservation = await dispatchBudget?.reserve({ tokens: exposure.totalExposureTokens, costMicros: admittedCostMicros })
       if (dispatchBudget && dispatchReservation === undefined)
         throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch reservation was not returned', 500)
       if (
         dispatchBudget &&
         (!Number.isSafeInteger(dispatchReservation!.tokens) ||
-          dispatchReservation!.tokens < providerExposureTokens ||
+          dispatchReservation!.tokens < exposure.totalExposureTokens ||
           !Number.isSafeInteger(dispatchReservation!.costMicros) ||
           dispatchReservation!.costMicros < admittedCostMicros)
       ) {
@@ -1517,9 +1927,9 @@ export class AxAgentEngine implements AgentEngine {
         if (provider.capabilities.usage !== 'estimated')
           throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider returned incomplete or invalid token usage', 502)
         estimatedUsage = true
-        inputTokens = maximumInputTokens
-        outputTokens = maxOutputTokens
-        totalTokens = providerExposureTokens
+        inputTokens = exposure.inputExposureTokens
+        outputTokens = exposure.outputExposureTokens
+        totalTokens = exposure.totalExposureTokens
         completeUsage = { inputTokens, outputTokens, totalTokens }
       }
       const content = accumulator.contentFragments.join('')
@@ -1583,25 +1993,21 @@ export class AxAgentEngine implements AgentEngine {
   }
 
   async execute(request: AgentEngineRequest, sink: AgentEngineSink): Promise<AgentEngineResult> {
-    const maxTurns = request.limits?.maxTurns ?? MAX_TURNS
-    const maxToolCalls = request.limits?.maxToolCalls ?? MAX_TOOL_CALLS
-    const maxTokens = request.limits?.maxTokens
-    if (
-      !Number.isSafeInteger(maxTurns) ||
-      maxTurns < 1 ||
-      maxTurns > MAX_TURNS ||
-      !Number.isSafeInteger(maxToolCalls) ||
-      maxToolCalls < 0 ||
-      maxToolCalls > MAX_TOOL_CALLS ||
-      (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens < 1)) ||
-      (request.limits?.maxOutputTokens !== undefined &&
-        (!Number.isSafeInteger(request.limits.maxOutputTokens) || request.limits.maxOutputTokens < 1 || request.limits.maxOutputTokens > 32_768))
-    ) {
-      throw classifyAgentExecutionFailure(new AgentRepositoryError('INVALID_ENGINE_LIMITS', 'Agent engine limits are invalid', 500), 'setup')
+    let limits: EngineLimits
+    try {
+      limits = engineLimitsFor(request)
+    } catch (error) {
+      throw classifyAgentExecutionFailure(error, 'setup')
     }
-    let provider: AgentProviderService
-    let actionSession: AxActionSession | null = null
+    const { maxTurns, maxToolCalls, maxTokens } = limits
+    const prepared = await this.#prepare(request, true)
+    const provider = prepared.provider
+    let actionSession: AxActionSession | null = prepared.actionSession
     let actionSessionClosed = false
+    const skillCatalog = prepared.skillCatalog
+    let discovery: ToolDiscoveryController | null = prepared.discovery
+    let discoveryTurn: ToolDiscoveryTurn | null = prepared.discoveryTurn
+    let tools: ProviderTools | null = prepared.tools
     const finalizeActionSession = (): AgentExecutionFailure | undefined => {
       if (actionSession === null || actionSessionClosed) return undefined
       const current = actionSession
@@ -1614,68 +2020,11 @@ export class AxAgentEngine implements AgentEngine {
         return actionSessionCloseFailure()
       }
     }
-    let skillCatalog: unknown = null
     try {
-      provider = await this.#factory.create(request.run.providerProfileVersionId)
-      if (request.purpose !== 'planner' && request.run.executionMode === 'agent' && this.#actions) actionSession = await this.#actions.open(request)
-      if (request.purpose !== 'subagent' && actionSession?.functions.some(action => action.name === 'skills.list')) {
-        skillCatalog = await withInvokingAgentRunLease(request.signal, request.run, () =>
-          actionSession!.invoke('skills.list', {}, request.signal, 'skill-catalog-bootstrap')
-        )
-      }
-    } catch (error) {
-      finalizeActionSession()
-      throw classifyAgentExecutionFailure(error, 'setup')
-    }
-    let discovery: ToolDiscoveryController | null = null
-    let discoveryTurn: ToolDiscoveryTurn | null = null
-    let tools: ProviderTools | null = null
-    try {
-      if (actionSession !== null) {
-        const admittedFunctions = actionSession.functions.map(fn => {
-          const group = (fn as unknown as { readonly group?: string }).group
-          return group === undefined ? { ...fn, group: 'core' as const } : fn
-        })
-        discovery = createToolDiscovery(admittedFunctions, { child: request.purpose === 'subagent' })
-        discoveryTurn = discovery.beginTurn()
-        tools = providerTools(actionSession, provider.capabilities.toolCalling, discoveryTurn)
-      }
-    } catch (error) {
-      finalizeActionSession()
-      throw classifyAgentExecutionFailure(error, 'setup')
-    }
-    try {
-      const systemMessageFor = (turnTools: ProviderTools | null): ChatPromptMessage => {
-        const categoryIndex = turnTools === null ? [] : promptToolCategoryIndex(turnTools)
-        const toolInstructions =
-          turnTools?.mode === 'prompt'
-            ? promptToolInstructions(promptToolDefinitions(turnTools), categoryIndex)
-            : categoryIndex.length === 0
-              ? undefined
-              : `Available admitted tool categories (enable with ${TOOL_DISCOVERY_CONTROL_NAME}):\n${JSON.stringify(categoryIndex)}`
-        return {
-          role: 'system',
-          content: prompt(request, skillCatalog, toolInstructions)
-        }
-      }
-      const conversation: ChatPromptMessage[] = request.messages
-        .filter(message => message.content.length > 0)
-        .map(message =>
-          message.role === 'assistant'
-            ? {
-                role: 'assistant' as const,
-                content: message.content,
-                ...(message.providerState?.thoughtBlocks ? { thoughtBlocks: message.providerState.thoughtBlocks.map(block => ({ ...block })) } : {})
-              }
-            : { role: 'user' as const, content: message.content }
-        )
-      let latestUserIndex = -1
-      for (let index = conversation.length - 1; index >= 0; index--) {
-        if (conversation[index]?.role === 'user') {
-          latestUserIndex = index
-          break
-        }
-      }
+      const systemMessageFor = (turnTools: ProviderTools | null): ChatPromptMessage => systemMessageForRequest(request, skillCatalog, turnTools)
+      const preparedConversation = conversationFor(request)
+      const conversation: ChatPromptMessage[] = [...preparedConversation.conversation]
+      const latestUserIndex = preparedConversation.latestUserIndex
       const activePrompt: ChatPromptMessage[] = []
       if (request.recoveredAction !== undefined) {
         if (request.purpose !== 'root' || tools === null || actionSession === null)
@@ -1731,15 +2080,14 @@ export class AxAgentEngine implements AgentEngine {
           citationRegistry,
           retrievals
         )
-      const coverage: DraftCoverage | undefined =
-        request.research === undefined
-          ? undefined
-          : {
-              taskGroups: request.research.packets
-                .filter(entry => entry.packet.outcome === 'completed' && entry.evidenceIds.length > 0)
-                .map(entry => ({ title: entry.task.title, evidenceIds: entry.evidenceIds })),
-              conflictGroups: request.research.packets.flatMap(entry => entry.conflictEvidenceGroups.map(evidenceIds => ({ evidenceIds })))
-            }
+      const coverage: DraftCoverage = {
+        taskGroups:
+          request.research?.packets
+            .filter(entry => entry.packet.outcome === 'completed' && entry.evidenceIds.length > 0)
+            .map(entry => ({ title: entry.task.title, evidenceIds: entry.evidenceIds })) ?? [],
+        conflictGroups: request.research?.packets.flatMap(entry => entry.conflictEvidenceGroups.map(evidenceIds => ({ evidenceIds }))) ?? [],
+        ...(request.currentPage === undefined ? {} : { currentPage: request.currentPage })
+      }
       for (let turn = 0; turn < maxTurns; turn++) {
         const remainingTokens = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
         if (remainingTokens < 1)
@@ -1767,6 +2115,7 @@ export class AxAgentEngine implements AgentEngine {
           if (error instanceof AgentExecutionFailure) throw error
           throw classifyAgentExecutionFailure(error, 'context_admission')
         }
+        bounded = boundedAttemptWithinBudget(provider, tools, systemMessage, conversation, latestUserIndex, activePrompt, bounded, remainingTokens)
         const turnLimits = deriveAgentProviderResourceLimits(bounded.maxOutputTokens)
         const result = await this.#turn(
           provider,
@@ -1796,12 +2145,16 @@ export class AxAgentEngine implements AgentEngine {
             request.purpose === 'planner'
               ? ({ valid: true, issues: [], claims: [], citationIds: [] } satisfies DraftAssessment)
               : request.purpose === 'subagent'
-                ? assessSubagentDraft(result.content, citationRegistry)
+                ? assessSubagentDraft(result.content, citationRegistry, request.currentPage)
                 : assessDraft(result.content, citationRegistry, coverage)
           await sink.event('model.turn', modelTurnData(turn + 1, result, assessment.valid ? 'answer_accepted' : 'answer_rejected'))
           if (request.purpose !== 'planner') await sink.event('evidence.provenance', provenanceData(assessment.valid, assessment, retrievals))
           if (!assessment.valid) {
-            if (turn + 1 >= maxTurns) throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Agent could not produce source-grounded output', 409)
+            if (turn + 1 >= maxTurns)
+              throw classifyAgentExecutionFailure(
+                new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Agent could not produce source-grounded output', 409),
+                'provider_response'
+              )
             activePrompt.push({
               role: 'assistant',
               content: result.content,

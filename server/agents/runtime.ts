@@ -470,7 +470,15 @@ export interface AgentEngineResult {
   }
 }
 
+export interface AgentEnginePreflight {
+  readonly admissible: boolean
+  readonly inputExposureTokens: number
+  readonly outputExposureTokens: number
+  readonly totalExposureTokens: number
+}
+
 export interface AgentEngine {
+  preflight(request: AgentEngineRequest): Promise<AgentEnginePreflight>
   execute(request: AgentEngineRequest, sink: AgentEngineSink): Promise<AgentEngineResult>
   resumeAction?(request: AgentEngineRequest, checkpoint: AgentApprovalContinuationCheckpoint, sink: AgentEngineSink): Promise<AgentEngineResult>
 }
@@ -1068,8 +1076,11 @@ export class AgentProductRuntime {
   async #planResearch(
     claim: AgentRunClaim,
     userRequest: string,
-    currentPage: AgentEngineRequest['currentPage'],
+    currentPage: AgentCurrentPageHint | undefined,
     knowledgeContext: AgentKnowledgeContext | undefined,
+    memory: AgentMemorySnapshot,
+    skills: readonly RuntimeSkillRow[],
+    budget: AgentChildBudgetUsage,
     signal: AbortSignal,
     dispatchBudget: AgentDispatchBudget,
     maxTokens?: number
@@ -1135,13 +1146,72 @@ export class AgentProductRuntime {
       })
       return { tasks: [], usage }
     }
+    const proposed = plan.map(task => ({ id: randomUUID(), ...task }))
+    if (proposed.length > 0) {
+      const initialCount = Math.min(this.#orchestration.maxConcurrentChildren, proposed.length)
+      const reservations = new AgentChildBudgetReservations(this.#orchestration, budget)
+      const checked: Array<{ readonly reservation: AgentChildBudgetReservation }> = []
+      let admissible = true
+      try {
+        for (let index = 0; index < initialCount; index += 1) {
+          const task = proposed[index]
+          if (!task) break
+          const reservation = reservations.reserve(initialCount - index)
+          if (reservation === null) {
+            admissible = false
+            break
+          }
+          checked.push({ reservation })
+          const preflightSignal = AbortSignal.any([
+            signal,
+            AbortSignal.timeout(this.#orchestration.childTimeoutMilliseconds)
+          ])
+          const preflight = await this.#engine.preflight(
+            this.#researchEngineRequest({
+              claim,
+              task,
+              memory,
+              skills,
+              currentPage,
+              knowledgeContext,
+              reservation,
+              signal: preflightSignal
+            })
+          )
+          if (
+            !Number.isSafeInteger(preflight.inputExposureTokens) ||
+            preflight.inputExposureTokens < 0 ||
+            !Number.isSafeInteger(preflight.outputExposureTokens) ||
+            preflight.outputExposureTokens < 1 ||
+            !Number.isSafeInteger(preflight.totalExposureTokens) ||
+            preflight.totalExposureTokens < 1 ||
+            preflight.outputExposureTokens > reservation.maxOutputTokens ||
+            preflight.totalExposureTokens > reservation.totalTokens ||
+            !preflight.admissible
+          ) {
+            admissible = false
+            break
+          }
+        }
+      } finally {
+        for (const { reservation } of checked) reservations.release(reservation, { outputCharacters: 0, totalTokens: 0 })
+      }
+      if (!admissible) {
+        await this.#appendPresentationEvent(claim, 'task.planCreated', {
+          usageVersion: 2,
+          rootRunId: claim.id,
+          accepted: false,
+          taskCount: 0,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          totalTokens: usage.totalTokens,
+          costMicros: usage.costMicros
+        })
+        return { tasks: [], usage }
+      }
+    }
     return {
-      tasks: await createAgentRunTasks(
-        this.#knex,
-        claim,
-        plan.map(task => ({ id: randomUUID(), ...task })),
-        usage
-      ),
+      tasks: await createAgentRunTasks(this.#knex, claim, proposed, usage),
       usage
     }
   }
@@ -1151,6 +1221,7 @@ export class AgentProductRuntime {
     readonly modelUsage: AgentUsageTotals
     readonly modelTurns: number
     readonly budget: AgentChildBudgetUsage
+    readonly planRejected: boolean
   }> {
     const rows = (await this.#knex('agentEvents')
       .where({ runId: claim.id })
@@ -1161,6 +1232,7 @@ export class AgentProductRuntime {
     let consumedOutputCharacters = 0
     let consumedTotalTokens = 0
     let modelTurns = 0
+    let planRejected = false
     for (const row of rows) {
       if (sha256(row.data) !== row.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored orchestration event hash is invalid', 500)
       let data: unknown
@@ -1182,6 +1254,7 @@ export class AgentProductRuntime {
         usage.outputTokens = safeUsageSum(usage.outputTokens, eventUsage.outputTokens, 'Orchestration output tokens')
         usage.totalTokens = safeUsageSum(usage.totalTokens, eventUsage.totalTokens, 'Orchestration total tokens')
         usage.costMicros = safeUsageSum(usage.costMicros, eventUsage.costMicros, 'Orchestration cost')
+        if (Reflect.get(data, 'accepted') === false && Reflect.get(data, 'taskCount') === 0) planRejected = true
         continue
       }
       if (typeof Reflect.get(data, 'taskId') !== 'string' || typeof Reflect.get(data, 'subagentRunId') !== 'string') {
@@ -1209,7 +1282,41 @@ export class AgentProductRuntime {
       consumedOutputCharacters = safeUsageSum(consumedOutputCharacters, turnOutputCharacters, 'Consumed child output characters')
     }
     const budget: AgentChildBudgetUsage = { outputCharacters: consumedOutputCharacters, totalTokens: consumedTotalTokens }
-    return { usage, modelUsage, modelTurns, budget }
+    return { usage, modelUsage, modelTurns, budget, planRejected }
+  }
+  #researchEngineRequest(input: {
+    readonly claim: AgentRunClaim
+    readonly task: AgentResearchTask
+    readonly memory: AgentMemorySnapshot
+    readonly skills: readonly RuntimeSkillRow[]
+    readonly currentPage: AgentCurrentPageHint | undefined
+    readonly knowledgeContext: AgentKnowledgeContext | undefined
+    readonly reservation: AgentChildBudgetReservation
+    readonly signal: AbortSignal
+    readonly subagentRunId?: string
+    readonly dispatchBudget?: AgentDispatchBudget
+  }): AgentEngineRequest {
+    return {
+      run: input.claim,
+      purpose: 'subagent',
+      task: input.task,
+      ...(input.subagentRunId === undefined ? {} : { subagentRunId: input.subagentRunId }),
+      actionAllowlist: SUBAGENT_READ_ACTIONS,
+      limits: {
+        maxTokens: input.reservation.totalTokens,
+        maxTurns: this.#orchestration.childTurns,
+        maxToolCalls: this.#orchestration.childToolCalls,
+        maxOutputTokens: input.reservation.maxOutputTokens
+      },
+      messages: [{ role: 'user', content: subagentPrompt(input.task) }],
+      memory: input.memory,
+      skills: input.skills,
+      priorActivity: [],
+      ...(input.dispatchBudget === undefined ? {} : { dispatchBudget: input.dispatchBudget }),
+      signal: input.signal,
+      ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
+      ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext })
+    }
   }
 
   async #executeResearchTask(
@@ -1235,27 +1342,18 @@ export class AgentProductRuntime {
       const startedTask = await startAgentRunTask(this.#knex, claim, task.id, subagentRunId)
       activeTask = startedTask
       const result = await this.#engine.execute(
-        {
-          run: claim,
-          purpose: 'subagent',
+        this.#researchEngineRequest({
+          claim,
           task: researchTask(startedTask),
-          subagentRunId,
-          actionAllowlist: SUBAGENT_READ_ACTIONS,
-          limits: {
-            maxTokens: reservation.totalTokens,
-            maxTurns: this.#orchestration.childTurns,
-            maxToolCalls: this.#orchestration.childToolCalls,
-            maxOutputTokens: reservation.totalTokens
-          },
-          messages: [{ role: 'user', content: subagentPrompt(startedTask) }],
           memory,
           skills,
-          priorActivity: [],
-          dispatchBudget,
+          currentPage,
+          knowledgeContext,
+          reservation,
           signal: childSignal,
-          ...(currentPage === undefined ? {} : { currentPage }),
-          ...(knowledgeContext === undefined ? {} : { knowledgeContext })
-        },
+          subagentRunId,
+          dispatchBudget
+        }),
         {
           text: async delta => {
             if (childSignal.aborted) throw childSignal.reason
@@ -1603,8 +1701,27 @@ export class AgentProductRuntime {
           tasks = await listAgentRunTasks(this.#knex, claim.id)
         }
         const latestUserMessage = [...messages].reverse().find(message => message.role === 'user')?.content ?? ''
-        if (this.#orchestration.enabled && claim.executionMode === 'agent' && tasks.length === 0 && shouldPlanAgentResearch(latestUserMessage)) {
-          tasks = (await this.#planResearch(claim, latestUserMessage, currentPage, knowledgeContext, executionSignal, dispatchBudget, startingGoalTokens)).tasks
+        if (
+          this.#orchestration.enabled &&
+          claim.executionMode === 'agent' &&
+          tasks.length === 0 &&
+          !orchestrationTelemetry.planRejected &&
+          shouldPlanAgentResearch(latestUserMessage)
+        ) {
+          tasks = (
+            await this.#planResearch(
+              claim,
+              latestUserMessage,
+              currentPage,
+              knowledgeContext,
+              memory,
+              skills,
+              orchestrationTelemetry.budget,
+              executionSignal,
+              dispatchBudget,
+              startingGoalTokens
+            )
+          ).tasks
         }
       }
       if (continuation === null && this.#orchestration.enabled && claim.executionMode === 'agent' && tasks.some(task => task.status === 'pending')) {
@@ -1847,7 +1964,9 @@ export class AgentProductRuntime {
       const errorMessage = recoveryRequired
         ? 'The approved action completed, but its assistant response requires recovery'
         : budgetLimited
-          ? 'Agent goal budget was exhausted'
+          ? claim.goalId === null
+            ? 'Agent request budget was exhausted'
+            : 'Agent goal budget was exhausted'
           : 'Agent inference failed'
       let ownsActiveRun = false
       let ownedStatus: string | undefined

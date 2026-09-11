@@ -17,19 +17,21 @@ Working on your first Pull Request? You can learn how from this *free* course, [
 
 ## Submitting code
 
-Any code change should be submitted as a pull request. The description should explain what the code does and give steps to execute it. The pull request should also contain tests.
+Any code change should be submitted as a pull request. The description should explain what the code does, give steps to exercise it, and report the checks run. Add permanent tests when they defend a meaningful behavior, boundary, invariant, or regression; otherwise provide a focused runtime smoke result.
 
 ## Code review process
 
 The bigger the pull request, the longer it will take to review and merge. Try to break down large pull requests in smaller chunks that are easier to review and merge.
 It is also always helpful to have some context for your pull request. What was the purpose? Why does it matter to you?
 
-## Security review and attestation workflow
+## Enterprise Release — security review and attestation workflow
+This workflow applies only when a maintainer explicitly activates **Enterprise Release** for a named official beta, production release, or compliance milestone as defined in `AGENTS.md`. Development Sprint is the default: routine development and maintained local-tailnet deployment do not require an immutable source/attestation pair, review record, evidence document, manifest update, release tag, provenance record, or certification artifact.
+
 
 tsEpistle gates release qualification through an executable, manifest-driven integrity gate (`bun run threat-model:check` and `bun server/scripts/check-threat-model.ts --release`). Historical release models relied on a monolithic markdown table row (`Covered source`) inside the threat model; current records are cataloged in `docs/security/review-attestations.json`.
 
 The governing record and manifest format is `schemaVersion: 2`. Release authority is maintainer-owned: a maintainer or delegated agent performs and records the source review, and the reviewer's identity is attribution rather than a separate trust root. The former schemaVersion 1 external-review, detached-signature, and trusted-key process is superseded historical policy, not a current release prerequisite. Historical records are migrated for representation only, remain `releaseEligible: false`, and preserve their original findings and evidence.
-The static prerequisite is intentionally executable rather than descriptive: `package.json` defines `ci:static` with the exact unconditional `bun audit --production` segment after dependency and license checks and before broader gates, followed by `bun run threat-model:check`. Both the pull-request `pr-quality` job and the shared `quality` job invoke `bun run ci:static`; do not replace the audit with an echo, add `--ignore`/`--audit-level` variants, background it, or suppress it with `|| true`. The checker also parses and hashes a successfully read zero-byte threat model, so an empty model cannot pass by sentinel omission. A failed audit or reported production vulnerability blocks later workflow stages.
+The static prerequisite remains executable for hosted release-oriented automation: `package.json` defines `ci:static` with the exact unconditional `bun audit --production` segment after dependency and license checks and before broader gates, followed by `bun run threat-model:check`. Both the pull-request `pr-quality` job and the shared `quality` job invoke `bun run ci:static`; do not replace the audit with an echo, add `--ignore`/`--audit-level` variants, background it, or suppress it with `|| true`. A failed hosted check must be fixed rather than hidden. This existing automation is not the local Development Sprint acceptance command; Sprint uses the changed-path checks defined in `AGENTS.md`. The checker also parses and hashes a successfully read zero-byte threat model, so an empty model cannot pass by sentinel omission.
 
 
 ### Canonical security boundary and digests
@@ -132,7 +134,7 @@ During development, specialized audits may evaluate uncommitted working-tree cha
 - A content fingerprint is transient evidence, not a Git commit or a substitute for a canonical `coveredTreeDigest`.
 - Historical records retain their original scope, findings, and evidence after representation migration. They are explicitly superseded by the current maintainer-owned schema-2 review policy; do not reinterpret their historical limitations as current release requirements.
 
-Releasing any feature or refactor requires committed source, a completed maintainer/agent source review, current canonical digests, real contained evidence, a clean checkout, zero active blocking findings, and the existing artifact/provenance and protected-environment checks.
+Releasing under an explicitly activated Enterprise Release requires committed source, a completed maintainer/agent source review, current canonical digests, real contained evidence, a clean checkout, zero active blocking findings, and the existing artifact/provenance and protected-environment checks. Development Sprint commits and local-tailnet deployments are governed instead by `AGENTS.md` and do not create this attestation package.
 ## Requesting new features / enhancements
 
 Use the feature request board to submit new ideas and vote on which ideas should be integrated first.

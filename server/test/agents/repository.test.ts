@@ -42,6 +42,17 @@ const userMessageId = '00000000-0000-4000-8000-000000000003'
 const assistantMessageId = '00000000-0000-4000-8000-000000000004'
 type AdmissionResolverInput = Parameters<AgentAdmissionResolver['resolve']>[1]
 type CurrentAdmissionResolverInput = Parameters<AgentAdmissionResolver['resolveCurrent']>[1]
+const preflightAgentRequest = async (request: Parameters<AgentEngine['preflight']>[0]) => {
+  const inputExposureTokens = 1
+  const outputExposureTokens = Math.max(1, Math.min(request.limits?.maxOutputTokens ?? 1, request.limits?.maxTokens ?? Number.MAX_SAFE_INTEGER))
+  const totalExposureTokens = inputExposureTokens + outputExposureTokens
+  return {
+    admissible: request.limits?.maxTokens === undefined || totalExposureTokens <= request.limits.maxTokens,
+    inputExposureTokens,
+    outputExposureTokens,
+    totalExposureTokens
+  }
+}
 
 const createTables = async (knex: Knex): Promise<void> => {
   await knex.schema.createTable('users', table => {
@@ -1247,6 +1258,7 @@ describe('durable agent repositories', () => {
       now
     )
     const engine: AgentEngine = {
+      preflight: preflightAgentRequest,
       async execute(request) {
         if (!request.dispatchBudget) throw new Error('dispatch budget missing')
         const reservation = await request.dispatchBudget.reserve({ tokens: 100, costMicros: 100 })
@@ -1333,6 +1345,7 @@ describe('durable agent repositories', () => {
     await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 100 }, { dailyTokens: 1_000, dailyCostMicros: 1_000 }, expiresAt, now)
     let executions = 0
     const engine: AgentEngine = {
+      preflight: preflightAgentRequest,
       async execute(request) {
         executions += 1
         if (!request.dispatchBudget) throw new Error('dispatch budget missing')
@@ -1486,6 +1499,7 @@ describe('durable agent repositories', () => {
     )
     let reservedExposure = 0
     const engine: AgentEngine = {
+      preflight: preflightAgentRequest,
       async execute(request, sink) {
         const reservation = await request.dispatchBudget.reserve({ tokens: 84, costMicros: 30 })
         reservedExposure = Number((await knex('agentQuotaReservations').where({ runId }).first('reservedTokens'))?.reservedTokens)
@@ -1570,6 +1584,7 @@ describe('durable agent repositories', () => {
       now
     )
     const engine: AgentEngine = {
+      preflight: preflightAgentRequest,
       async execute(_request, sink) {
         await sink.event('model.turn', {
           turn: 1,
@@ -1636,6 +1651,7 @@ describe('durable agent repositories', () => {
     )
     const entered = Promise.withResolvers<void>()
     const engine: AgentEngine = {
+      preflight: preflightAgentRequest,
       async execute(request) {
         await knex('agentRuns')
           .where({ id: request.run.id, leaseOwner: request.run.leaseOwner, leaseToken: request.run.leaseToken, status: 'running' })
@@ -1797,6 +1813,7 @@ describe('durable agent repositories', () => {
         }
       },
       {
+        preflight: preflightAgentRequest,
         async execute() {
           return { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
         }
@@ -1898,7 +1915,7 @@ describe('durable agent repositories', () => {
             }
           }
         },
-        { execute } as AgentEngine,
+        { preflight: preflightAgentRequest, execute } as AgentEngine,
         {
           workerId: 'goal-budget-test',
           globalConcurrency: 1,
@@ -1991,6 +2008,7 @@ describe('durable agent repositories', () => {
         }
       },
       {
+        preflight: preflightAgentRequest,
         async execute(_request, sink) {
           await sink.event('model.turn', {
             turn: 1,
@@ -2087,7 +2105,13 @@ describe('durable agent repositories', () => {
       new Date('2026-08-17T00:10:00.000Z'),
       now
     )
+    const preflightRequests: Array<Parameters<AgentEngine['preflight']>[0]> = []
+    const childRequests: Array<Parameters<AgentEngine['execute']>[0]> = []
     const engine: AgentEngine = {
+      preflight: async request => {
+        preflightRequests.push(request)
+        return { admissible: true, inputExposureTokens: 100, outputExposureTokens: 2_048, totalExposureTokens: 2_148 }
+      },
       async execute(request, sink) {
         if (request.purpose === 'planner') {
           await sink.text(
@@ -2101,6 +2125,7 @@ describe('durable agent repositories', () => {
           return { inputTokens: 3, outputTokens: 2, totalTokens: 5, costMicros: 0 }
         }
         if (request.purpose === 'subagent') {
+          childRequests.push(request)
           if (!request.task || !request.subagentRunId) throw new Error('missing child envelope')
           const alpha = request.task.title.includes('alpha')
           const pageId = alpha ? 1 : 2
@@ -2189,8 +2214,18 @@ describe('durable agent repositories', () => {
         orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true }
       }
     )
-
     expect(await runtime.runOnce()).toBe(true)
+    expect(preflightRequests).toHaveLength(2)
+    expect(preflightRequests.map(request => request.limits)).toEqual([
+      { maxTokens: 6_000, maxTurns: 4, maxToolCalls: 8, maxOutputTokens: 2_048 },
+      { maxTokens: 6_000, maxTurns: 4, maxToolCalls: 8, maxOutputTokens: 2_048 }
+    ])
+    expect(preflightRequests.every(request => request.dispatchBudget === undefined)).toBe(true)
+    expect(childRequests).toHaveLength(2)
+    expect(childRequests.map(request => request.limits)).toEqual([
+      { maxTokens: 6_000, maxTurns: 4, maxToolCalls: 8, maxOutputTokens: 2_048 },
+      { maxTokens: 6_000, maxTurns: 4, maxToolCalls: 8, maxOutputTokens: 2_048 }
+    ])
     expect(await knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens', 'totalTokens')).toEqual({
       status: 'succeeded',
       inputTokens: 23,
@@ -2206,6 +2241,167 @@ describe('durable agent repositories', () => {
     )
     const thread = await projectAgentThread(knex, 7, sessionId, { profileResolutionToken: () => 'token' })
     expect(thread.tasks).toHaveLength(2)
+    await runtime.shutdown()
+  })
+  it('falls back to the ordinary root path when the initial child batch is not admissible', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    await knex('agentMessages').where({ id: userMessageId }).update({ content: 'Compare the alpha and beta deployment guides.' })
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: now,
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null
+    })
+    await reserveAgentRunQuota(
+      knex,
+      runId,
+      7,
+      { tokens: 10_000, costMicros: 1_000 },
+      { dailyTokens: 20_000, dailyCostMicros: 2_000 },
+      new Date('2026-08-17T00:10:00.000Z'),
+      now
+    )
+    const purposes: string[] = []
+    const preflightRequests: Array<Parameters<AgentEngine['preflight']>[0]> = []
+    const engine: AgentEngine = {
+      preflight: async request => {
+        preflightRequests.push(request)
+        return { admissible: false, inputExposureTokens: 120_000, outputExposureTokens: 2_048, totalExposureTokens: 122_048 }
+      },
+      async execute(request, sink) {
+        purposes.push(request.purpose ?? 'root')
+        if (request.purpose === 'planner') {
+          await sink.text(
+            JSON.stringify({
+              tasks: [
+                { kind: 'source_scout', title: 'Review alpha', question: 'What does alpha require?', sourceScope: ['alpha'], requiredEvidenceCount: 1 },
+                { kind: 'source_scout', title: 'Review beta', question: 'What does beta require?', sourceScope: ['beta'], requiredEvidenceCount: 1 }
+              ]
+            })
+          )
+          return { inputTokens: 3, outputTokens: 2, totalTokens: 5, costMicros: 0 }
+        }
+        await sink.text('Ordinary root answer.')
+        return { inputTokens: 4, outputTokens: 2, totalTokens: 6, costMicros: 0 }
+      }
+    }
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      {
+        workerId: 'orchestration-infeasible-test',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true, maxConcurrentChildren: 1 }
+      }
+    )
+
+    expect(await runtime.runOnce()).toBe(true)
+    expect(purposes).toEqual(['planner', 'root'])
+    expect(preflightRequests).toHaveLength(1)
+    expect(await knex('agentRunTasks').where({ runId })).toEqual([])
+    const planEvent = await knex('agentEvents').where({ runId, type: 'task.planCreated' }).first('data')
+    expect(JSON.parse(String(planEvent?.data))).toMatchObject({ accepted: false, taskCount: 0, inputTokens: 3, outputTokens: 2, totalTokens: 5 })
+    expect(await knex('agentEvents').where({ runId, type: 'task.created' })).toEqual([])
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens', 'totalTokens')).toMatchObject({
+      status: 'succeeded',
+      inputTokens: 7,
+      outputTokens: 4,
+      totalTokens: 11
+    })
+    await runtime.shutdown()
+  })
+  it('does not rerun the planner after an infeasible plan receipt survives a lease retry', async () => {
+    const now = new Date('2026-08-17T00:02:00.000Z')
+    await knex('agentMessages').where({ id: userMessageId }).update({ content: 'Compare the alpha and beta deployment guides.' })
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 1,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: now,
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null
+    })
+    await reserveAgentRunQuota(
+      knex,
+      runId,
+      7,
+      { tokens: 10_000, costMicros: 1_000 },
+      { dailyTokens: 20_000, dailyCostMicros: 2_000 },
+      new Date('2026-08-17T00:10:00.000Z'),
+      now
+    )
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000090',
+      runId,
+      ownerId: 7,
+      type: 'task.planCreated',
+      attempt: 1,
+      data: {
+        usageVersion: 2,
+        rootRunId: runId,
+        accepted: false,
+        taskCount: 0,
+        inputTokens: 3,
+        outputTokens: 2,
+        totalTokens: 5,
+        costMicros: 0
+      }
+    })
+    const purposes: string[] = []
+    const engine: AgentEngine = {
+      preflight: preflightAgentRequest,
+      async execute(request, sink) {
+        purposes.push(request.purpose ?? 'root')
+        if (request.purpose === 'planner') throw new Error('planner must not rerun after rejected plan receipt')
+        await sink.text('Retry root answer.')
+        return { inputTokens: 4, outputTokens: 2, totalTokens: 6, costMicros: 0 }
+      }
+    }
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      {
+        workerId: 'orchestration-rejected-retry-test',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true }
+      }
+    )
+
+    expect(await runtime.runOnce()).toBe(true)
+    expect(purposes).toEqual(['root'])
+    expect(await knex('agentEvents').where({ runId, type: 'task.planCreated' })).toHaveLength(1)
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens', 'totalTokens')).toMatchObject({
+      status: 'succeeded',
+      inputTokens: 7,
+      outputTokens: 4,
+      totalTokens: 11
+    })
     await runtime.shutdown()
   })
   it('filters old pending settlements before the claim limit so a later run is not starved', async () => {

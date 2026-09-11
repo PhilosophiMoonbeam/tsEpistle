@@ -5,7 +5,7 @@ import { AxAgentEngine, type AgentActionSessionProvider } from '../../agents/pro
 import { AgentProviderAttemptError, type AgentProviderFactory, type AgentProviderService } from '../../agents/providers/factory.ts'
 import { AgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
-import { AgentChildBudgetReservations, MAX_AGENT_CHILD_OUTPUT_CHARACTERS, type AgentOrchestrationLimits } from '../../agents/orchestration.ts'
+import { AgentChildBudgetReservations, type AgentOrchestrationLimits } from '../../agents/orchestration.ts'
 
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
@@ -1754,6 +1754,53 @@ describe('provider fragment boundaries', () => {
   })
 })
 
+describe('engine preflight', () => {
+  it('prepares the frozen child request without dispatch or action execution and closes once', async () => {
+    const chat = vi.fn(async () => {
+      throw new Error('preflight must not call the provider')
+    })
+    const invoke = vi.fn(async () => {
+      throw new Error('preflight must not invoke Wiki actions')
+    })
+    const close = vi.fn()
+    const open = vi.fn(async () => ({
+      authoritySha256: null,
+      functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object' }, risk: 'read' }],
+      invoke,
+      snapshot: async () => ({}),
+      close
+    }))
+    const request: AgentEngineRequest = {
+      ...baseRequest(new AbortController().signal),
+      purpose: 'subagent',
+      actionAllowlist: ['pages.get'],
+      task: {
+        id: '00000000-0000-4000-8000-000000000021',
+        kind: 'source_scout',
+        title: 'Review alpha',
+        question: 'What does alpha require?',
+        sourceScope: ['alpha'],
+        requiredEvidenceCount: 1
+      },
+      subagentRunId: '00000000-0000-4000-8000-000000000022',
+      messages: [{ role: 'user', content: 'x'.repeat(8_000) }],
+      limits: { maxTokens: 6_000, maxTurns: 4, maxToolCalls: 8, maxOutputTokens: 2_048 }
+    }
+    const engine = new AxAgentEngine(factoryFor(chat), { open } as unknown as AgentActionSessionProvider)
+
+    const result = await engine.preflight(request)
+
+    expect(result.outputExposureTokens).toBe(2_048)
+    expect(result.totalExposureTokens).toBe(result.inputExposureTokens + result.outputExposureTokens)
+    expect(result.totalExposureTokens).toBeGreaterThan(6_000)
+    expect(result.admissible).toBe(false)
+    expect(open).toHaveBeenCalledOnce()
+    expect(invoke).not.toHaveBeenCalled()
+    expect(chat).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
+  })
+})
+
 describe('child aggregate budget reservations', () => {
   it('admits concurrent children atomically and reconstructs retry headroom from measured usage', () => {
     const limits = {
@@ -1772,27 +1819,17 @@ describe('child aggregate budget reservations', () => {
     } as const satisfies AgentOrchestrationLimits
     const reservations = new AgentChildBudgetReservations(limits, { totalTokens: 0, outputCharacters: 0 })
 
-    const first = reservations.reserve()
-    const second = reservations.reserve()
-    const third = reservations.reserve()
+    const first = reservations.reserve(3)
+    const second = reservations.reserve(2)
+    const third = reservations.reserve(1)
 
-    expect(first).toEqual(
-      expect.objectContaining({
-        totalTokens: 4,
-        outputCharacters: MAX_AGENT_CHILD_OUTPUT_CHARACTERS
-      })
-    )
-    expect(second).toEqual(
-      expect.objectContaining({
-        totalTokens: 4,
-        outputCharacters: 80_000 - MAX_AGENT_CHILD_OUTPUT_CHARACTERS
-      })
-    )
-    expect(third).toBeNull()
+    expect(first).toEqual(expect.objectContaining({ totalTokens: 3, maxOutputTokens: 3, outputCharacters: 26_666 }))
+    expect(second).toEqual(expect.objectContaining({ totalTokens: 3, maxOutputTokens: 3, outputCharacters: 26_667 }))
+    expect(third).toEqual(expect.objectContaining({ totalTokens: 4, maxOutputTokens: 4, outputCharacters: 26_667 }))
 
     reservations.release(first!, { totalTokens: 3, outputCharacters: 20_000 })
     reservations.release(second!, { totalTokens: 3, outputCharacters: 10_000 })
-    expect(reservations.consumed).toEqual({ totalTokens: 6, outputCharacters: 30_000 })
+    reservations.release(third!, { totalTokens: 0, outputCharacters: 0 })
 
     const recovered = new AgentChildBudgetReservations(limits, reservations.consumed)
     const retry = recovered.reserve()
@@ -1824,6 +1861,27 @@ describe('child aggregate budget reservations', () => {
     expect(reservations.reserve(2)).toEqual(expect.objectContaining({ totalTokens: 4, outputCharacters: 32_000 }))
     expect(reservations.reserve(1)).toEqual(expect.objectContaining({ totalTokens: 4, outputCharacters: 32_000 }))
   })
+  it('reserves aggregate child total allowance independently from each offered output ceiling', () => {
+    const limits = {
+      enabled: true,
+      maxConcurrentChildren: 2,
+      maxChildren: 2,
+      plannerTurns: 1,
+      childTurns: 4,
+      childToolCalls: 8,
+      plannerTimeoutMilliseconds: 1_000,
+      childTimeoutMilliseconds: 1_000,
+      plannerMaxOutputTokens: 1_024,
+      childMaxOutputTokens: 2_048,
+      maxAggregateChildTokens: 12_000,
+      maxAggregateChildOutputCharacters: 96_000
+    } as const satisfies AgentOrchestrationLimits
+    const reservations = new AgentChildBudgetReservations(limits, { totalTokens: 0, outputCharacters: 0 })
+
+    expect(reservations.reserve(2)).toEqual(expect.objectContaining({ totalTokens: 6_000, maxOutputTokens: 2_048 }))
+    expect(reservations.reserve(1)).toEqual(expect.objectContaining({ totalTokens: 6_000, maxOutputTokens: 2_048 }))
+  })
+
 
   it('uses aggregate token headroom smaller than the per-child ceiling', () => {
     const limits = {
@@ -1841,11 +1899,10 @@ describe('child aggregate budget reservations', () => {
       maxAggregateChildOutputCharacters: 200_000
     } as const satisfies AgentOrchestrationLimits
     const reservations = new AgentChildBudgetReservations(limits, { totalTokens: 0, outputCharacters: 0 })
-
-    expect(reservations.reserve()).toEqual(expect.objectContaining({ totalTokens: 4 }))
-    expect(reservations.reserve()).toEqual(expect.objectContaining({ totalTokens: 4 }))
-    expect(reservations.reserve()).toEqual(expect.objectContaining({ totalTokens: 2 }))
-    expect(reservations.reserve()).toBeNull()
+    expect(reservations.reserve(3)).toEqual(expect.objectContaining({ totalTokens: 3, maxOutputTokens: 3 }))
+    expect(reservations.reserve(2)).toEqual(expect.objectContaining({ totalTokens: 3, maxOutputTokens: 3 }))
+    expect(reservations.reserve(1)).toEqual(expect.objectContaining({ totalTokens: 4, maxOutputTokens: 4 }))
+    expect(reservations.reserve(1)).toBeNull()
   })
 
   it('rejects measured child usage above the held reservation without changing aggregate counters', () => {
