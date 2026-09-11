@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 2,
+  "id": "security-review-907831b89576e4876e51a471f8a16859fbb71575",
+  "kind": "source-review",
+  "repository": "PhilosophiMoonbeam/tsEpistle",
+  "policyVersion": 1,
+  "threatModelDigest": "2b2baa8c523bbbb2b3ffa89e2cad954ba63e3af372529dc76e931291bbd3b748",
+  "reviewer": {
+    "identity": "tsEpistle maintainers (Main; FinalCorrectionSecurity; FinalSecurityCertification; CurrentFinalSecurity; ExactSourceSecurityAttestation)",
+    "reviewedAt": "2026-09-11"
+  },
+  "releaseEligible": true,
+  "source": {
+    "revision": "907831b89576e4876e51a471f8a16859fbb71575",
+    "baseRevision": "314d78bf12ce610906f54a50f19839543272d70e",
+    "coveredTreeDigest": "a379c661545097db71eed7d8a99bd7fe45258be5370be47ed097e2f0fee48679"
+  },
+  "findings": [
+    {
+      "id": "AUTH-APIKEY-HUMAN-IMPERSONATION",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/core/auth.api-access.test.ts",
+        "server/test/graph/api-key-mutations.test.ts"
+      ]
+    },
+    {
+      "id": "AUTH-CALLBACK-INITIATION-BINDING",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/authentication/cas/cas-strategy.test.ts",
+        "server/modules/authentication/saml/authentication.test.ts",
+        "server/test/controllers/auth.test.js"
+      ]
+    },
+    {
+      "id": "AUTH-OAUTH-STATE-LIFECYCLE",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/authentication/oauth-state.test.ts",
+        "server/test/repositories/federated-login.postgres.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-ASSET-001",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/models/assets.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-IMPORT-002",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/storage/git/admission.test.ts",
+        "server/modules/storage/git/bounded-process.test.ts",
+        "server/modules/storage/git/repository.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-BACKUP-003",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/modules/storage.disk.test.js"
+      ]
+    },
+    {
+      "id": "SEC-STORAGE-NATIVE-BOUND-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "docs/security/threat-model.md",
+        "server/modules/storage/git/bounded-process.test.ts"
+      ]
+    },
+    {
+      "id": "SEC-ADAPTER-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "docs/security/threat-model.md"
+      ]
+    },
+    {
+      "id": "SEC-CACHE-001",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-54949bf6d081-evidence.md",
+        "docs/security/threat-model.md",
+        "server/controllers/api/pages.ts",
+        "server/test/controllers/api.pages.test.js",
+        "server/test/operations/pages-tree.postgres.test.ts"
+      ]
+    }
+  ],
+  "evidencePaths": [
+    "docs/security/security-review-907831b89576e4876e51a471f8a16859fbb71575-evidence.md",
+    "docs/security/review-attestations/security-review-907831b89576e4876e51a471f8a16859fbb71575.json",
+    ".github/workflows/build.yml",
+    "package.json",
+    "bun.lock",
+    "dev/build/Dockerfile",
+    "dev/build-arm/Dockerfile",
+    "dev/build/Dockerfile.agent-browser",
+    "dev/containers/Dockerfile",
+    "dev/containers/Dockerfile.browser",
+    "server/index.ts",
+    "server/agents/runtime.ts",
+    "server/agents/diagnostics.ts",
+    "server/agents/providers/engine.ts",
+    "server/agents/providers/usage.ts",
+    "server/agents/providers/utility.ts",
+    "server/db/migrations/tsepistle-000031-agent-total-token-accounting.ts",
+    "server/test/agents/agent-engine.test.ts",
+    "server/test/agents/diagnostics.test.ts",
+    "server/test/db/agent-total-token-accounting-migration.test.ts",
+    "server/test/db/agents-migration.postgres.integration.test.ts",
+    "shared/site-notifications.ts",
+    "server/controllers/api/pages.ts",
+    "server/operations/page-watching.ts",
+    "server/operations/approvals.ts",
+    "server/operations/page-protection.ts",
+    "server/helpers/page-access.ts",
+    "server/test/controllers/api.pages.test.js",
+    "server/test/operations/page-watching.test.ts",
+    "server/test/operations/approvals.test.ts",
+    "server/test/operations/page-protection.test.ts",
+    "server/test/jobs/page-watch-notification.test.ts",
+    "client/helpers/site-notifications-api.ts",
+    "client/store/site-notifications.ts",
+    "client/store/site-notifications.test.ts",
+    "client/store/index.ts",
+    "client/store/index.auth-loading.test.ts",
+    "client/components/common/account-notifications.vue",
+    "client/components/common/account-notifications.interaction.test.ts",
+    "client/components/common/nav-header.vue",
+    "client/components/common/nav-header.notifications.test.ts",
+    "client/themes/default/components/page.vue",
+    "client/themes/default/components/page-approval.interaction.test.ts",
+    "shared/tag-colors.ts",
+    "shared/tag-colors.test.ts",
+    "docs/security/security-review-314d78bf12ce610906f54a50f19839543272d70e-evidence.md",
+    "docs/security/security-review-db1a4456bd967808bcd8797b42c68ceeff076551-evidence.md",
+    "docs/security/security-review-594fe5c109f6cdc04545712fdac677dd0fc00691-evidence.md",
+    "docs/security/security-review-dd783e3aad6d8ecc6800797ad76dcc63d2ed1156-evidence.md",
+    "docs/security/security-review-871003fab75a1e2f55d5ec768d74e9643ead862e-evidence.md",
+    "docs/security/security-review-2026-09-09-b5924c6ae9fa-evidence.md",
+    "docs/security/security-review-2026-09-09-bd5c06096186-evidence.md",
+    "docs/security/security-review-2026-09-09-54949bf6d081-evidence.md",
+    "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+    "docs/security/threat-model.md"
+  ]
+}

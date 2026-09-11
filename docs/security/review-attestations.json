@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "policyVersion": 1,
   "threatModelPath": "docs/security/threat-model.md",
-  "activeReviewId": "security-review-314d78bf12ce610906f54a50f19839543272d70e",
+  "activeReviewId": "security-review-907831b89576e4876e51a471f8a16859fbb71575",
   "records": [
     {
       "id": "legacy-baseline-55f30709",
@@ -51,6 +51,10 @@
     {
       "id": "security-review-314d78bf12ce610906f54a50f19839543272d70e",
       "path": "docs/security/review-attestations/security-review-314d78bf12ce610906f54a50f19839543272d70e.json"
+    },
+    {
+      "id": "security-review-907831b89576e4876e51a471f8a16859fbb71575",
+      "path": "docs/security/review-attestations/security-review-907831b89576e4876e51a471f8a16859fbb71575.json"
     }
   ]
 }
