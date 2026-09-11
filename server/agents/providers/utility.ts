@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto'
 import type { AxChatResponse } from '@ax-llm/ax'
+import type { AgentTokenUsage } from '../../../shared/agents/contracts.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { KnowledgeUtilityResultSchema, type KnowledgeGap, type KnowledgeUtilityResult } from '../../knowledge/projection.ts'
 import { AgentProviderFactory, agentProviderCostMicros } from './factory.ts'
-import type { AgentDispatchBudget } from '../runtime.ts'
+import { assertAgentTokenUsage, readAgentProviderUsage } from './usage.ts'
+import type { AgentDispatchBudget, AgentDispatchBudgetReservation } from '../runtime.ts'
+import { AgentRepositoryError } from '../repository.ts'
 
 const TITLE_MAXIMUM_CHARACTERS = 72
 const TITLE_MAXIMUM_PROVIDER_BYTES = 4_096
@@ -32,6 +35,7 @@ export interface AgentConversationTitleResult {
   readonly source: 'utility' | 'fallback'
   readonly inputTokens: number
   readonly outputTokens: number
+  readonly totalTokens: number
   readonly costMicros: number
 }
 
@@ -59,6 +63,7 @@ export interface AgentKnowledgeEnrichmentResult {
   readonly outputSha256: string
   readonly inputTokens: number
   readonly outputTokens: number
+  readonly totalTokens: number
 }
 
 export interface AgentKnowledgeEnricher {
@@ -113,73 +118,73 @@ const boundedTranscript = (messages: readonly AgentConversationTitleMessage[]): 
   }
   return transcript
 }
+const invalidProviderUsage = (): AgentRepositoryError =>
+  new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider returned incomplete or invalid token usage', 502)
 
-const consumeTitleResponse = async (
-  response: AxChatResponse | ReadableStream<AxChatResponse>
-): Promise<{ content: string; inputTokens: number; outputTokens: number }> => {
+const mergedUsage = (current: AgentTokenUsage | null, next: AgentTokenUsage): AgentTokenUsage => {
+  const inputTokens = current === null ? next.inputTokens : Math.max(current.inputTokens, next.inputTokens)
+  const outputTokens = current === null ? next.outputTokens : Math.max(current.outputTokens, next.outputTokens)
+  const totalTokens = current === null ? next.totalTokens : Math.max(current.totalTokens, next.totalTokens)
+  assertAgentTokenUsage(inputTokens, outputTokens, totalTokens)
+  return { inputTokens, outputTokens, totalTokens }
+}
+
+const consumeUtilityResponse = async (
+  response: AxChatResponse | ReadableStream<AxChatResponse>,
+  maximumBytes: number,
+  outputLimitMessage: string
+): Promise<{ content: string; usage: AgentTokenUsage }> => {
   let content = ''
-  let inputTokens = 0
-  let outputTokens = 0
+  let usage: AgentTokenUsage | null = null
   const accept = (value: AxChatResponse): void => {
     for (const result of value.results) {
       if (result.content) content += result.content
-      if (Buffer.byteLength(content, 'utf8') > TITLE_MAXIMUM_PROVIDER_BYTES) throw new Error('Utility model title exceeded its output limit')
+      if (Buffer.byteLength(content, 'utf8') > maximumBytes) throw new Error(outputLimitMessage)
     }
-    const tokens = value.modelUsage?.tokens
-    if (tokens) {
-      inputTokens = Math.max(inputTokens, tokens.promptTokens)
-      outputTokens = Math.max(outputTokens, tokens.completionTokens)
-    }
+    const receipt = readAgentProviderUsage(value)
+    if (receipt !== null) usage = mergedUsage(usage, receipt)
   }
   if (response instanceof ReadableStream) {
     const reader = response.getReader()
+    let reachedEof = false
+    let streamFailure: unknown
     try {
       while (true) {
         const item = await reader.read()
-        if (item.done) break
+        if (item.done) {
+          reachedEof = true
+          break
+        }
         accept(item.value)
       }
+    } catch (error) {
+      streamFailure = error
+      try {
+        await reader.cancel('provider stream failed')
+      } catch {
+        // Preserve the provider or response failure.
+      }
     } finally {
-      reader.releaseLock()
+      try {
+        reader.releaseLock()
+      } catch (error) {
+        if (streamFailure === undefined) streamFailure = error
+      }
     }
+    if (streamFailure !== undefined) throw streamFailure
+    if (!reachedEof) throw invalidProviderUsage()
   } else {
     accept(response)
   }
-  return { content, inputTokens, outputTokens }
+  if (usage === null) throw invalidProviderUsage()
+  return { content, usage }
 }
-const consumeKnowledgeResponse = async (
-  response: AxChatResponse | ReadableStream<AxChatResponse>
-): Promise<{ content: string; inputTokens: number; outputTokens: number }> => {
-  let content = ''
-  let inputTokens = 0
-  let outputTokens = 0
-  const accept = (value: AxChatResponse): void => {
-    for (const result of value.results) {
-      if (result.content) content += result.content
-      if (Buffer.byteLength(content, 'utf8') > KNOWLEDGE_MAXIMUM_PROVIDER_BYTES) throw new Error('Utility model knowledge output exceeded its limit')
-    }
-    const tokens = value.modelUsage?.tokens
-    if (tokens) {
-      inputTokens = Math.max(inputTokens, tokens.promptTokens)
-      outputTokens = Math.max(outputTokens, tokens.completionTokens)
-    }
-  }
-  if (response instanceof ReadableStream) {
-    const reader = response.getReader()
-    try {
-      while (true) {
-        const item = await reader.read()
-        if (item.done) break
-        accept(item.value)
-      }
-    } finally {
-      reader.releaseLock()
-    }
-  } else {
-    accept(response)
-  }
-  return { content, inputTokens, outputTokens }
-}
+
+const consumeTitleResponse = async (response: AxChatResponse | ReadableStream<AxChatResponse>): Promise<{ content: string; usage: AgentTokenUsage }> =>
+  consumeUtilityResponse(response, TITLE_MAXIMUM_PROVIDER_BYTES, 'Utility model title exceeded its output limit')
+
+const consumeKnowledgeResponse = async (response: AxChatResponse | ReadableStream<AxChatResponse>): Promise<{ content: string; usage: AgentTokenUsage }> =>
+  consumeUtilityResponse(response, KNOWLEDGE_MAXIMUM_PROVIDER_BYTES, 'Utility model knowledge output exceeded its limit')
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 
@@ -200,6 +205,12 @@ const boundedUtf8 = (value: string, maximumBytes: number): string => {
 const providerOutputTokens = (maximum: number | undefined, requested: number): number =>
   Math.max(1, Math.min(requested, typeof maximum === 'number' && Number.isSafeInteger(maximum) ? maximum : requested))
 
+const safeTokenSum = (left: number, right: number): number => {
+  if (!Number.isSafeInteger(left) || left < 0 || !Number.isSafeInteger(right) || right < 0 || right > Number.MAX_SAFE_INTEGER - left)
+    throw invalidProviderUsage()
+  return left + right
+}
+
 export class AgentUtilityModel implements AgentConversationTitleGenerator, AgentKnowledgeEnricher {
   readonly #factory: AgentProviderFactory
 
@@ -211,6 +222,10 @@ export class AgentUtilityModel implements AgentConversationTitleGenerator, Agent
     const transcript = boundedTranscript(request.messages)
     const firstUserMessage = transcript.find(message => message.role === 'user')?.content ?? ''
     const fallback = conversationTitleFallback(firstUserMessage)
+    let attempted = false
+    let usageValidationAttempted = false
+    let accountingAttempted = false
+    let dispatchReservation: AgentDispatchBudgetReservation | undefined
     try {
       const provider = await this.#factory.create(request.profileVersionId, { purpose: 'utility' })
       const maximumOutputTokens = providerOutputTokens(provider.capabilities.maxOutputTokens, 128)
@@ -230,47 +245,64 @@ export class AgentUtilityModel implements AgentConversationTitleGenerator, Agent
         model: provider.model,
         modelConfig: { maxTokens: maximumOutputTokens }
       }
-      const maximumInputTokens = Math.max(
-        0,
-        Math.min(provider.capabilities.maxContextTokens - maximumOutputTokens, Buffer.byteLength(JSON.stringify(providerRequest), 'utf8'))
-      )
-      if (Buffer.byteLength(JSON.stringify(providerRequest), 'utf8') > provider.capabilities.maxContextTokens - maximumOutputTokens)
+      const encodedRequest = JSON.stringify(providerRequest)
+      const maximumInputTokens = Math.max(0, Math.min(provider.capabilities.maxContextTokens - maximumOutputTokens, Buffer.byteLength(encodedRequest, 'utf8')))
+      if (Buffer.byteLength(encodedRequest, 'utf8') > provider.capabilities.maxContextTokens - maximumOutputTokens)
         throw new Error('Utility model title prompt exceeds its context limit')
+      const maximumTotalTokens = safeTokenSum(maximumInputTokens, maximumOutputTokens)
       const dispatchBudget = request.dispatchBudget
-      const dispatchReservation = await dispatchBudget?.reserve({
-        tokens: maximumInputTokens + maximumOutputTokens,
-        costMicros: agentProviderCostMicros(provider.pricing, maximumInputTokens, maximumOutputTokens)
+      dispatchReservation = await dispatchBudget?.reserve({
+        tokens: maximumTotalTokens,
+        costMicros: agentProviderCostMicros(provider.pricing, 0, 0, maximumTotalTokens)
       })
-      let response: AxChatResponse | ReadableStream<AxChatResponse>
-      try {
-        response = await provider.service.chat(providerRequest, { stream: false, abortSignal: signal })
-      } catch (error) {
-        if (dispatchReservation && dispatchBudget) await dispatchBudget.release(dispatchReservation)
-        throw error
-      }
-      let dispatchActive = dispatchReservation !== undefined
-      try {
-        const consumed = await consumeTitleResponse(response)
-        const costMicros = agentProviderCostMicros(provider.pricing, consumed.inputTokens, consumed.outputTokens)
-        if (dispatchReservation && dispatchBudget) {
-          await dispatchBudget.reconcile(dispatchReservation, { inputTokens: consumed.inputTokens, outputTokens: consumed.outputTokens, costMicros })
-          dispatchActive = false
+      if (request.signal.aborted) {
+        const unusedReservation = dispatchReservation
+        dispatchReservation = undefined
+        if (unusedReservation && dispatchBudget) {
+          try {
+            await dispatchBudget.release(unusedReservation)
+          } catch {
+            // Preserve the user cancellation.
+          }
         }
-        const title = normalizeConversationTitle(consumed.content, '')
-        return {
-          title: title || fallback,
-          source: title ? 'utility' : 'fallback',
-          inputTokens: consumed.inputTokens,
-          outputTokens: consumed.outputTokens,
+        throw request.signal.reason
+      }
+      attempted = true
+      const response = await provider.service.chat(providerRequest, { stream: false, abortSignal: signal })
+      usageValidationAttempted = true
+      const consumed = await consumeTitleResponse(response)
+      accountingAttempted = true
+      const costMicros = agentProviderCostMicros(provider.pricing, consumed.usage.inputTokens, consumed.usage.outputTokens, consumed.usage.totalTokens)
+      if (dispatchReservation && dispatchBudget) {
+        await dispatchBudget.reconcile(dispatchReservation, {
+          inputTokens: consumed.usage.inputTokens,
+          outputTokens: consumed.usage.outputTokens,
+          totalTokens: consumed.usage.totalTokens,
           costMicros
-        }
-      } catch (error) {
-        if (dispatchActive && dispatchReservation && dispatchBudget) await dispatchBudget.release(dispatchReservation)
-        throw error
+        })
+        dispatchReservation = undefined
       }
-    } catch {
+      const title = normalizeConversationTitle(consumed.content, '')
+      return {
+        title: title || fallback,
+        source: title ? 'utility' : 'fallback',
+        inputTokens: consumed.usage.inputTokens,
+        outputTokens: consumed.usage.outputTokens,
+        totalTokens: consumed.usage.totalTokens,
+        costMicros
+      }
+    } catch (error) {
       if (request.signal.aborted) throw request.signal.reason
-      return { title: fallback, source: 'fallback', inputTokens: 0, outputTokens: 0, costMicros: 0 }
+      if (accountingAttempted || (usageValidationAttempted && error instanceof AgentRepositoryError && error.code === 'PROVIDER_USAGE_INVALID')) throw error
+      if (attempted) return { title: fallback, source: 'fallback', inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
+      if (dispatchReservation && request.dispatchBudget) {
+        try {
+          await request.dispatchBudget.release(dispatchReservation)
+        } catch {
+          // Pre-dispatch fallback is best effort.
+        }
+      }
+      return { title: fallback, source: 'fallback', inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
     }
   }
 
@@ -326,7 +358,7 @@ export class AgentUtilityModel implements AgentConversationTitleGenerator, Agent
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(KNOWLEDGE_TIMEOUT_MILLISECONDS)])
     const response = await provider.service.chat(providerRequest, { stream: false, abortSignal: signal })
     const consumed = await consumeKnowledgeResponse(response)
-    if (consumed.outputTokens > maximumOutputTokens) throw new Error('Utility model knowledge output exceeded its configured token limit')
+    if (consumed.usage.outputTokens > maximumOutputTokens) throw new Error('Utility model knowledge output exceeded its configured token limit')
     const decoded: unknown = JSON.parse(consumed.content.trim())
     const value = KnowledgeUtilityResultSchema.parse(decoded)
     const encodedOutput = canonicalJson(value)
@@ -335,8 +367,9 @@ export class AgentUtilityModel implements AgentConversationTitleGenerator, Agent
       model: provider.model,
       inputSha256: sha256(encodedInput),
       outputSha256: sha256(encodedOutput),
-      inputTokens: consumed.inputTokens,
-      outputTokens: consumed.outputTokens
+      inputTokens: consumed.usage.inputTokens,
+      outputTokens: consumed.usage.outputTokens,
+      totalTokens: consumed.usage.totalTokens
     }
   }
 }

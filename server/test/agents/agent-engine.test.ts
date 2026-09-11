@@ -22,6 +22,8 @@ const request = (signal: AbortSignal): AgentEngineRequest => ({
     sessionId: '00000000-0000-4000-8000-000000000002',
     userMessageId: '00000000-0000-4000-8000-000000000003',
     assistantMessageId: '00000000-0000-4000-8000-000000000004',
+    goalId: null,
+    goalContinuation: null,
     ownerId: 7,
     clientRequestId: '00000000-0000-4000-8000-000000000005',
     clientRequestSha256: 'a'.repeat(64),
@@ -32,6 +34,7 @@ const request = (signal: AbortSignal): AgentEngineRequest => ({
     executionMode: 'agent',
     capabilityRevision: 'cap-1',
     pricingRevision: 'price-1',
+    totalTokens: 0,
     promptVersion: 1,
     attempts: 1,
     maxAttempts: 3,
@@ -76,6 +79,43 @@ const request = (signal: AbortSignal): AgentEngineRequest => ({
 })
 
 describe('Ax agent engine', () => {
+  it('accepts an independent provider total from a completed response', async () => {
+    const response = {
+      results: [{ index: 0, content: 'Real receipt answer.' }],
+      modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 4_580 } }
+    } satisfies AxChatResponse
+    const chat = vi.fn(async () => response)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+
+    const result = await new AxAgentEngine(factory).execute({ ...request(new AbortController().signal), purpose: 'planner' }, { text, event })
+
+    expect(text).toHaveBeenCalledWith('Real receipt answer.')
+    expect(result).toMatchObject({ inputTokens: 3, outputTokens: 309, totalTokens: 4_580, costMicros: 9_157 })
+    expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ usageVersion: 2, inputTokens: 3, outputTokens: 309, totalTokens: 4_580 }))
+  })
   it('runs bounded provider tool turns and returns encrypted continuation only', async () => {
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [
@@ -133,7 +173,10 @@ describe('Ax agent engine', () => {
       citation: { evidenceId: 'page:42:revision:1', label: 'Guide', href: '/en/guide' },
       citationSections: [{ evidenceId: 'page:42:revision:1:section:1', label: 'Guide › Install', href: '/en/guide#install' }]
     }))
-    const close = vi.fn()
+    const publicationOrder: string[] = []
+    const close = vi.fn(() => {
+      publicationOrder.push('close')
+    })
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [
@@ -151,7 +194,9 @@ describe('Ax agent engine', () => {
       })
     }
     const engine = new AxAgentEngine(factory, actions)
-    const text = vi.fn(async () => {})
+    const text = vi.fn(async () => {
+      publicationOrder.push('text')
+    })
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
@@ -201,10 +246,72 @@ describe('Ax agent engine', () => {
     expect(result).toMatchObject({
       inputTokens: 13,
       outputTokens: 6,
+      totalTokens: 19,
       citations: [{ evidenceId: 'page:42:revision:1:section:1', kind: 'page', label: 'Guide › Install', href: '/en/guide#install' }],
       providerState: { thoughtBlocks: [{ data: 'encrypted-state', encrypted: true }] }
     })
     expect(JSON.stringify(result)).not.toContain('hidden thought')
+    expect(close).toHaveBeenCalledOnce()
+    expect(publicationOrder).toEqual(['close', 'text'])
+  })
+  it('finalizes actions before publication and preserves the primary provider failure over cleanup failure', async () => {
+    const response = {
+      results: [{ index: 0, content: 'Planner answer.' }],
+      modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+    } satisfies AxChatResponse
+    const chat = vi.fn(async () => response)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const close = vi.fn(() => {
+      throw new Error('cleanup failed')
+    })
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [],
+        invoke: async () => ({}),
+        snapshot: async () => ({}),
+        close,
+        authoritySha256: null
+      })
+    }
+    const text = vi.fn(async () => {})
+    const engine = new AxAgentEngine(factory, actions)
+
+    await expect(engine.execute({ ...request(new AbortController().signal) }, { text, event: async () => {} })).rejects.toMatchObject({
+      code: 'ACTION_SESSION_CLOSE_FAILED',
+      stage: 'action_cleanup',
+      message: 'Agent inference failed'
+    })
+    expect(text).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
+
+    close.mockClear()
+    chat.mockImplementationOnce(async () => {
+      throw new Error('provider failed')
+    })
+    await expect(engine.execute({ ...request(new AbortController().signal) }, { text, event: async () => {} })).rejects.toMatchObject({
+      code: 'PROVIDER_REQUEST_FAILED',
+      stage: 'provider_request',
+      message: 'Agent inference failed'
+    })
     expect(close).toHaveBeenCalledOnce()
   })
   it('compacts retrieval projections so tool results continue within a goal token budget', async () => {
@@ -214,9 +321,7 @@ describe('Ax agent engine', () => {
         results: [
           {
             index: 0,
-            functionCalls: [
-              { id: 'budget-search', type: 'function', function: { name: 'wiki_search_pages', params: '{"query":"recipes","limit":20}' } }
-            ]
+            functionCalls: [{ id: 'budget-search', type: 'function', function: { name: 'wiki_search_pages', params: '{"query":"recipes","limit":20}' } }]
           }
         ],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } }
@@ -245,7 +350,7 @@ describe('Ax agent engine', () => {
           usage: 'terminal',
           cancellation: true,
           maxContextTokens: 100_000,
-          maxOutputTokens: 32_768
+          maxOutputTokens: 4_000
         },
         transportKind: 'openai-responses',
         model: 'gpt-test',
@@ -314,39 +419,48 @@ describe('Ax agent engine', () => {
     let consumedTokens = 0
     let reservationId = 0
     const reservedMaximums: number[] = []
+    const admittedTotals: number[] = []
     const dispatchBudget = {
       reserve: async (maximum: { readonly tokens: number; readonly costMicros: number }) => {
-        if (consumedTokens + maximum.tokens > 48_000) throw new Error('goal reservation exceeds remaining tokens')
+        admittedTotals.push(consumedTokens + maximum.tokens)
+        if (consumedTokens + maximum.tokens > 64_000) throw new Error('goal reservation exceeds remaining tokens')
         reservedMaximums.push(maximum.tokens)
         return { id: ++reservationId, ...maximum }
       },
       reconcile: async (
         _reservation: { readonly id: number; readonly tokens: number; readonly costMicros: number },
-        actual: { readonly inputTokens: number; readonly outputTokens: number; readonly costMicros: number }
+        actual: { readonly inputTokens: number; readonly outputTokens: number; readonly totalTokens: number; readonly costMicros: number }
       ) => {
-        consumedTokens += actual.inputTokens + actual.outputTokens
+        consumedTokens += actual.totalTokens
       },
       release: async (_reservation: { readonly id: number; readonly tokens: number; readonly costMicros: number }) => undefined,
-      consumeTool: async () => undefined
+      consumeTool: async () => undefined,
+      unsettledExposure: { tokens: 0, costMicros: 0 }
     } satisfies NonNullable<AgentEngineRequest['dispatchBudget']>
     const engine = new AxAgentEngine(factory, actions)
     const result = await engine.execute(
       {
         ...request(new AbortController().signal),
         dispatchBudget,
-        limits: { maxTokens: 48_000, maxTurns: 12, maxToolCalls: 32, maxOutputTokens: 32_768 }
+        limits: { maxTokens: 64_000, maxTurns: 12, maxToolCalls: 32, maxOutputTokens: 4_000 }
       },
       { text: async () => undefined, event: async () => undefined }
     )
     expect(chat).toHaveBeenCalledTimes(3)
     expect(reservedMaximums).toHaveLength(3)
-    expect(reservedMaximums[2]).toBe(41_973)
+    expect(admittedTotals).toHaveLength(3)
+    expect(admittedTotals.every(total => total <= 64_000)).toBe(true)
     expect(JSON.stringify(calls[1]?.chatPrompt)).toContain('A concise provider-facing search summary.')
     expect(JSON.stringify(calls[2]?.chatPrompt)).toContain('Budget evidence remains available.')
     expect(JSON.stringify(calls[2]?.chatPrompt)).not.toContain('review metadata')
     expect(JSON.stringify(calls[2]?.chatPrompt)).not.toContain('Internal review detail')
     expect(JSON.stringify(calls[2]?.chatPrompt)).not.toContain('internal-review-detail')
-    expect(result).toMatchObject({ inputTokens: 13_003, outputTokens: 54 })
+    expect(result).toMatchObject({
+      inputTokens: 13_003,
+      outputTokens: 54,
+      totalTokens: 13_057,
+      citations: [{ evidenceId: 'page:42:revision:1:section:1', kind: 'page', label: 'Budget Guide › Evidence', href: '/en/budget-guide#evidence' }]
+    })
   })
   it('accepts a citation placed after sentence punctuation and rejects an uncited page answer', async () => {
     const responses: AxChatResponse[] = [
@@ -363,7 +477,7 @@ describe('Ax agent engine', () => {
           toolCalling: 'native',
           parallelToolCalls: true,
           structuredOutput: 'native-json-schema',
-          usage: 'terminal',
+          usage: 'estimated',
           cancellation: true,
           maxContextTokens: 100_000,
           maxOutputTokens: 4_000
@@ -428,7 +542,7 @@ describe('Ax agent engine', () => {
           toolCalling: 'native',
           parallelToolCalls: true,
           structuredOutput: 'native-json-schema',
-          usage: 'terminal',
+          usage: 'estimated',
           cancellation: true,
           maxContextTokens: 100_000,
           maxOutputTokens: 4_000
@@ -516,7 +630,7 @@ describe('Ax agent engine', () => {
           toolCalling: 'native',
           parallelToolCalls: true,
           structuredOutput: 'native-json-schema',
-          usage: 'terminal',
+          usage: 'estimated',
           cancellation: true,
           maxContextTokens: 100_000,
           maxOutputTokens: 4_000
@@ -675,7 +789,7 @@ describe('Ax agent engine', () => {
           toolCalling: 'native',
           parallelToolCalls: true,
           structuredOutput: 'native-json-schema',
-          usage: 'terminal',
+          usage: 'estimated',
           cancellation: true,
           maxContextTokens: 100_000,
           maxOutputTokens: 4_000
@@ -853,7 +967,7 @@ describe('Ax agent engine', () => {
           toolCalling: 'native',
           parallelToolCalls: true,
           structuredOutput: 'native-json-schema',
-          usage: 'terminal',
+          usage: 'estimated',
           cancellation: true,
           maxContextTokens: 100_000,
           maxOutputTokens: 4_000
@@ -925,7 +1039,7 @@ describe('Ax agent engine', () => {
           toolCalling: 'native',
           parallelToolCalls: false,
           structuredOutput: 'native-json-schema',
-          usage: 'terminal',
+          usage: 'estimated',
           cancellation: true,
           maxContextTokens: 100_000,
           maxOutputTokens: 4_000
@@ -967,7 +1081,7 @@ describe('Ax agent engine', () => {
           toolCalling: 'native',
           parallelToolCalls: true,
           structuredOutput: 'native-json-schema',
-          usage: 'terminal',
+          usage: 'estimated',
           cancellation: true,
           maxContextTokens: 100_000,
           maxOutputTokens: 4_000
@@ -1233,6 +1347,7 @@ describe('Ax agent engine', () => {
     await expect(engine.resumeAction(resumed, checkpoint, sink)).resolves.toMatchObject({
       inputTokens: 3,
       outputTokens: 4,
+      totalTokens: 7,
       costMicros: 11
     })
 
@@ -1309,7 +1424,7 @@ describe('Ax agent engine', () => {
           toolCalling: 'native',
           parallelToolCalls: false,
           structuredOutput: 'tool-result',
-          usage: 'terminal',
+          usage: 'estimated',
           cancellation: true,
           maxContextTokens: 10_000,
           maxOutputTokens: 1_000
@@ -1348,7 +1463,7 @@ describe('Ax agent engine', () => {
           toolCalling: 'native',
           parallelToolCalls: false,
           structuredOutput: 'tool-result',
-          usage: 'terminal',
+          usage: 'estimated',
           cancellation: true,
           maxContextTokens: 10_000,
           maxOutputTokens: 1_000
@@ -1420,7 +1535,9 @@ describe('Ax agent engine', () => {
     expect(Buffer.byteLength(JSON.stringify(providerRequest), 'utf8')).toBeLessThanOrEqual(23_000)
     expect(providerRequest.chatPrompt).toContainEqual(expect.objectContaining({ role: 'user', content: 'latest user turn' }))
     expect(providerRequest.chatPrompt).not.toContainEqual(expect.objectContaining({ role: 'user', content: 'older context that would fit' }))
-    expect(providerRequest.chatPrompt).not.toContainEqual(expect.objectContaining({ role: 'user', content: expect.stringContaining('omitted recent context:') }))
+    expect(providerRequest.chatPrompt).not.toContainEqual(
+      expect.objectContaining({ role: 'user', content: expect.stringContaining('omitted recent context:') })
+    )
     const systemContent = String(providerRequest.chatPrompt?.[0]?.content)
     expect(systemContent.indexOf('"runId":"older"')).toBeLessThan(systemContent.indexOf('"runId":"newer"'))
 
@@ -1434,15 +1551,65 @@ describe('Ax agent engine', () => {
       )
     ).rejects.toMatchObject({
       code: 'AGENT_CONTEXT_TOO_LARGE',
-      status: 413,
-      message: 'Agent conversation exceeds the selected provider context limit'
+      status: 413
     })
     expect(chat).not.toHaveBeenCalled()
+  })
+  it('uses cumulative streamed usage maxima without double-counting chunks', async () => {
+    const stream = new ReadableStream<AxChatResponse>({
+      start(controller) {
+        controller.enqueue({
+          results: [{ index: 0, content: 'A' }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 100, totalTokens: 103 } }
+        })
+        controller.enqueue({
+          results: [{ index: 0, content: 'B' }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 200, totalTokens: 500 } }
+        })
+        controller.enqueue({
+          results: [{ index: 0, content: 'C' }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 4_580 } }
+        })
+        controller.close()
+      }
+    })
+    const chat = vi.fn(async () => stream)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: true,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'stream',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-chat',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const text = vi.fn(async (_delta: string) => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+
+    const result = await new AxAgentEngine(factory).execute({ ...request(new AbortController().signal), purpose: 'planner' }, { text, event })
+
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toBe('ABC')
+    expect(result).toMatchObject({ inputTokens: 3, outputTokens: 309, totalTokens: 4_580, costMicros: 9_157 })
+    expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ usageVersion: 2, inputTokens: 3, outputTokens: 309, totalTokens: 4_580 }))
   })
 
   it('presents only the validated streamed draft in bounded deltas whose concatenation is final content', async () => {
     const rejected = 'Unsupported claim. [[cite:missing]]'
     const accepted = 'Validated answer. '.repeat(1_000)
+    let cancelCalls = 0
     const streamed = (content: string, inputTokens: number, outputTokens: number): ReadableStream<AxChatResponse> =>
       new ReadableStream<AxChatResponse>({
         start(controller) {
@@ -1461,6 +1628,9 @@ describe('Ax agent engine', () => {
             })
           }
           controller.close()
+        },
+        cancel() {
+          cancelCalls += 1
         }
       })
     const responses = [streamed(rejected, 5, 2), streamed(accepted, 8, 4)]
@@ -1491,10 +1661,8 @@ describe('Ax agent engine', () => {
     })
     const input = request(new AbortController().signal)
 
-    const result = await new AxAgentEngine(factory).execute(
-      { ...input, run: { ...input.run, executionMode: 'generation-only' } },
-      { text, event }
-    )
+    const result = await new AxAgentEngine(factory).execute({ ...input, run: { ...input.run, executionMode: 'generation-only' } }, { text, event })
+    expect(cancelCalls).toBe(0)
 
     const deltas = text.mock.calls.map(([delta]) => delta)
     expect(deltas.join('')).toBe(accepted)
@@ -1506,7 +1674,7 @@ describe('Ax agent engine', () => {
       expect.objectContaining({ outcome: 'answer_rejected', content: rejected }),
       expect.objectContaining({ outcome: 'answer_accepted', content: accepted.slice(0, 32_000) })
     ])
-    expect(result).toMatchObject({ inputTokens: 13, outputTokens: 6 })
+    expect(result).toMatchObject({ inputTokens: 13, outputTokens: 6, totalTokens: 19 })
   })
 })
 
@@ -1532,10 +1700,7 @@ describe('Agent event projection', () => {
         event('tool.completed', { actionCallId, result: '{}', summary: `Read page ${index}` })
       )
     }
-    events.push(
-      event('run.completed', { runId }),
-      event('suggestions.updated', { suggestions: [{ id: 'next', label: 'Next step', prompt: 'Continue' }] })
-    )
+    events.push(event('run.completed', { runId }), event('suggestions.updated', { suggestions: [{ id: 'next', label: 'Next step', prompt: 'Continue' }] }))
 
     const reduced = reduceAgentEvents(events, runId)
 

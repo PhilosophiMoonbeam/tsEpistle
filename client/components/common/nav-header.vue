@@ -37,6 +37,19 @@
             span {{title}}
       v-col.nav-header-search-col(md='4', v-if='$vuetify.display.mdAndUp')
         .nav-header-inner.nav-header-command
+          v-btn.nav-header-agent(
+            v-if='canEnterAgent'
+            prepend-icon='mdi-book-open-page-variant-outline'
+            aria-label='Open Wiki Agent'
+            title='Wiki Agent · Ctrl/⌘ + Shift + A'
+            variant='tonal'
+            color='primary'
+            size='small'
+            data-search-modal-action
+            @click='openAgent'
+          )
+            span Wiki Agent
+
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
               v-text-field.nav-header-search-control(
@@ -64,37 +77,38 @@
                 template(v-slot:append-inner)
                   kbd.nav-header-search-key(v-if='!search && !searchIsFocused', aria-hidden='true') {{ searchShortcutLabel }}
 
-            v-btn.nav-header-agent(
-              v-if='canEnterAgent'
-              prepend-icon='mdi-book-open-page-variant-outline'
-              aria-label='Open Wiki Agent'
-              title='Wiki Agent · Ctrl/⌘ + Shift + A'
-              variant='tonal'
-              color='primary'
-              size='small'
-              data-search-modal-action
-              @click='openAgent'
-            )
-              span Wiki Agent
+          v-tooltip(location="bottom")
+            template(v-slot:activator='{ props }')
+              v-btn.nav-header-browse(
+                v-bind='props'
+                icon
+                href='/t'
+                data-search-modal-action
+                variant='outlined'
+                :aria-current='mode === `tags` ? `page` : undefined'
+                :aria-label='$t(`common:header.browseTags`)'
+              )
+                v-icon(size='18') mdi-tag-outline
+            span {{$t('common:header.browseTags')}}
 
-            v-tooltip(location="bottom")
-              template(v-slot:activator='{ props }')
-                v-btn.nav-header-browse(
-                  v-bind='props'
-                  icon
-                  href='/t'
-                  data-search-modal-action
-                  variant='outlined'
-                  :aria-current='mode === `tags` ? `page` : undefined'
-                  :aria-label='$t(`common:header.browseTags`)'
-                )
-                  v-icon(size='18') mdi-tag-outline
-              span {{$t('common:header.browseTags')}}
       v-col.nav-header-actions-col(cols='7', md='4')
         .nav-header-inner.nav-header-actions
           v-spacer
           .navHeaderLoading(v-show='isLoading')
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2', aria-label='Page loading')
+
+          v-btn.nav-header-agent(
+            v-if='canEnterAgent && $vuetify.display.smAndDown'
+            icon
+            aria-label='Open Wiki Agent'
+            title='Wiki Agent · Ctrl/⌘ + Shift + A'
+            variant='tonal'
+            color='primary'
+            size='small'
+            data-search-modal-action
+            @click='openAgent'
+          )
+            v-icon(icon='mdi-book-open-page-variant-outline')
 
           //- (mobile) SEARCH TOGGLE
 
@@ -110,18 +124,6 @@
             :aria-label='searchIsShown ? `Close search` : `Open search`'
           )
             v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
-          v-btn.nav-header-agent(
-            v-if='canEnterAgent && $vuetify.display.smAndDown'
-            icon
-            aria-label='Open Wiki Agent'
-            title='Wiki Agent · Ctrl/⌘ + Shift + A'
-            variant='tonal'
-            color='primary'
-            size='small'
-            data-search-modal-action
-            @click='openAgent'
-          )
-            v-icon(icon='mdi-book-open-page-variant-outline')
           v-tooltip.nav-header-mobile-browse(v-if='$vuetify.display.smAndDown', location='bottom')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-browse(
@@ -295,7 +297,7 @@
                 h2#account-preferences-title.account-menu__preferences-title Appearance preferences
                 appearance-selector
               v-divider
-              form(action='/logout', method='post')
+              form(action='/logout', method='post', @submit='clearAgentChatPinOnLogout')
                 v-list-item(tag='button', type='submit', link)
                   template(v-slot:append): v-icon(color='error') mdi-logout
                   v-list-item-title.text-error {{$t('common:header.logout')}}
@@ -323,7 +325,7 @@
 import { defineAsyncComponent, defineComponent, markRaw, mergeProps } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
-
+import { clearAgentChatPin } from '../../helpers/agent-chat-pin'
 import {
   offPageConvert,
   offPageDelete,
@@ -542,6 +544,9 @@ export default defineComponent({
   },
   methods: {
     mergeProps,
+    clearAgentChatPinOnLogout (): void {
+      clearAgentChatPin()
+    },
     async pageActionsVisibilityChanged(open: boolean): Promise<void> {
       this.pageActionsAreOpen = open
       if (this.pageActionsFocusFrame !== null) {
@@ -567,13 +572,13 @@ export default defineComponent({
       this.searchIsFocused = true
     },
     async searchTab (event: KeyboardEvent): Promise<void> {
-      if (!this.$vuetify.display.mdAndUp) return
       event.preventDefault()
       emitSearchExit(false)
       this.searchClose()
       await this.$nextTick()
-      const forwardTarget = document.querySelector<HTMLElement>('.nav-header-agent') ?? document.querySelector<HTMLElement>('.nav-header-browse')
-      const target = event.shiftKey ? document.querySelector<HTMLElement>('.nav-header-logo') : forwardTarget
+      const previousTarget = document.querySelector<HTMLElement>('.nav-header-agent') ?? document.querySelector<HTMLElement>('.nav-header-logo')
+      const forwardTarget = document.querySelector<HTMLElement>('.nav-header-browse') ?? document.querySelector<HTMLElement>('.nav-header-logo')
+      const target = event.shiftKey ? previousTarget : forwardTarget
       target?.focus({ preventScroll: true })
     },
     searchClose () {

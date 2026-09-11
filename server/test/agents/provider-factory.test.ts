@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 import type { LookupAddress } from 'node:dns'
-import { AgentProviderAttemptError, AgentProviderFactory, createGuardedProviderFetch } from '../../agents/providers/factory.ts'
+import { AgentProviderAttemptError, AgentProviderFactory, agentProviderCostMicros, createGuardedProviderFetch } from '../../agents/providers/factory.ts'
+import { readAgentProviderUsage, readAgentUsageEvent } from '../../agents/providers/usage.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 
 const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
@@ -103,6 +104,59 @@ describe('guarded provider fetch', () => {
       code: 'RESOURCE_EXHAUSTED',
       status: 429,
       message: 'Provider request failed'
+    })
+  })
+})
+
+describe('provider usage accounting', () => {
+  it('preserves independent provider totals and conservatively prices residual tokens', () => {
+    expect(
+      readAgentProviderUsage({
+        results: [],
+        modelUsage: { ai: 'test', model: 'model-test', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 4_580 } }
+      })
+    ).toEqual({ inputTokens: 3, outputTokens: 309, totalTokens: 4_580 })
+    expect(readAgentProviderUsage({ results: [] })).toBeNull()
+    expect(readAgentUsageEvent({ usageVersion: 2, inputTokens: 3, outputTokens: 309, totalTokens: 4_580, costMicros: 9 })).toEqual({
+      inputTokens: 3,
+      outputTokens: 309,
+      totalTokens: 4_580,
+      costMicros: 9
+    })
+    expect(agentProviderCostMicros({ revision: 'high-input', inputMicrosPerMillionTokens: 2_000_000, outputMicrosPerMillionTokens: 1_000_000 }, 1, 1, 4)).toBe(
+      7
+    )
+    expect(agentProviderCostMicros({ revision: 'rounding', inputMicrosPerMillionTokens: 1_000_001, outputMicrosPerMillionTokens: 1_000_000 }, 0, 0, 1)).toBe(2)
+  })
+
+  it('rejects totals below a safe directional sum and unsafe accounting', () => {
+    expect(() =>
+      readAgentProviderUsage({
+        results: [],
+        modelUsage: { ai: 'test', model: 'model-test', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 311 } }
+      })
+    ).toThrow('Provider returned incomplete or invalid token usage')
+    expect(() => readAgentUsageEvent({ usageVersion: 2, inputTokens: 3, outputTokens: 309, totalTokens: 311, costMicros: 1 })).toThrow(
+      'Stored agent usage event data is invalid'
+    )
+    expect(() => readAgentUsageEvent({ usageVersion: 2, inputTokens: 3, outputTokens: 309, totalTokens: 4_580 })).toThrow(
+      'Stored agent usage event data is invalid'
+    )
+    expect(() =>
+      readAgentProviderUsage({
+        results: [],
+        modelUsage: {
+          ai: 'test',
+          model: 'model-test',
+          tokens: { promptTokens: Number.MAX_SAFE_INTEGER, completionTokens: 1, totalTokens: Number.MAX_SAFE_INTEGER }
+        }
+      })
+    ).toThrow('Provider returned incomplete or invalid token usage')
+    expect(readAgentUsageEvent({ inputTokens: 3, outputTokens: 309 })).toEqual({
+      inputTokens: 3,
+      outputTokens: 309,
+      totalTokens: 312,
+      costMicros: 0
     })
   })
 })

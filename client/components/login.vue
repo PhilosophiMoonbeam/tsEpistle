@@ -345,6 +345,8 @@
             :disabled='isLoading'
             ) {{ $t('auth:tfa.verifyToken') }}
     loader(v-model='isLoading', :color='loaderColor', :title='loaderTitle', :subtitle='$t(`auth:pleaseWait`)')
+      template(v-if='showLoginSuccessAnimation', v-slot:illustration)
+        login-success-animation
     notify.login-notify
 </template>
 
@@ -363,6 +365,7 @@ import { fetchAuthStrategies, submitAuthRequest, submitStatusRequest, type AuthR
 import { getErrorMessage } from '../helpers/root-ui-store'
 import { sanitizeTfaQrImage } from '../helpers/tfa-qr'
 import LoginParticleLogo from './login-logo/LoginParticleLogo.vue'
+import LoginSuccessAnimation from './login-success-animation.vue'
 import { isLogoEffectDescriptor, type LogoEffectDescriptor } from './login-logo/particle-logo'
 
 type LoginScreen = 'login' | 'forgot' | 'verifyEmail' | 'resetPwd' | 'changePwd' | 'success'
@@ -378,7 +381,8 @@ export default defineComponent({
   mixins: [passwordPolicyMixin],
   i18nOptions: { namespaces: 'auth' },
   components: {
-    LoginParticleLogo
+    LoginParticleLogo,
+    LoginSuccessAnimation
   },
   props: {
     bgUrl: {
@@ -416,6 +420,7 @@ export default defineComponent({
       securityCodeError: '',
       continuationToken: '',
       isLoading: false,
+      showLoginSuccessAnimation: false,
       loaderColor: 'grey-darken-4',
       loaderTitle: 'Working...',
       newPassword: '',
@@ -514,6 +519,7 @@ export default defineComponent({
   },
   methods: {
     showError (error: unknown) {
+      this.showLoginSuccessAnimation = false
       this.errorMessage = typeof error === 'string' ? error : getErrorMessage(error)
       this.errorShown = true
     },
@@ -529,6 +535,7 @@ export default defineComponent({
     },
     showSuccess (message: string) {
       this.clearError()
+      this.showLoginSuccessAnimation = false
       this.successMessage = message
       this.screen = 'success'
     },
@@ -736,6 +743,7 @@ export default defineComponent({
       this.isLoading = false
     },
     handleLoginResponse (respObj: AuthResponse) {
+      this.showLoginSuccessAnimation = false
       this.continuationToken = respObj.continuationToken || ''
       if (respObj.mustChangePwd === true) {
         this.screen = 'changePwd'
@@ -774,6 +782,7 @@ export default defineComponent({
         }, 500)
         this.isLoading = false
       } else if (respObj.authenticated === true) {
+        this.showLoginSuccessAnimation = true
         this.loaderColor = 'green-darken-1'
         this.loaderTitle = this.$t('auth:loginSuccess')
         if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)
@@ -900,11 +909,30 @@ export default defineComponent({
   }
 
   &-logo {
+    position: relative;
     display: grid;
     flex: 0 0 3.25rem;
     width: 3.25rem;
     height: 3.25rem;
+    padding: var(--wiki-space-2);
     place-items: center;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
+    border-radius: var(--wiki-control-radius);
+    background:
+      linear-gradient(
+        145deg,
+        color-mix(in srgb, var(--wiki-accent-warm) 11%, var(--wiki-surface-raised)),
+        color-mix(in srgb, var(--wiki-accent-spectral) 7%, var(--wiki-surface-raised))
+      );
+    box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+
+    > .v-avatar {
+      width: 100% !important;
+      height: 100% !important;
+      min-width: 0 !important;
+      min-height: 0 !important;
+    }
 
     > .v-avatar > img {
       display: block;

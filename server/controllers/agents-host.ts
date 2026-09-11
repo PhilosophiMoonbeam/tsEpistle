@@ -5,6 +5,7 @@ import type { Knex } from 'knex'
 import { z, ZodError } from 'zod'
 
 import { isTerminalAgentRunStatus, type DecideAgentApprovalRequest } from '../../shared/agents/contracts.ts'
+import { cleanAgentConversationFolderName } from '../../shared/agents/conversation-folders.ts'
 
 import { SkillValidationError } from '../agents/skills/parser.ts'
 import { agentCsrfMatches } from '../agents/csrf.ts'
@@ -177,7 +178,7 @@ const UpdateSessionSchema = z
     retention: z.enum(['temporary', 'saved']).optional()
   })
   .refine(value => value.title !== undefined || value.retention !== undefined)
-const ConversationFolderNameSchema = z.string().trim().min(1).max(64)
+const ConversationFolderNameSchema = z.string().transform(cleanAgentConversationFolderName).pipe(z.string().min(1).max(64))
 const CreateConversationFolderSchema = z.strictObject({ name: ConversationFolderNameSchema })
 const RenameConversationFolderSchema = z.strictObject({ expectedVersion: z.number().int().positive(), name: ConversationFolderNameSchema })
 const MoveSessionFolderSchema = z.strictObject({ expectedSessionVersion: z.number().int().positive(), folderId: z.uuid().nullable() })
@@ -390,7 +391,8 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     `${apiPrefix}/conversation-folders/:folderId`,
     asyncRoute(async (req, res) => {
       const folderId = UUIDSchema.parse(routeParameter(req, 'folderId'))
-      const movedSessions = await deleteAgentConversationFolder(wiki.models.knex, requestSkillPrincipal(req).userId, folderId)
+      const expectedVersion = z.coerce.number().int().positive().parse(req.query.expectedVersion)
+      const movedSessions = await deleteAgentConversationFolder(wiki.models.knex, requestSkillPrincipal(req).userId, folderId, expectedVersion)
       return res.json({ deleted: true, movedSessions })
     })
   )
@@ -944,15 +946,21 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const namespace = wiki.config.agents.skills.namespace
       const escapeLike = (value: string) => value.replace(/[\\%_]/g, character => `\\${character}`)
       const prefix = `${escapeLike(namespace)}/`
-      const pages = await wiki.models.knex('pages')
+      const pages = await wiki.models
+        .knex('pages')
         .select('id', 'path', 'title', 'localeCode as locale')
         .where({ contentType: 'markdown' })
         .whereRaw("?? LIKE ? ESCAPE '\\'", ['path', `${prefix}%`])
         .whereRaw("?? NOT LIKE ? ESCAPE '\\'", ['path', `${prefix}%/%`])
-        .where(builder => builder.whereRaw("LOWER(??) LIKE ? ESCAPE '\\'", ['path', `%${escapeLike(query.toLowerCase())}%`])
-          .orWhereRaw("LOWER(??) LIKE ? ESCAPE '\\'", ['title', `%${escapeLike(query.toLowerCase())}%`]))
+        .where(builder =>
+          builder
+            .whereRaw("LOWER(??) LIKE ? ESCAPE '\\'", ['path', `%${escapeLike(query.toLowerCase())}%`])
+            .orWhereRaw("LOWER(??) LIKE ? ESCAPE '\\'", ['title', `%${escapeLike(query.toLowerCase())}%`])
+        )
         .whereNotExists(wiki.models.knex('agentSkills').select('id').whereRaw('?? = ??', ['rootPageId', 'pages.id']).whereNull('deletedAt'))
-        .orderBy('path').orderBy('id').limit(21)
+        .orderBy('path')
+        .orderBy('id')
+        .limit(21)
       return res.json({ namespace, pages: pages.slice(0, 20), hasMore: pages.length > 20 })
     })
   )

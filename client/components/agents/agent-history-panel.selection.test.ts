@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
+import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../../shared/agents/conversation-folders.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 
 interface Ref<T> {
@@ -15,14 +16,16 @@ interface PanelAgents {
   cancelSessionReadTransition: () => void
   reloadSessions?: () => Promise<unknown>
   reloadFolders?: () => Promise<unknown>
+  createFolder?: (name: string) => Promise<unknown>
   moveSessionToFolder?: (sessionId: string, folderId: string | null) => Promise<unknown>
   renameSession?: (sessionId: string, title: string) => Promise<unknown>
   removeSession?: (sessionId: string) => Promise<boolean>
-  deleteFolder?: (folderId: string) => Promise<unknown>
+  deleteFolder?: (folderId: string, expectedVersion: number) => Promise<boolean>
 }
 
 interface PanelHarness {
   activeDropTarget: Ref<string | null>
+  beginCreateFolderForSession: (session: AgentSessionSummary, restoreTarget: HTMLElement | null) => void
   beginRenameFolder: (folder: AgentConversationFolderView) => void
   beginRenameSession: (session: AgentSessionSummary, restoreTarget: HTMLElement | null) => void
   beginDeleteSession: (session: AgentSessionSummary, restoreTarget: HTMLElement | null) => void
@@ -31,6 +34,7 @@ interface PanelHarness {
   canDropTo: (folderId: string | null) => boolean
   clearHistoryDisabled: Ref<boolean>
   closeHistory: () => void
+  dialogError: Ref<string>
   dragStatus: Ref<string>
   draggedSessionId: Ref<string | null>
   dropSession: (event: DragEvent, folderId: string | null) => Promise<void>
@@ -40,16 +44,21 @@ interface PanelHarness {
   emit: PanelEmit
   finishSessionDrag: () => void
   folderEditorOpen: Ref<boolean>
+  folderEditorRestoreTarget: Ref<HTMLElement | null>
+  folderName: Ref<string>
+  folderWorkflowState: Ref<string>
   foldersRefreshError: Ref<string>
   initialRefreshPending: Ref<boolean>
   loading: Ref<boolean>
   localError: Ref<string>
   moveSession: (session: AgentSessionSummary, folderId: string | null) => Promise<boolean>
+  openFolderIds: Ref<string[]>
   refreshFolders: () => Promise<boolean>
   refreshHistory: () => Promise<boolean>
   refreshSessions: () => Promise<boolean>
   refreshingHistory: Ref<boolean>
   sessionMutationBusy: Ref<boolean>
+  saveFolder: () => Promise<void>
   saveSessionTitle: () => Promise<void>
   searchQuery: Ref<string | null>
   sessionEditorOpen: Ref<boolean>
@@ -186,12 +195,15 @@ const loadPanel = (
     'defineProps',
     'defineEmits',
     'useAgentsStore',
+    'agentConversationFolderNameKey',
+    'cleanAgentConversationFolderName',
     'createModalFocusScope',
     'window',
     'document',
     'HTMLElement',
     `${executableScript}\nreturn {
       activeDropTarget,
+      beginCreateFolderForSession,
       beginDeleteSession,
       beginRemoveFolder,
       beginRenameFolder,
@@ -200,6 +212,7 @@ const loadPanel = (
       clearHistoryDisabled,
       closeHistory,
       beginRenameSession,
+      dialogError,
       dragStatus,
       draggedSessionId,
       dropSession,
@@ -208,16 +221,21 @@ const loadPanel = (
       deleteSession,
       deletingSession,
       folderEditorOpen,
+      folderEditorRestoreTarget,
+      folderName,
+      folderWorkflowState,
       foldersRefreshError,
       initialRefreshPending,
       loading,
       localError,
       moveSession,
+      openFolderIds,
       openSession,
       refreshFolders,
       refreshHistory,
       refreshSessions,
       refreshingHistory,
+      saveFolder,
       sessionMutationBusy,
       saveSessionTitle,
       searchQuery,
@@ -275,6 +293,8 @@ const loadPanel = (
     }),
     () => emit,
     () => store,
+    agentConversationFolderNameKey,
+    cleanAgentConversationFolderName,
     vi.fn(),
     { matchMedia: () => ({ matches: compact }) },
     {
@@ -486,7 +506,7 @@ describe('Agent history session selection', () => {
     const session = makeSession()
     const folder = makeFolder()
     const removeSession = vi.fn().mockResolvedValue(true)
-    const deleteFolder = vi.fn().mockResolvedValue(undefined)
+    const deleteFolder = vi.fn().mockResolvedValue(true)
     const agents: PanelAgents = {
       error: '',
       openSession: vi.fn().mockResolvedValue(false),
@@ -516,9 +536,261 @@ describe('Agent history session selection', () => {
     expect(openFolderConfirmation.removingFolder.value).toBe(folder)
     openFolderConfirmation.sessionMutationBusy.value = true
     await openFolderConfirmation.deleteFolder()
-
     expect(removeSession).not.toHaveBeenCalled()
     expect(deleteFolder).not.toHaveBeenCalled()
+  })
+  it('reconciles a lost create response by canonical folder name without a duplicate create or wrong-folder move', async () => {
+    const source = makeSession()
+    const committedFolder = makeFolder({
+      id: '10000000-0000-4000-8000-000000000002',
+      name: 'Release archive'
+    })
+    const distinctFolder = makeFolder({
+      id: '10000000-0000-4000-8000-000000000003',
+      name: 'Release archives'
+    })
+    const sessions = [source]
+    const folders: AgentConversationFolderView[] = []
+    const createFolder = vi.fn().mockRejectedValue(new TypeError('The create response was lost'))
+    const reloadFolders = vi.fn().mockImplementation(async () => {
+      folders.splice(0, folders.length, committedFolder, distinctFolder)
+    })
+    const moveSessionToFolder = vi.fn().mockImplementation(async (_sessionId: string, folderId: string | null) => {
+      source.folderId = folderId
+      source.retention = folderId ? 'saved' : 'temporary'
+      return source
+    })
+    const agents: PanelAgents = {
+      error: '',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn(),
+      createFolder,
+      reloadFolders,
+      moveSessionToFolder
+    }
+    const panel = loadPanel(agents, true, sessions, folders)
+
+    panel.beginCreateFolderForSession(source, null)
+    panel.folderName.value = '  Ｒｅｌｅａｓｅ\u00a0  \t archive  '
+    await panel.saveFolder()
+
+    expect(createFolder).toHaveBeenCalledTimes(1)
+    expect(createFolder).toHaveBeenCalledWith('Release archive')
+    expect(reloadFolders).toHaveBeenCalledTimes(1)
+    expect(moveSessionToFolder).toHaveBeenCalledTimes(1)
+    expect(moveSessionToFolder).toHaveBeenCalledWith(source.id, committedFolder.id)
+    expect(source.folderId).toBe(committedFolder.id)
+    expect(panel.openFolderIds.value).toEqual([committedFolder.id])
+    expect(panel.folderEditorOpen.value).toBe(false)
+    expect(panel.folderWorkflowState.value).toBe('idle')
+    expect(folders.find(folder => folder.id === distinctFolder.id)?.name).toBe('Release archives')
+  })
+
+  it('does not adopt a canonically different folder after a lost create response', async () => {
+    const source = makeSession()
+    const distinctFolder = makeFolder({
+      id: '10000000-0000-4000-8000-000000000003',
+      name: 'Release archives'
+    })
+    const sessions = [source]
+    const folders: AgentConversationFolderView[] = []
+    const createFolder = vi.fn().mockRejectedValue(new TypeError('The create response was lost'))
+    const reloadFolders = vi.fn().mockImplementation(async () => {
+      folders.splice(0, folders.length, distinctFolder)
+    })
+    const moveSessionToFolder = vi.fn()
+    const agents: PanelAgents = {
+      error: '',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn(),
+      createFolder,
+      reloadFolders,
+      moveSessionToFolder
+    }
+    const panel = loadPanel(agents, true, sessions, folders)
+
+    panel.beginCreateFolderForSession(source, null)
+    panel.folderName.value = '  Ｒｅｌｅａｓｅ\u00a0  \t archive  '
+    await panel.saveFolder()
+
+    expect(createFolder).toHaveBeenCalledTimes(1)
+    expect(reloadFolders).toHaveBeenCalledTimes(1)
+    expect(moveSessionToFolder).not.toHaveBeenCalled()
+    expect(source.folderId).toBeNull()
+    expect(panel.folderEditorOpen.value).toBe(true)
+    expect(panel.folderWorkflowState.value).toBe('creating')
+  })
+
+  it('accepts a lost create-folder move only when an authoritative refresh shows the created folder', async () => {
+    const source = makeSession()
+    const folder = makeFolder()
+    const refreshedSource = makeSession({ folderId: folder.id, retention: 'saved', version: 2 })
+    const sessions = [source]
+    const activator = new HarnessElement()
+    const createFolder = vi.fn().mockResolvedValue(folder)
+    const moveSessionToFolder = vi.fn().mockRejectedValue(new TypeError('The move response was lost'))
+    const reloadSessions = vi.fn().mockImplementation(async () => {
+      sessions.splice(0, sessions.length, refreshedSource)
+    })
+    const agents: PanelAgents = {
+      error: '',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn(),
+      createFolder,
+      moveSessionToFolder,
+      reloadSessions
+    }
+    const panel = loadPanel(agents, true, sessions, [folder])
+
+    panel.beginCreateFolderForSession(source, activator as unknown as HTMLElement)
+    panel.folderName.value = folder.name
+    await panel.saveFolder()
+    await Promise.resolve()
+
+    expect(createFolder).toHaveBeenCalledTimes(1)
+    expect(createFolder).toHaveBeenCalledWith(folder.name)
+    expect(moveSessionToFolder).toHaveBeenCalledTimes(1)
+    expect(moveSessionToFolder).toHaveBeenCalledWith(source.id, folder.id)
+    expect(reloadSessions).toHaveBeenCalledTimes(1)
+    expect(panel.folderEditorOpen.value).toBe(false)
+    expect(panel.folderWorkflowState.value).toBe('idle')
+    expect(panel.openFolderIds.value).toEqual([folder.id])
+    expect(panel.dragStatus.value).toBe('Moved Release planning to Roadmap.')
+    expect(panel.localError.value).toBe('')
+    expect(activator.focus).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    {
+      label: 'a different folder',
+      refreshedSessions: (source: AgentSessionSummary): AgentSessionSummary[] => [
+        makeSession({ id: source.id, folderId: '20000000-0000-4000-8000-000000000001', retention: 'saved', version: 2 })
+      ]
+    },
+    {
+      label: 'a missing conversation',
+      refreshedSessions: (_source: AgentSessionSummary): AgentSessionSummary[] => []
+    }
+  ])('keeps create-folder move retry for $label after authoritative refresh', async ({ refreshedSessions }) => {
+    const source = makeSession()
+    const folder = makeFolder()
+    const sessions = [source]
+    const createFolder = vi.fn().mockResolvedValue(folder)
+    const moveSessionToFolder = vi.fn().mockRejectedValue(new TypeError('The move response was lost'))
+    const reloadSessions = vi.fn().mockImplementation(async () => {
+      sessions.splice(0, sessions.length, ...refreshedSessions(source))
+    })
+    const agents: PanelAgents = {
+      error: '',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn(),
+      createFolder,
+      moveSessionToFolder,
+      reloadSessions
+    }
+    const panel = loadPanel(agents, true, sessions, [folder])
+
+    panel.beginCreateFolderForSession(source, null)
+    panel.folderName.value = folder.name
+    await panel.saveFolder()
+
+    expect(createFolder).toHaveBeenCalledTimes(1)
+    expect(moveSessionToFolder).toHaveBeenCalledTimes(1)
+    expect(reloadSessions).toHaveBeenCalledTimes(1)
+    expect(panel.folderEditorOpen.value).toBe(true)
+    expect(panel.folderWorkflowState.value).toBe('move-retry')
+    expect(panel.dialogError.value).toContain('Retry the move.')
+    expect(panel.openFolderIds.value).toEqual([])
+  })
+
+  it('keeps create-folder move retry when the authoritative refresh fails', async () => {
+    const source = makeSession()
+    const folder = makeFolder()
+    const sessions = [source]
+    const createFolder = vi.fn().mockResolvedValue(folder)
+    const moveSessionToFolder = vi.fn().mockRejectedValue(new TypeError('The move response was lost'))
+    const reloadSessions = vi.fn().mockRejectedValue(new Error('Conversations unavailable'))
+    const agents: PanelAgents = {
+      error: '',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn(),
+      createFolder,
+      moveSessionToFolder,
+      reloadSessions
+    }
+    const panel = loadPanel(agents, true, sessions, [folder])
+
+    panel.beginCreateFolderForSession(source, null)
+    panel.folderName.value = folder.name
+    await panel.saveFolder()
+
+    expect(createFolder).toHaveBeenCalledTimes(1)
+    expect(moveSessionToFolder).toHaveBeenCalledTimes(1)
+    expect(reloadSessions).toHaveBeenCalledTimes(1)
+    expect(panel.folderEditorOpen.value).toBe(true)
+    expect(panel.folderWorkflowState.value).toBe('move-retry')
+    expect(panel.sessionsRefreshError.value).toContain('Conversations unavailable')
+    expect(panel.dialogError.value).toContain('Retry the move.')
+  })
+
+  it('refreshes a stale folder delete and reopens confirmation with the renewed version', async () => {
+    const folder = makeFolder()
+    const renewedFolder = makeFolder({ version: 2, updatedAt: '2026-09-01T10:00:00.000Z' })
+    const session = makeSession({ folderId: folder.id, retention: 'saved' })
+    const folders = [folder]
+    const deleteFolder = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error('Folder changed'), { status: 409 }))
+      .mockResolvedValueOnce(true)
+    const reloadFolders = vi.fn().mockImplementation(async () => {
+      folders.splice(0, folders.length, renewedFolder)
+    })
+    const agents: PanelAgents = {
+      error: '',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn(),
+      deleteFolder,
+      reloadFolders
+    }
+    const panel = loadPanel(agents, true, [session], folders)
+
+    panel.beginRemoveFolder(folder)
+    await panel.deleteFolder()
+
+    expect(deleteFolder).toHaveBeenCalledTimes(1)
+    expect(deleteFolder).toHaveBeenCalledWith(folder.id, folder.version)
+    expect(reloadFolders).toHaveBeenCalledTimes(1)
+    expect(panel.removingFolder.value).toEqual(renewedFolder)
+    expect(panel.dialogError.value).toContain('updated folder')
+    expect(session.folderId).toBe(folder.id)
+    expect(panel.dragStatus.value).toBe('')
+
+    await panel.deleteFolder()
+
+    expect(deleteFolder).toHaveBeenCalledTimes(2)
+    expect(deleteFolder).toHaveBeenLastCalledWith(renewedFolder.id, renewedFolder.version)
+    expect(panel.removingFolder.value).toBeNull()
+  })
+
+  it('does not announce or project a folder delete when the store reports no commit', async () => {
+    const folder = makeFolder()
+    const session = makeSession({ folderId: folder.id, retention: 'saved' })
+    const deleteFolder = vi.fn().mockResolvedValue(false)
+    const agents: PanelAgents = {
+      error: '',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn(),
+      deleteFolder
+    }
+    const panel = loadPanel(agents, true, [session], [folder])
+
+    panel.beginRemoveFolder(folder)
+    await panel.deleteFolder()
+
+    expect(deleteFolder).toHaveBeenCalledWith(folder.id, folder.version)
+    expect(panel.removingFolder.value).toBe(folder)
+    expect(panel.dragStatus.value).toBe('')
+    expect(session.folderId).toBe(folder.id)
   })
 
   it('restores focus to the conversation action trigger when rename is cancelled', async () => {
@@ -670,7 +942,7 @@ describe('Agent history session selection', () => {
     expect(panel.draggedSessionId.value).toBeNull()
     expect(panel.activeDropTarget.value).toBeNull()
     expect(panel.localError.value).toBe('Folder version changed')
-    expect(panel.dragStatus.value).toBe('Release planning could not be moved. It remains in Recent.')
+    expect(panel.dragStatus.value).toContain('Refresh history, then retry the move.')
   })
 
   it('announces cancellation when pointer dragging ends outside a target', () => {

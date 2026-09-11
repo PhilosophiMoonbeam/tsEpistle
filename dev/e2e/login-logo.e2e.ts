@@ -1075,11 +1075,24 @@ test.describe('managed login logo auth independence', () => {
           const staticImage = samplePage.locator('.login-particle-logo__image')
           await expect(ordinaryLogo).toHaveAttribute('src', fixture.effect.logoUrl)
           await expect(ordinaryLogo).toHaveCSS('width', '34px')
-          for (const selector of ['.login-brand .login-logo', '.login-brand .login-logo .v-avatar']) {
-            await expect(samplePage.locator(selector)).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-            await expect(samplePage.locator(selector)).toHaveCSS('box-shadow', 'none')
+          const logoFrame = samplePage.locator('.login-brand .login-logo')
+          await expect(logoFrame).toHaveCSS('width', '52px')
+          await expect(logoFrame).toHaveCSS('height', '52px')
+          await expect(logoFrame).toHaveCSS('padding', '8px')
+          for (const edge of ['top', 'right', 'bottom', 'left'] as const) {
+            await expect(logoFrame).toHaveCSS(`border-${edge}-width`, '1px')
           }
-          await expect(samplePage.locator('.login-brand .login-logo')).toHaveCSS('border-top-width', '0px')
+          const frameAppearance = await logoFrame.evaluate(element => {
+            const style = getComputedStyle(element)
+            return {
+              backgroundImage: style.backgroundImage,
+              borderRadius: style.borderRadius,
+              boxShadow: style.boxShadow
+            }
+          })
+          expect(frameAppearance.backgroundImage).toContain('linear-gradient')
+          expect(frameAppearance.borderRadius).not.toBe('0px')
+          expect(frameAppearance.boxShadow).not.toBe('none')
           await expectFieldGeometry(samplePage, fixture.effect)
           expect(
             await samplePage.locator('.login-particle-logo').evaluate(element => getComputedStyle(element).getPropertyValue('--login-logo-aura').trim())
@@ -1099,6 +1112,98 @@ test.describe('managed login logo auth independence', () => {
       expect(themeBackgrounds[0]).not.toBe(themeBackgrounds[1])
     })
   }
+  test('shows the TS Epistle book during the redirect window only after terminal ordinary authentication', async ({ page }, testInfo) => {
+    requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    let ordinaryAttempts = 0
+    await page.route(/\/_api\/auth\/login$/, async route => {
+      ordinaryAttempts += 1
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ authenticated: true, redirect: '/login?after=ordinary' })
+      })
+    })
+
+    await page.goto('/login?login-art=ordinary')
+    await expectOrdinaryLogin(page)
+    await page.getByLabel('Email Address', { exact: true }).fill('ordinary@example.test')
+    await page.getByLabel('Password', { exact: true }).fill('ordinary-password')
+    await page.getByRole('button', { name: 'Log In', exact: true }).click()
+
+    const loader = page.locator('.loader-dialog')
+    await expect(loader).toBeVisible()
+    const illustration = loader.locator('.login-success-animation')
+    await expect(illustration).toBeVisible()
+    await expect(illustration).toHaveAttribute('width', '72')
+    await expect(illustration).toHaveAttribute('height', '72')
+    await expect(illustration).toHaveAttribute('aria-hidden', 'true')
+    await expect(illustration.locator('[data-page-turn]')).toHaveCount(3)
+    await expect(loader.locator('.atom-spinner')).toHaveCount(0)
+    const animatedPage = illustration.locator('.login-success-animation__page--turn-1')
+    const animationStyle = await animatedPage.evaluate(element => {
+      const style = getComputedStyle(element)
+      return { animationName: style.animationName, animationDuration: style.animationDuration }
+    })
+    expect(animationStyle.animationName).not.toBe('none')
+    expect(animationStyle.animationDuration).toBe('0.9s')
+    expect(ordinaryAttempts).toBe(1)
+  })
+
+  test('keeps the book hidden for a TFA challenge and shows it after authenticated TFA completion', async ({ page }, testInfo) => {
+    requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.route(/\/_api\/auth\/login(?:\/tfa)?$/, async route => {
+      if (route.request().url().endsWith('/tfa')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ authenticated: true, redirect: '/login?after=tfa' })
+        })
+        return
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ authenticated: false, mustProvideTFA: true, continuationToken: 'login-art-tfa' })
+      })
+    })
+
+    await page.goto('/login?login-art=tfa')
+    await expectOrdinaryLogin(page)
+    await page.getByLabel('Email Address', { exact: true }).fill('tfa@example.test')
+    await page.getByLabel('Password', { exact: true }).fill('tfa-password')
+    await page.getByRole('button', { name: 'Log In', exact: true }).click()
+    const tfaForm = page.locator('form.login-tfa').first()
+    await expect(tfaForm).toBeVisible()
+    await expect(page.locator('.login-success-animation')).toHaveCount(0)
+
+    await tfaForm.locator('input[name="security-code"]').fill('123456')
+    await tfaForm.locator('button[type="submit"]').click()
+    await expect(page.locator('.loader-dialog')).toBeVisible()
+    await expect(page.locator('.login-success-animation')).toBeVisible()
+    await expect(page.locator('.login-success-animation__page--turn-1')).toHaveCSS('animation-name', 'none')
+  })
+
+  test('keeps the book hidden when authentication fails', async ({ page }, testInfo) => {
+    requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
+    await page.route(/\/_api\/auth\/login$/, async route => {
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Login fixture rejected the credentials.' })
+      })
+    })
+
+    await page.goto('/login?login-art=error')
+    await expectOrdinaryLogin(page)
+    await page.getByLabel('Email Address', { exact: true }).fill('error@example.test')
+    await page.getByLabel('Password', { exact: true }).fill('incorrect-password')
+    await page.getByRole('button', { name: 'Log In', exact: true }).click()
+    await expect(page.locator('.loader-dialog')).toBeHidden()
+    await expect(page.locator('.login-success-animation')).toHaveCount(0)
+    await expect(page.locator('.v-alert[role="alert"]')).toBeVisible()
+  })
 
   test('omits the large field at 959px, 650px, and truly zero measured space while preserving a positive narrow static field', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
@@ -1310,9 +1415,7 @@ test.describe('managed login logo auth independence', () => {
     await expectLoginValidation(page)
   })
 
-  test('renders a drifting particle cloud with cursor response, visible scatter, and recovery without telemetry', async ({
-    page
-  }, testInfo) => {
+  test('renders a drifting particle cloud with cursor response, visible scatter, and recovery without telemetry', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     const supportsWebGL2 = await browserSupportsWebGL2(page)
@@ -1379,11 +1482,11 @@ test.describe('managed login logo auth independence', () => {
     const scatteredDifference = compareFrames(before, scattered).mean
     expect(scatteredDifference).toBeGreaterThan(0.0001)
     // Scatter must retain visible particles, rather than making an alpha hole.
-    expect(analyzeFrame(scattered).inkRatio).toBeGreaterThan(analyzeFrame(before).inkRatio * 0.70)
+    expect(analyzeFrame(scattered).inkRatio).toBeGreaterThan(analyzeFrame(before).inkRatio * 0.7)
     const recovered = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, baselineTime, blastTime + 3000)).png)
     // The physical beads continue drifting; the recovered frame need not be pixel-identical.
     // Fixed-step physics tests separately compare recovery against an undisturbed cloud.
-    expect(compareFrames(before, recovered).mean).toBeLessThan(scatteredDifference * 0.60)
+    expect(compareFrames(before, recovered).mean).toBeLessThan(scatteredDifference * 0.6)
     expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBe(0)
 
     for (let i = 0; i < 8; i++) {
@@ -1662,15 +1765,30 @@ const particleColorReferenceShader = readFileSync(new URL('./fixtures/particle-c
 
 test('cached particle colors match the original GPU treatment and retain light contrast', async ({ page }, testInfo) => {
   requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
-  const linear = (value: number) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
-  const colors = [[255, 255, 255], [255, 232, 173], [89, 184, 240], [242, 122, 41], [249, 161, 52], [13, 15, 26], [2, 2, 2], [0, 0, 0]]
-  const backgrounds = [[1, 1, 1], [0.96, 0.94, 0.89], [0.055, 0.065, 0.085], [0.18, 0.18, 0.18], [0.64, 0.64, 0.64]]
+  const linear = (value: number) => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+  const colors = [
+    [255, 255, 255],
+    [255, 232, 173],
+    [89, 184, 240],
+    [242, 122, 41],
+    [249, 161, 52],
+    [13, 15, 26],
+    [2, 2, 2],
+    [0, 0, 0]
+  ]
+  const backgrounds = [
+    [1, 1, 1],
+    [0.96, 0.94, 0.89],
+    [0.055, 0.065, 0.085],
+    [0.18, 0.18, 0.18],
+    [0.64, 0.64, 0.64]
+  ]
   const inputs = colors.flatMap(color => [255, 140, 38, 1].flatMap(alpha => [1, 19661, 45874, 64000].map(seed => ({ color, alpha, seed }))))
   for (let index = 0; index < 256; index++) {
     inputs.push({
       color: [(index * 73) & 255, (index * 151) & 255, (index * 199) & 255],
-      alpha: 1 + (index * 11) % 255,
-      seed: 1 + (index * 40503) % 65535
+      alpha: 1 + ((index * 11) % 255),
+      seed: 1 + ((index * 40503) % 65535)
     })
   }
   const particles = {
@@ -1689,86 +1807,98 @@ test('cached particle colors match the original GPU treatment and retain light c
       cached: Array.from(cached.subarray(index * 4, index * 4 + 4))
     }))
   })
-  const result = await page.evaluate(({ source, reference, samples }) => {
-    const gl = document.createElement('canvas').getContext('webgl2')
-    if (!gl) return null
-    const compile = (type: number, code: string) => {
-      const shader = gl.createShader(type)!
-      gl.shaderSource(shader, code)
-      gl.compileShader(shader)
-      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) ?? 'Shader compile failed')
-      return shader
-    }
-    const fragment = compile(gl.FRAGMENT_SHADER, '#version 300 es\nprecision highp float;\nout vec4 color;\nvoid main(){color=vec4(1.0);}')
-    const shaders: WebGLShader[] = []
-    const programs = [source, reference].map(shaderSource => {
-      const vertex = compile(gl.VERTEX_SHADER, `#version 300 es
+  const result = await page.evaluate(
+    ({ source, reference, samples }) => {
+      const gl = document.createElement('canvas').getContext('webgl2')
+      if (!gl) return null
+      const compile = (type: number, code: string) => {
+        const shader = gl.createShader(type)!
+        gl.shaderSource(shader, code)
+        gl.compileShader(shader)
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) ?? 'Shader compile failed')
+        return shader
+      }
+      const fragment = compile(gl.FRAGMENT_SHADER, '#version 300 es\nprecision highp float;\nout vec4 color;\nvoid main(){color=vec4(1.0);}')
+      const shaders: WebGLShader[] = []
+      const programs = [source, reference].map(shaderSource => {
+        const vertex = compile(
+          gl.VERTEX_SHADER,
+          `#version 300 es
 #define CLOUD_DUST_END 0.7
 #define CLOUD_BEAD_START 0.935
-${shaderSource.replace(/attribute /g, 'in ').replace(/varying /g, 'out ').replace('precision highp float;', `precision highp float;
+${shaderSource
+  .replace(/attribute /g, 'in ')
+  .replace(/varying /g, 'out ')
+  .replace(
+    'precision highp float;',
+    `precision highp float;
 uniform mat4 projectionMatrix;
-uniform mat4 modelViewMatrix;`)}`)
-      shaders.push(vertex)
-      const program = gl.createProgram()!
-      gl.attachShader(program, vertex)
-      gl.attachShader(program, fragment)
-      gl.transformFeedbackVaryings(program, ['vColor'], gl.INTERLEAVED_ATTRIBS)
-      gl.linkProgram(program)
-      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) ?? 'Shader link failed')
-      return program
-    })
-    const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
-    const buffer = gl.createBuffer()!
-    gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER, buffer)
-    gl.bufferData(gl.TRANSFORM_FEEDBACK_BUFFER, 16, gl.STREAM_READ)
-    const feedback = gl.createTransformFeedback()!
-    gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, feedback)
-    gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, buffer)
-    gl.enable(gl.RASTERIZER_DISCARD)
-    const linear = (value: number) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
-    const outputs = programs.map(program => {
-      gl.useProgram(program)
-      const uniform = (name: string) => gl.getUniformLocation(program, name)
-      const attr = (name: string, x: number, y = 0, z = 0, w = 1) => {
-        const location = gl.getAttribLocation(program, name)
-        if (location >= 0) gl.vertexAttrib4f(location, x, y, z, w)
-      }
-      gl.uniformMatrix4fv(uniform('projectionMatrix'), false, identity)
-      gl.uniformMatrix4fv(uniform('modelViewMatrix'), false, identity)
-      gl.uniform1f(uniform('uAspect'), 1)
-      gl.uniform1f(uniform('uRenderedLongAxis'), 800)
-      gl.uniform1f(uniform('uDpr'), 1)
-      gl.uniform2f(uniform('uViewport'), 800, 800)
-      attr('logoSize', 1)
-      attr('cloudMotion', 0, 0, 0)
-      return samples.map(sample => {
-        gl.uniform3f(uniform('uBackground'), linear(sample.background[0]!), linear(sample.background[1]!), linear(sample.background[2]!))
-        attr('logoSeed', sample.seed)
-        attr('logoColor', sample.color[0]!, sample.color[1]!, sample.color[2]!, sample.sourceAlpha)
-        attr('particleColor', sample.cached[0]!, sample.cached[1]!, sample.cached[2]!, sample.cached[3]!)
-        gl.beginTransformFeedback(gl.POINTS)
-        gl.drawArrays(gl.POINTS, 0, 1)
-        gl.endTransformFeedback()
-        const output = new Float32Array(4)
-        gl.getBufferSubData(gl.TRANSFORM_FEEDBACK_BUFFER, 0, output)
-        return Array.from(output)
+uniform mat4 modelViewMatrix;`
+  )}`
+        )
+        shaders.push(vertex)
+        const program = gl.createProgram()!
+        gl.attachShader(program, vertex)
+        gl.attachShader(program, fragment)
+        gl.transformFeedbackVaryings(program, ['vColor'], gl.INTERLEAVED_ATTRIBS)
+        gl.linkProgram(program)
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) ?? 'Shader link failed')
+        return program
       })
-    })
-    const error = gl.getError()
-    gl.disable(gl.RASTERIZER_DISCARD)
-    gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null)
-    gl.deleteTransformFeedback(feedback)
-    gl.deleteBuffer(buffer)
-    for (const program of programs) gl.deleteProgram(program)
-    for (const shader of shaders) gl.deleteShader(shader)
-    gl.deleteShader(fragment)
-    gl.getExtension('WEBGL_lose_context')?.loseContext()
-    return { error, outputs }
-  }, { source: particleVertexShader, reference: particleColorReferenceShader, samples })
+      const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
+      const buffer = gl.createBuffer()!
+      gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER, buffer)
+      gl.bufferData(gl.TRANSFORM_FEEDBACK_BUFFER, 16, gl.STREAM_READ)
+      const feedback = gl.createTransformFeedback()!
+      gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, feedback)
+      gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, buffer)
+      gl.enable(gl.RASTERIZER_DISCARD)
+      const linear = (value: number) => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+      const outputs = programs.map(program => {
+        gl.useProgram(program)
+        const uniform = (name: string) => gl.getUniformLocation(program, name)
+        const attr = (name: string, x: number, y = 0, z = 0, w = 1) => {
+          const location = gl.getAttribLocation(program, name)
+          if (location >= 0) gl.vertexAttrib4f(location, x, y, z, w)
+        }
+        gl.uniformMatrix4fv(uniform('projectionMatrix'), false, identity)
+        gl.uniformMatrix4fv(uniform('modelViewMatrix'), false, identity)
+        gl.uniform1f(uniform('uAspect'), 1)
+        gl.uniform1f(uniform('uRenderedLongAxis'), 800)
+        gl.uniform1f(uniform('uDpr'), 1)
+        gl.uniform2f(uniform('uViewport'), 800, 800)
+        attr('logoSize', 1)
+        attr('cloudMotion', 0, 0, 0)
+        return samples.map(sample => {
+          gl.uniform3f(uniform('uBackground'), linear(sample.background[0]!), linear(sample.background[1]!), linear(sample.background[2]!))
+          attr('logoSeed', sample.seed)
+          attr('logoColor', sample.color[0]!, sample.color[1]!, sample.color[2]!, sample.sourceAlpha)
+          attr('particleColor', sample.cached[0]!, sample.cached[1]!, sample.cached[2]!, sample.cached[3]!)
+          gl.beginTransformFeedback(gl.POINTS)
+          gl.drawArrays(gl.POINTS, 0, 1)
+          gl.endTransformFeedback()
+          const output = new Float32Array(4)
+          gl.getBufferSubData(gl.TRANSFORM_FEEDBACK_BUFFER, 0, output)
+          return Array.from(output)
+        })
+      })
+      const error = gl.getError()
+      gl.disable(gl.RASTERIZER_DISCARD)
+      gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null)
+      gl.deleteTransformFeedback(feedback)
+      gl.deleteBuffer(buffer)
+      for (const program of programs) gl.deleteProgram(program)
+      for (const shader of shaders) gl.deleteShader(shader)
+      gl.deleteShader(fragment)
+      gl.getExtension('WEBGL_lose_context')?.loseContext()
+      return { error, outputs }
+    },
+    { source: particleVertexShader, reference: particleColorReferenceShader, samples }
+  )
   test.skip(!result, 'WebGL2 unavailable')
   if (!result) return
   expect(result.error).toBe(0)
-  const srgb = (value: number) => value <= 0.0031308 ? value * 12.92 : 1.055 * value ** (1 / 2.4) - 0.055
+  const srgb = (value: number) => (value <= 0.0031308 ? value * 12.92 : 1.055 * value ** (1 / 2.4) - 0.055)
   const luminance = (color: number[]) => 0.2126 * linear(color[0]!) + 0.7152 * linear(color[1]!) + 0.0722 * linear(color[2]!)
   let maximumEncodedChannelDifference = 0
   let maximumAlphaDifference = 0
@@ -1817,14 +1947,24 @@ test('the dust brush is local to scattered particles and preserves variable blas
       if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) ?? 'Shader compile failed')
       return shader
     }
-    const vert = compile(gl.VERTEX_SHADER, `#version 300 es
+    const vert = compile(
+      gl.VERTEX_SHADER,
+      `#version 300 es
 #define CLOUD_DUST_END 0.7
 #define CLOUD_BEAD_START 0.935
-${source.replace(/attribute /g, 'in ').replace(/varying /g, 'out ').replace('void main()', 'void particleMain()').replace('precision highp float;', `precision highp float;
+${source
+  .replace(/attribute /g, 'in ')
+  .replace(/varying /g, 'out ')
+  .replace('void main()', 'void particleMain()')
+  .replace(
+    'precision highp float;',
+    `precision highp float;
 uniform mat4 projectionMatrix;
 uniform mat4 modelViewMatrix;
-out vec4 testedPosition;`)}
-void main() { particleMain(); testedPosition = gl_Position; }`)
+out vec4 testedPosition;`
+  )}
+void main() { particleMain(); testedPosition = gl_Position; }`
+    )
     const frag = compile(gl.FRAGMENT_SHADER, '#version 300 es\nprecision highp float;\nout vec4 color;\nvoid main(){color=vec4(1.0);}')
     const program = gl.createProgram()!
     gl.attachShader(program, vert)

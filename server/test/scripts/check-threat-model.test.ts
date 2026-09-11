@@ -65,7 +65,6 @@ function commit(rootPath: string, message: string): string {
   return runGit(rootPath, ['rev-parse', 'HEAD'])
 }
 
-
 type RepositoryFixtureOptions = {
   releaseEligible?: boolean
   reviewerIdentity?: string
@@ -87,7 +86,7 @@ function createRepository(options: RepositoryFixtureOptions = {}): {
   runGit(rootPath, ['config', 'user.email', 'threat-model@example.invalid'])
 
   const baseManifest: FixtureManifest = {
-    packageManager: 'bun@1.4.0',
+    packageManager: 'bun@1.4.2',
     scripts: {
       'dependencies:check': 'bun dependency-policy.ts',
       'licenses:check': 'bun licenses.ts',
@@ -173,7 +172,6 @@ afterEach(() => {
     rmSync(directory, { recursive: true, force: true })
   }
 })
-
 
 describe('canonical policy-v1 path classification and digest', () => {
   it('covers server, client, shared, deploy, patches, workflows, actions, entire dev prefix, and config files', () => {
@@ -1099,7 +1097,6 @@ describe('maintainer release integrity enforcement (TMG-001)', () => {
   })
 })
 
-
 describe('release mode enforcement', () => {
   it('rejects untracked non-boundary file during release check', async () => {
     const { rootPath } = createRepository({ releaseEligible: true })
@@ -1141,4 +1138,3 @@ describe('release mode enforcement', () => {
     expect(releaseFailures).toContain('Release blocked by unresolved findings: SEC-RELEASE-001')
   })
 })
-

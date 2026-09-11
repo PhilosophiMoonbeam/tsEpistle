@@ -1,11 +1,13 @@
 import type { Page, Route } from '@playwright/test'
 import type { AgentProposalView } from '../../shared/agents/contracts.ts'
-export type AgentFixtureMode = 'success' | 'failure' | 'retry' | 'stop' | 'approval' | 'partial' | 'focus' | 'security' | 'cap'
+export type AgentFixtureMode = 'success' | 'failure' | 'retry' | 'stop' | 'approval' | 'partial' | 'focus' | 'security' | 'cap' | 'latest' | 'pin'
 
 export interface AgentFixtureOptions {
   readonly mode?: AgentFixtureMode
   readonly archivePartialFailure?: boolean
   readonly seedMemory?: boolean
+  readonly seedFolders?: boolean
+  readonly distinctSessionIds?: boolean
 }
 
 export interface EnabledAgentFixture {
@@ -108,6 +110,11 @@ const json = (route: Route, payload: unknown, status = 200): Promise<void> =>
   route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(payload) })
 
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+const isPositiveVersion = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+
+const invalidRequest = (route: Route): Promise<void> => json(route, { error: 'INVALID_REQUEST', details: [] }, 400)
+
+const resourceNotFound = (route: Route): Promise<void> => json(route, { error: 'AGENT_RESOURCE_NOT_FOUND', message: 'Agent resource was not found' }, 404)
 
 const emptyHistoryWindow = () => ({ messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false })
 
@@ -188,6 +195,15 @@ const successfulMarkdown = [
   '[Follow-up reading](/en/release-guide#title-only)',
   '[Follow-up reading](/en/release-guide#title-only)'
 ].join('\n')
+const latestResponseMarkdown = [
+  'The latest response is ready to review from the beginning.',
+  ...Array.from(
+    { length: 28 },
+    (_, index) =>
+      `Verification checkpoint ${index + 1}: the release evidence remains available while this transcript grows beyond the visible conversation area.`
+  ),
+  'The final checkpoint keeps the newest response at the end of the conversation.'
+].join('\n\n')
 
 const focusSameCountMarkdown = `${successfulMarkdown}\n\nThe streamed review context is still current.`
 const focusCardinalityMarkdown = `${focusSameCountMarkdown}\n\nThe streamed review context gained another link.\n\n[Follow-up reading](/en/release-guide#title-only)`
@@ -206,6 +222,7 @@ const cappedMermaidMarkdown = Array.from({ length: 9 }, (_, index) =>
 const responseMarkdown = (mode: AgentFixtureMode): string => {
   if (mode === 'security') return hostileMermaidMarkdown
   if (mode === 'cap') return cappedMermaidMarkdown
+  if (mode === 'latest') return latestResponseMarkdown
   return successfulMarkdown
 }
 
@@ -229,16 +246,34 @@ type FixtureMemory = {
   createdAt: string
   updatedAt: string
 }
+type FixtureFolder = {
+  id: string
+  name: string
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+const folderFor = (id = FOLDER_ID, name = 'Release reviews', version = 1): FixtureFolder => ({
+  id,
+  name,
+  version,
+  createdAt: NOW,
+  updatedAt: NOW
+})
 type FixtureState = {
   thread: FixtureThread
   mode: AgentFixtureMode
   archivePartialFailure: boolean
   seedMemory: boolean
+  distinctSessionIds: boolean
   runIndex: number
+  sessionCreates: number
   sessionVersion: number
   sessionListReads: number
   folderReads: number
+  folderCreates: number
   eventReads: number
+  folders: FixtureFolder[]
   memoryEntries: FixtureMemory[]
   activeRunId: string | null
   finalizedRuns: Set<string>
@@ -278,7 +313,8 @@ const setActiveThread = (state: FixtureState, prompt: string): string => {
   state.activeRunId = runId
   state.eventReads = 0
   state.sessionVersion += 1
-  state.thread.session = sessionFor(state.thread.session.id, run, state.sessionVersion)
+  const folderId = state.thread.session.folderId
+  state.thread.session = { ...sessionFor(state.thread.session.id, run, state.sessionVersion), folderId }
   state.thread.messages.push({
     id: userId,
     runId: null,
@@ -401,11 +437,15 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
     mode,
     archivePartialFailure: options.archivePartialFailure ?? false,
     seedMemory: options.seedMemory ?? true,
+    distinctSessionIds: options.distinctSessionIds ?? false,
     runIndex: 0,
+    sessionCreates: 0,
     sessionVersion: 1,
     sessionListReads: 0,
     folderReads: 0,
+    folderCreates: 0,
     eventReads: 0,
+    folders: options.seedFolders === false ? [] : [folderFor()],
     memoryEntries: options.seedMemory === false ? [] : [memory()],
     activeRunId: null,
     finalizedRuns: new Set(),
@@ -448,7 +488,53 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
     if (path === '/_api/agents/conversation-folders' && request.method() === 'GET') {
       state.folderReads += 1
       if (state.archivePartialFailure && state.folderReads === 2) return json(route, { error: 'Fixture archive folder failure' }, 503)
-      return json(route, { folders: [{ id: FOLDER_ID, name: 'Release reviews', version: 1, createdAt: NOW, updatedAt: NOW }] })
+      return json(route, { folders: copy(state.folders) })
+    }
+    if (path === '/_api/agents/conversation-folders' && request.method() === 'POST') {
+      const body = (request.postDataJSON() ?? {}) as { name?: string }
+      const name = typeof body.name === 'string' ? body.name.trim() : ''
+      if (!name) return json(route, { error: 'Folder name is required.' }, 400)
+      state.folderCreates += 1
+      const folder = folderFor(uuidAt(FOLDER_ID, state.folderCreates), name)
+      state.folders.push(folder)
+      return json(route, { folder: copy(folder) }, 201)
+    }
+    const folderMatch = path.match(/^\/_api\/agents\/conversation-folders\/([^/]+)$/)
+    if (folderMatch && request.method() === 'PATCH') {
+      const body = (request.postDataJSON() ?? {}) as { expectedVersion?: unknown; name?: unknown }
+      if (!isPositiveVersion(body.expectedVersion)) return invalidRequest(route)
+      const folder = state.folders.find(item => item.id === folderMatch[1])
+      if (!folder) return resourceNotFound(route)
+      if (folder.version !== body.expectedVersion)
+        return json(route, { error: 'CONVERSATION_FOLDER_VERSION_CHANGED', message: 'Conversation folder changed concurrently' }, 409)
+      const name = typeof body.name === 'string' ? body.name.trim() : ''
+      if (!name) return invalidRequest(route)
+      folder.name = name
+      folder.version += 1
+      folder.updatedAt = LATER
+      return json(route, { folder: copy(folder) })
+    }
+    if (folderMatch && request.method() === 'DELETE') {
+      const expectedVersionValue = url.searchParams.get('expectedVersion')
+      const expectedVersion = expectedVersionValue === null ? null : Number(expectedVersionValue)
+      if (!isPositiveVersion(expectedVersion)) return invalidRequest(route)
+      const index = state.folders.findIndex(item => item.id === folderMatch[1])
+      if (index < 0) return resourceNotFound(route)
+      const folder = state.folders[index]!
+      if (folder.version !== expectedVersion)
+        return json(route, { error: 'CONVERSATION_FOLDER_VERSION_CHANGED', message: 'Conversation folder changed concurrently' }, 409)
+      state.folders.splice(index, 1)
+      const movedSessions = state.thread.session.folderId === folder.id ? 1 : 0
+      if (movedSessions) {
+        state.sessionVersion += 1
+        state.thread.session.folderId = null
+        state.thread.session.retention = 'saved'
+        state.thread.session.expiresAt = null
+        state.thread.session.version = state.sessionVersion
+        state.thread.session.updatedAt = LATER
+        state.thread.session.lastActivityAt = LATER
+      }
+      return json(route, { deleted: true, movedSessions })
     }
     if (path === '/_api/agents/profiles' && request.method() === 'GET') return json(route, { profiles: [profile()] })
     if (path === '/_api/agents/skills' && request.method() === 'GET') return json(route, { skills: [] })
@@ -508,11 +594,34 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
     if (path === '/_api/agents/sessions' && request.method() === 'POST') {
       const body = (request.postDataJSON() ?? {}) as { retention?: 'saved' | 'temporary' }
       state.sessionVersion = 1
-      state.thread = threadFor()
+      state.sessionCreates += 1
+      const sessionId = state.distinctSessionIds ? uuidAt(SESSION_ID, state.sessionCreates) : SESSION_ID
+      state.thread = threadFor(sessionId)
       state.thread.session.retention = body.retention === 'temporary' ? 'temporary' : 'saved'
       state.thread.session.expiresAt = body.retention === 'temporary' ? '2026-09-02T12:00:00.000Z' : null
       state.activeRunId = null
       return json(route, { ...copy(state.thread), launchPage: null }, 201)
+    }
+    const sessionFolderMatch = path.match(/^\/_api\/agents\/sessions\/([^/]+)\/folder$/)
+    if (sessionFolderMatch && request.method() === 'PUT') {
+      const body = (request.postDataJSON() ?? {}) as { expectedSessionVersion?: unknown; folderId?: unknown }
+      const expectedSessionVersion = body.expectedSessionVersion
+      const folderId = body.folderId
+      if (!isPositiveVersion(expectedSessionVersion) || !Object.hasOwn(body, 'folderId') || !(folderId === null || typeof folderId === 'string')) {
+        return invalidRequest(route)
+      }
+      if (sessionFolderMatch[1] !== state.thread.session.id) return resourceNotFound(route)
+      if (expectedSessionVersion !== state.thread.session.version)
+        return json(route, { error: 'SESSION_VERSION_CHANGED', message: 'Agent session changed concurrently' }, 409)
+      if (folderId !== null && !state.folders.some(folder => folder.id === folderId)) return resourceNotFound(route)
+      state.sessionVersion += 1
+      state.thread.session.folderId = folderId
+      state.thread.session.retention = 'saved'
+      state.thread.session.expiresAt = null
+      state.thread.session.version = state.sessionVersion
+      state.thread.session.updatedAt = LATER
+      state.thread.session.lastActivityAt = LATER
+      return json(route, copy(state.thread))
     }
     const sessionMatch = path.match(/^\/_api\/agents\/sessions\/([^/]+)$/)
     if (sessionMatch && request.method() === 'GET') {

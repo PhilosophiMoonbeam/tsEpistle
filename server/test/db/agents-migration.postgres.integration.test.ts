@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
 import { projectAgentThread } from '../../agents/projection.ts'
@@ -12,6 +13,7 @@ import { down as downSkillPreferences, up as upSkillPreferences } from '../../db
 import { down as downAgentMemory, up as upAgentMemory } from '../../db/migrations/2.5.147.ts'
 import { down as downAgentTasks, up as upAgentTasks } from '../../db/migrations/2.5.156.ts'
 import { down as downAgentGoals, up as upAgentGoals } from '../../db/migrations/2.5.157.ts'
+import { up as upAgentTotalTokens } from '../../db/migrations/tsepistle-000031-agent-total-token-accounting.ts'
 import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
 
 const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
@@ -27,6 +29,7 @@ const connection = databaseName.endsWith('_agents_test')
     }
   : null
 const suite = connection ? describe : describe.skip
+const isolatedSchema = `agent_total_tokens_${randomUUID().replaceAll('-', '')}`
 
 suite('PostgreSQL first-class agent migration', () => {
   let db: Knex
@@ -82,6 +85,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await upAgentMemory(db)
     await upAgentTasks(db)
     await upAgentGoals(db)
+    await upAgentTotalTokens(db)
   })
 
   afterAll(async () => {
@@ -121,6 +125,56 @@ suite('PostgreSQL first-class agent migration', () => {
     expect(await db('agentSkills').columnInfo('isAgentDiscoverable')).toMatchObject({ nullable: false, defaultValue: 'true' })
     expect(await db('agentSkills').columnInfo('rootPageId')).toMatchObject({ nullable: true })
     expect(await db.schema.hasColumn('agentSessions', 'memorySnapshot')).toBe(true)
+  })
+  it('upgrades an existing PostgreSQL run table and preserves independent totals under the accounting constraint', async () => {
+    let isolated: Knex | undefined
+    try {
+      await db.raw(`CREATE SCHEMA "${isolatedSchema}"`)
+      isolated = knexModule({
+        client: 'pg',
+        connection: connection ?? undefined,
+        searchPath: [isolatedSchema],
+        pool: { min: 0, max: 1 }
+      })
+      const currentSchema = await isolated.raw('SELECT current_schema() AS "schema"')
+      expect(currentSchema.rows[0]?.schema).toBe(isolatedSchema)
+      await isolated.schema.createTable('agentRuns', table => {
+        table.uuid('id').primary()
+        table.bigInteger('inputTokens').notNullable().defaultTo(0)
+        table.bigInteger('outputTokens').notNullable().defaultTo(0)
+      })
+      expect(await isolated.schema.hasColumn('agentRuns', 'totalTokens')).toBe(false)
+      await isolated('agentRuns').insert({ id: '00000000-0000-4000-8000-000000000121', inputTokens: 3, outputTokens: 309 })
+
+      await upAgentTotalTokens(isolated)
+
+      expect(await isolated('agentRuns').columnInfo('totalTokens')).toMatchObject({ type: 'bigint', nullable: false })
+      expect(await isolated('agentRuns').where({ id: '00000000-0000-4000-8000-000000000121' }).first('totalTokens')).toEqual({ totalTokens: '312' })
+      await isolated('agentRuns').insert({ id: '00000000-0000-4000-8000-000000000122', inputTokens: 3, outputTokens: 309, totalTokens: 4_580 })
+      await isolated('agentRuns').insert({ id: '00000000-0000-4000-8000-000000000123', inputTokens: 0, outputTokens: 0 })
+      await isolated('agentRuns').insert({
+        id: '00000000-0000-4000-8000-000000000124',
+        inputTokens: Number.MAX_SAFE_INTEGER,
+        outputTokens: 0,
+        totalTokens: Number.MAX_SAFE_INTEGER
+      })
+      expect(await isolated('agentRuns').where({ id: '00000000-0000-4000-8000-000000000122' }).first('inputTokens', 'outputTokens', 'totalTokens')).toEqual({
+        inputTokens: '3',
+        outputTokens: '309',
+        totalTokens: '4580'
+      })
+      expect(await isolated('agentRuns').where({ id: '00000000-0000-4000-8000-000000000123' }).first('totalTokens')).toEqual({ totalTokens: '0' })
+      await expect(
+        Promise.resolve(isolated('agentRuns').insert({ id: '00000000-0000-4000-8000-000000000125', inputTokens: 3, outputTokens: 309, totalTokens: 311 }))
+      ).rejects.toMatchObject({ code: '23514' })
+    } finally {
+      try {
+        if (isolated) await isolated.destroy()
+      } finally {
+        await db.raw(`DROP SCHEMA IF EXISTS "${isolatedSchema}" CASCADE`)
+      }
+    }
+    expect(await db.schema.hasColumn('agentRuns', 'totalTokens')).toBe(true)
   })
   it('projects group-visible preferences with PostgreSQL-safe aliases', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000101'

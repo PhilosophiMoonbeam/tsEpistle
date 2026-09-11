@@ -62,6 +62,13 @@
               :disabled="busy || disabled"
               @click="emit('move', folder.id)"
             />
+            <v-list-item
+              prepend-icon="mdi-folder-plus-outline"
+              title="New folder…"
+              subtitle="Create a folder for this conversation"
+              :disabled="busy || disabled"
+              @click="requestNewFolder"
+            />
           </v-list>
         </v-menu>
         <v-divider v-if="canMove" class="agent-history-session-actions__divider" />
@@ -90,6 +97,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   move: [folderId: string | null]
+  'new-folder': [session: AgentSessionSummary, restoreTarget: HTMLElement | null]
   rename: [restoreTarget: HTMLElement | null]
   remove: [restoreTarget: HTMLElement | null]
 }>()
@@ -100,10 +108,11 @@ const triggerElement = (): HTMLElement | null => {
   if (!value) return null
   return value instanceof HTMLElement ? value : value.$el ?? null
 }
+const requestNewFolder = (): void => emit('new-folder', props.session, triggerElement())
 const requestRename = (): void => emit('rename', triggerElement())
 const requestRemove = (): void => emit('remove', triggerElement())
 const availableFolders = computed(() => props.folders.filter(folder => folder.id !== props.session.folderId))
-const canMove = computed(() => props.session.folderId !== null || availableFolders.value.length > 0)
+const canMove = computed(() => true)
 </script>
 <style scoped>
 .agent-history-session-actions { align-items: center; display: flex; }

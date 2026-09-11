@@ -56,52 +56,63 @@ export const MAX_AGENT_CHILD_OUTPUT_CHARACTERS = 64 * 1_024
 
 export interface AgentChildBudgetUsage {
   readonly outputCharacters: number
-  readonly tokens: number
+  readonly totalTokens: number
 }
 
 export interface AgentChildBudgetReservation {
   readonly id: number
   readonly outputCharacters: number
-  readonly outputTokens: number
+  readonly totalTokens: number
+}
+
+const childBudgetInteger = (value: number, label: string): number => {
+  if (!Number.isSafeInteger(value) || value < 0) throw new AgentRepositoryError('AGENT_CHILD_BUDGET_INVALID', `${label} is invalid`, 500)
+  return value
+}
+
+const childBudgetSum = (left: number, right: number, label: string): number => {
+  const sum = left + right
+  if (!Number.isSafeInteger(sum) || sum < 0) throw new AgentRepositoryError('AGENT_CHILD_BUDGET_INVALID', `${label} exceeds the supported range`, 500)
+  return sum
 }
 
 export class AgentChildBudgetReservations {
   readonly #limits: AgentOrchestrationLimits
   readonly #active = new Set<number>()
   #consumedOutputCharacters: number
-  #consumedTokens: number
+  #consumedTotalTokens: number
   #nextId = 1
   #reservedOutputCharacters = 0
-  #reservedTokens = 0
+  #reservedTotalTokens = 0
 
   constructor(limits: AgentOrchestrationLimits, consumed: AgentChildBudgetUsage) {
     this.#limits = limits
-    this.#consumedOutputCharacters = consumed.outputCharacters
-    this.#consumedTokens = consumed.tokens
+    this.#consumedOutputCharacters = childBudgetInteger(consumed.outputCharacters, 'Consumed child output characters')
+    this.#consumedTotalTokens = childBudgetInteger(consumed.totalTokens, 'Consumed child total tokens')
   }
 
   reserve(concurrentSlots = 1): AgentChildBudgetReservation | null {
     if (!Number.isSafeInteger(concurrentSlots) || concurrentSlots < 1)
       throw new AgentRepositoryError('AGENT_CHILD_BUDGET_INVALID', 'Subagent concurrency reservation is invalid', 500)
-    const remainingTokens = this.#limits.maxAggregateChildTokens - this.#consumedTokens - this.#reservedTokens
+    const remainingTotalTokens = this.#limits.maxAggregateChildTokens - this.#consumedTotalTokens - this.#reservedTotalTokens
     const remainingOutputCharacters = this.#limits.maxAggregateChildOutputCharacters - this.#consumedOutputCharacters - this.#reservedOutputCharacters
-    if (remainingTokens < 1 || remainingOutputCharacters < 1) return null
+    if (remainingTotalTokens < 1 || remainingOutputCharacters < 1) return null
     const reservation = {
       id: this.#nextId++,
       outputCharacters: Math.min(MAX_AGENT_CHILD_OUTPUT_CHARACTERS, Math.max(1, Math.floor(remainingOutputCharacters / concurrentSlots))),
-      outputTokens: Math.min(this.#limits.childMaxOutputTokens, Math.max(1, Math.floor(remainingTokens / concurrentSlots)))
+      totalTokens: Math.min(this.#limits.childMaxOutputTokens, Math.max(1, Math.floor(remainingTotalTokens / concurrentSlots)))
     }
     this.#active.add(reservation.id)
-    this.#reservedOutputCharacters += reservation.outputCharacters
-    this.#reservedTokens += reservation.outputTokens
+    this.#reservedOutputCharacters = childBudgetSum(this.#reservedOutputCharacters, reservation.outputCharacters, 'Reserved child output characters')
+    this.#reservedTotalTokens = childBudgetSum(this.#reservedTotalTokens, reservation.totalTokens, 'Reserved child total tokens')
     return reservation
   }
 
   release(reservation: AgentChildBudgetReservation, consumed: AgentChildBudgetUsage): void {
     if (
-      !Number.isSafeInteger(consumed.tokens) ||
-      consumed.tokens < 0 ||
-      consumed.tokens > reservation.outputTokens ||
+      !Number.isSafeInteger(consumed.totalTokens) ||
+      consumed.totalTokens < 0 ||
+      consumed.totalTokens > reservation.totalTokens ||
       !Number.isSafeInteger(consumed.outputCharacters) ||
       consumed.outputCharacters < 0 ||
       consumed.outputCharacters > reservation.outputCharacters
@@ -110,15 +121,15 @@ export class AgentChildBudgetReservations {
     }
     if (!this.#active.delete(reservation.id)) throw new AgentRepositoryError('AGENT_CHILD_BUDGET_INVALID', 'Subagent budget reservation is not active', 500)
     this.#reservedOutputCharacters -= reservation.outputCharacters
-    this.#reservedTokens -= reservation.outputTokens
-    this.#consumedOutputCharacters += consumed.outputCharacters
-    this.#consumedTokens += consumed.tokens
+    this.#reservedTotalTokens -= reservation.totalTokens
+    this.#consumedOutputCharacters = childBudgetSum(this.#consumedOutputCharacters, consumed.outputCharacters, 'Consumed child output characters')
+    this.#consumedTotalTokens = childBudgetSum(this.#consumedTotalTokens, consumed.totalTokens, 'Consumed child total tokens')
   }
 
   get consumed(): AgentChildBudgetUsage {
     return {
       outputCharacters: this.#consumedOutputCharacters,
-      tokens: this.#consumedTokens
+      totalTokens: this.#consumedTotalTokens
     }
   }
 }

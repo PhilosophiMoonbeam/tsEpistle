@@ -10,7 +10,7 @@ export const systemWorkspaceFixture = (): SystemWorkspace => ({
     architecture: 'x64',
     kernel: '6.8.0',
     container: true,
-    bunVersion: '1.4.0',
+    bunVersion: '1.4.2',
     uptimeSeconds: 93782,
     processRssBytes: 210_000_000,
     heapUsedBytes: 85_000_000,

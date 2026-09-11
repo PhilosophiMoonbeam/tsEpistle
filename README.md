@@ -7,7 +7,7 @@
 [![Package alpha metadata](https://img.shields.io/badge/package%20alpha%20metadata-0.1.0--alpha.1-E4A24B)](https://github.com/PhilosophiMoonbeam/tsEpistle/blob/main/package.json)
 [![Build workflow](https://github.com/PhilosophiMoonbeam/tsEpistle/actions/workflows/build.yml/badge.svg)](https://github.com/PhilosophiMoonbeam/tsEpistle/actions/workflows/build.yml)
 [![License: AGPLv3](https://img.shields.io/badge/license-AGPLv3-181A1C.svg)](LICENSE)
-[![Bun](https://img.shields.io/badge/runtime-Bun%201.4.0-F9A134?logo=bun&logoColor=white)](https://bun.com/)
+[![Bun](https://img.shields.io/badge/runtime-Bun%201.4.2-F9A134?logo=bun&logoColor=white)](https://bun.com/)
 [![PostgreSQL](https://img.shields.io/badge/database-PostgreSQL%2015%E2%80%9318-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 
 </div>
@@ -47,7 +47,7 @@ The versions below are the repository's declared runtime and package metadata; d
 
 | Layer | Current choice |
 | --- | --- |
-| Runtime and package manager | Bun 1.4.0 (`packageManager`; engines `>=1.4.0 <2`) |
+| Runtime and package manager | Bun 1.4.2 (`packageManager`; engines `>=1.4.2 <2`) |
 | Server | Express 5.2.1, Pug 3.0.4 |
 | Client | Vue 3.5.41, Vuetify 4.1.9, Vite 8.2.1 |
 | Language | TypeScript 6.0.2 |

@@ -22,15 +22,28 @@ const failures: string[] = []
 for (const [name, version] of Object.entries(requiredVersions)) {
   if (dependencies[name] !== version) failures.push(`${name} must be exactly ${version}, found ${dependencies[name] ?? 'missing'}`)
 }
-if (manifest.devDependencies?.['@modelcontextprotocol/client'] !== '2.0.0') failures.push('@modelcontextprotocol/client must remain a test-only exact 2.0.0 dependency')
+if (manifest.devDependencies?.['@modelcontextprotocol/client'] !== '2.0.0')
+  failures.push('@modelcontextprotocol/client must remain a test-only exact 2.0.0 dependency')
 
 const data = loadYaml(await readFile('server/app/data.yml', 'utf8')) as DataFile
 const agents = data.defaults?.config?.agents
 if (!agents) failures.push('server/app/data.yml does not define defaults.config.agents')
 else {
   const flagPaths = [
-    'enabled', 'provider.enabled', 'orchestration.enabled', 'goals.enabled', 'skills.enabled', 'browser.enabled', 'proposals.enabled', 'writes.enabled',
-    'writes.create.enabled', 'writes.patch.enabled', 'writes.move.enabled', 'writes.restore.enabled', 'writes.delete.enabled', 'mcp.enabled'
+    'enabled',
+    'provider.enabled',
+    'orchestration.enabled',
+    'goals.enabled',
+    'skills.enabled',
+    'browser.enabled',
+    'proposals.enabled',
+    'writes.enabled',
+    'writes.create.enabled',
+    'writes.patch.enabled',
+    'writes.move.enabled',
+    'writes.restore.enabled',
+    'writes.delete.enabled',
+    'mcp.enabled'
   ]
   for (const path of flagPaths) {
     let value: unknown = agents
@@ -41,13 +54,12 @@ else {
 
 const browserDockerfile = await readFile('dev/build/Dockerfile.agent-browser', 'utf8')
 const browserRuntime = await readFile('server/agents/browser/runtime.ts', 'utf8')
-if (!browserDockerfile.includes('oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6')) {
-  failures.push('browser worker base image must retain the reviewed Bun 1.4.0 multi-arch digest')
+if (!browserDockerfile.includes('oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895')) {
+  failures.push('browser worker base image must retain the reviewed Bun 1.4.2 multi-arch digest')
 }
 if (!browserDockerfile.includes('USER bun')) failures.push('browser worker image must run as bun')
 if (!browserRuntime.includes('chromiumSandbox: true')) failures.push('browser worker must launch Chromium with its sandbox enabled')
 if (!browserDockerfile.includes('AGENT_BROWSER_MAX_CONTEXTS=8')) failures.push('browser worker image must retain a bounded context default')
-
 
 const retiredIsolatedSurface = [
   'client/agents-app.ts',
@@ -61,7 +73,9 @@ for (const file of retiredIsolatedSurface) {
   try {
     await access(file)
     failures.push(`obsolete isolated-agent surface must be removed: ${file}`)
-  } catch { /* absence is the required clean cutover */ }
+  } catch {
+    /* absence is the required clean cutover */
+  }
 }
 
 const master = await readFile('server/master.ts', 'utf8')
@@ -101,7 +115,11 @@ const requiredReleaseInputs = [
   'docs/agents-deployment.md'
 ]
 for (const file of requiredReleaseInputs) {
-  try { await readFile(file) } catch { failures.push(`required agent release input is missing: ${file}`) }
+  try {
+    await readFile(file)
+  } catch {
+    failures.push(`required agent release input is missing: ${file}`)
+  }
 }
 
 if (failures.length > 0) throw new Error(`Agent release gate failed:\n${failures.map(failure => `- ${failure}`).join('\n')}`)

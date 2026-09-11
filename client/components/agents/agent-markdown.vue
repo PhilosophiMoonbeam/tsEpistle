@@ -53,6 +53,7 @@ interface RenderedDomState {
     readonly state: 'success' | 'error'
     readonly remaining: number
   }[]
+  readonly diagramDisclosure: readonly { readonly blockId: string; readonly open: boolean }[]
 }
 
 const markdownRoot = useTemplateRef<HTMLElement>('markdownRoot')
@@ -140,6 +141,10 @@ const captureRenderedDomState = (): RenderedDomState | null => {
         state,
         remaining: Math.max(0, reset.expiresAt - Date.now())
       }]
+    }),
+    diagramDisclosure: [...root.querySelectorAll<HTMLDetailsElement>('.agent-markdown__diagram-source')].flatMap(disclosure => {
+      const blockId = blockIdentity(disclosure)
+      return blockId ? [{ blockId, open: disclosure.open }] : []
     })
   }
 }
@@ -179,6 +184,11 @@ const restoreRenderedDomState = (state: RenderedDomState | null): void => {
     button.setAttribute('aria-label', feedback.ariaLabel)
     button.dataset.copyState = feedback.state
     scheduleCopyReset(button, feedback.remaining)
+  }
+  for (const disclosureState of state.diagramDisclosure) {
+    const disclosure = [...root.querySelectorAll<HTMLDetailsElement>('.agent-markdown__diagram-source')]
+      .find(candidate => blockIdentity(candidate) === disclosureState.blockId)
+    if (disclosure) disclosure.open = disclosureState.open
   }
   if (state.focusTarget) findFocusedElement(root, state.focusTarget)?.focus({ preventScroll: true })
 }
@@ -232,7 +242,7 @@ const decorateRenderedHtml = (html: string): string => {
     if (!pre || shell.querySelector('.agent-markdown__diagram-source')) continue
     const sourceDisclosure = document.createElement('details')
     sourceDisclosure.className = 'agent-markdown__diagram-source'
-    sourceDisclosure.open = true
+    sourceDisclosure.open = false
     const summary = document.createElement('summary')
     summary.textContent = 'Mermaid source'
     sourceDisclosure.append(summary, pre)

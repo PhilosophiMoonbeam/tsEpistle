@@ -11,6 +11,7 @@ import {
   type AgentMessageStatus,
   type AgentSessionRetention
 } from '../../shared/agents/contracts.ts'
+import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../shared/agents/conversation-folders.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 
 const SHA256 = /^[a-f0-9]{64}$/
@@ -209,9 +210,6 @@ const folderRecord = (row: ConversationFolderRow): AgentConversationFolderRecord
   updatedAt: iso(row.updatedAt)
 })
 
-const cleanFolderName = (value: string): string => value.normalize('NFKC').trim().replace(/\s+/g, ' ')
-const normalizedFolderName = (value: string): string => cleanFolderName(value).toLowerCase()
-
 export const listOwnedAgentConversationFolders = async (knex: Knex, ownerId: number): Promise<AgentConversationFolderRecord[]> => {
   const rows = await knex<ConversationFolderRow>('agentConversationFolders').where({ ownerId }).orderBy('normalizedName').orderBy('id')
   return rows.map(folderRecord)
@@ -219,14 +217,13 @@ export const listOwnedAgentConversationFolders = async (knex: Knex, ownerId: num
 
 export const createAgentConversationFolder = async (knex: Knex, ownerId: number, requestedName: string): Promise<AgentConversationFolderRecord> =>
   knex.transaction(async transaction => {
-    const name = cleanFolderName(requestedName)
+    const name = cleanAgentConversationFolderName(requestedName)
     if (!name || name.length > 64)
       throw new AgentRepositoryError('INVALID_CONVERSATION_FOLDER_NAME', 'Conversation folder names must contain between 1 and 64 characters', 400)
-    if (
-      await transaction('agentConversationFolders')
-        .where({ ownerId, normalizedName: normalizedFolderName(name) })
-        .first('id')
-    ) {
+    const owner = await transaction('users').where({ id: ownerId }).forUpdate().first('id')
+    if (!owner) return notFound()
+    const normalizedName = agentConversationFolderNameKey(name)
+    if (await transaction('agentConversationFolders').where({ ownerId, normalizedName }).first('id')) {
       return conflict('CONVERSATION_FOLDER_EXISTS', 'A conversation folder with this name already exists')
     }
     const countRow = await transaction('agentConversationFolders').where({ ownerId }).count<{ count: number | string }[]>({ count: '*' }).first()
@@ -237,7 +234,7 @@ export const createAgentConversationFolder = async (knex: Knex, ownerId: number,
       id: randomUUID(),
       ownerId,
       name,
-      normalizedName: normalizedFolderName(name),
+      normalizedName,
       version: 1,
       createdAt: now,
       updatedAt: now
@@ -254,30 +251,29 @@ export const renameAgentConversationFolder = async (
   requestedName: string
 ): Promise<AgentConversationFolderRecord> =>
   knex.transaction(async transaction => {
-    const name = cleanFolderName(requestedName)
+    const name = cleanAgentConversationFolderName(requestedName)
     if (!name || name.length > 64)
       throw new AgentRepositoryError('INVALID_CONVERSATION_FOLDER_NAME', 'Conversation folder names must contain between 1 and 64 characters', 400)
+    const normalizedName = agentConversationFolderNameKey(name)
     const existing = await transaction<ConversationFolderRow>('agentConversationFolders').where({ id: folderId, ownerId }).first()
     if (!existing) return notFound()
     if (existing.version !== expectedVersion) return conflict('CONVERSATION_FOLDER_VERSION_CHANGED', 'Conversation folder changed concurrently')
-    const duplicate = await transaction('agentConversationFolders')
-      .where({ ownerId, normalizedName: normalizedFolderName(name) })
-      .whereNot({ id: folderId })
-      .first('id')
+    const duplicate = await transaction('agentConversationFolders').where({ ownerId, normalizedName }).whereNot({ id: folderId }).first('id')
     if (duplicate) return conflict('CONVERSATION_FOLDER_EXISTS', 'A conversation folder with this name already exists')
     const changed = await transaction('agentConversationFolders')
       .where({ id: folderId, ownerId, version: expectedVersion })
-      .update({ name, normalizedName: normalizedFolderName(name), version: transaction.raw('?? + 1', ['version']), updatedAt: new Date() })
+      .update({ name, normalizedName, version: transaction.raw('?? + 1', ['version']), updatedAt: new Date() })
     if (changed !== 1) return conflict('CONVERSATION_FOLDER_VERSION_CHANGED', 'Conversation folder changed concurrently')
     const updated = await transaction<ConversationFolderRow>('agentConversationFolders').where({ id: folderId, ownerId }).first()
     if (!updated) return notFound()
     return folderRecord(updated)
   })
 
-export const deleteAgentConversationFolder = async (knex: Knex, ownerId: number, folderId: string): Promise<number> =>
+export const deleteAgentConversationFolder = async (knex: Knex, ownerId: number, folderId: string, expectedVersion: number): Promise<number> =>
   knex.transaction(async transaction => {
-    const folder = await transaction('agentConversationFolders').where({ id: folderId, ownerId }).first('id')
+    const folder = await transaction<ConversationFolderRow>('agentConversationFolders').where({ id: folderId, ownerId }).forUpdate().first('id', 'version')
     if (!folder) return notFound()
+    if (folder.version !== expectedVersion) return conflict('CONVERSATION_FOLDER_VERSION_CHANGED', 'Conversation folder changed concurrently')
     const now = new Date()
     const moved = await transaction('agentSessions')
       .where({ ownerId, folderId })
@@ -290,7 +286,8 @@ export const deleteAgentConversationFolder = async (knex: Knex, ownerId: number,
         updatedAt: now,
         version: transaction.raw('?? + 1', ['version'])
       })
-    await transaction('agentConversationFolders').where({ id: folderId, ownerId }).delete()
+    const deleted = await transaction('agentConversationFolders').where({ id: folderId, ownerId, version: expectedVersion }).delete()
+    if (deleted !== 1) return conflict('CONVERSATION_FOLDER_VERSION_CHANGED', 'Conversation folder changed concurrently')
     return moved
   })
 

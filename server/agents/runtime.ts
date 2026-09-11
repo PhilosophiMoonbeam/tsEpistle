@@ -1,13 +1,24 @@
 import { AgentKnowledgeContextSchema, type AgentKnowledgeContext } from '../../shared/agents/knowledge-context.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
-import type { AgentActionName, AgentCurrentPageHint, AgentEventData, AgentEventType, AgentExecutionMode } from '../../shared/agents/contracts.ts'
+import {
+  isTerminalAgentRunStatus,
+  type AgentActionName,
+  type AgentCurrentPageHint,
+  type AgentEventData,
+  type AgentEventType,
+  type AgentExecutionMode,
+  type AgentRunStatus
+} from '../../shared/agents/contracts.ts'
+import { assertAgentTokenUsage, readAgentUsageEvent } from './providers/usage.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import {
   AgentRunCoordinator,
+  AgentQuotaSettlementError,
   admitAgentRun,
   admitAgentRunInTransaction,
   ensureAgentRunQuota,
+  persistAgentRunQuotaSettlementIntent,
   terminalizeAgentRun,
   readAgentApprovalContinuation,
   getOwnedAgentRun,
@@ -31,9 +42,10 @@ import {
   type AgentGoalRecord
 } from './goals.ts'
 import { decodeAgentMemorySnapshot, type AgentMemorySnapshot } from './memory.ts'
+import { AgentExecutionFailure } from './providers/execution-failure.ts'
+import { AgentProviderPoliciesSchema } from './providers/registry.ts'
 import { SkillRuntime } from './skills/runtime.ts'
 import type { AgentConversationTitleGenerator, AgentConversationTitleResult } from './providers/utility.ts'
-import { AgentProviderPoliciesSchema } from './providers/registry.ts'
 import {
   AgentChildBudgetReservations,
   SUBAGENT_READ_ACTIONS,
@@ -66,13 +78,44 @@ const sha256 = (value: string): string => createHash('sha256').update(value).dig
 export interface AgentDispatchUsage {
   readonly inputTokens: number
   readonly outputTokens: number
+  readonly totalTokens: number
+  readonly costMicros: number
+}
+
+export interface AgentDispatchExposure {
+  readonly tokens: number
   readonly costMicros: number
 }
 
 interface AgentUsageTotals {
   inputTokens: number
   outputTokens: number
+  totalTokens: number
   costMicros: number
+}
+const GOAL_ACCOUNTING_ERROR_MESSAGE = 'Goal quota accounting is incomplete or invalid'
+
+const goalAccountingFailure = (): never => {
+  throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', GOAL_ACCOUNTING_ERROR_MESSAGE, 500)
+}
+
+const goalAccountingInteger = (value: unknown): number => {
+  if (typeof value !== 'number' && typeof value !== 'string') return goalAccountingFailure()
+  if (typeof value === 'string' && value.trim().length === 0) return goalAccountingFailure()
+  let numeric: number
+  try {
+    numeric = Number(value)
+  } catch {
+    return goalAccountingFailure()
+  }
+  if (!Number.isSafeInteger(numeric) || numeric < 0) return goalAccountingFailure()
+  return numeric
+}
+
+const goalAccountingSum = (left: number, right: number, _label: string): number => {
+  const sum = left + right
+  if (!Number.isSafeInteger(sum) || sum < 0) return goalAccountingFailure()
+  return sum
 }
 
 export interface AgentDispatchBudgetReservation {
@@ -86,6 +129,7 @@ export interface AgentDispatchBudget {
   reconcile(reservation: AgentDispatchBudgetReservation, actual: AgentDispatchUsage): Promise<void>
   release(reservation: AgentDispatchBudgetReservation): Promise<void>
   consumeTool(): Promise<void>
+  readonly unsettledExposure: AgentDispatchExposure
 }
 
 class AgentRunDispatchBudget implements AgentDispatchBudget {
@@ -100,6 +144,7 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
   readonly #active = new Map<number, AgentQuotaRequest>()
   #consumedInputTokens = 0
   #consumedOutputTokens = 0
+  #consumedTotalTokens = 0
   #consumedCostMicros = 0
   #consumedToolCalls = 0
   #heldTokens = 0
@@ -112,7 +157,7 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
     claim: AgentRunClaim,
     maximumTokens?: number,
     maximumToolCalls?: number,
-    initialUsage: Readonly<AgentUsageTotals> = { inputTokens: 0, outputTokens: 0, costMicros: 0 }
+    initialUsage: Readonly<AgentUsageTotals> = { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
   ) {
     this.#knex = knex
     this.#runId = claim.id
@@ -122,6 +167,8 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
     this.#maximumToolCalls = maximumToolCalls
     this.#consumedInputTokens = nonNegativeUsage(initialUsage.inputTokens, 'Persisted provider input tokens')
     this.#consumedOutputTokens = nonNegativeUsage(initialUsage.outputTokens, 'Persisted provider output tokens')
+    this.#consumedTotalTokens = nonNegativeUsage(initialUsage.totalTokens, 'Persisted provider total tokens')
+    assertAgentTokenUsage(this.#consumedInputTokens, this.#consumedOutputTokens, this.#consumedTotalTokens)
     this.#consumedCostMicros = nonNegativeUsage(initialUsage.costMicros, 'Persisted provider cost')
   }
 
@@ -143,9 +190,10 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
       throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider policies are invalid', 500)
     }
     this.#limits = { dailyTokens: policies.dailyTokens, dailyCostMicros: policies.dailyCostMicros }
-    this.#heldTokens = Number(reservation.reservedTokens)
-    this.#heldCostMicros = Number(reservation.reservedCostMicros)
+    this.#heldTokens = nonNegativeUsage(Number(reservation.reservedTokens), 'Held dispatch token exposure')
+    this.#heldCostMicros = nonNegativeUsage(Number(reservation.reservedCostMicros), 'Held dispatch cost exposure')
     this.#expiresAt = new Date(reservation.expiresAt)
+    if (!Number.isFinite(this.#expiresAt.valueOf())) throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent quota expiration is invalid', 500)
   }
 
   async #exclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -161,7 +209,6 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
       release()
     }
   }
-
   async reserve(maximum: AgentQuotaRequest): Promise<AgentDispatchBudgetReservation> {
     return this.#exclusive(async () => {
       await this.#initialize()
@@ -170,12 +217,12 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
       let activeTokens = 0
       let activeCostMicros = 0
       for (const exposure of this.#active.values()) {
-        activeTokens += exposure.tokens
-        activeCostMicros += exposure.costMicros
+        activeTokens = safeUsageSum(activeTokens, exposure.tokens, 'Active dispatch token exposure')
+        activeCostMicros = safeUsageSum(activeCostMicros, exposure.costMicros, 'Active dispatch cost exposure')
       }
       const target = {
-        tokens: this.#consumedInputTokens + this.#consumedOutputTokens + activeTokens + tokens,
-        costMicros: this.#consumedCostMicros + activeCostMicros + costMicros
+        tokens: safeUsageSum(this.#consumedTotalTokens, safeUsageSum(activeTokens, tokens, 'Dispatch token exposure'), 'Dispatch token target'),
+        costMicros: safeUsageSum(this.#consumedCostMicros, safeUsageSum(activeCostMicros, costMicros, 'Dispatch cost exposure'), 'Dispatch cost target')
       }
       if (this.#maximumTokens !== undefined && target.tokens > this.#maximumTokens) {
         throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
@@ -200,18 +247,27 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
       if (!held) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch reservation is not active', 500)
       const inputTokens = nonNegativeUsage(actual.inputTokens, 'Dispatch input token usage')
       const outputTokens = nonNegativeUsage(actual.outputTokens, 'Dispatch output token usage')
+      const totalTokens = nonNegativeUsage(actual.totalTokens, 'Dispatch total token usage')
       const costMicros = nonNegativeUsage(actual.costMicros, 'Dispatch cost usage')
-      if (inputTokens + outputTokens > held.tokens) {
-        if (this.#maximumTokens !== undefined && this.#consumedInputTokens + this.#consumedOutputTokens + inputTokens + outputTokens > this.#maximumTokens)
-          throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
+      assertAgentTokenUsage(inputTokens, outputTokens, totalTokens)
+      const consumedTokensAfter = safeUsageSum(this.#consumedTotalTokens, totalTokens, 'Consumed dispatch tokens')
+      const consumedCostAfter = safeUsageSum(this.#consumedCostMicros, costMicros, 'Consumed dispatch cost')
+      const exceedsGoal = this.#maximumTokens !== undefined && consumedTokensAfter > this.#maximumTokens
+      const exceedsReservation = totalTokens > held.tokens || costMicros > held.costMicros
+      if (exceedsGoal || exceedsReservation) {
+        this.#active.delete(reservation.id)
+        this.#consumedInputTokens = safeUsageSum(this.#consumedInputTokens, inputTokens, 'Consumed dispatch input tokens')
+        this.#consumedOutputTokens = safeUsageSum(this.#consumedOutputTokens, outputTokens, 'Consumed dispatch output tokens')
+        this.#consumedTotalTokens = consumedTokensAfter
+        this.#consumedCostMicros = consumedCostAfter
+        if (exceedsGoal) throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
         throw new AgentRepositoryError('DISPATCH_RESERVATION_EXCEEDED', 'Provider usage exceeded its dispatch reservation', 502)
       }
-      if (costMicros > held.costMicros)
-        throw new AgentRepositoryError('DISPATCH_RESERVATION_EXCEEDED', 'Provider usage exceeded its dispatch reservation', 502)
       this.#active.delete(reservation.id)
-      this.#consumedInputTokens += inputTokens
-      this.#consumedOutputTokens += outputTokens
-      this.#consumedCostMicros += costMicros
+      this.#consumedInputTokens = safeUsageSum(this.#consumedInputTokens, inputTokens, 'Consumed dispatch input tokens')
+      this.#consumedOutputTokens = safeUsageSum(this.#consumedOutputTokens, outputTokens, 'Consumed dispatch output tokens')
+      this.#consumedTotalTokens = consumedTokensAfter
+      this.#consumedCostMicros = consumedCostAfter
     })
   }
 
@@ -231,7 +287,21 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
   }
 
   get consumed(): AgentUsageTotals {
-    return { inputTokens: this.#consumedInputTokens, outputTokens: this.#consumedOutputTokens, costMicros: this.#consumedCostMicros }
+    return {
+      inputTokens: this.#consumedInputTokens,
+      outputTokens: this.#consumedOutputTokens,
+      totalTokens: this.#consumedTotalTokens,
+      costMicros: this.#consumedCostMicros
+    }
+  }
+  get unsettledExposure(): AgentDispatchExposure {
+    let tokens = 0
+    let costMicros = 0
+    for (const exposure of this.#active.values()) {
+      tokens = safeUsageSum(tokens, exposure.tokens, 'Unsettled dispatch token exposure')
+      costMicros = safeUsageSum(costMicros, exposure.costMicros, 'Unsettled dispatch cost exposure')
+    }
+    return { tokens, costMicros }
   }
 }
 
@@ -385,6 +455,7 @@ export interface AgentEngineResult {
   readonly suggestions?: readonly Readonly<Record<string, unknown>>[]
   readonly inputTokens: number
   readonly outputTokens: number
+  readonly totalTokens: number
   readonly costMicros: number
   readonly providerState?: Readonly<Record<string, unknown>>
   readonly authoritySha256?: string
@@ -607,7 +678,9 @@ const knowledgeContextHint = (value: string | undefined): AgentKnowledgeContext 
     const parsed: unknown = JSON.parse(value)
     const context = typeof parsed === 'object' && parsed !== null ? Reflect.get(parsed, 'knowledgeContext') : undefined
     return context === undefined ? undefined : AgentKnowledgeContextSchema.parse(context)
-  } catch { throw new AgentRepositoryError('AGENT_RUN_CONTEXT_CORRUPT', 'Stored source context is invalid', 500) }
+  } catch {
+    throw new AgentRepositoryError('AGENT_RUN_CONTEXT_CORRUPT', 'Stored source context is invalid', 500)
+  }
 }
 
 const currentPageHint = (value: string | undefined): AgentCurrentPageHint | undefined => {
@@ -645,6 +718,11 @@ const currentPageHint = (value: string | undefined): AgentCurrentPageHint | unde
 const nonNegativeUsage = (value: number, label: string): number => {
   if (!Number.isSafeInteger(value) || value < 0) throw new AgentRepositoryError('INVALID_AGENT_USAGE', `${label} must be a non-negative safe integer`, 500)
   return value
+}
+const safeUsageSum = (left: number, right: number, label: string): number => {
+  const sum = left + right
+  if (!Number.isSafeInteger(sum) || sum < 0) throw new AgentRepositoryError('INVALID_AGENT_USAGE', `${label} exceeds the supported range`, 500)
+  return sum
 }
 
 const providerState = (value: Uint8Array | null): AgentEngineMessage['providerState'] => {
@@ -762,7 +840,7 @@ export class AgentProductRuntime {
         expectedSessionVersion: input.expectedSessionVersion,
         content: goal.objective,
         ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
-      ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
+        ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
         ...resolved,
         quota: { ...resolved.quota, tokens: Math.min(resolved.quota.tokens, goal.maxTokens) },
         goalId: goal.id,
@@ -826,7 +904,7 @@ export class AgentProductRuntime {
     signal: AbortSignal,
     dispatchBudget: AgentDispatchBudget
   ): Promise<AgentConversationTitleResult> {
-    const empty: AgentConversationTitleResult = { title: '', source: 'fallback', inputTokens: 0, outputTokens: 0, costMicros: 0 }
+    const empty: AgentConversationTitleResult = { title: '', source: 'fallback', inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
     const titleMessages = [
       ...messages.map(message => ({ role: message.role, content: message.content })),
       { role: 'assistant' as const, content: assistantMessage }
@@ -845,6 +923,7 @@ export class AgentProductRuntime {
       })
     } catch (error) {
       if (signal.aborted) throw signal.reason ?? error
+      if (error instanceof AgentRepositoryError) throw error
       return empty
     }
     if (signal.aborted) throw signal.reason
@@ -910,24 +989,28 @@ export class AgentProductRuntime {
         }
       )
     } catch (error) {
-      if (signal.aborted) throw error
-      return { tasks: [], usage: { inputTokens: 0, outputTokens: 0, costMicros: 0 } }
+      if (plannerSignal.aborted) throw plannerSignal.reason ?? error
+      throw error
     }
     const usage = {
       inputTokens: nonNegativeUsage(result.inputTokens, 'Planner input tokens'),
       outputTokens: nonNegativeUsage(result.outputTokens, 'Planner output tokens'),
+      totalTokens: nonNegativeUsage(result.totalTokens, 'Planner total tokens'),
       costMicros: nonNegativeUsage(result.costMicros, 'Planner cost')
     }
+    assertAgentTokenUsage(usage.inputTokens, usage.outputTokens, usage.totalTokens)
     let plan
     try {
       plan = parseAgentTaskPlan(content, this.#orchestration.maxChildren)
     } catch {
       await this.#appendPresentationEvent(claim, 'task.planCreated', {
+        usageVersion: 2,
         rootRunId: claim.id,
         accepted: false,
         taskCount: 0,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
         costMicros: usage.costMicros
       })
       return { tasks: [], usage }
@@ -952,12 +1035,11 @@ export class AgentProductRuntime {
     const rows = (await this.#knex('agentEvents')
       .where({ runId: claim.id })
       .whereIn('type', ['task.planCreated', 'model.turn'])
-      .orderBy('sequence')
       .select('type', 'data', 'dataSha256')) as Array<{ type: 'task.planCreated' | 'model.turn'; data: string; dataSha256: string }>
-    const usage: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, costMicros: 0 }
-    const modelUsage: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, costMicros: 0 }
+    const usage: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
+    const modelUsage: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
     let consumedOutputCharacters = 0
-    let consumedTokens = 0
+    let consumedTotalTokens = 0
     let modelTurns = 0
     for (const row of rows) {
       if (sha256(row.data) !== row.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored orchestration event hash is invalid', 500)
@@ -969,37 +1051,44 @@ export class AgentProductRuntime {
       }
       if (typeof data !== 'object' || data === null || Array.isArray(data))
         throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored orchestration event data is invalid', 500)
-      const inputTokens = nonNegativeUsage(Number(Reflect.get(data, 'inputTokens')), 'Orchestration input tokens')
-      const outputTokens = nonNegativeUsage(Number(Reflect.get(data, 'outputTokens')), 'Orchestration output tokens')
-      const costMicros = nonNegativeUsage(Number(Reflect.get(data, 'costMicros') ?? 0), 'Orchestration cost')
+      let eventUsage
+      try {
+        eventUsage = readAgentUsageEvent(data as AgentEventData)
+      } catch {
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored orchestration usage is invalid', 500)
+      }
       if (row.type === 'task.planCreated') {
-        usage.inputTokens += inputTokens
-        usage.outputTokens += outputTokens
-        usage.costMicros += nonNegativeUsage(Number(Reflect.get(data, 'costMicros')), 'Orchestration cost')
+        usage.inputTokens = safeUsageSum(usage.inputTokens, eventUsage.inputTokens, 'Orchestration input tokens')
+        usage.outputTokens = safeUsageSum(usage.outputTokens, eventUsage.outputTokens, 'Orchestration output tokens')
+        usage.totalTokens = safeUsageSum(usage.totalTokens, eventUsage.totalTokens, 'Orchestration total tokens')
+        usage.costMicros = safeUsageSum(usage.costMicros, eventUsage.costMicros, 'Orchestration cost')
         continue
       }
       if (typeof Reflect.get(data, 'taskId') !== 'string' || typeof Reflect.get(data, 'subagentRunId') !== 'string') {
         modelTurns += 1
-        modelUsage.inputTokens += inputTokens
-        modelUsage.outputTokens += outputTokens
-        modelUsage.costMicros += costMicros
+        modelUsage.inputTokens = safeUsageSum(modelUsage.inputTokens, eventUsage.inputTokens, 'Model input tokens')
+        modelUsage.outputTokens = safeUsageSum(modelUsage.outputTokens, eventUsage.outputTokens, 'Model output tokens')
+        modelUsage.totalTokens = safeUsageSum(modelUsage.totalTokens, eventUsage.totalTokens, 'Model total tokens')
+        modelUsage.costMicros = safeUsageSum(modelUsage.costMicros, eventUsage.costMicros, 'Model cost')
         continue
       }
-      usage.inputTokens += inputTokens
-      usage.outputTokens += outputTokens
-      usage.costMicros += costMicros
-      consumedTokens += inputTokens + outputTokens
+      usage.inputTokens = safeUsageSum(usage.inputTokens, eventUsage.inputTokens, 'Orchestration input tokens')
+      usage.outputTokens = safeUsageSum(usage.outputTokens, eventUsage.outputTokens, 'Orchestration output tokens')
+      usage.totalTokens = safeUsageSum(usage.totalTokens, eventUsage.totalTokens, 'Orchestration total tokens')
+      usage.costMicros = safeUsageSum(usage.costMicros, eventUsage.costMicros, 'Orchestration cost')
+      consumedTotalTokens = safeUsageSum(consumedTotalTokens, eventUsage.totalTokens, 'Consumed child total tokens')
       const turnContent = Reflect.get(data, 'content')
       if (typeof turnContent !== 'string') throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored subagent output telemetry is invalid', 500)
       const accountedOutputCharacters = Reflect.get(data, 'budgetOutputCharacters')
-      consumedOutputCharacters +=
+      const turnOutputCharacters =
         Reflect.get(data, 'contentTruncated') === true
           ? accountedOutputCharacters === undefined
             ? this.#orchestration.maxAggregateChildOutputCharacters + 1
             : nonNegativeUsage(Number(accountedOutputCharacters), 'Subagent output characters')
           : turnContent.length
+      consumedOutputCharacters = safeUsageSum(consumedOutputCharacters, turnOutputCharacters, 'Consumed child output characters')
     }
-    const budget: AgentChildBudgetUsage = { outputCharacters: consumedOutputCharacters, tokens: consumedTokens }
+    const budget: AgentChildBudgetUsage = { outputCharacters: consumedOutputCharacters, totalTokens: consumedTotalTokens }
     return { usage, modelUsage, modelTurns, budget }
   }
 
@@ -1019,8 +1108,8 @@ export class AgentProductRuntime {
     const childSignal = AbortSignal.any([signal, AbortSignal.timeout(this.#orchestration.childTimeoutMilliseconds)])
     let activeTask: AgentTaskRecord | undefined
     let content = ''
-    let usage: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, costMicros: 0 }
-    const consumed = { outputCharacters: 0, tokens: 0 }
+    let usage: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
+    const consumed = { outputCharacters: 0, totalTokens: 0 }
     const evidenceRevisions = new Map<string, string>()
     try {
       const startedTask = await startAgentRunTask(this.#knex, claim, task.id, subagentRunId)
@@ -1033,10 +1122,10 @@ export class AgentProductRuntime {
           subagentRunId,
           actionAllowlist: SUBAGENT_READ_ACTIONS,
           limits: {
-            maxTokens: reservation.outputTokens,
+            maxTokens: reservation.totalTokens,
             maxTurns: this.#orchestration.childTurns,
             maxToolCalls: this.#orchestration.childToolCalls,
-            maxOutputTokens: reservation.outputTokens
+            maxOutputTokens: reservation.totalTokens
           },
           messages: [{ role: 'user', content: subagentPrompt(startedTask) }],
           memory,
@@ -1058,12 +1147,16 @@ export class AgentProductRuntime {
             if (childSignal.aborted) throw childSignal.reason
             const contextualData = { ...data, rootRunId: claim.id, taskId: task.id, subagentRunId }
             if (type === 'model.turn') {
-              const turnTokens =
-                nonNegativeUsage(Number(Reflect.get(data, 'inputTokens')), 'Subagent input tokens') +
-                nonNegativeUsage(Number(Reflect.get(data, 'outputTokens')), 'Subagent output tokens')
-              if (consumed.tokens + turnTokens > reservation.outputTokens)
+              let turnUsage
+              try {
+                turnUsage = readAgentUsageEvent(data)
+              } catch {
+                throw new AgentRepositoryError('AGENT_CHILD_BUDGET_INVALID', 'Subagent token usage telemetry is invalid', 500)
+              }
+              const nextConsumedTotalTokens = safeUsageSum(consumed.totalTokens, turnUsage.totalTokens, 'Consumed child total tokens')
+              if (nextConsumedTotalTokens > reservation.totalTokens)
                 throw new AgentRepositoryError('AGENT_CHILD_BUDGET_EXCEEDED', 'Subagent token usage exceeded its reserved allowance', 409)
-              consumed.tokens += turnTokens
+              consumed.totalTokens = nextConsumedTotalTokens
               const turnContent = Reflect.get(data, 'content')
               if (typeof turnContent !== 'string') throw new AgentRepositoryError('AGENT_CHILD_BUDGET_INVALID', 'Subagent output telemetry is invalid', 500)
               const turnOutputCharacters = Reflect.get(data, 'contentTruncated') === true ? reservation.outputCharacters + 1 : turnContent.length
@@ -1078,7 +1171,7 @@ export class AgentProductRuntime {
                 })
                 throw new AgentRepositoryError('AGENT_CHILD_BUDGET_EXCEEDED', 'Subagent output exceeded its reserved allowance', 409)
               }
-              consumed.outputCharacters += turnOutputCharacters
+              consumed.outputCharacters = safeUsageSum(consumed.outputCharacters, turnOutputCharacters, 'Consumed child output characters')
             }
             if (type === 'tool.completed') {
               const evidence = persistedResearchEvidence(contextualData, startedTask)
@@ -1093,11 +1186,13 @@ export class AgentProductRuntime {
       usage = {
         inputTokens: nonNegativeUsage(result.inputTokens, 'Subagent input tokens'),
         outputTokens: nonNegativeUsage(result.outputTokens, 'Subagent output tokens'),
+        totalTokens: nonNegativeUsage(result.totalTokens, 'Subagent total tokens'),
         costMicros: nonNegativeUsage(result.costMicros, 'Subagent cost')
       }
-      if (usage.inputTokens + usage.outputTokens !== consumed.tokens)
+      assertAgentTokenUsage(usage.inputTokens, usage.outputTokens, usage.totalTokens)
+      if (usage.totalTokens !== consumed.totalTokens)
         throw new AgentRepositoryError('AGENT_CHILD_BUDGET_INVALID', 'Subagent aggregate usage does not match its turn telemetry', 500)
-      if (consumed.tokens > reservation.outputTokens)
+      if (consumed.totalTokens > reservation.totalTokens)
         throw new AgentRepositoryError('AGENT_CHILD_BUDGET_EXCEEDED', 'Subagent token usage exceeded its reserved allowance', 409)
       if (content.length > reservation.outputCharacters)
         throw new AgentRepositoryError('AGENT_CHILD_BUDGET_EXCEEDED', 'Subagent output exceeded its reserved allowance', 409)
@@ -1107,11 +1202,19 @@ export class AgentProductRuntime {
     } catch (error) {
       if (signal.aborted) throw error
       if (activeTask === undefined) throw error
+      const legacyCode =
+        error instanceof AgentExecutionFailure
+          ? null
+          : typeof error === 'object' && error !== null && typeof Reflect.get(error, 'code') === 'string'
+            ? String(Reflect.get(error, 'code'))
+            : null
       const errorCode = childSignal.aborted
         ? 'SUBAGENT_TIMEOUT'
-        : typeof error === 'object' && error !== null && typeof Reflect.get(error, 'code') === 'string'
-          ? String(Reflect.get(error, 'code')).slice(0, 64)
-          : 'SUBAGENT_FAILED'
+        : error instanceof AgentExecutionFailure
+          ? error.code
+          : legacyCode === 'AGENT_BUDGET_LIMITED' || legacyCode === 'AGENT_CHILD_BUDGET_EXCEEDED'
+            ? legacyCode
+            : 'SUBAGENT_FAILED'
       try {
         await failAgentRunTask(this.#knex, claim, activeTask.id, subagentRunId, errorCode)
       } catch (taskError) {
@@ -1136,7 +1239,7 @@ export class AgentProductRuntime {
     dispatchBudget: AgentDispatchBudget
   ): Promise<AgentUsageTotals> {
     const pending = tasks.filter(task => task.status === 'pending')
-    const totals: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, costMicros: 0 }
+    const totals: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
     if (pending.length === 0) return totals
     const reservations = new AgentChildBudgetReservations(this.#orchestration, budget)
     const concurrency = Math.min(this.#orchestration.maxConcurrentChildren, pending.length)
@@ -1171,9 +1274,10 @@ export class AgentProductRuntime {
       if (rejected?.status === 'rejected') throw rejected.reason
       const usages = settlements.flatMap(result => (result.status === 'fulfilled' ? [result.value] : []))
       for (const taskUsage of usages) {
-        totals.inputTokens += taskUsage.inputTokens
-        totals.outputTokens += taskUsage.outputTokens
-        totals.costMicros += taskUsage.costMicros
+        totals.inputTokens = safeUsageSum(totals.inputTokens, taskUsage.inputTokens, 'Child input tokens')
+        totals.outputTokens = safeUsageSum(totals.outputTokens, taskUsage.outputTokens, 'Child output tokens')
+        totals.totalTokens = safeUsageSum(totals.totalTokens, taskUsage.totalTokens, 'Child total tokens')
+        totals.costMicros = safeUsageSum(totals.costMicros, taskUsage.costMicros, 'Child cost')
       }
     }
     return totals
@@ -1239,7 +1343,7 @@ export class AgentProductRuntime {
   ): Promise<{ status: 'succeeded' | 'partial' | 'failed'; errorCode?: string; errorMessage?: string }> {
     let content = ''
     let quotaReconciled = false
-    const orchestrationUsage: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, costMicros: 0 }
+    const orchestrationUsage: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
     let dispatchBudget: AgentRunDispatchBudget | undefined
     let goalDeadlineAt: number | null = null
     let goalDeadlineTimer: NodeJS.Timeout | undefined
@@ -1309,9 +1413,14 @@ export class AgentProductRuntime {
       const continuation = await readAgentApprovalContinuation(this.#knex, claim)
       let orchestrationTelemetry = await this.#orchestrationTelemetry(claim)
       const persistedProviderUsage = {
-        inputTokens: orchestrationTelemetry.usage.inputTokens + orchestrationTelemetry.modelUsage.inputTokens,
-        outputTokens: orchestrationTelemetry.usage.outputTokens + orchestrationTelemetry.modelUsage.outputTokens,
-        costMicros: orchestrationTelemetry.usage.costMicros + orchestrationTelemetry.modelUsage.costMicros
+        inputTokens: safeUsageSum(orchestrationTelemetry.usage.inputTokens, orchestrationTelemetry.modelUsage.inputTokens, 'Persisted provider input tokens'),
+        outputTokens: safeUsageSum(
+          orchestrationTelemetry.usage.outputTokens,
+          orchestrationTelemetry.modelUsage.outputTokens,
+          'Persisted provider output tokens'
+        ),
+        totalTokens: safeUsageSum(orchestrationTelemetry.usage.totalTokens, orchestrationTelemetry.modelUsage.totalTokens, 'Persisted provider total tokens'),
+        costMicros: safeUsageSum(orchestrationTelemetry.usage.costMicros, orchestrationTelemetry.modelUsage.costMicros, 'Persisted provider cost')
       }
       const startingGoalUsage = goal === null ? null : await this.#goalUsage(goal.id)
       const startingGoalTokens = goal === null ? undefined : goal.maxTokens - (startingGoalUsage?.tokens ?? 0)
@@ -1348,20 +1457,31 @@ export class AgentProductRuntime {
         }
       }
       if (continuation === null && this.#orchestration.enabled && claim.executionMode === 'agent' && tasks.some(task => task.status === 'pending')) {
-        await this.#executeResearchTasks(claim, tasks, memory, skills, currentPage, knowledgeContext, orchestrationTelemetry.budget, executionSignal, dispatchBudget)
-        tasks = await listAgentRunTasks(this.#knex, claim.id)
-        orchestrationTelemetry = await this.#orchestrationTelemetry(claim)
+        await this.#executeResearchTasks(
+          claim,
+          tasks,
+          memory,
+          skills,
+          currentPage,
+          knowledgeContext,
+          orchestrationTelemetry.budget,
+          executionSignal,
+          dispatchBudget
+        )
       }
+      tasks = await listAgentRunTasks(this.#knex, claim.id)
+      orchestrationTelemetry = await this.#orchestrationTelemetry(claim)
       orchestrationUsage.inputTokens = orchestrationTelemetry.usage.inputTokens
       orchestrationUsage.outputTokens = orchestrationTelemetry.usage.outputTokens
+      orchestrationUsage.totalTokens = orchestrationTelemetry.usage.totalTokens
       orchestrationUsage.costMicros = orchestrationTelemetry.usage.costMicros
       const research = tasks.length === 0 ? undefined : await this.#researchContext(claim, tasks)
       const goalUsage = goal === null ? null : await this.#goalUsage(goal.id)
-      const currentRunEventTokens =
-        orchestrationTelemetry.usage.inputTokens +
-        orchestrationTelemetry.usage.outputTokens +
-        orchestrationTelemetry.modelUsage.inputTokens +
-        orchestrationTelemetry.modelUsage.outputTokens
+      const currentRunEventTokens = safeUsageSum(
+        orchestrationTelemetry.usage.totalTokens,
+        orchestrationTelemetry.modelUsage.totalTokens,
+        'Current run event tokens'
+      )
       const remainingGoalTokens = goal === null ? null : goal.maxTokens - (goalUsage?.tokens ?? 0) - currentRunEventTokens
       const remainingGoalToolCalls = goal === null ? null : goal.maxToolCalls - (goalUsage?.toolCalls ?? 0)
       if ((remainingGoalTokens !== null && remainingGoalTokens < 1) || (remainingGoalToolCalls !== null && remainingGoalToolCalls < 0)) {
@@ -1388,7 +1508,7 @@ export class AgentProductRuntime {
             }),
         ...(research === undefined ? {} : { research }),
         ...(currentPage === undefined ? {} : { currentPage }),
-          ...(knowledgeContext === undefined ? {} : { knowledgeContext })
+        ...(knowledgeContext === undefined ? {} : { knowledgeContext })
       }
       const sink: AgentEngineSink = {
         text: async delta => {
@@ -1410,43 +1530,76 @@ export class AgentProductRuntime {
               Promise.reject(
                 new AgentRepositoryError('AGENT_ACTION_CONTINUATION_UNSUPPORTED', 'Inference engine cannot resume durable action continuations', 500)
               ))
-      if (executionSignal.aborted) throw executionSignal.reason
       const resultModelUsage = {
         inputTokens: nonNegativeUsage(result.inputTokens, 'Model input tokens'),
         outputTokens: nonNegativeUsage(result.outputTokens, 'Model output tokens'),
+        totalTokens: nonNegativeUsage(result.totalTokens, 'Model total tokens'),
         costMicros: nonNegativeUsage(result.costMicros, 'Model cost')
       }
+      assertAgentTokenUsage(resultModelUsage.inputTokens, resultModelUsage.outputTokens, resultModelUsage.totalTokens)
       const modelUsage = {
-        inputTokens: orchestrationTelemetry.modelUsage.inputTokens + resultModelUsage.inputTokens,
-        outputTokens: orchestrationTelemetry.modelUsage.outputTokens + resultModelUsage.outputTokens,
-        costMicros: orchestrationTelemetry.modelUsage.costMicros + resultModelUsage.costMicros
+        inputTokens: safeUsageSum(orchestrationTelemetry.modelUsage.inputTokens, resultModelUsage.inputTokens, 'Model input tokens'),
+        outputTokens: safeUsageSum(orchestrationTelemetry.modelUsage.outputTokens, resultModelUsage.outputTokens, 'Model output tokens'),
+        totalTokens: safeUsageSum(orchestrationTelemetry.modelUsage.totalTokens, resultModelUsage.totalTokens, 'Model total tokens'),
+        costMicros: safeUsageSum(orchestrationTelemetry.modelUsage.costMicros, resultModelUsage.costMicros, 'Model cost')
       }
       const titleUsage =
         continuation === null
           ? await this.#generateConversationTitle(claim, sessionRow, messages, content, executionSignal, dispatchBudget)
-          : { title: '', source: 'fallback' as const, inputTokens: 0, outputTokens: 0, costMicros: 0 }
+          : { title: '', source: 'fallback' as const, inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
+      assertAgentTokenUsage(titleUsage.inputTokens, titleUsage.outputTokens, titleUsage.totalTokens)
       if (executionSignal.aborted) throw executionSignal.reason
-      const inputTokens = nonNegativeUsage(orchestrationUsage.inputTokens + modelUsage.inputTokens + titleUsage.inputTokens, 'Input tokens')
-      const outputTokens = nonNegativeUsage(orchestrationUsage.outputTokens + modelUsage.outputTokens + titleUsage.outputTokens, 'Output tokens')
-      const costMicros = nonNegativeUsage(orchestrationUsage.costMicros + modelUsage.costMicros + titleUsage.costMicros, 'Cost')
+      const inputTokens = safeUsageSum(
+        safeUsageSum(orchestrationUsage.inputTokens, modelUsage.inputTokens, 'Input tokens'),
+        titleUsage.inputTokens,
+        'Input tokens'
+      )
+      const outputTokens = safeUsageSum(
+        safeUsageSum(orchestrationUsage.outputTokens, modelUsage.outputTokens, 'Output tokens'),
+        titleUsage.outputTokens,
+        'Output tokens'
+      )
+      const totalTokens = safeUsageSum(
+        safeUsageSum(orchestrationUsage.totalTokens, modelUsage.totalTokens, 'Total provider tokens'),
+        titleUsage.totalTokens,
+        'Total provider tokens'
+      )
+      const costMicros = safeUsageSum(safeUsageSum(orchestrationUsage.costMicros, modelUsage.costMicros, 'Cost'), titleUsage.costMicros, 'Cost')
+      assertAgentTokenUsage(inputTokens, outputTokens, totalTokens)
+      const dispatchedUsage = dispatchBudget?.consumed
+      const measuredInputTokens = Math.max(inputTokens, dispatchedUsage?.inputTokens ?? 0)
+      const measuredOutputTokens = Math.max(outputTokens, dispatchedUsage?.outputTokens ?? 0)
+      const measuredTotalTokens = Math.max(
+        totalTokens,
+        dispatchedUsage?.totalTokens ?? 0,
+        safeUsageSum(measuredInputTokens, measuredOutputTokens, 'Measured directional tokens')
+      )
+      const measuredCostMicros = Math.max(costMicros, dispatchedUsage?.costMicros ?? 0)
+      assertAgentTokenUsage(measuredInputTokens, measuredOutputTokens, measuredTotalTokens)
+      const unsettledExposure = dispatchBudget?.unsettledExposure ?? { tokens: 0, costMicros: 0 }
+      const consumedTokens = safeUsageSum(measuredTotalTokens, unsettledExposure.tokens, 'Total provider tokens')
+      const consumedCostMicros = safeUsageSum(measuredCostMicros, unsettledExposure.costMicros, 'Total provider cost')
       const citations = result.citations === undefined ? null : canonicalJson(result.citations)
       const providerStateJson = result.providerState === undefined ? null : canonicalJson(result.providerState)
       if (providerStateJson !== null && Buffer.byteLength(providerStateJson, 'utf8') > 256 * 1_024)
         throw new AgentRepositoryError('AGENT_PROVIDER_STATE_TOO_LARGE', 'Provider continuation exceeds its size limit', 500)
-      if (result.suggestions !== undefined) await this.#appendPresentationEvent(claim, 'suggestions.updated', { suggestions: result.suggestions })
       await this.#appendPresentationEvent(claim, 'usage.updated', {
-        inputTokens,
-        outputTokens,
-        costMicros,
+        usageVersion: 2,
+        inputTokens: measuredInputTokens,
+        outputTokens: measuredOutputTokens,
+        totalTokens: measuredTotalTokens,
+        costMicros: measuredCostMicros,
         model: modelUsage,
         orchestration: { ...orchestrationUsage, taskCount: tasks.length },
         utility: {
           inputTokens: titleUsage.inputTokens,
           outputTokens: titleUsage.outputTokens,
+          totalTokens: titleUsage.totalTokens,
           costMicros: titleUsage.costMicros,
           purpose: 'conversation_title'
         }
       })
+      if (result.suggestions !== undefined) await this.#appendPresentationEvent(claim, 'suggestions.updated', { suggestions: result.suggestions })
       const pendingProposal = await this.#knex('agentProposals')
         .where({ runId: claim.id })
         .whereIn('status', ['pending', 'approved', 'applying'])
@@ -1465,6 +1618,13 @@ export class AgentProductRuntime {
         issueCodes: completion.issues.map(issue => issue.code)
       })
       const partial = completion.outcome !== 'complete'
+      await persistAgentRunQuotaSettlementIntent(this.#knex, {
+        runId: claim.id,
+        ownerId: claim.ownerId,
+        expected: { statuses: ['running', 'awaiting_approval'], leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken },
+        consumedTokens,
+        consumedCostMicros
+      })
       await terminalizeAgentRun(this.#knex, {
         runId: claim.id,
         ownerId: claim.ownerId,
@@ -1479,14 +1639,15 @@ export class AgentProductRuntime {
         },
         eventData: {},
         quota: {
-          consumedTokens: inputTokens + outputTokens,
-          consumedCostMicros: costMicros,
+          consumedTokens,
+          consumedCostMicros,
           status: 'consumed'
         },
         runPatch: {
-          inputTokens,
-          outputTokens,
-          estimatedCostMicros: costMicros,
+          inputTokens: measuredInputTokens,
+          outputTokens: measuredOutputTokens,
+          totalTokens: measuredTotalTokens,
+          estimatedCostMicros: measuredCostMicros,
           completionOutcome: completion.outcome,
           completionAssessment: encodedCompletion.encoded,
           completionAssessmentSha256: encodedCompletion.sha256
@@ -1495,14 +1656,33 @@ export class AgentProductRuntime {
       quotaReconciled = true
       return { status: partial ? 'partial' : 'succeeded' }
     } catch (error) {
-      const reportedCode =
-        typeof error === 'object' && error !== null && typeof Reflect.get(error, 'code') === 'string' ? String(Reflect.get(error, 'code')) : null
+      if (error instanceof AgentQuotaSettlementError) throw error
+      const normalizedFailure = error instanceof AgentExecutionFailure ? error : null
+      let legacyCode: string | null = null
+      if (normalizedFailure === null && typeof error === 'object' && error !== null) {
+        try {
+          const value: unknown = Reflect.get(error, 'code')
+          if (typeof value === 'string') legacyCode = value
+        } catch {
+          legacyCode = null
+        }
+      }
+      const reportedCode = normalizedFailure?.code ?? legacyCode
       const recoveryRequired = reportedCode === 'AGENT_ACTION_RECOVERY_REQUIRED'
+      const budgetLimited =
+        reportedCode === 'AGENT_BUDGET_LIMITED' || reportedCode === 'AGENT_CHILD_BUDGET_EXCEEDED' || (goalDeadlineAt !== null && goalDeadlineAt <= Date.now())
       const errorCode = recoveryRequired
         ? 'AGENT_ACTION_RECOVERY_REQUIRED'
-        : reportedCode === 'AGENT_BUDGET_LIMITED' || reportedCode === 'AGENT_CHILD_BUDGET_EXCEEDED' || (goalDeadlineAt !== null && goalDeadlineAt <= Date.now())
+        : budgetLimited
           ? 'AGENT_BUDGET_LIMITED'
-          : 'AGENT_ENGINE_FAILED'
+          : (normalizedFailure?.code ?? 'AGENT_ENGINE_FAILED')
+      const failureStage = normalizedFailure?.stage ?? 'unknown'
+      const providerStatus = normalizedFailure?.providerStatus
+      const errorMessage = recoveryRequired
+        ? 'The approved action completed, but its assistant response requires recovery'
+        : budgetLimited
+          ? 'Agent goal budget was exhausted'
+          : 'Agent inference failed'
       let ownsActiveRun = false
       let ownedStatus: string | undefined
       try {
@@ -1526,72 +1706,147 @@ export class AgentProductRuntime {
         if (ownsActiveRun && !quotaReconciled) {
           const telemetry = await this.#orchestrationTelemetry(claim)
           const persistedUsage = {
-            inputTokens: telemetry.usage.inputTokens + telemetry.modelUsage.inputTokens,
-            outputTokens: telemetry.usage.outputTokens + telemetry.modelUsage.outputTokens,
-            costMicros: telemetry.usage.costMicros + telemetry.modelUsage.costMicros
+            inputTokens: safeUsageSum(telemetry.usage.inputTokens, telemetry.modelUsage.inputTokens, 'Persisted input tokens'),
+            outputTokens: safeUsageSum(telemetry.usage.outputTokens, telemetry.modelUsage.outputTokens, 'Persisted output tokens'),
+            totalTokens: safeUsageSum(telemetry.usage.totalTokens, telemetry.modelUsage.totalTokens, 'Persisted total tokens'),
+            costMicros: safeUsageSum(telemetry.usage.costMicros, telemetry.modelUsage.costMicros, 'Persisted cost')
           }
           const dispatchedUsage = dispatchBudget?.consumed
-          const providerUsage =
+          const settledUsage =
             dispatchedUsage === undefined
               ? persistedUsage
-              : {
-                  inputTokens: Math.max(persistedUsage.inputTokens, dispatchedUsage.inputTokens),
-                  outputTokens: Math.max(persistedUsage.outputTokens, dispatchedUsage.outputTokens),
-                  costMicros: Math.max(persistedUsage.costMicros, dispatchedUsage.costMicros)
-                }
-          const consumedTokens = providerUsage.inputTokens + providerUsage.outputTokens
+              : (() => {
+                  const inputTokens = Math.max(persistedUsage.inputTokens, dispatchedUsage.inputTokens)
+                  const outputTokens = Math.max(persistedUsage.outputTokens, dispatchedUsage.outputTokens)
+                  return {
+                    inputTokens,
+                    outputTokens,
+                    totalTokens: Math.max(
+                      persistedUsage.totalTokens,
+                      dispatchedUsage.totalTokens,
+                      safeUsageSum(inputTokens, outputTokens, 'Settled directional tokens')
+                    ),
+                    costMicros: Math.max(persistedUsage.costMicros, dispatchedUsage.costMicros)
+                  }
+                })()
+          assertAgentTokenUsage(settledUsage.inputTokens, settledUsage.outputTokens, settledUsage.totalTokens)
+          const unsettledExposure = dispatchBudget?.unsettledExposure ?? { tokens: 0, costMicros: 0 }
+          const consumedTokens = safeUsageSum(settledUsage.totalTokens, unsettledExposure.tokens, 'Total provider tokens')
+          const consumedCostMicros = safeUsageSum(settledUsage.costMicros, unsettledExposure.costMicros, 'Total provider cost')
+          const unsettledEventData =
+            unsettledExposure.tokens === 0 && unsettledExposure.costMicros === 0
+              ? {}
+              : { unsettledExposure: { tokens: unsettledExposure.tokens, costMicros: unsettledExposure.costMicros } }
+          if (consumedTokens > 0 || consumedCostMicros > 0)
+            await persistAgentRunQuotaSettlementIntent(this.#knex, {
+              runId: claim.id,
+              ownerId: claim.ownerId,
+              expected: { statuses: ['running', 'awaiting_approval'], leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken },
+              consumedTokens,
+              consumedCostMicros
+            })
           await terminalizeAgentRun(this.#knex, {
             runId: claim.id,
             ownerId: claim.ownerId,
             expected: { statuses: ['running', 'awaiting_approval'], leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken },
             status: recoveryRequired ? 'partial' : 'failed',
             assistant: { status: 'failed' },
-            eventData: { errorCode },
+            eventData: {
+              errorCode,
+              errorMessage,
+              failureStage,
+              ...unsettledEventData,
+              ...(providerStatus === undefined ? {} : { providerStatus })
+            },
             quota: {
               consumedTokens,
-              consumedCostMicros: providerUsage.costMicros,
-              status: consumedTokens > 0 || providerUsage.costMicros > 0 ? 'consumed' : 'released'
+              consumedCostMicros,
+              status: consumedTokens > 0 || consumedCostMicros > 0 ? 'consumed' : 'released'
             },
             runPatch: {
-              inputTokens: providerUsage.inputTokens,
-              outputTokens: providerUsage.outputTokens,
-              estimatedCostMicros: providerUsage.costMicros
+              inputTokens: settledUsage.inputTokens,
+              outputTokens: settledUsage.outputTokens,
+              totalTokens: settledUsage.totalTokens,
+              estimatedCostMicros: settledUsage.costMicros
             },
             errorCode,
-            errorMessage: recoveryRequired
-              ? 'The approved action completed, but its assistant response requires recovery'
-              : errorCode === 'AGENT_BUDGET_LIMITED'
-                ? 'Agent goal budget was exhausted'
-                : 'Agent inference failed'
+            errorMessage
           })
           quotaReconciled = true
         }
-      } catch {
-        /* the retention reconciler owns missing/lost reservations */
+      } catch (settlementError) {
+        if (settlementError instanceof AgentQuotaSettlementError) throw settlementError
+        throw settlementError
       }
       if (signal.aborted) throw error
       if (recoveryRequired)
         return {
           status: 'partial',
           errorCode,
-          errorMessage: 'The approved action completed, but its assistant response requires recovery'
+          errorMessage
         }
-      return { status: 'failed', errorCode, errorMessage: errorCode === 'AGENT_BUDGET_LIMITED' ? 'Agent goal budget was exhausted' : 'Agent inference failed' }
+      return { status: 'failed', errorCode, errorMessage }
     } finally {
       clearTimeout(goalDeadlineTimer)
     }
   }
   async #goalUsage(goalId: string): Promise<{ readonly tokens: number; readonly toolCalls: number }> {
-    const runs = (await this.#knex('agentRuns').where({ goalId }).select('id', 'inputTokens', 'outputTokens')) as Array<{
+    const runs = (await this.#knex('agentRuns as runs')
+      .leftJoin('agentQuotaReservations as reservations', function () {
+        this.on('reservations.runId', '=', 'runs.id').andOn('reservations.ownerId', '=', 'runs.ownerId')
+      })
+      .where('runs.goalId', goalId)
+      .select(
+        'runs.id',
+        'runs.ownerId',
+        'runs.status',
+        'runs.totalTokens',
+        'reservations.ownerId as reservationOwnerId',
+        'reservations.reservedTokens as reservationReservedTokens',
+        'reservations.consumedTokens as reservationConsumedTokens',
+        'reservations.status as reservationStatus',
+        'reservations.reconciledAt as reservationReconciledAt'
+      )) as Array<{
       id: string
-      inputTokens: number | string
-      outputTokens: number | string
+      ownerId: number | string
+      status: string
+      totalTokens: number | string
+      reservationOwnerId: number | string | null
+      reservationReservedTokens: number | string | null
+      reservationConsumedTokens: number | string | null
+      reservationStatus: string | null
+      reservationReconciledAt: Date | string | null
     }>
+    let tokens = 0
     const runIds = runs.map(run => run.id)
+    for (const run of runs) {
+      const status = run.status as AgentRunStatus
+      if (!isTerminalAgentRunStatus(status)) {
+        if (!['queued', 'running', 'awaiting_approval'].includes(run.status)) return goalAccountingFailure()
+        const activeTotalTokens = goalAccountingInteger(run.totalTokens)
+        const pendingTokens = run.reservationConsumedTokens === null ? 0 : goalAccountingInteger(run.reservationConsumedTokens)
+        tokens = goalAccountingSum(tokens, Math.max(activeTotalTokens, pendingTokens), 'Goal aggregate token usage')
+        continue
+      }
+      const ownerId = goalAccountingInteger(run.ownerId)
+      if (
+        run.reservationOwnerId === null ||
+        run.reservationOwnerId === undefined ||
+        goalAccountingInteger(run.reservationOwnerId) !== ownerId ||
+        (run.reservationStatus !== 'consumed' && run.reservationStatus !== 'released') ||
+        run.reservationReconciledAt === null ||
+        run.reservationReconciledAt === undefined
+      )
+        return goalAccountingFailure()
+      const totalTokens = goalAccountingInteger(run.totalTokens)
+      const reconciledTokens = goalAccountingInteger(run.reservationConsumedTokens)
+      if (run.reservationStatus === 'released' && reconciledTokens !== 0) return goalAccountingFailure()
+      tokens = goalAccountingSum(tokens, Math.max(totalTokens, reconciledTokens), 'Goal aggregate token usage')
+    }
     const toolCalls =
       runIds.length === 0
         ? 0
-        : Number(
+        : goalAccountingInteger(
             (
               await this.#knex('agentEvents')
                 .whereIn('runId', runIds)
@@ -1600,16 +1855,30 @@ export class AgentProductRuntime {
                 .first()
             )?.count ?? 0
           )
-    return {
-      tokens: runs.reduce((total, run) => total + Number(run.inputTokens) + Number(run.outputTokens), 0),
-      toolCalls
-    }
+    return { tokens, toolCalls }
   }
   async #emitLatestGoalStatus(goal: AgentGoalRecord): Promise<void> {
     const run = (await this.#knex('agentRuns').where({ goalId: goal.id, ownerId: goal.ownerId }).orderBy('goalContinuation', 'desc').first('id', 'attempts')) as
       | { id: string; attempts: number }
       | undefined
     if (run) await emitGoalEvent(this.#knex, { goal, run, type: 'goal.status' })
+  }
+  async #blockGoalForAccounting(goal: AgentGoalRecord): Promise<AgentGoalRecord> {
+    if (goal.status === 'blocked' && goal.errorCode === 'GOAL_ACCOUNTING_UNAVAILABLE') return goal
+    const blocked = await updateGoalStatus(this.#knex, {
+      ownerId: goal.ownerId,
+      goalId: goal.id,
+      expectedVersion: goal.version,
+      from: [goal.status],
+      to: 'blocked',
+      completion: goal.completion,
+      consumedTokens: goal.consumedTokens,
+      consumedToolCalls: goal.consumedToolCalls,
+      errorCode: 'GOAL_ACCOUNTING_UNAVAILABLE',
+      errorMessage: 'Goal accounting must be reconciled before continuation.'
+    })
+    await this.#emitLatestGoalStatus(blocked)
+    return blocked
   }
 
   async #continueGoal(
@@ -1634,7 +1903,14 @@ export class AgentProductRuntime {
       throw new AgentRepositoryError('GOAL_VERSION_CHANGED', 'Agent goal changed concurrently', 409)
     const allowed = input.automatic ? fresh.status === 'active' : fresh.status === 'paused' || fresh.status === 'blocked'
     if (!allowed) throw new AgentRepositoryError('INVALID_GOAL_TRANSITION', 'Agent goal cannot continue from its current state', 409)
-    const usage = await this.#goalUsage(fresh.id)
+    let usage: { readonly tokens: number; readonly toolCalls: number }
+    try {
+      usage = await this.#goalUsage(fresh.id)
+    } catch (error) {
+      if (!(error instanceof AgentRepositoryError) || error.code !== 'AGENT_QUOTA_CORRUPT') throw error
+      const blocked = await this.#blockGoalForAccounting(fresh)
+      return { goal: blocked, run: null, replayed: false }
+    }
     const limitReached =
       fresh.continuationCount >= fresh.maxContinuations ||
       usage.tokens >= fresh.maxTokens ||
@@ -1766,10 +2042,11 @@ export class AgentProductRuntime {
           completedAt: null
         })
       if (changed !== 1) throw new AgentRepositoryError('GOAL_VERSION_CHANGED', 'Agent goal changed concurrently', 409)
-      const initialContext = await transaction('agentEvents as events')
+      const initialContext = (await transaction('agentEvents as events')
         .join('agentRuns as runs', 'runs.id', 'events.runId')
         .where({ 'runs.goalId': locked.id, 'events.type': 'run.queued' })
-        .orderBy('events.createdAt', 'asc').first('events.data') as { data: string } | undefined
+        .orderBy('events.createdAt', 'asc')
+        .first('events.data')) as { data: string } | undefined
       const knowledgeContext = knowledgeContextHint(initialContext?.data)
       const currentPage = currentPageHint(initialContext?.data)
       const result = await admitAgentRunInTransaction(transaction, {
@@ -1870,7 +2147,14 @@ export class AgentProductRuntime {
           }
         | undefined
       if (!latest) throw new AgentRepositoryError('AGENT_GOAL_CORRUPT', 'Agent goal has no run', 500)
-      const usage = await this.#goalUsage(goal.id)
+      let usage: { readonly tokens: number; readonly toolCalls: number }
+      try {
+        usage = await this.#goalUsage(goal.id)
+      } catch (error) {
+        if (!(error instanceof AgentRepositoryError) || error.code !== 'AGENT_QUOTA_CORRUPT') throw error
+        await this.#blockGoalForAccounting(goal)
+        return
+      }
       const completion = decodeCompletionAssessment(latest.completionAssessment, latest.completionOutcome, latest.completionAssessmentSha256)
       if (latest.status === 'succeeded' && completion?.outcome === 'complete') {
         const completed = await updateGoalStatus(this.#knex, {

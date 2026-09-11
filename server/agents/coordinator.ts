@@ -12,6 +12,7 @@ import {
   type AgentTerminalRunStatus
 } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
+import { readAgentUsageEvent } from './providers/usage.ts'
 import { AgentRepositoryError } from './repository.ts'
 
 const ACTIVE_STATUSES: readonly AgentRunStatus[] = ['queued', 'running', 'awaiting_approval']
@@ -162,6 +163,7 @@ export interface AgentRunRecord {
   readonly capabilityRevision: string
   readonly pricingRevision: string
   readonly promptVersion: number
+  readonly totalTokens: number
   readonly attempts: number
   readonly maxAttempts: number
   readonly eventSequence: number
@@ -194,6 +196,7 @@ const runStatus = (value: string): AgentRunStatus => {
 
 const runRecord = (row: RunRow): AgentRunRecord => ({
   ...row,
+  totalTokens: nonNegativeInteger(Number(row.totalTokens), 'Run total tokens'),
   status: runStatus(row.status),
   leaseExpiresAt: row.leaseExpiresAt === null ? null : new Date(row.leaseExpiresAt).toISOString(),
   cancelRequestedAt: row.cancelRequestedAt === null ? null : new Date(row.cancelRequestedAt).toISOString(),
@@ -221,6 +224,39 @@ export interface AgentQuotaRequest {
 const nonNegativeInteger = (value: number, name: string): number => {
   if (!Number.isSafeInteger(value) || value < 0) throw new AgentRepositoryError('INVALID_AGENT_QUOTA', `${name} must be a non-negative safe integer`, 400)
   return value
+}
+export class AgentQuotaSettlementError extends AgentRepositoryError {
+  constructor(message = 'Agent quota settlement requires repair') {
+    super('AGENT_QUOTA_SETTLEMENT_REQUIRED', message, 500)
+  }
+}
+const quotaCorruption = (message: string): never => {
+  throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', message, 500)
+}
+
+const storedQuotaInteger = (value: unknown, name: string): number => {
+  if ((typeof value !== 'number' && typeof value !== 'string') || (typeof value === 'string' && value.trim().length === 0))
+    return quotaCorruption(`${name} is invalid`)
+  let numeric: number
+  try {
+    numeric = Number(value)
+  } catch {
+    return quotaCorruption(`${name} is invalid`)
+  }
+  if (!Number.isSafeInteger(numeric) || numeric < 0) return quotaCorruption(`${name} is invalid`)
+  return numeric
+}
+
+const storedQuotaSum = (left: number, right: number, name: string): number => {
+  const sum = left + right
+  if (!Number.isSafeInteger(sum) || sum < 0) return quotaCorruption(`${name} exceeds the supported range`)
+  return sum
+}
+
+const storedQuotaDifference = (left: number, right: number, name: string): number => {
+  const difference = left - right
+  if (!Number.isSafeInteger(difference) || difference < 0) return quotaCorruption(`${name} is inconsistent`)
+  return difference
 }
 
 const dayKey = (date: Date): string => date.toISOString().slice(0, 10)
@@ -316,12 +352,25 @@ export const ensureAgentRunQuota = async (
   await knex.transaction(async transaction => {
     await acquireAgentCoordinatorAdvisoryLocks(transaction, [ownerId])
     const reservation = (await transaction('agentQuotaReservations').where({ runId, ownerId }).forUpdate().first()) as
-      | { day: string; reservedTokens: number | string; reservedCostMicros: number | string; status: string; expiresAt: Date | string }
+      | {
+          day: string
+          reservedTokens: number | string
+          reservedCostMicros: number | string
+          consumedTokens: number | string
+          consumedCostMicros: number | string
+          status: string
+          expiresAt: Date | string
+          reconciledAt: Date | string | null
+        }
       | undefined
     if (!reservation) throw new AgentRepositoryError('QUOTA_RESERVATION_NOT_FOUND', 'Agent quota reservation was not found', 404)
     if (reservation.status !== 'reserved') throw new AgentRepositoryError('QUOTA_RESERVATION_RECONCILED', 'Agent quota reservation is no longer active', 409)
-    const reservedTokens = Number(reservation.reservedTokens)
-    const reservedCost = Number(reservation.reservedCostMicros)
+    const pendingTokens = storedQuotaInteger(reservation.consumedTokens, 'Stored consumed tokens')
+    const pendingCost = storedQuotaInteger(reservation.consumedCostMicros, 'Stored consumed cost')
+    if (reservation.reconciledAt !== null || pendingTokens !== 0 || pendingCost !== 0)
+      throw new AgentQuotaSettlementError('Agent quota reservation has pending settlement')
+    const reservedTokens = storedQuotaInteger(reservation.reservedTokens, 'Stored reserved tokens')
+    const reservedCost = storedQuotaInteger(reservation.reservedCostMicros, 'Stored reserved cost')
     const additionalTokens = Math.max(0, targetTokens - reservedTokens)
     const additionalCost = Math.max(0, targetCost - reservedCost)
     if (additionalTokens === 0 && additionalCost === 0) return
@@ -363,6 +412,88 @@ export interface ReconcileAgentQuotaInput {
   readonly now?: Date
 }
 
+export interface AgentQuotaSettlementIntent {
+  readonly consumedTokens: number
+  readonly consumedCostMicros: number
+}
+
+export interface PersistAgentQuotaSettlementIntentInput {
+  readonly runId: string
+  readonly ownerId: number
+  readonly consumedTokens: number
+  readonly consumedCostMicros: number
+  readonly expected?: TerminalizeAgentRunExpected
+  readonly now?: Date
+}
+
+interface AgentQuotaReservationRow {
+  readonly day: string
+  readonly reservedTokens: number | string
+  readonly reservedCostMicros: number | string
+  readonly consumedTokens: number | string
+  readonly consumedCostMicros: number | string
+  readonly status: string
+  readonly reconciledAt: Date | string | null
+}
+
+const positiveQuotaSettlement = (intent: AgentQuotaSettlementIntent | null): boolean =>
+  intent !== null && (intent.consumedTokens > 0 || intent.consumedCostMicros > 0)
+
+export const readAgentRunQuotaSettlementIntent = async (
+  knex: Knex | Knex.Transaction,
+  runId: string,
+  ownerId: number
+): Promise<AgentQuotaSettlementIntent | null> => {
+  const reservation = (await knex('agentQuotaReservations')
+    .where({ runId, ownerId })
+    .first('status', 'reconciledAt', 'consumedTokens', 'consumedCostMicros')) as
+    | Pick<AgentQuotaReservationRow, 'consumedTokens' | 'consumedCostMicros' | 'status' | 'reconciledAt'>
+    | undefined
+  if (!reservation) return null
+  const consumedTokens = storedQuotaInteger(reservation.consumedTokens, 'Stored consumed tokens')
+  const consumedCostMicros = storedQuotaInteger(reservation.consumedCostMicros, 'Stored consumed cost')
+  if (reservation.status !== 'reserved' || reservation.reconciledAt !== null) return null
+  return { consumedTokens, consumedCostMicros }
+}
+
+export const persistAgentRunQuotaSettlementIntent = async (knex: Knex, input: PersistAgentQuotaSettlementIntentInput): Promise<void> => {
+  const consumedTokens = nonNegativeInteger(input.consumedTokens, 'Pending consumed tokens')
+  const consumedCostMicros = nonNegativeInteger(input.consumedCostMicros, 'Pending consumed cost')
+  if (consumedTokens === 0 && consumedCostMicros === 0) return
+  const now = input.now ?? new Date()
+  const expected = input.expected
+  if (!expected || !('leaseOwner' in expected) || !('leaseToken' in expected))
+    throw new AgentRepositoryError('RUN_LEASE_LOST', 'An active lease fence is required before quota settlement intent', 409)
+  await knex.transaction(async transaction => {
+    await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
+    const query = transaction<RunRow>('agentRuns').where({ id: input.runId, ownerId: input.ownerId }).whereIn('status', expected.statuses).forUpdate()
+    const row = await query.first('status', 'eventSequence', 'leaseOwner', 'leaseToken')
+    if (!row) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost before quota settlement intent', 409)
+    if (input.expected?.eventSequence !== undefined && Number(row.eventSequence) !== input.expected.eventSequence)
+      throw new AgentRepositoryError('RUN_EVENT_FENCE_CHANGED', 'Agent run event fence changed before quota settlement intent', 409)
+    if ('leaseOwner' in (input.expected ?? {}) && row.leaseOwner !== input.expected?.leaseOwner)
+      throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost before quota settlement intent', 409)
+    if ('leaseToken' in (input.expected ?? {}) && row.leaseToken !== input.expected?.leaseToken)
+      throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost before quota settlement intent', 409)
+    const reservation = (await transaction('agentQuotaReservations').where({ runId: input.runId, ownerId: input.ownerId }).forUpdate().first()) as
+      | AgentQuotaReservationRow
+      | undefined
+    if (!reservation) throw new AgentRepositoryError('QUOTA_RESERVATION_NOT_FOUND', 'Agent quota reservation was not found', 404)
+    const existingTokens = storedQuotaInteger(reservation.consumedTokens, 'Stored consumed tokens')
+    const existingCostMicros = storedQuotaInteger(reservation.consumedCostMicros, 'Stored consumed cost')
+    if (reservation.status !== 'reserved' || reservation.reconciledAt !== null)
+      throw new AgentQuotaSettlementError('Agent quota reservation is no longer pending settlement')
+    const nextTokens = Math.max(existingTokens, consumedTokens)
+    const nextCostMicros = Math.max(existingCostMicros, consumedCostMicros)
+    if (nextTokens === existingTokens && nextCostMicros === existingCostMicros) return
+    const changed = await transaction('agentQuotaReservations')
+      .where({ runId: input.runId, ownerId: input.ownerId, status: 'reserved' })
+      .whereNull('reconciledAt')
+      .update({ consumedTokens: nextTokens, consumedCostMicros: nextCostMicros, heartbeatAt: now })
+    if (changed !== 1) throw new AgentQuotaSettlementError('Agent quota reservation changed before settlement intent was recorded')
+  })
+}
+
 interface ReconcileAgentQuotaOptions {
   readonly allowMissing?: boolean
   readonly acceptAnyReconciled?: boolean
@@ -379,50 +510,80 @@ const reconcileAgentRunQuotaInTransaction = async (
   const now = input.now ?? new Date()
   if (options.advisoryLocksHeld !== true) await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
   const reservation = (await transaction('agentQuotaReservations').where({ runId: input.runId, ownerId: input.ownerId }).forUpdate().first()) as
-    | {
-        day: string
-        reservedTokens: number | string
-        reservedCostMicros: number | string
-        consumedTokens: number | string
-        consumedCostMicros: number | string
-        status: string
-      }
+    | AgentQuotaReservationRow
     | undefined
   if (!reservation) {
     if (options.allowMissing === true) return
     throw new AgentRepositoryError('QUOTA_RESERVATION_NOT_FOUND', 'Agent quota reservation was not found', 404)
   }
+  const reservedTokens = storedQuotaInteger(reservation.reservedTokens, 'Stored reserved tokens')
+  const reservedCost = storedQuotaInteger(reservation.reservedCostMicros, 'Stored reserved cost')
+  const reconciledTokens = storedQuotaInteger(reservation.consumedTokens, 'Stored consumed tokens')
+  const reconciledCost = storedQuotaInteger(reservation.consumedCostMicros, 'Stored consumed cost')
+  const pending = reservation.status === 'reserved' && reservation.reconciledAt === null
+  if (reservation.status === 'released' && (reconciledTokens !== 0 || reconciledCost !== 0))
+    return quotaCorruption('Released quota reservation contains consumption')
+  if (reservation.status === 'reserved' && reservation.reconciledAt !== null)
+    throw new AgentQuotaSettlementError('Agent quota reservation has an invalid settlement boundary')
   if (reservation.status !== 'reserved') {
     if (options.acceptAnyReconciled === true) return
-    if (reservation.status === input.status && Number(reservation.consumedTokens) === consumedTokens && Number(reservation.consumedCostMicros) === consumedCost)
-      return
+    if (reservation.status === input.status && reconciledTokens === consumedTokens && reconciledCost === consumedCost) return
     throw new AgentRepositoryError('QUOTA_RESERVATION_RECONCILED', 'Agent quota reservation was already reconciled differently', 409)
   }
   if (input.status === 'released' && (consumedTokens !== 0 || consumedCost !== 0))
     throw new AgentRepositoryError('INVALID_AGENT_QUOTA', 'Released quota cannot record consumption', 400)
-  const daily = (await transaction('agentQuotaDaily').where({ ownerId: input.ownerId, day: reservation.day }).forUpdate().first()) as
+  if (pending && input.status === 'released' && (reconciledTokens !== 0 || reconciledCost !== 0))
+    throw new AgentQuotaSettlementError('Pending quota settlement cannot be released')
+  if (pending && (consumedTokens < reconciledTokens || consumedCost < reconciledCost))
+    throw new AgentQuotaSettlementError('Final quota settlement is below its durable pending usage')
+  let daily:
     | { reservedTokens: number | string; consumedTokens: number | string; reservedCostMicros: number | string; consumedCostMicros: number | string }
     | undefined
-  if (!daily) throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota row is missing', 500)
-  const reservedTokens = Number(reservation.reservedTokens)
-  const reservedCost = Number(reservation.reservedCostMicros)
-  if (consumedTokens > reservedTokens || consumedCost > reservedCost)
-    throw new AgentRepositoryError('QUOTA_RESERVATION_EXCEEDED', 'Agent usage exceeds its held quota reservation', 409)
-  if (Number(daily.reservedTokens) < reservedTokens || Number(daily.reservedCostMicros) < reservedCost)
-    throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota counters are inconsistent', 500)
-  await transaction('agentQuotaDaily')
-    .where({ ownerId: input.ownerId, day: reservation.day })
-    .update({
-      reservedTokens: Number(daily.reservedTokens) - reservedTokens,
-      consumedTokens: Number(daily.consumedTokens) + consumedTokens,
-      reservedCostMicros: Number(daily.reservedCostMicros) - reservedCost,
-      consumedCostMicros: Number(daily.consumedCostMicros) + consumedCost,
-      updatedAt: now
-    })
+  let nextDailyReservedTokens: number
+  let nextDailyConsumedTokens: number
+  let nextDailyReservedCost: number
+  let nextDailyConsumedCost: number
+  try {
+    daily = (await transaction('agentQuotaDaily').where({ ownerId: input.ownerId, day: reservation.day }).forUpdate().first()) as
+      | { reservedTokens: number | string; consumedTokens: number | string; reservedCostMicros: number | string; consumedCostMicros: number | string }
+      | undefined
+    if (!daily) throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota row is missing', 500)
+    const dailyReservedTokens = storedQuotaInteger(daily.reservedTokens, 'Stored daily reserved tokens')
+    const dailyConsumedTokens = storedQuotaInteger(daily.consumedTokens, 'Stored daily consumed tokens')
+    const dailyReservedCost = storedQuotaInteger(daily.reservedCostMicros, 'Stored daily reserved cost')
+    const dailyConsumedCost = storedQuotaInteger(daily.consumedCostMicros, 'Stored daily consumed cost')
+    if (dailyReservedTokens < reservedTokens || dailyReservedCost < reservedCost)
+      throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota counters are inconsistent', 500)
+    nextDailyReservedTokens = storedQuotaDifference(dailyReservedTokens, reservedTokens, 'Daily reserved tokens')
+    nextDailyConsumedTokens = storedQuotaSum(dailyConsumedTokens, consumedTokens, 'Daily consumed tokens')
+    nextDailyReservedCost = storedQuotaDifference(dailyReservedCost, reservedCost, 'Daily reserved cost')
+    nextDailyConsumedCost = storedQuotaSum(dailyConsumedCost, consumedCost, 'Daily consumed cost')
+  } catch (error) {
+    if (positiveQuotaSettlement(pending ? { consumedTokens: reconciledTokens, consumedCostMicros: reconciledCost } : null))
+      throw new AgentQuotaSettlementError('Agent quota settlement requires repair before final accounting')
+    throw error
+  }
+  const dailyChanged = await transaction('agentQuotaDaily').where({ ownerId: input.ownerId, day: reservation.day }).update({
+    reservedTokens: nextDailyReservedTokens,
+    consumedTokens: nextDailyConsumedTokens,
+    reservedCostMicros: nextDailyReservedCost,
+    consumedCostMicros: nextDailyConsumedCost,
+    updatedAt: now
+  })
+  if (dailyChanged !== 1) {
+    if (positiveQuotaSettlement(pending ? { consumedTokens: reconciledTokens, consumedCostMicros: reconciledCost } : null))
+      throw new AgentQuotaSettlementError('Agent daily quota changed before final accounting')
+    throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota changed concurrently', 500)
+  }
   const changed = await transaction('agentQuotaReservations')
     .where({ runId: input.runId, ownerId: input.ownerId, status: 'reserved' })
+    .whereNull('reconciledAt')
     .update({ status: input.status, consumedTokens, consumedCostMicros: consumedCost, reconciledAt: now, heartbeatAt: now })
-  if (changed !== 1) throw new AgentRepositoryError('QUOTA_RESERVATION_RECONCILED', 'Agent quota reservation changed concurrently', 409)
+  if (changed !== 1) {
+    if (positiveQuotaSettlement(pending ? { consumedTokens: reconciledTokens, consumedCostMicros: reconciledCost } : null))
+      throw new AgentQuotaSettlementError('Agent quota reservation changed before final accounting')
+    throw new AgentRepositoryError('QUOTA_RESERVATION_RECONCILED', 'Agent quota reservation changed concurrently', 409)
+  }
 }
 
 export const reconcileAgentRunQuota = async (knex: Knex, input: ReconcileAgentQuotaInput): Promise<void> =>
@@ -491,8 +652,17 @@ const nextMessageOrdinal = async (transaction: Knex.Transaction, sessionId: stri
   return Number(latest?.ordinal ?? 0) + 1
 }
 
-const queuedEventData = (runId: string, currentPage?: Readonly<Record<string, unknown>>, knowledgeContext?: AgentKnowledgeContext): { data: string; dataSha256: string } => {
-  const value: AgentEventData = { runId, status: 'queued', ...(currentPage === undefined ? {} : { currentPage }), ...(knowledgeContext === undefined ? {} : { knowledgeContext }) }
+const queuedEventData = (
+  runId: string,
+  currentPage?: Readonly<Record<string, unknown>>,
+  knowledgeContext?: AgentKnowledgeContext
+): { data: string; dataSha256: string } => {
+  const value: AgentEventData = {
+    runId,
+    status: 'queued',
+    ...(currentPage === undefined ? {} : { currentPage }),
+    ...(knowledgeContext === undefined ? {} : { knowledgeContext })
+  }
   const data = canonicalJson(value)
   return { data, dataSha256: sha256(data) }
 }
@@ -594,6 +764,7 @@ export const admitAgentRunInTransaction = async (
     promptVersion: input.promptVersion,
     inputTokens: 0,
     outputTokens: 0,
+    totalTokens: 0,
     estimatedCostMicros: null,
     completionOutcome: null,
     completionAssessment: null,
@@ -656,6 +827,7 @@ export interface TerminalizeAgentAssistantInput {
 export interface TerminalizeAgentRunPatch {
   readonly inputTokens?: number
   readonly outputTokens?: number
+  readonly totalTokens?: number
   readonly estimatedCostMicros?: number | null
   readonly completionOutcome?: string | null
   readonly completionAssessment?: string | null
@@ -708,13 +880,13 @@ const assertTerminalMessageStatus = (runStatus: AgentTerminalRunStatus, messageS
   if (!valid) throw new AgentRepositoryError('INVALID_TERMINAL_MESSAGE_STATUS', 'Assistant message status is inconsistent with the terminal run', 400)
 }
 
-const persistedAgentRunUsage = async (transaction: Knex.Transaction, runId: string): Promise<{ readonly tokens: number; readonly costMicros: number }> => {
+const persistedAgentRunUsage = async (transaction: Knex.Transaction, runId: string): Promise<{ readonly totalTokens: number; readonly costMicros: number }> => {
   const rows = (await transaction('agentEvents')
     .where({ runId })
     .whereIn('type', ['task.planCreated', 'model.turn', 'usage.updated'])
     .orderBy('sequence')
     .select('type', 'data', 'dataSha256')) as Array<{ type: 'task.planCreated' | 'model.turn' | 'usage.updated'; data: string; dataSha256: string }>
-  let tokens = 0
+  let totalTokens = 0
   let costMicros = 0
   for (const row of rows) {
     if (sha256(row.data) !== row.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored agent usage event hash is invalid', 500)
@@ -726,18 +898,21 @@ const persistedAgentRunUsage = async (transaction: Knex.Transaction, runId: stri
     }
     if (typeof data !== 'object' || data === null || Array.isArray(data))
       throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored agent usage event data is invalid', 500)
-    const inputTokens = nonNegativeInteger(Number(Reflect.get(data, 'inputTokens')), 'Persisted input tokens')
-    const outputTokens = nonNegativeInteger(Number(Reflect.get(data, 'outputTokens')), 'Persisted output tokens')
-    const eventCostMicros = nonNegativeInteger(Number(Reflect.get(data, 'costMicros') ?? 0), 'Persisted cost')
+    let usage
+    try {
+      usage = readAgentUsageEvent(data as AgentEventData)
+    } catch {
+      throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored agent usage event usage is invalid', 500)
+    }
     if (row.type === 'usage.updated') {
-      tokens = nonNegativeInteger(inputTokens + outputTokens, 'Persisted token usage')
-      costMicros = eventCostMicros
+      totalTokens = usage.totalTokens
+      costMicros = usage.costMicros
     } else {
-      tokens = nonNegativeInteger(tokens + inputTokens + outputTokens, 'Persisted token usage')
-      costMicros = nonNegativeInteger(costMicros + eventCostMicros, 'Persisted cost usage')
+      totalTokens = storedQuotaSum(totalTokens, usage.totalTokens, 'Persisted token usage')
+      costMicros = storedQuotaSum(costMicros, usage.costMicros, 'Persisted cost usage')
     }
   }
-  return { tokens, costMicros }
+  return { totalTokens, costMicros }
 }
 
 export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transaction, input: TerminalizeAgentRunInput): Promise<AgentRunRecord> => {
@@ -761,6 +936,26 @@ export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transac
       (('leaseOwner' in expected && row.leaseOwner !== expected.leaseOwner) || ('leaseToken' in expected && row.leaseToken !== expected.leaseToken))
     )
       throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost', 409)
+    if (input.quota === undefined) {
+      const pendingIntent = await readAgentRunQuotaSettlementIntent(transaction, row.id, row.ownerId)
+      if (pendingIntent !== null) {
+        const usage = await persistedAgentRunUsage(transaction, row.id)
+        const consumedTokens = Math.max(usage.totalTokens, pendingIntent.consumedTokens)
+        const consumedCostMicros = Math.max(usage.costMicros, pendingIntent.consumedCostMicros)
+        await reconcileAgentRunQuotaInTransaction(
+          transaction,
+          {
+            runId: row.id,
+            ownerId: row.ownerId,
+            consumedTokens,
+            consumedCostMicros,
+            status: consumedTokens > 0 || consumedCostMicros > 0 ? 'consumed' : 'released',
+            now
+          },
+          { allowMissing: true, acceptAnyReconciled: true, advisoryLocksHeld: true }
+        )
+      }
+    }
     return runRecord(row)
   }
   if (!expected || !expected.statuses.includes(currentStatus as 'queued' | 'running' | 'awaiting_approval'))
@@ -826,6 +1021,7 @@ export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transac
   if (status === 'cancelled') runPatch.cancelRequestedAt = row.cancelRequestedAt ?? input.cancelRequestedAt ?? now
   if (input.runPatch?.inputTokens !== undefined) runPatch.inputTokens = nonNegativeInteger(input.runPatch.inputTokens, 'Run input tokens')
   if (input.runPatch?.outputTokens !== undefined) runPatch.outputTokens = nonNegativeInteger(input.runPatch.outputTokens, 'Run output tokens')
+  if (input.runPatch?.totalTokens !== undefined) runPatch.totalTokens = nonNegativeInteger(input.runPatch.totalTokens, 'Run total tokens')
   if (input.runPatch?.estimatedCostMicros !== undefined)
     runPatch.estimatedCostMicros =
       input.runPatch.estimatedCostMicros === null ? null : nonNegativeInteger(input.runPatch.estimatedCostMicros, 'Run estimated cost')
@@ -840,12 +1036,15 @@ export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transac
   if (changed !== 1) throw new AgentRepositoryError('RUN_TERMINAL_FENCE_CHANGED', 'Agent run changed during terminalization', 409)
 
   const persistedUsage = input.quota === undefined ? await persistedAgentRunUsage(transaction, row.id) : null
+  const persistedIntent = input.quota === undefined ? await readAgentRunQuotaSettlementIntent(transaction, row.id, row.ownerId) : null
+  const persistedTokens = Math.max(persistedUsage?.totalTokens ?? 0, persistedIntent?.consumedTokens ?? 0)
+  const persistedCostMicros = Math.max(persistedUsage?.costMicros ?? 0, persistedIntent?.consumedCostMicros ?? 0)
   const quota =
     input.quota ??
     ({
-      consumedTokens: persistedUsage?.tokens ?? 0,
-      consumedCostMicros: persistedUsage?.costMicros ?? 0,
-      status: (persistedUsage?.tokens ?? 0) > 0 || (persistedUsage?.costMicros ?? 0) > 0 ? 'consumed' : 'released'
+      consumedTokens: persistedTokens,
+      consumedCostMicros: persistedCostMicros,
+      status: persistedTokens > 0 || persistedCostMicros > 0 ? 'consumed' : 'released'
     } as const)
   await reconcileAgentRunQuotaInTransaction(
     transaction,
@@ -1074,6 +1273,18 @@ interface ActiveLeaseCounts {
   readonly byOwner: Map<number, number>
 }
 
+export const excludeAgentRunsWithPendingQuotaSettlement = (query: Knex.QueryBuilder, db: Knex | Knex.Transaction): void => {
+  query.whereNotExists(function pendingQuotaSettlement() {
+    this.select(db.raw('1'))
+      .from('agentQuotaReservations as pendingQuotaReservations')
+      .where('pendingQuotaReservations.runId', db.ref('agentRuns.id'))
+      .andWhere('pendingQuotaReservations.ownerId', db.ref('agentRuns.ownerId'))
+      .andWhere('pendingQuotaReservations.status', 'reserved')
+      .whereNull('pendingQuotaReservations.reconciledAt')
+      .andWhere(pending => pending.where('pendingQuotaReservations.consumedTokens', '>', 0).orWhere('pendingQuotaReservations.consumedCostMicros', '>', 0))
+  })
+}
+
 const activeLeaseCounts = async (transaction: Knex.Transaction, now: Date, globalConcurrency: number): Promise<ActiveLeaseCounts> => {
   const rows = await transaction('agentRuns')
     .where({ status: 'running' })
@@ -1134,6 +1345,7 @@ export const claimAgentRun = async (knex: Knex, options: ClaimAgentRunOptions): 
           .orWhere(subquery => subquery.whereIn('status', ['running', 'awaiting_approval']).andWhere('leaseExpiresAt', '<=', now))
       )
       .whereNull('cancelRequestedAt')
+      .modify(query => excludeAgentRunsWithPendingQuotaSettlement(query, transaction))
       .modify(query => {
         if (saturatedOwnerIds.length > 0) {
           query.where(eligible =>
@@ -1145,6 +1357,8 @@ export const claimAgentRun = async (knex: Knex, options: ClaimAgentRunOptions): 
       .orderBy('queuedAt')
       .limit(32)
     for (const candidate of candidates) {
+      const pendingIntent = await readAgentRunQuotaSettlementIntent(transaction, candidate.id, candidate.ownerId)
+      if (positiveQuotaSettlement(pendingIntent)) continue
       if (candidate.status === 'running' && candidate.sideEffectsStarted) {
         await recoveryLostSideEffect(transaction, candidate, now)
         continue
@@ -1371,6 +1585,7 @@ export class AgentRunCoordinator {
         })
       }
     } catch (error) {
+      if (error instanceof AgentQuotaSettlementError) throw error
       try {
         const current = await currentClaimState(this.#knex, claim)
         if (current.cancelRequestedAt !== null) {

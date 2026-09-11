@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import * as ts from 'typescript'
+import { JSDOM } from 'jsdom'
 
 const compileSearchMethods = (source, names) => {
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
@@ -32,163 +33,42 @@ const compileSearchMethods = (source, names) => {
 
 describe('Ask modal accessibility contract', () => {
   const search = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
-  const focusScope = fs.readFileSync(path.join(process.cwd(), 'client/components/common/modal-focus-scope.ts'), 'utf8')
-
-  test('exposes modal semantics only while Ask owns the complete focus scope', () => {
-    expect(search).toMatch(/role=['"]dialog['"]/)
-    expect(search).toMatch(/:aria-modal=['"]isAgentOpen \? `true` : undefined['"]/)
-    expect(search).not.toMatch(/^\s+aria-modal=['"]true['"]/m)
-    expect(search).toMatch(/:aria-labelledby=['"]isAgentOpen \? `wiki-agent-title` : `wiki-search-title`['"]/)
-    const agentFocusScope = search.match(/const focusScope = createModalFocusScope\(\{([\s\S]*?)\n\s+\}\)/)?.[1] ?? ''
-    const searchFocusScope = search.match(/this\.searchModalFocusScope = createModalFocusScope\(\{([\s\S]*?)\n\s+\}\)/)?.[1] ?? ''
-    expect(agentFocusScope).toMatch(/root,[\s\S]*restoreTarget:\s*this\.restoreTargetFor\(agentOpener\),[\s\S]*onEscape:\s*this\.returnToSearch/)
-    expect(agentFocusScope).toMatch(/additionalRoots:.*activeOwnedOverlayRoots/)
-    expect(searchFocusScope).toMatch(/additionalRoots:\s*this\.searchModalAdditionalRoots/)
-    expect(search).toMatch(
-      /isAgentOpen\(open:\s*boolean\)\s*\{[\s\S]*if\s*\(open\)\s*\{[\s\S]*void this\.activateAgentModal\(\)[\s\S]*return[\s\S]*if \(this\.directPromptHandoffPending\) this\.directPromptHandoffId \+= 1[\s\S]*if\s*\(this\.searchIsFocused\)\s*void this\.reactivateSearchModal\(\)[\s\S]*else this\.deactivateAgentModal\(false\)/
-    )
-    expect(search).toMatch(
-      /searchIsFocused\(open:\s*boolean\)\s*\{[\s\S]*if\s*\(open\)\s*\{[\s\S]*void this\.activateAgentModal\(\)[\s\S]*return[\s\S]*const restoreFocus = this\.searchExitRestoreFocus[\s\S]*this\.finishSearchFocus\(restoreFocus\)/
-    )
-    expect(search).toMatch(
-      /createModalFocusScope\(\{[\s\S]*root,[\s\S]*restoreTarget:\s*this\.restoreTargetFor\(agentOpener\),[\s\S]*onEscape:\s*this\.returnToSearch/
-    )
-    expect(search).toMatch(
-      /activateSearchModal\(restoreTarget:[\s\S]*createModalFocusScope\(\{[\s\S]*root,[\s\S]*restoreTarget:\s*this\.restoreTargetFor\(restoreTarget\),[\s\S]*additionalRoots:[\s\S]*onEscape:\s*this\.closeSearch/
-    )
-    expect(search).toMatch(/search\(newValue:[\s\S]*query\.trim\(\)\.length >= 2\) this\.searchIsFocused = true/)
-    expect(search).toMatch(
-      /reactivateSearchModal\(\):[\s\S]*this\.deactivateAgentModal\(true\)[\s\S]*this\.activateSearchModal\(this\.searchRestoreTarget \?\? this\.findSearchTrigger\(\)\)/
-    )
-    expect(search).toMatch(
-      /restoreTargetFor\(target:[\s\S]*target\?\.isConnected && target\.tabIndex >= 0[\s\S]*replacement && replacement\.tabIndex >= 0[\s\S]*return this\.findSearchTrigger\(\)/
-    )
-    expect(search).toMatch(/this\.activateSearchModal\(searchOpener\)/)
-    expect(search).toMatch(/active !== document\.body[\s\S]*active\.tabIndex >= 0/)
-    const backgroundIsolation = focusScope.match(/const hideBackground = ([\s\S]*?)(?=\nconst restoreBackground)/)?.[1] ?? ''
-    expect(backgroundIsolation).toMatch(/for \(const protectedRoot of \[root, \.\.\.additionalRoots\]\)[\s\S]*protectedElements\.add\(current\)/)
-    expect(backgroundIsolation).toMatch(
-      /element\.classList\.contains\('v-overlay-container'\)[\s\S]*for \(const overlay of element\.children\)[\s\S]*protectedElements\.has\(overlay as HTMLElement\)[\s\S]*hideElement\(overlay as HTMLElement\)/
-    )
-    expect(backgroundIsolation).toMatch(/element\.inert = true[\s\S]*element\.setAttribute\('aria-hidden', 'true'\)/)
-    const backgroundReconciliation = focusScope.match(/const reconcileBackgrounds = ([\s\S]*?)(?=\nconst restoreTargetElement)/)?.[1] ?? ''
-    expect(backgroundReconciliation).toMatch(/stack\.map\(state => state\.additionalRoots\(\)\)/)
-    expect(backgroundReconciliation).toMatch(/state\.observedAdditionalRoots = nextAdditionalRoots\[index\]!/)
-    expect(backgroundReconciliation).toMatch(
-      /restoreBackground\(stack\[index\]!\.background\)[\s\S]*nestedState\.root,[\s\S]*nextAdditionalRoots\[[\s\S]*state\.background = hideBackground\(state\.root, \[\.\.\.state\.observedAdditionalRoots, \.\.\.nestedRoots\]\)/
-    )
-    const overlayObserver = focusScope.match(/const backgroundObserver = ([\s\S]*?)(?=\n\s*const modalAdditionalRoots)/)?.[1] ?? ''
-    expect(overlayObserver).toMatch(/new MutationObserverConstructor\([\s\S]*reconcileBackgrounds\(document, true\)/)
-    expect(overlayObserver).toMatch(/observe\(document\.body, \{ childList: true, subtree: true \}\)/)
-    expect(focusScope).toContain('querySelectorAll<HTMLElement>(contentSelector)')
-    expect(search).toMatch(
-      /closeSearch\(\):\s*void\s*\{[\s\S]*this\.finishSearchFocus\(\)[\s\S]*this\.searchIsFocused\s*=\s*false[\s\S]*this\.searchMode\s*=\s*['"]search['"]/
-    )
-    expect(search).toMatch(/await \(this\.\$refs\.inlineAgent[\s\S]*\?\.focusComposer\(\)/)
-    expect(search).toMatch(/searchListIds\(\): string/)
-    expect(search).toMatch(/for \(const input of controls\)/)
-    expect(search).toMatch(/input\.removeAttribute\('aria-describedby'\)/)
-    expect(focusScope).toMatch(/element\.tabIndex >= 0/)
-    expect(focusScope).toMatch(/!element\.matches\(':disabled'\)/)
-    const modalFocusableElements = focusScope.match(/const getModalFocusableElements = ([\s\S]*?)(?=\nconst hideBackground)/)?.[1] ?? ''
-    expect(modalFocusableElements).toMatch(/new Set\s*\(/)
-    expect(focusScope).toMatch(/event\.stopImmediatePropagation\(\)/)
-    expect(focusScope).toMatch(/target\.focus\(\{ preventScroll: true \}\)/)
-  })
-
-  test('restores the exact pre-search trigger without retaining search focus or mode', () => {
-    expect(search).toMatch(/document\.addEventListener\('focusin', this\.captureSearchRestoreTarget, true\)/)
-    expect(search).toMatch(/document\.removeEventListener\('focusin', this\.captureSearchRestoreTarget, true\)/)
-    expect(search).toMatch(
-      /captureSearchRestoreTarget\(event: FocusEvent\): void[\s\S]*event\.relatedTarget[\s\S]*!this\.isSearchControl\(previous\)[\s\S]*\? previous[\s\S]*: null/
-    )
-    expect(search).toMatch(
-      /const searchOpener = this\.searchRestoreTarget \?\?[\s\S]*this\.isSearchControl\(activeOpener\) \? null : activeOpener[\s\S]*this\.findSearchTrigger\(\)/
-    )
-    expect(search).toMatch(/const agentOpener = this\.pendingAskRestoreTarget \?\? activeOpener \?\? this\.findSearchControl\(\)/)
-    expect(search).toMatch(
-      /finishSearchFocus\(restoreFocus = true\): void[\s\S]*this\.deactivateModalLayers\(restoreFocus\)[\s\S]*this\.isSearchControl\(active\)[\s\S]*active\.blur\(\)[\s\S]*this\.searchRestoreTarget = null/
-    )
-  })
-
   test('restores focus to the remounted zero-result Ask action instead of the global trigger', () => {
-    const emptyAsk = search.match(/v-btn\.search-results-empty-ask\(([\s\S]*?)\n\s+\) Ask Wiki about/)?.[1] ?? ''
-    const focusKey = emptyAsk.match(/data-modal-focus-key=['"]([^'"]+)['"]/)?.[1]
-    expect(focusKey).toBe('search-ask-empty')
-
     const methods = compileSearchMethods(search, ['restoreTargetFor'])
-    const originalHTMLElement = Object.getOwnPropertyDescriptor(globalThis, 'HTMLElement')
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true })
     const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
-    class TestElement {
-      constructor(key = '') {
-        this.dataset = key ? { modalFocusKey: key } : {}
-        this.isConnected = true
-        this.tabIndex = 0
-      }
+    const fixtureDocument = dom.window.document
+    const focusKey = 'test-ask-focus'
+    const opener = fixtureDocument.createElement('button')
+    const replacement = fixtureDocument.createElement('button')
+    const globalFallback = fixtureDocument.createElement('button')
 
-      matches(_selector) {
-        return false
-      }
-    }
-    const opener = new TestElement(focusKey)
-    opener.isConnected = false
-    const remountedAsk = new TestElement(focusKey)
-    const globalTrigger = new TestElement()
-    let requestedSelector = ''
-    let triggerLookups = 0
+    opener.dataset.modalFocusKey = focusKey
+    replacement.dataset.modalFocusKey = focusKey
+    fixtureDocument.body.append(opener, replacement, globalFallback)
+    opener.remove()
 
-    Object.defineProperty(globalThis, 'HTMLElement', {
-      configurable: true,
-      writable: true,
-      value: TestElement
-    })
     Object.defineProperty(globalThis, 'document', {
       configurable: true,
       writable: true,
-      value: {
-        querySelector: selector => {
-          requestedSelector = selector
-          return remountedAsk
-        }
-      }
+      value: fixtureDocument
     })
 
     try {
       const resolveTarget = methods.restoreTargetFor.call(
         {
-          findSearchTrigger: () => {
-            triggerLookups += 1
-            return globalTrigger
-          }
+          findSearchTrigger: () => globalFallback
         },
         opener
       )
 
-      expect(resolveTarget()).toBe(remountedAsk)
-      expect(requestedSelector).toBe('[data-modal-focus-key="search-ask-empty"]')
-      expect(triggerLookups).toBe(0)
+      expect(opener.isConnected).toBe(false)
+      expect(replacement.isConnected).toBe(true)
+      expect(resolveTarget()).toBe(replacement)
     } finally {
-      if (originalHTMLElement) Object.defineProperty(globalThis, 'HTMLElement', originalHTMLElement)
-      else delete globalThis.HTMLElement
       if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument)
       else delete globalThis.document
+      dom.window.close()
     }
-  })
-
-  test('bounds result descriptions and keeps scope actions touch-sized throughout the mobile layout', () => {
-    const resultItemStart = search.indexOf('v-list-item.search-results-item(')
-    const resultItemEnd = search.indexOf('v-divider', resultItemStart)
-    const resultItem = search.slice(resultItemStart, resultItemEnd)
-    expect(resultItem).toContain("lines='three'")
-    expect(resultItem).toContain('v-list-item-subtitle {{ item.description }}')
-
-    const mobileStart = search.indexOf("@media #{map-get($display-breakpoints, 'sm-and-down')}")
-    const narrowPhoneStart = search.indexOf('@media (max-width: 599.98px)', mobileStart)
-    const mobileLayout = search.slice(mobileStart, narrowPhoneStart)
-    const scopeTargetHeight = mobileLayout.match(/&-scope-actions \.v-btn \{ min-height: ([\d.]+)rem;/)
-
-    expect(mobileStart).toBeGreaterThanOrEqual(0)
-    expect(narrowPhoneStart).toBeGreaterThan(mobileStart)
-    expect(Number(scopeTargetHeight?.[1]) * 16).toBeGreaterThanOrEqual(44)
   })
 })

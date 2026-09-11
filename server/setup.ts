@@ -1,24 +1,22 @@
-import path from 'node:path'
-import { randomUUID, generateKeyPairSync, randomBytes } from 'node:crypto'
-import { promisify } from 'node:util'
+import { generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto'
+import http from 'node:http'
 import type { Socket } from 'node:net'
+import path from 'node:path'
+import { promisify } from 'node:util'
+import bcrypt from 'bcryptjs-then'
 import compression from 'compression'
 import express, { type ErrorRequestHandler } from 'express'
-import favicon from 'serve-favicon'
-import http from 'node:http'
 import fs from 'fs-extra'
 import _ from 'lodash'
 import pemJwk from 'pem-jwk'
-import semver from 'semver'
-import bcrypt from 'bcryptjs-then'
-import { newPasswordIssue } from '../shared/security-policy.ts'
-
-import viteAssets from './helpers/vite-assets.ts'
-import system from './core/system.ts'
-
-import type { ProductMetadata } from '../shared/product.ts'
+import favicon from 'serve-favicon'
 import { BUILTIN_CONTENT_EXTENSIONS } from '../shared/content-extensions.ts'
+import type { ProductMetadata } from '../shared/product.ts'
+import { newPasswordIssue } from '../shared/security-policy.ts'
 import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../shared/theme-colors.ts'
+import system from './core/system.ts'
+import viteAssets from './helpers/vite-assets.ts'
+
 const { collectEntry } = viteAssets
 const randomBytesAsync = promisify(randomBytes)
 const { pem2jwk } = pemJwk
@@ -216,11 +214,6 @@ export default function startSetup(): Promise<void> {
         injectBody: ''
       })
       _.set(wiki.config, 'title', wiki.product.name)
-
-      const bunVersion = process.versions.bun
-      if (!bunVersion || !semver.satisfies(bunVersion, '>=1.4.0 <2')) {
-        throw new Error('Bun 1.4.0 or later, but before Bun 2, is required!')
-      }
 
       wiki.logger.info('Creating data directories...')
       await fs.ensureDir(path.resolve(wiki.ROOTPATH, wiki.config.dataPath))

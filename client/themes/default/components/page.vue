@@ -1355,11 +1355,14 @@ export default defineComponent({
       lastSampledRailTop: -1,
       railSettleHandler: null as (() => void) | null,
       lastRailMaxHeight: -1,
+      lastRailAlignmentOffset: null as number | null,
+      railAlignmentDirty: true,
       railStickyTop: 80,
       railSpacingGap: 8,
       cachedRailEl: null as HTMLElement | null,
       navFooterEl: null as HTMLElement | null,
       cachedHeaderEl: null as HTMLElement | null,
+      cachedTitleEl: null as HTMLElement | null,
       railResizeObserver: null as ResizeObserver | null
     }
   },
@@ -1538,7 +1541,9 @@ export default defineComponent({
       }
     },
     tocPosition () {
+      this.resetDesktopRailMeasurementState()
       this.$nextTick(() => {
+        this.setupDesktopRailObserver()
         this.updateDesktopRailMeasurements(true)
         this.startDesktopRailSettling()
       })
@@ -1550,6 +1555,7 @@ export default defineComponent({
         this.syncPageStore()
         this.resetPageRouteState()
         await this.$nextTick()
+        this.setupDesktopRailObserver()
         this.refreshPageContent()
         this.updateDesktopRailMeasurements(true)
         this.startDesktopRailSettling()
@@ -1587,6 +1593,7 @@ export default defineComponent({
     // -> Check side navigation visibility
     this.handleSideNavVisibility()
     this.resizeHandler = () => {
+      this.markDesktopRailAlignmentDirty()
       this.handleSideNavVisibility()
       this.updateDesktopRailMeasurements(true)
       this.startDesktopRailSettling()
@@ -1644,6 +1651,7 @@ export default defineComponent({
     this.railSettleHandler = null
     if (this.cachedRailEl) {
       this.cachedRailEl.style.removeProperty('--page-desktop-rail-max-height')
+      this.cachedRailEl.style.removeProperty('--page-desktop-rail-align-offset')
       this.cachedRailEl = null
     }
     this.navFooterEl = null
@@ -1652,6 +1660,9 @@ export default defineComponent({
       this.railResizeObserver = null
     }
     this.cachedHeaderEl = null
+    this.cachedTitleEl = null
+    this.lastRailAlignmentOffset = null
+    this.railAlignmentDirty = true
     if (this.loadHandler) window.removeEventListener('load', this.loadHandler)
     if (this.beforePrintHandler) window.removeEventListener('beforeprint', this.beforePrintHandler)
     if (this.afterPrintHandler) window.removeEventListener('afterprint', this.afterPrintHandler)
@@ -1714,7 +1725,7 @@ export default defineComponent({
     },
     resetPageRouteState(): void {
       this.cancelScheduledScroll()
-      this.tocExpanded = !this.isTocCompact
+      this.resetDesktopRailMeasurementState()
       this.tocQuery = ''
       this.readingProgress = 0
       this.activeAnchor = ''
@@ -2283,6 +2294,7 @@ export default defineComponent({
       const previousWidth = this.winWidth
       const nextWidth = window.innerWidth
       if (nextWidth === previousWidth) { return }
+      this.markDesktopRailAlignmentDirty()
       this.winWidth = nextWidth
       if (previousWidth >= 1280 && nextWidth < 1280) {
         this.tocExpanded = false
@@ -2292,6 +2304,21 @@ export default defineComponent({
       } else {
         this.navShown = false
       }
+    },
+    markDesktopRailAlignmentDirty(): void {
+      this.railAlignmentDirty = true
+    },
+    resetDesktopRailMeasurementState(): void {
+      this.cancelDesktopRailSettling()
+      if (this.cachedRailEl) {
+        this.cachedRailEl.style.removeProperty('--page-desktop-rail-max-height')
+        this.cachedRailEl.style.removeProperty('--page-desktop-rail-align-offset')
+      }
+      this.cachedRailEl = null
+      this.navFooterEl = null
+      this.lastRailMaxHeight = -1
+      this.lastRailAlignmentOffset = null
+      this.railAlignmentDirty = true
     },
     goToComments (focusNewComment = false) {
       void this.goTo('#discussion', this.scrollOpts)
@@ -2314,28 +2341,45 @@ export default defineComponent({
       }
       return null
     },
+    getPageTitleElement(): HTMLElement | null {
+      const titleRef = this.$refs.pageTitle as HTMLElement | undefined
+      if (titleRef instanceof HTMLElement) return titleRef
+      if (typeof document !== 'undefined') return document.querySelector('.page-title')
+      return null
+    },
     setupDesktopRailObserver(): void {
       if (typeof window === 'undefined' || typeof ResizeObserver === 'undefined') return
 
       if (!this.railResizeObserver) {
         this.railResizeObserver = new ResizeObserver(() => {
+          this.markDesktopRailAlignmentDirty()
           this.updateDesktopRailMeasurements(true)
           this.startDesktopRailSettling()
         })
       }
 
-      const headerEl = (this.cachedHeaderEl && this.cachedHeaderEl.isConnected)
-        ? this.cachedHeaderEl
-        : this.getPageHeaderElement()
-
-      if (headerEl && headerEl !== this.cachedHeaderEl) {
+      const headerEl = this.getPageHeaderElement()
+      if (headerEl !== this.cachedHeaderEl) {
+        this.markDesktopRailAlignmentDirty()
         if (this.cachedHeaderEl) {
           try {
             this.railResizeObserver.unobserve(this.cachedHeaderEl)
           } catch {}
         }
         this.cachedHeaderEl = headerEl
-        this.railResizeObserver.observe(headerEl)
+        if (headerEl) this.railResizeObserver.observe(headerEl)
+      }
+
+      const titleEl = this.getPageTitleElement()
+      if (titleEl !== this.cachedTitleEl) {
+        this.markDesktopRailAlignmentDirty()
+        if (this.cachedTitleEl) {
+          try {
+            this.railResizeObserver.unobserve(this.cachedTitleEl)
+          } catch {}
+        }
+        this.cachedTitleEl = titleEl
+        if (titleEl) this.railResizeObserver.observe(titleEl)
       }
     },
     getDesktopRailElement(): HTMLElement | null {
@@ -2370,6 +2414,7 @@ export default defineComponent({
     },
     startDesktopRailSettling(): void {
       if (typeof window === 'undefined') return
+      this.markDesktopRailAlignmentDirty()
       if (window.innerWidth < 1280 || this.tocPosition === 'off') {
         this.cancelDesktopRailSettling()
         return
@@ -2429,18 +2474,18 @@ export default defineComponent({
     },
     updateDesktopRailMeasurements(isResize = false): void {
       if (typeof window === 'undefined') return
+      if (isResize) this.markDesktopRailAlignmentDirty()
 
+      const previousRailEl = this.cachedRailEl
       const railEl = (this.cachedRailEl && this.cachedRailEl.isConnected)
         ? this.cachedRailEl
         : this.getDesktopRailElement()
+      if (railEl !== previousRailEl) this.markDesktopRailAlignmentDirty()
       this.cachedRailEl = railEl
       if (!railEl) return
 
       if (window.innerWidth < 1280 || this.tocPosition === 'off') {
-        if (this.lastRailMaxHeight !== -1) {
-          railEl.style.removeProperty('--page-desktop-rail-max-height')
-          this.lastRailMaxHeight = -1
-        }
+        this.resetDesktopRailMeasurementState()
         return
       }
 
@@ -2467,10 +2512,29 @@ export default defineComponent({
         this.railSpacingGap = Number.isFinite(resolvedGap) && resolvedGap > 0 ? resolvedGap : 8
       }
 
+      let railRect = railEl.getBoundingClientRect()
+      if (window.scrollY <= 1 && (isResize || this.railAlignmentDirty)) {
+        const titleEl = this.getPageTitleElement()
+        const titleRect = titleEl?.getBoundingClientRect()
+        if (titleRect && titleRect.height > 0 && railRect.height > 0) {
+          const inlineOffset = parseFloat(railEl.style.getPropertyValue('--page-desktop-rail-align-offset'))
+          const currentOffset = this.lastRailAlignmentOffset ?? (Number.isFinite(inlineOffset) ? inlineOffset : 0)
+          const titleMidpoint = titleRect.top + titleRect.height / 2
+          const nextOffset = currentOffset + titleMidpoint - railRect.top
+          if (Number.isFinite(nextOffset)) {
+            if (this.lastRailAlignmentOffset === null || Math.abs(nextOffset - currentOffset) >= 0.25) {
+              this.lastRailAlignmentOffset = nextOffset
+              railEl.style.setProperty('--page-desktop-rail-align-offset', `${nextOffset}px`)
+              railRect = railEl.getBoundingClientRect()
+            }
+            this.railAlignmentDirty = false
+          }
+        }
+      }
+
       const footerTop = this.navFooterEl
         ? this.navFooterEl.getBoundingClientRect().top
         : (window.innerHeight - 24)
-      const railRect = railEl.getBoundingClientRect()
       const effectiveRailTop = Math.max(railRect.top, this.railStickyTop)
       const calculatedMaxHeight = Math.max(0, Math.floor(footerTop - effectiveRailTop - this.railSpacingGap))
 
@@ -2896,7 +2960,7 @@ export default defineComponent({
     display: flex;
     justify-content: flex-end;
     gap: var(--wiki-space-2);
-    align-self: end;
+    align-self: start;
     overflow: visible;
 
     .v-btn {
@@ -3016,7 +3080,6 @@ export default defineComponent({
       max-width: var(--page-header-action-reserve);
       grid-column: 2;
       justify-self: end;
-      transform: translateY(calc(var(--wiki-space-4) + 50%));
       overflow: visible;
       .v-btn {
         min-width: 0;
@@ -3160,7 +3223,10 @@ export default defineComponent({
 }
 
 .page-col-sd--with-toc {
-  margin-block-start: calc(var(--page-toc-desktop-lift) * -1);
+  margin-block-start: calc(
+    (var(--page-toc-desktop-lift) * -1) +
+    var(--page-desktop-rail-align-offset, 0px)
+  );
 }
 
 .page-col-sd--toc-off,

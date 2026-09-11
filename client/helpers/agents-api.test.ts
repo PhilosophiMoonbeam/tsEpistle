@@ -4,11 +4,13 @@ import {
   AgentApiError,
   cancelAgentRun,
   clearUnfiledAgentHistory,
+  createAgentConversationFolder,
   createAgentGoal,
   createAgentMemory,
   createAgentThread,
   createPersonalAgentSkill,
   decideAgentProposal,
+  deleteAgentConversationFolder,
   deleteAgentSession,
   getAgentMemories,
   getAgentThread,
@@ -16,6 +18,7 @@ import {
   listAgentSessions,
   listPersonalAgentSkills,
   removePersonalAgentSkill,
+  renameAgentConversationFolder,
   subscribeAgentRun,
   submitAgentMessage,
   updateAgentSession,
@@ -44,6 +47,75 @@ describe('agents client boundary', () => {
       '/_api/agents/sessions/00000000-0000-4000-8000-000000000001',
       expect.objectContaining({ method: 'DELETE', credentials: 'same-origin', headers: { 'x-wiki-csrf': 'csrf-token' } })
     )
+  })
+
+  it('deletes a conversation folder with its expected version and returns the committed move count', async () => {
+    const folderId = '00000000-0000-4000-8000-000000000003'
+    const fetcher = vi.fn(async () => Response.json({ deleted: true, movedSessions: 3 })) as unknown as typeof fetch
+
+    await expect(deleteAgentConversationFolder(fetcher, 'csrf-token', folderId, 7)).resolves.toBe(3)
+    expect(fetcher).toHaveBeenCalledWith(
+      `/_api/agents/conversation-folders/${folderId}?expectedVersion=7`,
+      expect.objectContaining({ method: 'DELETE', credentials: 'same-origin', headers: expect.objectContaining({ 'x-wiki-csrf': 'csrf-token' }) })
+    )
+  })
+
+  it('canonicalizes full-width and repeated whitespace in create and rename requests', async () => {
+    const folderId = '00000000-0000-4000-8000-000000000003'
+    const folder = {
+      id: folderId,
+      name: 'Release archive',
+      version: 1,
+      createdAt: '2026-09-11T00:00:00.000Z',
+      updatedAt: '2026-09-11T00:00:00.000Z'
+    }
+    const renamedFolder = { ...folder, version: 2 }
+    const responses = [Response.json({ folder }, { status: 201 }), Response.json({ folder: renamedFolder })]
+    const fetcher = vi.fn(async () => responses.shift()!) as unknown as typeof fetch
+
+    await expect(createAgentConversationFolder(fetcher, 'csrf-token', '  Ｒｅｌｅａｓｅ\u00a0\t  archive  ')).resolves.toEqual(folder)
+    await expect(renameAgentConversationFolder(fetcher, 'csrf-token', folderId, 1, '\u00a0Ｒｅｌｅａｓｅ\u00a0\u00a0archive\u00a0')).resolves.toEqual(
+      renamedFolder
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      '/_api/agents/conversation-folders',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'Release archive' }) })
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      `/_api/agents/conversation-folders/${folderId}`,
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ expectedVersion: 1, name: 'Release archive' }) })
+    )
+  })
+
+  it('enforces conversation folder name bounds after canonical cleaning', async () => {
+    const folder = {
+      id: '00000000-0000-4000-8000-000000000003',
+      name: 'A'.repeat(64),
+      version: 1,
+      createdAt: '2026-09-11T00:00:00.000Z',
+      updatedAt: '2026-09-11T00:00:00.000Z'
+    }
+    const fetcher = vi.fn(async () => Response.json({ folder }, { status: 201 })) as unknown as typeof fetch
+
+    await expect(createAgentConversationFolder(fetcher, 'csrf-token', `  Ａ${'Ａ'.repeat(63)}\u00a0`)).resolves.toEqual(folder)
+    expect(fetcher).toHaveBeenCalledWith(
+      '/_api/agents/conversation-folders',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'A'.repeat(64) }) })
+    )
+    await expect(createAgentConversationFolder(fetcher, 'csrf-token', ` Ａ${'Ａ'.repeat(64)} `)).rejects.toMatchObject({ status: 400 })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects an invalid conversation folder version before sending a delete request', async () => {
+    const folderId = '00000000-0000-4000-8000-000000000003'
+    const fetcher = vi.fn(async () => Response.json({ deleted: true, movedSessions: 0 })) as unknown as typeof fetch
+
+    for (const expectedVersion of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(deleteAgentConversationFolder(fetcher, 'csrf-token', folderId, expectedVersion)).rejects.toMatchObject({ status: 400 })
+    }
+    expect(fetcher).not.toHaveBeenCalled()
   })
 
   it('clears unfiled history through the CSRF-protected collection endpoint', async () => {

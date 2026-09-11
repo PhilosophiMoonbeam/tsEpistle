@@ -51,6 +51,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.integer('attempts').defaultTo(0)
     table.integer('maxAttempts').defaultTo(3)
     table.integer('eventSequence').defaultTo(0)
+    table.bigInteger('totalTokens').notNullable().defaultTo(0)
     table.boolean('sideEffectsStarted')
     table.dateTime('cancelRequestedAt').nullable()
     table.dateTime('leaseExpiresAt').nullable()
@@ -168,6 +169,7 @@ describe('agent retention maintenance', () => {
       status,
       attempts: status === 'queued' ? 0 : 1,
       eventSequence: 0,
+      totalTokens: 0,
       sideEffectsStarted,
       cancelRequestedAt,
       leaseExpiresAt: expired,
@@ -409,12 +411,283 @@ describe('agent retention maintenance', () => {
     })
     expect(await knex('agentSessions').where({ id: 'session-expired' }).first()).toBeUndefined()
   })
+  it('skips positive pending settlement during recovery and releases only zero-intent expiry', async () => {
+    await knex('agentSessions').insert({
+      id: 'session-pending',
+      ownerId: 7,
+      retention: 'saved',
+      expiresAt: null,
+      deletedAt: null,
+      updatedAt: old,
+      lastActivityAt: now,
+      version: 1
+    })
+    await knex('agentMessages').insert({
+      id: 'assistant-pending-run',
+      sessionId: 'session-pending',
+      runId: 'pending-run',
+      ordinal: 1,
+      role: 'assistant',
+      status: 'streaming',
+      content: '',
+      citations: null,
+      providerStateCiphertext: null,
+      providerStateSha256: null,
+      createdAt: old,
+      updatedAt: old
+    })
+    await knex('agentRuns').insert({
+      id: 'pending-run',
+      sessionId: 'session-pending',
+      ownerId: 7,
+      assistantMessageId: 'assistant-pending-run',
+      status: 'running',
+      attempts: 1,
+      maxAttempts: 3,
+      eventSequence: 0,
+      totalTokens: 0,
+      sideEffectsStarted: false,
+      cancelRequestedAt: null,
+      leaseExpiresAt: expired,
+      leaseOwner: 'dead-worker',
+      leaseToken: 'pending-lease',
+      availableAt: old,
+      runtimeStateCiphertext: null,
+      queuedAt: old,
+      startedAt: old,
+      updatedAt: old,
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null
+    })
+    await knex('agentQuotaDaily').insert({
+      ownerId: 7,
+      day: '2026-08-17',
+      reservedTokens: 30,
+      consumedTokens: 0,
+      reservedCostMicros: 60,
+      consumedCostMicros: 0,
+      updatedAt: old
+    })
+    await knex('agentQuotaReservations').insert([
+      {
+        runId: 'pending-run',
+        ownerId: 7,
+        day: '2026-08-17',
+        reservedTokens: 20,
+        reservedCostMicros: 40,
+        consumedTokens: 21,
+        consumedCostMicros: 41,
+        status: 'reserved',
+        expiresAt: expired,
+        heartbeatAt: old,
+        reconciledAt: null
+      },
+      {
+        runId: 'zero-run',
+        ownerId: 7,
+        day: '2026-08-17',
+        reservedTokens: 10,
+        reservedCostMicros: 20,
+        consumedTokens: 0,
+        consumedCostMicros: 0,
+        status: 'reserved',
+        expiresAt: expired,
+        heartbeatAt: old,
+        reconciledAt: null
+      }
+    ])
+
+    const result = await runAgentMaintenance(knex, { batchSize: 100, savedSessionDays: 90, mcpContentDays: 7, auditDays: 90, compactDeltaDays: 1 }, now)
+
+    expect(result).toMatchObject({ cancelledRuns: 0, recoveredRuns: 0, requeuedRuns: 0, reconciledReservations: 1 })
+    expect(await knex('agentRuns').where({ id: 'pending-run' }).first('status')).toEqual({ status: 'running' })
+    expect(await knex('agentQuotaReservations').where({ runId: 'pending-run' }).first()).toMatchObject({
+      reservedTokens: 20,
+      reservedCostMicros: 40,
+      consumedTokens: 21,
+      consumedCostMicros: 41,
+      status: 'reserved',
+      reconciledAt: null
+    })
+    expect(await knex('agentQuotaReservations').where({ runId: 'zero-run' }).first('status', 'consumedTokens', 'consumedCostMicros')).toEqual({
+      status: 'released',
+      consumedTokens: 0,
+      consumedCostMicros: 0
+    })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toMatchObject({
+      reservedTokens: 20,
+      consumedTokens: 0,
+      reservedCostMicros: 40,
+      consumedCostMicros: 0
+    })
+  })
+  it('filters pending recovery rows before the maintenance batch and releases an eligible zero-intent reservation', async () => {
+    const pendingRuns = [
+      {
+        id: 'pending-old-token',
+        sessionId: 'session-pending-token',
+        ownerId: 7,
+        status: 'running',
+        attempts: 1,
+        maxAttempts: 3,
+        eventSequence: 0,
+        totalTokens: 0,
+        sideEffectsStarted: false,
+        cancelRequestedAt: null,
+        leaseExpiresAt: expired,
+        leaseOwner: 'dead-worker',
+        leaseToken: 'pending-token-lease',
+        availableAt: old,
+        updatedAt: old,
+        queuedAt: old,
+        startedAt: old,
+        completedAt: null,
+        errorCode: null,
+        errorMessage: null
+      },
+      {
+        id: 'pending-old-cost',
+        sessionId: 'session-pending-cost',
+        ownerId: 7,
+        status: 'running',
+        attempts: 1,
+        maxAttempts: 3,
+        eventSequence: 0,
+        totalTokens: 0,
+        sideEffectsStarted: false,
+        cancelRequestedAt: null,
+        leaseExpiresAt: expired,
+        leaseOwner: 'dead-worker',
+        leaseToken: 'pending-cost-lease',
+        availableAt: old,
+        updatedAt: old,
+        queuedAt: old,
+        startedAt: old,
+        completedAt: null,
+        errorCode: null,
+        errorMessage: null
+      },
+      {
+        id: 'eligible-later',
+        sessionId: 'session-eligible',
+        ownerId: 7,
+        status: 'running',
+        attempts: 1,
+        maxAttempts: 3,
+        eventSequence: 0,
+        totalTokens: 0,
+        sideEffectsStarted: false,
+        cancelRequestedAt: null,
+        leaseExpiresAt: expired,
+        leaseOwner: 'dead-worker',
+        leaseToken: 'eligible-lease',
+        availableAt: new Date('2026-08-17T00:01:00.000Z'),
+        updatedAt: new Date('2026-08-17T00:01:00.000Z'),
+        queuedAt: new Date('2026-08-17T00:01:00.000Z'),
+        startedAt: new Date('2026-08-17T00:01:00.000Z'),
+        completedAt: null,
+        errorCode: null,
+        errorMessage: null
+      }
+    ]
+    await knex('agentRuns').insert(pendingRuns)
+    await knex('agentQuotaDaily').insert({
+      ownerId: 7,
+      day: '2026-08-17',
+      reservedTokens: 30,
+      consumedTokens: 0,
+      reservedCostMicros: 60,
+      consumedCostMicros: 0,
+      updatedAt: old
+    })
+    await knex('agentQuotaReservations').insert([
+      {
+        runId: 'pending-old-token',
+        ownerId: 7,
+        day: '2026-08-17',
+        reservedTokens: 10,
+        reservedCostMicros: 20,
+        consumedTokens: 1,
+        consumedCostMicros: 0,
+        status: 'reserved',
+        expiresAt: expired,
+        heartbeatAt: old,
+        reconciledAt: null
+      },
+      {
+        runId: 'pending-old-cost',
+        ownerId: 7,
+        day: '2026-08-17',
+        reservedTokens: 10,
+        reservedCostMicros: 20,
+        consumedTokens: 0,
+        consumedCostMicros: 1,
+        status: 'reserved',
+        expiresAt: expired,
+        heartbeatAt: old,
+        reconciledAt: null
+      },
+      {
+        runId: 'zero-intent-expired',
+        ownerId: 7,
+        day: '2026-08-17',
+        reservedTokens: 10,
+        reservedCostMicros: 20,
+        consumedTokens: 0,
+        consumedCostMicros: 0,
+        status: 'reserved',
+        expiresAt: expired,
+        heartbeatAt: old,
+        reconciledAt: null
+      }
+    ])
+
+    const result = await runAgentMaintenance(knex, { batchSize: 2, savedSessionDays: 90, mcpContentDays: 7, auditDays: 90, compactDeltaDays: 1 }, now)
+
+    expect(result).toMatchObject({ cancelledRuns: 0, recoveredRuns: 0, requeuedRuns: 1, reconciledReservations: 1 })
+    expect(await knex('agentRuns').where({ id: 'eligible-later' }).first('status', 'leaseOwner', 'leaseToken')).toMatchObject({
+      status: 'queued',
+      leaseOwner: null,
+      leaseToken: null
+    })
+    expect(
+      await knex('agentRuns')
+        .whereIn('id', ['pending-old-token', 'pending-old-cost'])
+        .whereNot('status', 'running')
+        .count<{ count: number | string }[]>({ count: '*' })
+        .first()
+    ).toEqual({
+      count: 0
+    })
+    expect(
+      await knex('agentQuotaReservations')
+        .whereIn('runId', ['pending-old-token', 'pending-old-cost'])
+        .select('runId', 'status', 'consumedTokens', 'consumedCostMicros')
+        .orderBy('runId')
+    ).toEqual([
+      { runId: 'pending-old-cost', status: 'reserved', consumedTokens: 0, consumedCostMicros: 1 },
+      { runId: 'pending-old-token', status: 'reserved', consumedTokens: 1, consumedCostMicros: 0 }
+    ])
+    expect(await knex('agentQuotaReservations').where({ runId: 'zero-intent-expired' }).first('status', 'consumedTokens', 'consumedCostMicros')).toEqual({
+      status: 'released',
+      consumedTokens: 0,
+      consumedCostMicros: 0
+    })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toMatchObject({
+      reservedTokens: 20,
+      reservedCostMicros: 40,
+      consumedTokens: 0,
+      consumedCostMicros: 0
+    })
+  })
 
   it('compacts old deltas from partial runs', async () => {
     await knex('agentRuns').insert({
       id: 'run-partial',
       sessionId: 'session-live',
       ownerId: 7,
+      totalTokens: 0,
       status: 'partial',
       sideEffectsStarted: false,
       updatedAt: old,
@@ -453,6 +726,7 @@ describe('agent retention maintenance', () => {
       id: 'run-active',
       sessionId: 'session-active',
       ownerId: 7,
+      totalTokens: 0,
       status: 'running',
       sideEffectsStarted: false,
       cancelRequestedAt: null,
@@ -526,8 +800,28 @@ describe('agent retention maintenance', () => {
       updatedAt: now
     })
     await knex('agentSessions').insert([
-      { id: 'owned-unfiled-one', ownerId: 7, retention: 'saved', folderId: null, expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 },
-      { id: 'owned-unfiled-two', ownerId: 7, retention: 'saved', folderId: null, expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 },
+      {
+        id: 'owned-unfiled-one',
+        ownerId: 7,
+        retention: 'saved',
+        folderId: null,
+        expiresAt: null,
+        deletedAt: null,
+        updatedAt: now,
+        lastActivityAt: now,
+        version: 1
+      },
+      {
+        id: 'owned-unfiled-two',
+        ownerId: 7,
+        retention: 'saved',
+        folderId: null,
+        expiresAt: null,
+        deletedAt: null,
+        updatedAt: now,
+        lastActivityAt: now,
+        version: 1
+      },
       {
         id: 'owned-filed',
         ownerId: 7,
@@ -549,6 +843,7 @@ describe('agent retention maintenance', () => {
       status,
       attempts: status === 'queued' ? 0 : 1,
       eventSequence: 0,
+      totalTokens: 0,
       sideEffectsStarted: false,
       cancelRequestedAt: null,
       leaseExpiresAt: now,

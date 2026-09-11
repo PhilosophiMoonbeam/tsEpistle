@@ -1,4 +1,8 @@
 # Maintainer source-review evidence — 2026-09-09
+## User-authorized archival redaction
+**Recorded:** 2026-09-11 08:02:41 UTC
+
+Only the historical Bun version string was removed. No historical run was re-executed or reclassified, and no current version is attributed to this review. Review identity, source bindings, findings, results, and attribution remain unchanged. This is the sole user-authorized exception to the immutable archival text claims. The pre-redaction file SHA-256 was `4ccd8090c25c1638817985200d6740396c5e6a0489a7ff13b412e88cc2672833`; the original bytes remain in repository history at verified revision `ed71dec57050f1bc60edc8bfdb73e47d6bc41181`.
 
 ## Review identity, freeze, and boundary
 
@@ -16,7 +20,7 @@ The reviewed scope is the final source tree at `S`: the authenticated API-princi
 
 `S` is the source freeze. The attestation record and this Markdown are inputs to a documentation-only successor `A`: `A` will append/select this record while leaving the source boundary equal to `S`. No future SHA for `A` is invented here, and this evidence does not claim that `A` has already been committed, built, pushed, or deployed.
 
-The observed review environment was Linux kernel `7.0.0-31-generic` on x86_64, Bun `1.4.0`, Git `2.53.0`, GNU tar `1.35`, and gzip `1.14`. These are tool observations for the review environment, not deployment or image metadata. External approvals, detached signatures, arbitrary coverage thresholds, production credentials, maintained-instance state, and live external-provider exercise are outside this review.
+The observed review environment was Linux kernel `7.0.0-31-generic` on x86_64, Bun (historical version redacted), Git `2.53.0`, GNU tar `1.35`, and gzip `1.14`. These are tool observations for the review environment, not deployment or image metadata. External approvals, detached signatures, arbitrary coverage thresholds, production credentials, maintained-instance state, and live external-provider exercise are outside this review.
 
 ## Review-artifact conclusions and attribution
 

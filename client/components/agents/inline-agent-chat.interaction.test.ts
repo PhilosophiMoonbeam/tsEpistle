@@ -117,6 +117,7 @@ interface ValueRef<T> {
 
 interface LockState {
   activeRun: ValueRef<{ canCancel: boolean; status: string } | null>
+  canPinCurrentChat: ValueRef<boolean>
   canSubmit: ValueRef<boolean>
   connectionLabel: ValueRef<string>
   connectionTone: ValueRef<string>
@@ -129,6 +130,8 @@ interface LockState {
     initialize: (...args: unknown[]) => unknown
     newSession: (...args: unknown[]) => unknown
     reloadSessions: (...args: unknown[]) => unknown
+    send: (...args: unknown[]) => unknown
+    setCurrentChatPinned: (...args: unknown[]) => unknown
   }
   clearUnfiledCommitted: ValueRef<boolean>
   clearUnfiledError: ValueRef<string>
@@ -139,9 +142,76 @@ interface LockState {
   openClearUnfiledHistory: () => void
   recoverClearUnfiledHistory: () => Promise<void>
   thread: ValueRef<Record<string, unknown> | null>
+  sendPrompt: (content: string) => Promise<boolean>
 }
 
-const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.scriptSetup.content.replace(/^import .*$/gm, ''))
+const removeSetupMacro = (content: string, macroName: string): string => {
+  const match = new RegExp(`(^|\\n)[ \\t]*${macroName}\\s*\\(`).exec(content)
+  if (!match) return content
+  const statementStart = match.index + (match[1] === '\n' ? 1 : 0)
+  const start = statementStart + match[0].length - (match[1] === '\n' ? 1 : 0) - 1
+  let depth = 0
+  let quote: '"' | "'" | '`' | null = null
+  let escaped = false
+  let lineComment = false
+  let blockComment = false
+  for (let index = start; index < content.length; index += 1) {
+    const character = content[index]
+    const next = content[index + 1]
+    if (lineComment) {
+      if (character === '\n') lineComment = false
+      continue
+    }
+    if (blockComment) {
+      if (character === '*' && next === '/') {
+        blockComment = false
+        index += 1
+      }
+      continue
+    }
+    if (quote) {
+      if (escaped) {
+        escaped = false
+      } else if (character === '\\') {
+        escaped = true
+      } else if (character === quote) {
+        quote = null
+      }
+      continue
+    }
+    if (character === '/' && next === '/') {
+      lineComment = true
+      index += 1
+      continue
+    }
+    if (character === '/' && next === '*') {
+      blockComment = true
+      index += 1
+      continue
+    }
+    if (character === '"' || character === "'" || character === '`') {
+      quote = character
+      continue
+    }
+    if (character === '(') {
+      depth += 1
+      continue
+    }
+    if (character === ')') {
+      depth -= 1
+      if (depth === 0) {
+        let end = index + 1
+        while (/\s/.test(content[end] ?? '')) end += 1
+        if (content[end] === ';') end += 1
+        return `${content.slice(0, statementStart)}${content.slice(end)}`
+      }
+    }
+  }
+  return content
+}
+
+const setupScript = removeSetupMacro(descriptor.scriptSetup.content, 'defineExpose')
+const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(setupScript.replace(/^import .*$/gm, ''))
 const composerScript = composerDescriptor.scriptSetup.content
 const executableComposerScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(composerScript.replace(/^import .*$/gm, ''))
 const composerBindingNames = Array.from(composerScript.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
@@ -169,7 +239,8 @@ const evaluateComposer = new Function(
 const loadGoalLockState = (
   status: 'active' | 'paused' | null,
   mutationBusy = false,
-  runStatus: 'running' | 'awaiting_approval' | null = status === 'active' ? 'running' : null
+  runStatus: 'running' | 'awaiting_approval' | null = status === 'active' ? 'running' : null,
+  canPinCurrentChat = true
 ): LockState => {
   const ref = <T>(value: T): ValueRef<T> => ({ value })
   const thread = ref({
@@ -188,10 +259,13 @@ const loadGoalLockState = (
   })
   const storeRefs = {
     connection: ref('connected'),
+    canPinCurrentChat: ref(canPinCurrentChat),
     decidingApprovalId: ref(null),
     error: ref(''),
     goalBusy: ref(false),
     loading: ref(false),
+    pinnedSessionId: ref<string | null>(null),
+    pinStorageAvailable: ref(true),
     profiles: ref([{ id: 'profile-1' }]),
     sending: ref(false),
     sessionMutationBusy: ref(mutationBusy),
@@ -204,6 +278,8 @@ const loadGoalLockState = (
   }
   const props = {
     csrfToken: 'csrf',
+    ownerId: 2,
+    resumeSessionId: undefined,
     providerEnabled: true,
     skillsEnabled: true,
     goalsEnabled: true,
@@ -214,52 +290,39 @@ const loadGoalLockState = (
   }
   const agentCalls = {
     clearUnfiledHistory: vi.fn(() => Promise.resolve()),
-    initialize: vi.fn(() => Promise.resolve()),
-    newSession: vi.fn(() => Promise.resolve()),
-    reloadSessions: vi.fn(() => Promise.resolve())
+    initialize: vi.fn(() => Promise.resolve(true)),
+    newSession: vi.fn(() => Promise.resolve(true)),
+    reloadSessions: vi.fn(() => Promise.resolve()),
+    send: vi.fn(() => Promise.resolve(true)),
+    setCurrentChatPinned: vi.fn()
   }
   const evaluate = new Function(
-    'computed',
-    'nextTick',
-    'onBeforeUnmount',
-    'onMounted',
-    'ref',
-    'useTemplateRef',
-    'useId',
-    'watch',
-    'storeToRefs',
-    'defineProps',
-    'defineEmits',
-    'useAgentsStore',
-    'createModalFocusScope',
-    'isAgentApprovalOutsideViewport',
-    'shouldFollowGoalExpansion',
-    'defineExpose',
-    `${executableScript}\nreturn { activeRun, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, connectionLabel, connectionTone, goalSubmitUnavailableReason, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, sessionMutationBusy, submitUnavailableReason, thread }`
-  ) as (...dependencies: unknown[]) => LockState
+    '{ computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion }',
+    `${executableScript}\nreturn { activeRun, canPinCurrentChat, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, connectionLabel, connectionTone, ensureInitialized, goalSubmitUnavailableReason, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, submitUnavailableReason, thread }`
+  ) as (dependencies: Record<string, unknown>) => LockState
 
-  const state = evaluate(
-    (getter: () => unknown) => ({
+  const state = evaluate({
+    computed: (getter: () => unknown) => ({
       get value() {
         return getter()
       }
     }),
-    () => Promise.resolve(),
-    () => undefined,
-    () => undefined,
+    nextTick: () => Promise.resolve(),
+    onBeforeUnmount: () => undefined,
+    onMounted: () => undefined,
     ref,
-    () => ref(null),
-    () => 'agent-test',
-    () => undefined,
-    () => storeRefs,
-    () => props,
-    () => ({}),
-    () => agentCalls,
-    () => ({ deactivate: () => undefined }),
-    () => false,
-    () => false,
-    () => undefined
-  ) as LockState
+    useTemplateRef: () => ref(null),
+    useId: () => 'agent-test',
+    watch: () => undefined,
+    storeToRefs: () => storeRefs,
+    defineEmits: () => () => undefined,
+    defineProps: () => props,
+    useAgentsStore: () => agentCalls,
+    activeOwnedOverlayRoots: () => [],
+    createModalFocusScope: () => ({ deactivate: () => undefined }),
+    isAgentApprovalOutsideViewport: () => false,
+    shouldFollowGoalExpansion: () => false
+  }) as LockState
   return { ...state, agentCalls }
 }
 
@@ -277,7 +340,10 @@ const settle = async (): Promise<void> => {
   await Vue.nextTick()
 }
 
-const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
+const mountInlineAgent = (
+  lockState?: LockState,
+  options: { readonly approvalJumpVisible?: boolean; readonly followJumpVisible?: boolean } = {}
+): MountedInlineAgent => {
   const host = document.createElement('div')
   document.body.append(host)
   const historyOpen = Vue.ref(false)
@@ -287,6 +353,8 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
   const thread = lockState?.thread.value ?? null
   const context: Record<string, unknown> = {
     csrfToken: 'csrf',
+    ownerId: 2,
+    resumeSessionId: undefined,
     approvalId: undefined,
     providerEnabled: true,
     skillsEnabled: false,
@@ -298,8 +366,10 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
     loading: false,
     sending: false,
     sessionMutationBusy: lockState?.sessionMutationBusy.value ?? false,
-    error: '',
     connection: 'connected',
+    error: '',
+    pinStorageAvailable: true,
+    canPinCurrentChat: lockState?.canPinCurrentChat.value ?? true,
     decidingApprovalId: null,
     goalBusy: false,
     profiles: [{}],
@@ -325,8 +395,8 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
     clearUnfiledCommitted: false,
     clearUnfiledError: '',
     goalExpanded: false,
-    approvalJumpVisible: false,
-    followJumpVisible: false,
+    approvalJumpVisible: options.approvalJumpVisible ?? false,
+    followJumpVisible: options.followJumpVisible ?? false,
     skillManagerOpen: false,
     currentPage: null,
     activeRun: lockState?.activeRun.value ?? null,
@@ -345,6 +415,7 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
     starters: [],
     emit: () => undefined,
     agents: { drafts: {}, setDraft: () => undefined },
+    setCurrentChatPinned: () => undefined,
     creatingRetention: null,
     keepingConversation: false,
     isTemporary: false,
@@ -411,9 +482,11 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
       statusLabel: String,
       statusTone: String,
       hasMessages: Boolean,
+      chatPinned: Boolean,
+      chatPinDisabled: Boolean,
       externalDescriptionId: String
     },
-    emits: ['send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'draftChange'],
+    emits: ['send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'update:chatPinned', 'draftChange'],
     setup(props, { emit, expose }) {
       return evaluateComposer(
         Vue.computed,
@@ -545,16 +618,26 @@ describe('Inline Agent mobile panel controls', () => {
 })
 
 describe('Inline Agent workspace actions', () => {
-  it('keeps History and Memory available and exposes labelled Panels and New controls', async () => {
+  it('keeps History and Memory available and exposes direct New and Temporary controls', async () => {
     const mounted = mountInlineAgent()
     const actions = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__desktop-panel-btn, .inline-agent__session-action'))
 
-    expect(actions.map(action => action.getAttribute('aria-label'))).toEqual(['Open agent conversation history', 'Manage agent memory', 'New conversation'])
+    expect(actions.map(action => action.getAttribute('aria-label'))).toEqual([
+      'Open agent conversation history',
+      'Manage agent memory',
+      'New conversation',
+      'Temporary conversation'
+    ])
     expect(mounted.activator.textContent?.trim()).toContain('Panels')
-    expect(actions[2]?.textContent?.trim()).toBe('New')
-    expect(actions[2]?.getAttribute('role')).not.toBe('menu')
-    expect(actions[2]?.getAttribute('aria-haspopup')).toBe('menu')
-    expect(actions[2]?.getAttribute('aria-expanded')).toBe('false')
+    const newConversation = mounted.root.querySelector<HTMLElement>('.inline-agent__new-session')
+    const temporaryConversation = mounted.root.querySelector<HTMLElement>('.inline-agent__temporary-session')
+    const close = mounted.root.querySelector<HTMLElement>('.inline-agent__mobile-close')
+    if (!newConversation || !temporaryConversation || !close) throw new Error('Session action controls did not render')
+    expect(newConversation.textContent?.trim()).toBe('New')
+    expect(newConversation.hasAttribute('aria-haspopup')).toBe(false)
+    expect(newConversation.hasAttribute('aria-expanded')).toBe(false)
+    expect(newConversation.compareDocumentPosition(temporaryConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(temporaryConversation.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
     await openPanelMenu(mounted)
   })
@@ -627,11 +710,41 @@ describe('Inline Agent panel semantics', () => {
   })
 })
 
+describe('Inline Agent latest response dock', () => {
+  it('keeps the compact latest response face between the body and composer with an accessible halo', () => {
+    const mounted = mountInlineAgent(undefined, { followJumpVisible: true })
+    const body = mounted.root.querySelector<HTMLElement>('.inline-agent__body')
+    const dock = mounted.root.querySelector<HTMLElement>('.inline-agent__jump-dock')
+    const composer = mounted.root.querySelector<HTMLElement>('.inline-agent__composer')
+    const button = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__follow-jump')
+    const face = mounted.root.querySelector<HTMLElement>('.inline-agent__follow-jump-face')
+    const halo = mounted.root.querySelector<HTMLElement>('.inline-agent__follow-jump-halo')
+
+    if (!body || !dock || !composer || !button || !face || !halo) throw new Error('Latest response control did not render')
+    expect(body.nextElementSibling).toBe(dock)
+    expect(dock.nextElementSibling).toBe(composer)
+    expect(button.getAttribute('aria-label')).toBe('Jump to latest response')
+    expect(button.textContent?.trim()).toBe('Latest response')
+    expect(button.querySelectorAll('button')).toHaveLength(0)
+    expect(face.textContent?.trim()).toBe('Latest response')
+    expect(halo.getAttribute('aria-hidden')).toBe('true')
+  })
+
+  it('keeps approval navigation ahead of latest response navigation', () => {
+    const mounted = mountInlineAgent(undefined, { approvalJumpVisible: true, followJumpVisible: true })
+    const dock = mounted.root.querySelector<HTMLElement>('.inline-agent__jump-dock')
+
+    expect(dock?.querySelector('.inline-agent__approval-jump')?.textContent?.trim()).toBe('Approval required')
+    expect(dock?.querySelector('.inline-agent__follow-jump')).toBeNull()
+  })
+})
+
 describe('Agent composer action semantics', () => {
-  it('renders Ready immediately before the accessible Send action', () => {
+  it('renders Ready immediately before the accessible Send action and exposes Pin chat', () => {
     const mounted = mountInlineAgent()
     const { primary, status } = expectComposerActionStructure(mounted)
     const submit = primary.querySelector<HTMLButtonElement>('.agent-composer__submit')
+    const pin = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__chat-pin')
 
     expect(status.textContent?.trim()).toBe('Ready')
     expect(status.getAttribute('title')).toBe('Ready')
@@ -639,12 +752,16 @@ describe('Agent composer action semantics', () => {
     expect(submit?.tagName).toBe('BUTTON')
     expect(submit?.textContent?.trim()).toBe('Send')
     expect(primary.querySelector('.agent-composer__stop')).toBeNull()
+    expect(pin?.getAttribute('aria-label')).toBe('Pin chat')
+    expect(pin?.getAttribute('aria-pressed')).toBe('false')
+    expect(pin?.hasAttribute('disabled')).toBe(false)
   })
 
-  it('keeps Working immediately before the accessible Stop action for cancellable runs', () => {
+  it('keeps Working immediately before the accessible Stop action for cancellable runs while Pin chat stays enabled', () => {
     const mounted = mountInlineAgent(loadGoalLockState('active'))
     const { primary, status } = expectComposerActionStructure(mounted)
     const stop = primary.querySelector<HTMLButtonElement>('.agent-composer__stop')
+    const pin = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__chat-pin')
 
     expect(status.textContent?.trim()).toBe('Working')
     expect(status.getAttribute('title')).toBe('Working')
@@ -652,6 +769,21 @@ describe('Agent composer action semantics', () => {
     expect(stop?.tagName).toBe('BUTTON')
     expect(stop?.textContent?.trim()).toBe('Stop response')
     expect(primary.querySelector('.agent-composer__submit')).toBeNull()
+    expect(pin?.getAttribute('aria-pressed')).toBe('false')
+    expect(pin?.hasAttribute('disabled')).toBe(false)
+  })
+  it('disables Pin chat only while workspace selection is unsettled', () => {
+    const unsettled = mountInlineAgent(loadGoalLockState(null, false, null, false))
+    const unsettledPin = unsettled.root.querySelector<HTMLButtonElement>('.agent-composer__chat-pin')
+    expect(unsettledPin?.disabled).toBe(true)
+
+    const activeRun = mountInlineAgent(loadGoalLockState(null, false, 'running', true))
+    const activeRunPin = activeRun.root.querySelector<HTMLButtonElement>('.agent-composer__chat-pin')
+    expect(activeRunPin?.disabled).toBe(false)
+
+    const activeGoal = mountInlineAgent(loadGoalLockState('active', false, 'running', true))
+    const activeGoalPin = activeGoal.root.querySelector<HTMLButtonElement>('.agent-composer__chat-pin')
+    expect(activeGoalPin?.disabled).toBe(false)
   })
 
   it('keeps Review needed immediately before Stop while awaiting approval', () => {

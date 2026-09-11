@@ -27,7 +27,7 @@ describe('agent utility model', () => {
       void args
       return {
         results: [{ index: 0, content: '“Deployment Pipeline Failures”' }],
-        modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 19, completionTokens: 4, totalTokens: 23 } }
+        modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 4580 } }
       }
     })
     const create = vi.fn(async () => ({
@@ -41,9 +41,10 @@ describe('agent utility model', () => {
     expect(await utility.generateConversationTitle(request)).toEqual({
       title: 'Deployment Pipeline Failures',
       source: 'utility',
-      inputTokens: 19,
-      outputTokens: 4,
-      costMicros: 27
+      inputTokens: 3,
+      outputTokens: 309,
+      totalTokens: 4580,
+      costMicros: 9157
     })
     expect(create).toHaveBeenCalledWith(request.profileVersionId, { purpose: 'utility' })
     expect(chat).toHaveBeenCalledWith(
@@ -70,8 +71,253 @@ describe('agent utility model', () => {
       source: 'fallback',
       inputTokens: 0,
       outputTokens: 0,
+      totalTokens: 0,
       costMicros: 0
     })
+  })
+
+  it('falls back to presentation text while retaining a valid complete receipt', async () => {
+    const chat = vi.fn(async () => ({
+      results: [{ index: 0, content: 'Untitled conversation' }],
+      modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 4580 } }
+    }))
+    const create = vi.fn(async () => ({
+      service: { chat },
+      model: 'model-mini',
+      capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+      pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+    }))
+    const utility = new AgentUtilityModel({ create } as unknown as AgentProviderFactory)
+
+    await expect(utility.generateConversationTitle(request)).resolves.toEqual({
+      title: 'Investigate intermittent failures in the deployment pipeline',
+      source: 'fallback',
+      inputTokens: 3,
+      outputTokens: 309,
+      totalTokens: 4580,
+      costMicros: 9157
+    })
+  })
+
+  it('rejects missing provider usage instead of settling a dispatched title at zero', async () => {
+    const chat = vi.fn(async () => ({ results: [{ index: 0, content: 'A title' }] }))
+    const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({
+        service: { chat },
+        model: 'model-mini',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
+
+    await expect(utility.generateConversationTitle(request)).rejects.toMatchObject({ code: 'PROVIDER_USAGE_INVALID' })
+  })
+
+  it('does not release an attempted reservation when the provider request fails', async () => {
+    const reserve = vi.fn(async () => ({ id: 1, tokens: 100_000, costMicros: 100_000 }))
+    const reconcile = vi.fn(async () => {})
+    const release = vi.fn(async () => {})
+    const chat = vi.fn(async () => {
+      throw new Error('provider request failed')
+    })
+    const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({
+        service: { chat },
+        model: 'model-mini',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
+
+    await expect(
+      utility.generateConversationTitle({
+        ...request,
+        dispatchBudget: { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
+      })
+    ).resolves.toMatchObject({
+      title: 'Investigate intermittent failures in the deployment pipeline',
+      source: 'fallback',
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0
+    })
+    expect(reconcile).not.toHaveBeenCalled()
+    expect(release).not.toHaveBeenCalled()
+  })
+
+  it('releases a reservation when user cancellation wins before provider invocation', async () => {
+    const controller = new AbortController()
+    const reason = new Error('cancelled before utility dispatch')
+    const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
+    const reserve = vi.fn(async () => {
+      controller.abort(reason)
+      return reservation
+    })
+    const release = vi.fn(async () => {})
+    const chat = vi.fn(async () => ({ results: [] }))
+    const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({
+        service: { chat },
+        model: 'model-mini',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
+
+    await expect(
+      utility.generateConversationTitle({
+        ...request,
+        signal: controller.signal,
+        dispatchBudget: {
+          reserve,
+          reconcile: vi.fn(async () => {}),
+          release,
+          consumeTool: vi.fn(async () => {}),
+          unsettledExposure: { tokens: 0, costMicros: 0 }
+        }
+      })
+    ).rejects.toBe(reason)
+    expect(chat).not.toHaveBeenCalled()
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('reserves unknown attempted title exposure at the configured maximum rate', async () => {
+    const reserve = vi.fn(async () => ({ id: 1, tokens: 100_000, costMicros: 100_000 }))
+    const release = vi.fn(async () => {})
+    const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({
+        service: {
+          chat: vi.fn(async () => {
+            throw new Error('provider request failed')
+          })
+        },
+        model: 'model-mini',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
+
+    await expect(
+      utility.generateConversationTitle({
+        ...request,
+        dispatchBudget: {
+          reserve,
+          reconcile: vi.fn(async () => {}),
+          release,
+          consumeTool: vi.fn(async () => {}),
+          unsettledExposure: { tokens: 0, costMicros: 0 }
+        }
+      })
+    ).resolves.toMatchObject({ source: 'fallback', totalTokens: 0 })
+    const admission = reserve.mock.calls[0]?.[0] as { tokens: number; costMicros: number } | undefined
+    expect(admission).toBeDefined()
+    expect(admission?.costMicros).toBe((admission?.tokens ?? 0) * 2)
+    expect(release).not.toHaveBeenCalled()
+  })
+  it('cancels a rejected stream before releasing its reader and retains attempted exposure', async () => {
+    let cancelReason: unknown
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue({
+          results: [{ index: 0, content: 'x'.repeat(4_097) }],
+          modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 4580 } }
+        })
+      },
+      cancel(reason) {
+        cancelReason = reason
+      }
+    })
+    const reserve = vi.fn(async () => ({ id: 1, tokens: 100_000, costMicros: 100_000 }))
+    const reconcile = vi.fn(async () => {})
+    const release = vi.fn(async () => {})
+    const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({
+        service: { chat: vi.fn(async () => stream) },
+        model: 'model-mini',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
+
+    await expect(
+      utility.generateConversationTitle({
+        ...request,
+        dispatchBudget: { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
+      })
+    ).resolves.toMatchObject({
+      title: 'Investigate intermittent failures in the deployment pipeline',
+      source: 'fallback',
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0
+    })
+    expect(cancelReason).toBe('provider stream failed')
+    expect(reconcile).not.toHaveBeenCalled()
+    expect(release).not.toHaveBeenCalled()
+  })
+
+  it('uses cumulative maxima only after a streaming response reaches EOF', async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue({
+          results: [{ index: 0, content: 'Deployment ' }],
+          modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 100, totalTokens: 1_000 } }
+        })
+        controller.enqueue({
+          results: [{ index: 0, content: 'Pipeline Failures' }],
+          modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 4_580 } }
+        })
+        controller.close()
+      }
+    })
+    const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({
+        service: { chat: vi.fn(async () => stream) },
+        model: 'model-mini',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
+
+    await expect(utility.generateConversationTitle(request)).resolves.toMatchObject({
+      title: 'Deployment Pipeline Failures',
+      inputTokens: 3,
+      outputTokens: 309,
+      totalTokens: 4_580
+    })
+  })
+
+  it('propagates post-attempt reconciliation failures', async () => {
+    const reconcile = vi.fn(async () => {
+      throw new Error('accounting unavailable')
+    })
+    const release = vi.fn(async () => {})
+    const chat = vi.fn(async () => ({
+      results: [{ index: 0, content: 'Useful title' }],
+      modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 4580 } }
+    }))
+    const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({
+        service: { chat },
+        model: 'model-mini',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
+
+    await expect(
+      utility.generateConversationTitle({
+        ...request,
+        dispatchBudget: {
+          reserve: vi.fn(async () => ({ id: 1, tokens: 100_000, costMicros: 100_000 })),
+          reconcile,
+          release,
+          consumeTool: vi.fn(async () => {}),
+          unsettledExposure: { tokens: 0, costMicros: 0 }
+        }
+      })
+    ).rejects.toThrow('accounting unavailable')
+    expect(release).not.toHaveBeenCalled()
   })
 
   it('returns strict bounded knowledge enrichment without exposing tools', async () => {
@@ -90,7 +336,7 @@ describe('agent utility model', () => {
           })
         }
       ],
-      modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 25, completionTokens: 12, totalTokens: 37 } }
+      modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 4580 } }
     }))
     const create = vi.fn(async () => ({
       service: { chat },
@@ -109,8 +355,9 @@ describe('agent utility model', () => {
     expect(result).toMatchObject({
       value: { type: 'Procedure', tags: ['deployment'], searchTerms: ['release deployment'] },
       model: 'model-mini',
-      inputTokens: 25,
-      outputTokens: 12
+      inputTokens: 3,
+      outputTokens: 309,
+      totalTokens: 4580
     })
     expect(result.inputSha256).toMatch(/^[a-f0-9]{64}$/)
     expect(result.outputSha256).toMatch(/^[a-f0-9]{64}$/)
@@ -167,7 +414,8 @@ describe('agent utility model', () => {
             searchTerms: []
           })
         }
-      ]
+      ],
+      modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 0, totalTokens: 3 } }
     }))
     const utility = new AgentUtilityModel({
       create: vi.fn(async () => ({ service: { chat }, model: 'model-mini', capabilities: { maxContextTokens: 2_000, maxOutputTokens: 8 } }))

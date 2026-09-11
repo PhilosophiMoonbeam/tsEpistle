@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BUN_VERSION: 1.4.0
+  BUN_VERSION: 1.4.2
   WIKI_HELM_PREVIOUS_IMAGE: ghcr.io/requarks/wiki:2.5.314@sha256:68f0d1848261ae76492ba358e30a96a76fed5d97a3fff381656082bf90f70d7e
 
 jobs:
@@ -140,6 +140,11 @@ jobs:
           --health-retries 20
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - name: Verify Local Toolchain
+      shell: bash
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
+
     - run: bun install --frozen-lockfile
     - name: Exercise Agent Migration and Rollback
       env:
@@ -229,6 +234,11 @@ jobs:
           postgresImage: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - name: Verify Local Toolchain
+      shell: bash
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
+
     - name: Install Dependencies
       run: bun install --frozen-lockfile
     - name: Measure Bounded Page Index
@@ -256,6 +266,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - name: Verify Local Toolchain
+      shell: bash
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
+
 
     - name: Set Build Metadata
       shell: bash
@@ -352,6 +367,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - name: Verify Local Toolchain
+      shell: bash
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
+
 
     - name: Download Reference Linux Bundle
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -410,6 +430,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - name: Verify Local Toolchain
+      shell: bash
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
+
 
     - name: Install Test Dependencies
       run: |
@@ -486,6 +511,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - name: Verify Local Toolchain
+      shell: bash
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
+
 
     - name: Download Test Image
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -535,6 +565,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - name: Verify Local Toolchain
+      shell: bash
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
+
 
     - name: Download Test Image
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -565,6 +600,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - name: Verify Local Toolchain
+      shell: bash
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
+
 
     - name: Download Test Image
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -634,6 +674,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - name: Verify Local Toolchain
+      shell: bash
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
+
 
     - name: Set Build Metadata
       shell: bash
@@ -731,6 +776,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - name: Verify Local Toolchain
+      shell: bash
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
+
     - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
       with:
         image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
@@ -960,6 +1010,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - name: Verify Local Toolchain
+      shell: bash
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
+
 
     - name: Set Build Metadata
       shell: bash
@@ -1153,6 +1208,11 @@ jobs:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       with:
         fetch-depth: 0
+    - name: Verify Local Toolchain
+      shell: bash
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
+
 
     - name: Enforce Threat Model Release State
       run: bun server/scripts/check-threat-model.ts --release
@@ -1239,6 +1299,10 @@ jobs:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       with:
         fetch-depth: 0
+    - name: Verify Local Toolchain
+      shell: bash
+      run: |
+        test "$(bun --version)" = "$BUN_VERSION"
 
     - name: Enforce Threat Model Release State
       run: bun server/scripts/check-threat-model.ts --release

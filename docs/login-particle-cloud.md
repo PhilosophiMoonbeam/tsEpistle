@@ -1,6 +1,6 @@
 # Login logo particle cloud
 
-Existing managed logo uploads automatically use the cloud renderer; no upload, migration, or server-side reprocessing is required. The small login logo displays its original PNG alpha directly on the credential card, with a transparent avatar and no decorative tile. Move the pointer through the cloud to stir it; click to scatter particles. The displaced particles return to their logo positions.
+Existing managed logo uploads automatically use the cloud renderer; no upload, migration, or server-side reprocessing is required. The ordinary login logo preserves the full-canvas PNG and is displayed inside the credential card's framed `.login-logo` container with a contained image; this frame is ordinary branding and does not alter the particle source. Move the pointer through the cloud to stir it; click to scatter particles. The displaced particles return to their logo positions.
 
 ## Rendering and physics
 
@@ -14,9 +14,11 @@ Pointer samples feed one continuous brush, with a 65 ms follow time and a 180 ms
 
 Each accepted click samples a scale from 0.90–1.45 once. That scale multiplies the existing 100–240 CSS-pixel base blast radius, giving a bounded 90–348 CSS-pixel range across viewport sizes. It also scales bead impulse strength; both populations share the same radius cap and chosen scale. The six-blast capacity, 2.8-second lifetime, particle count, and physics budget are unchanged.
 
-The renderer reads the actual surface color before its first frame and updates it when the theme changes. It stops when inactive and disposes resources on teardown. Reduced motion, unsupported WebGL, artifact failures, or context loss keep the static logo and authentication controls usable. Coarse-pointer and small viewport profiles retain the existing static/ordinary login behavior.
+The renderer reads the actual surface color before its first frame and updates it when the theme changes. It stops when inactive and disposes resources on teardown. Reduced motion, unsupported WebGL, artifact failures, or context loss keep the personalized static treatment and authentication controls usable; reduced motion does not import WebGL or start animation. Coarse-pointer and small viewport profiles retain the framed ordinary login logo and static/ordinary login behavior.
 
 The default orbit illustration is omitted when a managed logo is configured. Explicit custom login backgrounds are preserved.
+
+After terminal ordinary authentication succeeds, the login loader may show a decorative TS Epistle open-book illustration for a 900 ms book-opening sequence before redirect. It is auth-success-only: failed login, TFA, password-reset, verification, and other non-terminal states do not show it. Reduced-motion styling collapses the animation while preserving the same success-only gate; the art never participates in authentication.
 
 ## Renderer choice
 
@@ -37,7 +39,7 @@ The September 2026 audit retained the existing renderer because there was no mea
 
 `bun run test client/components/login-logo/particle-colors.test.ts client/components/login-logo/particle-cloud.test.ts client/components/login-logo/LogoParticleScene.test.ts client/components/login-logo/LoginParticleLogo.test.ts client/components/login-logo/useLogoPointer.test.ts client/components/login-logo/particle-logo.test.ts client/components/login-logo/login-layout.test.ts`
 
-Physics tests cover collision separation and exchanged velocity, scatter and return relative to an undisturbed cloud, refresh-rate independence, bounded suspension/resize handling, and a 16,000-record adversarial input. GPU transform-feedback checks run the actual vertex shader to verify current-position locality, unchanged remote blast paths, meaningful small/large scatter, and full recovery. They also check final composited contrast and preserved alpha for white, pale, and saturated particles on white, warm light, and dark surfaces. Brush tests cover strength gain, radius bounds, saturated ring replacement, direction reversal, release, and refresh-rate independence. The login browser suite checks rendered movement and recovery, transparent logo containers, authentication independence, failures, theme/layout behavior, reduced motion, and resource teardown.
+Physics tests cover collision separation and exchanged velocity, scatter and return relative to an undisturbed cloud, refresh-rate independence, bounded suspension/resize handling, and a 16,000-record adversarial input. GPU transform-feedback checks run the actual vertex shader to verify current-position locality, unchanged remote blast paths, meaningful small/large scatter, and full recovery. They also check final composited contrast and preserved alpha for white, pale, and saturated particles on white, warm light, and dark surfaces. Brush tests cover strength gain, radius bounds, saturated ring replacement, direction reversal, release, and refresh-rate independence. The login browser suite checks rendered movement and recovery, framed ordinary-logo presentation, transparent static-effect fallback, auth-success-only book art, and reduced-motion behavior.
 
 With an initialized local test server:
 

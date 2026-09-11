@@ -2,7 +2,8 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 
 import type { AgentConversationFolderView, AgentProviderProfileView, AgentThreadState } from '../../shared/agents/contracts.ts'
-import { useAgentsStore } from './agents.ts'
+import { AGENT_CHAT_PIN_STORAGE_KEY, clearAgentChatPin, writeAgentChatPin } from '../helpers/agent-chat-pin.ts'
+import { isAgentSessionId, useAgentsStore } from './agents.ts'
 
 const activeThread = (): AgentThreadState => ({
   session: {
@@ -306,6 +307,7 @@ describe('Agent chat refresh fallback', () => {
 
 describe('Agent store initialization', () => {
   afterEach(() => {
+    clearAgentChatPin()
     vi.restoreAllMocks()
   })
 
@@ -339,7 +341,7 @@ describe('Agent store initialization', () => {
     })
     store.connectCurrentRun = vi.fn()
 
-    await store.initialize('initialized-csrf', { routeSync: false })
+    await store.initialize('initialized-csrf', { ownerId: 1, routeSync: false })
 
     const createCall = fetcher.mock.calls.find(call => call[0] === '/_api/agents/sessions' && call[1]?.method === 'POST')
     expect(store.csrfToken).toBe('initialized-csrf')
@@ -374,7 +376,7 @@ describe('Agent store initialization', () => {
     store.profiles = [staleProfile]
     vi.spyOn(window, 'fetch').mockRejectedValue(new TypeError('Workspace unavailable'))
 
-    const initializing = store.initialize('csrf-token', { routeSync: false })
+    const initializing = store.initialize('csrf-token', { ownerId: 1, routeSync: false })
     expect(store.profiles).toEqual([])
     await initializing
     expect(store.profiles).toEqual([])
@@ -389,35 +391,244 @@ describe('Agent store initialization', () => {
     const store = useAgentsStore()
     const existing = folderForTest('00000000-0000-4000-8000-000000000062', 'Existing')
     const baseline = deferred<Response>()
+    const deleteResponse = deferred<Response>()
     const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
       if (path === '/_api/agents/conversation-folders' && method === 'GET') return baseline.promise
+      if (path.startsWith(`/_api/agents/conversation-folders/${existing.id}?`) && method === 'DELETE') return deleteResponse.promise
       if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
       if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
     })
-    store.newSession = vi.fn(async () => {})
+    store.newSession = vi.fn(async () => true)
 
-    const initializing = store.initialize('csrf-token', { routeSync: false })
-    const creating = store.createFolder('New')
-    const creatingRejection = expect(creating).rejects.toThrow('Conversation folders are still loading')
-    const renaming = store.renameFolder(existing.id, existing.version, 'Renamed')
-    const renamingRejection = expect(renaming).rejects.toThrow('Conversation folders are still loading')
-    const deleting = store.deleteFolder(existing.id)
-    const deletingRejection = expect(deleting).rejects.toThrow('Conversation folders are still loading')
+    const initializing = store.initialize('csrf-token', { ownerId: 1, routeSync: false })
+    const movable = threadForSession('00000000-0000-4000-8000-000000000063', '00000000-0000-4000-8000-000000000065')
+    store.sessions = [summaryForThread(movable)]
+    const creatingRejection = expect(store.createFolder('New')).rejects.toThrow('Conversation folders are still loading')
+    const renamingRejection = expect(store.renameFolder(existing.id, existing.version, 'Renamed')).rejects.toThrow('Conversation folders are still loading')
+    const deletingRejection = expect(store.deleteFolder(existing.id, existing.version)).rejects.toThrow('Conversation folders are still loading')
+    const movingRejection = expect(store.moveSessionToFolder(movable.session.id, existing.id)).rejects.toThrow('Conversation folders are still loading')
 
-    await Promise.all([creatingRejection, renamingRejection, deletingRejection])
+    await Promise.all([creatingRejection, renamingRejection, deletingRejection, movingRejection])
     expect(fetcher.mock.calls.filter(call => (call[1]?.method ?? 'GET') !== 'GET')).toHaveLength(0)
 
     baseline.resolve(Response.json({ folders: [existing] }))
-    await initializing
-
+    await expect(initializing).resolves.toBe(true)
+    expect(store.loading).toBe(false)
     expect(store.folders).toEqual([existing])
+
+    const busyToken = store.beginSessionMutation()
+    expect(busyToken).toBeGreaterThan(0)
+    const requestCountBeforeBusyDelete = fetcher.mock.calls.length
+    await expect(store.deleteFolder(existing.id, existing.version)).resolves.toBe(false)
+    expect(fetcher.mock.calls).toHaveLength(requestCountBeforeBusyDelete)
+    expect(store.endSessionMutation(busyToken)).toBe(true)
+    const deletingAfterLoad = store.deleteFolder(existing.id, existing.version)
+    expect(store.sessionMutationBusy).toBe(true)
+    expect(fetcher.mock.calls.at(-1)?.[0]).toBe(`/_api/agents/conversation-folders/${existing.id}?expectedVersion=${existing.version}`)
+    expect(fetcher.mock.calls.at(-1)?.[1]?.method).toBe('DELETE')
+    deleteResponse.resolve(Response.json({ deleted: true, movedSessions: 0 }))
+    await expect(deletingAfterLoad).resolves.toBe(true)
+    expect(store.folders).toEqual([])
+    expect(store.sessionMutationBusy).toBe(false)
+    store.closeWorkspace()
+  })
+  it('falls an absent explicit resume through a live pin before creating anything new', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.connectCurrentRun = vi.fn()
+    const resumeId = '00000000-0000-4000-8000-000000000120'
+    const pinnedId = '00000000-0000-4000-8000-000000000121'
+    const pinned = {
+      ...threadForSession(pinnedId, '00000000-0000-4000-8000-000000000122'),
+      session: { ...activeThread().session, id: pinnedId, currentRun: null }
+    }
+    writeAgentChatPin(1, pinnedId)
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
+      if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
+      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
+      if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
+      if (path === `/_api/agents/sessions/${resumeId}` && method === 'GET') return Promise.resolve(Response.json({ message: 'Gone' }, { status: 410 }))
+      if (path === `/_api/agents/sessions/${pinnedId}` && method === 'GET') return Promise.resolve(Response.json(pinned))
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    await expect(store.initialize('csrf-token', { ownerId: 1, routeSync: false, resumeSessionId: resumeId })).resolves.toBe(true)
+
+    expect(store.thread?.session.id).toBe(pinnedId)
+    expect(fetcher.mock.calls.filter(call => call[0] === `/_api/agents/sessions/${resumeId}`)).toHaveLength(1)
+    expect(fetcher.mock.calls.filter(call => call[0] === `/_api/agents/sessions/${pinnedId}`)).toHaveLength(1)
+    expect(fetcher.mock.calls.some(call => call[1]?.method === 'POST')).toBe(false)
+    clearAgentChatPin()
     store.closeWorkspace()
   })
 
+  it('uses one thread read for an absent resume that is the same as the pin, then clears the pin before a fresh session', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.connectCurrentRun = vi.fn()
+    const missingId = '00000000-0000-4000-8000-000000000123'
+    const created = {
+      ...threadForSession('00000000-0000-4000-8000-000000000124', '00000000-0000-4000-8000-000000000125'),
+      session: { ...activeThread().session, id: '00000000-0000-4000-8000-000000000124', currentRun: null }
+    }
+    writeAgentChatPin(1, missingId)
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
+      if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
+      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
+      if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
+      if (path === `/_api/agents/sessions/${missingId}` && method === 'GET') return Promise.resolve(Response.json({ message: 'Not found' }, { status: 404 }))
+      if (path === '/_api/agents/sessions' && method === 'POST') return Promise.resolve(Response.json(created, { status: 201 }))
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    await expect(store.initialize('csrf-token', { ownerId: 1, routeSync: false, resumeSessionId: missingId })).resolves.toBe(true)
+
+    expect(fetcher.mock.calls.filter(call => call[0] === `/_api/agents/sessions/${missingId}`)).toHaveLength(1)
+    expect(fetcher.mock.calls.filter(call => call[0] === '/_api/agents/sessions' && call[1]?.method === 'POST')).toHaveLength(1)
+    expect(window.sessionStorage.getItem('agents.chat-pin.v1')).toBeNull()
+    clearAgentChatPin()
+    store.closeWorkspace()
+  })
+
+  it('does not fall back from an explicit resume on transient or authorization errors', async () => {
+    for (const status of [503, 403]) {
+      setActivePinia(createPinia())
+      const store = useAgentsStore()
+      store.connectCurrentRun = vi.fn()
+      const resumeId = status === 503 ? '00000000-0000-4000-8000-000000000126' : '00000000-0000-4000-8000-000000000127'
+      const pinnedId = status === 503 ? '00000000-0000-4000-8000-000000000128' : '00000000-0000-4000-8000-000000000129'
+      writeAgentChatPin(1, pinnedId)
+      const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+        const path = String(input)
+        const method = init?.method ?? 'GET'
+        if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
+        if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
+        if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
+        if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
+        if (path === `/_api/agents/sessions/${resumeId}` && method === 'GET') return Promise.resolve(Response.json({ message: 'Unavailable' }, { status }))
+        return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+      })
+
+      await expect(store.initialize('csrf-token', { ownerId: 1, routeSync: false, resumeSessionId: resumeId })).resolves.toBe(false)
+
+      expect(fetcher.mock.calls.filter(call => call[0] === `/_api/agents/sessions/${pinnedId}`)).toHaveLength(0)
+      expect(fetcher.mock.calls.some(call => call[1]?.method === 'POST')).toBe(false)
+      clearAgentChatPin()
+      store.closeWorkspace()
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('rejects malformed IDs before issuing a thread GET and uses the same UUID parser for routes and pins', async () => {
+    expect(isAgentSessionId('00000000-0000-4000-8000-000000000130')).toBe(true)
+    expect(isAgentSessionId('00000000-0000-0000-0000-000000000130')).toBe(false)
+    expect(isAgentSessionId('not-a-session')).toBe(false)
+
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.connectCurrentRun = vi.fn()
+    const pinnedId = '00000000-0000-4000-8000-000000000131'
+    const pinned = {
+      ...threadForSession(pinnedId, '00000000-0000-4000-8000-000000000132'),
+      session: { ...activeThread().session, id: pinnedId, currentRun: null }
+    }
+    writeAgentChatPin(1, pinnedId)
+    const malformedResume = '00000000-0000-0000-0000-000000000133'
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
+      if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
+      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
+      if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
+      if (path === `/_api/agents/sessions/${pinnedId}` && method === 'GET') return Promise.resolve(Response.json(pinned))
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    await expect(store.initialize('csrf-token', { ownerId: 1, routeSync: false, resumeSessionId: malformedResume })).resolves.toBe(true)
+
+    expect(fetcher.mock.calls.some(call => call[0] === `/_api/agents/sessions/${malformedResume}`)).toBe(false)
+    expect(store.thread?.session.id).toBe(pinnedId)
+    clearAgentChatPin()
+    store.closeWorkspace()
+  })
+
+  it('discards a malformed persisted pin without issuing a thread GET', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.connectCurrentRun = vi.fn()
+    const created = {
+      ...threadForSession('00000000-0000-4000-8000-000000000134', '00000000-0000-4000-8000-000000000135'),
+      session: { ...activeThread().session, id: '00000000-0000-4000-8000-000000000134', currentRun: null }
+    }
+    window.sessionStorage.setItem(AGENT_CHAT_PIN_STORAGE_KEY, JSON.stringify({ version: 1, ownerId: 1, sessionId: 'not-a-session' }))
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
+      if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
+      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
+      if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
+      if (path === '/_api/agents/sessions' && method === 'POST') return Promise.resolve(Response.json(created, { status: 201 }))
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    await expect(store.initialize('csrf-token', { ownerId: 1, routeSync: false })).resolves.toBe(true)
+
+    expect(
+      fetcher.mock.calls.filter(call => typeof call[0] === 'string' && call[0].includes('/_api/agents/sessions/') && call[1]?.method === 'GET')
+    ).toHaveLength(0)
+    expect(fetcher.mock.calls.filter(call => call[0] === '/_api/agents/sessions' && call[1]?.method === 'POST')).toHaveLength(1)
+    expect(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)).toBeNull()
+    clearAgentChatPin()
+    store.closeWorkspace()
+  })
+  it('uses the greatest current-or-summary version and keeps a late move projection monotonic', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    const current = { ...activeThread(), session: { ...activeThread().session, currentRun: null, version: 2 } }
+    const latest = { ...current, session: { ...current.session, version: 6, title: 'Latest state', folderId: '00000000-0000-4000-8000-000000000140' } }
+    const staleProjection = { ...current, session: { ...current.session, version: 4, folderId: '00000000-0000-4000-8000-000000000141' } }
+    store.thread = current
+    store.sessions = [{ ...summaryForThread(current), version: 3 }]
+    const pendingMove = deferred<Response>()
+    const requestBodies: unknown[] = []
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${current.session.id}/folder` && method === 'PUT') {
+        requestBodies.push(JSON.parse(String(init?.body)))
+        return pendingMove.promise
+      }
+      if (path === '/_api/agents/sessions' && method === 'GET')
+        return Promise.resolve(Response.json({ sessions: [{ ...summaryForThread(staleProjection), version: 5 }], nextCursor: null }))
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    const moving = store.moveSessionToFolder(current.session.id, '00000000-0000-4000-8000-000000000141')
+    await flushMicrotasks()
+    store.thread = latest
+    store.sessions = [summaryForThread(latest)]
+    pendingMove.resolve(Response.json(staleProjection))
+    await expect(moving).resolves.toEqual(staleProjection)
+
+    expect(requestBodies).toEqual([{ expectedSessionVersion: 3, folderId: '00000000-0000-4000-8000-000000000141' }])
+    expect(store.thread?.session.version).toBe(6)
+    expect(store.thread?.session.folderId).toBe('00000000-0000-4000-8000-000000000140')
+    expect(store.sessions[0]?.version).toBe(6)
+    expect(store.sessions[0]?.folderId).toBe('00000000-0000-4000-8000-000000000140')
+  })
   it('retains the opaque next cursor from the authoritative session page', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
@@ -821,6 +1032,46 @@ describe('Agent session mutations', () => {
     }
   })
 
+  it('invalidates an account A mutation lease without letting its late finally release account B', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const accountA = { ...activeThread(), session: { ...activeThread().session, currentRun: null } }
+    const accountB = {
+      ...threadForSession('00000000-0000-4000-8000-000000000142', '00000000-0000-4000-8000-000000000143'),
+      session: { ...activeThread().session, id: '00000000-0000-4000-8000-000000000142', currentRun: null }
+    }
+    store.thread = accountA
+    store.sessions = [summaryForThread(accountA)]
+    store.csrfToken = 'csrf-a'
+    store.pinOwnerId = 1
+    const pendingSend = deferred<Response>()
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${accountA.session.id}/messages` && method === 'POST') return pendingSend.promise
+      if (path === '/_api/agents/sessions' && method === 'GET')
+        return Promise.resolve(Response.json({ sessions: [summaryForThread(accountB)], nextCursor: null }))
+      if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
+      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
+      if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
+      if (path === `/_api/agents/sessions/${accountB.session.id}` && method === 'GET') return Promise.resolve(Response.json(accountB))
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    const sending = store.send('Keep account A request in flight')
+    const oldToken = store.sessionMutationToken
+    expect(oldToken).toBeGreaterThan(0)
+    await expect(store.initialize('csrf-b', { ownerId: 2, routeSync: false, resumeSessionId: accountB.session.id })).resolves.toBe(true)
+    const newToken = store.beginSessionMutation()
+    expect(newToken).toBeGreaterThan(oldToken!)
+    pendingSend.resolve(Response.json({ run: activeThread().session.currentRun, replayed: false }))
+    await expect(sending).resolves.toBe(true)
+    expect(store.sessionMutationToken).toBe(newToken)
+    expect(store.sessionMutationBusy).toBe(true)
+    expect(store.endSessionMutation(newToken!)).toBe(true)
+    expect(store.sessionMutationBusy).toBe(false)
+    expect(fetcher.mock.calls.some(call => call[1]?.method === 'POST')).toBe(true)
+  })
   it('restores an unfiled current conversation and its stream when clearing fails', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
@@ -1002,7 +1253,7 @@ describe('Agent session mutations', () => {
             ? '/_api/agents/sessions'
             : actionName === 'removeSession'
               ? `/_api/agents/sessions/${removedSessionId}`
-              : `/_api/agents/conversation-folders/${folderId}`
+              : `/_api/agents/conversation-folders/${folderId}?expectedVersion=1`
         const expectedMethod = actionName === 'newSession' ? 'POST' : 'DELETE'
         let requestIssued = false
         const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
@@ -1021,12 +1272,12 @@ describe('Agent session mutations', () => {
         if (actionName === 'newSession') mutation = store.newSession('saved')
         else if (actionName === 'removeSession') mutation = store.removeSession(removedSessionId)
         else if (actionName === 'clearUnfiledHistory') mutation = store.clearUnfiledHistory()
-        else mutation = store.deleteFolder(folderId)
+        else mutation = store.deleteFolder(folderId, 1)
 
         expect(store.sessionMutationBusy).toBe(true)
         expect(requestIssued).toBe(true)
         const transitionVersion = store.sessionTransitionVersion
-        await expect(store.newSession('temporary')).resolves.toBeUndefined()
+        await expect(store.newSession('temporary')).resolves.toBe(false)
         expect(store.sessionTransitionVersion).toBe(transitionVersion)
         expect(fetcher).toHaveBeenCalledTimes(1)
 
@@ -1035,6 +1286,8 @@ describe('Agent session mutations', () => {
           else if (actionName === 'deleteFolder') request.resolve(Response.json({ deleted: true, movedSessions: 0 }))
           else request.resolve(new Response(null, { status: 204 }))
           if (actionName === 'removeSession') await expect(mutation).resolves.toBe(true)
+          else if (actionName === 'newSession') await expect(mutation).resolves.toBe(true)
+          else if (actionName === 'deleteFolder') await expect(mutation).resolves.toBe(true)
           else await expect(mutation).resolves.toBeUndefined()
         } else {
           request.reject(new TypeError(`${actionName} offline`))
@@ -1042,9 +1295,13 @@ describe('Agent session mutations', () => {
         }
 
         expect(store.sessionMutationBusy).toBe(false)
-        expect(store.beginSessionMutation()).toBe(true)
+        const token = store.beginSessionMutation()
+        expect(token).toBeGreaterThan(0)
         expect(store.sessionMutationBusy).toBe(true)
-        store.endSessionMutation()
+        expect(token).toBe(store.sessionMutationToken)
+        await expect(store.newSession('temporary', token! + 1)).resolves.toBe(false)
+        expect(store.sessionMutationBusy).toBe(true)
+        expect(store.endSessionMutation(token)).toBe(true)
         expect(store.sessionMutationBusy).toBe(false)
         fetcher.mockRestore()
       }
@@ -1127,7 +1384,7 @@ describe('Agent folder refresh ordering', () => {
       }
       if (path === '/_api/agents/conversation-folders' && method === 'POST') return pendingCreate.promise
       if (path === `/_api/agents/conversation-folders/${created.id}` && method === 'PATCH') return Promise.resolve(Response.json({ folder: renamed }))
-      if (path === `/_api/agents/conversation-folders/${created.id}` && method === 'DELETE')
+      if (path.startsWith(`/_api/agents/conversation-folders/${created.id}?`) && method === 'DELETE')
         return Promise.resolve(Response.json({ deleted: true, movedSessions: 0 }))
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
@@ -1150,7 +1407,7 @@ describe('Agent folder refresh ordering', () => {
     expect(store.folders).toEqual([renamed])
 
     const beforeDelete = store.reloadFolders()
-    await store.deleteFolder(created.id)
+    await store.deleteFolder(created.id, created.version)
     expect(signals[2]?.aborted).toBe(true)
     staleReads[2]!.resolve(Response.json({ folders: [renamed] }))
     await beforeDelete
@@ -1355,6 +1612,195 @@ describe('Agent session selection', () => {
   })
 })
 
+describe('Agent chat pin availability', () => {
+  afterEach(() => {
+    clearAgentChatPin()
+    vi.restoreAllMocks()
+  })
+
+  it('keeps a retained chat unchanged while a replacement workspace is loading, then pins the committed chat', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.routeSync = false
+    store.pinOwnerId = 1
+    store.workspaceVersion = 7
+    store.initializedWorkspaceVersion = 7
+    const retained = {
+      ...threadForSession('00000000-0000-4000-8000-000000000140', '00000000-0000-4000-8000-000000000141'),
+      session: {
+        ...activeThread().session,
+        id: '00000000-0000-4000-8000-000000000140',
+        currentRun: null
+      }
+    }
+    const selected = {
+      ...threadForSession('00000000-0000-4000-8000-000000000142', '00000000-0000-4000-8000-000000000143'),
+      session: {
+        ...activeThread().session,
+        id: '00000000-0000-4000-8000-000000000142',
+        currentRun: null
+      }
+    }
+    store.thread = retained
+    writeAgentChatPin(1, retained.session.id)
+    store.pinnedSessionId = retained.session.id
+    store.connectCurrentRun = vi.fn()
+    const pendingSelection = deferred<Response>()
+    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${selected.session.id}` && method === 'GET') return pendingSelection.promise
+      if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
+      if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
+      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
+      if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    const initializing = store.initialize('csrf-token', { ownerId: 1, routeSync: false, resumeSessionId: selected.session.id })
+    expect(store.canPinCurrentChat).toBe(false)
+    store.setCurrentChatPinned(true)
+    store.setCurrentChatPinned(false)
+    expect(store.pinnedSessionId).toBe(retained.session.id)
+    expect(JSON.parse(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!).sessionId).toBe(retained.session.id)
+
+    pendingSelection.resolve(Response.json(selected))
+    await expect(initializing).resolves.toBe(true)
+    expect(store.thread?.session.id).toBe(selected.session.id)
+    expect(store.canPinCurrentChat).toBe(true)
+    store.setCurrentChatPinned(true)
+    expect(store.pinnedSessionId).toBe(selected.session.id)
+    expect(JSON.parse(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!).sessionId).toBe(selected.session.id)
+  })
+
+  it('blocks pin mutations during a history read while retaining the displayed chat', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.routeSync = false
+    store.pinOwnerId = 1
+    store.workspaceVersion = 8
+    store.initializedWorkspaceVersion = 8
+    const retained = threadForSession('00000000-0000-4000-8000-000000000144', '00000000-0000-4000-8000-000000000145')
+    const selected = threadForSession('00000000-0000-4000-8000-000000000146', '00000000-0000-4000-8000-000000000147')
+    store.thread = retained
+    writeAgentChatPin(1, retained.session.id)
+    store.pinnedSessionId = retained.session.id
+    store.connectCurrentRun = vi.fn()
+    const pendingSelection = deferred<Response>()
+    vi.spyOn(window, 'fetch').mockReturnValue(pendingSelection.promise)
+
+    const opening = store.openSession(selected.session.id)
+    expect(store.canPinCurrentChat).toBe(false)
+    store.setCurrentChatPinned(true)
+    store.setCurrentChatPinned(false)
+    expect(store.pinnedSessionId).toBe(retained.session.id)
+    expect(JSON.parse(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!).sessionId).toBe(retained.session.id)
+
+    pendingSelection.resolve(Response.json(selected))
+    await expect(opening).resolves.toBe(true)
+    expect(store.thread?.session.id).toBe(selected.session.id)
+    expect(store.canPinCurrentChat).toBe(true)
+    store.setCurrentChatPinned(true)
+    expect(store.pinnedSessionId).toBe(selected.session.id)
+    expect(JSON.parse(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!).sessionId).toBe(selected.session.id)
+  })
+
+  it('keeps a retained chat unpinnable after initialization fails', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.routeSync = false
+    store.pinOwnerId = 1
+    store.workspaceVersion = 9
+    store.initializedWorkspaceVersion = 9
+    const retained = {
+      ...threadForSession('00000000-0000-4000-8000-000000000148', '00000000-0000-4000-8000-000000000149'),
+      session: {
+        ...activeThread().session,
+        id: '00000000-0000-4000-8000-000000000148',
+        currentRun: null
+      }
+    }
+    store.thread = retained
+    writeAgentChatPin(1, retained.session.id)
+    store.pinnedSessionId = retained.session.id
+    store.connectCurrentRun = vi.fn()
+    const pendingHistory = deferred<Response>()
+    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === '/_api/agents/sessions' && method === 'GET') return pendingHistory.promise
+      if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
+      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
+      if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    const initializing = store.initialize('csrf-token', { ownerId: 1, routeSync: false })
+    expect(store.canPinCurrentChat).toBe(false)
+    store.setCurrentChatPinned(true)
+    store.setCurrentChatPinned(false)
+    expect(store.pinnedSessionId).toBe(retained.session.id)
+
+    pendingHistory.reject(new Error('Initialization unavailable'))
+    await expect(initializing).resolves.toBe(false)
+    expect(store.canPinCurrentChat).toBe(false)
+    store.setCurrentChatPinned(true)
+    store.setCurrentChatPinned(false)
+    expect(store.pinnedSessionId).toBe(retained.session.id)
+    expect(JSON.parse(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!).sessionId).toBe(retained.session.id)
+  })
+
+  it('keeps settled active runs and goals pinnable', () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const thread = activeThread()
+    const run = thread.session.currentRun!
+    const settled: AgentThreadState = {
+      ...thread,
+      session: {
+        ...thread.session,
+        currentRun: {
+          ...run,
+          status: 'succeeded',
+          canCancel: false,
+          completedAt: '2026-08-23T00:01:00.000Z'
+        }
+      },
+      goal: {
+        id: '00000000-0000-4000-8000-000000000150',
+        sessionId: thread.session.id,
+        objective: 'Finish the durable task.',
+        status: 'active',
+        version: 1,
+        currentRunId: run.id,
+        continuationCount: 0,
+        maxContinuations: 3,
+        consumedTokens: 10,
+        maxTokens: 48_000,
+        consumedToolCalls: 1,
+        maxToolCalls: 96,
+        startedAt: thread.session.createdAt,
+        deadlineAt: '2026-08-23T01:00:00.000Z',
+        completedAt: null,
+        errorCode: null,
+        errorMessage: null,
+        completion: null
+      }
+    }
+    store.thread = settled
+    store.pinOwnerId = 1
+    store.workspaceVersion = 10
+    store.initializedWorkspaceVersion = 10
+
+    expect(store.canPinCurrentChat).toBe(true)
+    store.setCurrentChatPinned(true)
+    expect(store.pinnedSessionId).toBe(thread.session.id)
+    store.setCurrentChatPinned(false)
+    expect(store.pinnedSessionId).toBeNull()
+    expect(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)).toBeNull()
+  })
+})
+
 describe('Agent session mutation transitions', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -1473,6 +1919,7 @@ describe('Agent session mutation transitions', () => {
     store.csrfToken = 'csrf-token'
     const active = activeThread()
     const empty = { ...active, session: { ...active.session, currentRun: null } }
+    store.pinOwnerId = 1
     store.thread = empty
     store.setDraft(active.session.id, 'Pending question')
     store.connectCurrentRun = vi.fn()
@@ -1491,7 +1938,7 @@ describe('Agent session mutation transitions', () => {
 
     const sending = store.send('Pending question')
     store.closeWorkspace()
-    await store.initialize('csrf-token', { routeSync: false })
+    await store.initialize('csrf-token', { ownerId: 1, routeSync: false, resumeSessionId: active.session.id })
     expect(store.thread?.session.currentRun).toBeNull()
     accepted = true
     pending.resolve(Response.json({ run: active.session.currentRun, replayed: false }))
@@ -1640,7 +2087,7 @@ describe('Agent empty conversation lifecycle', () => {
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ sessions: [], nextCursor: null }), { status: 200, ...json }))
 
-    expect(await store.newSession('saved')).toBeUndefined()
+    expect(await store.newSession('saved')).toBe(true)
 
     expect(fetcher.mock.calls.map(call => [call[0], (call[1] as RequestInit | undefined)?.method ?? 'GET'])).toEqual([
       ['/_api/agents/sessions', 'POST'],

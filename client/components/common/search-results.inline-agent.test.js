@@ -21,7 +21,7 @@ const compileSearchMethods = (source, names, dependencies) => {
   const declarations = methods.properties.filter(node => ts.isMethodDeclaration(node) && selected.has(node.name.getText(sourceFile)))
   if (declarations.length !== selected.size) throw new Error('A requested search method was not found.')
 
-  const factorySource = `(searchPages, getErrorMessage, wikiStore) => ({${declarations.map(node => node.getText(sourceFile)).join(',')}})`
+  const factorySource = `(searchPages, getErrorMessage, wikiStore, useAgentsStore, isAgentSessionId) => ({${declarations.map(node => node.getText(sourceFile)).join(',')}})`
   const compiled = ts.transpileModule(`const factory = ${factorySource}`, {
     compilerOptions: {
       target: ts.ScriptTarget.ES2022,
@@ -29,7 +29,7 @@ const compileSearchMethods = (source, names, dependencies) => {
     }
   }).outputText
   const factory = new Function(`${compiled}\nreturn factory`)()
-  return factory(dependencies.searchPages, dependencies.getErrorMessage, dependencies.wikiStore)
+  return factory(dependencies.searchPages, dependencies.getErrorMessage, dependencies.wikiStore, dependencies.useAgentsStore, dependencies.isAgentSessionId)
 }
 
 const deferred = () => {
@@ -250,4 +250,28 @@ describe('inline Ask mode contract', () => {
     expect(state.cursor).toBe(0)
   })
 
+  test('retires an absent resume only after a different session commits selection', () => {
+    const requested = '00000000-0000-4000-8000-000000000001'
+    const selected = '00000000-0000-4000-8000-000000000002'
+    const agents = {
+      thread: { session: { id: selected } },
+      initializedWorkspaceVersion: null,
+      workspaceVersion: 4
+    }
+    const methods = compileSearchMethods(search, ['retireResumeAfterSelection'], {
+      searchPages: () => Promise.reject(new Error('Search execution was not expected.')),
+      getErrorMessage: value => String(value),
+      wikiStore: { page: { locale: 'en', path: 'guide' } },
+      useAgentsStore: () => agents,
+      isAgentSessionId: value => typeof value === 'string'
+    })
+    const state = { agentResumeSessionId: requested }
+
+    methods.retireResumeAfterSelection.call(state)
+    expect(state.agentResumeSessionId).toBe(requested)
+
+    agents.initializedWorkspaceVersion = agents.workspaceVersion
+    methods.retireResumeAfterSelection.call(state)
+    expect(state.agentResumeSessionId).toBeNull()
+  })
 })

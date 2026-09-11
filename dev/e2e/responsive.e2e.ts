@@ -9,18 +9,45 @@ import {
   sameOriginHeaders
 } from './helpers.ts'
 import { installEnabledAgentFixture } from './agent-fixture.ts'
+import { decodeWikiPagePayload, type WikiPagePayload } from '../../client/helpers/wiki-navigation.ts'
 
 async function openFixtureAgentFromSearch(page: Page): Promise<Locator> {
   await openAuthenticatedPage(page, '/', '.page-header-section')
-  const search = await openSearch(page)
-  await expect(search).toBeFocused()
-  await expect(page.getByRole('dialog', { name: 'Wiki search' })).toBeVisible()
-  const entry = page.locator('.search-results-agent-entry')
-  await expect(entry).toBeVisible()
-  await entry.click()
+  const viewport = page.viewportSize()
+  const searchDialog = page.getByRole('dialog', { name: 'Wiki search', exact: true })
+  if (viewport && viewport.width >= 960) {
+    await page.keyboard.press('ControlOrMeta+K')
+    await expect(searchDialog).toBeVisible()
+    const entry = searchDialog.getByRole('button', { name: 'Open Wiki Agent', exact: true })
+    await expect(entry).toBeVisible()
+    await entry.click()
+  } else {
+    const search = await openSearch(page)
+    await expect(search).toBeFocused()
+    await expect(searchDialog).toBeVisible()
+    const entry = searchDialog.getByRole('button', { name: 'Open Wiki Agent', exact: true })
+    await expect(entry).toBeVisible()
+    await entry.click()
+  }
   const agent = page.getByRole('region', { name: 'Wiki Agent' })
   await expect(agent).toBeVisible()
   return agent
+}
+
+const decodeWikiPagePayloadForTest = (encoded: string): WikiPagePayload => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  const atob = globalThis.atob
+  if (typeof atob !== 'function') throw new Error('Bun atob is unavailable for wiki payload decoding.')
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { atob }
+  })
+  try {
+    return decodeWikiPagePayload(encoded)
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow)
+    else Reflect.deleteProperty(globalThis, 'window')
+  }
 }
 
 test.describe('responsive UI quality matrix', () => {
@@ -94,20 +121,25 @@ test.describe('responsive UI quality matrix', () => {
         if (viewport.width >= 1280) {
           const hero = page.locator('.page-hero').first()
           const title = page.locator('.page-title').first()
-          const [heroBounds, titleBounds, shortcutBounds, tocBounds] = await Promise.all([
+          const rail = page.locator('.page-col-sd:visible').first()
+          const [heroBounds, titleBounds, railBounds, shortcutBounds, tocBounds] = await Promise.all([
             hero.boundingBox(),
             title.boundingBox(),
+            rail.boundingBox(),
             shortcutCard.boundingBox(),
             tocCard.boundingBox()
           ])
           expect(heroBounds).not.toBeNull()
           expect(titleBounds).not.toBeNull()
+          expect(railBounds).not.toBeNull()
           expect(shortcutBounds).not.toBeNull()
           expect(tocBounds).not.toBeNull()
-          if (heroBounds && titleBounds && shortcutBounds && tocBounds) {
-            expect(shortcutBounds.y, 'Reader shortcuts begin inside the title gradient').toBeGreaterThanOrEqual(heroBounds.y)
-            expect(shortcutBounds.y, 'Reader shortcuts begin before the title gradient ends').toBeLessThan(heroBounds.y + heroBounds.height)
-            expect(Math.abs(shortcutBounds.y - titleBounds.y), 'Reader shortcuts align with the title row').toBeLessThanOrEqual(4)
+          if (heroBounds && titleBounds && railBounds && shortcutBounds && tocBounds) {
+            const titleMidpoint = titleBounds.y + titleBounds.height / 2
+            expect(railBounds.y, 'Reader rail begins inside the title hero').toBeGreaterThanOrEqual(heroBounds.y)
+            expect(railBounds.y, 'Reader rail begins before the title hero ends').toBeLessThan(heroBounds.y + heroBounds.height)
+            expect(Math.abs(railBounds.y - titleMidpoint), 'Reader rail aligns with the title midpoint').toBeLessThanOrEqual(4)
+            expect(shortcutBounds.y, 'Reader shortcuts begin at the rail top').toBeGreaterThanOrEqual(railBounds.y - 1)
             expect(tocBounds.y, 'Page Contents follows the reader shortcuts').toBeGreaterThanOrEqual(shortcutBounds.y + shortcutBounds.height)
             expect(tocBounds.height, 'Page Contents retains useful empty geometry').toBeGreaterThanOrEqual(128)
 
@@ -253,6 +285,157 @@ test.describe('responsive UI quality matrix', () => {
     await returnToTop.click()
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(2)
   })
+  test('keeps the reader Edit hit area interactive from top through bottom', async ({ page }) => {
+    const viewport = page.viewportSize()
+    expect(viewport).not.toBeNull()
+    if (!viewport || viewport.width < 600) return
+
+    await authenticateAsAdmin(page)
+    const readerUrl = new URL('/en/visual-markdown-browser', sameOriginHeaders().Origin)
+    await page.route(`${readerUrl.origin}${readerUrl.pathname}**`, async route => {
+      const request = route.request()
+      const requestUrl = new URL(request.url())
+      const isDocumentNavigation = request.resourceType() === 'document' && request.isNavigationRequest()
+      const isSpaNavigation = request.headers()['x-wiki-navigation'] === '1'
+      const isExpectedReaderRequest =
+        request.method() === 'GET' &&
+        requestUrl.origin === readerUrl.origin &&
+        requestUrl.pathname === readerUrl.pathname &&
+        (isDocumentNavigation || isSpaNavigation)
+      if (!isExpectedReaderRequest) {
+        await route.continue()
+        return
+      }
+
+      const response = await route.fetch()
+      const contentType = response.headers()['content-type'] ?? ''
+      const document = await response.text()
+      if (!response.ok() || !/^text\/html(?:;|$)/iu.test(contentType)) {
+        throw new Error(`Reader fixture returned ${response.status()} ${contentType || 'without a content type'}.`)
+      }
+
+      const payloadAttribute = /(<wiki-page\b[^>]*\bpayload=)(["'])([^"']+)\2/gu
+      const payloadMatches = Array.from(document.matchAll(payloadAttribute))
+      if (payloadMatches.length !== 1) throw new Error(`Reader fixture returned ${payloadMatches.length} wiki payloads instead of exactly one.`)
+      const match = payloadMatches[0]
+      if (!match || match.index === undefined) throw new Error('Reader fixture payload did not expose a replacement offset.')
+
+      let decodedPayload: WikiPagePayload
+      try {
+        decodedPayload = decodeWikiPagePayloadForTest(match[3]!)
+      } catch (error) {
+        throw new Error(`Reader fixture wiki payload failed validation: ${error instanceof Error ? error.message : String(error)}`)
+      }
+
+      let rawPayload: unknown
+      try {
+        rawPayload = JSON.parse(Buffer.from(match[3]!, 'base64').toString('utf8'))
+      } catch (error) {
+        throw new Error(`Reader fixture wiki payload failed raw decoding: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      if (typeof rawPayload !== 'object' || rawPayload === null || Array.isArray(rawPayload)) throw new Error('Reader fixture wiki payload was not an object.')
+      const rawPayloadRecord = rawPayload as Record<string, unknown>
+      const rawProps = rawPayloadRecord.props
+      if (
+        typeof rawProps !== 'object' ||
+        rawProps === null ||
+        Array.isArray(rawProps) ||
+        typeof (rawProps as Record<string, unknown>).editShortcuts !== 'string'
+      ) {
+        throw new Error('Reader fixture wiki payload did not contain encoded edit shortcuts.')
+      }
+      const rawPropsRecord = rawProps as Record<string, unknown>
+      if (rawPropsRecord.editShortcuts !== decodedPayload.props.editShortcuts) {
+        throw new Error('Reader fixture wiki payload decoding changed the edit shortcuts encoding.')
+      }
+
+      let editShortcuts: unknown
+      try {
+        editShortcuts = JSON.parse(Buffer.from(decodedPayload.props.editShortcuts, 'base64').toString('utf8'))
+      } catch (error) {
+        throw new Error(`Reader fixture edit shortcuts failed decoding: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      if (typeof editShortcuts !== 'object' || editShortcuts === null || Array.isArray(editShortcuts))
+        throw new Error('Reader fixture edit shortcuts were not an object.')
+
+      const patchedEditShortcuts = {
+        ...(editShortcuts as Record<string, unknown>),
+        editMenuBar: true,
+        editMenuBtn: true,
+        editMenuExternalBtn: false
+      }
+      const encodedEditShortcuts = Buffer.from(JSON.stringify(patchedEditShortcuts), 'utf8').toString('base64')
+      const patchedRawPayload = {
+        ...rawPayloadRecord,
+        props: {
+          ...rawPropsRecord,
+          editShortcuts: encodedEditShortcuts
+        }
+      }
+      const encodedPatchedPayload = Buffer.from(JSON.stringify(patchedRawPayload), 'utf8').toString('base64')
+      let reExtractedRawPayload: unknown
+      try {
+        reExtractedRawPayload = JSON.parse(Buffer.from(encodedPatchedPayload, 'base64').toString('utf8'))
+      } catch (error) {
+        throw new Error(`Patched reader fixture wiki payload failed round-trip decoding: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      if (JSON.stringify(reExtractedRawPayload) !== JSON.stringify(patchedRawPayload)) {
+        throw new Error('Patched reader fixture wiki payload did not preserve its exact JSON round trip.')
+      }
+
+      let roundTripPayload: WikiPagePayload
+      try {
+        roundTripPayload = decodeWikiPagePayloadForTest(encodedPatchedPayload)
+      } catch (error) {
+        throw new Error(`Patched reader fixture wiki payload failed schema validation: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      const expectedPayload = {
+        ...decodedPayload,
+        props: {
+          ...decodedPayload.props,
+          editShortcuts: encodedEditShortcuts
+        }
+      }
+      if (JSON.stringify(roundTripPayload) !== JSON.stringify(expectedPayload)) {
+        throw new Error('Patched reader fixture wiki payload changed fields outside edit shortcuts.')
+      }
+      let roundTripEditShortcuts: unknown
+      try {
+        roundTripEditShortcuts = JSON.parse(Buffer.from(roundTripPayload.props.editShortcuts, 'base64').toString('utf8'))
+      } catch (error) {
+        throw new Error(`Patched reader fixture edit shortcuts failed round-trip decoding: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      if (JSON.stringify(roundTripEditShortcuts) !== JSON.stringify(patchedEditShortcuts)) {
+        throw new Error('Patched reader fixture edit shortcuts did not survive their exact round trip.')
+      }
+
+      const patchedDocument =
+        document.slice(0, match.index) + `${match[1]}${match[2]}${encodedPatchedPayload}${match[2]}` + document.slice(match.index + match[0].length)
+      await route.fulfill({ response, body: patchedDocument })
+    })
+
+    for (const position of ['top', 'center', 'bottom'] as const) {
+      await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+      const edit = page.locator('.page-edit-shortcuts .v-btn').first()
+      await expect(edit, 'Reader Edit action is present').toBeVisible()
+      const bounds = await edit.boundingBox()
+      expect(bounds).not.toBeNull()
+      if (!bounds) continue
+      const edgeInset = Math.min(8, Math.max(2, bounds.height / 4))
+      const x = bounds.x + bounds.width / 2
+      const y = bounds.y + (position === 'top' ? edgeInset : position === 'center' ? bounds.height / 2 : bounds.height - edgeInset)
+      const hit = await page.evaluate(
+        ({ x, y }) => {
+          const target = document.elementFromPoint(x, y)
+          return target instanceof HTMLElement && Boolean(target.closest('.page-edit-shortcuts .v-btn'))
+        },
+        { x, y }
+      )
+      expect(hit, `Reader Edit ${position} pointer target remains interactive`).toBe(true)
+      await page.mouse.click(x, y)
+      await expect(page).toHaveURL('/e/en/visual-markdown-browser')
+    }
+  })
 
   test('uses expanded and aligned desktop reader geometry', async ({ page }) => {
     const viewport = page.viewportSize()
@@ -348,8 +531,7 @@ test.describe('responsive UI quality matrix', () => {
         expect(Math.abs(descriptionBounds.x - articleBounds.x), 'Page description aligns with the article card outer edge').toBeLessThanOrEqual(2)
       }
     }
-    expect(metadataBounds.width, 'Reader metadata rail is at least 18rem').toBeGreaterThanOrEqual(18 * shellSizing.rootFontSize - 1)
-    expect(metadataBounds.width, 'Reader metadata rail stays within 21rem').toBeLessThanOrEqual(21 * shellSizing.rootFontSize + 1)
+    expect(Math.abs(metadataBounds.y - (titleBounds.y + titleBounds.height / 2)), 'Left metadata rail aligns with the title midpoint').toBeLessThanOrEqual(4)
     expect(metadataBounds.x, 'Reader metadata rail remains before the primary article').toBeLessThan(articleBounds.x)
     expect(metadataBounds.x + metadataBounds.width, 'Reader metadata rail must not overlap the primary article').toBeLessThanOrEqual(articleBounds.x + 1)
 
@@ -414,7 +596,6 @@ test.describe('responsive UI quality matrix', () => {
       const title = page.locator('.page-header--toc-right .page-title').first()
       const rail = page.locator('.page-col-sd--toc-right').first()
       const article = page.locator('.page-col-content--toc-right:not(.is-page-header) > .contents').first()
-      const rootFontSize = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).fontSize))
       const [headerBounds, bodyBounds, titleBounds, railBounds, articleBounds] = await Promise.all([
         headerShell.boundingBox(),
         bodyShell.boundingBox(),
@@ -429,9 +610,8 @@ test.describe('responsive UI quality matrix', () => {
       expect(articleBounds).not.toBeNull()
       if (!headerBounds || !bodyBounds || !titleBounds || !railBounds || !articleBounds) return
       expect(Math.abs(headerBounds.x - bodyBounds.x)).toBeLessThanOrEqual(2)
+      expect(Math.abs(railBounds.y - (titleBounds.y + titleBounds.height / 2)), 'Right metadata rail aligns with the title midpoint').toBeLessThanOrEqual(4)
       expect(Math.abs(headerBounds.width - bodyBounds.width)).toBeLessThanOrEqual(2)
-      expect(railBounds.width, 'Right metadata rail is at least 18rem').toBeGreaterThanOrEqual(18 * rootFontSize - 1)
-      expect(railBounds.width, 'Right metadata rail stays within 21rem').toBeLessThanOrEqual(21 * rootFontSize + 1)
       expect(articleBounds.x + articleBounds.width, 'Article remains before and clear of the right rail').toBeLessThan(railBounds.x)
       expect(Math.abs(titleBounds.x - articleBounds.x), 'Right-mode title aligns with the article').toBeLessThanOrEqual(2)
       expect(
@@ -447,6 +627,182 @@ test.describe('responsive UI quality matrix', () => {
         if (rail) rail.className = classes.rail
         if (article) article.className = classes.article
       }, originalClasses)
+    }
+  })
+  test('tracks the title midpoint for long, sparse, and branded reader headers', async ({ page }) => {
+    const viewport = page.viewportSize()
+    expect(viewport).not.toBeNull()
+    if (!viewport || viewport.width < 1280) return
+    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+
+    const assertAligned = async (label: string): Promise<void> => {
+      await expect
+        .poll(
+          () =>
+            page.evaluate(() => {
+              const title = document.querySelector<HTMLElement>('.page-title')
+              const rail = document.querySelector<HTMLElement>('.page-col-sd')
+              if (!title || !rail) return Number.POSITIVE_INFINITY
+              const titleBounds = title.getBoundingClientRect()
+              const railBounds = rail.getBoundingClientRect()
+              return Math.abs(railBounds.top - (titleBounds.top + titleBounds.height / 2))
+            }),
+          label
+        )
+        .toBeLessThanOrEqual(4)
+    }
+
+    await assertAligned('Default reader rail aligns with the title midpoint')
+    await page.evaluate(() => {
+      const title = document.querySelector<HTMLElement>('.page-title')
+      if (!title) throw new Error('Reader title is missing')
+      title.textContent = 'A deliberately long reader title that wraps across multiple lines to exercise midpoint alignment'
+    })
+    await assertAligned('Long reader title keeps the rail aligned with its midpoint')
+
+    await page.evaluate(() => document.querySelector('.page-description')?.remove())
+    await assertAligned('Reader rail stays aligned when the description is absent')
+
+    await page.evaluate(() => {
+      const headings = document.querySelector<HTMLElement>('.page-header-headings')
+      if (!headings) throw new Error('Reader heading group is missing')
+      headings.classList.add('page-header-headings--branded')
+      const mark = document.createElement('div')
+      mark.className = 'page-branding-mark'
+      mark.setAttribute('aria-hidden', 'true')
+      mark.style.width = '128px'
+      mark.style.height = '128px'
+      headings.append(mark)
+    })
+    await assertAligned('Branded reader rail stays aligned with the title midpoint')
+  })
+  test('realigns a dirty rail after a scrolled title resize and eligibility transitions', async ({ page }) => {
+    const viewport = page.viewportSize()
+    expect(viewport).not.toBeNull()
+    if (!viewport || viewport.width < 1280) return
+
+    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+
+    const title = page.locator('.page-title').first()
+    const rail = page.locator('.page-col-sd').first()
+    const alignment = async (): Promise<number> =>
+      page.evaluate(() => {
+        const title = document.querySelector<HTMLElement>('.page-title')
+        const rail = document.querySelector<HTMLElement>('.page-col-sd')
+        if (!title || !rail) return Number.POSITIVE_INFINITY
+        const titleBounds = title.getBoundingClientRect()
+        const railBounds = rail.getBoundingClientRect()
+        return Math.abs(railBounds.top - (titleBounds.top + titleBounds.height / 2))
+      })
+    const railState = async (): Promise<{ alignmentOffset: string; maxHeight: string; tocPosition: string }> =>
+      page.evaluate(() => {
+        const rail = document.querySelector<HTMLElement>('.page-col-sd')
+        const app = (
+          window as typeof window & {
+            WIKI?: {
+              config?: {
+                globalProperties?: {
+                  $pinia?: {
+                    _s?: Map<string, { site: { tocPosition: string } }>
+                  }
+                }
+              }
+            }
+          }
+        ).WIKI
+        const store = app?.config?.globalProperties?.$pinia?._s?.get('wiki')
+        return {
+          alignmentOffset: rail?.style.getPropertyValue('--page-desktop-rail-align-offset') ?? '',
+          maxHeight: rail?.style.getPropertyValue('--page-desktop-rail-max-height') ?? '',
+          tocPosition: store?.site.tocPosition ?? ''
+        }
+      })
+    const setTocPosition = async (tocPosition: 'left' | 'right' | 'off'): Promise<void> => {
+      await page.evaluate(value => {
+        const app = (
+          window as typeof window & {
+            WIKI?: {
+              config?: {
+                globalProperties?: {
+                  $pinia?: {
+                    _s?: Map<string, { site: { tocPosition: string } }>
+                  }
+                }
+              }
+            }
+          }
+        ).WIKI
+        const store = app?.config?.globalProperties?.$pinia?._s?.get('wiki')
+        if (!store) throw new Error('Wiki store is unavailable for responsive TOC transition.')
+        store.site.tocPosition = value
+      }, tocPosition)
+    }
+
+    const initialTitle = await title.textContent()
+    const initialWidth = viewport.width
+    const resizedDesktopWidth = initialWidth === 1280 ? 1360 : Math.max(1280, initialWidth - 80)
+    const longTitle = 'A deliberately long reader title that wraps after a scrolled resize and remains aligned when the reader returns to the top'
+    const originalTocPosition = (await railState()).tocPosition as 'left' | 'right' | 'off'
+    if (originalTocPosition === 'off') {
+      await setTocPosition('left')
+      await expect(page.locator('.page-header--toc-left')).toBeVisible()
+    }
+
+    try {
+      await expect.poll(alignment, 'Initial desktop rail alignment').toBeLessThanOrEqual(4)
+      const initialRailState = await railState()
+      expect(initialRailState.maxHeight, 'Desktop rail keeps its footer-bounded max-height').not.toBe('')
+
+      await page.evaluate(() => window.scrollTo(0, Math.max(1, Math.floor(document.documentElement.scrollHeight / 2))))
+      await expect.poll(() => page.evaluate(() => window.scrollY), 'Reader scrolls away from the title').toBeGreaterThan(1)
+
+      await page.evaluate(text => {
+        const title = document.querySelector<HTMLElement>('.page-title')
+        if (!title) throw new Error('Reader title is missing')
+        title.textContent = text
+        title.style.maxWidth = '18rem'
+        window.dispatchEvent(new Event('resize'))
+      }, longTitle)
+      await expect.poll(() => title.evaluate(element => element.getBoundingClientRect().height), 'Reader title wraps while scrolled').toBeGreaterThan(40)
+
+      await page.setViewportSize({ width: resizedDesktopWidth, height: viewport.height })
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await expect.poll(() => page.evaluate(() => window.scrollY), 'Reader returns to the top').toBeLessThan(2)
+      await expect.poll(alignment, 'Dirty reader rail realigns after returning to the top').toBeLessThanOrEqual(4)
+
+      await page.setViewportSize({ width: 1279, height: viewport.height })
+      await expect
+        .poll(async () => {
+          const state = await railState()
+          return `${state.alignmentOffset}|${state.maxHeight}`
+        }, 'Ineligible breakpoint clears desktop rail measurements')
+        .toBe('|')
+
+      await page.setViewportSize({ width: resizedDesktopWidth, height: viewport.height })
+      await expect.poll(alignment, 'Desktop rail realigns after crossing the breakpoint').toBeLessThanOrEqual(4)
+      await expect.poll(async () => (await railState()).maxHeight, 'Desktop rail restores its footer-bounded max-height after the breakpoint').not.toBe('')
+
+      await setTocPosition('off')
+      await expect(page.locator('.page-header--toc-off')).toBeVisible()
+      await expect
+        .poll(async () => {
+          const state = await railState()
+          return `${state.alignmentOffset}|${state.maxHeight}`
+        }, 'TOC-off clears desktop rail measurements')
+        .toBe('|')
+
+      await setTocPosition('right')
+      await expect(page.locator('.page-header--toc-right')).toBeVisible()
+      await expect.poll(alignment, 'Right TOC rail realigns after eligibility returns').toBeLessThanOrEqual(4)
+      await expect.poll(async () => (await railState()).maxHeight, 'Right TOC rail keeps its footer-bounded max-height').not.toBe('')
+    } finally {
+      await setTocPosition(originalTocPosition)
+      await page.evaluate(text => {
+        const title = document.querySelector<HTMLElement>('.page-title')
+        if (!title) return
+        title.textContent = text ?? ''
+        title.style.removeProperty('max-width')
+      }, initialTitle)
     }
   })
 
@@ -1136,7 +1492,7 @@ test.describe('responsive UI quality matrix', () => {
           return 'search'
         })
     })
-    expect(actionOrder, 'Header actions stay in search, Agent, Browse DOM order').toEqual(['search', 'agent', 'browse'])
+    expect(actionOrder, 'Header actions stay in Agent, search, Browse DOM order').toEqual(['agent', 'search', 'browse'])
 
     const [searchBounds, agentBounds, browseBounds] = await Promise.all([searchControl.boundingBox(), entrance.boundingBox(), browse.boundingBox()])
     expect(searchBounds).not.toBeNull()
@@ -1147,8 +1503,8 @@ test.describe('responsive UI quality matrix', () => {
     }
     if (searchBounds && agentBounds && browseBounds) {
       const actionBounds = [
-        { name: 'search', bounds: searchBounds },
         { name: 'Agent', bounds: agentBounds },
+        { name: 'search', bounds: searchBounds },
         { name: 'Browse', bounds: browseBounds }
       ]
       for (let firstIndex = 0; firstIndex < actionBounds.length; firstIndex += 1) {
@@ -1164,14 +1520,12 @@ test.describe('responsive UI quality matrix', () => {
 
     await searchControl.focus()
     await expect(searchControl).toBeFocused()
-    await searchControl.press('Tab')
+    await searchControl.press('Shift+Tab')
     await expect(entrance).toBeFocused()
     await entrance.press('Tab')
+    await expect(searchControl).toBeFocused()
+    await searchControl.press('Tab')
     await expect(browse).toBeFocused()
-    if (viewport.width >= 960) {
-      await page.keyboard.press('ControlOrMeta+K')
-      await expect(page.locator('.nav-header-search-control input:visible').first()).toBeVisible()
-    }
     await expect
       .poll(() =>
         page.locator('.nav-header').evaluate(
@@ -1183,13 +1537,29 @@ test.describe('responsive UI quality matrix', () => {
         )
       )
       .toBe(0)
-    await openSearch(page)
-    await expect(page.locator('.search-results-agent-entry')).toBeVisible()
-    await page.locator('.search-results-agent-entry').click()
+    if (viewport.width >= 960) await page.keyboard.press('ControlOrMeta+K')
+    else await openSearch(page)
+    const wikiSearchDialog = page.getByRole('dialog', { name: 'Wiki search', exact: true })
+    await expect(wikiSearchDialog).toBeVisible()
+    const openWikiAgentButton = wikiSearchDialog.getByRole('button', { name: 'Open Wiki Agent', exact: true })
+    await expect(openWikiAgentButton).toBeVisible()
+    await openWikiAgentButton.click()
 
     const agent = page.getByRole('region', { name: 'Wiki Agent' })
     await expect(agent).toBeVisible()
     await expect(page.getByText(/Agent inference is currently disabled/)).toBeVisible()
+    const newConversationButton = agent.getByRole('button', { name: 'New conversation', exact: true })
+    const temporaryConversationButton = agent.getByRole('button', { name: 'Temporary conversation', exact: true })
+    const chatPinButton = agent.locator('.agent-composer__chat-pin')
+    await expect(newConversationButton).toBeVisible()
+    await expect(temporaryConversationButton).toBeVisible()
+    await expect(chatPinButton).toHaveAttribute('aria-pressed', 'false')
+    await chatPinButton.click()
+    await expect(chatPinButton).toHaveAttribute('aria-pressed', 'true')
+    await chatPinButton.click()
+    await expect(chatPinButton).toHaveAttribute('aria-pressed', 'false')
+    await expect(agent.locator('.inline-agent__starter').first()).toBeVisible()
+
     await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeVisible()
     const historyButton = agent.getByRole('button', { name: 'Open agent conversation history' })
     const mobilePanelButton = agent.getByRole('button', { name: 'Open Agent panels: conversation history and memory' })
@@ -1208,6 +1578,9 @@ test.describe('responsive UI quality matrix', () => {
     const card = agent.locator('.inline-agent__card')
     const visibleSidePanels = agent.locator('.inline-agent__side:visible')
     const scrim = agent.locator('.inline-agent__scrim')
+    const historyPanel = agent.getByRole('complementary', { name: 'Conversations' })
+    const memoryPanel = agent.getByRole('complementary', { name: 'Agent memory' })
+    const historyDialog = agent.getByRole('dialog', { name: 'Conversations' })
 
     if (viewport.width >= 1760) {
       await page.locator('.search-results--ask').evaluate(async element => {
@@ -1217,7 +1590,6 @@ test.describe('responsive UI quality matrix', () => {
       expect(initialCard).not.toBeNull()
 
       await openHistory()
-      const historyPanel = agent.getByRole('complementary', { name: 'Chat history panel' })
       await expect(historyPanel).toBeVisible()
       await expect(historyPanel).not.toHaveAttribute('aria-modal', 'true')
       await expect(historyPanel).not.toHaveAttribute('role', 'dialog')
@@ -1236,7 +1608,6 @@ test.describe('responsive UI quality matrix', () => {
 
       const memoryButton = agent.getByRole('button', { name: 'Manage agent memory' })
       await memoryButton.click()
-      const memoryPanel = agent.getByRole('complementary', { name: 'Agent memory panel' })
       await expect(memoryPanel).toBeVisible()
       await expect(scrim).toHaveCount(0)
       await expect(memoryPanel).not.toHaveAttribute('aria-modal', 'true')
@@ -1257,7 +1628,6 @@ test.describe('responsive UI quality matrix', () => {
       await expect(historyPanel).toBeHidden()
     } else if (viewport.width >= 1024) {
       await openHistory()
-      const historyPanel = agent.getByRole('complementary', { name: 'Chat history panel' })
       await expect(historyPanel).toBeVisible()
       await expect(historyPanel).not.toHaveAttribute('aria-modal', 'true')
       await expect(scrim).toHaveCount(0)
@@ -1274,7 +1644,6 @@ test.describe('responsive UI quality matrix', () => {
       await expect(historyPanel).toBeHidden()
     } else {
       await openHistory()
-      const historyDialog = agent.getByRole('dialog', { name: 'Chat history panel' })
       await expect(historyDialog).toBeVisible()
       await expect(historyDialog).toHaveAttribute('aria-modal', 'true')
       await expect(scrim).toBeVisible()
@@ -1330,6 +1699,7 @@ test.describe('responsive UI quality matrix', () => {
       await expect(agent.getByText('The streamed review context is still current.', { exact: true })).toBeVisible()
       await expect(repeatedLinks).toHaveCount(2)
       await expect(repeatedLinks.nth(1)).toBeFocused()
+
       await expect(agent.getByText('The streamed review context gained another link.', { exact: true })).toBeVisible()
       await expect(repeatedLinks).toHaveCount(3)
       await expect(repeatedLinks.nth(0)).not.toBeFocused()
@@ -1337,6 +1707,461 @@ test.describe('responsive UI quality matrix', () => {
       await expect(agent.locator('.agent-markdown svg')).not.toHaveCount(0)
       await expect(agent.locator('[data-copy-code]')).toBeVisible()
       expect(fixture.requests.some(request => request.includes('/messages'))).toBe(true)
+      fixture.assertNoUnexpectedRequests()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+  test('keeps the Latest response control visible, safe, and operable', async ({ page }, testInfo) => {
+    const desktopProject = testInfo.project.name === 'responsive-chromium-desktop' || testInfo.project.name === 'responsive-chromium-wide'
+    const coarseProject = testInfo.project.name === 'responsive-chromium-mobile'
+    if (!desktopProject && !coarseProject) return
+    if (coarseProject) await page.setViewportSize({ width: 320, height: 640 })
+    const fixture = await installEnabledAgentFixture(page, { mode: 'latest' })
+    try {
+      const agent = await openFixtureAgentFromSearch(page)
+      const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
+      await composer.fill('Show enough release evidence to inspect the latest response navigation.')
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(agent.locator('.agent-message--assistant').last()).toContainText(
+        'The final checkpoint keeps the newest response at the end of the conversation.'
+      )
+
+      const transcript = agent.locator('.inline-agent__transcript')
+      await expect.poll(() => transcript.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(100)
+      await transcript.evaluate(element => element.scrollTo({ top: 0, behavior: 'auto' }))
+      const latest = agent.getByRole('button', { name: 'Jump to latest response', exact: true })
+      const face = latest.locator('.inline-agent__follow-jump-face')
+      const halo = latest.locator('.inline-agent__follow-jump-halo')
+      const jumpDock = agent.locator('.inline-agent__jump-dock')
+      const card = agent.locator('.inline-agent__card')
+      const body = agent.locator('.inline-agent__body')
+      const composerFooter = agent.locator('.inline-agent__composer')
+      const addSources = agent.getByText('Add sources', { exact: true })
+      await expect(latest).toBeVisible()
+      await expect(addSources).toBeVisible()
+
+      const assertJumpGeometry = async (scheme: 'light' | 'dark'): Promise<void> => {
+        await page.emulateMedia({ colorScheme: scheme, forcedColors: 'none', reducedMotion: 'no-preference' })
+        await expect(latest).toBeVisible()
+        const [cardBounds, jumpBounds, faceBounds, haloBounds, bodyBounds, composerBounds, addSourcesBounds] = await Promise.all([
+          card.boundingBox(),
+          jumpDock.boundingBox(),
+          face.boundingBox(),
+          halo.boundingBox(),
+          body.boundingBox(),
+          composerFooter.boundingBox(),
+          addSources.boundingBox()
+        ])
+        expect(cardBounds).not.toBeNull()
+        expect(jumpBounds).not.toBeNull()
+        expect(faceBounds).not.toBeNull()
+        expect(haloBounds).not.toBeNull()
+        expect(bodyBounds).not.toBeNull()
+        expect(composerBounds).not.toBeNull()
+        expect(addSourcesBounds).not.toBeNull()
+        if (cardBounds && jumpBounds && faceBounds && haloBounds && bodyBounds && composerBounds && addSourcesBounds) {
+          expect(faceBounds.height).toBeGreaterThanOrEqual(35)
+          expect(faceBounds.height).toBeLessThanOrEqual(37)
+          expect(faceBounds.x).toBeGreaterThanOrEqual(jumpBounds.x)
+          expect(faceBounds.x + faceBounds.width).toBeLessThanOrEqual(jumpBounds.x + jumpBounds.width)
+          const paintOutset = 4
+          expect(haloBounds.x - paintOutset).toBeGreaterThanOrEqual(cardBounds.x - 1)
+          expect(haloBounds.x + haloBounds.width + paintOutset).toBeLessThanOrEqual(cardBounds.x + cardBounds.width + 1)
+          expect(haloBounds.y - paintOutset).toBeGreaterThanOrEqual(cardBounds.y - 1)
+          expect(haloBounds.y + haloBounds.height + paintOutset).toBeLessThanOrEqual(composerBounds.y + 1)
+          expect(haloBounds.y - paintOutset).toBeGreaterThanOrEqual(bodyBounds.y + bodyBounds.height - 1)
+          const overlapsAddSources =
+            faceBounds.x < addSourcesBounds.x + addSourcesBounds.width &&
+            addSourcesBounds.x < faceBounds.x + faceBounds.width &&
+            faceBounds.y < addSourcesBounds.y + addSourcesBounds.height &&
+            addSourcesBounds.y < faceBounds.y + faceBounds.height
+          expect(overlapsAddSources, `Latest response face overlaps Add sources in ${scheme} mode`).toBe(false)
+        }
+        const [haloStyles, faceStyles, transcriptStyles] = await Promise.all([
+          halo.evaluate(element => {
+            const styles = getComputedStyle(element)
+            return { filter: styles.filter, opacity: Number(styles.opacity) }
+          }),
+          face.evaluate(element => {
+            const styles = getComputedStyle(element)
+            return { background: styles.backgroundColor, border: styles.borderColor }
+          }),
+          transcript.evaluate(element => getComputedStyle(element).scrollBehavior)
+        ])
+        expect(haloStyles.filter, `Latest response halo remains painted in ${scheme} mode`).toContain('blur')
+        expect(haloStyles.opacity, `Latest response halo remains visible in ${scheme} mode`).toBeGreaterThan(0)
+        expect(faceStyles.background, `Latest response face has a visible background in ${scheme} mode`).not.toBe('rgba(0, 0, 0, 0)')
+        expect(faceStyles.border, `Latest response face has a visible border in ${scheme} mode`).not.toBe('rgba(0, 0, 0, 0)')
+        expect(transcriptStyles).toBe('smooth')
+      }
+
+      if (desktopProject) {
+        await assertJumpGeometry('light')
+        await assertJumpGeometry('dark')
+        await page.emulateMedia({ colorScheme: 'dark', forcedColors: 'active', reducedMotion: 'reduce' })
+        await expect(latest).toBeVisible()
+        const forcedStyles = await halo.evaluate(element => {
+          const styles = getComputedStyle(element)
+          return { display: styles.display, filter: styles.filter }
+        })
+        expect(forcedStyles.display).toBe('none')
+        expect(forcedStyles.filter).toBe('blur(4px)')
+        expect(await transcript.evaluate(element => getComputedStyle(element).scrollBehavior)).toBe('auto')
+      } else {
+        await page.emulateMedia({ colorScheme: 'light', forcedColors: 'none', reducedMotion: 'reduce' })
+        const [outerBounds, compactFaceBounds] = await Promise.all([latest.boundingBox(), face.boundingBox()])
+        expect(outerBounds).not.toBeNull()
+        expect(compactFaceBounds).not.toBeNull()
+        if (outerBounds && compactFaceBounds) {
+          expect(Math.min(outerBounds.width, outerBounds.height)).toBeGreaterThanOrEqual(44)
+          expect(compactFaceBounds.height).toBeGreaterThanOrEqual(35)
+          expect(compactFaceBounds.height).toBeLessThanOrEqual(37)
+        }
+      }
+
+      const moveAwayFromLatest = async (): Promise<void> => {
+        await transcript.evaluate(element => element.scrollTo({ top: 0, behavior: 'auto' }))
+        await expect(latest).toBeVisible()
+      }
+      const expectLatestReached = async (): Promise<void> => {
+        await expect.poll(() => transcript.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(160)
+        await expect(latest).toBeHidden()
+        await expect(transcript).toBeFocused()
+      }
+      await moveAwayFromLatest()
+      await latest.click()
+      await expectLatestReached()
+      await moveAwayFromLatest()
+      await latest.focus()
+      await latest.press('Enter')
+      await expectLatestReached()
+
+      const [agentBounds, transcriptBounds, composerBounds] = await Promise.all([agent.boundingBox(), transcript.boundingBox(), composerFooter.boundingBox()])
+      expect(agentBounds).not.toBeNull()
+      expect(transcriptBounds).not.toBeNull()
+      expect(composerBounds).not.toBeNull()
+      if (agentBounds && transcriptBounds && composerBounds) {
+        expect(agentBounds.x).toBeGreaterThanOrEqual(-1)
+        expect(agentBounds.x + agentBounds.width).toBeLessThanOrEqual((page.viewportSize()?.width ?? 0) + 1)
+        expect(transcriptBounds.x + transcriptBounds.width).toBeLessThanOrEqual(composerBounds.x + composerBounds.width + 1)
+      }
+      expect(await agent.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+      expect(await transcript.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+      fixture.assertNoUnexpectedRequests()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+  test('keeps approval navigation ahead of the Latest response jump', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Enabled approval navigation priority is owned by Chromium desktop.')
+    const fixture = await installEnabledAgentFixture(page, { mode: 'approval' })
+    try {
+      const agent = await openFixtureAgentFromSearch(page)
+      const approvalPrompt = Array.from(
+        { length: 22 },
+        (_, index) =>
+          `Review section ${index + 1}: confirm the source revision, evidence owner, validation result, rollback note, and publication decision before proceeding with this bounded release operation.`
+      ).join('\n\n')
+      await agent.getByRole('textbox', { name: /^(?:Message|Follow up with) Wiki Agent$/ }).fill(approvalPrompt)
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(agent.getByText('Awaiting approval', { exact: true })).toBeVisible()
+      const transcript = agent.locator('.inline-agent__transcript')
+      const approvalCard = agent.locator('.agent-operation').first()
+      await expect(approvalCard).toBeVisible()
+      const approvalJump = agent.getByRole('button', { name: 'Approval required', exact: true })
+      await transcript.hover()
+      await expect.poll(() => transcript.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(0)
+      await page.mouse.wheel(0, 50000)
+      const scrollTopAtBottom = await transcript.evaluate(element => element.scrollTop)
+      expect(scrollTopAtBottom, 'Approval fixture scrolls to the bottom of its overflowing transcript').toBeGreaterThan(0)
+      await page.mouse.wheel(0, -50000)
+      await expect.poll(() => transcript.evaluate(element => element.scrollTop)).toBe(0)
+      await expect
+        .poll(() =>
+          approvalCard.evaluate(element => {
+            const container = element.closest<HTMLElement>('.inline-agent__transcript')
+            if (!container) return false
+            return element.getBoundingClientRect().top >= container.getBoundingClientRect().bottom
+          })
+        )
+        .toBe(true)
+      await expect(approvalJump).toBeVisible()
+      const latestJump = agent.getByRole('button', { name: 'Jump to latest response', exact: true })
+      await expect(latestJump).toHaveCount(0)
+      await approvalJump.click()
+      await expect
+        .poll(() =>
+          approvalCard.evaluate(element => {
+            const container = element.closest<HTMLElement>('.inline-agent__transcript')
+            if (!container) return false
+            const containerBounds = container.getBoundingClientRect()
+            const cardBounds = element.getBoundingClientRect()
+            return Math.min(cardBounds.bottom, containerBounds.bottom) - Math.max(cardBounds.top, containerBounds.top) > 0
+          })
+        )
+        .toBe(true)
+      await expect(approvalCard).toBeFocused()
+      await expect(approvalJump).toHaveCount(0)
+      fixture.assertNoUnexpectedRequests()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+  test('admits the current-page starter once and preserves source handoff as a draft', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Enabled Agent starter and source handoff coverage is owned by Chromium desktop.')
+    const fixture = await installEnabledAgentFixture(page)
+    const messagePath = (request: { method(): string; url(): string }): boolean =>
+      request.method() === 'POST' && /\/_api\/agents\/sessions\/[^/]+\/messages$/.test(new URL(request.url()).pathname)
+    try {
+      await authenticateAsAdmin(page)
+      await page.goto('/en/home', { waitUntil: 'networkidle' })
+      await expect(page.locator('.page-header-section')).toBeVisible()
+      await page.locator('.nav-header-agent:visible').first().click()
+      const agent = page.getByRole('region', { name: 'Wiki Agent' })
+      await expect(agent).toBeVisible()
+      const starterPrompt = 'Summarize the current Wiki page and cite the key sections.'
+      const starter = agent.locator('.inline-agent__starter').filter({ hasText: 'Understand this page' }).first()
+      await expect(starter).toBeVisible()
+      const starterRequestPromise = page.waitForRequest(messagePath)
+      await starter.click()
+      const starterRequest = await starterRequestPromise
+      const starterBody = starterRequest.postDataJSON() as {
+        content?: unknown
+        currentPage?: { id?: unknown; locale?: unknown; path?: unknown; observedUpdatedAt?: unknown }
+        knowledgeContext?: { scope?: { kind?: unknown }; sources?: unknown }
+      }
+      expect(starterBody.content).toBe(starterPrompt)
+      expect(starterBody.currentPage).toEqual(
+        expect.objectContaining({
+          id: expect.any(Number),
+          locale: 'en',
+          path: 'home',
+          observedUpdatedAt: expect.any(String)
+        })
+      )
+      expect(starterBody.knowledgeContext).toEqual(expect.objectContaining({ scope: { kind: 'all' }, sources: [] }))
+      await expect(agent.locator('.agent-message--user')).toHaveCount(1)
+      await expect(agent.locator('.agent-message--user').first()).toContainText(starterPrompt)
+      await expect(agent.locator('.agent-message--assistant').last()).toContainText('The release is ready for a deliberate review.')
+      expect(fixture.requests.filter(request => request.includes('/messages'))).toHaveLength(1)
+
+      await agent.getByRole('button', { name: 'Add sources', exact: true }).click()
+      const searchDialog = page.getByRole('dialog', { name: 'Wiki search', exact: true })
+      await expect(searchDialog).toBeVisible()
+      const searchInput = page.locator('.nav-header-search-control:visible input').first()
+      await searchInput.fill('visual')
+      const visualResult = searchDialog.locator('.search-results-row').filter({ hasText: 'visual-markdown-browser' }).first()
+      await expect(visualResult).toBeVisible()
+      await visualResult.locator('.search-results-preview').click()
+      const sourcePreview = page.locator('.wiki-source-preview__panel')
+      await expect(sourcePreview).toBeVisible()
+      await sourcePreview.getByRole('button', { name: 'Ask about this page', exact: true }).click()
+      await expect(agent).toBeVisible()
+      const draft = agent.getByRole('textbox', { name: /^(?:Message|Follow up with) Wiki Agent$/ })
+      await expect(draft).toBeEditable()
+      await expect(draft).toHaveValue('visual')
+      await expect(agent.locator('.agent-context__source-label').filter({ hasText: /Visual Markdown/ })).toBeVisible()
+      expect(fixture.requests.filter(request => request.includes('/messages'))).toHaveLength(1)
+      fixture.assertNoUnexpectedRequests()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+  test('reopens a pinned conversation across pages and creates a fresh session only after unpinning', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Pinned Agent retention coverage is owned by Chromium desktop.')
+    const fixture = await installEnabledAgentFixture(page, { mode: 'pin', distinctSessionIds: true })
+    const messagePath = (request: { method(): string; url(): string }): boolean =>
+      request.method() === 'POST' && /\/_api\/agents\/sessions\/[^/]+\/messages$/.test(new URL(request.url()).pathname)
+    const sessionPath = (request: { method(): string; url(): string }): boolean =>
+      request.method() === 'GET' && /\/_api\/agents\/sessions\/[^/]+$/.test(new URL(request.url()).pathname)
+    const createSessionPath = (response: { request(): { method(): string }; url(): string }): boolean =>
+      response.request().method() === 'POST' && new URL(response.url()).pathname === '/_api/agents/sessions'
+    try {
+      await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+      await expect(page.locator('.page-header-section')).toBeVisible()
+      const firstCreatePromise = page.waitForResponse(createSessionPath)
+      await page.locator('.nav-header-agent:visible').first().click()
+      const firstCreateResponse = await firstCreatePromise
+      expect(firstCreateResponse.status()).toBe(201)
+      const firstCreated = (await firstCreateResponse.json()) as { session?: { id?: unknown; retention?: unknown } }
+      const sessionA = firstCreated.session?.id
+      expect(firstCreated.session?.retention).toBe('saved')
+      expect(typeof sessionA).toBe('string')
+      if (typeof sessionA !== 'string') throw new Error('The fixture did not return the first created session ID.')
+      const agent = page.getByRole('region', { name: 'Wiki Agent' })
+      await expect(agent).toBeVisible()
+      const pin = agent.locator('.agent-composer__chat-pin')
+      const composerInput = agent.getByRole('textbox', { name: /^(?:Message|Follow up with) Wiki Agent$/ })
+      await expect(pin).toHaveAttribute('aria-pressed', 'false')
+      await pin.click()
+      await expect(pin).toHaveAttribute('aria-pressed', 'true')
+      await expect(pin).toHaveAttribute('title', 'Unpin chat')
+
+      const promptA = 'Remember the first page context.'
+      const messageARequestPromise = page.waitForRequest(messagePath)
+      await composerInput.fill(promptA)
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      const messageARequest = await messageARequestPromise
+      const bodyA = messageARequest.postDataJSON() as {
+        content?: unknown
+        currentPage?: { id?: unknown; locale?: unknown; path?: unknown; observedUpdatedAt?: unknown }
+      }
+      expect(bodyA.content).toBe(promptA)
+      expect(bodyA.currentPage).toEqual(expect.objectContaining({ locale: 'en', path: 'visual-markdown-browser' }))
+      await expect(agent.locator('.agent-message--assistant').last()).toContainText('The release is ready for a deliberate review.')
+
+      await page.keyboard.press('Escape')
+      const firstSearchDialog = page.getByRole('dialog', { name: 'Wiki search', exact: true })
+      await expect(firstSearchDialog).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(firstSearchDialog).toBeHidden()
+
+      await openAuthenticatedPage(page, '/en/home', '.page-header-section')
+      await expect(page.locator('.page-header-section')).toBeVisible()
+      const reopenAResponsePromise = page.waitForResponse(response => {
+        const request = response.request()
+        return sessionPath(request) && new URL(response.url()).pathname === `/_api/agents/sessions/${sessionA}`
+      })
+      const createsBeforeReopen = fixture.requests.filter(request => request === 'POST /_api/agents/sessions').length
+      await page.locator('.nav-header-agent:visible').first().click()
+      const reopenAResponse = await reopenAResponsePromise
+      expect(reopenAResponse.status()).toBe(200)
+      const reopenedA = (await reopenAResponse.json()) as { session?: { id?: unknown } }
+      expect(reopenedA.session?.id).toBe(sessionA)
+      expect(fixture.requests.filter(request => request === 'POST /_api/agents/sessions')).toHaveLength(createsBeforeReopen)
+      await expect(agent.getByText('Current page · en/home', { exact: true })).toBeVisible()
+      await expect(pin).toHaveAttribute('aria-pressed', 'true')
+      await expect(pin).toHaveAttribute('title', 'Unpin chat')
+
+      await page.reload({ waitUntil: 'networkidle' })
+      await expect(page.locator('.page-header-section')).toBeVisible()
+      const reloadAResponsePromise = page.waitForResponse(response => {
+        const request = response.request()
+        return sessionPath(request) && new URL(response.url()).pathname === `/_api/agents/sessions/${sessionA}`
+      })
+      const createsBeforeReload = fixture.requests.filter(request => request === 'POST /_api/agents/sessions').length
+      await page.locator('.nav-header-agent:visible').first().click()
+      const reloadAResponse = await reloadAResponsePromise
+      expect(reloadAResponse.status()).toBe(200)
+      const reloadedA = (await reloadAResponse.json()) as { session?: { id?: unknown } }
+      expect(reloadedA.session?.id).toBe(sessionA)
+      expect(fixture.requests.filter(request => request === 'POST /_api/agents/sessions')).toHaveLength(createsBeforeReload)
+      await expect(agent.getByText('Current page · en/home', { exact: true })).toBeVisible()
+      await expect(pin).toHaveAttribute('aria-pressed', 'true')
+      await expect(pin).toHaveAttribute('title', 'Unpin chat')
+
+      const promptB = 'Remember the newly visited page context.'
+      const messageBRequestPromise = page.waitForRequest(messagePath)
+      await composerInput.fill(promptB)
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      const messageBRequest = await messageBRequestPromise
+      const bodyB = messageBRequest.postDataJSON() as {
+        content?: unknown
+        currentPage?: { id?: unknown; locale?: unknown; path?: unknown; observedUpdatedAt?: unknown }
+      }
+      expect(bodyB.content).toBe(promptB)
+      expect(bodyB.currentPage).toEqual(expect.objectContaining({ locale: 'en', path: 'home' }))
+      expect(bodyA.currentPage).toEqual(expect.objectContaining({ locale: 'en', path: 'visual-markdown-browser' }))
+      await expect(agent.locator('.agent-message--user')).toHaveCount(2)
+      await expect(agent.locator('.agent-message--user').filter({ hasText: promptA })).toBeVisible()
+      await expect(agent.locator('.agent-message--user').filter({ hasText: promptB })).toBeVisible()
+
+      await pin.click()
+      await expect(pin).toHaveAttribute('aria-pressed', 'false')
+      await page.keyboard.press('Escape')
+      const secondSearchDialog = page.getByRole('dialog', { name: 'Wiki search', exact: true })
+      await expect(secondSearchDialog).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(secondSearchDialog).toBeHidden()
+
+      const freshCreateResponsePromise = page.waitForResponse(createSessionPath)
+      const createsBeforeFresh = fixture.requests.filter(request => request === 'POST /_api/agents/sessions').length
+      await page.locator('.nav-header-agent:visible').first().click()
+      const freshCreateResponse = await freshCreateResponsePromise
+      expect(freshCreateResponse.status()).toBe(201)
+      const freshCreated = (await freshCreateResponse.json()) as { session?: { id?: unknown; retention?: unknown } }
+      expect(typeof freshCreated.session?.id).toBe('string')
+      expect(freshCreated.session?.id).not.toBe(sessionA)
+      expect(freshCreated.session?.retention).toBe('saved')
+      expect(fixture.requests.filter(request => request === 'POST /_api/agents/sessions')).toHaveLength(createsBeforeFresh + 1)
+      await expect(agent.locator('.agent-message--user')).toHaveCount(0)
+      await expect(agent.getByText('Current page · en/home', { exact: true })).toBeVisible()
+      fixture.assertNoUnexpectedRequests()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+  test('creates and moves a conversation folder from the empty drop target', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Agent history folder coverage is owned by Chromium desktop.')
+    const fixture = await installEnabledAgentFixture(page, { seedFolders: false })
+    try {
+      const sessionListResponsePromise = page.waitForResponse(response => {
+        const request = response.request()
+        return request.method() === 'GET' && new URL(response.url()).pathname === '/_api/agents/sessions'
+      })
+      const agent = await openFixtureAgentFromSearch(page)
+      const sessionListResponse = await sessionListResponsePromise
+      expect(sessionListResponse.ok()).toBe(true)
+      const sessionListPayload = (await sessionListResponse.json()) as { sessions?: Array<{ id?: unknown; title?: unknown }> }
+      const source = sessionListPayload.sessions?.find(session => session.title === 'Release evidence review')
+      const sourceId = source?.id
+      expect(typeof sourceId, 'The dragged conversation has a server-provided session ID').toBe('string')
+      if (typeof sourceId !== 'string') throw new Error('The fixture session summary omitted the dragged conversation ID.')
+
+      await agent.getByRole('button', { name: 'Open agent conversation history' }).click()
+      const history = agent.locator('.inline-agent__side--history:visible')
+      await expect(history).toBeVisible()
+      const emptyFolderTarget = history.locator('.agent-history__empty--folders[data-drop-target="new-folder"]')
+      const recentSession = history.locator('.agent-history__recent .agent-history__session').filter({ hasText: 'Release evidence review' }).first()
+      await expect(emptyFolderTarget).toBeVisible()
+      await expect(recentSession).toBeVisible()
+      await recentSession.dragTo(emptyFolderTarget)
+
+      const folderDialog = page.getByRole('dialog', { name: 'New folder', exact: true })
+      await expect(folderDialog).toHaveCount(1)
+      await expect(folderDialog).toBeVisible()
+      await folderDialog.getByRole('textbox', { name: 'Folder name' }).fill('Release archive')
+      const folderCreateResponsePromise = page.waitForResponse(response => {
+        const request = response.request()
+        return request.method() === 'POST' && new URL(response.url()).pathname === '/_api/agents/conversation-folders'
+      })
+      const sessionMoveResponsePromise = page.waitForResponse(response => {
+        const request = response.request()
+        return request.method() === 'PUT' && new URL(response.url()).pathname === `/_api/agents/sessions/${sourceId}/folder`
+      })
+      await folderDialog.getByRole('button', { name: 'Create folder', exact: true }).click()
+      const [folderCreateResponse, sessionMoveResponse] = await Promise.all([folderCreateResponsePromise, sessionMoveResponsePromise])
+      expect(folderCreateResponse.status(), 'Folder creation succeeds').toBe(201)
+      expect(sessionMoveResponse.status(), 'Moving the source conversation succeeds').toBe(200)
+      const folderPayload = (await folderCreateResponse.json()) as { folder?: { id?: unknown } }
+      const folderId = folderPayload.folder?.id
+      expect(typeof folderId, 'Folder creation returns the destination folder ID').toBe('string')
+      if (typeof folderId !== 'string') throw new Error('The fixture folder response omitted the destination folder ID.')
+      const moveBody = sessionMoveResponse.request().postDataJSON() as { folderId?: unknown; expectedSessionVersion?: unknown }
+      expect(moveBody.folderId, 'The move uses the returned destination folder ID').toBe(folderId)
+      expect(typeof moveBody.expectedSessionVersion, 'The move carries the source session version').toBe('number')
+      expect(new URL(sessionMoveResponse.url()).pathname, 'The move uses the returned source session ID').toBe(`/_api/agents/sessions/${sourceId}/folder`)
+
+      const mutationRequests = fixture.requests.filter(
+        request => request === 'POST /_api/agents/conversation-folders' || request === `PUT /_api/agents/sessions/${sourceId}/folder`
+      )
+      expect(mutationRequests, 'Folder creation commits before moving the source conversation').toEqual([
+        'POST /_api/agents/conversation-folders',
+        `PUT /_api/agents/sessions/${sourceId}/folder`
+      ])
+
+      await expect(folderDialog).toBeHidden()
+      const destination = history.locator('.v-expansion-panel').filter({
+        has: page.locator('.agent-history__folder-name').filter({ hasText: 'Release archive' })
+      })
+      await expect(destination).toHaveCount(1)
+      await expect(destination).toBeVisible()
+      await expect(destination.locator('.agent-history__folder-title')).toHaveAttribute('aria-expanded', 'true')
+      const destinationConversations = destination.locator('.agent-history__list--folder[aria-label="Release archive conversations"] .agent-history__session')
+      await expect(destinationConversations).toHaveCount(1)
+      await expect(destinationConversations.locator('.v-list-item-title')).toHaveText('Release evidence review')
+      await expect(history.locator('.agent-history__recent .agent-history__session').filter({ hasText: 'Release evidence review' })).toHaveCount(0)
       fixture.assertNoUnexpectedRequests()
     } finally {
       await fixture.dispose()
@@ -1354,17 +2179,30 @@ test.describe('responsive UI quality matrix', () => {
       const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
       await composer.fill('Render the hostile Mermaid theme safely.')
       await agent.getByRole('button', { name: 'Send', exact: true }).click()
-      await expect(agent.locator('pre').filter({ hasText: 'mermaid-hostile.invalid' }).first()).toBeVisible()
+      const sourceDisclosure = agent.locator('details.agent-markdown__diagram-source').filter({
+        has: page.locator('pre').filter({ hasText: 'mermaid-hostile.invalid' })
+      })
+      await expect(sourceDisclosure).toHaveCount(1)
+      await expect(sourceDisclosure).toBeVisible()
+      await expect(sourceDisclosure).not.toHaveAttribute('open', '')
+      await expect(sourceDisclosure.locator('summary')).toBeVisible()
+      await expect(sourceDisclosure.locator('pre')).toBeHidden()
+
       const output = agent.locator('.agent-markdown__diagram-output').first()
       await expect(output).toBeVisible()
       await expect(output).not.toHaveAttribute('aria-busy', 'true')
-      await expect(agent.getByText('Mermaid source', { exact: true }).first()).toBeVisible()
       const fallback = output.getByRole('alert')
       if (await fallback.count()) {
         await expect(fallback).toHaveText('Diagram could not be rendered safely. Mermaid source remains available below.')
       } else {
         await expect(output.getByRole('img', { name: 'Mermaid diagram', exact: true })).toBeVisible()
       }
+      expect(hostileRequests).toEqual([])
+
+      await sourceDisclosure.locator('summary').click()
+      await expect(sourceDisclosure).toHaveAttribute('open', '')
+      await expect(sourceDisclosure.locator('pre')).toBeVisible()
+      await expect(sourceDisclosure.locator('pre')).toContainText('mermaid-hostile.invalid')
       expect(hostileRequests).toEqual([])
       fixture.assertNoUnexpectedRequests()
     } finally {

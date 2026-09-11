@@ -24,7 +24,7 @@
       <span class="agent-history__search-status" role="status" aria-live="polite">{{ searchStatus }}</span>
     </div>
     <span id="agent-history-drag-instructions" class="agent-history__search-status">
-      Drag a conversation to Recent or a saved folder. Use its actions menu to move it with a keyboard.
+      Drag a conversation to Recent, a saved folder, or the new-folder area. Use its actions menu to move it with a keyboard.
     </span>
     <span class="agent-history__search-status" role="status" aria-live="polite">{{ dragStatus }}</span>
 
@@ -113,6 +113,7 @@
                       :busy="sessionBusy(session.id)"
                       :disabled="sessionMutationBusy"
                       @move="folderId => moveSession(session, folderId)"
+                      @new-folder="(selectedSession, restoreTarget) => beginCreateFolderForSession(selectedSession, restoreTarget)"
                       @rename="restoreTarget => beginRenameSession(session, restoreTarget)"
                       @remove="restoreTarget => beginDeleteSession(session, restoreTarget)"
                     />
@@ -160,7 +161,7 @@
               <h3 id="agent-history-folders-title" class="agent-history__section-title">Saved folders</h3>
               <div class="agent-history__section-copy">Kept without expiry</div>
             </div>
-            <v-btn class="agent-history__new-folder" prepend-icon="mdi-folder-plus-outline" size="small" variant="text" aria-label="Create a conversation folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting" @click="beginCreateFolder">New folder</v-btn>
+            <v-btn class="agent-history__new-folder" prepend-icon="mdi-folder-plus-outline" size="small" variant="text" aria-label="Create a conversation folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" @click="beginCreateFolder">New folder</v-btn>
           </div>
 
           <v-expansion-panels v-if="visibleFolderGroups.length" v-model="openFolderIds" class="agent-history__folder-panels" multiple variant="accordion">
@@ -225,6 +226,7 @@
                         :busy="sessionBusy(session.id)"
                         :disabled="sessionMutationBusy"
                         @move="folderId => moveSession(session, folderId)"
+                        @new-folder="(selectedSession, restoreTarget) => beginCreateFolderForSession(selectedSession, restoreTarget)"
                         @rename="restoreTarget => beginRenameSession(session, restoreTarget)"
                         @remove="restoreTarget => beginDeleteSession(session, restoreTarget)"
                       />
@@ -235,6 +237,28 @@
               </v-expansion-panel-text>
             </v-expansion-panel>
           </v-expansion-panels>
+          <div
+            v-else-if="folders.length === 0"
+            class="agent-history__empty agent-history__empty--folders"
+            :class="{
+              'agent-history__drop-target--available': canDropTo(newFolderDropTarget),
+              'agent-history__drop-target--active': isActiveDropTarget(newFolderDropTarget)
+            }"
+            data-drop-target="new-folder"
+            role="region"
+            aria-label="Create a folder for conversations worth keeping"
+            aria-describedby="agent-history-drag-instructions"
+            @dragenter="setDropTarget($event, newFolderDropTarget)"
+            @dragover="setDropTarget($event, newFolderDropTarget)"
+            @dragleave="leaveDropTarget($event, newFolderDropTarget)"
+            @drop="dropSession($event, newFolderDropTarget)"
+          >
+            <v-icon icon="mdi-folder-heart-outline" size="22" />
+            <div>
+              <strong>Create a folder for conversations worth keeping</strong>
+              <span>Drop a conversation here to start a new folder.</span>
+            </div>
+          </div>
           <div v-else class="agent-history__empty agent-history__empty--folders">
             <v-icon icon="mdi-folder-heart-outline" size="22" />
             <span>Create a folder for conversations worth keeping.</span>
@@ -260,14 +284,31 @@
       </v-card-title>
       <v-card-text class="px-5 pt-4">
         <v-alert v-if="dialogError" class="mb-3" type="error" variant="tonal" density="compact">{{ dialogError }}</v-alert>
-        <v-text-field ref="folderInput" v-model="folderName" autofocus counter="64" label="Folder name" maxlength="64" variant="outlined" @keydown.enter.prevent="saveFolder" />
+        <v-text-field
+          ref="folderInput"
+          v-model="folderName"
+          class="agent-history__folder-input"
+          autofocus
+          counter="64"
+          label="Folder name"
+          maxlength="64"
+          variant="outlined"
+          :disabled="folderWorkflowState === 'move-retry' || folderWorkflowState === 'create-unknown'"
+          @keydown.enter.prevent="saveFolder"
+        />
         <p class="text-body-small text-medium-emphasis mb-0">Folders keep conversations beyond the history window.</p>
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" :disabled="savingFolder" @click="folderEditorOpen = false">Cancel</v-btn>
-        <v-btn color="primary" variant="tonal" :disabled="loading || !folderName.trim() || savingFolder" :loading="savingFolder" @click="saveFolder">
-          {{ editingFolder ? 'Save name' : 'Create folder' }}
+        <v-btn variant="text" :disabled="savingFolder" @click="cancelFolderEditor">Cancel</v-btn>
+        <v-btn
+          color="primary"
+          variant="tonal"
+          :disabled="loading || !folderName.trim() || savingFolder || sessionMutationBusy"
+          :loading="savingFolder"
+          @click="saveFolder"
+        >
+          {{ editingFolder ? 'Save name' : folderWorkflowState === 'move-retry' ? 'Retry move' : folderWorkflowState === 'create-unknown' ? 'Check folder status' : 'Create folder' }}
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -336,6 +377,7 @@ import AgentPanelHeader from './agent-panel-header.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, onWatcherCleanup, ref, shallowRef, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
+import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../../shared/agents/conversation-folders.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 import { useAgentsStore } from '../../store/agents.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
@@ -347,7 +389,13 @@ const { folders, loading, sessionMutationBusy, sessions, sessionsLoadMoreError, 
 const openFolderIds = ref<string[]>([])
 const localError = ref('')
 const folderEditorOpen = ref(false)
+const folderEditorRestoreTarget = shallowRef<HTMLElement | null>(null)
 const folderName = ref('')
+type FolderWorkflowState = 'idle' | 'creating' | 'create-unknown' | 'moving' | 'move-retry'
+const folderWorkflowState = ref<FolderWorkflowState>('idle')
+const folderWorkflowSession = shallowRef<AgentSessionSummary | null>(null)
+const folderWorkflowFolderId = ref<string | null>(null)
+const folderWorkflowFolder = shallowRef<AgentConversationFolderView | null>(null)
 const editingFolder = shallowRef<AgentConversationFolderView | null>(null)
 const savingFolder = ref(false)
 const sessionEditorOpen = ref(false)
@@ -365,6 +413,7 @@ const openingSessionIds = shallowRef(new Set<string>())
 const movingSessionIds = shallowRef(new Set<string>())
 const committedDeletedSessionIds = shallowRef(new Set<string>())
 const projectedFolderIds = shallowRef(new Map<string, string | null>())
+const lastMoveRefresh = shallowRef<{ readonly sessionId: string; readonly refreshed: boolean } | null>(null)
 const sessionsRefreshError = ref('')
 const foldersRefreshError = ref('')
 const refreshingSessions = ref(false)
@@ -373,15 +422,19 @@ const refreshingHistory = computed(() => refreshingSessions.value || refreshingF
 const initialRefreshPending = ref(false)
 const draggedSessionId = ref<string | null>(null)
 const activeDropTarget = ref<string | null>(null)
+const activeDragToken = ref<string | null>(null)
+let activeDragDataTransfer: DataTransfer | null = null
+let dragTokenSequence = 0
 const dragStatus = ref('')
 const recentDropTarget = '__agent_history_recent__'
+const newFolderDropTarget = '__agent_history_new_folder__'
+const sessionDragMime = 'application/x-ts-epistle-agent-session'
 type ComponentRoot = ComponentPublicInstance | HTMLElement
 const historyCloseButton = useTemplateRef<ComponentRoot>('historyCloseButton')
 const historySearchField = useTemplateRef<ComponentRoot>('historySearchField')
 const deleteDialogCard = useTemplateRef<ComponentRoot>('deleteDialogCard')
 const removeFolderDialogCard = useTemplateRef<ComponentRoot>('removeFolderDialogCard')
 const folderInput = useTemplateRef<ComponentRoot>('folderInput')
-const folderEditorRestoreTarget = shallowRef<HTMLElement | null>(null)
 const destructiveRestoreTarget = shallowRef<HTMLElement | null>(null)
 let destructiveFocusScope: ModalFocusScope | null = null
 
@@ -554,7 +607,7 @@ const clearProjectedFolder = (sessionId: string): void => {
 const sessionBusy = (sessionId: string): boolean =>
   loading.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0 || movingSessionIds.value.has(sessionId)
 const hasRenderedDropDestination = (session: AgentSessionSummary): boolean =>
-  session.folderId !== null || visibleFolderGroups.value.length > 0
+  session.folderId !== null || visibleFolderGroups.value.length > 0 || !normalizedSearch.value
 const canDragSession = (session: AgentSessionSummary): boolean =>
   !sessionMutationBusy.value && !sessionBusy(session.id) && hasRenderedDropDestination(session)
 const dropTargetKey = (folderId: string | null): string => folderId ?? recentDropTarget
@@ -562,31 +615,54 @@ const isActiveDropTarget = (folderId: string | null): boolean =>
   activeDropTarget.value === dropTargetKey(folderId)
 const canDropTo = (folderId: string | null): boolean => {
   const session = draggedSession.value
-  return Boolean(session && !sessionMutationBusy.value && session.folderId !== folderId && !sessionBusy(session.id))
+  if (!session || sessionMutationBusy.value || sessionBusy(session.id)) return false
+  if (folderId !== null && folderId !== newFolderDropTarget && !folders.value.some(folder => folder.id === folderId)) return false
+  return folderId === newFolderDropTarget || session.folderId !== folderId
 }
 const clearDragState = (): void => {
   draggedSessionId.value = null
   activeDropTarget.value = null
+  activeDragToken.value = null
+  activeDragDataTransfer = null
+}
+const isKnownSessionDrag = (event: DragEvent): boolean => {
+  const transfer = event.dataTransfer
+  const token = activeDragToken.value
+  if (!transfer || !draggedSessionId.value || !token) return false
+  if (transfer === activeDragDataTransfer) return true
+  const types = Array.from(transfer.types ?? [])
+  if (!types.includes(sessionDragMime)) return false
+  let encoded = ''
+  try {
+    encoded = typeof transfer.getData === 'function' ? transfer.getData(sessionDragMime) : ''
+  } catch {
+    return false
+  }
+  return !encoded || encoded === token
 }
 const beginSessionDrag = (event: DragEvent, session: AgentSessionSummary): void => {
   if (!canDragSession(session)) {
     event.preventDefault()
     return
   }
+  const token = `${session.id}:${++dragTokenSequence}`
   draggedSessionId.value = session.id
+  activeDragToken.value = token
+  activeDragDataTransfer = event.dataTransfer
   activeDropTarget.value = null
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData(sessionDragMime, token)
     event.dataTransfer.setData('text/plain', session.id)
   }
-  dragStatus.value = `Dragging ${session.title || 'New conversation'}. Drop it on Recent or a saved folder.`
+  dragStatus.value = `Dragging ${session.title || 'New conversation'}. Drop it on Recent, a saved folder, or the new-folder area.`
 }
 const finishSessionDrag = (): void => {
   if (draggedSessionId.value) dragStatus.value = 'Conversation move cancelled.'
   clearDragState()
 }
 const setDropTarget = (event: DragEvent, folderId: string | null): void => {
-  if (!canDropTo(folderId)) return
+  if (!isKnownSessionDrag(event) || !canDropTo(folderId)) return
   event.preventDefault()
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
   activeDropTarget.value = dropTargetKey(folderId)
@@ -718,8 +794,14 @@ const openSession = async (sessionId: string): Promise<void> => {
   }
 }
 
+const errorStatus = (value: unknown): number | null => {
+  const record = typeof value === 'object' && value !== null ? value as Record<string, unknown> : null
+  return typeof record?.status === 'number' ? record.status : null
+}
+const isConflictError = (value: unknown): boolean => errorStatus(value) === 409
 const moveSession = async (session: AgentSessionSummary, folderId: string | null): Promise<boolean> => {
   if (loading.value || sessionMutationBusy.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0 || session.folderId === folderId || movingSessionIds.value.has(session.id)) return false
+  lastMoveRefresh.value = null
   const title = session.title || 'New conversation'
   const destination = dropDestinationName(folderId)
   const originalLocation = sessionLocationName(session)
@@ -729,39 +811,67 @@ const moveSession = async (session: AgentSessionSummary, folderId: string | null
   dragStatus.value = `Moving ${title} to ${destination}.`
   updatePendingSet(movingSessionIds, session.id, true)
   try {
-    await agents.moveSessionToFolder(session.id, folderId)
+    const projected = await agents.moveSessionToFolder(session.id, folderId)
+    if (!projected) return false
     setProjectedFolder(session.id, folderId)
     if (!showCommittedRefreshFailure()) clearProjectedFolder(session.id)
     if (folderId && !openFolderIds.value.includes(folderId)) openFolderIds.value.push(folderId)
     dragStatus.value = `Moved ${title} to ${destination}.`
     return true
   } catch (value) {
+    const refreshed = await refreshSessions()
+    lastMoveRefresh.value = { sessionId: session.id, refreshed }
     localError.value = message(value, 'The conversation could not be moved.')
-    dragStatus.value = `${title} could not be moved. It remains in ${originalLocation}.`
+    dragStatus.value = `${title} could not be moved. It remains in ${originalLocation}. Refresh history, then retry the move.`
     return false
   } finally {
     updatePendingSet(movingSessionIds, session.id, false)
   }
 }
 const dropSession = async (event: DragEvent, folderId: string | null): Promise<void> => {
-  if (!canDropTo(folderId)) return
+  if (!isKnownSessionDrag(event) || !canDropTo(folderId)) return
   event.preventDefault()
   const session = draggedSession.value
   clearDragState()
-  if (session) await moveSession(session, folderId)
+  if (!session) return
+  if (folderId === newFolderDropTarget) {
+    beginCreateFolderForSession(session, document.activeElement instanceof HTMLElement ? document.activeElement : null)
+    return
+  }
+  await moveSession(session, folderId)
+}
+const resetFolderWorkflow = (): void => {
+  folderWorkflowState.value = 'idle'
+  folderWorkflowSession.value = null
+  folderWorkflowFolderId.value = null
+  folderWorkflowFolder.value = null
 }
 const beginCreateFolder = (): void => {
-  if (loading.value) return
+  if (loading.value || sessionMutationBusy.value) return
   dialogError.value = ''
   editingFolder.value = null
+  resetFolderWorkflow()
   folderName.value = ''
   folderEditorRestoreTarget.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
   folderEditorOpen.value = true
 }
+const beginCreateFolderForSession = (session: AgentSessionSummary, restoreTarget: HTMLElement | null): void => {
+  if (loading.value || sessionMutationBusy.value || sessionBusy(session.id)) return
+  dialogError.value = ''
+  editingFolder.value = null
+  folderName.value = ''
+  folderWorkflowState.value = 'creating'
+  folderWorkflowSession.value = session
+  folderWorkflowFolderId.value = null
+  folderWorkflowFolder.value = null
+  folderEditorRestoreTarget.value = restoreTarget ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+  folderEditorOpen.value = true
+}
 const beginRenameFolder = (folder: AgentConversationFolderView): void => {
-  if (loading.value) return
+  if (loading.value || sessionMutationBusy.value) return
   dialogError.value = ''
   editingFolder.value = folder
+  resetFolderWorkflow()
   folderName.value = folder.name
   folderEditorRestoreTarget.value =
     document.querySelector<HTMLElement>('.agent-history__folder-actions[aria-expanded="true"]') ??
@@ -821,16 +931,131 @@ const cancelRemoveFolder = (): void => {
   removingFolder.value = null
   dialogError.value = ''
 }
+const folderByName = (name: string): AgentConversationFolderView | null => {
+  const nameKey = agentConversationFolderNameKey(cleanAgentConversationFolderName(name))
+  return folders.value.find(folder =>
+    agentConversationFolderNameKey(cleanAgentConversationFolderName(folder.name)) === nameKey) ?? null
+}
+const isFolderView = (value: unknown): value is AgentConversationFolderView => {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return typeof record.id === 'string' && typeof record.name === 'string' && typeof record.version === 'number'
+}
+const reconcileFolderByName = async (name: string): Promise<AgentConversationFolderView | null> => {
+  const local = folderByName(name)
+  if (local) return local
+  if (!await refreshFolders()) return null
+  return folderByName(name)
+}
+const closeFolderEditorAfterCommit = (): void => {
+  folderEditorOpen.value = false
+  resetFolderWorkflow()
+}
+const completeCreatedFolderMove = (folder: AgentConversationFolderView, session: AgentSessionSummary): void => {
+  localError.value = ''
+  dialogError.value = ''
+  setProjectedFolder(session.id, folder.id)
+  if (!openFolderIds.value.includes(folder.id)) openFolderIds.value.push(folder.id)
+  dragStatus.value = `Moved ${session.title || 'New conversation'} to ${folder.name}.`
+  closeFolderEditorAfterCommit()
+}
+const moveCreatedFolder = async (folder: AgentConversationFolderView): Promise<boolean> => {
+  folderWorkflowFolderId.value = folder.id
+  folderWorkflowFolder.value = folder
+  const source = folderWorkflowSession.value
+  if (!source) {
+    closeFolderEditorAfterCommit()
+    return true
+  }
+  const authoritativeLatest = sessions.value.find(candidate => candidate.id === source.id)
+  const latest = displaySessions.value.find(candidate => candidate.id === source.id) ?? source
+  folderWorkflowSession.value = latest
+  const moved = authoritativeLatest?.folderId === folder.id || await moveSession(latest, folder.id)
+  if (moved) {
+    completeCreatedFolderMove(folder, latest)
+    return true
+  }
+  const refreshed = sessions.value.find(candidate => candidate.id === source.id)
+  if (refreshed) folderWorkflowSession.value = refreshed
+  if (
+    lastMoveRefresh.value?.sessionId === source.id &&
+    lastMoveRefresh.value.refreshed &&
+    refreshed?.folderId === folder.id
+  ) {
+    completeCreatedFolderMove(folder, refreshed)
+    return true
+  }
+  folderWorkflowState.value = 'move-retry'
+  dialogError.value = `Folder “${folder.name}” was created, but the conversation could not be moved. Retry the move.`
+  return false
+}
+const retryFolderMove = async (): Promise<void> => {
+  const folderId = folderWorkflowFolderId.value
+  const source = folderWorkflowSession.value
+  const folder = folderWorkflowFolder.value ?? (folderId ? folders.value.find(candidate => candidate.id === folderId) ?? null : null)
+  if (!folderId || !source || !folder) {
+    dialogError.value = 'The created folder is no longer available. Refresh folders before retrying.'
+    return
+  }
+  await moveCreatedFolder(folder)
+}
+const cancelFolderEditor = (): void => {
+  if (savingFolder.value) return
+  folderEditorOpen.value = false
+  resetFolderWorkflow()
+}
 const saveFolder = async (): Promise<void> => {
-  const name = folderName.value.trim()
-  if (!name || loading.value || savingFolder.value || deleting.value) return
-  savingFolder.value = true; dialogError.value = ''
+  const name = cleanAgentConversationFolderName(folderName.value)
+  if (!name || loading.value || savingFolder.value || deleting.value || sessionMutationBusy.value) return
+  savingFolder.value = true
+  dialogError.value = ''
   try {
-    if (editingFolder.value) await agents.renameFolder(editingFolder.value.id, editingFolder.value.version, name)
-    else await agents.createFolder(name)
-    folderEditorOpen.value = false
-  } catch (value) { dialogError.value = message(value, 'The folder could not be saved.') }
-  finally { savingFolder.value = false }
+    if (editingFolder.value) {
+      await agents.renameFolder(editingFolder.value.id, editingFolder.value.version, name)
+      closeFolderEditorAfterCommit()
+      return
+    }
+    if (folderWorkflowState.value === 'move-retry') {
+      await retryFolderMove()
+      return
+    }
+    if (folderWorkflowState.value === 'create-unknown') {
+      const reconciled = await reconcileFolderByName(name)
+      if (reconciled) await moveCreatedFolder(reconciled)
+      else if (!foldersRefreshError.value) {
+        folderWorkflowState.value = 'creating'
+        dialogError.value = 'No matching folder was found. You can create it now.'
+      } else {
+        dialogError.value = 'The folder creation result is still unknown. Refresh folders, then check again before retrying.'
+      }
+      return
+    }
+    folderWorkflowState.value = 'creating'
+    try {
+      const created = await agents.createFolder(name)
+      const folder = isFolderView(created) ? created : await reconcileFolderByName(name)
+      if (!folder) {
+        folderWorkflowState.value = 'create-unknown'
+        dialogError.value = 'The folder may have been created, but its result could not be confirmed. Check again before retrying.'
+        return
+      }
+      await moveCreatedFolder(folder)
+    } catch (value) {
+      const createError = message(value, 'The folder could not be saved.')
+      const reconciled = await reconcileFolderByName(name)
+      if (reconciled) {
+        await moveCreatedFolder(reconciled)
+        return
+      }
+      const refreshFailed = Boolean(foldersRefreshError.value)
+      folderWorkflowState.value = refreshFailed ? 'create-unknown' : 'creating'
+      dialogError.value = refreshFailed
+        ? 'The folder creation result is unknown. Refresh folders, then check again before retrying.'
+        : createError
+    }
+  } finally {
+    savingFolder.value = false
+  }
 }
 watch(folderEditorOpen, async open => {
   let cancelled = false
@@ -840,7 +1065,13 @@ watch(folderEditorOpen, async open => {
   if (cancelled) return
   const target = folderEditorRestoreTarget.value
   folderEditorRestoreTarget.value = null
-  if (target?.isConnected && !target.closest('[inert], [aria-hidden="true"]')) target.focus()
+  resetFolderWorkflow()
+  const focusTarget = [
+    target,
+    componentControl(historySearchField.value),
+    componentControl(historyCloseButton.value)
+  ].find(isVisibleFocusTarget)
+  focusTarget?.focus()
 })
 const deleteSession = async (): Promise<void> => {
   const session = deletingSession.value
@@ -865,7 +1096,8 @@ const deleteFolder = async (): Promise<void> => {
   const affectedSessionIds = displaySessions.value.filter(session => session.folderId === folder.id).map(session => session.id)
   deleting.value = true; dialogError.value = ''; sessionsRefreshError.value = ''; agents.error = ''
   try {
-    await agents.deleteFolder(folder.id)
+    const committed = await agents.deleteFolder(folder.id, folder.version)
+    if (!committed) return
     for (const sessionId of affectedSessionIds) setProjectedFolder(sessionId, null)
     openFolderIds.value = openFolderIds.value.filter(id => id !== folder.id)
     destructiveRestoreTarget.value = componentElement(historyCloseButton.value)
@@ -874,6 +1106,19 @@ const deleteFolder = async (): Promise<void> => {
       for (const sessionId of affectedSessionIds) clearProjectedFolder(sessionId)
     }
   } catch (value) {
+    if (isConflictError(value)) {
+      const refreshed = await refreshFolders()
+      const renewed = refreshed ? folders.value.find(candidate => candidate.id === folder.id) ?? null : null
+      if (renewed) {
+        removingFolder.value = renewed
+        dialogError.value = 'The folder changed while you were reviewing it. Review the updated folder, then remove it again.'
+      } else {
+        dialogError.value = refreshed
+          ? 'The folder is no longer available. Refresh folders before trying again.'
+          : 'The folder changed while you were reviewing it. Refresh folders, then review the confirmation again.'
+      }
+      return
+    }
     dialogError.value = message(value, 'The folder could not be removed.')
   } finally {
     deleting.value = false
@@ -977,6 +1222,9 @@ onBeforeUnmount(() => {
 .agent-history__footer p { flex: 1; margin: 0; font-size: .7rem; line-height: 1.5; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent); }
 .agent-history__folder-icon { color: color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, rgb(var(--v-theme-on-surface))); }
 .agent-history__new-folder { flex: 0 0 auto; color: color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, rgb(var(--v-theme-on-surface))); }
+.agent-history__folder-input :deep(.v-field--variant-outlined .v-field__outline__notch) {
+  background-color: var(--wiki-surface-raised);
+}
 .agent-history__body {
   display: flex;
   flex: 1 1 auto;

@@ -3,7 +3,14 @@ import type { Knex } from 'knex'
 import { AGENT_TERMINAL_RUN_STATUSES } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { AgentRepositoryError } from './repository.ts'
-import { acquireAgentCoordinatorAdvisoryLocks, reconcileAgentRunQuota, terminalizeAgentRunInTransaction } from './coordinator.ts'
+import {
+  AgentQuotaSettlementError,
+  acquireAgentCoordinatorAdvisoryLocks,
+  excludeAgentRunsWithPendingQuotaSettlement,
+  readAgentRunQuotaSettlementIntent,
+  reconcileAgentRunQuota,
+  terminalizeAgentRunInTransaction
+} from './coordinator.ts'
 
 const TERMINAL_PROPOSAL_STATUSES = ['denied', 'expired', 'applied', 'failed', 'cancelled'] as const
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -58,7 +65,9 @@ const tombstoneOwnedSessions = async (transaction: Knex.Transaction, ownerId: nu
     .whereIn('sessionId', sessionIds)
     .whereIn('status', ['queued', 'awaiting_approval'])
     .forUpdate()) as Array<{ id: string; status: 'queued' | 'awaiting_approval'; eventSequence: number; leaseToken: string | null }>
-  for (const run of immediatelyCancelled)
+  for (const run of immediatelyCancelled) {
+    const pendingIntent = await readAgentRunQuotaSettlementIntent(transaction, run.id, ownerId)
+    if (pendingIntent !== null && (pendingIntent.consumedTokens > 0 || pendingIntent.consumedCostMicros > 0)) continue
     await terminalizeAgentRunInTransaction(transaction, {
       runId: run.id,
       ownerId,
@@ -67,10 +76,8 @@ const tombstoneOwnedSessions = async (transaction: Knex.Transaction, ownerId: nu
       cancelRequestedAt: now,
       now
     })
-  await transaction('agentRuns')
-    .where({ ownerId, status: 'running' })
-    .whereIn('sessionId', sessionIds)
-    .update({ cancelRequestedAt: now, updatedAt: now })
+  }
+  await transaction('agentRuns').where({ ownerId, status: 'running' }).whereIn('sessionId', sessionIds).update({ cancelRequestedAt: now, updatedAt: now })
   const proposalIds = await transaction('agentProposals').whereIn('sessionId', sessionIds).whereIn('status', ['pending', 'approved']).pluck<string>('id')
   if (proposalIds.length > 0) {
     await transaction('agentProposals').whereIn('id', proposalIds).update({ status: 'cancelled' })
@@ -112,25 +119,22 @@ export const requestUnfiledAgentHistoryClear = async (knex: Knex, ownerId: numbe
 
 const recoverRuns = async (knex: Knex, now: Date, batchSize: number): Promise<{ cancelled: number; recovered: number; requeued: number }> =>
   knex.transaction(async transaction => {
-    const candidateQuery = transaction('agentRuns')
-      .where(query =>
-        query
-          .where(cancelled =>
-            cancelled
-              .whereNotNull('cancelRequestedAt')
-              .whereIn('status', ['queued', 'running', 'awaiting_approval'])
-              .andWhere(noLiveLease =>
-                noLiveLease
-                  .where({ status: 'queued' })
-                  .orWhereNull('leaseExpiresAt')
-                  .orWhere('leaseExpiresAt', '<=', now)
-              )
-          )
-          .orWhere(expired => expired.whereIn('status', ['running', 'awaiting_approval']).andWhere('leaseExpiresAt', '<=', now))
-      )
+    const candidateQuery = transaction('agentRuns').where(query =>
+      query
+        .where(cancelled =>
+          cancelled
+            .whereNotNull('cancelRequestedAt')
+            .whereIn('status', ['queued', 'running', 'awaiting_approval'])
+            .andWhere(noLiveLease => noLiveLease.where({ status: 'queued' }).orWhereNull('leaseExpiresAt').orWhere('leaseExpiresAt', '<=', now))
+        )
+        .orWhere(expired => expired.whereIn('status', ['running', 'awaiting_approval']).andWhere('leaseExpiresAt', '<=', now))
+    )
+    const candidates = await candidateQuery
+      .clone()
+      .modify(query => excludeAgentRunsWithPendingQuotaSettlement(query, transaction))
       .orderBy('updatedAt')
       .limit(batchSize)
-    const candidates = await candidateQuery.clone().select<{ id: string; ownerId: number }[]>('id', 'ownerId')
+      .select<{ id: string; ownerId: number }[]>('id', 'ownerId')
     if (candidates.length === 0) return { cancelled: 0, recovered: 0, requeued: 0 }
     await acquireAgentCoordinatorAdvisoryLocks(
       transaction,
@@ -142,6 +146,7 @@ const recoverRuns = async (knex: Knex, now: Date, batchSize: number): Promise<{ 
         'id',
         candidates.map(candidate => candidate.id)
       )
+      .modify(query => excludeAgentRunsWithPendingQuotaSettlement(query, transaction))
       .forUpdate()) as Array<{
       id: string
       ownerId: number
@@ -155,6 +160,8 @@ const recoverRuns = async (knex: Knex, now: Date, batchSize: number): Promise<{ 
     let recovered = 0
     let requeued = 0
     for (const row of rows) {
+      const pendingIntent = await readAgentRunQuotaSettlementIntent(transaction, row.id, row.ownerId)
+      if (pendingIntent !== null && (pendingIntent.consumedTokens > 0 || pendingIntent.consumedCostMicros > 0)) continue
       if (row.cancelRequestedAt !== null) {
         await terminalizeAgentRunInTransaction(transaction, {
           runId: row.id,
@@ -357,14 +364,23 @@ const compactEvents = async (knex: Knex, cutoff: Date, batchSize: number): Promi
 const reconcileExpiredReservations = async (knex: Knex, now: Date, batchSize: number): Promise<number> => {
   const rows = await knex('agentQuotaReservations')
     .where({ status: 'reserved' })
+    .andWhere('consumedTokens', 0)
+    .andWhere('consumedCostMicros', 0)
     .andWhere('expiresAt', '<=', now)
     .orderBy('expiresAt')
     .limit(batchSize)
     .select<{ runId: string; ownerId: number }[]>('runId', 'ownerId')
   let reconciled = 0
   for (const row of rows) {
-    await reconcileAgentRunQuota(knex, { runId: row.runId, ownerId: row.ownerId, consumedTokens: 0, consumedCostMicros: 0, status: 'released', now })
-    reconciled += 1
+    const pendingIntent = await readAgentRunQuotaSettlementIntent(knex, row.runId, row.ownerId)
+    if (pendingIntent !== null && (pendingIntent.consumedTokens > 0 || pendingIntent.consumedCostMicros > 0)) continue
+    try {
+      await reconcileAgentRunQuota(knex, { runId: row.runId, ownerId: row.ownerId, consumedTokens: 0, consumedCostMicros: 0, status: 'released', now })
+      reconciled += 1
+    } catch (error) {
+      if (error instanceof AgentQuotaSettlementError) continue
+      throw error
+    }
   }
   return reconciled
 }

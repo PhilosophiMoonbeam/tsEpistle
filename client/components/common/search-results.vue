@@ -31,6 +31,8 @@
       InlineAgentChat(
         v-if='isAgentOpen'
         ref='inlineAgent'
+        :owner-id='agentOwnerId'
+        :resume-session-id='agentResumeSessionId || undefined'
         :csrf-token='agentCsrfToken'
         :approval-id='approvalId'
         :provider-enabled='agentProviderEnabled'
@@ -248,6 +250,8 @@ import type { WikiSource, WikiSourceSelector } from '../../../shared/wiki-source
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
 import { onSearchEnter, onSearchExit, onSearchMove, offSearchEnter, offSearchExit, offSearchMove } from '../../helpers/search-navigation-events'
+import { useAgentsStore } from '../../store/agents.ts'
+import { isAgentSessionId } from '../../helpers/agent-chat-pin.ts'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
 import { activeOwnedOverlayRoots, createModalFocusScope, type ModalFocusScope } from './modal-focus-scope'
 import { navigateToWikiPage } from '../../helpers/wiki-navigation'
@@ -293,6 +297,7 @@ export default defineComponent({
       searchExitRestoreFocus: true,
       directPromptHandoffId: 0,
       directPromptHandoffPending: false,
+      agentResumeSessionId: null as string | null,
       searchAbortController: null as AbortController | null
     }
   },
@@ -337,6 +342,7 @@ export default defineComponent({
     isAgentOpen(): boolean {
       return this.canAsk && this.searchMode === 'ask'
     },
+    agentOwnerId(): number { return wikiStore.user.id },
     agentCsrfToken(): string { return siteConfig.agentCsrfToken },
     agentProviderEnabled(): boolean { return siteConfig.agentProviderEnabled },
     agentSkillsEnabled(): boolean { return siteConfig.agentSkillsEnabled },
@@ -408,6 +414,23 @@ export default defineComponent({
       this.searchExitRestoreFocus = true
       this.finishSearchFocus(restoreFocus)
     },
+    agentOwnerId(newOwnerId: number, oldOwnerId: number | undefined) {
+      if (oldOwnerId === undefined || newOwnerId === oldOwnerId) return
+      this.agentResumeSessionId = null
+      if (this.isAgentOpen) {
+        this.searchMode = 'search'
+        this.searchIsFocused = false
+      }
+    },
+    currentPageId(newPageId: number, oldPageId: number | undefined) {
+      if (oldPageId !== undefined && newPageId !== oldPageId) this.agentResumeSessionId = null
+    },
+    currentPageLocale(newLocale: string, oldLocale: string | undefined) {
+      if (oldLocale !== undefined && newLocale !== oldLocale) this.agentResumeSessionId = null
+    },
+    currentPagePath(newPath: string, oldPath: string | undefined) {
+      if (oldPath !== undefined && newPath !== oldPath) this.agentResumeSessionId = null
+    },
     canAsk(allowed: boolean) {
       if (!allowed && this.searchMode === 'ask') this.searchMode = 'search'
     },
@@ -454,6 +477,7 @@ export default defineComponent({
     offSearchExit(this.handleSearchExit)
     document.removeEventListener('focusin', this.captureSearchRestoreTarget, true)
     this.deactivateModalLayers(false)
+    this.agentResumeSessionId = null
   },
   methods: {
     matchSummary(item: PageSearchRow): string {
@@ -481,7 +505,9 @@ export default defineComponent({
       })
       this.pendingAskRestoreTarget = null
       this.modalFocusScope = focusScope
-      await (this.$refs.inlineAgent as InlineAgentChatRef | undefined)?.focusComposer()
+      const inlineAgent = this.$refs.inlineAgent as InlineAgentChatRef | undefined
+      await inlineAgent?.focusComposer()
+      this.retireResumeAfterSelection()
       if (this.modalFocusScope === focusScope && !focusScope.containsFocus()) focusScope.focusFirst()
     },
     activateSearchModal(restoreTarget: HTMLElement | null): void {
@@ -583,6 +609,18 @@ export default defineComponent({
       }
       return controls
     },
+    retireResumeAfterSelection(): void {
+      const agents = useAgentsStore()
+      const selectedSessionId = agents.thread?.session.id
+      if (
+        this.agentResumeSessionId &&
+        selectedSessionId &&
+        selectedSessionId !== this.agentResumeSessionId &&
+        agents.initializedWorkspaceVersion === agents.workspaceVersion &&
+        isAgentSessionId(selectedSessionId)
+      )
+        this.agentResumeSessionId = null
+    },
     searchModalAdditionalRoots(): HTMLElement[] {
       this.syncSearchInputA11y()
       return [...Array.from(document.querySelectorAll<HTMLElement>('.nav-header-search-control input, [data-search-modal-action]')).filter(element => !element.matches(':disabled')), ...activeOwnedOverlayRoots('.agent-owned-overlay')]
@@ -590,6 +628,11 @@ export default defineComponent({
     setSearchMode(mode: 'search' | 'ask'): void {
       if (mode === 'ask') this.openAsk()
       else this.searchMode = 'search'
+    },
+    captureAgentExcursion(): void {
+      const agents = useAgentsStore()
+      const sessionId = agents.workspaceDisposed ? null : agents.thread?.session.id
+      if (sessionId && isAgentSessionId(sessionId)) this.agentResumeSessionId = sessionId
     },
     openAsk(): void {
       if (!this.canAsk) return
@@ -599,6 +642,7 @@ export default defineComponent({
       this.searchMode = 'ask'
     },
     returnToSearch(): void {
+      this.captureAgentExcursion()
       this.pendingAskRestoreTarget = null
       this.directPromptHandoffId += 1
       this.searchMode = 'search'
@@ -679,6 +723,7 @@ export default defineComponent({
       return { kind: 'all' }
     },
     async askSource(source: WikiSource): Promise<void> {
+      this.captureAgentExcursion()
       this.previewSelector = null
       this.searchMode = 'ask'
       await this.$nextTick()
@@ -702,6 +747,7 @@ export default defineComponent({
       }
     },
     closeSearch(): void {
+      const shouldCloseAgentWorkspace = this.isAgentOpen || Boolean(this.agentResumeSessionId)
       this.directPromptHandoffId += 1
       this.pendingAskRestoreTarget = null
       this.finishSearchFocus()
@@ -709,6 +755,8 @@ export default defineComponent({
       this.searchMode = 'search'
       this.search = ''
       this.approvalId = ''
+      this.agentResumeSessionId = null
+      if (shouldCloseAgentWorkspace) useAgentsStore().closeWorkspace()
       const url = new URL(window.location.href)
       url.searchParams.delete('agentApproval')
       window.history.replaceState(window.history.state, '', url)

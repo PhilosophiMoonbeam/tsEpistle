@@ -20,6 +20,7 @@ import {
   type AxAIOpenAIResponsesRequest
 } from '@ax-llm/ax'
 import { agentProviderReasoningEfforts, type AgentReasoningEffort } from '../../../shared/agents/contracts.ts'
+import { assertAgentTokenUsage } from './usage.ts'
 import {
   AgentProviderAdapterConfigSchema,
   AgentProviderCapabilitiesSchema,
@@ -128,11 +129,21 @@ export const parseAgentProviderPricing = (value: string): AgentProviderPricing =
   }
 }
 
-export const agentProviderCostMicros = (pricing: AgentProviderPricing, inputTokens: number, outputTokens: number): number => {
-  if (!Number.isSafeInteger(inputTokens) || inputTokens < 0 || !Number.isSafeInteger(outputTokens) || outputTokens < 0) {
-    throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider returned invalid token usage', 502)
-  }
-  const numerator = BigInt(inputTokens) * BigInt(pricing.inputMicrosPerMillionTokens) + BigInt(outputTokens) * BigInt(pricing.outputMicrosPerMillionTokens)
+export const agentProviderCostMicros = (pricing: AgentProviderPricing, inputTokens: number, outputTokens: number, totalTokens: number): number => {
+  assertAgentTokenUsage(inputTokens, outputTokens, totalTokens)
+  if (
+    !Number.isSafeInteger(pricing.inputMicrosPerMillionTokens) ||
+    pricing.inputMicrosPerMillionTokens < 0 ||
+    !Number.isSafeInteger(pricing.outputMicrosPerMillionTokens) ||
+    pricing.outputMicrosPerMillionTokens < 0
+  )
+    throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider pricing is invalid', 502)
+  const residualTokens = totalTokens - inputTokens - outputTokens
+  const maximumRate = Math.max(pricing.inputMicrosPerMillionTokens, pricing.outputMicrosPerMillionTokens)
+  const numerator =
+    BigInt(inputTokens) * BigInt(pricing.inputMicrosPerMillionTokens) +
+    BigInt(outputTokens) * BigInt(pricing.outputMicrosPerMillionTokens) +
+    BigInt(residualTokens) * BigInt(maximumRate)
   const cost = (numerator + 999_999n) / 1_000_000n
   if (cost > BigInt(Number.MAX_SAFE_INTEGER)) throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider usage cost exceeds the supported range', 502)
   return Number(cost)

@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import type * as BootstrapModule from '../../index.ts'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 interface KernelMock {
   init(): Promise<void>
@@ -7,6 +7,19 @@ interface KernelMock {
 }
 
 const EXIT_CODE_SENTINEL = 23
+const overrideBunVersion = (version: string): (() => void) => {
+  const descriptor = Object.getOwnPropertyDescriptor(process.versions, 'bun')
+  Object.defineProperty(process.versions, 'bun', {
+    configurable: true,
+    enumerable: descriptor?.enumerable ?? true,
+    value: version,
+    writable: descriptor?.writable ?? false
+  })
+  return () => {
+    if (descriptor) Object.defineProperty(process.versions, 'bun', descriptor)
+    else Reflect.deleteProperty(process.versions, 'bun')
+  }
+}
 
 describe('bootstrap lifecycle', () => {
   let previousExitCode: number | undefined
@@ -19,7 +32,7 @@ describe('bootstrap lifecycle', () => {
   })
 
   afterEach(() => {
-    process.exitCode = previousExitCode
+    process.exitCode = previousExitCode ?? 0
     globalThis.WIKI = previousWiki as typeof globalThis.WIKI
     vi.restoreAllMocks()
   })
@@ -39,6 +52,52 @@ describe('bootstrap lifecycle', () => {
     const { main } = await vi.importFresh<typeof BootstrapModule>('../../index.ts', import.meta.url)
     return { configService, logger, main }
   }
+
+  it('rejects an unsupported Bun runtime before configuration or kernel initialization', async () => {
+    const restoreBunVersion = overrideBunVersion('1.4.1')
+    const initialSigtermListeners = process.listenerCount('SIGTERM')
+    const initialUncaughtExceptionListeners = process.listenerCount('uncaughtException')
+    try {
+      const kernel = {
+        init: vi.fn().mockResolvedValue(undefined),
+        shutdown: vi.fn().mockResolvedValue(undefined)
+      }
+      const { configService, main } = await setupModule(kernel)
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      await main()
+
+      expect(configService.init).not.toHaveBeenCalled()
+      expect(kernel.init).not.toHaveBeenCalled()
+      expect(kernel.shutdown).not.toHaveBeenCalled()
+      expect(process.listenerCount('SIGTERM')).toBe(initialSigtermListeners)
+      expect(process.listenerCount('uncaughtException')).toBe(initialUncaughtExceptionListeners)
+      expect(process.exitCode).toBe(1)
+    } finally {
+      restoreBunVersion()
+    }
+  })
+
+  it('continues bootstrap on the minimum supported Bun runtime', async () => {
+    const restoreBunVersion = overrideBunVersion('1.4.2')
+    try {
+      const kernel = {
+        init: vi.fn().mockResolvedValue(undefined),
+        shutdown: vi.fn().mockResolvedValue(undefined)
+      }
+      const { configService, main } = await setupModule(kernel)
+
+      await main()
+      expect(configService.init).toHaveBeenCalledTimes(1)
+      expect(kernel.init).toHaveBeenCalledTimes(1)
+      const sigterm = process.listeners('SIGTERM').at(-1)
+      if (!sigterm) throw new Error('SIGTERM lifecycle handler was not registered')
+      sigterm()
+      await vi.waitFor(() => expect(kernel.shutdown).toHaveBeenCalledTimes(1))
+    } finally {
+      restoreBunVersion()
+    }
+  })
 
   it('registers one fatal-listener pair for one promise-owned bootstrap', async () => {
     const unhandledRejections = process.listenerCount('unhandledRejection')

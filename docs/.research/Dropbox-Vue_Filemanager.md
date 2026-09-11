@@ -41,7 +41,7 @@ This is a tsEpistle implementation plan, not a reusable file-manager PRD.
 |---|---:|---|
 | tsEpistle | `0.1.0-alpha.1` | `package.json` |
 | Wiki.js upstream | `2.5.314` | `package.json` |
-| Bun | `1.4.0`; engine `>=1.4.0 <2` | `package.json` |
+| Bun | `1.4.2`; engine `>=1.4.2 <2` | `package.json` |
 | Vue | `3.5.41` | `package.json` |
 | Vuetify | `4.1.9` | `package.json` |
 | Vite | `8.2.1` | `package.json` |
@@ -50,6 +50,7 @@ This is a tsEpistle implementation plan, not a reusable file-manager PRD.
 | Pinia | `4.0.3` | `package.json` |
 | vue-filepond | `8.0.0` | `package.json` |
 `package.json` remains authoritative. No Dropbox SDK is installed. Vuetify `4.1.9` is installed; there is no stale “target version” or migration caveat.
+Only the runtime baseline was refreshed to Bun `1.4.2` and engine `>=1.4.2 <2`; this does not represent a fresh Dropbox audit, and the `Verified` date above remains unchanged.
 
 ### 3.2 Current Dropbox login
 - `server/modules/authentication/dropbox/definition.yml` instructs operators to create an App Folder app with only `account_info.read`.

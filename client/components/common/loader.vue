@@ -11,8 +11,10 @@
   )
     v-card.loader-dialog(:color='color')
       v-card-text.text-center
+        .loader-dialog-illustration(v-if='$slots.illustration')
+          slot(name='illustration')
         atom-spinner.is-inline(
-          v-if='mode === `loading`'
+          v-else-if='mode === `loading`'
           :animation-duration='1000'
           :size='52'
           color='currentColor'
@@ -102,6 +104,15 @@ export default defineComponent({
   .v-card-text {
     padding: var(--wiki-space-8) var(--wiki-space-6) var(--wiki-space-6) !important;
   }
+  .loader-dialog-illustration {
+    display: inline-flex;
+    width: 72px;
+    height: 72px;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 10px;
+  }
+
 
   .atom-spinner.is-inline {
     display: inline-block;

@@ -631,9 +631,16 @@ export interface WikiLinePatchV1 {
   readonly operations: readonly WikiLinePatchOperationV1[]
 }
 
+export interface AgentTokenUsage {
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly totalTokens: number
+}
+
 export interface AgentUsageUpdate {
   readonly inputTokens: number
   readonly outputTokens: number
+  readonly totalTokens: number
   readonly cachedTokens: number | null
   readonly reasoningTokens: number | null
   readonly estimatedCostMicros: number | null

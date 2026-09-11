@@ -1,4 +1,5 @@
 import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
+import { cleanAgentConversationFolderName } from '../../shared/agents/conversation-folders.ts'
 import { z } from 'zod'
 import { sameOriginJsonFetch } from './json-transport.ts'
 import {
@@ -345,7 +346,7 @@ const assertUuid = (value: string, label: string): void => {
 }
 const assertFolderName = (value: string): string => {
   if (typeof value !== 'string') throw invalidRequest('Conversation folder name is invalid.')
-  const name = value.normalize('NFKC').trim().replace(/\s+/g, ' ')
+  const name = cleanAgentConversationFolderName(value)
   if (!name || name.length > 64) throw invalidRequest('Conversation folder names must contain between 1 and 64 characters.')
   return name
 }
@@ -450,13 +451,14 @@ export const renameAgentConversationFolder = async (
   ).folder
 }
 
-export const deleteAgentConversationFolder = async (fetcher: typeof fetch, csrfToken: string, folderId: string): Promise<number> => {
+export const deleteAgentConversationFolder = async (fetcher: typeof fetch, csrfToken: string, folderId: string, expectedVersion: number): Promise<number> => {
   assertUuid(folderId, 'Folder ID')
+  assertPositiveVersion(expectedVersion)
   return (
     await requestJson(
       fetcher,
       csrfToken,
-      `/_api/agents/conversation-folders/${encodeURIComponent(folderId)}`,
+      `/_api/agents/conversation-folders/${encodeURIComponent(folderId)}?expectedVersion=${encodeURIComponent(String(expectedVersion))}`,
       z.object({ deleted: z.literal(true), movedSessions: z.number().int().nonnegative() }),
       { method: 'DELETE' }
     )

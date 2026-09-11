@@ -4,8 +4,10 @@
 // ===========================================
 
 import path from 'node:path'
-import { nanoid } from 'nanoid'
 import { DateTime } from 'luxon'
+import { nanoid } from 'nanoid'
+import semver from 'semver'
+import packageJson from '../package.json' with { type: 'json' }
 
 interface BootstrapKernel {
   init(): Promise<void>
@@ -116,6 +118,12 @@ async function run(): Promise<void> {
   process.on('uncaughtException', handleFatal)
 
   bootstrapPromise = (async () => {
+    const bunVersion = process.versions.bun
+    const bunVersionRange = packageJson.engines.bun
+    if (!bunVersion || !semver.satisfies(bunVersion, bunVersionRange)) {
+      throw new Error(`Bun ${bunVersionRange} is required!`)
+    }
+
     if (configuredInstanceId && configuredInstanceId.length > 128) {
       throw new RangeError('INSTANCE_ID must contain at most 128 characters')
     }

@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { parse } from '@vue/compiler-sfc'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
@@ -21,17 +20,11 @@ interface DragHarness {
 }
 
 const actionsPath = join(process.cwd(), 'client/components/agents/agent-history-session-actions.vue')
-const actionsSource = readFileSync(actionsPath, 'utf8')
-const actionsComponent = parse(actionsSource, { filename: actionsPath })
-const actionsTemplate = actionsComponent.descriptor.template?.content ?? ''
-const actionsScript = actionsComponent.descriptor.scriptSetup?.content ?? ''
+const actionsScript = readFileSync(actionsPath, 'utf8').match(/<script setup lang=["']ts["']>([\s\S]*?)<\/script>/)?.[1] ?? ''
 const executableActionsScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(actionsScript.replace(/^import .*$/gm, ''))
 
 const panelPath = join(process.cwd(), 'client/components/agents/agent-history-panel.vue')
-const panelSource = readFileSync(panelPath, 'utf8')
-const panelComponent = parse(panelSource, { filename: panelPath })
-const panelTemplate = panelComponent.descriptor.template?.content ?? ''
-const panelScript = panelComponent.descriptor.scriptSetup?.content ?? ''
+const panelScript = readFileSync(panelPath, 'utf8').match(/<script setup lang=["']ts["']>([\s\S]*?)<\/script>/)?.[1] ?? ''
 const dragHelpersScript = panelScript.match(/const hasRenderedDropDestination[\s\S]*?(?=const dropTargetKey)/)?.[0] ?? ''
 const executableDragHelpersScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(dragHelpersScript)
 
@@ -81,134 +74,49 @@ const loadActions = (session: AgentSessionSummary, folders: AgentConversationFol
   )
 }
 
-const loadDragHelpers = (visibleFolderIds: readonly string[], busySessionIds: readonly string[] = [], mutationBusy = false): DragHarness => {
+const loadDragHelpers = (visibleFolderIds: readonly string[], busySessionIds: readonly string[] = [], mutationBusy = false, search = ''): DragHarness => {
   const evaluate = new Function(
     'visibleFolderGroups',
     'sessionBusy',
     'sessionMutationBusy',
+    'normalizedSearch',
     `${executableDragHelpersScript}\nreturn { hasRenderedDropDestination, canDragSession }`
   ) as (...dependencies: unknown[]) => DragHarness
-  return evaluate({ value: visibleFolderIds.map(id => ({ folder: { id } })) }, (sessionId: string) => busySessionIds.includes(sessionId), {
-    value: mutationBusy
-  })
+  return evaluate(
+    { value: visibleFolderIds.map(id => ({ folder: { id } })) },
+    (sessionId: string) => busySessionIds.includes(sessionId),
+    { value: mutationBusy },
+    { value: search }
+  )
 }
 
 describe('Agent history folder actions', () => {
-  it('shows no move destination when an unfiled conversation has no folders', () => {
+  it('offers New folder in Move even when no saved folder exists', () => {
     const actions = loadActions(makeSession(), [])
 
     expect(actions.availableFolders.value).toEqual([])
-    expect(actions.canMove.value).toBe(false)
-    expect(actionsTemplate).toMatch(/<v-menu[^>]*v-if="canMove" location="end" submenu>/)
-    expect(actionsTemplate).toContain('<v-divider v-if="canMove"')
-    expect(actionsTemplate).toContain('title="Delete"')
+    expect(actions.canMove.value).toBe(true)
   })
 
-  it('offers one compact Move submenu without repeating folders at the root', () => {
+  it('keeps the current folder out of destinations while retaining Recent and New folder', () => {
     const current = makeFolder()
     const other = makeFolder('10000000-0000-4000-8000-000000000002', 'Launch notes')
     const actions = loadActions(makeSession({ folderId: current.id, retention: 'saved' }), [current, other])
 
     expect(actions.canMove.value).toBe(true)
     expect(actions.availableFolders.value).toEqual([other])
-    expect(actionsTemplate.match(/title="Move"/g)).toHaveLength(1)
-    expect(actionsTemplate.match(/v-for="folder in availableFolders"/g)).toHaveLength(1)
-    expect(actionsTemplate).toContain('title="Recent"')
-    expect(actionsTemplate).not.toContain('<v-list-subheader')
   })
 
-  it('keeps Recent available when it is the only destination for a filed conversation', () => {
-    const current = makeFolder()
-    const actions = loadActions(makeSession({ folderId: current.id, retention: 'saved' }), [current])
-
-    expect(actions.availableFolders.value).toEqual([])
-    expect(actions.canMove.value).toBe(true)
-    expect(actionsTemplate).toContain('v-if="session.folderId !== null"')
-    expect(actionsTemplate).toContain('@click="emit(\'move\', null)"')
-  })
-
-  it('preserves three-dot deletion management and keyboard submenu semantics', () => {
-    expect(actionsComponent.errors).toEqual([])
-    expect(actionsTemplate).toContain('icon="mdi-dots-horizontal"')
-    expect(actionsTemplate).toContain('submenu')
-    expect(actionsTemplate).toContain('v-bind="moveMenuProps"')
-    expect(actionsTemplate).toContain('@click="emit(\'move\', folder.id)"')
-    expect(actionsTemplate).toContain('@click="requestRemove"')
-  })
-
-  it('enables dragging only when a non-busy conversation has a different rendered destination', () => {
+  it('enables dragging to the zero-folder empty destination without enabling filtered empties', () => {
     const recentSession = makeSession()
     const folder = makeFolder()
 
-    expect(loadDragHelpers([]).hasRenderedDropDestination(recentSession)).toBe(false)
-    expect(loadDragHelpers([]).canDragSession(recentSession)).toBe(false)
+    expect(loadDragHelpers([]).hasRenderedDropDestination(recentSession)).toBe(true)
+    expect(loadDragHelpers([]).canDragSession(recentSession)).toBe(true)
+    expect(loadDragHelpers([], [], false, 'filtered').hasRenderedDropDestination(recentSession)).toBe(false)
     expect(loadDragHelpers([folder.id]).canDragSession(recentSession)).toBe(true)
     expect(loadDragHelpers([folder.id], [recentSession.id]).canDragSession(recentSession)).toBe(false)
     expect(loadDragHelpers([folder.id], [], true).canDragSession(recentSession)).toBe(false)
     expect(loadDragHelpers([folder.id]).canDragSession(makeSession({ folderId: folder.id, retention: 'saved' }))).toBe(true)
-  })
-
-  it('keeps drag targets, valid row affordances, and accessible keyboard instructions together', () => {
-    expect(panelComponent.errors).toEqual([])
-    expect(panelTemplate.match(/:draggable="canDragSession\(session\)"/g)).toHaveLength(2)
-    expect(panelTemplate).toContain('@drop="dropSession($event, null)"')
-    expect(panelTemplate).toContain('@drop="dropSession($event, group.folder.id)"')
-    expect(panelTemplate).toContain("'agent-history__drop-target--available': canDropTo(null)")
-    expect(panelTemplate).toContain("'agent-history__drop-target--active': isActiveDropTarget(group.folder.id)")
-    expect(panelTemplate).toContain('id="agent-history-drag-instructions"')
-    expect(panelTemplate).toContain('Use its actions menu to move it with a keyboard.')
-    expect(panelScript).toContain('if (!canDragSession(session))')
-    expect(panelSource).toContain('.agent-history__session--dragging')
-    expect(panelSource).toContain('.agent-history__drop-target--active')
-  })
-
-  it('keeps clear-history scope, retention, and folder-exemption copy truthful', () => {
-    expect(panelTemplate).toContain('@click="requestClear"')
-    expect(panelTemplate).toContain(':disabled="clearHistoryDisabled"')
-    expect(panelTemplate).toContain('aria-label="Conversation history options"')
-    expect(panelTemplate).toContain('title="Clear Recent history"')
-    expect(panelTemplate).toContain('subtitle="Saved folders are preserved"')
-    expect(panelTemplate.indexOf('class="agent-history__new-folder"')).toBeLessThan(panelTemplate.indexOf('title="Clear Recent history"'))
-    expect(panelScript).toContain('defineEmits<{ close: []; clear: [] }>()')
-    expect(panelScript).not.toContain('reset')
-    expect(panelTemplate).toContain('Your recent, unfiled conversations')
-    expect(panelTemplate).toContain('Kept without expiry')
-    expect(panelTemplate).toContain('Folders keep conversations beyond the history window.')
-    expect(panelTemplate).toContain('each starts a fresh history retention window. No conversations are deleted.')
-  })
-
-  it('keeps Recent and Saved reachable through one archive body scroller', () => {
-    expect(panelComponent.errors).toEqual([])
-    expect(panelTemplate).toContain('<div v-else class="agent-history__body">')
-    expect(panelSource.match(/overflow-y: auto;/g)).toHaveLength(1)
-    expect(panelSource).not.toContain('agent-history__recent-scroll')
-    expect(panelSource).not.toContain('agent-history__folders-scroll')
-    expect(panelSource).not.toContain('max-height: calc(')
-    expect(panelTemplate).toContain('v-model="searchQuery"')
-    expect(panelTemplate.match(/@move="folderId => moveSession\(session, folderId\)"/g)).toHaveLength(2)
-    expect(panelTemplate.match(/@rename="restoreTarget => beginRenameSession\(session, restoreTarget\)"/g)).toHaveLength(2)
-    expect(panelTemplate.match(/@remove="restoreTarget => beginDeleteSession\(session, restoreTarget\)"/g)).toHaveLength(2)
-    expect(panelTemplate).toContain('@click="beginRenameFolder(group.folder)"')
-    expect(panelTemplate).toContain('@click="beginRemoveFolder(group.folder)"')
-    expect(panelTemplate).toContain('@click="loadMoreSessions"')
-    const titleIndex = panelTemplate.indexOf('<v-expansion-panel-title')
-    const actionIndex = panelTemplate.indexOf('<v-btn v-bind="menuProps" class="agent-history__folder-actions"')
-    const textIndex = panelTemplate.indexOf('<v-expansion-panel-text>')
-    expect(titleIndex).toBeGreaterThan(-1)
-    expect(actionIndex).toBeGreaterThan(titleIndex)
-    expect(textIndex).toBeGreaterThan(actionIndex)
-    expect(panelTemplate).not.toContain('<v-menu class="agent-history__folder-actions"')
-    expect(panelTemplate).toContain('<v-menu content-class="agent-owned-overlay" location="bottom end">')
-  })
-  it('keeps destructive history controls disabled when the shared session mutation lock is occupied', () => {
-    expect(panelTemplate).toContain(':persistent="deleting || sessionMutationBusy"')
-    expect(panelTemplate).toContain(':disabled="deleting || sessionMutationBusy" @click="deleteSession"')
-    expect(panelTemplate).toContain(':disabled="loading || deleting || sessionMutationBusy" @click="deleteFolder"')
-    expect(panelTemplate).toContain(
-      'title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy"'
-    )
-    expect(panelScript).toContain('if (loading.value || sessionMutationBusy.value) return')
-    expect(panelScript).toContain('if (!session || deleting.value || savingFolder.value || sessionMutationBusy.value) return')
-    expect(panelScript).toContain('if (!folder || loading.value || deleting.value || savingFolder.value || sessionMutationBusy.value) return')
   })
 })

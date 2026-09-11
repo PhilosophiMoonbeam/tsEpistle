@@ -5,7 +5,7 @@
   "description": "tsEpistle, an independent community fork of Wiki.js",
   "main": "server/index.ts",
   "type": "module",
-  "packageManager": "bun@1.4.0",
+  "packageManager": "bun@1.4.2",
   "dev": false,
   "scripts": {
     "start": "bun server/index.ts",
@@ -71,7 +71,7 @@
     "modifiedAt": "2026-08-13"
   },
   "engines": {
-    "bun": ">=1.4.0 <2"
+    "bun": ">=1.4.2 <2"
   },
   "dependencies": {
     "@asciidoctor/core": "4.0.8",
@@ -253,7 +253,7 @@
     "@tiptap/starter-kit": "3.30.2",
     "@tiptap/vue-3": "3.30.2",
     "@tresjs/core": "5.8.3",
-    "@types/bun": "1.4.0",
+    "@types/bun": "1.4.2",
     "@types/canvas-confetti": "1.9.0",
     "@types/compression": "1.8.1",
     "@types/cookie-parser": "1.4.10",

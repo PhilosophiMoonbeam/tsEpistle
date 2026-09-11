@@ -20,7 +20,7 @@ import type {
 const temporaryDirectories: string[] = []
 
 const environment: SiteLogoProcessingEnvironment = {
-  runtime: { name: 'bun', version: '1.4.0' },
+  runtime: { name: 'bun', version: '1.4.2' },
   operatingSystem: { platform: 'linux', release: 'test', architecture: 'x64' },
   cpu: { model: 'Test CPU', logicalCores: 8 },
   memory: { totalBytes: 16 * 1024 * 1024 * 1024 },

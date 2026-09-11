@@ -1,6 +1,8 @@
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
+import type { AgentEventData } from '../../shared/agents/contracts.ts'
+import { readAgentUsageEvent } from '../../agents/providers/usage.ts'
 import type { AgentRunClaim } from '../../agents/coordinator.ts'
 import { validateChildEvidencePacket, type AgentResearchTask } from '../../agents/orchestration.ts'
 import {
@@ -49,7 +51,7 @@ const tasks: readonly AgentResearchTask[] = [
   }
 ]
 
-const plannerUsage = { inputTokens: 12, outputTokens: 4, costMicros: 0 }
+const plannerUsage = { inputTokens: 12, outputTokens: 4, totalTokens: 16, costMicros: 0 }
 
 const completedPacket = validateChildEvidencePacket(
   JSON.stringify({
@@ -223,6 +225,26 @@ describe('durable agent task ledger', () => {
     await cancelAgentRunTasks(knex, claim)
     expect((await listAgentRunTasks(knex, runId)).map(task => task.status)).toEqual(['cancelled', 'cancelled'])
     expect(await knex('agentEvents').where({ type: 'task.cancelled' }).count<{ count: number | string }[]>({ count: '*' }).first()).toMatchObject({ count: 2 })
+  })
+
+  it('persists full planner totals in the v2 plan event', async () => {
+    await createAgentRunTasks(knex, claim, tasks, plannerUsage)
+    const event = await knex('agentEvents').where({ runId, type: 'task.planCreated' }).first('data')
+    const data = JSON.parse(String(event?.data)) as AgentEventData
+    expect(data).toMatchObject({
+      usageVersion: 2,
+      inputTokens: 12,
+      outputTokens: 4,
+      totalTokens: 16,
+      costMicros: 0
+    })
+    expect(readAgentUsageEvent(data)).toEqual({ inputTokens: 12, outputTokens: 4, totalTokens: 16, costMicros: 0 })
+  })
+
+  it('rejects an invalid planner total before creating rows or events', async () => {
+    await expect(createAgentRunTasks(knex, claim, tasks, { ...plannerUsage, totalTokens: 15 })).rejects.toThrow()
+    expect(await knex('agentRunTasks').where({ runId }).count<{ count: number | string }[]>({ count: '*' }).first()).toMatchObject({ count: 0 })
+    expect(await knex('agentEvents').where({ runId }).count<{ count: number | string }[]>({ count: '*' }).first()).toMatchObject({ count: 0 })
   })
 
   it('refuses a destructive rollback while durable research tasks exist', async () => {

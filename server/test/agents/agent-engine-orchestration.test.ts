@@ -2,7 +2,8 @@ import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
 import { AxAgentEngine, type AgentActionSessionProvider } from '../../agents/providers/engine.ts'
-import type { AgentProviderFactory, AgentProviderService } from '../../agents/providers/factory.ts'
+import { AgentProviderAttemptError, type AgentProviderFactory, type AgentProviderService } from '../../agents/providers/factory.ts'
+import { AgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
 import { AgentChildBudgetReservations, MAX_AGENT_CHILD_OUTPUT_CHARACTERS, type AgentOrchestrationLimits } from '../../agents/orchestration.ts'
 
@@ -13,6 +14,8 @@ const run = {
   sessionId: '00000000-0000-4000-8000-000000000002',
   userMessageId: '00000000-0000-4000-8000-000000000003',
   assistantMessageId: '00000000-0000-4000-8000-000000000004',
+  goalId: null,
+  goalContinuation: null,
   ownerId: 7,
   clientRequestId: '00000000-0000-4000-8000-000000000005',
   clientRequestSha256: 'a'.repeat(64),
@@ -23,6 +26,7 @@ const run = {
   executionMode: 'agent',
   capabilityRevision: 'cap-1',
   pricingRevision: 'price-1',
+  totalTokens: 0,
   promptVersion: 1,
   attempts: 1,
   maxAttempts: 3,
@@ -52,16 +56,19 @@ const baseRequest = (signal: AbortSignal): AgentEngineRequest => ({
   signal
 })
 
-const factoryFor = (chat: AgentProviderService['service']['chat']): AgentProviderFactory =>
+const factoryFor = (
+  chat: AgentProviderService['service']['chat'],
+  options: { readonly streaming?: boolean; readonly usage?: 'stream' | 'terminal' | 'estimated' } = {}
+): AgentProviderFactory =>
   ({
     create: async () => ({
       service: { chat },
       capabilities: {
-        streaming: false,
+        streaming: options.streaming ?? false,
         toolCalling: 'native',
         parallelToolCalls: true,
         structuredOutput: 'native-json-schema',
-        usage: 'terminal',
+        usage: options.usage ?? 'estimated',
         cancellation: true,
         maxContextTokens: 100_000,
         maxOutputTokens: 4_000
@@ -75,6 +82,211 @@ const factoryFor = (chat: AgentProviderService['service']['chat']): AgentProvide
   }) as unknown as AgentProviderFactory
 
 describe('Ax orchestration stages', () => {
+  it('classifies wrapped request, stream, and response failures at their engine boundaries', async () => {
+    const wrappedRequest = Object.assign(new Error('provider request secret'), {
+      cause: Object.assign(new Error('sdk wrapper secret'), {
+        originalError: new AgentProviderAttemptError('provider_secret_code', 429, null, 'api_key')
+      }),
+      body: 'request body secret',
+      headers: 'authorization secret'
+    })
+    const requestError = await new AxAgentEngine(
+      factoryFor(
+        vi.fn(async () => {
+          throw wrappedRequest
+        })
+      )
+    )
+      .execute(baseRequest(new AbortController().signal), { text: async () => {}, event: async () => {} })
+      .catch(error => error)
+    expect(requestError).toBeInstanceOf(AgentExecutionFailure)
+    expect(requestError).toMatchObject({
+      code: 'PROVIDER_RATE_LIMITED',
+      stage: 'provider_request',
+      providerStatus: 429,
+      message: 'Agent inference failed'
+    })
+    expect(JSON.stringify(requestError)).not.toContain('provider_secret_code')
+    expect(JSON.stringify(requestError)).not.toContain('api_key')
+    expect(JSON.stringify(requestError)).not.toContain('request body secret')
+    expect(JSON.stringify(requestError)).not.toContain('authorization secret')
+
+    const streamFailure = Object.assign(new Error('provider stream secret'), {
+      cause: new AgentProviderAttemptError('stream_secret_code', 503, null, 'token')
+    })
+    const stream = new ReadableStream<AxChatResponse>({
+      start(controller) {
+        controller.error(streamFailure)
+      }
+    })
+    const streamError = await new AxAgentEngine(factoryFor(async () => stream))
+      .execute(baseRequest(new AbortController().signal), { text: async () => {}, event: async () => {} })
+      .catch(error => error)
+    expect(streamError).toMatchObject({ code: 'PROVIDER_UNAVAILABLE', stage: 'provider_stream', providerStatus: 503 })
+    expect(JSON.stringify(streamError)).not.toContain('stream_secret_code')
+    expect(JSON.stringify(streamError)).not.toContain('token')
+
+    const malformedResponse = {
+      results: [{ index: 0, functionCalls: [{ id: '', type: 'function', function: { name: 'wiki_get_page', params: '{}' } }] }]
+    } satisfies AxChatResponse
+    const responseError = await new AxAgentEngine(factoryFor(async () => malformedResponse))
+      .execute(baseRequest(new AbortController().signal), { text: async () => {}, event: async () => {} })
+      .catch(error => error)
+    expect(responseError).toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response', message: 'Agent inference failed' })
+  })
+  it('awaits one safe cancellation before releasing an incomplete provider stream', async () => {
+    const reservation = { id: 'reservation', tokens: 100_000, costMicros: 100_000 }
+    const reserve = vi.fn(async () => reservation)
+    const reconcile = vi.fn(async () => {})
+    const release = vi.fn(async () => {})
+    let resolveCancelStarted!: () => void
+    let resolveCancel!: () => void
+    const cancelStarted = new Promise<void>(resolve => {
+      resolveCancelStarted = resolve
+    })
+    let cancelReason: unknown
+    let cancelCalls = 0
+    const stream = new ReadableStream<AxChatResponse>({
+      start(controller) {
+        controller.enqueue({
+          results: [{ index: 0, content: 'partial' }],
+          modelUsage: null
+        } as unknown as AxChatResponse)
+      },
+      cancel(reason) {
+        cancelCalls += 1
+        cancelReason = reason
+        resolveCancelStarted()
+        return new Promise<void>(resolve => {
+          resolveCancel = resolve
+        })
+      }
+    })
+    const chat = vi.fn(async () => stream)
+    const execution = new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' })).execute(
+      {
+        ...baseRequest(new AbortController().signal),
+        purpose: 'planner',
+        dispatchBudget: { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
+      },
+      { text: async () => {}, event: async () => {} }
+    )
+    let settled = false
+    const observed = execution.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+
+    await cancelStarted
+    expect(settled).toBe(false)
+    expect(stream.locked).toBe(true)
+    expect(cancelReason).toBe('provider stream failed')
+    expect(cancelCalls).toBe(1)
+    expect(reconcile).not.toHaveBeenCalled()
+    expect(release).not.toHaveBeenCalled()
+
+    resolveCancel()
+    await expect(execution).rejects.toMatchObject({ code: 'PROVIDER_USAGE_INVALID', stage: 'provider_response' })
+    await observed
+    expect(reconcile).not.toHaveBeenCalled()
+    expect(stream.locked).toBe(false)
+    expect(release).not.toHaveBeenCalled()
+    expect(chat).toHaveBeenCalledOnce()
+  })
+
+  it('preserves the primary stream failure when cancellation rejects and releases the reader lock', async () => {
+    const rawCancelFailure = new Error('raw cancellation secret')
+    let cancelCalls = 0
+    let cancelReason: unknown
+    const stream = new ReadableStream<AxChatResponse>({
+      start(controller) {
+        controller.enqueue({
+          results: [{ index: 0, content: 'partial' }],
+          modelUsage: null
+        } as unknown as AxChatResponse)
+      },
+      cancel(reason) {
+        cancelCalls += 1
+        cancelReason = reason
+        return Promise.reject(rawCancelFailure)
+      }
+    })
+    const chat = vi.fn(async () => stream)
+    const error = await new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' }))
+      .execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
+      .catch(failure => failure)
+
+    expect(error).toMatchObject({ code: 'PROVIDER_USAGE_INVALID', stage: 'provider_response', message: 'Agent inference failed' })
+    expect(JSON.stringify(error)).not.toContain('raw cancellation secret')
+    expect(cancelReason).toBe('provider stream failed')
+    expect(cancelCalls).toBe(1)
+    expect(chat).toHaveBeenCalledOnce()
+
+    const releasedReader = stream.getReader()
+    releasedReader.releaseLock()
+  })
+
+  it('marks third-turn context admission after one plus ten completed tool calls without dispatching a third model turn', async () => {
+    const calls = Array.from({ length: 10 }, (_, index) => ({
+      id: `second-${index}`,
+      type: 'function' as const,
+      function: { name: 'wiki_get_page', params: JSON.stringify({ id: index + 2 }) }
+    }))
+    const responses: AxChatResponse[] = [
+      { results: [{ index: 0, functionCalls: [{ id: 'first', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }] },
+      { results: [{ index: 0, functionCalls: calls }] }
+    ]
+    const chat = vi.fn(async () => responses.shift()!)
+    const invoke = vi.fn(async () => ({ content: 'x'.repeat(3_000) }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+    const error = await new AxAgentEngine(
+      {
+        create: async () => ({
+          service: { chat },
+          capabilities: {
+            streaming: false,
+            toolCalling: 'native',
+            parallelToolCalls: true,
+            structuredOutput: 'native-json-schema',
+            usage: 'estimated',
+            cancellation: true,
+            maxContextTokens: 25_000,
+            maxOutputTokens: 1_000
+          },
+          transportKind: 'openai-responses',
+          model: 'gpt-test',
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          pricing
+        })
+      } as unknown as AgentProviderFactory,
+      actions
+    )
+      .execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          limits: { maxTurns: 3, maxToolCalls: 11, maxOutputTokens: 100 }
+        },
+        { text: async () => {}, event: async () => {} }
+      )
+      .catch(value => value)
+
+    expect(error).toMatchObject({ code: 'AGENT_CONTEXT_TOO_LARGE', stage: 'context_admission' })
+    expect(chat).toHaveBeenCalledTimes(2)
+    expect(invoke).toHaveBeenCalledTimes(11)
+  })
   it('runs the planner without actions, retries, or unbounded output', async () => {
     const chat = vi.fn(
       async () =>
@@ -97,7 +309,7 @@ describe('Ax orchestration stages', () => {
         },
         { text, event: async () => {} }
       )
-    ).toMatchObject({ inputTokens: 4, outputTokens: 2, costMicros: 8 })
+    ).toMatchObject({ inputTokens: 4, outputTokens: 2, totalTokens: 6, costMicros: 8 })
 
     expect(open).not.toHaveBeenCalled()
     expect(text).toHaveBeenCalledWith('{"tasks":[]}')
@@ -620,19 +832,75 @@ describe('Ax orchestration stages', () => {
         new AxAgentEngine(factory, actions).execute(
           {
             ...baseRequest(new AbortController().signal),
-            dispatchBudget: { reserve, reconcile, release, consumeTool }
+            dispatchBudget: { reserve, reconcile, release, consumeTool, unsettledExposure: { tokens: 0, costMicros: 0 } }
           },
           { text: async () => {}, event: async () => {} }
         )
       )
     ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
 
-    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 7, outputTokens: 5, costMicros: 17 })
+    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 7, outputTokens: 5, totalTokens: 12, costMicros: 17 })
     expect(release).not.toHaveBeenCalled()
     expect(invoke).not.toHaveBeenCalled()
   })
+  it('propagates reconciliation failure after a provider response validation error', async () => {
+    const response = {
+      results: [{ index: 0, content: '<wiki-tool-call>not-json</wiki-tool-call>' }],
+      modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 5, totalTokens: 12 } }
+    } satisfies AxChatResponse
+    const chat = vi.fn(async () => response)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'prompt',
+          parallelToolCalls: false,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-chat',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const reservation = { id: 'reservation', tokens: 100_000, costMicros: 100_000 }
+    const reserve = vi.fn(async () => reservation)
+    const reconcile = vi.fn(async () => {
+      throw new Error('accounting unavailable')
+    })
+    const release = vi.fn(async () => {})
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke: vi.fn(async () => ({})),
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
 
-  it('releases an active dispatch reservation when usage reconciliation fails', async () => {
+    const error = await new AxAgentEngine(factory, actions)
+      .execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          dispatchBudget: { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
+        },
+        { text: async () => {}, event: async () => {} }
+      )
+      .catch(value => value)
+
+    expect(error).toMatchObject({ code: 'PROVIDER_REQUEST_FAILED', stage: 'usage_reconciliation' })
+    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 7, outputTokens: 5, totalTokens: 12, costMicros: 17 })
+    expect(release).not.toHaveBeenCalled()
+  })
+
+  it('preserves an active dispatch reservation when usage reconciliation fails', async () => {
     const response = {
       results: [{ index: 0, content: 'Bounded answer.' }],
       modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 5, totalTokens: 12 } }
@@ -650,15 +918,300 @@ describe('Ax orchestration stages', () => {
         new AxAgentEngine(factoryFor(vi.fn(async () => response))).execute(
           {
             ...baseRequest(new AbortController().signal),
-            dispatchBudget: { reserve, reconcile, release, consumeTool }
+            dispatchBudget: { reserve, reconcile, release, consumeTool, unsettledExposure: { tokens: 0, costMicros: 0 } }
           },
           { text: async () => {}, event: async () => {} }
         )
       )
-    ).rejects.toMatchObject({ code: 'PROVIDER_REQUEST_FAILED' })
+    ).rejects.toMatchObject({ code: 'PROVIDER_REQUEST_FAILED', stage: 'usage_reconciliation', message: 'Agent inference failed' })
 
-    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 7, outputTokens: 5, costMicros: 17 })
-    expect(release).toHaveBeenCalledWith(reservation)
+    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 7, outputTokens: 5, totalTokens: 12, costMicros: 17 })
+    expect(release).not.toHaveBeenCalled()
+  })
+  it('uses the admitted request and configured output exposure for estimated usage when the provider omits usage', async () => {
+    const chat = vi.fn(async () => ({ results: [{ index: 0, content: 'Estimated answer.' }] }) satisfies AxChatResponse)
+    const reserve = vi.fn(async (maximum: { readonly tokens: number; readonly costMicros: number }) => ({ id: 1, ...maximum }))
+    const reconcile = vi.fn(async () => {})
+    const release = vi.fn(async () => {})
+    const dispatchBudget = { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'estimated' })).execute(
+      { ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget },
+      { text: async () => {}, event: async () => {} }
+    )
+    const admitted = reserve.mock.calls[0]?.[0]
+    expect(admitted).toBeDefined()
+    const expectedAdmissionCost = admitted!.tokens * 2
+    expect(admitted!.costMicros).toBe(expectedAdmissionCost)
+    expect(result).toMatchObject({
+      inputTokens: admitted!.tokens - 4_000,
+      outputTokens: 4_000,
+      totalTokens: admitted!.tokens,
+      costMicros: expectedAdmissionCost
+    })
+    expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ tokens: admitted!.tokens, costMicros: expectedAdmissionCost }), {
+      inputTokens: admitted!.tokens - 4_000,
+      outputTokens: 4_000,
+      totalTokens: admitted!.tokens,
+      costMicros: expectedAdmissionCost
+    })
+    expect(release).not.toHaveBeenCalled()
+  })
+  it('prices a reported directional receipt below the conservative estimated exposure', async () => {
+    const response = {
+      results: [{ index: 0, content: 'Measured answer.' }],
+      modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1_326, completionTokens: 4_000, totalTokens: 5_326 } }
+    } satisfies AxChatResponse
+    const chat = vi.fn(async () => response)
+    const reserve = vi.fn(async (maximum: { readonly tokens: number; readonly costMicros: number }) => ({ id: 1, ...maximum }))
+    const reconcile = vi.fn(async () => {})
+    const release = vi.fn(async () => {})
+    const dispatchBudget = { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' })).execute(
+      { ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget },
+      { text: async () => {}, event: async () => {} }
+    )
+    const admitted = reserve.mock.calls[0]?.[0]
+    expect(admitted).toBeDefined()
+    expect(admitted).toMatchObject({ tokens: 5_326, costMicros: 10_652 })
+    expect(result).toMatchObject({ inputTokens: 1_326, outputTokens: 4_000, totalTokens: 5_326, costMicros: 9_326 })
+    expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ tokens: 5_326, costMicros: 10_652 }), {
+      inputTokens: 1_326,
+      outputTokens: 4_000,
+      totalTokens: 5_326,
+      costMicros: 9_326
+    })
+    expect(admitted!.costMicros - result.costMicros).toBe(1_326)
+    expect(release).not.toHaveBeenCalled()
+  })
+
+  it('rejects terminal, mismatched, and malformed provider usage without releasing a post-dispatch reservation', async () => {
+    const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
+    const runCase = async (
+      response: AxChatResponse | ReadableStream<AxChatResponse>,
+      options: { readonly streaming?: boolean; readonly usage?: 'stream' | 'terminal' | 'estimated' }
+    ) => {
+      const reserve = vi.fn(async () => reservation)
+      const reconcile = vi.fn(async () => {})
+      const release = vi.fn(async () => {})
+      const dispatchBudget = { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
+      await expect(
+        new AxAgentEngine(
+          factoryFor(
+            vi.fn(async () => response),
+            options
+          )
+        ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget }, { text: async () => {}, event: async () => {} })
+      ).rejects.toMatchObject({ code: 'PROVIDER_USAGE_INVALID' })
+      return { release, reconcile }
+    }
+
+    const missing = await runCase({ results: [{ index: 0, content: 'missing' }] }, { usage: 'terminal' })
+    const unsafe = await runCase(
+      {
+        results: [{ index: 0, content: 'unsafe' }],
+        modelUsage: {
+          ai: 'test',
+          model: 'gpt-test',
+          tokens: { promptTokens: Number.MAX_SAFE_INTEGER, completionTokens: 1, totalTokens: Number.MAX_SAFE_INTEGER }
+        }
+      },
+      { usage: 'terminal' }
+    )
+    expect(unsafe.reconcile).not.toHaveBeenCalled()
+    expect(unsafe.release).not.toHaveBeenCalled()
+    const underrun = await runCase(
+      {
+        results: [{ index: 0, content: 'underrun' }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 3, totalTokens: 4 } }
+      },
+      { usage: 'terminal' }
+    )
+    expect(underrun.reconcile).not.toHaveBeenCalled()
+    expect(underrun.release).not.toHaveBeenCalled()
+    expect(missing.reconcile).not.toHaveBeenCalled()
+    expect(missing.release).not.toHaveBeenCalled()
+    const malformedStream = new ReadableStream<AxChatResponse>({
+      start(controller) {
+        controller.enqueue({
+          results: [{ index: 0, content: 'malformed' }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: Number.NaN, completionTokens: 2, totalTokens: 2 } }
+        } as unknown as AxChatResponse)
+        controller.close()
+      }
+    })
+    const malformed = await runCase(malformedStream, { streaming: true, usage: 'stream' })
+    expect(malformed.reconcile).not.toHaveBeenCalled()
+    expect(malformed.release).not.toHaveBeenCalled()
+  })
+  it('reconciles exactly additive provider usage once', async () => {
+    const response = {
+      results: [{ index: 0, content: 'Exactly accounted answer.' }],
+      modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 3, totalTokens: 5 } }
+    } satisfies AxChatResponse
+    const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
+    const reserve = vi.fn(async () => reservation)
+    const reconcile = vi.fn(async () => {})
+    const release = vi.fn(async () => {})
+    const chat = vi.fn(async () => response)
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' })).execute(
+      {
+        ...baseRequest(new AbortController().signal),
+        purpose: 'planner',
+        dispatchBudget: { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
+      },
+      { text: async () => {}, event: async () => {} }
+    )
+
+    expect(result).toMatchObject({ inputTokens: 2, outputTokens: 3, totalTokens: 5, costMicros: 8 })
+    expect(reconcile).toHaveBeenCalledOnce()
+    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 2, outputTokens: 3, totalTokens: 5, costMicros: 8 })
+    expect(release).not.toHaveBeenCalled()
+  })
+
+  it('cancels an internally inconsistent stream before releasing its reader and leaves exposure unsettled', async () => {
+    const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
+    const reserve = vi.fn(async () => reservation)
+    const reconcile = vi.fn(async () => {})
+    const release = vi.fn(async () => {})
+    let cancelCalls = 0
+    let resolveCancelStarted!: () => void
+    let resolveCancel!: () => void
+    const cancelStarted = new Promise<void>(resolve => {
+      resolveCancelStarted = resolve
+    })
+    let cancelReason: unknown
+    const stream = new ReadableStream<AxChatResponse>({
+      start(controller) {
+        controller.enqueue({
+          results: [{ index: 0, content: 'partial' }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 3, totalTokens: 5 } }
+        })
+        controller.enqueue({
+          results: [{ index: 0, content: 'remainder' }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 3, totalTokens: 4 } }
+        })
+      },
+      cancel(reason) {
+        cancelCalls += 1
+        cancelReason = reason
+        resolveCancelStarted()
+        return new Promise<void>(resolve => {
+          resolveCancel = resolve
+        })
+      }
+    })
+    const chat = vi.fn(async () => stream)
+    const text = vi.fn(async () => {})
+    const execution = new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' })).execute(
+      {
+        ...baseRequest(new AbortController().signal),
+        purpose: 'planner',
+        dispatchBudget: { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
+      },
+      { text, event: async () => {} }
+    )
+    let settled = false
+    const observed = execution.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+
+    await cancelStarted
+    expect(settled).toBe(false)
+    expect(stream.locked).toBe(true)
+    expect(cancelReason).toBe('provider stream failed')
+    expect(cancelCalls).toBe(1)
+    expect(reconcile).not.toHaveBeenCalled()
+    expect(release).not.toHaveBeenCalled()
+
+    resolveCancel()
+    await expect(execution).rejects.toMatchObject({ code: 'PROVIDER_USAGE_INVALID', stage: 'provider_response' })
+    await observed
+    expect(stream.locked).toBe(false)
+    expect(text).not.toHaveBeenCalled()
+    expect(reconcile).not.toHaveBeenCalled()
+    expect(release).not.toHaveBeenCalled()
+    expect(chat).toHaveBeenCalledOnce()
+  })
+
+  it('retains exposure for lost responses, interrupted streams, and reconciliation failures', async () => {
+    const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
+    const runCase = async (chat: AgentProviderService['service']['chat'], factory: AgentProviderFactory = factoryFor(chat)) => {
+      const reserve = vi.fn(async () => reservation)
+      const reconcile = vi.fn(async () => {
+        throw new Error('accounting unavailable')
+      })
+      const release = vi.fn(async () => {})
+      const dispatchBudget = { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
+      await expect(
+        new AxAgentEngine(factory).execute(
+          { ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget },
+          { text: async () => {}, event: async () => {} }
+        )
+      ).rejects.toMatchObject({ message: 'Agent inference failed' })
+      return { release, reconcile }
+    }
+
+    const lost = await runCase(
+      vi.fn(async () => {
+        throw new Error('lost response')
+      })
+    )
+    expect(lost.reconcile).not.toHaveBeenCalled()
+    expect(lost.release).not.toHaveBeenCalled()
+
+    const stream = new ReadableStream<AxChatResponse>({
+      start(controller) {
+        controller.enqueue({
+          results: [{ index: 0, content: 'partial' }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } }
+        })
+        controller.error(new Error('stream lost'))
+      }
+    })
+    const interrupted = await runCase(
+      vi.fn(async () => stream),
+      factoryFor(
+        vi.fn(async () => stream),
+        { streaming: true, usage: 'stream' }
+      )
+    )
+    expect(interrupted.reconcile).not.toHaveBeenCalled()
+    expect(interrupted.release).not.toHaveBeenCalled()
+
+    const rejected = await runCase(
+      vi.fn(async () => ({
+        results: [{ index: 0, content: 'answer' }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } }
+      }))
+    )
+    expect(rejected.reconcile).toHaveBeenCalledOnce()
+    expect(rejected.release).not.toHaveBeenCalled()
+  })
+
+  it('rejects an under-covered dispatch before calling the provider and releases only that pre-dispatch reservation', async () => {
+    const chat = vi.fn(async () => ({ results: [{ index: 0, content: 'unused' }] }) satisfies AxChatResponse)
+    const reserve = vi.fn(async () => ({ id: 1, tokens: 0, costMicros: 0 }))
+    const release = vi.fn(async () => {})
+    const dispatchBudget = {
+      reserve,
+      reconcile: vi.fn(async () => {}),
+      release,
+      consumeTool: vi.fn(async () => {}),
+      unsettledExposure: { tokens: 0, costMicros: 0 }
+    }
+    await expect(
+      new AxAgentEngine(factoryFor(chat)).execute(
+        { ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget },
+        { text: async () => {}, event: async () => {} }
+      )
+    ).rejects.toMatchObject({ stage: 'dispatch_admission' })
+    expect(chat).not.toHaveBeenCalled()
+    expect(release).toHaveBeenCalledOnce()
   })
 })
 
@@ -678,7 +1231,7 @@ describe('child aggregate budget reservations', () => {
       maxAggregateChildTokens: 10,
       maxAggregateChildOutputCharacters: 80_000
     } as const satisfies AgentOrchestrationLimits
-    const reservations = new AgentChildBudgetReservations(limits, { tokens: 0, outputCharacters: 0 })
+    const reservations = new AgentChildBudgetReservations(limits, { totalTokens: 0, outputCharacters: 0 })
 
     const first = reservations.reserve()
     const second = reservations.reserve()
@@ -686,28 +1239,28 @@ describe('child aggregate budget reservations', () => {
 
     expect(first).toEqual(
       expect.objectContaining({
-        outputTokens: 4,
+        totalTokens: 4,
         outputCharacters: MAX_AGENT_CHILD_OUTPUT_CHARACTERS
       })
     )
     expect(second).toEqual(
       expect.objectContaining({
-        outputTokens: 4,
+        totalTokens: 4,
         outputCharacters: 80_000 - MAX_AGENT_CHILD_OUTPUT_CHARACTERS
       })
     )
     expect(third).toBeNull()
 
-    reservations.release(first!, { tokens: 3, outputCharacters: 20_000 })
-    reservations.release(second!, { tokens: 3, outputCharacters: 10_000 })
-    expect(reservations.consumed).toEqual({ tokens: 6, outputCharacters: 30_000 })
+    reservations.release(first!, { totalTokens: 3, outputCharacters: 20_000 })
+    reservations.release(second!, { totalTokens: 3, outputCharacters: 10_000 })
+    expect(reservations.consumed).toEqual({ totalTokens: 6, outputCharacters: 30_000 })
 
     const recovered = new AgentChildBudgetReservations(limits, reservations.consumed)
     const retry = recovered.reserve()
-    expect(retry).toEqual(expect.objectContaining({ outputTokens: 4, outputCharacters: 50_000 }))
-    recovered.release(retry!, { tokens: 4, outputCharacters: 50_000 })
+    expect(retry).toEqual(expect.objectContaining({ totalTokens: 4, outputCharacters: 50_000 }))
+    recovered.release(retry!, { totalTokens: 4, outputCharacters: 50_000 })
 
-    expect(recovered.consumed).toEqual({ tokens: 10, outputCharacters: 80_000 })
+    expect(recovered.consumed).toEqual({ totalTokens: 10, outputCharacters: 80_000 })
     expect(recovered.reserve()).toBeNull()
   })
 
@@ -726,11 +1279,11 @@ describe('child aggregate budget reservations', () => {
       maxAggregateChildTokens: 12,
       maxAggregateChildOutputCharacters: 96_000
     } as const satisfies AgentOrchestrationLimits
-    const reservations = new AgentChildBudgetReservations(limits, { tokens: 0, outputCharacters: 0 })
+    const reservations = new AgentChildBudgetReservations(limits, { totalTokens: 0, outputCharacters: 0 })
 
-    expect(reservations.reserve(3)).toEqual(expect.objectContaining({ outputTokens: 4, outputCharacters: 32_000 }))
-    expect(reservations.reserve(2)).toEqual(expect.objectContaining({ outputTokens: 4, outputCharacters: 32_000 }))
-    expect(reservations.reserve(1)).toEqual(expect.objectContaining({ outputTokens: 4, outputCharacters: 32_000 }))
+    expect(reservations.reserve(3)).toEqual(expect.objectContaining({ totalTokens: 4, outputCharacters: 32_000 }))
+    expect(reservations.reserve(2)).toEqual(expect.objectContaining({ totalTokens: 4, outputCharacters: 32_000 }))
+    expect(reservations.reserve(1)).toEqual(expect.objectContaining({ totalTokens: 4, outputCharacters: 32_000 }))
   })
 
   it('uses aggregate token headroom smaller than the per-child ceiling', () => {
@@ -748,11 +1301,11 @@ describe('child aggregate budget reservations', () => {
       maxAggregateChildTokens: 10,
       maxAggregateChildOutputCharacters: 200_000
     } as const satisfies AgentOrchestrationLimits
-    const reservations = new AgentChildBudgetReservations(limits, { tokens: 0, outputCharacters: 0 })
+    const reservations = new AgentChildBudgetReservations(limits, { totalTokens: 0, outputCharacters: 0 })
 
-    expect(reservations.reserve()).toEqual(expect.objectContaining({ outputTokens: 4 }))
-    expect(reservations.reserve()).toEqual(expect.objectContaining({ outputTokens: 4 }))
-    expect(reservations.reserve()).toEqual(expect.objectContaining({ outputTokens: 2 }))
+    expect(reservations.reserve()).toEqual(expect.objectContaining({ totalTokens: 4 }))
+    expect(reservations.reserve()).toEqual(expect.objectContaining({ totalTokens: 4 }))
+    expect(reservations.reserve()).toEqual(expect.objectContaining({ totalTokens: 2 }))
     expect(reservations.reserve()).toBeNull()
   })
 
@@ -771,14 +1324,14 @@ describe('child aggregate budget reservations', () => {
       maxAggregateChildTokens: 4,
       maxAggregateChildOutputCharacters: 1_000
     } as const satisfies AgentOrchestrationLimits
-    const reservations = new AgentChildBudgetReservations(limits, { tokens: 0, outputCharacters: 0 })
+    const reservations = new AgentChildBudgetReservations(limits, { totalTokens: 0, outputCharacters: 0 })
     const reservation = reservations.reserve()!
 
-    expect(() => reservations.release(reservation, { tokens: 5, outputCharacters: 10 })).toThrow(
+    expect(() => reservations.release(reservation, { totalTokens: 5, outputCharacters: 10 })).toThrow(
       expect.objectContaining({ code: 'AGENT_CHILD_BUDGET_EXCEEDED' })
     )
-    expect(reservations.consumed).toEqual({ tokens: 0, outputCharacters: 0 })
-    reservations.release(reservation, { tokens: 4, outputCharacters: 10 })
-    expect(reservations.consumed).toEqual({ tokens: 4, outputCharacters: 10 })
+    expect(reservations.consumed).toEqual({ totalTokens: 0, outputCharacters: 0 })
+    reservations.release(reservation, { totalTokens: 4, outputCharacters: 10 })
+    expect(reservations.consumed).toEqual({ totalTokens: 4, outputCharacters: 10 })
   })
 })

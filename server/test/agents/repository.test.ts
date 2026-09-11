@@ -3,31 +3,38 @@ import createKnex, { type Knex } from 'knex'
 import {
   appendAgentEvent,
   appendAgentMessage,
+  createAgentConversationFolder,
   createAgentSession,
+  deleteAgentConversationFolder,
   getOwnedAgentArtifact,
   getOwnedAgentSession,
   listOwnedAgentEvents,
   listOwnedAgentSessions,
+  renameAgentConversationFolder,
   storeAgentScreenshot,
   updateAgentSession
 } from '../../agents/repository.ts'
 import { projectAgentThread, reduceAgentEvents } from '../../agents/projection.ts'
 import {
   AgentRunCoordinator,
+  AgentQuotaSettlementError,
   admitAgentRun,
   claimAgentRun,
   heartbeatAgentRun,
   markAgentRunSideEffectsStarted,
   ensureAgentRunQuota,
+  persistAgentRunQuotaSettlementIntent,
   reconcileAgentRunQuota,
   requestAgentRunCancellation,
   reserveAgentRunQuota,
+  terminalizeAgentRun,
   transitionAgentRun
 } from '../../agents/coordinator.ts'
 import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 import type { AgentEvent } from '../../../shared/agents/contracts.ts'
+import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../../shared/agents/conversation-folders.ts'
 
 const sessionId = '00000000-0000-4000-8000-000000000001'
 const runId = '00000000-0000-4000-8000-000000000002'
@@ -35,6 +42,9 @@ const userMessageId = '00000000-0000-4000-8000-000000000003'
 const assistantMessageId = '00000000-0000-4000-8000-000000000004'
 
 const createTables = async (knex: Knex): Promise<void> => {
+  await knex.schema.createTable('users', table => {
+    table.integer('id').primary()
+  })
   await knex.schema.createTable('agentSessions', table => {
     table.uuid('id').primary()
     table.integer('ownerId').notNullable()
@@ -135,6 +145,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.integer('promptVersion').notNullable()
     table.integer('inputTokens').notNullable()
     table.integer('outputTokens').notNullable()
+    table.integer('totalTokens').notNullable().defaultTo(0)
     table.integer('estimatedCostMicros').nullable()
     table.binary('runtimeStateCiphertext').nullable()
     table.string('errorCode').nullable()
@@ -315,8 +326,8 @@ const insertRun = async (knex: Knex): Promise<void> => {
     promptVersion: 1,
     inputTokens: 0,
     outputTokens: 0,
+    totalTokens: 0,
     estimatedCostMicros: null,
-    errorCode: null,
     errorMessage: null,
     queuedAt: now,
     startedAt: now,
@@ -331,6 +342,7 @@ describe('durable agent repositories', () => {
   beforeEach(async () => {
     knex = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
     await createTables(knex)
+    await knex('users').insert([{ id: 7 }, { id: 8 }])
     await createAgentSession(knex, { id: sessionId, ownerId: 7, title: 'Thread', retention: 'saved', providerProfileId: null, executionMode: 'agent' })
     await appendAgentMessage(knex, { id: userMessageId, ownerId: 7, sessionId, role: 'user', status: 'complete', content: 'Question' })
     await appendAgentMessage(knex, { id: assistantMessageId, ownerId: 7, sessionId, role: 'assistant', status: 'streaming', content: '' })
@@ -363,6 +375,75 @@ describe('durable agent repositories', () => {
       status: 409
     })
   })
+  it('canonicalizes conversation folder names before enforcing owner-local uniqueness', async () => {
+    const cleanName = cleanAgentConversationFolderName('  Ｆｏｌｄ\u00a0\tName  ')
+    expect(cleanName).toBe('Fold Name')
+    expect(agentConversationFolderNameKey(cleanName)).toBe('fold name')
+
+    const folder = await createAgentConversationFolder(knex, 7, '  Ｆｏｌｄ\u00a0\tName  ')
+    expect(folder).toMatchObject({ name: cleanName })
+    expect(await knex('agentConversationFolders').where({ id: folder.id }).first('normalizedName')).toEqual({ normalizedName: 'fold name' })
+    await expect(createAgentConversationFolder(knex, 7, 'fold name')).rejects.toMatchObject({ code: 'CONVERSATION_FOLDER_EXISTS', status: 409 })
+    await expect(createAgentConversationFolder(knex, 8, 'fold name')).resolves.toMatchObject({ ownerId: 8, name: 'fold name' })
+    await expect(createAgentConversationFolder(knex, 99, 'Other')).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND', status: 404 })
+  })
+  it('deletes conversation folders with optimistic versions and moves contained sessions atomically', async () => {
+    const folder = await createAgentConversationFolder(knex, 7, 'Archive')
+    await knex('agentSessions')
+      .where({ id: sessionId })
+      .update({
+        folderId: folder.id,
+        retention: 'temporary',
+        expiresAt: new Date('2099-01-01T00:00:00.000Z')
+      })
+    await expect(deleteAgentConversationFolder(knex, 8, folder.id, 1)).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND', status: 404 })
+
+    await renameAgentConversationFolder(knex, 7, folder.id, 1, 'Renamed')
+    const beforeStaleSession = await knex('agentSessions').where({ id: sessionId }).first('folderId', 'retention', 'expiresAt', 'version')
+    await expect(deleteAgentConversationFolder(knex, 7, folder.id, 1)).rejects.toMatchObject({
+      code: 'CONVERSATION_FOLDER_VERSION_CHANGED',
+      status: 409
+    })
+    expect(await knex('agentConversationFolders').where({ id: folder.id }).first('name', 'version')).toEqual({ name: 'Renamed', version: 2 })
+    expect(await knex('agentSessions').where({ id: sessionId }).first('folderId', 'retention', 'expiresAt', 'version')).toEqual(beforeStaleSession)
+
+    expect(await deleteAgentConversationFolder(knex, 7, folder.id, 2)).toBe(1)
+    expect(await knex('agentConversationFolders').where({ id: folder.id }).first()).toBeUndefined()
+    expect(await knex('agentSessions').where({ id: sessionId }).first('folderId', 'retention', 'expiresAt', 'version')).toMatchObject({
+      folderId: null,
+      retention: 'saved',
+      expiresAt: null,
+      version: 2
+    })
+  })
+
+  it('rolls back contained session updates when the final folder compare-and-delete misses', async () => {
+    const folder = await createAgentConversationFolder(knex, 7, 'Rollback')
+    await knex('agentSessions')
+      .where({ id: sessionId })
+      .update({
+        folderId: folder.id,
+        retention: 'temporary',
+        expiresAt: new Date('2099-01-01T00:00:00.000Z')
+      })
+    const beforeFolder = await knex('agentConversationFolders').where({ id: folder.id }).first('name', 'version')
+    const beforeSession = await knex('agentSessions').where({ id: sessionId }).first('folderId', 'retention', 'expiresAt', 'version')
+    await knex.raw(`
+      CREATE TRIGGER folder_delete_cas_race
+      AFTER UPDATE OF folderId ON agentSessions
+      WHEN OLD.folderId = '${folder.id}' AND NEW.folderId IS NULL
+      BEGIN
+        UPDATE agentConversationFolders SET version = version + 1 WHERE id = '${folder.id}';
+      END
+    `)
+
+    await expect(deleteAgentConversationFolder(knex, 7, folder.id, 1)).rejects.toMatchObject({
+      code: 'CONVERSATION_FOLDER_VERSION_CHANGED',
+      status: 409
+    })
+    expect(await knex('agentConversationFolders').where({ id: folder.id }).first('name', 'version')).toEqual(beforeFolder)
+    expect(await knex('agentSessions').where({ id: sessionId }).first('folderId', 'retention', 'expiresAt', 'version')).toEqual(beforeSession)
+  })
 
   it('lists only conversations that contain a completed user message', async () => {
     const emptySessionId = '00000000-0000-4000-8000-000000000098'
@@ -377,9 +458,18 @@ describe('durable agent repositories', () => {
 
   it('excludes temporary chats before limiting history and lists them after they are kept', async () => {
     const temporaryId = '00000000-0000-4000-8000-000000000099'
-    await createAgentSession(knex, { id: temporaryId, ownerId: 7, retention: 'temporary', providerProfileId: null, executionMode: 'agent', expiresAt: new Date('2099-01-01T00:00:00Z') })
+    await createAgentSession(knex, {
+      id: temporaryId,
+      ownerId: 7,
+      retention: 'temporary',
+      providerProfileId: null,
+      executionMode: 'agent',
+      expiresAt: new Date('2099-01-01T00:00:00Z')
+    })
     await appendAgentMessage(knex, { ownerId: 7, sessionId: temporaryId, role: 'user', status: 'complete', content: 'A temporary question.' })
-    await knex('agentSessions').where({ id: temporaryId }).update({ lastActivityAt: new Date('2098-01-01T00:00:00Z') })
+    await knex('agentSessions')
+      .where({ id: temporaryId })
+      .update({ lastActivityAt: new Date('2098-01-01T00:00:00Z') })
 
     expect((await listOwnedAgentSessions(knex, 7, 1)).map(session => session.id)).toEqual([sessionId])
     expect(await getOwnedAgentSession(knex, 7, temporaryId)).toMatchObject({ retention: 'temporary' })
@@ -735,7 +825,111 @@ describe('durable agent repositories', () => {
     })
   })
 
-  it('keeps daily quota rows unchanged when measured use exceeds the held reservation', async () => {
+  it('charges full measured token overrun, releases the original hold once, and keeps replay idempotent', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    const expiresAt = new Date('2026-08-17T00:05:00.000Z')
+    await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 200 }, { dailyTokens: 1_000, dailyCostMicros: 1_000 }, expiresAt, now)
+
+    await reconcileAgentRunQuota(knex, { runId, ownerId: 7, consumedTokens: 101, consumedCostMicros: 200, status: 'consumed', now })
+    const dailyAfterSettlement = await knex('agentQuotaDaily').where({ ownerId: 7 }).first()
+    const reservationAfterSettlement = await knex('agentQuotaReservations').where({ runId }).first()
+    expect(dailyAfterSettlement).toMatchObject({
+      reservedTokens: 0,
+      consumedTokens: 101,
+      reservedCostMicros: 0,
+      consumedCostMicros: 200
+    })
+    expect(reservationAfterSettlement).toMatchObject({
+      reservedTokens: 100,
+      reservedCostMicros: 200,
+      consumedTokens: 101,
+      consumedCostMicros: 200,
+      status: 'consumed'
+    })
+
+    await reconcileAgentRunQuota(knex, { runId, ownerId: 7, consumedTokens: 101, consumedCostMicros: 200, status: 'consumed', now })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toEqual(dailyAfterSettlement)
+    expect(await knex('agentQuotaReservations').where({ runId }).first()).toEqual(reservationAfterSettlement)
+  })
+
+  it('charges a cost-only overrun and rejects a changed replay', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    const expiresAt = new Date('2026-08-17T00:05:00.000Z')
+    await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 200 }, { dailyTokens: 1_000, dailyCostMicros: 1_000 }, expiresAt, now)
+
+    await reconcileAgentRunQuota(knex, { runId, ownerId: 7, consumedTokens: 100, consumedCostMicros: 201, status: 'consumed', now })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toMatchObject({
+      reservedTokens: 0,
+      consumedTokens: 100,
+      reservedCostMicros: 0,
+      consumedCostMicros: 201
+    })
+    expect(await knex('agentQuotaReservations').where({ runId }).first()).toMatchObject({
+      reservedTokens: 100,
+      reservedCostMicros: 200,
+      consumedTokens: 100,
+      consumedCostMicros: 201,
+      status: 'consumed'
+    })
+    await expect(
+      Promise.resolve(reconcileAgentRunQuota(knex, { runId, ownerId: 7, consumedTokens: 100, consumedCostMicros: 202, status: 'consumed', now }))
+    ).rejects.toMatchObject({ code: 'QUOTA_RESERVATION_RECONCILED', status: 409 })
+  })
+  it('records a fenced monotone pending settlement without changing admission holds', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    const expiresAt = new Date('2026-08-17T00:05:00.000Z')
+    await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 200 }, { dailyTokens: 1_000, dailyCostMicros: 1_000 }, expiresAt, now)
+    const dailyBefore = await knex('agentQuotaDaily').where({ ownerId: 7 }).first()
+    await persistAgentRunQuotaSettlementIntent(knex, {
+      runId,
+      ownerId: 7,
+      expected: { statuses: ['running'], eventSequence: 0, leaseOwner: 'worker-a', leaseToken: '00000000-0000-4000-8000-000000000006' },
+      consumedTokens: 101,
+      consumedCostMicros: 201,
+      now
+    })
+    await expect(
+      Promise.resolve(
+        persistAgentRunQuotaSettlementIntent(knex, {
+          runId,
+          ownerId: 7,
+          expected: { statuses: ['running'], eventSequence: 1, leaseOwner: 'worker-a', leaseToken: '00000000-0000-4000-8000-000000000006' },
+          consumedTokens: 1,
+          consumedCostMicros: 1,
+          now
+        })
+      )
+    ).rejects.toMatchObject({ code: 'RUN_EVENT_FENCE_CHANGED', status: 409 })
+    await persistAgentRunQuotaSettlementIntent(knex, {
+      runId,
+      ownerId: 7,
+      expected: { statuses: ['running'], leaseOwner: 'worker-a', leaseToken: '00000000-0000-4000-8000-000000000006' },
+      consumedTokens: 90,
+      consumedCostMicros: 190,
+      now
+    })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toEqual(dailyBefore)
+    expect(await knex('agentQuotaReservations').where({ runId }).first()).toMatchObject({
+      reservedTokens: 100,
+      reservedCostMicros: 200,
+      consumedTokens: 101,
+      consumedCostMicros: 201,
+      status: 'reserved',
+      reconciledAt: null
+    })
+    await expect(
+      Promise.resolve(reconcileAgentRunQuota(knex, { runId, ownerId: 7, consumedTokens: 0, consumedCostMicros: 0, status: 'released', now }))
+    ).rejects.toBeInstanceOf(AgentQuotaSettlementError)
+    await reconcileAgentRunQuota(knex, { runId, ownerId: 7, consumedTokens: 102, consumedCostMicros: 202, status: 'consumed', now })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toMatchObject({
+      reservedTokens: 0,
+      consumedTokens: 102,
+      reservedCostMicros: 0,
+      consumedCostMicros: 202
+    })
+  })
+
+  it('rejects released consumption without changing quota rows', async () => {
     const now = new Date('2026-08-17T00:00:00.000Z')
     const expiresAt = new Date('2026-08-17T00:05:00.000Z')
     await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 200 }, { dailyTokens: 1_000, dailyCostMicros: 1_000 }, expiresAt, now)
@@ -747,16 +941,74 @@ describe('durable agent repositories', () => {
         reconcileAgentRunQuota(knex, {
           runId,
           ownerId: 7,
-          consumedTokens: 101,
-          consumedCostMicros: 200,
-          status: 'consumed',
+          consumedTokens: 1,
+          consumedCostMicros: 0,
+          status: 'released',
           now
         })
       )
-    ).rejects.toMatchObject({ code: 'QUOTA_RESERVATION_EXCEEDED' })
-
+    ).rejects.toMatchObject({ code: 'INVALID_AGENT_QUOTA', status: 400 })
     expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toEqual(dailyBefore)
     expect(await knex('agentQuotaReservations').where({ runId }).first()).toEqual(reservationBefore)
+  })
+
+  it('rolls back inconsistent and overflowing settlement calculations', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    const expiresAt = new Date('2026-08-17T00:05:00.000Z')
+    await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 200 }, { dailyTokens: 1_000, dailyCostMicros: 1_000 }, expiresAt, now)
+    await knex('agentQuotaDaily').where({ ownerId: 7 }).update({ reservedTokens: 99 })
+    const inconsistentDaily = await knex('agentQuotaDaily').where({ ownerId: 7 }).first()
+    const inconsistentReservation = await knex('agentQuotaReservations').where({ runId }).first()
+
+    await expect(
+      Promise.resolve(reconcileAgentRunQuota(knex, { runId, ownerId: 7, consumedTokens: 101, consumedCostMicros: 200, status: 'consumed', now }))
+    ).rejects.toMatchObject({ code: 'AGENT_QUOTA_CORRUPT', status: 500 })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toEqual(inconsistentDaily)
+    expect(await knex('agentQuotaReservations').where({ runId }).first()).toEqual(inconsistentReservation)
+
+    await knex('agentQuotaDaily').where({ ownerId: 7 }).update({ reservedTokens: 100, consumedTokens: Number.MAX_SAFE_INTEGER })
+    const overflowingDaily = await knex('agentQuotaDaily').where({ ownerId: 7 }).first()
+    const overflowingReservation = await knex('agentQuotaReservations').where({ runId }).first()
+    await expect(
+      Promise.resolve(reconcileAgentRunQuota(knex, { runId, ownerId: 7, consumedTokens: 1, consumedCostMicros: 0, status: 'consumed', now }))
+    ).rejects.toMatchObject({ code: 'AGENT_QUOTA_CORRUPT', status: 500 })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toEqual(overflowingDaily)
+    expect(await knex('agentQuotaReservations').where({ runId }).first()).toEqual(overflowingReservation)
+  })
+  it('rejects daily cost overflow while token usage remains representable', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    const expiresAt = new Date('2026-08-17T00:05:00.000Z')
+    await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 200 }, { dailyTokens: 1_000, dailyCostMicros: 1_000 }, expiresAt, now)
+    await knex('agentQuotaDaily').where({ ownerId: 7 }).update({ consumedCostMicros: Number.MAX_SAFE_INTEGER })
+    const dailyBefore = await knex('agentQuotaDaily').where({ ownerId: 7 }).first()
+    const reservationBefore = await knex('agentQuotaReservations').where({ runId }).first()
+    await expect(
+      Promise.resolve(reconcileAgentRunQuota(knex, { runId, ownerId: 7, consumedTokens: 1, consumedCostMicros: 1, status: 'consumed', now }))
+    ).rejects.toMatchObject({ code: 'AGENT_QUOTA_CORRUPT', status: 500 })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toEqual(dailyBefore)
+    expect(await knex('agentQuotaReservations').where({ runId }).first()).toEqual(reservationBefore)
+  })
+
+  it('accumulates settled and overrun charges and rejects a fresh admission above the daily limit', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    const expiresAt = new Date('2026-08-17T00:05:00.000Z')
+    const limits = { dailyTokens: 1_000, dailyCostMicros: 1_000 }
+    const secondRunId = '00000000-0000-4000-8000-000000000030'
+    const freshRunId = '00000000-0000-4000-8000-000000000031'
+    await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 100 }, limits, expiresAt, now)
+    await reconcileAgentRunQuota(knex, { runId, ownerId: 7, consumedTokens: 80, consumedCostMicros: 100, status: 'consumed', now })
+    await reserveAgentRunQuota(knex, secondRunId, 7, { tokens: 100, costMicros: 100 }, limits, expiresAt, now)
+    await reconcileAgentRunQuota(knex, { runId: secondRunId, ownerId: 7, consumedTokens: 101, consumedCostMicros: 101, status: 'consumed', now })
+
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toMatchObject({
+      reservedTokens: 0,
+      consumedTokens: 181,
+      reservedCostMicros: 0,
+      consumedCostMicros: 201
+    })
+    await expect(
+      Promise.resolve(reserveAgentRunQuota(knex, freshRunId, 7, { tokens: 1, costMicros: 0 }, { dailyTokens: 181, dailyCostMicros: 1_000 }, expiresAt, now))
+    ).rejects.toMatchObject({ code: 'AGENT_QUOTA_EXHAUSTED', status: 429 })
   })
 
   it('atomically tops up dispatch exposure and denies a second priced run after daily cost is consumed', async () => {
@@ -779,6 +1031,209 @@ describe('durable agent repositories', () => {
       reservedCostMicros: 0,
       consumedCostMicros: 200
     })
+  })
+
+  it('terminalizes a provider overrun with full known usage before finish and restart', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: now,
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null
+    })
+    await reserveAgentRunQuota(
+      knex,
+      runId,
+      7,
+      { tokens: 100, costMicros: 100 },
+      { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      new Date('2026-08-17T00:05:00.000Z'),
+      now
+    )
+    const engine: AgentEngine = {
+      async execute(request) {
+        if (!request.dispatchBudget) throw new Error('dispatch budget missing')
+        const reservation = await request.dispatchBudget.reserve({ tokens: 100, costMicros: 100 })
+        await request.dispatchBudget.reconcile(reservation, { inputTokens: 70, outputTokens: 40, totalTokens: 110, costMicros: 101 })
+        throw new Error('unreachable')
+      }
+    }
+    const runtimeOptions = { workerId: 'worker-provider-overrun', globalConcurrency: 1, perUserConcurrency: 1 }
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      runtimeOptions
+    )
+
+    expect(await runtime.runOnce()).toBe(true)
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens', 'totalTokens', 'estimatedCostMicros')).toMatchObject({
+      status: 'failed',
+      inputTokens: 70,
+      outputTokens: 40,
+      totalTokens: 110,
+      estimatedCostMicros: 101
+    })
+    expect(
+      await knex('agentQuotaReservations').where({ runId }).first('reservedTokens', 'reservedCostMicros', 'consumedTokens', 'consumedCostMicros', 'status')
+    ).toEqual({
+      reservedTokens: 100,
+      reservedCostMicros: 100,
+      consumedTokens: 110,
+      consumedCostMicros: 101,
+      status: 'consumed'
+    })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toMatchObject({
+      reservedTokens: 0,
+      reservedCostMicros: 0,
+      consumedTokens: 110,
+      consumedCostMicros: 101
+    })
+    expect(await knex('agentEvents').where({ runId, type: 'usage.updated' }).count<{ count: number | string }[]>({ count: '*' }).first()).toMatchObject({
+      count: 0
+    })
+    const dailyAfterTerminal = await knex('agentQuotaDaily').where({ ownerId: 7 }).first()
+    expect(await runtime.runOnce()).toBe(false)
+    await runtime.shutdown()
+
+    const restarted = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      { ...runtimeOptions, workerId: 'worker-provider-overrun-restart' }
+    )
+    expect(await restarted.runOnce()).toBe(false)
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toEqual(dailyAfterTerminal)
+    await restarted.shutdown()
+  })
+  it('persists an overrun intent across failed settlement, restart, and repair', async () => {
+    const now = new Date('2026-08-17T00:02:00.000Z')
+    const expiresAt = new Date('2026-08-17T00:05:00.000Z')
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: now,
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null
+    })
+    await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 100 }, { dailyTokens: 1_000, dailyCostMicros: 1_000 }, expiresAt, now)
+    let executions = 0
+    const engine: AgentEngine = {
+      async execute(request) {
+        executions += 1
+        if (!request.dispatchBudget) throw new Error('dispatch budget missing')
+        const reservation = await request.dispatchBudget.reserve({ tokens: 100, costMicros: 100 })
+        try {
+          await request.dispatchBudget.reconcile(reservation, { inputTokens: 70, outputTokens: 40, totalTokens: 110, costMicros: 101 })
+        } catch (error) {
+          await knex('agentQuotaDaily').where({ ownerId: 7, day: '2026-08-17' }).update({
+            consumedTokens: Number.MAX_SAFE_INTEGER,
+            consumedCostMicros: Number.MAX_SAFE_INTEGER
+          })
+          throw error
+        }
+        throw new Error('unreachable')
+      }
+    }
+    const runtimeOptions = {
+      workerId: 'worker-provider-overrun-repair',
+      globalConcurrency: 1,
+      perUserConcurrency: 1
+    }
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      runtimeOptions
+    )
+
+    await expect(Promise.resolve(runtime.runOnce())).rejects.toBeInstanceOf(AgentQuotaSettlementError)
+    await runtime.shutdown()
+    expect(executions).toBe(1)
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'leaseOwner', 'leaseToken')).toMatchObject({
+      status: 'running',
+      leaseOwner: 'worker-provider-overrun-repair',
+      leaseToken: expect.any(String)
+    })
+    expect(await knex('agentQuotaReservations').where({ runId }).first()).toMatchObject({
+      reservedTokens: 100,
+      reservedCostMicros: 100,
+      consumedTokens: 110,
+      consumedCostMicros: 101,
+      status: 'reserved',
+      reconciledAt: null
+    })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7, day: '2026-08-17' }).first()).toMatchObject({
+      reservedTokens: 100,
+      consumedTokens: Number.MAX_SAFE_INTEGER,
+      reservedCostMicros: 100,
+      consumedCostMicros: Number.MAX_SAFE_INTEGER
+    })
+
+    await knex('agentRuns')
+      .where({ id: runId })
+      .update({ leaseExpiresAt: new Date('2026-08-16T00:00:00.000Z') })
+    const restarted = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      { ...runtimeOptions, workerId: 'worker-provider-overrun-repair-restart' }
+    )
+    expect(await restarted.runOnce()).toBe(false)
+    await restarted.shutdown()
+    expect(executions).toBe(1)
+
+    await knex('agentQuotaDaily').where({ ownerId: 7, day: '2026-08-17' }).update({ consumedTokens: 0, consumedCostMicros: 0 })
+    const live = await knex('agentRuns').where({ id: runId }).first('leaseOwner', 'leaseToken')
+    await terminalizeAgentRun(knex, {
+      runId,
+      ownerId: 7,
+      expected: { statuses: ['running'], leaseOwner: live.leaseOwner, leaseToken: live.leaseToken },
+      status: 'failed',
+      assistant: { status: 'failed' },
+      now: new Date('2026-08-17T00:05:00.000Z')
+    })
+    const dailyAfterRepair = await knex('agentQuotaDaily').where({ ownerId: 7, day: '2026-08-17' }).first()
+    expect(await knex('agentQuotaReservations').where({ runId }).first()).toMatchObject({
+      reservedTokens: 100,
+      reservedCostMicros: 100,
+      consumedTokens: 110,
+      consumedCostMicros: 101,
+      status: 'consumed'
+    })
+    expect(dailyAfterRepair).toMatchObject({
+      reservedTokens: 0,
+      consumedTokens: 110,
+      reservedCostMicros: 0,
+      consumedCostMicros: 101
+    })
+    await terminalizeAgentRun(knex, { runId, ownerId: 7, status: 'failed', now: new Date('2026-08-17T00:06:00.000Z') })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7, day: '2026-08-17' }).first()).toEqual(dailyAfterRepair)
   })
 
   it('reconciles terminal retry usage from every persisted root model turn', async () => {
@@ -829,12 +1284,11 @@ describe('durable agent repositories', () => {
     let reservedExposure = 0
     const engine: AgentEngine = {
       async execute(request, sink) {
-        if (!request.dispatchBudget) throw new Error('dispatch budget missing')
         const reservation = await request.dispatchBudget.reserve({ tokens: 84, costMicros: 30 })
         reservedExposure = Number((await knex('agentQuotaReservations').where({ runId }).first('reservedTokens'))?.reservedTokens)
-        await request.dispatchBudget.reconcile(reservation, { inputTokens: 5, outputTokens: 2, costMicros: 9 })
+        await request.dispatchBudget.reconcile(reservation, { inputTokens: 5, outputTokens: 2, totalTokens: 7, costMicros: 9 })
         await sink.text('Recovered answer')
-        return { inputTokens: 5, outputTokens: 2, costMicros: 9 }
+        return { inputTokens: 5, outputTokens: 2, totalTokens: 7, costMicros: 9 }
       }
     }
     const runtime = new AgentProductRuntime(
@@ -849,11 +1303,11 @@ describe('durable agent repositories', () => {
     )
 
     expect(await runtime.runOnce()).toBe(true)
-    expect(reservedExposure).toBe(101)
-    expect(await knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens', 'estimatedCostMicros')).toMatchObject({
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens', 'totalTokens', 'estimatedCostMicros')).toMatchObject({
       status: 'succeeded',
       inputTokens: 18,
       outputTokens: 6,
+      totalTokens: 24,
       estimatedCostMicros: 30
     })
     expect(await knex('agentQuotaReservations').where({ runId }).first('status', 'consumedTokens', 'consumedCostMicros')).toMatchObject({
@@ -865,6 +1319,7 @@ describe('durable agent repositories', () => {
     expect(JSON.parse(String(usageEvent?.data))).toMatchObject({
       inputTokens: 18,
       outputTokens: 6,
+      totalTokens: 24,
       costMicros: 30,
       model: { inputTokens: 16, outputTokens: 5, costMicros: 26 },
       orchestration: { inputTokens: 2, outputTokens: 1, costMicros: 4 }
@@ -1112,7 +1567,7 @@ describe('durable agent repositories', () => {
       },
       {
         async execute() {
-          return { inputTokens: 0, outputTokens: 0, costMicros: 0 }
+          return { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
         }
       },
       { workerId: 'dedupe-test', globalConcurrency: 1, perUserConcurrency: 1 }
@@ -1224,8 +1679,15 @@ describe('durable agent repositories', () => {
     await createAgentSession(knex, { id: titledSessionId, ownerId: 9, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
     const generateConversationTitle = vi
       .fn()
-      .mockResolvedValueOnce({ title: 'Deployment Pipeline Failures', source: 'utility', inputTokens: 2, outputTokens: 3, costMicros: 0 })
-      .mockResolvedValueOnce({ title: 'Runner Rollover Configuration Failures', source: 'utility', inputTokens: 4, outputTokens: 2, costMicros: 0 })
+      .mockResolvedValueOnce({ title: 'Deployment Pipeline Failures', source: 'utility', inputTokens: 2, outputTokens: 3, totalTokens: 5, costMicros: 0 })
+      .mockResolvedValueOnce({
+        title: 'Runner Rollover Configuration Failures',
+        source: 'utility',
+        inputTokens: 4,
+        outputTokens: 2,
+        totalTokens: 6,
+        costMicros: 0
+      })
     const runtime = new AgentProductRuntime(
       knex,
       {
@@ -1260,7 +1722,7 @@ describe('durable agent repositories', () => {
             actionCallIds: []
           })
           await sink.text('I found a stale runner configuration.')
-          return { inputTokens: 10, outputTokens: 5, costMicros: 0 }
+          return { inputTokens: 10, outputTokens: 5, totalTokens: 15, costMicros: 0 }
         }
       },
       {
@@ -1355,7 +1817,7 @@ describe('durable agent repositories', () => {
               ]
             })
           )
-          return { inputTokens: 3, outputTokens: 2, costMicros: 0 }
+          return { inputTokens: 3, outputTokens: 2, totalTokens: 5, costMicros: 0 }
         }
         if (request.purpose === 'subagent') {
           if (!request.task || !request.subagentRunId) throw new Error('missing child envelope')
@@ -1402,7 +1864,7 @@ describe('durable agent repositories', () => {
               recommendedFollowups: []
             })
           )
-          return { inputTokens: 5, outputTokens: 3, costMicros: 0, authoritySha256: 'c'.repeat(64) }
+          return { inputTokens: 5, outputTokens: 3, totalTokens: 8, costMicros: 0, authoritySha256: 'c'.repeat(64) }
         }
         expect(request.research).toMatchObject({ packets: [{ packet: { outcome: 'completed' } }, { packet: { outcome: 'completed' } }] })
         expect(request.research?.evidenceSeeds).toHaveLength(2)
@@ -1419,6 +1881,7 @@ describe('durable agent repositories', () => {
         return {
           inputTokens: 10,
           outputTokens: 5,
+          totalTokens: 15,
           costMicros: 0,
           citations: [
             { evidenceId: 'page:1', kind: 'page', label: 'Alpha', href: '/en/alpha' },
@@ -1444,10 +1907,11 @@ describe('durable agent repositories', () => {
     )
 
     expect(await runtime.runOnce()).toBe(true)
-    expect(await knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens')).toEqual({
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens', 'totalTokens')).toEqual({
       status: 'succeeded',
       inputTokens: 23,
-      outputTokens: 13
+      outputTokens: 13,
+      totalTokens: 36
     })
     expect(await knex('agentRunTasks').where({ runId }).orderBy('ordinal').select('status', 'outcome', 'evidenceCount', 'authoritySha256')).toEqual([
       { status: 'completed', outcome: 'completed', evidenceCount: 1, authoritySha256: 'c'.repeat(64) },
@@ -1460,6 +1924,101 @@ describe('durable agent repositories', () => {
     expect(thread.tasks).toHaveLength(2)
     await runtime.shutdown()
   })
+  it('filters old pending settlements before the claim limit so a later run is not starved', async () => {
+    const now = new Date('2026-08-17T00:02:00.000Z')
+    const old = new Date('2026-08-17T00:00:00.000Z')
+    const pendingRuns = Array.from({ length: 32 }, (_, index) => {
+      const id = `00000000-0000-4000-8000-${String(100 + index).padStart(12, '0')}`
+      return {
+        id,
+        sessionId,
+        userMessageId: `00000000-0000-4000-8000-${String(200 + index).padStart(12, '0')}`,
+        assistantMessageId: `00000000-0000-4000-8000-${String(300 + index).padStart(12, '0')}`,
+        ownerId: 7,
+        clientRequestId: `00000000-0000-4000-8000-${String(400 + index).padStart(12, '0')}`,
+        clientRequestSha256: 'a'.repeat(64),
+        profileResolutionSha256: 'b'.repeat(64),
+        status: 'queued',
+        attempts: 0,
+        maxAttempts: 3,
+        eventSequence: 0,
+        availableAt: old,
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        cancelRequestedAt: null,
+        sideEffectsStarted: false,
+        providerProfileVersionId: '00000000-0000-4000-8000-000000000007',
+        transportKind: 'openai-responses',
+        model: 'test',
+        executionMode: 'agent',
+        profilePolicyVersion: 1,
+        defaultGeneration: 1,
+        capabilityRevision: 'v1',
+        pricingRevision: 'v1',
+        promptVersion: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        estimatedCostMicros: null,
+        runtimeStateCiphertext: null,
+        errorCode: null,
+        errorMessage: null,
+        queuedAt: old,
+        startedAt: null,
+        updatedAt: old,
+        completedAt: null,
+        goalId: null,
+        goalContinuation: null,
+        completionOutcome: null,
+        completionAssessment: null,
+        completionAssessmentSha256: null
+      }
+    })
+    await knex('agentRuns').insert(pendingRuns)
+    await knex('agentQuotaReservations').insert(
+      pendingRuns.map(run => ({
+        runId: run.id,
+        ownerId: 7,
+        day: '2026-08-17',
+        reservedTokens: 1,
+        reservedCostMicros: 1,
+        consumedTokens: 1,
+        consumedCostMicros: 1,
+        status: 'reserved',
+        expiresAt: old,
+        heartbeatAt: old,
+        reconciledAt: null
+      }))
+    )
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: now,
+      queuedAt: now,
+      updatedAt: now
+    })
+
+    const claim = await claimAgentRun(knex, { workerId: 'worker-starvation', globalConcurrency: 1, perUserConcurrency: 1, now })
+
+    expect(claim).toMatchObject({ id: runId, status: 'running', leaseOwner: 'worker-starvation' })
+    expect(
+      await knex('agentRuns')
+        .whereIn(
+          'id',
+          pendingRuns.map(run => run.id)
+        )
+        .whereNot('status', 'queued')
+        .count<{ count: number | string }[]>({ count: '*' })
+        .first()
+    ).toEqual({
+      count: 0
+    })
+  })
+
   it('claims, fences, heartbeats, cancels, and refuses replay after side effects', async () => {
     const now = new Date('2026-08-17T00:02:00.000Z')
     const claim = await claimAgentRun(knex, { workerId: 'worker-b', globalConcurrency: 4, perUserConcurrency: 1, now })

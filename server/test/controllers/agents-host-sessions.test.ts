@@ -9,10 +9,12 @@ import { z } from 'zod'
 import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
 import createAgentsHostController from '../../controllers/agents-host.ts'
 import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
+import { AgentExecutionFailure, classifyAgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
+import { AgentProviderAttemptError } from '../../agents/providers/factory.ts'
 import { AgentRunCoordinator, admitAgentRun, requestAgentRunCancellation, terminalizeAgentRun, transitionAgentRun } from '../../agents/coordinator.ts'
-import { up as addAgentGoals } from '../../db/migrations/2.5.157.ts'
+import { AgentRepositoryError } from '../../agents/repository.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
-
+import { up as addAgentGoals } from '../../db/migrations/2.5.157.ts'
 interface TestSessionState {
   agentCsrfToken?: string
 }
@@ -104,6 +106,7 @@ const createTables = async (db: Knex): Promise<void> => {
     table.integer('promptVersion').notNullable()
     table.integer('inputTokens').notNullable()
     table.integer('outputTokens').notNullable()
+    table.integer('totalTokens').notNullable().defaultTo(0)
     table.integer('estimatedCostMicros').nullable()
     table.binary('runtimeStateCiphertext').nullable()
     table.string('errorCode').nullable()
@@ -285,6 +288,126 @@ describe('ordinary-origin agent session API', () => {
   let engineCurrentPage: unknown
   let engineSkills: readonly { readonly id: string; readonly name: string }[] = []
   let engineMemory: unknown
+  let engineFailure: unknown = null
+  const makeAccountingRuntime = (engine: AgentEngine, maxTokens: number): AgentProductRuntime => {
+    const resolved = {
+      profileResolutionSha256: 'a'.repeat(64),
+      providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
+      transportKind: 'test',
+      model: 'deterministic',
+      executionMode: 'agent' as const,
+      profilePolicyVersion: 1,
+      defaultGeneration: 1,
+      capabilityRevision: 'test-v1',
+      pricingRevision: 'test-v1',
+      promptVersion: 1,
+      quota: { tokens: 100, costMicros: 100 },
+      quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      reservationMilliseconds: 60_000
+    }
+    return new AgentProductRuntime(
+      db,
+      {
+        async resolve() {
+          return resolved
+        },
+        async resolveCurrent() {
+          return resolved
+        }
+      },
+      engine,
+      {
+        workerId: `goal-accounting-${maxTokens}`,
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        goals: { enabled: true, maxContinuations: 3, maxTokens, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 }
+      }
+    )
+  }
+  const insertAccountingSession = async (sessionId: string): Promise<void> => {
+    const now = new Date()
+    await db('agentSessions').insert({
+      id: sessionId,
+      ownerId: 7,
+      title: 'Goal accounting',
+      titleSource: 'none',
+      retention: 'saved',
+      folderId: null,
+      providerProfileId: null,
+      executionMode: 'agent',
+      version: 1,
+      summary: null,
+      summaryThroughOrdinal: null,
+      memorySnapshot: '{"agent":[],"user":[]}',
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+      expiresAt: null,
+      deletedAt: null
+    })
+  }
+  const settleAccountingRun = async (
+    runId: string,
+    inputTokens: number,
+    outputTokens: number,
+    reservation: 'consumed' | 'reserved' | 'missing',
+    reservationTokens: number
+  ): Promise<void> => {
+    const quotaReservation = (await db('agentQuotaReservations').where({ runId }).first('ownerId', 'day', 'reservedTokens', 'reservedCostMicros')) as
+      | { ownerId: number; day: string; reservedTokens: number | string; reservedCostMicros: number | string }
+      | undefined
+    if (!quotaReservation) throw new Error('accounting fixture reservation is missing')
+    const daily = (await db('agentQuotaDaily')
+      .where({ ownerId: quotaReservation.ownerId, day: quotaReservation.day })
+      .first('reservedTokens', 'consumedTokens', 'reservedCostMicros', 'consumedCostMicros')) as
+      | {
+          reservedTokens: number | string
+          consumedTokens: number | string
+          reservedCostMicros: number | string
+          consumedCostMicros: number | string
+        }
+      | undefined
+    if (!daily) throw new Error('accounting fixture daily quota is missing')
+    const now = new Date()
+    await db('agentQuotaDaily')
+      .where({ ownerId: quotaReservation.ownerId, day: quotaReservation.day })
+      .update({
+        reservedTokens: Number(daily.reservedTokens) - Number(quotaReservation.reservedTokens),
+        consumedTokens: Number(daily.consumedTokens) + (reservation === 'consumed' ? reservationTokens : 0),
+        reservedCostMicros: Number(daily.reservedCostMicros) - Number(quotaReservation.reservedCostMicros),
+        consumedCostMicros: Number(daily.consumedCostMicros),
+        updatedAt: now
+      })
+    await db('agentRuns')
+      .where({ id: runId })
+      .update({
+        status: 'failed',
+        inputTokens,
+        outputTokens,
+        totalTokens: reservation === 'consumed' ? reservationTokens : 0,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        completedAt: now,
+        updatedAt: now
+      })
+    if (reservation === 'missing') {
+      await db('agentQuotaReservations').where({ runId }).delete()
+      return
+    }
+    await db('agentQuotaReservations')
+      .where({ runId })
+      .update({
+        status: reservation,
+        consumedTokens: reservation === 'consumed' ? reservationTokens : 0,
+        consumedCostMicros: 0,
+        reconciledAt: reservation === 'consumed' ? now : null,
+        heartbeatAt: now
+      })
+  }
+  const pauseAccountingGoal = async (goalId: string): Promise<number> => {
+    await db('agentGoals').where({ id: goalId }).update({ status: 'paused', version: 2, updatedAt: new Date() })
+    return 2
+  }
 
   beforeAll(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
@@ -294,9 +417,16 @@ describe('ordinary-origin agent session API', () => {
         engineCurrentPage = request.currentPage
         engineSkills = request.skills.map(skill => ({ id: skill.id, name: skill.name }))
         engineMemory = request.memory
+        if (engineFailure !== null) throw engineFailure
         await sink.text('Hello ')
         await sink.text('from the deterministic engine.')
-        return { inputTokens: 3, outputTokens: 5, costMicros: 8, suggestions: [{ id: 'continue', label: 'Continue', prompt: 'Continue' }] }
+        return {
+          inputTokens: 3,
+          outputTokens: 5,
+          totalTokens: 8,
+          costMicros: 8,
+          suggestions: [{ id: 'continue', label: 'Continue', prompt: 'Continue' }]
+        }
       }
     }
     runtime = new AgentProductRuntime(
@@ -488,8 +618,8 @@ describe('ordinary-origin agent session API', () => {
       promptVersion: 1,
       inputTokens: 0,
       outputTokens: 0,
+      totalTokens: 0,
       estimatedCostMicros: null,
-      errorCode: null,
       errorMessage: null,
       queuedAt,
       startedAt: queuedAt,
@@ -583,6 +713,81 @@ describe('ordinary-origin agent session API', () => {
     })
   })
 
+  it('fails safely when diagnostic total-token aggregation exceeds safe integer range', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000160'
+    const now = '2026-08-17T00:00:00.000Z'
+    const maximumSafeTokens = Number.MAX_SAFE_INTEGER
+    await db('agentSessions').insert({
+      id: sessionId,
+      ownerId: 8,
+      title: 'Overflow diagnostics',
+      titleSource: 'manual',
+      retention: 'saved',
+      providerProfileId: null,
+      executionMode: 'agent',
+      version: 1,
+      summary: null,
+      summaryThroughOrdinal: null,
+      memorySnapshot: '{"agent":[],"user":[]}',
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+      expiresAt: null,
+      deletedAt: null
+    })
+    const run = (id: string, userMessageId: string, assistantMessageId: string) => ({
+      id,
+      sessionId,
+      userMessageId,
+      assistantMessageId,
+      ownerId: 8,
+      clientRequestId: id,
+      clientRequestSha256: 'a'.repeat(64),
+      profileResolutionSha256: 'b'.repeat(64),
+      status: 'succeeded',
+      attempts: 1,
+      maxAttempts: 3,
+      eventSequence: 0,
+      availableAt: now,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      cancelRequestedAt: null,
+      sideEffectsStarted: false,
+      providerProfileVersionId: '00000000-0000-4000-8000-000000000161',
+      transportKind: 'openai-responses',
+      model: 'test',
+      executionMode: 'agent',
+      profilePolicyVersion: 1,
+      defaultGeneration: 1,
+      capabilityRevision: 'v1',
+      pricingRevision: 'v1',
+      promptVersion: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: maximumSafeTokens,
+      estimatedCostMicros: 0,
+      runtimeStateCiphertext: null,
+      errorCode: null,
+      errorMessage: null,
+      queuedAt: now,
+      startedAt: now,
+      updatedAt: now,
+      completedAt: now
+    })
+    await db('agentRuns').insert([
+      run('00000000-0000-4000-8000-000000000162', '00000000-0000-4000-8000-000000000163', '00000000-0000-4000-8000-000000000164'),
+      run('00000000-0000-4000-8000-000000000165', '00000000-0000-4000-8000-000000000166', '00000000-0000-4000-8000-000000000167')
+    ])
+
+    administrator = true
+    const response = await fetch(`${baseUrl}/_api/agents/admin/sessions/${sessionId}/diagnostics.json`, { headers: { cookie } })
+    administrator = false
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({ error: 'AGENT_DIAGNOSTIC_USAGE_OVERFLOW', message: 'Agent request failed' })
+    expect(response.headers.get('content-disposition')).toBeNull()
+  })
+
   it('replays validated SSE events and closes at the terminal sequence', async () => {
     const now = '2026-08-17T00:00:00.000Z'
     const sessionId = '00000000-0000-4000-8000-000000000061'
@@ -633,8 +838,8 @@ describe('ordinary-origin agent session API', () => {
       promptVersion: 1,
       inputTokens: 0,
       outputTokens: 0,
+      totalTokens: 0,
       estimatedCostMicros: null,
-      errorCode: null,
       errorMessage: null,
       queuedAt: now,
       startedAt: now,
@@ -860,9 +1065,59 @@ describe('ordinary-origin agent session API', () => {
     expect(replay.match(/event: message\.completed/g)).toHaveLength(1)
     expect(replay.match(/event: run\.completed/g)).toHaveLength(1)
     expect(replay).toContain('event: suggestions.updated')
-    expect(replay).toContain('"model":{"costMicros":8,"inputTokens":3,"outputTokens":5}')
-    expect(replay).toContain('"orchestration":{"costMicros":0,"inputTokens":0,"outputTokens":0,"taskCount":0}')
-    expect(replay).toContain('"utility":{"costMicros":0,"inputTokens":0,"outputTokens":0,"purpose":"conversation_title"}')
+    expect(replay).toContain('"usageVersion":2')
+    expect(replay).toContain('"totalTokens":8')
+    expect(replay).toContain('"model":{"costMicros":8,"inputTokens":3,"outputTokens":5,"totalTokens":8}')
+    expect(replay).toContain('"orchestration":{"costMicros":0,"inputTokens":0,"outputTokens":0,"taskCount":0,"totalTokens":0}')
+    expect(replay).toContain('"utility":{"costMicros":0,"inputTokens":0,"outputTokens":0,"purpose":"conversation_title","totalTokens":0}')
+  })
+  it('persists normalized failures as a durable safe projection without provider details', async () => {
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+    })
+    const state = (await created.json()) as { session: { id: string; version: number; profileResolutionToken: string } }
+    const admitted = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/messages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        clientRequestId: '00000000-0000-4000-8000-000000000076',
+        expectedSessionVersion: state.session.version,
+        profileResolutionToken: state.session.profileResolutionToken,
+        content: 'Trigger a durable safe failure.'
+      })
+    })
+    const admission = (await admitted.json()) as { run: { id: string } }
+    const wrapped = Object.assign(new Error('provider response body secret'), {
+      cause: new AgentProviderAttemptError('provider-secret-code', 429, null, 'secret-parameter'),
+      body: 'secret body',
+      headers: 'authorization secret'
+    })
+    engineFailure = classifyAgentExecutionFailure(wrapped, 'provider_request')
+    expect(engineFailure).toBeInstanceOf(AgentExecutionFailure)
+    try {
+      expect(await runtime.runOnce()).toBe(true)
+    } finally {
+      engineFailure = null
+    }
+    const runRow = await db('agentRuns').where({ id: admission.run.id }).first('status', 'errorCode', 'errorMessage')
+    expect(runRow).toEqual({ status: 'failed', errorCode: 'PROVIDER_RATE_LIMITED', errorMessage: 'Agent inference failed' })
+    const eventRow = await db('agentEvents').where({ runId: admission.run.id, type: 'run.failed' }).first('data')
+    const failureEvent = JSON.parse(String(eventRow?.data)) as Record<string, unknown>
+    expect(failureEvent).toMatchObject({
+      status: 'failed',
+      errorCode: 'PROVIDER_RATE_LIMITED',
+      errorMessage: 'Agent inference failed',
+      failureStage: 'provider_request',
+      providerStatus: 429
+    })
+    const persisted = JSON.stringify({ runRow, failureEvent })
+    expect(persisted).not.toContain('provider-secret-code')
+    expect(persisted).not.toContain('secret-parameter')
+    expect(persisted).not.toContain('secret body')
+    expect(persisted).not.toContain('authorization secret')
   })
   it('creates an explicit durable goal and completes it through the host gate', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
@@ -907,6 +1162,269 @@ describe('ordinary-origin agent session API', () => {
     expect(
       await db('agentEvents').join('agentRuns', 'agentRuns.id', 'agentEvents.runId').where({ 'agentRuns.goalId': goalId }).pluck('agentEvents.type')
     ).toEqual(expect.arrayContaining(['goal.created', 'run.completionAssessed', 'goal.status']))
+  })
+  it('charges conservative terminal goal reservations across runtime recreation before continuation', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000301'
+    const goalId = '00000000-0000-4000-8000-000000000302'
+    await insertAccountingSession(sessionId)
+    const firstRuntime = makeAccountingRuntime(
+      {
+        async execute() {
+          throw new Error('the conservative charge must fence continuation before dispatch')
+        }
+      },
+      4
+    )
+    const admitted = await firstRuntime.createGoal({
+      goalId,
+      ownerId: 7,
+      sessionId,
+      profileResolutionToken: 'accounting-test',
+      clientRequestId: '00000000-0000-4000-8000-000000000303',
+      expectedSessionVersion: 1,
+      objective: 'Exhaust the durable goal conservatively.'
+    })
+    await settleAccountingRun(admitted.run.id, 0, 0, 'consumed', 4)
+    const expectedVersion = await pauseAccountingGoal(goalId)
+    await firstRuntime.shutdown()
+
+    const recreatedRuntime = makeAccountingRuntime(
+      {
+        async execute() {
+          throw new Error('the exhausted goal must not dispatch')
+        }
+      },
+      4
+    )
+    const resumed = await recreatedRuntime.resumeGoal({
+      goalId,
+      ownerId: 7,
+      expectedVersion,
+      runId: '00000000-0000-4000-8000-000000000304',
+      clientRequestId: '00000000-0000-4000-8000-000000000305'
+    })
+    expect(resumed).toMatchObject({
+      goal: { status: 'budget_limited', consumedTokens: 4 },
+      run: null,
+      replayed: false
+    })
+    expect(Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(1)
+    await recreatedRuntime.shutdown()
+  })
+  it('counts measured directional and reconciled reservation usage once', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000311'
+    const goalId = '00000000-0000-4000-8000-000000000312'
+    await insertAccountingSession(sessionId)
+    const accountingRuntime = makeAccountingRuntime(
+      {
+        async execute() {
+          throw new Error('the measured usage test does not need provider execution')
+        }
+      },
+      12
+    )
+    const admitted = await accountingRuntime.createGoal({
+      goalId,
+      ownerId: 7,
+      sessionId,
+      profileResolutionToken: 'accounting-test',
+      clientRequestId: '00000000-0000-4000-8000-000000000313',
+      expectedSessionVersion: 1,
+      objective: 'Count measured usage only once.'
+    })
+    await settleAccountingRun(admitted.run.id, 4, 4, 'consumed', 8)
+    const expectedVersion = await pauseAccountingGoal(goalId)
+    const resumed = await accountingRuntime.resumeGoal({
+      goalId,
+      ownerId: 7,
+      expectedVersion,
+      runId: '00000000-0000-4000-8000-000000000314',
+      clientRequestId: '00000000-0000-4000-8000-000000000315'
+    })
+    expect(resumed.goal).toMatchObject({ status: 'active', consumedTokens: 8 })
+    expect(resumed.run).not.toBeNull()
+    await accountingRuntime.cancel(7, resumed.run!.id)
+    await accountingRuntime.shutdown()
+  })
+  it('charges a goal overrun fully and blocks continuation without dispatch', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000351'
+    const goalId = '00000000-0000-4000-8000-000000000352'
+    await insertAccountingSession(sessionId)
+    let providerDispatches = 0
+    const accountingRuntime = makeAccountingRuntime(
+      {
+        async execute() {
+          providerDispatches += 1
+          throw new Error('an overrun goal must not continue')
+        }
+      },
+      8
+    )
+    const admitted = await accountingRuntime.createGoal({
+      goalId,
+      ownerId: 7,
+      sessionId,
+      profileResolutionToken: 'accounting-test',
+      clientRequestId: '00000000-0000-4000-8000-000000000353',
+      expectedSessionVersion: 1,
+      objective: 'Stop after a known provider overrun.'
+    })
+    const quotaReservationBefore = (await db('agentQuotaReservations')
+      .where({ runId: admitted.run.id })
+      .first('ownerId', 'day', 'reservedTokens', 'reservedCostMicros')) as
+      | { ownerId: number; day: string; reservedTokens: number | string; reservedCostMicros: number | string }
+      | undefined
+    if (!quotaReservationBefore) throw new Error('overrun accounting reservation is missing')
+    const dailyBefore = (await db('agentQuotaDaily')
+      .where({ ownerId: quotaReservationBefore.ownerId, day: quotaReservationBefore.day })
+      .first('reservedTokens', 'consumedTokens', 'reservedCostMicros', 'consumedCostMicros')) as
+      | {
+          reservedTokens: number | string
+          consumedTokens: number | string
+          reservedCostMicros: number | string
+          consumedCostMicros: number | string
+        }
+      | undefined
+    if (!dailyBefore) throw new Error('overrun accounting daily quota is missing')
+    await settleAccountingRun(admitted.run.id, 4, 4, 'consumed', 12)
+    const expectedVersion = await pauseAccountingGoal(goalId)
+    const resumed = await accountingRuntime.resumeGoal({
+      goalId,
+      ownerId: 7,
+      expectedVersion,
+      runId: '00000000-0000-4000-8000-000000000354',
+      clientRequestId: '00000000-0000-4000-8000-000000000355'
+    })
+    expect(resumed).toMatchObject({
+      goal: { status: 'budget_limited', consumedTokens: 12 },
+      run: null,
+      replayed: false
+    })
+    expect(providerDispatches).toBe(0)
+    const dailyAfter = await db('agentQuotaDaily')
+      .where({ ownerId: quotaReservationBefore.ownerId, day: quotaReservationBefore.day })
+      .first('reservedTokens', 'consumedTokens', 'reservedCostMicros', 'consumedCostMicros')
+    expect(dailyAfter).toMatchObject({
+      reservedTokens: Number(dailyBefore.reservedTokens) - Number(quotaReservationBefore.reservedTokens),
+      consumedTokens: Number(dailyBefore.consumedTokens) + 12,
+      reservedCostMicros: Number(dailyBefore.reservedCostMicros) - Number(quotaReservationBefore.reservedCostMicros),
+      consumedCostMicros: Number(dailyBefore.consumedCostMicros)
+    })
+    expect(await db('agentQuotaReservations').where({ runId: admitted.run.id }).first('reservedTokens', 'consumedTokens', 'status')).toEqual({
+      reservedTokens: 8,
+      consumedTokens: 12,
+      status: 'consumed'
+    })
+    await accountingRuntime.shutdown()
+  })
+
+  it('rejects a continuation before provider dispatch when only a partial goal budget remains', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000321'
+    const goalId = '00000000-0000-4000-8000-000000000322'
+    let providerDispatches = 0
+    await insertAccountingSession(sessionId)
+    const accountingRuntime = makeAccountingRuntime(
+      {
+        async execute(request) {
+          if (request.limits?.maxTokens !== 1) providerDispatches += 1
+          throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
+        }
+      },
+      5
+    )
+    const admitted = await accountingRuntime.createGoal({
+      goalId,
+      ownerId: 7,
+      sessionId,
+      profileResolutionToken: 'accounting-test',
+      clientRequestId: '00000000-0000-4000-8000-000000000323',
+      expectedSessionVersion: 1,
+      objective: 'Reject a continuation with only one token remaining.'
+    })
+    await settleAccountingRun(admitted.run.id, 0, 0, 'consumed', 4)
+    const expectedVersion = await pauseAccountingGoal(goalId)
+    const resumed = await accountingRuntime.resumeGoal({
+      goalId,
+      ownerId: 7,
+      expectedVersion,
+      runId: '00000000-0000-4000-8000-000000000324',
+      clientRequestId: '00000000-0000-4000-8000-000000000325'
+    })
+    expect(resumed.run).not.toBeNull()
+    expect(await accountingRuntime.runOnce()).toBe(true)
+    expect(providerDispatches).toBe(0)
+    expect(await db('agentGoals').where({ id: goalId }).first('status', 'consumedTokens')).toEqual({ status: 'budget_limited', consumedTokens: 4 })
+    await accountingRuntime.shutdown()
+  })
+  it('blocks explicit continuation when a terminal quota reservation is missing', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000331'
+    const goalId = '00000000-0000-4000-8000-000000000332'
+    await insertAccountingSession(sessionId)
+    const accountingRuntime = makeAccountingRuntime(
+      {
+        async execute() {
+          throw new Error('a missing terminal ledger must fence dispatch')
+        }
+      },
+      10
+    )
+    const admitted = await accountingRuntime.createGoal({
+      goalId,
+      ownerId: 7,
+      sessionId,
+      profileResolutionToken: 'accounting-test',
+      clientRequestId: '00000000-0000-4000-8000-000000000333',
+      expectedSessionVersion: 1,
+      objective: 'Reconcile the missing terminal ledger.'
+    })
+    await settleAccountingRun(admitted.run.id, 0, 0, 'missing', 0)
+    const expectedVersion = await pauseAccountingGoal(goalId)
+    const resumed = await accountingRuntime.resumeGoal({
+      goalId,
+      ownerId: 7,
+      expectedVersion,
+      runId: '00000000-0000-4000-8000-000000000334',
+      clientRequestId: '00000000-0000-4000-8000-000000000335'
+    })
+    expect(resumed).toMatchObject({
+      goal: { status: 'blocked', errorCode: 'GOAL_ACCOUNTING_UNAVAILABLE', consumedTokens: 0 },
+      run: null,
+      replayed: false
+    })
+    expect(Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(1)
+    await accountingRuntime.shutdown()
+  })
+  it('blocks automatic continuation when a terminal quota reservation is still held', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000341'
+    const goalId = '00000000-0000-4000-8000-000000000342'
+    await insertAccountingSession(sessionId)
+    const accountingRuntime = makeAccountingRuntime(
+      {
+        async execute() {
+          throw new Error('an unreconciled terminal ledger must fence dispatch')
+        }
+      },
+      10
+    )
+    const admitted = await accountingRuntime.createGoal({
+      goalId,
+      ownerId: 7,
+      sessionId,
+      profileResolutionToken: 'accounting-test',
+      clientRequestId: '00000000-0000-4000-8000-000000000343',
+      expectedSessionVersion: 1,
+      objective: 'Reconcile the held terminal ledger.'
+    })
+    await settleAccountingRun(admitted.run.id, 0, 0, 'reserved', 0)
+    expect(await accountingRuntime.runOnce()).toBe(false)
+    expect(await db('agentGoals').where({ id: goalId }).first('status', 'errorCode', 'consumedTokens')).toEqual({
+      status: 'blocked',
+      errorCode: 'GOAL_ACCOUNTING_UNAVAILABLE',
+      consumedTokens: 0
+    })
+    expect(Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(1)
+    await db('agentQuotaReservations').where({ runId: admitted.run.id }).delete()
+    await accountingRuntime.shutdown()
   })
   it('applies user skill preferences at the latest version across conversations', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
@@ -1042,7 +1560,13 @@ describe('ordinary-origin agent session API', () => {
 
     ownerId = 8
     expect(await (await fetch(`${baseUrl}/_api/agents/conversation-folders`, { headers: { cookie } })).json()).toEqual({ folders: [] })
-    expect((await fetch(`${baseUrl}/_api/agents/conversation-folders/${folder.id}`, { method: 'DELETE', headers })).status).toBe(404)
+    expect((await fetch(`${baseUrl}/_api/agents/conversation-folders/${folder.id}`, { method: 'DELETE', headers })).status).toBe(400)
+    expect((await fetch(`${baseUrl}/_api/agents/conversation-folders/${folder.id}?expectedVersion=not-a-number`, { method: 'DELETE', headers })).status).toBe(
+      400
+    )
+    expect(
+      (await fetch(`${baseUrl}/_api/agents/conversation-folders/${folder.id}?expectedVersion=${folder.version}`, { method: 'DELETE', headers })).status
+    ).toBe(404)
     ownerId = 7
 
     const filed = await fetch(`${baseUrl}/_api/agents/sessions/${created.session.id}/folder`, {
@@ -1068,6 +1592,20 @@ describe('ordinary-origin agent session API', () => {
       headers,
       body: JSON.stringify({ expectedSessionVersion: 3, folderId: folder.id })
     })
+    const foldered = (await (
+      await fetch(`${baseUrl}/_api/agents/sessions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+      })
+    ).json()) as { session: { id: string; version: number } }
+    const folderedFiled = await fetch(`${baseUrl}/_api/agents/sessions/${foldered.session.id}/folder`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ expectedSessionVersion: foldered.session.version, folderId: folder.id })
+    })
+    expect(await folderedFiled.json()).toMatchObject({ session: { folderId: folder.id, retention: 'saved', version: 2 } })
+
     expect((await fetch(`${baseUrl}/_api/agents/sessions/${created.session.id}`, { method: 'DELETE', headers })).status).toBe(204)
     expect(await db('agentSessions').where({ id: created.session.id }).whereNotNull('deletedAt').first()).toBeDefined()
 
@@ -1077,8 +1615,27 @@ describe('ordinary-origin agent session API', () => {
       body: JSON.stringify({ expectedVersion: folder.version, name: 'Reference' })
     })
     expect(await renamed.json()).toMatchObject({ folder: { name: 'Reference', version: 2 } })
-    const removed = await fetch(`${baseUrl}/_api/agents/conversation-folders/${folder.id}`, { method: 'DELETE', headers })
-    expect(await removed.json()).toEqual({ deleted: true, movedSessions: 0 })
+    const staleRemoved = await fetch(`${baseUrl}/_api/agents/conversation-folders/${folder.id}?expectedVersion=${folder.version}`, {
+      method: 'DELETE',
+      headers
+    })
+    expect(staleRemoved.status).toBe(409)
+    expect(await db('agentConversationFolders').where({ id: folder.id }).first('name', 'version')).toEqual({ name: 'Reference', version: 2 })
+    expect(await db('agentSessions').where({ id: foldered.session.id }).first('folderId', 'retention', 'expiresAt', 'version')).toMatchObject({
+      folderId: folder.id,
+      retention: 'saved',
+      expiresAt: null,
+      version: 2
+    })
+    const removed = await fetch(`${baseUrl}/_api/agents/conversation-folders/${folder.id}?expectedVersion=2`, { method: 'DELETE', headers })
+    expect(await db('agentConversationFolders').where({ id: folder.id }).first()).toBeUndefined()
+    expect(await removed.json()).toEqual({ deleted: true, movedSessions: 1 })
+    expect(await db('agentSessions').where({ id: foldered.session.id }).first('folderId', 'retention', 'expiresAt', 'version')).toMatchObject({
+      folderId: null,
+      retention: 'saved',
+      expiresAt: null,
+      version: 3
+    })
   })
 
   it('terminalizes cancellation atomically, preserves terminal state, and drains approval waiters', async () => {
@@ -1238,7 +1795,7 @@ describe('ordinary-origin agent session API', () => {
       status: 'succeeded',
       assistant: { status: 'complete', content: 'Late provider completion' },
       quota: { consumedTokens: 4, consumedCostMicros: 8, status: 'consumed' },
-      runPatch: { inputTokens: 3, outputTokens: 1, estimatedCostMicros: 8 },
+      runPatch: { inputTokens: 3, outputTokens: 1, totalTokens: 4, estimatedCostMicros: 8 },
       now
     }
     await terminalizeAgentRun(db, racingTerminalization)
@@ -1270,6 +1827,7 @@ describe('ordinary-origin agent session API', () => {
       runPatch: {
         inputTokens: 3,
         outputTokens: 1,
+        totalTokens: 4,
         estimatedCostMicros: 8,
         completionOutcome: 'complete',
         completionAssessment: '{"winner":true}',
@@ -1284,6 +1842,7 @@ describe('ordinary-origin agent session API', () => {
         'eventSequence',
         'inputTokens',
         'outputTokens',
+        'totalTokens',
         'estimatedCostMicros',
         'completionOutcome',
         'completionAssessment',
@@ -1331,6 +1890,7 @@ describe('ordinary-origin agent session API', () => {
       runPatch: {
         inputTokens: 30,
         outputTokens: 10,
+        totalTokens: 40,
         estimatedCostMicros: 80,
         completionOutcome: 'failed',
         completionAssessment: '{"winner":false}',
@@ -1380,9 +1940,10 @@ describe('ordinary-origin agent session API', () => {
         status: runId === racing.run.id ? 'consumed' : 'released'
       })
     }
-    expect(await db('agentRuns').where({ id: racing.run.id }).first('inputTokens', 'outputTokens', 'estimatedCostMicros')).toEqual({
+    expect(await db('agentRuns').where({ id: racing.run.id }).first('inputTokens', 'outputTokens', 'totalTokens', 'estimatedCostMicros')).toEqual({
       inputTokens: 3,
       outputTokens: 1,
+      totalTokens: 4,
       estimatedCostMicros: 8
     })
 

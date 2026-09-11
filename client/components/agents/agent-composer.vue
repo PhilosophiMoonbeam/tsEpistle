@@ -212,6 +212,19 @@
         >
           <span>Goal</span>
         </v-btn>
+        <v-btn
+          class="agent-composer__chat-pin"
+          :color="chatPinned ? 'primary' : undefined"
+          :variant="chatPinned ? 'tonal' : 'text'"
+          :prepend-icon="chatPinned ? 'mdi-pin' : 'mdi-pin-outline'"
+          aria-label="Pin chat"
+          :aria-pressed="chatPinned"
+          :title="chatPinned ? 'Unpin chat' : 'Pin chat'"
+          :disabled="chatPinDisabled"
+          @click="toggleChatPinned"
+        >
+          <span>Pin chat</span>
+        </v-btn>
       </div>
 
       <div
@@ -288,9 +301,11 @@ const props = defineProps<{
   initialMode?: 'message' | 'goal'
   initialSkillVersionIds?: readonly string[]
   hasMessages?: boolean
+  chatPinned?: boolean
+  chatPinDisabled: boolean
   externalDescriptionId?: string
 }>()
-const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void]; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
+const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void]; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]]; 'update:chatPinned': [pinned: boolean] }>()
 const draft = ref(props.initialDraft ?? '')
 watch(draft, text => {
   if (props.sessionId) emit('draftChange', props.sessionId, text)
@@ -530,6 +545,10 @@ const togglePreference = (versionId: string): void => {
     skillIds.push(skillId)
   }
   emit('updateSkillPreferences', skillIds)
+}
+const toggleChatPinned = (): void => {
+  if (props.chatPinDisabled) return
+  emit('update:chatPinned', !Boolean(props.chatPinned))
 }
 interface SkillCommandMatch {
   readonly query: string
@@ -903,7 +922,8 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__skill-button,
-.agent-composer__goal-button {
+.agent-composer__goal-button,
+.agent-composer__chat-pin {
   border-radius: var(--wiki-radius-pill);
   padding-inline: var(--wiki-space-3);
   font-weight: 500;

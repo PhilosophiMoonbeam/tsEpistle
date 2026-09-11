@@ -35,6 +35,17 @@ const particleLogoComponent = readComponentSource('client/components/login-logo/
 const particleSceneComponent = readComponentSource('client/components/login-logo/LogoParticleScene.vue')
 const pointerControllerPath = path.join(process.cwd(), 'client/components/login-logo/useLogoPointer.ts')
 const pointerControllerSource = fs.readFileSync(pointerControllerPath, 'utf8')
+const loginSuccessAnimationPath = path.join(process.cwd(), 'client/components/login-success-animation.vue')
+const loginSuccessAnimationSource = fs.readFileSync(loginSuccessAnimationPath, 'utf8')
+const loginSuccessAnimation = parse(loginSuccessAnimationSource, { filename: loginSuccessAnimationPath })
+if (loginSuccessAnimation.errors.length > 0) {
+  throw new Error(`Could not parse login-success-animation.vue: ${loginSuccessAnimation.errors.join(', ')}`)
+}
+if (!loginSuccessAnimation.descriptor.template || !loginSuccessAnimation.descriptor.styles.length) {
+  throw new Error('login-success-animation.vue template or style was not found')
+}
+const loaderPath = path.join(process.cwd(), 'client/components/common/loader.vue')
+const loaderSource = fs.readFileSync(loaderPath, 'utf8')
 
 const componentId = 'login-layout-behavior-test'
 const compiledScript = compileScript(parsed.descriptor, { id: componentId, genDefaultAs: '__login__' })
@@ -123,9 +134,22 @@ const LoginParticleLogoStub = Vue.defineComponent({
         : null
   }
 })
+const LoginSuccessAnimationStub = Vue.defineComponent({
+  name: 'LoginSuccessAnimation',
+  setup: () => () =>
+    Vue.h('svg', {
+      class: 'login-success-animation',
+      width: '72',
+      height: '72',
+      role: 'presentation',
+      'aria-hidden': 'true',
+      focusable: 'false'
+    })
+})
 
 const components: Record<string, Vue.Component> = {
   LoginParticleLogo: LoginParticleLogoStub,
+  LoginSuccessAnimation: LoginSuccessAnimationStub,
   Loader: Vue.defineComponent({ setup: () => () => null }),
   Notify: Vue.defineComponent({ setup: () => () => null }),
   PasswordStrength: Vue.defineComponent({ setup: () => () => null }),
@@ -162,6 +186,7 @@ const loginBundle = await Bun.build({
     '../helpers/root-ui-store',
     '../helpers/tfa-qr',
     './login-logo/LoginParticleLogo.vue',
+    './login-success-animation.vue',
     './login-logo/particle-logo'
   ],
   format: 'cjs',
@@ -226,8 +251,10 @@ loginModuleFactory(
     if (specifier === './login-logo/LoginParticleLogo.vue') {
       return { __esModule: true, default: LoginParticleLogoStub }
     }
+    if (specifier === './login-success-animation.vue') {
+      return { __esModule: true, default: LoginSuccessAnimationStub }
+    }
     if (specifier === './login-logo/particle-logo') return { isLogoEffectDescriptor }
-    throw new Error(`Unexpected import in login.vue: ${specifier}`)
   },
   compiledLoginModule,
   loginPath,
@@ -357,6 +384,9 @@ describe('login personalized static-logo integration', () => {
     expect(ordinaryLogo?.getAttribute('alt')).toBe('')
     expect(title?.textContent).toBe('Example knowledge base')
     expect(card.compareDocumentPosition(field) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+    const logoFrame = card.querySelector<HTMLElement>('.login-brand .login-logo')
+    expect(logoFrame).not.toBeNull()
+    expect(logoFrame?.querySelector('img')).toBe(ordinaryLogo)
 
     const plainDom = await renderLoginDom(null)
     expect(card.outerHTML).toBe(plainDom.window.document.querySelector('main.login-sd')?.outerHTML)
@@ -391,6 +421,39 @@ describe('login personalized static-logo integration', () => {
     expect(card.querySelector('form.login-form button[type="submit"]')).not.toBeNull()
 
     dom.window.close()
+  })
+})
+describe('login success illustration contract', () => {
+  it('keeps the success artwork decorative and stages an open-book page sequence', () => {
+    const animationTemplate = loginSuccessAnimation.descriptor.template?.content ?? ''
+    const animationStyle = loginSuccessAnimation.descriptor.styles[0]?.content ?? ''
+
+    expect(animationTemplate).toMatch(/svg\.login-success-animation/)
+    expect(animationTemplate).toMatch(/\bwidth='72'/)
+    expect(animationTemplate).toMatch(/\bheight='72'/)
+    expect(animationTemplate).toMatch(/\baria-hidden='true'/)
+    expect(animationTemplate.match(/data-page-turn='[123]'/g) ?? []).toHaveLength(3)
+    expect(animationStyle).toMatch(/--login-book-duration:\s*900ms/)
+    expect(animationStyle).toMatch(/@keyframes\s+loginBookCoverLeft/)
+    expect(animationStyle).toMatch(/@keyframes\s+loginBookPageTurnOne/)
+    expect(animationStyle).toMatch(/@keyframes\s+loginBookPageTurnTwo/)
+    expect(animationStyle).toMatch(/@keyframes\s+loginBookPageTurnThree/)
+    expect(animationStyle).toMatch(/@media\s+\(prefers-reduced-motion:\s*reduce\)[\s\S]*animation:\s*none/)
+    expect(animationStyle).toMatch(/@media\s+\(forced-colors:\s*active\)[\s\S]*CanvasText/)
+  })
+
+  it('provides an optional Loader illustration slot without replacing fallback indicators', () => {
+    expect(loaderSource).toMatch(/slot\(name='illustration'\)/)
+    expect(loaderSource).toMatch(/atom-spinner\.is-inline\([\s\S]*v-else-if='mode === `loading`'/)
+    expect(loaderSource).toMatch(/img\(v-else-if='mode === `icon`'/)
+  })
+
+  it('routes only an explicit authenticated API response to the success illustration', () => {
+    expect(loginSource).toMatch(/showLoginSuccessAnimation:\s*false/)
+    expect(loginSource).toMatch(/template\(v-if='showLoginSuccessAnimation',\s*v-slot:illustration\)/)
+    expect(loginSource).toMatch(/this\.showLoginSuccessAnimation\s*=\s*false[\s\S]*this\.continuationToken/)
+    expect(loginSource).toMatch(/respObj\.authenticated\s*===\s*true[\s\S]*this\.showLoginSuccessAnimation\s*=\s*true/)
+    expect(loginSource).not.toMatch(/loaderTitle\s*===|successMessage\s*===/)
   })
 })
 

@@ -8,9 +8,11 @@ import {
   type AgentTaskKind,
   type AgentTaskOutcome,
   type AgentTaskStatus,
-  type AgentTaskView
+  type AgentTaskView,
+  type AgentTokenUsage
 } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
+import { assertAgentTokenUsage } from './providers/usage.ts'
 import { parseChildEvidencePacket, type AgentResearchTask, type AgentValidatedPacket } from './orchestration.ts'
 import type { AgentRunClaim } from './coordinator.ts'
 import { AgentRepositoryError, appendAgentEvent } from './repository.ts'
@@ -60,9 +62,7 @@ export interface AgentTaskRecord extends AgentResearchTask {
   readonly completedAt: string | null
 }
 
-export interface AgentTaskPlanUsage {
-  readonly inputTokens: number
-  readonly outputTokens: number
+export interface AgentTaskPlanUsage extends AgentTokenUsage {
   readonly costMicros: number
 }
 
@@ -224,8 +224,11 @@ export const createAgentRunTasks = async (
   claim: AgentRunClaim,
   tasks: readonly AgentResearchTask[],
   plannerUsage: AgentTaskPlanUsage
-): Promise<readonly AgentTaskRecord[]> =>
-  knex.transaction(async transaction => {
+): Promise<readonly AgentTaskRecord[]> => {
+  assertAgentTokenUsage(plannerUsage.inputTokens, plannerUsage.outputTokens, plannerUsage.totalTokens)
+  if (!Number.isSafeInteger(plannerUsage.costMicros) || plannerUsage.costMicros < 0)
+    throw new AgentRepositoryError('INVALID_AGENT_USAGE', 'Planner cost must be a non-negative safe integer', 500)
+  return knex.transaction(async transaction => {
     const run = await transaction('agentRuns')
       .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken, status: 'running' })
       .whereNull('cancelRequestedAt')
@@ -269,11 +272,13 @@ export const createAgentRunTasks = async (
       type: 'task.planCreated',
       attempt: claim.attempts,
       data: {
+        usageVersion: 2,
         rootRunId: claim.id,
         accepted: true,
         taskCount: rows.length,
         inputTokens: plannerUsage.inputTokens,
         outputTokens: plannerUsage.outputTokens,
+        totalTokens: plannerUsage.totalTokens,
         costMicros: plannerUsage.costMicros
       },
       leaseToken: claim.leaseToken
@@ -282,6 +287,7 @@ export const createAgentRunTasks = async (
     for (const row of rows) await appendTaskEvent(transaction, claim, 'task.created', row)
     return rows.map(taskRecord)
   })
+}
 
 export const recoverAgentRunTasks = async (knex: Knex, claim: AgentRunClaim): Promise<void> =>
   knex.transaction(async transaction => {

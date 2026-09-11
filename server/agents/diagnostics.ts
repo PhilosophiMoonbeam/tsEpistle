@@ -33,9 +33,54 @@ interface DiagnosticToolCall {
   rationale: null
 }
 
-const iso = (value: Date | string): string => value instanceof Date ? value.toISOString() : new Date(value).toISOString()
-const nullableIso = (value: Date | string | null): string | null => value === null ? null : iso(value)
+const iso = (value: Date | string): string => (value instanceof Date ? value.toISOString() : new Date(value).toISOString())
+const nullableIso = (value: Date | string | null): string | null => (value === null ? null : iso(value))
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
+const DIAGNOSTIC_USAGE_INTEGER = /^(0|[1-9][0-9]*)$/
+const invalidDiagnosticUsage = (): never => {
+  throw new AgentRepositoryError('AGENT_DIAGNOSTIC_USAGE_INVALID', 'Stored agent diagnostic usage is invalid', 500)
+}
+const diagnosticUsageOverflow = (): never => {
+  throw new AgentRepositoryError('AGENT_DIAGNOSTIC_USAGE_OVERFLOW', 'Agent diagnostic usage totals exceed the supported numeric range', 500)
+}
+const diagnosticUsageInteger = (value: unknown): number => {
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value) || value < 0) return invalidDiagnosticUsage()
+    return value
+  }
+  if (typeof value === 'bigint') {
+    if (value < 0n || value > MAX_SAFE_INTEGER_BIGINT) return invalidDiagnosticUsage()
+    return Number(value)
+  }
+  if (typeof value === 'string' && DIAGNOSTIC_USAGE_INTEGER.test(value)) {
+    const parsed = Number(value)
+    if (Number.isSafeInteger(parsed)) return parsed
+  }
+  return invalidDiagnosticUsage()
+}
+const safeDiagnosticAdd = (left: number, right: number, onOverflow: () => never): number => {
+  if (!Number.isSafeInteger(left) || left < 0 || !Number.isSafeInteger(right) || right < 0) return invalidDiagnosticUsage()
+  if (right > Number.MAX_SAFE_INTEGER - left) return onOverflow()
+  return left + right
+}
+
+interface DiagnosticUsage {
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly totalTokens: number
+  readonly estimatedCostMicros: number | null
+}
+
+const readDiagnosticUsage = (row: Record<string, unknown>): DiagnosticUsage => {
+  const inputTokens = diagnosticUsageInteger(row.inputTokens)
+  const outputTokens = diagnosticUsageInteger(row.outputTokens)
+  const totalTokens = diagnosticUsageInteger(row.totalTokens)
+  const directionalTotal = safeDiagnosticAdd(inputTokens, outputTokens, invalidDiagnosticUsage)
+  if (totalTokens < directionalTotal) return invalidDiagnosticUsage()
+  const estimatedCostMicros = row.estimatedCostMicros === null ? null : diagnosticUsageInteger(row.estimatedCostMicros)
+  return { inputTokens, outputTokens, totalTokens, estimatedCostMicros }
+}
 
 const parseObject = (value: string, code: string): Record<string, unknown> => {
   try {
@@ -49,7 +94,11 @@ const parseObject = (value: string, code: string): Record<string, unknown> => {
 
 const parseOptionalJson = (value: unknown): unknown => {
   if (typeof value !== 'string') return value ?? null
-  try { return JSON.parse(value) } catch { return null }
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
 }
 
 const readIdentity = (actionName: string, input: unknown, output: unknown): string | null => {
@@ -58,16 +107,20 @@ const readIdentity = (actionName: string, input: unknown, output: unknown): stri
     const candidate = input as Record<string, unknown>
     if (candidate.id !== undefined) return `${actionName}:id:${String(candidate.id)}`
     if (typeof candidate.path === 'string' && typeof candidate.locale === 'string') return `${actionName}:path:${candidate.locale}:${candidate.path}`
-    if (candidate.pageId !== undefined && candidate.versionId !== undefined) return `${actionName}:version:${String(candidate.pageId)}:${String(candidate.versionId)}`
+    if (candidate.pageId !== undefined && candidate.versionId !== undefined)
+      return `${actionName}:version:${String(candidate.pageId)}:${String(candidate.versionId)}`
   }
   if (typeof output === 'object' && output !== null && !Array.isArray(output)) {
     const candidate = output as Record<string, unknown>
-    if (candidate.id !== undefined && candidate.sourceRevision !== undefined) return `${actionName}:result:${String(candidate.id)}:${String(candidate.sourceRevision)}`
+    if (candidate.id !== undefined && candidate.sourceRevision !== undefined)
+      return `${actionName}:result:${String(candidate.id)}:${String(candidate.sourceRevision)}`
   }
   return null
 }
 
-const analyzeTools = (events: readonly { readonly type: string, readonly data: Record<string, unknown> }[]): {
+const analyzeTools = (
+  events: readonly { readonly type: string; readonly data: Record<string, unknown> }[]
+): {
   readonly toolCalls: readonly DiagnosticToolCall[]
   readonly findings: readonly Readonly<Record<string, unknown>>[]
 } => {
@@ -88,7 +141,12 @@ const analyzeTools = (events: readonly { readonly type: string, readonly data: R
         if (Array.isArray(event.data.issues)) {
           for (const issue of event.data.issues) if (typeof issue === 'string') evidenceIssues.add(issue)
         }
-      } else if (event.data.accepted === true && completedPageReads > 0 && Array.isArray(event.data.finalCitationIds) && event.data.finalCitationIds.length === 0) {
+      } else if (
+        event.data.accepted === true &&
+        completedPageReads > 0 &&
+        Array.isArray(event.data.finalCitationIds) &&
+        event.data.finalCitationIds.length === 0
+      ) {
         acceptedWithoutCitations = true
       }
       continue
@@ -139,12 +197,14 @@ const analyzeTools = (events: readonly { readonly type: string, readonly data: R
     }
   }
 
-  const duplicateReads = tools.filter(tool => tool.duplicateOfActionCallId !== null).map(tool => ({
-    actionCallId: tool.actionCallId,
-    duplicateOfActionCallId: tool.duplicateOfActionCallId,
-    actionName: tool.actionName,
-    cacheHit: tool.cacheHit
-  }))
+  const duplicateReads = tools
+    .filter(tool => tool.duplicateOfActionCallId !== null)
+    .map(tool => ({
+      actionCallId: tool.actionCallId,
+      duplicateOfActionCallId: tool.duplicateOfActionCallId,
+      actionName: tool.actionName,
+      cacheHit: tool.cacheHit
+    }))
   const findings: Readonly<Record<string, unknown>>[] = []
   if (duplicateReads.length > 0) findings.push({ kind: 'duplicate_page_reads', count: duplicateReads.length, calls: duplicateReads })
   if (rejectedEvidenceDrafts > 0) findings.push({ kind: 'evidence_retries', count: rejectedEvidenceDrafts, issues: [...evidenceIssues] })
@@ -153,22 +213,136 @@ const analyzeTools = (events: readonly { readonly type: string, readonly data: R
 }
 
 export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: string): Promise<Readonly<Record<string, unknown>>> => {
-  const session = await knex('agentSessions').where({ id: sessionId }).first(
-    'id', 'ownerId', 'title', 'titleSource', 'retention', 'folderId', 'providerProfileId', 'executionMode', 'version', 'summary', 'summaryThroughOrdinal', 'memorySnapshot', 'createdAt', 'updatedAt', 'lastActivityAt', 'expiresAt', 'deletedAt'
-  ) as Record<string, unknown> | undefined
+  const session = (await knex('agentSessions')
+    .where({ id: sessionId })
+    .first(
+      'id',
+      'ownerId',
+      'title',
+      'titleSource',
+      'retention',
+      'folderId',
+      'providerProfileId',
+      'executionMode',
+      'version',
+      'summary',
+      'summaryThroughOrdinal',
+      'memorySnapshot',
+      'createdAt',
+      'updatedAt',
+      'lastActivityAt',
+      'expiresAt',
+      'deletedAt'
+    )) as Record<string, unknown> | undefined
   if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
 
   const [messages, runRows, eventRows, skillRows, goals] = await Promise.all([
-    knex('agentMessages').where({ sessionId }).orderBy('ordinal').select('id', 'runId', 'ordinal', 'role', 'status', 'content', 'isVisible', 'citations', 'providerStateSha256', 'createdAt', 'updatedAt') as Promise<Array<Record<string, unknown>>>,
-    knex('agentRuns').where({ sessionId }).orderBy('queuedAt').select(
-      'id', 'userMessageId', 'assistantMessageId', 'clientRequestId', 'goalId', 'goalContinuation', 'status', 'attempts', 'maxAttempts', 'eventSequence', 'availableAt', 'cancelRequestedAt', 'sideEffectsStarted', 'providerProfileVersionId', 'transportKind', 'model', 'executionMode', 'profilePolicyVersion', 'defaultGeneration', 'capabilityRevision', 'pricingRevision', 'promptVersion', 'inputTokens', 'outputTokens', 'estimatedCostMicros', 'completionOutcome', 'completionAssessment', 'completionAssessmentSha256', 'errorCode', 'errorMessage', 'queuedAt', 'startedAt', 'updatedAt', 'completedAt'
-    ) as Promise<Array<Record<string, unknown>>>,
-    knex<DiagnosticEventRow>('agentEvents').join('agentRuns', 'agentRuns.id', 'agentEvents.runId').where('agentRuns.sessionId', sessionId).orderBy('agentRuns.queuedAt').orderBy('agentEvents.sequence').select('agentEvents.*'),
-    knex('agentRunSkills').join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId').join('agentSkills', 'agentSkills.id', 'agentSkillVersions.skillId').join('agentRuns', 'agentRuns.id', 'agentRunSkills.runId').where('agentRuns.sessionId', sessionId).orderBy('agentRunSkills.ordinal').select('agentRunSkills.runId', 'agentRunSkills.ordinal', 'agentSkillVersions.id as versionId', 'agentSkillVersions.contentHash', 'agentSkillVersions.skillMarkdown', 'agentSkills.name') as Promise<Array<Record<string, unknown>>>,
-    knex('agentGoals').where({ sessionId }).orderBy('startedAt').select('id', 'objective', 'objectiveSha256', 'status', 'version', 'continuationCount', 'maxContinuations', 'consumedTokens', 'maxTokens', 'consumedToolCalls', 'maxToolCalls', 'completionOutcome', 'completionAssessment', 'completionAssessmentSha256', 'errorCode', 'errorMessage', 'startedAt', 'deadlineAt', 'updatedAt', 'completedAt') as Promise<Array<Record<string, unknown>>>
+    knex('agentMessages')
+      .where({ sessionId })
+      .orderBy('ordinal')
+      .select('id', 'runId', 'ordinal', 'role', 'status', 'content', 'isVisible', 'citations', 'providerStateSha256', 'createdAt', 'updatedAt') as Promise<
+      Array<Record<string, unknown>>
+    >,
+    knex('agentRuns')
+      .where({ sessionId })
+      .orderBy('queuedAt')
+      .select(
+        'id',
+        'userMessageId',
+        'assistantMessageId',
+        'clientRequestId',
+        'goalId',
+        'goalContinuation',
+        'status',
+        'attempts',
+        'maxAttempts',
+        'eventSequence',
+        'availableAt',
+        'cancelRequestedAt',
+        'sideEffectsStarted',
+        'providerProfileVersionId',
+        'transportKind',
+        'model',
+        'executionMode',
+        'profilePolicyVersion',
+        'defaultGeneration',
+        'capabilityRevision',
+        'pricingRevision',
+        'promptVersion',
+        'inputTokens',
+        'outputTokens',
+        'totalTokens',
+        'estimatedCostMicros',
+        'completionOutcome',
+        'completionAssessment',
+        'completionAssessmentSha256',
+        'errorCode',
+        'errorMessage',
+        'queuedAt',
+        'startedAt',
+        'updatedAt',
+        'completedAt'
+      ) as Promise<Array<Record<string, unknown>>>,
+    knex<DiagnosticEventRow>('agentEvents')
+      .join('agentRuns', 'agentRuns.id', 'agentEvents.runId')
+      .where('agentRuns.sessionId', sessionId)
+      .orderBy('agentRuns.queuedAt')
+      .orderBy('agentEvents.sequence')
+      .select('agentEvents.*'),
+    knex('agentRunSkills')
+      .join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId')
+      .join('agentSkills', 'agentSkills.id', 'agentSkillVersions.skillId')
+      .join('agentRuns', 'agentRuns.id', 'agentRunSkills.runId')
+      .where('agentRuns.sessionId', sessionId)
+      .orderBy('agentRunSkills.ordinal')
+      .select(
+        'agentRunSkills.runId',
+        'agentRunSkills.ordinal',
+        'agentSkillVersions.id as versionId',
+        'agentSkillVersions.contentHash',
+        'agentSkillVersions.skillMarkdown',
+        'agentSkills.name'
+      ) as Promise<Array<Record<string, unknown>>>,
+    knex('agentGoals')
+      .where({ sessionId })
+      .orderBy('startedAt')
+      .select(
+        'id',
+        'objective',
+        'objectiveSha256',
+        'status',
+        'version',
+        'continuationCount',
+        'maxContinuations',
+        'consumedTokens',
+        'maxTokens',
+        'consumedToolCalls',
+        'maxToolCalls',
+        'completionOutcome',
+        'completionAssessment',
+        'completionAssessmentSha256',
+        'errorCode',
+        'errorMessage',
+        'startedAt',
+        'deadlineAt',
+        'updatedAt',
+        'completedAt'
+      ) as Promise<Array<Record<string, unknown>>>
   ])
 
-  const eventsByRun = new Map<string, Array<{ id: string, sequence: number, type: string, attempt: number, schemaVersion: number, dataSha256: string, data: Record<string, unknown>, createdAt: string }>>()
+  const eventsByRun = new Map<
+    string,
+    Array<{
+      id: string
+      sequence: number
+      type: string
+      attempt: number
+      schemaVersion: number
+      dataSha256: string
+      data: Record<string, unknown>
+      createdAt: string
+    }>
+  >()
   for (const row of eventRows) {
     if (sha256(row.data) !== row.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent event payload hash mismatch', 500)
     const event = {
@@ -195,11 +369,14 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
     else skillsByRun.set(runId, [skill])
   }
 
-  const runs = runRows.map(row => {
+  const runs: Array<Readonly<Record<string, unknown>>> = []
+  const totals = { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostMicros: 0 }
+  for (const row of runRows) {
+    const usage = readDiagnosticUsage(row)
     const id = String(row.id)
     const timeline = eventsByRun.get(id) ?? []
     const diagnostics = analyzeTools(timeline)
-    return {
+    const run = {
       id,
       userMessageId: row.userMessageId,
       assistantMessageId: row.assistantMessageId,
@@ -223,17 +400,15 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
         defaultGeneration: Number(row.defaultGeneration),
         promptVersion: Number(row.promptVersion)
       },
-      usage: {
-        inputTokens: Number(row.inputTokens),
-        outputTokens: Number(row.outputTokens),
-        totalTokens: Number(row.inputTokens) + Number(row.outputTokens),
-        estimatedCostMicros: row.estimatedCostMicros === null ? null : Number(row.estimatedCostMicros)
-      },
-      completion: row.completionOutcome === null ? null : {
-        outcome: row.completionOutcome,
-        assessment: parseOptionalJson(row.completionAssessment),
-        sha256: row.completionAssessmentSha256
-      },
+      usage,
+      completion:
+        row.completionOutcome === null
+          ? null
+          : {
+              outcome: row.completionOutcome,
+              assessment: parseOptionalJson(row.completionAssessment),
+              sha256: row.completionAssessmentSha256
+            },
       error: row.errorCode === null ? null : { code: row.errorCode, message: row.errorMessage },
       queuedAt: iso(row.queuedAt as Date | string),
       startedAt: nullableIso(row.startedAt as Date | string | null),
@@ -243,21 +418,21 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
       timeline,
       diagnostics
     }
-  })
-
-  const totals = runs.reduce((sum, run) => ({
-    inputTokens: sum.inputTokens + run.usage.inputTokens,
-    outputTokens: sum.outputTokens + run.usage.outputTokens,
-    totalTokens: sum.totalTokens + run.usage.totalTokens,
-    estimatedCostMicros: sum.estimatedCostMicros + (run.usage.estimatedCostMicros ?? 0)
-  }), { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostMicros: 0 })
+    totals.inputTokens = safeDiagnosticAdd(totals.inputTokens, usage.inputTokens, diagnosticUsageOverflow)
+    totals.outputTokens = safeDiagnosticAdd(totals.outputTokens, usage.outputTokens, diagnosticUsageOverflow)
+    totals.totalTokens = safeDiagnosticAdd(totals.totalTokens, usage.totalTokens, diagnosticUsageOverflow)
+    if (usage.estimatedCostMicros !== null)
+      totals.estimatedCostMicros = safeDiagnosticAdd(totals.estimatedCostMicros, usage.estimatedCostMicros, diagnosticUsageOverflow)
+    runs.push(run)
+  }
 
   return {
     schemaVersion: 1,
     exportedAt: new Date().toISOString(),
     limitations: {
       modelRationale: 'Private chain-of-thought is neither retained nor exported. Tool reasons identify observable control-flow context only.',
-      historicalToolInputs: 'Tool inputs are available for runs created after diagnostic input capture was enabled. Older selectors may be inferred from successful outputs.',
+      historicalToolInputs:
+        'Tool inputs are available for runs created after diagnostic input capture was enabled. Older selectors may be inferred from successful outputs.',
       intermediateContent: 'Model turn content is capped at 32,000 characters per turn; final assistant messages are complete in messages.'
     },
     session: {

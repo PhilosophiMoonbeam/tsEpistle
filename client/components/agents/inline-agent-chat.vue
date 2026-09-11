@@ -108,40 +108,25 @@
               />
             </v-list>
           </v-menu>
-          <v-menu content-class="agent-owned-overlay" location="bottom end" attach=".inline-agent">
-            <template #activator="{ props: menuProps }">
-              <v-btn
-                v-bind="menuProps"
-                ref="newSessionTrigger"
-                class="inline-agent__session-action inline-agent__new-session"
-                prepend-icon="mdi-plus"
-                variant="tonal"
-                :loading="Boolean(creatingRetention)"
-                aria-label="New conversation"
-                :disabled="loading || sending || sessionMutationBusy"
-              >New</v-btn>
-            </template>
-            <v-list density="compact">
-              <v-list-item
-                class="inline-agent__panel-menu-item"
-                link
-                prepend-icon="mdi-bookmark-outline"
-                title="Saved conversation"
-                subtitle="Keep this conversation in history"
-                :disabled="loading || sending || sessionMutationBusy"
-                @click="newSession"
-              />
-              <v-list-item
-                class="inline-agent__panel-menu-item"
-                link
-                prepend-icon="mdi-clock-outline"
-                title="Temporary conversation"
-                subtitle="Start without saving to history"
-                :disabled="loading || sending || sessionMutationBusy"
-                @click="newTemporarySession"
-              />
-            </v-list>
-          </v-menu>
+          <v-btn
+            class="inline-agent__session-action inline-agent__new-session"
+            prepend-icon="mdi-plus"
+            variant="tonal"
+            :loading="creatingRetention === 'saved'"
+            aria-label="New conversation"
+            :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention)"
+            @click="newSession"
+          >New</v-btn>
+          <v-btn
+            class="inline-agent__session-action inline-agent__temporary-session"
+            icon="mdi-clock-outline"
+            variant="text"
+            :loading="creatingRetention === 'temporary'"
+            aria-label="Temporary conversation"
+            title="Start a temporary conversation"
+            :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention)"
+            @click="newTemporarySession"
+          />
           <v-btn class="inline-agent__mobile-close" icon="mdi-close" variant="text" aria-label="Close Wiki Agent" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('close')" />
         </div>
       </v-toolbar>
@@ -176,7 +161,7 @@
             {{ providerUnavailableMessage }}
           </v-alert>
           <v-alert
-            v-if="!loading && !thread && initializationError"
+            v-if="!loading && initializationError"
             class="inline-agent__alert inline-agent__initialization-error"
             type="error"
             variant="tonal"
@@ -230,7 +215,7 @@
                     variant="text"
                     :disabled="!canSubmit"
                     :title="!canSubmit ? submitUnavailableReason : undefined"
-                    @click="preparePrompt(starter.prompt)"
+                    @click="sendPrompt(starter.prompt)"
                   >
                     <v-icon start :icon="starter.icon" />
                     <span class="inline-agent__starter-copy"><strong>{{ starter.label }}</strong><small>{{ starter.description }}</small></span>
@@ -267,32 +252,40 @@
               </div>
             </div>
 
-            <nav
-              v-if="approvalJumpVisible || followJumpVisible"
-              class="inline-agent__jump-dock"
-              aria-label="Conversation navigation"
-            >
-              <v-btn
-                v-if="approvalJumpVisible"
-                class="inline-agent__approval-jump"
-                color="warning"
-                variant="elevated"
-                prepend-icon="mdi-shield-alert-outline"
-                append-icon="mdi-arrow-down"
-                @click="jumpToApproval"
-              >Approval required</v-btn>
-              <v-btn
-                v-else
-                class="inline-agent__follow-jump"
-                color="primary"
-                variant="tonal"
-                prepend-icon="mdi-arrow-down"
-                aria-label="Jump to latest response"
-                @click="scrollToLatest"
-              >Latest response</v-btn>
-            </nav>
           </div>
+
         </div>
+        <nav
+          v-if="approvalJumpVisible || followJumpVisible"
+          class="inline-agent__jump-dock"
+          aria-label="Conversation navigation"
+        >
+          <v-btn
+            v-if="approvalJumpVisible"
+            class="inline-agent__approval-jump"
+            color="warning"
+            variant="elevated"
+            prepend-icon="mdi-shield-alert-outline"
+            append-icon="mdi-arrow-down"
+            @click="jumpToApproval"
+          >Approval required</v-btn>
+          <v-btn
+            v-else
+            class="inline-agent__follow-jump"
+            color="primary"
+            variant="text"
+            aria-label="Jump to latest response"
+            @click="scrollToLatest"
+          >
+            <span class="inline-agent__follow-jump-frame">
+              <span class="inline-agent__follow-jump-halo" aria-hidden="true" />
+              <span class="inline-agent__follow-jump-face">
+                <v-icon icon="mdi-arrow-down" size="16" aria-hidden="true" />
+                <span>Latest response</span>
+              </span>
+            </span>
+          </v-btn>
+        </nav>
 
         <footer class="inline-agent__composer">
           <div class="inline-agent__composer-inner">
@@ -307,6 +300,10 @@
               <v-icon icon="mdi-lock-outline" size="16" aria-hidden="true" />
               <span>{{ openGoal ? goalSubmitUnavailableReason : submitUnavailableReason }}</span>
             </p>
+            <p v-if="pinStorageAvailable === false" class="inline-agent__pin-storage-warning" role="status" aria-live="polite">
+              <v-icon icon="mdi-information-outline" size="16" aria-hidden="true" />
+              <span>Pinning is available for this tab, but browser storage is unavailable; it will not survive a reload.</span>
+            </p>
             <AgentComposer
               :key="thread?.session.id ?? 'opening'"
               ref="composer"
@@ -314,6 +311,9 @@
               :initial-draft="thread ? agents.drafts[thread.session.id]?.text : ''"
               :initial-mode="thread ? agents.drafts[thread.session.id]?.mode : 'message'"
               :initial-skill-version-ids="thread ? agents.drafts[thread.session.id]?.skillVersionIds : []"
+              :chat-pinned="Boolean(thread && pinnedSessionId === thread.session.id)"
+              :chat-pin-disabled="!canPinCurrentChat"
+              @update:chat-pinned="setCurrentChatPinned"
               @draft-change="agents.setDraft"
               @composition-change="agents.updateDraft"
               :sending="sending"
@@ -440,6 +440,8 @@ import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './age
 
 const props = defineProps<{
   csrfToken: string
+  ownerId: number
+  resumeSessionId?: string
   approvalId?: string
   providerEnabled: boolean
   skillsEnabled: boolean
@@ -455,7 +457,7 @@ const emit = defineEmits<{
 }>()
 
 const agents = useAgentsStore()
-const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread } = storeToRefs(agents)
+const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, loading, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void> }>('composer')
@@ -480,6 +482,7 @@ const clearingUnfiledHistory = ref(false)
 const clearUnfiledError = ref('')
 const clearUnfiledCommitted = ref(false)
 const creatingRetention = ref<'saved' | 'temporary' | null>(null)
+const promptSubmissionPending = ref(false)
 const keepingConversation = ref(false)
 const sessionNotice = ref('')
 const historyOpen = ref(false)
@@ -494,7 +497,7 @@ let transcriptFrameShouldFollow = false
 let panelFocusScope: ModalFocusScope | null = null
 let panelFocusKind: 'history' | 'memory' | null = null
 let pendingPanelFocusKind: 'history' | 'memory' | null = null
-let initialization: Promise<void> | null = null
+let initialization: Promise<boolean> | null = null
 const panelMode = ref<'wide' | 'docked' | 'modal'>('wide')
 let panelModeMedia: MediaQueryList[] = []
 const mobilePanelQuery = '(max-width: 639.98px)'
@@ -518,13 +521,13 @@ const providerAvailable = computed(() => props.providerEnabled && profiles.value
 const providerUnavailableMessage = computed(() => props.providerEnabled
   ? 'No enabled provider profile is available for your account. Ask an administrator to grant one in Administration → Agents.'
   : 'Agent inference is currently disabled. An administrator can configure it in Administration → Agents.')
-const canSubmit = computed(() => providerAvailable.value && !loading.value && !sending.value && !sessionMutationBusy.value && Boolean(thread.value) && !activeRun.value && !openGoal.value)
+const canSubmit = computed(() => providerAvailable.value && !initializationError.value && !loading.value && !sending.value && !sessionMutationBusy.value && Boolean(thread.value) && !activeRun.value && !openGoal.value)
 const goalSubmitUnavailableReason = computed(() => !openGoal.value
   ? ''
   : openGoal.value.status === 'paused'
     ? 'Resume or cancel the current goal before sending a message'
     : 'Finish or cancel the current goal before sending a message')
-const submitUnavailableReason = computed(() => !providerAvailable.value ? providerUnavailableMessage.value : loading.value ? 'Opening conversation' : sending.value ? 'Sending your message' : sessionMutationBusy.value ? 'Wait for the current conversation update to finish' : activeRun.value ? 'Wait for the current response to finish' : openGoal.value ? goalSubmitUnavailableReason.value : '')
+const submitUnavailableReason = computed(() => !providerAvailable.value ? providerUnavailableMessage.value : loading.value ? 'Opening conversation' : initializationError.value ? 'The requested conversation could not be opened' : sending.value ? 'Sending your message' : sessionMutationBusy.value ? 'Wait for the current conversation update to finish' : activeRun.value ? 'Wait for the current response to finish' : openGoal.value ? goalSubmitUnavailableReason.value : '')
 const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
 const invocationLimit = computed(() => Math.max(0, 8 - preferredSkillIds.value.length))
 const isTemporary = computed(() => thread.value?.session.retention === 'temporary' && !thread.value.session.folderId)
@@ -541,18 +544,20 @@ const connectionLabel = computed(() => loading.value
     ? 'Reconnecting'
     : !providerAvailable.value
       ? 'Unavailable'
-      : Boolean(error.value)
+      : Boolean(initializationError.value)
         ? 'Try again'
-        : activeRun.value?.status === 'awaiting_approval'
-          ? 'Review needed'
-          : sending.value
-            ? 'Sending'
-            : activeRun.value
-              ? 'Working'
-              : 'Ready')
+        : Boolean(error.value)
+          ? 'Try again'
+          : activeRun.value?.status === 'awaiting_approval'
+            ? 'Review needed'
+            : sending.value
+              ? 'Sending'
+              : activeRun.value
+                ? 'Working'
+                : 'Ready')
 const connectionTone = computed<'ready' | 'error' | 'busy'>(() => loading.value || connection.value === 'reconnecting'
   ? 'busy'
-  : !providerAvailable.value || Boolean(error.value)
+  : !providerAvailable.value || Boolean(error.value) || Boolean(initializationError.value)
     ? 'error'
     : sending.value || Boolean(activeRun.value)
       ? 'busy'
@@ -567,9 +572,12 @@ const starters = computed(() => [
 
 const activeDraft = computed(() => thread.value ? agents.drafts[thread.value.session.id] ?? emptyAgentDraft() : emptyAgentDraft())
 const patchDraft = (patch: Partial<AgentDraft>): void => { if (thread.value) agents.updateDraft(thread.value.session.id, patch) }
+const setCurrentChatPinned = (pinned: boolean): void => {
+  agents.setCurrentChatPinned(pinned)
+}
 
 const preparePrompt = async (prompt: string, source?: WikiSource, scope?: AgentSearchScope): Promise<void> => {
-  await ensureInitialized()
+  if (!await ensureInitialized()) return
   const sessionId = thread.value?.session.id
   if (!sessionId) return
   if (scope) agents.updateDraft(sessionId, { scope })
@@ -584,42 +592,49 @@ const preparePrompt = async (prompt: string, source?: WikiSource, scope?: AgentS
   const existing = agents.drafts[sessionId]?.text ?? ''
   await composer.value?.setDraft(existing.trim() && existing.trim() !== prompt.trim() ? source ? existing : `${existing}\n\n${prompt}` : prompt)
 }
-
 const initializationFailureMessage = (value: unknown): string =>
   value instanceof Error && value.message
     ? value.message
     : typeof value === 'string' && value
       ? value
       : 'The conversation could not be opened.'
-const ensureInitialized = (): Promise<void> => {
+const ensureInitialized = (): Promise<boolean> => {
   if (initialization) return initialization
   initializationError.value = ''
-  const pending = agents.initialize(props.csrfToken, { routeSync: false, currentPage: currentPage.value, reuseLatest: true })
+  const pending = agents.initialize(props.csrfToken, {
+    ownerId: props.ownerId,
+    resumeSessionId: props.resumeSessionId,
+    routeSync: false,
+    currentPage: currentPage.value
+  })
   const tracked = pending.then(
-    () => {
-      if (thread.value) {
+    success => {
+      const initialized = Boolean(success)
+      if (initialized) {
         initializationError.value = ''
-        return
+      } else {
+        initializationError.value = error.value || 'The conversation could not be opened. Retry to try again.'
+        if (initialization === tracked) initialization = null
       }
-      initializationError.value = error.value || 'The conversation could not be opened. Retry to try again.'
-      if (initialization === tracked) initialization = null
+      return initialized
     },
     value => {
-      if (!thread.value) initializationError.value = initializationFailureMessage(value)
+      initializationError.value = initializationFailureMessage(value)
       if (initialization === tracked) initialization = null
+      return false
     }
   )
   initialization = tracked
   return tracked
 }
 const retryInitialization = async (): Promise<void> => {
-  if (loading.value || thread.value) return
+  if (loading.value || !initializationError.value) return
   initializationError.value = ''
   agents.error = ''
   await ensureInitialized()
 }
 const focusComposer = async (): Promise<void> => {
-  await ensureInitialized()
+  if (!await ensureInitialized()) return
   await nextTick()
   await composer.value?.focusInput()
 }
@@ -632,9 +647,11 @@ const sendPrompt = async (
   const prompt = content.trim()
   if (sessionMutationBusy.value) { completion?.(false); return false }
   if (!prompt) { completion?.(false); return false }
+  if (promptSubmissionPending.value) { completion?.(false); return false }
+  promptSubmissionPending.value = true
   try {
-    await ensureInitialized()
-    if (!canSubmit.value || (mode === 'goal' && !props.goalsEnabled)) { completion?.(false); return false }
+    const initialized = await ensureInitialized()
+    if (!initialized || !canSubmit.value || (mode === 'goal' && !props.goalsEnabled)) { completion?.(false); return false }
     const success = await agents.send(prompt, invokedSkillVersionIds, mode)
     completion?.(success)
     return success
@@ -642,6 +659,8 @@ const sendPrompt = async (
     agents.error = value instanceof Error ? value.message : 'The message could not be sent.'
     completion?.(false)
     return false
+  } finally {
+    promptSubmissionPending.value = false
   }
 }
 const focusConversation = async (): Promise<void> => {
@@ -680,11 +699,10 @@ const createSession = async (retention: 'saved' | 'temporary'): Promise<void> =>
   creatingRetention.value = retention
   sessionNotice.value = ''
   try {
-    await ensureInitialized()
-    if (sessionMutationBusy.value) return
-    await agents.newSession(retention)
-    if (thread.value?.session.retention === retention) {
-      sessionNotice.value = retention === 'saved' ? 'New conversation ready.' : ''
+    const initialized = await ensureInitialized()
+    if (!initialized || sessionMutationBusy.value) return
+    const created = await agents.newSession(retention)
+    if (created && thread.value?.session.retention === retention) {
       await nextTick()
       await composer.value?.focusInput()
     }
@@ -1173,6 +1191,11 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__new-session {
   margin-inline-start: var(--wiki-space-1);
 }
+.inline-agent__temporary-session {
+  width: var(--wiki-control-height);
+  min-width: var(--wiki-control-height);
+  padding-inline: 0;
+}
 .inline-agent__progress {
   position: absolute;
   z-index: 3;
@@ -1206,7 +1229,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   flex: 1 1 auto;
   flex-direction: column;
   overflow: hidden;
-  padding: var(--wiki-space-4) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)) 0;
+  padding: var(--wiki-space-4) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)) var(--wiki-space-2);
   background: rgb(var(--v-theme-background));
 }
 .inline-agent__transcript-wrap {
@@ -1306,16 +1329,88 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__jump-dock {
   display: flex;
+  align-items: center;
   width: min(100%, var(--agent-conversation-width));
+  box-sizing: border-box;
   flex: 0 0 auto;
   justify-content: flex-end;
   margin-inline: auto;
-  padding: var(--wiki-space-1) var(--wiki-space-1) var(--wiki-space-2);
+  padding: var(--wiki-space-4);
+  border: 0;
+  background: rgb(var(--v-theme-background));
 }
 
-.inline-agent__approval-jump,
-.inline-agent__follow-jump {
+.inline-agent__approval-jump {
   box-shadow: var(--wiki-shadow-md);
+}
+
+.inline-agent__follow-jump {
+  box-sizing: border-box;
+  min-width: 36px;
+  min-height: 36px;
+  height: auto;
+  padding: 0;
+  border-radius: var(--wiki-control-radius);
+  background: transparent !important;
+  box-shadow: none;
+}
+
+.inline-agent__follow-jump :deep(.v-btn__content) {
+  min-height: 36px;
+  padding: 0;
+}
+
+.inline-agent__follow-jump-frame {
+  position: relative;
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+}
+
+.inline-agent__follow-jump-halo {
+  position: absolute;
+  inset: -2px;
+  border-radius: var(--wiki-control-radius);
+  background: linear-gradient(
+    90deg,
+    var(--wiki-accent-warm),
+    var(--wiki-ambient-accent),
+    var(--wiki-accent-spectral)
+  );
+  filter: blur(4px);
+  opacity: .42;
+  pointer-events: none;
+}
+
+.inline-agent__follow-jump-face {
+  position: relative;
+  display: inline-flex;
+  min-height: 36px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: var(--wiki-space-1);
+  padding-inline: var(--wiki-space-2);
+  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 38%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-md);
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .75rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.inline-agent__follow-jump-face :deep(.v-icon) {
+  flex: 0 0 auto;
+  font-size: 16px;
+}
+
+@media (pointer: coarse) {
+  .inline-agent__follow-jump {
+    min-height: 44px;
+    padding: 4px;
+  }
 }
 
 .inline-agent__welcome {
@@ -1436,6 +1531,15 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   color: rgb(var(--v-theme-on-surface));
   font-size: var(--wiki-label-size);
   font-weight: 500;
+  line-height: 1.4;
+}
+.inline-agent__pin-storage-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wiki-space-2);
+  margin: 0 0 var(--wiki-space-3);
+  color: color-mix(in srgb, rgb(var(--v-theme-warning)) 88%, rgb(var(--v-theme-on-surface)));
+  font-size: var(--wiki-label-size);
   line-height: 1.4;
 }
 
@@ -1809,7 +1913,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__body {
-    padding: var(--wiki-space-2) var(--wiki-space-3) 0;
+    padding: var(--wiki-space-2) var(--wiki-space-3) var(--wiki-space-2);
   }
 
   .inline-agent__transcript {
@@ -1852,9 +1956,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     white-space: nowrap;
   }
 
-  .inline-agent__jump-dock {
-    padding-inline: 0;
-  }
 }
 
 
@@ -1922,6 +2023,18 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
   .inline-agent__loading-mark {
     background: Highlight;
+  }
+  .inline-agent__follow-jump-halo,
+  .inline-agent__follow-jump :deep(.v-btn__underlay),
+  .inline-agent__follow-jump :deep(.v-btn__overlay) {
+    display: none;
+  }
+
+  .inline-agent__follow-jump-face {
+    border-color: ButtonText;
+    background: ButtonFace;
+    box-shadow: none;
+    color: ButtonText;
   }
 }
 
