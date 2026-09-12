@@ -3363,11 +3363,13 @@ export default defineComponent({
   h6 {
     position: relative;
     scroll-margin-block-start: calc(var(--v-layout-top, var(--wiki-grid-size)) + var(--wiki-space-8));
+    padding-inline-end: 1.3em;
 
     .toc-anchor {
       position: absolute;
       inset-block-end: .08em;
-      inset-inline-start: calc(100% + var(--wiki-space-2));
+      inset-inline-end: 0;
+      inset-inline-start: auto;
       display: inline-flex;
       color: var(--wiki-accent-ink);
       font-size: .72em;
@@ -3701,8 +3703,6 @@ export default defineComponent({
     h5,
     h6 {
       .toc-anchor {
-        position: static;
-        margin-inline-start: var(--wiki-space-1);
         opacity: .48;
       }
     }
