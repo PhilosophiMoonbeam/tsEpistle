@@ -72,6 +72,7 @@
         :model-value="modelValue.config[field.key]"
         @update:model-value="updateConfig(field.key, $event)"
         :label="field.title"
+        autocomplete="off"
         rows="4"
         auto-grow
         variant="outlined"
@@ -85,6 +86,7 @@
         @update:model-value="updateConfig(field.key, Number($event))"
         :label="field.title"
         type="number"
+        autocomplete="off"
         variant="outlined"
         :disabled="disabled"
         :hint="field.hint"
@@ -95,6 +97,7 @@
         :model-value="modelValue.config[field.key]"
         @update:model-value="updateConfig(field.key, $event)"
         :label="field.title"
+        autocomplete="off"
         variant="outlined"
         :disabled="disabled"
         :hint="field.hint"

@@ -98,6 +98,16 @@ function arrange(overrides: Record<string, unknown> = {}) {
   return { state, component, transport, window }
 }
 describe('reviewed authentication workspace', () => {
+  it('keeps provider configuration out of browser credential autofill', () => {
+    const source = fs.readFileSync('client/components/admin/admin-auth-fields.vue', 'utf8')
+    const parsed = parse(source, { filename: 'client/components/admin/admin-auth-fields.vue' })
+    expect(parsed.errors).toEqual([])
+    const template = parsed.descriptor.template?.content ?? ''
+    expect(template).toMatch(/v-textarea[\s\S]*?v-else-if="field\.multiline"[\s\S]*?autocomplete="off"/)
+    expect(template).toMatch(/v-text-field[\s\S]*?field\.type === 'number'[\s\S]*?autocomplete="off"/)
+    expect(template).toMatch(/v-text-field[\s\S]*?v-else[\s\S]*?autocomplete="off"/)
+    expect(template).toMatch(/type="password"[\s\S]*?autocomplete="new-password"/)
+  })
   it('isolates drafts, normalizes insignificant whitespace and protects navigation', async () => {
     const { state, window } = arrange()
     await state.load()

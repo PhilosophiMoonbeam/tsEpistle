@@ -3,9 +3,9 @@
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "6053cb982f254f2d52b2a043864a999c725240f7",
-    "recordedAt": "2026-08-29T04:12:49-04:00",
-    "lastFetchedAt": "2026-08-29T17:40:25+00:00"
+    "recordedTip": "1c7d709b1a0cd4bd755c60aaeef19744b6c7f089",
+    "recordedAt": "2026-09-12T03:42:22-04:00",
+    "lastFetchedAt": "2026-09-12T21:40:49.935Z"
   },
   "forkCheckpoint": "6713df41c978b1c772159eae06f9c59c3e590d3f",
   "candidates": [
@@ -528,6 +528,146 @@
       "workstream": "architecture-boundaries",
       "contract": "The fork retains Express, Objection, its existing Nodemailer template pipeline, Vuetify, and locale namespaces; Scarlett Fastify schemas, Drizzle models, Tailwind components, duplicate mail renderer, and multisite strategy IDs are not transplanted.",
       "lastReviewed": "2026-08-29"
+    },
+    {
+      "id": "authentication-login-race-and-tfa-manual-2026-08-29",
+      "commits": ["73dbbdcb"],
+      "category": "authentication-security",
+      "disposition": "compare",
+      "state": "completed",
+      "workstream": "release-assurance/authentication",
+      "contract": "The fork's fetch-based authentication transport does not retry writes, every continuation action is single-flight, and forced TFA enrollment already exposes a validated manual secret alongside a sanitized QR image.",
+      "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "scarlett-beta-branding-and-publication-2026-09-02",
+      "commits": ["a49f1ab6", "d513c930", "8baa5e28", "51a42038", "bab67a5c", "f4868a8c", "47207e17", "bfafd9d4"],
+      "category": "release",
+      "disposition": "supersede",
+      "state": "closed",
+      "workstream": "release-assurance/artifacts",
+      "contract": "tsEpistle keeps its independent alpha identity, repositories and documentation; its Dockerfiles and canary workflow already emit fork-owned OCI identity, revision and source metadata, so Scarlett beta tags, sponsors, registries and annotations are not copied.",
+      "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "asset-and-folder-management-2026-09-05",
+      "commits": ["7dfb9abe"],
+      "category": "assets",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "admin/assets",
+      "contract": "The fork retains its authorized asset and folder GraphQL/REST operations, storage abstraction and existing editor media workflow; Scarlett Fastify, Drizzle, Tailwind, folder-color and View Transition implementations are not transplanted.",
+      "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "public-user-profiles-2026-09-05",
+      "commits": ["a857f96b"],
+      "category": "privacy",
+      "disposition": "conditional",
+      "state": "closed",
+      "workstream": "accounts/public-profiles",
+      "contract": "Self-service profiles remain private account administration. Public author pages require an explicit exposure policy, field-level consent, authorization-safe page projections and deletion behavior before adding a public route or search surface.",
+      "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "drawio-and-steps-blocks-2026-09",
+      "commits": ["7cf47610", "1c7d709b"],
+      "category": "extension",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "wave-4/extension-sdk",
+      "contract": "Draw.io authoring remains available through the fork's native editor modal. New rendered constructs enter through versioned strict content-extension envelopes with sanitized fallbacks and lifecycle tests; Scarlett custom elements containing unversioned body markup are not copied, so Steps remains a future extension candidate.",
+      "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "global-audit-log-2026-09-06",
+      "commits": ["d39f2eff"],
+      "category": "audit",
+      "disposition": "conditional",
+      "state": "closed",
+      "workstream": "admin/audit-history",
+      "contract": "Reviewed administration workspaces keep actor-attributed, bounded domain histories and durable mutation records. A global audit ledger is added only with fork-native event coverage, authorization, retention, redaction, migration and high-availability semantics rather than Scarlett's new schema and best-effort call-site instrumentation.",
+      "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "runtime-proxy-and-admin-autofill-2026-09",
+      "commits": ["e8b6fcb3", "800fb31b"],
+      "category": "security",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "release-assurance/authentication",
+      "contract": "Express proxy trust is already applied immediately through reviewed security administration. Identity-provider and storage credentials remain write-only; browser autofill is suppressed on every provider configuration field, with new-password retained for replacement secrets.",
+      "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "metrics-surface-2026-09-06",
+      "commits": ["fb184f63", "acb555ea"],
+      "category": "operations",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "admin/system-observability",
+      "contract": "The fork already owns a Prometheus registry, an enableable manage-system-protected metrics endpoint, focused tests and system observations; Scarlett's Fastify metrics page and alternate client dependency are not transplanted.",
+      "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "page-version-and-print-experience-2026-09",
+      "commits": ["50adab2e", "7ea92a98"],
+      "category": "reader-experience",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "wave-3/history",
+      "contract": "Authorized immutable version retrieval, source/download/branch/restore actions and a responsive history experience already exist. The fork's print mode expands details and tabsets, removes application chrome, preserves document flow and handles dark mode without adopting Scarlett layouts or styles.",
+      "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "authentication-provider-expansion-2026-09",
+      "commits": ["0c8108d5", "d668ba70", "0052ec61", "b2edc4fd"],
+      "category": "authentication-security",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "release-assurance/authentication",
+      "contract": "The fork retains its established Azure/Microsoft, LDAP, SAML, OIDC, Discord, GitHub and Google modules, centralized group provisioning, OAuth state checks and login-provider focus behavior. Provider-wide credential-bearing debug logs are rejected; the bounded existing LDAP diagnostic flag remains explicit and reviewed.",
+      "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "passkeys-and-profile-editing-policy-2026-09-10",
+      "commits": ["ad8e9d39"],
+      "category": "authentication-security",
+      "disposition": "conditional",
+      "state": "closed",
+      "workstream": "accounts/authentication",
+      "contract": "Existing profile edits remain governed by fork account operations. Passkeys require a complete WebAuthn credential lifecycle, recovery, session invalidation, origin/RP validation and administration contract; a settings toggle without that substrate is not transplanted.",
+      "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "page-metadata-and-script-corrections-2026-09",
+      "commits": ["795414ef", "32a656e7"],
+      "category": "correctness",
+      "disposition": "compare",
+      "state": "completed",
+      "workstream": "pages/reader-runtime",
+      "contract": "Server-rendered metadata remains authoritative, tags are locale-aware sorted in the fork's dedicated browser, and page CSS/JavaScript is permission-gated and injected only after page authorization. Same-origin soft navigation deliberately falls back to a full load for pages with custom code, preventing skipped or stale scripts without a second client executor.",
+      "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "root-files-prerender-and-theme-injection-2026-09",
+      "commits": ["8f72bd6d", "1db38cc1", "48835a27"],
+      "category": "reader-runtime",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "pages/reader-runtime",
+      "contract": "Robots policy, canonical server-rendered page HTML, metadata, and bounded reviewed theme CSS/head/body injection already exist in Express. Scarlett's Fastify app-shell prerenderer and public-page sitemap are not copied; a sitemap would need dynamic anonymous page-rule filtering and bounded generation before exposure.",
+      "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "tag-browser-and-search-corrections-2026-09-12",
+      "commits": ["b6bcee8a"],
+      "category": "reader-experience",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "experience-completion/tags",
+      "contract": "The fork already provides a localized responsive tag library with canonical aliases, multi-tag intersection, permission-filtered page results, locale-aware ordering, keyboard semantics and focused end-to-end coverage; Scarlett's Tailwind tag page and stores are not transplanted.",
+      "lastReviewed": "2026-09-12"
     }
   ]
 }
