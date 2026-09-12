@@ -25,7 +25,7 @@ section.account-notifications(aria-labelledby='account-notifications-title')
         @click='openWatchPage($event, item)'
       )
         template(v-slot:prepend='{}')
-          span.account-notifications__unread-marker(v-if='isUnread(item)', aria-hidden='true') !
+          span.account-notifications__unread-marker(v-if='isUnread(item)', aria-hidden='true')
         v-list-item-title {{ watchAction(item, $t) }} · {{ item.title }}
         v-list-item-subtitle {{ watchSummary(item, $t) }}
         template(v-slot:append='{}')
@@ -243,7 +243,8 @@ const openApprovalPage = (event: MouseEvent, item: PageApprovalInboxItem): void 
     margin: 2px var(--wiki-space-2);
     transition: background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
 
-    &:hover {
+    &:hover,
+    &:focus-visible {
       background-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, transparent);
     }
   }
@@ -257,11 +258,11 @@ const openApprovalPage = (event: MouseEvent, item: PageApprovalInboxItem): void 
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.25rem;
-  height: 1.25rem;
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 40%, transparent);
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, transparent);
-  color: rgb(var(--v-theme-primary));
+  width: .5rem;
+  height: .5rem;
+  margin-inline-end: .5rem;
+  border: 1px solid var(--wiki-purpose-primary-ink);
+  background: var(--wiki-purpose-primary-ink);
   border-radius: 999px;
   font-size: .75rem;
   font-weight: 700;
@@ -270,9 +271,9 @@ const openApprovalPage = (event: MouseEvent, item: PageApprovalInboxItem): void 
 
 .account-notifications__unread-state {
   padding: .125rem .5rem;
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 30%, transparent);
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, transparent);
-  color: rgb(var(--v-theme-primary));
+  border: 1px solid var(--wiki-purpose-primary-edge);
+  background: var(--wiki-purpose-primary-fill);
+  color: var(--wiki-purpose-primary-ink);
   border-radius: var(--wiki-radius-pill);
   font-size: .6875rem;
   font-weight: 700;

@@ -2,14 +2,6 @@
 
 @use "sass:math";
 
-:where([dir="rtl"]) {
-  --wiki-heading-swoosh-scale: -1;
-}
-
-:where([dir="ltr"]) {
-  --wiki-heading-swoosh-scale: 1;
-}
-
 // Modern reading surface
 .v-main .contents,
 .editor-page-canvas.contents,

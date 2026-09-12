@@ -19,7 +19,7 @@
         .profile-header
           .profile-header-avatar
             v-avatar(v-if='picture.kind === `initials`', size='64', color='primary')
-              span.text-headline-small.text-white.font-weight-bold {{ picture.initials }}
+              span.text-headline-small.text-on-primary.font-weight-bold {{ picture.initials }}
             v-avatar(v-else-if='picture.kind === `image`', size='64')
               v-img(:src='picture.url', alt='')
             v-avatar(v-else, size='64', color='surface-variant')
@@ -736,7 +736,9 @@ export default {
         return { kind: 'image' as const, url: (pictureUrl === 'internal') ? `/_userav/${wikiStore.user.id}` : pictureUrl }
       }
       const label = this.user?.name || this.user?.email || wikiStore.user.name || wikiStore.user.email || 'User'
-      return { kind: 'initials' as const, initials: label.slice(0, 2).toUpperCase() }
+      const parts = label.trim().split(/\s+/)
+      const initials = ((parts[0]?.charAt(0) || 'U') + (parts.length > 1 ? parts[parts.length - 1]?.charAt(0) || '' : '')).toUpperCase()
+      return { kind: 'initials' as const, initials }
     },
     profileReady () {
       return this.user !== null

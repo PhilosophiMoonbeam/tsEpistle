@@ -194,9 +194,6 @@
                 v-list-item.pl-4(role='button', link, @click='pageView', v-if='mode !== `view`')
                   template(v-slot:prepend): v-icon(color='primary') mdi-file-document-outline
                   v-list-item-title.text-body-medium {{$t('common:header.view')}}
-                v-list-item.pl-4(role='button', link, @click='pageEdit', v-if='mode !== `edit` && hasWritePagesPermission')
-                  template(v-slot:prepend): v-icon(color='primary') mdi-file-document-edit-outline
-                  v-list-item-title.text-body-medium {{$t('common:header.edit')}}
                 v-list-item.pl-4(role='button', link, @click='pageHistory', v-if='mode !== `history` && hasReadHistoryPermission')
                   template(v-slot:prepend): v-icon(color='primary') mdi-history
                   v-list-item-title.text-body-medium {{$t('common:header.history')}}
@@ -890,14 +887,18 @@ export default defineComponent({
 }
 
 .nav-header {
-  --nav-header-accent-direction: 90deg;
   isolation: isolate;
   border-bottom: 1px solid var(--wiki-surface-border) !important;
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 85%, transparent) !important;
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  background: rgb(var(--v-theme-surface)) !important;
   color: rgb(var(--v-theme-on-surface));
   box-shadow: none !important;
+
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    background: var(--wiki-glass-bg) !important;
+    backdrop-filter: var(--wiki-glass-blur);
+    -webkit-backdrop-filter: var(--wiki-glass-blur);
+    border-bottom-color: var(--wiki-glass-border) !important;
+  }
 
   > .v-toolbar__content {
     overflow: hidden;
@@ -1286,11 +1287,14 @@ export default defineComponent({
   line-height: 1;
 }
 
-.nav-header-edit-btn {
+.nav-header .nav-header-inner .nav-header-edit-btn {
+  flex: 0 0 auto;
   height: 36px !important;
   padding-inline: var(--wiki-space-3);
   font-weight: 600;
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 30%, transparent) !important;
+  border: 1px solid var(--wiki-purpose-primary-edge) !important;
+  background: var(--wiki-purpose-primary-fill);
+  color: var(--wiki-purpose-primary-ink) !important;
   margin-inline-end: var(--wiki-space-1);
 }
 
@@ -1391,21 +1395,8 @@ export default defineComponent({
   width: var(--wiki-space-6);
 }
 
-.v-locale--is-rtl .nav-header {
-  --nav-header-accent-direction: 270deg;
-}
-
 .v-theme--dark .nav-header {
   border-bottom-color: var(--wiki-surface-border-strong) !important;
-  background:
-    linear-gradient(
-      var(--nav-header-accent-direction),
-      color-mix(in srgb, var(--wiki-accent-warm) 7%, var(--wiki-surface-raised)),
-      var(--wiki-surface-raised) 36%,
-      var(--wiki-surface-raised) 68%,
-      color-mix(in srgb, var(--wiki-accent-spectral) 6%, var(--wiki-surface-raised))
-    ) !important;
-  box-shadow: 0 var(--wiki-space-2) var(--wiki-space-8) color-mix(in srgb, rgb(var(--v-theme-background)) 54%, transparent) !important;
 }
 
 @media (min-width: 960px) {

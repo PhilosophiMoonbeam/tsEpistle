@@ -8,7 +8,7 @@ export const ReaderLayoutSchema = z.object({
   copyWidth: z.number().int().min(48).max(110)
 }).strict()
 export type ReaderLayout = z.infer<typeof ReaderLayoutSchema>
-export const defaultReaderLayout: ReaderLayout = { textSize: 17, lineHeight: 1.68, copyWidth: 101 }
+export const defaultReaderLayout: ReaderLayout = { textSize: 17, lineHeight: 1.68, copyWidth: 74 }
 export const normalizeReaderLayout = (input: unknown): ReaderLayout => {
   const result = ReaderLayoutSchema.safeParse(input)
   return result.success ? result.data : { ...defaultReaderLayout }

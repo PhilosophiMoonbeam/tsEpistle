@@ -252,6 +252,7 @@ export default defineComponent({
     display: flex;
     min-height: calc(var(--wiki-control-height) + var(--wiki-space-8));
     align-items: center;
+    gap: var(--wiki-space-4);
     margin-bottom: var(--wiki-space-4);
     padding: var(--wiki-space-1);
 
@@ -269,7 +270,7 @@ export default defineComponent({
 
     &-title {
       min-width: 0;
-      margin-inline: var(--wiki-space-5);
+      margin-inline: 0;
 
       > .text-headline-medium {
         color: rgb(var(--v-theme-on-surface)) !important;
@@ -399,15 +400,21 @@ export default defineComponent({
       flex-wrap: wrap;
       gap: var(--wiki-space-3);
 
+      > .profile-header-avatar .v-avatar,
+      > .profile-header-icon-box .v-avatar,
       > img {
         width: calc(var(--wiki-control-height) + var(--wiki-space-2)) !important;
         height: calc(var(--wiki-control-height) + var(--wiki-space-2)) !important;
         border-radius: var(--wiki-control-radius);
       }
 
+      > .profile-header-avatar .v-avatar {
+        border-radius: 50%;
+      }
+
       &-title {
-        flex: 1 1 calc(100% - 4.5rem);
-        margin-inline: var(--wiki-space-1);
+        flex: 1 1 0;
+        margin-inline: 0;
 
         > .text-headline-medium {
           font-size: 1.5rem !important;

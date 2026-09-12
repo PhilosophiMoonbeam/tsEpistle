@@ -1,7 +1,7 @@
 <template lang="pug">
   v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus }]')
     a.page-skip-link(:href='`#${pageArticleId}`', @click.prevent='focusArticle') Skip to content
-    nav-header(v-if='!printView')
+    nav-header(v-if='!printView', reserve-actions)
     .page-position(v-if='!printView', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100')
       .page-position-fill(:style='{ transform: `scaleX(${readingProgress / 100})` }')
     .page-reading-dock(v-if='readerFocus && !printView', role='region', :aria-label='$t(`common:page.focusReading`)')
@@ -78,7 +78,6 @@
             v-spacer
             .text-body-small.text-warning {{$t('common:page.unpublished')}}
             status-indicator.ml-3(negative, pulse)
-        v-divider
       v-container.page-hero(
         ref='pageHero'
         fluid
@@ -136,7 +135,7 @@
                   :class='tocPosition === `right` ? `is-right` : ``'
                   )
                   v-btn(
-                    v-if='editShortcutsObj.editMenuBtn'
+                    v-if='editShortcutsObj.editMenuBtn && (!hasWritePagesPermission || $vuetify.display.smAndDown)'
                     @click='pageEdit'
                     variant="flat"
                     size="small"
@@ -153,7 +152,6 @@
                     )
                     v-icon.mr-2(size="small") {{ editShortcutsObj.editMenuExternalIcon }}
                     span.text-none {{$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })}}
-      v-divider
       v-container.page-body(fluid)
         v-row
           #page-mobile-tools.page-mobile-tools
@@ -183,101 +181,6 @@
             cols='12'
             :class='[tocPosition === `right` ? `page-col-content--toc-right` : `page-col-content--toc-left`, { "page-col-content--with-toc": tocPosition !== `off`, "page-col-content--toc-off": tocPosition === `off` }]'
             )
-            v-tooltip(location='start', v-if='hasAnyPagePermissions && editShortcutsObj.editFab && !$vuetify.display.smAndDown')
-              template(v-slot:activator='{ props: tooltipProps }')
-                v-speed-dial(
-                  v-model='pageEditFab'
-                  :activator-props='tooltipProps'
-                  location='top center'
-                  transition='scale-transition'
-                )
-                  template(v-slot:activator='{ props: speedDialProps }')
-                    v-btn.btn-animate-edit.page-edit-fab(
-                      icon
-                      color='primary'
-                      v-bind='speedDialProps'
-                      :aria-expanded='pageEditFab ? `true` : `false`'
-                      :aria-label='$t(`common:header.pageActions`)'
-                    )
-                      v-icon mdi-pencil
-                  v-tooltip(location='start', v-if='hasWritePagesPermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(icon, size="small", color='white', v-bind='props', @click='pageEdit', :aria-label='$t(`common:page.editPage`)')
-                        v-icon(size='20') mdi-pencil
-                    span {{$t('common:page.editPage')}}
-                  v-tooltip(location='start', v-if='hasReadHistoryPermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        size="small"
-                        color='white'
-                        v-bind='props'
-                        @click='pageHistory'
-                        :aria-label='$t(`common:header.history`)'
-                      )
-                        v-icon(size='20') mdi-history
-                    span {{$t('common:header.history')}}
-                  v-tooltip(location='start', v-if='hasReadSourcePermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        size="small"
-                        color='white'
-                        v-bind='props'
-                        @click='pageSource'
-                        :aria-label='$t(`common:header.viewSource`)'
-                        )
-                        v-icon(size='20') mdi-code-tags
-                    span {{$t('common:header.viewSource')}}
-                  v-tooltip(location='start', v-if='hasWritePagesPermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        size="small"
-                        color='white'
-                        v-bind='props'
-                        @click='pageConvert'
-                        :aria-label='$t(`common:header.convert`)'
-                        )
-                        v-icon(size='20') mdi-lightning-bolt
-                    span {{$t('common:header.convert')}}
-                  v-tooltip(location='start', v-if='hasWritePagesPermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        size="small"
-                        color='white'
-                        v-bind='props'
-                        @click='pageDuplicate'
-                        :aria-label='$t(`common:header.duplicate`)'
-                        )
-                        v-icon(size='20') mdi-content-duplicate
-                    span {{$t('common:header.duplicate')}}
-                  v-tooltip(location='start', v-if='hasManagePagesPermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        size="small"
-                        color='white'
-                        v-bind='props'
-                        @click='pageMove'
-                        :aria-label='$t(`common:header.move`)'
-                        )
-                        v-icon(size='20') mdi-content-save-move-outline
-                    span {{$t('common:header.move')}}
-                  v-tooltip(location='start', v-if='hasDeletePagesPermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        size="small"
-                        color='error'
-                        v-bind='props'
-                        @click='pageDelete'
-                        :aria-label='$t(`common:header.delete`)'
-                        )
-                        v-icon(size='20') mdi-trash-can-outline
-                    span {{$t('common:header.delete')}}
-              span {{$t('common:page.editPage')}}
             v-menu(
               v-if='hasAnyPagePermissions && editShortcutsObj.editFab && $vuetify.display.smAndDown'
               location='top end'
@@ -1195,7 +1098,6 @@ export default defineComponent({
       activeAnchor: '',
       outlineCleanup: null as (() => void) | null,
       upBtnShown: false,
-      pageEditFab: false,
       pageWatched: false,
       pageWatchLoading: false,
       pageWatchEmailEnabled: true,
@@ -1624,7 +1526,6 @@ export default defineComponent({
       this.preSearchCollapsedByUser = null
       this.searchOverrides.clear()
 
-      this.pageEditFab = false
       this.brandingFailureIdentity = null
       this.pageWatched = false
       this.pageWatchLoading = false
@@ -2506,7 +2407,7 @@ export default defineComponent({
 
 .page-main {
   transition: none;
-  background: rgb(var(--v-theme-background));
+  background: rgb(var(--v-theme-surface));
 }
 .page-main--route-enter {
   .page-header-headings,
@@ -2608,7 +2509,7 @@ export default defineComponent({
 
 .page-breadcrumb-bar {
   min-height: var(--wiki-control-height);
-  border-bottom: 1px solid var(--wiki-surface-border);
+  border-bottom: 0;
   background: transparent !important;
   box-shadow: none;
 
@@ -3434,19 +3335,24 @@ export default defineComponent({
 }
 
 .page-col-content > .contents {
-  --page-reader-surface-padding: clamp(var(--wiki-space-6), 3vw, var(--wiki-space-12));
+  --page-reader-surface-padding: var(--wiki-space-4);
 
   min-height: calc(var(--wiki-grid-size) * 3);
   scroll-margin-block-start: calc(var(--v-layout-top, 64px) + 24px);
   padding: var(--page-reader-surface-padding);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-panel-radius);
-  background: rgb(var(--v-theme-surface));
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   box-shadow: none;
 
   > div {
-    width: min(100%, var(--page-reader-copy-max));
-    margin: 0 auto 0 0;
+    width: 100%;
+    margin: 0;
+
+    // Keep prose comfortable while tables, diagrams and code use the canvas.
+    > :where(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
+      max-inline-size: var(--page-reader-copy-max);
+    }
   }
 
   h1,
@@ -4047,7 +3953,7 @@ export default defineComponent({
 
 .wiki-page.wiki-page--reading {
   --page-reader-shell-max: 64rem;
-  --page-reader-copy-max: min(72ch, var(--wiki-reader-copy-width, 101ch));
+  --page-reader-copy-max: min(72ch, var(--wiki-reader-copy-width, 74ch));
 
   .page-col-sd,
   .page-mobile-tools,

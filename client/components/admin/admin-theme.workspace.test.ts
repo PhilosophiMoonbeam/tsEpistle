@@ -7,8 +7,12 @@ describe('Theme editing policy and preview calculations', () => {
     const policy = themePolicyFromConfiguration({ theming: { injectCSS: source } })
     expect(policy.injectCSS).toBe(source)
     expect(policy.palettes).toHaveLength(1)
-    expect(policy.reading).toEqual({ textSize: 17, lineHeight: 1.68, copyWidth: 101 })
+    expect(policy.reading).toEqual({ textSize: 17, lineHeight: 1.68, copyWidth: 74 })
     expect(ThemePolicySchema.safeParse(policy).success).toBe(true)
+  })
+  test('preserves an explicitly configured wide reading measure', () => {
+    const reading = { textSize: 19, lineHeight: 1.8, copyWidth: 101 }
+    expect(themePolicyFromConfiguration({ theming: { reading } }).reading).toEqual(reading)
   })
   test('requires an existing published palette and complete valid reading settings', () => {
     const policy = themePolicyFromConfiguration({})

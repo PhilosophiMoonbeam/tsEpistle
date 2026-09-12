@@ -23,6 +23,21 @@
             v-icon.text-grey mdi-refresh
       v-col(cols='12')
         v-card
+          .profile-pages-toolbar(v-if='!errorMessage')
+            v-text-field.profile-pages-search(
+              v-model='search'
+              :label='$t("profile:pages.find", { defaultValue: "Find your pages" })'
+              prepend-inner-icon='mdi-magnify'
+              variant='outlined'
+              density='compact'
+              hide-details
+              clearable
+              :disabled='loading && pages.length === 0'
+              autocomplete='off'
+              aria-describedby='profile-pages-result-count'
+            )
+            p#profile-pages-result-count.profile-pages-result-count(role='status', aria-live='polite', aria-atomic='true')
+              template(v-if='!loading') {{ $t('profile:pages.resultCount', { defaultValue: '{{count}} of {{total}} pages', count: filteredPages.length, total: pages.length }) }}
           async-state(
             v-if='errorMessage'
             state='error'
@@ -33,7 +48,7 @@
           )
           v-data-table.profile-pages-table(
             v-else
-            :items='pages'
+            :items='filteredPages'
             :headers='headers'
             v-model:page='pagination'
             :items-per-page='15'
@@ -77,11 +92,18 @@
                 :message='$t("profile:pages.loadingMessage", { defaultValue: "Fetching your contributions." })'
               )
               async-state(
+                v-else-if='pages.length > 0 && normalizedSearch'
+                state='empty'
+                :title='$t("profile:pages.noMatches", { defaultValue: "No matching pages" })'
+                :message='$t("profile:pages.noMatchesMessage", { defaultValue: "Try another title, description, path, or language, or clear your search." })'
+              )
+              async-state(
                 v-else
                 state='empty'
                 :title='$t("profile:pages.emptyList", { defaultValue: "No pages to display" })'
+                :message='$t("profile:pages.noContributions", { defaultValue: "Pages you create or contribute to will appear here." })'
               )
-          .text-center.py-2.animated.fadeInDown(v-if='pageTotal > 1')
+          .text-center.py-2(v-if='pageTotal > 1')
             v-pagination(v-model='pagination', :length='pageTotal')
 </template>
 
@@ -99,12 +121,22 @@ export default {
   data() {
     return {
       pagination: 1,
+      search: '' as string | null,
       pages: [] as PageListRow[],
       loading: false,
       errorMessage: ''
     }
   },
   computed: {
+    normalizedSearch (): string {
+      return (this.search ?? '').trim().toLocaleLowerCase()
+    },
+    filteredPages (): PageListRow[] {
+      const query = this.normalizedSearch
+      if (!query) return this.pages
+      return this.pages.filter(page => [page.title, page.description, page.path, page.locale]
+        .some(value => (value ?? '').toLocaleLowerCase().includes(query)))
+    },
     headers () {
       return [
         { title: this.$t('profile:pages.headerTitle'), key: 'title', value: 'title' },
@@ -114,7 +146,15 @@ export default {
       ]
     },
     pageTotal () {
-      return Math.ceil(this.pages.length / 15)
+      return Math.ceil(this.filteredPages.length / 15)
+    }
+  },
+  watch: {
+    normalizedSearch () {
+      this.pagination = 1
+    },
+    pageTotal (total: number) {
+      this.pagination = Math.min(this.pagination, Math.max(1, total))
     }
   },
   mounted() {
@@ -145,7 +185,7 @@ export default {
           creatorId: userId,
           authorId: userId
         })
-        this.pagination = Math.min(this.pagination, Math.max(1, Math.ceil(this.pages.length / 15)))
+        this.pagination = Math.min(this.pagination, Math.max(1, this.pageTotal))
         return true
       } catch (err) {
         this.errorMessage = getErrorMessage(err)
@@ -162,6 +202,40 @@ export default {
 </script>
 
 <style lang='scss'>
+.profile-pages-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-4);
+  padding: var(--wiki-space-4);
+  border-bottom: 1px solid var(--wiki-surface-border);
+}
+
+.profile-pages-search {
+  flex: 1 1 20rem;
+  min-width: 0;
+  max-width: 30rem;
+}
+
+.profile-pages-result-count {
+  margin: 0;
+  color: var(--wiki-purpose-neutral-ink);
+  font-size: .8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 599.98px) {
+  .profile-pages-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--wiki-space-2);
+  }
+
+  .profile-pages-search {
+    flex-basis: auto;
+    max-width: none;
+  }
+}
+
 .profile-pages-table-caption {
   position: absolute;
   width: 1px;
