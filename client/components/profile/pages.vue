@@ -37,7 +37,7 @@
               aria-describedby='profile-pages-result-count'
             )
             p#profile-pages-result-count.profile-pages-result-count(role='status', aria-live='polite', aria-atomic='true')
-              template(v-if='!loading') {{ $t('profile:pages.resultCount', { defaultValue: '{{count}} of {{total}} pages', count: filteredPages.length, total: pages.length }) }}
+              span(v-if='!loading', v-text='$t(`profile:pages.resultCount`, { defaultValue: `{{count}} of {{total}} pages`, count: filteredPages.length, total: pages.length })')
           async-state(
             v-if='errorMessage'
             state='error'

@@ -3339,7 +3339,7 @@ export default defineComponent({
 
   min-height: calc(var(--wiki-grid-size) * 3);
   scroll-margin-block-start: calc(var(--v-layout-top, 64px) + 24px);
-  padding: var(--page-reader-surface-padding);
+  padding: var(--page-reader-surface-padding) 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -3549,7 +3549,7 @@ export default defineComponent({
   }
 
   .page-col-content > .contents {
-    padding: var(--wiki-space-8);
+    padding: var(--wiki-space-8) 0;
   }
 }
 
@@ -3687,9 +3687,9 @@ export default defineComponent({
     min-height: calc(var(--wiki-grid-size) * 2);
     padding:
       var(--wiki-space-6)
-      var(--wiki-space-4)
+      0
       var(--wiki-space-8);
-    border-radius: var(--wiki-panel-radius);
+    border-radius: 0;
 
     h1 .toc-anchor {
       opacity: .48;
