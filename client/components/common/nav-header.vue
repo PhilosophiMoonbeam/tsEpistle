@@ -37,19 +37,19 @@
             span {{title}}
       v-col.nav-header-search-col(md='4', v-if='$vuetify.display.mdAndUp')
         .nav-header-inner.nav-header-command
-          v-btn.nav-header-agent(
-            v-if='canEnterAgent'
-            prepend-icon='mdi-book-open-page-variant-outline'
-            aria-label='Open Wiki Agent'
-            title='Wiki Agent · Ctrl/⌘ + Shift + A'
-            variant='tonal'
-            color='primary'
-            size='small'
-            data-search-modal-action
-            @click='openAgent'
-          )
-            span Agent
-            ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
+          v-tooltip(location="bottom")
+            template(v-slot:activator='{ props }')
+              v-btn.nav-header-browse(
+                v-bind='props'
+                icon
+                href='/t'
+                data-search-modal-action
+                variant='outlined'
+                :aria-current='mode === `tags` ? `page` : undefined'
+                :aria-label='$t(`common:header.browseTags`)'
+              )
+                v-icon(size='18') mdi-tag-outline
+            span {{$t('common:header.browseTags')}}
 
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
@@ -78,19 +78,20 @@
                 template(v-slot:append-inner)
                   kbd.nav-header-search-key(v-if='!search && !searchIsFocused', aria-hidden='true') {{ searchShortcutLabel }}
 
-          v-tooltip(location="bottom")
-            template(v-slot:activator='{ props }')
-              v-btn.nav-header-browse(
-                v-bind='props'
-                icon
-                href='/t'
-                data-search-modal-action
-                variant='outlined'
-                :aria-current='mode === `tags` ? `page` : undefined'
-                :aria-label='$t(`common:header.browseTags`)'
-              )
-                v-icon(size='18') mdi-tag-outline
-            span {{$t('common:header.browseTags')}}
+          v-btn.nav-header-agent(
+            v-if='canEnterAgent'
+            prepend-icon='mdi-book-open-page-variant-outline'
+            aria-label='Open Wiki Agent'
+            title='Wiki Agent · Ctrl/⌘ + Shift + A'
+            variant='tonal'
+            color='primary'
+            size='small'
+            data-search-modal-action
+            @click='openAgent'
+          )
+            span Agent
+            ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
+
 
       v-col.nav-header-actions-col(cols='7', md='4')
         .nav-header-inner.nav-header-actions
@@ -880,21 +881,26 @@ export default defineComponent({
   margin-inline: .375rem;
 }
 .nav-header-agent .v-btn__prepend,
-.nav-header-agent .v-btn__content,
 .nav-header-agent .v-btn__append {
   position: relative;
   z-index: 1;
 }
 
+.nav-header-agent .v-btn__content {
+  position: static;
+  border-radius: inherit;
+}
+
 .nav-header {
+  --nav-header-tint: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 5%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 3%, transparent));
   isolation: isolate;
   border-bottom: 1px solid var(--wiki-surface-border) !important;
-  background: rgb(var(--v-theme-surface)) !important;
+  background: var(--nav-header-tint), rgb(var(--v-theme-surface)) !important;
   color: rgb(var(--v-theme-on-surface));
-  box-shadow: none !important;
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--wiki-shadow-color) 35%, transparent) !important;
 
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    background: var(--wiki-glass-bg) !important;
+    background: var(--nav-header-tint), var(--wiki-glass-bg) !important;
     backdrop-filter: var(--wiki-glass-blur);
     -webkit-backdrop-filter: var(--wiki-glass-blur);
     border-bottom-color: var(--wiki-glass-border) !important;
@@ -1400,10 +1406,10 @@ export default defineComponent({
 }
 
 @media (min-width: 960px) {
-  .nav-header--reserved-actions {
+  .nav-header {
     .nav-header-layout {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1fr);
     }
 
     .nav-header-brand-col,
@@ -1413,9 +1419,17 @@ export default defineComponent({
       max-width: none;
     }
 
-    .nav-header-actions {
-      width: max-content;
+    .nav-header-actions { justify-content: flex-end; }
+
+    .nav-header-command {
+      display: grid;
+      grid-template-columns: 5rem minmax(0, 1fr) 5rem;
     }
+
+    .nav-header-command > .nav-header-browse { grid-column: 1; justify-self: end; }
+    .nav-header-command > .nav-header-agent { grid-column: 3; justify-self: start; margin: 0; --wiki-control-radius: 18px; }
+    .nav-header-command > .nav-header-search-control { grid-column: 2; justify-self: center; width: 100%; }
+
 
     .nav-header-slot-actions {
       flex: 0 0 auto;

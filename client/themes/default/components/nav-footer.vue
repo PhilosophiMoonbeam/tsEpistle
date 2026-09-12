@@ -71,7 +71,7 @@ export default defineComponent({
   overflow: visible;
   height: auto;
   min-height: var(--wiki-footer-height);
-  padding: 2px var(--wiki-page-gutter) calc(2px + env(safe-area-inset-bottom));
+  padding: 0 var(--wiki-page-gutter) env(safe-area-inset-bottom);
   border-top: 1px solid var(--wiki-surface-border);
   background:
     linear-gradient(
@@ -113,7 +113,7 @@ export default defineComponent({
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
   font-family: var(--wiki-font-body);
   font-size: .625rem;
-  line-height: 1.4;
+  line-height: 1.2;
   text-align: center;
 
   &__legal {
@@ -197,7 +197,7 @@ export default defineComponent({
 
 @media (max-width: 599px) {
   .nav-footer {
-    padding: 2px var(--wiki-space-4) calc(2px + env(safe-area-inset-bottom));
+    padding: 0 var(--wiki-space-4) env(safe-area-inset-bottom);
   }
 }
 

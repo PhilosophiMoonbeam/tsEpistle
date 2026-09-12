@@ -6,10 +6,11 @@
     )
       v-btn.nav-sidebar-home(
         :class='{ "nav-sidebar-home--static": navMode === `STATIC` }'
-        variant="tonal"
+        :variant='path === `home` ? `tonal` : `text`'
         color='primary'
         @click='goHome'
         :aria-label='$t(`common:header.home`)'
+        :aria-current='path === `home` ? `page` : undefined'
         )
         v-icon(:start='navMode === `STATIC`', size='20') mdi-home
         span.nav-sidebar-home-label.text-body-medium.text-none(v-if='navMode === `STATIC`') {{$t('common:header.home')}}
@@ -681,7 +682,7 @@ export default defineComponent({
     position: relative;
     border-color: transparent !important;
     background: transparent !important;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 80%, transparent);
+    color: var(--wiki-accent-ink);
     box-shadow: none;
 
     .v-btn__overlay,
@@ -719,6 +720,12 @@ export default defineComponent({
         background: color-mix(in srgb, var(--wiki-ambient-accent) 10%, var(--wiki-surface-raised));
         box-shadow: var(--wiki-shadow-xs);
       }
+    }
+
+    &[aria-current='page']::before {
+      border-color: color-mix(in srgb, var(--wiki-accent-warm) 45%, var(--wiki-surface-border));
+      background: color-mix(in srgb, var(--wiki-accent-warm) 18%, var(--wiki-surface-raised));
+      box-shadow: var(--wiki-shadow-xs);
     }
 
     &:focus-visible {

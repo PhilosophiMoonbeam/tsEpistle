@@ -19,7 +19,7 @@
   --wiki-radius-md: var(--wiki-panel-radius);
   --wiki-hero-radius: 1.375rem;
   --wiki-radius-pill: 999rem;
-  --wiki-footer-height: 1.5rem;
+  --wiki-footer-height: 1rem;
   --wiki-control-height: 2.75rem;
   --wiki-font-newsreader: 'Newsreader', ui-serif, Georgia, Cambria, 'Times New Roman', serif;
   --wiki-font-roboto-flex: 'Roboto Flex', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -83,8 +83,8 @@
   --wiki-purpose-neutral-ink: rgb(var(--v-theme-purpose-neutral-ink, var(--v-theme-on-surface)));
   --wiki-purpose-neutral-fill: rgb(var(--v-theme-purpose-neutral-fill, var(--v-theme-surface)));
   --wiki-purpose-neutral-edge: rgb(var(--v-theme-purpose-neutral-edge, var(--v-theme-on-surface)));
-  --wiki-beam-violet: color-mix(in srgb, rgb(var(--v-theme-secondary)) 72%, rgb(var(--v-theme-primary)) 28%);
-  --wiki-beam-cool: color-mix(in srgb, rgb(var(--v-theme-info)) 82%, rgb(var(--v-theme-secondary)) 18%);
+  --wiki-beam-violet: var(--wiki-accent-warm);
+  --wiki-beam-cool: var(--wiki-accent-spectral);
   --v-font-body: var(--wiki-font-body);
   --v-font-heading: var(--wiki-font-heading);
 }

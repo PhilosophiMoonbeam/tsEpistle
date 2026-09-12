@@ -27,8 +27,8 @@ describe('global footer edge and attribution contract', () => {
     expect(style).toMatch(/min-height:\s*var\(--wiki-footer-height\);/)
   })
 
-  test('defines the 24px single-line footer height token', () => {
-    expect(baseSource).toMatch(/--wiki-footer-height:\s*1\.5rem;/)
+  test('defines the compact 16px single-line footer height token', () => {
+    expect(baseSource).toMatch(/--wiki-footer-height:\s*1rem;/)
   })
 
   test('preserves configured legal copy and its override precedence', () => {

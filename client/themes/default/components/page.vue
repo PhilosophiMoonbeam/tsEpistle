@@ -98,60 +98,61 @@
               .page-title-row.d-flex.align-center
                 h1.page-title(ref='pageTitle', :id='pageTitleId') {{title}}
                 v-chip.page-visibility.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') {{$t('common:page.private')}}
-              p.page-description(v-if='description') {{description}}
               page-branding-mark(
                 v-if='pageBranding'
                 :branding='pageBranding'
                 :failed='brandingFailureIdentity === pageBrandingIdentity'
                 @error='pageBrandingImageError'
               )
-            .page-document-meta
-              .page-document-provenance
-                .page-document-row.page-document-row--date(v-if='updatedAt')
-                  v-tooltip(location='top', v-if='canViewHistory')
-                    template(v-slot:activator='{ props }')
-                      v-btn.page-history-btn(
-                        v-bind='props'
-                        :href='pageHistoryUrl'
-                        @click='historyLinkClicked($event)'
-                        :aria-label='$t(`common:page.viewHistory`)'
-                        icon='mdi-history'
-                        variant='text'
-                        size='x-small'
-                        density='compact'
+            .page-header-summary
+              p.page-description(v-if='description') {{description}}
+              .page-document-meta
+                .page-document-provenance
+                  .page-document-row.page-document-row--date(v-if='updatedAt')
+                    v-tooltip(location='top', v-if='canViewHistory')
+                      template(v-slot:activator='{ props }')
+                        v-btn.page-history-btn(
+                          v-bind='props'
+                          :href='pageHistoryUrl'
+                          @click='historyLinkClicked($event)'
+                          :aria-label='$t(`common:page.viewHistory`)'
+                          icon='mdi-history'
+                          variant='text'
+                          size='x-small'
+                          density='compact'
+                        )
+                      span {{ $t('common:page.viewHistory') }}
+                    time(:datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt, interpolation: { escapeValue: false } }) }}
+                  .page-document-row.page-document-row--author(v-if='hasAuthor')
+                    span.page-document-author
+                      | {{ $t('common:page.byAuthor', { author: '' }) }}
+                      bdi.page-provenance-author {{ authorName }}
+                .page-header-control-pair(
+                  v-if='!printView || (editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn))'
+                )
+                  v-btn.page-focus-control(v-if='!printView && !readerFocus', variant='text', size='small', prepend-icon='mdi-book-open-page-variant-outline', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t('common:page.focusReading') }}
+                  .page-edit-shortcuts(
+                    v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
+                    :class='tocPosition === `right` ? `is-right` : ``'
+                    )
+                    v-btn(
+                      v-if='editShortcutsObj.editMenuBtn && (!hasWritePagesPermission || $vuetify.display.smAndDown)'
+                      @click='pageEdit'
+                      variant="flat"
+                      size="small"
                       )
-                    span {{ $t('common:page.viewHistory') }}
-                  time(:datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt, interpolation: { escapeValue: false } }) }}
-                .page-document-row.page-document-row--author(v-if='hasAuthor')
-                  span.page-document-author
-                    | {{ $t('common:page.byAuthor', { author: '' }) }}
-                    bdi.page-provenance-author {{ authorName }}
-              .page-header-control-pair(
-                v-if='!printView || (editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn))'
-              )
-                v-btn.page-focus-control(v-if='!printView', variant='text', size='small', :prepend-icon='readerFocus ? `mdi-arrow-collapse-horizontal` : `mdi-book-open-page-variant-outline`', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t(readerFocus ? 'common:page.exitFocus' : 'common:page.focusReading') }}
-                .page-edit-shortcuts(
-                  v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
-                  :class='tocPosition === `right` ? `is-right` : ``'
-                  )
-                  v-btn(
-                    v-if='editShortcutsObj.editMenuBtn && (!hasWritePagesPermission || $vuetify.display.smAndDown)'
-                    @click='pageEdit'
-                    variant="flat"
-                    size="small"
-                    )
-                    v-icon.mr-2(size="small") mdi-pencil
-                    span.text-none {{$t(`common:actions.edit`)}}
-                  v-btn(
-                    v-if='editShortcutsObj.editMenuExternalBtn && editMenuExternalUrl'
-                    :href='editMenuExternalUrl'
-                    target='_blank'
-                    rel='noopener'
-                    variant="flat"
-                    size="small"
-                    )
-                    v-icon.mr-2(size="small") {{ editShortcutsObj.editMenuExternalIcon }}
-                    span.text-none {{$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })}}
+                      v-icon.mr-2(size="small") mdi-pencil
+                      span.text-none {{$t(`common:actions.edit`)}}
+                    v-btn(
+                      v-if='editShortcutsObj.editMenuExternalBtn && editMenuExternalUrl'
+                      :href='editMenuExternalUrl'
+                      target='_blank'
+                      rel='noopener'
+                      variant="flat"
+                      size="small"
+                      )
+                      v-icon.mr-2(size="small") {{ editShortcutsObj.editMenuExternalIcon }}
+                      span.text-none {{$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })}}
       v-container.page-body(fluid)
         v-row
           #page-mobile-tools.page-mobile-tools
@@ -2321,7 +2322,7 @@ export default defineComponent({
   min-width: 0;
   align-items: center;
   flex-wrap: wrap;
-  margin-block-start: .875rem;
+  margin-block-start: 0;
   font-size: .75rem;
   line-height: 1.4;
   gap: var(--wiki-space-3);
@@ -2329,10 +2330,10 @@ export default defineComponent({
 
 .page-document-provenance {
   display: flex;
-  min-width: min-content;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 2px;
+  min-width: 0;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  gap: 2px 5px;
 }
 
 .page-header-control-pair {
@@ -2406,8 +2407,9 @@ export default defineComponent({
 }
 
 .page-main {
+  --page-reader-background: color-mix(in srgb, var(--wiki-accent-warm) 3%, rgb(var(--v-theme-background)));
   transition: none;
-  background: rgb(var(--v-theme-surface));
+  background: var(--page-reader-background);
 }
 .page-main--route-enter {
   .page-header-headings,
@@ -2567,6 +2569,7 @@ export default defineComponent({
   min-height: 0;
   padding: 0 !important;
   background: rgb(var(--v-theme-surface));
+  border-block-end: 1px solid var(--wiki-surface-border);
 
   &.page-hero--accent-present::before {
     position: absolute;
@@ -2590,7 +2593,7 @@ export default defineComponent({
 
 .page-hero--with-toc,
 .page-hero--with-toc .page-header-section {
-  min-height: calc(var(--page-toc-empty-height) + var(--wiki-space-8));
+  min-height: 0;
 }
 
 .page-header-section {
@@ -2622,9 +2625,21 @@ export default defineComponent({
     grid-row: 1;
   }
 
-  > .is-page-header > .page-document-meta {
+  > .is-page-header > .page-header-summary {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+
+  .page-header-summary {
+    display: flex;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: var(--wiki-space-2) var(--wiki-space-4);
+    min-width: 0;
+    margin-block-start: var(--wiki-space-2);
+
+    .page-description { flex: 1 1 18rem; margin: 0; }
+    .page-document-meta { margin-inline-start: auto; justify-content: flex-end; }
   }
 
   .page-header-headings {
@@ -2780,67 +2795,9 @@ export default defineComponent({
       grid-template-columns: minmax(0, 1fr);
     }
 
-    > .is-page-header.has-edit-shortcuts {
-      --page-header-action-reserve: clamp(
-        calc(var(--wiki-control-height) * 3),
-        22vw,
-        calc(var(--wiki-control-height) * 6 + var(--wiki-space-4))
-      );
-      grid-template-columns:
-        minmax(0, 1fr)
-        minmax(0, var(--page-header-action-reserve));
-    }
-
-    .has-edit-shortcuts .page-header-headings {
-      grid-column: 1;
-    }
-
-    .has-edit-shortcuts .page-edit-shortcuts {
-      position: relative;
-      z-index: 2;
-      display: flex;
-      width: min(100%, var(--page-header-action-reserve));
-      min-width: 0;
-      max-width: var(--page-header-action-reserve);
-      grid-column: 2;
-      justify-self: end;
-      overflow: visible;
-      .v-btn {
-        min-width: 0;
-        max-width: 100%;
-        flex: 0 1 auto;
-        overflow: visible;
-      }
-
-      .v-btn__content {
-        min-width: 0;
-        max-width: 100%;
-        overflow: visible;
-      }
-
-      .v-btn .text-none {
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-    }
+    .page-edit-shortcuts { max-width: 100%; flex-wrap: wrap; }
   }
 }
-
-@media (min-width: 600px) {
-  .wiki-page.is-ltr .page-header-section > .is-page-header.has-edit-shortcuts {
-    .page-header-headings--branded {
-      grid-template-columns: minmax(0, 1fr) 0;
-
-      > .page-branding-mark {
-        right: calc(-1 * (var(--page-header-action-reserve) + var(--wiki-space-4)));
-      }
-    }
-  }
-}
-
-
 
 @media (min-width: 1280px) {
   .page-header-section .page-header-headings--branded {
@@ -2866,16 +2823,6 @@ export default defineComponent({
       }
     }
 
-    > .page-header--toc-left.has-edit-shortcuts {
-      grid-template-columns:
-        var(--page-metadata-rail-width)
-        minmax(0, 1fr)
-        minmax(0, var(--page-header-action-reserve));
-
-      .page-edit-shortcuts {
-        grid-column: 3;
-      }
-    }
 
     > .page-header--toc-right {
       grid-template-columns:
@@ -2883,22 +2830,13 @@ export default defineComponent({
         var(--page-metadata-rail-width);
     }
 
-    > .page-header--toc-right.has-edit-shortcuts {
-      grid-template-columns:
-        minmax(0, 1fr)
-        minmax(0, var(--page-header-action-reserve))
-        var(--page-metadata-rail-width);
 
-      .page-edit-shortcuts {
-        padding-inline-end: var(--wiki-space-4);
-      }
-    }
-
-    > .page-header--toc-left > .page-document-meta {
+    > .page-header--toc-left > .page-header-summary {
+      padding-inline-start: var(--wiki-space-4);
       grid-column: 2 / -1;
     }
 
-    > .page-header--toc-right > .page-document-meta {
+    > .page-header--toc-right > .page-header-summary {
       grid-column: 1 / -2;
     }
   }
@@ -3926,10 +3864,10 @@ export default defineComponent({
   z-index: 1006;
   display: flex;
   align-items: center;
-  gap: .75rem;
+  gap: .5rem;
   width: max-content;
-  max-width: min(32rem, calc(100% - 2rem));
-  padding: .5rem .5rem .5rem 1rem;
+  max-width: min(26rem, calc(100% - 2rem));
+  padding: .25rem .375rem .25rem .75rem;
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-radius-pill);
   background: rgb(var(--v-theme-surface));
@@ -3937,7 +3875,12 @@ export default defineComponent({
   box-shadow: var(--wiki-shadow-md);
   transform: translateX(-50%);
 
-  .v-btn { flex-shrink: 0; color: var(--wiki-accent-ink); }
+  @supports (backdrop-filter: blur(1px)) {
+    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 72%, transparent);
+    backdrop-filter: blur(12px) saturate(140%);
+  }
+
+  .v-btn { flex-shrink: 0; min-height: 28px; height: 28px; color: var(--wiki-accent-ink); }
 }
 
 .is-rtl .page-reading-dock { transform: translateX(50%); }
@@ -3948,7 +3891,7 @@ export default defineComponent({
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--wiki-font-display);
-  font-size: 1.125rem;
+  font-size: .9375rem;
 }
 
 .wiki-page.wiki-page--reading {
@@ -3964,7 +3907,7 @@ export default defineComponent({
 
   .page-header-section > .is-page-header {
     grid-template-columns: minmax(0, 1fr);
-    padding-block: var(--wiki-space-8) !important;
+    padding-block: var(--wiki-space-4) !important;
   }
 
   .page-header-section .page-header-headings {
@@ -3990,8 +3933,13 @@ export default defineComponent({
     > div { margin-inline: auto; }
   }
 
+  .page-header-section > .is-page-header > .page-header-summary {
+    grid-column: 1;
+    padding-inline-start: 0;
+  }
+
   .page-main,
-  .page-body { background: rgb(var(--v-theme-surface)); }
+  .page-body { background: var(--page-reader-background); }
 }
 
 @media (max-width: 599px) {

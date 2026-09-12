@@ -116,7 +116,7 @@ const beamStyle = computed<Record<string, string>>(() => {
 .control-border-beam__trail {
   --wiki-beam-dash-offset: -13;
   opacity: 0;
-  animation: control-border-beam 6.6s var(--wiki-motion-ease, cubic-bezier(.22, .8, .22, 1)) infinite;
+  animation: control-border-beam 24s linear infinite;
   animation-delay: var(--wiki-beam-phase-offset, 0ms);
 }
 
@@ -159,184 +159,22 @@ const beamStyle = computed<Record<string, string>>(() => {
   stroke-opacity: .34;
 }
 
+/* One forward circuit with irregularly spaced appearances. Invisible travel
+   advances by at least 10% of the perimeter; the loop closes at exactly 500. */
 @keyframes control-border-beam {
-  0%,
-  2% {
-    opacity: 0;
-    --wiki-beam-dash-offset: -13;
-  }
-
-  3% {
-    opacity: .1;
-    --wiki-beam-dash-offset: -17;
-  }
-
-  5% {
-    opacity: .45;
-    --wiki-beam-dash-offset: -46;
-  }
-
-  7.5% {
-    opacity: .86;
-    --wiki-beam-dash-offset: -87;
-  }
-
-  10% {
-    opacity: 1;
-    --wiki-beam-dash-offset: -130;
-  }
-
-  12.5% {
-    opacity: .83;
-    --wiki-beam-dash-offset: -176;
-  }
-
-  15% {
-    opacity: .35;
-    --wiki-beam-dash-offset: -211;
-  }
-
-  16.5%,
-  17.5% {
-    opacity: 0;
-    --wiki-beam-dash-offset: -223;
-  }
-
-  18%,
-  19.5% {
-    opacity: 0;
-    --wiki-beam-dash-offset: -137;
-  }
-
-  20% {
-    opacity: 0;
-    --wiki-beam-dash-offset: -137;
-  }
-
-  20.5% {
-    opacity: .1;
-    --wiki-beam-dash-offset: -139;
-  }
-
-  23% {
-    opacity: .45;
-    --wiki-beam-dash-offset: -168;
-  }
-
-  25.5% {
-    opacity: .86;
-    --wiki-beam-dash-offset: -209;
-  }
-
-  28% {
-    opacity: 1;
-    --wiki-beam-dash-offset: -252;
-  }
-
-  30.5% {
-    opacity: .83;
-    --wiki-beam-dash-offset: -297;
-  }
-
-  33% {
-    opacity: .35;
-    --wiki-beam-dash-offset: -333;
-  }
-
-  34.5%,
-  35.5% {
-    opacity: 0;
-    --wiki-beam-dash-offset: -347;
-  }
-
-  36%,
-  37.5% {
-    opacity: 0;
-    --wiki-beam-dash-offset: -302;
-  }
-
-  38% {
-    opacity: 0;
-    --wiki-beam-dash-offset: -302;
-  }
-
-  38.5% {
-    opacity: .1;
-    --wiki-beam-dash-offset: -306;
-  }
-
-  41% {
-    opacity: .45;
-    --wiki-beam-dash-offset: -335;
-  }
-
-  43.5% {
-    opacity: .86;
-    --wiki-beam-dash-offset: -376;
-  }
-
-  46% {
-    opacity: 1;
-    --wiki-beam-dash-offset: -419;
-  }
-
-  48.5% {
-    opacity: .83;
-    --wiki-beam-dash-offset: -465;
-  }
-
-  51% {
-    opacity: .35;
-    --wiki-beam-dash-offset: -500;
-  }
-
-  52.5%,
-  53.5% {
-    opacity: 0;
-    --wiki-beam-dash-offset: -512;
-  }
-
-  54%,
-  55% {
-    opacity: 0;
-    --wiki-beam-dash-offset: -421;
-  }
-
-  55.5% {
-    opacity: .1;
-    --wiki-beam-dash-offset: -425;
-  }
-
-  58% {
-    opacity: .45;
-    --wiki-beam-dash-offset: -454;
-  }
-
-  60.5% {
-    opacity: .86;
-    --wiki-beam-dash-offset: -495;
-  }
-
-  63% {
-    opacity: 1;
-    --wiki-beam-dash-offset: -538;
-  }
-
-  65.5% {
-    opacity: .83;
-    --wiki-beam-dash-offset: -584;
-  }
-
-  68% {
-    opacity: .35;
-    --wiki-beam-dash-offset: -619;
-  }
-
-  69.5%,
-  100% {
-    opacity: 0;
-    --wiki-beam-dash-offset: -631;
-  }
+  0%   { opacity: 0; --wiki-beam-dash-offset: -13; }
+  3%   { opacity: .7; --wiki-beam-dash-offset: -28; }
+  12%  { opacity: 1; --wiki-beam-dash-offset: -73; }
+  18%  { opacity: 0; --wiki-beam-dash-offset: -103; }
+  30%  { opacity: 0; --wiki-beam-dash-offset: -163; }
+  34%  { opacity: .8; --wiki-beam-dash-offset: -183; }
+  46%  { opacity: 1; --wiki-beam-dash-offset: -243; }
+  51%  { opacity: 0; --wiki-beam-dash-offset: -268; }
+  66%  { opacity: 0; --wiki-beam-dash-offset: -343; }
+  70%  { opacity: .8; --wiki-beam-dash-offset: -363; }
+  83%  { opacity: 1; --wiki-beam-dash-offset: -428; }
+  89%  { opacity: 0; --wiki-beam-dash-offset: -458; }
+  100% { opacity: 0; --wiki-beam-dash-offset: -513; }
 }
 
 @media (prefers-reduced-motion: reduce), (forced-colors: active), print {

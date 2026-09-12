@@ -1492,7 +1492,12 @@ test.describe('responsive UI quality matrix', () => {
           return 'search'
         })
     })
-    expect(actionOrder, 'Header actions stay in Agent, search, Browse DOM order').toEqual(['agent', 'search', 'browse'])
+    expect(actionOrder, 'Keyboard order follows the visible header controls').toEqual(viewport.width < 960 ? ['agent', 'search', 'browse'] : ['browse', 'search', 'agent'])
+    if (viewport.width >= 960) {
+      const field = await page.locator('.nav-header-command .nav-header-search-control').boundingBox()
+      expect(field).not.toBeNull()
+      expect(Math.abs(field!.x + field!.width / 2 - viewport.width / 2), 'Search is centered in the viewport').toBeLessThanOrEqual(1)
+    }
 
     const [searchBounds, agentBounds, browseBounds] = await Promise.all([searchControl.boundingBox(), entrance.boundingBox(), browse.boundingBox()])
     expect(searchBounds).not.toBeNull()
@@ -1521,11 +1526,13 @@ test.describe('responsive UI quality matrix', () => {
     await searchControl.focus()
     await expect(searchControl).toBeFocused()
     await searchControl.press('Shift+Tab')
-    await expect(entrance).toBeFocused()
-    await entrance.press('Tab')
+    const beforeSearch = viewport.width < 960 ? entrance : browse
+    const afterSearch = viewport.width < 960 ? browse : entrance
+    await expect(beforeSearch).toBeFocused()
+    await beforeSearch.press('Tab')
     await expect(searchControl).toBeFocused()
     await searchControl.press('Tab')
-    await expect(browse).toBeFocused()
+    await expect(afterSearch).toBeFocused()
     await expect
       .poll(() =>
         page.locator('.nav-header').evaluate(
@@ -2873,6 +2880,7 @@ test.describe('focused reading', () => {
     await page.keyboard.press('Enter')
     const dock = page.getByRole('region', { name: 'Focus reading', exact: true })
     const exit = dock.getByRole('button', { name: 'Exit focus', exact: true })
+    await expect(page.getByRole('button', { name: 'Exit focus', exact: true })).toHaveCount(1)
     await expect(exit).toBeFocused()
     await expect(page.locator('.page-navigation.v-navigation-drawer--active')).toHaveCount(0)
     await expect(page.locator('.page-toc-card')).toBeHidden()
