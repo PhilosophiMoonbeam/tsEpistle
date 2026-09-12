@@ -716,8 +716,9 @@ export default defineComponent({
       emitSearchExit(false)
       this.searchClose()
       await this.$nextTick()
-      const previousTarget = document.querySelector<HTMLElement>('.nav-header-agent') ?? document.querySelector<HTMLElement>('.nav-header-logo')
-      const forwardTarget = document.querySelector<HTMLElement>('.nav-header-browse') ?? document.querySelector<HTMLElement>('.nav-header-logo')
+      const desktop = this.$vuetify.display.mdAndUp
+      const previousTarget = document.querySelector<HTMLElement>(desktop ? '.nav-header-browse' : '.nav-header-agent') ?? document.querySelector<HTMLElement>('.nav-header-logo')
+      const forwardTarget = document.querySelector<HTMLElement>(desktop ? '.nav-header-agent' : '.nav-header-browse') ?? document.querySelector<HTMLElement>('.nav-header-actions button:not(:disabled), .nav-header-actions a[href]')
       const target = event.shiftKey ? previousTarget : forwardTarget
       target?.focus({ preventScroll: true })
     },
