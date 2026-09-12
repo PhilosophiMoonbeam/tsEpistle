@@ -107,6 +107,7 @@ describe('reviewed authentication workspace', () => {
     expect(template).toMatch(/v-text-field[\s\S]*?field\.type === 'number'[\s\S]*?autocomplete="off"/)
     expect(template).toMatch(/v-text-field[\s\S]*?v-else[\s\S]*?autocomplete="off"/)
     expect(template).toMatch(/type="password"[\s\S]*?autocomplete="new-password"/)
+    expect(template.match(/v-credential-autofill/g)).toHaveLength(5)
   })
   it('isolates drafts, normalizes insignificant whitespace and protects navigation', async () => {
     const { state, window } = arrange()

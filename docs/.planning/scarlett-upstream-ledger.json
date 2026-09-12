@@ -596,7 +596,7 @@
       "disposition": "adapt",
       "state": "completed",
       "workstream": "release-assurance/authentication",
-      "contract": "Express proxy trust is already applied immediately through reviewed security administration. Identity-provider and storage credentials remain write-only; browser autofill is suppressed on every provider configuration field, with new-password retained for replacement secrets.",
+      "contract": "Express proxy trust is already applied immediately through reviewed security administration. Identity-provider and storage credentials remain write-only; every provider text control carries standards-based autocomplete suppression plus native-control opt-outs for 1Password, LastPass, Bitwarden and Dashlane, with new-password retained for replacement secrets.",
       "lastReviewed": "2026-09-12"
     },
     {

@@ -289,9 +289,11 @@
                   :disabled="locked"
                   @update:model-value="setSchedule"
                 /><v-text-field
+                  v-credential-autofill
                   v-if="scheduleMode === 'custom'"
                   v-model="selectedDraft.syncInterval"
                   label="Custom interval (ISO 8601)"
+                  autocomplete="off"
                   variant="outlined"
                   hint="Examples: PT30M or PT2H. From 10 seconds to 24 days."
                   persistent-hint
@@ -335,6 +337,7 @@
                       :disabled="locked"
                       @update:model-value="setSecretAction(field.key,$event)"
                     /><v-textarea
+                      v-credential-autofill
                       v-if="field.multiline && selectedDraft.secrets[field.key]?.action === 'replace'"
                       :model-value="secretValue(field.key)"
                       :label="'New ' + field.title"
@@ -345,6 +348,7 @@
                       :disabled="locked"
                       @update:model-value="setSecretValue(field.key,$event)"
                     /><v-text-field
+                      v-credential-autofill
                       v-else-if="selectedDraft.secrets[field.key]?.action === 'replace'"
                       :model-value="secretValue(field.key)"
                       :label="'New ' + field.title"
@@ -382,6 +386,7 @@
                     <p>{{ field.hint }}</p>
                   </div>
                   <v-textarea
+                    v-credential-autofill
                     v-else-if="field.multiline"
                     :model-value="String(selectedDraft.config[field.key] ?? '')"
                     :label="field.title"
@@ -390,10 +395,12 @@
                     variant="outlined"
                     rows="3"
                     class="storage-full"
+                    autocomplete="off"
                     :disabled="locked || !selectedTarget.isAvailable"
                     @update:model-value="setField(field.key,$event)"
                   />
                   <v-text-field
+                    v-credential-autofill
                     v-else
                     :model-value="selectedDraft.config[field.key]"
                     :label="field.title"
@@ -709,6 +716,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import { vCredentialAutofill } from '../../helpers/credential-autofill.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import {
   StorageTargetDraftSchema,

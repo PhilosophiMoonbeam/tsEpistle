@@ -18,17 +18,20 @@
           :disabled="disabled"
           @update:model-value="secretAction(field.key, $event)"
         /><v-textarea
+          v-credential-autofill
           v-if="
             modelValue.secrets[field.key]?.action === 'replace' &&
             field.multiline
           "
           :model-value="secretValue(field.key)"
           :label="'Replacement ' + field.title"
+          autocomplete="off"
           rows="4"
           variant="outlined"
           :disabled="disabled"
           @update:model-value="replaceSecret(field.key, $event)"
         /><v-text-field
+          v-credential-autofill
           v-else-if="modelValue.secrets[field.key]?.action === 'replace'"
           :model-value="secretValue(field.key)"
           :label="'Replacement ' + field.title"
@@ -68,6 +71,7 @@
         persistent-hint
       />
       <v-textarea
+        v-credential-autofill
         v-else-if="field.multiline"
         :model-value="modelValue.config[field.key]"
         @update:model-value="updateConfig(field.key, $event)"
@@ -81,6 +85,7 @@
         persistent-hint
       />
       <v-text-field
+        v-credential-autofill
         v-else-if="field.type === 'number'"
         :model-value="modelValue.config[field.key]"
         @update:model-value="updateConfig(field.key, Number($event))"
@@ -93,6 +98,7 @@
         persistent-hint
       />
       <v-text-field
+        v-credential-autofill
         v-else
         :model-value="modelValue.config[field.key]"
         @update:model-value="updateConfig(field.key, $event)"
@@ -114,7 +120,9 @@ import type {
   AuthenticationProviderDraft,
   AuthenticationValue
 } from '../../../shared/authentication-policy.ts'
+import { vCredentialAutofill } from '../../helpers/credential-autofill.ts'
 export default {
+  directives: { credentialAutofill: vCredentialAutofill },
   props: {
     modelValue: {
       type: Object as PropType<AuthenticationProviderDraft>,
