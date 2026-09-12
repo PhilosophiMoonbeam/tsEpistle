@@ -41,6 +41,9 @@
   --wiki-surface-raised: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-surface-bright)) 6%);
   --wiki-surface-sunken: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, rgb(var(--v-theme-surface)) 28%);
   --wiki-surface-soft: var(--wiki-surface-sunken);
+  --wiki-glass-bg: color-mix(in srgb, rgb(var(--v-theme-surface)) 82%, transparent);
+  --wiki-glass-blur: blur(16px) saturate(180%);
+  --wiki-glass-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
   --wiki-accent-warm: rgb(var(--v-theme-primary));
   --wiki-accent-ink: color-mix(in srgb, var(--wiki-accent-warm) 38%, rgb(var(--v-theme-on-surface)) 62%);
   --wiki-accent-spectral: rgb(var(--v-theme-secondary));

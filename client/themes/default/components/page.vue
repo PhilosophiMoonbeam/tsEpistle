@@ -2380,7 +2380,7 @@ export default defineComponent({
   --page-reader-shell-max: 132rem;
   --page-metadata-rail-width: clamp(15rem, 18vw, 17rem);
   --page-reader-column-gap: var(--wiki-space-6);
-  --page-reader-copy-max: var(--wiki-reader-copy-width, 101ch);
+  --page-reader-copy-max: var(--wiki-reader-copy-width, 74ch);
 
   font-family: var(--wiki-font-body);
 }
@@ -2609,8 +2609,8 @@ export default defineComponent({
 .page-breadcrumb-bar {
   min-height: var(--wiki-control-height);
   border-bottom: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-raised) !important;
-  box-shadow: var(--wiki-shadow-xs);
+  background: transparent !important;
+  box-shadow: none;
 
   .v-toolbar__content {
     width: min(100%, var(--wiki-shell-max));
@@ -3442,7 +3442,7 @@ export default defineComponent({
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-panel-radius);
   background: rgb(var(--v-theme-surface));
-  box-shadow: var(--wiki-shadow-xs);
+  box-shadow: none;
 
   > div {
     width: min(100%, var(--page-reader-copy-max));

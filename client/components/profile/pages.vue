@@ -3,24 +3,26 @@
     v-row
       v-col(cols='12')
         .profile-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-file.svg', alt='', style='width: 80px;')
+          .profile-header-icon-box
+            v-avatar(size='64', color='primary', variant='tonal')
+              v-icon(size='36', color='primary') mdi-file-document-multiple-outline
           .profile-header-title
-            h1.text-headline-medium.text-primary.animated.fadeInLeft {{$t('profile:pages.title')}}
-            .text-body-large.text-grey.animated.fadeInLeft {{$t('profile:pages.subtitle')}}
+            h1.text-headline-medium.font-weight-bold {{$t('profile:pages.title')}}
+            .text-body-large.text-medium-emphasis {{$t('profile:pages.subtitle')}}
           v-spacer
-          v-btn.animated.fadeInDown.wait-p1s(
+          v-btn(
             icon
             color='grey'
             variant="outlined"
             @click='refresh'
             :loading='loading'
             :disabled='loading'
-            size="large"
+            rounded='lg'
             :aria-label='$t("profile:pages.refresh", { defaultValue: "Refresh pages" })'
           )
             v-icon.text-grey mdi-refresh
       v-col(cols='12')
-        v-card.animated.fadeInUp
+        v-card
           async-state(
             v-if='errorMessage'
             state='error'
@@ -204,5 +206,12 @@ export default {
   gap: 4px;
   margin-top: 8px;
   overflow-wrap: anywhere;
+}
+
+.profile-header-icon-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
 }
 </style>

@@ -17,25 +17,32 @@
     v-row(v-else)
       v-col(cols='12')
         .profile-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-profile.svg', alt='', style='width: 80px;')
+          .profile-header-avatar
+            v-avatar(v-if='picture.kind === `initials`', size='64', color='primary')
+              span.text-headline-small.text-white.font-weight-bold {{ picture.initials }}
+            v-avatar(v-else-if='picture.kind === `image`', size='64')
+              v-img(:src='picture.url', alt='')
+            v-avatar(v-else, size='64', color='surface-variant')
+              v-icon(size='40') mdi-account
           .profile-header-title
-            h1.text-headline-medium.text-primary.animated.fadeInLeft {{$t('profile:title')}}
-            .text-body-large.text-grey.animated.fadeInLeft {{$t('profile:subtitle')}}
+            h1.text-headline-medium.font-weight-bold {{$t('profile:title')}}
+            .text-body-large.text-medium-emphasis {{$t('profile:subtitle')}}
           v-spacer
-          v-btn.animated.fadeInDown(
+          v-btn(
             color='primary'
             variant="flat"
             @click='saveProfile'
             :loading='saveLoading'
             :disabled='!profileReady'
             size="large"
+            rounded='lg'
             prepend-icon='mdi-check'
           ) {{$t('common:actions.save')}}
           //- v-btn.animated.fadeInDown.mr-0(variant='outlined', color='primary', disabled)
           //-   v-icon(start) mdi-earth
           //-   span {{$t('profile:viewPublicProfile')}}
       v-col(lg='6' cols='12')
-        v-card.animated.fadeInUp
+        v-card
           v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
             v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:myInfo')}}
           v-list(lines="two", density="compact")
@@ -129,7 +136,7 @@
                       @keydown.esc='editPop.jobTitle = false'
                     )
 
-        v-card.mt-3.animated.fadeInUp.wait-p2s
+        v-card.mt-3
           v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
             v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:auth.title')}}
           v-card-text.pt-0
@@ -245,7 +252,7 @@
         //-       v-img(:src='picture.url')
         //-     v-btn.mx-4(variant='outlined') Upload Picture
         //-     v-btn(variant='outlined', disabled) Remove Picture
-        v-card.animated.fadeInUp.wait-p2s
+        v-card
           v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
             v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:preferences')}}
           v-list(lines="two", density="compact")
@@ -378,9 +385,9 @@
                         v-icon(start) mdi-check
                         span {{$t('common:actions.ok')}}
 
-        v-card.mt-3.animated.fadeInUp.wait-p3s
-          v-toolbar(color='primary', density="compact", flat)
-            v-toolbar-title.text-body-large(tag='h2') {{$t('profile:groups.title')}}
+        v-card.mt-3
+          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
+            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:groups.title')}}
           v-list(density="compact")
             template(v-if='user.groups.length')
               template(v-for='(grp, idx) of user.groups', :key='`grp-id-` + grp')
@@ -393,7 +400,7 @@
             v-list-item(v-else)
               v-list-item-title.text-body-medium.text-medium-emphasis {{ $t('profile:groups.empty', { defaultValue: 'No groups assigned' }) }}
 
-        v-card.mt-3.animated.fadeInUp.wait-p4s
+        v-card.mt-3
           v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
             v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:activity.title')}}
           v-card-text.text-grey-darken-2
@@ -723,6 +730,14 @@ export default {
     }
   },
   computed: {
+    picture () {
+      const pictureUrl = typeof wikiStore.user.pictureUrl === 'string' ? wikiStore.user.pictureUrl : ''
+      if (pictureUrl.length > 1) {
+        return { kind: 'image' as const, url: (pictureUrl === 'internal') ? `/_userav/${wikiStore.user.id}` : pictureUrl }
+      }
+      const label = this.user?.name || this.user?.email || wikiStore.user.name || wikiStore.user.email || 'User'
+      return { kind: 'initials' as const, initials: label.slice(0, 2).toUpperCase() }
+    },
     profileReady () {
       return this.user !== null
     },
@@ -977,5 +992,12 @@ export default {
   &__name {
     min-width: 0;
   }
+}
+
+.profile-header-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
 }
 </style>

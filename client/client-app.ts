@@ -81,7 +81,8 @@ const vuetify = createVuetify({
       variant: 'flat'
     },
     VBtn: {
-      elevation: 0
+      elevation: 0,
+      rounded: 'lg'
     },
     VTextField: {
       baseColor: 'on-surface',
@@ -114,7 +115,7 @@ const vuetify = createVuetify({
       variant: 'outlined'
     },
     VChip: {
-      rounded: 'lg',
+      rounded: 'pill',
       variant: 'tonal'
     },
     VDialog: {
@@ -122,13 +123,13 @@ const vuetify = createVuetify({
       transition: 'dialog-transition'
     },
     VMenu: {
-      offset: 8,
+      offset: 6,
       transition: 'fade-transition'
     },
     VTooltip: {
       location: 'bottom',
-      offset: 8,
-      openDelay: 400,
+      offset: 6,
+      openDelay: 200,
       transition: 'fade-transition'
     },
     VDataTable: {

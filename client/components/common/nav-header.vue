@@ -164,6 +164,18 @@
 
           //- PAGE ACTIONS
 
+          template(v-if='hasWritePagesPermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
+            v-btn.nav-header-edit-btn(
+              variant='tonal'
+              color='primary'
+              size='small'
+              rounded='lg'
+              prepend-icon='mdi-pencil'
+              @click='pageEdit'
+              :aria-label='$t(`common:header.edit`)'
+            )
+              span.font-weight-medium {{$t('common:header.edit')}}
+
           template(v-if='hasAnyPagePermissions && path && mode !== `edit` && $vuetify.display.mdAndUp')
             v-menu(location="bottom end", transition='slide-y-transition', @update:model-value='pageActionsVisibilityChanged')
               template(v-slot:activator='{ props: menuProps }')
@@ -175,7 +187,7 @@
                       rounded='lg'
                       :aria-label='$t(`common:header.pageActions`)'
                       )
-                      v-icon mdi-file-document-edit-outline
+                      v-icon mdi-dots-horizontal
                   span {{$t('common:header.pageActions')}}
               v-list.nav-header-menu.page-actions-menu(ref='pageActionsMenu' nav)
                 .text-label-small.pa-4.text-grey {{$t('common:header.currentPage')}}
@@ -276,9 +288,11 @@
                     rounded='lg'
                     :aria-label='accountButtonLabel'
                     )
-                    v-icon(v-if='picture.kind === `initials`') mdi-account-circle
-                    v-avatar(v-else-if='picture.kind === `image`', :size='34')
+                    v-avatar(v-if='picture.kind === `initials`', :size='32', color='primary')
+                      span.account-menu__initials {{ picture.initials }}
+                    v-avatar(v-else-if='picture.kind === `image`', :size='32')
                       v-img(:src='picture.url', alt='')
+                    v-icon(v-else) mdi-account-circle
                     span.account-menu__notification-indicator(
                       v-if='notificationState !== `clear`'
                       :class='`account-menu__notification-indicator--${notificationState}`'
@@ -879,34 +893,11 @@ export default defineComponent({
   --nav-header-accent-direction: 90deg;
   isolation: isolate;
   border-bottom: 1px solid var(--wiki-surface-border) !important;
-  background:
-    linear-gradient(
-      var(--nav-header-accent-direction),
-      color-mix(in srgb, var(--wiki-accent-warm) 5%, var(--wiki-surface-raised)),
-      var(--wiki-surface-raised) 34%,
-      var(--wiki-surface-raised) 70%,
-      color-mix(in srgb, var(--wiki-accent-spectral) 4%, var(--wiki-surface-raised))
-    ) !important;
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 85%, transparent) !important;
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   color: rgb(var(--v-theme-on-surface));
-  box-shadow: var(--wiki-shadow-sm) !important;
-
-  &::after {
-    position: absolute;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 2;
-    height: 1px;
-    background: linear-gradient(
-      var(--nav-header-accent-direction),
-      transparent,
-      color-mix(in srgb, var(--wiki-ambient-accent) 48%, transparent) 24%,
-      color-mix(in srgb, var(--wiki-accent-spectral) 34%, transparent) 76%,
-      transparent
-    );
-    pointer-events: none;
-    content: '';
-  }
+  box-shadow: none !important;
 
   > .v-toolbar__content {
     overflow: hidden;
@@ -1124,7 +1115,7 @@ export default defineComponent({
       border-color: color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent);
       background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent);
       color: var(--wiki-accent-warm);
-      transform: translateY(-1px);
+      transform: none;
     }
 
     &:focus-visible {
@@ -1286,6 +1277,21 @@ export default defineComponent({
 
 .account-menu__trigger {
   position: relative;
+}
+
+.account-menu__initials {
+  font-size: .8125rem;
+  font-weight: 700;
+  color: rgb(var(--v-theme-on-primary));
+  line-height: 1;
+}
+
+.nav-header-edit-btn {
+  height: 36px !important;
+  padding-inline: var(--wiki-space-3);
+  font-weight: 600;
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 30%, transparent) !important;
+  margin-inline-end: var(--wiki-space-1);
 }
 
 .account-menu__notification-indicator {

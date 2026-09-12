@@ -237,6 +237,16 @@ const openApprovalPage = (event: MouseEvent, item: PageApprovalInboxItem): void 
 
 .account-notifications__list {
   padding: 0 !important;
+
+  .v-list-item {
+    border-radius: var(--wiki-radius-sm);
+    margin: 2px var(--wiki-space-2);
+    transition: background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+    &:hover {
+      background-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, transparent);
+    }
+  }
 }
 
 .account-notifications__item--unread {
@@ -249,17 +259,21 @@ const openApprovalPage = (event: MouseEvent, item: PageApprovalInboxItem): void 
   justify-content: center;
   width: 1.25rem;
   height: 1.25rem;
-  border: 1px solid currentColor;
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 40%, transparent);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, transparent);
+  color: rgb(var(--v-theme-primary));
   border-radius: 999px;
-  font-size: .8rem;
-  font-weight: 800;
+  font-size: .75rem;
+  font-weight: 700;
   line-height: 1;
 }
 
 .account-notifications__unread-state {
-  padding: .125rem .375rem;
-  border: 1px solid currentColor;
-  border-radius: .25rem;
+  padding: .125rem .5rem;
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 30%, transparent);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, transparent);
+  color: rgb(var(--v-theme-primary));
+  border-radius: var(--wiki-radius-pill);
   font-size: .6875rem;
   font-weight: 700;
   letter-spacing: .04em;
