@@ -11,3 +11,9 @@ props:
     title: Tag Number
     hint: When creating the tag, select "CMS and website builders" and copy the provided Tag Number
     order: 1
+  webvisor:
+    type: Boolean
+    title: Session Replay
+    hint: Records reader interactions for playback. New configurations default off; existing enabled installations retain their previous setting.
+    default: false
+    order: 2

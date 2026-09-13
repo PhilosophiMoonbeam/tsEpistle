@@ -162,6 +162,8 @@ Watch startup logs and health until migrations and background projection initial
 
 The migration creates tsEpistle-specific Agent, proposal, durable-job, knowledge-projection, search, and supporting tables. Those schema changes are forward-only from an operator perspective: rollback requires the original snapshot, not the old application image pointed at the new database.
 
+Migration `tsepistle-000032-yandex-webvisor` makes Yandex Metrica session replay explicit. Existing enabled Yandex rows that previously inherited the bundled `webvisor: true` behavior retain `true`; disabled rows and new configurations default to `false`. Administrators can review and change the setting under **Administration → Analytics → Providers**. Do not roll back to an older application after saving `false`: older templates ignore the setting and hard-code session replay on. Preserve the database and fix forward or restore the matching pre-upgrade backup.
+
 ## Phase 6: Validate the clone
 
 Validate data, behavior, and containment—not just the health endpoint.

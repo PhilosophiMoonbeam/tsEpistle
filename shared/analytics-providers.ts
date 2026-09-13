@@ -131,11 +131,20 @@ export const analyticsProviderDefinitions: AnalyticsProviderDefinition[] = [
   definition(
     'yandex',
     'Yandex Metrica',
-    'Traffic and interaction reporting with webvisor enabled.',
+    'Traffic and interaction reporting with optional session replay.',
     'https://metrica.yandex.com',
     'replay',
-    ['Page views', 'Click map', 'Link tracking', 'Session replay'],
-    [field('tagNumber', 'Tag number', 'number')]
+    ['Page views', 'Click map', 'Link tracking', 'Optional session replay'],
+    [
+      field('tagNumber', 'Tag number', 'number'),
+      field(
+        'webvisor',
+        'Session replay',
+        'boolean',
+        'false',
+        'Records reader interactions for playback. New configurations default off; existing enabled installations retain their previous setting.'
+      )
+    ]
   ),
   definition(
     'azureinsights',
@@ -159,7 +168,7 @@ export const analyticsProviderDefinitions: AnalyticsProviderDefinition[] = [
       field('serviceName', 'Service name', 'text', 'tsepistle'),
       field('environment', 'Environment', 'text', '', 'Optional deployment label.', true)
     ],
-    'The bundled loader requests the unversioned @elastic/apm-rum bundle from unpkg.com. Review the provider version before enabling.'
+    'The bundled loader uses the exact @elastic/apm-rum 5.17.5 browser bundle from unpkg.com. Check compatibility with your APM server.'
   ),
   definition(
     'newrelic',
@@ -209,6 +218,7 @@ export const analyticsProviderIssues = (provider: AnalyticsProviderDraft): strin
       continue
     }
     if (field.kind === 'number' && !/^[1-9][0-9]{0,14}$/.test(value)) issues.push(`${field.title} must be a positive whole-number identifier.`)
+    if (field.kind === 'boolean' && !['true', 'false'].includes(value)) issues.push(`${field.title} must be true or false.`)
     if (field.kind === 'hostname' && !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(value))
       issues.push(`${field.title} must be a hostname without a scheme or path.`)
     if (field.kind === 'url') {

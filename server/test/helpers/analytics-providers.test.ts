@@ -36,7 +36,7 @@ describe('Analytics provider contracts and compiled browser code', () => {
       const config = Object.fromEntries(
         definition.fields.map(field => [
           field.key,
-          field.kind === 'url' ? 'https://stats.example.test' : field.kind === 'hostname' ? 'stats.example.test' : field.kind === 'number' ? '1234' : 'example'
+          field.kind === 'url' ? 'https://stats.example.test' : field.kind === 'hostname' ? 'stats.example.test' : field.kind === 'number' ? '1234' : field.kind === 'boolean' ? 'false' : 'example'
         ])
       )
       if (definition.key === 'google') config.propertyTrackingId = 'G-EXAMPLE'
@@ -70,10 +70,34 @@ describe('Analytics provider contracts and compiled browser code', () => {
     expect(() => compileAnalyticsTemplate({ head: '{{unknown}}', bodyStart: '', bodyEnd: '' }, draft)).toThrow('unknown field')
     await expect(readAnalyticsTemplate(serverPath, '../outside')).rejects.toThrow('unavailable')
   })
-  it('normalizes saved numeric defaults without admitting prototype or unknown configuration fields', () => {
+  it('emits an explicit Yandex replay boolean and a version-pinned Elastic loader', async () => {
+    const yandex = { key: 'yandex', isEnabled: true, config: { tagNumber: '42', webvisor: 'false' } }
+    const replayOff = compileAnalyticsTemplate(await readAnalyticsTemplate(serverPath, 'yandex'), yandex)
+    expect(replayOff.head).toContain('webvisor:false')
+    expect(replayOff.head).not.toContain('webvisor:true')
+
+    yandex.config.webvisor = 'true'
+    expect(compileAnalyticsTemplate(await readAnalyticsTemplate(serverPath, 'yandex'), yandex).head).toContain('webvisor:true')
+    expect(analyticsProviderIssues({ ...yandex, config: { ...yandex.config, webvisor: 'yes' } })).toContain('Session replay must be true or false.')
+
+    const elastic = analyticsProviderDefinitions.find(definition => definition.key === 'elasticapm')!
+    const elasticDraft = {
+      key: elastic.key,
+      isEnabled: true,
+      config: Object.fromEntries(elastic.fields.map(field => [field.key, field.default || (field.kind === 'url' ? 'https://apm.example.test' : 'example')]))
+    }
+    const elasticCode = compileAnalyticsTemplate(await readAnalyticsTemplate(serverPath, elastic.key), elasticDraft)
+    expect(elasticCode.head).toContain('https://unpkg.com/@elastic/apm-rum@5.17.5/dist/bundles/elastic-apm-rum.umd.min.js')
+    expect(elasticCode.head).not.toContain('@elastic/apm-rum/dist/')
+  })
+  it('normalizes saved numeric and boolean defaults without admitting prototype or unknown configuration fields', () => {
     expect(
       analyticsDraftFromRow({ key: 'matomo', isEnabled: false, config: { siteId: 1, serverHost: 'https://stats.example.test', unknown: 'discard' } }).config
     ).toEqual({ siteId: '1', serverHost: 'https://stats.example.test' })
+    expect(analyticsDraftFromRow({ key: 'yandex', isEnabled: true, config: { tagNumber: 42, webvisor: false } }).config).toEqual({
+      tagNumber: '42',
+      webvisor: 'false'
+    })
     expect(analyticsProviderIssues({ ...provider(), config: { ...provider().config, unexpected: 'x' } })).toContain('Unknown configuration field: unexpected.')
   })
   it('isolates an invalid integration and enforces current availability and request policy before compiling', async () => {

@@ -83,7 +83,7 @@ export interface AnalyticsField {
   key: string
   title: string
   hint: string
-  kind: 'text' | 'url' | 'number' | 'hostname'
+  kind: 'text' | 'url' | 'number' | 'hostname' | 'boolean'
   optional: boolean
   default: string
 }

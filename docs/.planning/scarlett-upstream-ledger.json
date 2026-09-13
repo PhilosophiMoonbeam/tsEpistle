@@ -3,9 +3,9 @@
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "1c7d709b1a0cd4bd755c60aaeef19744b6c7f089",
-    "recordedAt": "2026-09-12T03:42:22-04:00",
-    "lastFetchedAt": "2026-09-12T21:40:49.935Z"
+    "recordedTip": "007e8e974580a74e5301c710a17595ac70aa240f",
+    "recordedAt": "2026-09-13T19:58:06.350Z",
+    "lastFetchedAt": "2026-09-13T19:58:06.350Z"
   },
   "forkCheckpoint": "6713df41c978b1c772159eae06f9c59c3e590d3f",
   "candidates": [
@@ -668,6 +668,46 @@
       "workstream": "experience-completion/tags",
       "contract": "The fork already provides a localized responsive tag library with canonical aliases, multi-tag intersection, permission-filtered page results, locale-aware ordering, keyboard semantics and focused end-to-end coverage; Scarlett's Tailwind tag page and stores are not transplanted.",
       "lastReviewed": "2026-09-12"
+    },
+    {
+      "id": "page-source-guest-permission-2026-09-13",
+      "commits": ["ff9aa13e"],
+      "category": "authorization",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "pages/source-access",
+      "contract": "Express source routes already resolve the Guest principal and page-specific rules before exposing canonical source, while private ownership, historical permission and password unlock remain fail-closed. Scarlett's Fastify content predicate and global Quasar action gate are not transplanted, and Guest defaults are not widened.",
+      "lastReviewed": "2026-09-13"
+    },
+    {
+      "id": "empty-folder-purge-2026-09-13",
+      "commits": ["b11bf4f6"],
+      "category": "admin-utilities",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "admin/content-lifecycle",
+      "contract": "The fork's page tree is an atomic page-path-derived projection whose rebuild already removes stale empty ancestors; asset folders and administrator-owned navigation remain separate canonical models. Scarlett's global repeated deletion of persistent mixed tree rows has no safe or useful fork target and is not transplanted.",
+      "lastReviewed": "2026-09-13"
+    },
+    {
+      "id": "analytics-modules-and-provider-hardening-2026-09-13",
+      "commits": ["9ec8070c"],
+      "category": "privacy",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "admin/analytics",
+      "contract": "The existing reviewed PostgreSQL analytics workspace, request-scoped collection policy, privacy-signal exclusions, provider validation and broader integration catalog remain authoritative. The useful deltas are adapted narrowly: Yandex session replay becomes an explicit reviewed boolean that defaults off for new or disabled configurations while preserving enabled legacy behavior, and Elastic APM loads an exact version-pinned bundle from its existing origin; Scarlett's Fastify, multisite config-blob and Tailwind surfaces are not copied.",
+      "lastReviewed": "2026-09-13"
+    },
+    {
+      "id": "comments-talk-and-provider-expansion-2026-09-13",
+      "commits": ["007e8e97"],
+      "category": "workflow",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "experience-completion/discussions",
+      "contract": "Fork-native comments already retain Wiki.js integer data, page-rule and password authorization, sanitized rendering, durable cooldowns, moderation history, reviewed provider settings and private-page-safe embeds. Scarlett's incompatible UUID migration, Fastify/Drizzle stack, unscoped mentions and executable widget lifecycle are rejected; replies, mentions, an Article/Talk presentation and additional providers remain independent candidates only after they preserve the existing privacy, moderation, CSP, migration and multi-instance contracts.",
+      "lastReviewed": "2026-09-13"
     }
   ]
 }

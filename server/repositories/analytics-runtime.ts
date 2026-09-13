@@ -43,6 +43,7 @@ export const analyticsDraftFromRow = (row: AnalyticsRow): AnalyticsProviderDraft
     config: Object.fromEntries(
       (definition?.fields ?? []).map(field => {
         const value = raw[field.key] ?? field.default
+        if (field.kind === 'boolean' && typeof value === 'boolean') return [field.key, value ? 'true' : 'false']
         return [field.key, typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '']
       })
     )

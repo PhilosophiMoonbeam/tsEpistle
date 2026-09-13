@@ -387,17 +387,28 @@
                 </v-alert>
                 <p class="analytics-compatibility">{{ provider.compatibility }}</p>
                 <div class="analytics-provider-fields">
-                  <v-text-field
-                    v-for="field in provider.fields"
-                    :key="field.key"
-                    v-model="providerDraft.config[field.key]"
-                    :label="field.title + (field.optional ? ' (optional)' : '')"
-                    :hint="field.hint"
-                    persistent-hint
-                    variant="outlined"
-                    :inputmode="field.kind === 'number' ? 'numeric' : field.kind === 'url' ? 'url' : 'text'"
-                    :disabled="locked || !provider.isAvailable"
-                  />
+                  <template v-for="field in provider.fields" :key="field.key">
+                    <v-switch
+                      v-if="field.kind === 'boolean'"
+                      :model-value="providerDraft.config[field.key] === 'true'"
+                      :label="field.title"
+                      :hint="field.hint"
+                      persistent-hint
+                      color="primary"
+                      :disabled="locked || !provider.isAvailable"
+                      @update:model-value="providerDraft.config[field.key] = $event ? 'true' : 'false'"
+                    />
+                    <v-text-field
+                      v-else
+                      v-model="providerDraft.config[field.key]"
+                      :label="field.title + (field.optional ? ' (optional)' : '')"
+                      :hint="field.hint"
+                      persistent-hint
+                      variant="outlined"
+                      :inputmode="field.kind === 'number' ? 'numeric' : field.kind === 'url' ? 'url' : 'text'"
+                      :disabled="locked || !provider.isAvailable"
+                    />
+                  </template>
                 </div>
                 <div v-if="providerProblems.length" class="analytics-provider-problems" role="status">
                   <strong>{{ providerDraft.isEnabled ? 'Resolve before publication' : 'Needed before enabling' }}</strong>
@@ -783,7 +794,12 @@ const changedProviderFields = (row: AnalyticsProviderDraft) => {
   return (
     original?.fields
       .filter((field) => row.config[field.key] !== original.config[field.key])
-      .map((field) => ({ key: field.key, title: field.title, before: original.config[field.key], after: row.config[field.key] })) || []
+      .map((field) => ({
+        key: field.key,
+        title: field.title,
+        before: field.kind === 'boolean' ? (original.config[field.key] === 'true' ? 'On' : 'Off') : original.config[field.key],
+        after: field.kind === 'boolean' ? (row.config[field.key] === 'true' ? 'On' : 'Off') : row.config[field.key]
+      })) || []
   )
 }
 const bars = computed<BarDatum[]>(() => {
