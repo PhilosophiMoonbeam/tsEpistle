@@ -703,10 +703,10 @@
       "id": "comments-talk-and-provider-expansion-2026-09-13",
       "commits": ["007e8e97"],
       "category": "workflow",
-      "disposition": "split",
+      "disposition": "adapt",
       "state": "completed",
       "workstream": "experience-completion/discussions",
-      "contract": "Fork-native comments already retain Wiki.js integer data, page-rule and password authorization, sanitized rendering, durable cooldowns, moderation history, reviewed provider settings and private-page-safe embeds. Scarlett's incompatible UUID migration, Fastify/Drizzle stack, unscoped mentions and executable widget lifecycle are rejected; replies, mentions, an Article/Talk presentation and additional providers remain independent candidates only after they preserve the existing privacy, moderation, CSP, migration and multi-instance contracts.",
+      "contract": "Adapted the complete useful comments delta into the fork-native stack: one-level integer reply threads normalize to a visible same-page root and preserve replies through hide/delete projection; contextual page-scoped mentions use permanent lowercase handle claims, active human participants and neutral stored Markdown; the existing page shell exposes history-aware Article/Talk tabs for native discussions; and Comentario, Discourse, Giscus, Hyvor Talk, Isso, Remark42 and Waline use typed configuration, stable /i/<pageId> identity, strict URL/context encoding and guarded provider-catalog rollback. Existing page-rule/password authorization, private-page external suppression, moderation, cooldown, PostgreSQL locking and operator-owned CSP remain authoritative. Scarlett's UUID migration, Fastify/Drizzle stack, global user discovery and executable template lifecycle remain rejected.",
       "lastReviewed": "2026-09-13"
     }
   ]

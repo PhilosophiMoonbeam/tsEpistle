@@ -164,6 +164,10 @@ The migration creates tsEpistle-specific Agent, proposal, durable-job, knowledge
 
 Migration `tsepistle-000032-yandex-webvisor` makes Yandex Metrica session replay explicit. Existing enabled Yandex rows that previously inherited the bundled `webvisor: true` behavior retain `true`; disabled rows and new configurations default to `false`. Administrators can review and change the setting under **Administration → Analytics → Providers**. Do not roll back to an older application after saving `false`: older templates ignore the setting and hard-code session replay on. Preserve the database and fix forward or restore the matching pre-upgrade backup.
 
+Migration `tsepistle-000033-comment-mentions` adds optional lowercase mention handles and a permanent claim ledger. A released handle remains reserved after an account changes handle, clears it or is deleted; the claim's user reference becomes a tombstone rather than making the handle reusable. The down migration refuses any current handle or claim. Preserve the database backup and apply a forward fix instead of starting an older image against these rows.
+
+Migration `tsepistle-000034-comment-provider-catalog` adds disabled defaults for Comentario, Discourse, Giscus, Hyvor Talk, Isso, Remark42 and Waline. Its down migration removes only untouched disabled defaults and refuses an enabled or changed row. Review provider destinations and CSP allowlists before activation; migrating does not contact an external service.
+
 ## Phase 6: Validate the clone
 
 Validate data, behavior, and containment—not just the health endpoint.
