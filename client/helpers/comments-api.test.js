@@ -1,4 +1,4 @@
-import { fetchCommentProviders, fetchComments, saveCommentProviders } from './comments-api.ts'
+import { fetchCommentProviders, fetchComments, fetchMentionCandidates, saveCommentProviders } from './comments-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -29,6 +29,8 @@ describe('comments api helper', () => {
       id: 31,
       render: '<p>Owner comment</p>',
       authorName: 'Owner',
+      replyTo: 0,
+      authorHandle: 'owner',
       createdAt: '2026-08-14T00:00:00.000Z',
       updatedAt: '2026-08-14T00:00:00.000Z'
     }]
@@ -36,6 +38,15 @@ describe('comments api helper', () => {
 
     expect(await fetchComments(fetchImpl, 17)).toEqual(comments)
     expect(fetchImpl).toHaveBeenCalledWith('/_api/comments?pageId=17', {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' }
+    })
+  })
+
+  test('scopes mention discovery to the current page and validates candidates', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ id: 7, handle: 'alice', name: 'Alice' }]))
+    expect(await fetchMentionCandidates(fetchImpl, 17, 'ali')).toEqual([{ id: 7, handle: 'alice', name: 'Alice' }])
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/comments/mentions?pageId=17&q=ali', {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' }
     })

@@ -1,0 +1,16 @@
+key: isso
+title: Isso
+description: Lightweight self-hosted comments with anonymous posting support.
+author: Isso
+logo: https://static.requarks.io/logo/isso.svg
+website: https://isso-comments.de
+codeTemplate: true
+isAvailable: true
+props:
+  server:
+    type: String
+    title: Server URL
+    default: ''
+    hint: 'Public HTTPS URL of your Isso server. Name requirements are configured on that server; allow its script, stylesheet and API origins in the wiki CSP.'
+    maxWidth: 650
+    order: 1

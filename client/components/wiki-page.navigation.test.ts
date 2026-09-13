@@ -12,6 +12,7 @@ type NavigationOptions = {
 type NavigationVm = {
   currentUrl: string
   navigationSequence: number
+  activePageView: 'article' | 'talk'
   navigationAbortController: AbortController | null
   navigationPending: boolean
   currentPage: WikiPagePayload
@@ -146,6 +147,7 @@ const navigationVm = (): NavigationVm => ({
   navigationSequence: 0,
   navigationAbortController: null,
   navigationPending: false,
+  activePageView: 'article',
   currentPage: payload(),
   contentHtml: '',
   commentsHtml: '',
@@ -183,6 +185,21 @@ describe('wiki page navigation response boundary', () => {
     expect(vm.commentsHtml).toContain('data-forged-comments')
     expect(vm.navigationKey).toBe(1)
     expect(vm.currentUrl).toBe(finalUrl)
+  })
+
+  test('switches Article and Talk through same-page history without fetching', async () => {
+    const { value, readBody } = response({ url: window.location.href })
+    const component = loadComponent(value)
+    const vm = navigationVm()
+    const destination = new URL(vm.currentUrl)
+    destination.hash = 'discussion'
+
+    await component.methods.navigate.call(vm, destination)
+
+    expect(readBody).not.toHaveBeenCalled()
+    expect(vm.activePageView).toBe('talk')
+    expect(vm.currentUrl).toBe(destination.href)
+    expect(vm.restoreScroll).toHaveBeenCalledWith(destination, undefined)
   })
 
   const rejectedResponses: Array<[string, string, HeadersInit]> = [

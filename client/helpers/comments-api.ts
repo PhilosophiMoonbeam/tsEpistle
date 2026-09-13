@@ -48,6 +48,8 @@ export type CommentRow = {
   id: number
   render: string
   authorName: string
+  replyTo: number
+  authorHandle: string
   createdAt: string
   updatedAt: string
 }
@@ -64,9 +66,18 @@ type CommentCreateInput = {
   guestName: string
   guestEmail: string
 }
+export type MentionCandidate = {
+  id: number
+  handle: string
+  name: string
+}
 
 function normalizePositiveInteger(value: unknown, fallbackMessage: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new Error(fallbackMessage)
+  return value
+}
+function normalizeNonNegativeInteger(value: unknown, fallbackMessage: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error(fallbackMessage)
   return value
 }
 
@@ -76,6 +87,7 @@ function normalizeCommentRow(payload: unknown, fallbackMessage: string): Comment
     typeof payload.render !== 'string' ||
     typeof payload.authorName !== 'string' ||
     typeof payload.createdAt !== 'string' ||
+    typeof payload.authorHandle !== 'string' ||
     typeof payload.updatedAt !== 'string'
   ) {
     throw new Error(fallbackMessage)
@@ -83,6 +95,8 @@ function normalizeCommentRow(payload: unknown, fallbackMessage: string): Comment
   return {
     id: normalizePositiveInteger(payload.id, fallbackMessage),
     render: payload.render,
+    replyTo: normalizeNonNegativeInteger(payload.replyTo, fallbackMessage),
+    authorHandle: payload.authorHandle,
     authorName: payload.authorName,
     createdAt: payload.createdAt,
     updatedAt: payload.updatedAt
@@ -266,6 +280,19 @@ export async function fetchComments(fetchImpl: FetchImpl, pageId: number, fallba
   const payload = await parseJsonResponse(response, fallbackMessage)
   if (!Array.isArray(payload)) throw new Error(fallbackMessage)
   return payload.map(row => normalizeCommentRow(row, fallbackMessage))
+}
+
+export async function fetchMentionCandidates(fetchImpl: FetchImpl, pageId: number, query: string, fallbackMessage = 'Mention search response is invalid'): Promise<MentionCandidate[]> {
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/comments/mentions?pageId=${encodeURIComponent(pageId)}&q=${encodeURIComponent(query)}`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!Array.isArray(payload)) throw new Error(fallbackMessage)
+  return payload.map(row => {
+    if (!isRecord(row) || typeof row.id !== 'number' || !Number.isSafeInteger(row.id) || row.id < 1 || typeof row.handle !== 'string' || !/^[a-z0-9_-]{3,32}$/.test(row.handle) || typeof row.name !== 'string' || !row.name) throw new Error(fallbackMessage)
+    return { id: row.id, handle: row.handle, name: row.name }
+  })
 }
 
 export async function createComment(fetchImpl: FetchImpl, input: CommentCreateInput, fallbackMessage = 'Comment creation failed'): Promise<{ id: number }> {

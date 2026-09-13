@@ -5,6 +5,7 @@ import { createDiscussionSettingsStore, type DiscussionDefinition } from '../../
 import { createDiscussionModerationStore } from '../../operations/discussion-moderation.ts'
 import { createDiscussionPostingStore, type DiscussionPostInput } from '../../operations/discussion-posting.ts'
 import { up, down } from '../../db/migrations/tsepistle-000016-discussion-moderation.ts'
+import { up as addCommentMentions, down as removeCommentMentions } from '../../db/migrations/tsepistle-000033-comment-mentions.ts'
 const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
 const password = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE ? fs.readFileSync(process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
 const connection = database.endsWith('_discussion_test') && password ? { host: process.env.WIKI_TEST_POSTGRES_HOST ?? '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: 'wiki', database, password } : null
@@ -39,6 +40,8 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     await db.schema.createTable('pageAccessPasswords', table => { table.integer('pageId').primary(); table.integer('version') })
     await db.schema.createTable('pageUnlockGrants', table => { table.string('id'); table.integer('pageId'); table.string('sessionId'); table.integer('userId'); table.integer('passwordVersion'); table.timestamp('expiresAt') })
     await db.schema.createTable('comments', table => { table.increments('id'); table.integer('pageId').references('id').inTable('pages'); table.integer('authorId'); table.text('content'); table.text('render'); table.string('name'); table.string('email'); table.string('ip'); table.integer('replyTo').defaultTo(0); table.string('createdAt'); table.string('updatedAt') })
+    await db.schema.createTable('users', table => { table.integer('id').primary(); table.string('name') })
+    await addCommentMentions(db)
     await up(db)
     settings = createDiscussionSettingsStore({ db, definitions: () => definitions, fallbackFeatures: () => ({ featurePageComments: true, custom: 'keep' }), async activate() { if (failActivation) throw new Error('runtime unavailable'); return [] } })
     moderation = createDiscussionModerationStore(db)
@@ -51,12 +54,22 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     })
   })
   beforeEach(async () => {
-    for (const table of ['discussionModerationHistory', 'pageDiscussionPolicy', 'comments', 'pageAccessPasswords', 'pageUnlockGrants', 'pageTags', 'tags', 'pages', 'commentProviders', 'settings']) await db(table).delete()
+    for (const table of ['discussionModerationHistory', 'pageDiscussionPolicy', 'comments', 'userHandleClaims', 'users', 'pageAccessPasswords', 'pageUnlockGrants', 'pageTags', 'tags', 'pages', 'commentProviders', 'settings']) await db(table).delete()
     await db('pages').insert([{ id: 1, title: 'Public guide', path: 'guide', localeCode: 'en', visibility: 'public', ownerId: null }, { id: 2, title: 'Private notes', path: 'private', localeCode: 'en', visibility: 'private', ownerId: 7 }])
     await db('commentProviders').insert([{ key: 'default', isEnabled: true, config: JSON.stringify({ akismet: 'saved-key', minDelay: 30, unknown: 'retained' }) }, { key: 'commento', isEnabled: false, config: JSON.stringify({ instanceUrl: 'https://comments.example.invalid' }) }])
     failActivation = false; spamChecks = []
   })
-  afterAll(async () => { if (db) { for (const table of ['discussionModerationHistory', 'pageDiscussionPolicy', 'comments', 'pageUnlockGrants', 'pageAccessPasswords', 'pageTags', 'tags', 'pages', 'commentProviders', 'settings']) await db.schema.dropTableIfExists(table); await db.destroy() }; globalThis.WIKI = oldWiki as never })
+  afterAll(async () => { if (db) { await removeCommentMentions(db); for (const table of ['discussionModerationHistory', 'pageDiscussionPolicy', 'comments', 'users', 'pageUnlockGrants', 'pageAccessPasswords', 'pageTags', 'tags', 'pages', 'commentProviders', 'settings']) await db.schema.dropTableIfExists(table); await db.destroy() }; globalThis.WIKI = oldWiki as never })
+  it('keeps claimed mention handles permanent across account deletion', async () => {
+    await db('users').insert([{ id: 7, name: 'Alice', handle: 'alice' }, { id: 8, name: 'Other' }])
+    await db('userHandleClaims').insert({ handle: 'alice', userId: 7 })
+    await expect(db('users').where('id', 8).update({ handle: 'Alice' })).rejects.toThrow()
+    await db('users').where('id', 7).delete()
+    expect(await db('userHandleClaims').where('handle', 'alice').first()).toMatchObject({ userId: null })
+    await expect(db('userHandleClaims').insert({ handle: 'alice', userId: 8 })).rejects.toThrow()
+    await expect(removeCommentMentions(db)).rejects.toThrow('permanent user mention handle claims')
+  })
+
   it('masks credentials, preserves masked secrets and unrelated flags, and retains undeclared stored settings', async () => {
     const initial = await settings.read(); expect(initial.providers[1]?.config.akismet).toBe('********')
     await settings.patchFeatures({ featurePageRatings: false })
@@ -142,6 +155,19 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     await db('pageUnlockGrants').insert({ id: 'grant', pageId: 1, sessionId: 'test-session', userId: 8, passwordVersion: 2, expiresAt: new Date(Date.now() + 60000) })
     await posts.post(input); expect(spamChecks).toEqual([])
   })
+  it('normalizes reply ancestry to one visible same-page root', async () => {
+    const root = await posts.post(post())
+    const reply = await posts.post(post({ replyTo: root, user: { ...post().user, id: 3 } }))
+    const nested = await posts.post(post({ replyTo: reply, user: { ...post().user, id: 4 } }))
+    expect((await db('comments').where('id', reply).first()).replyTo).toBe(root)
+    expect((await db('comments').where('id', nested).first()).replyTo).toBe(root)
+
+    const otherPageRoot = await posts.post(post({ pageId: 2, user: { ...post().user, id: 5 } }))
+    await expect(posts.post(post({ replyTo: otherPageRoot, user: { ...post().user, id: 6 } }))).rejects.toMatchObject({ status: 409 })
+    await db('comments').where('id', root).update({ isHidden: true })
+    await expect(posts.post(post({ replyTo: reply, user: { ...post().user, id: 7 } }))).rejects.toMatchObject({ status: 409 })
+  })
+
   it('rejects posting when paused, external provider active or reply parent unavailable before spam checking', async () => {
     await settings.patchFeatures({ featurePageComments: false }); await expect(posts.post(post())).rejects.toMatchObject({ status: 409 })
     await settings.patchFeatures({ featurePageComments: true }); await expect(posts.post(post({ replyTo: 999 }))).rejects.toMatchObject({ status: 409 })

@@ -79,6 +79,40 @@
             v-list-item
               template(v-slot:prepend)
                 v-avatar(size='32')
+                  v-icon mdi-at
+              v-list-item-title {{$t('profile:mentionHandle', { defaultValue: 'Mention handle' })}}
+              v-list-item-subtitle {{ user.handle ? `@${user.handle}` : $t('profile:mentionHandleEmpty', { defaultValue: 'Not set' }) }}
+              template(v-slot:append)
+                v-menu(
+                  v-model='editPop.handle'
+                  :close-on-content-click='false'
+                  min-width='min(350px, calc(100vw - 24px))'
+                  location='start'
+                  )
+                  template(v-slot:activator='{ props }')
+                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:mentionHandle`, { defaultValue: `Mention handle` })' @click='focusField(`iptMentionHandle`)')
+                      v-icon(start) mdi-pencil
+                      span {{ $t('common:actions.edit') }}
+                  v-card
+                    v-text-field(
+                      ref='iptMentionHandle'
+                      v-model='user.handle'
+                      :label='$t(`profile:mentionHandle`, { defaultValue: `Mention handle` })'
+                      :hint='$t(`profile:mentionHandleHint`, { defaultValue: `3–32 lowercase letters, numbers, underscores or hyphens. Leave blank to disable mentions.` })'
+                      persistent-hint
+                      prefix='@'
+                      maxlength='32'
+                      autocomplete='off'
+                      variant="solo"
+                      append-icon='mdi-check'
+                      @click:append='editPop.handle = false'
+                      @keydown.enter='editPop.handle = false'
+                      @keydown.esc='editPop.handle = false'
+                    )
+            v-divider
+            v-list-item
+              template(v-slot:prepend)
+                v-avatar(size='32')
                   v-icon mdi-map-marker
               v-list-item-title {{$t('profile:location')}}
               v-list-item-subtitle {{ user.location }}
@@ -429,6 +463,7 @@ import { resolveThemeName } from '../../helpers/theme.ts'
 
 type ProfileFieldRef =
   | 'iptDisplayName'
+  | 'iptMentionHandle'
   | 'iptLocation'
   | 'iptJobTitle'
   | 'iptTimezone'
@@ -472,6 +507,7 @@ export default {
       },
       editPop: {
         name: false,
+        handle: false,
         location: false,
         jobTitle: false,
         timezone: false,
@@ -838,12 +874,14 @@ export default {
       try {
         await updateProfile(window.fetch.bind(window), {
           name: profile.name,
+          handle: profile.handle,
           location: profile.location,
           jobTitle: profile.jobTitle,
           timezone: profile.timezone,
           dateFormat: profile.dateFormat,
           appearance: profile.appearance
         })
+        profile.handle = profile.handle.trim().toLowerCase()
         await wikiStore.refreshAuth()
         wikiStore.user.name = profile.name
         wikiStore.user.appearance = profile.appearance

@@ -1,0 +1,23 @@
+key: discourse
+title: Discourse
+description: Use a Discourse forum topic as each page discussion.
+author: Discourse
+logo: https://static.requarks.io/logo/discourse.svg
+website: https://www.discourse.org
+codeTemplate: true
+isAvailable: true
+props:
+  discourseUrl:
+    type: String
+    title: Forum URL
+    default: ''
+    hint: 'Public URL of the Discourse forum configured to embed this wiki.'
+    maxWidth: 650
+    order: 1
+  discourseUserName:
+    type: String
+    title: Posting Username
+    default: ''
+    hint: Optional Discourse account used to create topics.
+    maxWidth: 450
+    order: 2

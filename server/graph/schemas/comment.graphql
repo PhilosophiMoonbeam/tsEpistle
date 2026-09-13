@@ -79,6 +79,8 @@ type CommentPost {
   content: String! @auth(requires: ["write:comments", "manage:comments", "manage:system"])
   render: String!
   authorId: Int!
+  replyTo: Int!
+  authorHandle: String
   authorName: String!
   authorEmail: String
   authorIP: String

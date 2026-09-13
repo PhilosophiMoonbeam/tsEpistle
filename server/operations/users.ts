@@ -18,6 +18,7 @@ interface UserRecord extends Record<string, unknown> {
   email: string
   name: string
   providerKey: string
+  handle?: string | null
   providerId: unknown
   password: string
   tfaSecret: string
@@ -394,6 +395,7 @@ const getProfile = async (requester: Express.User | undefined): Promise<UserReco
   user.groups = groups
   user.permissions = _.uniq(groups.flatMap(group => Array.isArray(group.permissions) ? group.permissions.filter((permission): permission is string => typeof permission === 'string') : []))
   user.providerName = strategyFor(user.providerKey)?.displayName ?? 'Unknown'
+  user.handle = user.handle || ''
   user.lastLoginAt = user.lastLoginAt || user.updatedAt
   user.password = ''
   user.providerId = ''
@@ -410,6 +412,7 @@ const updateProfile = async ({ requester, input: value, response }: UserRequest)
   if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
   const input = recordValue(value)
   const name = stringValue(input.name, 'name')
+  const handle = input.handle === undefined ? undefined : stringValue(input.handle, 'handle').trim()
   const jobTitle = stringValue(input.jobTitle, 'jobTitle')
   const location = stringValue(input.location, 'location')
   const timezone = stringValue(input.timezone, 'timezone')
@@ -420,6 +423,7 @@ const updateProfile = async ({ requester, input: value, response }: UserRequest)
   await wiki.models.users.updateUser({
     id: user.id,
     name: _.trim(name),
+    ...(handle === undefined ? {} : { handle }),
     jobTitle: _.trim(jobTitle),
     location: _.trim(location),
     timezone,

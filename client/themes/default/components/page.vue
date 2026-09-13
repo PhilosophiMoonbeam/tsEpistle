@@ -1,10 +1,10 @@
 <template lang="pug">
-  v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus }]')
-    a.page-skip-link(:href='`#${pageArticleId}`', @click.prevent='focusArticle') Skip to content
+  v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive }]')
+    a.page-skip-link(:href='talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='talkActive ? goToComments() : focusArticle()') Skip to content
     nav-header(v-if='!printView', reserve-actions)
-    .page-position(v-if='!printView', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100')
+    .page-position(v-if='!printView && !talkActive', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100')
       .page-position-fill(:style='{ transform: `scaleX(${readingProgress / 100})` }')
-    .page-reading-dock(v-if='readerFocus && !printView', role='region', :aria-label='$t(`common:page.focusReading`)')
+    .page-reading-dock(v-if='readerFocus && !printView && !talkActive', role='region', :aria-label='$t(`common:page.focusReading`)')
       v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
       span.page-reading-dock-title {{ title }}
       v-btn(variant='text', size='small', prepend-icon='mdi-arrow-collapse-horizontal', @click='toggleReaderFocus') {{$t('common:page.exitFocus')}}
@@ -29,7 +29,7 @@
           @navigate='sidebarNavigationStarted'
         )
 
-    v-fab-transition(v-if='navMode !== `NONE` && !readerFocus')
+    v-fab-transition(v-if='navMode !== `NONE` && (!readerFocus || talkActive)')
       v-btn.page-nav-toggle(
         ref='navToggle'
         :class='{ "page-nav-toggle--open": navShown }'
@@ -130,7 +130,7 @@
                 .page-header-control-pair(
                   v-if='!printView || (editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn))'
                 )
-                  v-btn.page-focus-control(v-if='!printView && !readerFocus', variant='text', size='small', prepend-icon='mdi-book-open-page-variant-outline', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t('common:page.focusReading') }}
+                  v-btn.page-focus-control(v-if='!printView && !readerFocus && !talkActive', variant='text', size='small', prepend-icon='mdi-book-open-page-variant-outline', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t('common:page.focusReading') }}
                   .page-edit-shortcuts(
                     v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
                     :class='tocPosition === `right` ? `is-right` : ``'
@@ -214,7 +214,17 @@
             v-alert.page-page-context.mb-5(v-if='!isPublished', color='warning', variant="outlined", icon='mdi-minus-circle', density="compact")
               .text-body-small {{$t('common:page.unpublishedWarning')}}
             site-banner.page-page-context(:banner='siteBanner')
-            article.contents(ref='container', :id='pageArticleId', tabindex='-1', :aria-labelledby='pageTitleId', :dir='$vuetify.locale.isRtl ? `rtl` : `ltr`')
+            v-tabs.page-view-tabs(
+              v-if='commentsEnabled && commentsPerms.read && !commentsExternal && !printView'
+              :model-value='activeView'
+              color='primary'
+              density='compact'
+              aria-label='Page view'
+              @update:model-value='selectPageView'
+            )
+              v-tab#page-view-article-tab(value='article' prepend-icon='mdi-file-document-outline') Article
+              v-tab#page-view-talk-tab(value='talk' prepend-icon='mdi-forum-outline') Talk
+            article.contents(ref='container', v-show='printView || commentsExternal || activeView === `article`', :id='pageArticleId', role='tabpanel', :aria-labelledby='commentsEnabled && commentsPerms.read && !commentsExternal && !printView ? `page-view-article-tab` : pageTitleId', tabindex='-1', :dir='$vuetify.locale.isRtl ? `rtl` : `ltr`')
               template(v-if='$slots.contents')
                 slot(name='contents')
               async-state(
@@ -222,7 +232,7 @@
                 state='empty'
                 :title='$t(`common:page.noContent`)'
               )
-            section.comments-container#discussion(v-if='commentsEnabled && commentsPerms.read && !printView' aria-labelledby='discussion-title')
+            section.comments-container#discussion(v-if='commentsEnabled && commentsPerms.read && !printView && (commentsExternal || activeView === `talk`)' role='tabpanel' :aria-labelledby='commentsExternal ? `discussion-title` : `page-view-talk-tab`')
               .comments-header
                 .comments-header-icon
                   v-icon(size='20') mdi-comment-text-outline
@@ -330,7 +340,7 @@
                       v-icon(:color='printView ? `primary` : `grey`') mdi-printer
                   span {{$t('common:page.printFormat')}}
                 v-spacer
-            v-card.page-toc-card.mb-4(v-if='tocPosition !== `off`', tag='nav', :aria-label='$t(`common:page.toc`)')
+            v-card.page-toc-card.mb-4(v-if='tocPosition !== `off` && !talkActive', tag='nav', :aria-label='$t(`common:page.toc`)')
               v-btn.page-toc-toggle.text-none(
                 variant='text'
                 block
@@ -970,6 +980,7 @@ export default defineComponent({
     PageBrandingMark,
     PageTocTree,
   },
+  emits: ['update:activeView'],
   setup () {
     return {
       goTo: useGoTo()
@@ -1047,6 +1058,10 @@ export default defineComponent({
     navExpandParent: {
       type: Boolean,
       default: true
+    },
+    activeView: {
+      type: String as PropType<'article' | 'talk'>,
+      default: 'article'
     },
     commentsEnabled: {
       type: Boolean,
@@ -1159,8 +1174,8 @@ export default defineComponent({
   },
   computed: {
     navigationOpen: {
-      get (): boolean { return !this.readerFocus && this.navShown },
-      set (value: boolean) { if (!this.readerFocus) this.navShown = value }
+      get (): boolean { return (this.talkActive || !this.readerFocus) && this.navShown },
+      set (value: boolean) { if (!this.readerFocus || this.talkActive) this.navShown = value }
     },
     pageArticleId (): string {
       return `wiki-page-shell-${this.pageId}-article`
@@ -1188,6 +1203,9 @@ export default defineComponent({
     },
     commentsPerms () {
       return wikiStore.page.effectivePermissions.comments
+    },
+    talkActive (): boolean {
+      return this.activeView === 'talk' && this.commentsEnabled && this.commentsPerms.read && !this.commentsExternal
     },
     editShortcutsObj () {
       return wikiStore.page.editShortcuts
@@ -2048,12 +2066,15 @@ export default defineComponent({
       this.lastRailAlignmentOffset = null
       this.railAlignmentDirty = true
     },
+    selectPageView(value: unknown): void {
+      if (value === 'article' || value === 'talk') this.$emit('update:activeView', value)
+    },
     goToComments (focusNewComment = false) {
-      void this.goTo('#discussion', this.scrollOpts)
-
-      if (focusNewComment) {
-        document.querySelector<HTMLElement>('#discussion-new')?.focus()
-      }
+      if (!this.commentsExternal) this.$emit('update:activeView', 'talk')
+      this.$nextTick(() => {
+        void this.goTo('#discussion', this.scrollOpts)
+        if (focusNewComment) document.querySelector<HTMLElement>('#discussion-new')?.focus()
+      })
     },
     getPageHeaderElement(): HTMLElement | null {
       const heroRef = this.$refs.pageHero as { $el?: HTMLElement } | HTMLElement | undefined
@@ -3329,6 +3350,19 @@ export default defineComponent({
     scroll-margin-block-start: calc(max(var(--v-layout-top, 0px), var(--wiki-grid-size, 64px)) + var(--wiki-space-8));
   }
 
+}
+
+.page-view-tabs {
+  width: fit-content;
+  margin-bottom: var(--wiki-space-5);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs);
+}
+
+.page-view-tabs ~ .comments-container {
+  margin-top: 0;
 }
 
 .comments-container {

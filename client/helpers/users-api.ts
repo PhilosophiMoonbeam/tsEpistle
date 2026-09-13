@@ -521,6 +521,7 @@ export type Profile = {
   id: number
   email: string
   name: string
+  handle: string
   providerKey: string
   providerName: string
   isSystem: boolean
@@ -539,6 +540,7 @@ export type Profile = {
 
 type ProfileUpdateInput = {
   name: string
+  handle: string
   location: string
   jobTitle: string
   timezone: string
@@ -556,6 +558,7 @@ function normalizeProfile(payload: unknown, fallbackMessage: string): Profile {
     typeof payload.id !== 'number' ||
     typeof payload.email !== 'string' ||
     typeof payload.name !== 'string' ||
+    typeof payload.handle !== 'string' ||
     typeof payload.providerKey !== 'string' ||
     typeof payload.providerName !== 'string' ||
     typeof payload.isSystem !== 'boolean' ||
@@ -577,6 +580,7 @@ function normalizeProfile(payload: unknown, fallbackMessage: string): Profile {
     id: payload.id,
     email: payload.email,
     name: payload.name,
+    handle: payload.handle,
     providerKey: payload.providerKey,
     providerName: payload.providerName,
     isSystem: payload.isSystem,

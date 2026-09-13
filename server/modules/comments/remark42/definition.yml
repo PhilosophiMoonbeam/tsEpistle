@@ -1,0 +1,35 @@
+key: remark42
+title: Remark42
+description: Self-hosted threaded comments with anonymous or social sign-in.
+author: Remark42
+logo: https://static.requarks.io/logo/remark42.svg
+website: https://remark42.com
+codeTemplate: true
+isAvailable: true
+props:
+  host:
+    type: String
+    title: Server URL
+    default: ''
+    hint: 'Public URL of your Remark42 server, without a trailing slash.'
+    maxWidth: 650
+    order: 1
+  siteId:
+    type: String
+    title: Site ID
+    default: remark
+    order: 2
+  theme:
+    type: String
+    title: Theme
+    default: light
+    enum:
+      - 'light|Light'
+      - 'dark|Dark'
+    order: 3
+  maxShownComments:
+    type: Number
+    title: Comments Shown
+    default: 15
+    hint: Number shown before the reader requests more, from 1 to 100.
+    order: 4

@@ -209,6 +209,7 @@ interface UpdateUserOptions {
   id: number
   email?: string
   name?: string
+  handle?: string
   newPassword?: string
   groups?: number[]
   location?: string
@@ -224,6 +225,7 @@ interface UserPatch {
   sessionsRevokedAt?: string
   email?: string
   name?: string
+  handle?: string | null
   password?: string
   location?: string
   jobTitle?: string
@@ -254,6 +256,7 @@ export default class User extends Model {
   declare id: number
   declare email: string
   declare name: string
+  declare handle: string | null
   declare providerId: string | null
   declare providerKey: string
   declare provider: Authentication | string
@@ -294,6 +297,7 @@ export default class User extends Model {
         id: { type: 'integer' },
         email: { type: 'string', format: 'email' },
         name: { type: 'string', minLength: 1, maxLength: 255 },
+        handle: { type: ['string', 'null'], pattern: '^[a-z0-9_-]{3,32}$' },
         providerId: { type: 'string' },
         password: { type: 'string' },
         tfaIsActive: { type: 'boolean', default: false },
@@ -1136,6 +1140,7 @@ export default class User extends Model {
     id,
     email,
     name,
+    handle,
     newPassword,
     groups,
     location,
@@ -1169,6 +1174,21 @@ export default class User extends Model {
       }
       if (typeof name === 'string' && !_.isEmpty(name) && name !== usr.name) {
         usrData.name = _.trim(name)
+      }
+      if (handle !== undefined) {
+        const rawHandle = _.trim(handle)
+        if (rawHandle && !/^[A-Za-z0-9_-]{3,32}$/.test(rawHandle)) throw new wiki.Error.InputInvalid('Mention handles must use 3 to 32 ASCII letters, numbers, underscores or hyphens.')
+        const normalizedHandle = rawHandle.toLowerCase()
+        if ((normalizedHandle || null) !== usr.handle) {
+          if (normalizedHandle) {
+            await trx('userHandleClaims').insert({ handle: normalizedHandle, userId: id }).onConflict('handle').ignore()
+            const claim = await trx('userHandleClaims').where('handle', normalizedHandle).forUpdate().first('userId')
+            if (!claim || Number(claim.userId) !== id) throw Object.assign(new wiki.Error.InputInvalid('Handle unavailable.'), { status: 409 })
+            const duplicate = await wiki.models.users.query(trx).select('id').where('handle', normalizedHandle).whereNot('id', id).first()
+            if (duplicate) throw Object.assign(new wiki.Error.InputInvalid('Handle unavailable.'), { status: 409 })
+          }
+          usrData.handle = normalizedHandle || null
+        }
       }
       if (typeof newPassword === 'string' && !_.isEmpty(newPassword)) {
         if (usr.providerKey !== 'local') throw new wiki.Error.InputInvalid('This password belongs to the account’s identity provider.')

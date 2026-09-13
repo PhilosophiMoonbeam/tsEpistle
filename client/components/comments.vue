@@ -1,6 +1,6 @@
 <template lang="pug">
   div.comments(v-intersect.once='onIntersect')
-    v-alert.mb-4(v-if='availability && !availability.canPost', type='info', variant='tonal') {{ availability.closed ? 'This discussion is closed to new comments.' : 'Discussions are currently unavailable.' }}
+    v-alert.mb-4(v-if='availability && (availability.closed || !availability.enabled)', type='info', variant='tonal') {{ availability.closed ? 'This discussion is closed to new comments.' : 'Discussions are currently unavailable.' }}
     form.comments-composer(
       v-if='permissions.write && availability?.canPost'
       :aria-label='$t(`common:comments.postComment`)'
@@ -8,7 +8,14 @@
       novalidate
       @submit.prevent='postComment'
     )
+      .comments-replying.d-flex.align-center.mb-3(v-if='replyTo > 0')
+        v-icon.mr-2(size='18' aria-hidden='true') mdi-reply
+        span.text-body-small Replying to #[strong {{ replyAuthor }}]
+        v-spacer
+        v-btn(icon size='x-small' variant='text' type='button' aria-label='Cancel reply' @click='cancelReply')
+          v-icon(size='18') mdi-close
       v-textarea#discussion-new.comments-composer-field(
+        ref='newCommentField'
         variant="outlined"
         :placeholder='$t(`common:comments.newPlaceholder`)'
         auto-grow
@@ -16,12 +23,29 @@
         rows='3'
         hide-details
         v-model='newcomment'
+        @input='queueMentionSearch'
+        @click='queueMentionSearch'
+        @keyup='queueMentionSearch'
+        @keydown='handleMentionKeydown'
         color="primary"
         bg-color='surface'
         :aria-label='$t(`common:comments.fieldContent`)'
         :disabled='isPosting'
         required
       )
+      v-card.comments-mentions(v-if='mentionCandidates.length > 0' variant='outlined')
+        v-list(density='compact' aria-label='Mention suggestions')
+          v-list-item(
+            v-for='(candidate, candidateIndex) of mentionCandidates'
+            :id='`mention-option-${candidate.id}`'
+            :key='candidate.handle'
+            :active='mentionIndex === candidateIndex'
+            prepend-icon='mdi-at'
+            :title='`@${candidate.handle}`'
+            :subtitle='candidate.name'
+            @click='insertMention(candidate)'
+            @mouseenter='mentionIndex = candidateIndex'
+          )
       v-row.comments-guest-fields.mt-2(density="compact", v-if='!isAuthenticated')
         v-col(cols='12', lg='6')
           v-text-field(
@@ -89,9 +113,10 @@
       :aria-label='$t(`common:comments.title`)'
     )
       v-timeline-item.comments-post(
+        :class='{ "comments-post--reply": cm.replyTo > 0 }'
         dot-color="primary"
         size="large"
-        v-for='cm of comments'
+        v-for='cm of orderedComments'
         :key='`comment-` + cm.id'
         :id='`comment-post-id-` + cm.id'
         )
@@ -105,8 +130,17 @@
           :aria-labelledby='`comment-author-${cm.id}`'
         )
           v-card-text
-            .comments-post-actions(v-if='permissions.manage && !isBusy && commentEditId === 0')
+            .comments-post-actions(v-if='!isBusy && commentEditId === 0')
               v-btn(
+                v-if='permissions.write && availability?.canPost'
+                icon
+                size='small'
+                variant='text'
+                :aria-label='`Reply to ${cm.authorName}`'
+                @click='startReply(cm)'
+              ): v-icon(size="small") mdi-reply
+              v-btn(
+                v-if='permissions.manage'
                 icon
                 size='small'
                 variant='text'
@@ -115,6 +149,7 @@
               ): v-icon(size="small") mdi-pencil
               v-btn(
                 icon
+                v-if='permissions.manage'
                 size='small'
                 variant='text'
                 :aria-label='$t(`common:comments.deleteConfirmTitle`) + `: ` + cm.authorName'
@@ -188,8 +223,8 @@
 import { defineComponent } from 'vue'
 import { markRaw } from 'vue'
 import { useGoTo } from 'vuetify'
-import { createComment, deleteComment, fetchComment, fetchComments, fetchDiscussionAvailability, updateComment } from '../helpers/comments-api'
-import type { CommentRow } from '../helpers/comments-api'
+import { createComment, deleteComment, fetchComment, fetchComments, fetchDiscussionAvailability, fetchMentionCandidates, updateComment } from '../helpers/comments-api'
+import type { CommentRow, MentionCandidate } from '../helpers/comments-api'
 import { wikiStore } from '@/store/index.ts'
 import validateValues from '../../shared/validation'
 import { getErrorMessage, showNotification } from '../helpers/root-ui-store'
@@ -225,6 +260,7 @@ type CommentScrollOptions = {
   offset: number
   easing: 'easeInOutCubic'
 }
+type MentionRange = { start: number; end: number }
 
 export default defineComponent({
   components: {
@@ -239,12 +275,20 @@ export default defineComponent({
     return {
       availability: null as { enabled: boolean; closed: boolean; canPost: boolean } | null,
       newcomment: '',
+      replyTo: 0,
+      replyAuthor: '',
+      mentionCandidates: [] as MentionCandidate[],
+      mentionRange: null as MentionRange | null,
+      mentionGeneration: 0,
+      mentionIndex: -1,
+      mentionTimer: null as number | null,
       isLoading: true,
       hasLoadedOnce: false,
       fetchError: '',
       fetchGeneration: 0,
       fetchController: null as AbortController | null,
       hasIntersected: false,
+      reportedUnavailableAnchor: '',
       isPosting: false,
       comments: [] as CommentWithInitials[],
       guestName: '',
@@ -265,11 +309,23 @@ export default defineComponent({
     pageId(): number { return wikiStore.page.id },
     permissions(): CommentPermissions { return wikiStore.page.effectivePermissions.comments },
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
-    userDisplayName(): string { return wikiStore.user.name }
+    userDisplayName(): string { return wikiStore.user.name },
+    orderedComments(): CommentWithInitials[] {
+      const roots: CommentWithInitials[] = []
+      const replies = new Map<number, CommentWithInitials[]>()
+      for (const comment of this.comments) {
+        if (comment.replyTo === 0) roots.push(comment)
+        else replies.set(comment.replyTo, [...(replies.get(comment.replyTo) ?? []), comment])
+      }
+      return roots.flatMap(root => [root, ...(replies.get(root.id) ?? [])])
+    }
   },
   watch: {
     pageId (pageId: number, previousPageId: number) {
       if (pageId === previousPageId) return
+      this.newcomment = ''
+      this.guestName = ''
+      this.guestEmail = ''
       this.fetchController?.abort()
       this.fetchController = null
       this.fetchGeneration += 1
@@ -280,6 +336,9 @@ export default defineComponent({
       this.commentToDelete = null
       this.commentEditId = 0
       this.commentEditContent = null
+      this.cancelReply()
+      this.clearMentionSearch()
+      this.reportedUnavailableAnchor = ''
       this.deleteCommentDialogShown = false
       if (this.hasIntersected) void this.fetch(true)
     }
@@ -288,12 +347,108 @@ export default defineComponent({
     this.fetchGeneration += 1
     this.fetchController?.abort()
     this.fetchController = null
+    if (this.mentionTimer !== null) window.clearTimeout(this.mentionTimer)
   },
   methods: {
+    newCommentTextarea(): HTMLTextAreaElement | null {
+      const field = this.$refs.newCommentField as { $el?: Element } | undefined
+      return field?.$el?.querySelector('textarea') ?? null
+    },
+    clearMentionSearch(): void {
+      this.mentionGeneration += 1
+      if (this.mentionTimer !== null) window.clearTimeout(this.mentionTimer)
+      this.mentionTimer = null
+      this.mentionRange = null
+      this.mentionIndex = -1
+      this.mentionCandidates = []
+    },
+    queueMentionSearch(event?: Event): void {
+      if (event instanceof KeyboardEvent && ['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) return
+      this.clearMentionSearch()
+      if (!this.isAuthenticated) return
+      const textarea = this.newCommentTextarea()
+      const cursor = textarea?.selectionStart ?? this.newcomment.length
+      const match = this.newcomment.slice(0, cursor).match(/(?:^|[^\w@/])@([a-z0-9_-]{2,32})$/i)
+      const query = (match?.[1] ?? '').toLowerCase()
+      if (!query) return
+      const range = { start: cursor - query.length - 1, end: cursor }
+      const generation = this.mentionGeneration
+      const pageId = this.pageId
+      this.mentionRange = range
+      this.mentionTimer = window.setTimeout(async () => {
+        this.mentionTimer = null
+        try {
+          const candidates = await fetchMentionCandidates(window.fetch.bind(window), pageId, query)
+          if (pageId === this.pageId && generation === this.mentionGeneration && this.mentionRange?.start === range.start && this.mentionRange.end === range.end && this.newcomment.slice(range.start, range.end).toLowerCase() === `@${query}`) {
+            this.mentionCandidates = candidates
+            this.mentionIndex = candidates.length > 0 ? 0 : -1
+          }
+        } catch {
+          if (pageId === this.pageId && generation === this.mentionGeneration) this.mentionCandidates = []
+        }
+      }, 150)
+    },
+    handleMentionKeydown(event: KeyboardEvent): void {
+      if (this.mentionCandidates.length === 0) return
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        const direction = event.key === 'ArrowDown' ? 1 : -1
+        this.mentionIndex = (this.mentionIndex + direction + this.mentionCandidates.length) % this.mentionCandidates.length
+      } else if (event.key === 'Enter' && this.mentionIndex >= 0) {
+        event.preventDefault()
+        const candidate = this.mentionCandidates[this.mentionIndex]
+        if (candidate) this.insertMention(candidate)
+      } else if (event.key === 'Escape') {
+        event.preventDefault()
+        this.clearMentionSearch()
+      }
+    },
+    insertMention(candidate: MentionCandidate): void {
+      const range = this.mentionRange
+      if (!range) return
+      const insertion = `@${candidate.handle} `
+      this.newcomment = this.newcomment.slice(0, range.start) + insertion + this.newcomment.slice(range.end)
+      const cursor = range.start + insertion.length
+      this.clearMentionSearch()
+      this.$nextTick(() => {
+        const textarea = this.newCommentTextarea()
+        textarea?.focus()
+        textarea?.setSelectionRange(cursor, cursor)
+      })
+    },
+    startReply(comment: CommentWithInitials): void {
+      this.replyTo = comment.id
+      this.replyAuthor = comment.authorName
+      if (comment.authorHandle && !this.newcomment.trim()) this.newcomment = `@${comment.authorHandle} `
+      this.clearMentionSearch()
+      this.$nextTick(() => {
+        void this.goTo('#discussion-new', { ...this.scrollOpts, duration: 250 })
+        this.newCommentTextarea()?.focus()
+      })
+    },
+    cancelReply(): void {
+      this.replyTo = 0
+      this.replyAuthor = ''
+    },
     onIntersect (isIntersecting: boolean, _entries: IntersectionObserverEntry[], _observer: IntersectionObserver): void {
       if (!isIntersecting) return
       this.hasIntersected = true
       void this.fetch(true)
+    },
+    focusRequestedComment(): void {
+      const anchor = window.location.hash
+      if (!/^#comment-post-id-[1-9]\d*$/.test(anchor)) return
+      this.$nextTick(() => {
+        const target = document.querySelector<HTMLElement>(anchor)
+        if (target) {
+          void this.goTo(anchor, { ...this.scrollOpts, duration: 250 })
+          target.setAttribute('tabindex', '-1')
+          target.focus({ preventScroll: true })
+        } else if (this.reportedUnavailableAnchor !== anchor) {
+          this.reportedUnavailableAnchor = anchor
+          showNotification(wikiStore, { style: 'warning', message: 'This comment cannot be opened.', icon: 'alert' })
+        }
+      })
     },
     async fetch (silent = false) {
       this.fetchController?.abort()
@@ -316,6 +471,7 @@ export default defineComponent({
             initials: firstInitial + lastInitial
           }
         })
+        this.focusRequestedComment()
       } catch (err) {
         if (requestId !== this.fetchGeneration) return
         console.warn(err)
@@ -387,7 +543,7 @@ export default defineComponent({
       try {
         const response = await createComment(window.fetch.bind(window), {
           pageId,
-          replyTo: 0,
+          replyTo: this.replyTo,
           content: this.newcomment,
           guestName: this.guestName,
           guestEmail: this.guestEmail
@@ -399,6 +555,7 @@ export default defineComponent({
         })
         if (pageId !== this.pageId) return
         this.newcomment = ''
+        this.cancelReply()
         await this.fetch()
         if (pageId !== this.pageId || !this.comments.some(comment => comment.id === response.id)) return
         this.$nextTick(() => {
@@ -518,7 +675,9 @@ export default defineComponent({
           icon: 'check'
         })
         if (pageId === this.pageId) {
-          this.comments = this.comments.filter(comment => comment.id !== commentToDelete.id)
+          this.comments = this.comments
+            .filter(comment => comment.id !== commentToDelete.id)
+            .map(comment => comment.replyTo === commentToDelete.id ? { ...comment, replyTo: 0 } : comment)
         }
         this.commentToDelete = null
       } catch (err) {
@@ -559,6 +718,33 @@ export default defineComponent({
 .comments-composer-field textarea {
   line-height: var(--wiki-leading-body);
 }
+.comments-replying {
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 30%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 7%, var(--wiki-surface-raised));
+}
+
+.comments-mentions {
+  max-height: 16rem;
+  overflow: auto;
+  margin-top: var(--wiki-space-2);
+  border-color: var(--wiki-surface-border-strong) !important;
+  background: var(--wiki-surface-raised);
+}
+
+.comments-post--reply .v-timeline-item__body {
+  margin-inline-start: var(--wiki-space-6);
+}
+
+.comment-mention {
+  padding: .08em .34em;
+  border-radius: var(--wiki-radius-xs);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent);
+  color: var(--wiki-accent-warm);
+  font-weight: 650;
+}
+
 
 .comments-guest-fields {
   gap: var(--wiki-space-2);

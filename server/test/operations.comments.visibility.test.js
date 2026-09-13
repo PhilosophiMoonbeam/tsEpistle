@@ -103,6 +103,24 @@ describe('comment page identity and private existence isolation', () => {
     }))
   })
 
+  it('projects replies with unavailable ancestry as standalone visible comments', async () => {
+    const page = { id: 17, localeCode: 'en', path: 'same/path', visibility: 'private', ownerId: 7, tags: [] }
+    global.WIKI.models.pages.query.mockReturnValue(pageQuery(page))
+    global.WIKI.models.comments.query.mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        orderBy: vi.fn().mockResolvedValue([
+          { id: 31, pageId: 17, replyTo: 0, isHidden: true, content: 'Hidden root', render: '<p>Hidden root</p>', name: 'Owner', createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z' },
+          { id: 32, pageId: 17, replyTo: 31, isHidden: false, content: 'Visible reply', render: '<p>Visible reply</p>', name: 'Reader', createdAt: '2026-08-14T00:01:00.000Z', updatedAt: '2026-08-14T00:01:00.000Z' },
+          { id: 33, pageId: 17, replyTo: 999, isHidden: false, content: 'Legacy orphan', render: '<p>Legacy orphan</p>', name: 'Reader', createdAt: '2026-08-14T00:02:00.000Z', updatedAt: '2026-08-14T00:02:00.000Z' }
+        ])
+      })
+    })
+    const operations = (await vi.importFresh('../operations/comments.ts', import.meta.url)).default
+
+    const rows = await operations.list({ requester: { id: 7, permissions: ['read:comments'] }, pageId: 17 })
+    expect(rows.map(row => ({ id: row.id, replyTo: row.replyTo }))).toEqual([{ id: 32, replyTo: 0 }, { id: 33, replyTo: 0 }])
+  })
+
   it('returns the same not-found error for an absent page and another owner private page', async () => {
     const operations = (await vi.importFresh('../operations/comments.ts', import.meta.url)).default
     const requester = { id: 8, permissions: ['read:comments'] }

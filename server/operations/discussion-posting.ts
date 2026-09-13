@@ -42,7 +42,23 @@ export const createDiscussionPostingStore = (deps: Dependencies) => ({
       if (!flags.featurePageComments) throw new ApplicationError('Discussions are currently paused.', { status: 409 })
       if (enabled.length !== 1 || enabled[0].key !== 'default') throw new ApplicationError('Built-in discussions are not the active provider.', { status: 409 })
       if ((await tx('pageDiscussionPolicy').where('pageId', page.id).first('closed'))?.closed) throw new ApplicationError('This discussion is closed to new comments.', { status: 409 })
-      if (input.replyTo > 0 && !await tx('comments').where({ id: input.replyTo, pageId: page.id, isHidden: false }).first('id')) throw new ApplicationError('The comment you are replying to is unavailable.', { status: 409 })
+      let normalizedReplyTo = 0
+      if (input.replyTo > 0) {
+        const seen = new Set<number>()
+        let candidateId = input.replyTo
+        while (candidateId > 0) {
+          if (seen.has(candidateId)) throw new ApplicationError('The comment you are replying to is unavailable.', { status: 409 })
+          seen.add(candidateId)
+          const candidate = await tx('comments').where({ id: candidateId, pageId: page.id, isHidden: false }).first('id', 'replyTo')
+          if (!candidate) throw new ApplicationError('The comment you are replying to is unavailable.', { status: 409 })
+          const parentId = Number(candidate.replyTo) || 0
+          if (parentId === 0) {
+            normalizedReplyTo = Number(candidate.id)
+            break
+          }
+          candidateId = parentId
+        }
+      }
       const minDelay = Number(enabled[0].config.minDelay)
       if (!Number.isSafeInteger(minDelay) || minDelay < 0 || minDelay > 86400) throw new ApplicationError('Discussion settings need administrator attention.', { status: 409 })
       const latestQuery = tx('comments').where('authorId', input.user.id)
@@ -54,7 +70,7 @@ export const createDiscussionPostingStore = (deps: Dependencies) => ({
       // Page and policy locks remain held until the bounded check and insert finish.
       if (page.visibility === 'public' && !protection) await deps.checkSpam({ page, comment: input, providerConfig: enabled[0].config })
       const now = new Date().toISOString()
-      const [row] = await tx('comments').insert({ content: input.content.trim(), render: input.render, replyTo: input.replyTo, pageId: page.id, authorId: input.user.id, name: input.user.name, email: input.user.email, ip: input.user.ip, createdAt: now, updatedAt: now }).returning('id')
+      const [row] = await tx('comments').insert({ content: input.content.trim(), render: input.render, replyTo: normalizedReplyTo, pageId: page.id, authorId: input.user.id, name: input.user.name, email: input.user.email, ip: input.user.ip, createdAt: now, updatedAt: now }).returning('id')
       return Number(row.id)
     })
   }

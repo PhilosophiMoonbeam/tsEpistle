@@ -13,10 +13,10 @@ const reasonValue = (value: unknown): string => {
   return value.trim()
 }
 interface PageRow { id: number; title: string; path: string; localeCode: string; visibility: 'public' | 'private' }
-interface CommentRow { id: number; pageId: number; content: string; name: string; authorId: number; email: string; ip: string; createdAt: string; updatedAt: string; isHidden: boolean; moderationRevision: string; moderationReason: string; moderatedAt: Date | null; moderatedBy: number | null }
+interface CommentRow { id: number; pageId: number; replyTo: number; content: string; name: string; authorId: number; email: string; ip: string; createdAt: string; updatedAt: string; isHidden: boolean; moderationRevision: string; moderationReason: string; moderatedAt: Date | null; moderatedBy: number | null }
 interface PolicyRow { pageId: number; closed: boolean; reason: string; updatedAt: Date; updatedBy: number | null; revision: string }
 const pageDto = (page: PageRow): DiscussionPage => ({ id: page.id, title: page.title, path: page.path, locale: page.localeCode, visibility: page.visibility })
-const commentFingerprint = (row: CommentRow) => hash([row.id, row.content, row.updatedAt, row.isHidden, row.moderationRevision])
+const commentFingerprint = (row: CommentRow) => hash([row.id, row.replyTo, row.content, row.updatedAt, row.isHidden, row.moderationRevision])
 const policyFingerprint = (page: PageRow, row?: PolicyRow) => hash([page.id, row?.revision ?? null, row?.closed ?? false])
 const commentDto = (row: CommentRow, page: PageRow): ModerationRecord => ({ id: row.id, excerpt: row.content.slice(0, 240), authorId: row.authorId, authorName: row.name, createdAt: date(row.createdAt), updatedAt: date(row.updatedAt), isHidden: row.isHidden, page: pageDto(page) })
 const requireAdmin = (requester: PagePrincipal) => { if (!managesSystem(requester)) throw new ApplicationError('manage:system is required.', { status: 403 }) }
@@ -61,6 +61,7 @@ export const createDiscussionModerationStore = (db: Knex) => {
         const subject = await tx<CommentRow>('comments').where('id', id).first('pageId')
         if (!subject) throw new ApplicationError('Comment not found.', { status: 404 })
         await page(subject.pageId, tx, true)
+        await tx.raw('SELECT pg_advisory_xact_lock(?, ?)', [DISCUSSION_PAGE_LOCK, subject.pageId])
         const row = await tx<CommentRow>('comments').where('id', id).forUpdate().first()
         if (!row) throw new ApplicationError('Comment not found.', { status: 404 })
         if (input.fingerprint !== commentFingerprint(row)) throw new ApplicationError('This comment changed. Reload it before moderating.', { status: 409 })

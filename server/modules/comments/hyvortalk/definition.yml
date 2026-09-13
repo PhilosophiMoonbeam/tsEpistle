@@ -1,0 +1,24 @@
+key: hyvortalk
+title: Hyvor Talk
+description: Hosted privacy-focused comments with moderation and notifications.
+author: Hyvor
+logo: https://static.requarks.io/logo/hyvor-talk.svg
+website: https://talk.hyvor.com
+codeTemplate: true
+isAvailable: true
+props:
+  websiteId:
+    type: Number
+    title: Website ID
+    default: 0
+    hint: Numeric website identifier from the Hyvor Talk console.
+    order: 1
+  colorScheme:
+    type: String
+    title: Colour Scheme
+    default: os
+    enum:
+      - 'os|Follow the reader'
+      - 'light|Light'
+      - 'dark|Dark'
+    order: 2

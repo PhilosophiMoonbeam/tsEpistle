@@ -3,6 +3,8 @@
     v-bind='currentPage.props'
     :navigation-key='navigationKey'
     :navigation-pending='navigationPending'
+    :active-view='activePageView'
+    @update:active-view='selectPageView'
   )
     template(v-slot:contents)
       slot(v-if='navigationKey === 0' name='contents')
@@ -31,6 +33,11 @@ interface NavigationOptions {
   scrollY?: number
 }
 
+type PageView = 'article' | 'talk'
+const pageViewForUrl = (url: string | URL): PageView => {
+  const hash = new URL(url, window.location.href).hash
+  return hash === '#discussion' || hash.startsWith('#comment-post-id-') ? 'talk' : 'article'
+}
 const NAVIGATION_STATE_KEY = '__wikiPageNavigation'
 const NAVIGATION_LOADING_KEY = 'wiki-page-navigation'
 
@@ -64,6 +71,7 @@ export default defineComponent({
       navigationKey: 0,
       navigationPending: false,
       currentUrl: window.location.href,
+      activePageView: pageViewForUrl(window.location.href),
       previousScrollRestoration: null as History['scrollRestoration'] | null,
       navigationSequence: 0,
       navigationAbortController: null as AbortController | null,
@@ -92,6 +100,19 @@ export default defineComponent({
     }
   },
   methods: {
+    async selectPageView(view: PageView): Promise<void> {
+      if (view === this.activePageView) return
+      this.saveCurrentHistoryScroll()
+      const destination = new URL(this.currentUrl)
+      if (view === 'talk') destination.hash = 'discussion'
+      else if (destination.hash === '#discussion' || destination.hash.startsWith('#comment-post-id-')) destination.hash = ''
+      window.history.pushState({ [NAVIGATION_STATE_KEY]: true, scrollY: window.scrollY }, '', destination)
+      this.currentUrl = destination.href
+      this.activePageView = view
+      await nextTick()
+      if (view === 'talk') this.restoreScroll(destination)
+      else document.querySelector<HTMLElement>('.contents')?.focus({ preventScroll: true })
+    },
     saveCurrentHistoryScroll(): void {
       const currentState = typeof window.history.state === 'object' && window.history.state !== null
         ? window.history.state as Record<string, unknown>
@@ -127,7 +148,8 @@ export default defineComponent({
       if (destination.href === this.currentUrl) return
 
       const current = new URL(this.currentUrl)
-      if (destination.pathname === current.pathname && destination.search === current.search && destination.hash) {
+      if (destination.pathname === current.pathname && destination.search === current.search) {
+        this.activePageView = pageViewForUrl(destination)
         if (!options.popState) {
           this.saveCurrentHistoryScroll()
           window.history.pushState({ [NAVIGATION_STATE_KEY]: true, scrollY: window.scrollY }, '', destination)
@@ -177,6 +199,7 @@ export default defineComponent({
         this.contentHtml = parsed.contentHtml
         this.commentsHtml = parsed.commentsHtml
         this.currentUrl = parsed.url.href
+        this.activePageView = pageViewForUrl(parsed.url)
         this.navigationKey += 1
         this.updateDocumentMetadata(parsed.documentTitle, parsed.description, parsed.url)
 

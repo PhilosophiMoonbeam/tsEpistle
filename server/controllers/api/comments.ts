@@ -3,8 +3,6 @@ import { errorStatus, objectValue, type NextFunction, type Request, type Respons
 
 import { readDiscussionWorkspace, writeDiscussionWorkspace } from '../../operations/discussion-settings.ts'
 import { discussionModeration } from '../../operations/discussion-moderation.ts'
-import { assertPageUnlocked } from '../../operations/page-protection.ts'
-import type { Knex } from 'knex'
 import commentOperations from '../../operations/comments.ts'
 
 const router = express.Router()
@@ -32,6 +30,8 @@ const handleCommentError = (err: unknown, res: Response, next: NextFunction): vo
   const status = errorStatus(err)
   if (status !== undefined && status >= 400 && status < 500) {
     const message = err instanceof Error ? err.message : String(err)
+    const retryAfterMilliseconds = typeof err === 'object' && err !== null ? Reflect.get(err, 'retryAfterMilliseconds') : undefined
+    if (status === 429 && typeof retryAfterMilliseconds === 'number' && Number.isFinite(retryAfterMilliseconds)) res.set('Retry-After', String(Math.max(1, Math.ceil(retryAfterMilliseconds / 1000))))
     res.status(status).json({ error: message || 'Request Failed' })
     return
   }
@@ -52,16 +52,15 @@ router.patch('/moderation/:id', async (req, res) => { try { res.json(await discu
 router.get('/closed-pages', async (req, res) => { try { res.json(await discussionModeration().closedPages(req.user, req.query)) } catch (error) { fail(res, error) } })
 router.get('/page-policy/:id', async (req, res) => { try { res.json(await discussionModeration().policy(req.user, Number(req.params.id))) } catch (error) { fail(res, error) } })
 router.patch('/page-policy/:id', async (req, res) => { try { res.json(await discussionModeration().setPolicy(req.user, Number(req.params.id), req.body ?? {})) } catch (error) { fail(res, error) } })
-router.get('/availability/:id', async (req, res) => {
+router.get('/availability/:id', async (req, res, next) => {
   const pageId = parsePositiveInteger(req.params.id)
   if (pageId === null) return res.status(400).json({ error: 'Choose a valid page.' })
+  if (!requireCommentRequester(req, res)) return
   try {
-    await assertPageUnlocked({ requester: req.user, pageId, sessionId: req.sessionID })
-    const context = WIKI as unknown as { models: { knex: Knex }; config: { features: { featurePageComments: boolean } }; data: { commentProvider: { key?: string } } }
-    const policy = await context.models.knex('pageDiscussionPolicy').where('pageId', pageId).first('closed')
-    const enabled = context.config.features.featurePageComments && context.data.commentProvider.key === 'default'
-    res.json({ enabled, closed: policy?.closed === true, canPost: enabled && !policy?.closed })
-  } catch (error) { fail(res, error) }
+    res.json(await commentOperations.availability({ requester: req.user, pageId, sessionId: req.sessionID }))
+  } catch (error) {
+    handleCommentError(error, res, next)
+  }
 })
 
 router.get('/providers', async (req, res, next) => {
@@ -90,6 +89,18 @@ router.post('/providers', async (req, res, next) => {
   try {
     await commentOperations.updateProviders(objectValue(req.body, 'providers'))
     res.json({ message: 'Comment Providers updated successfully' })
+  } catch (err) {
+    handleCommentError(err, res, next)
+  }
+})
+
+router.get('/mentions', async (req, res, next) => {
+  const pageId = parsePositiveInteger(req.query && req.query.pageId)
+  if (pageId === null) return res.status(400).json({ error: 'pageId query parameter must be a positive integer' })
+  if (!requireCommentRequester(req, res)) return
+  if (typeof req.user.id !== 'number' || req.user.id === 2) return res.status(401).json({ error: 'Sign in to search mention handles.' })
+  try {
+    res.json(await commentOperations.searchMentions({ requester: req.user, sessionId: req.sessionID, pageId, query: req.query && req.query.q }))
   } catch (err) {
     handleCommentError(err, res, next)
   }

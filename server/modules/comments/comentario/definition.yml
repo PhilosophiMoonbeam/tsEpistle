@@ -1,0 +1,16 @@
+key: comentario
+title: Comentario
+description: A privacy-friendly, self-hosted comment engine and maintained successor to Commento.
+author: Comentario
+logo: https://static.requarks.io/logo/comentario.svg
+website: https://comentario.app
+codeTemplate: true
+isAvailable: true
+props:
+  instanceUrl:
+    type: String
+    title: Instance URL
+    default: ''
+    hint: 'Public HTTPS URL of your Comentario instance. Its script, API, stylesheet and live-update destinations must be allowed by the wiki CSP.'
+    maxWidth: 650
+    order: 1

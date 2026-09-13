@@ -21,3 +21,9 @@ props:
     hint: 'The name of this site configured in the artalk backend. Leave empty to use default site.'
     maxWidth: 450
     order: 2
+  darkMode:
+    type: Boolean
+    title: Automatic Dark Mode
+    default: true
+    hint: Match Artalk to the visitor's operating-system color scheme.
+    order: 3

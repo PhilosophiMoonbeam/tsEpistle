@@ -23,6 +23,7 @@ interface AccountRow {
   id: number
   name: string
   email: string
+  handle: string | null
   providerKey: string
   isSystem: boolean
   isActive: boolean
@@ -179,6 +180,7 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
       row.adminRevision,
       row.authVersion,
       row.updatedAt,
+      row.handle,
       profile(row, membership),
       row.isSystem,
       row.isActive,

@@ -19,7 +19,7 @@ interface LastLoginUser {
   name: unknown
   lastLoginAt: unknown
 }
-const profileFields = ['name', 'location', 'jobTitle', 'timezone', 'dateFormat', 'appearance'] as const
+const profileFields = ['name', 'handle', 'location', 'jobTitle', 'timezone', 'dateFormat', 'appearance'] as const
 type ProfileInput = Record<(typeof profileFields)[number], string>
 
 const isProfileInput = (value: Record<string, unknown>): value is ProfileInput => profileFields.every(field => typeof value[field] === 'string')
@@ -311,6 +311,7 @@ router.get('/profile', async (req, res, next) => {
       ..._.pick(user, [
         'id',
         'name',
+        'handle',
         'email',
         'providerKey',
         'providerName',

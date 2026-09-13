@@ -9,6 +9,7 @@ import { canReadPage, pageAuthorizationContext } from '../helpers/page-access.ts
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import { assertPageUnlocked } from '../operations/page-protection.ts'
 import { rejectApiPrincipalMutation } from '../helpers/api-principal.ts'
+import { DISCUSSION_PAGE_LOCK } from '../operations/discussion-moderation.ts'
 
 interface CommentUser extends Record<string, unknown> {
   id: number
@@ -49,6 +50,8 @@ export default class Comment extends Model {
   declare id: number
   declare content: string
   declare render: string
+  declare replyTo: number
+  declare isHidden: boolean
   declare name: string
   declare email: string
   declare ip: string
@@ -167,7 +170,13 @@ export default class Comment extends Model {
     }
     await assertPageUnlocked({ requester: user, pageId, sessionId, authority })
     void ip
-    await this.query().deleteById(id)
+    await wiki.models.knex.transaction(async transaction => {
+      await transaction.raw('SELECT pg_advisory_xact_lock(?, ?)', [DISCUSSION_PAGE_LOCK, pageId])
+      const target = await this.query(transaction).findById(id).forUpdate()
+      if (!target || target.pageId !== pageId) throw Object.assign(new wiki.Error.CommentNotFound(), { status: 404 })
+      await this.query(transaction).where({ pageId, replyTo: id }).patch({ replyTo: 0 })
+      await this.query(transaction).deleteById(id)
+    })
   }
 }
 
@@ -193,5 +202,5 @@ const wiki = WIKI as unknown as {
     loadPageRuleAuthority: (requester: CommentUser, transaction?: Knex.Transaction) => Promise<PageRuleAuthority>
   }
   data: { commentProvider: CommentProvider }
-  models: { pages: { getPageFromDb: (id: number) => Promise<CommentPage | null> } }
+  models: { knex: Knex, pages: { getPageFromDb: (id: number) => Promise<CommentPage | null> } }
 }

@@ -1,17 +1,11 @@
 import { wiki } from '../../types.ts'
-import md from 'markdown-it'
-import { full as mdEmoji } from 'markdown-it-emoji'
-import jsdomModule from 'jsdom'
-import createDOMPurify from 'dompurify'
 import _ from 'lodash'
 import type { Knex } from 'knex'
 import type { PageRuleAuthority } from '../../../helpers/group-access.ts'
 import type { PagePrincipal } from '../../../helpers/page-access.ts'
 import { createDiscussionPostingStore } from '../../../operations/discussion-posting.ts'
+import { renderCommentMarkdown } from '../../../helpers/comment-markdown.ts'
 
-const { JSDOM } = jsdomModule
-const window = new JSDOM('').window
-const DOMPurify = createDOMPurify(window)
 
 interface CommentPage {
   id: number
@@ -204,16 +198,6 @@ let akismetClient: AkismetClient | null = null
 let antiSpamState: 'off' | 'verified' | 'unverified' = 'off'
 let antiSpamCheckedAt: string | null = null
 
-const mkdown = md({
-  html: false,
-  breaks: true,
-  linkify: true,
-  highlight(str, lang) {
-    return `<pre><code class="language-${lang}">${_.escape(str)}</code></pre>`
-  }
-})
-
-mkdown.use(mdEmoji)
 
 // ------------------------------------
 // Default Comment Provider
@@ -298,13 +282,13 @@ const plugin = {
         }
         if (isSpam) throw new Error('Comment was rejected because it is marked as spam.')
       }
-    }).post({ pageId: page.id, replyTo: replyTo ?? 0, content, render: DOMPurify.sanitize(mkdown.render(content)), user, requester, sessionId })
+    }).post({ pageId: page.id, replyTo: replyTo ?? 0, content, render: renderCommentMarkdown(content), user, requester, sessionId })
   },
   /**
    * Update an existing comment
    */
   async update({ id, content }: UpdateCommentInput) {
-    const renderedContent = DOMPurify.sanitize(mkdown.render(content))
+    const renderedContent = renderCommentMarkdown(content)
     await comments.query().findById(id).patch({
       content,
       render: renderedContent

@@ -561,8 +561,8 @@ describe('controllers/api comments endpoints', () => {
       ip: '127.0.0.1',
       body: { pageId: 9, content: 'New comment' }
     }
-    const firstRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-    const repeatedRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const firstRes = { status: vi.fn().mockReturnThis(), json: vi.fn(), set: vi.fn() }
+    const repeatedRes = { status: vi.fn().mockReturnThis(), json: vi.fn(), set: vi.fn() }
 
     await create(req, firstRes)
     await create(req, repeatedRes)
@@ -575,6 +575,7 @@ describe('controllers/api comments endpoints', () => {
       ['comment-create:12:127.0.0.1', expect.any(Number), expect.any(Number), expect.any(Number)]
     )
     expect(repeatedRes.status).toHaveBeenCalledWith(429)
+    expect(repeatedRes.set).toHaveBeenCalledWith('Retry-After', '15')
     expect(repeatedRes.json).toHaveBeenCalledWith({ error: 'Too many attempts! Try again later.' })
   })
 

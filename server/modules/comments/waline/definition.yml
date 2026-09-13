@@ -1,0 +1,41 @@
+key: waline
+title: Waline
+description: Self-hosted comments backed by a serverless service and database.
+author: Waline
+logo: https://static.requarks.io/logo/waline.svg
+website: https://waline.js.org
+codeTemplate: true
+isAvailable: true
+props:
+  serverURL:
+    type: String
+    title: Server URL
+    default: ''
+    hint: 'Public HTTPS URL of your Waline server. Add its API origin to connect-src.'
+    maxWidth: 650
+    order: 1
+  clientUrl:
+    type: String
+    title: Client Script URL
+    default: https://unpkg.com/@waline/client@3.15.2/dist/waline.js
+    hint: Reviewed explicit HTTPS module file; pin a version or self-host it for supply-chain control.
+    maxWidth: 650
+    order: 2
+  styleUrl:
+    type: String
+    title: Client Stylesheet URL
+    default: https://unpkg.com/@waline/client@3.15.2/dist/waline.css
+    hint: Reviewed explicit HTTPS stylesheet from the same Waline client version.
+    maxWidth: 650
+    order: 3
+  lang:
+    type: String
+    title: Language
+    default: en
+    order: 4
+  reaction:
+    type: Boolean
+    title: Reactions
+    default: false
+    hint: Enabling reactions can require additional image origins in the wiki CSP.
+    order: 5
