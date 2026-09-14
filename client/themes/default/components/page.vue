@@ -2309,7 +2309,8 @@ export default defineComponent({
 .wiki-page {
   --page-toc-empty-height: calc(var(--wiki-grid-size) * 2);
   --page-toc-desktop-lift: calc(var(--page-toc-empty-height) + var(--wiki-space-6));
-  --page-reader-shell-max: 132rem;
+  --page-layout-shell-max: 132rem;
+  --page-reader-shell-max: var(--page-layout-shell-max);
   --page-metadata-rail-width: clamp(15rem, 18vw, 17rem);
   --page-reader-column-gap: var(--wiki-space-6);
   --page-reader-copy-max: var(--wiki-reader-copy-width, 74ch);
@@ -3991,16 +3992,15 @@ export default defineComponent({
     padding-inline-start: 0;
   }
 
-  // The focused copy keeps its centered shell, while the decorative mark
-  // remains positioned against the full-width hero like it is in standard mode.
+  // Keep the mark anchored to the standard responsive edge while its focused
+  // heading containing block preserves the mark's standard rendered size.
   .page-header-section,
   .page-header-section > .is-page-header {
     position: static;
   }
 
   .page-header-headings--branded > .page-branding-mark {
-    top: var(--wiki-space-2);
-    right: var(--wiki-page-gutter);
+    right: calc((min(100vw, var(--page-layout-shell-max)) - min(100vw, var(--page-reader-shell-max))) / -2);
   }
 
   .page-col-content:not(.is-page-header) {
