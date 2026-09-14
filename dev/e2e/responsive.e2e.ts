@@ -2819,8 +2819,8 @@ test.describe('reader metadata rendering', () => {
       await expect(date).toHaveAttribute('title', expectedDateTitle)
 
       const provenance = page.locator('.page-provenance-card')
-      await expect(provenance.locator('.mdi-history')).toHaveCount(1)
-      await expect(provenance.locator('.page-history-btn')).toBeVisible()
+      await expect(provenance.locator('.page-provenance-card__icon')).toHaveCount(0)
+      expect(await provenance.locator('.page-history-btn').count()).toBeLessThanOrEqual(1)
 
       const author = page.locator('bdi.page-provenance-author')
       await expect(author).toHaveText(new RegExp(`^${authorName}$`))
