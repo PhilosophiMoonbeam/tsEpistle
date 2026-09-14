@@ -1,12 +1,12 @@
 import fs from 'node:fs'
-import { DISCUSSION_SECRET_MASK, discussionIssues, discussionProviderTitle, discussionSettings } from '../../../shared/discussion-policy.ts'
+import { DISCUSSION_SECRET_MASK, discussionEnumOptions, discussionIssues, discussionProviderTitle, discussionSettings } from '../../../shared/discussion-policy.ts'
 const source = fs.readFileSync('client/components/admin/admin-comments.vue', 'utf8'), script = source.match(/<script lang="ts">([\s\S]*?)<\/script>/)[1]
 const compiled = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .+$/gm, '').replace('export default', 'const component ='))
 const provider = { key: 'default', title: 'Default', isEnabled: true, isAvailable: true, external: false, description: '', website: '', config: { akismet: '********', minDelay: 30 }, props: { akismet: { type: 'string', sensitive: true }, minDelay: { type: 'number' } } }
 const snapshot = { providers: [provider], enabled: true, fingerprint: 'first', counts: { visible: 2, hidden: 1, closedPages: 0 }, runtime: { provider: 'default', antiSpam: { state: 'verified' } } }
 function arrange(overrides = {}) {
   const transport = { fetchDiscussionWorkspace: vi.fn().mockResolvedValue(structuredClone(snapshot)), saveDiscussionWorkspace: vi.fn(), fetchDiscussionInventory: vi.fn().mockResolvedValue({ items: [], total: 0 }), inspectDiscussion: vi.fn(), moderateDiscussion: vi.fn(), fetchClosedDiscussions: vi.fn().mockResolvedValue({ items: [], total: 0 }), fetchPageDiscussionPolicy: vi.fn(), savePageDiscussionPolicy: vi.fn(), fetchPageList: vi.fn().mockResolvedValue([]), ...overrides }
-  const dependencies = { AsyncState: {}, DISCUSSION_SECRET_MASK, discussionIssues, discussionProviderTitle, discussionSettings, getErrorMessage: error => error.message, ...transport }
+  const dependencies = { AsyncState: {}, DISCUSSION_SECRET_MASK, discussionEnumOptions, discussionIssues, discussionProviderTitle, discussionSettings, getErrorMessage: error => error.message, ...transport }
   const component = new Function(...Object.keys(dependencies), compiled + ';return component')(...Object.values(dependencies))
   const state = { ...component.data(), $route: { query: {}, hash: '' }, $router: { replace: vi.fn() } }
   for (const [key, method] of Object.entries(component.methods)) state[key] = method.bind(state)
@@ -14,6 +14,18 @@ function arrange(overrides = {}) {
   return { state, component, transport }
 }
 describe('discussion workspace drafts and action recovery', () => {
+  it('accepts stored values from labelled provider option definitions', () => {
+    const providers = [
+      structuredClone(provider),
+      { key: 'giscus', title: 'Giscus', isEnabled: false, isAvailable: true, external: true, description: '', website: '', config: { theme: 'preferred_color_scheme' }, props: { theme: { type: 'string', title: 'Theme', enum: ['preferred_color_scheme|Follow the reader', 'light|Light'] } } },
+      { key: 'hyvortalk', title: 'Hyvor Talk', isEnabled: false, isAvailable: true, external: true, description: '', website: '', config: { colorScheme: 'os' }, props: { colorScheme: { type: 'string', title: 'Colour Scheme', enum: ['os|Follow the reader', 'light|Light'] } } },
+      { key: 'remark42', title: 'Remark42', isEnabled: false, isAvailable: true, external: true, description: '', website: '', config: { theme: 'light' }, props: { theme: { type: 'string', title: 'Theme', enum: ['light|Light', 'dark|Dark'] } } }
+    ]
+    expect(discussionIssues(providers)).toEqual([])
+    expect(discussionEnumOptions(providers[1].props.theme)).toEqual([{ value: 'preferred_color_scheme', title: 'Follow the reader' }, { value: 'light', title: 'Light' }])
+    providers[1].config.theme = 'sepia'
+    expect(discussionIssues(providers)).toEqual([{ provider: 'giscus', field: 'theme', message: 'Giscus · Theme must use one of the listed options.' }])
+  })
   it('isolates draft settings and keeps the saved secret masked until explicitly replaced', async () => {
     const { state } = arrange(); await state.reload(); state.current.config.minDelay = 60
     expect(state.saved.providers[0].config.minDelay).toBe(30); expect(state.dirty).toBe(true); expect(state.current.config.akismet).toBe('********')

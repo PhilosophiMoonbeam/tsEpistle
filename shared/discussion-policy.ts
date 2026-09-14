@@ -26,6 +26,16 @@ export interface DiscussionWorkspace extends DiscussionPolicySnapshot {
   runtime: { provider: string | null; antiSpam: { state: 'off' | 'verified' | 'unverified' | 'unavailable'; checkedAt: string | null } }
 }
 export const discussionProviderTitle = (provider: Pick<DiscussionProvider, 'key' | 'title'>): string => provider.key === 'default' ? 'Built-in discussions' : provider.title
+const discussionEnumValue = (entry: string): string => {
+  const separator = entry.indexOf('|')
+  return separator === -1 ? entry : entry.slice(0, separator)
+}
+export const discussionEnumOptions = (prop: Pick<DiscussionProperty, 'enum'>): Array<{ title: string; value: string }> =>
+  (prop.enum ?? []).map(entry => {
+    const value = discussionEnumValue(entry)
+    const separator = entry.indexOf('|')
+    return { value, title: separator === -1 ? value : entry.slice(separator + 1) || value }
+  })
 export const discussionSettings = (providers: DiscussionProvider[]): DiscussionProviderSettings[] => providers.map(({ key, isEnabled, config, props }) => ({ key, isEnabled, config: Object.fromEntries(Object.entries(config).filter(([field]) => Object.hasOwn(props, field))) }))
 export const discussionIssues = (providers: DiscussionProvider[]): DiscussionIssue[] => {
   const issues: DiscussionIssue[] = [], enabled = providers.filter(provider => provider.isEnabled)
@@ -37,7 +47,7 @@ export const discussionIssues = (providers: DiscussionProvider[]): DiscussionIss
     for (const [field, prop] of Object.entries(provider.props)) {
       const value = provider.config[field], label = `${title} · ${prop.title || field}`
       if ((prop.type === 'boolean' && typeof value !== 'boolean') || (prop.type === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) || (prop.type === 'string' && typeof value !== 'string')) issues.push({ provider: provider.key, field, message: `${label} requires a ${prop.type} value.` })
-      else if (prop.enum && !prop.enum.includes(String(value))) issues.push({ provider: provider.key, field, message: `${label} must use one of the listed options.` })
+      else if (prop.enum && !prop.enum.some(entry => discussionEnumValue(entry) === String(value))) issues.push({ provider: provider.key, field, message: `${label} must use one of the listed options.` })
       else if (typeof value === 'string' && value.length > 2000) issues.push({ provider: provider.key, field, message: `${label} must be at most 2,000 characters.` })
     }
     if (provider.key === 'default') {
