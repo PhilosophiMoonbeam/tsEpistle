@@ -3994,8 +3994,7 @@ export default defineComponent({
   // The focused copy keeps its centered shell, while the decorative mark
   // remains positioned against the full-width hero like it is in standard mode.
   .page-header-section,
-  .page-header-section > .is-page-header,
-  .page-header-headings--branded {
+  .page-header-section > .is-page-header {
     position: static;
   }
 
