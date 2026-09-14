@@ -111,6 +111,10 @@ const requestBody = (req: Request): Record<string, unknown> => {
 }
 
 const optionalStringQuery = (value: unknown): string | undefined => (typeof value === 'string' && value.length > 0 ? value : undefined)
+const setPrivatePageHeaders = (res: Response): void => {
+  if (typeof res.set === 'function') res.set('Cache-Control', 'private, no-store')
+  if (typeof res.vary === 'function') res.vary('Cookie')
+}
 const requiredSourceRevision = (req: Request, res: Response): string | null => {
   const value = requestBody(req).expectedSourceRevision
   if (typeof value !== 'string' || value.length > 64 || !/^[1-9][0-9]*$/u.test(value)) {
@@ -491,6 +495,7 @@ router.get('/recent', async (req, res, next) => {
 })
 
 router.get('/links', async (req, res, next) => {
+  setPrivatePageHeaders(res)
   if (!requirePageLinksAccess(req, res)) {
     return
   }
@@ -710,10 +715,10 @@ router.patch('/:id/owner', async (req, res, next) => {
 })
 
 router.get('/:id/protection', async (req, res, next) => {
+  setPrivatePageHeaders(res)
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   try {
-    res.set('Cache-Control', 'private, no-store')
     res.json(await getPageProtection(req.user, id))
   } catch (err) {
     next(err)
@@ -942,6 +947,7 @@ router.post('/:id/move', async (req, res, next) => {
 })
 
 router.get('/:id/locale-relations', async (req, res, next) => {
+  setPrivatePageHeaders(res)
   const pageId = parsePositiveIntegerParam(req, res)
   if (pageId === null) return
   try {
@@ -994,6 +1000,7 @@ router.post('/:id/conflicts/check', async (req, res, next) => {
 })
 
 router.get('/:id/conflict-latest', async (req, res, next) => {
+  setPrivatePageHeaders(res)
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   try {
@@ -1041,6 +1048,7 @@ router.delete('/:id/collaboration/draft', async (req, res, next) => {
 })
 
 router.get('/:id/history', async (req, res, next) => {
+  setPrivatePageHeaders(res)
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   const offsetPage = Number(_.get(req, 'query.offsetPage', 0))
@@ -1056,6 +1064,7 @@ router.get('/:id/history', async (req, res, next) => {
 })
 
 router.get('/:id/history/:versionId', async (req, res, next) => {
+  setPrivatePageHeaders(res)
   const pageId = parsePositiveIntegerParam(req, res)
   if (pageId === null) return
   const versionId = parsePositiveIntegerParam(req, res, 'versionId')
@@ -1082,7 +1091,19 @@ router.post('/:id/history/:versionId/restore', async (req, res, next) => {
   }
 })
 
+router.get('/:id/offline-snapshot', async (req, res, next) => {
+  setPrivatePageHeaders(res)
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  try {
+    return res.json(await pageOperations.getOfflineSnapshot({ id }))
+  } catch (err) {
+    return sendOperationError(res, next, err, 'Offline snapshot is unavailable')
+  }
+})
+
 router.get('/:id', async (req, res, next) => {
+  setPrivatePageHeaders(res)
   const rawId = _.get(req, 'params.id')
   if (!_.isString(rawId) || !/^[1-9]\d*$/.test(rawId)) {
     return res.status(400).json({ error: 'id must be a positive integer' })
@@ -1105,10 +1126,6 @@ router.get('/:id', async (req, res, next) => {
       return res.status(404).json({ error: 'This page does not exist.' })
     }
     const pageResult: Record<string, unknown> = projectedPage
-    if (pageResult.visibility === 'private') {
-      res.set('Cache-Control', 'private, no-store')
-      res.vary('Cookie')
-    }
     const okf = await buildPageOkfView({
       knex: getTransportRuntime<PagesApiRuntime>().models.knex,
       pageId: id,

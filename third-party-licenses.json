@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "b96582feedbc8c25e9184446855ad33125ecd989e2a13db9a860689c68ae6bd7",
+    "sha256": "b41046004a77152ba4cf180701fa934dd2ec9d9bed4877c2900f39d41cd44067",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -3918,6 +3918,14 @@
       "license": "MIT",
       "author": "Alexander Shtuchkin <ashtuchkin@gmail.com>",
       "homepage": "https://github.com/pillarjs/iconv-lite"
+    },
+    {
+      "name": "idb",
+      "versions": [
+        "8.0.3"
+      ],
+      "license": "ISC",
+      "author": "Jake Archibald"
     },
     {
       "name": "import-in-the-middle",

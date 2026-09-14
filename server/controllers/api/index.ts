@@ -4,6 +4,7 @@ import { errorStatus, getTransportRuntime } from '../_types.ts'
 import analyticsRouter from './analytics.ts'
 import assetsRouter from './assets.ts'
 import authRouter from './auth.ts'
+import offlineRouter from './offline.ts'
 import commentsRouter from './comments.ts'
 import contentExtensionsRouter from './content-extensions.ts'
 import developerFlagsRouter from './developer-flags.ts'
@@ -58,6 +59,7 @@ router.use('/editors', editorsRouter)
 router.use('/users', usersRouter)
 router.use('/pages', pagesRouter)
 router.use('/auth', authRouter)
+router.use('/offline', offlineRouter)
 router.use('/webhooks', webhooksRouter)
 router.use('/taxonomy', taxonomyRouter)
 

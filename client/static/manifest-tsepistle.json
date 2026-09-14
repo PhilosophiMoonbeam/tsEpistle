@@ -1,20 +1,45 @@
 {
-  "name": "tsEpistle",
+  "id": "/",
+  "name": "tsEpistle Knowledge Base",
   "short_name": "tsEpistle",
+  "description": "A collaborative knowledge base for reading and writing on the web.",
   "start_url": "/",
-  "icons": [
-      {
-          "src": "/_assets/favicons/android-chrome-192x192.png",
-          "sizes": "192x192",
-          "type": "image/png"
-      },
-      {
-          "src": "/_assets/favicons/android-chrome-256x256.png",
-          "sizes": "256x256",
-          "type": "image/png"
-      }
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#F9A134",
+  "background_color": "#F7F7F5",
+  "categories": [
+    "books",
+    "education",
+    "productivity"
   ],
-  "theme_color": "#4f46e5",
-  "background_color": "#f5f7fb",
-  "display": "standalone"
+  "icons": [
+    {
+      "src": "/_assets/favicons/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/_assets/favicons/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/_assets/favicons/maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Offline library",
+      "short_name": "Offline",
+      "description": "Browse pages saved on this device.",
+      "url": "/_offline"
+    }
+  ]
 }

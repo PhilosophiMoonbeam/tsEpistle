@@ -21,6 +21,7 @@ import securityMiddleware from './middlewares/security.ts'
 import createOriginMiddleware from './middlewares/origin.ts'
 import seoMiddleware from './middlewares/seo.ts'
 import createAuthController, { normalizeFaviconUrl, type AuthWiki } from './controllers/auth.ts'
+import createPwaController from './controllers/pwa.ts'
 import createSiteLogoController from './controllers/site-logo.ts'
 import createAgentsHostController from './controllers/agents-host.ts'
 import createUploadController, { type UploadWiki } from './controllers/upload.ts'
@@ -252,6 +253,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   )
   app.use('/', createSslController(wiki))
   app.use('/', createSiteLogoController(wiki.models.knex))
+  app.use('/', createPwaController({ ROOTPATH: wiki.ROOTPATH, config: { host: wiki.config.host } }))
 
   app.use(cookieParser())
   const currentSessionCookieOptions = sessionCookieOptions(() => wiki.config.host)

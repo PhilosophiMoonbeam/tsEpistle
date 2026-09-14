@@ -10,6 +10,8 @@ import type { KnowledgeProjectionView } from '../knowledge/projection.ts'
 import type { WikiSource } from '../../shared/wiki-source.ts'
 import type { Knex } from 'knex'
 import type { SearchResult as ProviderSearchResult } from '../modules/types.ts'
+import { buildOfflinePageSnapshot, OfflinePageProjectionError, type OfflinePageSource } from '../helpers/offline-page.ts'
+import type { OfflinePageSnapshotV1 } from '../../shared/offline.ts'
 import {
   canDeletePage,
   canReadPage,
@@ -221,6 +223,7 @@ interface WikiPageOperations {
   data: { searchEngine?: { supportsPageFilters?: boolean; query(query: string, options: Record<string, unknown>): Promise<SearchResponse> } }
   models: {
     knex: Knex
+    users: { query(transaction?: Knex.Transaction): unknown }
     pages: {
       query(): PageQuery
       assertCreateAccess(input: {
@@ -298,6 +301,89 @@ const normalizePageBooleans = <T extends PageRecord>(page: T): T => {
 const loadPageFromDb = async (input: Parameters<WikiPageOperations['models']['pages']['getPageFromDb']>[0]): Promise<PageSourceRecord | undefined> => {
   const page = await wiki.models.pages.getPageFromDb(input)
   return page === undefined ? undefined : normalizePageBooleans(page)
+}
+interface OfflineGuestRecord extends Record<string, unknown> {
+  id?: unknown
+  isActive?: unknown
+  groups?: unknown
+  getGlobalPermissions?: () => unknown
+}
+interface OfflineGuestLookup extends PromiseLike<OfflineGuestRecord | undefined> {
+  withGraphJoined(relation: string): OfflineGuestLookup
+  modifyGraph(relation: string, callback: (builder: { select(...columns: string[]): unknown }) => void): OfflineGuestLookup
+}
+interface OfflineUsersQuery {
+  findById(id: number): OfflineGuestLookup
+}
+
+const loadOfflineGuest = async (transaction: Knex.Transaction): Promise<Express.User> => {
+  const users = wiki.models.users.query(transaction) as OfflineUsersQuery
+  const guest = await users
+    .findById(2)
+    .withGraphJoined('groups')
+    .modifyGraph('groups', builder => {
+      builder.select('groups.id', 'permissions')
+    })
+  if (!guest || guest.id !== 2 || guest.isActive !== true || !Array.isArray(guest.groups))
+    throw new OfflinePageProjectionError('Guest authority is unavailable')
+  const getGlobalPermissions = guest.getGlobalPermissions
+  if (typeof getGlobalPermissions !== 'function') throw new OfflinePageProjectionError('Guest authority is unavailable')
+  let permissions: unknown
+  try {
+    permissions = getGlobalPermissions.call(guest)
+  } catch {
+    throw new OfflinePageProjectionError('Guest authority is unavailable')
+  }
+  if (!Array.isArray(permissions) || !permissions.every(permission => typeof permission === 'string'))
+    throw new OfflinePageProjectionError('Guest authority is unavailable')
+  guest.permissions = [...new Set(permissions)]
+  guest.ownershipUserId = null
+  return guest as Express.User
+}
+
+const OFFLINE_PAGE_COLUMNS = [
+  'pages.id',
+  'pages.path',
+  'pages.localeCode',
+  'pages.title',
+  'pages.description',
+  'pages.visibility',
+  'pages.ownerId',
+  'pages.isPublished',
+  'pages.publishStartDate',
+  'pages.publishEndDate',
+  'pages.contentType',
+  'pages.editorKey',
+  'pages.render',
+  'pages.sourceRevision',
+  'pages.extra'
+]
+
+const loadOfflinePage = async (transaction: Knex.Transaction, pageId: number): Promise<OfflinePageSource | undefined> => {
+  const row = await transaction('pages').select(OFFLINE_PAGE_COLUMNS).where('pages.id', pageId).first()
+  if (row === undefined || row === null || typeof row !== 'object' || Array.isArray(row)) return undefined
+  const tags = await transaction('pageTags')
+    .join('tags', 'tags.id', 'pageTags.tagId')
+    .where('pageTags.pageId', pageId)
+    .select('tags.tag')
+    .orderBy('tags.id', 'asc')
+  return { ...(row as Record<string, unknown>), tags } as unknown as OfflinePageSource
+}
+
+const getOfflineSnapshot = async (input: OperationInput): Promise<OfflinePageSnapshotV1> => {
+  const pageId = positiveInteger(input.id, 'id')
+  return wiki.models.knex.transaction(
+    async transaction => {
+      const guest = await loadOfflineGuest(transaction)
+      const authority = await wiki.auth.loadPageRuleAuthority(guest, transaction)
+      const page = await loadOfflinePage(transaction, pageId)
+      if (!page) throw new OfflinePageProjectionError()
+      const protection = await transaction('pageAccessPasswords').where({ pageId }).first('pageId')
+      if (protection) throw new OfflinePageProjectionError()
+      return buildOfflinePageSnapshot({ page, guest, authority, capturedAt: new Date() })
+    },
+    { isolationLevel: 'repeatable read' }
+  )
 }
 const positiveInteger = (value: unknown, label: string): number => {
   if (!Number.isSafeInteger(value) || (value as number) < 1) throw new ApplicationError(`${label} must be a positive integer`, { code: 'INVALID_INPUT' })
@@ -2198,6 +2284,7 @@ export default {
   create,
   discover,
   get,
+  getOfflineSnapshot,
   getByPath,
   getConflictLatest,
   getHistory,

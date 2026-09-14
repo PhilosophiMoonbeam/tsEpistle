@@ -2,6 +2,7 @@ import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards'
 import { parseCollaborationSession, type CollaborationSession } from '../../shared/collaboration'
 import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../shared/page-branding.ts'
+import { OfflinePageSnapshotV1Schema, type OfflinePageSnapshotV1 } from '../../shared/offline.ts'
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -806,6 +807,24 @@ export async function fetchPage(fetchImpl: FetchImpl, id: number, fallbackMessag
   })
 
   return normalizePageDetails(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
+export async function fetchOfflinePageSnapshot(
+  fetchImpl: FetchImpl,
+  id: number,
+  fallbackMessage = 'Offline snapshot response is invalid'
+): Promise<OfflinePageSnapshotV1> {
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error(fallbackMessage)
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/offline-snapshot`, {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json'
+    }
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  const parsed = OfflinePageSnapshotV1Schema.safeParse(payload)
+  if (!parsed.success) throw new Error(fallbackMessage)
+  return parsed.data
 }
 
 export async function fetchPageList(fetchImpl: FetchImpl, fallbackMessage = 'Page list response is invalid'): Promise<PageListRow[]> {
