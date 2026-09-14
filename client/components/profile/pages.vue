@@ -24,18 +24,30 @@
       v-col(cols='12')
         v-card
           .profile-pages-toolbar(v-if='!errorMessage')
-            v-text-field.profile-pages-search(
-              v-model='search'
-              :label='$t("profile:pages.find", { defaultValue: "Find your pages" })'
-              prepend-inner-icon='mdi-magnify'
-              variant='outlined'
-              density='compact'
-              hide-details
-              clearable
-              :disabled='loading && pages.length === 0'
-              autocomplete='off'
-              aria-describedby='profile-pages-result-count'
-            )
+            .profile-pages-controls
+              v-text-field.profile-pages-search(
+                v-model='search'
+                :label='$t("profile:pages.find", { defaultValue: "Find your pages" })'
+                prepend-inner-icon='mdi-magnify'
+                variant='outlined'
+                density='compact'
+                hide-details
+                clearable
+                :disabled='loading && pages.length === 0'
+                autocomplete='off'
+                aria-describedby='profile-pages-result-count'
+              )
+              v-btn.profile-pages-private-filter(
+                type='button'
+                :variant='privateOnly ? "tonal" : "text"'
+                color='primary'
+                size='small'
+                :aria-pressed='privateOnly'
+                :aria-label='$t("profile:pages.privateOnlyToggle", { defaultValue: "Show private pages only" })'
+                @click='privateOnly = !privateOnly'
+              )
+                v-icon(size='16', aria-hidden='true') mdi-lock-outline
+                span {{ $t('profile:pages.privateOnly', { defaultValue: 'Private only' }) }}
             p#profile-pages-result-count.profile-pages-result-count(role='status', aria-live='polite', aria-atomic='true')
               span(v-if='!loading', v-text='$t(`profile:pages.resultCount`, { defaultValue: `{{count}} of {{total}} pages`, count: filteredPages.length, total: pages.length })')
           async-state(
@@ -92,10 +104,10 @@
                 :message='$t("profile:pages.loadingMessage", { defaultValue: "Fetching your contributions." })'
               )
               async-state(
-                v-else-if='pages.length > 0 && normalizedSearch'
+                v-else-if='pages.length > 0 && hasActiveFilters'
                 state='empty'
-                :title='$t("profile:pages.noMatches", { defaultValue: "No matching pages" })'
-                :message='$t("profile:pages.noMatchesMessage", { defaultValue: "Try another title, description, path, or language, or clear your search." })'
+                :title='emptyStateTitle'
+                :message='emptyStateMessage'
               )
               async-state(
                 v-else
@@ -122,6 +134,7 @@ export default {
     return {
       pagination: 1,
       search: '' as string | null,
+      privateOnly: false,
       pages: [] as PageListRow[],
       loading: false,
       errorMessage: ''
@@ -133,9 +146,36 @@ export default {
     },
     filteredPages (): PageListRow[] {
       const query = this.normalizedSearch
-      if (!query) return this.pages
-      return this.pages.filter(page => [page.title, page.description, page.path, page.locale]
-        .some(value => (value ?? '').toLocaleLowerCase().includes(query)))
+      return this.pages.filter(page =>
+        (!this.privateOnly || page.visibility === 'private') &&
+        (!query || [page.title, page.description, page.path, page.locale]
+          .some(value => (value ?? '').toLocaleLowerCase().includes(query)))
+      )
+    },
+    hasActiveFilters (): boolean {
+      return Boolean(this.privateOnly || this.normalizedSearch)
+    },
+    emptyStateTitle (): string {
+      if (this.privateOnly) {
+        return this.$t(
+          this.normalizedSearch ? 'profile:pages.noPrivateMatches' : 'profile:pages.noPrivatePages',
+          { defaultValue: this.normalizedSearch ? 'No matching private pages' : 'No private pages yet' }
+        )
+      }
+      return this.$t('profile:pages.noMatches', { defaultValue: 'No matching pages' })
+    },
+    emptyStateMessage (): string {
+      if (this.privateOnly) {
+        return this.$t(
+          this.normalizedSearch ? 'profile:pages.noPrivateMatchesMessage' : 'profile:pages.noPrivatePagesMessage',
+          {
+            defaultValue: this.normalizedSearch
+              ? 'Try another title, description, path, or language, or clear your search or turn off Private only.'
+              : 'Turn off Private only to see all your pages.'
+          }
+        )
+      }
+      return this.$t('profile:pages.noMatchesMessage', { defaultValue: 'Try another title, description, path, or language, or clear your search.' })
     },
     headers () {
       return [
@@ -151,6 +191,9 @@ export default {
   },
   watch: {
     normalizedSearch () {
+      this.pagination = 1
+    },
+    privateOnly () {
       this.pagination = 1
     },
     pageTotal (total: number) {
@@ -210,10 +253,28 @@ export default {
   border-bottom: 1px solid var(--wiki-surface-border);
 }
 
+.profile-pages-controls {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--wiki-space-2);
+}
+
 .profile-pages-search {
   flex: 1 1 20rem;
   min-width: 0;
   max-width: 30rem;
+}
+
+.profile-pages-private-filter {
+  flex: 0 0 auto;
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.profile-pages-private-filter[aria-pressed='true'] {
+  font-weight: 600;
 }
 
 .profile-pages-result-count {
@@ -230,9 +291,19 @@ export default {
     gap: var(--wiki-space-2);
   }
 
+  .profile-pages-controls {
+    flex-wrap: wrap;
+    align-items: stretch;
+    width: 100%;
+  }
+
   .profile-pages-search {
-    flex-basis: auto;
+    flex-basis: 100%;
     max-width: none;
+  }
+
+  .profile-pages-private-filter {
+    align-self: flex-start;
   }
 }
 

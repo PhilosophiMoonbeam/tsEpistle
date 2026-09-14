@@ -1,5 +1,5 @@
 <template lang="pug">
-  v-footer.nav-footer(:color='bgColor', :app='app')
+  v-footer.nav-footer(:color='bgColor')
     .footer-attribution
       .footer-attribution__legal(v-if='footerOverride')
         span(v-html='footerOverrideRender')
@@ -26,10 +26,6 @@ export default defineComponent({
     darkColor: {
       type: String,
       default: 'surface'
-    },
-    app: {
-      type: Boolean,
-      default: true
     }
   },
   data() {
@@ -67,6 +63,7 @@ export default defineComponent({
 
 <style lang="scss">
 .nav-footer {
+  position: relative;
   --nav-footer-accent-direction: 90deg;
   overflow: visible;
   height: auto;

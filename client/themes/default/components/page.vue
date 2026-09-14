@@ -2,9 +2,9 @@
   v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive }]')
     a.page-skip-link(:href='talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='talkActive ? goToComments() : focusArticle()') Skip to content
     nav-header(v-if='!printView', reserve-actions)
-    .page-position(v-if='!printView && !talkActive', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100')
+    .page-position(v-if='!printView', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100')
       .page-position-fill(:style='{ transform: `scaleX(${readingProgress / 100})` }')
-    .page-reading-dock(v-if='readerFocus && !printView && !talkActive', role='region', :aria-label='$t(`common:page.focusReading`)', style='backdrop-filter: blur(14px) saturate(145%);')
+    .page-reading-dock(v-if='readerFocus && !printView && !talkActive', role='region', :aria-label='$t(`common:page.focusReading`)')
       v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
       span.page-reading-dock-title {{ title }}
       v-btn(variant='text', size='small', prepend-icon='mdi-arrow-collapse-horizontal', @click='toggleReaderFocus') {{$t('common:page.exitFocus')}}
@@ -106,53 +106,32 @@
               )
             .page-header-summary
               p.page-description(v-if='description') {{description}}
-              .page-document-meta
-                .page-document-provenance
-                  .page-document-row.page-document-row--date(v-if='updatedAt')
-                    v-tooltip(location='top', v-if='canViewHistory')
-                      template(v-slot:activator='{ props }')
-                        v-btn.page-history-btn(
-                          v-bind='props'
-                          :href='pageHistoryUrl'
-                          @click='historyLinkClicked($event)'
-                          :aria-label='$t(`common:page.viewHistory`)'
-                          icon='mdi-history'
-                          variant='text'
-                          size='x-small'
-                          density='compact'
-                        )
-                      span {{ $t('common:page.viewHistory') }}
-                    time(:datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt, interpolation: { escapeValue: false } }) }}
-                  .page-document-row.page-document-row--author(v-if='hasAuthor')
-                    span.page-document-author
-                      | {{ $t('common:page.byAuthor', { author: '' }) }}
-                      bdi.page-provenance-author {{ authorName }}
-                .page-header-control-pair(
-                  v-if='!printView || (editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn))'
-                )
-                  v-btn.page-focus-control(v-if='!printView && !readerFocus && !talkActive', variant='text', size='small', prepend-icon='mdi-book-open-page-variant-outline', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t('common:page.focusReading') }}
-                  .page-edit-shortcuts(
-                    v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
-                    :class='tocPosition === `right` ? `is-right` : ``'
+              .page-header-control-pair(
+                v-if='!printView || (editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn))'
+              )
+                v-btn.page-focus-control(v-if='!printView && !readerFocus && !talkActive', variant='text', size='small', prepend-icon='mdi-book-open-page-variant-outline', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t('common:page.focusReading') }}
+                .page-edit-shortcuts(
+                  v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
+                  :class='tocPosition === `right` ? `is-right` : ``'
+                  )
+                  v-btn(
+                    v-if='editShortcutsObj.editMenuBtn && (!hasWritePagesPermission || $vuetify.display.smAndDown)'
+                    @click='pageEdit'
+                    variant="flat"
+                    size="small"
                     )
-                    v-btn(
-                      v-if='editShortcutsObj.editMenuBtn && (!hasWritePagesPermission || $vuetify.display.smAndDown)'
-                      @click='pageEdit'
-                      variant="flat"
-                      size="small"
-                      )
-                      v-icon.mr-2(size="small") mdi-pencil
-                      span.text-none {{$t(`common:actions.edit`)}}
-                    v-btn(
-                      v-if='editShortcutsObj.editMenuExternalBtn && editMenuExternalUrl'
-                      :href='editMenuExternalUrl'
-                      target='_blank'
-                      rel='noopener'
-                      variant="flat"
-                      size="small"
-                      )
-                      v-icon.mr-2(size="small") {{ editShortcutsObj.editMenuExternalIcon }}
-                      span.text-none {{$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })}}
+                    v-icon.mr-2(size="small") mdi-pencil
+                    span.text-none {{$t(`common:actions.edit`)}}
+                  v-btn(
+                    v-if='editShortcutsObj.editMenuExternalBtn && editMenuExternalUrl'
+                    :href='editMenuExternalUrl'
+                    target='_blank'
+                    rel='noopener'
+                    variant="flat"
+                    size="small"
+                    )
+                    v-icon.mr-2(size="small") {{ editShortcutsObj.editMenuExternalIcon }}
+                    span.text-none {{$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })}}
       v-container.page-body(fluid)
         v-row
           #page-mobile-tools.page-mobile-tools
@@ -246,7 +225,7 @@
             defer
             :key='isTocMobile ? `mobile-tools` : winWidth < 1280 ? `tablet-tools` : `desktop-tools`'
             :to='isTocMobile ? `#page-mobile-tools` : `#page-desktop-rail`'
-            :disabled='winWidth >= 600 && winWidth < 1280'
+            :disabled='printView || (winWidth >= 600 && winWidth < 1280)'
           )
             v-card.page-shortcuts-card.mb-4(flat)
               v-toolbar(color='surface', flat, density="compact")
@@ -340,6 +319,33 @@
                       v-icon(:color='printView ? `primary` : `grey`') mdi-printer
                   span {{$t('common:page.printFormat')}}
                 v-spacer
+            v-card.page-provenance-card.mb-4(
+              v-if='updatedAt || hasAuthor'
+              flat
+              role='group'
+            )
+              .page-provenance-card__content
+                v-icon.page-provenance-card__icon(icon='mdi-history', size='16', aria-hidden='true')
+                .page-document-provenance
+                  .page-document-row.page-document-row--date(v-if='updatedAt')
+                    v-tooltip(location='top', v-if='canViewHistory')
+                      template(v-slot:activator='{ props }')
+                        v-btn.page-history-btn(
+                          v-bind='props'
+                          :href='pageHistoryUrl'
+                          @click='historyLinkClicked($event)'
+                          :aria-label='$t(`common:page.viewHistory`)'
+                          icon='mdi-history'
+                          variant='text'
+                          size='x-small'
+                          density='compact'
+                        )
+                      span {{ $t('common:page.viewHistory') }}
+                    time(:datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt, interpolation: { escapeValue: false } }) }}
+                  .page-document-row.page-document-row--author(v-if='hasAuthor')
+                    span.page-document-author
+                      | {{ $t('common:page.byAuthor', { author: '' }) }}
+                      bdi.page-provenance-author {{ authorName }}
             v-card.page-toc-card.mb-4(v-if='tocPosition !== `off` && !talkActive', tag='nav', :aria-label='$t(`common:page.toc`)')
               v-btn.page-toc-toggle.text-none(
                 variant='text'
@@ -2292,9 +2298,10 @@ export default defineComponent({
 
       const footerTop = this.navFooterEl
         ? this.navFooterEl.getBoundingClientRect().top
-        : (window.innerHeight - 24)
+        : window.innerHeight
+      const boundedBottom = Math.min(window.innerHeight, footerTop)
       const effectiveRailTop = Math.max(railRect.top, this.railStickyTop)
-      const calculatedMaxHeight = Math.max(0, Math.floor(footerTop - effectiveRailTop - this.railSpacingGap))
+      const calculatedMaxHeight = Math.max(0, Math.floor(boundedBottom - effectiveRailTop - this.railSpacingGap))
 
       if (this.lastRailMaxHeight !== calculatedMaxHeight) {
         this.lastRailMaxHeight = calculatedMaxHeight
@@ -2332,31 +2339,16 @@ export default defineComponent({
   &:focus { transform: translateY(0); }
 }
 
-.page-document-label,
-.page-document-meta {
+.page-document-label {
   display: flex;
   align-items: center;
   gap: .5rem;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 65%, transparent);
-}
-
-.page-document-label {
   margin-block-end: .625rem;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 65%, transparent);
   font-size: .6875rem;
   font-weight: 650;
   letter-spacing: .12em;
   text-transform: uppercase;
-}
-
-.page-document-meta {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-block-start: 0;
-  font-size: .75rem;
-  line-height: 1.4;
-  gap: var(--wiki-space-3);
 }
 
 .page-document-provenance {
@@ -2366,6 +2358,7 @@ export default defineComponent({
   flex-wrap: wrap;
   gap: 2px 5px;
 }
+
 
 .page-header-control-pair {
   display: flex;
@@ -2676,7 +2669,6 @@ export default defineComponent({
     margin-block-start: var(--wiki-space-2);
 
     .page-description { flex: 1 1 18rem; margin: 0; }
-    .page-document-meta { margin-inline-start: auto; justify-content: flex-end; }
   }
 
   .page-header-headings {
@@ -2982,7 +2974,8 @@ export default defineComponent({
     min-height: 0;
   }
 
-  .page-shortcuts-card {
+  .page-shortcuts-card,
+  .page-provenance-card {
     flex: 0 0 auto;
   }
 
@@ -3247,6 +3240,36 @@ export default defineComponent({
     min-width: 0;
     border-color: var(--wiki-surface-border-strong);
     border-radius: var(--wiki-control-radius);
+  }
+}
+
+.page-provenance-card {
+  min-height: 32px;
+  overflow: hidden !important;
+  border: 1px solid var(--wiki-surface-border) !important;
+  border-radius: var(--wiki-panel-radius);
+  background: color-mix(in srgb, var(--wiki-accent-spectral) 5%, var(--wiki-surface-raised)) !important;
+  box-shadow: var(--wiki-shadow-xs);
+
+  &__content {
+    display: flex;
+    min-width: 0;
+    min-height: 32px;
+    align-items: center;
+    gap: var(--wiki-space-2);
+    padding: 2px var(--wiki-space-3);
+  }
+
+  &__icon {
+    flex: 0 0 auto;
+    color: var(--wiki-accent-spectral);
+    opacity: .76;
+  }
+
+  .page-document-provenance {
+    flex: 1 1 auto;
+    align-items: center;
+    column-gap: var(--wiki-space-3);
   }
 }
 
@@ -3520,6 +3543,7 @@ export default defineComponent({
 }
 @media (min-width: 600px) and (max-width: 1279px) {
   .page-body > .v-row > .page-shortcuts-card,
+  .page-body > .v-row > .page-provenance-card,
   .page-body > .v-row > .page-toc-card {
     order: 0 !important;
     align-self: flex-start;
@@ -3532,6 +3556,7 @@ export default defineComponent({
   }
 
   .page-body > .v-row > .page-shortcuts-card,
+  .page-body > .v-row > .page-provenance-card,
   .page-body > .v-row > .page-toc-card,
   .page-body > .v-row > .page-tags-card,
   .page-body > .v-row > .page-comments-card {
@@ -3667,6 +3692,7 @@ export default defineComponent({
   }
 
   .page-mobile-tools > .page-shortcuts-card,
+  .page-mobile-tools > .page-provenance-card,
   .page-mobile-tools > .page-toc-card {
     width: 100%;
     max-width: 100%;
@@ -3785,6 +3811,31 @@ export default defineComponent({
   .page-history-btn,
   .comments-container {
     display: none !important;
+  }
+  .page-provenance-card {
+    display: flex !important;
+    width: 100%;
+    min-height: 0;
+    margin: 0 0 var(--wiki-space-4) !important;
+    border: 0 !important;
+    border-block-end: 1px solid currentColor !important;
+    border-radius: 0;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .page-provenance-card__content {
+    min-height: 0;
+    padding: 0 0 var(--wiki-space-2);
+    color: CanvasText;
+  }
+
+  .page-provenance-card__icon,
+  .page-provenance-card .page-document-row--date,
+  .page-provenance-card .page-document-row--author,
+  .page-provenance-card .page-document-author,
+  .page-provenance-card time {
+    color: CanvasText;
   }
 
   .page-main,
@@ -3912,7 +3963,8 @@ export default defineComponent({
 .page-position-fill {
   width: 100%;
   height: 100%;
-  background: var(--wiki-accent-ink);
+  background: color-mix(in srgb, var(--wiki-accent-ink) 52%, transparent);
+  opacity: .72;
   transform-origin: left;
 }
 
@@ -3941,11 +3993,11 @@ export default defineComponent({
   padding: .25rem .375rem .25rem .75rem;
   border: 1px solid color-mix(in srgb, var(--wiki-surface-border-strong) 82%, transparent);
   border-radius: var(--wiki-radius-pill);
-  background-color: rgba(var(--v-theme-surface), .36);
+  background-color: var(--wiki-chrome-surface);
   color: rgb(var(--v-theme-on-surface));
   box-shadow: var(--wiki-shadow-md);
-  backdrop-filter: blur(14px) saturate(145%);
-  -webkit-backdrop-filter: blur(14px) saturate(145%);
+  backdrop-filter: var(--wiki-chrome-blur);
+  -webkit-backdrop-filter: var(--wiki-chrome-blur);
   transform: translateX(-50%);
 
   .v-icon,
@@ -3976,6 +4028,7 @@ export default defineComponent({
   .page-mobile-tools,
   .page-mobile-metadata,
   .page-body > .v-row > .v-card,
+  .page-provenance-card,
   .page-edit-shortcuts,
   .page-edit-fab { display: none !important; }
 

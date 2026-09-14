@@ -122,9 +122,6 @@
           span.admin-route-bar__group(v-if='currentRouteGroup') {{ currentRouteGroup.label }}
           v-icon(v-if='currentRouteGroup' size='14') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
           strong(aria-current='page') {{ currentRouteLabel }}
-        router-link.admin-route-bar__index(to='/dashboard#settings' aria-label='All administration settings')
-          v-icon(size='16') mdi-view-grid-outline
-          span All settings
       router-view(v-slot='{ Component }')
         transition(name='admin-router' mode='out-in' @after-enter='focusRouteHeading')
           component(:is='Component' @vue:mounted='focusRouteHeading')
@@ -173,7 +170,7 @@ export default defineComponent({
     const { mdAndUp } = useDisplay()
     const adminDrawerShown = ref(mdAndUp.value)
     const navSearch = ref<string | null>('')
-    const openedSections = ref<string[]>(['knowledge', 'intelligence'])
+    const openedSections = ref<string[]>([])
     const sectionsBeforeSearch = ref<string[] | null>(null)
 
     watch(mdAndUp, isDesktop => {
@@ -240,9 +237,6 @@ export default defineComponent({
     this.syncOpenedSection()
   },
   watch: {
-    '$route.hash' () {
-      if (this.$route.hash === '#settings') this.focusRouteHeading()
-    },
     '$route.path' () {
       window.scrollTo({ top: 0, behavior: 'instant' })
       this.navSearch = ''
@@ -261,7 +255,6 @@ export default defineComponent({
           heading.setAttribute('tabindex', '-1')
           heading.focus({ preventScroll: true })
         }
-        if (this.$route.hash === '#settings') main?.querySelector('#settings')?.scrollIntoView({ block: 'start' })
       })
     },
     isSectionOpen(key: string) {
@@ -280,13 +273,8 @@ export default defineComponent({
       const currentGroup = this.navGroups.find(group =>
         group.items.some(item => item.to && (currentPath === item.to || currentPath.startsWith(`${item.to}/`)))
       )
-      if (currentGroup) {
-        this.openedSections = [currentGroup.key]
-      } else if (currentPath === '/dashboard') {
-        this.openedSections = ['knowledge', 'intelligence']
-      }
-    },
-
+      this.openedSections = currentGroup ? [currentGroup.key] : []
+    }
   }
 })
 </script>

@@ -1,7 +1,7 @@
 <template lang='pug'>
-  v-app-bar.nav-header(:height='dense ? 56 : 64', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', style='backdrop-filter: blur(14px) saturate(145%);')
+  v-app-bar.nav-header(:height='dense ? 56 : 64', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', style='backdrop-filter: var(--wiki-chrome-blur);')
     template(v-slot:extension)
-      v-toolbar.nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search', flat, style='backdrop-filter: blur(14px) saturate(145%);')
+      v-toolbar.nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search', flat, style='backdrop-filter: var(--wiki-chrome-blur);')
         v-text-field.nav-header-search-control(
           style='backdrop-filter: blur(12px) saturate(150%);'
           ref='searchFieldMobile'
@@ -37,7 +37,7 @@
             span {{title}}
       v-col.nav-header-search-col(md='4', v-if='$vuetify.display.mdAndUp')
         .nav-header-inner.nav-header-command
-          v-tooltip(location="bottom")
+          v-tooltip(location="bottom", v-if='!hideSearch')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-browse(
                 v-bind='props'
@@ -139,7 +139,7 @@
             :aria-label='searchIsShown ? `Close search` : `Open search`'
           )
             v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
-          v-tooltip.nav-header-mobile-browse(v-if='$vuetify.display.smAndDown', location='bottom')
+          v-tooltip.nav-header-mobile-browse(v-if='!hideSearch && $vuetify.display.smAndDown', location='bottom')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-browse(
                 v-bind='props'
@@ -899,15 +899,15 @@ export default defineComponent({
 
 .nav-header {
   --nav-header-tint: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent));
-  --nav-header-surface: rgba(var(--v-theme-surface), .36);
+  --nav-header-surface: var(--wiki-chrome-surface);
   isolation: isolate;
   border-bottom: 1px solid var(--wiki-surface-border) !important;
   background-color: var(--nav-header-surface) !important;
   background-image: var(--nav-header-tint) !important;
   color: rgb(var(--v-theme-on-surface));
   box-shadow: 0 3px 10px color-mix(in srgb, var(--wiki-shadow-color) 35%, transparent) !important;
-  backdrop-filter: var(--wiki-glass-blur, blur(16px) saturate(180%)) !important;
-  -webkit-backdrop-filter: var(--wiki-glass-blur, blur(16px) saturate(180%)) !important;
+  backdrop-filter: var(--wiki-chrome-blur) !important;
+  -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
 
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     border-bottom-color: var(--wiki-glass-border) !important;
@@ -923,8 +923,8 @@ export default defineComponent({
     padding-inline: var(--wiki-space-4);
     background-color: var(--nav-header-surface) !important;
     background-image: var(--nav-header-tint) !important;
-    backdrop-filter: var(--wiki-glass-blur, blur(16px) saturate(180%)) !important;
-    -webkit-backdrop-filter: var(--wiki-glass-blur, blur(16px) saturate(180%)) !important;
+    backdrop-filter: var(--wiki-chrome-blur) !important;
+    -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
 
     .v-toolbar__content {
       height: auto !important;
@@ -1098,8 +1098,8 @@ export default defineComponent({
     width: 100%;
     background-color: var(--nav-header-surface) !important;
     background-image: var(--nav-header-tint) !important;
-    backdrop-filter: var(--wiki-glass-blur, blur(16px) saturate(180%)) !important;
-    -webkit-backdrop-filter: var(--wiki-glass-blur, blur(16px) saturate(180%)) !important;
+    backdrop-filter: var(--wiki-chrome-blur) !important;
+    -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
 
     .nav-header-search-control {
       max-width: none;
@@ -1439,7 +1439,7 @@ export default defineComponent({
   .nav-header {
     .nav-header-layout {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(max-content, 1fr);
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1fr);
     }
 
     .nav-header-brand-col,

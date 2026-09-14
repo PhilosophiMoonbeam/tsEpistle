@@ -136,11 +136,13 @@
               v-icon(color='error') mdi-close
             v-list-item-title {{ $t('common:actions.close') }}
     loader(v-model='dialogProgress', :title='$t(`editor:save.processing`)', :subtitle='$t(`editor:save.pleaseWait`)')
+      template(v-slot:illustration)
+        login-success-animation
     notify
 </template>
 
 <script lang='ts'>
-import { defineComponent, type PropType } from 'vue'
+import { defineAsyncComponent, defineComponent, type PropType } from 'vue'
 import { useHotkey } from 'vuetify'
 import { createAsyncComponent } from './common/async-component-state.vue'
 import _ from 'lodash'
@@ -159,6 +161,8 @@ import {
   type PageBrandingAssignment,
   type PageBrandingView
 } from '../../shared/page-branding.ts'
+
+const LoginSuccessAnimation = defineAsyncComponent(() => import('./login-success-animation.vue'))
 
 const EDITOR_PAGE_CANVAS_SCOPE = '.editor-page-canvas'
 
@@ -203,6 +207,7 @@ export default defineComponent({
   i18nOptions: { namespaces: 'editor' },
   components: {
     StatusIndicator,
+    LoginSuccessAnimation,
     editorCode: createAsyncComponent(() => import('./editor/editor-code.vue')),
     editorCkeditor: createAsyncComponent(() => import('./editor/editor-ckeditor.vue')),
     editorVisualMarkdown: createAsyncComponent(() => import('./editor/editor-visual-markdown.vue')),

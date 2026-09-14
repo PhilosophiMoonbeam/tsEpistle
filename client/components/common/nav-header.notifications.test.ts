@@ -315,15 +315,20 @@ const slotForwardingStub = VueRuntime.defineComponent({
   }
 })
 
-const mountHeader = async () => {
+interface HeaderMountOptions {
+  hideSearch?: boolean
+  smAndDown?: boolean
+}
+
+const mountHeader = async ({ hideSearch = true, smAndDown = false }: HeaderMountOptions = {}) => {
   const host = browserWindow.document.createElement('div')
   browserWindow.document.body.append(host)
-  const app = VueRuntime.createApp(NavHeader, { dense: true, hideSearch: true })
+  const app = VueRuntime.createApp(NavHeader, { dense: true, hideSearch })
   app.component('v-menu', slotForwardingStub)
   app.component('v-tooltip', slotForwardingStub)
   app.config.globalProperties.$t = translate
   app.config.globalProperties.$vuetify = {
-    display: { smAndDown: false, mdAndUp: true },
+    display: { smAndDown, mdAndUp: !smAndDown },
     locale: { isRtl: false }
   }
   app.mount(host)
@@ -347,6 +352,20 @@ afterEach(() => {
   siteNotifications.identityStale = false
   siteNotifications.notificationState = 'unknown'
   refreshAuthBehavior = async () => 'authenticated'
+})
+
+describe('search header affordances', () => {
+  it('omits Browse by Tags from the desktop header when search is hidden', async () => {
+    const mounted = await mountHeader({ hideSearch: true, smAndDown: false })
+
+    expect(mounted.host.querySelector('.nav-header-browse')).toBeNull()
+  })
+
+  it('omits Browse by Tags from the mobile header when search is hidden', async () => {
+    const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
+
+    expect(mounted.host.querySelector('.nav-header-browse')).toBeNull()
+  })
 })
 
 describe('notification header identity recovery', () => {

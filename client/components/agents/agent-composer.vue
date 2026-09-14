@@ -793,6 +793,13 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .agent-composer {
+  --agent-composer-control-face-height: max(30.6px, calc(var(--wiki-control-height) * .697));
+  --agent-composer-control-hit-height: max(44px, var(--wiki-control-height));
+  --agent-composer-control-hit-inset: calc((var(--agent-composer-control-hit-height) - var(--agent-composer-control-face-height)) / -2);
+  --agent-composer-control-gap: calc(var(--wiki-space-1) * .95);
+  --agent-composer-control-padding-inline: calc(var(--wiki-space-3) * .95);
+  --agent-composer-control-font-size: calc(var(--v-btn-size, .875rem) * .95);
+  --agent-composer-control-min-width: calc(var(--wiki-control-height) * .95);
   position: relative;
   display: flex;
   max-height: min(calc(var(--wiki-space-12) * 7), 44dvh);
@@ -916,13 +923,13 @@ onBeforeUnmount(() => {
 .agent-composer__actions {
   display: grid;
   min-width: 0;
-  min-height: max(36px, calc(var(--wiki-control-height) * .82));
+  min-height: var(--agent-composer-control-face-height);
   flex: 0 0 auto;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--wiki-space-1);
-  padding: var(--wiki-space-1) 0 0;
-  margin-top: var(--wiki-space-1);
+  gap: var(--agent-composer-control-gap);
+  padding: var(--agent-composer-control-gap) 0 0;
+  margin-top: var(--agent-composer-control-gap);
   border-top: 1px solid var(--wiki-surface-border);
 }
 
@@ -931,12 +938,12 @@ onBeforeUnmount(() => {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: var(--wiki-space-1);
+  gap: var(--agent-composer-control-gap);
 }
 
 
 .agent-composer__primary-actions {
-  min-width: calc(var(--wiki-space-12) * 2);
+  min-width: calc(var(--wiki-space-12) * 1.9);
   justify-content: stretch;
 }
 
@@ -947,8 +954,7 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
 }
 
-/* The action faces are compact; their transparent pseudo-elements preserve a 44px pointer target. */
-
+/* Compact action faces retain a 44px effective pointer target through an invisible before-pseudo-element. */
 .agent-composer__skill-button,
 .agent-composer__goal-button,
 .agent-composer__chat-pin,
@@ -956,28 +962,34 @@ onBeforeUnmount(() => {
 .agent-composer__stop {
   position: relative;
   box-sizing: border-box;
-  height: max(36px, calc(var(--wiki-control-height) * .82));
-  min-height: max(36px, calc(var(--wiki-control-height) * .82));
+  min-width: var(--agent-composer-control-min-width);
+  height: var(--agent-composer-control-face-height);
+  min-height: var(--agent-composer-control-face-height);
   border-radius: var(--wiki-radius-pill);
+  font-size: var(--agent-composer-control-font-size);
 }
 
-.agent-composer__skill-button::after,
-.agent-composer__goal-button::after,
-.agent-composer__chat-pin::after,
-.agent-composer__submit::after,
-.agent-composer__stop::after {
+.agent-composer__skill-button::before,
+.agent-composer__goal-button::before,
+.agent-composer__chat-pin::before,
+.agent-composer__submit::before,
+.agent-composer__stop::before {
   position: absolute;
-  inset: -4px 0;
-  min-height: 44px;
+  inset-block: var(--agent-composer-control-hit-inset);
+  inset-inline-start: 50%;
+  width: 100%;
+  min-width: var(--agent-composer-control-hit-height);
+  min-height: var(--agent-composer-control-hit-height);
   border-radius: inherit;
   content: '';
   pointer-events: auto;
+  transform: translateX(-50%);
 }
 
 .agent-composer__skill-button,
 .agent-composer__goal-button,
 .agent-composer__chat-pin {
-  padding-inline: var(--wiki-space-3);
+  padding-inline: var(--agent-composer-control-padding-inline);
   font-weight: 500;
   letter-spacing: .01em;
   transition: background var(--wiki-motion-fast) var(--wiki-motion-ease), color var(--wiki-motion-fast) var(--wiki-motion-ease), border-color var(--wiki-motion-fast) var(--wiki-motion-ease);
@@ -985,6 +997,10 @@ onBeforeUnmount(() => {
 
 .agent-composer__skill-button {
   max-width: 100%;
+}
+.agent-composer__actions :deep(.v-btn__prepend),
+.agent-composer__actions :deep(.v-btn__append) {
+  margin-inline: calc(var(--wiki-space-1) * -.95) calc(var(--wiki-space-2) * .95);
 }
 
 
@@ -1028,7 +1044,7 @@ onBeforeUnmount(() => {
 
 
 .agent-composer__submit {
-  min-width: calc(var(--wiki-space-12) * 2);
+  min-width: calc(var(--wiki-space-12) * 1.9);
   box-shadow: var(--wiki-shadow-xs);
   font-weight: 600;
   transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease), box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
@@ -1070,7 +1086,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__stop {
-  min-width: calc(var(--wiki-space-12) * 1.6);
+  min-width: calc(var(--wiki-space-12) * 1.52);
   font-weight: 600;
 }
 
@@ -1145,7 +1161,7 @@ onBeforeUnmount(() => {
   .agent-composer__actions {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: "context primary";
-    column-gap: var(--wiki-space-1);
+    column-gap: var(--agent-composer-control-gap);
     row-gap: 0;
   }
 
@@ -1154,8 +1170,8 @@ onBeforeUnmount(() => {
     overflow-x: auto;
     overscroll-behavior-inline: contain;
     scrollbar-width: none;
-    padding-block: 4px;
-    margin-block: -4px;
+    padding-block: var(--agent-composer-control-gap);
+    margin-block: calc(var(--agent-composer-control-gap) * -1);
   }
 
   .agent-composer__primary-actions {
@@ -1198,8 +1214,8 @@ onBeforeUnmount(() => {
 @media (max-width: 599.98px) {
   .agent-composer__skill-button,
   .agent-composer__goal-button {
-    min-width: max(44px, var(--wiki-control-height));
-    padding-inline: var(--wiki-space-2);
+    min-width: var(--agent-composer-control-min-width);
+    padding-inline: calc(var(--wiki-space-2) * .95);
   }
 
   .agent-composer__skill-button :deep(.v-btn__prepend),
@@ -1212,11 +1228,11 @@ onBeforeUnmount(() => {
 
   .agent-composer__primary-actions,
   .agent-composer__submit {
-    min-width: calc(var(--wiki-space-12) * 1.5);
+    min-width: calc(var(--wiki-space-12) * 1.425);
   }
 
   .agent-composer__submit {
-    padding-inline: var(--wiki-space-3);
+    padding-inline: calc(var(--wiki-space-3) * .95);
   }
 
   .agent-composer__submit :deep(.v-btn__prepend) {

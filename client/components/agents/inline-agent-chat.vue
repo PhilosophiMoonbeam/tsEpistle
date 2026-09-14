@@ -130,8 +130,7 @@
             class="inline-agent__session-action inline-agent__temporary-session"
             :class="{ 'inline-agent__temporary-session--active': isTemporary }"
             icon="mdi-timer-sand-complete"
-            :variant="isTemporary ? 'tonal' : 'text'"
-            :color="isTemporary ? 'primary' : undefined"
+            variant="text"
             rounded="circle"
             :loading="creatingRetention === 'temporary'"
             aria-label="Temporary conversation"
@@ -216,9 +215,6 @@
 
               <section v-if="thread && !hasConversation" class="inline-agent__welcome" aria-labelledby="inline-agent-welcome-title">
                 <h2 id="inline-agent-welcome-title">A little curiosity, <em>a clearer picture</em></h2>
-                <p class="inline-agent__welcome-copy">
-                  Explore an idea, connect the dots, or work on your wiki.
-                </p>
                 <div class="inline-agent__starters" role="group" aria-label="Conversation starters">
                   <v-btn
                     v-for="starter in starters"
@@ -1295,23 +1291,29 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 80%, rgb(var(--v-theme-surface)) 20%) !important;
 }
 
-.inline-agent__temporary-session:hover:not(.inline-agent__temporary-session--active),
-.inline-agent__temporary-session:focus-visible:not(.inline-agent__temporary-session--active) {
+.inline-agent__temporary-session:hover,
+.inline-agent__temporary-session:focus-visible,
+.inline-agent__temporary-session--active {
   border-color: color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent) !important;
   background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent) !important;
   color: var(--wiki-accent-warm) !important;
 }
 
 .inline-agent__temporary-session--active {
-  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 32%, transparent) !important;
-  background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent) !important;
-  color: var(--wiki-accent-ink) !important;
+  box-shadow:
+    inset 0 0 0 .0625rem color-mix(in srgb, var(--wiki-ambient-accent) 28%, transparent),
+    var(--wiki-shadow-inset),
+    0 0 0 .125rem color-mix(in srgb, var(--wiki-ambient-accent) 24%, transparent);
 }
 
-.inline-agent__temporary-session--active:hover,
 .inline-agent__temporary-session--active:focus-visible {
-  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 42%, transparent) !important;
-  background: color-mix(in srgb, var(--wiki-accent-warm) 16%, transparent) !important;
+  outline: .125rem solid var(--wiki-focus-color);
+  outline-offset: var(--wiki-focus-offset);
+  box-shadow:
+    var(--wiki-focus-ring),
+    inset 0 0 0 .0625rem color-mix(in srgb, var(--wiki-ambient-accent) 28%, transparent),
+    var(--wiki-shadow-inset),
+    0 0 0 .125rem color-mix(in srgb, var(--wiki-ambient-accent) 24%, transparent);
 }
 .inline-agent__progress {
   position: absolute;
@@ -1553,7 +1555,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   width: min(100%, var(--agent-conversation-width));
   margin: auto;
   padding: clamp(1.5rem, 4vh, 4rem) 0;
-  text-align: start;
+  text-align: center;
 }
 
 /* The welcome treatment stays typographic and compact; the old decorative mark is intentionally omitted. */
@@ -1575,26 +1577,19 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
 }
 
-.inline-agent__welcome-copy {
-  max-width: 34rem;
-  margin: 1.4rem 0 2rem;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
-  font-size: 1rem;
-  line-height: 1.65;
-}
 
 .inline-agent__starters {
   display: grid;
-  width: 85%;
+  width: 90%;
   margin-inline: auto;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: .75rem;
+  gap: .65rem;
 }
 
 .inline-agent__starter {
   height: auto !important;
-  min-height: 4.5rem;
-  padding: .72rem;
+  min-height: 4.05rem;
+  padding: .6rem;
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-raised);
@@ -1943,7 +1938,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__session-action :deep(.v-btn__prepend) { margin: 0; }
   .inline-agent__notice { display: none; }
   .inline-agent__starters { width: 100%; grid-template-columns: 1fr; }
-  .inline-agent__starter { min-height: 3.6rem; padding: .675rem; }
+  .inline-agent__starter { min-height: 3.25rem; padding: .6rem; }
 }
 
 @media (min-width: 640px) and (max-width: 1023.98px) {
@@ -2106,9 +2101,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
   .inline-agent__welcome h2 { font-size: clamp(2rem, 8vw, 3rem); }
 
-  .inline-agent__welcome-copy {
-    margin-block: var(--wiki-space-4);
-  }
 
   .inline-agent__composer {
     padding: var(--wiki-space-2) var(--wiki-space-3) max(var(--wiki-space-2), env(safe-area-inset-bottom));
@@ -2207,6 +2199,19 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     color: ButtonText;
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+
+  .inline-agent__temporary-session--active {
+    border-color: Highlight !important;
+    background: Highlight !important;
+    color: HighlightText !important;
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+    box-shadow: inset 0 0 0 1px HighlightText;
+  }
+
+  .inline-agent__temporary-session--active:focus-visible {
+    outline-offset: 2px;
   }
 }
 

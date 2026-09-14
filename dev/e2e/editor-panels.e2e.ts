@@ -10,6 +10,7 @@ const content = Array.from(
 
 type EditorFixtureOptions = {
   onTagSearch?: (route: Route) => Promise<void> | void
+  largeAssetFixture?: boolean
 }
 
 async function openEditor(page: Page, options: EditorFixtureOptions = {}) {
@@ -18,29 +19,43 @@ async function openEditor(page: Page, options: EditorFixtureOptions = {}) {
     const request = route.request()
     const path = new URL(request.url()).pathname
     if (request.method() !== 'GET') return route.fulfill({ status: 405 })
-    if (path === '/_api/assets')
-      return route.fulfill({
-        json: [
-          {
-            id: 1,
-            filename: 'brand-mark.png',
-            description: 'Transparent brand mark',
+    if (path === '/_api/assets') {
+      const assets = [
+        {
+          id: 1,
+          filename: 'brand-mark.png',
+          description: 'Transparent brand mark',
+          ext: '.png',
+          fileSize: 84210,
+          createdAt: '2026-09-01T12:00:00Z',
+          kind: 'IMAGE'
+        },
+        {
+          id: 2,
+          filename: 'a-very-long-filename-for-a-complete-brand-reference-document.pdf',
+          description: 'A long description to check wrapping and table alignment across sizes.',
+          ext: '.pdf',
+          fileSize: 1820000,
+          createdAt: '2026-09-01T12:00:00Z',
+          kind: 'BINARY'
+        }
+      ]
+      if (options.largeAssetFixture) {
+        assets.push(
+          ...Array.from({ length: 14 }, (_, index) => ({
+            id: index + 3,
+            filename: `identity-reference-asset-${String(index + 1).padStart(2, '0')}.png`,
+            description:
+              'A deliberately long page identity description keeps the results list tall enough to exercise its internal scroller at every supported desktop viewport.',
             ext: '.png',
-            fileSize: 84210,
+            fileSize: 84210 + index,
             createdAt: '2026-09-01T12:00:00Z',
             kind: 'IMAGE'
-          },
-          {
-            id: 2,
-            filename: 'a-very-long-filename-for-a-complete-brand-reference-document.pdf',
-            description: 'A long description to check wrapping and table alignment across sizes.',
-            ext: '.pdf',
-            fileSize: 1820000,
-            createdAt: '2026-09-01T12:00:00Z',
-            kind: 'BINARY'
-          }
-        ]
-      })
+          }))
+        )
+      }
+      return route.fulfill({ json: assets })
+    }
     if (path === '/_api/assets/folders')
       return route.fulfill({
         json: [
@@ -193,6 +208,7 @@ test('asset browser keeps folder, upload, and insertion actions contained', asyn
   const chooser = page.waitForEvent('filechooser')
   await dialog.getByRole('button', { name: 'Browse files', exact: true }).click()
   await (await chooser).setFiles({ name: 'queued-reference-document.txt', mimeType: 'text/plain', buffer: Buffer.from('Local queue only.') })
+
   await expect(dialog.locator('.filepond--file')).toBeVisible()
   await assertControlsContained(page)
   await dialog.getByRole('row', { name: 'Select brand-mark.png', exact: true }).click()
@@ -204,6 +220,45 @@ test('asset browser keeps folder, upload, and insertion actions contained', asyn
     .locator('.editor-markdown')
     .evaluate(root => (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor.getValue())
   expect(source).toContain('brand-mark.png')
+})
+test('page identity asset results stay within the viewport and scroll internally', async ({ page }) => {
+  await openEditor(page, { largeAssetFixture: true })
+  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
+  await expect(properties).toBeVisible()
+  await properties.getByRole('button', { name: 'Select', exact: true }).click()
+
+  const picker = page.locator('.editor-modal-media.is-editor-embedded.is-page-branding')
+  await expect(picker).toBeVisible()
+  await expect
+    .poll(
+      () =>
+        picker.evaluate(root => {
+          const rect = root.getBoundingClientRect()
+          return rect.top >= -1 && rect.bottom <= innerHeight + 1
+        }),
+      'The page identity selector must fit inside the viewport'
+    )
+    .toBe(true)
+
+  const results = picker.locator('.editor-media-table .v-table__wrapper')
+  await expect
+    .poll(() => results.evaluate(element => element.scrollHeight > element.clientHeight), 'Page identity assets must scroll within the results area')
+    .toBe(true)
+  await results.evaluate(element => {
+    element.scrollTop = element.scrollHeight
+  })
+  const lastAsset = picker.getByRole('row', { name: 'Select brand-mark.png', exact: true })
+  await expect(lastAsset).toBeVisible()
+  await expect
+    .poll(() =>
+      lastAsset.evaluate(element => {
+        const resultBounds = element.closest('.v-table__wrapper')?.getBoundingClientRect()
+        const assetBounds = element.getBoundingClientRect()
+        return Boolean(resultBounds && assetBounds.top >= resultBounds.top - 1 && assetBounds.bottom <= resultBounds.bottom + 1)
+      })
+    )
+    .toBe(true)
 })
 
 test('preview follows the cursor by default and stops when toggled off', async ({ page }) => {

@@ -6,6 +6,7 @@
     width='1000'
     :fullscreen='$vuetify.display.smAndDown'
     :aria-labelledby='brandingPickerShown ? `editor-media-title` : `editor-properties-title`'
+    :class='{ "editor-properties-dialog--branding": brandingPickerShown }'
     )
     editor-modal-media(
       v-if='brandingPickerShown'
@@ -1278,6 +1279,17 @@ export default defineComponent({
     flex: 0 0 auto;
     padding: 5px 10px;
   }
+}
+
+.editor-properties-dialog--branding > .v-overlay__content {
+  height: calc(100dvh - 48px);
+  max-height: calc(100dvh - 48px);
+  overflow: hidden;
+}
+
+.editor-properties-dialog--branding.v-dialog--fullscreen > .v-overlay__content {
+  height: 100%;
+  max-height: 100%;
 }
 
 </style>

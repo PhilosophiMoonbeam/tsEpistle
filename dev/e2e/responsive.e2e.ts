@@ -63,6 +63,21 @@ test.describe('responsive UI quality matrix', () => {
     for (const path of ['/en/home', '/en/visual-markdown-browser']) {
       await openAuthenticatedPage(page, path, '.page-header-section')
       await expectResponsiveLayout(page, path)
+      const browseTags = page.locator('.nav-header .nav-header-browse:visible').first()
+      await expect(browseTags, 'Public headers keep Browse by Tags available').toBeVisible()
+      await expect(browseTags).toHaveAccessibleName('Browse by Tags')
+      if (viewport.width >= 960) {
+        const command = page.locator('.nav-header-command:visible').first()
+        await expect(command, 'Desktop headers keep the search command group visible').toBeVisible()
+        const commandBounds = await command.boundingBox()
+        expect(commandBounds).not.toBeNull()
+        if (commandBounds) {
+          expect(
+            Math.abs(commandBounds.x + commandBounds.width / 2 - viewport.width / 2),
+            'Desktop search command group is centered against the full viewport'
+          ).toBeLessThanOrEqual(1)
+        }
+      }
 
       const headerPageActions = page
         .locator('.nav-header')
@@ -1177,6 +1192,7 @@ test.describe('responsive UI quality matrix', () => {
     for (const path of ['/a/dashboard', '/a/pages']) {
       await openAuthenticatedPage(page, path, '.admin-main')
       await expectResponsiveLayout(page, path)
+      await expect(page.locator('.nav-header .nav-header-browse')).toHaveCount(0)
     }
 
     const drawer = page.locator('#admin-navigation')
@@ -1196,24 +1212,6 @@ test.describe('responsive UI quality matrix', () => {
       await expect(drawer).not.toHaveClass(/v-navigation-drawer--temporary/)
       await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
     }
-
-    await page.getByRole('link', { name: 'All administration settings', exact: true }).click()
-    await expect(page.locator('#dashboard-settings-title')).toBeInViewport()
-    const settingsSearch = page.locator('.dashboard-directory__search input')
-    await settingsSearch.fill('MCP')
-    await expect(page.locator('.dashboard-directory__link')).toHaveCount(2)
-    await settingsSearch.fill('no-matching-setting')
-    await expect(page.getByText('No matching settings', { exact: true })).toBeVisible()
-    await page.getByRole('button', { name: 'Clear search', exact: true }).click()
-    await expect(page.locator('.dashboard-directory__link')).toHaveCount(27)
-    const directory = page.locator('#settings')
-    for (const link of await directory.locator('.dashboard-directory__link').all()) {
-      await expect(link).toHaveAttribute('href', /^\/(?:a\/[^/]+|graphql)$/)
-    }
-    const pagesLink = directory.getByRole('link', { name: /^Pages / })
-    await pagesLink.focus()
-    await page.keyboard.press('Enter')
-    await expect(page).toHaveURL('/a/pages')
   })
 
   test('keeps tag taxonomy lifecycle review and navigation safe', async ({ page }) => {
@@ -1492,7 +1490,9 @@ test.describe('responsive UI quality matrix', () => {
           return 'search'
         })
     })
-    expect(actionOrder, 'Keyboard order follows the visible header controls').toEqual(viewport.width < 960 ? ['agent', 'search', 'browse'] : ['browse', 'search', 'agent'])
+    expect(actionOrder, 'Keyboard order follows the visible header controls').toEqual(
+      viewport.width < 960 ? ['agent', 'search', 'browse'] : ['browse', 'search', 'agent']
+    )
     if (viewport.width >= 960) {
       const field = await page.locator('.nav-header-command .nav-header-search-control').boundingBox()
       expect(field).not.toBeNull()

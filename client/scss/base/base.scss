@@ -43,6 +43,8 @@
   --wiki-surface-soft: var(--wiki-surface-sunken);
   --wiki-glass-bg: color-mix(in srgb, rgb(var(--v-theme-surface)) 82%, transparent);
   --wiki-glass-blur: blur(16px) saturate(180%);
+  --wiki-chrome-surface: rgba(var(--v-theme-surface), .30);
+  --wiki-chrome-blur: blur(16px) saturate(180%);
   --wiki-glass-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
   --wiki-accent-warm: rgb(var(--v-theme-primary));
   --wiki-accent-ink: color-mix(in srgb, var(--wiki-accent-warm) 38%, rgb(var(--v-theme-on-surface)) 62%);
@@ -315,48 +317,84 @@ body {
 }
 
 .wiki-tag-color {
-  --wiki-tag-color-ink: var(--wiki-purpose-neutral-ink);
-  --wiki-tag-color-fill: var(--wiki-purpose-neutral-fill);
-  --wiki-tag-color-edge: var(--wiki-purpose-neutral-edge);
+  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-neutral-ink) 72%, var(--wiki-purpose-neutral-edge) 28%);
+  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-neutral-fill) 90%, var(--wiki-purpose-neutral-edge) 10%);
+  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-neutral-edge) 82%, var(--wiki-surface-border-strong) 18%);
   border: 1px solid var(--wiki-tag-color-edge);
   color: var(--wiki-tag-color-ink);
   background-color: var(--wiki-tag-color-fill);
 }
 
 .wiki-tag-color[data-tag-color='primary'] {
-  --wiki-tag-color-ink: var(--wiki-purpose-primary-ink);
-  --wiki-tag-color-fill: var(--wiki-purpose-primary-fill);
-  --wiki-tag-color-edge: var(--wiki-purpose-primary-edge);
-}
-
-.wiki-tag-color[data-tag-color='secondary'] {
-  --wiki-tag-color-ink: var(--wiki-purpose-secondary-ink);
-  --wiki-tag-color-fill: var(--wiki-purpose-secondary-fill);
-  --wiki-tag-color-edge: var(--wiki-purpose-secondary-edge);
-}
-
-.wiki-tag-color[data-tag-color='success'] {
-  --wiki-tag-color-ink: var(--wiki-purpose-success-ink);
-  --wiki-tag-color-fill: var(--wiki-purpose-success-fill);
-  --wiki-tag-color-edge: var(--wiki-purpose-success-edge);
+  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-primary-ink) 48%, var(--wiki-purpose-primary-edge) 52%);
+  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-primary-fill) 90%, var(--wiki-purpose-primary-edge) 10%);
+  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-primary-edge) 84%, var(--wiki-surface-border-strong) 16%);
 }
 
 .wiki-tag-color[data-tag-color='info'] {
-  --wiki-tag-color-ink: var(--wiki-purpose-info-ink);
-  --wiki-tag-color-fill: var(--wiki-purpose-info-fill);
-  --wiki-tag-color-edge: var(--wiki-purpose-info-edge);
+  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-info-ink) 48%, var(--wiki-purpose-info-edge) 52%);
+  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-info-fill) 90%, var(--wiki-purpose-info-edge) 10%);
+  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-info-edge) 84%, var(--wiki-surface-border-strong) 16%);
+}
+
+.wiki-tag-color[data-tag-color='success'] {
+  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-success-ink) 48%, var(--wiki-purpose-success-edge) 52%);
+  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-success-fill) 90%, var(--wiki-purpose-success-edge) 10%);
+  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-success-edge) 84%, var(--wiki-surface-border-strong) 16%);
 }
 
 .wiki-tag-color[data-tag-color='warning'] {
-  --wiki-tag-color-ink: var(--wiki-purpose-warning-ink);
-  --wiki-tag-color-fill: var(--wiki-purpose-warning-fill);
-  --wiki-tag-color-edge: var(--wiki-purpose-warning-edge);
+  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-warning-ink) 48%, var(--wiki-purpose-warning-edge) 52%);
+  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-warning-fill) 90%, var(--wiki-purpose-warning-edge) 10%);
+  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-warning-edge) 84%, var(--wiki-surface-border-strong) 16%);
+}
+
+.wiki-tag-color[data-tag-color='secondary'] {
+  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-secondary-ink) 48%, var(--wiki-purpose-secondary-edge) 52%);
+  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-secondary-fill) 90%, var(--wiki-purpose-secondary-edge) 10%);
+  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-secondary-edge) 84%, var(--wiki-surface-border-strong) 16%);
 }
 
 .wiki-tag-color[data-tag-color='error'] {
-  --wiki-tag-color-ink: var(--wiki-purpose-error-ink);
-  --wiki-tag-color-fill: var(--wiki-purpose-error-fill);
-  --wiki-tag-color-edge: var(--wiki-purpose-error-edge);
+  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-error-ink) 48%, var(--wiki-purpose-error-edge) 52%);
+  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-error-fill) 90%, var(--wiki-purpose-error-edge) 10%);
+  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-error-edge) 84%, var(--wiki-surface-border-strong) 16%);
+}
+
+.wiki-tag-color[data-tag-color='violet'] {
+  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-secondary-ink) 44%, var(--wiki-accent-warm) 56%);
+  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-secondary-fill) 88%, var(--wiki-accent-warm) 12%);
+  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-secondary-edge) 58%, var(--wiki-accent-warm) 42%);
+}
+
+.wiki-tag-color[data-tag-color='teal'] {
+  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-success-ink) 44%, var(--wiki-accent-spectral) 56%);
+  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-success-fill) 88%, var(--wiki-accent-spectral) 12%);
+  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-success-edge) 58%, var(--wiki-accent-spectral) 42%);
+}
+
+.wiki-tag-color[data-tag-color='cyan'] {
+  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-info-ink) 44%, var(--wiki-accent-spectral) 56%);
+  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-info-fill) 88%, var(--wiki-accent-spectral) 12%);
+  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-info-edge) 58%, var(--wiki-accent-spectral) 42%);
+}
+
+.wiki-tag-color[data-tag-color='orange'] {
+  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-warning-ink) 44%, var(--wiki-accent-warm) 56%);
+  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-warning-fill) 88%, var(--wiki-accent-warm) 12%);
+  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-warning-edge) 58%, var(--wiki-accent-warm) 42%);
+}
+
+.wiki-tag-color[data-tag-color='rose'] {
+  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-error-ink) 44%, var(--wiki-accent-warm) 56%);
+  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-error-fill) 88%, var(--wiki-accent-warm) 12%);
+  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-error-edge) 58%, var(--wiki-accent-warm) 42%);
+}
+
+.wiki-tag-color[data-tag-color='indigo'] {
+  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-primary-ink) 44%, var(--wiki-accent-spectral) 56%);
+  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-primary-fill) 88%, var(--wiki-accent-spectral) 12%);
+  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-primary-edge) 58%, var(--wiki-accent-spectral) 42%);
 }
 
 .wiki-tag-color[data-tag-color='neutral'] {

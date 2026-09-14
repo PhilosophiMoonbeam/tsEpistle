@@ -209,17 +209,58 @@ async function openTags(page: Page, path = '/t', options: TagApiOptions = {}) {
   await page.goto(path, { waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('heading', { name: /tags/i }).first()).toBeVisible()
 }
-async function expectTagFooterReachability(page: Page, resultName: RegExp, surface: string) {
+async function expectTagFooterReachability(page: Page, resultName: RegExp, surface: string, expectInitiallyVisible: boolean) {
   const resultLink = page.getByRole('link', { name: resultName }).last()
   await expect(resultLink).toBeVisible()
 
-  const footerDocumentTopBeforeScroll = await page.evaluate(() => {
+  if (expectInitiallyVisible) {
+    const shortTagSearch = page.getByRole('textbox', { name: /search tags/i }).first()
+    await shortTagSearch.fill('Alpha')
+    await expect(page.locator('.tags-index-item'), `${surface} short fixture must narrow the tag index`).toHaveCount(1)
+  }
+  await page.evaluate(() => window.scrollTo(0, 0))
+  const initialGeometry = await page.evaluate(() => {
     const footer = document.querySelector('footer')
-    if (!(footer instanceof HTMLElement)) return null
-    return footer.getBoundingClientRect().top + window.scrollY
+    const bottomContent = document.querySelector('main article:last-of-type')
+    if (!(footer instanceof HTMLElement) || !(bottomContent instanceof HTMLElement)) return null
+
+    const bounds = (element: HTMLElement) => {
+      const rect = element.getBoundingClientRect()
+      return {
+        top: rect.top,
+        bottom: rect.bottom,
+        documentTop: rect.top + window.scrollY,
+        documentBottom: rect.bottom + window.scrollY
+      }
+    }
+
+    return {
+      footer: bounds(footer),
+      bottomContent: bounds(bottomContent),
+      scrollY: window.scrollY,
+      scrollHeight: document.documentElement.scrollHeight,
+      viewportHeight: window.innerHeight
+    }
   })
-  expect(footerDocumentTopBeforeScroll, `${surface} must expose a footer before scrolling`).not.toBeNull()
-  if (footerDocumentTopBeforeScroll === null) throw new Error(`${surface} did not expose a footer before scrolling.`)
+
+  expect(initialGeometry, `${surface} must expose footer and bottom content geometry`).not.toBeNull()
+  if (!initialGeometry) throw new Error(`${surface} did not expose footer and bottom content geometry.`)
+
+  const footerDocumentTopBeforeScroll = initialGeometry.footer.documentTop
+  if (expectInitiallyVisible) {
+    expect(
+      Math.abs(initialGeometry.scrollY + initialGeometry.viewportHeight - initialGeometry.scrollHeight),
+      `${surface} short content must not require scrolling`
+    ).toBeLessThanOrEqual(1)
+    expect(initialGeometry.footer.top, `${surface} footer must be visible without scrolling`).toBeGreaterThanOrEqual(-1)
+    expect(initialGeometry.footer.bottom, `${surface} footer must fit without scrolling`).toBeLessThanOrEqual(initialGeometry.viewportHeight + 1)
+  } else {
+    expect(initialGeometry.footer.top, `${surface} footer must stay below the viewport before the document end`).toBeGreaterThan(initialGeometry.viewportHeight)
+    const middleScroll = Math.max(0, Math.floor((initialGeometry.scrollHeight - initialGeometry.viewportHeight) / 2))
+    await page.evaluate(scrollY => window.scrollTo(0, scrollY), middleScroll)
+    const middleFooterTop = await page.evaluate(() => document.querySelector('footer')?.getBoundingClientRect().top ?? null)
+    expect(middleFooterTop, `${surface} footer must stay below the viewport away from the document end`).toBeGreaterThan(initialGeometry.viewportHeight)
+  }
 
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
   await resultLink.evaluate(element => {
@@ -269,6 +310,12 @@ async function expectTagFooterReachability(page: Page, resultName: RegExp, surfa
   expect(geometry.footer.documentTop, `${surface} footer must follow bottom content in document flow`).toBeGreaterThanOrEqual(
     geometry.bottomContent.documentBottom - 1
   )
+  if (expectInitiallyVisible) {
+    await page
+      .getByRole('textbox', { name: /search tags/i })
+      .first()
+      .fill('')
+  }
 }
 
 test('public tag library supports local filtering, AND selection, and mobile result focus', async ({ page }) => {
@@ -408,14 +455,14 @@ test('public tag library supports local filtering, AND selection, and mobile res
   const frenchResult = page.getByRole('link', { name: /french guide result/i })
   await expect(frenchResult).toBeVisible()
   await expect(frenchResult).toHaveAttribute('href', '/fr/guide/french-start')
-  await expectTagFooterReachability(page, /french guide result/i, 'short tag result')
+  await expectTagFooterReachability(page, /french guide result/i, 'short tag result', true)
 
   const beta = await revealTagButton(page, 'Beta')
   await beta.click()
   await expect(beta).toHaveAttribute('aria-pressed', 'true')
   await expect(page).toHaveURL(/\/t\/alpha\/beta\?lang=fr(?:$|#)/)
   await expect(page.getByRole('link', { name: /latest result/i })).toBeVisible()
-  await expectTagFooterReachability(page, /trailing result/i, 'long tag result')
+  await expectTagFooterReachability(page, /trailing result/i, 'long tag result', false)
 
   const viewportWidth = page.viewportSize()?.width
   if (viewportWidth === undefined) throw new Error('Responsive tag coverage requires a configured viewport width.')
@@ -496,11 +543,19 @@ test('public tag colors follow canonical identity across browse states', async (
   }
 
   expect(bucketByTag.get('alpha')).toBe(bucketByTag.get('ALPHA'))
-  expect(bucketByTag.get('alpha')).toBe(bucketByTag.get('--alpha'))
-  expect(bucketByTag.get('東京')).toBe(bucketByTag.get('—東京'))
   expect(bucketByTag.get('123')).toBe(bucketByTag.get('１２３'))
+  expect(bucketByTag.get('123')).toBe('neutral')
+  expect(bucketByTag.get('--alpha')).toBe('neutral')
+  expect(bucketByTag.get('—東京')).toBe('neutral')
   expect(bucketByTag.get('!!!')).toBe(bucketByTag.get('???'))
   expect(bucketByTag.get('!!!')).toBe('neutral')
+  expect(tagColorBucket('alpha')).toBe(tagColorBucket('apple'))
+  expect(tagColorBucket('beta')).toBe(tagColorBucket('boat'))
+
+  const representativeTags = Array.from({ length: 26 }, (_, index) => String.fromCharCode(97 + index))
+  const representativeBuckets = representativeTags.map(tagColorBucket)
+  expect(new Set(representativeBuckets).size).toBeGreaterThanOrEqual(10)
+  expect(representativeBuckets.every(bucket => bucket !== 'neutral')).toBe(true)
 
   const alpha = tagButton(page, 'Alpha concept')
   await alpha.click()

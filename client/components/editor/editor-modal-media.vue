@@ -1443,6 +1443,70 @@ export default defineComponent({
     background: transparent !important;
     padding-bottom: 0;
   }
+  &.is-editor-embedded.is-page-branding {
+    display: flex;
+    min-height: 0;
+    height: 100% !important;
+    max-height: 100%;
+    overflow: hidden;
+
+    .editor-media-layout {
+      min-height: 0;
+      height: 100%;
+      flex: 1 1 auto;
+      align-items: stretch;
+      overflow-y: auto;
+    }
+
+    .editor-media-browser {
+      display: flex;
+      min-height: 0;
+      height: 100%;
+      max-height: 100%;
+      flex-direction: column;
+    }
+
+    .editor-media-browser > .editor-media-panel {
+      display: flex;
+      min-height: 0;
+      flex: 1 1 auto;
+      flex-direction: column;
+    }
+
+    .editor-media-browser > .editor-media-panel > .editor-media-panel-content {
+      display: flex;
+      min-height: 0;
+      flex: 1 1 auto;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .editor-media-browser > .editor-media-panel > .editor-media-panel-content > :not(.editor-media-table) {
+      flex: 0 0 auto;
+    }
+
+    .editor-media-browser .editor-media-table {
+      display: flex;
+      min-height: 0;
+      flex: 1 1 auto;
+      flex-direction: column;
+      overflow: hidden;
+
+      .v-table__wrapper {
+        min-height: 0;
+        flex: 1 1 auto;
+        overflow-x: auto;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
+      }
+    }
+
+    .editor-media-sidebar {
+      min-height: 0;
+      overflow-y: auto;
+    }
+  }
 
 }
 </style>

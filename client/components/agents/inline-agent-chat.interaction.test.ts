@@ -356,22 +356,28 @@ const mountInlineAgent = (
   const memoryOpen = Vue.ref(false)
   const panelMenuOpen = Vue.ref(false)
   const composerFocused = lockState?.composerFocused ?? Vue.ref(false)
-  const handleComposerFocusIn = lockState?.handleComposerFocusIn ?? (() => {
-    composerFocused.value = true
-  })
-  const handleComposerFocusOut = lockState?.handleComposerFocusOut ?? ((event: FocusEvent) => {
-    const nextTarget = event.relatedTarget
-    const currentTarget = event.currentTarget
-    if (!(currentTarget instanceof HTMLElement) || !(nextTarget instanceof Node) || !currentTarget.contains(nextTarget)) composerFocused.value = false
-  })
+  const handleComposerFocusIn =
+    lockState?.handleComposerFocusIn ??
+    (() => {
+      composerFocused.value = true
+    })
+  const handleComposerFocusOut =
+    lockState?.handleComposerFocusOut ??
+    ((event: FocusEvent) => {
+      const nextTarget = event.relatedTarget
+      const currentTarget = event.currentTarget
+      if (!(currentTarget instanceof HTMLElement) || !(nextTarget instanceof Node) || !currentTarget.contains(nextTarget)) composerFocused.value = false
+    })
   const handleComposerPointerDown = (): void => {
     composerFocused.value = true
   }
-  const handleTranscriptEngagement = lockState?.handleTranscriptEngagement ?? ((event: FocusEvent | PointerEvent) => {
-    const target = event.target
-    if (target instanceof Element && target.closest('.inline-agent__composer')) return
-    composerFocused.value = false
-  })
+  const handleTranscriptEngagement =
+    lockState?.handleTranscriptEngagement ??
+    ((event: FocusEvent | PointerEvent) => {
+      const target = event.target
+      if (target instanceof Element && target.closest('.inline-agent__composer')) return
+      composerFocused.value = false
+    })
   const transcriptFollowing = Vue.ref(true)
   const goal = lockState?.openGoal.value ?? null
   const thread = lockState?.thread.value ?? null
@@ -441,7 +447,26 @@ const mountInlineAgent = (
     sessionTitle: 'Release planning',
     connectionLabel: lockState?.connectionLabel.value ?? 'Ready',
     connectionTone: lockState?.connectionTone.value ?? 'ready',
-    starters: [],
+    starters: [
+      {
+        label: 'Explore the Wiki',
+        description: 'Find a place to begin',
+        prompt: 'Give me an overview of the main topics in the Wiki, with links to useful starting pages.',
+        icon: 'mdi-compass-outline'
+      },
+      {
+        label: 'Connect the Dots',
+        description: 'Discover related knowledge',
+        prompt: 'Help me explore connections between topics in the Wiki. Ask me which topic I want to start with.',
+        icon: 'mdi-vector-link'
+      },
+      {
+        label: 'Catch Up',
+        description: 'See what changed recently',
+        prompt: 'Summarize the most recently updated Wiki pages I can access.',
+        icon: 'mdi-history'
+      }
+    ],
     emit: () => undefined,
     agents: { drafts: {}, setDraft: () => undefined },
     setCurrentChatPinned: () => undefined,
@@ -666,6 +691,10 @@ describe('Inline Agent workspace actions', () => {
     expect(newConversation.classList.contains('rounded-pill')).toBe(true)
     expect(newConversation.hasAttribute('aria-haspopup')).toBe(false)
     expect(newConversation.hasAttribute('aria-expanded')).toBe(false)
+    expect(newConversation.classList.contains('v-btn--variant-tonal')).toBe(true)
+    expect(temporaryConversation.classList.contains('v-btn--variant-text')).toBe(true)
+    expect(temporaryConversation.classList.contains('v-btn--variant-tonal')).toBe(false)
+    expect(temporaryConversation.getAttribute('title')).toBe('Start a temporary conversation')
     expect(temporaryConversation.classList.contains('inline-agent__temporary-session--active')).toBe(false)
     expect(temporaryConversation.getAttribute('aria-pressed')).toBe('false')
     expect(temporaryConversation.getAttribute('data-state')).toBeNull()
@@ -677,6 +706,9 @@ describe('Inline Agent workspace actions', () => {
     expect(activeTemporary.classList.contains('inline-agent__temporary-session--active')).toBe(true)
     expect(activeTemporary.getAttribute('aria-pressed')).toBe('true')
     expect(activeTemporary.getAttribute('data-state')).toBe('active')
+    expect(activeTemporary.classList.contains('v-btn--variant-text')).toBe(true)
+    expect(activeTemporary.classList.contains('v-btn--variant-tonal')).toBe(false)
+    expect(activeTemporary.getAttribute('title')).toBe('Current temporary conversation')
 
     await openPanelMenu(mounted)
   })
@@ -709,13 +741,26 @@ describe('Inline Agent workspace actions', () => {
     expect(mounted.root.querySelector('.agent-composer__input textarea')).not.toBeNull()
   })
 
-  it('uses the compact typographic welcome copy and Sparkles workspace mark', () => {
+  it('centers the welcome heading above exactly three starter cards without supporting copy', () => {
     const mounted = mountInlineAgent(loadGoalLockState(null))
     const heading = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome h2')
     const copy = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome-copy')
+    const starterGroup = mounted.root.querySelector<HTMLElement>('.inline-agent__starters')
+    const starters = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__starter'))
+    if (!heading || !starterGroup) throw new Error('Welcome starter cards did not render')
 
-    expect(heading?.textContent?.trim()).toBe('A little curiosity, a clearer picture')
-    expect(copy?.textContent?.trim()).toBe('Explore an idea, connect the dots, or work on your wiki.')
+    expect(heading.textContent?.trim()).toBe('A little curiosity, a clearer picture')
+    expect(copy).toBeNull()
+    expect(mounted.root.textContent).not.toContain('Explore an idea, connect the dots, or work on your wiki.')
+    expect(starterGroup.getAttribute('role')).toBe('group')
+    expect(starterGroup.getAttribute('aria-label')).toBe('Conversation starters')
+    expect(heading.nextElementSibling).toBe(starterGroup)
+    expect(starters).toHaveLength(3)
+    expect(starters.map(starter => starter.querySelector<HTMLElement>('.inline-agent__starter-heading strong')?.textContent?.trim())).toEqual([
+      'Explore the Wiki',
+      'Connect the Dots',
+      'Catch Up'
+    ])
     expect(mounted.root.querySelector('.inline-agent__welcome-mark')).toBeNull()
     expect(mounted.root.querySelector('.inline-agent__welcome-index')).toBeNull()
     expect(mounted.root.querySelector('.inline-agent__avatar .mdi-creation-outline')).not.toBeNull()

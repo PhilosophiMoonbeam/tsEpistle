@@ -262,7 +262,7 @@
                 .tags-pagination(v-if='props.pageCount > 1')
                   v-pagination(v-model='pagination.page' :length='props.pageCount' :aria-label='$t(`tags:pagination`, { defaultValue: `Matching page pagination` })')
 
-    nav-footer(:app='false')
+    nav-footer
     notify
     search-results
 </template>
@@ -966,6 +966,7 @@ export default {
   border: 0;
   background-color: transparent;
   color: var(--wiki-tag-color-ink);
+  opacity: 1;
 }
 
 .tags-index-item:hover {
