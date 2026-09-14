@@ -2428,7 +2428,7 @@ export default defineComponent({
 }
 
 .page-main {
-  --page-reader-background: color-mix(in srgb, var(--wiki-accent-warm) 3%, rgb(var(--v-theme-background)));
+  --page-reader-background: rgb(var(--v-theme-background));
   transition: none;
   background: var(--page-reader-background);
 }
