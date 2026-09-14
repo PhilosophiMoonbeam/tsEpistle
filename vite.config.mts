@@ -140,6 +140,7 @@ export default defineConfig(({ command }) => ({
       manifest: false,
       injectRegister: false,
       injectManifest: {
+        rollupFormat: 'iife',
         swDest: resolve(root, 'assets/sw.js'),
         globDirectory: resolve(root, 'assets'),
         globPatterns: ['client/offline.html', 'js/*.js', 'assets/*.css'],
