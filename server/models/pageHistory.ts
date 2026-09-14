@@ -7,7 +7,15 @@ import Page from './pages.ts'
 import User from './users.ts'
 import Editor from './editors.ts'
 import Locale from './locales.ts'
-import { scopePageQuery, type PagePrincipal, type PageVisibility } from '../helpers/page-access.ts'
+import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
+import {
+  canReadPage,
+  pageAuthorizationContext,
+  scopePageQuery,
+  type PagePrincipal,
+  type PageVisibility,
+  type PageVisibilityRecord
+} from '../helpers/page-access.ts'
 
 interface PageVersionOptions {
   id: number
@@ -21,6 +29,7 @@ interface PageVersionOptions {
   visibility: PageVisibility
   ownerId: number | null
   isPublished: boolean | number
+  isSearchable?: boolean | number
   localeCode: string
   path: string
   publishEndDate?: string | null
@@ -36,6 +45,7 @@ interface VersionQuery {
   pageId: number
   versionId: number
   requester: PagePrincipal
+  authority?: PageRuleAuthority
 }
 
 interface HistoryQuery {
@@ -43,6 +53,7 @@ interface HistoryQuery {
   offsetPage?: number
   requester: PagePrincipal
   offsetSize?: number
+  authority?: PageRuleAuthority
 }
 
 interface HistoryTrailEntry {
@@ -53,11 +64,18 @@ interface HistoryTrailEntry {
   valueBefore: string | null
   valueAfter: string | null
   sourceRevision: string | number
+  isSearchable: boolean
   versionDate: string
 }
 
+type HistoricalTagMap = Map<number, unknown[]>
+
 type WikiSource = typeof WIKI
 type PageHistoryWikiContext = WikiSource & {
+  auth: {
+    checkPageAccess(user: PagePrincipal, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority): boolean
+    loadPageRuleAuthority(requester: PagePrincipal, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
+  }
   models: {
     knex: Knex
     pageHistory: typeof PageHistory
@@ -65,8 +83,73 @@ type PageHistoryWikiContext = WikiSource & {
 }
 
 const wiki = WIKI as PageHistoryWikiContext
+const normalizeDbBoolean = (value: unknown, fallback = false): boolean => {
+  if (value === true || value === 1) return true
+  if (value === false || value === 0) return false
+  return fallback
+}
 
 /* global WIKI */
+
+const authorityFor = async (requester: PagePrincipal, supplied?: PageRuleAuthority): Promise<PageRuleAuthority> => {
+  if (supplied !== undefined && supplied.requester === requester) return supplied
+  return wiki.auth.loadPageRuleAuthority(requester)
+}
+
+const isPageVisibility = (value: unknown): value is PageVisibility => value === 'public' || value === 'private'
+
+const isPageOwnerId = (value: unknown): value is number | null => value === null || (typeof value === 'number' && Number.isSafeInteger(value) && value > 0)
+
+const historicalContext = (row: Record<string, unknown>, tags: unknown[]): PageVisibilityRecord | null => {
+  const path = Reflect.get(row, 'path')
+  const localeValue = Reflect.get(row, 'localeCode')
+  const localeCode = localeValue === undefined ? Reflect.get(row, 'locale') : localeValue
+  const visibility = Reflect.get(row, 'visibility')
+  const ownerId = Reflect.get(row, 'ownerId')
+  if (typeof path !== 'string' || path.length === 0 || typeof localeCode !== 'string' || !isPageVisibility(visibility) || !isPageOwnerId(ownerId)) {
+    return null
+  }
+  return { path, localeCode, visibility, ownerId, tags }
+}
+
+const historicalRowAuthorized = (row: Record<string, unknown>, tags: unknown[], requester: PagePrincipal, authority: PageRuleAuthority): boolean => {
+  const context = historicalContext(row, tags)
+  if (context === null) return false
+  const page = pageAuthorizationContext(context)
+  if (page === null) return false
+  if (page.visibility === 'private') return canReadPage(requester, page, authority)
+  return wiki.auth.checkPageAccess(requester, ['read:history'], page, authority)
+}
+
+const loadHistoricalTags = async (ids: readonly number[]): Promise<HistoricalTagMap> => {
+  const tagsByHistoryId: HistoricalTagMap = new Map(ids.map(id => [id, []]))
+  if (ids.length === 0) return tagsByHistoryId
+
+  const rows = await wiki.models
+    .knex('pageHistoryTags')
+    .leftJoin('tags', 'tags.id', 'pageHistoryTags.tagId')
+    .select({
+      historyId: 'pageHistoryTags.pageId',
+      tag: 'tags.tag'
+    })
+    .whereIn('pageHistoryTags.pageId', ids)
+    .orderBy('pageHistoryTags.pageId', 'asc')
+    .orderBy('tags.id', 'asc')
+
+  for (const row of rows as Array<Record<string, unknown>>) {
+    const historyId = Number(Reflect.get(row, 'historyId'))
+    if (!Number.isSafeInteger(historyId) || !tagsByHistoryId.has(historyId)) continue
+    tagsByHistoryId.get(historyId)?.push(Reflect.get(row, 'tag'))
+  }
+  return tagsByHistoryId
+}
+
+const historyOrder = (left: Pick<PageHistory, 'versionDate' | 'id'>, right: Pick<PageHistory, 'versionDate' | 'id'>): number => {
+  const leftDate = String(left.versionDate ?? '')
+  const rightDate = String(right.versionDate ?? '')
+  if (leftDate !== rightDate) return rightDate < leftDate ? -1 : 1
+  return Number(right.id) - Number(left.id)
+}
 
 /**
  * Page History model
@@ -83,6 +166,7 @@ export default class PageHistory extends Model {
   declare visibility: PageVisibility
   declare ownerId: number | null
   declare isPublished: boolean
+  declare isSearchable: boolean
   declare publishStartDate: string
   declare publishEndDate: string
   declare content: string
@@ -109,6 +193,7 @@ export default class PageHistory extends Model {
         title: { type: 'string' },
         description: { type: 'string' },
         isPublished: { type: 'boolean' },
+        isSearchable: { type: 'boolean' },
         visibility: { type: 'string', enum: ['public', 'private'] },
         ownerId: { type: ['integer', 'null'] },
         publishStartDate: { type: 'string' },
@@ -190,7 +275,8 @@ export default class PageHistory extends Model {
       hash: opts.hash,
       visibility: opts.visibility,
       ownerId: opts.ownerId,
-      isPublished: opts.isPublished === true || opts.isPublished === 1,
+      isPublished: normalizeDbBoolean(opts.isPublished),
+      isSearchable: normalizeDbBoolean(opts.isSearchable, true),
       localeCode: opts.localeCode,
       path: opts.path,
       publishEndDate: opts.publishEndDate || '',
@@ -211,7 +297,23 @@ export default class PageHistory extends Model {
   /**
    * Get Page Version
    */
-  static async getVersion({ pageId, versionId, requester }: VersionQuery) {
+  static async getVersion({ pageId, versionId, requester, authority: suppliedAuthority }: VersionQuery) {
+    const authority = await authorityFor(requester, suppliedAuthority)
+    const identityQuery = wiki.models.pageHistory
+      .query()
+      .column(['pageHistory.id', 'pageHistory.path', 'pageHistory.localeCode', 'pageHistory.visibility', 'pageHistory.ownerId'])
+      .where({
+        'pageHistory.id': versionId,
+        'pageHistory.pageId': pageId
+      })
+    scopePageQuery(identityQuery, requester, { table: 'pageHistory', includeAllForSystemManager: true })
+    const identity = (await identityQuery.first()) as unknown as Record<string, unknown> | undefined
+    if (!identity) return null
+
+    const tagsByHistoryId = await loadHistoricalTags([versionId])
+    const historicalTags = tagsByHistoryId.get(versionId)
+    if (!historicalTags || !historicalRowAuthorized(identity, historicalTags, requester, authority)) return null
+
     const query = wiki.models.pageHistory
       .query()
       .column([
@@ -221,6 +323,7 @@ export default class PageHistory extends Model {
         'pageHistory.visibility',
         'pageHistory.ownerId',
         'pageHistory.isPublished',
+        'pageHistory.isSearchable',
         'pageHistory.publishStartDate',
         'pageHistory.publishEndDate',
         'pageHistory.content',
@@ -244,29 +347,35 @@ export default class PageHistory extends Model {
         'pageHistory.id': versionId,
         'pageHistory.pageId': pageId
       })
-    scopePageQuery(query, requester, { table: 'pageHistory', includeAllForSystemManager: true })
     const version = await query.first()
     if (!version) return null
-    const tags = await wiki.models.pageHistory.relatedQuery<Tag>('tags').for(versionId).select('tag').orderBy('tags.id')
+    version.isSearchable = normalizeDbBoolean(version.isSearchable, true)
+    if (!historicalRowAuthorized(version as unknown as Record<string, unknown>, historicalTags, requester, authority)) return null
     return {
       ...version,
+      isSearchable: version.isSearchable,
       updatedAt: version.createdAt || null,
-      tags: tags.map(tag => tag.tag)
+      tags: historicalTags.filter((tag): tag is string => typeof tag === 'string')
     }
   }
 
   /**
    * Get History Trail of a Page
    */
-  static async getHistory({ pageId, offsetPage = 0, offsetSize = 100, requester }: HistoryQuery) {
+  static async getHistory({ pageId, offsetPage = 0, offsetSize = 100, requester, authority: suppliedAuthority }: HistoryQuery) {
+    const authority = await authorityFor(requester, suppliedAuthority)
     const query = wiki.models.pageHistory
       .query()
       .column([
         'pageHistory.id',
         'pageHistory.path',
+        'pageHistory.localeCode',
+        'pageHistory.visibility',
+        'pageHistory.ownerId',
         'pageHistory.authorId',
         'pageHistory.action',
         'pageHistory.sourceRevision',
+        'pageHistory.isSearchable',
         'pageHistory.versionDate',
         {
           authorName: 'author.name'
@@ -277,50 +386,44 @@ export default class PageHistory extends Model {
         'pageHistory.pageId': pageId
       })
     scopePageQuery(query, requester, { table: 'pageHistory', includeAllForSystemManager: true })
-    const history = await query.orderBy('pageHistory.versionDate', 'desc').page(offsetPage, offsetSize)
-
-    let prevPh: PageHistory | null = null
-    const upperLimit = (offsetPage + 1) * offsetSize
-
-    if (history.total >= upperLimit) {
-      const previousQuery = wiki.models.pageHistory
-        .query()
-        .column([
-          'pageHistory.id',
-          'pageHistory.path',
-          'pageHistory.authorId',
-          'pageHistory.action',
-          'pageHistory.versionDate',
-          {
-            authorName: 'author.name'
-          }
-        ])
-        .joinRelated('author')
-        .where({
-          'pageHistory.pageId': pageId
-        })
-      scopePageQuery(previousQuery, requester, { table: 'pageHistory', includeAllForSystemManager: true })
-      prevPh =
-        (await previousQuery
-          .orderBy('pageHistory.versionDate', 'desc')
-          .offset((offsetPage + 1) * offsetSize)
-          .limit(1)
-          .first()) ?? null
+    const rows = (await query.orderBy('pageHistory.versionDate', 'desc').orderBy('pageHistory.id', 'desc')) as unknown as PageHistory[]
+    const ids = rows.map(row => Number(row.id)).filter((id): id is number => Number.isSafeInteger(id) && id > 0)
+    const tagsByHistoryId = await loadHistoricalTags(ids)
+    const authorizedRows: PageHistory[] = []
+    for (const row of rows) {
+      const historyId = Number(row.id)
+      const historicalTags = tagsByHistoryId.get(historyId)
+      if (
+        !Number.isSafeInteger(historyId) ||
+        !historicalTags ||
+        !historicalRowAuthorized(row as unknown as Record<string, unknown>, historicalTags, requester, authority)
+      ) {
+        continue
+      }
+      authorizedRows.push(row)
     }
+    authorizedRows.sort(historyOrder)
 
+    const start = offsetPage * offsetSize
+    const selectedRows = authorizedRows.slice(start, start + offsetSize)
+    let prevPh: PageHistory | null = authorizedRows[start + offsetSize] ?? null
+    const normalizedHistory = selectedRows.map(ph => {
+      ph.isSearchable = normalizeDbBoolean(ph.isSearchable, true)
+      return ph
+    })
     return {
       trail: _.reduce(
-        _.reverse(history.results),
+        normalizedHistory.slice().reverse(),
         (res: HistoryTrailEntry[], ph: PageHistory) => {
           let actionType = 'edit'
           let valueBefore: string | null = null
           let valueAfter: string | null = null
 
-          if (!prevPh && history.total < upperLimit) {
+          if (!prevPh) {
             actionType = 'initial'
-          } else if ((prevPh?.path ?? '') !== ph.path) {
+          } else if (prevPh.path !== ph.path) {
             actionType = 'move'
-            valueBefore = prevPh?.path ?? ''
+            valueBefore = prevPh.path
             valueAfter = ph.path
           }
 
@@ -331,6 +434,7 @@ export default class PageHistory extends Model {
             actionType,
             valueBefore,
             sourceRevision: ph.sourceRevision,
+            isSearchable: ph.isSearchable,
             valueAfter,
             versionDate: ph.versionDate
           })
@@ -340,7 +444,7 @@ export default class PageHistory extends Model {
         },
         [] as HistoryTrailEntry[]
       ),
-      total: history.total
+      total: authorizedRows.length
     }
   }
 

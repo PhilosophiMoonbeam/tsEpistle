@@ -53,7 +53,7 @@
                 <br />
                 of your wiki
               </h2>
-              <p>One application process. A current database observation. Concrete signals for the next decision.</p>
+              <p>A local process view, a current database observation and concrete signals for the next decision.</p>
             </div>
             <div class="system-release">
               <div>
@@ -138,6 +138,46 @@
               is reachable or its certificate is valid.
             </p>
             <v-btn to="/a/ssl" variant="outlined" append-icon="mdi-arrow-right">HTTPS &amp; certificates</v-btn>
+            <h3 class="system-section-title">Connected processes</h3>
+            <div v-if="snapshot.database.connectedProcesses.status === 'unavailable'" class="system-empty">
+              <v-icon icon="mdi-database-alert-outline" size="32" />
+              <h4>Connected-process stats unavailable</h4>
+              <p>PostgreSQL activity visibility is restricted or this point-in-time census failed. The other system observations remain available.</p>
+            </div>
+            <div v-else-if="!snapshot.database.connectedProcesses.processes.length" class="system-empty">
+              <v-icon icon="mdi-database-off-outline" size="32" />
+              <h4>No tagged open connections observed</h4>
+              <p>No open PostgreSQL connections with the current versioned application tag were visible at this observation.</p>
+            </div>
+            <div v-else class="system-table-wrap" role="region" aria-label="Connected process observations" tabindex="0">
+              <table>
+                <caption class="sr-only">Currently open PostgreSQL connections grouped by opaque process identity.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Opaque identity</th>
+                    <th scope="col">Pool</th>
+                    <th scope="col">Listener</th>
+                    <th scope="col">Worker</th>
+                    <th scope="col">Unclassified</th>
+                    <th scope="col">Earliest open backend</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="process in snapshot.database.connectedProcesses.processes" :key="process.identity">
+                    <th scope="row"><code>{{ process.identity }}</code></th>
+                    <td>{{ number(process.connections.pool) }}</td>
+                    <td>{{ number(process.connections.listener) }}</td>
+                    <td>{{ number(process.connections.worker) }}</td>
+                    <td>{{ number(process.connections.unclassified) }}</td>
+                    <td>{{ process.earliestBackendStart ? dateTime(process.earliestBackendStart) : '—' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="system-note">
+              This is a point-in-time connected-process observation from currently open tagged PostgreSQL connections. Up to 100 identities are shown. It is
+              not a health check, cluster membership list, uptime or last-seen history; processes without open tagged database connections are omitted.
+            </p>
           </template>
           <template v-else-if="section === 'background'">
             <div class="system-heading">
@@ -303,13 +343,13 @@
             <div class="system-report-controls">
               <h3>Report contents</h3>
               <p>
-                Includes build identity, process measurements, database version/migrations, scheduler observations and queue totals. Durable job
+                Includes build identity, process measurements, database version/migrations, connected-process role totals and queue totals. Durable job
                 identifiers, payloads and raw failures are omitted.
               </p>
               <v-checkbox
                 v-model="includeDeployment"
                 label="Include deployment identifiers"
-                hint="Adds the instance ID, hostname, filesystem paths, public origin and database host shown in Runtime."
+                hint="Adds the instance ID, hostname, filesystem paths, public origin, database host and opaque connected-process identities."
                 persistent-hint
                 density="compact"
               />
@@ -341,10 +381,12 @@
             <dd>{{ number(snapshot.queue.counts.pending) }}</dd>
             <dt>Attention records</dt>
             <dd>{{ number(snapshot.queue.totalAttention) }}</dd>
+            <dt>Connected processes</dt>
+            <dd>{{ snapshot.database.connectedProcesses.status === 'observed' ? number(snapshot.database.connectedProcesses.processes.length) : 'Unavailable' }}</dd>
           </dl>
           <div>
-            <h3>One process, one moment</h3>
-            <p>Measurements stay fixed until you refresh. A deployment may have other application processes; this screen does not enumerate them.</p>
+            <h3>Connected process view</h3>
+            <p>Measurements stay fixed until you refresh. This point-in-time view groups currently open tagged database connections; it does not establish process health, cluster membership, uptime or last-seen history.</p>
           </div>
           <div>
             <h3>Deployment ownership</h3>

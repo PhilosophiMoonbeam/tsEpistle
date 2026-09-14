@@ -244,6 +244,9 @@
       transition(name='editor-markdown-preview', :css='$vuetify.display.mdAndUp')
         .editor-markdown-preview(v-if='previewShown')
           .editor-markdown-preview-content.editor-page-canvas.contents(ref='editorPreviewContainer')
+            v-alert.mb-3(v-if='previewError', type='error', variant='tonal', density='compact', role='alert')
+              span {{previewError}}
+              v-btn.ml-2(type='button', size='small', variant='text', @click='retryPreview') {{$t('editor:retryPreview')}}
             div(
               ref='editorPreview'
               v-html='previewHTML'
@@ -289,7 +292,14 @@ import { decodeBase64Text } from '../../helpers/base64'
 import { autocompletion, type CompletionContext } from '@codemirror/autocomplete'
 import { markdown } from '@codemirror/lang-markdown'
 import { keymap } from '@codemirror/view'
-import { TextEditor, type TextEditorHandle, type TextPosition } from './common/text-editor'
+import {
+  TextEditor,
+  type TextEditorHandle,
+  type TextEditorOffsetChange,
+  type TextEditorSelection,
+  type TextEditorSelectionChange,
+  type TextPosition
+} from './common/text-editor'
 import {
   createMarkdownCollaboration,
   type CollaborationStatus,
@@ -436,6 +446,7 @@ export default defineComponent({
       previewHTML: '',
       previewDirty: true,
       previewRevision: 0,
+      previewError: '',
       helpShown: false,
       spellModeActive: false,
       insertLinkDialog: false,
@@ -590,7 +601,16 @@ export default defineComponent({
       const renderEnvironment: MarkdownRenderEnvironment = { sourceLines: [] }
       const revision = ++this.previewRevision
       this.previewDirty = true
-      this.previewHTML = sanitizeWikiMarkdownHtml(md.render(newContent, renderEnvironment))
+      this.previewError = ''
+      try {
+        const previewHTML = sanitizeWikiMarkdownHtml(md.render(newContent, renderEnvironment))
+        if (this.editorDisposed || !this.previewShown || revision !== this.previewRevision) return
+        this.previewHTML = previewHTML
+      } catch {
+        if (this.editorDisposed || !this.previewShown || revision !== this.previewRevision) return
+        this.previewError = this.$t('editor:previewRenderFailed')
+        return
+      }
       sourceLinesByEditor.set(this, renderEnvironment.sourceLines)
       this.$nextTick(() => {
         if (this.editorDisposed || !this.previewShown || revision !== this.previewRevision) return
@@ -600,6 +620,9 @@ export default defineComponent({
         this.previewDirty = false
         this.requestPreviewAlignment(true)
       })
+    },
+    retryPreview () {
+      this.processContent(requireEditor(this.cm).getValue())
     },
     /**
      * Update cursor state
@@ -612,18 +635,89 @@ export default defineComponent({
      */
     toggleMarkup({ start, end }: ToggleMarkupOptions) {
       const cm = requireEditor(this.cm)
-      if (!end) { end = start }
-      if (!cm.hasSelection()) {
-        return wikiStore.showNotification({
+      if (!end) end = start
+      const changes: TextEditorOffsetChange[] = []
+      const formattedRanges = new Set<string>()
+      let missingWord = false
+      let changed = false
+      const formatSelection = (selection: TextEditorSelection): TextEditorSelectionChange | null => {
+        const range = selection.empty ? cm.wordOffsetsAt(selection.from) : selection
+        if (!range) {
+          missingWord = true
+          return null
+        }
+        const rangeKey = `${range.from}:${range.to}`
+        if (formattedRanges.has(rangeKey)) return null
+        formattedRanges.add(rangeKey)
+        const selected = cm.slice(range.from, range.to)
+        const backwards = selection.anchor > selection.head
+        if (selected.startsWith(start) && selected.endsWith(end) && selected.length >= start.length + end.length) {
+          const content = selected.slice(start.length, selected.length - end.length)
+          const selectionFrom = range.from
+          const selectionTo = selectionFrom + content.length
+          changed = true
+          return {
+            content,
+            from: range.from,
+            to: range.to,
+            anchor: backwards ? selectionTo : selectionFrom,
+            head: backwards ? selectionFrom : selectionTo
+          }
+        }
+        if (
+          range.from >= start.length &&
+          cm.slice(range.from - start.length, range.from) === start &&
+          cm.slice(range.to, range.to + end.length) === end
+        ) {
+          const contentFrom = range.from - start.length
+          const selectionFrom = contentFrom
+          const selectionTo = selectionFrom + selected.length
+          changed = true
+          const cursor = selectionFrom + (selection.from - range.from)
+          return {
+            content: selected,
+            from: contentFrom,
+            to: range.to + end.length,
+            anchor: selection.empty ? cursor : (backwards ? selectionTo : selectionFrom),
+            head: selection.empty ? cursor : (backwards ? selectionFrom : selectionTo)
+          }
+        }
+        const content = start + selected + end
+        const selectionFrom = range.from + start.length
+        const selectionTo = selectionFrom + selected.length
+        changed = true
+        const cursor = selectionFrom + (selection.from - range.from)
+        return {
+          content,
+          from: range.from,
+          to: range.to,
+          anchor: selection.empty ? cursor : (backwards ? selectionTo : selectionFrom),
+          head: selection.empty ? cursor : (backwards ? selectionFrom : selectionTo)
+        }
+      }
+      if (cm.replaceSelections) {
+        cm.replaceSelections(formatSelection)
+      } else {
+        for (const selection of cm.selectedOffsets()) {
+          const result = formatSelection({
+            anchor: selection.from,
+            head: selection.to,
+            from: selection.from,
+            to: selection.to,
+            empty: selection.from === selection.to
+          })
+          if (result) changes.push(result)
+        }
+        for (const change of [...changes].reverse()) cm.replaceOffsets(change.content, change.from, change.to)
+      }
+      if (missingWord) {
+        wikiStore.showNotification({
           message: this.$t('editor:markup.noSelectionError'),
           style: 'warning',
           icon: 'warning'
         })
       }
-      const selections = cm.selectedOffsets().reverse()
-      for (const selection of selections) {
-        cm.replaceOffsets(start + cm.slice(selection.from, selection.to) + end, selection.from, selection.to)
-      }
+      if (changed) cm.focus()
     },
     /**
      * Set current line as header

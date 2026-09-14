@@ -22,8 +22,9 @@ const currentPage = {
   sourceRevision: '17',
   authorId: 11,
   isPublished: true,
-  updatedAt: '2026-08-30T00:00:00.000Z',
+  isSearchable: true,
   createdAt: '2026-08-20T00:00:00.000Z',
+  updatedAt: '2026-08-30T00:00:00.000Z',
   editorKey: 'markdown',
   editor: 'markdown',
   tags: [{ tag: 'current' }],
@@ -41,8 +42,8 @@ const historicalPage = {
   contentType: 'markdown',
   content: '# Historical\n',
   sourceRevision: '9',
-  authorId: 23,
   isPublished: false,
+  isSearchable: false,
   updatedAt: '2026-08-22T00:00:00.000Z',
   createdAt: '2026-08-21T00:00:00.000Z',
   editor: 'asciidoc',
@@ -162,7 +163,10 @@ describe('common page downloads', () => {
     const res = response()
     await download(req, res)
 
-    expect(global.WIKI.models.pageHistory.getVersion).toHaveBeenCalledWith({ pageId: 7, versionId: 3, requester: req.user })
+    const historyRequest = global.WIKI.models.pageHistory.getVersion.mock.calls[0][0]
+    expect(historyRequest).toMatchObject({ pageId: 7, versionId: 3 })
+    expect(historyRequest.requester).toBe(req.user)
+    expect(historyRequest.authority?.requester).toBe(req.user)
     const document = res.send.mock.calls[0][0]
     expect(parseOkfDocument(document)).toMatchObject({
       body: '# Historical\n',

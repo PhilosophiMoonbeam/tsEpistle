@@ -1,5 +1,14 @@
-import { wiki, type StorageConfig, type WikiAsset, type WikiPage } from '../../types.ts'
-import { CopyObjectCommand, DeleteObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client, type S3ClientConfig } from '@aws-sdk/client-s3'
+import { wiki, type StorageAssetRelocation, type StorageConfig, type WikiAsset, type WikiPage } from '../../types.ts'
+import {
+  CopyObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadBucketCommand,
+  PutObjectCommand,
+  S3Client,
+  type S3ClientConfig
+} from '@aws-sdk/client-s3'
+import { createHash } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import _ from 'lodash'
 import pageHelper from '../../../helpers/page.ts'
@@ -52,7 +61,8 @@ function isPageExportRow(value: unknown): value is PageExportRow {
     (typeof value.content === 'string' || (isRecord(value.content) && !Array.isArray(value.content))) &&
     (typeof value.sourceRevision === 'string' || typeof value.sourceRevision === 'number' || typeof value.sourceRevision === 'bigint') &&
     typeof value.authorId === 'number' &&
-    (isRecord(value.extra) && !Array.isArray(value.extra)) &&
+    isRecord(value.extra) &&
+    !Array.isArray(value.extra) &&
     (typeof value.isPublished === 'boolean' || value.isPublished === 0 || value.isPublished === 1) &&
     (value.updatedAt instanceof Date || typeof value.updatedAt === 'string') &&
     (value.createdAt instanceof Date || typeof value.createdAt === 'string') &&
@@ -79,7 +89,6 @@ function serializePage(page: StoragePageEncodingInput): string | Buffer {
   return serializeContent(encoded as string | Record<string, unknown>)
 }
 
-
 /**
  * Deduce the file path given the `page` object and the object's key to the page's path.
  */
@@ -100,6 +109,23 @@ const getFilePath = <K extends 'destinationPath' | 'path'>(
 /**
  * Can be used with S3 compatible storage.
  */
+interface S3ObjectResponse {
+  Body?: { transformToByteArray(): Promise<Uint8Array> }
+  ETag?: string
+}
+
+function isS3NotFound(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  const record = error as Record<string, unknown>
+  const metadataStatus = typeof record.$metadata === 'object' && record.$metadata !== null ? Reflect.get(record.$metadata, 'httpStatusCode') : undefined
+  return record.name === 'NoSuchKey' || record.name === 'NotFound' || metadataStatus === 404 || record.statusCode === 404 || record.status === 404
+}
+
+async function readS3ObjectBytes(response: S3ObjectResponse, failureMessage: string): Promise<Buffer> {
+  if (!response.Body || typeof response.Body.transformToByteArray !== 'function') throw new Error(failureMessage)
+  return Buffer.from(await response.Body.transformToByteArray())
+}
+
 export default class S3CompatibleStorage {
   config!: StorageConfig & {
     accessKeyId: string
@@ -217,6 +243,51 @@ export default class S3CompatibleStorage {
     )
     await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucketName, Key: sourcePath }))
   }
+  async assetRelocated(asset: StorageAssetRelocation) {
+    const digest = createHash('sha256').update(asset.data).digest('hex')
+    if (digest !== asset.contentSha256) throw new Error('Canonical asset bytes failed relocation validation')
+    const sourcePath = storageObjectKey(this.config.pathPrefix, asset.sourcePath)
+    const destinationPath = storageObjectKey(this.config.pathPrefix, asset.destinationPath)
+    let destination: S3ObjectResponse | undefined
+    try {
+      destination = (await this.s3.send(new GetObjectCommand({ Bucket: this.bucketName, Key: destinationPath }))) as unknown as S3ObjectResponse
+    } catch (error: unknown) {
+      if (!isS3NotFound(error)) throw error
+    }
+    if (destination === undefined) {
+      await this.s3.send(
+        new PutObjectCommand({
+          Bucket: this.bucketName,
+          Key: destinationPath,
+          Body: asset.data,
+          IfNoneMatch: '*',
+          Metadata: { 'tsepistle-content-sha256': asset.contentSha256 }
+        })
+      )
+      destination = (await this.s3.send(new GetObjectCommand({ Bucket: this.bucketName, Key: destinationPath }))) as unknown as S3ObjectResponse
+    }
+    const destinationBytes = await readS3ObjectBytes(destination, 'Storage destination returned no body after relocation write')
+    if (destinationBytes.byteLength !== asset.data.byteLength || createHash('sha256').update(destinationBytes).digest('hex') !== asset.contentSha256) {
+      throw new Error('Storage destination does not contain the canonical asset bytes')
+    }
+    if (asset.sourcePath === asset.destinationPath) return
+    let source: S3ObjectResponse
+    try {
+      source = (await this.s3.send(new GetObjectCommand({ Bucket: this.bucketName, Key: sourcePath }))) as unknown as S3ObjectResponse
+    } catch (error: unknown) {
+      if (isS3NotFound(error)) return
+      throw error
+    }
+    const sourceEtag = source.ETag
+    if (typeof sourceEtag !== 'string' || sourceEtag.trim().length === 0 || sourceEtag === '*') {
+      throw new Error('Storage source cannot be conditionally verified for relocation cleanup')
+    }
+    const sourceBytes = await readS3ObjectBytes(source, 'Storage source returned no body for relocation cleanup')
+    if (sourceBytes.byteLength !== asset.data.byteLength || createHash('sha256').update(sourceBytes).digest('hex') !== asset.contentSha256) {
+      throw new Error('Former storage location changed before relocation cleanup')
+    }
+    await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucketName, Key: sourcePath, IfMatch: sourceEtag }))
+  }
   async getLocalLocation() {}
   /**
    * HANDLERS
@@ -228,8 +299,20 @@ export default class S3CompatibleStorage {
     await pipeline(
       wiki.models.knex
         .column(
-          'id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content',
-          'sourceRevision', 'authorId', 'extra', 'isPublished', 'updatedAt', 'createdAt', 'editorKey'
+          'id',
+          'path',
+          'localeCode',
+          'title',
+          'description',
+          'contentType',
+          'content',
+          'sourceRevision',
+          'authorId',
+          'extra',
+          'isPublished',
+          'updatedAt',
+          'createdAt',
+          'editorKey'
         )
         .select()
         .from('pages')

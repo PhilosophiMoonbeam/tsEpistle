@@ -4,6 +4,7 @@ import type { ContentExtensionRerenderContext } from '../content-extensions/rere
 import { publishOutboxEvents } from '../core/outbox.ts'
 import { createDurableJobHandlers } from './durable-job-handlers.ts'
 import { failExhaustedSiteLogoJobs } from './site-logo-process.ts'
+import { failExhaustedAssetRelocationEffects } from './asset-relocation.ts'
 import type { PageWatchWikiContext } from './page-watch-notification.ts'
 
 type WikiContext = PageWatchWikiContext &
@@ -35,6 +36,7 @@ export default async function runDurableJobs(): Promise<void> {
   await publishOutboxEvents(wiki.models.knex)
   const now = new Date()
   await failExhaustedSiteLogoJobs(wiki.models.knex, now)
+  await failExhaustedAssetRelocationEffects(wiki.models.knex, now)
   await runDurableJobBatch(wiki.models.knex, {
     workerId: wiki.INSTANCE_ID,
     limit: 10,

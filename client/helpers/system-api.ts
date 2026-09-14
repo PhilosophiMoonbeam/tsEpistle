@@ -29,6 +29,25 @@ export type SystemInfo = SystemSummary & {
   workingDirectory: string
   upgradeCapable: boolean
 }
+export type RenderEffectStatus = 'pending' | 'leased' | 'succeeded' | 'failed' | 'superseded'
+export interface RenderPageReceipt {
+  readonly message: string
+  readonly effectId: string
+  readonly pageId: number
+  readonly sourceRevision: string
+  readonly statusUrl: string
+}
+export interface RenderPageStatus {
+  readonly effectId: string
+  readonly pageId: number
+  readonly sourceRevision: string
+  readonly status: RenderEffectStatus
+  readonly result: unknown
+  readonly postcondition: unknown
+}
+
+const isRenderEffectStatus = (value: unknown): value is RenderEffectStatus =>
+  value === 'pending' || value === 'leased' || value === 'succeeded' || value === 'failed' || value === 'superseded'
 
 const parseJsonResponse = async (response: Response, fallbackMessage: string): Promise<unknown> => {
   const payload: unknown = await response.json().catch(() => null)
@@ -40,16 +59,17 @@ const parseJsonResponse = async (response: Response, fallbackMessage: string): P
   return payload
 }
 
-const request = async (fetchImpl: FetchImpl, method: string, path: string, body: unknown, fallbackMessage: string) =>
-  parseJsonResponse(
-    await sameOriginJsonFetch(fetchImpl, path, {
-      method,
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) })
-    }),
-    fallbackMessage
-  )
+const request = async (fetchImpl: FetchImpl, method: string, path: string, body: unknown, fallbackMessage: string, expectedStatus?: number) => {
+  const response = await sameOriginJsonFetch(fetchImpl, path, {
+    method,
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) })
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (expectedStatus !== undefined && typeof response.status === 'number' && response.status !== expectedStatus) throw new Error(fallbackMessage)
+  return payload
+}
 
 const normalizeSummary = (payload: unknown, fallbackMessage: string): SystemSummary => {
   if (!isRecord(payload)) throw new Error(fallbackMessage)
@@ -86,10 +106,56 @@ export const fetchSystemHost = async (fetchImpl: FetchImpl, fallbackMessage = 'S
   return { host: payload.host }
 }
 
-export const renderPage = async (fetchImpl: FetchImpl, id: number, fallbackMessage = 'Page render failed') => {
-  const payload = await request(fetchImpl, 'POST', '/_api/system/content/render-page', { id }, fallbackMessage)
-  if (!isRecord(payload) || typeof payload.message !== 'string') throw new Error(fallbackMessage)
-  return payload
+export const renderPage = async (fetchImpl: FetchImpl, id: number, fallbackMessage = 'Page render failed'): Promise<RenderPageReceipt> => {
+  const payload = await request(fetchImpl, 'POST', '/_api/system/content/render-page', { id }, fallbackMessage, 202)
+  if (!isRecord(payload)) throw new Error(fallbackMessage)
+  const message = payload.message
+  const effectId = payload.effectId
+  const pageId = payload.pageId
+  const sourceRevision = payload.sourceRevision
+  const statusUrl = payload.statusUrl
+  if (
+    typeof message !== 'string' ||
+    message.length === 0 ||
+    typeof effectId !== 'string' ||
+    effectId.length === 0 ||
+    typeof pageId !== 'number' ||
+    !Number.isSafeInteger(pageId) ||
+    pageId < 1 ||
+    typeof sourceRevision !== 'string' ||
+    !/^[1-9][0-9]*$/u.test(sourceRevision) ||
+    typeof statusUrl !== 'string' ||
+    statusUrl.length === 0
+  )
+    throw new Error(fallbackMessage)
+  return { message, effectId, pageId, sourceRevision, statusUrl }
+}
+
+export const fetchRenderPageStatus = async (
+  fetchImpl: FetchImpl,
+  statusUrl: string,
+  fallbackMessage = 'Page render status is unavailable'
+): Promise<RenderPageStatus> => {
+  const payload = await request(fetchImpl, 'GET', statusUrl, undefined, fallbackMessage)
+  if (!isRecord(payload)) throw new Error(fallbackMessage)
+  const effectId = payload.effectId
+  const pageId = payload.pageId
+  const sourceRevision = payload.sourceRevision
+  const status = payload.status
+  if (
+    typeof effectId !== 'string' ||
+    effectId.length === 0 ||
+    typeof pageId !== 'number' ||
+    !Number.isSafeInteger(pageId) ||
+    pageId < 1 ||
+    typeof sourceRevision !== 'string' ||
+    !/^[1-9][0-9]*$/u.test(sourceRevision) ||
+    !isRenderEffectStatus(status) ||
+    !Object.hasOwn(payload, 'result') ||
+    !Object.hasOwn(payload, 'postcondition')
+  )
+    throw new Error(fallbackMessage)
+  return { effectId, pageId, sourceRevision, status, result: payload.result, postcondition: payload.postcondition }
 }
 
 export const performSystemUpgrade = async (fetchImpl: FetchImpl, fallbackMessage = 'Upgrade failed') => {

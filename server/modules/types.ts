@@ -1,4 +1,4 @@
-import type { StorageFileHandle } from './storage/local-filesystem.ts'
+import type { StorageFileHandle, StorageFileIdentityExpectation } from './storage/local-filesystem.ts'
 import type { Readable, Writable } from 'node:stream'
 
 export type UnknownRecord = Record<string, unknown>
@@ -33,6 +33,7 @@ export interface WikiPage {
   updatedAt: Date | string
   extra: UnknownRecord
   isPublished: boolean | number
+  isSearchable: boolean | number
   editorKey: string
   tags: UnknownRecord[]
   $relatedQuery(relation: string): Promise<UnknownRecord[]>
@@ -432,6 +433,21 @@ export interface StorageAssetIdentity {
   readonly filename: string
   readonly folderId: number | null
 }
+export interface StorageAssetRelocation {
+  readonly id: number
+  readonly sourcePath: string
+  readonly destinationPath: string
+  readonly data: Buffer
+  readonly contentSha256: string
+  /**
+   * Optional source snapshot supplied by a local adapter caller. Implementations
+   * must still capture and re-check the live source identity immediately before
+   * removing it.
+   */
+  readonly sourceIdentity?: StorageFileIdentityExpectation
+  readonly authorName: string
+  readonly authorEmail: string
+}
 
 export interface StorageLocalLocation {
   open(): Promise<StorageFileHandle>
@@ -448,6 +464,11 @@ export interface StoragePlugin<C extends StorageConfig = StorageConfig, Context 
   assetUploaded?(this: Context, asset: WikiAsset): Promise<void>
   assetDeleted?(this: Context, asset: WikiAsset): Promise<void>
   assetRenamed?(this: Context, asset: WikiAsset): Promise<void>
+  /**
+   * Reconcile a relocation from canonical bytes. Omit only when unsupported;
+   * the storage runtime must fail explicitly instead of treating omission as success.
+   */
+  assetRelocated?(this: Context, asset: StorageAssetRelocation): Promise<void>
   getLocalLocation?(this: Context, asset: StorageAssetIdentity): Promise<StorageLocalLocation | void>
   sync?(this: Context, options?: { manual: boolean }): Promise<StoragePluginActionResult>
   dump?(this: Context): Promise<StoragePluginActionResult>

@@ -5,7 +5,7 @@ import { createVuetify } from 'vuetify'
 import * as vuetifyLocaleMessages from 'vuetify/locale'
 import Hammer from 'hammerjs'
 import moment from 'moment-timezone'
-import helpersPlugin from './helpers/index.ts'
+import helpersPlugin, { applyUserPresentation } from './helpers/index.ts'
 import boot from './modules/boot.ts'
 import localization from './modules/localization.ts'
 import { pinia, wikiStore } from './store/index.ts'
@@ -167,9 +167,6 @@ window.WIKI = app
 window.boot = boot
 
 moment.locale(siteConfig.lang)
-if (wikiStore.user.dateFormat) {
-  moment.updateLocale(moment.locale(), { longDateFormat: { L: wikiStore.user.dateFormat } } as moment.LocaleSpecification)
-}
-if (wikiStore.user.timezone) moment.tz.setDefault(wikiStore.user.timezone)
+applyUserPresentation(wikiStore.user)
 
 app.mount('#root')

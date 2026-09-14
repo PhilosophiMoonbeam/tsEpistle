@@ -392,7 +392,10 @@ export const createUtilitiesWorkspaceStore = (db: Knex): UtilitiesWorkspaceStore
   const execute = async (requester: SystemRequester, input: StartInput) => {
     let effectStarted = false
     const heartbeat = setInterval(() => {
-      void db('utilitiesOperations').where({ id: input.id, state: 'running' }).update({ heartbeatAt: now().toISOString() }).catch(() => {})
+      void db('utilitiesOperations')
+        .where({ id: input.id, state: 'running' })
+        .update({ heartbeatAt: now().toISOString() })
+        .catch(() => {})
     }, 15_000)
     heartbeat.unref()
     let importEffectFingerprint: string | undefined
@@ -438,7 +441,7 @@ export const createUtilitiesWorkspaceStore = (db: Knex): UtilitiesWorkspaceStore
           let processed = 0
           for (const page of pages) {
             await fenceEffect()
-            await systemOperations.renderPage(page.id)
+            await systemOperations.renderPageImmediately({ id: page.id, requester })
             processed += 1
             await db('utilitiesOperations')
               .where({ id: input.id, state: 'running' })

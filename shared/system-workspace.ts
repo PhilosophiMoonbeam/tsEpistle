@@ -19,6 +19,26 @@ export const ScheduledObservationSchema = z.object({
   failures: count
 })
 export type ScheduledObservation = z.infer<typeof ScheduledObservationSchema>
+export const SYSTEM_CONNECTION_APPLICATION_PREFIX = 'tsEpistle/v1/'
+export const SYSTEM_CONNECTION_APPLICATION_MAX_BYTES = 63
+export const SYSTEM_CONNECTED_PROCESS_MAX_ROWS = 100
+export const SYSTEM_CONNECTION_ROLES = ['pool', 'listener', 'worker'] as const
+export type SystemConnectionRole = (typeof SYSTEM_CONNECTION_ROLES)[number]
+const ConnectedProcessSchema = z.object({
+  identity: z.string().min(1),
+  connections: z.object({
+    pool: count,
+    listener: count,
+    worker: count,
+    unclassified: count
+  }),
+  earliestBackendStart: date
+})
+export const ConnectedProcessCensusSchema = z.object({
+  status: z.enum(['observed', 'unavailable']),
+  processes: z.array(ConnectedProcessSchema).max(SYSTEM_CONNECTED_PROCESS_MAX_ROWS)
+})
+export type ConnectedProcessCensus = z.infer<typeof ConnectedProcessCensusSchema>
 export const SystemWorkspaceSchema = z.object({
   observedAt: z.iso.datetime(),
   product: ProductMetadataSchema,
@@ -48,7 +68,8 @@ export const SystemWorkspaceSchema = z.object({
     version: z.string(),
     latencyMs: z.number().nonnegative(),
     host: z.string(),
-    migrations: z.object({ applied: z.array(z.string()), pending: z.array(z.string()), unknown: z.array(z.string()) })
+    migrations: z.object({ applied: z.array(z.string()), pending: z.array(z.string()), unknown: z.array(z.string()) }),
+    connectedProcesses: ConnectedProcessCensusSchema
   }),
   scheduler: z.object({ started: z.boolean(), jobs: z.array(ScheduledObservationSchema) }),
   queue: z.object({
@@ -84,6 +105,26 @@ export const systemJobDestination = (type: string): { title: string; path: strin
   return null
 }
 
+const connectedProcessReport = (census: ConnectedProcessCensus, includeDeployment: boolean) => {
+  const connections = { pool: 0, listener: 0, worker: 0, unclassified: 0 }
+  let earliestBackendStart: string | null = null
+  for (const process of census.processes) {
+    connections.pool += process.connections.pool
+    connections.listener += process.connections.listener
+    connections.worker += process.connections.worker
+    connections.unclassified += process.connections.unclassified
+    if (process.earliestBackendStart && (!earliestBackendStart || process.earliestBackendStart < earliestBackendStart))
+      earliestBackendStart = process.earliestBackendStart
+  }
+  return {
+    status: census.status,
+    processCount: census.processes.length,
+    connections,
+    earliestBackendStart,
+    ...(includeDeployment ? { processes: census.processes } : {})
+  }
+}
+
 /** Explicit allowlist: never export raw job data, credentials or unreviewed host identifiers. */
 export const systemSupportReport = (workspace: SystemWorkspace, includeDeployment = false) => ({
   format: 'tsepistle-system-report-v1',
@@ -106,8 +147,12 @@ export const systemSupportReport = (workspace: SystemWorkspace, includeDeploymen
     httpPort: workspace.runtime.httpPort,
     httpsPort: workspace.runtime.httpsPort
   },
-  database: { version: workspace.database.version, latencyMs: workspace.database.latencyMs, migrations: workspace.database.migrations },
-  scheduler: { started: workspace.scheduler.started, jobs: workspace.scheduler.jobs },
+  database: {
+    version: workspace.database.version,
+    latencyMs: workspace.database.latencyMs,
+    migrations: workspace.database.migrations,
+    connectedProcesses: connectedProcessReport(workspace.database.connectedProcesses, includeDeployment)
+  },
   queue: {
     counts: workspace.queue.counts,
     due: workspace.queue.due,
@@ -116,7 +161,7 @@ export const systemSupportReport = (workspace: SystemWorkspace, includeDeploymen
     totalAttention: workspace.queue.totalAttention
   },
   limitations: [
-    'One application process at the observation time; no worker census or historical uptime.',
+    'Connected-process counts cover only currently open tagged PostgreSQL connections at observation time; they are not membership, health, uptime or last-seen history.',
     'OS-visible resources are not container CPU or memory limits.',
     'No external ingress, provider connectivity or delivery verification.',
     'Job payloads, raw failures and durable job identifiers are omitted.'

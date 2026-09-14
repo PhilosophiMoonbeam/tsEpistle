@@ -9,6 +9,7 @@ export const durableJobIdentities = [
   'process-site-logo@3',
   'rerender-content-extension@1',
   'deliver-webhook@1',
-  'notify-page-watcher@1'
+  'notify-page-watcher@1',
+  'asset-relocation@1'
 ] as const
 export type DurableJobIdentity = (typeof durableJobIdentities)[number]

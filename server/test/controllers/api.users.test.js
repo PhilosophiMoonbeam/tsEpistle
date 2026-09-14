@@ -119,6 +119,9 @@ describe('controllers/api users endpoints', () => {
               location: 'Tallinn',
               jobTitle: 'Architect',
               timezone: 'Europe/Tallinn',
+              dateFormat: 'YYYY-MM-DD',
+              timeFormat: '24h',
+              appearance: 'dark',
               isSystem: false,
               isActive: true,
               isVerified: true,
@@ -768,6 +771,9 @@ describe('controllers/api users endpoints', () => {
       location: 'Tallinn',
       jobTitle: 'Architect',
       timezone: 'Europe/Tallinn',
+      dateFormat: 'YYYY-MM-DD',
+      timeFormat: '24h',
+      appearance: 'dark',
       isSystem: false,
       isActive: true,
       isVerified: true,
@@ -932,6 +938,9 @@ describe('controllers/api users endpoints', () => {
         email: 'alice@example.com',
         providerKey: 'local',
         timezone: 'Europe/Tallinn',
+        dateFormat: 'YYYY-MM-DD',
+        timeFormat: '24h',
+        appearance: 'dark',
         permissions: []
       }
     })

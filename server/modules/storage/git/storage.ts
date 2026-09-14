@@ -1,6 +1,19 @@
-import type { StorageAssetIdentity, StorageConfig, StorageContext, StoragePlugin, StoragePluginActionResult, WikiAsset, WikiUser } from '../../types.ts'
+import type {
+  QueryBuilder,
+  UnknownRecord,
+  StorageConfig,
+  StorageAssetIdentity,
+  StorageAssetRelocation,
+  StorageContext,
+  StoragePlugin,
+  StoragePluginActionResult,
+  WikiAsset,
+  WikiUser
+} from '../../types.ts'
 import { wiki } from '../../types.ts'
+import type { Knex } from 'knex'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { simpleGit, type SimpleGit } from 'simple-git'
 import _ from 'lodash'
@@ -9,23 +22,24 @@ import { Transform, type TransformCallback } from 'node:stream'
 
 import pageHelper from '../../../helpers/page.ts'
 import assetHelper from '../../../helpers/asset.ts'
-import commonDisk, {
-  collectStorageEntries,
-  isImportSourceMissing,
-  validateStoragePaths
-} from '../disk/common.ts'
+import commonDisk, { collectStorageEntries, isImportSourceMissing, validateStoragePaths } from '../disk/common.ts'
 import type { StorageImportAdmission } from '../disk/common.ts'
 import type { StorageImportResult } from '../types.ts'
 import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
-import { pullRemoteAuthoritative, reattachUnrelatedHistory, recoverInterruptedGitOperation, sharesHistoryWith, type GitRepositoryCommand } from './repository.ts'
 import {
-  admitGitTree,
-  assertGitPath,
-  streamGitNameStatus,
-  type GitChangeStatus,
-  type GitNameStatusChange,
-  type GitNativeCommand
-} from './admission.ts'
+  assertAssetLocationAssetSettled,
+  assertAssetLocationReservations,
+  lockAssetLocation,
+  withAssetLocationLocks
+} from '../../../helpers/asset-location-lock.ts'
+import {
+  pullRemoteAuthoritative,
+  reattachUnrelatedHistory,
+  recoverInterruptedGitOperation,
+  sharesHistoryWith,
+  type GitRepositoryCommand
+} from './repository.ts'
+import { admitGitTree, assertGitPath, streamGitNameStatus, type GitChangeStatus, type GitNameStatusChange, type GitNativeCommand } from './admission.ts'
 import {
   BoundedProcessError,
   GIT_NATIVE_DEADLINE_MS,
@@ -42,12 +56,7 @@ import {
 import { isStorageGitMetadataPath, isStorageInternalPath, isStorageReservedPath } from '../internal-path.ts'
 import { okfFilePath, parseOkfFilePath } from '../../../okf/format.ts'
 import { gitStorageSshCommand, gitStorageHttpRemote, writeGitStorageConnectionFile } from './connection.ts'
-import {
-  openStorageRoot,
-  type StorageFileIdentityExpectation,
-  type StorageFileHandle,
-  type StorageRootHandle
-} from '../local-filesystem.ts'
+import { openStorageRoot, type StorageFileIdentityExpectation, type StorageFileHandle, type StorageRootHandle } from '../local-filesystem.ts'
 import type { StorageLocalLocation } from '../../types.ts'
 
 export interface GitStorageFile {
@@ -116,16 +125,12 @@ interface PageExportRow {
 function gitPagePath(page: Pick<PageExportRow, 'path' | 'localeCode' | 'contentType'>, alwaysNamespace: boolean): string {
   if (page.contentType === 'markdown') return okfFilePath(page.localeCode, page.path)
   const fileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
-  return alwaysNamespace || (wiki.config.lang.namespacing && wiki.config.lang.code !== page.localeCode)
-    ? `${page.localeCode}/${fileName}`
-    : fileName
+  return alwaysNamespace || (wiki.config.lang.namespacing && wiki.config.lang.code !== page.localeCode) ? `${page.localeCode}/${fileName}` : fileName
 }
 
 function changedPagePath(filePath: string): { locale: string; path: string } {
   const canonicalIdentity = parseOkfFilePath(filePath)
-  return canonicalIdentity === null
-    ? pageHelper.getPagePath(filePath)
-    : { locale: canonicalIdentity.locale, path: canonicalIdentity.pagePath }
+  return canonicalIdentity === null ? pageHelper.getPagePath(filePath) : { locale: canonicalIdentity.locale, path: canonicalIdentity.pagePath }
 }
 
 interface AssetExportRow {
@@ -133,7 +138,6 @@ interface AssetExportRow {
   folderId: number | null
   data: Buffer
 }
-
 
 function isPageExportRow(value: unknown): value is PageExportRow {
   return (
@@ -172,7 +176,6 @@ function isPageExportRow(value: unknown): value is PageExportRow {
   )
 }
 
-
 function serializePage(page: StoragePageEncodingInput): string {
   const encoded = encodeStoragePageDocument(page)
   if (page.contentType === 'markdown') {
@@ -193,22 +196,41 @@ function isAssetExportRow(value: unknown): value is AssetExportRow {
     Buffer.isBuffer(value.data)
   )
 }
-function requireRoot (context: GitStorageContext): StorageRootHandle {
+function requireRoot(context: GitStorageContext): StorageRootHandle {
   if (context.quarantined || context.root === null || context.root === undefined || context.root.closed) throw new Error('Git storage is not initialized')
   return context.root
 }
 
-function requireGit (context: GitStorageContext): SimpleGit {
+function requireGit(context: GitStorageContext): SimpleGit {
   if (context.quarantined || context.git === null || context.git === undefined) throw new Error('Git storage is not initialized')
   return context.git
 }
 
-function gitExecutable (context: GitStorageContext): string {
+async function destinationHasCanonicalBytes(root: StorageRootHandle, relativePath: string, data: Buffer, contentSha256: string): Promise<boolean> {
+  let destination: StorageFileHandle
+  try {
+    destination = await root.openFile(relativePath)
+  } catch (error: unknown) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return false
+    throw error
+  }
+  try {
+    const destinationBytes = await destination.readBounded(data.byteLength + 1)
+    if (destinationBytes.byteLength !== data.byteLength || createHash('sha256').update(destinationBytes).digest('hex') !== contentSha256) {
+      throw new Error('Storage destination does not contain the canonical asset bytes')
+    }
+    return true
+  } finally {
+    await destination.close()
+  }
+}
+
+function gitExecutable(context: GitStorageContext): string {
   const configured = context.config.gitBinaryPath
   return typeof configured === 'string' && configured.trim().length > 0 ? configured : 'git'
 }
 
-function assertBranch (branch: string): void {
+function assertBranch(branch: string): void {
   if (
     typeof branch !== 'string' ||
     branch.length === 0 ||
@@ -228,7 +250,7 @@ function assertBranch (branch: string): void {
   }
 }
 
-async function observeGitStorage (context: GitStorageContext, deadlineAt: number): Promise<void> {
+async function observeGitStorage(context: GitStorageContext, deadlineAt: number): Promise<void> {
   const remaining = deadlineAt - Date.now()
   if (remaining <= 0) throw new BoundedProcessError('deadline', 'Git synchronization exceeded its deadline')
   await observeDirectoryTree(path.join(context.repoPath, '.git'), {
@@ -244,9 +266,9 @@ async function observeGitStorage (context: GitStorageContext, deadlineAt: number
   })
 }
 
-function nativeGit (context: GitStorageContext, deadlineAt: number): GitNativeCommand {
+function nativeGit(context: GitStorageContext, deadlineAt: number): GitNativeCommand {
   return {
-    async run (args, options = {}) {
+    async run(args, options = {}) {
       const remaining = deadlineAt - Date.now()
       if (remaining <= 0) throw new BoundedProcessError('deadline', 'Git synchronization exceeded its deadline')
       const result = await runBoundedProcess({
@@ -270,21 +292,21 @@ function nativeGit (context: GitStorageContext, deadlineAt: number): GitNativeCo
   }
 }
 
-function nativeRepository (command: GitNativeCommand): GitRepositoryCommand {
+function nativeRepository(command: GitNativeCommand): GitRepositoryCommand {
   return {
-    async run (args) {
+    async run(args) {
       const result = await command.run(args, { captureStdout: true, maxStdoutBytes: 8 * 1024 })
       return result.stdout.toString('utf8')
     }
   }
 }
 
-async function runNativeText (command: GitNativeCommand, args: readonly string[]): Promise<string> {
+async function runNativeText(command: GitNativeCommand, args: readonly string[]): Promise<string> {
   const result = await command.run(args, { captureStdout: true, maxStdoutBytes: 8 * 1024 })
   return result.stdout.toString('utf8').trim()
 }
 
-async function resolveCommit (command: GitNativeCommand, revision: string, optional = false): Promise<string | null> {
+async function resolveCommit(command: GitNativeCommand, revision: string, optional = false): Promise<string | null> {
   try {
     const value = await runNativeText(command, ['rev-parse', '--verify', '--quiet', `${revision}^{commit}`])
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(value)) throw new BoundedProcessError('parser', 'Git returned an invalid commit identifier')
@@ -295,24 +317,16 @@ async function resolveCommit (command: GitNativeCommand, revision: string, optio
   }
 }
 
-async function fetchConfiguredBranch (command: GitNativeCommand, branch: string): Promise<string> {
+async function fetchConfiguredBranch(command: GitNativeCommand, branch: string): Promise<string> {
   assertBranch(branch)
-  await command.run([
-    'fetch',
-    '--no-tags',
-    '--no-recurse-submodules',
-    '--no-auto-maintenance',
-    '--no-progress',
-    'origin',
-    branch
-  ], { captureStdout: false })
+  await command.run(['fetch', '--no-tags', '--no-recurse-submodules', '--no-auto-maintenance', '--no-progress', 'origin', branch], { captureStdout: false })
   const remoteRef = `refs/remotes/origin/${branch}`
   const fetched = await resolveCommit(command, remoteRef)
   if (fetched === null) throw new Error('Invalid branch! Make sure it exists on the remote first.')
   return fetched
 }
 
-async function quarantineGitContext (context: GitStorageContext): Promise<void> {
+async function quarantineGitContext(context: GitStorageContext): Promise<void> {
   const root = context.root
   context.root = null
   context.git = null
@@ -326,7 +340,7 @@ async function quarantineGitContext (context: GitStorageContext): Promise<void> 
   }
 }
 
-function shouldQuarantineGitFailure (error: unknown): boolean {
+function shouldQuarantineGitFailure(error: unknown): boolean {
   return error instanceof BoundedProcessError && error.quarantine
 }
 
@@ -340,7 +354,34 @@ function requireAssetCache(asset: WikiAsset): CacheableWikiAsset {
   }
   return asset
 }
-async function buildGitImportPlan (
+
+type GitAssetTransaction = Knex.Transaction | undefined
+
+async function withGitAssetTransaction<T>(work: (transaction: GitAssetTransaction) => Promise<T>): Promise<T> {
+  const knex = wiki.models.knex as unknown as
+    | {
+        transaction?: (callback: (transaction: Knex.Transaction) => Promise<T>) => Promise<T>
+      }
+    | undefined
+  if (typeof knex?.transaction === 'function') return knex.transaction(transaction => work(transaction))
+  return work(undefined)
+}
+
+type GitAssetQuery = QueryBuilder<WikiAsset>
+
+function queryGitAssets(transaction: GitAssetTransaction): GitAssetQuery {
+  if (transaction === undefined) return (wiki.models.assets.query as unknown as () => GitAssetQuery)()
+  return (wiki.models.assets.query as unknown as (transaction: Knex.Transaction) => GitAssetQuery)(transaction)
+}
+
+async function findGitAssetForMutation(transaction: GitAssetTransaction, hash: string): Promise<WikiAsset | undefined> {
+  if (transaction === undefined) return queryGitAssets(transaction).findOne({ hash })
+  const row = await transaction('assets').where({ hash }).forUpdate().first('id')
+  if (!row) return undefined
+  return queryGitAssets(transaction).findOne({ id: row.id })
+}
+
+async function buildGitImportPlan(
   root: StorageRootHandle,
   admission: StorageImportAdmission,
   changes: readonly GitNameStatusChange[]
@@ -381,15 +422,13 @@ async function buildGitImportPlan (
   await validateStoragePaths(root, paths, admission)
   return { admission, files }
 }
- 
-
 
 const plugin: GitStoragePlugin = {
   git: null,
   root: null,
   repoPath: path.resolve(wiki.ROOTPATH, wiki.config.dataPath, 'repo'),
-  async activated () {},
-  async deactivated () {
+  async activated() {},
+  async deactivated() {
     const root = this.root
     this.root = null
     this.git = null
@@ -398,7 +437,7 @@ const plugin: GitStoragePlugin = {
   /**
    * INIT
    */
-  async init () {
+  async init() {
     wiki.logger.info('(STORAGE/GIT) Initializing...')
     const previousRoot = this.root
     this.root = null
@@ -448,12 +487,14 @@ const plugin: GitStoragePlugin = {
         case 'ssh': {
           wiki.logger.info('(STORAGE/GIT) Setting SSH Command config...')
           const dataPath = path.resolve(wiki.ROOTPATH, wiki.config.dataPath)
-          const identityPath = this.config.sshPrivateKeyMode === 'contents'
-            ? await writeGitStorageConnectionFile(dataPath, 'git-ssh.pem', this.config.sshPrivateKeyContent)
-            : this.config.sshPrivateKeyPath
-          const knownHostsPath = typeof this.config.sshKnownHosts === 'string' && this.config.sshKnownHosts.trim()
-            ? await writeGitStorageConnectionFile(dataPath, 'git-known-hosts', this.config.sshKnownHosts)
-            : undefined
+          const identityPath =
+            this.config.sshPrivateKeyMode === 'contents'
+              ? await writeGitStorageConnectionFile(dataPath, 'git-ssh.pem', this.config.sshPrivateKeyContent)
+              : this.config.sshPrivateKeyPath
+          const knownHostsPath =
+            typeof this.config.sshKnownHosts === 'string' && this.config.sshKnownHosts.trim()
+              ? await writeGitStorageConnectionFile(dataPath, 'git-known-hosts', this.config.sshKnownHosts)
+              : undefined
           await this.git.addConfig('core.sshCommand', gitStorageSshCommand(identityPath, knownHostsPath))
           wiki.logger.info('(STORAGE/GIT) Adding origin remote via SSH...')
           await this.git.addRemote('origin', this.config.repoUrl)
@@ -484,7 +525,7 @@ const plugin: GitStoragePlugin = {
   /**
    * SYNC
    */
-  async sync () {
+  async sync() {
     const root = requireRoot(this)
     requireGit(this)
     const branch = this.config.branch
@@ -566,20 +607,14 @@ const plugin: GitStoragePlugin = {
    *
    * @param {Array<String>} files Array of files to process
    */
-  async processFiles (plan: GitStorageImportPlan, user: WikiUser) {
+  async processFiles(plan: GitStorageImportPlan, user: WikiUser) {
     const root = requireRoot(this)
     if (plan.admission.root !== root) throw new Error('Git import admission belongs to a different storage root')
     const files = plan.files
     const admission = plan.admission
     const seen = new Set<string>()
     for (const item of files) {
-      const status = item.status ?? (
-        item.relPath !== item.oldPath
-          ? 'R'
-          : item.deletions > 0 && item.insertions === 0
-            ? 'D'
-            : 'M'
-      )
+      const status = item.status ?? (item.relPath !== item.oldPath ? 'R' : item.deletions > 0 && item.insertions === 0 ? 'D' : 'M')
       assertGitPath(item.oldPath)
       assertGitPath(item.relPath)
       const key = `${status}\0${item.oldPath}\0${item.relPath}`
@@ -593,13 +628,7 @@ const plugin: GitStoragePlugin = {
 
     const results: GitStorageImportResult[] = []
     for (const item of files) {
-      const status = item.status ?? (
-        item.relPath !== item.oldPath
-          ? 'R'
-          : item.deletions > 0 && item.insertions === 0
-            ? 'D'
-            : 'M'
-      )
+      const status = item.status ?? (item.relPath !== item.oldPath ? 'R' : item.deletions > 0 && item.insertions === 0 ? 'D' : 'M')
       const entry = admission.filesByPath.get(item.relPath)
       const expectedStats = entry !== undefined && entry.kind === 'file' ? entry.identity : undefined
       if (!item.importAll && status !== 'D' && expectedStats === undefined) {
@@ -660,38 +689,77 @@ const plugin: GitStoragePlugin = {
           }
         } else {
           if (fileExists && !item.importAll && status === 'R') {
-            wiki.logger.info(`(STORAGE/GIT) Asset marked as renamed: from ${item.oldPath} to ${item.relPath}`)
-            const sourceHash = assetHelper.generateHash(item.oldPath)
-            const destinationHash = assetHelper.generateHash(item.relPath)
-            const assetToRename = await wiki.models.assets.query().findOne({ hash: sourceHash })
-            if (assetToRename) {
-              const folderId = await commonDisk.resolveAssetFolder(item.relPath)
-              await wiki.models.assets.query().patch({
-                filename: path.posix.basename(item.relPath.replace(/\\/g, '/')),
-                folderId,
-                hash: destinationHash
-              }).findById(assetToRename.id)
-              await requireAssetCache(assetToRename).deleteAssetCache()
-              results.push({ kind: 'asset', relPath: item.relPath, ok: true })
-            } else {
-              wiki.logger.info(`(STORAGE/GIT) Asset was not found in the DB, nothing to rename: ${item.relPath}`)
-              results.push({ kind: 'asset', relPath: item.relPath, ok: false, outcome: 'conflict', error: 'Asset was not found in the database' })
-            }
+            await withAssetLocationLocks(
+              ['assets'],
+              async assertHeld => {
+                await assertHeld?.()
+                wiki.logger.info(`(STORAGE/GIT) Asset marked as renamed: from ${item.oldPath} to ${item.relPath}`)
+                const sourceHash = assetHelper.generateHash(item.oldPath)
+                const destinationHash = assetHelper.generateHash(item.relPath)
+                const assetToRename = await withGitAssetTransaction(async transaction => {
+                  const asset = await findGitAssetForMutation(transaction, sourceHash)
+                  if (!asset) return undefined
+                  if (transaction) {
+                    for (const assetPath of [item.oldPath, item.relPath].sort()) await lockAssetLocation(transaction, assetPath)
+                  }
+                  await assertAssetLocationAssetSettled(transaction as Knex.Transaction, asset.id)
+                  await assertAssetLocationReservations(transaction as Knex.Transaction, [item.oldPath, item.relPath])
+                  const folderId = await commonDisk.resolveAssetFolder(item.relPath)
+                  const writableAssets = queryGitAssets(transaction)
+                  await writableAssets
+                    .patch({
+                      filename: path.posix.basename(item.relPath.replace(/\\/g, '/')),
+                      folderId,
+                      hash: destinationHash
+                    })
+                    .findById(asset.id)
+                  return asset
+                })
+                if (assetToRename) {
+                  await assertHeld?.()
+                  await requireAssetCache(assetToRename).deleteAssetCache()
+                  await assertHeld?.()
+                  results.push({ kind: 'asset', relPath: item.relPath, ok: true })
+                } else {
+                  wiki.logger.info(`(STORAGE/GIT) Asset was not found in the DB, nothing to rename: ${item.relPath}`)
+                  results.push({ kind: 'asset', relPath: item.relPath, ok: false, outcome: 'conflict', error: 'Asset was not found in the database' })
+                }
+              },
+              wiki.models.knex as unknown as Knex
+            )
             continue
           }
           if (!fileExists && !item.importAll && status === 'D') {
-            wiki.logger.info(`(STORAGE/GIT) Asset marked as deleted: ${item.relPath}`)
-            const fileHash = assetHelper.generateHash(item.relPath)
-            const assetToDelete = await wiki.models.assets.query().findOne({ hash: fileHash })
-            if (assetToDelete) {
-              await wiki.models.knex('assetData').where('id', assetToDelete.id).delete()
-              await wiki.models.assets.query().delete().where('id', assetToDelete.id)
-              await requireAssetCache(assetToDelete).deleteAssetCache()
-              results.push({ kind: 'asset', relPath: item.relPath, ok: true })
-            } else {
-              wiki.logger.info(`(STORAGE/GIT) Asset was not found in the DB, nothing to delete: ${item.relPath}`)
-              results.push({ kind: 'asset', relPath: item.relPath, ok: false, outcome: 'conflict', error: 'Asset was not found in the database' })
-            }
+            await withAssetLocationLocks(
+              ['assets'],
+              async assertHeld => {
+                await assertHeld?.()
+                wiki.logger.info(`(STORAGE/GIT) Asset marked as deleted: ${item.relPath}`)
+                const fileHash = assetHelper.generateHash(item.relPath)
+                const assetToDelete = await withGitAssetTransaction(async transaction => {
+                  const asset = await findGitAssetForMutation(transaction, fileHash)
+                  if (!asset) return undefined
+                  if (transaction) await lockAssetLocation(transaction, item.relPath)
+                  await assertAssetLocationAssetSettled(transaction as Knex.Transaction, asset.id)
+                  await assertAssetLocationReservations(transaction as Knex.Transaction, [item.relPath])
+                  const assetData = (transaction === undefined ? wiki.models.knex('assetData') : transaction('assetData')) as unknown as QueryBuilder<UnknownRecord>
+                  await assetData.where('id', asset.id).delete()
+                  const writableAssets = queryGitAssets(transaction)
+                  await writableAssets.delete().where('id', asset.id)
+                  return asset
+                })
+                if (assetToDelete) {
+                  await assertHeld?.()
+                  await requireAssetCache(assetToDelete).deleteAssetCache()
+                  await assertHeld?.()
+                  results.push({ kind: 'asset', relPath: item.relPath, ok: true })
+                } else {
+                  wiki.logger.info(`(STORAGE/GIT) Asset was not found in the DB, nothing to delete: ${item.relPath}`)
+                  results.push({ kind: 'asset', relPath: item.relPath, ok: false, outcome: 'conflict', error: 'Asset was not found in the database' })
+                }
+              },
+              wiki.models.knex as unknown as Knex
+            )
             continue
           }
           if (!source) throw new Error(`Import source does not exist: ${item.relPath}`)
@@ -727,7 +795,7 @@ const plugin: GitStoragePlugin = {
    *
    * @param {Object} page Page to create
    */
-  async created (page) {
+  async created(page) {
     const root = requireRoot(this)
     const git = requireGit(this)
     const fileName = gitPagePath(page, this.config.alwaysNamespace)
@@ -749,7 +817,7 @@ const plugin: GitStoragePlugin = {
    *
    * @param {Object} page Page to update
    */
-  async updated (page) {
+  async updated(page) {
     const root = requireRoot(this)
     const git = requireGit(this)
     const fileName = gitPagePath(page, this.config.alwaysNamespace)
@@ -771,7 +839,7 @@ const plugin: GitStoragePlugin = {
    *
    * @param {Object} page Page to delete
    */
-  async deleted (page) {
+  async deleted(page) {
     const root = requireRoot(this)
     const git = requireGit(this)
     const fileName = gitPagePath(page, this.config.alwaysNamespace)
@@ -793,15 +861,18 @@ const plugin: GitStoragePlugin = {
    *
    * @param {Object} page Page to rename
    */
-  async renamed (page) {
+  async renamed(page) {
     const root = requireRoot(this)
     const git = requireGit(this)
     const sourceFileName = gitPagePath(page, this.config.alwaysNamespace)
-    const destinationFileName = gitPagePath({
-      path: page.destinationPath,
-      localeCode: page.destinationLocaleCode,
-      contentType: page.contentType
-    }, this.config.alwaysNamespace)
+    const destinationFileName = gitPagePath(
+      {
+        path: page.destinationPath,
+        localeCode: page.destinationLocaleCode,
+        contentType: page.contentType
+      },
+      this.config.alwaysNamespace
+    )
     const sourceLogIdentity = page.contentType === 'markdown' ? sourceFileName : `[${page.localeCode}] ${page.path}`
     const destinationLogIdentity = page.contentType === 'markdown' ? destinationFileName : `[${page.destinationLocaleCode}] ${page.destinationPath}`
     wiki.logger.info(`(STORAGE/GIT) Committing file move from ${sourceLogIdentity} to ${destinationLogIdentity}...`)
@@ -823,7 +894,7 @@ const plugin: GitStoragePlugin = {
    *
    * @param {Object} asset Asset to upload
    */
-  async assetUploaded (asset) {
+  async assetUploaded(asset) {
     const root = requireRoot(this)
     const git = requireGit(this)
     wiki.logger.info(`(STORAGE/GIT) Committing new file ${asset.path}...`)
@@ -840,7 +911,7 @@ const plugin: GitStoragePlugin = {
    *
    * @param {Object} asset Asset to upload
    */
-  async assetDeleted (asset) {
+  async assetDeleted(asset) {
     const root = requireRoot(this)
     const git = requireGit(this)
     wiki.logger.info(`(STORAGE/GIT) Committing removed file ${asset.path}...`)
@@ -857,7 +928,7 @@ const plugin: GitStoragePlugin = {
    *
    * @param {Object} asset Asset to upload
    */
-  async assetRenamed (asset) {
+  async assetRenamed(asset) {
     const root = requireRoot(this)
     const git = requireGit(this)
     wiki.logger.info(`(STORAGE/GIT) Committing file move from ${asset.path} to ${asset.destinationPath}...`)
@@ -871,7 +942,50 @@ const plugin: GitStoragePlugin = {
       '--author': `"${asset.moveAuthorName} <${asset.moveAuthorEmail}>"`
     })
   },
-  async getLocalLocation (asset: StorageAssetIdentity): Promise<StorageLocalLocation | void> {
+  async assetRelocated(asset: StorageAssetRelocation) {
+    const root = requireRoot(this)
+    const git = requireGit(this)
+    const digest = createHash('sha256').update(asset.data).digest('hex')
+    if (digest !== asset.contentSha256) throw new Error('Canonical asset bytes failed relocation validation')
+
+    const destinationDirectory = path.posix.dirname(asset.destinationPath)
+    if (destinationDirectory !== '.') await root.ensureDirectory(destinationDirectory)
+    if (!(await destinationHasCanonicalBytes(root, asset.destinationPath, asset.data, asset.contentSha256))) {
+      await root.writeAtomicIfAbsent(asset.destinationPath, asset.data)
+      if (!(await destinationHasCanonicalBytes(root, asset.destinationPath, asset.data, asset.contentSha256))) {
+        throw new Error('Storage destination was not retained after relocation write')
+      }
+    }
+
+    let source: StorageFileHandle | undefined
+    if (asset.sourcePath !== asset.destinationPath) {
+      try {
+        source = await root.openFile(asset.sourcePath, asset.sourceIdentity)
+      } catch (error: unknown) {
+        if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')) throw error
+      }
+    }
+    if (source !== undefined) {
+      try {
+        const sourceBytes = await source.readBounded(asset.data.byteLength + 1)
+        if (sourceBytes.byteLength !== asset.data.byteLength || createHash('sha256').update(sourceBytes).digest('hex') !== asset.contentSha256) {
+          throw new Error('Former storage location changed before relocation cleanup')
+        }
+        await root.removeFile(asset.sourcePath, source.identity)
+      } finally {
+        await source.close()
+      }
+    }
+    const changedPaths = asset.sourcePath === asset.destinationPath ? [asset.destinationPath] : [asset.sourcePath, asset.destinationPath]
+    await git.raw(['add', '-A', '--', ...changedPaths])
+    const status = await git.status()
+    const changedPathSet = new Set(changedPaths)
+    if (!status.files.some(file => changedPathSet.has(file.path))) return
+    await git.commit(`docs: relocate ${asset.sourcePath} to ${asset.destinationPath}`, changedPaths, {
+      '--author': `"${asset.authorName} <${asset.authorEmail}>"`
+    })
+  },
+  async getLocalLocation(asset: StorageAssetIdentity): Promise<StorageLocalLocation | void> {
     if (isStorageInternalPath(asset.path) || isStorageReservedPath(asset.path)) return
     const root = requireRoot(this)
     return {
@@ -881,7 +995,7 @@ const plugin: GitStoragePlugin = {
   /**
    * HANDLERS
    */
-  async importAll () {
+  async importAll() {
     const root = requireRoot(this)
     wiki.logger.info('(STORAGE/GIT) Importing all content from local Git repo to the DB...')
     const admission = await collectStorageEntries(root, { maxAssetBytes: wiki.config.uploads.maxFileSize })
@@ -894,7 +1008,7 @@ const plugin: GitStoragePlugin = {
     wiki.logger.info('(STORAGE/GIT) Import completed.')
     return results
   },
-  async syncUntracked () {
+  async syncUntracked() {
     const root = requireRoot(this)
     const git = requireGit(this)
     wiki.logger.info('(STORAGE/GIT) Adding all untracked content...')
@@ -903,8 +1017,20 @@ const plugin: GitStoragePlugin = {
     await pipeline(
       wiki.models.knex
         .column(
-          'id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content',
-          'sourceRevision', 'authorId', 'extra', 'isPublished', 'updatedAt', 'createdAt', 'editorKey'
+          'id',
+          'path',
+          'localeCode',
+          'title',
+          'description',
+          'contentType',
+          'content',
+          'sourceRevision',
+          'authorId',
+          'extra',
+          'isPublished',
+          'updatedAt',
+          'createdAt',
+          'editorKey'
         )
         .select()
         .from('pages')
@@ -956,10 +1082,8 @@ const plugin: GitStoragePlugin = {
     await git.commit('docs: add all untracked content')
     wiki.logger.info('(STORAGE/GIT) All content is now tracked.')
   },
-  async purge () {
-    const root = this.root !== null && this.root !== undefined && !this.root.closed
-      ? this.root
-      : await openStorageRoot(this.repoPath)
+  async purge() {
+    const root = this.root !== null && this.root !== undefined && !this.root.closed ? this.root : await openStorageRoot(this.repoPath)
     this.root = root
     wiki.logger.info('(STORAGE/GIT) Purging local repository...')
     await root.purgeContents()

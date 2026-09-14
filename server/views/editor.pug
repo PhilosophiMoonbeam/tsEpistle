@@ -13,7 +13,9 @@ block body
       title=page.title
       description=page.description
       :tags=page.tags
-      :is-published=page.isPublished
+      :is-published=(page.isPublished === undefined || page.isPublished === true || page.isPublished === 1 || page.isPublished === 'true' ? true : 'false')
+      :is-searchable=(page.isSearchable !== false && page.isSearchable !== 0 ? 'true' : 'false')
+      :bootstrap-notice=page.bootstrapNotice
       visibility=page.visibility
       :owner-id=page.ownerId
       publish-start-date=page.publishStartDate

@@ -36,8 +36,9 @@ type EditorStore = {
   }
   page: {
     id: number
-    description: string
     isPublished: boolean
+    description: string
+    isSearchable: boolean
     visibility: 'public' | 'private'
     locale: string
     path: string
@@ -64,6 +65,7 @@ type SavedState = {
   content: string
   description: string
   isPublished: boolean
+  isSearchable: boolean
   visibility: 'public' | 'private'
   locale: string
   path: string
@@ -84,6 +86,7 @@ type PageInput = {
   locale: string
   visibility: 'public' | 'private'
   isPublished: boolean
+  isSearchable: boolean
   path: string
   publishEndDate: string
   publishStartDate: string
@@ -118,10 +121,10 @@ type ShellContext = {
   restoreCurrentSavedState: () => void
   discardAndExit: () => Promise<void>
   exitGo: () => void
-  handleCollaborationState: (state: { active: boolean, discarded: boolean, generation: number | null }) => void
+  handleCollaborationState: (state: { active: boolean; discarded: boolean; generation: number | null }) => void
   exit: () => Promise<void>
   handleBeforeUnload: (event: BeforeUnloadEvent) => void
-  save: (options?: { rethrow?: boolean, overwrite?: boolean }) => Promise<void>
+  save: (options?: { rethrow?: boolean; overwrite?: boolean }) => Promise<void>
   saveAndClose: () => Promise<boolean>
   saveUnsavedAndClose: () => Promise<void>
   showProgressDialog: () => void
@@ -146,16 +149,16 @@ type ApiDependencies = {
     isPublic: boolean
   ) => Promise<{ sourceRevision: string }>
   checkPageConflict: (fetcher: typeof fetch, id: number, checkoutDate: string) => Promise<boolean>
-  createPage: (fetcher: typeof fetch, input: PageInput) => Promise<{ id: number, updatedAt: string }>
+  createPage: (fetcher: typeof fetch, input: PageInput) => Promise<{ id: number; updatedAt: string }>
   discardCollaborationDraft: (fetcher: typeof fetch, pageId: number, expectedUpdatedAt: string, expectedSourceRevision: string) => Promise<void>
-  fetchPage: (fetcher: typeof fetch, id: number, errorMessage: string) => Promise<{ okf: OkfState, sourceRevision: string }>
+  fetchPage: (fetcher: typeof fetch, id: number, errorMessage: string) => Promise<{ okf: OkfState; sourceRevision: string }>
   updatePage: (
     fetcher: typeof fetch,
     id: number,
     input: PageInput,
     sourceRevision: string,
     expectedCollaborationGeneration?: number
-  ) => Promise<{ sourceRevision: string, updatedAt: string }>
+  ) => Promise<{ sourceRevision: string; updatedAt: string }>
 }
 
 type TestWindow = {
@@ -166,7 +169,7 @@ type TestWindow = {
     replace: (url: string) => void
   }
   clearedTimers: number[]
-  scheduledTimers: Array<{ id: number, delay: number | undefined }>
+  scheduledTimers: Array<{ id: number; delay: number | undefined }>
   clearTimeout: (id: number) => void
   setTimeout: (handler: () => void, delay?: number) => number
   fetch: typeof fetch
@@ -174,20 +177,16 @@ type TestWindow = {
 
 const shellAst = ts.createSourceFile(shellPath, shellScript, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
 const shellDefaultExport = shellAst.statements.find(ts.isExportAssignment)
-if (
-  !shellDefaultExport ||
-  !ts.isCallExpression(shellDefaultExport.expression) ||
-  !ts.isObjectLiteralExpression(shellDefaultExport.expression.arguments[0])
-) {
+if (!shellDefaultExport || !ts.isCallExpression(shellDefaultExport.expression) || !ts.isObjectLiteralExpression(shellDefaultExport.expression.arguments[0])) {
   throw new Error('Unable to find the editor Options API component definition')
 }
 const shellOptions = shellDefaultExport.expression.arguments[0]
 
 const extractShellObjectOption = (name: string): string => {
-  const property = shellOptions.properties.find(candidate =>
-    ts.isPropertyAssignment(candidate) &&
-    ((ts.isIdentifier(candidate.name) && candidate.name.text === name) ||
-      (ts.isStringLiteral(candidate.name) && candidate.name.text === name))
+  const property = shellOptions.properties.find(
+    candidate =>
+      ts.isPropertyAssignment(candidate) &&
+      ((ts.isIdentifier(candidate.name) && candidate.name.text === name) || (ts.isStringLiteral(candidate.name) && candidate.name.text === name))
   )
   if (!property || !ts.isPropertyAssignment(property) || !ts.isObjectLiteralExpression(property.initializer)) {
     throw new Error(`Unable to find the editor ${name} option`)
@@ -217,6 +216,7 @@ const createStore = (mode: 'create' | 'update' = 'update'): EditorStore => {
       id: 12,
       description: 'persisted description',
       isPublished: true,
+      isSearchable: true,
       visibility: 'public',
       locale: 'en',
       path: 'persisted-path',
@@ -245,10 +245,10 @@ const createStore = (mode: 'create' | 'update' = 'update'): EditorStore => {
     },
     notifications: [],
     loadingOwners: [],
-    showNotification (notification) {
+    showNotification(notification) {
       this.notifications.push(notification)
     },
-    startLoading (owner) {
+    startLoading(owner) {
       this.loadingOwners.push(owner)
     }
   }
@@ -260,10 +260,10 @@ const createTestWindow = (): TestWindow => {
   const location = {
     assigned: [] as string[],
     replaced: [] as string[],
-    assign (url: string) {
+    assign(url: string) {
       this.assigned.push(url)
     },
-    replace (url: string) {
+    replace(url: string) {
       this.replaced.push(url)
     }
   }
@@ -271,10 +271,10 @@ const createTestWindow = (): TestWindow => {
     location,
     clearedTimers: [],
     scheduledTimers: [],
-    clearTimeout (id) {
+    clearTimeout(id) {
       this.clearedTimers.push(id)
     },
-    setTimeout (_handler, delay) {
+    setTimeout(_handler, delay) {
       const id = nextTimer++
       this.scheduledTimers.push({ id, delay })
       return id
@@ -293,11 +293,7 @@ const defaultDependencies = (store: EditorStore): ApiDependencies => ({
   updatePage: async () => ({ sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' })
 })
 
-const loadShellBehavior = (
-  store: EditorStore,
-  testWindow: TestWindow,
-  overrides: Partial<ApiDependencies> = {}
-): ShellBehavior => {
+const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides: Partial<ApiDependencies> = {}): ShellBehavior => {
   const dependencies = { ...defaultDependencies(store), ...overrides }
   const evaluate = new Function(
     '_',
@@ -330,17 +326,13 @@ const loadShellBehavior = (
     dependencies.fetchPage,
     dependencies.updatePage,
     () => undefined,
-    (error: unknown) => error instanceof Error ? error.message : String(error),
+    (error: unknown) => (error instanceof Error ? error.message : String(error)),
     () => undefined,
     (css: string) => css
   )
 }
 
-const createShellHarness = (
-  store: EditorStore,
-  testWindow: TestWindow,
-  overrides: Partial<ApiDependencies> = {}
-): ShellContext => {
+const createShellHarness = (store: EditorStore, testWindow: TestWindow, overrides: Partial<ApiDependencies> = {}): ShellContext => {
   const behavior = loadShellBehavior(store, testWindow, overrides)
   const context = {
     savedState: {} as SavedState,
@@ -390,6 +382,7 @@ const mutableSnapshot = (store: EditorStore): SavedState => ({
   content: store.editor.content,
   description: store.page.description,
   isPublished: store.page.isPublished,
+  isSearchable: store.page.isSearchable,
   visibility: store.page.visibility,
   locale: store.page.locale,
   path: store.page.path,
@@ -408,6 +401,7 @@ const applyEveryEdit = (store: EditorStore) => {
   store.editor.content = 'discarded content'
   store.page.description = 'discarded description'
   store.page.isPublished = false
+  store.page.isSearchable = false
   store.page.visibility = 'private'
   store.page.locale = 'fr'
   store.page.path = 'discarded-path'
@@ -431,12 +425,11 @@ const applyEveryEdit = (store: EditorStore) => {
 }
 
 describe('modern editor shell interaction contract', () => {
-
   test('resets the durable Markdown draft before restoring a public page and exiting', async () => {
     const store = createStore()
     const testWindow = createTestWindow()
     let persistenceCalls = 0
-    const discardedDrafts: Array<{ pageId: number, expectedUpdatedAt: string, expectedSourceRevision: string }> = []
+    const discardedDrafts: Array<{ pageId: number; expectedUpdatedAt: string; expectedSourceRevision: string }> = []
     const context = createShellHarness(store, testWindow, {
       discardCollaborationDraft: async (_fetcher, pageId, expectedUpdatedAt, expectedSourceRevision) => {
         discardedDrafts.push({ pageId, expectedUpdatedAt, expectedSourceRevision })
@@ -474,11 +467,13 @@ describe('modern editor shell interaction contract', () => {
     expect(store.notifications).toEqual([])
     expect(store.loadingOwners).toEqual([])
     expect(persistenceCalls).toBe(0)
-    expect(discardedDrafts).toEqual([{
-      pageId: 12,
-      expectedUpdatedAt: '2026-09-03T11:00:00.000Z',
-      expectedSourceRevision: '1'
-    }])
+    expect(discardedDrafts).toEqual([
+      {
+        pageId: 12,
+        expectedUpdatedAt: '2026-09-03T11:00:00.000Z',
+        expectedSourceRevision: '1'
+      }
+    ])
     expect(store.page.tags).not.toBe(context.savedState.tags)
     expect(store.page.okf).not.toBe(context.savedState.okf)
     store.page.tags.push('new live tag')
@@ -516,7 +511,6 @@ describe('modern editor shell interaction contract', () => {
     expect(createStoreState.notifications).toEqual([])
     expect(createStoreState.loadingOwners).toEqual([])
   })
-
 
   test('does not call collaboration reset for non-collaboration editors', async () => {
     const store = createStore()
@@ -579,11 +573,13 @@ describe('modern editor shell interaction contract', () => {
     expect(context.progressShown).toBe(0)
     expect(context.progressHidden).toBe(0)
     expect(store.loadingOwners).toEqual([])
-    expect(store.notifications).toEqual([{
-      message: 'Another user is actively editing this page.',
-      style: 'error',
-      icon: 'warning'
-    }])
+    expect(store.notifications).toEqual([
+      {
+        message: 'Another user is actively editing this page.',
+        style: 'error',
+        icon: 'warning'
+      }
+    ])
   })
 
   test('turns an unnotified stale peer terminal when its generation-fenced Save is rejected', async () => {
@@ -676,7 +672,7 @@ describe('modern editor shell interaction contract', () => {
     const store = createStore()
     const testWindow = createTestWindow()
     let updateInput: PageInput | undefined
-    let updateFence: { sourceRevision: string, generation: number | undefined } | undefined
+    let updateFence: { sourceRevision: string; generation: number | undefined } | undefined
     let visibilityCalls = 0
     const context = createShellHarness(store, testWindow, {
       updatePage: async (_fetcher, _id, input, sourceRevision, generation) => {
@@ -713,11 +709,13 @@ describe('modern editor shell interaction contract', () => {
     expect(context.dialogUnsaved).toBe(false)
     expect(context.progressShown).toBe(1)
     expect(context.progressHidden).toBe(1)
-    expect(store.notifications).toEqual([{
-      message: 'editor:save.updateSuccess',
-      style: 'success',
-      icon: 'check'
-    }])
+    expect(store.notifications).toEqual([
+      {
+        message: 'editor:save.updateSuccess',
+        style: 'success',
+        icon: 'check'
+      }
+    ])
     expect(store.loadingOwners).toEqual([])
     expect(testWindow.scheduledTimers).toEqual([{ id: 100, delay: 1000 }])
     expect(testWindow.clearedTimers).toEqual([100])
@@ -746,11 +744,13 @@ describe('modern editor shell interaction contract', () => {
     expect(context.exitConfirmed).toBe(false)
     expect(context.progressShown).toBe(1)
     expect(context.progressHidden).toBe(1)
-    expect(store.notifications).toEqual([{
-      message: 'save rejected',
-      style: 'error',
-      icon: 'warning'
-    }])
+    expect(store.notifications).toEqual([
+      {
+        message: 'save rejected',
+        style: 'error',
+        icon: 'warning'
+      }
+    ])
     expect(store.loadingOwners).toEqual([])
     expect(testWindow.location.assigned).toEqual([])
     expect(testWindow.location.replaced).toEqual([])
@@ -824,5 +824,12 @@ describe('modern editor shell interaction contract', () => {
     context.handleBeforeUnload(confirmedEvent)
     expect(prevented).toBe(1)
     expect(confirmedEvent.returnValue).toBe(false)
+  })
+  test('renders an optional historical bootstrap warning as an escaped persistent alert', () => {
+    const template = shellSfc.descriptor.template?.content ?? ''
+    expect(shellScript).toMatch(/bootstrapNotice:\s*\{\s*type:\s*String/)
+    expect(template).toMatch(/v-alert\.editor-bootstrap-notice[\s\S]*v-if='bootstrapNotice'/)
+    expect(template).toContain('{{ bootstrapNotice }}')
+    expect(template).not.toContain('v-html')
   })
 })

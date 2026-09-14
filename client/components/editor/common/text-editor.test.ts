@@ -67,4 +67,13 @@ describe('TextEditor', () => {
     expect(clicks).toEqual([{ line: 1, ch: 3 }])
     expect(editor.getValue()).toBe('first\nsecond')
   })
+
+  it('resolves the Unicode word under an empty selection', () => {
+    const value = 'Alpha café, omega'
+    const { editor } = createEditor({ value })
+    const from = value.indexOf('café')
+
+    expect(editor.wordOffsetsAt(from + 2)).toEqual({ from, to: from + 'café'.length })
+    expect(editor.wordOffsetsAt(value.indexOf(','))).toBeNull()
+  })
 })

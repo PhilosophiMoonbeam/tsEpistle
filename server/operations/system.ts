@@ -1,4 +1,5 @@
 import os from 'node:os'
+import type { Knex } from 'knex'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -10,6 +11,14 @@ import getos from 'getos'
 import errors from './errors.ts'
 import { ProductMetadataSchema, type ProductMetadata } from '../../shared/product.ts'
 
+import { requireSystemAuthority, type SystemRequester } from '../helpers/system-authority.ts'
+import {
+  admitPageRenderEffect,
+  readPageRenderEffectStatus,
+  supersedeStalePageRenderEffects,
+  type PageProjectionLocation,
+  type PageRenderEffectStatusView
+} from '../core/page-mutation-outbox.ts'
 const { ApplicationError } = errors
 
 interface CountResult {
@@ -54,10 +63,7 @@ interface WikiModels {
   tags: { query(): CountQuery }
   assets: { flushTempUploads(): unknown }
   pageHistory: { purge(olderThan: string): unknown }
-  knex: {
-    raw(statement: string): Promise<unknown>
-    client: unknown
-  }
+  knex: Knex
 }
 
 interface WikiConfig {
@@ -244,11 +250,85 @@ const migratePagesToLocale = (input: unknown): Promise<number> => {
   return wiki.models.pages.migrateToLocale({ sourceLocale, targetLocale, user: requester as PageMigrationActor })
 }
 
-const renderPage = async (id: unknown): Promise<void> => {
+interface RenderPageRow {
+  readonly id: number
+  readonly sourceRevision: string | number
+  readonly content: string
+  readonly localeCode: string
+  readonly path: string
+  readonly visibility: 'public' | 'private'
+  readonly ownerId: number | null
+}
+
+const renderPage = async (
+  input: unknown
+): Promise<{
+  readonly message: string
+  readonly effectId: string
+  readonly pageId: number
+  readonly sourceRevision: string
+  readonly statusUrl: string
+}> => {
+  const record = input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : undefined
+  const id = record ? record.id : input
+  const requester = record?.requester
+  if (!requester || typeof requester !== 'object' || !Object.hasOwn(requester, 'user'))
+    throw new ApplicationError('A current system administrator is required.', { code: 'AUTH_REQUIRED', status: 401 })
   if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1) throw new ApplicationError('id must be a positive integer', { code: 'INVALID_PAGE_ID' })
-  const page = await wiki.models.pages.query().findById(id)
-  if (!page) throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
+
+  return wiki.models.knex.transaction(async transaction => {
+    await requireSystemAuthority(transaction, requester as SystemRequester, true)
+    const page = await transaction<RenderPageRow>('pages').where({ id }).forUpdate().first()
+    if (!page) throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
+    const location: PageProjectionLocation = {
+      locale: page.localeCode,
+      path: page.path,
+      visibility: page.visibility,
+      ownerId: page.ownerId
+    }
+    await supersedeStalePageRenderEffects(transaction, { pageId: page.id, sourceRevision: page.sourceRevision })
+    const admission = await admitPageRenderEffect(transaction, {
+      pageId: page.id,
+      sourceRevision: page.sourceRevision,
+      source: page.content,
+      location
+    })
+    return {
+      message: 'Page render accepted.',
+      effectId: admission.effectId,
+      pageId: page.id,
+      sourceRevision: admission.sourceRevision,
+      statusUrl: `/_api/system/content/render-page/status/${encodeURIComponent(admission.effectId)}`
+    }
+  })
+}
+const renderPageImmediately = async (input: unknown): Promise<void> => {
+  const record = input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : undefined
+  const id = record?.id
+  const requester = record?.requester
+  if (!requester || typeof requester !== 'object' || !Object.hasOwn(requester, 'user'))
+    throw new ApplicationError('A current system administrator is required.', { code: 'AUTH_REQUIRED', status: 401 })
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1) throw new ApplicationError('id must be a positive integer', { code: 'INVALID_PAGE_ID' })
+  await wiki.models.knex.transaction(async transaction => {
+    await requireSystemAuthority(transaction, requester as SystemRequester, true)
+    const page = await transaction<Pick<RenderPageRow, 'id'>>('pages').where({ id }).forUpdate().first('id')
+    if (!page) throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
+  })
   await runBoundedWorker('render-page', id)
+}
+
+const getRenderPageStatus = async (input: unknown): Promise<PageRenderEffectStatusView | null> => {
+  const record = input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : undefined
+  const effectId = record?.effectId
+  const requester = record?.requester
+  if (!requester || typeof requester !== 'object' || !Object.hasOwn(requester, 'user'))
+    throw new ApplicationError('A current system administrator is required.', { code: 'AUTH_REQUIRED', status: 401 })
+  if (typeof effectId !== 'string' || effectId.length === 0 || effectId.length > 255)
+    throw new ApplicationError('effectId must be a non-empty string', { code: 'INVALID_EFFECT_ID' })
+  return wiki.models.knex.transaction(async transaction => {
+    await requireSystemAuthority(transaction, requester as SystemRequester)
+    return readPageRenderEffectStatus(transaction, { effectId })
+  })
 }
 
 const purgePageHistory = (olderThan: unknown): unknown => {
@@ -332,5 +412,7 @@ export default {
   purgePageHistory,
   rebuildPageTree,
   renderPage,
+  renderPageImmediately,
+  getRenderPageStatus,
   startExport
 }

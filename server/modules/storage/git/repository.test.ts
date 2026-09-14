@@ -4,11 +4,7 @@ import fs from 'fs-extra'
 import { afterEach, describe, expect, it, vi } from '../../../test/bun-test.mts'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
-import {
-  pullRemoteAuthoritative,
-  reattachUnrelatedHistory,
-  sharesHistoryWith
-} from './repository.ts'
+import { pullRemoteAuthoritative, reattachUnrelatedHistory, recoverInterruptedGitOperation, sharesHistoryWith } from './repository.ts'
 
 const roots: string[] = []
 
@@ -32,13 +28,7 @@ const initializeWorkingRepository = async (directory: string): Promise<SimpleGit
   return git
 }
 
-const commitFile = async (
-  git: SimpleGit,
-  directory: string,
-  file: string,
-  content: string,
-  message: string
-): Promise<void> => {
+const commitFile = async (git: SimpleGit, directory: string, file: string, content: string, message: string): Promise<void> => {
   await fs.outputFile(path.join(directory, file), content)
   await git.add(file)
   await git.commit(message)
@@ -78,6 +68,24 @@ describe('Git storage repository recovery', () => {
 
     await commitFile(local, localDir, 'after.md', 'still writable\n', 'prove recovery')
     expect((await local.log({ maxCount: 1 })).latest?.message).toBe('prove recovery')
+  })
+
+  it('aborts a rebase paused without REBASE_HEAD before later writes', async () => {
+    const root = await temporaryRoot()
+    const directory = path.join(root, 'local')
+    const git = await initializeWorkingRepository(directory)
+    await commitFile(git, directory, 'page.md', 'base\n', 'base')
+    await commitFile(git, directory, 'page.md', 'edited\n', 'edit')
+
+    await expect(Promise.resolve(git.raw(['rebase', 'HEAD~1', '--exec', 'false']))).rejects.toThrow()
+    expect(await git.raw(['rev-parse', '--verify', '--quiet', 'REBASE_HEAD'])).toBe('')
+
+    const logger = { warn: vi.fn() }
+    expect(await recoverInterruptedGitOperation(git, logger)).toBe('rebase')
+    expect(logger.warn).toHaveBeenCalledWith('(STORAGE/GIT) Rolling back an unfinished rebase...')
+
+    await commitFile(git, directory, 'after.md', 'still writable\n', 'prove paused recovery')
+    expect((await git.log({ maxCount: 1 })).latest?.message).toBe('prove paused recovery')
   })
 
   it('merges unrelated remote history without replacing newer wiki files', async () => {

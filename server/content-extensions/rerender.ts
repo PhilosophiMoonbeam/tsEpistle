@@ -9,6 +9,7 @@ interface ExtensionPage {
 
 interface SearchableExtensionPage extends ExtensionPage {
   visibility: string
+  isSearchable: boolean | number
   isPublished: boolean | number
   safeContent: string
 }
@@ -33,7 +34,8 @@ export interface ContentExtensionRerenderContext {
 
 const rerenderBatchSize = 250
 
-const isPublishedPublicPage = (page: SearchableExtensionPage): boolean => page.visibility === 'public' && (page.isPublished === true || page.isPublished === 1)
+const isPublishedPublicPage = (page: SearchableExtensionPage): boolean =>
+  page.visibility === 'public' && (page.isPublished === true || page.isPublished === 1) && page.isSearchable !== false && page.isSearchable !== 0
 
 const pageContainsExtension = (content: string, key: string): boolean => {
   for (const fence of parseMarkdownCodeFences(content)) {
@@ -78,10 +80,8 @@ export const rerenderPagesForContentExtension = async (
       signal.throwIfAborted()
       const indexedPage = await wiki.models.pages.getPageFromDb(page.id)
       if (!indexedPage) continue
-      if (isPublishedPublicPage(indexedPage)) {
-        signal.throwIfAborted()
-        await wiki.data.searchEngine.deleted(indexedPage)
-      }
+      signal.throwIfAborted()
+      await wiki.data.searchEngine.deleted(indexedPage)
       signal.throwIfAborted()
       await wiki.models.pages.renderPage(page)
       rerendered += 1

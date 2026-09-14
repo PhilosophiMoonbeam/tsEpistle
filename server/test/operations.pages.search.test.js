@@ -252,6 +252,77 @@ describe('page search visibility', () => {
 
     await expect(operations.search({ requester: { id: 7 }, query: 'classified' })).resolves.toMatchObject({ results: [], totalHits: 0 })
   })
+  it('filters opted-out pages at request time across public, private, and knowledge candidates while defaulting missing flags to searchable', async () => {
+    const publicDefault = page({ id: 71, path: 'docs/default-searchable', title: 'Needle Public Default' })
+    const publicOptedOut = page({ id: 72, path: 'docs/opted-out', title: 'Needle Public Opted Out', isSearchable: false })
+    const privateDefault = page({ id: 73, path: 'private/default-searchable', title: 'Needle Private Default', visibility: 'private', ownerId: 7 })
+    const privateOptedOut = page({ id: 74, path: 'private/opted-out', title: 'Needle Private Opted Out', visibility: 'private', ownerId: 7, isSearchable: false })
+    const knowledgeDefault = page({ id: 75, path: 'docs/knowledge-default', title: 'Needle Knowledge Default' })
+    const knowledgeOptedOut = page({ id: 76, path: 'docs/knowledge-opted-out', title: 'Needle Knowledge Opted Out', isSearchable: false })
+    searchVisible.mockResolvedValueOnce([
+      {
+        id: knowledgeDefault.id,
+        sourceRevision: knowledgeDefault.sourceRevision,
+        locale: 'en',
+        path: knowledgeDefault.path,
+        visibility: 'public',
+        score: 7,
+        matchedFields: ['knowledge'],
+        knowledge: {}
+      },
+      {
+        id: knowledgeOptedOut.id,
+        sourceRevision: knowledgeOptedOut.sourceRevision,
+        locale: 'en',
+        path: knowledgeOptedOut.path,
+        visibility: 'public',
+        score: 7,
+        matchedFields: ['knowledge'],
+        knowledge: {}
+      }
+    ])
+    installSearchWiki({
+      pageResults: [
+        [publicDefault, publicOptedOut, knowledgeDefault, knowledgeOptedOut],
+        [privateDefault, privateOptedOut],
+        [publicDefault, publicOptedOut, privateDefault, privateOptedOut, knowledgeDefault, knowledgeOptedOut]
+      ],
+      privateRanks: [
+        { id: privateDefault.id, sourceRevision: privateDefault.sourceRevision, score: 1 },
+        { id: privateOptedOut.id, sourceRevision: privateOptedOut.sourceRevision, score: 1 }
+      ],
+      engineResponse: {
+        results: [
+          {
+            id: publicDefault.id,
+            sourceRevision: publicDefault.sourceRevision,
+            locale: 'en',
+            path: publicDefault.path,
+            score: 10,
+            matchedFields: ['title']
+          },
+          {
+            id: publicOptedOut.id,
+            sourceRevision: publicOptedOut.sourceRevision,
+            locale: 'en',
+            path: publicOptedOut.path,
+            score: 10,
+            matchedFields: ['title']
+          }
+        ],
+        suggestions: [],
+        totalHits: 2
+      }
+    })
+    const operations = await loadOperations()
+
+    const result = await operations.search({ requester: { id: 7 }, query: 'needle' })
+    const resultIds = result.results.map(candidate => candidate.id)
+    expect(resultIds).toEqual(expect.arrayContaining([publicDefault.id, privateDefault.id, knowledgeDefault.id]))
+    expect(resultIds).not.toEqual(expect.arrayContaining([publicOptedOut.id, privateOptedOut.id, knowledgeOptedOut.id]))
+    expect(result.totalHits).toBe(3)
+  })
+
 
   it('passes selected scope and the Agent knowledge filter before the knowledge window cap', async () => {
     const selected = page({ id: 88, sourceRevision: '12', title: 'Database Rotation', path: 'ops/rotation' })

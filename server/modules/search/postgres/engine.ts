@@ -59,6 +59,7 @@ interface CanonicalSearchPageRow {
   id: number
   isProtected: boolean
   isPublished: boolean
+  isSearchable: boolean
   localeCode: string
   path: string
   render: string | null
@@ -75,7 +76,8 @@ interface CanonicalPageModel {
 const isPublishedPublicPage = (page: WikiPage): boolean => {
   const visibility = Reflect.get(page, 'visibility')
   const isPublished = Reflect.get(page, 'isPublished')
-  return visibility === 'public' && (isPublished === true || isPublished === 1)
+  const isSearchable = Reflect.get(page, 'isSearchable')
+  return visibility === 'public' && (isPublished === true || isPublished === 1) && isSearchable !== false && isSearchable !== 0
 }
 
 const pageSourceRevision = (page: WikiPage): string => {
@@ -299,10 +301,11 @@ const sourceRevisionsAreCurrent = async (transaction: Knex.Transaction): Promise
       WHERE (
         page.visibility = 'public'
         AND page."isPublished" = true
+        AND page."isSearchable" = true
         AND (vector."pageId" IS NULL OR vector."sourceRevision" IS DISTINCT FROM page."sourceRevision")
       ) OR (
         vector."pageId" IS NOT NULL
-        AND (page.id IS NULL OR page.visibility IS DISTINCT FROM 'public' OR page."isPublished" IS DISTINCT FROM true)
+        AND (page.id IS NULL OR page.visibility IS DISTINCT FROM 'public' OR page."isPublished" IS DISTINCT FROM true OR page."isSearchable" IS DISTINCT FROM true)
       )
     ) AS value
   `)
@@ -317,6 +320,7 @@ const canonicalPageSelection = `
     page."localeCode",
     page.title,
     page.description,
+    page."isSearchable",
     page.render,
     page.visibility,
     page."isPublished",
@@ -343,6 +347,7 @@ const canonicalPageBatch = async (transaction: Knex.Transaction, pageIdCursor: n
       ${canonicalPageSelection}
       WHERE page.visibility = 'public'
         AND page."isPublished" = true
+        AND page."isSearchable" = true
         AND page.id > ?
       ORDER BY page.id
       LIMIT ?
@@ -410,7 +415,7 @@ const reconcilePage = async (knex: Knex, dictionary: string, pageId: number): Pr
       [pageId]
     )
     const page = result.rows[0]
-    if (!page || page.visibility !== 'public' || page.isPublished !== true) {
+    if (!page || page.visibility !== 'public' || page.isPublished !== true || page.isSearchable !== true) {
       await transaction(WORDS_TABLE).where({ pageId }).delete()
       await transaction(VECTOR_TABLE).where({ pageId }).delete()
       return
@@ -531,11 +536,8 @@ const ensureSearchIndex = async (knex: Knex, dictionary: string, forceRebuild: b
   })
 
 const upsertPage = async (knex: Knex, dictionary: string, page: WikiPage): Promise<void> => {
-  if (!isPublishedPublicPage(page)) {
-    await removePage(knex, page.id)
-    return
-  }
-  await knex.transaction(transaction => indexPage(transaction, dictionary, page))
+  // Re-read the canonical row under a transaction; event payloads may be stale after a later metadata edit.
+  await reconcilePage(knex, dictionary, page.id)
 }
 
 const escapedLikeTerm = (value: string): string => `%${value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`
@@ -585,6 +587,7 @@ const queryPages = async (
     ), priority_ids AS MATERIALIZED (
       SELECT vector."pageId"
       FROM "pagesVector" vector
+      JOIN pages current_page ON current_page.id = vector."pageId" AND current_page."isSearchable" = true
       CROSS JOIN query_input input
       WHERE NOT input.is_structured
         AND (
@@ -613,6 +616,7 @@ const queryPages = async (
     ), lexical_ids AS MATERIALIZED (
       SELECT vector."pageId"
       FROM "pagesVector" vector
+      JOIN pages current_page ON current_page.id = vector."pageId" AND current_page."isSearchable" = true
       CROSS JOIN query_input input
       WHERE (SELECT count(*) FROM priority_ids) < ?
       AND NOT EXISTS (SELECT 1 FROM priority_ids exact JOIN "pagesVector" direct ON direct."pageId" = exact."pageId" WHERE lower(direct.path) = input.raw_query)
@@ -644,6 +648,7 @@ const queryPages = async (
     ), fuzzy_ids AS MATERIALIZED (
       SELECT vector."pageId"
       FROM "pagesVector" vector
+      JOIN pages current_page ON current_page.id = vector."pageId" AND current_page."isSearchable" = true
       CROSS JOIN query_input input
       WHERE (SELECT count(*) FROM exact_ids) < 5
       AND NOT EXISTS (SELECT 1 FROM priority_ids exact JOIN "pagesVector" direct ON direct."pageId" = exact."pageId" WHERE lower(direct.path) = input.raw_query OR lower(direct.title) = input.raw_query)
@@ -709,6 +714,7 @@ const queryPages = async (
         AND page.path = candidate.path
       WHERE page.visibility = 'public'
         AND page."isPublished" = true
+        AND page."isSearchable" = true
         AND NOT EXISTS (
           SELECT 1
           FROM "pageAccessPasswords" protection
@@ -821,8 +827,9 @@ const suggestionsFor = async (knex: Knex, query: string, pageIds: number[]): Pro
   const results = await knex.raw<PostgresRawResult<PostgresSuggestionRow>>(
     `
     SELECT word
-    FROM "pagesWords"
-    WHERE "pageId" = ANY(?::integer[]) AND word % ?
+    FROM "pagesWords" words
+    JOIN pages page ON page.id = words."pageId" AND page."isSearchable" = true
+    WHERE words."pageId" = ANY(?::integer[]) AND words.word % ?
     GROUP BY word
     ORDER BY similarity(word, ?) DESC, count(*) DESC, word
     LIMIT 5
@@ -944,13 +951,13 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> & Postgr
         }>
       >(`
       SELECT
-        count(page.id) FILTER (WHERE page.visibility = 'public' AND page."isPublished") AS "publicPages",
+        count(page.id) FILTER (WHERE page.visibility = 'public' AND page."isPublished" AND page."isSearchable") AS "publicPages",
         count(vector."pageId") AS "indexedPages",
-        count(page.id) FILTER (WHERE page.visibility = 'public' AND page."isPublished" AND vector."pageId" IS NULL) AS "missingPages",
-        count(page.id) FILTER (WHERE page.visibility = 'public' AND page."isPublished" AND vector."pageId" IS NOT NULL
+        count(page.id) FILTER (WHERE page.visibility = 'public' AND page."isPublished" AND page."isSearchable" AND vector."pageId" IS NULL) AS "missingPages",
+        count(page.id) FILTER (WHERE page.visibility = 'public' AND page."isPublished" AND page."isSearchable" AND vector."pageId" IS NOT NULL
           AND vector."sourceRevision" IS DISTINCT FROM page."sourceRevision") AS "stalePages",
         count(vector."pageId") FILTER (WHERE page.id IS NULL OR page.visibility IS DISTINCT FROM 'public'
-          OR page."isPublished" IS DISTINCT FROM true) AS "excludedEntries",
+          OR page."isPublished" IS DISTINCT FROM true OR page."isSearchable" IS DISTINCT FROM true) AS "excludedEntries",
         (SELECT dictionary FROM "pagesSearchMetadata" WHERE "contractId" = 1) AS dictionary,
         (SELECT "schemaVersion" FROM "pagesSearchMetadata" WHERE "contractId" = 1) AS "schemaVersion"
       FROM pages page FULL OUTER JOIN "pagesVector" vector ON vector."pageId" = page.id

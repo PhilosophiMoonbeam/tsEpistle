@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream'
-import { describe, expect, it } from '../bun-test.mts'
+import { describe, expect, it, vi } from '../bun-test.mts'
 
 const bulkPage = {
   id: 9,
@@ -47,8 +47,8 @@ Reflect.set(globalThis, 'WIKI', {
   }
 })
 
-// Dynamic import is intentional: storage modules capture the WIKI global during initialization.
-const { default: plugin } = await import('../../modules/storage/azure/storage.ts')
+// Fresh import is intentional: storage modules capture the WIKI global during initialization.
+const { default: plugin } = await vi.importFresh('../../modules/storage/azure/storage.ts', import.meta.url)
 
 const markdownPage = {
   ...bulkPage,
@@ -78,9 +78,15 @@ const storageContext = () => {
       keys.push(key)
       return {
         url: `https://storage.invalid/container/${key}`,
-        upload: async (content: string | Uint8Array) => { uploads.push({ key, content }) },
-        syncCopyFromURL: async (source: string) => { copies.push({ key, source }) },
-        delete: async () => { deletions.push(key) }
+        upload: async (content: string | Uint8Array) => {
+          uploads.push({ key, content })
+        },
+        syncCopyFromURL: async (source: string) => {
+          copies.push({ key, source })
+        },
+        delete: async () => {
+          deletions.push(key)
+        }
       }
     }
   }
@@ -117,14 +123,13 @@ describe('Azure storage canonical OKF object paths', () => {
     ])
     expect(recorded.uploads).toHaveLength(2)
     expect(String(recorded.uploads[0]?.content)).toContain('[this guide](/fr/guides/index.concept.md)')
-    expect(recorded.copies).toEqual([{
-      key: 'tenant/wiki/de/index.concept.md',
-      source: 'https://storage.invalid/container/tenant/wiki/fr/guides/index.concept.md'
-    }])
-    expect(recorded.deletions).toEqual([
-      'tenant/wiki/fr/guides/index.concept.md',
-      'tenant/wiki/fr/guides/index.concept.md'
+    expect(recorded.copies).toEqual([
+      {
+        key: 'tenant/wiki/de/index.concept.md',
+        source: 'https://storage.invalid/container/tenant/wiki/fr/guides/index.concept.md'
+      }
     ])
+    expect(recorded.deletions).toEqual(['tenant/wiki/fr/guides/index.concept.md', 'tenant/wiki/fr/guides/index.concept.md'])
   })
 
   it('uses canonical Markdown paths during bulk export', async () => {
@@ -146,9 +151,6 @@ describe('Azure storage canonical OKF object paths', () => {
       data: Buffer.from('image')
     } as never)
 
-    expect(recorded.keys).toEqual([
-      'tenant/wiki/guides/index.html',
-      'tenant/wiki/images/logo.png'
-    ])
+    expect(recorded.keys).toEqual(['tenant/wiki/guides/index.html', 'tenant/wiki/images/logo.png'])
   })
 })

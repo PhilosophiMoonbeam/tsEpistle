@@ -48,6 +48,9 @@ type UserMutation {
     passwordRaw: String
     providerKey: String!
     groups: [Int]!
+    timezone: String
+    dateFormat: String
+    timeFormat: String
     mustChangePassword: Boolean
     sendWelcomeEmail: Boolean
   ): UserResponse @auth(requires: ["write:users", "manage:users", "manage:system"])
@@ -59,6 +62,7 @@ type UserMutation {
     newPassword: String
     groups: [Int]
     location: String
+    timeFormat: String
     jobTitle: String
     timezone: String
     dateFormat: String
@@ -97,6 +101,7 @@ type UserMutation {
   updateProfile(
     name: String!
     handle: String
+    timeFormat: String
     location: String!
     jobTitle: String!
     timezone: String!
@@ -151,6 +156,7 @@ type User {
   providerId: String
   providerIs2FACapable: Boolean
   isSystem: Boolean!
+  timeFormat: String!
   isActive: Boolean!
   isVerified: Boolean!
   location: String!
@@ -172,6 +178,7 @@ type UserProfile {
   email: String!
   providerKey: String
   providerName: String
+  timeFormat: String!
   isSystem: Boolean!
   isVerified: Boolean!
   location: String!

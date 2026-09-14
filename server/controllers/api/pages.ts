@@ -52,6 +52,7 @@ interface PageListItem {
   title?: string | null
   description?: string | null
   isPublished?: boolean | number
+  isSearchable?: boolean | number
   visibility: PageVisibility
   ownerId: number | null
   contentType: string
@@ -78,6 +79,7 @@ const isPageListItem = (page: PageOperationListItem): page is PageOperationListI
   (page.title === undefined || page.title === null || typeof page.title === 'string') &&
   (page.description === undefined || page.description === null || typeof page.description === 'string') &&
   (!Object.hasOwn(page, 'isPublished') || typeof page.isPublished === 'boolean' || typeof page.isPublished === 'number') &&
+  (!Object.hasOwn(page, 'isSearchable') || typeof page.isSearchable === 'boolean' || typeof page.isSearchable === 'number') &&
   (page.visibility === 'public' || page.visibility === 'private') &&
   (page.ownerId === null || typeof page.ownerId === 'number') &&
   typeof page.contentType === 'string' &&
@@ -179,6 +181,7 @@ const pageResponse = (req: Request, page: unknown, authority: PageRuleAuthority)
   if (typeof page !== 'object' || page === null) return page
   const record = page as Record<string, unknown>
   const response: Record<string, unknown> = { ...record }
+  if (Object.hasOwn(record, 'isSearchable')) response.isSearchable = record.isSearchable !== false && record.isSearchable !== 0
   const extra = record.extra
   if (typeof extra === 'object' && extra !== null && !Array.isArray(extra)) {
     const safeExtra = { ...(extra as Record<string, unknown>) }
@@ -431,6 +434,7 @@ router.get('/', async (req, res, next) => {
           title: page.title ?? null,
           description: page.description ?? null,
           ...(Object.hasOwn(page, 'isPublished') ? { isPublished: Boolean(page.isPublished) } : {}),
+          ...(Object.hasOwn(page, 'isSearchable') ? { isSearchable: Boolean(page.isSearchable) } : {}),
           ...(Object.hasOwn(page, 'publishStartDate') ? { publishStartDate: page.publishStartDate ?? null } : {}),
           ...(Object.hasOwn(page, 'publishEndDate') ? { publishEndDate: page.publishEndDate ?? null } : {}),
           visibility: page.visibility,
@@ -1129,6 +1133,7 @@ router.get('/:id', async (req, res, next) => {
       okf,
       capabilities: { viewStewardContacts: canReadRestrictedFields },
       ...(Object.hasOwn(pageResult, 'isPublished') ? { isPublished: Boolean(pageResult.isPublished) } : {}),
+      ...(Object.hasOwn(pageResult, 'isSearchable') ? { isSearchable: pageResult.isSearchable !== false && pageResult.isSearchable !== 0 } : {}),
       ...(Object.hasOwn(pageResult, 'publishStartDate') ? { publishStartDate: pageResult.publishStartDate || null } : {}),
       ...(Object.hasOwn(pageResult, 'publishEndDate') ? { publishEndDate: pageResult.publishEndDate || null } : {}),
       ...(Object.hasOwn(pageResult, 'editor') ? { editor: pageResult.editor } : {}),

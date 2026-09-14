@@ -4,7 +4,8 @@ import _ from 'lodash'
 import errors from './errors.ts'
 import { accountAdministration } from './account-administration.ts'
 import commonHelper from '../helpers/common.ts'
-import { ProfilePreferencesInputSchema } from '../../shared/user-presentation.ts'
+import { isUserDateFormat, isUserTimeFormat, isUserTimezone, ProfilePreferencesInputSchema, type UserTimeFormat } from '../../shared/user-presentation.ts'
+import { normalizeUserAvatar } from '../helpers/user-avatar-processing.ts'
 import { principalId } from '../helpers/page-access.ts'
 
 const { ApplicationError } = errors
@@ -20,6 +21,7 @@ interface UserRecord extends Record<string, unknown> {
   providerKey: string
   handle?: string | null
   providerId: unknown
+  timeFormat?: UserTimeFormat
   password: string
   tfaSecret: string
   location?: string
@@ -87,6 +89,9 @@ interface UserQuery extends PromiseLike<UserRecord[]> {
   patch(data: Record<string, unknown>): PatchQuery
 }
 interface CreateUserInput extends Record<string, unknown> {
+  timezone?: string
+  dateFormat?: string
+  timeFormat?: UserTimeFormat
   providerKey: string
   email: string
   name: string
@@ -97,7 +102,11 @@ interface CreateUserInput extends Record<string, unknown> {
 }
 interface UpdateUserInput extends Record<string, unknown> {
   id: number
-  groups?: number[]
+  groups?: number[] | undefined
+  dateFormat?: string | undefined
+  timeFormat?: UserTimeFormat | undefined
+  appearance?: string | undefined
+  timezone?: string | undefined
 }
 interface UserRequest {
   requester: Express.User | undefined
@@ -106,7 +115,9 @@ interface UserRequest {
 }
 type WikiErrorName = 'AuthRequired' | 'AuthAccountBanned' | 'AuthAccountNotVerified' | 'AuthProviderInvalid' | 'AuthPasswordInvalid' | 'InputInvalid'
 interface WikiUsers {
-  Error: Record<WikiErrorName, new () => Error>
+  Error: Record<Exclude<WikiErrorName, 'InputInvalid'>, new () => Error> & {
+    InputInvalid: new (message?: string) => Error
+  }
   auth: {
     strategies: Record<string, unknown>
     checkAssignUserToGroupAccess(requester: Express.User | undefined, groups: number[] | undefined): Promise<boolean>
@@ -120,6 +131,7 @@ interface WikiUsers {
       createNewUser(input: CreateUserInput): Promise<unknown>
       sendWelcomeEmail(input: { id: number; expectedEmail?: string }): Promise<void>
       updateUser(input: UpdateUserInput): Promise<boolean>
+      replaceUserAvatarData(userId: number, data: Buffer | null): Promise<void>
       deleteUser(id: number, replaceId: number): Promise<unknown>
       refreshToken(user: number | UserRecord): Promise<{ token: string }>
     }
@@ -268,6 +280,9 @@ const getAdminDetail = async (value: unknown) => {
     location: user.location || '',
     jobTitle: user.jobTitle || '',
     timezone: user.timezone || '',
+    dateFormat: user.dateFormat || '',
+    timeFormat: user.timeFormat || 'locale',
+    appearance: user.appearance || '',
     isSystem: Boolean(user.isSystem),
     isActive: Boolean(user.isActive),
     isVerified: Boolean(user.isVerified),
@@ -285,6 +300,20 @@ const createInput = (value: unknown): CreateUserInput => {
     email: stringValue(input.email, 'email'),
     name: stringValue(input.name, 'name'),
     groups: groupsValue(input.groups)
+  }
+  const timezone = optionalString(input, 'timezone')
+  if (timezone !== undefined) {
+    if (timezone !== '' && !isUserTimezone(timezone)) throw new ApplicationError('timezone must be a valid IANA time zone', { code: 'INVALID_INPUT' })
+    result.timezone = timezone
+  }
+  const dateFormat = optionalString(input, 'dateFormat')
+  if (dateFormat !== undefined) {
+    if (!isUserDateFormat(dateFormat)) throw new ApplicationError('dateFormat is not supported', { code: 'INVALID_INPUT' })
+    result.dateFormat = dateFormat
+  }
+  if (input.timeFormat !== undefined) {
+    if (!isUserTimeFormat(input.timeFormat)) throw new ApplicationError('timeFormat is not supported', { code: 'INVALID_INPUT' })
+    result.timeFormat = input.timeFormat
   }
   const passwordRaw = optionalString(input, 'passwordRaw')
   if (passwordRaw !== undefined) result.passwordRaw = passwordRaw
@@ -304,69 +333,141 @@ const updateInput = (value: unknown): UpdateUserInput => {
     const normalized = optionalString(input, field)
     if (normalized !== undefined) result[field] = normalized
   }
+  if (input.timeFormat !== undefined) {
+    if (!isUserTimeFormat(input.timeFormat)) throw new ApplicationError('timeFormat is not supported', { code: 'INVALID_INPUT' })
+    result.timeFormat = input.timeFormat
+  }
   if (input.groups !== undefined && input.groups !== null) result.groups = groupsValue(input.groups)
   return result
 }
 const create = async ({ requester, input }: UserRequest): Promise<{ id: number; welcomeEmailError?: string }> => {
-  const normalized = createInput(input), store = accountAdministration(), options = await store.creationOptions(requester)
-  const result = await store.create(requester, { fingerprint: options.fingerprint, providerKey: normalized.providerKey, profile: { name: normalized.name, email: normalized.email, groups: normalized.groups, location: '', jobTitle: '', timezone: 'UTC' }, password: normalized.passwordRaw, isVerified: true, mustChangePassword: normalized.mustChangePassword ?? false, reason: 'Account created through the administration API' })
+  const normalized = createInput(input),
+    store = accountAdministration(),
+    options = await store.creationOptions(requester)
+  const result = await store.create(requester, {
+    fingerprint: options.fingerprint,
+    providerKey: normalized.providerKey,
+    profile: {
+      name: normalized.name,
+      email: normalized.email,
+      groups: normalized.groups,
+      location: '',
+      jobTitle: '',
+      timezone: normalized.timezone ?? ''
+    },
+    ...(normalized.dateFormat === undefined ? {} : { dateFormat: normalized.dateFormat }),
+    ...(normalized.timeFormat === undefined ? {} : { timeFormat: normalized.timeFormat }),
+    password: normalized.passwordRaw,
+    isVerified: true,
+    mustChangePassword: normalized.mustChangePassword ?? false,
+    reason: 'Account created through the administration API'
+  })
   if (normalized.sendWelcomeEmail) {
-    try { await wiki.models.users.sendWelcomeEmail({ id: result.id }) }
-    catch { return { ...result, welcomeEmailError: 'The account was created, but the welcome email could not be sent.' } }
+    try {
+      await wiki.models.users.sendWelcomeEmail({ id: result.id })
+    } catch {
+      return { ...result, welcomeEmailError: 'The account was created, but the welcome email could not be sent.' }
+    }
   }
   return result
 }
 const update = async ({ requester, input }: UserRequest): Promise<void> => {
-  const normalized = updateInput(input), store = accountAdministration(), current = await store.inspect(requester, normalized.id)
+  const normalized = updateInput(input),
+    store = accountAdministration(),
+    current = await store.inspect(requester, normalized.id)
   const profile = { ...current.profile }
   for (const key of ['name', 'email', 'location', 'jobTitle', 'timezone'] as const) if (typeof normalized[key] === 'string') profile[key] = normalized[key]
   if (normalized.groups) profile.groups = normalized.groups
   // Legacy transports have no client review token. Read and pass a current
   // fingerprint so even these writes use the same target guards and CAS boundary.
-  if (JSON.stringify(profile) === JSON.stringify(current.profile) && !normalized.newPassword && normalized.appearance === undefined && normalized.dateFormat === undefined) return
-  await store.updateProfile(requester, normalized.id, { fingerprint: current.fingerprint, reason: 'Account updated through the administration API', profile, password: normalized.newPassword, appearance: normalized.appearance, dateFormat: normalized.dateFormat })
+  if (
+    JSON.stringify(profile) === JSON.stringify(current.profile) &&
+    !normalized.newPassword &&
+    normalized.appearance === undefined &&
+    normalized.dateFormat === undefined &&
+    normalized.timeFormat === undefined
+  )
+    return
+  await store.updateProfile(requester, normalized.id, {
+    fingerprint: current.fingerprint,
+    reason: 'Account updated through the administration API',
+    profile,
+    password: normalized.newPassword,
+    appearance: normalized.appearance,
+    dateFormat: normalized.dateFormat,
+    timeFormat: normalized.timeFormat
+  })
   revoke(normalized.id)
 }
 const revoke = (id: number): void => {
   wiki.auth.revokeUserTokens({ id, kind: 'u' })
   wiki.events.outbound.emit('addAuthRevoke', { id, kind: 'u' })
 }
-const requesterValue = (value: unknown): Express.User | undefined => isRecord(value) ? value as Express.User : undefined
+const requesterValue = (value: unknown): Express.User | undefined => (isRecord(value) ? (value as Express.User) : undefined)
 const remove = async (value: unknown): Promise<void> => {
-  const input = recordValue(value), id = positiveInteger(input.id, 'id'), replaceId = positiveInteger(input.replaceId, 'replaceId'), requester = requesterValue(input.requester), store = accountAdministration()
+  const input = recordValue(value),
+    id = positiveInteger(input.id, 'id'),
+    replaceId = positiveInteger(input.replaceId, 'replaceId'),
+    requester = requesterValue(input.requester),
+    store = accountAdministration()
   const current = await store.inspect(requester, id)
   await store.remove(requester, id, { fingerprint: current.fingerprint, replaceId, reason: 'Account deleted through the administration API' })
   revoke(id)
 }
 const setActive = async (value: unknown): Promise<void> => {
-  const input = recordValue(value), id = positiveInteger(input.id, 'id'), requester = requesterValue(input.requester), store = accountAdministration()
+  const input = recordValue(value),
+    id = positiveInteger(input.id, 'id'),
+    requester = requesterValue(input.requester),
+    store = accountAdministration()
   if (typeof input.isActive !== 'boolean') throw new ApplicationError('isActive must be a boolean', { code: 'INVALID_INPUT' })
   const current = await store.inspect(requester, id)
   if (current.isActive === input.isActive) return
-  await store.act(requester, id, { fingerprint: current.fingerprint, action: input.isActive ? 'activate' : 'deactivate', reason: 'Account availability updated through the administration API' })
+  await store.act(requester, id, {
+    fingerprint: current.fingerprint,
+    action: input.isActive ? 'activate' : 'deactivate',
+    reason: 'Account availability updated through the administration API'
+  })
   revoke(id)
 }
 const verify = async (value: unknown, requester?: Express.User): Promise<void> => {
-  const id = positiveInteger(value, 'id'), store = accountAdministration(), current = await store.inspect(requester, id)
+  const id = positiveInteger(value, 'id'),
+    store = accountAdministration(),
+    current = await store.inspect(requester, id)
   if (current.isVerified) return
   await store.act(requester, id, { fingerprint: current.fingerprint, action: 'verify', reason: 'Email address verified through the administration API' })
 }
 const sendWelcomeEmail = async (value: unknown, requester?: Express.User, review?: Record<string, unknown>): Promise<void> => {
-  const id = positiveInteger(value, 'id'), store = accountAdministration()
+  const id = positiveInteger(value, 'id'),
+    store = accountAdministration()
   const input = review ?? { fingerprint: (await store.inspect(requester, id)).fingerprint, reason: 'Welcome email requested through the administration API' }
   const prepared = await store.prepareWelcome(requester, id, input)
   let accepted = false
-  try { await wiki.models.users.sendWelcomeEmail({ id, expectedEmail: prepared.email }); accepted = true }
-  catch { /* Preserve a bounded outcome without recording mail transport credentials. */ }
-  try { await store.finishWelcome(id, prepared.requestId, accepted) }
-  catch { throw new ApplicationError(accepted ? 'The mail service accepted the welcome email, but its history could not be updated. Do not resend without checking delivery.' : 'The welcome email failed and its history could not be updated.', { status: 503 }) }
+  try {
+    await wiki.models.users.sendWelcomeEmail({ id, expectedEmail: prepared.email })
+    accepted = true
+  } catch {
+    /* Preserve a bounded outcome without recording mail transport credentials. */
+  }
+  try {
+    await store.finishWelcome(id, prepared.requestId, accepted)
+  } catch {
+    throw new ApplicationError(
+      accepted
+        ? 'The mail service accepted the welcome email, but its history could not be updated. Do not resend without checking delivery.'
+        : 'The welcome email failed and its history could not be updated.',
+      { status: 503 }
+    )
+  }
   if (!accepted) throw new ApplicationError('The mail service did not accept the welcome email. Check Mail settings before retrying.', { status: 502 })
 }
 const setTfa = async (value: unknown): Promise<void> => {
-  const input = recordValue(value), id = positiveInteger(input.id, 'id'), requester = requesterValue(input.requester), store = accountAdministration()
+  const input = recordValue(value),
+    id = positiveInteger(input.id, 'id'),
+    requester = requesterValue(input.requester),
+    store = accountAdministration()
   if (typeof input.enabled !== 'boolean') throw new ApplicationError('enabled must be a boolean', { code: 'INVALID_INPUT' })
   const current = await store.inspect(requester, id)
-  const action = input.enabled ? current.twoFactor === 'enrolled' ? 'reset-2fa' : 'require-2fa' : 'disable-2fa'
+  const action = input.enabled ? (current.twoFactor === 'enrolled' ? 'reset-2fa' : 'require-2fa') : 'disable-2fa'
   await store.act(requester, id, { fingerprint: current.fingerprint, action, reason: 'Authenticator policy updated through the administration API' })
   revoke(id)
 }
@@ -393,7 +494,11 @@ const getProfile = async (requester: Express.User | undefined): Promise<UserReco
   const user = await requireProfileUser(requester)
   const groups = await user.$relatedQuery('groups').select('groups.id', 'name', 'permissions')
   user.groups = groups
-  user.permissions = _.uniq(groups.flatMap(group => Array.isArray(group.permissions) ? group.permissions.filter((permission): permission is string => typeof permission === 'string') : []))
+  user.permissions = _.uniq(
+    groups.flatMap(group =>
+      Array.isArray(group.permissions) ? group.permissions.filter((permission): permission is string => typeof permission === 'string') : []
+    )
+  )
   user.providerName = strategyFor(user.providerKey)?.displayName ?? 'Unknown'
   user.handle = user.handle || ''
   user.lastLoginAt = user.lastLoginAt || user.updatedAt
@@ -417,8 +522,11 @@ const updateProfile = async ({ requester, input: value, response }: UserRequest)
   const location = stringValue(input.location, 'location')
   const timezone = stringValue(input.timezone, 'timezone')
   const dateFormat = stringValue(input.dateFormat, 'dateFormat')
+  const timeFormat = input.timeFormat === undefined ? undefined : stringValue(input.timeFormat, 'timeFormat')
   const appearance = stringValue(input.appearance, 'appearance')
-  if (!['', 'DD/MM/YYYY', 'DD.MM.YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD', 'YYYY/MM/DD'].includes(dateFormat)) throw new wiki.Error.InputInvalid()
+  if (!isUserTimezone(timezone)) throw new wiki.Error.InputInvalid('Choose a valid time zone.')
+  if (!isUserDateFormat(dateFormat)) throw new wiki.Error.InputInvalid()
+  if (timeFormat !== undefined && !isUserTimeFormat(timeFormat)) throw new wiki.Error.InputInvalid()
   if (!['', 'light', 'dark', 'system'].includes(appearance)) throw new wiki.Error.InputInvalid()
   await wiki.models.users.updateUser({
     id: user.id,
@@ -428,9 +536,40 @@ const updateProfile = async ({ requester, input: value, response }: UserRequest)
     location: _.trim(location),
     timezone,
     dateFormat,
+    ...(timeFormat === undefined ? {} : { timeFormat }),
     appearance
   })
   issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id)).token)
+}
+const requireVerifiedProfileUser = async (requester: Express.User | undefined): Promise<UserRecord> => {
+  const user = await requireProfileUser(requester)
+  if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
+  return user
+}
+
+const mutateAvatar = async (user: UserRecord, data: Buffer | null, response: Response | undefined): Promise<{ pictureUrl: string | null }> => {
+  await wiki.models.users.replaceUserAvatarData(user.id, data)
+  issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id)).token)
+  return { pictureUrl: data === null ? null : 'internal' }
+}
+
+const updateAvatar = async ({
+  requester,
+  data,
+  response
+}: {
+  requester: Express.User | undefined
+  data: Buffer
+  response?: Response
+}): Promise<{ pictureUrl: string | null }> => {
+  const user = await requireVerifiedProfileUser(requester)
+  const canonical = await normalizeUserAvatar(data)
+  return mutateAvatar(user, canonical, response)
+}
+
+const clearAvatar = async ({ requester, response }: { requester: Express.User | undefined; response?: Response }): Promise<{ pictureUrl: string | null }> => {
+  const user = await requireVerifiedProfileUser(requester)
+  return mutateAvatar(user, null, response)
 }
 const updateProfilePreferences = async ({ requester, input: value, response }: UserRequest): Promise<void> => {
   const user = await requireProfileUser(requester)
@@ -464,6 +603,7 @@ const countPages = async (user: UserRecord): Promise<number> =>
 
 export default {
   changePassword,
+  clearAvatar,
   countPages,
   create,
   get,
@@ -479,6 +619,7 @@ export default {
   setActive,
   setTfa,
   update,
+  updateAvatar,
   updateProfile,
   updateProfilePreferences,
   verify

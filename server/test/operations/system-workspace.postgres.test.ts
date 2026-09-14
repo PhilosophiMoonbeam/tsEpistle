@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from '../bun-test.mts'
 import { createSystemWorkspaceStore } from '../../operations/system-workspace.ts'
-import { systemSupportReport } from '../../../shared/system-workspace.ts'
+import { SYSTEM_CONNECTION_APPLICATION_PREFIX, systemSupportReport } from '../../../shared/system-workspace.ts'
 import { systemWorkspaceFixture } from '../fixtures/system-workspace.ts'
 import { up as createQueue } from '../../db/migrations/2.5.130.ts'
 const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '',
@@ -15,7 +15,23 @@ const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never,
   now = new Date('2026-09-06T12:00:00Z')
 suite('System observations against PostgreSQL', () => {
-  let db: Knex, store: ReturnType<typeof createSystemWorkspaceStore>, supported: string[]
+  let db: Knex,
+    store: ReturnType<typeof createSystemWorkspaceStore>,
+    supported: string[],
+    taggedConnections: Knex[] = []
+  const openTaggedConnection = async (identity: string, role: string): Promise<Knex> => {
+    const tagged = knexModule({
+      client: 'pg',
+      connection: { ...connection!, application_name: `${SYSTEM_CONNECTION_APPLICATION_PREFIX}${identity}/${role}` },
+      pool: { min: 1, max: 1 }
+    })
+    taggedConnections.push(tagged)
+    await tagged.raw('SELECT 1')
+    return tagged
+  }
+  const closeTaggedConnections = async (): Promise<void> => {
+    for (const tagged of taggedConnections.splice(0)) await tagged.destroy()
+  }
   const row = (patch: Record<string, unknown> = {}) => ({
     id: randomUUID(),
     type: 'deliver-webhook',
@@ -32,32 +48,34 @@ suite('System observations against PostgreSQL', () => {
   })
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection: connection ?? undefined, pool: { min: 0, max: 4 } })
-    await db.schema.createTable('users', (t) => {
+    await db.schema.createTable('users', t => {
       t.integer('id').primary()
       t.boolean('isActive')
       t.integer('authVersion')
     })
-    await db.schema.createTable('groups', (t) => {
+    await db.schema.createTable('groups', t => {
       t.integer('id').primary()
       t.jsonb('permissions')
     })
-    await db.schema.createTable('userGroups', (t) => {
+    await db.schema.createTable('userGroups', t => {
       t.integer('userId')
       t.integer('groupId')
     })
-    await db.schema.createTable('migrations', (t) => {
+    await db.schema.createTable('migrations', t => {
       t.increments('id')
       t.string('name')
     })
     await createQueue(db)
   })
   afterAll(async () => {
+    await closeTaggedConnections()
     if (db) {
       for (const table of ['durableJobs', 'migrations', 'userGroups', 'groups', 'users']) await db.schema.dropTableIfExists(table)
       await db.destroy()
     }
   })
   beforeEach(async () => {
+    await closeTaggedConnections()
     for (const table of ['durableJobs', 'migrations', 'userGroups', 'groups', 'users']) await db(table).delete()
     await db('users').insert([
       { id: 1, isActive: true, authVersion: 0 },
@@ -85,6 +103,31 @@ suite('System observations against PostgreSQL', () => {
       supportedJobs: () => supported,
       databaseHost: () => fixture.database.host
     })
+  })
+  it('aggregates tagged open connections by opaque identity and role, and drops identities after close', async () => {
+    const identityA = '00000000-0000-4000-8000-000000000001'
+    const identityB = '00000000-0000-4000-8000-000000000002'
+    const pool = await openTaggedConnection(identityA, 'pool')
+    const listener = await openTaggedConnection(identityA, 'listener')
+    await openTaggedConnection(identityB, 'worker')
+    await openTaggedConnection(identityB, 'future')
+
+    const observed = (await store.inspect(admin)).database.connectedProcesses
+    expect(observed.status).toBe('observed')
+    expect(observed.processes).toHaveLength(2)
+    expect(observed.processes.find(process => process.identity === identityA)).toMatchObject({
+      connections: { pool: 1, listener: 1, worker: 0, unclassified: 0 }
+    })
+    expect(observed.processes.find(process => process.identity === identityB)).toMatchObject({
+      connections: { pool: 0, listener: 0, worker: 1, unclassified: 1 }
+    })
+    expect(observed.processes.find(process => process.identity === identityA)?.earliestBackendStart).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+
+    await pool.destroy()
+    await listener.destroy()
+    taggedConnections = taggedConnections.filter(tagged => tagged !== pool && tagged !== listener)
+    const afterClose = (await store.inspect(admin)).database.connectedProcesses
+    expect(afterClose.processes.find(process => process.identity === identityA)).toBeUndefined()
   })
   it('collects a real version query and distinguishes pending/unknown migrations without changing the ledger', async () => {
     await db('migrations').delete()
@@ -155,11 +198,14 @@ suite('System observations against PostgreSQL', () => {
     expect((await store.inspect(admin)).queue).toMatchObject({ due: 0, unsupported: 1, totalAttention: 1 })
   })
   it('produces an explicitly redacted support report and includes reviewed deployment identifiers only by opt-in', async () => {
+    const exportIdentity = '00000000-0000-4000-8000-000000000003'
+    await openTaggedConnection(exportIdentity, 'worker')
     const job = row({ state: 'failed' })
-    await db('durableJobs').insert(job)
     const result = await store.inspect(admin),
       redacted = JSON.stringify(systemSupportReport(result)),
       expanded = JSON.stringify(systemSupportReport(result, true))
+    expect(redacted).not.toContain(exportIdentity)
+    expect(expanded).toContain(exportIdentity)
     for (const privateValue of [
       'instance-private',
       'private-host',

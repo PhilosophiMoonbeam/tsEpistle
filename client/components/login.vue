@@ -316,8 +316,20 @@
           .text-label-large {{$t('auth:tfaSetupInstrFirst')}}
           .text-body-small (#[a(href='https://authy.com/', target='_blank', rel='noopener noreferrer') Authy], #[a(href='https://support.google.com/accounts/answer/1066447', target='_blank', rel='noopener noreferrer') Google Authenticator], #[a(href='https://www.microsoft.com/en-us/account/authenticator', target='_blank', rel='noopener noreferrer') Microsoft Authenticator], etc.)
           .login-tfa-qr.mt-5(v-if='isTFASetupShown', v-html='tfaQRImage', aria-hidden='true')
-          .text-body-small.mt-3 Manual setup key
-          code.login-tfa-secret {{tfaSecret}}
+          .text-body-small.mt-3 {{$t('auth:tfaSetupInstrManual')}}
+          .login-tfa-secret-row.mt-1
+            code.login-tfa-secret(ref='tfaSecret') {{groupedTfaSecret}}
+            v-btn(
+              type='button'
+              icon='mdi-content-copy'
+              variant='text'
+              size='small'
+              color='primary'
+              :disabled='isLoading || !tfaSecret'
+              :aria-label='$t(`auth:tfaSetupCopyKey`)'
+              @click='copyTfaSecret'
+            )
+          .text-body-small.mt-1(role='status', aria-live='polite') {{tfaCopyStatus}}
           .text-label-large.mt-5 {{$t('auth:tfaSetupInstrSecond')}}
           v-text-field.login-tfa-field.mt-2(
             variant="solo"
@@ -358,15 +370,15 @@ import { newPasswordIssue } from '../../shared/security-policy.ts'
 
 // <span>Photo by <a href="https://unsplash.com/@isaacquesada?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Isaac Quesada</a> on <a href="/t/textures-patterns?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Unsplash</a></span>
 
-import { defineComponent } from 'vue'
+import { defineAsyncComponent, defineComponent } from 'vue'
 import Cookies from 'js-cookie'
 import { wikiStore } from '@/store/index.ts'
 import { fetchAuthStrategies, submitAuthRequest, submitStatusRequest, type AuthResponse, type AuthStrategy } from '../helpers/auth-api'
 import { getErrorMessage } from '../helpers/root-ui-store'
 import { sanitizeTfaQrImage } from '../helpers/tfa-qr'
 import LoginParticleLogo from './login-logo/LoginParticleLogo.vue'
-import LoginSuccessAnimation from './login-success-animation.vue'
 import { isLogoEffectDescriptor, type LogoEffectDescriptor } from './login-logo/particle-logo'
+const LoginSuccessAnimation = defineAsyncComponent(() => import('./login-success-animation.vue'))
 
 type LoginScreen = 'login' | 'forgot' | 'verifyEmail' | 'resetPwd' | 'changePwd' | 'success'
 
@@ -428,6 +440,7 @@ export default defineComponent({
       isTFASetupShown: false,
       tfaQRImage: '',
       tfaSecret: '',
+      tfaCopyStatus: '',
       focusTimer: null as number | null,
       redirectTimer: null as number | null,
       errorShown: false,
@@ -475,6 +488,9 @@ export default defineComponent({
         return this.strategies.filter(strategy => strategy.key !== 'local')
       }
       return this.strategies
+    },
+    groupedTfaSecret (): string {
+      return this.tfaSecret.replace(/.{4}(?=.)/g, '$& ')
     },
     isUsernameEmail () {
       return this.selectedStrategy.strategy.usernameType === `email`
@@ -535,6 +551,24 @@ export default defineComponent({
       this.clearError()
       this.successMessage = message
       this.screen = 'success'
+    },
+    async copyTfaSecret () {
+      this.tfaCopyStatus = ''
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable')
+        await navigator.clipboard.writeText(this.tfaSecret)
+        this.tfaCopyStatus = this.$t('auth:tfaSetupKeyCopied')
+      } catch {
+        const secret = this.$refs.tfaSecret
+        if (secret instanceof HTMLElement) {
+          const range = document.createRange()
+          range.selectNodeContents(secret)
+          const selection = window.getSelection()
+          selection?.removeAllRanges()
+          selection?.addRange(range)
+        }
+        this.tfaCopyStatus = this.$t('auth:tfaSetupKeyCopyFailed')
+      }
     },
     async loadStrategies () {
       wikiStore.startLoading('login-strategies-refresh')
@@ -770,6 +804,7 @@ export default defineComponent({
         this.securityCodeError = ''
         this.tfaQRImage = tfaQRImage
         this.tfaSecret = respObj.tfaSecret || ''
+        this.tfaCopyStatus = ''
         this.isTFASetupShown = true
         if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
         this.focusTimer = window.setTimeout(() => {
@@ -1132,9 +1167,15 @@ export default defineComponent({
     text-align: center;
   }
 
+  &-secret-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--wiki-space-1);
+  }
+
   &-secret {
     display: block;
-    margin-top: var(--wiki-space-1);
     padding: var(--wiki-space-2);
     overflow-wrap: anywhere;
     border: 1px solid var(--wiki-surface-border);

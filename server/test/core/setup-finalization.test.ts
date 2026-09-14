@@ -32,13 +32,27 @@ const startSetupHarness = async (configSaved: boolean) => {
 
   const settingsTruncate = vi.fn().mockResolvedValue(undefined)
   const extensionInsert = vi.fn().mockResolvedValue(undefined)
-  const knex = Object.assign(
-    vi.fn((table: string) => ({
+  const tableQuery = (table: string) => {
+    if (table === 'settings') {
+      return {
+        where: vi.fn().mockReturnThis(),
+        forShare: vi.fn().mockReturnThis(),
+        first: vi.fn().mockResolvedValue(undefined),
+        insert: vi.fn().mockResolvedValue(undefined),
+        truncate: settingsTruncate
+      }
+    }
+    return {
       insert: table === 'contentExtensions' ? extensionInsert : vi.fn().mockResolvedValue(undefined),
-      truncate: table === 'settings' ? settingsTruncate : vi.fn().mockResolvedValue(undefined)
-    })),
-    { raw: vi.fn().mockResolvedValue(undefined) }
-  )
+      truncate: vi.fn().mockResolvedValue(undefined)
+    }
+  }
+  const transactionKnex = vi.fn((table: string) => tableQuery(table))
+  const transaction = vi.fn(async (operation: (trx: typeof transactionKnex) => Promise<unknown>) => operation(transactionKnex))
+  const knex = Object.assign(vi.fn((table: string) => tableQuery(table)), {
+    raw: vi.fn().mockResolvedValue(undefined),
+    transaction
+  })
   const localesDelete = vi.fn().mockResolvedValue(1)
   const localesInsert = vi.fn().mockResolvedValue({})
   const localesQuery = {
@@ -132,6 +146,7 @@ const startSetupHarness = async (configSaved: boolean) => {
     searchRefresh,
     server,
     settingsTruncate,
+    transaction,
     userInsert
   }
 }
@@ -176,6 +191,7 @@ describe('setup finalization', () => {
     const password = await bcrypt.hash('unrelated credential', 4)
     expect(await finalize(harness.server, password)).toMatchObject({ ok: true })
     await harness.completion
+    expect(harness.transaction).toHaveBeenCalledWith(expect.any(Function))
     const stored = harness.userInsert.mock.calls[0]?.[0].password
     expect(stored).not.toBe(password)
     expect(await bcrypt.compare(password, stored)).toBe(true)

@@ -1,3 +1,159 @@
+import createKnex from 'knex'
+import { createHash } from 'node:crypto'
+
+const assetHash = path => createHash('sha1').update(path).digest('hex')
+const namedError = name => class extends Error {
+  constructor(message = name) {
+    super(message)
+    this.name = name
+  }
+}
+
+const createAssetQuery = db => {
+  const query = vi.fn((transaction = db) => {
+    const builder = transaction('assets')
+    builder.findById = id => transaction('assets').where({ id }).first()
+    builder.patch = values => {
+      const update = transaction('assets').update(values)
+      update.findById = id => transaction('assets').where({ id }).update(values)
+      return update
+    }
+    builder.deleteById = id => transaction('assets').where({ id }).delete()
+    return builder
+  })
+  return query
+}
+
+const runRelocationWorker = async db => {
+  const { createAssetRelocationHandler } = await vi.importFresh('../jobs/asset-relocation.ts', import.meta.url)
+  const { runDurableJobBatch } = await vi.importFresh('../core/durable-jobs.ts', import.meta.url)
+  return runDurableJobBatch(db, {
+    workerId: 'asset-relocation-test',
+    now: new Date(Date.now() + 1_000),
+    retryDelay: () => 0,
+    handlers: { 'asset-relocation@1': createAssetRelocationHandler() }
+  })
+}
+
+const createRelocationDatabase = async () => {
+  const db = createKnex({
+    client: 'better-sqlite3',
+    connection: { filename: ':memory:' },
+    pool: { min: 1, max: 1 },
+    useNullAsDefault: true
+  })
+  await db.schema.createTable('assets', table => {
+    table.integer('id').primary()
+    table.string('filename').notNullable()
+    table.string('hash').notNullable()
+    table.string('ext').notNullable()
+    table.integer('folderId').nullable()
+  })
+  await db.schema.createTable('assetData', table => {
+    table.integer('id').primary()
+    table.binary('data').notNullable()
+  })
+  await db.schema.createTable('assetFolders', table => {
+    table.integer('id').primary()
+    table.string('slug').notNullable()
+    table.integer('parentId').nullable()
+  })
+  await db.schema.createTable('durableJobs', table => {
+    table.uuid('id').primary()
+    table.string('type', 128).notNullable()
+    table.integer('version').notNullable().defaultTo(1)
+    table.text('payload').notNullable()
+    table.string('state', 16).notNullable().defaultTo('pending')
+    table.integer('attempts').notNullable().defaultTo(0)
+    table.integer('maxAttempts').notNullable().defaultTo(5)
+    table.dateTime('nextRunAt').notNullable()
+    table.string('leaseOwner', 128).nullable()
+    table.string('leaseToken', 128).nullable()
+    table.dateTime('leaseExpiresAt').nullable()
+    table.text('lastError').nullable()
+    table.string('deduplicationKey', 255).nullable().unique()
+    table.dateTime('createdAt').notNullable()
+    table.dateTime('updatedAt').notNullable()
+    table.dateTime('completedAt').nullable()
+  })
+  await db.schema.createTable('assetRelocationOperations', table => {
+    table.uuid('id').primary()
+    table.integer('assetId').nullable()
+    table.integer('actorId').nullable()
+    table.string('sourcePath', 512).notNullable()
+    table.string('destinationPath', 512).notNullable()
+    table.string('sourceHash', 64).notNullable()
+    table.string('destinationHash', 64).notNullable()
+    table.string('contentSha256', 64).notNullable()
+    table.string('status', 16).notNullable()
+    table.text('lastError').nullable()
+    table.dateTime('createdAt').notNullable()
+    table.dateTime('updatedAt').notNullable()
+    table.dateTime('completedAt').nullable()
+  })
+  await db.schema.createTable('assetRelocationEffects', table => {
+    table.uuid('id').primary()
+    table.uuid('operationId').notNullable()
+    table.uuid('jobId').notNullable()
+    table.integer('assetId').notNullable()
+    table.string('targetKey', 128).notNullable()
+    table.string('targetConfigurationRevision', 128).notNullable()
+    table.string('sourcePath', 512).notNullable()
+    table.string('destinationPath', 512).notNullable()
+    table.string('contentSha256', 64).notNullable()
+    table.string('status', 16).notNullable()
+    table.text('lastError').nullable()
+    table.dateTime('createdAt').notNullable()
+    table.dateTime('updatedAt').notNullable()
+    table.dateTime('completedAt').nullable()
+  })
+  return db
+}
+
+const installRelocationWiki = ({
+  db,
+  assetQuery,
+  getHierarchy = async () => [],
+  targets = [],
+  checkPageAccess = () => true,
+  storage = {},
+  logger = { warn: vi.fn() }
+}) => {
+  const folderQuery = vi.fn((transaction = db) => transaction('assetFolders'))
+  const pageAccess = vi.fn(checkPageAccess)
+  const storageRuntime = {
+    assetEvent: vi.fn(),
+    deleteAssetCaches: vi.fn().mockResolvedValue(undefined),
+    relocationTargets: vi.fn(() => targets),
+    ...storage
+  }
+  global.WIKI = {
+    config: { db: { type: 'sqlite' } },
+    logger,
+    Error: {
+      AssetDeleteForbidden: namedError('AssetDeleteForbidden'),
+      AssetFolderExists: namedError('AssetFolderExists'),
+      AssetInvalid: namedError('AssetInvalid'),
+      AssetRenameCollision: namedError('AssetRenameCollision'),
+      AssetRenameForbidden: namedError('AssetRenameForbidden'),
+      AssetRenameInvalid: namedError('AssetRenameInvalid'),
+      AssetRenameInvalidExt: namedError('AssetRenameInvalidExt'),
+      AssetRenameTargetForbidden: namedError('AssetRenameTargetForbidden')
+    },
+    auth: {
+      checkAccess: vi.fn(checkAccessFor),
+      checkPageAccess: pageAccess,
+      loadPageRuleAuthority: vi.fn(async requester => authorityFor(requester))
+    },
+    models: {
+      assets: { query: assetQuery, flushTempUploads: vi.fn(), deleteAssetCaches: storageRuntime.deleteAssetCaches },
+      assetFolders: { query: folderQuery, getHierarchy: vi.fn(getHierarchy) },
+      knex: db,
+      storage: storageRuntime
+    }
+  }
+  return { folderQuery, pageAccess, storage: storageRuntime }
+}
 const assetRouter = { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() }
 vi.mockModule('express', import.meta.url, () => ({ default: { Router: () => assetRouter } }))
 vi.mockModule('../controllers/_types.ts', import.meta.url, () => ({
@@ -186,6 +342,470 @@ describe('asset operations', () => {
       reservations.forEach(branding.releaseAssetBrandingAnalysis)
     }
   })
+  it('renames and moves an asset to the canonical root location', async () => {
+    const db = await createRelocationDatabase()
+    try {
+      const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['manage:assets', 'write:assets'] }
+      const sourceFolder = { id: 42, slug: 'source', parentId: null }
+      const asset = {
+        id: 7,
+        filename: 'old.png',
+        hash: assetHash('source/old.png'),
+        ext: '.png',
+        folderId: sourceFolder.id
+      }
+      await db('assetFolders').insert(sourceFolder)
+      await db('assets').insert(asset)
+      await db('assetData').insert({ id: asset.id, data: Buffer.from('asset bytes') })
+      const target = {
+        key: 'disk',
+        configurationKey: 'disk-revision',
+        active: true,
+        paused: false,
+        supportsAssetRelocation: true
+      }
+      const reconcileAssetRelocation = vi.fn().mockResolvedValue(undefined)
+      const assetQuery = createAssetQuery(db)
+      const { pageAccess, storage } = installRelocationWiki({
+        db,
+        assetQuery,
+        targets: [target],
+        storage: { reconcileAssetRelocation },
+        getHierarchy: async id => id === sourceFolder.id ? [sourceFolder] : []
+      })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+
+      const receipt = await operations.relocate({ requester, id: asset.id, filename: 'Renamed.PNG', folderId: 0 })
+
+      expect(receipt).toMatchObject({
+        assetId: asset.id,
+        sourcePath: 'source/old.png',
+        destinationPath: 'renamed.png',
+        status: 'pending',
+        effects: [{ targetKey: 'disk', status: 'pending', lastError: null }]
+      })
+      await runRelocationWorker(db)
+      const completed = await operations.relocationStatus({ requester, id: receipt.id })
+      expect(completed).toMatchObject({
+        assetId: asset.id,
+        sourcePath: 'source/old.png',
+        destinationPath: 'renamed.png',
+        status: 'succeeded',
+        effects: [{ targetKey: 'disk', status: 'succeeded', lastError: null }]
+      })
+      expect(storage.reconcileAssetRelocation).toHaveBeenCalledWith(expect.objectContaining({
+        id: asset.id,
+        sourcePath: 'source/old.png',
+        destinationPath: 'renamed.png'
+      }))
+      expect(await db('assets').where({ id: asset.id }).first()).toMatchObject({
+        filename: 'renamed.png',
+        folderId: null,
+        hash: assetHash('renamed.png')
+      })
+      expect(pageAccess.mock.calls.map(([, , context]) => context.path)).toEqual(expect.arrayContaining(['source/old.png', 'renamed.png']))
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it('moves an asset when folderId is the only requested field', async () => {
+    const db = await createRelocationDatabase()
+    try {
+      const requester = { id: 8, name: 'Writer', email: 'writer@example.com', permissions: ['manage:assets', 'write:assets'] }
+      const sourceFolder = { id: 43, slug: 'source', parentId: null }
+      const asset = {
+        id: 8,
+        filename: 'old.png',
+        hash: assetHash('source/old.png'),
+        ext: '.png',
+        folderId: sourceFolder.id
+      }
+      await db('assetFolders').insert(sourceFolder)
+      await db('assets').insert(asset)
+      await db('assetData').insert({ id: asset.id, data: Buffer.from('asset bytes') })
+      const target = {
+        key: 'disk',
+        configurationKey: 'disk-revision',
+        active: true,
+        paused: false,
+        supportsAssetRelocation: true
+      }
+      const reconcileAssetRelocation = vi.fn().mockResolvedValue(undefined)
+      const assetQuery = createAssetQuery(db)
+      const { pageAccess, storage } = installRelocationWiki({
+        db,
+        assetQuery,
+        targets: [target],
+        storage: { reconcileAssetRelocation },
+        getHierarchy: async id => id === sourceFolder.id ? [sourceFolder] : []
+      })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+
+      const receipt = await operations.relocate({ requester, id: asset.id, folderId: 0 })
+
+      expect(receipt).toMatchObject({
+        assetId: asset.id,
+        sourcePath: 'source/old.png',
+        destinationPath: 'old.png',
+        status: 'pending',
+        effects: [{ targetKey: 'disk', status: 'pending', lastError: null }]
+      })
+      await runRelocationWorker(db)
+      const completed = await operations.relocationStatus({ requester, id: receipt.id })
+      expect(completed).toMatchObject({
+        assetId: asset.id,
+        sourcePath: 'source/old.png',
+        destinationPath: 'old.png',
+        status: 'succeeded',
+        effects: [{ targetKey: 'disk', status: 'succeeded', lastError: null }]
+      })
+      expect(storage.reconcileAssetRelocation).toHaveBeenCalledWith(expect.objectContaining({
+        id: asset.id,
+        sourcePath: 'source/old.png',
+        destinationPath: 'old.png'
+      }))
+      expect(await db('assets').where({ id: asset.id }).first()).toMatchObject({
+        filename: 'old.png',
+        folderId: null,
+        hash: assetHash('old.png')
+      })
+      expect(pageAccess.mock.calls.map(([, , context]) => context.path)).toEqual(expect.arrayContaining(['source/old.png', 'old.png']))
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it('checks source and destination authority before disclosing a relocation collision', async () => {
+    const scenarios = [
+      { name: 'source denial', error: 'AssetInvalid', check: () => false },
+      { name: 'destination denial', error: 'AssetRenameTargetForbidden', check: (_user, _permissions, context) => context.path !== 'target/new.png' }
+    ]
+    for (const scenario of scenarios) {
+      const db = await createRelocationDatabase()
+      try {
+        const requester = { id: 9, name: 'Writer', email: 'writer@example.com', permissions: ['write:assets'] }
+        const sourceFolder = { id: 44, slug: 'source', parentId: null }
+        const targetFolder = { id: 45, slug: 'target', parentId: null }
+        const asset = {
+          id: 9,
+          filename: 'old.png',
+          hash: assetHash('source/old.png'),
+          ext: '.png',
+          folderId: sourceFolder.id
+        }
+        await db('assetFolders').insert([sourceFolder, targetFolder])
+        await db('assets').insert([
+          asset,
+          { id: 10, filename: 'new.png', hash: assetHash('target/new.png'), ext: '.png', folderId: targetFolder.id }
+        ])
+        await db('assetData').insert({ id: asset.id, data: Buffer.from('asset bytes') })
+        const assetQuery = createAssetQuery(db)
+        const { pageAccess } = installRelocationWiki({
+          db,
+          assetQuery,
+          checkPageAccess: scenario.check,
+          getHierarchy: async id => id === sourceFolder.id ? [sourceFolder] : id === targetFolder.id ? [targetFolder] : []
+        })
+        const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+
+        await expect(
+          operations.relocate({ requester, id: asset.id, filename: 'new.png', folderId: targetFolder.id })
+        ).rejects.toMatchObject({ name: scenario.error })
+
+        expect(assetQuery).toHaveBeenCalledTimes(1)
+        expect(pageAccess.mock.calls.map(([, , context]) => context.path)).toEqual(
+          scenario.name === 'source denial' ? ['source/old.png'] : ['source/old.png', 'target/new.png']
+        )
+        expect(await db('assets').where({ id: asset.id }).first()).toMatchObject(asset)
+      } finally {
+        await db.destroy()
+      }
+    }
+  })
+
+  it('rejects an unsupported active target before mutating the canonical asset row', async () => {
+    const db = await createRelocationDatabase()
+    try {
+      const requester = { id: 10, name: 'Writer', email: 'writer@example.com', permissions: ['write:assets'] }
+      const asset = {
+        id: 10,
+        filename: 'old.png',
+        hash: assetHash('old.png'),
+        ext: '.png',
+        folderId: null
+      }
+      const target = {
+        key: 'legacy',
+        configurationKey: 'legacy-revision',
+        active: true,
+        paused: false,
+        supportsAssetRelocation: false
+      }
+      await db('assets').insert(asset)
+      await db('assetData').insert({ id: asset.id, data: Buffer.from('asset bytes') })
+      const assetQuery = createAssetQuery(db)
+      const { storage } = installRelocationWiki({ db, assetQuery, targets: [target] })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+
+      await expect(operations.relocate({ requester, id: asset.id, filename: 'new.png', folderId: 0 })).rejects.toMatchObject({
+        status: 503,
+        name: 'ASSET_RELOCATION_UNSUPPORTED',
+        message: 'Storage target legacy cannot reconcile asset relocations.'
+      })
+
+      expect(await db('assets').where({ id: asset.id }).first()).toMatchObject(asset)
+      expect(await db('assetRelocationOperations')).toHaveLength(0)
+      expect(storage.deleteAssetCaches).not.toHaveBeenCalled()
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it('returns the accepted pending receipt when post-commit cache cleanup fails', async () => {
+    const db = await createRelocationDatabase()
+    try {
+      const requester = { id: 12, name: 'Writer', email: 'writer@example.com', permissions: ['manage:assets', 'write:assets'] }
+      const asset = {
+        id: 12,
+        filename: 'old.png',
+        hash: assetHash('old.png'),
+        ext: '.png',
+        folderId: null
+      }
+      const target = {
+        key: 'disk',
+        configurationKey: 'disk-revision',
+        active: true,
+        paused: false,
+        supportsAssetRelocation: true
+      }
+      const logger = { warn: vi.fn() }
+      const cacheError = new Error('cache path secret')
+      const deleteAssetCaches = vi.fn().mockRejectedValue(cacheError)
+      await db('assets').insert(asset)
+      await db('assetData').insert({ id: asset.id, data: Buffer.from('asset bytes') })
+      const assetQuery = createAssetQuery(db)
+      const { storage } = installRelocationWiki({
+        db,
+        assetQuery,
+        targets: [target],
+        logger,
+        storage: { deleteAssetCaches }
+      })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+
+      const accepted = await operations.relocate({ requester, id: asset.id, filename: 'new.png', folderId: 0 })
+
+      expect(accepted).toMatchObject({
+        assetId: asset.id,
+        sourcePath: 'old.png',
+        destinationPath: 'new.png',
+        status: 'pending',
+        effects: [{ targetKey: 'disk', status: 'pending', lastError: null }]
+      })
+      await expect(operations.relocationStatus({ requester, id: accepted.id })).resolves.toEqual(accepted)
+      expect(deleteAssetCaches).toHaveBeenCalledWith([assetHash('old.png'), assetHash('new.png')])
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Asset relocation committed, but cache cleanup could not be completed. The relocation receipt remains valid.'
+      )
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(cacheError.message)
+      expect(storage.relocationTargets).toHaveBeenCalled()
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it('keeps a durable relocation receipt pending and records a terminal target failure', async () => {
+    const db = await createRelocationDatabase()
+    try {
+      const requester = { id: 11, name: 'Writer', email: 'writer@example.com', permissions: ['manage:assets', 'write:assets'] }
+      const asset = {
+        id: 11,
+        filename: 'old.png',
+        hash: assetHash('old.png'),
+        ext: '.png',
+        folderId: null
+      }
+      const target = {
+        key: 'disk',
+        configurationKey: 'disk-revision',
+        active: true,
+        paused: false,
+        supportsAssetRelocation: true
+      }
+      const reconciliationError = new Error('provider credentials must not be disclosed')
+      const reconcileAssetRelocation = vi.fn().mockRejectedValue(reconciliationError)
+      await db('assets').insert(asset)
+      await db('assetData').insert({ id: asset.id, data: Buffer.from('asset bytes') })
+      const assetQuery = createAssetQuery(db)
+      const { storage } = installRelocationWiki({
+        db,
+        assetQuery,
+        targets: [target],
+        storage: { reconcileAssetRelocation }
+      })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+
+      const accepted = await operations.relocate({ requester, id: asset.id, filename: 'new.png', folderId: 0 })
+      expect(accepted).toMatchObject({
+        assetId: asset.id,
+        sourcePath: 'old.png',
+        destinationPath: 'new.png',
+        status: 'pending',
+        statusUrl: `/_api/assets/relocations/${accepted.id}`,
+        effects: [{ targetKey: 'disk', status: 'pending', lastError: null }]
+      })
+      await expect(operations.relocationStatus({ requester, id: accepted.id })).resolves.toEqual(accepted)
+
+      const effect = await db('assetRelocationEffects').where({ operationId: accepted.id }).first()
+      await db('durableJobs').where({ id: effect.jobId }).update({ maxAttempts: 1 })
+      await runRelocationWorker(db)
+
+      const failed = await operations.relocationStatus({ requester, id: accepted.id })
+      expect(failed).toMatchObject({
+        assetId: asset.id,
+        status: 'failed',
+        effects: [{ targetKey: 'disk', status: 'failed', lastError: 'Storage target reconciliation failed.' }]
+      })
+      expect(JSON.stringify(failed)).not.toContain('provider credentials')
+      expect(await db('durableJobs').where({ id: effect.jobId }).first()).toMatchObject({ state: 'failed' })
+      expect(await db('assets').where({ id: asset.id }).first()).toMatchObject({ filename: 'new.png', folderId: null })
+      expect(reconcileAssetRelocation).toHaveBeenCalledOnce()
+      expect(storage.relocationTargets).toHaveBeenCalled()
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it('refuses unresolved same-asset changes and foreign path reuse without mutating the ledger', async () => {
+    const db = await createRelocationDatabase()
+    try {
+      const requester = { id: 21, name: 'Writer', email: 'writer@example.com', permissions: ['manage:assets', 'write:assets'] }
+      const target = { key: 'disk', configurationKey: 'disk-revision', active: true, paused: false, supportsAssetRelocation: true }
+      await db('assets').insert([
+        { id: 21, filename: 'old.png', hash: assetHash('old.png'), ext: '.png', folderId: null },
+        { id: 22, filename: 'other.png', hash: assetHash('other.png'), ext: '.png', folderId: null }
+      ])
+      await db('assetData').insert([
+        { id: 21, data: Buffer.from('asset bytes') },
+        { id: 22, data: Buffer.from('other bytes') }
+      ])
+      const assetQuery = createAssetQuery(db)
+      installRelocationWiki({ db, assetQuery, targets: [target] })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+
+      const accepted = await operations.relocate({ requester, id: 21, filename: 'new.png', folderId: 0 })
+      await expect(operations.relocate({ requester, id: 21, filename: 'next.png', folderId: 0 })).rejects.toMatchObject({
+        status: 409,
+        code: 'ASSET_LOCATION_BUSY'
+      })
+      await expect(operations.relocate({ requester, id: 22, filename: 'new.png', folderId: 0 })).rejects.toMatchObject({
+        status: 409,
+        code: 'ASSET_LOCATION_BUSY'
+      })
+
+      expect(await db('assets').where({ id: 21 }).first()).toMatchObject({
+        filename: 'new.png',
+        hash: assetHash('new.png')
+      })
+      expect(await db('assets').where({ id: 22 }).first()).toMatchObject({
+        filename: 'other.png',
+        hash: assetHash('other.png')
+      })
+      expect(await db('assetRelocationOperations')).toHaveLength(1)
+      expect(await db('assetRelocationEffects').where({ operationId: accepted.id })).toHaveLength(1)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it('fails a mismatched worker effect without superseding it or releasing reservations', async () => {
+    const db = await createRelocationDatabase()
+    try {
+      const requester = { id: 23, name: 'Writer', email: 'writer@example.com', permissions: ['manage:assets', 'write:assets'] }
+      const target = { key: 'disk', configurationKey: 'disk-revision', active: true, paused: false, supportsAssetRelocation: true }
+      const reconcileAssetRelocation = vi.fn().mockResolvedValue(undefined)
+      await db('assets').insert([
+        { id: 23, filename: 'old.png', hash: assetHash('old.png'), ext: '.png', folderId: null },
+        { id: 24, filename: 'other.png', hash: assetHash('other.png'), ext: '.png', folderId: null }
+      ])
+      await db('assetData').insert([
+        { id: 23, data: Buffer.from('asset bytes') },
+        { id: 24, data: Buffer.from('other bytes') }
+      ])
+      const assetQuery = createAssetQuery(db)
+      installRelocationWiki({ db, assetQuery, targets: [target], storage: { reconcileAssetRelocation } })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+
+      const accepted = await operations.relocate({ requester, id: 23, filename: 'new.png', folderId: 0 })
+      const effect = await db('assetRelocationEffects').where({ operationId: accepted.id }).first()
+      await db('assets').where({ id: 23 }).update({ hash: assetHash('tampered.png') })
+      await db('durableJobs').where({ id: effect.jobId }).update({ maxAttempts: 1 })
+      await runRelocationWorker(db)
+
+      const failed = await operations.relocationStatus({ requester, id: accepted.id })
+      expect(failed).toMatchObject({
+        status: 'failed',
+        effects: [{ status: 'failed', lastError: 'Storage target reconciliation failed.' }]
+      })
+      expect(failed.status).not.toBe('superseded')
+      expect(reconcileAssetRelocation).not.toHaveBeenCalled()
+      await expect(operations.relocate({ requester, id: 24, filename: 'new.png', folderId: 0 })).rejects.toMatchObject({
+        status: 409,
+        code: 'ASSET_LOCATION_BUSY'
+      })
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it('treats receipt ids as non-capabilities and hides revoked or foreign receipts', async () => {
+    const db = await createRelocationDatabase()
+    try {
+      const owner = { id: 25, name: 'Owner', email: 'owner@example.com', permissions: ['manage:assets', 'write:assets'] }
+      const foreign = { id: 26, name: 'Foreign', email: 'foreign@example.com', permissions: ['manage:assets', 'write:assets'] }
+      const system = { id: 27, name: 'System', email: 'system@example.com', permissions: ['manage:system'] }
+      let pathsAllowed = true
+      const target = { key: 'disk', configurationKey: 'disk-revision', active: true, paused: false, supportsAssetRelocation: true }
+      await db('assets').insert({ id: 25, filename: 'old.png', hash: assetHash('old.png'), ext: '.png', folderId: null })
+      await db('assetData').insert({ id: 25, data: Buffer.from('asset bytes') })
+      const assetQuery = createAssetQuery(db)
+      installRelocationWiki({
+        db,
+        assetQuery,
+        targets: [target],
+        checkPageAccess: () => pathsAllowed
+      })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+
+      const accepted = await operations.relocate({ requester: owner, id: 25, filename: 'new.png', folderId: 0 })
+      await expect(operations.relocationStatus({ requester: foreign, id: accepted.id })).rejects.toMatchObject({
+        status: 404,
+        name: 'ASSET_RELOCATION_NOT_FOUND',
+        message: 'Asset relocation was not found.'
+      })
+      await expect(operations.relocationStatus({ requester: owner, id: 'not-a-receipt' })).rejects.toMatchObject({
+        status: 404,
+        name: 'ASSET_RELOCATION_NOT_FOUND',
+        message: 'Asset relocation was not found.'
+      })
+
+      pathsAllowed = false
+      await expect(operations.relocationStatus({ requester: owner, id: accepted.id })).rejects.toMatchObject({
+        status: 404,
+        name: 'ASSET_RELOCATION_NOT_FOUND',
+        message: 'Asset relocation was not found.'
+      })
+      await expect(operations.relocationStatus({ requester: system, id: accepted.id })).resolves.toMatchObject({
+        id: accepted.id,
+        assetId: 25
+      })
+    } finally {
+      await db.destroy()
+    }
+  })
+
 
   it('authorizes the canonical nested destination before collision lookup or insertion', async () => {
     const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['write:assets'] }

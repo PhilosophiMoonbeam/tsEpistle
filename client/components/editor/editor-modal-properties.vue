@@ -105,6 +105,15 @@
               persistent-hint
               inset
             )
+            v-switch(
+              ref='searchablePageSwitch'
+              :label='$t(`editor:props.searchable`)'
+              v-model='isSearchable'
+              color='primary'
+              :hint='$t(`editor:props.searchableHint`)'
+              persistent-hint
+              inset
+            )
           v-divider
           v-card-text.editor-properties-subsection.pt-5
             .text-label-small.pb-5 {{$t('editor:props.path')}}
@@ -481,6 +490,7 @@ type PagePropertiesDraft = {
   tags: string[]
   path: string
   isPublished: boolean
+  isSearchable: boolean
   visibility: 'public' | 'private'
   publishStartDate: string
   publishEndDate: string
@@ -498,6 +508,7 @@ function createPropertiesDraft (): PagePropertiesDraft {
     tags: [...wikiStore.page.tags],
     path: wikiStore.page.path,
     isPublished: wikiStore.page.isPublished,
+    isSearchable: wikiStore.page.isSearchable,
     visibility: wikiStore.page.visibility,
     publishStartDate: wikiStore.page.publishStartDate,
     publishEndDate: wikiStore.page.publishEndDate,
@@ -678,6 +689,14 @@ export default defineComponent({
       },
       set(value: boolean) {
         this.draft.isPublished = value
+      }
+    },
+    isSearchable: {
+      get() {
+        return this.draft.isSearchable
+      },
+      set(value: boolean) {
+        this.draft.isSearchable = value
       }
     },
     privatePage: {
@@ -873,6 +892,7 @@ export default defineComponent({
       wikiStore.page.tags = [...this.draft.tags]
       wikiStore.page.path = this.draft.path
       wikiStore.page.isPublished = this.draft.isPublished
+      wikiStore.page.isSearchable = this.draft.isSearchable
       wikiStore.page.visibility = this.draft.visibility
       wikiStore.page.publishStartDate = this.draft.publishStartDate
       wikiStore.page.publishEndDate = this.draft.publishEndDate

@@ -1,6 +1,7 @@
-import type { StorageConfig, StorageContext, StoragePlugin } from '../../types.ts'
+import type { StorageAssetRelocation, StorageConfig, StorageContext, StoragePlugin } from '../../types.ts'
 import { wiki } from '../../types.ts'
 import { BlobServiceClient, RestError, StorageSharedKeyCredential, type ContainerClient } from '@azure/storage-blob'
+import { createHash } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import pageHelper from '../../../helpers/page.ts'
 import _ from 'lodash'
@@ -107,6 +108,12 @@ const getFilePath = <K extends 'destinationPath' | 'path'>(
   const withLocaleCode = wiki.config.lang.namespacing && wiki.config.lang.code !== localeCode
   return storageObjectKey(pathPrefix, withLocaleCode ? `${localeCode}/${fileName}` : fileName)
 }
+const azureStatusCode = (error: unknown): number | undefined => {
+  if (error instanceof RestError) return error.statusCode
+  if (typeof error !== 'object' || error === null) return undefined
+  const statusCode = Reflect.get(error, 'statusCode')
+  return typeof statusCode === 'number' ? statusCode : undefined
+}
 
 function serializePage(page: StoragePageEncodingInput): string {
   const encoded = encodeStoragePageDocument(page)
@@ -204,6 +211,51 @@ const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
       deleteSnapshots: 'include'
     })
   },
+  async assetRelocated(asset: StorageAssetRelocation) {
+    const digest = createHash('sha256').update(asset.data).digest('hex')
+    if (digest !== asset.contentSha256) throw new Error('Asset relocation content digest mismatch')
+    const destination = this.container.getBlockBlobClient(storageObjectKey(this.config.pathPrefix, asset.destinationPath))
+    let destinationExists = false
+    try {
+      await destination.getProperties()
+      destinationExists = true
+    } catch (error) {
+      if (azureStatusCode(error) !== 404) throw error
+    }
+    if (destinationExists) {
+      const destinationBytes = await destination.downloadToBuffer()
+      if (createHash('sha256').update(destinationBytes).digest('hex') !== asset.contentSha256) {
+        throw new Error('Azure destination already contains different content')
+      }
+    } else {
+      await destination.upload(asset.data, asset.data.length, {
+        tier: this.config.storageTier,
+        metadata: { 'tsepistle-content-sha256': asset.contentSha256 },
+        conditions: { ifNoneMatch: '*' }
+      })
+      const destinationBytes = await destination.downloadToBuffer()
+      if (createHash('sha256').update(destinationBytes).digest('hex') !== asset.contentSha256) {
+        throw new Error('Azure destination content verification failed')
+      }
+    }
+    if (asset.sourcePath === asset.destinationPath) return
+    const source = this.container.getBlockBlobClient(storageObjectKey(this.config.pathPrefix, asset.sourcePath))
+    let properties: { etag?: string }
+    try {
+      properties = await source.getProperties()
+    } catch (error) {
+      if (azureStatusCode(error) === 404) return
+      throw error
+    }
+    if (typeof properties.etag !== 'string' || properties.etag.length === 0) {
+      throw new Error('Azure source cannot be conditionally verified for relocation cleanup')
+    }
+    const sourceBytes = await source.downloadToBuffer()
+    if (createHash('sha256').update(sourceBytes).digest('hex') !== asset.contentSha256) {
+      throw new Error('Azure source content verification failed')
+    }
+    await source.delete({ deleteSnapshots: 'include', conditions: { ifMatch: properties.etag } })
+  },
   async getLocalLocation() {},
   /**
    * HANDLERS
@@ -215,8 +267,20 @@ const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
     await pipeline(
       wiki.models.knex
         .column(
-          'id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content',
-          'sourceRevision', 'authorId', 'extra', 'isPublished', 'updatedAt', 'createdAt', 'editorKey'
+          'id',
+          'path',
+          'localeCode',
+          'title',
+          'description',
+          'contentType',
+          'content',
+          'sourceRevision',
+          'authorId',
+          'extra',
+          'isPublished',
+          'updatedAt',
+          'createdAt',
+          'editorKey'
         )
         .select()
         .from('pages')

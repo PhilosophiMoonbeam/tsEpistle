@@ -24,6 +24,7 @@ interface PageFixture {
   readonly visibility?: 'public' | 'private'
   readonly ownerId?: number | null
   readonly isPublished?: boolean
+  readonly isSearchable?: boolean
   readonly publishStartDate?: string | null
   readonly publishEndDate?: string | null
 }
@@ -150,6 +151,7 @@ suite('PostgreSQL knowledge projection search', () => {
       updatedAt: '2026-09-09T00:00:00.000Z',
       visibility: page.visibility ?? 'public',
       isPublished: page.isPublished ?? true,
+      ...(page.isSearchable === undefined ? {} : { isSearchable: page.isSearchable }),
       publishStartDate: page.publishStartDate ?? null,
       publishEndDate: page.publishEndDate ?? null
     })
@@ -172,9 +174,9 @@ suite('PostgreSQL knowledge projection search', () => {
         "authorId" integer NOT NULL,
         "ownerId" integer,
         extra jsonb NOT NULL,
-        "updatedAt" timestamptz NOT NULL,
         visibility text NOT NULL,
         "isPublished" boolean NOT NULL,
+        "isSearchable" boolean NOT NULL DEFAULT true,
         "publishStartDate" text,
         "publishEndDate" text
       );
@@ -240,7 +242,7 @@ suite('PostgreSQL knowledge projection search', () => {
     expect(candidates).toEqual([expect.objectContaining({ id: 11, sourceRevision: '11' })])
   })
 
-  it('enforces publication, password, access, ownership, and current-revision boundaries in PostgreSQL', async () => {
+  it('enforces publication, password, access, ownership, searchability, and current-revision boundaries in PostgreSQL', async () => {
     const visible = fixture({ id: 1, path: 'knowledge/visible', title: 'Visible Boundary' })
     const unpublished = fixture({ id: 2, sourceRevision: 2, path: 'knowledge/unpublished', title: 'Unpublished Boundary', isPublished: false })
     const future = fixture({ id: 3, sourceRevision: 3, path: 'knowledge/future', title: 'Future Boundary', publishStartDate: '2030-01-01T00:00:00.000Z' })
@@ -248,7 +250,18 @@ suite('PostgreSQL knowledge projection search', () => {
     const denied = fixture({ id: 5, sourceRevision: 5, path: 'knowledge/denied', title: 'Denied Boundary' })
     const ownerPrivate = fixture({ id: 6, sourceRevision: 6, path: 'knowledge/owner', title: 'Owner Boundary', visibility: 'private', ownerId: 7 })
     const stale = fixture({ id: 7, sourceRevision: 2, path: 'knowledge/stale', title: 'Stale Boundary' })
-    for (const page of [visible, unpublished, future, protectedPage, denied, ownerPrivate, stale]) await insertPage(page)
+    const unsearchable = fixture({ id: 8, sourceRevision: 8, path: 'knowledge/unsearchable', title: 'Unsearchable Boundary', isSearchable: false })
+    const privateUnsearchable = fixture({
+      id: 9,
+      sourceRevision: 9,
+      path: 'knowledge/private-unsearchable',
+      title: 'Private Unsearchable Boundary',
+      visibility: 'private',
+      ownerId: 7,
+      isPublished: false,
+      isSearchable: false
+    })
+    for (const page of [visible, unpublished, future, protectedPage, denied, ownerPrivate, stale, unsearchable, privateUnsearchable]) await insertPage(page)
     await db('pageAccessPasswords').insert({ pageId: protectedPage.id })
     await db('pageKnowledgeProjections').where({ pageId: stale.id, sourceRevision: stale.sourceRevision }).delete()
     await persistProjection(stale, 1)
@@ -260,7 +273,7 @@ suite('PostgreSQL knowledge projection search', () => {
       query: 'boundary',
       requester: reader,
       authority: readerAuthority,
-      authorizedPageIds: [1, 2, 3, 4, 5, 7],
+      authorizedPageIds: [1, 2, 3, 4, 5, 7, 8],
       limit: 20
     })
     expect(publicCandidates.map(candidate => candidate.id)).toEqual([1])
@@ -268,6 +281,7 @@ suite('PostgreSQL knowledge projection search', () => {
     const owner = { id: 7, canReadPublic: false } as never
     const ownerCandidates = await repository.searchVisible({ query: 'boundary', requester: owner, authority: pageRuleAuthority(owner), limit: 20 })
     expect(ownerCandidates).toContainEqual(expect.objectContaining({ id: 6, sourceRevision: '6' }))
+    expect(ownerCandidates).not.toContainEqual(expect.objectContaining({ id: privateUnsearchable.id }))
     const manager = { id: 8, permissions: ['manage:system'], canReadPublic: false } as never
     const managerCandidates = await repository.searchVisible({
       query: 'boundary',
@@ -276,12 +290,13 @@ suite('PostgreSQL knowledge projection search', () => {
       limit: 20
     })
     expect(managerCandidates).toContainEqual(expect.objectContaining({ id: 6, sourceRevision: '6' }))
+    expect(managerCandidates).not.toContainEqual(expect.objectContaining({ id: privateUnsearchable.id }))
     expect(
       await repository.filterVisibleCurrentIds({
         requester: reader,
         authority: readerAuthority,
-        pageIds: [1, 2, 3, 4, 5, 6, 7],
-        authorizedPageIds: [1, 2, 3, 4, 5, 7]
+        pageIds: [1, 2, 3, 4, 5, 6, 7, 8],
+        authorizedPageIds: [1, 2, 3, 4, 5, 7, 8]
       })
     ).toEqual([1])
     expect(await repository.filterVisibleCurrentIds({ requester: owner, authority: pageRuleAuthority(owner) })).toEqual([6])
@@ -350,7 +365,9 @@ suite('PostgreSQL knowledge projection search', () => {
     const requester = { id: 9, canReadPublic: true } as never
     const authority = pageRuleAuthority(requester)
 
-    expect(await repository.searchVisible({ query: 'AFR', requester, authority, limit: 5 })).toEqual([expect.objectContaining({ id: 42, sourceRevision: '42' })])
+    expect(await repository.searchVisible({ query: 'AFR', requester, authority, limit: 5 })).toEqual([
+      expect.objectContaining({ id: 42, sourceRevision: '42' })
+    ])
     expect(await repository.searchVisible({ query: '"AFR"', requester, authority, limit: 5 })).toEqual([])
   })
 })

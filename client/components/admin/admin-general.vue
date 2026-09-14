@@ -414,6 +414,45 @@
               </template>
             </div>
           </template>
+          <template v-else-if="section === 'accounts'">
+            <div class="general-heading">
+              <span class="general-kicker">A consistent starting point</span>
+              <h2>New account presentation</h2>
+              <p>
+                These defaults are applied once when a new human account is
+                created. Existing accounts keep their saved preferences, and
+                each person can override these values from their profile.
+              </p>
+            </div>
+            <div class="general-setting-group">
+              <v-text-field
+                v-model="draft.userDefaults.timezone"
+                label="Default time zone"
+                variant="outlined"
+                :disabled="locked"
+                hint="IANA time zone, for example UTC or Europe/London."
+                persistent-hint
+              />
+              <v-select
+                v-model="draft.userDefaults.dateFormat"
+                :items="dateFormats"
+                label="Default date format"
+                variant="outlined"
+                :disabled="locked"
+              />
+              <v-select
+                v-model="draft.userDefaults.timeFormat"
+                :items="timeFormats"
+                label="Default time format"
+                variant="outlined"
+                :disabled="locked"
+              />
+            </div>
+            <p class="general-note">
+              Locale default keeps the browser’s language convention. Saving
+              does not rewrite existing profiles or system accounts.
+            </p>
+          </template>
           <template v-else>
             <div class="general-heading">
               <span class="general-kicker">Workspace decisions</span>
@@ -599,6 +638,7 @@ const sections = [
   { key: "identity", title: "Identity" },
   { key: "announcement", title: "Announcement" },
   { key: "publishing", title: "Publishing" },
+  { key: "accounts", title: "Accounts" },
   { key: "activity", title: "Activity" },
 ];
 export default {
@@ -726,6 +766,23 @@ export default {
         title: this.$t("common:license." + (value || "none")),
       }));
     },
+    dateFormats() {
+      return [
+        { title: "Locale default", value: "" },
+        { title: "DD/MM/YYYY", value: "DD/MM/YYYY" },
+        { title: "DD.MM.YYYY", value: "DD.MM.YYYY" },
+        { title: "MM/DD/YYYY", value: "MM/DD/YYYY" },
+        { title: "YYYY-MM-DD", value: "YYYY-MM-DD" },
+        { title: "YYYY/MM/DD", value: "YYYY/MM/DD" },
+      ];
+    },
+    timeFormats() {
+      return [
+        { title: "Locale default", value: "locale" },
+        { title: "12-hour (AM/PM)", value: "12h" },
+        { title: "24-hour", value: "24h" },
+      ];
+    },
   },
   watch: {
     "$route.hash": {
@@ -839,6 +896,14 @@ export default {
           "Tone: " + (banner.tone || "warning"),
           "Starts: " + (banner.startsAt || "Immediately"),
           "Ends: " + (banner.endsAt || "Until disabled"),
+        ].join("\n");
+      }
+      if (field === "userDefaults") {
+        const defaults = value as GeneralPolicy["userDefaults"];
+        return [
+          "Time zone: " + defaults.timezone,
+          "Date format: " + (defaults.dateFormat || "Locale default"),
+          "Time format: " + defaults.timeFormat,
         ].join("\n");
       }
       if (Array.isArray(value)) return value.join(", ") || "None selected";

@@ -9,12 +9,39 @@ import {
   type GeneralPolicyEvent,
   type GeneralWriteResult
 } from '../../shared/general-policy.ts'
+import { isUserDateFormat, isUserTimeFormat, isUserTimezone, userPresentationDefaults, type UserPresentationDefaults } from '../../shared/user-presentation.ts'
 import { siteBannerOrDefault } from '../../shared/site-banner.ts'
 import { accountSessionIsCurrent } from '../helpers/account-session.ts'
 import { principalId, type PagePrincipal } from '../helpers/page-access.ts'
 import errors from './errors.ts'
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+
+const parsePresentationDefaults = (value: unknown): Record<string, unknown> => {
+  let parsed = value
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed) as unknown
+    } catch {
+      return {}
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+  const candidate = parsed as Record<string, unknown>
+  const wrapped = candidate.v
+  return wrapped && typeof wrapped === 'object' && !Array.isArray(wrapped) ? (wrapped as Record<string, unknown>) : candidate
+}
+
+const normalizePresentationDefaults = (value: unknown): UserPresentationDefaults => {
+  const candidate = parsePresentationDefaults(value)
+  if (!isUserTimezone(candidate.timezone) || !isUserDateFormat(candidate.dateFormat) || !isUserTimeFormat(candidate.timeFormat))
+    return { ...userPresentationDefaults }
+  return {
+    timezone: candidate.timezone,
+    dateFormat: candidate.dateFormat,
+    timeFormat: candidate.timeFormat
+  }
+}
 const stable = (value: unknown): string =>
   JSON.stringify(value, (_key, item) =>
     item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item
@@ -32,7 +59,8 @@ const settingKeys = [
   'banner',
   'pageExtensions',
   'editShortcuts',
-  'generalAdministration'
+  'generalAdministration',
+  'userDefaults'
 ]
 const scalarKeys = ['host', 'title', 'company', 'contentLicense', 'footerOverride', 'pageExtensions']
 export const generalPolicyFromConfiguration = (configuration: Record<string, unknown>): GeneralPolicy => {
@@ -42,6 +70,7 @@ export const generalPolicyFromConfiguration = (configuration: Record<string, unk
     if (flat[key] !== undefined) Reflect.set(result, key, structuredClone(flat[key]))
   }
   result.banner = siteBannerOrDefault(configuration.banner)
+  result.userDefaults = normalizePresentationDefaults(flat.userDefaults)
   return result
 }
 export const generalConfigurationPatch = (policy: GeneralPolicy, configuration: Record<string, unknown>): Record<string, unknown> => ({
@@ -52,6 +81,7 @@ export const generalConfigurationPatch = (policy: GeneralPolicy, configuration: 
   footerOverride: policy.footerOverride,
   banner: policy.banner,
   pageExtensions: policy.pageExtensions,
+  userDefaults: policy.userDefaults,
   seo: { ...record(configuration.seo), description: policy.description, robots: policy.robots },
   editShortcuts: { ...record(configuration.editShortcuts), ...Object.fromEntries(Object.entries(policy).filter(([key]) => key.startsWith('edit'))) }
 })
@@ -125,7 +155,10 @@ export const createGeneralAdministrationStore = (deps: Dependencies) => {
         policy: saved.policy,
         fingerprint: saved.fingerprint,
         history: Array.isArray(saved.metadata.history) ? (saved.metadata.history.slice(0, 50) as GeneralPolicyEvent[]) : [],
-        runtime: { state: stable(saved.policy) === stable(deps.runtime()) && deps.runtimeReady?.() !== false ? 'applied' : 'needs-attention', observedAt: new Date().toISOString() }
+        runtime: {
+          state: stable(saved.policy) === stable(deps.runtime()) && deps.runtimeReady?.() !== false ? 'applied' : 'needs-attention',
+          observedAt: new Date().toISOString()
+        }
       }
     } catch (error) {
       await tx.rollback()
@@ -210,7 +243,11 @@ export const getGeneralAdministrationStore = () => {
           }
           const rows = await wiki.models.knex<Setting>('settings').whereIn('key', settingKeys).orderBy('key')
           const saved = { ...wiki.config, ...Object.fromEntries(rows.map(row => [row.key, scalarKeys.includes(row.key) ? record(row.value).v : row.value])) }
-          return notified && (!wiki.auth || wiki.auth.strategyHost === wiki.config.host) && stable(generalPolicyFromConfiguration(saved)) === stable(generalPolicyFromConfiguration(wiki.config))
+          return (
+            notified &&
+            (!wiki.auth || wiki.auth.strategyHost === wiki.config.host) &&
+            stable(generalPolicyFromConfiguration(saved)) === stable(generalPolicyFromConfiguration(wiki.config))
+          )
         })
         queue = next.then(
           () => {},
@@ -223,26 +260,38 @@ export const getGeneralAdministrationStore = () => {
   return runtimeStore
 }
 
-
 export const legacyGeneralKeys = Object.keys(generalPolicyDefaults)
 const legacyRetainedKeys = ['analyticsService', 'analyticsId', 'featurePageRatings', 'featurePersonalWikis']
 export const patchLegacyGeneralConfiguration = async (requester: PagePrincipal, input: Record<string, unknown>): Promise<void> => {
-  if (Object.keys(input).some(key => !legacyGeneralKeys.includes(key) && !legacyRetainedKeys.includes(key))) return fail('Save General settings separately from other workspace controls.')
-  const service = getGeneralAdministrationStore(), saved = await service.inspect(requester)
+  if (Object.keys(input).some(key => !legacyGeneralKeys.includes(key) && !legacyRetainedKeys.includes(key)))
+    return fail('Save General settings separately from other workspace controls.')
+  const service = getGeneralAdministrationStore(),
+    saved = await service.inspect(requester)
   const wiki = WIKI as unknown as { models: { knex: Knex }; config: Record<string, unknown> }
   const rows = await wiki.models.knex<Setting>('settings').whereIn('key', ['seo', 'features']).select('key', 'value')
   const configuration = { ...wiki.config, ...Object.fromEntries(rows.map(row => [row.key, row.value])) }
   const retained = { ...record(configuration.seo), ...record(configuration.features) }
-  for (const key of legacyRetainedKeys) if (Object.hasOwn(input, key) && input[key] !== retained[key]) return fail('Analytics and inactive feature flags cannot be changed through General settings.')
+  for (const key of legacyRetainedKeys)
+    if (Object.hasOwn(input, key) && input[key] !== retained[key])
+      return fail('Analytics and inactive feature flags cannot be changed through General settings.')
   const next: Record<string, unknown> = { ...saved.policy }
   for (const [key, value] of Object.entries(input)) {
     if (!legacyGeneralKeys.includes(key)) continue
-    if (key === 'pageExtensions' && typeof value === 'string') next[key] = value.split(',').map(item => item.trim()).filter(Boolean)
+    if (key === 'pageExtensions' && typeof value === 'string')
+      next[key] = value
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean)
     else next[key] = value
   }
   const result = validateGeneralPolicy(next)
   if (!result.ok) return fail(result.issues.join(' '))
   if (!generalChangedFields(saved.policy, result.value).length) return
-  const outcome = await service.save(requester, { policy: result.value, fingerprint: saved.fingerprint, reason: 'Updated through the legacy General configuration API' })
-  if (outcome.activation === 'needs-attention') return fail('Workspace settings were saved, but runtime activation needs attention. Reload General settings before continuing.', 500)
+  const outcome = await service.save(requester, {
+    policy: result.value,
+    fingerprint: saved.fingerprint,
+    reason: 'Updated through the legacy General configuration API'
+  })
+  if (outcome.activation === 'needs-attention')
+    return fail('Workspace settings were saved, but runtime activation needs attention. Reload General settings before continuing.', 500)
 }

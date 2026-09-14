@@ -117,6 +117,7 @@ const graphPage = ({ id, path, localeCode = 'en', title, sourceRevision = 1 }) =
   visibility: 'public',
   ownerId: null,
   isPublished: true,
+  isSearchable: true,
   publishStartDate: '',
   publishEndDate: '',
   contentType: 'markdown',
@@ -257,6 +258,7 @@ describe('controllers/api pages endpoints', () => {
             visibility: 'public',
             ownerId: null,
             isPublished: 1,
+            isSearchable: 1,
             publishStartDate: '',
             publishEndDate: '',
             contentType: 'markdown',
@@ -283,6 +285,7 @@ describe('controllers/api pages endpoints', () => {
                 updatedAt: '2026-01-03T00:00:00.000Z',
                 tags: [{ tag: 'alpha' }],
                 visibility: 'public',
+                isSearchable: 1,
                 ownerId: null
               },
               {
@@ -293,6 +296,7 @@ describe('controllers/api pages endpoints', () => {
                 updatedAt: '2026-01-02T00:00:00.000Z',
                 tags: [{ tag: 'beta' }],
                 visibility: 'public',
+                isSearchable: 1,
                 ownerId: null
               }
             ]
@@ -1199,6 +1203,7 @@ describe('controllers/api pages endpoints', () => {
         title: 'Alpha',
         description: 'Alpha description',
         isPublished: 1,
+        isSearchable: 1,
         visibility: 'public',
         ownerId: null,
         contentType: 'markdown',
@@ -1213,6 +1218,7 @@ describe('controllers/api pages endpoints', () => {
         title: 'Beta',
         description: 'Beta description',
         isPublished: 0,
+        isSearchable: 0,
         visibility: 'private',
         ownerId: 1,
         contentType: 'markdown',
@@ -1270,6 +1276,7 @@ describe('controllers/api pages endpoints', () => {
         title: 'Alpha',
         description: 'Alpha description',
         visibility: 'public',
+        isSearchable: true,
         ownerId: null,
         contentType: 'markdown',
         createdAt: '2026-01-01T00:00:00.000Z',
@@ -1289,6 +1296,7 @@ describe('controllers/api pages endpoints', () => {
       description: 'Visible description',
       visibility: 'public',
       ownerId: null,
+      isSearchable: true,
       contentType: 'markdown',
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-02T00:00:00.000Z',
@@ -1328,6 +1336,7 @@ describe('controllers/api pages endpoints', () => {
       title: 'Admin page',
       description: null,
       isPublished: false,
+      isSearchable: true,
       publishStartDate: null,
       publishEndDate: null,
       visibility: 'public',
@@ -1363,6 +1372,7 @@ describe('controllers/api pages endpoints', () => {
       title: 'Admin page',
       description: null,
       isPublished: false,
+      isSearchable: true,
       publishStartDate: null,
       publishEndDate: null,
       visibility: 'public',
@@ -1374,7 +1384,7 @@ describe('controllers/api pages endpoints', () => {
     }])
   })
 
-  it('rejects malformed publication metadata rather than exposing it', async () => {
+  it('normalizes malformed publication and legacy searchability metadata to canonical booleans', async () => {
     const row = {
       id: 44,
       locale: 'en',
@@ -1382,6 +1392,7 @@ describe('controllers/api pages endpoints', () => {
       title: 'Malformed page',
       description: null,
       isPublished: 'false',
+      isSearchable: 'false',
       visibility: 'public',
       ownerId: null,
       contentType: 'markdown',
@@ -1404,13 +1415,30 @@ describe('controllers/api pages endpoints', () => {
       })
     })
     const { listPages } = await loadHandler()
-    const next = vi.fn()
     const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
 
-    await listPages({ user: { id: 7, permissions: ['read:pages'] }, query: {} }, res, next)
+    await listPages({ user: { id: 1, permissions: ['read:pages', 'manage:system'] }, query: {} }, res, vi.fn())
 
-    expect(next).toHaveBeenCalledWith(expect.any(TypeError))
-    expect(res.json).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith([{
+      id: 44,
+      path: 'docs/malformed',
+      locale: 'en',
+      title: 'Malformed page',
+      description: null,
+      isPublished: false,
+      isSearchable: true,
+      visibility: 'public',
+      ownerId: null,
+      contentType: 'markdown',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      tags: []
+    }])
+    const [page] = res.json.mock.calls[0][0]
+    expect(typeof page.isPublished).toBe('boolean')
+    expect(typeof page.isSearchable).toBe('boolean')
+    expect(page.isPublished).toBe(false)
+    expect(page.isSearchable).toBe(true)
   })
 
   it('returns permission-filtered tag suggestions through a correlated candidate query', async () => {
@@ -1550,8 +1578,15 @@ describe('controllers/api pages endpoints', () => {
         ]
       }
     ])
+    const queryBuilder = {
+      where: vi.fn((criterion) => {
+        if (typeof criterion === 'function') criterion({ where: vi.fn(), orWhere: vi.fn() })
+        return queryBuilder
+      }),
+      orWhere: vi.fn()
+    }
     const modify = vi.fn(applyModifier => {
-      applyModifier({ where: vi.fn((callback) => callback({ where: vi.fn(), orWhere: vi.fn() })), orWhere: vi.fn() })
+      applyModifier(queryBuilder)
       return { withGraphJoined }
     })
     const column = vi.fn().mockReturnValue({ modify })
@@ -1856,6 +1891,7 @@ describe('controllers/api pages endpoints', () => {
       visibility: 'public',
       ownerId: null,
       isPublished: true,
+      isSearchable: true,
       publishStartDate: null,
       publishEndDate: null,
       contentType: 'markdown',
@@ -1895,6 +1931,7 @@ describe('controllers/api pages endpoints', () => {
       description: 'Alpha description',
       visibility: 'public',
       ownerId: null,
+      isSearchable: true,
       contentType: 'markdown',
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-02T00:00:00.000Z',
@@ -2091,7 +2128,7 @@ describe('controllers/api pages endpoints', () => {
   })
 
   it('returns 404 when page detail is missing', async () => {
-    global.WIKI.models.pages.getPageFromDb.mockResolvedValueOnce(null)
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValueOnce(undefined)
     const { getPage } = await loadHandler()
     const req = { user: { id: 7, permissions: [] }, sessionID: 'missing-detail', params: { id: '7' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }

@@ -275,17 +275,66 @@
               v-icon(start) mdi-progress-check
               span {{$t('profile:auth.changePassword')}}
       v-col(lg='6' cols='12')
-        //- v-card
-        //-   v-toolbar(color='surface-variant', density='compact', flat, class='border-b')
-        //-     v-toolbar-title
-        //-       .text-body-large Picture
-        //-   v-card-title
-        //-     v-avatar.bg-blue(v-if='picture.kind === `initials`', size='40')
-        //-       span.text-white.text-body-large {{picture.initials}}
-        //-     v-avatar(v-else-if='picture.kind === `image`', size='40')
-        //-       v-img(:src='picture.url')
-        //-     v-btn.mx-4(variant='outlined') Upload Picture
-        //-     v-btn(variant='outlined', disabled) Remove Picture
+        v-card.mb-3
+          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
+            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:avatar.title', { defaultValue: 'Profile avatar' })}}
+          v-card-text
+            .profile-avatar-editor
+              .profile-avatar-preview
+                v-avatar(v-if='picture.kind === `initials`', size='96', color='primary')
+                  span.text-headline-medium.text-on-primary.font-weight-bold {{ picture.initials }}
+                v-avatar(v-else-if='picture.kind === `image`', size='96')
+                  v-img(:src='picture.url', alt='')
+                v-avatar(v-else, size='96', color='surface-variant')
+                  v-icon(size='56') mdi-account
+              .profile-avatar-actions
+                input.profile-avatar-input(
+                  ref='avatarInput'
+                  type='file'
+                  accept='image/jpeg,image/png,image/webp'
+                  :disabled='avatarLoading'
+                  @change='handleAvatarSelected'
+                )
+                v-btn(
+                  ref='avatarUploadButton'
+                  type='button'
+                  variant='outlined'
+                  color='primary'
+                  :loading='avatarAction === `upload`'
+                  :disabled='avatarLoading'
+                  :aria-busy='avatarLoading'
+                  :aria-label='$t(`profile:avatar.upload`, { defaultValue: `Upload avatar` })'
+                  @click='openAvatarPicker'
+                )
+                  v-icon(start) mdi-upload
+                  span {{$t('profile:avatar.upload', { defaultValue: 'Upload avatar' })}}
+                v-btn(
+                  type='button'
+                  variant='text'
+                  color='error'
+                  :loading='avatarAction === `remove`'
+                  :disabled='avatarLoading || !hasInternalAvatar'
+                  :aria-busy='avatarLoading'
+                  :aria-label='$t(`profile:avatar.remove`, { defaultValue: `Remove avatar` })'
+                  @click='removeAvatar'
+                )
+                  v-icon(start) mdi-delete-outline
+                  span {{$t('profile:avatar.remove', { defaultValue: 'Remove avatar' })}}
+                .text-body-small.text-medium-emphasis {{ $t('profile:avatar.help', { defaultValue: 'PNG, JPEG, or WebP up to 1 MB. Provider avatars return after the next sign-in when removed.' }) }}
+                v-alert(
+                  v-if='avatarError'
+                  type='error'
+                  variant='tonal'
+                  density='compact'
+                  role='alert'
+                ) {{ avatarError }}
+                v-alert(
+                  v-if='avatarSuccess'
+                  type='success'
+                  variant='tonal'
+                  density='compact'
+                  role='status'
+                ) {{ avatarSuccess }}
         v-card
           v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
             v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:preferences')}}
@@ -375,6 +424,48 @@
                         )
                         v-icon(start) mdi-check
                         span {{$t('common:actions.ok')}}
+            v-list-item
+              template(v-slot:prepend)
+                v-avatar(size='32')
+                  v-icon mdi-clock-time-four-outline
+              v-list-item-title {{$t('profile:timeFormat', { defaultValue: 'Time format' })}}
+              v-list-item-subtitle {{ currentTimeFormat }}
+              template(v-slot:append)
+                v-menu(
+                  v-model='editPop.timeFormat'
+                  :close-on-content-click='false'
+                  min-width='min(350px, calc(100vw - 24px))'
+                  max-width='min(350px, calc(100vw - 24px))'
+                  location='start'
+                  )
+                  template(v-slot:activator='{ props }')
+                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:timeFormat`, { defaultValue: `Time format` })' @click='focusField(`iptTimeFormat`)')
+                      v-icon(start) mdi-pencil
+                      span {{ $t('common:actions.edit') }}
+                  v-card(flat)
+                    v-select(
+                      ref='iptTimeFormat'
+                      :items='timeFormats'
+                      v-model='user.timeFormat'
+                      :label='$t(`profile:timeFormat`, { defaultValue: `Time format` })'
+                      variant="solo"
+                      flat
+                      density="compact"
+                      hide-details
+                      @keydown.enter='editPop.timeFormat = false'
+                      @keydown.esc='editPop.timeFormat = false'
+                      style='height: 38px;'
+                    )
+                    v-card-chin
+                      v-spacer
+                      v-btn(
+                        size="small"
+                        variant="text"
+                        color='primary'
+                        @click='editPop.timeFormat = false'
+                        )
+                        v-icon(start) mdi-check
+                        span {{$t('common:actions.ok')}}
             v-divider
             v-list-item
               template(v-slot:prepend)
@@ -452,14 +543,14 @@
 import { passwordPolicyMixin } from '../../helpers/password-policy.ts'
 import { newPasswordIssue } from '../../../shared/security-policy.ts'
 import AsyncState from '@/components/common/async-state.vue'
+import PasswordStrength from '../common/password-strength.vue'
 import { wikiStore } from '@/store/index.ts'
-import { changeProfilePassword, fetchProfile, updateProfile, type Profile } from '../../helpers/users-api'
+import { changeProfilePassword, fetchProfile, removeProfileAvatar, updateProfile, uploadProfileAvatar, type Profile } from '../../helpers/users-api.ts'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import _ from 'lodash'
 import validateValues from '../../../shared/validation'
-import type moment from 'moment'
-import PasswordStrength from '../common/password-strength.vue'
 import { resolveThemeName } from '../../helpers/theme.ts'
+import { applyUserPresentation } from '../../helpers/index.ts'
 
 type ProfileFieldRef =
   | 'iptDisplayName'
@@ -468,6 +559,7 @@ type ProfileFieldRef =
   | 'iptJobTitle'
   | 'iptTimezone'
   | 'iptDateFormat'
+  | 'iptTimeFormat'
   | 'iptAppearance'
 
 function focusComponent (ref: unknown): void {
@@ -494,6 +586,10 @@ export default {
       profileLoading: true,
       profileError: '',
       user: null as Profile | null,
+      avatarAction: '' as '' | 'upload' | 'remove',
+      avatarError: '',
+      avatarSuccess: '',
+      avatarRevision: 0,
       currentPass: '',
       newPass: '',
       verifyPass: '',
@@ -512,6 +608,7 @@ export default {
         jobTitle: false,
         timezone: false,
         dateFormat: false,
+        timeFormat: false,
         appearance: false
       },
       timezones: Object.freeze([
@@ -603,6 +700,7 @@ export default {
         { title: '(GMT-01:00) Azores', value: 'Atlantic/Azores' },
         { title: '(GMT-01:00) Cape Verde', value: 'Atlantic/Cape_Verde' },
         { title: '(GMT-01:00) Scoresbysund', value: 'America/Scoresbysund' },
+        { title: '(GMT+00:00) Coordinated Universal Time', value: 'UTC' },
         { title: '(GMT+00:00) Abidjan', value: 'Africa/Abidjan' },
         { title: '(GMT+00:00) Accra', value: 'Africa/Accra' },
         { title: '(GMT+00:00) Bissau', value: 'Africa/Bissau' },
@@ -767,14 +865,27 @@ export default {
   },
   computed: {
     picture () {
-      const pictureUrl = typeof wikiStore.user.pictureUrl === 'string' ? wikiStore.user.pictureUrl : ''
+      const profilePictureUrl = this.user?.pictureUrl
+      const pictureUrl = this.user !== null && (typeof profilePictureUrl === 'string' || profilePictureUrl === null)
+        ? profilePictureUrl || ''
+        : typeof wikiStore.user.pictureUrl === 'string' ? wikiStore.user.pictureUrl : ''
+      const userId = this.user?.id || wikiStore.user.id
       if (pictureUrl.length > 1) {
-        return { kind: 'image' as const, url: (pictureUrl === 'internal') ? `/_userav/${wikiStore.user.id}` : pictureUrl }
+        return {
+          kind: 'image' as const,
+          url: (pictureUrl === 'internal') ? `/_userav/${userId}?v=${this.avatarRevision}` : pictureUrl
+        }
       }
       const label = this.user?.name || this.user?.email || wikiStore.user.name || wikiStore.user.email || 'User'
       const parts = label.trim().split(/\s+/)
       const initials = ((parts[0]?.charAt(0) || 'U') + (parts.length > 1 ? parts[parts.length - 1]?.charAt(0) || '' : '')).toUpperCase()
       return { kind: 'initials' as const, initials }
+    },
+    hasInternalAvatar () {
+      return this.user !== null ? this.user.pictureUrl === 'internal' : wikiStore.user.pictureUrl === 'internal'
+    },
+    avatarLoading () {
+      return this.avatarAction !== ''
     },
     profileReady () {
       return this.user !== null
@@ -791,6 +902,16 @@ export default {
         { title: 'YYYY-MM-DD', value: 'YYYY-MM-DD' },
         { title: 'YYYY/MM/DD', value: 'YYYY/MM/DD' }
       ]
+    },
+    timeFormats () {
+      return [
+        { title: this.$t('profile:timeLocaleDefault', { defaultValue: 'Use locale default' }), value: 'locale' },
+        { title: this.$t('profile:time12h', { defaultValue: '12-hour (AM/PM)' }), value: '12h' },
+        { title: this.$t('profile:time24h', { defaultValue: '24-hour' }), value: '24h' }
+      ]
+    },
+    currentTimeFormat () {
+      return _.get(_.find(this.timeFormats, ['value', this.user?.timeFormat]), 'title', this.$t('profile:timeLocaleDefault', { defaultValue: 'Use locale default' }))
     },
     appearances () {
       return [
@@ -809,26 +930,17 @@ export default {
       if (!this.user) return
       void this.$vuetify.theme.change(resolveThemeName(newValue, siteConfig.darkMode))
     },
-    'user.dateFormat': function (newValue: string, _oldValue: string) {
+    'user.dateFormat': function () {
       if (!this.user) return
-      if (newValue === '') {
-        this.$moment.updateLocale(this.$moment.locale(), null)
-      } else {
-        const localeConfig = {
-          longDateFormat: {
-            L: newValue
-          }
-        } as moment.LocaleSpecification
-        this.$moment.updateLocale(this.$moment.locale(), localeConfig)
-      }
+      applyUserPresentation(this.user)
     },
-    'user.timezone': function (newValue: string, _oldValue: string) {
+    'user.timeFormat': function () {
       if (!this.user) return
-      if (newValue === '') {
-        this.$moment.tz.setDefault()
-      } else {
-        this.$moment.tz.setDefault(newValue)
-      }
+      applyUserPresentation(this.user)
+    },
+    'user.timezone': function () {
+      if (!this.user) return
+      applyUserPresentation(this.user)
     }
   },
   mounted() {
@@ -840,7 +952,10 @@ export default {
       this.profileError = ''
       wikiStore.startLoading('profile-refresh')
       try {
-        this.user = await fetchProfile(window.fetch.bind(window))
+        const profile = await fetchProfile(window.fetch.bind(window))
+        this.user = profile
+        if (wikiStore.user.id === profile.id) wikiStore.user.pictureUrl = profile.pictureUrl ?? ''
+        applyUserPresentation(profile)
         return true
       } catch (err) {
         this.user = null
@@ -850,6 +965,64 @@ export default {
       } finally {
         this.profileLoading = false
         wikiStore.stopLoading('profile-refresh')
+      }
+    },
+    openAvatarPicker () {
+      if (this.avatarLoading) return
+      const input = this.$refs.avatarInput as HTMLInputElement | undefined
+      input?.click()
+    },
+    async handleAvatarSelected (event: Event) {
+      const input = event.target as HTMLInputElement
+      const file = input.files?.[0]
+      input.value = ''
+      if (!file || this.avatarLoading) return
+      await this.uploadAvatar(file)
+    },
+    async uploadAvatar (file: File) {
+      if (this.avatarLoading) return
+      this.avatarAction = 'upload'
+      this.avatarError = ''
+      this.avatarSuccess = ''
+      wikiStore.startLoading('profile-avatar')
+      try {
+        const result = await uploadProfileAvatar(window.fetch.bind(window), file)
+        await wikiStore.refreshAuth()
+        if (this.user) {
+          this.user.pictureUrl = result.pictureUrl
+          if (wikiStore.user.id === this.user.id) wikiStore.user.pictureUrl = result.pictureUrl ?? ''
+        }
+        this.avatarRevision += 1
+        this.avatarSuccess = this.$t('profile:avatar.uploadSuccess', { defaultValue: 'Avatar uploaded successfully.' })
+      } catch (err) {
+        this.avatarError = getErrorMessage(err)
+        wikiStore.showError(err)
+      } finally {
+        wikiStore.stopLoading('profile-avatar')
+        this.avatarAction = ''
+      }
+    },
+    async removeAvatar () {
+      if (this.avatarLoading || !this.hasInternalAvatar) return
+      this.avatarAction = 'remove'
+      this.avatarError = ''
+      this.avatarSuccess = ''
+      wikiStore.startLoading('profile-avatar')
+      try {
+        const result = await removeProfileAvatar(window.fetch.bind(window))
+        await wikiStore.refreshAuth()
+        if (this.user) {
+          this.user.pictureUrl = result.pictureUrl
+          if (wikiStore.user.id === this.user.id) wikiStore.user.pictureUrl = result.pictureUrl ?? ''
+        }
+        this.avatarRevision += 1
+        this.avatarSuccess = this.$t('profile:avatar.removeSuccess', { defaultValue: 'Avatar removed successfully.' })
+      } catch (err) {
+        this.avatarError = getErrorMessage(err)
+        wikiStore.showError(err)
+      } finally {
+        wikiStore.stopLoading('profile-avatar')
+        this.avatarAction = ''
       }
     },
     /**
@@ -879,6 +1052,7 @@ export default {
           jobTitle: profile.jobTitle,
           timezone: profile.timezone,
           dateFormat: profile.dateFormat,
+          timeFormat: profile.timeFormat,
           appearance: profile.appearance
         })
         profile.handle = profile.handle.trim().toLowerCase()
@@ -1039,5 +1213,37 @@ export default {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+}
+.profile-avatar-editor {
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-4);
+  flex-wrap: wrap;
+}
+
+.profile-avatar-preview {
+  flex: 0 0 auto;
+}
+
+.profile-avatar-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--wiki-space-2);
+  min-width: min(100%, 28rem);
+}
+
+.profile-avatar-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 600px) {
+  .profile-avatar-actions {
+    min-width: 100%;
+  }
 }
 </style>

@@ -5,7 +5,15 @@ import _ from 'lodash'
 import { Type as JSBinType } from 'js-binary'
 import pageHelper from '../helpers/page.ts'
 import { tagNames } from '../helpers/taxonomy-plan.ts'
-import { canDeletePage, canWritePage, managesSystem, pageAuthorizationContext, principalId, type PageAuthorizationContext, type PageVisibility } from '../helpers/page-access.ts'
+import {
+  canDeletePage,
+  canWritePage,
+  managesSystem,
+  pageAuthorizationContext,
+  principalId,
+  type PageAuthorizationContext,
+  type PageVisibility
+} from '../helpers/page-access.ts'
 import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import { localeRelationMovePatch } from '../helpers/page-locale-relations.ts'
 import path from 'node:path'
@@ -63,6 +71,7 @@ interface CachedPage {
   visibility: PageVisibility
   ownerId: number
   isPublished: boolean
+  isSearchable: boolean
   publishEndDate: string
   publishStartDate: string
   contentType: string
@@ -97,6 +106,7 @@ interface PageCacheIdentityMarker {
   localeCode: string
   visibility: PageVisibility
   ownerId: number | null
+  isSearchable: boolean
   extra?: unknown
 }
 
@@ -116,6 +126,7 @@ interface CreatePageOptions {
   description: string
   visibility: PageVisibility
   isPublished: boolean | number
+  isSearchable?: boolean | number
   title: string
   publishEndDate?: string | null
   publishStartDate?: string | null
@@ -138,6 +149,7 @@ interface UpdatePageOptions {
   content?: string
   description?: string
   isPublished?: boolean | number
+  isSearchable?: boolean | number
   title?: string
   tags?: string[]
   expectedUpdatedAt?: string
@@ -406,29 +418,17 @@ const lockPageForMutation = async (transaction: Knex.Transaction, page: Page): P
     | { sourceRevision?: string | number; updatedAt?: string | Date }
     | undefined
   if (!locked) throw new wiki.Error.PageNotFound()
-  if (
-    page.sourceRevision !== undefined &&
-    (locked.sourceRevision === undefined || String(locked.sourceRevision) !== String(page.sourceRevision))
-  ) {
+  if (page.sourceRevision !== undefined && (locked.sourceRevision === undefined || String(locked.sourceRevision) !== String(page.sourceRevision))) {
     throw pageUpdateConflict()
   }
-  if (
-    typeof page.updatedAt !== 'undefined' &&
-    locked.updatedAt !== undefined &&
-    new Date(locked.updatedAt).valueOf() !== new Date(page.updatedAt).valueOf()
-  ) {
+  if (typeof page.updatedAt !== 'undefined' && locked.updatedAt !== undefined && new Date(locked.updatedAt).valueOf() !== new Date(page.updatedAt).valueOf()) {
     throw pageUpdateConflict()
   }
   return loadPageTags(page, transaction, true)
 }
 
-const hasPagePermission = (
-  user: PageUser,
-  permissions: readonly string[],
-  context: PageAuthorizationContext | null,
-  authority: PageRuleAuthority
-): boolean => context !== null && wiki.auth.checkPageAccess(user, [...permissions], context, authority)
-
+const hasPagePermission = (user: PageUser, permissions: readonly string[], context: PageAuthorizationContext | null, authority: PageRuleAuthority): boolean =>
+  context !== null && wiki.auth.checkPageAccess(user, [...permissions], context, authority)
 
 const pageBrandingFromExtra = (extra: unknown): PageBrandingAssignment | undefined => {
   let candidate = extra
@@ -655,6 +655,7 @@ export default class Page extends Model {
   declare visibility: PageVisibility
   declare ownerId: number | null
   declare isPublished: boolean | number
+  declare isSearchable: boolean | number
   declare publishStartDate: string
   declare publishEndDate: string
   declare content: string
@@ -691,6 +692,7 @@ export default class Page extends Model {
         title: { type: 'string' },
         description: { type: 'string' },
         isPublished: { type: 'boolean' },
+        isSearchable: { type: 'boolean' },
         visibility: { type: 'string', enum: ['public', 'private'] },
         ownerId: { type: ['integer', 'null'] },
         localeGroupId: { type: ['string', 'null'] },
@@ -799,6 +801,7 @@ export default class Page extends Model {
       visibility: 'string',
       ownerId: 'uint',
       isPublished: 'boolean',
+      isSearchable: 'boolean',
       publishEndDate: 'string',
       publishStartDate: 'string',
       contentType: 'string',
@@ -894,14 +897,19 @@ export default class Page extends Model {
       return names
     }
     if (
-      !wiki.auth.checkPageAccess(opts.user, ['write:pages'], {
-        path: opts.path,
-        locale: opts.locale,
-        localeCode: opts.locale,
-        visibility: 'public',
-        ownerId: null,
-        tags: names.map(tag => ({ tag }))
-      }, opts.authority)
+      !wiki.auth.checkPageAccess(
+        opts.user,
+        ['write:pages'],
+        {
+          path: opts.path,
+          locale: opts.locale,
+          localeCode: opts.locale,
+          visibility: 'public',
+          ownerId: null,
+          tags: names.map(tag => ({ tag }))
+        },
+        opts.authority
+      )
     ) {
       throw new errors.ApplicationError('You do not have permission to create this page.', { status: 403, code: 'PAGE_CREATE_FORBIDDEN' })
     }
@@ -988,6 +996,7 @@ export default class Page extends Model {
         visibility: opts.visibility,
         ownerId,
         isPublished: opts.isPublished,
+        isSearchable: opts.isSearchable === undefined ? true : opts.isSearchable === true || opts.isSearchable === 1,
         localeCode: opts.locale,
         path: opts.path,
         publishEndDate: opts.publishEndDate || '',
@@ -1007,18 +1016,10 @@ export default class Page extends Model {
       if (canonicalContext === null) {
         throw new errors.ApplicationError('Unable to resolve canonical page tags.', { status: 403, code: 'PAGE_CREATE_FORBIDDEN' })
       }
-      if (
-        requestedScriptCss !== undefined &&
-        requestedScriptCss !== '' &&
-        !hasPagePermission(opts.user, ['write:styles'], canonicalContext, authority)
-      ) {
+      if (requestedScriptCss !== undefined && requestedScriptCss !== '' && !hasPagePermission(opts.user, ['write:styles'], canonicalContext, authority)) {
         throw new errors.ApplicationError('You do not have permission to add page styles.', { status: 403, code: 'PAGE_CREATE_FORBIDDEN' })
       }
-      if (
-        requestedScriptJs !== undefined &&
-        requestedScriptJs !== '' &&
-        !hasPagePermission(opts.user, ['write:scripts'], canonicalContext, authority)
-      ) {
+      if (requestedScriptJs !== undefined && requestedScriptJs !== '' && !hasPagePermission(opts.user, ['write:scripts'], canonicalContext, authority)) {
         throw new errors.ApplicationError('You do not have permission to add page scripts.', { status: 403, code: 'PAGE_CREATE_FORBIDDEN' })
       }
       if (opts.visibility === 'public' && !hasPagePermission(opts.user, ['write:pages'], canonicalContext, authority)) {
@@ -1187,8 +1188,8 @@ export default class Page extends Model {
       opts.content === undefined &&
       opts.description === undefined &&
       opts.isPublished === undefined &&
+      opts.isSearchable === undefined &&
       opts.title === undefined &&
-      opts.tags === undefined &&
       opts.editor === undefined &&
       opts.contentType === undefined &&
       opts.action === undefined &&
@@ -1251,14 +1252,16 @@ export default class Page extends Model {
       if (
         requestedScriptCss !== undefined &&
         requestedScriptCss !== existingScriptCss &&
-        (!hasPagePermission(opts.user, ['write:styles'], currentContext, authority) || !hasPagePermission(opts.user, ['write:styles'], proposedContext, authority))
+        (!hasPagePermission(opts.user, ['write:styles'], currentContext, authority) ||
+          !hasPagePermission(opts.user, ['write:styles'], proposedContext, authority))
       ) {
         throw new wiki.Error.PageUpdateForbidden()
       }
       if (
         requestedScriptJs !== undefined &&
         requestedScriptJs !== existingScriptJs &&
-        (!hasPagePermission(opts.user, ['write:scripts'], currentContext, authority) || !hasPagePermission(opts.user, ['write:scripts'], proposedContext, authority))
+        (!hasPagePermission(opts.user, ['write:scripts'], currentContext, authority) ||
+          !hasPagePermission(opts.user, ['write:scripts'], proposedContext, authority))
       ) {
         throw new wiki.Error.PageUpdateForbidden()
       }
@@ -1285,7 +1288,8 @@ export default class Page extends Model {
       const historyPage = {
         ...ogPage,
         tags: authorizationTags,
-        isPublished: ogPage.isPublished === true || ogPage.isPublished === 1
+        isPublished: ogPage.isPublished === true || ogPage.isPublished === 1,
+        isSearchable: ogPage.isSearchable !== false && ogPage.isSearchable !== 0
       }
       if (opts.expectedCollaborationGeneration !== undefined) {
         const room = await transaction<{ pageId: number; generation: number }>('pageCollaborationRooms')
@@ -1311,6 +1315,10 @@ export default class Page extends Model {
           editorKey,
           isPublished:
             opts.isPublished === undefined ? ogPage.isPublished === true || ogPage.isPublished === 1 : opts.isPublished === true || opts.isPublished === 1,
+          isSearchable:
+            opts.isSearchable === undefined
+              ? ogPage.isSearchable !== false && ogPage.isSearchable !== 0
+              : opts.isSearchable === true || opts.isSearchable === 1,
           publishEndDate: opts.publishEndDate === undefined ? ogPage.publishEndDate : opts.publishEndDate || '',
           publishStartDate: opts.publishStartDate === undefined ? ogPage.publishStartDate : opts.publishStartDate || '',
           title: destinationTitle,
@@ -1459,10 +1467,7 @@ export default class Page extends Model {
       })
       if (currentContext === null || !canWritePage(opts.user, currentContext, authority)) throw new wiki.Error.PageUpdateForbidden()
       if (proposedContext === null || !canWritePage(opts.user, proposedContext, authority)) throw new wiki.Error.PageUpdateForbidden()
-      if (
-        opts.visibility === 'public' &&
-        (!opts.confirmPublication || !hasPagePermission(opts.user, ['write:pages'], proposedContext, authority))
-      ) {
+      if (opts.visibility === 'public' && (!opts.confirmPublication || !hasPagePermission(opts.user, ['write:pages'], proposedContext, authority))) {
         throw new wiki.Error.PageUpdateForbidden()
       }
       const collision = await wiki.models.pages.query(transaction).findOne({
@@ -1475,7 +1480,8 @@ export default class Page extends Model {
       const historyPage = {
         ...page,
         tags: authorizationTags,
-        isPublished: page.isPublished === true || page.isPublished === 1
+        isPublished: page.isPublished === true || page.isPublished === 1,
+        isSearchable: page.isSearchable !== false && page.isSearchable !== 0
       }
       await wiki.models.pageHistory.addVersion({
         ...historyPage,
@@ -1753,7 +1759,8 @@ export default class Page extends Model {
       const historyPage = {
         ...ogPage,
         tags: authorizationTags,
-        isPublished: ogPage.isPublished === true || ogPage.isPublished === 1
+        isPublished: ogPage.isPublished === true || ogPage.isPublished === 1,
+        isSearchable: ogPage.isSearchable !== false && ogPage.isSearchable !== 0
       }
       if (shouldConvert) {
         await wiki.models.pageHistory.addVersion({
@@ -1847,7 +1854,6 @@ export default class Page extends Model {
       opts.destinationPath = opts.destinationPath.slice(1)
     }
 
-
     const destinationHash = pageHelper.generateHash({
       path: opts.destinationPath,
       locale: opts.destinationLocale,
@@ -1892,7 +1898,8 @@ export default class Page extends Model {
       const historyPage = {
         ...page,
         tags: authorizationTags,
-        isPublished: page.isPublished === true || page.isPublished === 1
+        isPublished: page.isPublished === true || page.isPublished === 1,
+        isSearchable: page.isSearchable !== false && page.isSearchable !== 0
       }
       await wiki.models.pageHistory.addVersion({
         ...historyPage,
@@ -2172,6 +2179,7 @@ export default class Page extends Model {
           'pages.visibility',
           'pages.ownerId',
           'pages.isPublished',
+          'pages.isSearchable',
           'pages.publishStartDate',
           'pages.publishEndDate',
           'pages.content',
@@ -2238,6 +2246,7 @@ export default class Page extends Model {
         visibility: page.visibility,
         ownerId: page.ownerId ?? 0,
         isPublished: page.isPublished === 1 || page.isPublished === true,
+        isSearchable: page.isSearchable !== false && page.isSearchable !== 0,
         publishEndDate: page.publishEndDate,
         publishStartDate: page.publishStartDate,
         contentType: page.contentType,
@@ -2269,7 +2278,7 @@ export default class Page extends Model {
       }
       const marker = await wiki.models
         .knex<PageCacheIdentityMarker>('pages')
-        .select('id', 'hash', 'sourceRevision', 'path', 'localeCode', 'visibility', 'ownerId', 'extra')
+        .select('id', 'hash', 'sourceRevision', 'path', 'localeCode', 'visibility', 'ownerId', 'isSearchable', 'extra')
         .where({
           path: opts.path,
           localeCode: opts.locale,
@@ -2283,7 +2292,8 @@ export default class Page extends Model {
         marker.id !== page.id ||
         String(marker.sourceRevision) !== page.sourceRevision ||
         marker.visibility !== page.visibility ||
-        marker.ownerId !== (page.ownerId === 0 ? null : page.ownerId)
+        marker.ownerId !== (page.ownerId === 0 ? null : page.ownerId) ||
+        marker.isSearchable !== page.isSearchable
       ) {
         await fs.remove(cachePath)
         return false

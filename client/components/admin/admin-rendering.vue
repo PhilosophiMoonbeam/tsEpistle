@@ -87,13 +87,17 @@
       </section>
       <section v-show="section === 'output'" id="rendering-panel-output" role="tabpanel" aria-labelledby="rendering-tab-output" class="rendering-output-panel">
         <div class="rendering-section-heading"><div><span class="rendering-eyebrow">Inspect the result</span><h3>See what is already stored.</h3><p>Choose a page to inspect its rendered HTML, heading structure and link markers.</p></div></div>
-        <div class="rendering-output-picker"><v-autocomplete v-model="pageId" :items="pageOptions" label="Page to inspect" :loading="pagesLoading" variant="outlined" density="comfortable" hide-details clearable :disabled="rendering" @update:model-value="inspectOutput" /><v-btn variant="tonal" prepend-icon="mdi-refresh" :disabled="!pageId || outputLoading || rendering" @click="inspectOutput">Reload output</v-btn></div>
+        <div class="rendering-output-picker"><v-autocomplete v-model="pageId" :items="pageOptions" label="Page to inspect" :loading="pagesLoading" variant="outlined" density="comfortable" hide-details clearable :disabled="rendering || renderPending" @update:model-value="inspectOutput" /><v-btn variant="tonal" prepend-icon="mdi-refresh" :disabled="!pageId || outputLoading || rendering || renderPending" @click="inspectOutput">Reload output</v-btn></div>
         <v-alert v-if="pagesError" type="error" variant="tonal" class="mb-4">{{ pagesError }}<v-btn variant="text" size="small" @click="loadPages">Retry page directory</v-btn></v-alert>
-        <v-alert v-if="renderNotice && pageId === renderNoticeFor" :type="renderFailed ? 'warning' : 'success'" variant="tonal" class="my-4">{{ renderNotice }}</v-alert>
+        <v-alert v-if="renderNotice && pageId === renderNoticeFor" :type="renderFailed || renderPending ? 'warning' : 'success'" variant="tonal" class="my-4">
+          {{ renderNotice }}
+          <div v-if="renderReceipt" class="rendering-render-receipt">Receipt {{ renderReceipt.effectId }} · {{ renderStatus ? `Status: ${renderStatus.status}` : 'Status: unknown' }}</div>
+          <v-btn v-if="renderReceipt && !rendering && renderPending" variant="text" size="small" prepend-icon="mdi-refresh" @click="refreshRenderStatus">Refresh render status</v-btn>
+        </v-alert>
         <async-state v-if="outputLoading" state="loading" title="Reading stored output" message="Checking page access and loading the saved render." />
         <async-state v-else-if="outputError" state="error" title="Stored output could not be read" :message="outputError" retry-label="Try again" @retry="inspectOutput" />
         <div v-else-if="output" class="rendering-output-workspace">
-          <header class="rendering-output-heading"><div><span class="rendering-eyebrow">{{ output.page.visibility === 'private' ? 'Private page' : 'Workspace page' }} · {{ format(output.page.contentType) }}</span><h4>{{ output.page.title }}</h4><p>{{ output.page.locale }}/{{ output.page.path }} · Current source revision {{ output.page.sourceRevision }}</p></div><v-btn variant="outlined" :disabled="rendering || dirty" :loading="rendering" @click="renderReview = true">Re-render this page</v-btn></header>
+          <header class="rendering-output-heading"><div><span class="rendering-eyebrow">{{ output.page.visibility === 'private' ? 'Private page' : 'Workspace page' }} · {{ format(output.page.contentType) }}</span><h4>{{ output.page.title }}</h4><p>{{ output.page.locale }}/{{ output.page.path }} · Current source revision {{ output.page.sourceRevision }}</p></div><v-btn variant="outlined" :disabled="rendering || renderPending || dirty" :loading="rendering" @click="renderReview = true">Re-render this page</v-btn></header>
           <p class="rendering-footnote">This is stored output, not a preview of your draft settings. Its rendering configuration and source revision were not recorded with the HTML. {{ dirty ? 'Save or reset your configuration draft before re-rendering.' : 'Re-rendering runs the saved pipeline and replaces stored output without editing page source.' }}</p>
           <dl class="rendering-output-stats"><div><dt>HTML size</dt><dd>{{ (output.bytes / 1024).toFixed(1) }} <small>KiB</small></dd></div><div><dt>Headings</dt><dd>{{ output.headings.length }}</dd></div><div><dt>Internal links</dt><dd>{{ output.links.internal }}</dd></div><div><dt>Unresolved markers</dt><dd>{{ output.links.unresolved }}</dd></div><div><dt>Images / frames</dt><dd>{{ output.images }} / {{ output.frames }}</dd></div></dl>
           <div class="rendering-output-toolbar"><div class="rendering-segment" role="group" aria-label="Stored output view"><button v-for="mode in outputModes" :key="mode.key" :aria-pressed="outputMode === mode.key" @click="outputMode = mode.key">{{ mode.title }}</button></div><v-btn size="small" variant="text" prepend-icon="mdi-download" @click="exportOutput">Export HTML as text</v-btn></div>
@@ -111,7 +115,7 @@
         <v-alert v-if="saveError" type="error" variant="tonal" class="mt-4">{{ saveError }}<div><v-btn variant="text" size="small" :disabled="saving" @click="reloadReview">Reload saved configuration</v-btn></div></v-alert>
       </v-card-text><v-card-actions><v-btn variant="text" :disabled="saving" @click="reviewOpen = false">Cancel</v-btn><v-spacer /><v-btn variant="flat" color="primary" :loading="saving" :disabled="saving || errors.length > 0 || (issues.length > 0 && !acknowledged)" @click="save">Save configuration</v-btn></v-card-actions></v-card>
     </v-dialog>
-    <v-dialog v-model="renderReview" max-width="600" :persistent="rendering" aria-labelledby="rendering-run-title"><v-card class="rendering-review"><div class="rendering-review-heading"><span class="rendering-eyebrow">Run the saved pipeline</span><h3 id="rendering-run-title">Re-render this page?</h3><p>{{ output?.page.title }} will receive fresh stored output. Source, ownership and publication settings stay intact. Enabled provider modules may contact external services. Leaving this page does not cancel the server job.</p></div><v-card-actions><v-btn variant="text" :disabled="rendering" @click="renderReview = false">Cancel</v-btn><v-spacer /><v-btn variant="flat" color="primary" :loading="rendering" :disabled="rendering || dirty" @click="rerender">Re-render page</v-btn></v-card-actions></v-card></v-dialog>
+    <v-dialog v-model="renderReview" max-width="600" :persistent="rendering" aria-labelledby="rendering-run-title"><v-card class="rendering-review"><div class="rendering-review-heading"><span class="rendering-eyebrow">Run the saved pipeline</span><h3 id="rendering-run-title">Re-render this page?</h3><p>{{ output?.page.title }} will receive fresh stored output. Source, ownership and publication settings stay intact. Enabled provider modules may contact external services. Leaving this page does not cancel the server job.</p></div><v-card-actions><v-btn variant="text" :disabled="rendering" @click="renderReview = false">Cancel</v-btn><v-spacer /><v-btn variant="flat" color="primary" :loading="rendering" :disabled="rendering || renderPending || dirty" @click="rerender">Re-render page</v-btn></v-card-actions></v-card></v-dialog>
   </v-container>
 </template>
 <script lang="ts">
@@ -119,7 +123,7 @@ import AsyncState from '@/components/common/async-state.vue'
 import { buildRenderingPlan, formatTitle, rendererTitle, renderingIssues, renderingSettings, type RenderingModule, type RenderingOutput, type RenderingWorkspace } from '../../../shared/rendering-policy.ts'
 import { fetchRenderingOutput, fetchRenderingWorkspace, saveRenderingWorkspace } from '../../helpers/rendering-workspace-api.ts'
 import { fetchPageList, type PageListRow } from '../../helpers/pages-api.ts'
-import { renderPage } from '../../helpers/system-api.ts'
+import { fetchRenderPageStatus, renderPage, type RenderPageReceipt, type RenderPageStatus } from '../../helpers/system-api.ts'
 import { getErrorMessage } from '../../helpers/root-ui-store.ts'
 import { buildStoredOutputPreview } from '../../helpers/rendering-output-preview.ts'
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -133,11 +137,16 @@ export default {
       tabs: [{ key: 'modules', title: 'Modules' }, { key: 'pipeline', title: 'Pipeline' }, { key: 'output', title: 'Stored output' }],
       stateOptions: [{ title: 'All states', value: 'all' }, { title: 'Active', value: 'active' }, { title: 'Disabled', value: 'disabled' }, { title: 'Paused by core', value: 'paused' }, { title: 'Changed', value: 'changed' }],
       planMode: 'draft', planFormat: 'markdown', pageId: null as number | null, pages: [] as PageListRow[], pagesLoading: false, pagesLoaded: false, pagesError: '', outputLoading: false, outputError: '', outputSequence: 0, output: null as RenderingOutput | null,
-      outputMode: 'preview', outputModes: [{ key: 'preview', title: 'Structure preview' }, { key: 'html', title: 'HTML source' }, { key: 'outline', title: 'Outline & links' }], rendering: false, renderReview: false, renderNotice: '', renderNoticeFor: null as number | null, renderFailed: false
+      outputMode: 'preview', outputModes: [{ key: 'preview', title: 'Structure preview' }, { key: 'html', title: 'HTML source' }, { key: 'outline', title: 'Outline & links' }], rendering: false, renderReview: false, renderNotice: '', renderNoticeFor: null as number | null, renderFailed: false,
+      renderReceipt: null as RenderPageReceipt | null, renderStatus: null as RenderPageStatus | null, renderPollCount: 0, renderPollLimit: 12, renderPollTimer: null as ReturnType<typeof setTimeout> | null
     }
   },
   computed: {
     busy(): boolean { return this.saving || this.rendering },
+    renderPending(): boolean {
+      const status = this.renderStatus?.status
+      return Boolean(this.renderReceipt && (!status || status === 'pending' || status === 'leased'))
+    },
     dirty(): boolean { return Boolean(this.saved && !same(renderingSettings(this.saved.modules), renderingSettings(this.draft))) },
     current(): RenderingModule | undefined { return this.draft.find(module => module.key === this.selectedKey) },
     enabledCount(): number { return this.draft.filter(module => module.isEnabled).length },
@@ -211,23 +220,127 @@ export default {
       if (!id) return
       try { const result = await fetchRenderingOutput(id); if (this.disposed || sequence !== this.outputSequence) return; this.output = result } catch (error) { if (!this.disposed && sequence === this.outputSequence) this.outputError = getErrorMessage(error) } finally { if (!this.disposed && sequence === this.outputSequence) this.outputLoading = false }
     },
-    async rerender() {
-      if (!this.output || this.busy || this.dirty) return
-      const id = this.output.page.id; this.rendering = true; this.renderNotice = ''; this.renderNoticeFor = id; this.renderFailed = false
-      try { await renderPage(window.fetch.bind(window), id); if (this.disposed) return; this.renderNotice = 'The render worker finished. Check the stored output below.' } catch (error) { if (this.disposed) return; this.renderFailed = true; this.renderNotice = `The render request did not confirm completion: ${getErrorMessage(error)}. The server may still be processing it. Reload output before retrying.` } finally { if (!this.disposed) { this.rendering = false; this.renderReview = false; await this.inspectOutput() } }
+    clearRenderPoll() {
+      if (this.renderPollTimer !== null) {
+        clearTimeout(this.renderPollTimer)
+        this.renderPollTimer = null
+      }
     },
-    exportOutput() { if (!this.output) return; const url = URL.createObjectURL(new Blob([this.output.html], { type: 'text/plain;charset=utf-8' })), link = document.createElement('a'); link.href = url; link.download = `page-${this.output.page.id}-rendered-html.txt`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000) },
-    beforeUnload(event: BeforeUnloadEvent) { if (this.dirty || this.busy) { event.preventDefault(); event.returnValue = '' } }
+    async pollRenderStatus() {
+      const receipt = this.renderReceipt
+      if (this.disposed || !receipt) return
+      try {
+        const status = await fetchRenderPageStatus(window.fetch.bind(window), receipt.statusUrl)
+        if (this.disposed || this.renderReceipt?.effectId !== receipt.effectId) return
+        if (status.effectId !== receipt.effectId || status.pageId !== receipt.pageId || status.sourceRevision !== receipt.sourceRevision)
+          throw new Error('The server returned a different render receipt.')
+        this.renderStatus = status
+        if (status.status === 'succeeded') {
+          this.clearRenderPoll()
+          this.rendering = false
+          this.renderReview = false
+          this.renderFailed = false
+          this.renderNotice = 'The render completed. Stored output has been refreshed.'
+          await this.inspectOutput()
+          return
+        }
+        if (status.status === 'failed') {
+          this.clearRenderPoll()
+          this.rendering = false
+          this.renderReview = false
+          this.renderFailed = true
+          this.renderNotice = 'The render failed. Existing stored output was preserved; no replacement was written.'
+          return
+        }
+        if (status.status === 'superseded') {
+          this.clearRenderPoll()
+          this.rendering = false
+          this.renderReview = false
+          this.renderFailed = true
+          this.renderNotice = 'The render was superseded by a newer source revision. Existing stored output was preserved.'
+          return
+        }
+        if (this.renderPollCount >= this.renderPollLimit) {
+          this.clearRenderPoll()
+          this.rendering = false
+          this.renderFailed = true
+          this.renderNotice = 'The render is still accepted but its completion is not confirmed. Refresh status manually; no automatic retry will be submitted.'
+          return
+        }
+        this.renderPollCount += 1
+        this.clearRenderPoll()
+        this.renderPollTimer = setTimeout(() => {
+          this.renderPollTimer = null
+          void this.pollRenderStatus()
+        }, 2_000)
+      } catch (error) {
+        this.clearRenderPoll()
+        if (this.disposed || this.renderReceipt?.effectId !== receipt.effectId) return
+        this.rendering = false
+        this.renderReview = false
+        this.renderFailed = true
+        this.renderNotice = `The render was accepted, but its completion status is unknown: ${getErrorMessage(error)}. Refresh status manually; no automatic retry will be submitted.`
+      }
+    },
+    async refreshRenderStatus() {
+      if (!this.renderReceipt || this.rendering || this.disposed) return
+      this.renderPollCount = 0
+      this.renderFailed = false
+      this.renderNotice = 'Checking the render receipt…'
+      this.rendering = true
+      await this.pollRenderStatus()
+    },
+    async rerender() {
+      if (!this.output || this.busy || this.dirty || this.renderPending) return
+      const id = this.output.page.id
+      this.clearRenderPoll()
+      this.rendering = true
+      this.renderReview = true
+      this.renderNotice = ''
+      this.renderNoticeFor = id
+      this.renderFailed = false
+      this.renderReceipt = null
+      this.renderStatus = null
+      this.renderPollCount = 0
+      try {
+        const receipt = await renderPage(window.fetch.bind(window), id)
+        if (this.disposed) return
+        this.renderReceipt = receipt
+        this.renderNotice = 'The render was accepted and queued. It has not completed yet.'
+        this.renderReview = false
+        await this.pollRenderStatus()
+      } catch (error) {
+        if (this.disposed) return
+        this.rendering = false
+        this.renderReview = false
+        this.renderFailed = true
+        this.renderNotice = `The render request outcome is unknown: ${getErrorMessage(error)}. No automatic retry was submitted.`
+      }
+    },
+    exportOutput() {
+      if (!this.output) return
+      const url = URL.createObjectURL(new Blob([this.output.html], { type: 'text/plain;charset=utf-8' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `page-${this.output.page.id}-rendered-html.txt`
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1_000)
+    },
+    beforeUnload(event: BeforeUnloadEvent) {
+      if (this.dirty || this.busy || this.renderPending) {
+        event.preventDefault()
+        event.returnValue = ''
+      }
+    },
   },
   watch: {
     '$route.hash'(value: string) { const key = value.slice(1); if (this.tabs.some(tab => tab.key === key)) { this.section = key; if (key === 'output') this.loadPages() } },
     '$route.query.format'(value: unknown) { if (typeof value === 'string' && this.formats.includes(value)) this.planFormat = value },
-    '$route.query.module'(key: unknown) { if (typeof key === 'string' && this.draft.some(module => module.key === key)) this.selectedKey = key },
-    '$route.query.page'(value: unknown) { const id = Number(value); const next = Number.isSafeInteger(id) && id > 0 ? id : null; if (next !== this.pageId && !this.rendering) { this.pageId = next; this.inspectOutput() } }
+    '$route.query.page'(value: unknown) { const id = Number(value); const next = Number.isSafeInteger(id) && id > 0 ? id : null; if (next !== this.pageId && !this.rendering && !this.renderPending) { this.pageId = next; this.inspectOutput() } }
   },
-  beforeRouteLeave() { return !this.busy && (!this.dirty || window.confirm('Discard the unsaved rendering configuration?')) },
+  beforeRouteLeave() { return !this.busy && !this.renderPending && (!this.dirty || window.confirm('Discard the unsaved rendering configuration?')) },
   mounted() { const key = this.$route.hash.slice(1); if (this.tabs.some(tab => tab.key === key)) this.section = key; const selected = this.$route.query.module; if (typeof selected === 'string') this.selectedKey = selected; const format = this.$route.query.format; if (typeof format === 'string') this.planFormat = format; this.reload(); if (this.section === 'output') { this.loadPages(); const id = Number(this.$route.query.page); if (Number.isSafeInteger(id) && id > 0) { this.pageId = id; this.inspectOutput() } } window.addEventListener('beforeunload', this.beforeUnload) },
-  beforeUnmount() { this.disposed = true; this.outputSequence++; window.removeEventListener('beforeunload', this.beforeUnload) }
+  beforeUnmount() { this.disposed = true; this.clearRenderPoll(); this.outputSequence++; window.removeEventListener('beforeunload', this.beforeUnload) }
 }
 </script>
 <style lang="scss" scoped>
@@ -254,6 +367,7 @@ export default {
 .rendering-properties { display:grid; gap:1.3rem; padding:.6rem 0 1rem; max-width:740px; }
 .rendering-property { min-width:0; :deep(.v-input__details) { padding-inline:0; padding-top:.5rem; } :deep(.v-messages) { line-height:1.6; font-size:.72rem; } :deep(.v-switch .v-input__control) { min-height:38px; } }
 .rendering-property-note { display:block; font-size:.63rem; color:var(--render-muted); margin-top:.45rem; }
+.rendering-render-receipt { margin-top:.45rem; font-size:.68rem; color:var(--render-muted); overflow-wrap:anywhere; }
 .rendering-empty,.rendering-footnote { color:var(--render-muted); font-size:.74rem; line-height:1.8; margin:.8rem 0; }
 .rendering-module-issues { border-top:1px solid var(--render-border); margin-top:1rem; padding-top:.5rem; p { display:flex; align-items:flex-start; gap:.6rem; font-size:.74rem; line-height:1.7; color:var(--render-muted); margin:.7rem 0; } .is-error { color:rgb(var(--v-theme-error)); } }
 .rendering-behavior { background:rgba(var(--v-theme-on-surface),.035); border-radius:8px; padding:1rem; margin:1rem 0; p { font-size:.74rem; line-height:1.8; color:var(--render-muted); margin:.6rem 0 0; } }

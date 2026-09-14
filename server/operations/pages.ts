@@ -54,6 +54,7 @@ interface PageRecord extends Record<string, unknown> {
   visibility: PageVisibility
   ownerId: number | null
   isPublished: boolean
+  isSearchable: boolean
   tags: TagRecord[]
 }
 interface PageSourceRecord extends PageRecord {
@@ -253,8 +254,13 @@ interface WikiPageOperations {
       }
     }
     pageHistory: {
-      getHistory(input: { pageId: number; offsetPage: number; offsetSize: number; requester: Express.User | undefined }): unknown
-      getVersion(input: { pageId: number; versionId: number; requester: Express.User | undefined }): Promise<PageVersionRecord | undefined>
+      getHistory(input: { pageId: number; offsetPage: number; offsetSize: number; requester: Express.User | undefined; authority?: PageRuleAuthority }): unknown
+      getVersion(input: {
+        pageId: number
+        versionId: number
+        requester: Express.User | undefined
+        authority?: PageRuleAuthority
+      }): Promise<PageVersionRecord | undefined>
     }
   }
 }
@@ -279,6 +285,20 @@ const assertUnlocked = (input: OperationInput, pageId: number): Promise<void> =>
     sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
   })
 const wiki = WIKI as unknown as WikiPageOperations
+const normalizeDbBoolean = (value: unknown, fallback = false): boolean => {
+  if (value === true || value === 1) return true
+  if (value === false || value === 0) return false
+  return fallback
+}
+const normalizePageBooleans = <T extends PageRecord>(page: T): T => {
+  page.isPublished = normalizeDbBoolean(page.isPublished)
+  page.isSearchable = normalizeDbBoolean(page.isSearchable, true)
+  return page
+}
+const loadPageFromDb = async (input: Parameters<WikiPageOperations['models']['pages']['getPageFromDb']>[0]): Promise<PageSourceRecord | undefined> => {
+  const page = await wiki.models.pages.getPageFromDb(input)
+  return page === undefined ? undefined : normalizePageBooleans(page)
+}
 const positiveInteger = (value: unknown, label: string): number => {
   if (!Number.isSafeInteger(value) || (value as number) < 1) throw new ApplicationError(`${label} must be a positive integer`, { code: 'INVALID_INPUT' })
   return value as number
@@ -289,6 +309,11 @@ const nonNegativeInteger = (value: unknown, label: string): number => {
 }
 const stringValue = (value: unknown, label: string): string => {
   if (typeof value !== 'string') throw new ApplicationError(`${label} must be a string`, { code: 'INVALID_INPUT' })
+  return value
+}
+const optionalBoolean = (value: unknown, label: string): boolean | undefined => {
+  if (value === undefined) return undefined
+  if (typeof value !== 'boolean') throw new ApplicationError(`${label} must be a boolean`, { code: 'INVALID_INPUT' })
   return value
 }
 const expectedSourceRevision = (value: unknown): string | undefined => {
@@ -385,56 +410,59 @@ const list = async (input: OperationInput) => {
     if (resolved.some(tag => tag === null)) return []
     args.tags = resolved as string[]
   }
-  const pages = await wiki.models.pages
-    .query()
-    .column([
-      'pages.id',
-      'path',
-      { locale: 'localeCode' },
-      'title',
-      'description',
-      'isPublished',
-      'publishStartDate',
-      'publishEndDate',
-      'visibility',
-      'ownerId',
-      'contentType',
-      'createdAt',
-      'updatedAt'
-    ])
-    .withGraphFetched('tags')
-    .modifyGraph('tags', builder => {
-      builder.select('tag')
-    })
-    .modify(queryBuilder => {
-      scopePageQuery(queryBuilder, requester, { table: 'pages' })
-      if (args.limit) queryBuilder.limit(args.limit)
-      if (args.offset > 0) queryBuilder.offset(args.offset)
-      if (args.locale) queryBuilder.where('localeCode', args.locale)
-      if (args.creatorId && args.authorId && args.creatorId > 0 && args.authorId > 0) {
-        queryBuilder.where(builder => {
-          builder.where('creatorId', args.creatorId).orWhere('authorId', args.authorId)
-        })
-      } else {
-        if (args.creatorId && args.creatorId > 0) queryBuilder.where('creatorId', args.creatorId)
-        if (args.authorId && args.authorId > 0) queryBuilder.where('authorId', args.authorId)
-      }
-      if (args.tags && args.tags.length > 0) {
-        queryBuilder.whereExists(builder => {
-          builder
-            .select('pageTags.pageId')
-            .from('pageTags')
-            .join('tags', 'tags.id', 'pageTags.tagId')
-            .whereRaw('?? = ??', ['pageTags.pageId', 'pages.id'])
-            .whereIn('tags.tag', args.tags!)
-        })
-      }
-      const orderDirection = args.orderByDirection === 'DESC' ? 'desc' : 'asc'
-      const orderColumns = { CREATED: 'pages.createdAt', PATH: 'pages.path', TITLE: 'pages.title', UPDATED: 'pages.updatedAt' }
-      const orderColumn = orderColumns[args.orderBy as keyof typeof orderColumns] ?? 'pages.id'
-      queryBuilder.orderBy(orderColumn, orderDirection)
-      if (orderColumn !== 'pages.id') queryBuilder.orderBy('pages.id', 'asc')
-    })
+  const pages = (
+    await wiki.models.pages
+      .query()
+      .column([
+        'pages.id',
+        'path',
+        { locale: 'localeCode' },
+        'title',
+        'description',
+        'isPublished',
+        'isSearchable',
+        'publishStartDate',
+        'publishEndDate',
+        'visibility',
+        'ownerId',
+        'contentType',
+        'createdAt',
+        'updatedAt'
+      ])
+      .withGraphFetched('tags')
+      .modifyGraph('tags', builder => {
+        builder.select('tag')
+      })
+      .modify(queryBuilder => {
+        scopePageQuery(queryBuilder, requester, { table: 'pages' })
+        if (args.limit) queryBuilder.limit(args.limit)
+        if (args.offset > 0) queryBuilder.offset(args.offset)
+        if (args.locale) queryBuilder.where('localeCode', args.locale)
+        if (args.creatorId && args.authorId && args.creatorId > 0 && args.authorId > 0) {
+          queryBuilder.where(builder => {
+            builder.where('creatorId', args.creatorId).orWhere('authorId', args.authorId)
+          })
+        } else {
+          if (args.creatorId && args.creatorId > 0) queryBuilder.where('creatorId', args.creatorId)
+          if (args.authorId && args.authorId > 0) queryBuilder.where('authorId', args.authorId)
+        }
+        if (args.tags && args.tags.length > 0) {
+          queryBuilder.whereExists(builder => {
+            builder
+              .select('pageTags.pageId')
+              .from('pageTags')
+              .join('tags', 'tags.id', 'pageTags.tagId')
+              .whereRaw('?? = ??', ['pageTags.pageId', 'pages.id'])
+              .whereIn('tags.tag', args.tags!)
+          })
+        }
+        const orderDirection = args.orderByDirection === 'DESC' ? 'desc' : 'asc'
+        const orderColumns = { CREATED: 'pages.createdAt', PATH: 'pages.path', TITLE: 'pages.title', UPDATED: 'pages.updatedAt' }
+        const orderColumn = orderColumns[args.orderBy as keyof typeof orderColumns] ?? 'pages.id'
+        queryBuilder.orderBy(orderColumn, orderDirection)
+        if (orderColumn !== 'pages.id') queryBuilder.orderBy('pages.id', 'asc')
+      })
+  ).map(normalizePageBooleans)
 
   const accessiblePages = pages.filter(page => canReadPage(requester, page, authority)).map(page => ({ ...page, tags: page.tags.map(tag => tag.tag) }))
   if (args.tags && args.tags.length > 0) {
@@ -578,6 +606,7 @@ const listTags = async (requester?: Express.User, suppliedAuthority?: PageRuleAu
     .column(['path', { locale: 'localeCode' }, 'visibility', 'ownerId'])
     .modify(queryBuilder => {
       scopePageQuery(queryBuilder, requester, { table: 'pages' })
+      queryBuilder.where('pages.isSearchable', true)
     })
     .withGraphJoined('tags')
   const tags = pages.filter(page => canReadPage(requester, page, authority)).flatMap(page => page.tags)
@@ -595,6 +624,7 @@ const listRecent = async (requester?: Express.User, suppliedAuthority?: PageRule
     .column(['pages.id', 'path', { locale: 'localeCode' }, 'title', 'updatedAt', 'visibility', 'ownerId'])
     .modify(queryBuilder => {
       scopePageQuery(queryBuilder, requester, { table: 'pages' })
+      queryBuilder.where('pages.isSearchable', true)
     })
     .withGraphFetched('tags')
     .modifyGraph('tags', builder => {
@@ -622,6 +652,7 @@ const searchTags = async (input: OperationInput) => {
     })
     .modify(queryBuilder => {
       scopePageQuery(queryBuilder, requester, { table: 'pages' })
+      queryBuilder.where('pages.isSearchable', true)
       queryBuilder.whereExists(builder => {
         builder
           .select('pageTags.pageId')
@@ -645,7 +676,7 @@ const searchTags = async (input: OperationInput) => {
 const authorizedPageSource = async (input: OperationInput, suppliedAuthority?: PageRuleAuthority): Promise<PageSourceRecord> => {
   const requester = input.requester
   const authority = await authorityForInput(input, suppliedAuthority)
-  const page = await wiki.models.pages.getPageFromDb(positiveInteger(input.id, 'id'))
+  const page = await loadPageFromDb(positiveInteger(input.id, 'id'))
   if (!page || !canAccessCurrentPageSource(requester, page, authority)) {
     throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
   }
@@ -707,6 +738,7 @@ const getSource = async (
   description: string | null
   editor: string
   title: string
+  isSearchable: boolean
   brandingAssignment?: PageBrandingAssignment | null
 }> => {
   const authority = await authorityForInput(input, suppliedAuthority)
@@ -716,6 +748,7 @@ const getSource = async (
     content: page.content,
     description: typeof page.description === 'string' ? page.description : null,
     editor: page.editorKey,
+    isSearchable: page.isSearchable,
     title: page.title,
     ...(brandingAssignment === undefined ? {} : { brandingAssignment })
   }
@@ -726,7 +759,7 @@ const graphEligiblePages = async (requester: Express.User | undefined, suppliedA
     ...(suppliedAuthority === undefined ? {} : { authority: suppliedAuthority })
   }
   const authority = await authorityForInput(authorityInput, suppliedAuthority)
-  const [pages, protectedIds] = await Promise.all([
+  const [rawPages, protectedIds] = await Promise.all([
     wiki.models.pages
       .query()
       .column([
@@ -738,6 +771,7 @@ const graphEligiblePages = async (requester: Express.User | undefined, suppliedA
         'pages.visibility',
         'pages.ownerId',
         'pages.isPublished',
+        'pages.isSearchable',
         'pages.publishStartDate',
         'pages.publishEndDate',
         'pages.contentType',
@@ -749,10 +783,11 @@ const graphEligiblePages = async (requester: Express.User | undefined, suppliedA
         builder.select('tag')
       })
       .modify(builder => {
-        builder.where({ 'pages.visibility': 'public', 'pages.isPublished': true })
+        builder.where({ 'pages.visibility': 'public', 'pages.isPublished': true, 'pages.isSearchable': true })
       }),
     protectedPageIds()
   ])
+  const pages = rawPages.map(normalizePageBooleans)
   return new Map<number, PageRecord>(
     pages
       .filter(page => publicationWindowOpen(page) && canReadPage(requester, page, authority) && !protectedIds.has(page.id))
@@ -818,7 +853,7 @@ const listLinks = async (input: OperationInput) => {
       .leftJoin('pages as target', function () {
         this.on('target.localeCode', '=', 'pageLinks.localeCode').andOn('target.path', '=', 'pageLinks.path')
       })
-      .where({ 'pages.localeCode': locale, 'pages.visibility': 'public', 'pages.isPublished': true }),
+      .where({ 'pages.localeCode': locale, 'pages.visibility': 'public', 'pages.isPublished': true, 'pages.isSearchable': true }),
     succeededLinkReceiptKeys()
   ])
 
@@ -870,8 +905,7 @@ const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> =
   if (maxDepth !== undefined && maxDepth > 32) throw new ApplicationError('maxDepth must not exceed 32', { code: 'INVALID_INPUT', status: 400 })
 
   const source = await get({ ...input, id: pageId }, authority)
-  if (source.visibility !== 'public' || source.isPublished === false) return { pages: [], truncated: false, nextOffset: null }
-
+  if (source.visibility !== 'public' || source.isPublished === false || !source.isSearchable) return { pages: [], truncated: false, nextOffset: null }
   const pagesById = await graphEligiblePages(requester, authority)
   if (!pagesById.has(pageId)) return { pages: [], truncated: false, nextOffset: null }
 
@@ -888,8 +922,10 @@ const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> =
     .where({
       'source.visibility': 'public',
       'source.isPublished': true,
+      'source.isSearchable': true,
       'target.visibility': 'public',
-      'target.isPublished': true
+      'target.isPublished': true,
+      'target.isSearchable': true
     })
     .select({
       sourceId: 'source.id',
@@ -1004,7 +1040,7 @@ const getHistory = async (input: OperationInput) => {
   const id = positiveInteger(input.id, 'id')
   const offsetPage = input.offsetPage === undefined ? 0 : nonNegativeInteger(input.offsetPage, 'offsetPage')
   const offsetSize = input.offsetSize === undefined ? 100 : positiveInteger(input.offsetSize, 'offsetSize')
-  const page = await wiki.models.pages.getPageFromDb(id)
+  const page = await loadPageFromDb(id)
   if (!page || (page.visibility === 'private' && !canReadPage(requester, page, authority))) throw new wiki.Error.PageNotFound()
   await assertUnlocked(input, id)
   if (
@@ -1022,7 +1058,7 @@ const getHistory = async (input: OperationInput) => {
   ) {
     throw new wiki.Error.PageHistoryForbidden()
   }
-  return wiki.models.pageHistory.getHistory({ pageId: id, offsetPage, offsetSize, requester })
+  return wiki.models.pageHistory.getHistory({ pageId: id, offsetPage, offsetSize, requester, authority })
 }
 
 const getVersion = async (input: OperationInput): Promise<PageVersionProjection | undefined> => {
@@ -1055,7 +1091,7 @@ const getVersion = async (input: OperationInput): Promise<PageVersionProjection 
   ) {
     throw new wiki.Error.PageHistoryForbidden()
   }
-  const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester })
+  const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester, authority })
   if (!version) return version
   const extra = isRecord(version.extra) ? { ...version.extra } : {}
   const assignment = PageBrandingAssignmentSchema.safeParse(extra.branding)
@@ -1148,7 +1184,7 @@ const privateSearchFilters = ({
   ownerId?: number
   pageIds?: readonly number[]
 }): { filters: string[]; bindings: Knex.RawBinding[] } => {
-  const filters = ["page.visibility = 'private'"]
+  const filters = ["page.visibility = 'private'", 'page."isSearchable" = true']
   const bindings: Knex.RawBinding[] = []
   if (ownerId !== undefined) {
     filters.push('page."ownerId" = ?')
@@ -1332,25 +1368,26 @@ const searchPrivatePages = async ({
       ).rows
   const rankById = new Map(rows.map(row => [row.id, row]))
   const pageIds = [...rankById.keys()]
-  if (pageIds.length === 0) return []
-  const hydratedPages = await wiki.models.pages
-    .query()
-    .column(['pages.id', 'pages.sourceRevision', 'path', { locale: 'localeCode' }, 'title', 'description', 'visibility', 'ownerId'])
-    .withGraphJoined('tags')
-    .modifyGraph('tags', builder => {
-      builder.select('tag')
-    })
-    .modify(builder => {
-      builder.whereIn('pages.id', pageIds)
-      builder.andWhere('pages.visibility', 'private')
-      if (ownerId !== undefined) builder.andWhere('pages.ownerId', ownerId)
-      if (locale !== undefined) builder.andWhere('pages.localeCode', locale)
-      if (path !== undefined) {
-        builder.andWhere(pathScope => {
-          pathScope.where('pages.path', path).orWhere('pages.path', 'LIKE', `${escapeLikePattern(path)}/%`)
-        })
-      }
-    })
+  const hydratedPages = (
+    await wiki.models.pages
+      .query()
+      .column(['pages.id', 'pages.sourceRevision', 'pages.isSearchable', 'path', { locale: 'localeCode' }, 'title', 'description', 'visibility', 'ownerId'])
+      .withGraphJoined('tags')
+      .modifyGraph('tags', builder => {
+        builder.select('tag')
+      })
+      .modify(builder => {
+        builder.whereIn('pages.id', pageIds)
+        builder.andWhere('pages.visibility', 'private')
+        if (ownerId !== undefined) builder.andWhere('pages.ownerId', ownerId)
+        if (locale !== undefined) builder.andWhere('pages.localeCode', locale)
+        if (path !== undefined) {
+          builder.andWhere(pathScope => {
+            pathScope.where('pages.path', path).orWhere('pages.path', 'LIKE', `${escapeLikePattern(path)}/%`)
+          })
+        }
+      })
+  ).map(normalizePageBooleans)
   const pagesById = new Map(hydratedPages.map(page => [page.id, page]))
   return pageIds.flatMap(id => {
     const page = pagesById.get(id)
@@ -1473,35 +1510,38 @@ const search = async (input: OperationInput) => {
 
   const initialProtectedPageIds = await protectedPageIds()
   // Public authorization, publication, selected scope, and metadata-only protection are resolved before either bounded backend runs.
-  const eligiblePublicPages = await wiki.models.pages
-    .query()
-    .select(
-      'pages.id',
-      'pages.sourceRevision',
-      'pages.localeCode',
-      'pages.path',
-      'pages.title',
-      'pages.description',
-      'pages.visibility',
-      'pages.ownerId',
-      'pages.isPublished',
-      'pages.publishStartDate',
-      'pages.publishEndDate'
-    )
-    .withGraphJoined('tags')
-    .modifyGraph('tags', builder => {
-      builder.select('tag')
-    })
-    .modify(builder => {
-      builder.where({ visibility: 'public', isPublished: true })
-      if (locale !== undefined) builder.andWhere('pages.localeCode', locale)
-      if (path !== undefined) {
-        builder.andWhere(scope => {
-          scope.where('pages.path', path).orWhere('pages.path', 'LIKE', `${escapeLikePattern(path)}/%`)
-        })
-      }
-      if (selectedPageIds !== undefined) builder.whereIn('pages.id', selectedPageIds)
-    })
+  const eligiblePublicPages = (
+    await wiki.models.pages
+      .query()
+      .select(
+        'pages.id',
+        'pages.sourceRevision',
+        'pages.localeCode',
+        'pages.path',
+        'pages.title',
+        'pages.description',
+        'pages.visibility',
+        'pages.ownerId',
+        'pages.isPublished',
+        'pages.isSearchable',
+        'pages.publishStartDate',
+        'pages.publishEndDate'
+      )
+      .withGraphJoined('tags')
+      .modifyGraph('tags', builder => {
+        builder.select('tag')
+      })
+      .modify(builder => {
+        builder.where({ visibility: 'public', isPublished: true, isSearchable: true })
+        if (locale !== undefined) builder.andWhere('pages.localeCode', locale)
+        if (path !== undefined) {
+          builder.andWhere(scope => {
+            scope.where('pages.path', path).orWhere('pages.path', 'LIKE', `${escapeLikePattern(path)}/%`)
+          })
+        }
+        if (selectedPageIds !== undefined) builder.whereIn('pages.id', selectedPageIds)
+      })
+  ).map(normalizePageBooleans)
   const metadataEligibleProtectedIds = await matchingProtectedMetadataIds(
     query,
     eligiblePublicPages.filter(page => initialProtectedPageIds.has(page.id)).map(page => page.id)
@@ -1575,7 +1615,7 @@ const search = async (input: OperationInput) => {
 
   const publicResultIds = publicResponse.results.map(result => result.id)
   const candidatePageIds = [...new Set([...publicResultIds, ...knowledgeCandidates.map(candidate => candidate.id)])]
-  const livePages =
+  const rawLivePages =
     candidatePageIds.length === 0
       ? []
       : await wiki.models.pages
@@ -1590,6 +1630,7 @@ const search = async (input: OperationInput) => {
             'pages.visibility',
             'pages.ownerId',
             'pages.isPublished',
+            'pages.isSearchable',
             'pages.publishStartDate',
             'pages.publishEndDate'
           )
@@ -1600,6 +1641,7 @@ const search = async (input: OperationInput) => {
           .modify(builder => {
             builder.whereIn('pages.id', candidatePageIds)
           })
+  const livePages = rawLivePages.map(normalizePageBooleans)
   const livePagesById = new Map(livePages.map(page => [page.id, page]))
   const currentProtectedPageIds = await protectedPageIds()
   const currentProtectedMetadataIds = await matchingProtectedMetadataIds(
@@ -1624,6 +1666,7 @@ const search = async (input: OperationInput) => {
       page.path !== result.path ||
       indexedRevision !== liveRevision ||
       !page.isPublished ||
+      !page.isSearchable ||
       !publicationWindowOpen(page) ||
       !canReadPage(requester, page, authority) ||
       (currentProtectedPageIds.has(page.id) && !currentProtectedMetadataIds.has(page.id))
@@ -1648,7 +1691,12 @@ const search = async (input: OperationInput) => {
   const privateResults = privatePages.flatMap(page => {
     const sourceRevision = currentSourceRevision(page.sourceRevision)
     const metadataOnly = currentProtectedPageIds.has(page.id)
-    if (sourceRevision === undefined || (metadataOnly && !currentPrivateMetadataIds.has(page.id)) || !canReadPage(requester, page, authority)) {
+    if (
+      sourceRevision === undefined ||
+      !page.isSearchable ||
+      (metadataOnly && !currentPrivateMetadataIds.has(page.id)) ||
+      !canReadPage(requester, page, authority)
+    ) {
       return []
     }
     return [
@@ -1676,7 +1724,8 @@ const search = async (input: OperationInput) => {
       (selectedPageIds !== undefined && !selectedPageIds.includes(page.id)) ||
       currentProtectedPageIds.has(page.id) ||
       !canReadPage(requester, page, authority) ||
-      (page.visibility === 'public' && (!page.isPublished || !publicationWindowOpen(page)))
+      (page.visibility === 'public' && (!page.isPublished || !publicationWindowOpen(page))) ||
+      !page.isSearchable
     ) {
       return []
     }
@@ -1773,11 +1822,10 @@ const getByPath = async (input: OperationInput, suppliedAuthority?: PageRuleAuth
       })
       .limit(2)
     const [candidate] = candidates
-    if (candidates.length === 1 && candidate !== undefined && canReadPage(requester, candidate, authority))
-      page = await wiki.models.pages.getPageFromDb(candidate.id)
+    if (candidates.length === 1 && candidate !== undefined && canReadPage(requester, candidate, authority)) page = await loadPageFromDb(candidate.id)
   } else {
     const ownerId = visibility === 'private' ? principalId(requester) : null
-    page = await wiki.models.pages.getPageFromDb({ path, locale, visibility, ownerId })
+    page = await loadPageFromDb({ path, locale, visibility, ownerId })
   }
   if (!page || page.path !== path || page.localeCode !== locale || page.visibility !== visibility || !canAccessCurrentPageSource(requester, page, authority)) {
     throw new wiki.Error.PageNotFound()
@@ -1869,7 +1917,7 @@ const checkConflict = async (input: OperationInput) => {
   const authority = await authorityFor(input)
   const id = positiveInteger(input.id, 'id')
   if (!(input.checkoutDate instanceof Date)) throw new ApplicationError('checkoutDate must be a Date', { code: 'INVALID_INPUT' })
-  const page = await wiki.models.pages.getPageFromDb(id)
+  const page = await loadPageFromDb(id)
   if (!page || (page.visibility === 'private' && !canWritePage(requester, page, authority))) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, page, authority)) throw new wiki.Error.PageUpdateForbidden()
   return page.updatedAt > input.checkoutDate
@@ -1878,7 +1926,7 @@ const checkConflict = async (input: OperationInput) => {
 const getConflictLatest = async (input: OperationInput) => {
   const requester = input.requester
   const authority = await authorityFor(input)
-  const page = await wiki.models.pages.getPageFromDb(positiveInteger(input.id, 'id'))
+  const page = await loadPageFromDb(positiveInteger(input.id, 'id'))
   if (!page || (page.visibility === 'private' && !canWritePage(requester, page, authority))) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, page, authority)) throw new wiki.Error.PageViewForbidden()
   await assertUnlocked(input, page.id)
@@ -1888,6 +1936,7 @@ const getConflictLatest = async (input: OperationInput) => {
 
 const create = (input: OperationInput): unknown => {
   const payload = mutationPayload(input, ['ownerId', 'isPrivate', 'privateNS'])
+  if (payload.isSearchable !== undefined) payload.isSearchable = optionalBoolean(payload.isSearchable, 'isSearchable')
   if (isPageEditorKey(payload.editor) && !normalizeAvailableEditors(wiki.config.editors?.available).includes(payload.editor)) {
     throw new ApplicationError('The selected editor is not available for new pages.', { code: 'EDITOR_NOT_AVAILABLE' })
   }
@@ -1919,6 +1968,7 @@ const update = async (input: OperationInput): Promise<unknown> => {
   const replaceOkfMetadata = Object.hasOwn(operationInput, 'okfMetadata')
   const collaborationGeneration = expectedCollaborationGeneration(operationInput.expectedCollaborationGeneration)
   const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS', ...(replaceOkfMetadata ? [] : ['okfMetadata'])])
+  if (payload.isSearchable !== undefined) payload.isSearchable = optionalBoolean(payload.isSearchable, 'isSearchable')
   await assertUnlocked(input, positiveInteger(payload.id, 'id'))
   const brandingContext = Object.hasOwn(payload, 'branding')
     ? {
@@ -2012,7 +2062,7 @@ const authorizeMutation = async (input: OperationInput): Promise<void> => {
   }
   const rawId = kind === 'restore' ? operationInput.pageId : operationInput.id
   const pageId = positiveInteger(rawId, kind === 'restore' ? 'pageId' : 'id')
-  const page = await wiki.models.pages.getPageFromDb(pageId)
+  const page = await loadPageFromDb(pageId)
   if (!page) throw new wiki.Error.PageNotFound()
   const canMutate = kind === 'delete' ? canDeletePage(requester, page, authority) : canWritePage(requester, page, authority)
   if (page.visibility === 'private' && !canMutate) throw new wiki.Error.PageNotFound()
@@ -2027,7 +2077,7 @@ const authorizeMutation = async (input: OperationInput): Promise<void> => {
   if (kind === 'update' && operationInput.tags !== undefined) proposedTags = tagNames(operationInput.tags).map(tag => ({ tag }))
   if (kind === 'restore') {
     const versionId = positiveInteger(operationInput.versionId, 'versionId')
-    const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester })
+    const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester, authority })
     if (!version) throw new wiki.Error.PageNotFound()
     proposedTags = version.tags
   }
@@ -2094,13 +2144,13 @@ const restore = async (input: OperationInput): Promise<void> => {
   const versionId = positiveInteger(input.versionId, 'versionId')
   const expected = expectedSourceRevision(input.expectedSourceRevision)
   if (expected === undefined) throw new ApplicationError('expectedSourceRevision must be a non-empty string', { code: 'INVALID_INPUT' })
-  const page = await wiki.models.pages.getPageFromDb(pageId)
+  const page = await loadPageFromDb(pageId)
   if (!page || (page.visibility === 'private' && !canWritePage(requester, page, authority))) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, page, authority)) throw new wiki.Error.PageRestoreForbidden()
   if (String(Reflect.get(page, 'sourceRevision')) !== expected) {
     throw new ApplicationError('The page changed after history was opened. Reload history before restoring.', { code: 'PAGE_RESTORE_CONFLICT', status: 409 })
   }
-  const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester })
+  const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester, authority })
   if (!version) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, { ...page, tags: version.tags }, authority)) throw new wiki.Error.PageRestoreForbidden()
   const versionExtra = isRecord(version.extra) ? version.extra : {}
@@ -2119,6 +2169,7 @@ const restore = async (input: OperationInput): Promise<void> => {
         description: version.description,
         editor: version.editor,
         tags: version.tags,
+        isSearchable: normalizeDbBoolean(version.isSearchable, true),
         action: 'restored',
         expectedUpdatedAt: page.updatedAt instanceof Date ? page.updatedAt.toISOString() : page.updatedAt,
         expectedSourceRevision: String(Reflect.get(page, 'sourceRevision')),

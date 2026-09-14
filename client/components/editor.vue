@@ -74,9 +74,17 @@
           span(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.close') }}
         v-divider.editor-actions-divider.ml-3(v-if='$vuetify.display.mdAndUp', vertical)
     v-main
-      component(:is='currentEditor', :save='save', @collaboration-state='handleCollaborationState')
+      .editor-main-surface
+        v-alert.editor-bootstrap-notice(
+          v-if='bootstrapNotice'
+          type='warning'
+          variant='tonal'
+          role='alert'
+          aria-live='polite'
+        )
+          .text-body-medium {{ bootstrapNotice }}
+        component(:is='currentEditor', :save='save', @collaboration-state='handleCollaborationState')
       editor-modal-properties(v-if='dialogProps', v-model='dialogProps')
-      editor-modal-editorselect(v-if='dialogEditorSelector', v-model='dialogEditorSelector')
       editor-modal-unsaved(
         v-if='dialogUnsaved'
         v-model='dialogUnsaved'
@@ -233,6 +241,10 @@ export default defineComponent({
       type: Boolean,
       default: true
     },
+    isSearchable: {
+      type: Boolean,
+      default: true
+    },
     visibility: {
       type: String as PropType<'public' | 'private'>,
       default: 'public'
@@ -278,6 +290,10 @@ export default defineComponent({
       default: () => new Date().toISOString()
     },
     sourceRevision: {
+      type: String,
+      default: ''
+    },
+    bootstrapNotice: {
       type: String,
       default: ''
     },
@@ -336,6 +352,7 @@ export default defineComponent({
         content: '',
         description: '',
         isPublished: false,
+        isSearchable: true,
         visibility: 'public' as 'public' | 'private',
         locale: 'en',
         path: '',
@@ -383,6 +400,7 @@ export default defineComponent({
         this.savedState.description !== wikiStore.page.description ||
         !_.isEqual(this.savedState.tags, wikiStore.page.tags) ||
         this.savedState.isPublished !== wikiStore.page.isPublished ||
+        this.savedState.isSearchable !== wikiStore.page.isSearchable ||
         this.savedState.visibility !== wikiStore.page.visibility ||
         this.savedState.publishStartDate !== wikiStore.page.publishStartDate ||
         this.savedState.publishEndDate !== wikiStore.page.publishEndDate ||
@@ -414,6 +432,7 @@ export default defineComponent({
     wikiStore.page.id = this.pageId
     wikiStore.page.description = this.description
     wikiStore.page.isPublished = this.isPublished
+    wikiStore.page.isSearchable = this.isSearchable
     wikiStore.page.visibility = this.visibility
     wikiStore.page.ownerId = this.ownerId
     wikiStore.page.publishStartDate = this.publishStartDate
@@ -527,6 +546,7 @@ export default defineComponent({
         this.applyHydratedBranding(page, expectedBrandingAssignment)
         wikiStore.page.okf = page.okf
         wikiStore.page.sourceRevision = page.sourceRevision
+        wikiStore.page.isSearchable = page.isSearchable !== false
         this.setCurrentSavedState()
       } catch (err) {
         wikiStore.page.okfError = getErrorMessage(err)
@@ -541,6 +561,7 @@ export default defineComponent({
         const page = await fetchPage(window.fetch.bind(window), this.pageId, this.$t('common:error.unexpected'))
         this.applyHydratedBranding(page, expectedBrandingAssignment)
         wikiStore.page.okf = page.okf
+        wikiStore.page.isSearchable = page.isSearchable !== false
         wikiStore.page.sourceRevision = page.sourceRevision
       } catch (err) {
         wikiStore.page.okfError = getErrorMessage(err)
@@ -755,6 +776,7 @@ export default defineComponent({
         locale: wikiStore.page.locale,
         visibility: wikiStore.page.visibility,
         isPublished: wikiStore.page.isPublished,
+        isSearchable: wikiStore.page.isSearchable,
         path: wikiStore.page.path,
         publishEndDate: wikiStore.page.publishEndDate || '',
         publishStartDate: wikiStore.page.publishStartDate || '',
@@ -771,6 +793,7 @@ export default defineComponent({
         content: wikiStore.editor.content,
         description: wikiStore.page.description,
         isPublished: wikiStore.page.isPublished,
+        isSearchable: wikiStore.page.isSearchable,
         visibility: wikiStore.page.visibility,
         locale: wikiStore.page.locale,
         path: wikiStore.page.path,
@@ -789,6 +812,7 @@ export default defineComponent({
       wikiStore.editor.content = this.savedState.content
       wikiStore.page.description = this.savedState.description
       wikiStore.page.isPublished = this.savedState.isPublished
+      wikiStore.page.isSearchable = this.savedState.isSearchable
       wikiStore.page.visibility = this.savedState.visibility
       wikiStore.page.locale = this.savedState.locale
       wikiStore.page.path = this.savedState.path
@@ -862,6 +886,23 @@ export default defineComponent({
       min-width: 0;
       flex: 1 1 auto;
     }
+  }
+  .editor-main-surface {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .editor-bootstrap-notice {
+    flex: none;
+    margin: var(--wiki-space-4) clamp(var(--wiki-space-4), 4vw, var(--wiki-space-8)) 0;
+  }
+
+  .editor-main-surface > :last-child {
+    min-width: 0;
+    flex: 1 1 auto;
   }
 
   &-title-input {

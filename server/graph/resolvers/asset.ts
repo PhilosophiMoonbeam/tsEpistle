@@ -23,7 +23,8 @@ interface CreateFolderArgs {
 }
 interface RenameAssetArgs {
   id: number
-  filename: string
+  filename?: string | null
+  folderId?: number | null
 }
 interface DeleteAssetArgs {
   id: number
@@ -39,6 +40,74 @@ const normalizeRequester = (user: Express.User): Requester => {
     name: user.name,
     email: user.email
   }
+}
+const invalidRelocationInput = (): Error => {
+  const error = new Error('Asset filename or folderId is required.')
+  Object.assign(error, { name: 'ASSET_RELOCATION_INPUT', status: 400 })
+  return error
+}
+
+const isObjectRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const mapRelocationError = (value: unknown): unknown => {
+  const record = isObjectRecord(value) ? value : undefined
+  const name = record?.name
+  if (typeof name !== 'string') return value
+  let status: number | undefined
+  let message: string | undefined
+  switch (name) {
+    case 'AssetInvalid':
+      status = 404
+      message = 'This asset does not exist or is invalid.'
+      break
+    case 'AssetRenameInvalid':
+      status = 400
+      message = 'The new asset filename is invalid.'
+      break
+    case 'AssetRenameInvalidExt':
+      status = 400
+      message = 'The file extension cannot be changed on an existing asset.'
+      break
+    case 'AssetRenameCollision':
+      status = 409
+      message = 'Asset relocation cannot use the requested location.'
+      break
+    case 'AssetRenameForbidden':
+    case 'AssetRenameTargetForbidden':
+      status = 403
+      message = 'You are not authorized to relocate this asset.'
+      break
+    default:
+      return value
+  }
+  const mapped = new Error(message)
+  mapped.name = name
+  const code = record?.code
+  const numericCode = typeof code === 'number' ? code : undefined
+  Object.assign(mapped, { status, ...(numericCode === undefined ? {} : { code: numericCode }) })
+  return mapped
+}
+
+const relocationStatuses: Record<string, true> = {
+  pending: true,
+  leased: true,
+  succeeded: true,
+  failed: true,
+  superseded: true
+}
+const boundedReceiptField = (value: unknown, fallback: string, limit: number): string => {
+  if (typeof value !== 'string' || value.length === 0) return fallback
+  return value.replace(/[\r\n]/g, ' ').slice(0, limit)
+}
+
+const relocationReceiptMessage = (receipt: unknown): string => {
+  const record = typeof receipt === 'object' && receipt !== null ? receipt : {}
+  const rawStatus = boundedReceiptField(Reflect.get(record, 'status'), 'unknown', 32)
+  const status = Object.hasOwn(relocationStatuses, rawStatus) ? rawStatus : 'unknown'
+  const id = boundedReceiptField(Reflect.get(record, 'id'), 'unavailable', 128)
+  const rawStatusUrl = boundedReceiptField(Reflect.get(record, 'statusUrl'), 'unavailable', 256)
+  const statusUrl = rawStatusUrl.startsWith('/_api/assets/relocations/') ? rawStatusUrl : 'the authorized relocation status endpoint'
+  return `Asset relocation accepted. Current status: ${status}. Receipt: ${id}. Status URL: ${statusUrl}`
 }
 
 export default {
@@ -81,15 +150,17 @@ export default {
       }
     },
     async renameAsset(_obj: unknown, args: RenameAssetArgs, context: ResolverContext) {
+      if (args.filename === undefined && args.folderId === undefined) return graphHelper.generateError(invalidRelocationInput())
       try {
-        await assetOperations.rename({
+        const receipt = await assetOperations.relocate({
           requester: normalizeRequester(context.req.user),
           id: args.id,
-          filename: args.filename
+          ...(args.filename === undefined ? {} : { filename: args.filename }),
+          ...(args.folderId === undefined ? {} : { folderId: args.folderId })
         })
-        return { responseResult: graphHelper.generateSuccess('Asset has been renamed successfully.') }
+        return { responseResult: graphHelper.generateSuccess(relocationReceiptMessage(receipt)) }
       } catch (err: unknown) {
-        return graphHelper.generateError(err)
+        return graphHelper.generateError(mapRelocationError(err))
       }
     },
     async deleteAsset(_obj: unknown, args: DeleteAssetArgs, context: ResolverContext) {

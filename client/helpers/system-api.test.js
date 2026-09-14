@@ -1,4 +1,4 @@
-import { fetchSystemHost, fetchSystemInfo, fetchSystemSummary, performSystemUpgrade, renderPage } from './system-api.ts'
+import { fetchRenderPageStatus, fetchSystemHost, fetchSystemInfo, fetchSystemSummary, performSystemUpgrade, renderPage } from './system-api.ts'
 
 const response = (payload, ok = true) => ({
   ok,
@@ -65,18 +65,33 @@ describe('system api helper', () => {
     )
   })
 
-  test('uses same-origin JSON requests for retained page rendering and upgrade endpoints', async () => {
+  test('uses same-origin JSON requests for render admission/status and upgrade endpoints', async () => {
     const requests = []
+    const receipt = {
+      message: 'Page render accepted.',
+      effectId: 'effect-42',
+      pageId: 42,
+      sourceRevision: '7',
+      statusUrl: '/_api/system/content/render-page/status/effect-42'
+    }
+    const status = { effectId: 'effect-42', pageId: 42, sourceRevision: '7', status: 'succeeded', result: {}, postcondition: {} }
     const fetchImpl = async (input, init) => {
       requests.push({ input, init })
+      if (input === receipt.statusUrl) return response(status)
+      if (input === '/_api/system/content/render-page') return response(receipt)
       return response({ message: 'accepted' })
     }
-    await expect(renderPage(fetchImpl, 42)).resolves.toEqual({ message: 'accepted' })
+    await expect(renderPage(fetchImpl, 42)).resolves.toEqual(receipt)
+    await expect(fetchRenderPageStatus(fetchImpl, receipt.statusUrl)).resolves.toEqual(status)
     await expect(performSystemUpgrade(fetchImpl)).resolves.toEqual({ message: 'accepted' })
     expect(requests).toEqual([
       {
         input: '/_api/system/content/render-page',
         init: expect.objectContaining({ method: 'POST', credentials: 'same-origin', body: JSON.stringify({ id: 42 }) })
+      },
+      {
+        input: receipt.statusUrl,
+        init: expect.objectContaining({ method: 'GET', credentials: 'same-origin' })
       },
       {
         input: '/_api/system/upgrade',

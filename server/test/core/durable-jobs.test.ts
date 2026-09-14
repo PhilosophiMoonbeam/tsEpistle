@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts
 import { DurableJobStore, runDurableJobBatch } from '../../core/durable-jobs.ts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { up as addDurableJobLeaseToken } from '../../db/migrations/2.5.158.ts'
-import { cleanupDurableJobs } from '../../jobs/durable-job-handlers.ts'
+// Asset relocation captures WIKI during module initialization, so seed the test fixture before loading the handler registry.
+global.WIKI = {}
+const { cleanupDurableJobs } = await import('../../jobs/durable-job-handlers.ts')
 import { createContentExtensionRerenderHandler } from '../../jobs/content-extension-rerender.ts'
 import type { ContentExtensionRerenderContext } from '../../content-extensions/rerender.ts'
 
@@ -460,5 +462,49 @@ describe('portable durable jobs', () => {
 
     expect(await knex('durableJobs').where('type', 'old-job')).toEqual([])
     expect(pool.numUsed()).toBe(usedBefore)
+  })
+
+  it('retains old unresolved asset relocation evidence and reservations', async () => {
+    const oldDate = new Date('2026-01-01T00:00:00.000Z')
+    await knex.schema.createTable('assetRelocationEffects', table => {
+      table.uuid('id').primary()
+      table.uuid('jobId').notNullable().references('id').inTable('durableJobs').onDelete('CASCADE')
+      table.string('status', 16).notNullable()
+    })
+    const unresolvedJobId = '00000000-0000-4000-8000-000000000002'
+    const resolvedJobId = '00000000-0000-4000-8000-000000000003'
+    const durableJob = (id: string, type: string, state: 'failed' | 'succeeded') => ({
+      id,
+      type,
+      version: 1,
+      payload: '{}',
+      state,
+      attempts: 1,
+      maxAttempts: 1,
+      nextRunAt: oldDate,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      lastError: state === 'failed' ? 'failed' : null,
+      deduplicationKey: null,
+      createdAt: oldDate,
+      updatedAt: oldDate,
+      completedAt: oldDate
+    })
+    await knex('durableJobs').insert([
+      durableJob(unresolvedJobId, 'asset-relocation', 'failed'),
+      durableJob(resolvedJobId, 'asset-relocation', 'succeeded')
+    ])
+    await knex('assetRelocationEffects').insert([
+      { id: '00000000-0000-4000-8000-000000000012', jobId: unresolvedJobId, status: 'failed' },
+      { id: '00000000-0000-4000-8000-000000000013', jobId: resolvedJobId, status: 'succeeded' }
+    ])
+
+    const proofJob = await store.enqueue({ type: 'cleanup-durable-jobs', version: 1, payload: {} })
+    await cleanupDurableJobs(proofJob, { knex, signal: new AbortController().signal })
+
+    expect(await knex('durableJobs').where({ id: unresolvedJobId })).toHaveLength(1)
+    expect(await knex('assetRelocationEffects').where({ jobId: unresolvedJobId })).toHaveLength(1)
+    expect(await knex('durableJobs').where({ id: resolvedJobId })).toHaveLength(0)
+    expect(await knex('assetRelocationEffects').where({ jobId: resolvedJobId })).toHaveLength(0)
   })
 })

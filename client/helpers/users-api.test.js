@@ -10,7 +10,9 @@ import {
   verifyAdminUser,
   setAdminUserTfa,
   fetchUserDetails,
-  updateProfilePreferences
+  updateProfilePreferences,
+  uploadProfileAvatar,
+  removeProfileAvatar
 } from './users-api.ts'
 
 function createJsonResponse(payload, ok = true) {
@@ -524,6 +526,9 @@ describe('users api helper', () => {
         location: 'Tallinn',
         jobTitle: 'Architect',
         timezone: 'Europe/Tallinn',
+        dateFormat: 'YYYY-MM-DD',
+        timeFormat: '24h',
+        appearance: 'dark',
         isSystem: false,
         isActive: true,
         isVerified: true,
@@ -549,6 +554,9 @@ describe('users api helper', () => {
       location: 'Tallinn',
       jobTitle: 'Architect',
       timezone: 'Europe/Tallinn',
+      dateFormat: 'YYYY-MM-DD',
+      timeFormat: '24h',
+      appearance: 'dark',
       isSystem: false,
       isActive: true,
       isVerified: true,
@@ -590,6 +598,9 @@ describe('users api helper', () => {
         location: 'Tallinn',
         jobTitle: 'Architect',
         timezone: 'Europe/Tallinn',
+        dateFormat: 'YYYY-MM-DD',
+        timeFormat: '24h',
+        appearance: 'dark',
         isSystem: false,
         isActive: true,
         isVerified: true,
@@ -644,5 +655,64 @@ describe('users api helper', () => {
     })
 
     await expect(Promise.resolve(searchUsers(fetchImpl, 'alice', 'Bad user search'))).rejects.toThrow('a user search admin permission is required')
+  })
+  test('uploads a profile avatar as multipart form data without overriding the browser content type', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        message: 'Profile avatar updated successfully.',
+        pictureUrl: 'internal'
+      })
+    )
+    const file = new File([Buffer.from('avatar')], 'avatar.png', { type: 'image/png' })
+
+    await expect(uploadProfileAvatar(fetchImpl, file)).resolves.toEqual({
+      message: 'Profile avatar updated successfully.',
+      pictureUrl: 'internal'
+    })
+
+    const [url, options] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/_api/users/profile/avatar')
+    expect(options).toMatchObject({
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' }
+    })
+    expect(options.headers).not.toHaveProperty('Content-Type')
+    expect(options.body).toBeInstanceOf(FormData)
+    const uploadedImage = options.body.get('image')
+    expect(uploadedImage).toBeInstanceOf(File)
+    expect(uploadedImage).toMatchObject({
+      name: 'avatar.png',
+      type: 'image/png',
+      size: Buffer.byteLength('avatar')
+    })
+    expect(Buffer.from(await uploadedImage.arrayBuffer())).toEqual(Buffer.from('avatar'))
+  })
+
+  test('removes a profile avatar with the authenticated same-origin DELETE request', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        message: 'Profile avatar removed successfully.',
+        pictureUrl: null
+      })
+    )
+
+    await expect(removeProfileAvatar(fetchImpl)).resolves.toEqual({
+      message: 'Profile avatar removed successfully.',
+      pictureUrl: null
+    })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/users/profile/avatar', {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' }
+    })
+  })
+
+  test('rejects malformed avatar mutation responses and preserves API errors', async () => {
+    const malformed = vi.fn().mockResolvedValue(createJsonResponse({ message: 'done', pictureUrl: 'internal', token: 'unexpected' }))
+    await expect(uploadProfileAvatar(malformed, new File([Buffer.from('avatar')], 'avatar.png'), 'Bad avatar response')).rejects.toThrow('Bad avatar response')
+
+    const failed = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Avatar image is invalid or could not be decoded.' }, false))
+    await expect(removeProfileAvatar(failed)).rejects.toThrow('Avatar image is invalid or could not be decoded.')
   })
 })

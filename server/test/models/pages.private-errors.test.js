@@ -19,6 +19,7 @@ const privatePage = {
   localeCode: 'en',
   visibility: 'private',
   ownerId: 7,
+  isSearchable: true,
   editorKey: 'markdown',
   tags: privatePageTags,
   $relatedQuery: vi.fn(async (relation, _transaction) => relation === 'tags' ? privatePageTags : [])
@@ -44,9 +45,9 @@ describe('private page mutation existence isolation', () => {
             localeCode: 'en',
             path: 'secret',
             visibility: 'private',
+            isSearchable: true,
             ownerId: 7
           }),
-          update: vi.fn().mockResolvedValue(1)
         }
       }
       if (table === 'pageAccessPasswords') {
@@ -836,7 +837,8 @@ describe('private page mutation existence isolation', () => {
       sourceRevision: '1',
       title: 'Docs',
       updatedAt: null,
-      visibility: 'public'
+      visibility: 'public',
+      isSearchable: true
     }
     const duplicateQuery = {
       select: vi.fn().mockReturnValue({
@@ -905,13 +907,14 @@ describe('private page mutation existence isolation', () => {
         table.integer('creatorId').notNullable()
         table.string('editorKey').notNullable()
         table.string('contentType').notNullable()
-        table.text('content').notNullable()
         table.boolean('isPublished').notNullable()
+        table.boolean('isSearchable').notNullable().defaultTo(true)
+        table.text('content').notNullable()
         table.string('publishStartDate').notNullable()
         table.string('publishEndDate').notNullable()
         table.string('toc').notNullable()
         table.text('extra').notNullable()
-        table.string('sourceRevision').notNullable().defaultTo('1')
+        table.bigInteger('sourceRevision').notNullable().defaultTo(1)
         table.dateTime('createdAt').nullable()
         table.dateTime('updatedAt').nullable()
       })
@@ -1011,7 +1014,8 @@ describe('private page mutation existence isolation', () => {
       ownerId: 7,
       path: 'docs',
       updatedAt: null,
-      visibility: 'private'
+      visibility: 'private',
+      isSearchable: true
     }
     const duplicateQuery = {
       select: vi.fn().mockReturnValue({

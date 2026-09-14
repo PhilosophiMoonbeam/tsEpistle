@@ -4,6 +4,7 @@ const systemOperations = {
   checkForUpdate: vi.fn(),
   getHost: vi.fn(),
   getInfo: vi.fn(),
+  getRenderPageStatus: vi.fn(),
   getSummary: vi.fn(),
   performUpgrade: vi.fn(),
   renderPage: vi.fn()
@@ -36,6 +37,42 @@ describe('system API clean cutover', () => {
     extensionsStore.inspect.mockResolvedValue({})
     observations.inspect.mockResolvedValue({ observedAt: '2026-09-10T00:00:00.000Z' })
     await vi.importFresh('../../controllers/api/system.ts', import.meta.url)
+  })
+  it('returns an accepted render receipt after passing the explicit requester to admission', async () => {
+    const receipt = {
+      message: 'Page render accepted.',
+      effectId: 'effect-42',
+      pageId: 42,
+      sourceRevision: '7',
+      statusUrl: '/_api/system/content/render-page/status/effect-42'
+    }
+    systemOperations.renderPage.mockResolvedValue(receipt)
+    const res = response()
+    await handler('post', '/content/render-page')({ user: systemUser, body: { id: 42 } }, res)
+    expect(systemOperations.renderPage).toHaveBeenCalledWith({ id: 42, requester: { user: systemUser } })
+    expect(res.status).toHaveBeenCalledWith(202)
+    expect(res.json).toHaveBeenCalledWith(receipt)
+  })
+
+  it('returns private render status only after the route authorization gate', async () => {
+    const status = { effectId: 'effect-42', pageId: 42, sourceRevision: '7', status: 'pending', result: null, postcondition: null }
+    systemOperations.getRenderPageStatus.mockResolvedValue(status)
+    const res = response()
+    await handler('get', '/content/render-page/status/:effectId')({ user: systemUser, params: { effectId: 'effect-42' } }, res)
+    expect(systemOperations.getRenderPageStatus).toHaveBeenCalledWith({
+      effectId: 'effect-42',
+      requester: { user: systemUser }
+    })
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
+    expect(res.json).toHaveBeenCalledWith(status)
+  })
+
+  it('does not query a render receipt for an unauthorized status caller', async () => {
+    configureTransportRuntime({ auth: { checkAccess: vi.fn(() => false), getEffectivePermissions: vi.fn() } })
+    const res = response()
+    await handler('get', '/content/render-page/status/:effectId')({ user: { id: 4 }, params: { effectId: 'effect-42' } }, res)
+    expect(systemOperations.getRenderPageStatus).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(403)
   })
 
 

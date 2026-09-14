@@ -100,8 +100,25 @@ export const syncProtectedPageAssets = async (knex: Knex | Knex.Transaction, pag
   const protection = await knex<ProtectionRow>('pageAccessPasswords').where({ pageId }).first()
   if (!protection) return
   const paths = extractProtectedAssetPaths(content, render)
+  const hasAssetIdentity = typeof knex.schema?.hasColumn === 'function' && (await knex.schema.hasColumn('pageProtectedAssets', 'assetId'))
+  const existingQuery = knex('pageProtectedAssets').where({ pageId })
+  const existing = (await (hasAssetIdentity ? existingQuery.select('assetPath', 'assetId') : existingQuery.select('assetPath'))) as Array<{
+    assetPath: string
+    assetId?: number | null
+  }>
+  const previousIds = new Map(existing.map(link => [link.assetPath, link.assetId ?? null]))
   await knex('pageProtectedAssets').where({ pageId }).delete()
-  if (paths.length > 0) await knex('pageProtectedAssets').insert(paths.map(assetPath => ({ pageId, assetPath })))
+  if (paths.length === 0) return
+  const hashes = paths.map(path => assetHelper.generateHash(path))
+  const assets = (await knex<{ id: number; hash: string }>('assets').whereIn('hash', hashes).select('id', 'hash')) as Array<{ id: number; hash: string }>
+  const idsByHash = new Map(assets.map(asset => [asset.hash, asset.id]))
+  await knex('pageProtectedAssets').insert(
+    paths.map(assetPath => ({
+      pageId,
+      assetPath,
+      ...(hasAssetIdentity ? { assetId: idsByHash.get(assetHelper.generateHash(assetPath)) ?? previousIds.get(assetPath) ?? null } : {})
+    }))
+  )
 }
 
 export const redactProtectedPageForSearch = async <T extends { id: number; safeContent?: string }>(page: T): Promise<T> => {
@@ -245,14 +262,26 @@ export const assertPageUnlocked = async (input: {
   }
   if (await pageRequiresUnlock(input)) throw new ApplicationError('Access denied', { status: 403, code: 'PAGE_LOCKED' })
 }
-
 export const protectedAssetRequiresUnlock = async (input: { requester: PagePrincipal; assetPath: string; sessionId: string; now?: Date }): Promise<boolean> => {
   if (managesSystem(input.requester)) return false
-  const links = await wiki.models.knex<{ pageId: number; assetPath: string }>('pageProtectedAssets').where({ assetPath: input.assetPath }).select('pageId')
-  const pageIds = new Set<number>(links.map(link => link.pageId))
-
+  const hasAssetIdentity =
+    typeof wiki.models.knex.schema?.hasColumn === 'function' && (await wiki.models.knex.schema.hasColumn('pageProtectedAssets', 'assetId'))
+  const linksQuery = wiki.models.knex('pageProtectedAssets').where({ assetPath: input.assetPath })
+  const links = (await (hasAssetIdentity ? linksQuery.select('pageId', 'assetId') : linksQuery.select('pageId'))) as Array<{
+    pageId: number
+    assetId?: number | null
+  }>
+  const pageIds = new Set<number>(links.map(link => Number(link.pageId)).filter(pageId => Number.isSafeInteger(pageId) && pageId > 0))
   const asset = await wiki.models.knex<{ id: number }>('assets').where('hash', assetHelper.generateHash(input.assetPath)).first('id')
   const assetId = asset && Number.isSafeInteger(asset.id) && asset.id > 0 ? asset.id : null
+  if (hasAssetIdentity && assetId !== null) {
+    await wiki.models.knex('pageProtectedAssets').where({ assetPath: input.assetPath }).whereNull('assetId').update({ assetId })
+    const identityLinks = await wiki.models.knex<{ pageId: number }>('pageProtectedAssets').where('assetId', assetId).select('pageId')
+    for (const link of identityLinks) {
+      const pageId = Number(link.pageId)
+      if (Number.isSafeInteger(pageId) && pageId > 0) pageIds.add(pageId)
+    }
+  }
 
   if (assetId !== null) {
     const protectedPages = await wiki.models

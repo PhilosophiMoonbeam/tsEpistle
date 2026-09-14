@@ -1,4 +1,6 @@
 import { assertSavedPassword } from '../helpers/password-policy.ts'
+import { resolveUserPresentation } from '../helpers/user-presentation.ts'
+import { isUserDateFormat, isUserTimeFormat, type UserTimeFormat } from '../../shared/user-presentation.ts'
 import { newPasswordIssue } from '../../shared/security-policy.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import bcrypt from 'bcryptjs-then'
@@ -81,7 +83,7 @@ const reasonValue = (value: unknown): string =>
   typeof value === 'string' && value.trim().length >= 3 && value.trim().length <= 1000
     ? value.trim()
     : fail('Add an administrative reason of 3–1,000 characters.')
-const profileValue = (value: unknown): AccountProfileDraft => {
+const profileValue = (value: unknown, allowUnsetTimezone = false): AccountProfileDraft => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fail('Enter account profile details.')
   const v = value as Record<string, unknown>
   if (['name', 'email', 'location', 'jobTitle', 'timezone'].some(key => typeof v[key] !== 'string') || !Array.isArray(v.groups))
@@ -94,7 +96,7 @@ const profileValue = (value: unknown): AccountProfileDraft => {
     timezone: String(v.timezone),
     groups: v.groups as number[]
   }
-  const issues = accountProfileIssues(profile)
+  const issues = accountProfileIssues(profile).filter(issue => !(allowUnsetTimezone && profile.timezone === '' && issue === 'Choose a valid time zone.'))
   if (issues.length) return fail(issues.join(' '))
   return { ...profile, groups: [...profile.groups].sort((a, b) => a - b) }
 }
@@ -353,8 +355,18 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
       return creationOptions(allGroups, await providers(db), actor)
     },
     async create(requester: PagePrincipal, input: Record<string, unknown>) {
-      const next = profileValue(input.profile),
+      const next = profileValue(input.profile, true),
         reason = reasonValue(input.reason)
+      let dateFormat: string | undefined
+      let timeFormat: UserTimeFormat | undefined
+      if (input.dateFormat !== undefined) {
+        if (!isUserDateFormat(input.dateFormat)) return fail('Choose a supported date format.')
+        dateFormat = input.dateFormat
+      }
+      if (input.timeFormat !== undefined) {
+        if (!isUserTimeFormat(input.timeFormat)) return fail('Choose a supported time format.')
+        timeFormat = input.timeFormat
+      }
       if (typeof input.providerKey !== 'string' || typeof input.isVerified !== 'boolean' || typeof input.mustChangePassword !== 'boolean')
         return fail('Choose a sign-in provider and account verification settings.')
       const local = input.providerKey === 'local'
@@ -378,16 +390,21 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
         await tx.raw('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', [`account-create:${provider.key}:${next.email}`])
         if (await tx('users').where('providerKey', provider.key).whereRaw('LOWER(??) = ?', ['email', next.email]).first('id'))
           return fail('This email address already belongs to an account with that provider.', 409)
+        const presentationOverrides = {
+          ...(next.timezone !== '' ? { timezone: next.timezone } : {}),
+          ...(dateFormat !== undefined ? { dateFormat } : {}),
+          ...(timeFormat !== undefined ? { timeFormat } : {})
+        }
+        const presentation = await resolveUserPresentation(tx, presentationOverrides)
         if (local) await assertSavedPassword(tx, input.password)
         const now = new Date()
         const [created] = await tx('users')
           .insert({
             providerKey: provider.key,
             name: next.name,
-            email: next.email,
             location: next.location,
             jobTitle: next.jobTitle,
-            timezone: next.timezone,
+            ...presentation,
             password,
             isActive: true,
             isSystem: false,
@@ -546,9 +563,12 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
       const password = replacingPassword ? await bcrypt.hash(String(input.password), 12) : undefined
       const presentation: Record<string, string> = {}
       if (input.dateFormat !== undefined) {
-        if (!['', 'DD/MM/YYYY', 'DD.MM.YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD', 'YYYY/MM/DD'].includes(String(input.dateFormat)))
-          return fail('Choose a valid date format.')
-        presentation.dateFormat = String(input.dateFormat)
+        if (!isUserDateFormat(input.dateFormat)) return fail('Choose a valid date format.')
+        presentation.dateFormat = input.dateFormat
+      }
+      if (input.timeFormat !== undefined) {
+        if (!isUserTimeFormat(input.timeFormat)) return fail('Choose a valid time format.')
+        presentation.timeFormat = input.timeFormat
       }
       if (input.appearance !== undefined) {
         if (!['', 'light', 'dark', 'system'].includes(String(input.appearance))) return fail('Choose a valid appearance.')

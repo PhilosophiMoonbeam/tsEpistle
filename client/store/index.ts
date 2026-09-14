@@ -2,7 +2,7 @@ import { createPinia, defineStore } from 'pinia'
 import { sameOriginJsonFetch } from '../helpers/json-transport.ts'
 import type { PageOkfView } from '../helpers/pages-api.ts'
 import type { SystemSummary } from '../helpers/system-api.ts'
-import { normalizeUserFontFamily } from '../../shared/user-presentation.ts'
+import { isUserTimeFormat, normalizeUserFontFamily, type UserTimeFormat } from '../../shared/user-presentation.ts'
 import type { PageBrandingAssignment, PageBrandingView } from '../../shared/page-branding.ts'
 export type Notification = {
   message: string
@@ -20,6 +20,7 @@ const defaultUser = () => ({
   defaultEditor: '',
   timezone: '',
   dateFormat: '',
+  timeFormat: 'locale' as UserTimeFormat,
   appearance: '',
   fontFamily: normalizeUserFontFamily(undefined),
   permissions: [] as string[],
@@ -94,6 +95,7 @@ export const useWikiStore = defineStore('wiki', {
       createdAt: '',
       description: '',
       isPublished: true,
+      isSearchable: true,
       visibility: 'public' as 'public' | 'private',
       ownerId: null as number | null,
       locale: 'en',
@@ -232,6 +234,7 @@ export const useWikiStore = defineStore('wiki', {
             localeCode: typeof profile.localeCode === 'string' ? profile.localeCode : '',
             defaultEditor: typeof profile.defaultEditor === 'string' ? profile.defaultEditor : '',
             timezone: typeof profile.timezone === 'string' ? profile.timezone : '',
+            timeFormat: isUserTimeFormat(profile.timeFormat) ? profile.timeFormat : 'locale',
             dateFormat: typeof profile.dateFormat === 'string' ? profile.dateFormat : '',
             appearance: typeof profile.appearance === 'string' ? profile.appearance : '',
             fontFamily: normalizeUserFontFamily(profile.fontFamily),

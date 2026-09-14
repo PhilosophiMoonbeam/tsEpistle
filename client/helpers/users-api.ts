@@ -1,6 +1,7 @@
+import { isUserDateFormat, isUserTimeFormat } from '../../shared/user-presentation.ts'
+import type { ProfilePreferencesInput, UserTimeFormat } from '../../shared/user-presentation.ts'
 import { sameOriginJsonFetch } from './json-transport.ts'
-import { isRecord } from './type-guards'
-import type { ProfilePreferencesInput } from '../../shared/user-presentation.ts'
+import { isRecord } from './type-guards.ts'
 
 type JsonResponse = { ok: boolean; headers?: { get: (name: string) => string | null }; json: () => Promise<unknown> }
 type FetchImpl = (url: string, init: RequestInit) => Promise<JsonResponse>
@@ -54,6 +55,9 @@ export type CreateAdminUserInput = {
   passwordRaw: string
   name: string
   groups: number[]
+  timezone?: string
+  dateFormat?: string
+  timeFormat?: UserTimeFormat
   mustChangePassword: boolean
   sendWelcomeEmail: boolean
 }
@@ -66,6 +70,9 @@ export type UpdateAdminUserInput = {
   location: string
   jobTitle: string
   timezone: string
+  dateFormat?: string
+  timeFormat?: UserTimeFormat
+  appearance?: string
 }
 
 export type AdminUserDetail = {
@@ -73,6 +80,9 @@ export type AdminUserDetail = {
   name: string
   email: string
   providerKey: string
+  dateFormat: string
+  timeFormat: UserTimeFormat
+  appearance: string
   providerName: string
   providerId: string | null
   providerIs2FACapable: boolean
@@ -240,6 +250,17 @@ function normalizeUserDetail(payload: unknown, fallbackMessage: string): AdminUs
   ) {
     throw new Error(fallbackMessage)
   }
+  const dateFormat = payload.dateFormat === undefined ? '' : payload.dateFormat
+  const timeFormat = payload.timeFormat === undefined ? 'locale' : payload.timeFormat
+  const appearance = payload.appearance === undefined ? '' : payload.appearance
+  if (
+    typeof dateFormat !== 'string' ||
+    !isUserDateFormat(dateFormat) ||
+    typeof timeFormat !== 'string' ||
+    !isUserTimeFormat(timeFormat) ||
+    typeof appearance !== 'string'
+  )
+    throw new Error(fallbackMessage)
   if (payload.providerId !== null && typeof payload.providerId !== 'string') {
     throw new Error(fallbackMessage)
   }
@@ -266,10 +287,13 @@ function normalizeUserDetail(payload: unknown, fallbackMessage: string): AdminUs
     providerKey: payload.providerKey,
     providerName: payload.providerName,
     providerId: payload.providerId,
+    timezone: payload.timezone,
+    dateFormat,
+    timeFormat,
+    appearance,
     providerIs2FACapable: payload.providerIs2FACapable,
     location: payload.location,
     jobTitle: payload.jobTitle,
-    timezone: payload.timezone,
     isSystem: payload.isSystem,
     isActive: payload.isActive,
     isVerified: payload.isVerified,
@@ -524,12 +548,14 @@ export type Profile = {
   handle: string
   providerKey: string
   providerName: string
+  pictureUrl: string | null
   isSystem: boolean
   isVerified: boolean
   location: string
   jobTitle: string
   timezone: string
   dateFormat: string
+  timeFormat: UserTimeFormat
   appearance: string
   createdAt: string
   updatedAt: string
@@ -545,6 +571,7 @@ type ProfileUpdateInput = {
   jobTitle: string
   timezone: string
   dateFormat: string
+  timeFormat: UserTimeFormat
   appearance: string
 }
 
@@ -561,6 +588,7 @@ function normalizeProfile(payload: unknown, fallbackMessage: string): Profile {
     typeof payload.handle !== 'string' ||
     typeof payload.providerKey !== 'string' ||
     typeof payload.providerName !== 'string' ||
+    (payload.pictureUrl !== null && typeof payload.pictureUrl !== 'string') ||
     typeof payload.isSystem !== 'boolean' ||
     typeof payload.isVerified !== 'boolean' ||
     typeof payload.location !== 'string' ||
@@ -576,12 +604,15 @@ function normalizeProfile(payload: unknown, fallbackMessage: string): Profile {
   ) {
     throw new Error(fallbackMessage)
   }
+  const timeFormat = payload.timeFormat === undefined ? 'locale' : payload.timeFormat
+  if (typeof timeFormat !== 'string' || !isUserTimeFormat(timeFormat)) throw new Error(fallbackMessage)
   return {
     id: payload.id,
     email: payload.email,
     name: payload.name,
     handle: payload.handle,
     providerKey: payload.providerKey,
+    pictureUrl: payload.pictureUrl as string | null,
     providerName: payload.providerName,
     isSystem: payload.isSystem,
     isVerified: payload.isVerified,
@@ -589,6 +620,7 @@ function normalizeProfile(payload: unknown, fallbackMessage: string): Profile {
     jobTitle: payload.jobTitle,
     timezone: payload.timezone,
     dateFormat: payload.dateFormat,
+    timeFormat,
     appearance: payload.appearance,
     createdAt: payload.createdAt,
     updatedAt: payload.updatedAt,
@@ -604,6 +636,52 @@ export async function fetchProfile(fetchImpl: FetchImpl, fallbackMessage = 'Prof
     headers: { Accept: 'application/json' }
   })
   return normalizeProfile(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
+export type ProfileAvatarMutationResult = {
+  message: string
+  pictureUrl: string | null
+}
+
+function normalizeProfileAvatarMutation(payload: unknown, fallbackMessage: string): ProfileAvatarMutationResult {
+  if (
+    !isRecord(payload) ||
+    typeof payload.message !== 'string' ||
+    payload.message.length < 1 ||
+    (payload.pictureUrl !== null && typeof payload.pictureUrl !== 'string') ||
+    'token' in payload ||
+    'jwt' in payload
+  )
+    throw new Error(fallbackMessage)
+  return {
+    message: payload.message,
+    pictureUrl: payload.pictureUrl as string | null
+  }
+}
+
+export async function uploadProfileAvatar(
+  fetchImpl: FetchImpl,
+  file: File,
+  fallbackMessage = 'Profile avatar upload failed'
+): Promise<ProfileAvatarMutationResult> {
+  const form = new FormData()
+  form.append('image', file, file.name)
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/users/profile/avatar', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
+    body: form
+  })
+  return normalizeProfileAvatarMutation(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+}
+
+export async function removeProfileAvatar(fetchImpl: FetchImpl, fallbackMessage = 'Profile avatar removal failed'): Promise<ProfileAvatarMutationResult> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/users/profile/avatar', {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  })
+  return normalizeProfileAvatarMutation(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
 async function sendProfileRequest(fetchImpl: FetchImpl, path: string, method: string, body: unknown, fallbackMessage: string): Promise<string> {

@@ -23,13 +23,11 @@ import {
   stripAssetBrandingMetadataRecord
 } from '../helpers/asset-branding.ts'
 import type { AssetBrandingMetadata } from '../../shared/page-branding.ts'
-import {
-  boundedImportAssetLimit,
-  validateUploadLimit
-} from '../modules/storage/import-budget.ts'
+import { boundedImportAssetLimit, validateUploadLimit } from '../modules/storage/import-budget.ts'
 import type { StorageAssetIdentity, StorageLocalLocation } from '../modules/types.ts'
 import { isStorageInternalPath, isStorageReservedPath } from '../modules/storage/internal-path.ts'
 import { openStorageRoot, type StorageFileHandle, type StorageRootHandle } from '../modules/storage/local-filesystem.ts'
+import { assertAssetLocationAssetSettled, assertAssetLocationReservations, lockAssetLocation, withAssetLocationLocks } from '../helpers/asset-location-lock.ts'
 
 const uploadFlights = new Map<string, Promise<void>>()
 
@@ -74,24 +72,23 @@ interface SourceHandle {
   relativePath: string
 }
 
-const storageRootPath = (name: 'cache' | 'uploads'): string =>
-  path.resolve(wiki.ROOTPATH, wiki.config.dataPath, name)
+const storageRootPath = (name: 'cache' | 'uploads'): string => path.resolve(wiki.ROOTPATH, wiki.config.dataPath, name)
 
-const isMissing = (value: unknown): boolean =>
-  typeof value === 'object' && value !== null && 'code' in value && value.code === 'ENOENT'
+const isMissing = (value: unknown): boolean => typeof value === 'object' && value !== null && 'code' in value && value.code === 'ENOENT'
 
-const isDeniedAssetPath = (assetPath: string): boolean =>
-  isStorageInternalPath(assetPath) || isStorageReservedPath(assetPath)
+const isDeniedAssetPath = (assetPath: string): boolean => isStorageInternalPath(assetPath) || isStorageReservedPath(assetPath)
 
 const isValidAssetIdentityField = (asset: Partial<Asset>): asset is Pick<Asset, 'id' | 'hash' | 'filename' | 'folderId'> => {
   const { id, folderId } = asset
-  return typeof id === 'number' &&
+  return (
+    typeof id === 'number' &&
     Number.isSafeInteger(id) &&
     id > 0 &&
     typeof asset.hash === 'string' &&
     typeof asset.filename === 'string' &&
     asset.filename.length > 0 &&
     (folderId === null || (typeof folderId === 'number' && Number.isSafeInteger(folderId) && folderId >= 0))
+  )
 }
 
 const relativeStoragePath = (rootPath: string, candidatePath: string): string => {
@@ -102,7 +99,7 @@ const relativeStoragePath = (rootPath: string, candidatePath: string): string =>
   return relative
 }
 
-async function openAssetSource (filePath: string, mode: string, expectedSize: number): Promise<SourceHandle> {
+async function openAssetSource(filePath: string, mode: string, expectedSize: number): Promise<SourceHandle> {
   if (!Number.isSafeInteger(expectedSize) || expectedSize < 0) throw new RangeError('Asset source size must be a non-negative safe integer')
   const rootPath = mode === 'upload' ? storageRootPath('uploads') : path.dirname(filePath)
   await mkdir(rootPath, { recursive: true, mode: 0o700 })
@@ -117,7 +114,7 @@ async function openAssetSource (filePath: string, mode: string, expectedSize: nu
   }
 }
 
-async function stageAssetSource (source: StorageFileHandle, maxBytes: number): Promise<{ directory: string; path: string }> {
+async function stageAssetSource(source: StorageFileHandle, maxBytes: number): Promise<{ directory: string; path: string }> {
   const directory = await mkdtemp(path.join(tmpdir(), 'wiki-asset-upload-'))
   try {
     await chmod(directory, 0o700)
@@ -136,7 +133,7 @@ async function stageAssetSource (source: StorageFileHandle, maxBytes: number): P
   }
 }
 
-async function withStorageRoot<T> (rootPath: string, operation: (root: StorageRootHandle) => Promise<T>): Promise<T> {
+async function withStorageRoot<T>(rootPath: string, operation: (root: StorageRootHandle) => Promise<T>): Promise<T> {
   await mkdir(rootPath, { recursive: true, mode: 0o700 })
   const root = await openStorageRoot(rootPath)
   try {
@@ -151,7 +148,7 @@ interface ByteRange {
   end: number
 }
 
-function parseByteRange (value: unknown, size: number): ByteRange | null | undefined {
+function parseByteRange(value: unknown, size: number): ByteRange | null | undefined {
   if (typeof value !== 'string' || value.length === 0) return undefined
   if (!value.startsWith('bytes=')) return null
   const ranges = value.slice('bytes='.length).split(',')
@@ -175,7 +172,7 @@ function parseByteRange (value: unknown, size: number): ByteRange | null | undef
   return { start, end: Math.min(end, size - 1) }
 }
 
-async function sendAssetBuffer (data: Buffer, res: Response): Promise<void> {
+async function sendAssetBuffer(data: Buffer, res: Response): Promise<void> {
   const request = res.req
   const range = parseByteRange(request?.headers?.range, data.byteLength)
   if (range === null) {
@@ -185,7 +182,8 @@ async function sendAssetBuffer (data: Buffer, res: Response): Promise<void> {
   if (range === undefined) {
     res.set('Content-Length', String(data.byteLength))
   } else {
-    res.status(206)
+    res
+      .status(206)
       .set('Content-Range', `bytes ${range.start}-${range.end}/${data.byteLength}`)
       .set('Content-Length', String(range.end - range.start + 1))
   }
@@ -196,7 +194,7 @@ async function sendAssetBuffer (data: Buffer, res: Response): Promise<void> {
   res.send(range === undefined ? data : data.subarray(range.start, range.end + 1))
 }
 
-async function sendAssetFile (source: StorageFileHandle, res: Response): Promise<void> {
+async function sendAssetFile(source: StorageFileHandle, res: Response): Promise<void> {
   const range = parseByteRange(res.req?.headers?.range, source.stats.size)
   if (range === null) {
     res.status(416).set('Content-Range', `bytes */${source.stats.size}`).end()
@@ -233,11 +231,11 @@ export default class Asset extends Model {
   declare createdAt: string
   declare updatedAt: string
 
-  static override get tableName () {
+  static override get tableName() {
     return 'assets'
   }
 
-  static override get jsonSchema () {
+  static override get jsonSchema() {
     return {
       type: 'object',
       properties: {
@@ -255,7 +253,7 @@ export default class Asset extends Model {
     }
   }
 
-  static override get relationMappings () {
+  static override get relationMappings() {
     return {
       author: {
         relation: Model.BelongsToOneRelation,
@@ -270,29 +268,35 @@ export default class Asset extends Model {
     }
   }
 
-  async getAssetPath (): Promise<string> {
+  async getAssetPath(): Promise<string> {
     const hierarchy = this.folderId ? await wiki.models.assetFolders.getHierarchy(this.folderId) : []
     return this.folderId ? `${hierarchy.map(folder => folder.slug).join('/')}/${this.filename}` : this.filename
   }
 
-  async deleteAssetCache (): Promise<void> {
+  static async deleteAssetCaches(hashes: readonly string[]): Promise<void> {
+    const uniqueHashes = [...new Set(hashes.filter(hash => typeof hash === 'string' && hash.length > 0))]
+    if (uniqueHashes.length === 0) return
     await withStorageRoot(storageRootPath('cache'), async root => {
-      await root.removeFile(`${this.hash}.dat`)
+      for (const hash of uniqueHashes) await root.removeFile(`${hash}.dat`)
     })
   }
 
-  override async $beforeUpdate (opt: ModelOptions, context: QueryContext): Promise<void> {
+  async deleteAssetCache(): Promise<void> {
+    await Asset.deleteAssetCaches([this.hash])
+  }
+
+  override async $beforeUpdate(opt: ModelOptions, context: QueryContext): Promise<void> {
     await super.$beforeUpdate(opt, context)
     this.updatedAt = moment.utc().toISOString()
   }
 
-  override async $beforeInsert (context: QueryContext): Promise<void> {
+  override async $beforeInsert(context: QueryContext): Promise<void> {
     await super.$beforeInsert(context)
     this.createdAt = moment.utc().toISOString()
     this.updatedAt = moment.utc().toISOString()
   }
 
-  static async upload (opts: UploadOptions): Promise<void> {
+  static async upload(opts: UploadOptions): Promise<void> {
     const configuredLimit = validateUploadLimit(wiki.config?.uploads?.maxFileSize)
     const modeLimit = opts.mode === 'upload' ? configuredLimit : boundedImportAssetLimit(configuredLimit)
     if (opts.maxBytes !== undefined && (!Number.isSafeInteger(opts.maxBytes) || opts.maxBytes < 0)) {
@@ -311,88 +315,103 @@ export default class Asset extends Model {
       folderId: opts.folderId
     }
 
-    await enqueueAssetUpload(fileHash, async () => {
-      const source = await openAssetSource(opts.path, opts.mode, opts.size)
-      let stagedDirectory: string | undefined
-      try {
-        const staged = await stageAssetSource(source.file, maxBytes)
-        stagedDirectory = staged.directory
-        if (wiki.config.uploads.scanSVG && (opts.mimetype.toLowerCase().startsWith('image/svg') || fileInfo.ext.toLowerCase() === '.svg')) {
-          const svgSanitizeJob = await wiki.scheduler.registerJob({ name: 'sanitize-svg', immediate: true, worker: true }, staged.path)
-          await svgSanitizeJob.finished
-        }
-
-        const fileBuffer = await withStorageRoot(staged.directory, async root => {
-          const stagedFile = await root.openFile('asset')
+    await withAssetLocationLocks(
+      ['assets', opts.assetPath],
+      async assertHeld => {
+        await assertHeld?.()
+        return enqueueAssetUpload(fileHash, async () => {
+          await assertHeld?.()
+          const source = await openAssetSource(opts.path, opts.mode, opts.size)
+          let stagedDirectory: string | undefined
           try {
-            return await stagedFile.readBounded(maxBytes)
-          } finally {
-            await stagedFile.close()
-          }
-        })
-        const insertedRow = { ...assetRow, authorId: opts.user.id }
-        const updatedRow = { ...(opts.mode === 'upload' ? insertedRow : assetRow), updatedAt: moment.utc().toISOString() }
-        let reservation: AssetBrandingAnalysisReservation | undefined
-        try {
-          const persisted = await wiki.models.knex.transaction(async transaction => {
-            const current = (await transaction('assets').where({ hash: fileHash }).forUpdate().first('id', 'metadata')) as
-              | { id: number; metadata?: unknown }
-              | undefined
-            let branding: AssetBrandingMetadata | undefined
-            if (current && hasAssetBrandingMetadata(current.metadata)) {
-              reservation = reserveAssetBrandingAnalysis(current.id)
-              branding = await analyzeAssetBranding(fileBuffer)
+            const staged = await stageAssetSource(source.file, maxBytes)
+            stagedDirectory = staged.directory
+            if (wiki.config.uploads.scanSVG && (opts.mimetype.toLowerCase().startsWith('image/svg') || fileInfo.ext.toLowerCase() === '.svg')) {
+              const svgSanitizeJob = await wiki.scheduler.registerJob({ name: 'sanitize-svg', immediate: true, worker: true }, staged.path)
+              await svgSanitizeJob.finished
             }
-            const persistedAsset = (await wiki.models.assets.query(transaction).insert(insertedRow).onConflict('hash').merge(updatedRow).returning('*')) as Asset
-            const metadata = stripAssetBrandingMetadataRecord(current?.metadata)
-            if (branding) metadata.branding = branding
-            await transaction('assets').where({ id: persistedAsset.id }).update({ metadata: JSON.stringify(metadata) })
-            await transaction('assetData').insert({ id: persistedAsset.id, data: fileBuffer }).onConflict('id').merge({ data: fileBuffer })
-            return { asset: persistedAsset }
-          })
 
-          await withStorageRoot(storageRootPath('cache'), async root => {
-            await root.writeAtomic(`${fileHash}.dat`, fileBuffer)
-          })
-          if (opts.mode === 'upload') await source.root.removeFile(source.relativePath)
-
-          if (!opts.skipStorage) {
-            await wiki.models.storage.assetEvent({
-              event: 'uploaded',
-              asset: {
-                ...persisted.asset,
-                metadata: stripAssetBrandingMetadata(persisted.asset.metadata),
-                path: await persisted.asset.getAssetPath(),
-                data: fileBuffer,
-                authorId: opts.user.id,
-                authorName: opts.user.name,
-                authorEmail: opts.user.email
+            const fileBuffer = await withStorageRoot(staged.directory, async root => {
+              const stagedFile = await root.openFile('asset')
+              try {
+                return await stagedFile.readBounded(maxBytes)
+              } finally {
+                await stagedFile.close()
               }
             })
+            const insertedRow = { ...assetRow, authorId: opts.user.id }
+            const updatedRow = { ...(opts.mode === 'upload' ? insertedRow : assetRow), updatedAt: moment.utc().toISOString() }
+            let reservation: AssetBrandingAnalysisReservation | undefined
+            try {
+              const persisted = await wiki.models.knex.transaction(async transaction => {
+                await lockAssetLocation(transaction, opts.assetPath)
+                await assertAssetLocationReservations(transaction, [opts.assetPath])
+                const current = (await transaction('assets').where({ hash: fileHash }).forUpdate().first('id', 'metadata')) as
+                  | { id: number; metadata?: unknown }
+                  | undefined
+                if (current) await assertAssetLocationAssetSettled(transaction, current.id)
+                let branding: AssetBrandingMetadata | undefined
+                if (current && hasAssetBrandingMetadata(current.metadata)) {
+                  reservation = reserveAssetBrandingAnalysis(current.id)
+                  branding = await analyzeAssetBranding(fileBuffer)
+                }
+                const persistedAsset = (await wiki.models.assets
+                  .query(transaction)
+                  .insert(insertedRow)
+                  .onConflict('hash')
+                  .merge(updatedRow)
+                  .returning('*')) as Asset
+                const metadata = stripAssetBrandingMetadataRecord(current?.metadata)
+                if (branding) metadata.branding = branding
+                await transaction('assets')
+                  .where({ id: persistedAsset.id })
+                  .update({ metadata: JSON.stringify(metadata) })
+                await transaction('assetData').insert({ id: persistedAsset.id, data: fileBuffer }).onConflict('id').merge({ data: fileBuffer })
+                return { asset: persistedAsset }
+              })
+              await assertHeld?.()
+
+              await withStorageRoot(storageRootPath('cache'), async root => {
+                await root.writeAtomic(`${fileHash}.dat`, fileBuffer)
+              })
+              if (opts.mode === 'upload') await source.root.removeFile(source.relativePath)
+
+              if (!opts.skipStorage) {
+                await wiki.models.storage.assetEvent({
+                  event: 'uploaded',
+                  asset: {
+                    ...persisted.asset,
+                    metadata: stripAssetBrandingMetadata(persisted.asset.metadata),
+                    path: await persisted.asset.getAssetPath(),
+                    data: fileBuffer,
+                    authorId: opts.user.id,
+                    authorName: opts.user.name,
+                    authorEmail: opts.user.email
+                  }
+                })
+              }
+              await assertHeld?.()
+            } finally {
+              releaseAssetBrandingAnalysis(reservation)
+            }
+          } finally {
+            if (stagedDirectory) await rm(stagedDirectory, { recursive: true, force: true })
+            await source.file.close()
+            await source.root.close()
           }
-        } finally {
-          releaseAssetBrandingAnalysis(reservation)
-        }
-      } finally {
-        if (stagedDirectory) await rm(stagedDirectory, { recursive: true, force: true })
-        await source.file.close()
-        await source.root.close()
-      }
-    })
+        })
+      },
+      wiki.models.knex
+    )
   }
 
-  private static async resolveAssetIdentity (assetPath: string): Promise<StorageAssetIdentity | null> {
+  private static async resolveAssetIdentity(assetPath: string): Promise<StorageAssetIdentity | null> {
     if (isDeniedAssetPath(assetPath)) return null
     const requestedHash = assetHelper.generateHash(assetPath)
-    const asset = await wiki.models.assets.query().where('hash', requestedHash).first() as Asset | undefined
+    const asset = (await wiki.models.assets.query().where('hash', requestedHash).first()) as Asset | undefined
     if (!asset || !isValidAssetIdentityField(asset) || asset.hash !== requestedHash) return null
-    if (
-      asset.filename.includes('/') ||
-      asset.filename.includes('\\') ||
-      asset.filename.includes('\0') ||
-      asset.filename === '.' ||
-      asset.filename === '..'
-    ) return null
+    if (asset.filename.includes('/') || asset.filename.includes('\\') || asset.filename.includes('\0') || asset.filename === '.' || asset.filename === '..')
+      return null
 
     let hierarchy: Array<{ slug: string }> = []
     if (asset.folderId !== null && asset.folderId !== 0) {
@@ -403,19 +422,21 @@ export default class Asset extends Model {
         throw error
       }
     }
-    if (!hierarchy.every(folder =>
-      typeof folder.slug === 'string' &&
-      folder.slug.length > 0 &&
-      folder.slug !== '.' &&
-      folder.slug !== '..' &&
-      !folder.slug.includes('/') &&
-      !folder.slug.includes('\\') &&
-      !folder.slug.includes('\0')
-    )) return null
+    if (
+      !hierarchy.every(
+        folder =>
+          typeof folder.slug === 'string' &&
+          folder.slug.length > 0 &&
+          folder.slug !== '.' &&
+          folder.slug !== '..' &&
+          !folder.slug.includes('/') &&
+          !folder.slug.includes('\\') &&
+          !folder.slug.includes('\0')
+      )
+    )
+      return null
 
-    const canonicalPath = hierarchy.length === 0
-      ? asset.filename
-      : `${hierarchy.map(folder => folder.slug).join('/')}/${asset.filename}`
+    const canonicalPath = hierarchy.length === 0 ? asset.filename : `${hierarchy.map(folder => folder.slug).join('/')}/${asset.filename}`
     if (canonicalPath !== assetPath || asset.hash !== assetHelper.generateHash(canonicalPath) || isDeniedAssetPath(canonicalPath)) return null
     return {
       id: asset.id,
@@ -426,7 +447,7 @@ export default class Asset extends Model {
     }
   }
 
-  static async getAsset (assetPath: string, res: Response): Promise<void> {
+  static async getAsset(assetPath: string, res: Response): Promise<void> {
     try {
       const identity = await this.resolveAssetIdentity(assetPath)
       if (!identity) {
@@ -449,7 +470,7 @@ export default class Asset extends Model {
     }
   }
 
-  static async getAssetFromCache (identity: StorageAssetIdentity, res: Response): Promise<boolean> {
+  static async getAssetFromCache(identity: StorageAssetIdentity, res: Response): Promise<boolean> {
     if (isDeniedAssetPath(identity.path)) return false
     return await withStorageRoot(storageRootPath('cache'), async root => {
       let source: StorageFileHandle
@@ -468,7 +489,7 @@ export default class Asset extends Model {
     })
   }
 
-  static async getAssetFromStorage (identity: StorageAssetIdentity, res: Response): Promise<boolean> {
+  static async getAssetFromStorage(identity: StorageAssetIdentity, res: Response): Promise<boolean> {
     if (isDeniedAssetPath(identity.path)) return false
     const localLocations = await wiki.models.storage.getLocalLocations({ asset: identity })
     for (const location of _.filter(localLocations, candidate => Boolean(candidate.location))) {
@@ -489,7 +510,7 @@ export default class Asset extends Model {
     return false
   }
 
-  static async getAssetFromDb (identity: StorageAssetIdentity, res: Response): Promise<void> {
+  static async getAssetFromDb(identity: StorageAssetIdentity, res: Response): Promise<void> {
     if (isDeniedAssetPath(identity.path)) {
       res.sendStatus(404)
       return
@@ -505,7 +526,7 @@ export default class Asset extends Model {
     await sendAssetBuffer(assetData.data, res)
   }
 
-  static async flushTempUploads (): Promise<void> {
+  static async flushTempUploads(): Promise<void> {
     await withStorageRoot(storageRootPath('uploads'), async root => {
       await root.purgeContents()
     })

@@ -25,7 +25,13 @@ export const systemWorkspaceFixture = (): SystemWorkspace => ({
     httpPort: 3000,
     httpsPort: null
   },
-  database: { version: '17.6', latencyMs: 1.2, host: 'private-database', migrations: { applied: ['one.js'], pending: [], unknown: [] } },
+  database: {
+    version: '17.6',
+    latencyMs: 1.2,
+    host: 'private-database',
+    migrations: { applied: ['one.js'], pending: [], unknown: [] },
+    connectedProcesses: { status: 'observed', processes: [] }
+  },
   scheduler: { started: true, jobs: [] },
   queue: {
     counts: { pending: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 },

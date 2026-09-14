@@ -1,5 +1,6 @@
 import { generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto'
 import http from 'node:http'
+import type { Knex } from 'knex'
 import type { Socket } from 'node:net'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -15,6 +16,7 @@ import type { ProductMetadata } from '../shared/product.ts'
 import { newPasswordIssue } from '../shared/security-policy.ts'
 import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../shared/theme-colors.ts'
 import system from './core/system.ts'
+import { resolveUserPresentation } from './helpers/user-presentation.ts'
 import viteAssets from './helpers/vite-assets.ts'
 
 const { collectEntry } = viteAssets
@@ -51,7 +53,7 @@ interface ModelQuery<T> extends PromiseLike<T[]> {
 
 interface RelatedUser {
   id: number
-  $relatedQuery(relation: string): { relate(id: number): Promise<unknown> }
+  $relatedQuery(relation: string, transaction?: Knex.Transaction): { relate(id: number): Promise<unknown> }
 }
 
 interface GroupRecord {
@@ -71,6 +73,7 @@ interface SetupModels {
       truncate(): Promise<unknown>
     }
     raw(statement: string): Promise<unknown>
+    transaction<T>(operation: (transaction: Knex.Transaction) => Promise<T>): Promise<T>
   }
   locales: { query(): ModelQuery<Record<string, unknown>> }
   loggers: { refreshLoggersFromDisk(): Promise<void> }
@@ -82,7 +85,7 @@ interface SetupModels {
     query(): ModelQuery<Record<string, unknown>>
   }
   storage: { refreshTargetsFromDisk(): Promise<void> }
-  users: { query(): ModelQuery<RelatedUser> }
+  users: { query(transaction?: Knex.Transaction): ModelQuery<RelatedUser> }
 }
 
 interface DestroyableServer extends http.Server {
@@ -317,18 +320,23 @@ export default function startSetup(): Promise<void> {
       await wiki.models.storage.refreshTargetsFromDisk()
 
       wiki.logger.info('Creating root administrator...')
-      const adminUser = await wiki.models.users.query().insert({
-        email: adminEmail.toLowerCase(),
-        provider: 'local',
-        password: adminPasswordHash,
-        name: 'Administrator',
-        locale: 'en',
-        defaultEditor: 'markdown',
-        tfaIsActive: false,
-        isActive: true,
-        isVerified: true
+      const adminUser = await wiki.models.knex.transaction(async trx => {
+        const presentation = await resolveUserPresentation(trx)
+        const user = await wiki.models.users.query(trx).insert({
+          email: adminEmail.toLowerCase(),
+          provider: 'local',
+          password: adminPasswordHash,
+          name: 'Administrator',
+          locale: 'en',
+          defaultEditor: 'markdown',
+          ...presentation,
+          tfaIsActive: false,
+          isActive: true,
+          isVerified: true
+        })
+        await user.$relatedQuery('groups', trx).relate(adminGroup.id)
+        return user
       })
-      await adminUser.$relatedQuery('groups').relate(adminGroup.id)
 
       wiki.logger.info('Creating guest account...')
       const guestUser = await wiki.models.users.query().insert({

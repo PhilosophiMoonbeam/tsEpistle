@@ -1,10 +1,12 @@
 import _ from 'lodash'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import knexModule, { type Knex } from 'knex'
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import Objection from 'objection'
 import PGPubSub from 'pg-pubsub'
+import { SYSTEM_CONNECTION_APPLICATION_MAX_BYTES, SYSTEM_CONNECTION_APPLICATION_PREFIX, type SystemConnectionRole } from '../../shared/system-workspace.ts'
 import migrationSource from '../db/migrator-source.ts'
 import migrateFromBeta from '../db/beta/index.ts'
 import { preflightMigrations } from '../db/migration-preflight.ts'
@@ -44,8 +46,12 @@ interface NetworkConnectionConfig {
 type DatabaseConnectionConfig = string | NetworkConnectionConfig
 type DatabaseRow = Record<string, unknown>
 type KnexInstance = Knex<DatabaseRow, unknown[]>
+interface ParameterizedQuery {
+  text: string
+  values: readonly unknown[]
+}
 interface PoolConnection {
-  query(statement: string): Promise<unknown>
+  query(statement: string | ParameterizedQuery): Promise<unknown>
 }
 interface NotificationPayload {
   event: string
@@ -75,9 +81,9 @@ interface DatabaseService {
   unsubscribeToNotifications(): Promise<void>
   notifyViaDB(event: string, value: unknown): void
 }
-
 interface WikiContext {
   INSTANCE_ID: string
+  CONNECTION_ROLE?: SystemConnectionRole
   IS_DEBUG: boolean
   IS_MASTER: boolean
   ROOTPATH: string
@@ -95,6 +101,39 @@ interface WikiContext {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+const processConnectionIdentity = randomUUID()
+const utf8Truncate = (value: string, maxBytes: number): string => {
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
+  let output = ''
+  for (const character of value) {
+    const next = output + character
+    if (Buffer.byteLength(next, 'utf8') > maxBytes) break
+    output = next
+  }
+  return output
+}
+export const createSystemConnectionApplicationName = (identity: string, role: SystemConnectionRole): string => {
+  const normalizedIdentity = identity.replace(/[^A-Za-z0-9._~-]/g, '-') || 'unknown'
+  const suffixBytes = Buffer.byteLength(SYSTEM_CONNECTION_APPLICATION_PREFIX, 'utf8') + 1 + Buffer.byteLength(role, 'utf8')
+  const token = utf8Truncate(normalizedIdentity, Math.max(1, SYSTEM_CONNECTION_APPLICATION_MAX_BYTES - suffixBytes))
+  const applicationName = `${SYSTEM_CONNECTION_APPLICATION_PREFIX}${token}/${role}`
+  if (Buffer.byteLength(applicationName, 'utf8') > SYSTEM_CONNECTION_APPLICATION_MAX_BYTES)
+    throw new RangeError('System database application name exceeds PostgreSQL limit')
+  return applicationName
+}
+const connectionRole = (): SystemConnectionRole => (wiki.CONNECTION_ROLE === 'worker' ? 'worker' : 'pool')
+const connectionSettingsWithApplicationName = (settings: unknown, applicationName: string): Record<string, unknown> => {
+  if (typeof settings === 'string') return { connectionString: settings, application_name: applicationName }
+  if (isRecord(settings)) {
+    const cloned = { ...settings, application_name: applicationName }
+    const passwordDescriptor = Object.getOwnPropertyDescriptor(settings, 'password')
+    if (passwordDescriptor) Object.defineProperty(cloned, 'password', passwordDescriptor)
+    else if (Reflect.has(settings, 'password'))
+      Object.defineProperty(cloned, 'password', { configurable: true, enumerable: false, value: Reflect.get(settings, 'password') })
+    return cloned
+  }
+  return { application_name: applicationName }
 }
 function isNetworkConnection(config: DatabaseConnectionConfig): config is NetworkConnectionConfig {
   return typeof config !== 'string' && 'host' in config
@@ -196,6 +235,7 @@ const database: DatabaseService = {
     }
 
     // Initialize Knex
+    const poolApplicationName = createSystemConnectionApplicationName(processConnectionIdentity, connectionRole())
     const knex = createKnex<DatabaseRow, unknown[]>({
       client: dbClient,
       useNullAsDefault: false,
@@ -204,7 +244,10 @@ const database: DatabaseService = {
       pool: {
         ...wiki.config.pool,
         afterCreate(conn: PoolConnection, done: (error?: Error) => void) {
-          let query = conn.query(`set application_name = 'tsEpistle'`)
+          let query = conn.query({
+            text: "SELECT set_config('application_name', $1, false)",
+            values: [poolApplicationName]
+          })
           if (wiki.config.db.schema && wiki.config.db.schema !== 'public') {
             query = query.then(() => conn.query(`set search_path TO ${wiki.config.db.schema}, public;`))
           }
@@ -302,10 +345,11 @@ const database: DatabaseService = {
       wiki.config.ha === 1 ||
       wiki.config.ha === '1'
     if (!useHA) return
-
     const knex = this.knex
     if (!knex) throw new Error('Database must be initialized before subscribing to notifications')
-    const listener = new PGPubSub(knex.client.connectionSettings, {
+
+    const listenerApplicationName = createSystemConnectionApplicationName(processConnectionIdentity, 'listener')
+    const listener = new PGPubSub(connectionSettingsWithApplicationName(knex.client.connectionSettings, listenerApplicationName), {
       log(ev: unknown) {
         wiki.logger.debug(ev)
       }

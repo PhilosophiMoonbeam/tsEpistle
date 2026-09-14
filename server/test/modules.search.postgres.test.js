@@ -23,7 +23,10 @@ const knexHarness = (options = {}) => {
     }
     if (statement.includes('FOR SHARE OF page')) {
       const [cursor, limit] = bindings
-      return { rows: rebuildPages.filter(page => page.id > cursor).slice(0, limit) }
+      const pages = statement.includes('page."isSearchable" = true')
+        ? rebuildPages.filter(page => page.isSearchable !== false && page.isSearchable !== 0)
+        : rebuildPages
+      return { rows: pages.filter(page => page.id > cursor).slice(0, limit) }
     }
     return { rows: [] }
   })
@@ -38,12 +41,16 @@ const knexHarness = (options = {}) => {
     const statement = String(sql)
     if (statement.includes('websearch_to_tsquery')) {
       const pageRevisions = bindings[10] === null ? null : JSON.parse(String(bindings[10]))
+      const sourceRows = options.queryRows ?? []
+      const searchableRows = statement.includes('current_page."isSearchable" = true')
+        ? sourceRows.filter(row => row.isSearchable !== false && row.isSearchable !== 0)
+        : sourceRows
       const rows = options.scope
-        ? (options.queryRows ?? []).filter(row =>
+        ? searchableRows.filter(row =>
             row.locale === options.scope.locale &&
             (row.path === options.scope.path || row.path.startsWith(`${options.scope.path}/`))
           )
-        : options.queryRows ?? []
+        : searchableRows
       const revisionFilteredRows =
         pageRevisions === null
           ? rows
@@ -52,8 +59,12 @@ const knexHarness = (options = {}) => {
     }
     if (statement.includes('FROM "pagesWords"')) {
       const pageIds = new Set(bindings[0])
+      const sourceRows = options.suggestionRows ?? []
+      const searchableRows = statement.includes('page."isSearchable" = true')
+        ? sourceRows.filter(row => row.isSearchable !== false && row.isSearchable !== 0)
+        : sourceRows
       const words = []
-      for (const candidate of options.suggestionRows ?? []) {
+      for (const candidate of searchableRows) {
         if (pageIds.has(candidate.pageId) && !words.some(row => row.word === candidate.word)) words.push({ word: candidate.word })
       }
       return { rows: words.slice(0, 5) }
@@ -185,6 +196,44 @@ describe('PostgreSQL hybrid search', () => {
     })
   })
 
+  it('filters an opted-out page from stale indexed candidates before worker cleanup', async () => {
+    const harness = knexHarness({
+      queryRows: [
+        {
+          id: 42,
+          sourceRevision: '1',
+          path: 'runbooks/opted-out',
+          locale: 'en',
+          title: 'Opted Out Falcon',
+          description: '',
+          tags: [],
+          score: 10,
+          matchedFields: ['title'],
+          isSearchable: false
+        },
+        {
+          id: 43,
+          sourceRevision: '1',
+          path: 'runbooks/searchable',
+          locale: 'en',
+          title: 'Searchable Falcon',
+          description: '',
+          tags: [],
+          score: 1,
+          matchedFields: ['title']
+        }
+      ]
+    })
+    installWiki(harness.knex)
+    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
+    Object.assign(plugin, { config: { dictLanguage: 'english' } })
+
+    await expect(plugin.query('falcon', {})).resolves.toMatchObject({
+      results: [expect.objectContaining({ id: 43 })],
+      totalHits: 1
+    })
+  })
+
   it('returns no candidates for blank input without querying the index', async () => {
     const harness = knexHarness()
     installWiki(harness.knex)
@@ -220,5 +269,43 @@ describe('PostgreSQL hybrid search', () => {
     expect(harness.transaction).toHaveBeenCalledTimes(1)
     expect(cleanHTML).toHaveBeenCalledWith('<p>rendered-only unique-extension-term</p>')
   })
+  it('rebuilds opted-out pages out of the derived index while keeping legacy rows searchable by default', async () => {
+    const optedOut = {
+      id: 42,
+      sourceRevision: '8',
+      path: 'runbooks/opted-out',
+      localeCode: 'en',
+      title: 'Opted Out Runbook',
+      description: 'Excluded from search',
+      render: '<p>opted-out-content</p>',
+      tags: [],
+      visibility: 'public',
+      isPublished: true,
+      isSearchable: false
+    }
+    const defaultSearchable = {
+      id: 43,
+      sourceRevision: '9',
+      path: 'runbooks/default',
+      localeCode: 'en',
+      title: 'Default Runbook',
+      description: 'Included in search',
+      render: '<p>default-content</p>',
+      tags: [],
+      visibility: 'public',
+      isPublished: true
+    }
+    const harness = knexHarness({ rebuildPages: [optedOut, defaultSearchable] })
+    const cleanHTML = vi.fn(value => value)
+    installWiki(harness.knex, { cleanHTML })
+    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
+    Object.assign(plugin, { config: { dictLanguage: 'english' } })
+
+    await expect(plugin.rebuild()).resolves.toBeUndefined()
+
+    expect(cleanHTML).toHaveBeenCalledTimes(1)
+    expect(cleanHTML).toHaveBeenCalledWith(defaultSearchable.render)
+  })
+
 
 })

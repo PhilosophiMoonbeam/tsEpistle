@@ -126,12 +126,13 @@ describe('page history visibility boundaries', () => {
       { path: page.path, locale: page.localeCode, tags: page.tags },
       expect.anything()
     )
-    expect(global.WIKI.models.pageHistory.getHistory).toHaveBeenCalledWith({
+    expect(global.WIKI.models.pageHistory.getHistory).toHaveBeenCalledWith(expect.objectContaining({
       pageId: page.id,
       offsetPage: 0,
       offsetSize: 100,
-      requester
-    })
+      requester,
+      authority: expect.objectContaining({ requester })
+    }))
   })
   it('cannot restore a hidden private revision after the page is published', async () => {
     const requester = { id: 8, permissions: ['read:pages', 'write:pages'] }
@@ -140,7 +141,12 @@ describe('page history visibility boundaries', () => {
     const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
     await expect(Promise.resolve(operations.restore({ requester, sessionId: 'session-1', pageId: 17, versionId: 4, expectedSourceRevision: '8' }))).rejects.toBeInstanceOf(PageNotFound)
-    expect(global.WIKI.models.pageHistory.getVersion).toHaveBeenCalledWith({ pageId: 17, versionId: 4, requester })
+    expect(global.WIKI.models.pageHistory.getVersion).toHaveBeenCalledWith(expect.objectContaining({
+      pageId: 17,
+      versionId: 4,
+      requester,
+      authority: expect.objectContaining({ requester })
+    }))
     expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
   })
 

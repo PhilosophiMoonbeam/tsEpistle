@@ -77,4 +77,22 @@ describe('profile authentication provider card contract', () => {
       /this\.changePassLoading = true\s+wikiStore\.startLoading\('profile-changepassword'\)[\s\S]+finally \{\s+wikiStore\.stopLoading\('profile-changepassword'\)\s+this\.changePassLoading = false/s
     )
   })
+
+  test('provides bounded self-service avatar upload and provider-aware removal controls', () => {
+    const avatarStart = template.indexOf('.profile-avatar-editor')
+    const avatarTemplate = template.slice(avatarStart, template.indexOf('v-card\n          v-toolbar', avatarStart))
+
+    expect(avatarStart).toBeGreaterThan(-1)
+    expect(avatarTemplate).toContain("accept='image/jpeg,image/png,image/webp'")
+    expect(avatarTemplate).toContain("@click='openAvatarPicker'")
+    expect(avatarTemplate).toContain("@click='removeAvatar'")
+    expect(avatarTemplate).toContain("role='alert'")
+    expect(avatarTemplate).toContain("role='status'")
+    expect(avatarTemplate).toContain(":disabled='avatarLoading || !hasInternalAvatar'")
+    expect(avatarTemplate).toMatch(/\.text-body-small\.text-medium-emphasis\s+\{\{\s*\$t\('profile:avatar\.help'/)
+    expect(script).toMatch(/async uploadAvatar \(file: File\) \{[\s\S]+uploadProfileAvatar\(/)
+    expect(script).toMatch(/async removeAvatar \(\) \{[\s\S]+removeProfileAvatar\(/)
+    expect(script).toContain('this.user.pictureUrl = result.pictureUrl')
+    expect(styles).toMatch(/\.profile-avatar-input\s*\{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;/s)
+  })
 })

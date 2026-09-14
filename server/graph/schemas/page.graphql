@@ -90,6 +90,7 @@ type PageMutation {
     description: String!
     editor: String!
     isPublished: Boolean!
+    isSearchable: Boolean
     visibility: PageVisibility!
     locale: String!
     path: String!
@@ -109,6 +110,7 @@ type PageMutation {
     editor: String
 
     isPublished: Boolean
+    isSearchable: Boolean
     locale: String
     path: String
     publishEndDate: Date
@@ -180,6 +182,7 @@ type Page {
   visibility: PageVisibility!
   ownerId: Int
   isPublished: Boolean! @auth(requires: ["write:pages", "manage:system"])
+  isSearchable: Boolean!
   publishStartDate: Date! @auth(requires: ["write:pages", "manage:system"])
   publishEndDate: Date! @auth(requires: ["write:pages", "manage:system"])
   tags: [PageTag]!
@@ -216,6 +219,7 @@ type PageHistory {
   authorId: Int!
   authorName: String!
   actionType: String!
+  isSearchable: Boolean!
   valueBefore: String
   valueAfter: String
 }
@@ -233,6 +237,7 @@ type PageVersion {
   visibility: PageVisibility!
   ownerId: Int
   isPublished: Boolean!
+  isSearchable: Boolean!
   locale: String!
   pageId: Int!
   path: String!
@@ -274,6 +279,7 @@ type PageListItem {
   description: String
   contentType: String!
   isPublished: Boolean!
+  isSearchable: Boolean!
   visibility: PageVisibility!
   ownerId: Int
   createdAt: Date!

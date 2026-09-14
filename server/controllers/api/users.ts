@@ -19,7 +19,7 @@ interface LastLoginUser {
   name: unknown
   lastLoginAt: unknown
 }
-const profileFields = ['name', 'handle', 'location', 'jobTitle', 'timezone', 'dateFormat', 'appearance'] as const
+const profileFields = ['name', 'handle', 'location', 'jobTitle', 'timezone', 'dateFormat', 'timeFormat', 'appearance'] as const
 type ProfileInput = Record<(typeof profileFields)[number], string>
 
 const isProfileInput = (value: Record<string, unknown>): value is ProfileInput => profileFields.every(field => typeof value[field] === 'string')
@@ -115,60 +115,95 @@ const requireUserMutationAccess = (req: Request, res: Response): boolean => {
   return true
 }
 
-const workspaceErrorMessage = (err: unknown, fallback: string): string => typeof err === 'object' && err !== null && 'status' in err && typeof err.status === 'number' ? errorMessage(err, fallback) : fallback
+const workspaceErrorMessage = (err: unknown, fallback: string): string =>
+  typeof err === 'object' && err !== null && 'status' in err && typeof err.status === 'number' ? errorMessage(err, fallback) : fallback
 
 // Keep workspace routes before the legacy /:id route. Every store operation
 // independently resolves current account/group authority as well as this gate.
 router.get('/workspace', async (req, res) => {
   if (!requireUserDetailAccess(req, res)) return
-  try { return res.json(await accountAdministration().list(req.user, req.query)) }
-  catch (err) { return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'Accounts could not be loaded.') }) }
+  try {
+    return res.json(await accountAdministration().list(req.user, req.query))
+  } catch (err) {
+    return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'Accounts could not be loaded.') })
+  }
 })
 router.post('/workspace', async (req, res) => {
   if (!requireUserMutationAccess(req, res)) return
-  try { return res.status(201).json(await accountAdministration().create(req.user, requestBody(req))) }
-  catch (err) { return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The account could not be created.') }) }
+  try {
+    return res.status(201).json(await accountAdministration().create(req.user, requestBody(req)))
+  } catch (err) {
+    return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The account could not be created.') })
+  }
 })
 router.get('/workspace/creation-options', async (req, res) => {
   if (!requireUserMutationAccess(req, res)) return
-  try { return res.json(await accountAdministration().creationOptions(req.user)) }
-  catch (err) { return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'Account creation options could not be loaded.') }) }
+  try {
+    return res.json(await accountAdministration().creationOptions(req.user))
+  } catch (err) {
+    return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'Account creation options could not be loaded.') })
+  }
 })
 router.get('/workspace/:id', async (req, res) => {
   if (!requireUserDetailAccess(req, res)) return
-  const id = normalizeUserIdParam(String(req.params.id), res); if (id === null) return
-  try { return res.json(await accountAdministration().inspect(req.user, id)) }
-  catch (err) { return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The account could not be loaded.') }) }
+  const id = normalizeUserIdParam(String(req.params.id), res)
+  if (id === null) return
+  try {
+    return res.json(await accountAdministration().inspect(req.user, id))
+  } catch (err) {
+    return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The account could not be loaded.') })
+  }
 })
 router.put('/workspace/:id/profile', async (req, res) => {
   if (!requireUserDetailAccess(req, res)) return
-  const id = normalizeUserIdParam(String(req.params.id), res); if (id === null) return
-  try { return res.json(await accountAdministration().updateProfile(req.user, id, requestBody(req))) }
-  catch (err) { return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The account could not be saved.') }) }
+  const id = normalizeUserIdParam(String(req.params.id), res)
+  if (id === null) return
+  try {
+    return res.json(await accountAdministration().updateProfile(req.user, id, requestBody(req)))
+  } catch (err) {
+    return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The account could not be saved.') })
+  }
 })
 router.post('/workspace/:id/actions', async (req, res) => {
   if (!requireUserDetailAccess(req, res)) return
-  const id = normalizeUserIdParam(String(req.params.id), res); if (id === null) return
-  try { return res.json(await accountAdministration().act(req.user, id, requestBody(req))) }
-  catch (err) { return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The account action could not be completed.') }) }
+  const id = normalizeUserIdParam(String(req.params.id), res)
+  if (id === null) return
+  try {
+    return res.json(await accountAdministration().act(req.user, id, requestBody(req)))
+  } catch (err) {
+    return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The account action could not be completed.') })
+  }
 })
 router.put('/workspace/:id/password', async (req, res) => {
   if (!requireUserDetailAccess(req, res)) return
-  const id = normalizeUserIdParam(String(req.params.id), res); if (id === null) return
-  try { return res.json(await accountAdministration().setPassword(req.user, id, requestBody(req))) }
-  catch (err) { return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The password could not be replaced.') }) }
+  const id = normalizeUserIdParam(String(req.params.id), res)
+  if (id === null) return
+  try {
+    return res.json(await accountAdministration().setPassword(req.user, id, requestBody(req)))
+  } catch (err) {
+    return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The password could not be replaced.') })
+  }
 })
 router.post('/workspace/:id/welcome-email', async (req, res) => {
   if (!requireUserDetailAccess(req, res)) return
-  const id = normalizeUserIdParam(String(req.params.id), res); if (id === null) return
-  try { await userOperations.sendWelcomeEmail(id, req.user, requestBody(req)); return res.json({ accepted: true }) }
-  catch (err) { return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The welcome email could not be sent.') }) }
+  const id = normalizeUserIdParam(String(req.params.id), res)
+  if (id === null) return
+  try {
+    await userOperations.sendWelcomeEmail(id, req.user, requestBody(req))
+    return res.json({ accepted: true })
+  } catch (err) {
+    return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The welcome email could not be sent.') })
+  }
 })
 router.delete('/workspace/:id', async (req, res) => {
   if (!requireUserDetailAccess(req, res)) return
-  const id = normalizeUserIdParam(String(req.params.id), res); if (id === null) return
-  try { return res.json(await accountAdministration().remove(req.user, id, requestBody(req))) }
-  catch (err) { return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The account could not be deleted.') }) }
+  const id = normalizeUserIdParam(String(req.params.id), res)
+  if (id === null) return
+  try {
+    return res.json(await accountAdministration().remove(req.user, id, requestBody(req)))
+  } catch (err) {
+    return res.status(errorStatus(err, 500)).json({ error: workspaceErrorMessage(err, 'The account could not be deleted.') })
+  }
 })
 
 router.post('/', async (req, res) => {
@@ -176,7 +211,18 @@ router.post('/', async (req, res) => {
     return
   }
 
-  const payload = _.pick(requestBody(req), ['providerKey', 'email', 'passwordRaw', 'name', 'groups', 'mustChangePassword', 'sendWelcomeEmail'])
+  const payload = _.pick(requestBody(req), [
+    'providerKey',
+    'email',
+    'passwordRaw',
+    'name',
+    'groups',
+    'timezone',
+    'dateFormat',
+    'timeFormat',
+    'mustChangePassword',
+    'sendWelcomeEmail'
+  ])
   if (!Array.isArray(payload.groups)) {
     return res.status(400).json({ error: 'groups must be an array' })
   }
@@ -293,6 +339,7 @@ router.get('/whoami', async (req, res, next) => {
         'defaultEditor',
         'timezone',
         'dateFormat',
+        'timeFormat',
         'appearance',
         'fontFamily',
         'permissions'
@@ -315,10 +362,12 @@ router.get('/profile', async (req, res, next) => {
         'email',
         'providerKey',
         'providerName',
+        'pictureUrl',
         'location',
         'jobTitle',
         'timezone',
         'dateFormat',
+        'timeFormat',
         'appearance',
         'createdAt',
         'updatedAt',
@@ -383,8 +432,18 @@ router.put('/:id', async (req, res) => {
   if (id === null) {
     return
   }
-
-  const payload = _.pick(requestBody(req), ['email', 'name', 'newPassword', 'groups', 'location', 'jobTitle', 'timezone', 'dateFormat', 'appearance'])
+  const payload = _.pick(requestBody(req), [
+    'email',
+    'name',
+    'newPassword',
+    'groups',
+    'location',
+    'jobTitle',
+    'timezone',
+    'dateFormat',
+    'timeFormat',
+    'appearance'
+  ])
   if (!_.isNil(payload.groups) && !Array.isArray(payload.groups)) {
     return res.status(400).json({ error: 'groups must be an array' })
   }

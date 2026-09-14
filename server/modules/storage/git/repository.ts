@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
+
 import type { SimpleGit } from 'simple-git'
 
 export interface GitRepositoryCommand {
@@ -12,38 +15,44 @@ export interface GitRecoveryLogger {
   warn(message: unknown): void
 }
 
-function isCommandRunner (git: GitRepositoryClient): git is GitRepositoryCommand {
+function isCommandRunner(git: GitRepositoryClient): git is GitRepositoryCommand {
   return 'run' in git && typeof git.run === 'function'
 }
 
-async function runGit (git: GitRepositoryClient, args: readonly string[]): Promise<string> {
+async function runGit(git: GitRepositoryClient, args: readonly string[]): Promise<string> {
   return isCommandRunner(git) ? git.run(args) : git.raw([...args])
 }
 
-function remoteObject (value: string): string {
+function remoteObject(value: string): string {
   if (/^(?:[0-9a-f]{7,64})$/u.test(value) || value.startsWith('origin/')) return value
   return `origin/${value}`
 }
 
-const markerExists = async (git: GitRepositoryClient, marker: 'REBASE_HEAD' | 'MERGE_HEAD'): Promise<boolean> => {
+const gitPathExists = async (gitDirectory: string, name: string): Promise<boolean> => {
   try {
-    const output = await runGit(git, ['rev-parse', '--verify', '--quiet', marker])
-    return output.trim().length > 0
+    await fs.stat(path.join(gitDirectory, name))
+    return true
   } catch {
     return false
   }
 }
 
 export const interruptedGitOperation = async (git: GitRepositoryClient): Promise<InterruptedGitOperation | null> => {
-  if (await markerExists(git, 'REBASE_HEAD')) return 'rebase'
-  if (await markerExists(git, 'MERGE_HEAD')) return 'merge'
+  let gitDirectory: string
+  try {
+    gitDirectory = (await runGit(git, ['rev-parse', '--absolute-git-dir'])).trim()
+  } catch {
+    return null
+  }
+  if (!gitDirectory) return null
+  // Git's merge and apply rebase backends keep different directories. REBASE_HEAD is absent while
+  // a rebase is paused by an edit or failed exec command, but the repository is still write-locked.
+  if ((await gitPathExists(gitDirectory, 'rebase-merge')) || (await gitPathExists(gitDirectory, 'rebase-apply'))) return 'rebase'
+  if (await gitPathExists(gitDirectory, 'MERGE_HEAD')) return 'merge'
   return null
 }
 
-export const recoverInterruptedGitOperation = async (
-  git: GitRepositoryClient,
-  logger: GitRecoveryLogger
-): Promise<InterruptedGitOperation | null> => {
+export const recoverInterruptedGitOperation = async (git: GitRepositoryClient, logger: GitRecoveryLogger): Promise<InterruptedGitOperation | null> => {
   const interrupted = await interruptedGitOperation(git)
   if (!interrupted) return null
   logger.warn(`(STORAGE/GIT) Rolling back an unfinished ${interrupted}...`)
@@ -59,11 +68,7 @@ const unmergedPaths = async (git: GitRepositoryClient): Promise<string[]> => {
   return paths.filter(Boolean)
 }
 
-export const pullRemoteAuthoritative = async (
-  git: GitRepositoryClient,
-  remoteRevision: string,
-  logger: GitRecoveryLogger
-): Promise<string[]> => {
+export const pullRemoteAuthoritative = async (git: GitRepositoryClient, remoteRevision: string, logger: GitRecoveryLogger): Promise<string[]> => {
   const remoteObjectId = remoteObject(remoteRevision)
   try {
     await runGit(git, ['rebase', '--autostash', remoteObjectId])
@@ -73,9 +78,7 @@ export const pullRemoteAuthoritative = async (
     await recoverInterruptedGitOperation(git, logger)
     if (conflicted.length === 0) throw error
 
-    logger.warn(
-      `(STORAGE/GIT) ${conflicted.length} path(s) conflict with ${remoteObjectId}; taking the remote version...`
-    )
+    logger.warn(`(STORAGE/GIT) ${conflicted.length} path(s) conflict with ${remoteObjectId}; taking the remote version...`)
     try {
       // During a rebase, "ours" is the fetched branch and "theirs" is the local commit being replayed.
       await runGit(git, ['rebase', '--autostash', '-X', 'ours', remoteObjectId])
@@ -93,19 +96,12 @@ export const pullRemoteAuthoritative = async (
   }
 }
 
-export const sharesHistoryWith = async (git: GitRepositoryClient, remoteRevision: string): Promise<boolean> => runGit(git, [
-  'merge-base',
-  'HEAD',
-  remoteObject(remoteRevision)
-])
-  .then(output => output.trim().length > 0)
-  .catch(() => false)
+export const sharesHistoryWith = async (git: GitRepositoryClient, remoteRevision: string): Promise<boolean> =>
+  runGit(git, ['merge-base', 'HEAD', remoteObject(remoteRevision)])
+    .then(output => output.trim().length > 0)
+    .catch(() => false)
 
-export const reattachUnrelatedHistory = async (
-  git: GitRepositoryClient,
-  remoteRevision: string,
-  logger: GitRecoveryLogger
-): Promise<void> => {
+export const reattachUnrelatedHistory = async (git: GitRepositoryClient, remoteRevision: string, logger: GitRecoveryLogger): Promise<void> => {
   const remoteObjectId = remoteObject(remoteRevision)
   logger.warn(`(STORAGE/GIT) Local history is unrelated to ${remoteObjectId}; reattaching it...`)
   try {
@@ -128,4 +124,3 @@ export const reattachUnrelatedHistory = async (
     )
   }
 }
-

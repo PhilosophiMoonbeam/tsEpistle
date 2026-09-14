@@ -3,10 +3,13 @@ import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 import {
+  admitPageRenderEffect,
   claimPageMutationEffects,
   enqueuePageMutationEffects,
   executePageMutationEffect,
+  readPageRenderEffectStatus,
   rearmPageMutationEffect,
+  supersedeStalePageRenderEffects,
   PageProjectionLifecycle,
   PageMutationOutboxError,
   type PageProjectionSink
@@ -49,6 +52,7 @@ beforeEach(async () => {
     table.text('content').notNullable()
     table.text('render').notNullable()
     table.boolean('isPublished').notNullable().defaultTo(true)
+    table.boolean('isSearchable').notNullable().defaultTo(true)
     table.string('localeCode').notNullable()
     table.string('path').notNullable()
     table.string('visibility').notNullable()
@@ -122,6 +126,50 @@ describe('page mutation projection outbox', () => {
     expect(second).toEqual(first)
     expect(await knex('pageMutationOutbox')).toHaveLength(4)
     await expect(Promise.resolve(enqueue({ source: '# Changed\n' }))).rejects.toMatchObject({ code: 'OUTBOX_IDEMPOTENCY_CONFLICT' })
+  })
+  it('coalesces same-revision render admission and rearms terminal work without changing immutable payload', async () => {
+    const first = await knex.transaction(transaction => admitPageRenderEffect(transaction, { pageId: 42, sourceRevision: '8', source: '# Start\n', location }))
+    const original = await knex('pageMutationOutbox').where({ id: first.effectId }).first()
+    if (!original) throw new Error('effect missing')
+    const second = await knex.transaction(transaction => admitPageRenderEffect(transaction, { pageId: 42, sourceRevision: '8', source: '# Start\n', location }))
+    expect(second).toEqual(first)
+    await knex('pageMutationOutbox').where({ id: first.effectId }).update({
+      status: 'succeeded',
+      attempts: 4,
+      result: '{"rendered":true}',
+      postcondition: '{"satisfied":true}'
+    })
+    await knex.transaction(transaction => admitPageRenderEffect(transaction, { pageId: 42, sourceRevision: '8', source: '# Start\n', location }))
+    expect(await knex('pageMutationOutbox').where({ id: first.effectId }).first()).toMatchObject({
+      payload: original.payload,
+      payloadSha256: original.payloadSha256,
+      effectKey: original.effectKey,
+      status: 'retry',
+      attempts: 0,
+      leaseToken: null
+    })
+  })
+
+  it('reports an older render intent as superseded after the page source revision changes', async () => {
+    const [effectId] = await enqueue({ effects: ['render'] })
+    if (!effectId) throw new Error('effect missing')
+    await knex('pages').insert({
+      id: 42,
+      sourceRevision: 9,
+      content: '# Changed\n',
+      render: '<p>old render</p>',
+      localeCode: 'en',
+      path: 'docs/start',
+      visibility: 'public',
+      ownerId: null
+    })
+    await knex.transaction(transaction => supersedeStalePageRenderEffects(transaction, { pageId: 42, sourceRevision: '9' }))
+    await expect(readPageRenderEffectStatus(knex, { effectId })).resolves.toMatchObject({
+      effectId,
+      pageId: 42,
+      sourceRevision: '8',
+      status: 'superseded'
+    })
   })
 
   it('represents deletion without retaining deleted source', async () => {
@@ -673,8 +721,7 @@ describe('production page projection lifecycle', () => {
       sourceRevision: 8,
       content: '# Fax directory\n',
       render:
-        '<a class="is-internal-link" href="/en/fax/%5Bdraft%5D_212.555.0199">draft</a>' +
-        '<a class="is-internal-link" href="/en/fax_212/555/0199">digits</a>',
+        '<a class="is-internal-link" href="/en/fax/%5Bdraft%5D_212.555.0199">draft</a>' + '<a class="is-internal-link" href="/en/fax_212/555/0199">digits</a>',
       localeCode: 'en',
       path: 'docs/fax',
       visibility: 'public',
@@ -903,6 +950,42 @@ describe('production page projection lifecycle', () => {
       { pageId: 42, status: 'succeeded' },
       { pageId: 43, status: 'succeeded' }
     ])
+  })
+  it('evicts stale search rows for an opted-out page without skipping render or links', async () => {
+    await knex('pages').insert({
+      id: 42,
+      sourceRevision: 8,
+      content: '# Opted out\n',
+      render: '<p><a class="is-internal-link" href="/en/target">target</a></p>',
+      isSearchable: false,
+      localeCode: 'en',
+      path: 'docs/opted-out',
+      visibility: 'public',
+      ownerId: null
+    })
+    await knex('pagesVector').insert({ pageId: 42, sourceRevision: 7 })
+    await knex('pagesWords').insert({ pageId: 42, word: 'stale' })
+
+    const runtime = projectionRuntime()
+    const renderPage = vi.fn(runtime.renderPage)
+    const reconcileSearchPage = vi.fn(runtime.reconcileSearchPage)
+    const removeSearchPage = vi.fn(runtime.removeSearchPage)
+    const lifecycle = new PageProjectionLifecycle(
+      knex,
+      'opted-out-maintenance-worker',
+      projectionRuntime({ renderPage, reconcileSearchPage, removeSearchPage })
+    )
+
+    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
+    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 2 })
+
+    expect(renderPage).toHaveBeenCalledWith(42)
+    expect(reconcileSearchPage).not.toHaveBeenCalled()
+    expect(removeSearchPage).toHaveBeenCalledWith(42)
+    expect(await knex('pageLinks').select('pageId', 'localeCode', 'path')).toEqual([{ pageId: 42, localeCode: 'en', path: 'target' }])
+    expect(await knex('pagesVector').where({ pageId: 42 })).toEqual([])
+    expect(await knex('pagesWords').where({ pageId: 42 })).toEqual([])
+    expect(await knex('pageMutationOutbox').where({ pageId: 42, effectKind: 'search' }).first('status')).toEqual({ status: 'succeeded' })
   })
 
   it('backfills links behind a stalled current render without rewriting the render intent', async () => {

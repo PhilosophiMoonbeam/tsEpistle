@@ -56,6 +56,10 @@ beforeEach(async () => {
 
   await knex('assets').insert({ id: 101, hash: protectedAssetHash })
   await upProtection(knex)
+  await knex.schema.alterTable('pageProtectedAssets', table => {
+    table.integer('assetId').nullable()
+  })
+
   page = {
     id: 42,
     title: 'Protected plan',
@@ -121,8 +125,32 @@ describe('password-protected pages', () => {
     expect(
       await protection.protectedAssetRequiresUnlock({ requester: user(8, ['read:pages']), assetPath: 'uploads/private-plan.png', sessionId: 'reader-session' })
     ).toBe(true)
-    expect(await knex('pageProtectedAssets')).toEqual([{ pageId: 42, assetPath: 'uploads/private-plan.png' }])
+    expect(await knex('pageProtectedAssets')).toEqual([{ pageId: 42, assetPath: 'uploads/private-plan.png', assetId: 101 }])
     expect(searchUpdated).toHaveBeenCalledWith(expect.objectContaining({ safeContent: '' }))
+  })
+
+  it('keeps protected access attached to the stable asset id after a move', async () => {
+    const protection = await vi.importFresh('../../operations/page-protection.ts', import.meta.url)
+    const destinationPath = 'uploads/moved/private-plan.png'
+    await protection.setPageProtection({
+      requester: user(7, ['write:pages']),
+      pageId: 42,
+      password: 'stable asset identity password',
+      sessionId: 'manager-session'
+    })
+    expect(await knex('pageProtectedAssets')).toEqual([{ pageId: 42, assetPath: protectedAssetPath, assetId: 101 }])
+
+    await knex('assets')
+      .where({ id: 101 })
+      .update({ hash: createHash('sha1').update(destinationPath).digest('hex') })
+
+    await expect(
+      protection.protectedAssetRequiresUnlock({
+        requester: user(8, ['read:pages']),
+        assetPath: destinationPath,
+        sessionId: 'reader-session'
+      })
+    ).resolves.toBe(true)
   })
 
   it('protects assets referenced only by page branding metadata', async () => {

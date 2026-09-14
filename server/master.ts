@@ -28,6 +28,7 @@ import createCommonController, { type CommonWiki } from './controllers/common.ts
 import createSslController, { type SslWiki } from './controllers/ssl.ts'
 import apiController, { type ApiRuntime } from './controllers/api/index.ts'
 import { siteLogoPreBodyRouter } from './controllers/api/site-logo.ts'
+import { userAvatarPreBodyRouter } from './controllers/api/user-avatar.ts'
 import { configureTransportRuntime } from './controllers/_types.ts'
 import apiV1Controller from './controllers/api-v1/index.ts'
 import type { ProductMetadata } from '../shared/product.ts'
@@ -498,6 +499,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
 
   await wiki.servers.startGraphQL()
   app.use('/_api/site/logo', siteLogoPreBodyRouter)
+  app.use('/_api/users/profile/avatar', userAvatarPreBodyRouter)
   const jsonBodyParser = express.json({ limit: wiki.config.bodyParserLimit ?? '5mb' })
   app.use('/_api', jsonBodyParser, apiController)
   app.use('/api/v1', jsonBodyParser, apiV1Controller)

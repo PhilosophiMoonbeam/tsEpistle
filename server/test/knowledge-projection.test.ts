@@ -376,6 +376,7 @@ describe('terminal knowledge effect recovery', () => {
       table.string('visibility').notNullable()
       table.integer('ownerId').nullable()
       table.boolean('isPublished').notNullable()
+      table.boolean('isSearchable').notNullable().defaultTo(true)
       table.dateTime('publishStartDate').nullable()
       table.dateTime('publishEndDate').nullable()
       table.string('contentType').notNullable()
@@ -444,6 +445,7 @@ describe('terminal knowledge effect recovery', () => {
       path: 'operations/recover',
       visibility: 'public',
       isPublished: true,
+      isSearchable: true,
       publishStartDate: null,
       publishEndDate: null,
       ownerId: null,

@@ -40,6 +40,7 @@ interface SourceSnapshotRow {
   readonly localeCode: string
   readonly path: string
   readonly visibility: 'public' | 'private'
+  readonly isSearchable: boolean | number
   readonly contentType: string
   readonly content: string
   readonly title: string
@@ -155,8 +156,7 @@ const knowledgeSearchDictionary = (): string => {
   return typeof dictionary === 'string' && /^[a-z][a-z0-9_]{0,62}$/iu.test(dictionary) ? dictionary : 'english'
 }
 
-type UtilityEligibility = 'eligible' | 'superseded' | 'withheld-private' | 'withheld-unpublished' | 'withheld-protected'
-
+type UtilityEligibility = 'eligible' | 'superseded' | 'withheld-private' | 'withheld-unpublished' | 'withheld-unsearchable' | 'withheld-protected'
 interface PublicationWindowRow {
   readonly publishStartDate: string | Date | null
   readonly publishEndDate: string | Date | null
@@ -168,6 +168,7 @@ interface CurrentUtilityPageRow extends PublicationWindowRow {
   readonly content: string
   readonly visibility: 'public' | 'private'
   readonly isPublished: boolean | number
+  readonly isSearchable: boolean | number
 }
 
 const publicationWindowOpen = (page: PublicationWindowRow, now = Date.now()): boolean => {
@@ -182,10 +183,11 @@ const utilityEligibility = async (
 ): Promise<UtilityEligibility> => {
   const page = (await knex<CurrentUtilityPageRow>('pages')
     .where({ id: payload.pageId })
-    .first('sourceRevision', 'content', 'visibility', 'isPublished', 'publishStartDate', 'publishEndDate')) as CurrentUtilityPageRow | undefined
+    .first('sourceRevision', 'content', 'visibility', 'isPublished', 'isSearchable', 'publishStartDate', 'publishEndDate')) as CurrentUtilityPageRow | undefined
   if (!page || revision(page.sourceRevision) !== payload.sourceRevision || payload.sourceSha256 === null || sha256(page.content) !== payload.sourceSha256)
     return 'superseded'
   if (page.visibility !== 'public') return 'withheld-private'
+  if (page.isSearchable === false || page.isSearchable === 0) return 'withheld-unsearchable'
   if (page.isPublished !== true && page.isPublished !== 1) return 'withheld-unpublished'
   if (!publicationWindowOpen(page)) return 'withheld-unpublished'
   const protectedPage = await knex('pageAccessPasswords').where({ pageId: payload.pageId }).first('pageId')
@@ -511,6 +513,7 @@ interface KnowledgeSearchProjectionRow extends StoredProjectionRow, PublicationW
   readonly visibility: 'public' | 'private'
   readonly ownerId: number | null
   readonly isPublished: boolean | number
+  readonly isSearchable: boolean | number
 }
 
 export class PageKnowledgeRepository {
@@ -616,6 +619,7 @@ export class PageKnowledgeRepository {
       })
       .where('projections.schemaVersion', KNOWLEDGE_SCHEMA_VERSION)
       .where('projections.deterministicVersion', KNOWLEDGE_DETERMINISTIC_VERSION)
+      .where('pages.isSearchable', true)
       .whereNotExists(protection =>
         protection.select(this.#knex.raw('1')).from('pageAccessPasswords').whereRaw('?? = ??', ['pageAccessPasswords.pageId', 'pages.id'])
       )
@@ -655,6 +659,7 @@ export class PageKnowledgeRepository {
       'pages.path',
       'pages.visibility',
       'pages.ownerId',
+      'pages.isSearchable',
       'pages.isPublished',
       'pages.publishStartDate',
       'pages.publishEndDate',
@@ -679,7 +684,12 @@ export class PageKnowledgeRepository {
     const visibleIds = new Set<number>()
     for (const row of rows) {
       const pageId = Number(row.id)
-      if (row.visibility === 'public' && ((row.isPublished !== true && row.isPublished !== 1) || !publicationWindowOpen(row, now.valueOf()))) continue
+      if (
+        row.isSearchable === false ||
+        row.isSearchable === 0 ||
+        (row.visibility === 'public' && ((row.isPublished !== true && row.isPublished !== 1) || !publicationWindowOpen(row, now.valueOf())))
+      )
+        continue
       if (!canReadPage(input.requester, { ...row, tags: tagsByPage.get(pageId) ?? [] }, input.authority)) continue
       const knowledge = projectionView(row, pageId, revision(row.sourceRevision), dictionary)
       if (knowledge && matchesKnowledgeFilter(knowledge, input.filter)) visibleIds.add(pageId)
@@ -727,6 +737,7 @@ export class PageKnowledgeRepository {
             publicPage.where('pages.visibility', 'public').where('pages.isPublished', true)
           })
         })
+        .where('pages.isSearchable', true)
       scopePageQuery(rowsQuery, input.requester, { table: 'pages', includeAllForSystemManager: true })
       if (selectedIds !== undefined) rowsQuery.whereIn('pages.id', selectedIds)
       if (authorizedPublicIds !== undefined) {
@@ -755,6 +766,7 @@ export class PageKnowledgeRepository {
           'pages.path',
           'pages.visibility',
           'pages.isPublished',
+          'pages.isSearchable',
           'pages.publishStartDate',
           'pages.publishEndDate',
           'pages.ownerId',
@@ -782,6 +794,7 @@ export class PageKnowledgeRepository {
       }
       for (const row of rows) {
         const pageId = Number(row.id)
+        if (row.isSearchable === false || row.isSearchable === 0) continue
         if (row.visibility === 'public' && ((row.isPublished !== true && row.isPublished !== 1) || !publicationWindowOpen(row, now.valueOf()))) continue
         if (!canReadPage(input.requester, { ...row, tags: tagsByPage.get(pageId) ?? [] }, input.authority)) continue
         const sourceRevision = revision(row.sourceRevision)
@@ -1063,6 +1076,7 @@ const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now
       .where('effects.status', 'succeeded')
       .where('pages.visibility', 'public')
       .where('pages.isPublished', true)
+      .where('pages.isSearchable', true)
       .whereNotExists(function () {
         this.select(knex.raw('1')).from('pageAccessPasswords').whereRaw('?? = ??', ['pageAccessPasswords.pageId', 'pages.id'])
       })
@@ -1070,7 +1084,7 @@ const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now
         builder
           .where('projections.enrichmentState', 'unavailable')
           .orWhere(retry => retry.where('projections.enrichmentState', 'failed').andWhere('projections.updatedAt', '<=', retryBefore))
-          .orWhere(retry => retry.whereIn('projections.enrichmentState', ['withheld-unpublished', 'withheld-protected']))
+          .orWhere(retry => retry.whereIn('projections.enrichmentState', ['withheld-unpublished', 'withheld-unsearchable', 'withheld-protected']))
           .orWhere(retry => retry.where('projections.enrichmentState', 'succeeded').andWhereNot('projections.utilityProfileVersionId', profileVersionId))
       )
       .select('effects.id', 'pages.id as pageId', 'pages.publishStartDate', 'pages.publishEndDate')
@@ -1102,6 +1116,7 @@ const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now
         .where({ 'projections.pageId': effect.pageId, 'projections.sourceRevision': effect.sourceRevision })
         .where('pages.visibility', 'public')
         .where('pages.isPublished', true)
+        .where('pages.isSearchable', true)
         .whereNotExists(function () {
           this.select(transaction.raw('1')).from('pageAccessPasswords').whereRaw('?? = ??', ['pageAccessPasswords.pageId', 'pages.id'])
         })
@@ -1109,7 +1124,7 @@ const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now
           builder
             .where('projections.enrichmentState', 'unavailable')
             .orWhere(retry => retry.where('projections.enrichmentState', 'failed').andWhere('projections.updatedAt', '<=', retryBefore))
-            .orWhere(retry => retry.whereIn('projections.enrichmentState', ['withheld-unpublished', 'withheld-protected']))
+            .orWhere(retry => retry.whereIn('projections.enrichmentState', ['withheld-unpublished', 'withheld-unsearchable', 'withheld-protected']))
             .orWhere(retry => retry.where('projections.enrichmentState', 'succeeded').andWhereNot('projections.utilityProfileVersionId', profileVersionId))
         )
         .forUpdate()

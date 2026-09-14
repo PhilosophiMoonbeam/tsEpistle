@@ -74,11 +74,13 @@
               template(v-slot:item='props')
                 tr.is-clickable(
                   :key='props.item.id'
-                  tabindex='0'
+                  :class='{ "is-stale": !isAssetActionable(props.item.id) }'
+                  :tabindex='isAssetActionable(props.item.id) ? 0 : -1'
                   :aria-selected='currentFileId === props.item.id'
-                  :aria-label='currentFileId === props.item.id ? `${props.item.filename}, selected` : `Select ${props.item.filename}`'
-                  @keydown.enter.space.prevent='selectAsset(props.item.id)'
-                  @click.left='selectAsset(props.item.id)'
+                  :aria-disabled='!isAssetActionable(props.item.id)'
+                  :aria-label='assetAriaLabel(props.item)'
+                  @keydown.enter.space.prevent='isAssetActionable(props.item.id) && selectAsset(props.item.id)'
+                  @click.left='isAssetActionable(props.item.id) && selectAsset(props.item.id)'
                   @click.right.prevent=''
                 )
                   td.text-body-small(v-if='$vuetify.display.smAndUp') {{ props.item.id }}
@@ -92,13 +94,14 @@
                   td.text-body-small(v-if='$vuetify.display.mdAndUp') {{ $helpers.formatMoment(props.item.createdAt, 'from') }}
                   td(v-if='$vuetify.display.smAndUp')
                     v-menu(
+                      :disabled='!isAssetActionable(props.item.id)'
                       :model-value='actionMenuAssetId === props.item.id'
                       min-width='200'
                       content-class='editor-media-owned-overlay'
                       @update:model-value='setActionMenu(props.item.id, $event)'
                     )
                       template(v-slot:activator='{ props: menuProps }')
-                        v-btn.editor-media-icon-button(icon, v-bind='menuProps', rounded='lg', size="small", :aria-label='`Asset actions for ${props.item.filename}`', :data-editor-media-asset-actions='props.item.id')
+                        v-btn.editor-media-icon-button(icon, v-bind='menuProps', rounded='lg', size="small", :disabled='!isAssetActionable(props.item.id)', :aria-label='`Asset actions for ${props.item.filename}`', :data-editor-media-asset-actions='props.item.id')
                           v-icon mdi-dots-horizontal
                       v-list(nav)
                         //- v-list-item(@click='', disabled)
@@ -122,19 +125,16 @@
                         //-       v-avatar(size='24')
                         //-         v-icon(color='purple') mdi-flash-circle
                         //-     v-list-item-title {{$t('common:actions.optimize')}}
-                        v-list-item(@click='openRenameDialog(props.item.id)')
+                        v-list-item(:disabled='!isAssetActionable(props.item.id)', @click='openRenameDialog(props.item.id)')
                           template(v-slot:prepend)
-                            v-avatar(size='24')
+                            v-avatar(size="24")
                               v-icon(color='warning') mdi-keyboard-outline
                           v-list-item-title {{$t('common:actions.rename')}}
-                        //- v-list-item(@click='', disabled)
-                        //-   template(v-slot:prepend)
-                        //-     v-avatar(size='24')
-                        //-       v-icon(color='blue') mdi-file-move
-                        //-   v-list-item-title {{$t('common:actions.move')}}
-                        v-list-item(@click='openDeleteDialog(props.item.id)')
+                        v-list-item(:disabled='!isAssetActionable(props.item.id)', @click='openMoveDialog(props.item.id)', prepend-icon='mdi-file-move')
+                          v-list-item-title {{$t('editor:assets.moveAsset')}}
+                        v-list-item(:disabled='!isAssetActionable(props.item.id)', @click='openDeleteDialog(props.item.id)')
                           template(v-slot:prepend)
-                            v-avatar(size='24')
+                            v-avatar(size="24")
                               v-icon(color='red') mdi-file-hidden
                           v-list-item-title {{$t('common:actions.delete')}}
               template(v-slot:no-data)
@@ -151,7 +151,7 @@
                 v-btn.radius-7(variant="outlined", @click='cancel')
                   v-icon(start) mdi-close
                   span {{$t('common:actions.cancel')}}
-                v-btn.radius-7(v-if='!isBranding', color='primary', @click='insert', :disabled='!currentFileId')
+                v-btn.radius-7(v-if='!isBranding', color='primary', @click='insert', :disabled='!currentFileId || !isAssetActionable(currentFileId)')
                   v-icon(start) mdi-playlist-plus
                   span {{$t('common:actions.insert')}}
                 v-btn.radius-7(v-else, color='primary', @click='confirmSelection', :disabled='!canConfirmSelection', :loading='brandingLoading')
@@ -201,7 +201,7 @@
               placeholder='None'
             )
 
-    //- RENAME DIALOG
+    //- RENAME OR MOVE DIALOG
 
     v-dialog(
       v-model='renameDialog'
@@ -213,10 +213,10 @@
     )
       v-card(:aria-busy='renameAssetLoading')
         .dialog-header.is-short.is-orange
-          v-icon.mr-2(color='primary', aria-hidden='true') mdi-keyboard
-          span#editor-media-rename-title {{$t('editor:assets.renameAsset')}}
+          v-icon.mr-2(color='primary', aria-hidden='true') mdi-file-move
+          span#editor-media-rename-title {{relocationMode === 'move' ? $t('editor:assets.moveAsset') : $t('editor:assets.renameAsset')}}
         v-card-text.pt-5
-          .text-body-medium {{$t('editor:assets.renameAssetSubtitle')}}
+          .text-body-medium {{relocationMode === 'move' ? $t('editor:assets.moveAssetSubtitle') : $t('editor:assets.renameAssetSubtitle')}}
           v-text-field(
             variant="outlined"
             single-line
@@ -226,14 +226,44 @@
             :label='$t(`common:actions.rename`)'
             ref='renameAssetIpt'
             :rules='renameAssetRules'
-            @keyup.enter='renameAsset'
+            @keyup.enter='relocateAsset'
             :disabled='renameAssetLoading'
           )
+          v-select(
+            v-model='relocationFolderId'
+            :items='relocationFolderItems'
+            item-title='title'
+            item-value='value'
+            :label='$t(relocationMode === "move" ? "editor:assets.destinationFolder" : "editor:assets.destinationFolderOptional")'
+            variant='outlined'
+            :disabled='renameAssetLoading'
+          )
+          v-alert.mt-2(type='warning', variant='tonal', density='compact', role='alert')
+            .text-body-small {{$t('editor:assets.relocationWarning')}}
+            .text-caption {{relocationReceipt?.sourcePath ?? relocationSourcePath}} → {{relocationReceipt?.destinationPath ?? relocationDestinationPath}}
+          v-alert.mt-2(
+            v-if='relocationReceipt'
+            :type='relocationStatusType'
+            variant='tonal'
+            density='compact'
+            role='status'
+            aria-live='polite'
+          )
+            .text-body-small {{relocationStatusMessage}}
+            .text-caption {{$t('editor:assets.relocationReceipt', { id: relocationReceipt.id })}}
+            a.text-caption(
+              :href='relocationReceipt.statusUrl'
+              target='_blank'
+              rel='noopener noreferrer'
+              :aria-label='$t(`editor:assets.viewRelocationStatusAria`)'
+            ) {{$t('editor:assets.viewRelocationStatus')}}
+            ul(v-if='relocationReceipt.effects.length > 0')
+              li(v-for='effect in relocationReceipt.effects' :key='effect.id')
+                | {{effect.targetKey}}: {{relocationEffectMessage(effect.status)}}
         v-card-chin
           v-spacer
           v-btn(variant="text", @click='renameDialog = false', :disabled='renameAssetLoading') {{$t('common:actions.cancel')}}
-          v-btn.px-3(color="warning", variant="flat", @click='renameAsset', :loading='renameAssetLoading', :disabled='renameAssetLoading || !isRenameValid') {{$t('common:actions.rename')}}
-
+          v-btn.px-3(color="warning", variant="flat", @click='relocateAsset', :loading='renameAssetLoading', :disabled='renameAssetLoading || !isRenameValid') {{$t(relocationMode === 'move' ? 'common:actions.move' : 'common:actions.rename')}}
     //- DELETE DIALOG
 
     v-dialog(
@@ -255,7 +285,6 @@
           .text-body-medium.text-red-darken-2 {{currentAsset?.filename}}?
           .text-body-small.mt-3 {{$t('editor:assets.deleteAssetWarn')}}
         v-card-chin
-          v-spacer
           v-btn(variant="text", ref='deleteCancelButton', @click='deleteDialog = false', :disabled='deleteAssetLoading') {{$t('common:actions.cancel')}}
           v-btn.px-3(color="red-darken-2", @click='deleteAsset', :loading='deleteAssetLoading', :disabled='deleteAssetLoading').text-white {{$t('common:actions.delete')}}
 </template>
@@ -263,10 +292,10 @@
 <script lang='ts'>
 import { defineComponent, markRaw, type Component, type PropType } from 'vue'
 import _ from 'lodash'
+import { createAssetFolder, deleteAsset as deleteAssetRequest, fetchAssetBranding, fetchAssetFolders, fetchAssetRelocationStatus, fetchAssets, relocateAsset as relocateAssetRequest, type Asset, type AssetFolder, type AssetRelocationInput, type AssetRelocationReceipt } from '../../helpers/assets-api'
 import { wikiStore } from '@/store/index.ts'
 import vueFilePond from 'vue-filepond'
 import 'filepond/dist/filepond.min.css'
-import { createAssetFolder, deleteAsset as deleteAssetRequest, fetchAssetBranding, fetchAssetFolders, fetchAssets, renameAsset as renameAssetRequest, type Asset, type AssetFolder } from '../../helpers/assets-api'
 import { isRecord } from '../../helpers/type-guards'
 import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
 import { emitEditorInsert } from '../../helpers/editor-insert-events'
@@ -291,6 +320,14 @@ const RENAME_ASSET_RULES = markRaw([
   (value: unknown) => (!String(value || '').includes('/') && !String(value || '').includes(String.fromCharCode(92))) || 'Filename cannot contain slashes.'
 ])
 
+type AssetTableHeader = {
+  title: string
+  key: string
+  value: string
+  width?: number
+  sortable?: boolean
+  align?: 'start' | 'end' | 'center'
+}
 export type MediaPickerPurpose = 'insert' | 'page-branding'
 
 export type BrandingSelection = {
@@ -298,10 +335,15 @@ export type BrandingSelection = {
   view: PageBrandingView
 }
 
-const BRANDING_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
+const BRANDING_IMAGE_EXTENSIONS: Record<string, true> = {
+  '.png': true,
+  '.jpg': true,
+  '.jpeg': true,
+  '.webp': true
+}
 
 function isPageBrandingAsset (asset: Asset): boolean {
-  return asset.kind.toUpperCase() === 'IMAGE' && BRANDING_IMAGE_EXTENSIONS.has(asset.ext.toLowerCase())
+  return asset.kind.toUpperCase() === 'IMAGE' && Object.hasOwn(BRANDING_IMAGE_EXTENSIONS, asset.ext.toLowerCase())
 }
 
 function parseAssetId (value: unknown): number | null {
@@ -394,9 +436,13 @@ export default defineComponent({
       deleteDialog: false,
       actionMenuAssetId: null as number | null,
       renameAssetName: '',
+      relocationFolderId: 0,
+      relocationMode: 'rename' as 'rename' | 'move',
+      relocationReceipt: null as AssetRelocationReceipt | null,
       renameAssetLoading: false,
       deleteAssetLoading: false,
       mediaLoadError: '',
+      staleAssetIds: [] as number[],
       brandingView: null as PageBrandingView | null,
       brandingLoading: false,
       brandingLoadError: '',
@@ -450,7 +496,10 @@ export default defineComponent({
       return this.isBranding ? this.assets.filter(isPageBrandingAsset) : this.assets
     },
     canConfirmSelection(): boolean {
-      return this.currentFileId !== null && !this.brandingLoading && this.brandingView?.assetId === this.currentFileId
+      return this.currentFileId !== null &&
+        this.isAssetActionable(this.currentFileId) &&
+        !this.brandingLoading &&
+        this.brandingView?.assetId === this.currentFileId
     },
     pageTotal () {
       if (!this.displayedAssets) {
@@ -459,15 +508,17 @@ export default defineComponent({
 
       return Math.ceil(this.displayedAssets.length / 15)
     },
-    headers() {
-      return _.compact([
-        this.$vuetify.display.smAndUp && { title: this.$t('editor:assets.headerId'), key: 'id', value: 'id', width: 80 },
-        { title: this.$t('editor:assets.headerFilename'), key: 'filename', value: 'filename' },
-        this.$vuetify.display.lgAndUp && { title: this.$t('editor:assets.headerType'), key: 'ext', value: 'ext', width: 90 },
-        this.$vuetify.display.mdAndUp && { title: this.$t('editor:assets.headerFileSize'), key: 'fileSize', value: 'fileSize', width: 110 },
-        this.$vuetify.display.mdAndUp && { title: this.$t('editor:assets.headerAdded'), key: 'createdAt', value: 'createdAt', width: 175 },
-        this.$vuetify.display.smAndUp && { title: this.$t('editor:assets.headerActions'), key: 'actions', value: 'actions', width: 80, sortable: false, align: 'end' }
-      ])
+    headers(): AssetTableHeader[] {
+      const headers: AssetTableHeader[] = []
+      if (this.$vuetify.display.smAndUp) headers.push({ title: this.$t('editor:assets.headerId'), key: 'id', value: 'id', width: 80 })
+      headers.push({ title: this.$t('editor:assets.headerFilename'), key: 'filename', value: 'filename' })
+      if (this.$vuetify.display.lgAndUp) headers.push({ title: this.$t('editor:assets.headerType'), key: 'ext', value: 'ext', width: 90 })
+      if (this.$vuetify.display.mdAndUp) headers.push({ title: this.$t('editor:assets.headerFileSize'), key: 'fileSize', value: 'fileSize', width: 110 })
+      if (this.$vuetify.display.mdAndUp) headers.push({ title: this.$t('editor:assets.headerAdded'), key: 'createdAt', value: 'createdAt', width: 175 })
+      if (this.$vuetify.display.smAndUp) {
+        headers.push({ title: this.$t('editor:assets.headerActions'), key: 'actions', value: 'actions', width: 80, sortable: false, align: 'end' })
+      }
+      return headers
     },
     isFolderNameValid() {
       return this.newFolderName.length > 1 && this.newFolderName.length <= 255 && !localeSegmentRegex.test(this.newFolderName) && !disallowedFolderChars.test(this.newFolderName)
@@ -478,7 +529,61 @@ export default defineComponent({
     isRenameValid (): boolean {
       const current = this.currentAsset
       const name = this.renameAssetName.trim()
-      return Boolean(current && name && name.length <= 255 && name !== current.filename && !/[\/\\]/.test(name))
+      const currentFolderId = current?.folderId ?? this.currentFolderId
+      return Boolean(current && name && name.length <= 255 && !/[\/\\]/.test(name) && (name !== current.filename || this.relocationFolderId !== currentFolderId))
+    },
+    relocationFolderItems(): Array<{ title: string; value: number }> {
+      const items = [{ title: '/', value: 0 }]
+      let path = ''
+      for (const folder of this.folderTree) {
+        path = path ? `${path}/${folder.name}` : folder.name
+        if (folder.id !== this.currentFolderId) items.push({ title: `/${path}`, value: folder.id })
+      }
+      const currentPath = this.folderTree.map(folder => folder.name).join('/')
+      for (const folder of this.folders) {
+        if (folder.id === this.currentFolderId) continue
+        items.push({ title: currentPath ? `/${currentPath}/${folder.name}` : `/${folder.name}`, value: folder.id })
+      }
+      return items.filter((item, index, all) => all.findIndex(candidate => candidate.value === item.value) === index)
+    },
+    relocationSourcePath(): string {
+      const folderPath = this.folderTree.map(folder => folder.name).join('/')
+      return folderPath ? `${folderPath}/${this.currentAsset?.filename ?? ''}` : this.currentAsset?.filename ?? ''
+    },
+    relocationDestinationPath(): string {
+      const folder = this.relocationFolderItems.find(item => item.value === this.relocationFolderId)
+      const folderPath = folder?.title.replace(/^\/|\/$/g, '') ?? ''
+      return folderPath ? `${folderPath}/${this.renameAssetName.trim()}` : this.renameAssetName.trim()
+    },
+    relocationStatusType(): 'info' | 'success' | 'warning' | 'error' {
+      switch (this.relocationReceipt?.status) {
+        case 'succeeded':
+          return 'success'
+        case 'failed':
+          return 'error'
+        case 'superseded':
+          return 'warning'
+        default:
+          return 'info'
+      }
+    },
+    relocationStatusMessage(): string {
+      switch (this.relocationReceipt?.status) {
+        case 'pending':
+          return this.$t('editor:assets.relocationPending')
+        case 'leased':
+          return this.$t('editor:assets.relocationInProgress')
+        case 'failed':
+          return this.$t('editor:assets.relocationFailed')
+        case 'superseded':
+          return this.$t('editor:assets.relocationSuperseded')
+        case 'succeeded':
+          return this.relocationReceipt?.effects.length === 0
+            ? this.$t('editor:assets.relocationSuccessNoTargets')
+            : this.$t('editor:assets.relocationSuccess')
+        default:
+          return this.$t('editor:assets.relocationUnavailable')
+      }
     },
     isPrivatePage(): boolean {
       return wikiStore.page.visibility === 'private'
@@ -580,7 +685,13 @@ export default defineComponent({
       return Array.from(document.querySelectorAll<HTMLElement>('.editor-media-owned-overlay'))
     },
     setActionMenu (assetId: number, isOpen: boolean) {
-      this.actionMenuAssetId = isOpen ? assetId : null
+      this.actionMenuAssetId = isOpen && this.isAssetActionable(assetId) ? assetId : null
+    },
+    invalidateMediaLoad () {
+      this.mediaRequest++
+      this.mediaAbortController?.abort()
+      this.mediaAbortController = null
+      this.loading = false
     },
     handleMediaEscape () {
       if (this.actionMenuAssetId !== null) {
@@ -669,8 +780,20 @@ export default defineComponent({
         }
       }
     },
+    isAssetActionable (id: number | null): boolean {
+      return id !== null && !this.staleAssetIds.includes(id)
+    },
+    assetAriaLabel (asset: Asset): string {
+      if (!this.isAssetActionable(asset.id)) return `${asset.filename}, unavailable until assets reload`
+      return this.currentFileId === asset.id ? `${asset.filename}, selected` : `Select ${asset.filename}`
+    },
+    markAssetStale (assetId: number) {
+      if (!this.staleAssetIds.includes(assetId)) this.staleAssetIds.push(assetId)
+      if (this.actionMenuAssetId === assetId) this.actionMenuAssetId = null
+      if (this.currentFileId === assetId) this.currentFileId = null
+    },
     confirmSelection () {
-      if (!this.isBranding) return this.insert()
+      if (!this.isAssetActionable(this.currentFileId)) return
       const assignment = PageBrandingAssignmentSchema.safeParse({ assetId: this.currentFileId })
       const view = PageBrandingViewSchema.safeParse(this.brandingView)
       if (!assignment.success || !view.success || view.data.assetId !== assignment.data.assetId) {
@@ -685,6 +808,7 @@ export default defineComponent({
       if (!this.embedded) this.activeModal = ''
     },
     selectAsset(id: number) {
+      if (!this.isAssetActionable(id)) return
       if (this.isBranding && !this.displayedAssets.some(asset => asset.id === id)) return
       this.currentFileId = id
       if (this.isBranding) void this.loadBrandingDescriptor(id)
@@ -720,6 +844,7 @@ export default defineComponent({
     },
     insert () {
       if (this.isBranding) return
+      if (!this.isAssetActionable(this.currentFileId)) return
       const asset = _.find(this.assets, ['id', this.currentFileId])
       if (!asset) throw new Error('No asset selected for insertion.')
       const assetPath = (this.folderTree as AssetFolder[]).map((f: AssetFolder) => f.slug).join('/')
@@ -820,48 +945,137 @@ export default defineComponent({
         wikiStore.stopLoading('editor-media-createfolder')
       }
     },
-    openRenameDialog(id: number) {
+    openRelocationDialog(id: number, mode: 'rename' | 'move') {
+      if (!this.isAssetActionable(id)) return
       this.rememberMediaDialogFocus(id)
       this.actionMenuAssetId = null
       this.currentFileId = id
-      if (!this.currentAsset) throw new Error('No asset selected for renaming.')
+      if (!this.currentAsset) throw new Error('No asset selected for relocation.')
+      this.relocationMode = mode
       this.renameAssetName = this.currentAsset.filename
+      this.relocationFolderId = this.currentAsset.folderId ?? this.currentFolderId
+      this.relocationReceipt = null
       this.renameDialog = true
     },
+    openRenameDialog(id: number) {
+      this.openRelocationDialog(id, 'rename')
+    },
+    openMoveDialog(id: number) {
+      this.openRelocationDialog(id, 'move')
+    },
     openDeleteDialog(id: number) {
+      if (!this.isAssetActionable(id)) return
       this.rememberMediaDialogFocus(id)
       this.actionMenuAssetId = null
       this.currentFileId = id
       if (!this.currentAsset) throw new Error('No asset selected for deletion.')
       this.deleteDialog = true
     },
-    async renameAsset() {
-      if (this.renameAssetLoading || !this.isRenameValid || this.currentFileId === null) return
+    relocationEffectMessage(status: string): string {
+      switch (status) {
+        case 'pending':
+          return this.$t('editor:assets.relocationEffectPending')
+        case 'leased':
+          return this.$t('editor:assets.relocationEffectInProgress')
+        case 'succeeded':
+          return this.$t('editor:assets.relocationEffectSucceeded')
+        case 'failed':
+          return this.$t('editor:assets.relocationEffectFailed')
+        case 'superseded':
+          return this.$t('editor:assets.relocationEffectSuperseded')
+        default:
+          return this.$t('editor:assets.relocationEffectUnknown')
+      }
+    },
+    async waitForRelocation(receipt: AssetRelocationReceipt): Promise<AssetRelocationReceipt> {
+      let current = receipt
+      for (let attempt = 0; attempt < 30 && !['succeeded', 'failed', 'superseded'].includes(current.status); attempt += 1) {
+        await new Promise<void>(resolve => window.setTimeout(resolve, 500))
+        if (this.disposed) return current
+        const next = await fetchAssetRelocationStatus(window.fetch.bind(window), current.statusUrl)
+        if (next.id !== receipt.id || next.assetId !== receipt.assetId) throw new Error('Asset relocation status did not match the requested receipt.')
+        current = next
+      }
+      return current
+    },
+    async refreshAfterRelocation (assetId: number): Promise<boolean> {
+      this.markAssetStale(assetId)
+      const loaded = await this.loadMedia()
+      if (loaded) this.staleAssetIds = this.staleAssetIds.filter(id => id !== assetId)
+      return loaded
+    },
+    async relocateAsset() {
+      if (
+        this.renameAssetLoading ||
+        !this.isRenameValid ||
+        this.currentFileId === null ||
+        !this.isAssetActionable(this.currentFileId)
+      )
+        return
       const assetId = this.currentFileId
-      const assetName = this.renameAssetName
-      wikiStore.startLoading('editor-media-renameasset')
+      const assetName = this.renameAssetName.trim()
+      const folderId = this.relocationFolderId
+      const currentFolderId = this.currentAsset?.folderId ?? this.currentFolderId
+      const input: AssetRelocationInput = { filename: assetName }
+      if (folderId !== currentFolderId) input.folderId = folderId
+      wikiStore.startLoading('editor-media-relocateasset')
       this.renameAssetLoading = true
       try {
-        await renameAssetRequest(window.fetch.bind(window), assetId, assetName)
-        if (this.disposed) return
-        await this.loadMedia()
+        const receipt = await relocateAssetRequest(window.fetch.bind(window), assetId, input)
+        this.relocationReceipt = receipt
+        this.invalidateMediaLoad()
+        this.markAssetStale(assetId)
         if (this.disposed) return
         wikiStore.showNotification({
-          message: this.$t('editor:assets.renameSuccess'),
+          message: this.$t('editor:assets.relocationSubmitted'),
+          style: 'info',
+          icon: 'clock-outline'
+        })
+        const finalReceipt = await this.waitForRelocation(receipt)
+        if (this.disposed) return
+        this.relocationReceipt = finalReceipt
+        const isTerminal = ['succeeded', 'failed', 'superseded'].includes(finalReceipt.status)
+        const refreshed = isTerminal ? await this.refreshAfterRelocation(assetId) : false
+        if (this.disposed) return
+        if (finalReceipt.status === 'failed') {
+          wikiStore.showNotification({
+            message: this.relocationStatusMessage,
+            style: 'error',
+            icon: 'alert'
+          })
+          return
+        }
+        if (finalReceipt.status === 'superseded') {
+          wikiStore.showNotification({
+            message: this.relocationStatusMessage,
+            style: 'warning',
+            icon: 'alert'
+          })
+          return
+        }
+        if (finalReceipt.status !== 'succeeded') {
+          wikiStore.showNotification({
+            message: this.$t('editor:assets.relocationPendingRetry'),
+            style: 'warning',
+            icon: 'clock-outline'
+          })
+          return
+        }
+        if (!refreshed) return
+        wikiStore.showNotification({
+          message: this.relocationStatusMessage,
           style: 'success',
           icon: 'check'
         })
-        this.renameDialog = false
-        this.renameAssetName = ''
       } catch (err) {
         if (!this.disposed) wikiStore.showError(err)
       } finally {
         if (!this.disposed) this.renameAssetLoading = false
-        wikiStore.stopLoading('editor-media-renameasset')
+        wikiStore.stopLoading('editor-media-relocateasset')
       }
     },
     async deleteAsset() {
-      if (this.deleteAssetLoading || this.currentFileId === null) return
+      if (this.deleteAssetLoading || this.currentFileId === null || !this.isAssetActionable(this.currentFileId)) return
       const assetId = this.currentFileId
       wikiStore.startLoading('editor-media-deleteasset')
       this.deleteAssetLoading = true
@@ -913,6 +1127,7 @@ export default defineComponent({
         const visibleAssets = this.isBranding ? assets.filter(isPageBrandingAsset) : assets
         this.folders = markRaw(folders)
         this.assets = markRaw(visibleAssets)
+        this.staleAssetIds = []
         if (this.currentFileId !== null && !visibleAssets.some(asset => asset.id === this.currentFileId)) {
           this.currentFileId = null
         }
@@ -1165,6 +1380,10 @@ export default defineComponent({
       outline: 2px solid rgba(var(--v-theme-primary), .7);
       outline-offset: -2px;
     }
+  }
+  tr.is-stale {
+    cursor: not-allowed;
+    opacity: .62;
   }
 
   @media (prefers-reduced-motion: reduce) {

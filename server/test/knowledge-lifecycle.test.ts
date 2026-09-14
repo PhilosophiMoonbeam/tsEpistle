@@ -20,6 +20,7 @@ const createSchema = async (): Promise<void> => {
     table.string('visibility').notNullable()
     table.integer('ownerId').nullable()
     table.boolean('isPublished').notNullable()
+    table.boolean('isSearchable').notNullable().defaultTo(true)
     table.dateTime('publishStartDate').nullable()
     table.dateTime('publishEndDate').nullable()
     table.string('contentType').notNullable()
@@ -39,6 +40,7 @@ const createSchema = async (): Promise<void> => {
     table.string('visibility').notNullable()
     table.integer('ownerId').nullable()
     table.boolean('isPublished').notNullable()
+    table.boolean('isSearchable').notNullable().defaultTo(true)
     table.dateTime('publishStartDate').nullable()
     table.dateTime('publishEndDate').nullable()
     table.string('contentType').notNullable()
@@ -110,6 +112,7 @@ const page = (overrides: Record<string, unknown> = {}) => ({
   visibility: 'public',
   ownerId: null,
   isPublished: true,
+  isSearchable: true,
   publishStartDate: null,
   publishEndDate: null,
   contentType: 'markdown',
@@ -486,6 +489,31 @@ describe('page knowledge lifecycle', () => {
       | { enrichmentState: string; utilityModel: string | null }
       | undefined
     expect(enriched).toMatchObject({
+      enrichmentState: 'succeeded',
+      utilityModel: 'utility-small'
+    })
+  })
+
+  it('withholds enrichment for opted-out sources and requeues it only when searchability is restored', async () => {
+    await enableUtilityEnrichment()
+    const current = page({ isSearchable: false })
+    await db('pages').insert(current)
+    await enqueueKnowledge('1', String(current.content), 'create')
+    const enrichKnowledge = vi.fn(async () => utilityResult('searchable'))
+    const lifecycle = new PageKnowledgeLifecycle(db, 'searchability-worker', { enrichKnowledge })
+
+    await lifecycle.runOnce()
+    expect(enrichKnowledge).not.toHaveBeenCalled()
+    expect(await db('pageKnowledgeProjections').first('enrichmentState', 'utilityModel')).toEqual({
+      enrichmentState: 'withheld-unsearchable',
+      utilityModel: null
+    })
+    expect(await lifecycle.runOnce()).toMatchObject({ requeued: 0, processed: 0 })
+
+    await db('pages').where({ id: 42 }).update({ isSearchable: true })
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ requeued: 1, processed: 1 })
+    expect(enrichKnowledge).toHaveBeenCalledTimes(1)
+    expect(await db('pageKnowledgeProjections').first('enrichmentState', 'utilityModel')).toMatchObject({
       enrichmentState: 'succeeded',
       utilityModel: 'utility-small'
     })
@@ -939,7 +967,8 @@ describe('page knowledge lifecycle', () => {
       page({ id: 1, path: 'protected', title: 'Common protected', extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } }) }),
       page({ id: 2, path: 'filtered', title: 'Common filtered', extra: JSON.stringify({ okf: { type: 'Reference', status: 'stable' } }) }),
       page({ id: 3, path: 'eligible/z', title: 'Common eligible Z', extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } }) }),
-      page({ id: 4, path: 'eligible/a', title: 'Common eligible A', extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } }) })
+      page({ id: 4, path: 'eligible/a', title: 'Common eligible A', extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } }) }),
+      page({ id: 5, path: 'eligible/opted-out', title: 'Common eligible opted out', isSearchable: false, extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } }) })
     ]
     for (const source of sources) {
       await db('pages').insert(source)

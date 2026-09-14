@@ -17,6 +17,11 @@ import { createAuthRateLimiter, setAuthRateLimitHeaders, type AuthRateLimiter } 
 import { resolveAssetBrandingView } from '../helpers/asset-branding.ts'
 
 const tmplCreateRegex = /^[0-9]+(,[0-9]+)?$/
+const normalizeDbBoolean = (value: unknown, fallback = false): boolean => {
+  if (value === true || value === 1) return true
+  if (value === false || value === 0) return false
+  return fallback
+}
 interface PageTag {
   tag: string
 }
@@ -45,6 +50,7 @@ interface PageDocumentRecord {
   sourceRevision: string | number | bigint
   authorId: number
   isPublished: boolean | number
+  isSearchable: boolean | number
   updatedAt: string | Date
   createdAt: string | Date
   tags: PageTag[] | string[]
@@ -84,12 +90,14 @@ interface EditorPage {
   visibility?: PageVisibility
   ownerId?: number | null
   isPublished?: boolean | number | string
+  isSearchable?: boolean | number | string
   updatedAt: string | Date
   createdAt?: string | Date
   editorKey: string | null
   editor?: string
   tags?: PageTag[] | string[]
   extra: PageExtraRecord | null
+  bootstrapNotice?: string
   mode?: string
   publishStartDate?: string | Date
   publishEndDate?: string | Date
@@ -141,7 +149,12 @@ export interface CommonWiki {
       }
     }
     pageHistory: {
-      getVersion(input: { pageId: number; versionId: number; requester: Express.User | undefined }): Promise<PageVersionRecord | null>
+      getVersion(input: {
+        pageId: number
+        versionId: number
+        requester: Express.User | undefined
+        authority?: PageRuleAuthority
+      }): Promise<PageVersionRecord | null>
     }
     users: { getUserAvatarData(userId: string): Promise<unknown> }
     navigation: {
@@ -564,7 +577,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     res.attachment(fileName)
     let downloadPage: StoragePageEncodingInput = page
     if (versionId > 0) {
-      const pageVersion = await wiki.models.pageHistory.getVersion({ pageId: page.id, versionId, requester: req.user })
+      const pageVersion = await wiki.models.pageHistory.getVersion({ pageId: page.id, versionId, requester: req.user, authority })
       if (!pageVersion) return res.status(404).end()
       downloadPage = {
         ...pageVersion,
@@ -612,6 +625,10 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       visibility: pageArgs.visibility,
       ownerId: pageArgs.ownerId
     })
+    if (storedPage) {
+      storedPage.isPublished = normalizeDbBoolean(storedPage.isPublished)
+      storedPage.isSearchable = normalizeDbBoolean(storedPage.isSearchable, true)
+    }
     let page: EditorPage | null = storedPage
     let brandingAssignment: PageBrandingAssignment | null = null
     let branding: PageBrandingView | null = null
@@ -629,7 +646,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     }
     // -> Effective Permissions
     const authority = await wiki.auth.loadPageRuleAuthority(req.user)
-    const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs, authority)
+    let effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs, authority)
     if (storedPage && !applyPrivatePermissions(req, storedPage, effectivePermissions, authority)) {
       _.set(res.locals, 'pageMeta.title', 'Page Not Found')
       return res.status(404).render('notfound', { action: 'edit' })
@@ -671,7 +688,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       _.set(res.locals, 'pageMeta.title', `Edit ${page.title}`)
       _.set(res.locals, 'pageMeta.description', page.description)
       page.mode = 'update'
-      page.isPublished = page.isPublished === true || page.isPublished === 1 ? 'true' : 'false'
+      page.isPublished = normalizeDbBoolean(page.isPublished) ? 'true' : 'false'
       if (typeof page.content !== 'string') throw new Error('Page content is invalid')
       page.content = Buffer.from(page.content).toString('base64')
     } else {
@@ -696,7 +713,8 @@ export default function createCommonController(wiki: CommonWiki): express.Router
         extra: {
           css: '',
           js: ''
-        }
+        },
+        isSearchable: true
       }
 
       // -> From Template
@@ -733,11 +751,41 @@ export default function createCommonController(wiki: CommonWiki): express.Router
             }
             brandingAssignment = pageBrandingAssignmentFrom(pageVersion)
             branding = await resolvePageBranding(req, brandingAssignment)
-            if (brandingAssignment) page.extra = { ...(page.extra ?? {}), branding: brandingAssignment }
+            page.tags = Array.isArray(pageVersion.tags) ? pageVersion.tags.filter((tag): tag is string => typeof tag === 'string') : []
+            effectivePermissions = wiki.auth.getEffectivePermissions(req, { ...pageArgs, tags: page.tags.map(tag => ({ tag })) }, authority)
+            if (!effectivePermissions.pages.write) {
+              _.set(res.locals, 'pageMeta.title', 'Unauthorized')
+              return res.status(403).render('unauthorized', { action: 'create' })
+            }
+            const versionExtra = pageVersion.extra && typeof pageVersion.extra === 'object' && !Array.isArray(pageVersion.extra) ? pageVersion.extra : {}
+            const historicalCssValue = Reflect.get(versionExtra, 'css')
+            const historicalJsValue = Reflect.get(versionExtra, 'js')
+            const historicalCss = typeof historicalCssValue === 'string' ? historicalCssValue : ''
+            const historicalJs = typeof historicalJsValue === 'string' ? historicalJsValue : ''
+            const cssOmitted = historicalCss.trim().length > 0 && !effectivePermissions.pages.style
+            const jsOmitted = historicalJs.trim().length > 0 && !effectivePermissions.pages.script
+            page.extra = {
+              ...(brandingAssignment ? { branding: brandingAssignment } : {}),
+              css: effectivePermissions.pages.style ? historicalCss : '',
+              js: effectivePermissions.pages.script ? historicalJs : ''
+            }
+            const bootstrapNotice =
+              cssOmitted && jsOmitted
+                ? 'Historical CSS and JavaScript were not copied because the destination does not permit page styles or scripts.'
+                : cssOmitted
+                  ? 'Historical CSS was not copied because the destination does not permit page styles.'
+                  : jsOmitted
+                    ? 'Historical JavaScript was not copied because the destination does not permit page scripts.'
+                    : undefined
+            if (bootstrapNotice !== undefined) page.bootstrapNotice = bootstrapNotice
             page.content = Buffer.from(String(pageVersion.content)).toString('base64')
             page.editorKey = typeof pageVersion.editor === 'string' ? pageVersion.editor : null
             page.title = typeof pageVersion.title === 'string' ? pageVersion.title : null
             page.description = typeof pageVersion.description === 'string' ? pageVersion.description : null
+            page.isPublished = normalizeDbBoolean(pageVersion.isPublished)
+            page.isSearchable = normalizeDbBoolean(pageVersion.isSearchable, true)
+            page.publishStartDate = typeof pageVersion.publishStartDate === 'string' ? pageVersion.publishStartDate : ''
+            page.publishEndDate = typeof pageVersion.publishEndDate === 'string' ? pageVersion.publishEndDate : ''
           } else {
             // -> From Page Live
             const pageOriginal = await pageOperations.getSource({
@@ -753,6 +801,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
             page.editorKey = pageOriginal.editor
             page.title = typeof pageOriginal.title === 'string' ? pageOriginal.title : null
             page.description = typeof pageOriginal.description === 'string' ? pageOriginal.description : null
+            page.isSearchable = normalizeDbBoolean(pageOriginal.isSearchable, true)
           }
         } catch (err) {
           const errorName = err instanceof Error ? err.name : ''
@@ -939,7 +988,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
 
     if (page) {
       if (versionId > 0) {
-        const pageVersion = await wiki.models.pageHistory.getVersion({ pageId: page.id, versionId, requester: req.user })
+        const pageVersion = await wiki.models.pageHistory.getVersion({ pageId: page.id, versionId, requester: req.user, authority })
         if (!pageVersion) {
           _.set(res.locals, 'pageMeta.title', 'Page Not Found')
           return res.status(404).render('notfound', { action: 'source' })
@@ -976,13 +1025,14 @@ export default function createCommonController(wiki: CommonWiki): express.Router
    * User Avatar
    */
   router.get('/_userav/:uid', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store')
     if (!wiki.auth.checkAccess(req.user, ['read:pages'])) {
       return res.sendStatus(403)
     }
     const av = await wiki.models.users.getUserAvatarData(req.params.uid)
     if (av) {
       res.set('Content-Type', 'image/jpeg')
-      res.send(av)
+      return res.send(av)
     }
 
     return res.sendStatus(404)

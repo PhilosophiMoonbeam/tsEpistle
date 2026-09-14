@@ -29,7 +29,7 @@ let tempRoot: string
 let Page: typeof PageModel
 let transactionPageProjection: Record<string, unknown> | undefined
 let cacheIdentityMarker:
-  | { id: number; hash: string; sourceRevision: string | number; path: string; localeCode: string; visibility: 'public' | 'private'; ownerId: number | null }
+  | { id: number; hash: string; sourceRevision: string | number; path: string; localeCode: string; visibility: 'public' | 'private'; ownerId: number | null; isSearchable: boolean }
   | undefined
 
 
@@ -148,6 +148,7 @@ describe('models/pages.updatePage cache invalidation', () => {
       extra: {},
       hash: oldHash,
       isPublished: true,
+      isSearchable: true,
       localeCode: locale,
       ownerId,
       path: oldPath,
@@ -245,6 +246,7 @@ describe('models/pages.updatePage cache invalidation', () => {
       extra: {},
       hash: publicHash,
       isPublished: true,
+      isSearchable: true,
       localeCode: 'en',
       ownerId: null,
       path: publicIdentity.path,

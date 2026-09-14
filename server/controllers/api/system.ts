@@ -7,11 +7,15 @@ import { getSystemWorkspaceStore } from '../../operations/system-workspace-runti
 
 const router = express.Router()
 
-const authorized = (req: Request, res: Response): boolean => {
-  res.set('Cache-Control', 'no-store')
+const authorized = (req: Request, res: Response, cacheControl = 'no-store'): boolean => {
+  res.set('Cache-Control', cacheControl)
   if (getWikiAuth().checkAccess(systemRequester(req).user, ['manage:system'])) return true
   res.status(403).json({ error: 'System administration is required.' })
   return false
+}
+const privateStatusAuthorized = (req: Request, res: Response): boolean => {
+  res.set('Cache-Control', 'no-store')
+  return authorized(req, res, 'private, no-store')
 }
 
 const summaryAuthorized = (req: Request, res: Response): boolean => {
@@ -88,14 +92,12 @@ router.get('/extensions', async (req, res) => {
     res.status(410).json({ error: 'Extensions now uses read-only deployment observations. Reload Administration or use /_api/extensions/workspace.' })
   } catch (error) {
     const status = error instanceof Error && 'status' in error ? error.status : undefined
-    res
-      .status(typeof status === 'number' ? status : 503)
-      .json({
-        error:
-          error instanceof Error && typeof status === 'number'
-            ? error.message
-            : 'Extension observations are unavailable. Reload to inspect the deployed application image again.'
-      })
+    res.status(typeof status === 'number' ? status : 503).json({
+      error:
+        error instanceof Error && typeof status === 'number'
+          ? error.message
+          : 'Extension observations are unavailable. Reload to inspect the deployed application image again.'
+    })
   }
 })
 
@@ -112,16 +114,39 @@ router.get('/export-status', retiredUtilities('/_api/utilities/workspace'))
 router.post('/import-v1/users', retiredUtilities('/_api/utilities/workspace'))
 
 // Rendering has its own page-level administration workspace and does not use the Utilities batch rerender operation.
-router.post('/content/render-page', async (req, res) => {
-  if (!authorized(req, res)) return
+router.get('/content/render-page/status/:effectId', async (req, res) => {
+  if (!privateStatusAuthorized(req, res)) return
   try {
-    await systemOperations.renderPage(req.body?.id)
-    res.json({ message: 'Page rendered successfully.' })
+    const status = await systemOperations.getRenderPageStatus({
+      effectId: req.params.effectId,
+      requester: systemRequester(req)
+    })
+    if (!status) {
+      res.status(404).json({ error: 'Render effect not found.' })
+      return
+    }
+    res.json(status)
   } catch (error) {
     const status = error instanceof Error && 'status' in error ? error.status : undefined
     res
       .status(typeof status === 'number' ? status : 503)
-      .json({ error: error instanceof Error && typeof status === 'number' ? error.message : 'Page rendering could not be confirmed.' })
+      .json({ error: error instanceof Error && typeof status === 'number' ? error.message : 'Render status could not be confirmed.' })
+  }
+})
+
+router.post('/content/render-page', async (req, res) => {
+  if (!authorized(req, res)) return
+  try {
+    const receipt = await systemOperations.renderPage({
+      id: req.body?.id,
+      requester: systemRequester(req)
+    })
+    res.status(202).json(receipt)
+  } catch (error) {
+    const status = error instanceof Error && 'status' in error ? error.status : undefined
+    res
+      .status(typeof status === 'number' ? status : 503)
+      .json({ error: error instanceof Error && typeof status === 'number' ? error.message : 'Page rendering could not be admitted.' })
   }
 })
 

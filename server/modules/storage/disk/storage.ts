@@ -1,6 +1,7 @@
-import type { StorageConfig, StorageAssetIdentity, StorageContext, StoragePlugin, UnknownRecord } from '../../types.ts'
+import type { StorageConfig, StorageAssetIdentity, StorageAssetRelocation, StorageContext, StoragePlugin, UnknownRecord } from '../../types.ts'
 import { wiki } from '../../types.ts'
 import fs from 'fs-extra'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import { pipeline } from 'node:stream/promises'
@@ -12,12 +13,7 @@ import pageHelper from '../../../helpers/page.ts'
 import commonDisk from './common.ts'
 import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
 import { okfFilePath } from '../../../okf/format.ts'
-import {
-  openStorageRoot,
-  type StorageFileHandle,
-  type StorageRootHandle,
-  type StorageWalkEntry
-} from '../local-filesystem.ts'
+import { openStorageRoot, type StorageFileHandle, type StorageRootHandle, type StorageWalkEntry } from '../local-filesystem.ts'
 import { IMPORT_MAX_BYTES, IMPORT_MAX_ENTRIES, ImportBudget } from '../import-budget.ts'
 import { isStorageInternalPath, isStorageReservedPath } from '../internal-path.ts'
 import type { StorageLocalLocation } from '../../types.ts'
@@ -56,40 +52,61 @@ interface AssetExportRow {
   data: Buffer
 }
 
-function isPageExportRow (value: unknown): value is PageExportRow {
-  return typeof value === 'object' &&
+function isPageExportRow(value: unknown): value is PageExportRow {
+  return (
+    typeof value === 'object' &&
     value !== null &&
-    'id' in value && typeof value.id === 'number' &&
-    'path' in value && typeof value.path === 'string' &&
-    'localeCode' in value && typeof value.localeCode === 'string' &&
-    'title' in value && typeof value.title === 'string' &&
-    'description' in value && typeof value.description === 'string' &&
-    'contentType' in value && typeof value.contentType === 'string' &&
+    'id' in value &&
+    typeof value.id === 'number' &&
+    'path' in value &&
+    typeof value.path === 'string' &&
+    'localeCode' in value &&
+    typeof value.localeCode === 'string' &&
+    'title' in value &&
+    typeof value.title === 'string' &&
+    'description' in value &&
+    typeof value.description === 'string' &&
+    'contentType' in value &&
+    typeof value.contentType === 'string' &&
     'content' in value &&
-    (typeof value.content === 'string' ||
-      (typeof value.content === 'object' && value.content !== null && !Array.isArray(value.content))) &&
-    'sourceRevision' in value && (typeof value.sourceRevision === 'string' || typeof value.sourceRevision === 'number') &&
-    'authorId' in value && typeof value.authorId === 'number' &&
-    'createdAt' in value && (value.createdAt instanceof Date || typeof value.createdAt === 'string') &&
-    'updatedAt' in value && (value.updatedAt instanceof Date || typeof value.updatedAt === 'string') &&
-    'extra' in value && typeof value.extra === 'object' && value.extra !== null && !Array.isArray(value.extra) &&
-    'isPublished' in value && typeof value.isPublished === 'boolean' &&
-    'editorKey' in value && typeof value.editorKey === 'string'
+    (typeof value.content === 'string' || (typeof value.content === 'object' && value.content !== null && !Array.isArray(value.content))) &&
+    'sourceRevision' in value &&
+    (typeof value.sourceRevision === 'string' || typeof value.sourceRevision === 'number') &&
+    'authorId' in value &&
+    typeof value.authorId === 'number' &&
+    'createdAt' in value &&
+    (value.createdAt instanceof Date || typeof value.createdAt === 'string') &&
+    'updatedAt' in value &&
+    (value.updatedAt instanceof Date || typeof value.updatedAt === 'string') &&
+    'extra' in value &&
+    typeof value.extra === 'object' &&
+    value.extra !== null &&
+    !Array.isArray(value.extra) &&
+    'isPublished' in value &&
+    typeof value.isPublished === 'boolean' &&
+    'editorKey' in value &&
+    typeof value.editorKey === 'string'
+  )
 }
 
-function isAssetExportRow (value: unknown): value is AssetExportRow {
-  return typeof value === 'object' &&
+function isAssetExportRow(value: unknown): value is AssetExportRow {
+  return (
+    typeof value === 'object' &&
     value !== null &&
-    'filename' in value && typeof value.filename === 'string' &&
-    'folderId' in value && (value.folderId === null || typeof value.folderId === 'number') &&
-    'data' in value && Buffer.isBuffer(value.data)
+    'filename' in value &&
+    typeof value.filename === 'string' &&
+    'folderId' in value &&
+    (value.folderId === null || typeof value.folderId === 'number') &&
+    'data' in value &&
+    Buffer.isBuffer(value.data)
+  )
 }
 
-function serializeContent (content: string | Record<string, unknown>): string {
+function serializeContent(content: string | Record<string, unknown>): string {
   return typeof content === 'string' ? content : JSON.stringify(content)
 }
 
-function serializePage (page: StoragePageEncodingInput): string {
+function serializePage(page: StoragePageEncodingInput): string {
   const encoded = encodeStoragePageDocument(page)
   if (page.contentType === 'markdown') {
     if (typeof encoded === 'object' && encoded !== null && 'markdown' in encoded && typeof encoded.markdown === 'string') return encoded.markdown
@@ -101,13 +118,32 @@ function serializePage (page: StoragePageEncodingInput): string {
   return serialized
 }
 
-function storageRootPath (config: StorageConfig): string {
+function storageRootPath(config: StorageConfig): string {
   return path.resolve(wiki.ROOTPATH, config.path)
 }
 
-function requireRoot (context: DiskStorageContext): StorageRootHandle {
+function requireRoot(context: DiskStorageContext): StorageRootHandle {
   if (context.root === null || context.root === undefined || context.root.closed) throw new Error('Disk storage is not initialized')
   return context.root
+}
+
+async function destinationHasCanonicalBytes(root: StorageRootHandle, relativePath: string, data: Buffer, contentSha256: string): Promise<boolean> {
+  let destination: StorageFileHandle
+  try {
+    destination = await root.openFile(relativePath)
+  } catch (error: unknown) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return false
+    throw error
+  }
+  try {
+    const destinationBytes = await destination.readBounded(data.byteLength + 1)
+    if (destinationBytes.byteLength !== data.byteLength || createHash('sha256').update(destinationBytes).digest('hex') !== contentSha256) {
+      throw new Error('Storage destination does not contain the canonical asset bytes')
+    }
+    return true
+  } finally {
+    await destination.close()
+  }
 }
 
 const TAR_BLOCK_BYTES = 512
@@ -128,7 +164,7 @@ export const backupArchiveLimits: StorageBackupLimits = {
   maxOutputBytes: BACKUP_OUTPUT_MAX_BYTES
 }
 
-function tarPathParts (relativePath: string): { name: string; prefix?: string } {
+function tarPathParts(relativePath: string): { name: string; prefix?: string } {
   const encodedLength = Buffer.byteLength(relativePath)
   if (encodedLength <= 100) return { name: relativePath }
   const slashPositions: number[] = []
@@ -141,14 +177,14 @@ function tarPathParts (relativePath: string): { name: string; prefix?: string } 
   throw new RangeError(`Backup path is too long for a ustar archive: ${relativePath}`)
 }
 
-function writeTarOctal (header: Buffer, offset: number, length: number, value: number): void {
+function writeTarOctal(header: Buffer, offset: number, length: number, value: number): void {
   const digits = Math.max(0, Math.floor(value)).toString(8)
   if (digits.length > length - 1) throw new RangeError('Backup archive field is too large')
   const encoded = digits.padStart(length - 1, '0') + '\0'
   header.write(encoded, offset, length, 'ascii')
 }
 
-function tarHeader (entry: StorageWalkEntry, size: number): Buffer {
+function tarHeader(entry: StorageWalkEntry, size: number): Buffer {
   const header = Buffer.alloc(TAR_BLOCK_BYTES)
   const parts = tarPathParts(entry.relativePath)
   header.write(parts.name, 0, 100, 'utf8')
@@ -169,11 +205,11 @@ function tarHeader (entry: StorageWalkEntry, size: number): Buffer {
   return header
 }
 
-function assertBackupLimit (value: number, name: string): void {
+function assertBackupLimit(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new RangeError(`${name} must be a non-negative safe integer`)
 }
 
-function normalizeBackupLimits (limits: Partial<StorageBackupLimits> | undefined): StorageBackupLimits {
+function normalizeBackupLimits(limits: Partial<StorageBackupLimits> | undefined): StorageBackupLimits {
   const normalized = {
     maxEntries: limits?.maxEntries ?? backupArchiveLimits.maxEntries,
     maxRawBytes: limits?.maxRawBytes ?? backupArchiveLimits.maxRawBytes,
@@ -185,18 +221,20 @@ function normalizeBackupLimits (limits: Partial<StorageBackupLimits> | undefined
   return normalized
 }
 
-function sameBackupIdentity (
+function sameBackupIdentity(
   expected: StorageWalkEntry['identity'],
   actual: { dev: number; ino: number; size: number; mode: number; mtimeMs: number }
 ): boolean {
-  return expected.dev === actual.dev &&
+  return (
+    expected.dev === actual.dev &&
     expected.ino === actual.ino &&
     expected.size === actual.size &&
     expected.mode === actual.mode &&
     expected.mtimeMs === actual.mtimeMs
+  )
 }
 
-function assertBackupIdentity (
+function assertBackupIdentity(
   expected: StorageWalkEntry['identity'],
   actual: { dev: number; ino: number; size: number; mode: number; mtimeMs: number },
   relativePath: string
@@ -206,10 +244,7 @@ function assertBackupIdentity (
   }
 }
 
-async function *readBackupFileChunks (
-  source: StorageFileHandle,
-  entry: StorageWalkEntry
-): AsyncGenerator<Uint8Array> {
+async function* readBackupFileChunks(source: StorageFileHandle, entry: StorageWalkEntry): AsyncGenerator<Uint8Array> {
   const expected = entry.identity
   const size = expected.size
   if (!Number.isSafeInteger(size) || size < 0) throw new RangeError(`Backup source has an invalid size: ${entry.relativePath}`)
@@ -234,15 +269,12 @@ async function *readBackupFileChunks (
   assertBackupIdentity(expected, after, entry.relativePath)
 }
 
-function backupShouldSkip (relativePath: string): boolean {
+function backupShouldSkip(relativePath: string): boolean {
   if (isStorageInternalPath(relativePath)) return true
   return isStorageReservedPath(relativePath)
 }
 
-async function *tarChunks (
-  root: StorageRootHandle,
-  limits: StorageBackupLimits
-): AsyncGenerator<Uint8Array> {
+async function* tarChunks(root: StorageRootHandle, limits: StorageBackupLimits): AsyncGenerator<Uint8Array> {
   const budget = new ImportBudget(limits.maxEntries, limits.maxRawBytes)
   for await (const entry of root.walk({
     shouldSkip: backupShouldSkip,
@@ -285,7 +317,7 @@ async function *tarChunks (
   yield Buffer.alloc(TAR_BLOCK_BYTES * TAR_END_BLOCKS)
 }
 
-async function *gzipChunks (source: AsyncIterable<Uint8Array>): AsyncGenerator<Uint8Array> {
+async function* gzipChunks(source: AsyncIterable<Uint8Array>): AsyncGenerator<Uint8Array> {
   const input = Readable.from(source)
   const gzip = zlib.createGzip()
   const transfer = pipeline(input, gzip)
@@ -299,20 +331,19 @@ async function *gzipChunks (source: AsyncIterable<Uint8Array>): AsyncGenerator<U
   }
 }
 
-
 const plugin: StoragePlugin<StorageConfig, DiskStorageContext> & {
   root: StorageRootHandle | null
   backupLimits: StorageBackupLimits
 } = {
   root: null,
   backupLimits: backupArchiveLimits,
-  async activated () {},
-  async deactivated () {
+  async activated() {},
+  async deactivated() {
     const root = this.root
     this.root = null
     if (root) await root.close()
   },
-  async init () {
+  async init() {
     wiki.logger.info('(STORAGE/DISK) Initializing...')
     await this.deactivated()
     const rootPath = storageRootPath(this.config)
@@ -321,7 +352,7 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> & {
     this.root = await openStorageRoot(rootPath)
     wiki.logger.info('(STORAGE/DISK) Initialization completed.')
   },
-  async sync ({ manual } = { manual: false }) {
+  async sync({ manual } = { manual: false }) {
     if (!this.config.createDailyBackups && !manual) return
     const root = requireRoot(this)
     const directory = manual ? '_manual' : '_daily'
@@ -333,71 +364,123 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> & {
     await root.writeAtomicStream(archivePath, gzipChunks(tarChunks(root, limits)), limits.maxOutputBytes)
     wiki.logger.info('(STORAGE/DISK) Backup archive created successfully.')
   },
-  async created (page) {
+  async created(page) {
     const root = requireRoot(this)
     wiki.logger.info(`(STORAGE/DISK) Creating file [${page.localeCode}] ${page.path}...`)
     const fileName = pageFileName(page, true)
     await root.writeAtomic(fileName, serializePage(page))
   },
-  async updated (page) {
+  async updated(page) {
     const root = requireRoot(this)
     wiki.logger.info(`(STORAGE/DISK) Updating file [${page.localeCode}] ${page.path}...`)
     const fileName = pageFileName(page, true)
     await root.writeAtomic(fileName, serializePage(page))
   },
-  async deleted (page) {
+  async deleted(page) {
     const root = requireRoot(this)
     wiki.logger.info(`(STORAGE/DISK) Deleting file [${page.localeCode}] ${page.path}...`)
     const fileName = pageFileName(page, true)
     await root.removeFile(fileName)
   },
-  async renamed (page) {
+  async renamed(page) {
     const root = requireRoot(this)
     wiki.logger.info(`(STORAGE/DISK) Renaming file [${page.localeCode}] ${page.path} to [${page.destinationLocaleCode}] ${page.destinationPath}...`)
-    const sourceFileName = pageFileName({
-      path: page.path,
-      localeCode: page.localeCode,
-      contentType: page.contentType
-    }, wiki.config.lang.namespacing)
-    const destinationFileName = pageFileName({
-      path: page.destinationPath,
-      localeCode: page.destinationLocaleCode,
-      contentType: page.contentType
-    }, wiki.config.lang.namespacing)
+    const sourceFileName = pageFileName(
+      {
+        path: page.path,
+        localeCode: page.localeCode,
+        contentType: page.contentType
+      },
+      wiki.config.lang.namespacing
+    )
+    const destinationFileName = pageFileName(
+      {
+        path: page.destinationPath,
+        localeCode: page.destinationLocaleCode,
+        contentType: page.contentType
+      },
+      wiki.config.lang.namespacing
+    )
     await root.ensureDirectory(path.posix.dirname(destinationFileName) === '.' ? '' : path.posix.dirname(destinationFileName))
     await root.move(sourceFileName, destinationFileName)
   },
-  async assetUploaded (asset) {
+  async assetUploaded(asset) {
     const root = requireRoot(this)
     wiki.logger.info(`(STORAGE/DISK) Creating new file ${asset.path}...`)
     await root.writeAtomic(asset.path, asset.data)
   },
-  async assetDeleted (asset) {
+  async assetDeleted(asset) {
     const root = requireRoot(this)
     wiki.logger.info(`(STORAGE/DISK) Deleting file ${asset.path}...`)
     await root.removeFile(asset.path)
   },
-  async assetRenamed (asset) {
+  async assetRenamed(asset) {
     const root = requireRoot(this)
     wiki.logger.info(`(STORAGE/DISK) Renaming file from ${asset.path} to ${asset.destinationPath}...`)
     await root.ensureDirectory(path.posix.dirname(asset.destinationPath) === '.' ? '' : path.posix.dirname(asset.destinationPath))
     await root.move(asset.path, asset.destinationPath)
   },
-  async getLocalLocation (asset: StorageAssetIdentity): Promise<StorageLocalLocation | void> {
+  async assetRelocated(asset: StorageAssetRelocation) {
+    const root = requireRoot(this)
+    const digest = createHash('sha256').update(asset.data).digest('hex')
+    if (digest !== asset.contentSha256) throw new Error('Canonical asset bytes failed relocation validation')
+    await root.ensureDirectory(path.posix.dirname(asset.destinationPath) === '.' ? '' : path.posix.dirname(asset.destinationPath))
+    if (!(await destinationHasCanonicalBytes(root, asset.destinationPath, asset.data, asset.contentSha256))) {
+      await root.writeAtomicIfAbsent(asset.destinationPath, asset.data)
+      if (!(await destinationHasCanonicalBytes(root, asset.destinationPath, asset.data, asset.contentSha256))) {
+        throw new Error('Storage destination was not retained after relocation write')
+      }
+    }
+    if (asset.sourcePath === asset.destinationPath) return
+    let source: StorageFileHandle
+    try {
+      source = await root.openFile(asset.sourcePath, asset.sourceIdentity)
+    } catch (error: unknown) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return
+      throw error
+    }
+    try {
+      const sourceBytes = await source.readBounded(asset.data.byteLength + 1)
+      if (sourceBytes.byteLength !== asset.data.byteLength || createHash('sha256').update(sourceBytes).digest('hex') !== asset.contentSha256) {
+        throw new Error('Former storage location changed before relocation cleanup')
+      }
+      await root.removeFile(asset.sourcePath, source.identity)
+    } finally {
+      await source.close()
+    }
+  },
+  async getLocalLocation(asset: StorageAssetIdentity): Promise<StorageLocalLocation | void> {
     if (typeof asset.path !== 'string' || isStorageInternalPath(asset.path) || isStorageReservedPath(asset.path)) return
     const root = requireRoot(this)
     return {
       open: async () => root.openFile(asset.path)
     }
   },
-  async dump () {
+  async dump() {
     const root = requireRoot(this)
     wiki.logger.info('(STORAGE/DISK) Dumping all content to disk...')
     await pipeline(
-      wiki.models.knex.column(
-        'id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content',
-        'sourceRevision', 'authorId', 'extra', 'isPublished', 'updatedAt', 'createdAt', 'editorKey'
-      ).select().from('pages').where({ visibility: 'public' }).stream(),
+      wiki.models.knex
+        .column(
+          'id',
+          'path',
+          'localeCode',
+          'title',
+          'description',
+          'contentType',
+          'content',
+          'sourceRevision',
+          'authorId',
+          'extra',
+          'isPublished',
+          'updatedAt',
+          'createdAt',
+          'editorKey'
+        )
+        .select()
+        .from('pages')
+        .where({ visibility: 'public' })
+        .stream(),
       new Transform({
         objectMode: true,
         transform: async (value: unknown, _encoding: BufferEncoding, callback: TransformCallback) => {
@@ -444,10 +527,10 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> & {
     )
     wiki.logger.info('(STORAGE/DISK) All content was dumped to disk successfully.')
   },
-  async backup () {
+  async backup() {
     return this.sync({ manual: true })
   },
-  async importAll () {
+  async importAll() {
     const root = requireRoot(this)
     wiki.logger.info('(STORAGE/DISK) Importing all content from local disk folder to the DB...')
     const results = await commonDisk.importFromDisk({ root, moduleName: 'DISK' })
@@ -456,15 +539,10 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> & {
   }
 }
 
-function pageFileName (
-  page: { localeCode: string; path: string; contentType: string },
-  namespaceNonDefaultLocale: boolean
-): string {
+function pageFileName(page: { localeCode: string; path: string; contentType: string }, namespaceNonDefaultLocale: boolean): string {
   if (page.contentType === 'markdown') return okfFilePath(page.localeCode, page.path)
   const legacyFileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
-  return namespaceNonDefaultLocale && wiki.config.lang.code !== page.localeCode
-    ? `${page.localeCode}/${legacyFileName}`
-    : legacyFileName
+  return namespaceNonDefaultLocale && wiki.config.lang.code !== page.localeCode ? `${page.localeCode}/${legacyFileName}` : legacyFileName
 }
 
 export default plugin

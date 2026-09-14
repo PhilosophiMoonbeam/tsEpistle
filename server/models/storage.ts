@@ -22,6 +22,7 @@ import {
   type StorageActionItemOutcome,
   type StorageLastOperation,
   type StorageAssetIdentity,
+  type StorageAssetRelocation,
   type StorageLocalLocation
 } from '../modules/types.ts'
 import {
@@ -109,6 +110,10 @@ interface RenamedStorageAsset {
   moveAuthorName: string
   moveAuthorEmail: string
 }
+interface AssetRelocationRequest extends StorageAssetRelocation {
+  targetKey: string
+  targetConfigurationRevision: string
+}
 
 type StoragePageEvent =
   | { event: 'created'; page: WrittenStoragePage }
@@ -129,6 +134,7 @@ interface StoragePlugin extends Record<string, unknown> {
   assetUploaded(asset: UploadedStorageAsset): Promise<unknown>
   assetDeleted(asset: DeletedStorageAsset): Promise<unknown>
   assetRenamed(asset: RenamedStorageAsset): Promise<unknown>
+  assetRelocated?(asset: AssetRelocationRequest): Promise<unknown>
   getLocalLocation(asset: StorageAssetIdentity): Promise<StorageLocalLocation | void>
 }
 
@@ -269,16 +275,13 @@ const storageActionItem = (value: unknown): StorageActionItem => {
   const kind = row.kind === 'asset' ? 'asset' : 'page'
   const format = storageActionFormat(row.format)
   const rawOutcome = row.outcome
-  const outcome: StorageActionItemOutcome =
-    rawOutcome === 'conflict' ? 'conflict' : row.ok === true || rawOutcome === 'succeeded' ? 'succeeded' : 'failed'
+  const outcome: StorageActionItemOutcome = rawOutcome === 'conflict' ? 'conflict' : row.ok === true || rawOutcome === 'succeeded' ? 'succeeded' : 'failed'
   const rawDocument = isRecord(row.document) ? row.document : {}
   const diagnostics = sanitizeDiagnostics(rawDocument.diagnostics ?? row.diagnostics)
-  const message = outcome === 'succeeded'
-    ? null
-    : boundedStorageActionText(
-      format === 'invalid' ? 'Page document was rejected' : row.error ?? row.message,
-      'Storage item failed'
-    )
+  const message =
+    outcome === 'succeeded'
+      ? null
+      : boundedStorageActionText(format === 'invalid' ? 'Page document was rejected' : (row.error ?? row.message), 'Storage item failed')
   return {
     kind,
     path: boundedStorageActionPath(row.path ?? row.relPath),
@@ -309,13 +312,12 @@ const actionSummary = (
     if (item.format !== null) formats[item.format] += 1
     if (items.length < STORAGE_ACTION_ITEM_LIMIT) items.push(item)
   }
-  const outcome: StorageActionOutcome = failureMessage !== undefined
-    ? 'failed'
-    : failed === 0 ? 'succeeded' : succeeded === 0 ? 'failed' : 'partial'
-  const message = boundedStorageActionText(
-    failureMessage,
-    outcome === 'succeeded' ? 'Action completed.' : outcome === 'partial' ? 'Action completed with failures.' : 'Action failed.'
-  ) ?? 'Action failed.'
+  const outcome: StorageActionOutcome = failureMessage !== undefined ? 'failed' : failed === 0 ? 'succeeded' : succeeded === 0 ? 'failed' : 'partial'
+  const message =
+    boundedStorageActionText(
+      failureMessage,
+      outcome === 'succeeded' ? 'Action completed.' : outcome === 'partial' ? 'Action completed with failures.' : 'Action failed.'
+    ) ?? 'Action failed.'
   return {
     targetKey,
     handler,
@@ -338,14 +340,19 @@ async function recordTargetState(
   lastOperation?: StorageLastOperation | null,
   force = false
 ): Promise<void> {
-  if (!force && lastOperation === undefined && target.state?.status === status && target.state.message === message && isRecentStorageAttempt(target.state.lastAttempt)) return
+  if (
+    !force &&
+    lastOperation === undefined &&
+    target.state?.status === status &&
+    target.state.message === message &&
+    isRecentStorageAttempt(target.state.lastAttempt)
+  )
+    return
   const state: StorageState = {
     status,
     message,
     lastAttempt: new Date().toISOString(),
-    ...(lastOperation === undefined
-      ? target.state?.lastOperation === undefined ? {} : { lastOperation: target.state.lastOperation }
-      : { lastOperation })
+    ...(lastOperation === undefined ? (target.state?.lastOperation === undefined ? {} : { lastOperation: target.state.lastOperation }) : { lastOperation })
   }
   target.state = state
   await target.$query().patch({ state })
@@ -472,8 +479,9 @@ export default class Storage extends Model {
    */
   static async initTargets(): Promise<void> {
     const stopped: Promise<unknown>[] = []
-    try { await this.runtimeQueue.run(() => this.initializeTargets(stopped)) }
-    finally {
+    try {
+      await this.runtimeQueue.run(() => this.initializeTargets(stopped))
+    } finally {
       // Cancelled timer invocations queued after replacement must be able to leave the runtime queue first.
       for (const result of await Promise.allSettled(stopped)) if (result.status === 'rejected') getWiki().logger.warn(result.reason)
     }
@@ -492,8 +500,11 @@ export default class Storage extends Model {
       const previousJobs = _.remove(scheduler.jobs, job => job.name === 'sync-storage')
       for (const job of previousJobs) stopped.push(job.stop())
       for (const target of previousTargets) {
-        try { if (isStorageAction(target.fn.deactivated)) await target.fn.deactivated.call(target.fn) }
-        catch (error) { wiki.logger.warn(error) }
+        try {
+          if (isStorageAction(target.fn.deactivated)) await target.fn.deactivated.call(target.fn)
+        } catch (error) {
+          wiki.logger.warn(error)
+        }
       }
 
       // -> Initialize targets
@@ -523,28 +534,32 @@ export default class Storage extends Model {
 
           // -> Set recurring sync job
           if (targetDef.schedule && target.syncInterval !== 'P0D') {
-            scheduled.push(scheduler.registerJob(
-              {
-                name: 'sync-storage',
-                immediate: false,
-                schedule: target.syncInterval,
-                repeat: true
-              },
-              { targetKey: target.key, generation: target.runtimeGeneration }
-            ))
+            scheduled.push(
+              scheduler.registerJob(
+                {
+                  name: 'sync-storage',
+                  immediate: false,
+                  schedule: target.syncInterval,
+                  repeat: true
+                },
+                { targetKey: target.key, generation: target.runtimeGeneration }
+              )
+            )
           }
 
           // -> Set internal recurring sync job
           if (targetDef.internalSchedule && targetDef.internalSchedule !== 'P0D') {
-            scheduled.push(scheduler.registerJob(
-              {
-                name: 'sync-storage',
-                immediate: false,
-                schedule: targetDef.internalSchedule,
-                repeat: true
-              },
-              { targetKey: target.key, generation: target.runtimeGeneration }
-            ))
+            scheduled.push(
+              scheduler.registerJob(
+                {
+                  name: 'sync-storage',
+                  immediate: false,
+                  schedule: targetDef.internalSchedule,
+                  repeat: true
+                },
+                { targetKey: target.key, generation: target.runtimeGeneration }
+              )
+            )
           }
           this.activeTargets.push(target)
         } catch (err) {
@@ -634,6 +649,30 @@ export default class Storage extends Model {
       }
     }
   }
+  static async reconcileAssetRelocation(input: AssetRelocationRequest): Promise<void> {
+    return this.runtimeQueue.run(async () => {
+      if (!input.targetKey || !input.targetConfigurationRevision) throw new Error('Asset relocation target identity is invalid')
+      const target = this.activeTargets.find(candidate => candidate.key === input.targetKey)
+      if (!target) throw new Error(`Asset relocation target ${input.targetKey} is not active`)
+      if (getWiki().config?.offline && target.key !== 'disk') throw new Error('Remote asset relocation is paused in offline mode')
+      if (storageConfigurationKey(target) !== input.targetConfigurationRevision) {
+        throw new Error(`Asset relocation target ${input.targetKey} configuration changed`)
+      }
+      const relocate = target.fn.assetRelocated
+      if (typeof relocate !== 'function') throw new Error(`Asset relocation is unsupported by storage target ${input.targetKey}`)
+      try {
+        await relocate.call(target.fn, input)
+        await recordTargetState(target, 'operational', '', undefined, true)
+      } catch (error) {
+        try {
+          await recordTargetState(target, 'error', errorMessage(error), undefined, true)
+        } catch (statusError) {
+          getWiki().logger.warn(statusError)
+        }
+        throw error
+      }
+    })
+  }
 
   static async getLocalLocations(input: { asset: StorageAssetIdentity }): Promise<Array<{ location: StorageLocalLocation; key: string }>> {
     return this.runtimeQueue.run(() => this.resolveLocalLocations(input))
@@ -667,9 +706,20 @@ export default class Storage extends Model {
     }))
   }
 
+  static relocationTargets(): Array<StorageRuntimeTarget & { supportsAssetRelocation: boolean }> {
+    return (this.targets ?? []).map(target => ({
+      key: target.key,
+      generation: target.runtimeGeneration || '',
+      configurationKey: storageConfigurationKey(target),
+      active: this.activeTargets.includes(target),
+      paused: Boolean(getWiki().config?.offline && target.key !== 'disk'),
+      supportsAssetRelocation: typeof target.fn?.assetRelocated === 'function'
+    }))
+  }
+
   /** Own the runtime across review, effects and the durable receipt. Drain cancelled timers after releasing it. */
   static async performAdministrativeOperation<T>(
-    before: () => Promise<{targetKey:string|null;handler:string}>,
+    before: () => Promise<{ targetKey: string | null; handler: string }>,
     after: (result: StorageActionSummary | StorageRuntimeTarget[]) => Promise<T>
   ): Promise<T> {
     const stopped: Promise<unknown>[] = []
@@ -698,8 +748,11 @@ export default class Storage extends Model {
         await recordTargetState(target, 'operational', '', undefined, true)
         return true
       } catch (error) {
-        try { await recordTargetState(target, 'error', errorMessage(error), undefined, true) }
-        catch (statusError) { getWiki().logger.warn(statusError) }
+        try {
+          await recordTargetState(target, 'error', errorMessage(error), undefined, true)
+        } catch (statusError) {
+          getWiki().logger.warn(statusError)
+        }
         throw error
       }
     })

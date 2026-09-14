@@ -5,8 +5,12 @@ const pubSub = vi.hoisted(() => ({
   close: vi.fn(async (): Promise<void> => {}),
   publish: vi.fn(async (_channel: string, _payload: unknown): Promise<void> => {})
 }))
+const listenerSettings = vi.hoisted(() => ({ calls: [] as unknown[] }))
 
 class MockPGPubSub {
+  constructor(settings?: unknown) {
+    if (settings !== undefined) listenerSettings.calls.push(settings)
+  }
   addChannel = pubSub.addChannel
   close = pubSub.close
   publish = pubSub.publish
@@ -40,11 +44,12 @@ const wiki = {
 Reflect.set(globalThis, 'WIKI', wiki)
 
 // db.ts captures WIKI during module evaluation, after the pg-pubsub test double is installed.
-const { default: database } = await import('../../core/db.ts')
+const { default: database, createSystemConnectionApplicationName } = await import('../../core/db.ts')
 
 describe('database notifications', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    listenerSettings.calls.length = 0
     pubSub.addChannel.mockResolvedValue(undefined)
     pubSub.close.mockResolvedValue(undefined)
     pubSub.publish.mockResolvedValue(undefined)
@@ -82,5 +87,19 @@ describe('database notifications', () => {
       event: 'page.updated',
       error: 'connection lost'
     })
+  })
+  it('tags the listener without discarding URL-style connection settings', async () => {
+    database.knex = {
+      client: { connectionSettings: { connectionString: 'postgres://database.example.test/wiki', user: 'wiki' } }
+    } as never
+    await database.subscribeToNotifications()
+    const settings = listenerSettings.calls.at(-1)
+    expect(settings).toMatchObject({ connectionString: 'postgres://database.example.test/wiki', user: 'wiki' })
+    expect(settings).toMatchObject({ application_name: expect.stringMatching(/^tsEpistle\/v1\/[A-Za-z0-9._~-]+\/listener$/) })
+  })
+  it('keeps connection application names versioned and within PostgreSQL byte limits', () => {
+    const applicationName = createSystemConnectionApplicationName('é'.repeat(100), 'worker')
+    expect(Buffer.byteLength(applicationName, 'utf8')).toBeLessThanOrEqual(63)
+    expect(applicationName).toMatch(/^tsEpistle\/v1\/[A-Za-z0-9._~-]+\/worker$/)
   })
 })

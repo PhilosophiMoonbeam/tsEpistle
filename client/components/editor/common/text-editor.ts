@@ -1,5 +1,5 @@
 import { defaultHighlightStyle, foldEffect, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { Compartment, type Extension, Prec, StateEffect, StateField } from '@codemirror/state'
+import { Compartment, EditorSelection, type Extension, Prec, StateEffect, StateField } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
 import { basicSetup } from 'codemirror'
@@ -7,6 +7,25 @@ import { basicSetup } from 'codemirror'
 export type TextPosition = {
   line: number
   ch: number
+}
+
+export type TextEditorOffsetChange = {
+  from: number
+  to: number
+  content: string
+}
+
+export type TextEditorSelection = {
+  anchor: number
+  head: number
+  from: number
+  to: number
+  empty: boolean
+}
+
+export type TextEditorSelectionChange = TextEditorOffsetChange & {
+  anchor: number
+  head: number
 }
 
 export interface TextEditorHandle {
@@ -27,7 +46,9 @@ export interface TextEditorHandle {
   setSelection: (from: TextPosition, to?: TextPosition) => void
   selectedOffsets: () => Array<{ from: number; to: number }>
   slice: (from: number, to: number) => string
+  wordOffsetsAt: (offset: number) => { from: number; to: number } | null
   replaceOffsets: (content: string, from: number, to: number) => void
+  replaceSelections?: (change: (selection: TextEditorSelection) => TextEditorSelectionChange | null) => void
   replaceRange: (content: string, from: TextPosition, to?: TextPosition) => void
   replaceSelection: (content: string) => void
   setMarkers: (markers: Array<{ from: TextPosition; to: TextPosition; text: string; action: EventListener }>) => void
@@ -241,8 +262,37 @@ export class TextEditor implements TextEditorHandle {
     return this.view.state.doc.sliceString(from, to)
   }
 
+  wordOffsetsAt(offset: number): { from: number; to: number } | null {
+    const word = this.view.state.wordAt(offset)
+    return word && offset >= word.from && offset < word.to ? { from: word.from, to: word.to } : null
+  }
+
   replaceOffsets(content: string, from: number, to: number): void {
     this.view.dispatch({ changes: { from, to, insert: content } })
+  }
+
+  replaceSelections(change: (selection: TextEditorSelection) => TextEditorSelectionChange | null): void {
+    let changed = false
+    const transaction = this.view.state.changeByRange(selection => {
+      const result = change({
+        anchor: selection.anchor,
+        head: selection.head,
+        from: selection.from,
+        to: selection.to,
+        empty: selection.empty
+      })
+      if (!result) return { range: selection }
+      changed = true
+      return {
+        changes: {
+          from: result.from,
+          to: result.to,
+          insert: result.content
+        },
+        range: EditorSelection.range(result.anchor, result.head)
+      }
+    })
+    if (changed) this.view.dispatch(transaction)
   }
 
   replaceRange(content: string, from: TextPosition, to: TextPosition = from): void {

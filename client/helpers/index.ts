@@ -3,7 +3,38 @@ import { filesize } from 'filesize'
 import deburr from 'lodash/deburr.js'
 import kebabCase from 'lodash/kebabCase.js'
 import moment, { type MomentInput } from 'moment-timezone'
+import { isUserTimeFormat, type UserPresentationDefaults } from '../../shared/user-presentation.ts'
 
+export const applyUserPresentation = (presentation: Partial<UserPresentationDefaults>): void => {
+  moment.updateLocale(moment.locale(), null)
+  const localeData = moment.localeData()
+  const longDateFormat: moment.LongDateFormatSpec = {
+    LTS: localeData.longDateFormat('LTS'),
+    LT: localeData.longDateFormat('LT'),
+    L: localeData.longDateFormat('L'),
+    LL: localeData.longDateFormat('LL'),
+    LLL: localeData.longDateFormat('LLL'),
+    LLLL: localeData.longDateFormat('LLLL')
+  }
+  let hasLongDateFormatOverride = false
+  if (presentation.dateFormat) {
+    longDateFormat.L = presentation.dateFormat
+    hasLongDateFormatOverride = true
+  }
+  if (isUserTimeFormat(presentation.timeFormat)) {
+    if (presentation.timeFormat === '12h') {
+      longDateFormat.LT = 'h:mm A'
+      longDateFormat.LTS = 'h:mm:ss A'
+      hasLongDateFormatOverride = true
+    } else if (presentation.timeFormat === '24h') {
+      longDateFormat.LT = 'HH:mm'
+      longDateFormat.LTS = 'HH:mm:ss'
+      hasLongDateFormatOverride = true
+    }
+  }
+  if (hasLongDateFormatOverride) moment.updateLocale(moment.locale(), { longDateFormat })
+  if (typeof presentation.timezone === 'string') moment.tz.setDefault(presentation.timezone || undefined)
+}
 export const helpers = {
   filesize(rawSize: number): string {
     return filesize(rawSize).toUpperCase()

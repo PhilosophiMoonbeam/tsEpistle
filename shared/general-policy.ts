@@ -1,4 +1,6 @@
 import { disabledSiteBanner, validateSiteBanner, type SiteBannerConfig } from './site-banner.ts'
+import { isUserDateFormat, isUserTimeFormat, isUserTimezone, userPresentationDefaults, type UserPresentationDefaults } from './user-presentation.ts'
+
 export interface GeneralPolicy {
   host: string
   title: string
@@ -16,7 +18,9 @@ export interface GeneralPolicy {
   editMenuExternalName: string
   editMenuExternalIcon: string
   editMenuExternalUrl: string
+  userDefaults: UserPresentationDefaults
 }
+
 export const generalPolicyDefaults: GeneralPolicy = {
   host: '',
   title: 'tsEpistle',
@@ -33,8 +37,10 @@ export const generalPolicyDefaults: GeneralPolicy = {
   editMenuExternalBtn: false,
   editMenuExternalName: 'Edit on GitHub',
   editMenuExternalIcon: 'mdi-github',
-  editMenuExternalUrl: ''
+  editMenuExternalUrl: '',
+  userDefaults: { ...userPresentationDefaults }
 }
+
 export const generalFieldLabels: Record<keyof GeneralPolicy, string> = {
   host: 'Public address',
   title: 'Workspace name',
@@ -51,8 +57,10 @@ export const generalFieldLabels: Record<keyof GeneralPolicy, string> = {
   editMenuExternalBtn: 'External source action',
   editMenuExternalName: 'External action label',
   editMenuExternalIcon: 'External action icon',
-  editMenuExternalUrl: 'External source URL'
+  editMenuExternalUrl: 'External source URL',
+  userDefaults: 'New account presentation defaults'
 }
+
 export interface GeneralPolicyEvent {
   id: string
   actorId: number | null
@@ -60,21 +68,26 @@ export interface GeneralPolicyEvent {
   fields: string[]
   createdAt: string
 }
+
 export interface GeneralWorkspace {
   policy: GeneralPolicy
   fingerprint: string
   history: GeneralPolicyEvent[]
   runtime: { state: 'applied' | 'needs-attention'; observedAt: string }
 }
+
 export interface GeneralWriteResult {
   activation: 'applied' | 'needs-attention'
 }
+
 const hasControls = (text: string) =>
   [...text].some(character => {
     const code = character.charCodeAt(0)
     return (code < 32 && ![9, 10, 13].includes(code)) || code === 127
   })
+
 const licenses = ['', 'alr', 'cc0', 'ccby', 'ccbysa', 'ccbynd', 'ccbync', 'ccbyncsa', 'ccbyncnd']
+
 export const externalSourceUrl = (template: string, filename: string): string => {
   if (!template || /[\\\s]/.test(template) || hasControls(template)) return ''
   const candidate = template.replaceAll('{filename}', filename.split('/').map(encodeURIComponent).join('/'))
@@ -85,6 +98,7 @@ export const externalSourceUrl = (template: string, filename: string): string =>
     return ''
   }
 }
+
 export const validateGeneralPolicy = (input: unknown): { ok: true; value: GeneralPolicy } | { ok: false; issues: string[] } => {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return { ok: false, issues: ['Workspace settings must be an object.'] }
   const value = input as Record<string, unknown>,
@@ -148,6 +162,18 @@ export const validateGeneralPolicy = (input: unknown): { ok: true; value: Genera
   const banner = validateSiteBanner(value.banner)
   if (!banner.ok) issues.push(banner.message)
   else out.banner = banner.value
+  if (!Object.hasOwn(value, 'userDefaults') || !value.userDefaults || typeof value.userDefaults !== 'object' || Array.isArray(value.userDefaults)) {
+    issues.push(`${generalFieldLabels.userDefaults} must be an object.`)
+  } else {
+    const defaults = value.userDefaults as Record<string, unknown>
+    if (Object.keys(defaults).some(key => !['timezone', 'dateFormat', 'timeFormat'].includes(key)))
+      issues.push(`${generalFieldLabels.userDefaults} contain unsupported fields.`)
+    if (!isUserTimezone(defaults.timezone)) issues.push('The default time zone must be a valid IANA time zone.')
+    if (!isUserDateFormat(defaults.dateFormat)) issues.push('The default date format is not supported.')
+    if (!isUserTimeFormat(defaults.timeFormat)) issues.push('The default time format must be locale, 12h or 24h.')
+    if (isUserTimezone(defaults.timezone) && isUserDateFormat(defaults.dateFormat) && isUserTimeFormat(defaults.timeFormat))
+      out.userDefaults = { timezone: defaults.timezone, dateFormat: defaults.dateFormat, timeFormat: defaults.timeFormat }
+  }
   if (out.editMenuExternalUrl && !externalSourceUrl(out.editMenuExternalUrl, 'example/page.md'))
     issues.push('External source URL must use HTTP(S) without credentials or spaces.')
   if (out.editMenuExternalIcon && !/^mdi-[a-z0-9-]+$/.test(out.editMenuExternalIcon)) issues.push('Use an mdi- icon name for the external action.')
@@ -155,8 +181,9 @@ export const validateGeneralPolicy = (input: unknown): { ok: true; value: Genera
     issues.push('An enabled external source action requires a label and URL.')
   return issues.length ? { ok: false, issues } : { ok: true, value: out }
 }
+
 export const generalChangedFields = (before: GeneralPolicy, after: GeneralPolicy): Array<keyof GeneralPolicy> =>
   (Object.keys(generalPolicyDefaults) as Array<keyof GeneralPolicy>).filter(key => {
-    const normalize = (value: GeneralPolicy[keyof GeneralPolicy]) => Array.isArray(value) ? [...new Set(value)].sort() : value
+    const normalize = (value: GeneralPolicy[keyof GeneralPolicy]) => (Array.isArray(value) ? [...new Set(value)].sort() : value)
     return JSON.stringify(normalize(before[key])) !== JSON.stringify(normalize(after[key]))
   })

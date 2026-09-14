@@ -367,6 +367,7 @@ export type PageDetails = {
   visibility: 'public' | 'private'
   ownerId: number | null
   isPublished?: boolean
+  isSearchable?: boolean
   publishStartDate?: string | null
   publishEndDate?: string | null
   contentType: string
@@ -414,6 +415,7 @@ export type PageListRow = {
   title: string | null
   description: string | null
   isPublished?: boolean
+  isSearchable?: boolean
   publishStartDate?: string | null
   publishEndDate?: string | null
   visibility: 'public' | 'private'
@@ -511,6 +513,7 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
   const validCapabilities = typeof rawViewStewardContacts === 'boolean'
   const viewStewardContacts = typeof rawViewStewardContacts === 'boolean' ? rawViewStewardContacts : false
   const hasIsPublished = Object.hasOwn(rawRow, 'isPublished')
+  const hasIsSearchable = Object.hasOwn(rawRow, 'isSearchable')
   const hasPublishStartDate = Object.hasOwn(rawRow, 'publishStartDate')
   const hasPublishEndDate = Object.hasOwn(rawRow, 'publishEndDate')
   const hasEditor = Object.hasOwn(rawRow, 'editor')
@@ -542,6 +545,7 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     (page.visibility !== 'public' && page.visibility !== 'private') ||
     !validOwner ||
     (hasIsPublished && typeof rawRow.isPublished !== 'boolean') ||
+    (hasIsSearchable && typeof rawRow.isSearchable !== 'boolean') ||
     (hasPublishStartDate && rawRow.publishStartDate !== null && typeof rawRow.publishStartDate !== 'string') ||
     (hasPublishEndDate && rawRow.publishEndDate !== null && typeof rawRow.publishEndDate !== 'string') ||
     typeof page.contentType !== 'string' ||
@@ -591,6 +595,7 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     visibility: page.visibility,
     ownerId,
     ...(hasIsPublished ? { isPublished: rawRow.isPublished as boolean } : {}),
+    ...(hasIsSearchable ? { isSearchable: rawRow.isSearchable as boolean } : {}),
     ...(hasPublishStartDate ? { publishStartDate: rawRow.publishStartDate as string | null } : {}),
     ...(hasPublishEndDate ? { publishEndDate: rawRow.publishEndDate as string | null } : {}),
     contentType: page.contentType,
@@ -700,6 +705,7 @@ function normalizePageListRow(row: unknown, fallbackMessage: string): PageListRo
   const pageRow = row as Partial<PageListRow>
   const ownerId = pageRow.ownerId
   const hasIsPublished = Object.hasOwn(rawPageRow, 'isPublished')
+  const hasIsSearchable = Object.hasOwn(rawPageRow, 'isSearchable')
   const hasPublishStartDate = Object.hasOwn(rawPageRow, 'publishStartDate')
   const hasPublishEndDate = Object.hasOwn(rawPageRow, 'publishEndDate')
   const validOwner = ownerId === null || (typeof ownerId === 'number' && Number.isSafeInteger(ownerId))
@@ -711,6 +717,7 @@ function normalizePageListRow(row: unknown, fallbackMessage: string): PageListRo
     (pageRow.title !== null && typeof pageRow.title !== 'string') ||
     (pageRow.description !== null && typeof pageRow.description !== 'string') ||
     (hasIsPublished && typeof rawPageRow.isPublished !== 'boolean') ||
+    (hasIsSearchable && typeof rawPageRow.isSearchable !== 'boolean') ||
     (hasPublishStartDate && rawPageRow.publishStartDate !== null && typeof rawPageRow.publishStartDate !== 'string') ||
     (hasPublishEndDate && rawPageRow.publishEndDate !== null && typeof rawPageRow.publishEndDate !== 'string') ||
     (pageRow.visibility !== 'public' && pageRow.visibility !== 'private') ||
@@ -733,6 +740,7 @@ function normalizePageListRow(row: unknown, fallbackMessage: string): PageListRo
     title: pageRow.title,
     description: pageRow.description,
     ...(hasIsPublished ? { isPublished: rawPageRow.isPublished as boolean } : {}),
+    ...(hasIsSearchable ? { isSearchable: rawPageRow.isSearchable as boolean } : {}),
     ...(hasPublishStartDate ? { publishStartDate: rawPageRow.publishStartDate as string | null } : {}),
     ...(hasPublishEndDate ? { publishEndDate: rawPageRow.publishEndDate as string | null } : {}),
     visibility: pageRow.visibility,
@@ -924,6 +932,7 @@ export type PageWriteInput = {
   editor: string
   visibility: 'public' | 'private'
   isPublished: boolean
+  isSearchable?: boolean
   locale: string
   path: string
   publishEndDate: string
@@ -1338,6 +1347,7 @@ export type PageVersion = Record<string, unknown> & {
   tags: string[]
   versionDate: string
   visibility: 'public' | 'private'
+  isSearchable?: boolean
 }
 
 export async function fetchPages(

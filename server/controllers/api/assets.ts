@@ -61,7 +61,49 @@ const nonNegativeInteger = (value: unknown, res: Response, name: string): number
     res.status(400).json({ error: `${name} must be a non-negative integer` })
     return null
   }
-  return Number(value)
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed)) {
+    res.status(400).json({ error: `${name} must be a non-negative integer` })
+    return null
+  }
+  return parsed
+}
+const mapRelocationError = (value: unknown): unknown => {
+  const name = typeof value === 'object' && value !== null ? Reflect.get(value, 'name') : undefined
+  if (typeof name !== 'string') return value
+  let status: number | undefined
+  let message: string | undefined
+  switch (name) {
+    case 'AssetInvalid':
+      status = 404
+      message = 'This asset does not exist or is invalid.'
+      break
+    case 'AssetRenameInvalid':
+      status = 400
+      message = 'The new asset filename is invalid.'
+      break
+    case 'AssetRenameInvalidExt':
+      status = 400
+      message = 'The file extension cannot be changed on an existing asset.'
+      break
+    case 'AssetRenameCollision':
+      status = 409
+      message = 'Asset relocation cannot use the requested location.'
+      break
+    case 'AssetRenameForbidden':
+    case 'AssetRenameTargetForbidden':
+      status = 403
+      message = 'You are not authorized to relocate this asset.'
+      break
+    default:
+      return value
+  }
+  const mapped = new Error(message)
+  mapped.name = name
+  const code = objectValue(value, 'code')
+  const numericCode = typeof code === 'number' ? code : undefined
+  Object.assign(mapped, { status, ...(numericCode === undefined ? {} : { code: numericCode }) })
+  return mapped
 }
 
 router.get('/', async (req, res, next) => {
@@ -104,17 +146,50 @@ router.post('/folders', async (req, res, next) => {
   }
 })
 
+router.get('/relocations/:id', async (req, res, next) => {
+  res.set('Cache-Control', 'no-store')
+  if (!requireAccess(req, res, ['manage:system', 'manage:assets'])) return
+  try {
+    res.json(await assetOperations.relocationStatus({ requester: req.user, id: req.params.id }))
+  } catch (err) {
+    next(mapRelocationError(err))
+  }
+})
+
 router.patch('/:id', async (req, res, next) => {
+  res.set('Cache-Control', 'no-store')
   if (!requireAccess(req, res, ['manage:system', 'manage:assets'])) return
   const id = positiveInteger(req.params.id, res, 'id')
   if (id === null) return
-  const filename = objectValue(req.body, 'filename')
-  if (typeof filename !== 'string' || filename.length < 1) return res.status(400).json({ error: 'filename must be a non-empty string' })
+  const hasFilename = req.body !== null && typeof req.body === 'object' && Object.hasOwn(req.body, 'filename')
+  const hasFolderId = req.body !== null && typeof req.body === 'object' && Object.hasOwn(req.body, 'folderId')
+  if (!hasFilename && !hasFolderId) return res.status(400).json({ error: 'filename or folderId is required' })
+  const filenameValue = hasFilename ? objectValue(req.body, 'filename') : undefined
+  if (hasFilename && (typeof filenameValue !== 'string' || filenameValue.length < 1)) {
+    return res.status(400).json({ error: 'filename must be a non-empty string' })
+  }
+  let folderId: number | null | undefined
+  if (hasFolderId) {
+    const rawFolderId = objectValue(req.body, 'folderId')
+    if (rawFolderId === null) folderId = 0
+    else {
+      folderId = nonNegativeInteger(rawFolderId, res, 'folderId')
+      if (folderId === null) return
+    }
+  }
+  const relocationInput: {
+    requester: AssetRequester
+    id: number
+    filename?: string
+    folderId?: number | null
+  } = { requester: req.user, id }
+  if (typeof filenameValue === 'string') relocationInput.filename = filenameValue
+  if (folderId !== undefined) relocationInput.folderId = folderId
   try {
-    await assetOperations.rename({ requester: req.user, id, filename })
-    res.json({ message: 'Asset renamed successfully.' })
+    const receipt = await assetOperations.relocate(relocationInput)
+    res.status(202).json({ message: 'Asset relocation accepted.', ...receipt })
   } catch (err) {
-    next(err)
+    next(mapRelocationError(err))
   }
 })
 
@@ -126,7 +201,7 @@ router.delete('/:id', async (req, res, next) => {
     await assetOperations.remove({ requester: req.user, id })
     res.json({ message: 'Asset deleted successfully.' })
   } catch (err) {
-    next(err)
+    next(mapRelocationError(err))
   }
 })
 

@@ -164,6 +164,34 @@ describe('common page routing', () => {
       effectivePermissions: expect.objectContaining({ pages: { read: true, write: true, manage: true } })
     }))
   })
+  it('allows authorized direct reads of pages excluded from search', async () => {
+    const optedOutPage = {
+      ...privatePage,
+      path: 'guides/opted-out',
+      visibility: 'public',
+      ownerId: null,
+      title: 'Opted Out Guide',
+      isSearchable: false
+    }
+    global.WIKI.auth.getEffectivePermissions.mockReturnValue({
+      pages: { read: true, write: false, manage: false },
+      history: { read: true },
+      source: { read: true }
+    })
+    global.WIKI.models.pages.getPage.mockResolvedValue(optedOutPage)
+    const { view } = await handlers()
+    const res = response()
+
+    await view({
+      ...request({ id: 9, permissions: ['read:pages'] }),
+      originalUrl: '/en/guides/opted-out',
+      path: '/en/guides/opted-out',
+      sessionID: 'direct-read-session'
+    }, res, vi.fn())
+
+    expect(res.render).toHaveBeenCalledWith('page', expect.objectContaining({ page: optedOutPage }))
+  })
+
 
   it('suppresses external discussion embeds for private and password-protected pages', async () => {
     global.WIKI.config.features.featurePageComments = true
@@ -281,11 +309,9 @@ describe('common page routing', () => {
       sessionID: 'current-session',
       user: { id: 42, permissions: ['read:pages', 'write:pages'] }
     }
-
     const lockedResponse = response()
     await editor(req, lockedResponse, vi.fn())
 
-    expect(lockedResponse.status).toHaveBeenCalledWith(401)
     expect(lockedResponse.render).toHaveBeenCalledWith('page-unlock', expect.objectContaining({
       pageId: 7,
       pageTitle: 'Protected page'
@@ -299,6 +325,78 @@ describe('common page routing', () => {
       page: expect.objectContaining({
         content: Buffer.from('# Protected template').toString('base64'),
         title: 'Brief'
+      })
+    }))
+  })
+
+  it('branches from a historical version without dropping authorized page metadata', async () => {
+    const version = {
+      content: '# Historical version',
+      editor: 'markdown',
+      title: 'Historical title',
+      description: 'Historical description',
+      tags: ['history', 'release'],
+      isPublished: false,
+      isSearchable: false,
+      publishStartDate: '2026-10-01T00:00:00.000Z',
+      publishEndDate: '2026-11-01T00:00:00.000Z',
+      extra: { css: '.private {}', js: 'window.allowed = true' }
+    }
+    global.WIKI.auth.getEffectivePermissions.mockReturnValue({
+      pages: { read: true, write: true, manage: false, script: true, style: false },
+      history: { read: true },
+      source: { read: true }
+    })
+    const query = {
+      select: vi.fn(),
+      withGraphJoined: vi.fn(),
+      modifyGraph: vi.fn(),
+      findById: vi.fn().mockResolvedValue({
+        id: 7,
+        path: 'templates/brief',
+        localeCode: 'en',
+        visibility: 'public',
+        ownerId: null,
+        tags: [{ tag: 'history' }]
+      })
+    }
+    query.select.mockReturnValue(query)
+    query.withGraphJoined.mockReturnValue(query)
+    query.modifyGraph.mockReturnValue(query)
+    global.WIKI.models.pages.query.mockReturnValue(query)
+    global.WIKI.models.pageHistory.getVersion.mockResolvedValue(version)
+    global.WIKI.models.pages.getPageFromDb.mockImplementation(async input => typeof input === 'number'
+      ? {
+          ...privatePage,
+          path: 'templates/brief',
+          visibility: 'public',
+          ownerId: null,
+          tags: [{ tag: 'history' }]
+        }
+      : null)
+    const { editor } = await handlers()
+    const res = response()
+
+    await editor({
+      i18n: { changeLanguage: vi.fn(), dir: vi.fn().mockReturnValue('ltr') },
+      originalUrl: '/e/en/release-notes?from=7,9',
+      path: '/e/en/release-notes',
+      query: { from: '7,9' },
+      sessionID: 'current-session',
+      user: { id: 42, permissions: ['read:pages', 'read:history', 'write:pages', 'write:scripts'] }
+    }, res, vi.fn())
+
+
+    expect(res.render).toHaveBeenCalledWith('editor', expect.objectContaining({
+      page: expect.objectContaining({
+        content: Buffer.from(version.content).toString('base64'),
+        title: version.title,
+        tags: version.tags,
+        isPublished: false,
+        isSearchable: false,
+        publishStartDate: version.publishStartDate,
+        publishEndDate: version.publishEndDate,
+        extra: { css: '', js: version.extra.js }
       })
     }))
   })

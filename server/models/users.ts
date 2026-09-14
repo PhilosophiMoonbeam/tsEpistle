@@ -22,7 +22,16 @@ import type Comment from './comments.ts'
 import type PageHistory from './pageHistory.ts'
 import type Page from './pages.ts'
 import type UserKey from './userKeys.ts'
-import { DEFAULT_USER_FONT_FAMILY, USER_FONT_FAMILY_VALUES, type UserFontFamily } from '../../shared/user-presentation.ts'
+import {
+  DEFAULT_USER_FONT_FAMILY,
+  USER_FONT_FAMILY_VALUES,
+  UserTimeFormatSchema,
+  isUserDateFormat,
+  isUserTimezone,
+  type UserFontFamily,
+  type UserTimeFormat
+} from '../../shared/user-presentation.ts'
+import { resolveUserPresentation } from '../helpers/user-presentation.ts'
 
 interface AuthenticationInfo {
   key: string
@@ -190,13 +199,15 @@ interface LoginChecks {
   skipTFA?: boolean
   skipChangePwd?: boolean
 }
-
 interface CreateUserOptions {
   providerKey: string
   email: string
   passwordRaw?: string
   name: string
   groups: number[]
+  timezone?: string
+  dateFormat?: string
+  timeFormat?: UserTimeFormat
   mustChangePassword?: boolean
   sendWelcomeEmail?: boolean
 }
@@ -216,6 +227,7 @@ interface UpdateUserOptions {
   jobTitle?: string
   timezone?: string
   dateFormat?: string
+  timeFormat?: UserTimeFormat
   appearance?: string
   fontFamily?: UserFontFamily
 }
@@ -231,13 +243,28 @@ interface UserPatch {
   jobTitle?: string
   timezone?: string
   dateFormat?: string
+  timeFormat?: UserTimeFormat
   appearance?: string
   fontFamily?: UserFontFamily
 }
 
+type AvatarOrigin = 'provider' | 'self-service'
+
 interface AvatarRow {
   id: number
   data: Buffer
+  origin: AvatarOrigin | null
+}
+
+const isAvatarOverride = (row: Pick<AvatarRow, 'origin'> | undefined): boolean => row !== undefined && row.origin !== 'provider'
+
+const upsertAvatarData = async (trx: Knex.Transaction, userId: number, data: Buffer, origin: AvatarOrigin): Promise<void> => {
+  const existing = await trx<AvatarRow>('userAvatars').where({ id: userId }).first('id')
+  if (existing) {
+    await trx<AvatarRow>('userAvatars').where({ id: userId }).update({ data, origin })
+  } else {
+    await trx<AvatarRow>('userAvatars').insert({ id: userId, data, origin })
+  }
 }
 
 const wiki = WIKI as UsersWikiContext
@@ -265,9 +292,10 @@ export default class User extends Model {
   declare tfaSecret: string | null
   declare jobTitle: string
   declare location: string
-  declare pictureUrl: string
+  declare pictureUrl: string | null
   declare timezone: string
   declare dateFormat: string
+  declare timeFormat: UserTimeFormat
   declare appearance: string
   declare fontFamily: UserFontFamily
   declare isSystem: boolean
@@ -304,9 +332,10 @@ export default class User extends Model {
         tfaSecret: { type: ['string', 'null'] },
         jobTitle: { type: 'string' },
         location: { type: 'string' },
-        pictureUrl: { type: 'string' },
+        pictureUrl: { type: ['string', 'null'] },
         timezone: { type: 'string' },
         dateFormat: { type: 'string' },
+        timeFormat: { type: 'string', enum: [...UserTimeFormatSchema.options] },
         appearance: { type: 'string' },
         fontFamily: { type: 'string', enum: [...USER_FONT_FAMILY_VALUES] },
         isSystem: { type: 'boolean' },
@@ -431,6 +460,51 @@ export default class User extends Model {
     })
   }
 
+  static async updateProviderProfile({
+    userId,
+    email,
+    name,
+    picture,
+    pictureData
+  }: {
+    userId: number
+    email: string
+    name: string
+    picture: unknown
+    pictureData: Buffer | undefined
+  }): Promise<User> {
+    return wiki.models.knex.transaction(async trx => {
+      const userQuery = trx<User>('users').where({ id: userId })
+      const lockedQuery = typeof userQuery.forUpdate === 'function' ? userQuery.forUpdate() : userQuery
+      const currentUser = await lockedQuery.first()
+      if (!currentUser) throw new wiki.Error.UserNotFound()
+      if (!currentUser.isActive) throw new wiki.Error.AuthAccountBanned()
+      if (currentUser.isSystem) throw new Error('This is a system reserved account and cannot be used.')
+
+      const avatar = await trx<AvatarRow>('userAvatars').where({ id: userId }).first('id', 'origin')
+      const avatarOverride = isAvatarOverride(avatar)
+      const pictureUrl = pictureData
+        ? 'internal'
+        : _.truncate(_.toString(picture === undefined ? currentUser.pictureUrl : picture), {
+            length: 255,
+            omission: ''
+          })
+      const patch: Partial<User> = {
+        email,
+        name
+      }
+      if (!avatarOverride) patch.pictureUrl = pictureUrl
+      await trx<User>('users').where({ id: userId }).update(patch)
+      if (!avatarOverride && pictureData) {
+        await upsertAvatarData(trx, userId, pictureData, 'provider')
+      }
+
+      const updated = await wiki.models.users.query(trx).findById(userId)
+      if (!updated) throw new wiki.Error.UserNotFound()
+      return updated
+    })
+  }
+
   verifyTFA(code: string): boolean | null {
     const result = tfa.verifyToken(this.tfaSecret, code)
     return result && _.has(result, 'delta') && result.delta === 0
@@ -527,25 +601,15 @@ export default class User extends Model {
           omission: ''
         })
 
-    // Update existing user
+    // Update existing user and avatar state under the same user-row lock.
     if (user) {
-      if (!user.isActive) {
-        throw new wiki.Error.AuthAccountBanned()
-      }
-      if (user.isSystem) {
-        throw new Error('This is a system reserved account and cannot be used.')
-      }
-
-      user = await user.$query().patchAndFetch({
+      user = await User.updateProviderProfile({
+        userId: user.id,
         email: primaryEmail,
         name: displayName,
-        pictureUrl: pictureUrl
+        picture: profile.picture,
+        pictureData
       })
-
-      if (pictureData) {
-        await wiki.models.users.updateUserAvatarData(user.id, pictureData)
-      }
-
       return user
     }
 
@@ -564,6 +628,7 @@ export default class User extends Model {
         if (!admission.isEnabled || !admission.selfRegistration) throw new wiki.Error.AuthRegistrationDisabled()
         if (admission.domainWhitelist.length && !admission.domainWhitelist.includes(primaryEmail.split('@').at(-1)!.toLowerCase()))
           throw new wiki.Error.AuthRegistrationDomainUnauthorized()
+        const presentation = await resolveUserPresentation(trx)
         const newUser = await wiki.models.users.query(trx).insertAndFetch({
           providerKey: providerKey,
           providerId: _.toString(profile.id),
@@ -572,6 +637,7 @@ export default class User extends Model {
           pictureUrl: pictureUrl,
           localeCode: wiki.config.lang.code,
           defaultEditor: 'markdown',
+          ...presentation,
           ...initialUserPresentation(),
           tfaIsActive: false,
           isSystem: false,
@@ -579,15 +645,15 @@ export default class User extends Model {
           isVerified: true
         })
 
+        if (pictureData) {
+          await upsertAvatarData(trx, newUser.id, pictureData, 'provider')
+        }
+
         if (admission.autoEnrollGroups.length > 0) {
           await newUser.$relatedQuery<Group>('groups', trx).relate(admission.autoEnrollGroups)
         }
         return newUser
       })
-
-      if (pictureData) {
-        await wiki.models.users.updateUserAvatarData(user.id, pictureData)
-      }
 
       return user
     }
@@ -798,6 +864,7 @@ export default class User extends Model {
           name: currentUser.name,
           av: currentUser.pictureUrl,
           tz: currentUser.timezone,
+          tf: currentUser.timeFormat,
           lc: currentUser.localeCode,
           df: currentUser.dateFormat,
           ap: currentUser.appearance,
@@ -828,10 +895,13 @@ export default class User extends Model {
     if (securityCode.length === 6 && continuationToken.length > 1) {
       if (setup) {
         const user = await wiki.models.knex.transaction(async trx => {
-          const setupUser = await wiki.models.userKeys.validateToken({
-            kind: 'tfaSetup',
-            token: continuationToken
-          }, trx)
+          const setupUser = await wiki.models.userKeys.validateToken(
+            {
+              kind: 'tfaSetup',
+              token: continuationToken
+            },
+            trx
+          )
           if (setupUser.tfaIsActive) throw new wiki.Error.AuthValidationTokenInvalid()
           if (!setupUser.verifyTFA(securityCode)) throw new wiki.Error.AuthTFAFailed()
           await setupUser.enableTFA(trx)
@@ -1017,6 +1087,9 @@ export default class User extends Model {
     passwordRaw,
     name,
     groups,
+    timezone,
+    dateFormat,
+    timeFormat,
     mustChangePassword,
     sendWelcomeEmail
   }: CreateUserOptions): Promise<CreateUserResult> {
@@ -1087,6 +1160,9 @@ export default class User extends Model {
     }
 
     const validationError = Array.isArray(validation) && typeof validation[0] === 'string' ? validation[0] : undefined
+    if (timezone !== undefined && timezone !== '' && !isUserTimezone(timezone)) throw new wiki.Error.InputInvalid('Choose a valid time zone.')
+    if (dateFormat !== undefined && !isUserDateFormat(dateFormat)) throw new wiki.Error.InputInvalid('Choose a supported date format.')
+    if (timeFormat !== undefined && !UserTimeFormatSchema.safeParse(timeFormat).success) throw new wiki.Error.InputInvalid('Choose a supported time format.')
     if (validationError) {
       throw new wiki.Error.InputInvalid(validationError)
     }
@@ -1098,6 +1174,12 @@ export default class User extends Model {
       if (usr) {
         throw new wiki.Error.AuthAccountAlreadyExists()
       }
+      const presentationOverrides = {
+        ...(timezone !== undefined && timezone !== '' ? { timezone } : {}),
+        ...(dateFormat !== undefined ? { dateFormat } : {}),
+        ...(timeFormat !== undefined ? { timeFormat } : {})
+      }
+      const presentation = await resolveUserPresentation(trx, presentationOverrides)
 
       const createdUser = await wiki.models.users.query(trx).insert({
         providerKey,
@@ -1105,6 +1187,7 @@ export default class User extends Model {
         name,
         locale: 'en',
         defaultEditor: 'markdown',
+        ...presentation,
         ...initialUserPresentation(),
         tfaIsActive: false,
         isSystem: false,
@@ -1147,9 +1230,11 @@ export default class User extends Model {
     jobTitle,
     timezone,
     dateFormat,
+    timeFormat,
     appearance,
     fontFamily
   }: UpdateUserOptions): Promise<boolean> {
+    if (timeFormat !== undefined && !UserTimeFormatSchema.safeParse(timeFormat).success) throw new wiki.Error.InputInvalid('Choose a supported time format.')
     return wiki.models.knex.transaction(async trx => {
       const usr = await wiki.models.users.query(trx).findById(id).forUpdate()
       if (!usr) {
@@ -1177,7 +1262,8 @@ export default class User extends Model {
       }
       if (handle !== undefined) {
         const rawHandle = _.trim(handle)
-        if (rawHandle && !/^[A-Za-z0-9_-]{3,32}$/.test(rawHandle)) throw new wiki.Error.InputInvalid('Mention handles must use 3 to 32 ASCII letters, numbers, underscores or hyphens.')
+        if (rawHandle && !/^[A-Za-z0-9_-]{3,32}$/.test(rawHandle))
+          throw new wiki.Error.InputInvalid('Mention handles must use 3 to 32 ASCII letters, numbers, underscores or hyphens.')
         const normalizedHandle = rawHandle.toLowerCase()
         if ((normalizedHandle || null) !== usr.handle) {
           if (normalizedHandle) {
@@ -1222,6 +1308,9 @@ export default class User extends Model {
       }
       if (dateFormat !== undefined && dateFormat !== usr.dateFormat) {
         usrData.dateFormat = dateFormat
+      }
+      if (timeFormat !== undefined && timeFormat !== usr.timeFormat) {
+        usrData.timeFormat = timeFormat
       }
       if (appearance !== undefined && appearance !== usr.appearance) {
         usrData.appearance = appearance
@@ -1332,6 +1421,7 @@ export default class User extends Model {
         if (usr) {
           throw new wiki.Error.AuthAccountAlreadyExists()
         }
+        const presentation = await resolveUserPresentation(trx)
 
         await assertSavedPassword(trx, password)
         const passwordHash = await bcrypt.hash(password, 12)
@@ -1342,6 +1432,7 @@ export default class User extends Model {
           password: passwordHash,
           localeCode: wiki.config.lang.code,
           defaultEditor: 'markdown',
+          ...presentation,
           ...initialUserPresentation(),
           tfaIsActive: false,
           isSystem: false,
@@ -1430,7 +1521,8 @@ export default class User extends Model {
   }
 
   /**
-   * Add / Update User Avatar Data
+   * Add / Update provider avatar data without replacing a self-service or
+   * unknown-provenance avatar.
    */
   static async updateUserAvatarData(userId: number, data: Buffer): Promise<void> {
     try {
@@ -1438,35 +1530,61 @@ export default class User extends Model {
       if (data.length > 1024 * 1024) {
         throw new Error('Avatar image filesize is too large. 1MB max.')
       }
-      const existing = await wiki.models.knex<AvatarRow>('userAvatars').select('id').where('id', userId).first()
-      if (existing) {
-        await wiki.models
-          .knex<AvatarRow>('userAvatars')
-          .where({
-            id: userId
-          })
-          .update({
-            data
-          })
-      } else {
-        await wiki.models.knex<AvatarRow>('userAvatars').insert({
-          id: userId,
-          data
-        })
-      }
+
+      await wiki.models.knex.transaction(async trx => {
+        const userQuery = trx<User>('users').where({ id: userId })
+        const lockedQuery = typeof userQuery.forUpdate === 'function' ? userQuery.forUpdate() : userQuery
+        const user = await lockedQuery.first('id')
+        if (!user) throw new wiki.Error.UserNotFound()
+
+        const existing = await trx<AvatarRow>('userAvatars').where({ id: userId }).first('id', 'origin')
+        if (isAvatarOverride(existing)) return
+
+        await upsertAvatarData(trx, userId, data, 'provider')
+        await trx<User>('users').where({ id: userId }).update({ pictureUrl: 'internal' })
+      })
     } catch (err: unknown) {
       wiki.logger.warn(`Failed to process binary thumbnail data for user ${userId}: ${errorMessage(err)}`)
     }
+  }
+  /**
+   * Atomically replace the self-service avatar and its effective picture URL.
+   *
+   * Clearing deliberately restores the provider/default outcome (`null`) rather
+   * than attempting to remember a provider URL. Provider authentication may
+   * populate that URL again on a later sign-in.
+   */
+  static async replaceUserAvatarData(userId: number, data: Buffer | null): Promise<void> {
+    if (!Number.isSafeInteger(userId) || userId < 1) throw new Error('Invalid user id')
+    if (data !== null && (!Buffer.isBuffer(data) || data.byteLength === 0)) throw new Error('Invalid avatar image data')
+    if (data !== null && data.byteLength > 1024 * 1024) throw new Error('Avatar image filesize is too large. 1MB max.')
+
+    await wiki.models.knex.transaction(async trx => {
+      const userQuery = trx<User>('users').where({ id: userId })
+      const lockedQuery = typeof userQuery.forUpdate === 'function' ? userQuery.forUpdate() : userQuery
+      const user = await lockedQuery.first('id')
+      if (!user) throw new wiki.Error.UserNotFound()
+
+      if (data === null) {
+        await trx<AvatarRow>('userAvatars').where({ id: userId }).delete()
+        await trx<User>('users').where({ id: userId }).update({ pictureUrl: null })
+        return
+      }
+
+      await upsertAvatarData(trx, userId, data, 'self-service')
+      await trx<User>('users').where({ id: userId }).update({ pictureUrl: 'internal' })
+    })
   }
 
   static async getUserAvatarData(userId: number): Promise<Buffer | null | undefined> {
     try {
       const usrData = await wiki.models.knex<AvatarRow>('userAvatars').where('id', userId).first()
-      if (usrData) {
-        return usrData.data
-      } else {
-        return null
-      }
+      if (!usrData) return null
+      const avatarData: unknown = usrData.data
+      if (Buffer.isBuffer(avatarData)) return avatarData
+      if (avatarData instanceof Uint8Array) return Buffer.from(avatarData)
+      wiki.logger.warn(`Failed to process binary thumbnail data for user ${userId}`)
+      return null
     } catch {
       wiki.logger.warn(`Failed to process binary thumbnail data for user ${userId}`)
     }

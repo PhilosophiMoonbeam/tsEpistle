@@ -59,6 +59,18 @@ interface PageMutationOutboxRow {
   readonly createdAt: Date | string
   readonly updatedAt: Date | string
 }
+export type PageRenderEffectStatus = 'pending' | 'leased' | 'succeeded' | 'failed' | 'superseded'
+
+export interface PageRenderEffectStatusView {
+  readonly effectId: string
+  readonly pageId: number
+  readonly sourceRevision: string
+  readonly status: PageRenderEffectStatus
+  readonly result: unknown
+  readonly postcondition: unknown
+}
+
+type PageLocationInput = z.infer<typeof PageLocationSchema>
 
 export interface PageProjectionSink {
   readonly kind: PageProjectionEffectKind
@@ -281,6 +293,129 @@ export const rearmPageMutationEffect = async (
       updatedAt: now.toISOString()
     })
   return updated === 1
+}
+export const admitPageRenderEffect = async (
+  knex: Knex | Knex.Transaction,
+  input: {
+    readonly pageId: number
+    readonly sourceRevision: string | number | bigint
+    readonly source: string | Uint8Array
+    readonly location: PageLocationInput
+    readonly action?: PageProjectionPayload['action']
+    readonly now?: Date
+  }
+): Promise<{ readonly effectId: string; readonly sourceRevision: string }> => {
+  if (!Number.isSafeInteger(input.pageId) || input.pageId < 1) throw new PageMutationOutboxError('INVALID_PAGE_ID', 'Page mutation page ID is invalid')
+  const sourceRevision = revisionString(input.sourceRevision)
+  const location = PageLocationSchema.parse(input.location)
+  const action = input.action ?? 'update'
+  const existing = await knex<PageMutationOutboxRow>('pageMutationOutbox')
+    .where({ pageId: input.pageId, sourceRevision, effectKind: 'render' })
+    .forUpdate()
+    .first()
+  if (!existing) {
+    const [effectId] = await enqueuePageMutationEffects(knex, {
+      pageId: input.pageId,
+      sourceRevision,
+      desiredState: 'present',
+      action,
+      source: input.source,
+      location,
+      effects: ['render']
+    })
+    if (!effectId) throw new PageMutationOutboxError('OUTBOX_ADMISSION_FAILED', 'Page render intent could not be admitted')
+    return { effectId, sourceRevision }
+  }
+  const payload = parseRowPayload(existing)
+  if (
+    existing.effectKey !== `page:${input.pageId}:render` ||
+    payload.effectKind !== 'render' ||
+    payload.desiredState !== 'present' ||
+    payload.sourceSha256 !== sha256(input.source) ||
+    payload.location === null ||
+    canonicalJson(payload.location) !== canonicalJson(location)
+  ) {
+    throw new PageMutationOutboxError('OUTBOX_IDEMPOTENCY_CONFLICT', 'Existing render effect has different immutable content')
+  }
+  if (['succeeded', 'failed'].includes(existing.status) && existing.leaseToken === null) {
+    if (input.now === undefined) await rearmPageMutationEffect(knex, { id: existing.id, payload })
+    else await rearmPageMutationEffect(knex, { id: existing.id, payload, now: input.now })
+  }
+  return { effectId: existing.id, sourceRevision }
+}
+
+export const supersedeStalePageRenderEffects = async (
+  knex: Knex | Knex.Transaction,
+  input: { readonly pageId: number; readonly sourceRevision: string | number | bigint; readonly now?: Date }
+): Promise<void> => {
+  if (!Number.isSafeInteger(input.pageId) || input.pageId < 1) throw new PageMutationOutboxError('INVALID_PAGE_ID', 'Page mutation page ID is invalid')
+  const sourceRevision = revisionString(input.sourceRevision)
+  const now = input.now ?? new Date()
+  const nowIso = now.toISOString()
+  await knex<PageMutationOutboxRow>('pageMutationOutbox')
+    .where({ pageId: input.pageId, effectKind: 'render' })
+    .whereNot('sourceRevision', sourceRevision)
+    .whereIn('status', ['pending', 'retry'])
+    .whereNull('leaseToken')
+    .update({
+      status: 'superseded',
+      result: canonicalJson({ superseded: true }),
+      postcondition: canonicalJson({
+        satisfied: true,
+        observedSourceRevision: sourceRevision,
+        detail: 'Render intent was superseded by a newer page source revision'
+      }),
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      updatedAt: nowIso
+    })
+}
+
+const storedJson = (value: string | null): unknown => {
+  if (value === null) return null
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+const resultIsSuperseded = (value: unknown): boolean =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) && Reflect.get(value, 'superseded') === true
+
+export const readPageRenderEffectStatus = async (
+  knex: Knex | Knex.Transaction,
+  input: { readonly effectId: string; readonly now?: Date }
+): Promise<PageRenderEffectStatusView | null> => {
+  if (typeof input.effectId !== 'string' || input.effectId.length === 0 || input.effectId.length > 255) return null
+  const effect = await knex<PageMutationOutboxRow>('pageMutationOutbox').where({ id: input.effectId, effectKind: 'render' }).first()
+  if (!effect) return null
+  const payload = parseRowPayload(effect)
+  const currentPage = await knex<{ id: number; sourceRevision: string | number }>('pages').select('sourceRevision').where({ id: effect.pageId }).first()
+  const currentRevision = currentPage ? revisionString(currentPage.sourceRevision) : null
+  const result = storedJson(effect.result)
+  const superseded = currentRevision !== payload.sourceRevision || effect.status === 'superseded' || resultIsSuperseded(result)
+  const now = input.now ?? new Date()
+  const leaseExpiresAt = effect.leaseExpiresAt === null ? null : new Date(effect.leaseExpiresAt).getTime()
+  const leased = effect.leaseToken !== null && leaseExpiresAt !== null && leaseExpiresAt > now.getTime()
+  const status: PageRenderEffectStatus = superseded
+    ? 'superseded'
+    : effect.status === 'succeeded'
+      ? 'succeeded'
+      : effect.status === 'failed'
+        ? 'failed'
+        : leased
+          ? 'leased'
+          : 'pending'
+  return {
+    effectId: effect.id,
+    pageId: Number(effect.pageId),
+    sourceRevision: payload.sourceRevision,
+    status,
+    result,
+    postcondition: storedJson(effect.postcondition)
+  }
 }
 
 const PAGE_MUTATION_OUTBOX_CLAIM_LOCK_NAMESPACE = 0x57494b4f
@@ -510,6 +645,7 @@ interface ProjectionPageRow {
   readonly sourceRevision: string | number
   readonly content: string
   readonly isPublished: boolean | number
+  readonly isSearchable: boolean | number
   readonly render: string
   readonly localeCode: string
   readonly path: string
@@ -545,7 +681,7 @@ export interface PageProjectionRuntime {
 
 const loadProjectionPage = async (knex: Knex | Knex.Transaction, pageId: number): Promise<ProjectionPageRow | undefined> =>
   knex<ProjectionPageRow>('pages')
-    .select('id', 'sourceRevision', 'content', 'render', 'isPublished', 'localeCode', 'path', 'visibility', 'ownerId')
+    .select('id', 'sourceRevision', 'content', 'render', 'isPublished', 'isSearchable', 'localeCode', 'path', 'visibility', 'ownerId')
     .where({ id: pageId })
     .first()
 
@@ -709,7 +845,7 @@ class LinksProjectionSink implements PageProjectionSink {
 
     const outcome = await this.#knex.transaction(async transaction => {
       const current = await transaction<ProjectionPageRow>('pages')
-        .select('id', 'sourceRevision', 'content', 'render', 'isPublished', 'localeCode', 'path', 'visibility', 'ownerId')
+        .select('id', 'sourceRevision', 'content', 'render', 'isPublished', 'isSearchable', 'localeCode', 'path', 'visibility', 'ownerId')
         .where({ id: payload.pageId })
         .forUpdate()
         .first()
@@ -721,9 +857,7 @@ class LinksProjectionSink implements PageProjectionSink {
       if (links.length > 0) {
         await transaction('pageLinks').insert(links.map(link => ({ pageId: payload.pageId, ...link })))
       }
-      const persistedRows = await transaction<PageLinkRow>('pageLinks')
-        .select('localeCode', 'path')
-        .where({ pageId: payload.pageId })
+      const persistedRows = await transaction<PageLinkRow>('pageLinks').select('localeCode', 'path').where({ pageId: payload.pageId })
       const persisted = persistedRows.map(row => ({ localeCode: row.localeCode, path: row.path })).sort(comparePageLinkIdentities)
       const satisfied = canonicalJson(persisted) === canonicalJson(links)
       return { superseded: false, observed: current, invalid: false, satisfied }
@@ -802,7 +936,8 @@ class SearchProjectionSink implements PageProjectionSink {
       throw new PageMutationOutboxError('RENDER_PROJECTION_NOT_READY', 'Exact render projection has not completed')
     }
 
-    const publishedPublic = before.visibility === 'public' && (before.isPublished === true || before.isPublished === 1)
+    const publishedPublic =
+      before.visibility === 'public' && (before.isPublished === true || before.isPublished === 1) && before.isSearchable !== false && before.isSearchable !== 0
     if (publishedPublic) await this.#runtime.reconcileSearchPage(payload.pageId)
     else await this.#runtime.removeSearchPage(payload.pageId)
     if (signal.aborted) throw signal.reason
@@ -846,7 +981,8 @@ interface SearchMaintenancePage extends ProjectionPageRow {
 
 const searchStateDisagrees = async (knex: Knex, page: SearchMaintenancePage): Promise<boolean> => {
   const rows = await loadSearchRows(knex, page.id)
-  const publishedPublic = page.visibility === 'public' && (page.isPublished === true || page.isPublished === 1)
+  const publishedPublic =
+    page.visibility === 'public' && (page.isPublished === true || page.isPublished === 1) && page.isSearchable !== false && page.isSearchable !== 0
   return publishedPublic
     ? rows.vector === undefined || revisionString(rows.vector.sourceRevision) !== revisionString(page.sourceRevision)
     : rows.vector !== undefined || rows.hasWords
@@ -889,6 +1025,7 @@ export class PageProjectionLifecycle {
           'page.content',
           'page.render',
           'page.isPublished',
+          'page.isSearchable',
           'page.localeCode',
           'page.path',
           'page.visibility',
@@ -925,7 +1062,7 @@ export class PageProjectionLifecycle {
           const page = await transaction<ProjectionPageRow>('pages')
             .where({ id: candidate.id, sourceRevision: candidate.sourceRevision })
             .forUpdate()
-            .first('id', 'sourceRevision', 'content', 'render', 'isPublished', 'localeCode', 'path', 'visibility', 'ownerId')
+            .first('id', 'sourceRevision', 'content', 'render', 'isPublished', 'isSearchable', 'localeCode', 'path', 'visibility', 'ownerId')
           if (!page || page.visibility !== 'public' || (page.isPublished !== true && page.isPublished !== 1)) return false
 
           let pageRevision: string
@@ -1006,6 +1143,7 @@ export class PageProjectionLifecycle {
       'page.content',
       'page.render',
       'page.isPublished',
+      'page.isSearchable',
       'page.localeCode',
       'page.path',
       'page.visibility',
@@ -1060,11 +1198,12 @@ export class PageProjectionLifecycle {
             published
               .where('page.visibility', 'public')
               .where('page.isPublished', true)
+              .where('page.isSearchable', true)
               .where(vector => vector.whereNull('searchVector.pageId').orWhereRaw('?? <> ??', ['searchVector.sourceRevision', 'page.sourceRevision']))
           )
           .orWhere(notPublished =>
             notPublished
-              .where(visibility => visibility.whereNot('page.visibility', 'public').orWhereNot('page.isPublished', true))
+              .where(visibility => visibility.whereNot('page.visibility', 'public').orWhereNot('page.isPublished', true).orWhereNot('page.isSearchable', true))
               .where(rows =>
                 rows.whereNotNull('searchVector.pageId').orWhereExists(function () {
                   this.select(knex.raw('1')).from('pagesWords as searchWords').whereRaw('?? = ??', ['searchWords.pageId', 'page.id'])

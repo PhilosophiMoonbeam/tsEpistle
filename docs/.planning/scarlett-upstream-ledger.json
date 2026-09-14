@@ -1,27 +1,39 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "007e8e974580a74e5301c710a17595ac70aa240f",
-    "recordedAt": "2026-09-13T19:58:06.350Z",
-    "lastFetchedAt": "2026-09-13T19:58:06.350Z"
+    "recordedTip": "70331ecd63af6757c1c3c1a8b09ed9e1a3fd8e55",
+    "recordedAt": "2026-09-14T02:52:36.583Z",
+    "lastFetchedAt": "2026-09-14T02:52:36.583Z",
+    "auditBaseline": "b5b4b0880ae26f4b137242267b6674b51af8688c",
+    "candidateBaseline": "249758e3f923a77e1b62d26a47e142c312642a5f",
+    "historicalReview": {
+      "recordedTip": "249758e3f923a77e1b62d26a47e142c312642a5f",
+      "commitCount": 270,
+      "lastReviewed": "2026-09-14",
+      "contract": "Every upstream commit after the common ancestor through this tip was inspected by full patch; applicable behavior is either present, superseded by a stronger current contract, or explicitly conditional or rejected."
+    }
   },
   "forkCheckpoint": "6713df41c978b1c772159eae06f9c59c3e590d3f",
   "candidates": [
     {
       "id": "typed-api-schemas",
-      "commits": ["6f492f00"],
+      "commits": [
+        "6f492f0028430851b648be0e4a37bf400a89959b"
+      ],
       "category": "api-contract",
       "disposition": "adapt",
       "state": "completed",
       "workstream": "release-assurance/rest-openapi",
-      "contract": "Versioned Express REST and OpenAPI schemas share domain operations and generated client contracts without Fastify or duplicate mutation logic.",
-      "lastReviewed": "2026-08-15"
+      "contract": "Versioned Express REST and OpenAPI schemas share domain operations with typed runtime-validated client contracts, without Fastify or duplicate mutation logic.",
+      "lastReviewed": "2026-09-14"
     },
     {
       "id": "backend-typescript-boundaries",
-      "commits": ["ee7a15fb"],
+      "commits": [
+        "ee7a15fbd6c8f715c0767056c8ad1781af6d5688"
+      ],
       "category": "architecture",
       "disposition": "adapt",
       "state": "completed",
@@ -31,7 +43,9 @@
     },
     {
       "id": "tailwind-ui-rewrite",
-      "commits": ["937cecea"],
+      "commits": [
+        "937cecea05252bef6a25a3c6231f53c53af80883"
+      ],
       "category": "ux",
       "disposition": "reject",
       "state": "closed",
@@ -41,7 +55,14 @@
     },
     {
       "id": "ui-dark-responsive-fixes",
-      "commits": ["064e378b", "cffa39c1", "4677a7c5", "9de9b84b", "57cda516", "527b8e9f"],
+      "commits": [
+        "064e378b48bfda8963d919d7adb72a3591dfb2d3",
+        "cffa39c1e0d0fe70fa942418bc8f935b0a306325",
+        "4677a7c532f1b10db90e7e0090d0afdb8f78dce0",
+        "9de9b84b3426b1b63d5aec1b7e9e4a504188970c",
+        "57cda5162c26fa6cc7d3f1faf1cc7602f6236955",
+        "527b8e9f6486649d7e2bbf2af402658f2c56683e"
+      ],
       "category": "ux",
       "disposition": "compare",
       "state": "completed",
@@ -51,7 +72,9 @@
     },
     {
       "id": "password-protected-pages",
-      "commits": ["c10e988c"],
+      "commits": [
+        "c10e988c3af2c512ecf43e6a348aaa387378c30c"
+      ],
       "category": "security",
       "disposition": "adapt",
       "state": "completed",
@@ -61,7 +84,16 @@
     },
     {
       "id": "markdown-editor-dialogs",
-      "commits": ["9408accc", "7f53b60d", "21fac3a9", "6bffff10", "5a3be5c1", "817302d6", "ce530a40", "ad861ae3"],
+      "commits": [
+        "9408accc00d97a026bae66ebaf4ac35019cdb8f0",
+        "7f53b60dfb3eb5aa12e2b94e1c3a95b15aa1f451",
+        "21fac3a94ec0f7ac5a653f098cda40c7d157da06",
+        "6bffff10a68d93f7f9697e5692176b1d46ee8a10",
+        "5a3be5c19a50dd418bc321c5c88e005ad5bd1da2",
+        "817302d6b50b73ffa6b75aa325b7f12a2f9e1e09",
+        "ce530a40d277a0b37c0a90d06a5f5aae90494753",
+        "ad861ae377e051f2d655c86e33a3e848caad0f28"
+      ],
       "category": "editor",
       "disposition": "adapt",
       "state": "completed",
@@ -71,7 +103,17 @@
     },
     {
       "id": "content-block-platform",
-      "commits": ["3d13e50b", "072e1dcc", "5021b31a", "29d81640", "1aefb34d", "9a1ca3b1", "c182d2c9", "aa27932c", "d0c5a8bf"],
+      "commits": [
+        "3d13e50be8d0733b16a7e4ff6f9ccbc1dce46b2c",
+        "072e1dcc4235c9c77ce1e4beabe698c792c63f2d",
+        "5021b31a0a5bc2f10689fef6221a04b1bcd1598c",
+        "29d816401c7b55d31c61a4a469be4c5e4da8fdae",
+        "1aefb34d926bc710e51b2e1f6d5d5caa01477ef4",
+        "9a1ca3b1355c56de6e6007394fd9333257b2c585",
+        "c182d2c974b0b44550b7ff29f2542e378ac97c28",
+        "aa279332c5bbacebfd0d797e9f57e73ac34b1940",
+        "d0c5a8bfa90acee73a2f4c71033978bea1925468"
+      ],
       "category": "extension",
       "disposition": "replace",
       "state": "completed",
@@ -81,7 +123,10 @@
     },
     {
       "id": "approvals-inbox",
-      "commits": ["957efebe", "c36eab67"],
+      "commits": [
+        "957efebecb49664511c38d2bbefa83d987e7a253",
+        "c36eab6729b7cf4af67eed70b0a995957aae88cd"
+      ],
       "category": "workflow",
       "disposition": "adapt",
       "state": "completed",
@@ -91,7 +136,10 @@
     },
     {
       "id": "page-history-experience",
-      "commits": ["c9bd96a5", "4ec69a75"],
+      "commits": [
+        "c9bd96a5ba27a3f82ec60449b5529730b9b6e589",
+        "4ec69a75c06865b48b627582fac5c12ecbfcc019"
+      ],
       "category": "workflow",
       "disposition": "adapt",
       "state": "completed",
@@ -101,7 +149,11 @@
     },
     {
       "id": "permission-hardening",
-      "commits": ["db99e3d6", "1105cf4b", "81fc8db4"],
+      "commits": [
+        "db99e3d6ef5e618fc69d1d89a00b96865ba46047",
+        "1105cf4b5e0d6cc9741c3812319dd73823d1dbe5",
+        "81fc8db4f7dd7f85731a0158f78d092a0d08a33d"
+      ],
       "category": "security",
       "disposition": "adapt",
       "state": "completed",
@@ -111,7 +163,9 @@
     },
     {
       "id": "live-collaboration",
-      "commits": ["17d7b810"],
+      "commits": [
+        "17d7b810bb912c551d54d13cc969a9f47fc737f8"
+      ],
       "category": "editor",
       "disposition": "adapt",
       "state": "completed",
@@ -121,7 +175,9 @@
     },
     {
       "id": "page-watching",
-      "commits": ["14e1efae"],
+      "commits": [
+        "14e1efae41820323200d2c8bca292dd5e2e94094"
+      ],
       "category": "workflow",
       "disposition": "adapt",
       "state": "completed",
@@ -131,7 +187,9 @@
     },
     {
       "id": "endpoint-rate-limits",
-      "commits": ["14e1efae"],
+      "commits": [
+        "14e1efae41820323200d2c8bca292dd5e2e94094"
+      ],
       "category": "security",
       "disposition": "adapt",
       "state": "completed",
@@ -141,27 +199,35 @@
     },
     {
       "id": "oauth-modules",
-      "commits": ["ff4a5bc6"],
+      "commits": [
+        "ff4a5bc6e699fea2a9f8eef25192a70cb789cbf4"
+      ],
       "category": "security",
-      "disposition": "compare",
-      "state": "active",
+      "disposition": "supersede",
+      "state": "completed",
       "workstream": "release-assurance/authentication",
-      "contract": "Provider changes retain broad compatibility and share callback, token, profile, error, and regression contracts.",
-      "lastReviewed": "2026-08-15"
+      "contract": "Current OAuth providers share callback-state validation, PKCE where supported, normalized profile admission, self-registration policy, and reviewed administration safeguards without importing Fastify or multisite assumptions.",
+      "lastReviewed": "2026-09-14"
     },
     {
       "id": "durable-render-webhook-scheduler",
-      "commits": ["1c6e71ee", "c1d7eef3", "23dbb272"],
+      "commits": [
+        "1c6e71eebf0bb634db4c6cb2b4c4b100c63e60f1",
+        "c1d7eef3bf71bc9e7bc7d2a0a09653f520b9cba9",
+        "23dbb27212fba805b408e808ce71b3b7c16155d8"
+      ],
       "category": "operations",
       "disposition": "adapt",
       "state": "completed",
-      "workstream": "wave-2/durable-jobs",
-      "contract": "PostgreSQL leases, idempotent handlers, transactional outbox, bounded retries, recovery, and administrator visibility own background work.",
-      "lastReviewed": "2026-08-15"
+      "workstream": "correction/durable-operator-render",
+      "contract": "PostgreSQL leases, immutable revision-fenced render intents, bounded retries, recovery, status inspection, and truthful administrator visibility own operator rendering and other background work.",
+      "lastReviewed": "2026-09-14"
     },
     {
       "id": "disabled-extension-source",
-      "commits": ["c00b7007"],
+      "commits": [
+        "c00b7007eba46ab18690e57ec7f66b3e198a415c"
+      ],
       "category": "extension",
       "disposition": "supersede",
       "state": "completed",
@@ -171,7 +237,9 @@
     },
     {
       "id": "asset-rendering",
-      "commits": ["45d2287a"],
+      "commits": [
+        "45d2287ab185bbaf06c68b933fc7a15420a09513"
+      ],
       "category": "security",
       "disposition": "compare",
       "state": "completed",
@@ -181,17 +249,22 @@
     },
     {
       "id": "page-redirection",
-      "commits": ["8e6a35de"],
+      "commits": [
+        "8e6a35de98a45472f9f881282add757dd2eae6ee"
+      ],
       "category": "correctness",
-      "disposition": "supersede",
-      "state": "completed",
+      "disposition": "reject",
+      "state": "closed",
       "workstream": "wave-1/routing",
-      "contract": "Redirects prevent loops, preserve authorization and private non-disclosure, and retain editor parity.",
-      "lastReviewed": "2026-08-15"
+      "contract": "Scarlett supplied only an inert redirect editor definition; tsEpistle exposes no redirect page type until loop prevention, authorization, private non-disclosure, and editor parity have an explicit product contract.",
+      "lastReviewed": "2026-09-14"
     },
     {
       "id": "migration-reset-and-guard",
-      "commits": ["6db53d4f", "99ccdc13"],
+      "commits": [
+        "6db53d4faec7226ac00abaa0cfaa900851ec28a2",
+        "99ccdc1326770e1ebd7cf9b1705c819812485564"
+      ],
       "category": "data-continuity",
       "disposition": "synthesize",
       "state": "completed",
@@ -201,7 +274,9 @@
     },
     {
       "id": "request-parser-limits",
-      "commits": ["4c6d5c40"],
+      "commits": [
+        "4c6d5c4009a65b74609fb57a325bc8afada935c9"
+      ],
       "category": "security",
       "disposition": "compare",
       "state": "completed",
@@ -211,7 +286,9 @@
     },
     {
       "id": "compiled-spa-serving",
-      "commits": ["1cdbaf83"],
+      "commits": [
+        "1cdbaf838b9e24eea93f90aa3ad0076409f0c1dc"
+      ],
       "category": "release",
       "disposition": "supersede",
       "state": "completed",
@@ -221,7 +298,10 @@
     },
     {
       "id": "navigation-parent-controls",
-      "commits": ["2acd026c", "634f4b05"],
+      "commits": [
+        "2acd026c43cfa71d9b4746a6ed31a597ee4549eb",
+        "634f4b055561fbae06711e8874612f1302db6868"
+      ],
       "category": "ux",
       "disposition": "adapt",
       "state": "completed",
@@ -231,7 +311,9 @@
     },
     {
       "id": "folder-path-collision",
-      "commits": ["5fa9bf3f"],
+      "commits": [
+        "5fa9bf3f829288b0485d0e0dcb91d8c916588a56"
+      ],
       "category": "correctness",
       "disposition": "supersede",
       "state": "completed",
@@ -241,7 +323,9 @@
     },
     {
       "id": "utilities-jwk-removal",
-      "commits": ["09e9166b"],
+      "commits": [
+        "09e9166bc6d90e7f78c45564f81d8b85840ea2f7"
+      ],
       "category": "api-contract",
       "disposition": "split",
       "state": "completed",
@@ -251,7 +335,9 @@
     },
     {
       "id": "page-shadow-classes",
-      "commits": ["0c62c97e"],
+      "commits": [
+        "0c62c97eba01ef0d48d331a4a43f743547973f3e"
+      ],
       "category": "ux",
       "disposition": "reject",
       "state": "closed",
@@ -261,7 +347,11 @@
     },
     {
       "id": "docker-ci-fixes",
-      "commits": ["0376d788", "8b0a5e37", "dd37744e"],
+      "commits": [
+        "0376d7885083a13643801d038d4503875cc2cfaf",
+        "8b0a5e37255784f2908bf4382e5f903dbae4a977",
+        "dd37744ec56ded7189e826d427cae17123ff11b8"
+      ],
       "category": "release",
       "disposition": "compare",
       "state": "completed",
@@ -281,7 +371,9 @@
     },
     {
       "id": "repository-package-split",
-      "commits": ["ee7a15fb"],
+      "commits": [
+        "ee7a15fbd6c8f715c0767056c8ad1781af6d5688"
+      ],
       "category": "architecture",
       "disposition": "conditional",
       "state": "closed",
@@ -291,7 +383,10 @@
     },
     {
       "id": "drizzle-orm",
-      "commits": ["ee7a15fb", "6db53d4f"],
+      "commits": [
+        "ee7a15fbd6c8f715c0767056c8ad1781af6d5688",
+        "6db53d4faec7226ac00abaa0cfaa900851ec28a2"
+      ],
       "category": "architecture",
       "disposition": "conditional",
       "state": "closed",
@@ -301,7 +396,9 @@
     },
     {
       "id": "lit-extension-runtime",
-      "commits": ["937cecea"],
+      "commits": [
+        "937cecea05252bef6a25a3c6231f53c53af80883"
+      ],
       "category": "extension",
       "disposition": "conditional",
       "state": "closed",
@@ -311,7 +408,10 @@
     },
     {
       "id": "postgresql-only-platform",
-      "commits": ["ee7a15fb", "6db53d4f"],
+      "commits": [
+        "ee7a15fbd6c8f715c0767056c8ad1781af6d5688",
+        "6db53d4faec7226ac00abaa0cfaa900851ec28a2"
+      ],
       "category": "data-continuity",
       "disposition": "adopt",
       "state": "completed",
@@ -321,7 +421,10 @@
     },
     {
       "id": "bounded-page-projection",
-      "commits": ["9a1ca3b1", "aa27932c"],
+      "commits": [
+        "9a1ca3b1355c56de6e6007394fd9333257b2c585",
+        "aa279332c5bbacebfd0d797e9f57e73ac34b1940"
+      ],
       "category": "performance",
       "disposition": "conditional",
       "state": "closed",
@@ -331,7 +434,9 @@
     },
     {
       "id": "site-wide-banner",
-      "commits": ["d39e0633"],
+      "commits": [
+        "d39e063371c46c816f95c021abe31dbd2324a82c"
+      ],
       "category": "reader-experience",
       "disposition": "adapt",
       "state": "completed",
@@ -341,7 +446,9 @@
     },
     {
       "id": "storage-target-runtime",
-      "commits": ["91eede05"],
+      "commits": [
+        "91eede058e417e107c9053a384fa3ba37f15af6b"
+      ],
       "category": "storage",
       "disposition": "split",
       "state": "completed",
@@ -351,7 +458,10 @@
     },
     {
       "id": "cloud-storage-prefix-and-secrets",
-      "commits": ["49555480", "8ce6b6e6"],
+      "commits": [
+        "49555480a702c1bebd46595f7ea57ce1540acc89",
+        "8ce6b6e62ed63a0df72663a76cf6c329384345dd"
+      ],
       "category": "storage-security",
       "disposition": "split",
       "state": "completed",
@@ -361,7 +471,10 @@
     },
     {
       "id": "markdown-highlights-definitions-tab-headings",
-      "commits": ["aae07973", "b1261f46"],
+      "commits": [
+        "aae079731bf7b43f680aee7e30112212e1441d21",
+        "b1261f4606afe51c92e261da22beae656a3d32ff"
+      ],
       "category": "editor",
       "disposition": "adapt",
       "state": "completed",
@@ -371,7 +484,12 @@
     },
     {
       "id": "crowdin-build-upload",
-      "commits": ["b1261f46", "c7c26c45", "b1572792", "5ff4f1dd"],
+      "commits": [
+        "b1261f4606afe51c92e261da22beae656a3d32ff",
+        "c7c26c45c088ca8e5c2a183361c97286968f0c8e",
+        "b1572792a24f7df30729aa18a89e2624ad63474a",
+        "5ff4f1dda7ae7bb5e06a8a57c9c357b12456b29f"
+      ],
       "category": "release",
       "disposition": "conditional",
       "state": "closed",
@@ -381,7 +499,9 @@
     },
     {
       "id": "locale-platform-refresh",
-      "commits": ["fdd7945a"],
+      "commits": [
+        "fdd7945a6d0071b8a95d024261e1ee39974721a1"
+      ],
       "category": "localization",
       "disposition": "supersede",
       "state": "completed",
@@ -391,7 +511,9 @@
     },
     {
       "id": "page-locale-relations",
-      "commits": ["b16402ae"],
+      "commits": [
+        "b16402ae0f23dd398ac39a43a022a5d794376fd1"
+      ],
       "category": "reader-experience",
       "disposition": "split",
       "state": "completed",
@@ -401,7 +523,9 @@
     },
     {
       "id": "redirect-navigation-visibility",
-      "commits": ["7682e839"],
+      "commits": [
+        "7682e839c852efb933d0d6b5beefc026c230bee5"
+      ],
       "category": "navigation",
       "disposition": "supersede",
       "state": "completed",
@@ -411,7 +535,9 @@
     },
     {
       "id": "scarlett-ui-corrections-2026-08-25",
-      "commits": ["f537f04e"],
+      "commits": [
+        "f537f04ecceabc10d2cccd43be7d277c03182d61"
+      ],
       "category": "ux",
       "disposition": "compare",
       "state": "completed",
@@ -421,7 +547,9 @@
     },
     {
       "id": "pasted-asset-workflow-2026-08-26",
-      "commits": ["1513e880"],
+      "commits": [
+        "1513e88019069b4895a9e45634b7c6a8dd37a6e0"
+      ],
       "category": "editor-assets",
       "disposition": "split",
       "state": "completed",
@@ -431,7 +559,9 @@
     },
     {
       "id": "scheduler-and-storage-activity-reconcile",
-      "commits": ["40ebd103"],
+      "commits": [
+        "40ebd1036022d83d0b0b8242d3f31920de8bc5d1"
+      ],
       "category": "operations",
       "disposition": "split",
       "state": "completed",
@@ -441,7 +571,9 @@
     },
     {
       "id": "code-fence-presentation-metadata",
-      "commits": ["f985f041"],
+      "commits": [
+        "f985f041d07868c0b346684ec62dcff5725df37c"
+      ],
       "category": "rendering",
       "disposition": "adapt",
       "state": "completed",
@@ -451,7 +583,9 @@
     },
     {
       "id": "navigation-and-search-corrections-2026-08-28",
-      "commits": ["8ff4a3e6"],
+      "commits": [
+        "8ff4a3e62d36e62de379b1c8cd3551c701abb340"
+      ],
       "category": "ux",
       "disposition": "compare",
       "state": "completed",
@@ -461,7 +595,9 @@
     },
     {
       "id": "markdown-abbreviation-authoring",
-      "commits": ["dbf72551"],
+      "commits": [
+        "dbf72551a8ad03b594610f47ebc9d7bfb7be7720"
+      ],
       "category": "editor",
       "disposition": "adapt",
       "state": "completed",
@@ -471,7 +607,10 @@
     },
     {
       "id": "git-working-copy-recovery",
-      "commits": ["d910bae0", "59ef5e77"],
+      "commits": [
+        "d910bae080f1756f2ede2483625de83217712644",
+        "59ef5e779db70f9883258d06dd5611300e2173e0"
+      ],
       "category": "storage-reliability",
       "disposition": "adapt",
       "state": "completed",
@@ -481,7 +620,9 @@
     },
     {
       "id": "ssl-removal-and-mcp-placeholder",
-      "commits": ["59ef5e77"],
+      "commits": [
+        "59ef5e779db70f9883258d06dd5611300e2173e0"
+      ],
       "category": "admin",
       "disposition": "reject",
       "state": "closed",
@@ -491,7 +632,10 @@
     },
     {
       "id": "authentication-mail-completion-2026-08-29",
-      "commits": ["ccb2b702", "6053cb98"],
+      "commits": [
+        "ccb2b702fec70dcb66032ff296ea572b723d6f9e",
+        "6053cb982f254f2d52b2a043864a999c725240f7"
+      ],
       "category": "authentication-security",
       "disposition": "split",
       "state": "completed",
@@ -501,7 +645,9 @@
     },
     {
       "id": "authentication-outcome-experience-2026-08-29",
-      "commits": ["6053cb98"],
+      "commits": [
+        "6053cb982f254f2d52b2a043864a999c725240f7"
+      ],
       "category": "ux",
       "disposition": "adapt",
       "state": "completed",
@@ -511,7 +657,9 @@
     },
     {
       "id": "sample-content-utility-2026-08-29",
-      "commits": ["ccb2b702"],
+      "commits": [
+        "ccb2b702fec70dcb66032ff296ea572b723d6f9e"
+      ],
       "category": "admin-utilities",
       "disposition": "reject",
       "state": "closed",
@@ -521,7 +669,10 @@
     },
     {
       "id": "scarlett-auth-mail-stack-specifics-2026-08-29",
-      "commits": ["ccb2b702", "6053cb98"],
+      "commits": [
+        "ccb2b702fec70dcb66032ff296ea572b723d6f9e",
+        "6053cb982f254f2d52b2a043864a999c725240f7"
+      ],
       "category": "architecture",
       "disposition": "supersede",
       "state": "closed",
@@ -531,7 +682,9 @@
     },
     {
       "id": "authentication-login-race-and-tfa-manual-2026-08-29",
-      "commits": ["73dbbdcb"],
+      "commits": [
+        "73dbbdcb280f6b1d845f60d992571d218e89a63d"
+      ],
       "category": "authentication-security",
       "disposition": "compare",
       "state": "completed",
@@ -541,7 +694,16 @@
     },
     {
       "id": "scarlett-beta-branding-and-publication-2026-09-02",
-      "commits": ["a49f1ab6", "d513c930", "8baa5e28", "51a42038", "bab67a5c", "f4868a8c", "47207e17", "bfafd9d4"],
+      "commits": [
+        "a49f1ab67d142ff3640350c4dd66358edcbe5130",
+        "d513c9304419d136ca16f5bd708d302d260622e3",
+        "8baa5e28e29f36b7e9785e9fc6d14245c9e75112",
+        "51a420381437fe6f44d41b64dea3ec0ffe95ea75",
+        "bab67a5cf58e023a27d1c600879eaf25b258f6bd",
+        "f4868a8c94a44cee40e12573042b95e01854c6b1",
+        "47207e176ac7ca3292a2aebe0042692ac03913b8",
+        "bfafd9d4348935dbf47b120f3efce4547b037ca7"
+      ],
       "category": "release",
       "disposition": "supersede",
       "state": "closed",
@@ -551,17 +713,21 @@
     },
     {
       "id": "asset-and-folder-management-2026-09-05",
-      "commits": ["7dfb9abe"],
+      "commits": [
+        "7dfb9abe3206e0a303d677b9cf4f37049d997a22"
+      ],
       "category": "assets",
-      "disposition": "supersede",
+      "disposition": "split",
       "state": "completed",
-      "workstream": "admin/assets",
-      "contract": "The fork retains its authorized asset and folder GraphQL/REST operations, storage abstraction and existing editor media workflow; Scarlett Fastify, Drizzle, Tailwind, folder-color and View Transition implementations are not transplanted.",
-      "lastReviewed": "2026-09-12"
+      "workstream": "correction/asset-relocation",
+      "contract": "Existing authorized folder, upload, and rename behavior remains; folder relocation requires stable-ID password protection plus durable target reconciliation, while Scarlett framework, folder-color, and mixed-tree details remain rejected.",
+      "lastReviewed": "2026-09-14"
     },
     {
       "id": "public-user-profiles-2026-09-05",
-      "commits": ["a857f96b"],
+      "commits": [
+        "a857f96bb0815e4c68e4477f85f35e91288f293f"
+      ],
       "category": "privacy",
       "disposition": "conditional",
       "state": "closed",
@@ -571,7 +737,10 @@
     },
     {
       "id": "drawio-and-steps-blocks-2026-09",
-      "commits": ["7cf47610", "1c7d709b"],
+      "commits": [
+        "7cf47610d15ac3d8c9e8a1344f8431138bbe5b92",
+        "1c7d709b1a0cd4bd755c60aaeef19744b6c7f089"
+      ],
       "category": "extension",
       "disposition": "split",
       "state": "completed",
@@ -581,7 +750,9 @@
     },
     {
       "id": "global-audit-log-2026-09-06",
-      "commits": ["d39f2eff"],
+      "commits": [
+        "d39f2eff0f712741762966c4a09f39418a7e17b6"
+      ],
       "category": "audit",
       "disposition": "conditional",
       "state": "closed",
@@ -591,7 +762,10 @@
     },
     {
       "id": "runtime-proxy-and-admin-autofill-2026-09",
-      "commits": ["e8b6fcb3", "800fb31b"],
+      "commits": [
+        "e8b6fcb3fc2c17345962e0889c15e1a6fb65ebac",
+        "800fb31bbdce82e63a8ef20f35622fad30b55de3"
+      ],
       "category": "security",
       "disposition": "adapt",
       "state": "completed",
@@ -601,7 +775,10 @@
     },
     {
       "id": "metrics-surface-2026-09-06",
-      "commits": ["fb184f63", "acb555ea"],
+      "commits": [
+        "fb184f63751d77c96a63e63749566417da7f91fa",
+        "acb555eaa7cc5a24e01f753ef22dbada1a78ddbe"
+      ],
       "category": "operations",
       "disposition": "supersede",
       "state": "completed",
@@ -611,7 +788,10 @@
     },
     {
       "id": "page-version-and-print-experience-2026-09",
-      "commits": ["50adab2e", "7ea92a98"],
+      "commits": [
+        "50adab2eac3b38fe66b03c915857d8a8d1320034",
+        "7ea92a982b1275dd5e78d14bc0b2f27d115ca9cc"
+      ],
       "category": "reader-experience",
       "disposition": "supersede",
       "state": "completed",
@@ -621,7 +801,12 @@
     },
     {
       "id": "authentication-provider-expansion-2026-09",
-      "commits": ["0c8108d5", "d668ba70", "0052ec61", "b2edc4fd"],
+      "commits": [
+        "0c8108d5806ddc3d7a41f53e31580e7c3695c45c",
+        "d668ba70e3e7c1e877af1c5a4b155c84b7b4d8d4",
+        "0052ec618c041799d4c76632ea1ace26c98c1931",
+        "b2edc4fd007cae6322e3626c24fdc24eedd55c41"
+      ],
       "category": "authentication-security",
       "disposition": "split",
       "state": "completed",
@@ -631,7 +816,9 @@
     },
     {
       "id": "passkeys-and-profile-editing-policy-2026-09-10",
-      "commits": ["ad8e9d39"],
+      "commits": [
+        "ad8e9d393f19d487929495a023d0479224bbf38f"
+      ],
       "category": "authentication-security",
       "disposition": "conditional",
       "state": "closed",
@@ -641,17 +828,24 @@
     },
     {
       "id": "page-metadata-and-script-corrections-2026-09",
-      "commits": ["795414ef", "32a656e7"],
+      "commits": [
+        "795414ef71da995d293de6d99f022620205ff31f",
+        "32a656e7beec3baac08b02f15e32a1de3b3a6e62"
+      ],
       "category": "correctness",
       "disposition": "compare",
       "state": "completed",
-      "workstream": "pages/reader-runtime",
-      "contract": "Server-rendered metadata remains authoritative, tags are locale-aware sorted in the fork's dedicated browser, and page CSS/JavaScript is permission-gated and injected only after page authorization. Same-origin soft navigation deliberately falls back to a full load for pages with custom code, preventing skipped or stale scripts without a second client executor.",
-      "lastReviewed": "2026-09-12"
+      "workstream": "correction/page-history-branch",
+      "contract": "Historical branching preserves supported version tags, publication state and destination-authorized CSS or JavaScript; existing SSR metadata and custom-code navigation behavior remains authoritative.",
+      "lastReviewed": "2026-09-14"
     },
     {
       "id": "root-files-prerender-and-theme-injection-2026-09",
-      "commits": ["8f72bd6d", "1db38cc1", "48835a27"],
+      "commits": [
+        "8f72bd6d72df59e900bc01b58037a5e22a76bc78",
+        "1db38cc1ceaee6e523c17367e8ffe78c756c45d3",
+        "48835a27014a950b90013e8df40ab4a077f62433"
+      ],
       "category": "reader-runtime",
       "disposition": "split",
       "state": "completed",
@@ -661,7 +855,9 @@
     },
     {
       "id": "tag-browser-and-search-corrections-2026-09-12",
-      "commits": ["b6bcee8a"],
+      "commits": [
+        "b6bcee8a3dea8558a015f5f32bd7952920850db1"
+      ],
       "category": "reader-experience",
       "disposition": "supersede",
       "state": "completed",
@@ -671,7 +867,9 @@
     },
     {
       "id": "page-source-guest-permission-2026-09-13",
-      "commits": ["ff9aa13e"],
+      "commits": [
+        "ff9aa13e3d6d5cefbfed43c74bd6b88c39ec5da1"
+      ],
       "category": "authorization",
       "disposition": "supersede",
       "state": "completed",
@@ -681,7 +879,9 @@
     },
     {
       "id": "empty-folder-purge-2026-09-13",
-      "commits": ["b11bf4f6"],
+      "commits": [
+        "b11bf4f601101a3940763e626d2c6514c3aa5d0b"
+      ],
       "category": "admin-utilities",
       "disposition": "supersede",
       "state": "completed",
@@ -691,7 +891,9 @@
     },
     {
       "id": "analytics-modules-and-provider-hardening-2026-09-13",
-      "commits": ["9ec8070c"],
+      "commits": [
+        "9ec8070c688dfa1fd9ec899835988f14176211ba"
+      ],
       "category": "privacy",
       "disposition": "adapt",
       "state": "completed",
@@ -701,13 +903,2523 @@
     },
     {
       "id": "comments-talk-and-provider-expansion-2026-09-13",
-      "commits": ["007e8e97"],
+      "commits": [
+        "007e8e974580a74e5301c710a17595ac70aa240f"
+      ],
       "category": "workflow",
       "disposition": "adapt",
       "state": "completed",
       "workstream": "experience-completion/discussions",
       "contract": "Adapted the complete useful comments delta into the fork-native stack: one-level integer reply threads normalize to a visible same-page root and preserve replies through hide/delete projection; contextual page-scoped mentions use permanent lowercase handle claims, active human participants and neutral stored Markdown; the existing page shell exposes history-aware Article/Talk tabs for native discussions; and Comentario, Discourse, Giscus, Hyvor Talk, Isso, Remark42 and Waline use typed configuration, stable /i/<pageId> identity, strict URL/context encoding and guarded provider-catalog rollback. Existing page-rule/password authorization, private-page external suppression, moderation, cooldown, PostgreSQL locking and operator-owned CSP remain authoritative. Scarlett's UUID migration, Fastify/Drizzle stack, global user discovery and executable template lifecycle remain rejected.",
       "lastReviewed": "2026-09-13"
+    },
+    {
+      "id": "connected-process-census",
+      "commits": [
+        "055fcc6b7256bdf427f160d9d82788a2e02bdd17",
+        "95587ae71b1a0081471b7bfaa6cc8f49ed8bb15f"
+      ],
+      "category": "operations",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "correction/connected-process-census",
+      "contract": "The System workspace reports a bounded redacted census of currently connected tsEpistle PostgreSQL process roles without claiming membership, health, heartbeat, or historical uptime.",
+      "lastReviewed": "2026-09-14"
+    },
+    {
+      "id": "per-page-search-inclusion",
+      "commits": [
+        "c87f4ce770ebcc58ec74b7cb0b34911985a76571"
+      ],
+      "category": "search",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "correction/page-search-inclusion",
+      "contract": "A revisioned default-true page preference excludes opted-out pages immediately from every search-derived projection while preserving authorized direct access.",
+      "lastReviewed": "2026-09-14"
+    },
+    {
+      "id": "new-user-presentation-defaults",
+      "commits": [
+        "9ecaebba32e5d44f61231ad2abc49075efe54432"
+      ],
+      "category": "accounts",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "correction/user-presentation-defaults",
+      "contract": "Reviewed global timezone, date, and time-format defaults apply once and atomically to newly admitted real accounts without rewriting existing users.",
+      "lastReviewed": "2026-09-14"
+    },
+    {
+      "id": "self-service-avatar",
+      "commits": [
+        "40a0abc3bb7ab5f86e49aedf17f606d521e5f691"
+      ],
+      "category": "accounts",
+      "disposition": "adapt",
+      "state": "completed",
+      "workstream": "correction/self-service-avatar",
+      "contract": "Authenticated users can upload or clear a bounded sanitized raster avatar through current user operations while preserving explicit provider ownership and truthful failure semantics.",
+      "lastReviewed": "2026-09-14"
+    },
+    {
+      "id": "custom-icon-set-catalog",
+      "commits": [
+        "1786c3a5699bb265ccfa450815558b3f855339e6"
+      ],
+      "category": "ux",
+      "disposition": "conditional",
+      "state": "closed",
+      "workstream": "conditional/icon-catalog",
+      "contract": "A persisted custom icon-set catalog remains conditional on an explicit remote-source, cache, provenance, licensing, administration, and editor-selection contract; static MDI and glyph catalogs remain authoritative.",
+      "lastReviewed": "2026-09-14"
+    },
+    {
+      "id": "twemoji-parser-upgrade",
+      "commits": [
+        "0b0574861d67df4abc0f58ef0c0360490134bfeb"
+      ],
+      "category": "rendering",
+      "disposition": "conditional",
+      "state": "closed",
+      "workstream": "conditional/twemoji-upgrade",
+      "contract": "The working local Twemoji 14 archive remains pinned until a named glyph or parser requirement justifies a provenance-checked asset and build upgrade; version parity alone is insufficient.",
+      "lastReviewed": "2026-09-14"
+    },
+    {
+      "id": "page-rule-tag-authorization-2026-09-14",
+      "commits": [
+        "70331ecd63af6757c1c3c1a8b09ed9e1a3fd8e55"
+      ],
+      "category": "authorization",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "wave-1/policy",
+      "contract": "Fork-native page authorization retains alias-aware tag matching, complete page contexts, atomic current-and-proposed tag checks, and the established path-length-first deny-tie precedence. Scarlett's multisite Fastify and Quasar changes are superseded; TAGALL and separate tag selectors require a future explicit policy revision.",
+      "lastReviewed": "2026-09-14"
+    }
+  ],
+  "coverage": [
+    {
+      "commit": "3a57145e3d632e8e8976eef91ba0fb366155ec30",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: initial import from v3 prototype`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7b060bec5f344598e0b8c551d4eddb4e0b411b1b",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: db connection`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "027b1614ff3dd9c3e13bd38744c02acdac9ba6d2",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: admin editors + flags page to comp api, server cleanup`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "edb529378ec15a06e0ec8a69e9949b18d793fb60",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: fix models + storage modules`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "70a2e3ca63322de717495621c7e50dfffe90417d",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: remove logging modules`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "dfde2e10aab39ee911a34e0bd310b6d490ef83a3",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: admin sites + create site dialog to vue3 comp api`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "358ad1fdcdcfcfe2196db75a4ecc1c30ed192200",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: update schema with new structure / naming`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "464f55cf46cc353561b6c6873794b015d8dceb5b",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: admin general to vue3 comp api`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "07d274ca6c84fa5548875f6702fe4e70d2e0e9ee",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: admin system info to vue3 comp api`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "38aab6f46ce165b635fbba7d24a95f193d629a33",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore(helm): add revisionHistoryLimit (#5175)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "f7546191468580ff91b50b0ac67b0afecebaa20c",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(auth): OAuth2 scope support (#5181)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "908eb0ee6dab045aa130101b4f9d30300f5f23d8",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: external comments template using incorrect page variables`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "64cdc9f9539346fa74ac0cbb62909865e52ae5c4",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(auth): OAuth2 access_token in GET query string in userInfoURL (#5188)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "0a332143c00f69f6286557927a6d43b857242df4",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: setup vscode devcontainer environment`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "6ee5788fe102daa04dd1978e7079cc7d1286c297",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: fix devcontainer + add missing extensions`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "05c90434a5394bb30fe137a991dd1e423015cd83",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: rename docker init script`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "22e1eea9f20e62097bac21ca6727c9a10b4c1a53",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: auto launch terminal group on start`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "fd021a7999428f4e6cc56015239bc3d81ac17048",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: yarn 3 on ux project`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "89c0a83cd5976430b6d4652e3ceaf3e8b7eba926",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: docker build missing python (#5207)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "d45d40e12e092c2c23ffd3854113153a23e7db6c",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: add X-Mailer header to outgoing emails (#5238)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "948157745f29b72fb88977bd197d045c7ef02abe",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: default comment provider not displaying`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "64104f81ad23e08559c37ec571027d22785b2aa8",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: undefined author in git commit when deleting a page (#5215)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "8ad8147f633a1691b13bcff4da305e654927dc64",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: update docker arm build image`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "80dc7e74346056d6bb702df549eac86b16b4cf9c",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix arm dockerfile to alpine`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7bd527a6549df9b40514fe98fc207c8d3e45a0c0",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: update saml strategy to use new config options`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "638a459d82288bb33f544c9826b868358bb1daa8",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: update packer docker image for wiki-update-companion to 2.0`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "cfa20e0522376273d0344dfce8266baf74e0f384",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(helm): add support for spec.ingressClassName to Ingress template (#5202)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7715dc6f5e2a3f3c8a0be23dc9bd02f308ce9a61",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: saml - set cert as required`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "e5cbf6b94302e2a9518ddd460d1bb63c9d46fdfb",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: prevent manage system assignment from manage groups permission`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "986956c8ee712d919c58670a440f70601ced2bad",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: handle unicode chars when syncing files using git storage (#5272)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "fdceb75c4de20ea3c41750636869aee30393d208",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: typo in saml auth module`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "64e592ada43c6b57e716871a044916ad42a9ade6",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: change spelling of Kiev to Kyiv (#5285)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "0385a9b647e5f5e0d4ce9bda4f4cc853c6a8aa73",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: update to working twitch passport strategy (#5279)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "9e57c12a6047543f9f15a97a43bf6ea3e5fd05b4",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix(auth): SAML authnContext parameter should be an array (#5290)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "d2aa26f0986c73a343c66d67057cadbbffd0cff4",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix(nav): add locale to current directory link (#5286)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "8d81e8587b448b51d7011575a3f557f3b62a9c06",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix(search): search result display as empty after clearing field (#5283)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "54c1946035641067b628e2ac032ed8e255ac8875",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix(auth): update SAML authnContext hint text for multiple values`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "0c522c17227226f6c85fc1e9c00119d8d1e6d3fe",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: site tree not working because of incorrect variable name (#5304)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "36ba1eb1929217619ebe4daacceae9b8dcb07d98",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(admin): migrate locale + login + storage views to vue 3 composable`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "3d2e5c9daf48e50d0ac4830d02ea1f37aab8c44d",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(admin): migrate mail to vue 3 composable`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "d5fa587c98b60fd5fcf8fc147d03b5bb35ec8827",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(admin): migrate extensions + security to vue 3 composable`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "1eefdb06e60abfd41aea11724582bd866c86db81",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(admin): add sitemap option to general page`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7e344fc6faf059ef472dabfb6c1872bc76302584",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(admin): migrate groups page to vue 3 composable`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "6e303ac64853582be91eae214ceefb06c718c350",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(admin): migrate groups dialogs to vue 3 composable`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "47ed7b371c10e3a47488a93fc3980a8ac12f9fe2",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(admin): migrate users to vue 3 composable`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "66bedca98b5e484f7413174727b7bc89094a40d0",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: util code editor`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "54d15069bbb13742626f06d1156bbd2209b7a9a1",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: don't push files to git if ignored (#5334)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "5d0f882fedd77ce06adfdc06af0a791535873fa8",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix(auth): handle null SAML authnContext context`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "4bfd9f528058b0a4a198d029ba83e50595223f02",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(mail): allow setting of mailer identifying name`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "cc506a086d017003ccff8ac8657bbdce798eab18",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix(admin): sites save / activate / delete mutations`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "5a4a9df43a39d493cc19e005a72fb01a06cbb611",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(admin): migrate webhooks to vue 3 composable`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "d87e94abac53418e2d962dcac26c84854b202445",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: v2 and v3 interopability + various fixes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "368493c39b3b474a0518b2abb06cc55dc31bd05e",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix(admin): remove v-ripple from checkbox rows`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "8fb29cfc216aa9db96d81bd2dadfaa4beeb92b19",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(admin): migrate theme + api + utilities to vue 3 composition`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "4675348c434788f83b5745b08b68c3094fabef2a",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(admin): migrate nav + auth to vue 3 composition, convert lodash to lodash-es`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "c011d714d522fc8ec88da854edc7f1789735d7dc",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(admin): add footerExtra field to admin general`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "1a720c918c009f8a5a074f6d94b7f54206ff145c",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat(admin): add pageExtensions field to admin general + more animated icons`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "d9dbd0f62fa0231232287f457cce8751317c88c3",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: login screen UI + server code cleanup`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "c3bd7ff97e32d0af6cfa28ee7a9b44927ec19e20",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: profile page to vue 3 composition + add fonts / width options to theme + site config preload`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "bae96fbcbf032f55155f7f5fbbe14af7452cdc10",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: router load indicator + UI fixes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "cd5e7545eec68204de5aed67c1a33fb4a7bfbf77",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: add missing utilities admin + upgrade dependencies`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "d5a85774ee790a4d7c20970af7c74394ad0e63a9",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin dashboard UI`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "b9ca6862de1f8ae69e714d9078d31cf9a5c95781",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin dashboard stats + actions`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "6625267bc9309520d92a2aed54884d38b5d0434b",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin auth page (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7fe7fbb371a0f30b3b9326f8a82b5b08e4239353",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin api keys`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "c9fc4a16110ee5f15cb3497289aca40700d73623",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: admin storage page display issues`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "468aebe2a88bee6696310d3421069c4a70b0966e",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin storage actions + status light component`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "82ebac2dd6acb9f4ff8d18569db6974730051404",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: error pages + update docs links in admin pages`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "097833d77af5c3284836f0051872c78f38a94527",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: login page + auth panel + various improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "05797652a04f7080475e73301ad1e93e9d79f56e",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: welcome page - fix jwt auth`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "3ebbbc8b5e3a178508d8807133dea8d890e5cc86",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin terminal + legacy code cleanup`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "33547ddce90e21b03cac6ea238a6744d447c65bf",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: site logo upload + extensions fix`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "9a4ac686ca890f3dc66a53a76047ca6134bd58df",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: upload site favicon`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "8e87a5d4890d0129e728a26263cbbe578b2f4431",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: site login bg upload`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "55b0b00cee9f8cbb9482ca117ac1d0a753dc9e59",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: update profile + user theme`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "6ce29bdb772ce819d5ab23bff031071d9b84cbeb",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: add scheduler`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "e1ebaf5b31260be634123e3b4888a5c1fe31b89f",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: scheduler + worker pool`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7be5943c260ccbf2842105d754259d94e4666804",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: scheduler + admin page`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "5c6ae08b8460554f551ea203f406fe5f5d6fc474",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: use graphile-worker as scheduler (#5698)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "10cc2ef4b926915f65db99c7bf03bc34c6d51cd9",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: DB ref refactor + add scheduler db model + remove search modules (#5699)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "f4ce5ff63e82fc000975101983ec0926aa263997",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: remove bluebird + native scheduler (#5702)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "011be49ab4afa91c7af5c2246a88e188f477ce2f",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: scheduler - simple tasks handling (#5703)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "39b273b224eb5d6b6e9335fcd97709cbdeb3b656",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: scheduler - regular cron check + add future jobs`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "24ddab73fc30f093e62f8f2e60462249be198891",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: scheduler history + retries + admin scheduler page (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7aa4a0e9eee3848ed607bfbd4ebc06f8508074ff",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin scheduler + worker`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "055fcc6b7256bdf427f160d9d82788a2e02bdd17",
+      "candidateIds": [
+        "connected-process-census"
+      ]
+    },
+    {
+      "commit": "7128b160dd8ff6f1fca4d4c59c595cbb74b778d7",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: rendering + new page view`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "8cbdc88ac6c88b073ca0eecd5d7e0d6c216d3047",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: page edit + setup instructions`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "f947a4148120eab9b6e591feb6825fe9d91f4d0f",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `docs: update README`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "67d8234dfda54ca62bdda796df43f1eed95d69a4",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `docs: update README`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "85a74aa3232284333ca8cb63bab796139083d6cb",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `docs: update README`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "acc3b7369faf4d02862b49d44278e4bebb116973",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: page TOC + refactor PageDataDialog to composition API`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "c9504ed6f4b96676dce7506af0cd4691b3afa491",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: profile (avatar, auth and groups) pages + various fixes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "f671d3b1eccc8e7dfd26a0f7f7c814d191297071",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: footer + data store fixes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "274f3f4a0ab9b2e33d2240120e251c6fd7c007b7",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: page changes detection + side overlay component loader`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "f05a73dccba974259b63226c2736c2b40fe78b4e",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: edit page properties + update dependencies`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "24b1984919d59213e31be8af4c27d4466fd88c6f",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: file manager (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "0fd574904f72b89e8fc27d00f8550489872bb496",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: file manager (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "4e34151d1519e36d3b9ee5db4240e18632c61640",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin icons pack (wip) + translucent dropdown menus`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "0cbeec37d68c13af65bb94b718a4cdd2082dc68d",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: file manager tree view component`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "2a051637a6f7014591b7554a2f2a899bb020f7ed",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: file manager folders`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "4cdeba80ceb1d0920c80f3bce078353c7085fc03",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: page browser dialog + various improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "b4769b9ac6b13d125803caaefed1da5cc3942fd2",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: File Manager improvements + system flags`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "bfbb64a749b9d93f45f4df7e5ef846faf992f390",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: file manager improvements + admin user edit fixes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "c377eca6c760e007517dfddc5229311dad487dcd",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: rename folder + fileman improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "714aa1eb0fa015bcd77472acb46aaba03da719b6",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: file manager improvements + tree db model`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "ce766ce3e9f21e6515f9d7307a14dedccfea3395",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: tree model improvements + site uploads config`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "0056e2fb930ce2a1d7a56b1354933378f331b9ac",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: asset upload via file manager`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7a4bfa642f0a1fcdcfdcb9cdd6d5e6286ff6152f",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: file manager file extensions descriptions`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "b641f291a8bc268f3db0ee90c0fbe9ec9adfdeb8",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `docs: replace old port forwarding`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "18e80a95257ff0d4b940db94bc2274a96b28df54",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: file manager load`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "5c1b9b667affa64a9d4289f4cd7e19afecda82ce",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: file manager load (2)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "0605f6546500edc5fb5016c61668e6b01c8fceab",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: file manager thumbnail preview`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "3726a2f9f700ab4365e2b25c287e7e1d572f18b2",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: file manager non-ready state thumbnail`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "50d774fa98ec8254e0ebf0b25eca24724036fd2a",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: add ngrok to devcontainer`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "3aafe116aca825ef903c4d652844f1bc1042fa4e",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: add quasar config capabilities`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "638383252ca79ee0eae989b461634d9938ab4998",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: native editing + admin editors (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "3f3ac4ee7793edc5287c73eea07543e916740481",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin editor markdown config overlay`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "f849c16d9d3dea8bb74a9d1b88c32a17427241de",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: save + load admin editors config`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "8c71470d3aea606757dd76968370064dfe8feec8",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: show active editors only in new page menu`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "9b2e0f79d5376fee2eee2c8247d66978045d169c",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin rendering (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "0adb4dc3e3193d7f9744b81e05fc426d6bb41c1f",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: editor markdown toolbars UX`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "72eccb7a2a5d2b6f2a51f1129d8140f793f6a092",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: accessibilty cvd option + editor page header`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "33b083c12ed3b3dfb38b27775717a4b1c976d851",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: markdown editor UX improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "9fb9f53d53576113eaeefebbd6f50cb3b50e1eed",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: table editor (wip) + markdown editor improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "b979e50830144c202d8d95606767e7bc78adcb5d",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: purge legacy code`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "d2a18eca3c3b926c8f495e410b48e28c262aeeb4",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: welcome overlay + editor improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "50054dfa4f459243301fd669da8228ffb0cbc4b3",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: markdown editor renderer`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "278a9bef1d0f899aff1317ab39b2f15e7f7f1a0c",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: ext path fix + noto-emoji build script`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "9a92789d1358c84dc1303780c7dc3c76bbc0ffa1",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: editor create page mode`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "a6041b4ba5a934f61a7c18764fca6cc9ecd5d847",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: editor reason for change + nav fixes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "fc820eb1b6a0429e3ec9a282a6dca34e8c29bfd1",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: save editor render`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "e9e93eff42656369cda9cd661aca229fc3faf831",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: convert to esm (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "8f9444942621d591a080dc89f72779897d272766",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: convert to esm (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "532e5c99ab780f2eb878dc0a28607795612931f7",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: esm changes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "716ba9b6d76eec602f1caeb4fb43fa5bd9ebb678",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: legacy pug files cleanup`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "708e6f7701d97ccdffbfdd13039ee63123f56bbc",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: update gitignore`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "0eee0519ed51d3b9fd0f38a24c766fcfe6024ce0",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: insert asset in editor`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "97bcc56c650550bb64ed5ee98982d392fae8f17a",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: various fixes + profile editing block`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "9e875794cd8a7fe70acf52c740d9e9fe159c7737",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: markdown editor with monaco (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "51c404450905dbf88efbd2f2a92ea92704de0718",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: adapt remaining markdown actions to monaco`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "281ffd23f7f8d8ad1ca9314e21c1c4925556dc2f",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: improve toggle selection under cursor in markdown editor`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "59f6b6fedc2bde192825784e068759a7065c7193",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: markdown preview sync + code blocks syntax highlighting`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "960a8a03b2eb1473bb4f3831290061a1107f8ad7",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: update permission system + dark theme fixes + logout`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "e8cb5f9773ed97dcc5fd5bb79baa5c3879fea872",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `docs: Update README.md`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "9ecaebba32e5d44f61231ad2abc49075efe54432",
+      "candidateIds": [
+        "new-user-presentation-defaults"
+      ]
+    },
+    {
+      "commit": "c0df6d5b69ca20b33c3e102464e92e00c9a78a1a",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: remove monaco-editor externals`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "aeef7b1e534cae8c3fb4aee0516de3e28df578ea",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: markdown server rendering + use editor config + change password`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "593822e023d04779f4001543e657037126b14fa2",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `docs: fix dev info`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "80b1cbff5c498c402cc33c08b13a06a34c0ef94f",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: editor + page rendering improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "3da8fb417c4cdc5151c78158c7d4bf05f02d1127",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: page alias, theme layout options, code block themes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "4d1ab1f19329b5ff1cb3b84e0d38909c5b598b96",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: handle create path`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "102c23ec1ecad9bc7cd83f5b28cde0c583365a91",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: locale system groundwork + various improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "f5ad8d7ed685dab26826cf6fc9c3338c4bbd817d",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: ignore locales metadata index`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "e89f304ddb0f4a7f5e825a6af480bd1271ae0fa9",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: handle missing locale strings files`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "1522b26997f64fa2b3cca266f1849dc0dae26ba9",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin language switcher`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "e4efb38fbd6a663a8713a583025806c9056ca80d",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: empty duplicate alias warning on page udpate`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "3c28ac8092173598322df443daf1fd2bbf77458a",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: docker build cleanup`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "272ba9b9ea1736b8db3b6be7ceb68361b0652f6b",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: docker build improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "cd331fa147d3bc3d62805bfa02b10fcff0558eb5",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: update build.yml`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "f34cd3b3bf92d520e86785d4feaf97756b3248df",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: update build.yml`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "9b7ebe210fd062f741e7a9dfc3f9e292e9d1b781",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: update build.yml`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "db63355062886c30d6a5d301f47bc2af4ad3362a",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix Dockerfile`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "305854f8cea96eba35fffe73df7745b0a7c63afc",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix Dockerfile`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "123b0e15d4fd883a296ab86366f704e3c1b873df",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix Dockerfile + quasar build context`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "56d7f4b9359d22a5e4315f24570aff67a1e583c0",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: build docker image without gha cache + no platforms`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "8727b1c823f06953939c6f8408fa93db76bc1100",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: build assets outside docker`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "d5017e4cc62cfb7fbfd6580380ef8314fb54302b",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix build workflow`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "6d617cc4fb57689b12225c20b479f2168c97cf63",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix build workflow`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "f2742e1af87fdf17821ccd9717fab50a24760f8d",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix build workflow`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "9c2434176391c89672c6e7925b6c8f6ce8c4471e",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: remove docker sbom`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "d1bf125f746d2f952dd6639762d72be0a730f958",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix build workflow`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "95ea8526c5f8f683711f0f0ce8d49955757d124a",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix missing node_modules in build tarball`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "37c5b39a6e575e295df257769559636b74c04790",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix windows bundle during build`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "ee746aa4b937643a543eedaa765561f993bb6176",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix build workflow`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "283ee8b58a84e6149fb58492799fa817e55b2078",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: remove ssh2 dependency`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "b62c356f426c6eaba4f56ebf57cc7b6dd3f80678",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix build workflow`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "e9fc514c92faaadb184e6e9e7182e921c018b30b",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix build workflow`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "eed3675512d87937541bfaabf75683d33cfff2de",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: graphql auto refresh token + apollo improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "2587778e5227fa60774ed09914f9af5f0028791d",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: switch site locale`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "57c9d37fdaa22923c9f6d97ae4b5dd01c3d1e1af",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin locales UI + auto locales update + auto version check`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "bb4a1e6b15ab951b0b96f89c368ecd7f349ef2f8",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: check for updates dialog`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "b8a44d99aef6b2c17ff8aee28d3e49e88a8dd4aa",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: search kbd shortcut + fix logo upload`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7fde587a6c051f9e12708f0b1bc9624af676cff8",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: file manager rename + ltree path encode/decode + various improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "5efa0abe6288b37f3745bb07641fefe79165fdcf",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: file manager improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "e492371ce2f17e32bc72f576c5126ff7b5aace26",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: file manager open to current folder`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7f4417ee62007a2a1a7983bd3e065c44bf56da19",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: various fixes + improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "a806aa34667183c594d2a7309f5abb5793ca47f2",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: search page UI (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "cbbc10dadb4ad5c3f85407e6f19981c32756b819",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin search`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "b75275d748d510c6ac72d1421508f712499a4250",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: search results + dict override + remove tags relation table (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "dbfe7d4fbbad9873277def51f1dc298710b67134",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: search filters + ux improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "17034040ac0f0cf11f62787b4f6035ffa07725db",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: search i18n + ux improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "c87f4ce770ebcc58ec74b7cb0b34911985a76571",
+      "candidateIds": [
+        "per-page-search-inclusion"
+      ]
+    },
+    {
+      "commit": "5c6965b544aab266b2c6acebe8650a709c2a2b42",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: tags search + search improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "fa4b75753a1b27151ca279198b0fb36cae4c9b16",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: copy user token in admin`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "269040ed7fae4a320608c2d43b5154fd2e539ebc",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: sidebar nav editor (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "5eaba2cbb03d7004a50ec060a769daa0df09fcff",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: remove localeCode ref + new nav items + fetch current`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "607b8d8100ed51e7cab754e07df865dd4a2f50d0",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: edit navigation`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "5a8d95ee0c98b9b2d11275f4b17b423acb6cc33d",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: editor pending asset uploads (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "dd3335c1587e3cf6ffd5a71024bca8cb4ab4c306",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: missing sortablejs-vue3 dependency`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "1fb130988a734bd7ece8956d46254f706bf5532c",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: upload pending assets`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "349f4e5730d9b97b642fb17f27917ac6120482a4",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin auth UI + refs`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "5a60fb11b52a9ad4a81ba904b9c3a0e0fc05cb1a",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: various auth improvements + other fixes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "add3631b22b62b87037b1ba649816c692b8005c7",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: view page source + download page`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "a9784c34ea742702396b9ec10fd72c811eca95d4",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: rerender page`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "810cff60129705d298814113de43374f05022f48",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: add mdc parsing`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "fc7c24c63f6205deac2975f1d5f70cf04f9fce31",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: blocks (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "fdc45f6b4987f0c71add09821798db638dd9366e",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: downgrade to graphql 16.6.0 due to rollup bug`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "46fb25c1e95b1a065f11b7ee72366dfc950cd726",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin blocks page + lazy load blocks + block-index`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "d51fc36b56a5cb922aa60bbd912255e4c699a967",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: block-index feature complete + dark theme fixes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "4dcc9396d57668b29b94daa29b81358a01adfa1e",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: various fixes + improvements`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7c2b5dd4dde2f0598fa1aadaf92b03d0ab3f4ad1",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: add 3.0.0-alpha tag to builds`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "fe8066c8f40883032f26192d41e61dee4720ca1f",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: setup TFA`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "c5a441c9463d9f43563cd649e057493478f2fde3",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: login change password step`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7f9c3511e8a891b546aae8ffe582cf776f95127b",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: change own password dialog`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "a181579746989d433b63dad46d8911ea1466311f",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: turn off 2FA function + switch to pnpm + update dependencies`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "4d285caaa72947f72777c819071d479095139750",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: passkeys (add/remove)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "88197c174c63318ca708918734874aeebc4c6dc8",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: passkeys login`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "2a3e1400a7f49884df5a0bcbda47c8c261e84391",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: add permissions to resolvers`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "41fba30e4a3f43abbdb6dd80e94de17c7118f7c5",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: use pnpm for build + add not implemented to buttons`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "61e8e4818328ee06bf2b8a5ca5487e373dff6564",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: update dependencies`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "fe14d120807643b7101a01815fa16f7da74ad021",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: add preserverSymlinks to vite conf`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "dadfae402fea879e9e0989b6bbcc5b56358cf33b",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: add shamefully-hoist to npmrc`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "2c8f9f8e307bdc08f0faa4ebbd0f0616a0edb8f5",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix build`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "ca22b21bab4dff5c9d6229ab13036f9c59a8f7fa",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix windows build`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "1f589adccd8831d8e44bfb0d986c0ea1838cfebb",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: add shamefully-hoist for ux for local dev [skip ci]`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "97ee3af463e49522abcc5c0619ddab1b03f0f425",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: add basic media player block`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "057ef829c117be0d4589c2178340a9915c0997bd",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: mail processing with vue email templates`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "b7d25473c67f324699ebbdbeb5aabbf67347cdee",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: user welcome email`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "f0bb48c9c8e948a9836fdd844e27d4ea272f720f",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: nav items expect to be of type array (#6813)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "de14e7c4decd608f8f9d1aa4cd5f678b28179bd1",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: fix build chunks + blocks import`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "5677d853054f143e334a3dc47fcbf60131508af4",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: Update build.yml workflow`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7895a2130a713ceae1b06c4272295b5efb9aed2e",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: Update build.yml workflow`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "0395e453e6bae20218cc30c530b7bd4b1b30e787",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: Update build.yml workflow`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "b1b295c0be7b4adead30c9914773e7dd29e2277c",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: Update build.yml workflow`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "4f4b05e551104f83de70343fc6dac60db9d5b3c7",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: Update build.yml workflow`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "dec9272fbf0effa1a0ab1105af04fc73e2d948da",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: metrics endpoint`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "f8bc9e8c24bb8194b2df735ceedf7c09fed3ddb6",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: build init error + update deps + markdown editor user settings (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "291fe262721d10f3fac064b1f7d2844beeab4710",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: asset rename + asset delete dialogs + linting fixes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "70d4998b370906504b5b2ce59eb854b8147ebb4e",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: fix linting error`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "c4b579996192f7b14f5ab11f4d570bdfcb0e8c93",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: update dependencies + various fixes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "da9d252948534de5a16859a729214a1746c61542",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: hide unfinished editors from welcome screen`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "81e0a67f68c39a0123c8bea04cc1074e0fcbb1ee",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: admin users search + pagination`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "166f519c7595a8f1defba59d29c6ee5505f795a7",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: use core vite instead of quasar cli`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "83875e5ce3decdaaaab31a46c4ab01fda28d48f8",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `ci: update build workflow`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "5fb12c1e34ca78a616548277f53ab8bbda16272e",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: various fixes + updates`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "1aa58546fe3c6f305673af3b7a2ed628a9d43c50",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: update dependencies`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "1c65d23408c4473cb6f1a588498954f34aece13a",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: add permission check to resolvers (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "c9c071fe58f825fd3ac5820b6b064e4cfc34aa8f",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor(ux): update dependencies + adapt to SASS 2.0 color functions`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "57d4097296a8630177ed26f8cb9ff2320e8efc51",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor(server): update dependencies`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "1a6b5851b3e5c3cd238b1b6cd0203ae0e4a3b748",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: update devcontainer`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7425a74b6a6832cda103c502906c48516cd86147",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: page duplicate + code styling fixes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "d9523fe3932e028b04451fdd97190c95511eb074",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: rename / move page + code styling fixes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7008ec8dcc987151138b748cd705bbfca9d69c41",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: update dependencies`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "df91335f118a2181988ff4111da2fec6429f4829",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: update dependencies`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "c3f562b31532cb43de2eaf73bf740564dc943de6",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `chore: update to Node 24 and upgrade dependencies`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "7a3d78bbac92f804ddd2417e5ccd93079961df5e",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: assetById permissions + set min pg requirement to 16`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "05fe49577224753bb25750de564ddf4c4d802dcf",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: missing pako package + deprecated dev extension`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "dc25db1139dd1cfb009f0f0a7793ecfa820dfb03",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: fastify + drizzle exploration`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "dc4b84dc82cbfa548b7564e7530b6237776dbc3d",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: more models + migrations (wip)`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "fe38f4c7e5a2e0a97020c03911791ec53e42fea1",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: migrate from graphql to rest for frontend`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "b3c84fffbb4ad9bf96f136693c411c7a81f02d10",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: remove vega project structure`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "2e9ef68a4d704748bba1963aa47f061c93fea7ab",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `docs: update README`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "f4707f31d95d21b6caf8ebf3aaaadb5a07c7fe89",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: fix locales + add _site controller`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "dc78af9156aa50af58193aead4cda937ee4b2fbe",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: remove eslint + lodash-es, use oxc + es-toolkit`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "68e6a2787a79ea6a5ebf9725c39416f88c8046e8",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: auth + sessions`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "6f91c2e05299d5bdfbd8dc47c44070b7c32b3505",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `refactor: remove .mjs + fix scheduler + create,delete site`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "debbb10ed82536a2908ae6d1b524d6e0795e93eb",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: add site openapi schema + permissions + scheduler fixes`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "c83aae1b00d22afa65b5b8a225ebbf3fe4757121",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `fix: replace eventemitter2 with emittery`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "249758e3f923a77e1b62d26a47e142c312642a5f",
+      "candidateIds": [],
+      "classification": "reviewed-non-candidate",
+      "reason": "Reviewed `feat: scheduler admin API`; no separate portable behavior remains beyond current contracts or a recorded conditional or rejected feature."
+    },
+    {
+      "commit": "6f492f0028430851b648be0e4a37bf400a89959b",
+      "candidateIds": [
+        "typed-api-schemas"
+      ]
+    },
+    {
+      "commit": "ee7a15fbd6c8f715c0767056c8ad1781af6d5688",
+      "candidateIds": [
+        "backend-typescript-boundaries",
+        "drizzle-orm",
+        "postgresql-only-platform",
+        "repository-package-split"
+      ]
+    },
+    {
+      "commit": "6e8fe2b558cded52f67bbbd66b3a6c0c27ea9f50",
+      "candidateIds": [],
+      "classification": "superseded",
+      "reason": "Current reviewed administration APIs and workspaces supersede the Fastify/Quasar site and users wiring."
+    },
+    {
+      "commit": "45b5bd5cdcd99d83c13a9751151df7cb3daffb78",
+      "candidateIds": [],
+      "classification": "superseded",
+      "reason": "Current scheduler runtime, metrics, and System workspace supersede the framework-specific views."
+    },
+    {
+      "commit": "d1c41b4111753b0505d34891f85c2c0855e6f7e0",
+      "candidateIds": [],
+      "classification": "superseded",
+      "reason": "Current reviewed administration workspaces supersede the remaining Fastify/Quasar administration wiring."
+    },
+    {
+      "commit": "1786c3a5699bb265ccfa450815558b3f855339e6",
+      "candidateIds": [
+        "custom-icon-set-catalog"
+      ]
+    },
+    {
+      "commit": "40a0abc3bb7ab5f86e49aedf17f606d521e5f691",
+      "candidateIds": [
+        "self-service-avatar"
+      ]
+    },
+    {
+      "commit": "4507d9f7ad48263cecb16e960818b88303bb4c10",
+      "candidateIds": [],
+      "classification": "superseded",
+      "reason": "Current authorized page, asset, navigation, tree, tag, and render operations supersede the framework-specific views."
+    },
+    {
+      "commit": "937cecea05252bef6a25a3c6231f53c53af80883",
+      "candidateIds": [
+        "lit-extension-runtime",
+        "tailwind-ui-rewrite"
+      ]
+    },
+    {
+      "commit": "064e378b48bfda8963d919d7adb72a3591dfb2d3",
+      "candidateIds": [
+        "ui-dark-responsive-fixes"
+      ]
+    },
+    {
+      "commit": "cffa39c1e0d0fe70fa942418bc8f935b0a306325",
+      "candidateIds": [
+        "ui-dark-responsive-fixes"
+      ]
+    },
+    {
+      "commit": "4677a7c532f1b10db90e7e0090d0afdb8f78dce0",
+      "candidateIds": [
+        "ui-dark-responsive-fixes"
+      ]
+    },
+    {
+      "commit": "fbf0c1c6890f84c74e5192fff95c6d5deeda7d35",
+      "candidateIds": [],
+      "classification": "superseded",
+      "reason": "Current scoped reader content styling supersedes the unfinished framework-specific page contents CSS."
+    },
+    {
+      "commit": "c10e988c3af2c512ecf43e6a348aaa387378c30c",
+      "candidateIds": [
+        "password-protected-pages"
+      ]
+    },
+    {
+      "commit": "9408accc00d97a026bae66ebaf4ac35019cdb8f0",
+      "candidateIds": [
+        "markdown-editor-dialogs"
+      ]
+    },
+    {
+      "commit": "3d13e50be8d0733b16a7e4ff6f9ccbc1dce46b2c",
+      "candidateIds": [
+        "content-block-platform"
+      ]
+    },
+    {
+      "commit": "072e1dcc4235c9c77ce1e4beabe698c792c63f2d",
+      "candidateIds": [
+        "content-block-platform"
+      ]
+    },
+    {
+      "commit": "957efebecb49664511c38d2bbefa83d987e7a253",
+      "candidateIds": [
+        "approvals-inbox"
+      ]
+    },
+    {
+      "commit": "c36eab6729b7cf4af67eed70b0a995957aae88cd",
+      "candidateIds": [
+        "approvals-inbox"
+      ]
+    },
+    {
+      "commit": "c9bd96a5ba27a3f82ec60449b5529730b9b6e589",
+      "candidateIds": [
+        "page-history-experience"
+      ]
+    },
+    {
+      "commit": "4ec69a75c06865b48b627582fac5c12ecbfcc019",
+      "candidateIds": [
+        "page-history-experience"
+      ]
+    },
+    {
+      "commit": "db99e3d6ef5e618fc69d1d89a00b96865ba46047",
+      "candidateIds": [
+        "permission-hardening"
+      ]
+    },
+    {
+      "commit": "0c6510b9583cc9ef070e1a4eae62fea51a4e2fb3",
+      "candidateIds": [],
+      "classification": "superseded",
+      "reason": "Current Bun and Vite dependency graph supersedes the upstream frontend cleanup without importing its backend framework."
+    },
+    {
+      "commit": "17d7b810bb912c551d54d13cc969a9f47fc737f8",
+      "candidateIds": [
+        "live-collaboration"
+      ]
+    },
+    {
+      "commit": "0b0574861d67df4abc0f58ef0c0360490134bfeb",
+      "candidateIds": [
+        "twemoji-parser-upgrade"
+      ]
+    },
+    {
+      "commit": "1105cf4b5e0d6cc9741c3812319dd73823d1dbe5",
+      "candidateIds": [
+        "permission-hardening"
+      ]
+    },
+    {
+      "commit": "14e1efae41820323200d2c8bca292dd5e2e94094",
+      "candidateIds": [
+        "endpoint-rate-limits",
+        "page-watching"
+      ]
+    },
+    {
+      "commit": "ff4a5bc6e699fea2a9f8eef25192a70cb789cbf4",
+      "candidateIds": [
+        "oauth-modules"
+      ]
+    },
+    {
+      "commit": "1c6e71eebf0bb634db4c6cb2b4c4b100c63e60f1",
+      "candidateIds": [
+        "durable-render-webhook-scheduler"
+      ]
+    },
+    {
+      "commit": "0376d7885083a13643801d038d4503875cc2cfaf",
+      "candidateIds": [
+        "docker-ci-fixes"
+      ]
+    },
+    {
+      "commit": "8b0a5e37255784f2908bf4382e5f903dbae4a977",
+      "candidateIds": [
+        "docker-ci-fixes"
+      ]
+    },
+    {
+      "commit": "edfc4548db3bd8528bf10a5b90ab24e44fe9d796",
+      "candidateIds": [],
+      "classification": "superseded",
+      "reason": "Current Bun dependency graph and js-yaml namespace calls supersede this framework migration cleanup."
+    },
+    {
+      "commit": "c00b7007eba46ab18690e57ec7f66b3e198a415c",
+      "candidateIds": [
+        "disabled-extension-source"
+      ]
+    },
+    {
+      "commit": "12ec007bb84bb1dc5f8d7dbc11400fb6c95fe2ed",
+      "candidateIds": [],
+      "classification": "rejected",
+      "reason": "Administration cannot install browser packages at runtime; current separate browser image and accessible Vuetify controls are authoritative."
+    },
+    {
+      "commit": "5021b31a0a5bc2f10689fef6221a04b1bcd1598c",
+      "candidateIds": [
+        "content-block-platform"
+      ]
+    },
+    {
+      "commit": "7f53b60dfb3eb5aa12e2b94e1c3a95b15aa1f451",
+      "candidateIds": [
+        "markdown-editor-dialogs"
+      ]
+    },
+    {
+      "commit": "45d2287ab185bbaf06c68b933fc7a15420a09513",
+      "candidateIds": [
+        "asset-rendering"
+      ]
+    },
+    {
+      "commit": "c1d7eef3bf71bc9e7bc7d2a0a09653f520b9cba9",
+      "candidateIds": [
+        "durable-render-webhook-scheduler"
+      ]
+    },
+    {
+      "commit": "23dbb27212fba805b408e808ce71b3b7c16155d8",
+      "candidateIds": [
+        "durable-render-webhook-scheduler"
+      ]
+    },
+    {
+      "commit": "49e3598a15e5af4b19768ab77ada29639c5b2756",
+      "candidateIds": [],
+      "classification": "superseded",
+      "reason": "Current theme policy and consented map extension have no safe Leaflet or Lit dark-mode surface to adapt."
+    },
+    {
+      "commit": "81fc8db4f7dd7f85731a0158f78d092a0d08a33d",
+      "candidateIds": [
+        "permission-hardening"
+      ]
+    },
+    {
+      "commit": "8e6a35de98a45472f9f881282add757dd2eae6ee",
+      "candidateIds": [
+        "page-redirection"
+      ]
+    },
+    {
+      "commit": "9de9b84b3426b1b63d5aec1b7e9e4a504188970c",
+      "candidateIds": [
+        "ui-dark-responsive-fixes"
+      ]
+    },
+    {
+      "commit": "6db53d4faec7226ac00abaa0cfaa900851ec28a2",
+      "candidateIds": [
+        "drizzle-orm",
+        "migration-reset-and-guard",
+        "postgresql-only-platform"
+      ]
+    },
+    {
+      "commit": "dd37744ec56ded7189e826d427cae17123ff11b8",
+      "candidateIds": [
+        "docker-ci-fixes"
+      ]
+    },
+    {
+      "commit": "4c6d5c4009a65b74609fb57a325bc8afada935c9",
+      "candidateIds": [
+        "request-parser-limits"
+      ]
+    },
+    {
+      "commit": "1cdbaf838b9e24eea93f90aa3ad0076409f0c1dc",
+      "candidateIds": [
+        "compiled-spa-serving"
+      ]
+    },
+    {
+      "commit": "e0fd96a34726819a2992302b58fbb66aa1ff4451",
+      "candidateIds": [],
+      "classification": "superseded",
+      "reason": "Current page links, atlas, and same-origin navigation boundaries replace the upstream relation-link implementation."
+    },
+    {
+      "commit": "8cd2f0de432bc1ade4c73ba6f5467baad002842e",
+      "candidateIds": [],
+      "classification": "superseded",
+      "reason": "Current page navigation restores scroll and document metadata without upstream nested-scroller architecture."
+    },
+    {
+      "commit": "21fac3a94ec0f7ac5a653f098cda40c7d157da06",
+      "candidateIds": [
+        "markdown-editor-dialogs"
+      ]
+    },
+    {
+      "commit": "6bffff10a68d93f7f9697e5692176b1d46ee8a10",
+      "candidateIds": [
+        "markdown-editor-dialogs"
+      ]
+    },
+    {
+      "commit": "7a0e0dcca14625a215cc451f3a33b76d1c883ed6",
+      "candidateIds": [],
+      "classification": "superseded",
+      "reason": "Current Vuetify navigation and permission-gated page actions preserve the portable behavior."
+    },
+    {
+      "commit": "5a3be5c19a50dd418bc321c5c88e005ad5bd1da2",
+      "candidateIds": [
+        "markdown-editor-dialogs"
+      ]
+    },
+    {
+      "commit": "817302d6b50b73ffa6b75aa325b7f12a2f9e1e09",
+      "candidateIds": [
+        "markdown-editor-dialogs"
+      ]
+    },
+    {
+      "commit": "99ccdc1326770e1ebd7cf9b1705c819812485564",
+      "candidateIds": [
+        "migration-reset-and-guard"
+      ]
+    },
+    {
+      "commit": "57cda5162c26fa6cc7d3f1faf1cc7602f6236955",
+      "candidateIds": [
+        "ui-dark-responsive-fixes"
+      ]
+    },
+    {
+      "commit": "527b8e9f6486649d7e2bbf2af402658f2c56683e",
+      "candidateIds": [
+        "ui-dark-responsive-fixes"
+      ]
+    },
+    {
+      "commit": "2acd026c43cfa71d9b4746a6ed31a597ee4549eb",
+      "candidateIds": [
+        "navigation-parent-controls"
+      ]
+    },
+    {
+      "commit": "e393e720fdd6fcc5d376b2c082b267453036cd19",
+      "candidateIds": [],
+      "classification": "superseded",
+      "reason": "Authorized bounded redacted SSE logging supersedes the unredacted Fastify WebSocket terminal."
+    },
+    {
+      "commit": "95587ae71b1a0081471b7bfaa6cc8f49ed8bb15f",
+      "candidateIds": [
+        "connected-process-census"
+      ]
+    },
+    {
+      "commit": "123a49dff2096eaf3aa5f75ae03ba5df5e194e1f",
+      "candidateIds": [],
+      "classification": "rejected",
+      "reason": "Scarlett documentation URL identity does not apply to the independent tsEpistle product."
+    },
+    {
+      "commit": "634f4b055561fbae06711e8874612f1302db6868",
+      "candidateIds": [
+        "navigation-parent-controls"
+      ]
+    },
+    {
+      "commit": "5fa9bf3f829288b0485d0e0dcb91d8c916588a56",
+      "candidateIds": [
+        "folder-path-collision"
+      ]
+    },
+    {
+      "commit": "0c62c97eba01ef0d48d331a4a43f743547973f3e",
+      "candidateIds": [
+        "page-shadow-classes"
+      ]
+    },
+    {
+      "commit": "ce530a40d277a0b37c0a90d06a5f5aae90494753",
+      "candidateIds": [
+        "markdown-editor-dialogs"
+      ]
+    },
+    {
+      "commit": "09e9166bc6d90e7f78c45564f81d8b85840ea2f7",
+      "candidateIds": [
+        "utilities-jwk-removal"
+      ]
+    },
+    {
+      "commit": "29d816401c7b55d31c61a4a469be4c5e4da8fdae",
+      "candidateIds": [
+        "content-block-platform"
+      ]
+    },
+    {
+      "commit": "ad861ae377e051f2d655c86e33a3e848caad0f28",
+      "candidateIds": [
+        "markdown-editor-dialogs"
+      ]
+    },
+    {
+      "commit": "1aefb34d926bc710e51b2e1f6d5d5caa01477ef4",
+      "candidateIds": [
+        "content-block-platform"
+      ]
+    },
+    {
+      "commit": "9a1ca3b1355c56de6e6007394fd9333257b2c585",
+      "candidateIds": [
+        "bounded-page-projection",
+        "content-block-platform"
+      ]
+    },
+    {
+      "commit": "c182d2c974b0b44550b7ff29f2542e378ac97c28",
+      "candidateIds": [
+        "content-block-platform"
+      ]
+    },
+    {
+      "commit": "aa279332c5bbacebfd0d797e9f57e73ac34b1940",
+      "candidateIds": [
+        "bounded-page-projection",
+        "content-block-platform"
+      ]
+    },
+    {
+      "commit": "d0c5a8bfa90acee73a2f4c71033978bea1925468",
+      "candidateIds": [
+        "content-block-platform"
+      ]
+    },
+    {
+      "commit": "d39e063371c46c816f95c021abe31dbd2324a82c",
+      "candidateIds": [
+        "site-wide-banner"
+      ]
+    },
+    {
+      "commit": "91eede058e417e107c9053a384fa3ba37f15af6b",
+      "candidateIds": [
+        "storage-target-runtime"
+      ]
+    },
+    {
+      "commit": "49555480a702c1bebd46595f7ea57ce1540acc89",
+      "candidateIds": [
+        "cloud-storage-prefix-and-secrets"
+      ]
+    },
+    {
+      "commit": "8ce6b6e62ed63a0df72663a76cf6c329384345dd",
+      "candidateIds": [
+        "cloud-storage-prefix-and-secrets"
+      ]
+    },
+    {
+      "commit": "aae079731bf7b43f680aee7e30112212e1441d21",
+      "candidateIds": [
+        "markdown-highlights-definitions-tab-headings"
+      ]
+    },
+    {
+      "commit": "b1261f4606afe51c92e261da22beae656a3d32ff",
+      "candidateIds": [
+        "crowdin-build-upload",
+        "markdown-highlights-definitions-tab-headings"
+      ]
+    },
+    {
+      "commit": "c7c26c45c088ca8e5c2a183361c97286968f0c8e",
+      "candidateIds": [
+        "crowdin-build-upload"
+      ]
+    },
+    {
+      "commit": "b1572792a24f7df30729aa18a89e2624ad63474a",
+      "candidateIds": [
+        "crowdin-build-upload"
+      ]
+    },
+    {
+      "commit": "5ff4f1dda7ae7bb5e06a8a57c9c357b12456b29f",
+      "candidateIds": [
+        "crowdin-build-upload"
+      ]
+    },
+    {
+      "commit": "fdd7945a6d0071b8a95d024261e1ee39974721a1",
+      "candidateIds": [
+        "locale-platform-refresh"
+      ]
+    },
+    {
+      "commit": "b16402ae0f23dd398ac39a43a022a5d794376fd1",
+      "candidateIds": [
+        "page-locale-relations"
+      ]
+    },
+    {
+      "commit": "7682e839c852efb933d0d6b5beefc026c230bee5",
+      "candidateIds": [
+        "redirect-navigation-visibility"
+      ]
+    },
+    {
+      "commit": "f537f04ecceabc10d2cccd43be7d277c03182d61",
+      "candidateIds": [
+        "scarlett-ui-corrections-2026-08-25"
+      ]
+    },
+    {
+      "commit": "1513e88019069b4895a9e45634b7c6a8dd37a6e0",
+      "candidateIds": [
+        "pasted-asset-workflow-2026-08-26"
+      ]
+    },
+    {
+      "commit": "40ebd1036022d83d0b0b8242d3f31920de8bc5d1",
+      "candidateIds": [
+        "scheduler-and-storage-activity-reconcile"
+      ]
+    },
+    {
+      "commit": "f985f041d07868c0b346684ec62dcff5725df37c",
+      "candidateIds": [
+        "code-fence-presentation-metadata"
+      ]
+    },
+    {
+      "commit": "8ff4a3e62d36e62de379b1c8cd3551c701abb340",
+      "candidateIds": [
+        "navigation-and-search-corrections-2026-08-28"
+      ]
+    },
+    {
+      "commit": "dbf72551a8ad03b594610f47ebc9d7bfb7be7720",
+      "candidateIds": [
+        "markdown-abbreviation-authoring"
+      ]
+    },
+    {
+      "commit": "d910bae080f1756f2ede2483625de83217712644",
+      "candidateIds": [
+        "git-working-copy-recovery"
+      ]
+    },
+    {
+      "commit": "59ef5e779db70f9883258d06dd5611300e2173e0",
+      "candidateIds": [
+        "git-working-copy-recovery",
+        "ssl-removal-and-mcp-placeholder"
+      ]
+    },
+    {
+      "commit": "ccb2b702fec70dcb66032ff296ea572b723d6f9e",
+      "candidateIds": [
+        "authentication-mail-completion-2026-08-29",
+        "sample-content-utility-2026-08-29",
+        "scarlett-auth-mail-stack-specifics-2026-08-29"
+      ]
+    },
+    {
+      "commit": "6053cb982f254f2d52b2a043864a999c725240f7",
+      "candidateIds": [
+        "authentication-mail-completion-2026-08-29",
+        "authentication-outcome-experience-2026-08-29",
+        "scarlett-auth-mail-stack-specifics-2026-08-29"
+      ]
+    },
+    {
+      "commit": "73dbbdcb280f6b1d845f60d992571d218e89a63d",
+      "candidateIds": [
+        "authentication-login-race-and-tfa-manual-2026-08-29"
+      ]
+    },
+    {
+      "commit": "a49f1ab67d142ff3640350c4dd66358edcbe5130",
+      "candidateIds": [
+        "scarlett-beta-branding-and-publication-2026-09-02"
+      ]
+    },
+    {
+      "commit": "d513c9304419d136ca16f5bd708d302d260622e3",
+      "candidateIds": [
+        "scarlett-beta-branding-and-publication-2026-09-02"
+      ]
+    },
+    {
+      "commit": "8baa5e28e29f36b7e9785e9fc6d14245c9e75112",
+      "candidateIds": [
+        "scarlett-beta-branding-and-publication-2026-09-02"
+      ]
+    },
+    {
+      "commit": "51a420381437fe6f44d41b64dea3ec0ffe95ea75",
+      "candidateIds": [
+        "scarlett-beta-branding-and-publication-2026-09-02"
+      ]
+    },
+    {
+      "commit": "bab67a5cf58e023a27d1c600879eaf25b258f6bd",
+      "candidateIds": [
+        "scarlett-beta-branding-and-publication-2026-09-02"
+      ]
+    },
+    {
+      "commit": "f4868a8c94a44cee40e12573042b95e01854c6b1",
+      "candidateIds": [
+        "scarlett-beta-branding-and-publication-2026-09-02"
+      ]
+    },
+    {
+      "commit": "47207e176ac7ca3292a2aebe0042692ac03913b8",
+      "candidateIds": [
+        "scarlett-beta-branding-and-publication-2026-09-02"
+      ]
+    },
+    {
+      "commit": "bfafd9d4348935dbf47b120f3efce4547b037ca7",
+      "candidateIds": [
+        "scarlett-beta-branding-and-publication-2026-09-02"
+      ]
+    },
+    {
+      "commit": "7dfb9abe3206e0a303d677b9cf4f37049d997a22",
+      "candidateIds": [
+        "asset-and-folder-management-2026-09-05"
+      ]
+    },
+    {
+      "commit": "a857f96bb0815e4c68e4477f85f35e91288f293f",
+      "candidateIds": [
+        "public-user-profiles-2026-09-05"
+      ]
+    },
+    {
+      "commit": "7cf47610d15ac3d8c9e8a1344f8431138bbe5b92",
+      "candidateIds": [
+        "drawio-and-steps-blocks-2026-09"
+      ]
+    },
+    {
+      "commit": "d39f2eff0f712741762966c4a09f39418a7e17b6",
+      "candidateIds": [
+        "global-audit-log-2026-09-06"
+      ]
+    },
+    {
+      "commit": "e8b6fcb3fc2c17345962e0889c15e1a6fb65ebac",
+      "candidateIds": [
+        "runtime-proxy-and-admin-autofill-2026-09"
+      ]
+    },
+    {
+      "commit": "fb184f63751d77c96a63e63749566417da7f91fa",
+      "candidateIds": [
+        "metrics-surface-2026-09-06"
+      ]
+    },
+    {
+      "commit": "800fb31bbdce82e63a8ef20f35622fad30b55de3",
+      "candidateIds": [
+        "runtime-proxy-and-admin-autofill-2026-09"
+      ]
+    },
+    {
+      "commit": "acb555eaa7cc5a24e01f753ef22dbada1a78ddbe",
+      "candidateIds": [
+        "metrics-surface-2026-09-06"
+      ]
+    },
+    {
+      "commit": "50adab2eac3b38fe66b03c915857d8a8d1320034",
+      "candidateIds": [
+        "page-version-and-print-experience-2026-09"
+      ]
+    },
+    {
+      "commit": "7ea92a982b1275dd5e78d14bc0b2f27d115ca9cc",
+      "candidateIds": [
+        "page-version-and-print-experience-2026-09"
+      ]
+    },
+    {
+      "commit": "0c8108d5806ddc3d7a41f53e31580e7c3695c45c",
+      "candidateIds": [
+        "authentication-provider-expansion-2026-09"
+      ]
+    },
+    {
+      "commit": "d668ba70e3e7c1e877af1c5a4b155c84b7b4d8d4",
+      "candidateIds": [
+        "authentication-provider-expansion-2026-09"
+      ]
+    },
+    {
+      "commit": "0052ec618c041799d4c76632ea1ace26c98c1931",
+      "candidateIds": [
+        "authentication-provider-expansion-2026-09"
+      ]
+    },
+    {
+      "commit": "b2edc4fd007cae6322e3626c24fdc24eedd55c41",
+      "candidateIds": [
+        "authentication-provider-expansion-2026-09"
+      ]
+    },
+    {
+      "commit": "795414ef71da995d293de6d99f022620205ff31f",
+      "candidateIds": [
+        "page-metadata-and-script-corrections-2026-09"
+      ]
+    },
+    {
+      "commit": "ad8e9d393f19d487929495a023d0479224bbf38f",
+      "candidateIds": [
+        "passkeys-and-profile-editing-policy-2026-09-10"
+      ]
+    },
+    {
+      "commit": "32a656e7beec3baac08b02f15e32a1de3b3a6e62",
+      "candidateIds": [
+        "page-metadata-and-script-corrections-2026-09"
+      ]
+    },
+    {
+      "commit": "8f72bd6d72df59e900bc01b58037a5e22a76bc78",
+      "candidateIds": [
+        "root-files-prerender-and-theme-injection-2026-09"
+      ]
+    },
+    {
+      "commit": "1db38cc1ceaee6e523c17367e8ffe78c756c45d3",
+      "candidateIds": [
+        "root-files-prerender-and-theme-injection-2026-09"
+      ]
+    },
+    {
+      "commit": "48835a27014a950b90013e8df40ab4a077f62433",
+      "candidateIds": [
+        "root-files-prerender-and-theme-injection-2026-09"
+      ]
+    },
+    {
+      "commit": "b6bcee8a3dea8558a015f5f32bd7952920850db1",
+      "candidateIds": [
+        "tag-browser-and-search-corrections-2026-09-12"
+      ]
+    },
+    {
+      "commit": "1c7d709b1a0cd4bd755c60aaeef19744b6c7f089",
+      "candidateIds": [
+        "drawio-and-steps-blocks-2026-09"
+      ]
+    },
+    {
+      "commit": "ff9aa13e3d6d5cefbfed43c74bd6b88c39ec5da1",
+      "candidateIds": [
+        "page-source-guest-permission-2026-09-13"
+      ]
+    },
+    {
+      "commit": "b11bf4f601101a3940763e626d2c6514c3aa5d0b",
+      "candidateIds": [
+        "empty-folder-purge-2026-09-13"
+      ]
+    },
+    {
+      "commit": "9ec8070c688dfa1fd9ec899835988f14176211ba",
+      "candidateIds": [
+        "analytics-modules-and-provider-hardening-2026-09-13"
+      ]
+    },
+    {
+      "commit": "007e8e974580a74e5301c710a17595ac70aa240f",
+      "candidateIds": [
+        "comments-talk-and-provider-expansion-2026-09-13"
+      ]
+    },
+    {
+      "commit": "70331ecd63af6757c1c3c1a8b09ed9e1a3fd8e55",
+      "candidateIds": [
+        "page-rule-tag-authorization-2026-09-14"
+      ]
     }
   ]
 }

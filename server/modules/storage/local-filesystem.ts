@@ -1,5 +1,5 @@
 import { constants as fsConstants } from 'node:fs'
-import { lstat, mkdir, open, opendir, readdir, realpath, rename, rmdir, unlink, type FileHandle } from 'node:fs/promises'
+import { link, lstat, mkdir, open, opendir, readdir, realpath, rename, rmdir, unlink, type FileHandle } from 'node:fs/promises'
 import type { Dir, Stats } from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -20,6 +20,8 @@ export interface StorageFileIdentityExpectation {
   readonly dev?: number
   readonly ino?: number
   readonly size?: number
+  readonly mode?: number
+  readonly mtimeMs?: number
 }
 
 export type StorageWalkKind = 'file' | 'directory' | 'symlink' | 'other'
@@ -42,37 +44,37 @@ export interface StorageWalkOptions {
 export class StorageFilesystemError extends Error {
   readonly code: string
 
-  constructor (code: string, message: string) {
+  constructor(code: string, message: string) {
     super(message)
     this.name = 'StorageFilesystemError'
     this.code = code
   }
 }
 
-function errorCode (value: unknown): string | undefined {
+function errorCode(value: unknown): string | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const candidate = value as ErrorWithCode
   return typeof candidate.code === 'string' ? candidate.code : undefined
 }
 
-function isMissing (value: unknown): boolean {
+function isMissing(value: unknown): boolean {
   return errorCode(value) === 'ENOENT'
 }
 
-function isRejectedPathError (value: unknown): boolean {
+function isRejectedPathError(value: unknown): boolean {
   const code = errorCode(value)
   return code === 'ELOOP' || code === 'ENOTDIR' || code === 'ENAMETOOLONG' || code === 'EINVAL'
 }
 
-function rejectPath (relativePath: string, reason: string): StorageFilesystemError {
+function rejectPath(relativePath: string, reason: string): StorageFilesystemError {
   return new StorageFilesystemError('STORAGE_PATH_REJECTED', `${reason}: ${relativePath}`)
 }
 
-function unavailable (reason: string): StorageFilesystemError {
+function unavailable(reason: string): StorageFilesystemError {
   return new StorageFilesystemError('STORAGE_UNAVAILABLE', reason)
 }
 
-function assertLinuxSupport (): void {
+function assertLinuxSupport(): void {
   if (
     process.platform !== 'linux' ||
     typeof fsConstants.O_RDONLY !== 'number' ||
@@ -93,17 +95,17 @@ const DIRECTORY_FLAGS = ROOT_FLAGS
 const FILE_FLAGS = (): number => fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK
 const TEMPORARY_FLAGS = (): number => fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW
 
-function procFdPath (fd: number, child?: string): string {
+function procFdPath(fd: number, child?: string): string {
   if (!Number.isSafeInteger(fd) || fd < 0) throw unavailable('A valid descriptor is required for local storage')
   return child === undefined ? `/proc/self/fd/${fd}` : `/proc/self/fd/${fd}/${child}`
 }
 
-function isPathContained (root: string, candidate: string): boolean {
+function isPathContained(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate)
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
 }
 
-async function descriptorRealPath (handle: FileHandle): Promise<string> {
+async function descriptorRealPath(handle: FileHandle): Promise<string> {
   try {
     return await realpath(procFdPath(handle.fd))
   } catch (error: unknown) {
@@ -111,7 +113,7 @@ async function descriptorRealPath (handle: FileHandle): Promise<string> {
   }
 }
 
-function identityOf (stats: Stats): StorageFileIdentity {
+function identityOf(stats: Stats): StorageFileIdentity {
   return {
     dev: stats.dev,
     ino: stats.ino,
@@ -121,29 +123,29 @@ function identityOf (stats: Stats): StorageFileIdentity {
   }
 }
 
-function sameIdentity (left: StorageFileIdentity, right: StorageFileIdentity): boolean {
+function sameIdentity(left: StorageFileIdentity, right: StorageFileIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino
 }
 
-function sameEntryIdentity (left: StorageFileIdentity, right: StorageFileIdentity): boolean {
+function sameEntryIdentity(left: StorageFileIdentity, right: StorageFileIdentity): boolean {
   return sameIdentity(left, right) && left.mode === right.mode
 }
 
-function assertRegular (stats: Stats, relativePath: string): void {
+function assertRegular(stats: Stats, relativePath: string): void {
   if (!stats.isFile()) throw rejectPath(relativePath, 'Local storage path is not a regular file')
 }
 
-function assertDirectory (stats: Stats, relativePath: string): void {
+function assertDirectory(stats: Stats, relativePath: string): void {
   if (!stats.isDirectory()) throw rejectPath(relativePath, 'Local storage path is not a directory')
 }
 
-function assertLimit (maxBytes: number): void {
+function assertLimit(maxBytes: number): void {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new RangeError('Bounded local storage operations require a non-negative safe integer byte limit')
   }
 }
 
-function canonicalRelativeParts (relativePath: string, allowEmpty = false): string[] {
+function canonicalRelativeParts(relativePath: string, allowEmpty = false): string[] {
   if (typeof relativePath !== 'string') throw rejectPath(String(relativePath), 'Local storage path must be a string')
   const normalized = relativePath.replace(/\\/g, '/')
   if (allowEmpty && normalized === '') return []
@@ -162,23 +164,20 @@ function canonicalRelativeParts (relativePath: string, allowEmpty = false): stri
   return parts
 }
 
-
-function assertExpectedIdentity (
-  expected: StorageFileIdentityExpectation | undefined,
-  actual: StorageFileIdentity,
-  relativePath: string
-): void {
+function assertExpectedIdentity(expected: StorageFileIdentityExpectation | undefined, actual: StorageFileIdentity, relativePath: string): void {
   if (expected === undefined) return
   if (
     (expected.dev !== undefined && expected.dev !== actual.dev) ||
     (expected.ino !== undefined && expected.ino !== actual.ino) ||
-    (expected.size !== undefined && expected.size !== actual.size)
+    (expected.size !== undefined && expected.size !== actual.size) ||
+    (expected.mode !== undefined && expected.mode !== actual.mode) ||
+    (expected.mtimeMs !== undefined && expected.mtimeMs !== actual.mtimeMs)
   ) {
     throw rejectPath(relativePath, 'Local storage file changed during validation')
   }
 }
 
-async function closeHandles (handles: readonly FileHandle[]): Promise<void> {
+async function closeHandles(handles: readonly FileHandle[]): Promise<void> {
   let firstError: unknown
   for (let index = handles.length - 1; index >= 0; index -= 1) {
     const handle = handles[index]
@@ -192,15 +191,14 @@ async function closeHandles (handles: readonly FileHandle[]): Promise<void> {
   if (firstError !== undefined) throw firstError
 }
 
-async function closeDirectoryIterator (directory: Dir): Promise<void> {
+async function closeDirectoryIterator(directory: Dir): Promise<void> {
   try {
     await directory.close()
   } catch (error: unknown) {
     if (errorCode(error) !== 'ERR_DIR_CLOSED') throw error
   }
-
 }
-async function safeUnlink (parent: FileHandle, leaf: string): Promise<void> {
+async function safeUnlink(parent: FileHandle, leaf: string): Promise<void> {
   try {
     await unlink(procFdPath(parent.fd, leaf))
   } catch (error: unknown) {
@@ -208,7 +206,7 @@ async function safeUnlink (parent: FileHandle, leaf: string): Promise<void> {
   }
 }
 
-async function lstatAt (parent: FileHandle, leaf: string, relativePath: string): Promise<Stats | undefined> {
+async function lstatAt(parent: FileHandle, leaf: string, relativePath: string): Promise<Stats | undefined> {
   try {
     return await lstat(procFdPath(parent.fd, leaf))
   } catch (error: unknown) {
@@ -218,7 +216,7 @@ async function lstatAt (parent: FileHandle, leaf: string, relativePath: string):
   }
 }
 
-async function openDirectoryAt (parent: FileHandle, leaf: string, relativePath: string): Promise<FileHandle> {
+async function openDirectoryAt(parent: FileHandle, leaf: string, relativePath: string): Promise<FileHandle> {
   try {
     return await open(procFdPath(parent.fd, leaf), DIRECTORY_FLAGS())
   } catch (error: unknown) {
@@ -227,7 +225,7 @@ async function openDirectoryAt (parent: FileHandle, leaf: string, relativePath: 
   }
 }
 
-async function openRegularFileAt (parent: FileHandle, leaf: string, relativePath: string): Promise<FileHandle> {
+async function openRegularFileAt(parent: FileHandle, leaf: string, relativePath: string): Promise<FileHandle> {
   try {
     return await open(procFdPath(parent.fd, leaf), FILE_FLAGS())
   } catch (error: unknown) {
@@ -241,12 +239,7 @@ interface DirectoryChain {
   readonly parent: FileHandle
 }
 
-
-async function openRootForOperation (
-  canonicalRoot: string,
-  expectedRoot: StorageFileIdentity,
-  rootAnchor: FileHandle
-): Promise<FileHandle> {
+async function openRootForOperation(canonicalRoot: string, expectedRoot: StorageFileIdentity, rootAnchor: FileHandle): Promise<FileHandle> {
   const anchorPath = await descriptorRealPath(rootAnchor)
   if (anchorPath !== canonicalRoot) throw unavailable('Configured local storage root changed during validation')
   let root: FileHandle
@@ -274,7 +267,7 @@ async function openRootForOperation (
   }
 }
 
-async function openDirectoryChain (
+async function openDirectoryChain(
   canonicalRoot: string,
   expectedRoot: StorageFileIdentity,
   rootAnchor: FileHandle,
@@ -319,7 +312,7 @@ async function openDirectoryChain (
   }
 }
 
-async function inspectLeaf (
+async function inspectLeaf(
   parent: FileHandle,
   leaf: string,
   relativePath: string,
@@ -351,11 +344,7 @@ async function inspectLeaf (
   }
 }
 
-async function inspectDestination (
-  parent: FileHandle,
-  leaf: string,
-  relativePath: string
-): Promise<StorageFileIdentity | undefined> {
+async function inspectDestination(parent: FileHandle, leaf: string, relativePath: string): Promise<StorageFileIdentity | undefined> {
   const entry = await lstatAt(parent, leaf, relativePath)
   if (entry === undefined) return undefined
   if (!entry.isFile()) throw rejectPath(relativePath, 'Local storage destination is not a regular file')
@@ -371,13 +360,7 @@ export class StorageFileHandle {
   #closed = false
   #closePromise: Promise<void> | undefined
 
-  constructor (
-    relativePath: string,
-    handle: FileHandle,
-    handles: readonly FileHandle[],
-    stats: Stats,
-    identity: StorageFileIdentity
-  ) {
+  constructor(relativePath: string, handle: FileHandle, handles: readonly FileHandle[], stats: Stats, identity: StorageFileIdentity) {
     this.relativePath = relativePath
     this.#handle = handle
     this.#handles = handles
@@ -385,21 +368,21 @@ export class StorageFileHandle {
     this.identity = identity
   }
 
-  get closed (): boolean {
+  get closed(): boolean {
     return this.#closed
   }
 
   /** The descriptor is safe to pass to an awaited consumer; it is never a pathname. */
-  get handle (): FileHandle {
+  get handle(): FileHandle {
     this.assertOpen()
     return this.#handle
   }
 
-  assertOpen (): void {
+  assertOpen(): void {
     if (this.#closed) throw new StorageFilesystemError('STORAGE_HANDLE_CLOSED', `Local storage handle is closed: ${this.relativePath}`)
   }
 
-  async readBounded (maxBytes: number): Promise<Buffer> {
+  async readBounded(maxBytes: number): Promise<Buffer> {
     this.assertOpen()
     assertLimit(maxBytes)
     const before = await this.#handle.stat()
@@ -442,12 +425,12 @@ export class StorageFileHandle {
     return contents.subarray(0, offset)
   }
 
-  async copyTo (destination: FileHandle, maxBytes: number): Promise<number> {
+  async copyTo(destination: FileHandle, maxBytes: number): Promise<number> {
     this.assertOpen()
     return copyBounded(this, destination, maxBytes)
   }
 
-  async close (): Promise<void> {
+  async close(): Promise<void> {
     if (this.#closePromise !== undefined) return this.#closePromise
     this.#closed = true
     this.#closePromise = closeHandles(this.#handles)
@@ -457,7 +440,7 @@ export class StorageFileHandle {
 
 type ReadableDescriptor = StorageFileHandle | FileHandle
 
-function descriptorForRead (source: ReadableDescriptor): { readonly handle: FileHandle; readonly relativePath: string } {
+function descriptorForRead(source: ReadableDescriptor): { readonly handle: FileHandle; readonly relativePath: string } {
   if (source instanceof StorageFileHandle) {
     source.assertOpen()
     return { handle: source.handle, relativePath: source.relativePath }
@@ -465,14 +448,11 @@ function descriptorForRead (source: ReadableDescriptor): { readonly handle: File
   return { handle: source, relativePath: '<descriptor>' }
 }
 
-export async function copyBounded (
-  source: ReadableDescriptor,
-  destination: FileHandle,
-  maxBytes: number
-): Promise<number> {
+export async function copyBounded(source: ReadableDescriptor, destination: FileHandle, maxBytes: number): Promise<number> {
   assertLimit(maxBytes)
   const sourceDescriptor = descriptorForRead(source)
-  if (sourceDescriptor.handle.fd === destination.fd) throw new StorageFilesystemError('STORAGE_PATH_REJECTED', 'Local storage source and destination descriptors must differ')
+  if (sourceDescriptor.handle.fd === destination.fd)
+    throw new StorageFilesystemError('STORAGE_PATH_REJECTED', 'Local storage source and destination descriptors must differ')
   const before = await sourceDescriptor.handle.stat()
   assertRegular(before, sourceDescriptor.relativePath)
   const beforeIdentity = identityOf(before)
@@ -520,21 +500,21 @@ export class StorageRootHandle {
   #closed = false
   #closePromise: Promise<void> | undefined
 
-  constructor (canonicalRoot: string, rootAnchor: FileHandle, rootIdentity: StorageFileIdentity) {
+  constructor(canonicalRoot: string, rootAnchor: FileHandle, rootIdentity: StorageFileIdentity) {
     this.#canonicalRoot = canonicalRoot
     this.#rootAnchor = rootAnchor
     this.#rootIdentity = rootIdentity
   }
 
-  get closed (): boolean {
+  get closed(): boolean {
     return this.#closed
   }
 
-  #assertOpen (): void {
+  #assertOpen(): void {
     if (this.#closed) throw new StorageFilesystemError('STORAGE_HANDLE_CLOSED', 'Local storage root handle is closed')
   }
 
-  async openFile (relativePath: string, expected?: StorageFileIdentityExpectation): Promise<StorageFileHandle> {
+  async openFile(relativePath: string, expected?: StorageFileIdentityExpectation): Promise<StorageFileHandle> {
     this.#assertOpen()
     const parts = canonicalRelativeParts(relativePath)
     const canonicalPath = parts.join('/')
@@ -559,7 +539,7 @@ export class StorageRootHandle {
     }
   }
 
-  async ensureDirectory (relativePath: string): Promise<void> {
+  async ensureDirectory(relativePath: string): Promise<void> {
     this.#assertOpen()
     const parts = canonicalRelativeParts(relativePath, true)
     if (parts.length === 0) return
@@ -567,7 +547,7 @@ export class StorageRootHandle {
     await closeHandles(chain.handles)
   }
 
-  async #writeAtomicWithProducer (
+  async #writeAtomicWithProducer(
     relativePath: string,
     maxBytes: number,
     producer: (temporary: FileHandle, canonicalPath: string) => Promise<number>
@@ -628,7 +608,7 @@ export class StorageRootHandle {
     }
   }
 
-  async writeAtomic (relativePath: string, data: string | Uint8Array): Promise<void> {
+  async writeAtomic(relativePath: string, data: string | Uint8Array): Promise<void> {
     this.#assertOpen()
     const bytes = typeof data === 'string' ? Buffer.from(data) : Buffer.from(data)
     await this.#writeAtomicWithProducer(relativePath, bytes.byteLength, async (temporary, canonicalPath) => {
@@ -641,12 +621,84 @@ export class StorageRootHandle {
       return offset
     })
   }
+  /**
+   * Atomically creates a regular file without replacing a destination that
+   * appears after admission. A false result means the destination already
+   * exists and must be inspected by the caller before proceeding.
+   */
+  async writeAtomicIfAbsent(relativePath: string, data: string | Uint8Array): Promise<boolean> {
+    this.#assertOpen()
+    const bytes = typeof data === 'string' ? Buffer.from(data) : Buffer.from(data)
+    const parts = canonicalRelativeParts(relativePath)
+    const leaf = parts.at(-1)
+    if (leaf === undefined) throw rejectPath(relativePath, 'Local storage destination path is empty')
+    const canonicalPath = parts.join('/')
+    const chain = await openDirectoryChain(this.#canonicalRoot, this.#rootIdentity, this.#rootAnchor, parts.slice(0, -1), true)
+    const temporaryLeaf = `.${leaf}.${process.pid}.${randomUUID()}.tmp`
+    let temporary: FileHandle | undefined
+    let temporaryCreated = false
+    try {
+      if ((await inspectDestination(chain.parent, leaf, canonicalPath)) !== undefined) return false
+      temporary = await open(procFdPath(chain.parent.fd, temporaryLeaf), TEMPORARY_FLAGS(), 0o600)
+      temporaryCreated = true
+      let offset = 0
+      while (offset < bytes.byteLength) {
+        const result = await temporary.write(bytes, offset, bytes.byteLength - offset)
+        if (result.bytesWritten === 0) throw new Error(`Failed to write local storage file: ${canonicalPath}`)
+        offset += result.bytesWritten
+      }
+      await temporary.sync()
+      const temporaryStats = await temporary.stat()
+      assertRegular(temporaryStats, canonicalPath)
+      if (temporaryStats.size !== bytes.byteLength) {
+        throw new Error(`Local storage temporary size mismatch: ${canonicalPath}`)
+      }
+      if ((await inspectDestination(chain.parent, leaf, canonicalPath)) !== undefined) {
+        await temporary.close()
+        temporary = undefined
+        await safeUnlink(chain.parent, temporaryLeaf)
+        temporaryCreated = false
+        return false
+      }
+      await temporary.close()
+      temporary = undefined
+      try {
+        await link(procFdPath(chain.parent.fd, temporaryLeaf), procFdPath(chain.parent.fd, leaf))
+      } catch (error: unknown) {
+        if (errorCode(error) === 'EEXIST') {
+          await safeUnlink(chain.parent, temporaryLeaf)
+          temporaryCreated = false
+          return false
+        }
+        if (isRejectedPathError(error)) throw rejectPath(canonicalPath, 'Local storage destination cannot be safely created')
+        throw error
+      }
+      await unlink(procFdPath(chain.parent.fd, temporaryLeaf))
+      temporaryCreated = false
+      return true
+    } catch (error: unknown) {
+      if (temporary !== undefined) {
+        try {
+          await temporary.close()
+        } catch {
+          // Preserve the write error.
+        }
+      }
+      if (temporaryCreated) await safeUnlink(chain.parent, temporaryLeaf)
+      throw error
+    } finally {
+      if (temporary !== undefined) {
+        try {
+          await temporary.close()
+        } catch {
+          // Preserve the operation result.
+        }
+      }
+      await closeHandles(chain.handles)
+    }
+  }
 
-  async writeAtomicStream (
-    relativePath: string,
-    chunks: AsyncIterable<Uint8Array>,
-    maxBytes: number
-  ): Promise<void> {
+  async writeAtomicStream(relativePath: string, chunks: AsyncIterable<Uint8Array>, maxBytes: number): Promise<void> {
     this.#assertOpen()
     assertLimit(maxBytes)
     const iterator = chunks[Symbol.asyncIterator]()
@@ -695,7 +747,7 @@ export class StorageRootHandle {
     if (iteratorCloseFailed) throw iteratorCloseError
   }
 
-  async removeFile (relativePath: string): Promise<boolean> {
+  async removeFile(relativePath: string, expected?: StorageFileIdentityExpectation): Promise<boolean> {
     this.#assertOpen()
     const parts = canonicalRelativeParts(relativePath)
     const leaf = parts.at(-1)
@@ -718,9 +770,11 @@ export class StorageRootHandle {
       assertRegular(stats, canonicalPath)
       const identity = identityOf(stats)
       if (!sameIdentity(identity, identityOf(listed))) throw rejectPath(canonicalPath, 'Local storage file changed during removal')
+      assertExpectedIdentity(expected, identity, canonicalPath)
       const current = await lstatAt(chain.parent, leaf, canonicalPath)
       if (current === undefined) return false
       if (!current.isFile() || !sameIdentity(identity, identityOf(current))) throw rejectPath(canonicalPath, 'Local storage file changed during removal')
+      assertExpectedIdentity(expected, identityOf(current), canonicalPath)
       await unlink(procFdPath(chain.parent.fd, leaf))
       return true
     } catch (error: unknown) {
@@ -739,7 +793,7 @@ export class StorageRootHandle {
     }
   }
 
-  async move (sourcePath: string, destinationPath: string): Promise<boolean> {
+  async move(sourcePath: string, destinationPath: string): Promise<boolean> {
     this.#assertOpen()
     const sourceParts = canonicalRelativeParts(sourcePath)
     const destinationParts = canonicalRelativeParts(destinationPath)
@@ -803,7 +857,7 @@ export class StorageRootHandle {
     }
   }
 
-  async *walk (options: StorageWalkOptions = {}): AsyncGenerator<StorageWalkEntry> {
+  async *walk(options: StorageWalkOptions = {}): AsyncGenerator<StorageWalkEntry> {
     this.#assertOpen()
     const rejectUnsafe = options.rejectUnsafe !== false
     const root = await openRootForOperation(this.#canonicalRoot, this.#rootIdentity, this.#rootAnchor)
@@ -814,12 +868,7 @@ export class StorageRootHandle {
     }
   }
 
-  async *#walkDirectory (
-    directory: FileHandle,
-    prefix: string,
-    rejectUnsafe: boolean,
-    options: StorageWalkOptions
-  ): AsyncGenerator<StorageWalkEntry> {
+  async *#walkDirectory(directory: FileHandle, prefix: string, rejectUnsafe: boolean, options: StorageWalkOptions): AsyncGenerator<StorageWalkEntry> {
     let entries: Dir | undefined
     try {
       entries = await opendir(procFdPath(directory.fd), { bufferSize: 32 })
@@ -904,8 +953,7 @@ export class StorageRootHandle {
     }
   }
 
-
-  async purgeContents (): Promise<void> {
+  async purgeContents(): Promise<void> {
     this.#assertOpen()
     const root = await openRootForOperation(this.#canonicalRoot, this.#rootIdentity, this.#rootAnchor)
     try {
@@ -915,7 +963,7 @@ export class StorageRootHandle {
     }
   }
 
-  async #purgeDirectory (directory: FileHandle, prefix: string): Promise<void> {
+  async #purgeDirectory(directory: FileHandle, prefix: string): Promise<void> {
     const entries = await readdir(procFdPath(directory.fd), { withFileTypes: true })
     const sorted = entries.sort((left, right) => left.name.localeCompare(right.name))
     for (const entry of sorted) {
@@ -927,7 +975,8 @@ export class StorageRootHandle {
       if (listed.isSymbolicLink()) {
         const current = await lstatAt(directory, entry.name, relativePath)
         if (current === undefined) continue
-        if (!current.isSymbolicLink() || !sameEntryIdentity(listedIdentity, identityOf(current))) throw rejectPath(relativePath, 'Local storage link changed during purge')
+        if (!current.isSymbolicLink() || !sameEntryIdentity(listedIdentity, identityOf(current)))
+          throw rejectPath(relativePath, 'Local storage link changed during purge')
         await unlink(procFdPath(directory.fd, entry.name))
         continue
       }
@@ -952,7 +1001,8 @@ export class StorageRootHandle {
         }
         const current = await lstatAt(directory, entry.name, relativePath)
         if (current === undefined) continue
-        if (!current.isDirectory() || !sameIdentity(listedIdentity, identityOf(current))) throw rejectPath(relativePath, 'Local storage directory changed during purge')
+        if (!current.isDirectory() || !sameIdentity(listedIdentity, identityOf(current)))
+          throw rejectPath(relativePath, 'Local storage directory changed during purge')
         await rmdir(procFdPath(directory.fd, entry.name))
         continue
       }
@@ -973,12 +1023,12 @@ export class StorageRootHandle {
     }
   }
 
-  async copyBounded (source: StorageFileHandle, destination: FileHandle, maxBytes: number): Promise<number> {
+  async copyBounded(source: StorageFileHandle, destination: FileHandle, maxBytes: number): Promise<number> {
     this.#assertOpen()
     return copyBounded(source, destination, maxBytes)
   }
 
-  async close (): Promise<void> {
+  async close(): Promise<void> {
     if (this.#closePromise !== undefined) return this.#closePromise
     this.#closed = true
     this.#closePromise = this.#rootAnchor.close()
@@ -986,7 +1036,7 @@ export class StorageRootHandle {
   }
 }
 
-export async function openStorageRoot (rootPath: string): Promise<StorageRootHandle> {
+export async function openStorageRoot(rootPath: string): Promise<StorageRootHandle> {
   assertLinuxSupport()
   let canonicalRoot: string
   try {

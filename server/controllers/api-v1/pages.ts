@@ -30,8 +30,7 @@ const canRequestPages = (req: Request, authority: PageRuleAuthority): boolean =>
   if (!pageRuleAuthorityMatchesRequester(req.user, authority) || !Array.isArray(authority.permissions)) return false
   return (
     authority.permissions.includes('manage:system') ||
-    (authority.permissions.includes('read:pages') &&
-      (authority.permissions.includes('write:pages') || authority.permissions.includes('manage:pages')))
+    (authority.permissions.includes('read:pages') && (authority.permissions.includes('write:pages') || authority.permissions.includes('manage:pages')))
   )
 }
 
@@ -77,6 +76,7 @@ router.get('/', async (req, res, next) => {
         description: objectValue(row, 'description') ?? null,
         id: page.id,
         isPublished: Boolean(objectValue(row, 'isPublished')),
+        ...(Object.hasOwn(row, 'isSearchable') ? { isSearchable: objectValue(row, 'isSearchable') !== false && objectValue(row, 'isSearchable') !== 0 } : {}),
         locale: page.locale,
         ownerId: page.ownerId ?? null,
         path: page.path,
@@ -123,14 +123,13 @@ router.get('/:id', async (req, res, next) => {
       editor: page.editor,
       id: page.id,
       isPublished: Boolean(objectValue(row, 'isPublished')),
+      ...(Object.hasOwn(row, 'isSearchable') ? { isSearchable: objectValue(row, 'isSearchable') !== false && objectValue(row, 'isSearchable') !== 0 } : {}),
       locale: page.locale,
       ownerId: page.ownerId ?? null,
       path: page.path,
       publishEndDate: objectValue(row, 'publishEndDate') || null,
       tags: Array.isArray(page.tags)
-        ? page.tags
-            .map(tag => (typeof tag === 'string' ? tag : objectValue(tag, 'tag')))
-            .filter((tag): tag is string => typeof tag === 'string')
+        ? page.tags.map(tag => (typeof tag === 'string' ? tag : objectValue(tag, 'tag'))).filter((tag): tag is string => typeof tag === 'string')
         : [],
       publishStartDate: objectValue(row, 'publishStartDate') || null,
       title: page.title,

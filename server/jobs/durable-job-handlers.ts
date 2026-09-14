@@ -7,13 +7,28 @@ import { decryptWebhookSecret, resolveWebhookUrl, sendSignedWebhook, WebhookDeli
 import { createContentExtensionRerenderHandler } from './content-extension-rerender.ts'
 import { createPageWatchNotificationHandler, type PageWatchWikiContext } from './page-watch-notification.ts'
 import { cleanupSiteLogoRevisions, createSiteLogoProcessHandler } from './site-logo-process.ts'
+import { createAssetRelocationHandler } from './asset-relocation.ts'
 
 const cleanupRetentionMs = 30 * 24 * 60 * 60 * 1_000
 
 export const cleanupDurableJobs: DurableJobHandler = async (_job, { knex, signal }) => {
   const before = new Date(Date.now() - cleanupRetentionMs)
   signal.throwIfAborted()
-  await knex('durableJobs').whereIn('state', ['succeeded', 'failed', 'cancelled']).where('completedAt', '<', before).delete()
+  const query = knex('durableJobs').whereIn('state', ['succeeded', 'failed', 'cancelled']).where('completedAt', '<', before)
+  if (await knex.schema.hasTable('assetRelocationEffects')) {
+    query.andWhere(relocationJobs => {
+      relocationJobs
+        .whereNot('durableJobs.type', 'asset-relocation')
+        .orWhereExists(successfulEffect => {
+          successfulEffect
+            .select(knex.raw('1'))
+            .from('assetRelocationEffects as effect')
+            .whereRaw('?? = ??', ['effect.jobId', 'durableJobs.id'])
+            .where('effect.status', 'succeeded')
+        })
+    })
+  }
+  await query.delete()
 }
 
 export const createWebhookDeliveryHandler =
@@ -94,5 +109,6 @@ export const createDurableJobHandlers = (
     'process-site-logo@3': createSiteLogoProcessHandler(3),
     'rerender-content-extension@1': createContentExtensionRerenderHandler(wiki),
     'deliver-webhook@1': createWebhookDeliveryHandler(sessionSecret),
-    'notify-page-watcher@1': createPageWatchNotificationHandler(wiki)
+    'notify-page-watcher@1': createPageWatchNotificationHandler(wiki),
+    'asset-relocation@1': createAssetRelocationHandler()
   } satisfies Record<DurableJobIdentity, DurableJobHandler>)
