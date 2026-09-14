@@ -291,7 +291,7 @@ import { decodeBase64Text } from '../../helpers/base64'
 
 import { autocompletion, type CompletionContext } from '@codemirror/autocomplete'
 import { markdown } from '@codemirror/lang-markdown'
-import { keymap } from '@codemirror/view'
+import { EditorView, keymap } from '@codemirror/view'
 import {
   TextEditor,
   type TextEditorHandle,
@@ -314,7 +314,7 @@ import {
   enhanceWikiMarkdownPreview,
   sanitizeWikiMarkdownHtml
 } from './markdown/preview.ts'
-import { PreviewAlignmentScheduler, resolveVisiblePreviewTarget, stampDetailsSourceLine } from './markdown/preview-alignment'
+import { PreviewAlignmentScheduler, calculatePreviewAlignment, resolveVisiblePreviewTarget, stampDetailsSourceLine } from './markdown/preview-alignment'
 
 type MarkdownMarkerKind = 'diagram'
 
@@ -360,6 +360,12 @@ function requireEditor (editor: TextEditorHandle | null): TextEditorHandle {
 // ========================================
 
 const md = createWikiMarkdownRenderer()
+const markdownEditorInputTheme = EditorView.theme({
+  '.cm-content': {
+    fontSize: 'calc(.9rem + 1px)'
+  }
+})
+
 
 // ========================================
 // HELPER FUNCTIONS
@@ -405,14 +411,32 @@ md.renderer.rules.fence = (tokens, idx, options, env, renderer) => {
 
 const collaborations = new WeakMap<object, MarkdownCollaboration>()
 const sourceLinesByEditor = new WeakMap<object, number[]>()
-const previewAlignmentTargets = new WeakMap<object, HTMLElement>()
+type PreviewAlignmentAnimation = {
+  destination: HTMLElement
+  container: HTMLElement
+}
+const previewAlignmentAnimations = new WeakMap<object, PreviewAlignmentAnimation>()
 const previewAlignmentSchedulers = new WeakMap<object, PreviewAlignmentScheduler>()
+
+type VelocityTweenProgress = (elements: Element[], complete: number, remaining: number, start: number, tweenValue: number | null) => void
+type VelocityTweenOptions = {
+  duration?: number
+  complete?: () => void
+  progress?: VelocityTweenProgress
+}
+
+// Animate an absolute scrollTop value instead of Velocity's offset-parent based scroll action.
+const velocityTween = Velocity as unknown as (
+  target: Element,
+  properties: { tween: [number, number] },
+  options: VelocityTweenOptions
+) => void
 
 function stopPreviewAlignment (editor: object) {
   previewAlignmentSchedulers.get(editor)?.cancel()
-  const target = previewAlignmentTargets.get(editor)
-  if (target) Velocity(target, 'stop', true)
-  previewAlignmentTargets.delete(editor)
+  const animation = previewAlignmentAnimations.get(editor)
+  if (animation) Velocity(animation.container, 'stop', true)
+  previewAlignmentAnimations.delete(editor)
 }
 
 
@@ -825,7 +849,7 @@ export default defineComponent({
       scheduler.request(force)
     },
     /** Follow the selection head without moving or focusing the source editor. */
-    alignPreviewToCursor (force = false) {
+    alignPreviewToCursor (_force = false) {
       if (this.editorDisposed || !this.previewAlignmentEnabled || !this.previewShown || this.previewDirty || !this.cm || this.previewHTML.trim().length === 0) return
       const preview = this.$refs.editorPreview as HTMLElement | undefined
       const previewContainer = this.$refs.editorPreviewContainer as HTMLElement | undefined
@@ -843,18 +867,61 @@ export default defineComponent({
       }
       const mappedDestination = markedDestination ?? firstPreviewElement
       const destination = resolveVisiblePreviewTarget(mappedDestination)
-      const offset = markedDestination ? '-100' : '-50'
+      const previewRect = previewContainer.getBoundingClientRect()
+      const destinationRect = destination.getBoundingClientRect()
+      const maxScrollTop = Math.max(0, previewContainer.scrollHeight - previewContainer.clientHeight)
+      const currentScrollTop = Math.min(Math.max(previewContainer.scrollTop, 0), maxScrollTop)
+      const destinationViewportTop = destinationRect.top - previewRect.top
+      const fallbackOffset = markedDestination ? 100 : 50
+      let targetScrollTop = Math.min(
+        Math.max(currentScrollTop + destinationViewportTop - fallbackOffset, 0),
+        maxScrollTop
+      )
+
+      if (markedDestination) {
+        const sourceContainer = this.$refs.cm as HTMLElement | undefined
+        const sourceViewport = sourceContainer?.querySelector<HTMLElement>('.cm-scroller') ?? sourceContainer
+        const cursorElement = sourceContainer?.querySelector<HTMLElement>('.cm-cursor-primary')
+          ?? sourceContainer?.querySelector<HTMLElement>('.cm-cursor')
+        if (sourceViewport && cursorElement) {
+          const sourceRect = sourceViewport.getBoundingClientRect()
+          const cursorRect = cursorElement.getBoundingClientRect()
+          if (sourceRect.height > 0 && previewRect.height > 0 && cursorRect.height > 0) {
+            targetScrollTop = calculatePreviewAlignment({
+              sourceViewportTop: sourceRect.top,
+              sourceViewportHeight: sourceRect.height,
+              cursorTop: cursorRect.top,
+              cursorBottom: cursorRect.bottom,
+              previewViewportTop: previewRect.top,
+              previewViewportHeight: previewRect.height,
+              destinationTop: destinationRect.top,
+              destinationBottom: destinationRect.bottom,
+              currentScrollTop,
+              maxScrollTop
+            }).scrollTop
+          }
+        }
+      }
       const duration = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 180
 
-      if (!force && previewAlignmentTargets.get(this) === destination) return
       stopPreviewAlignment(this)
-      previewAlignmentTargets.set(this, destination)
-      Velocity(destination, 'scroll', {
-        offset,
+      if (duration === 0) {
+        previewContainer.scrollTop = targetScrollTop
+        return
+      }
+
+      const animation: PreviewAlignmentAnimation = { destination, container: previewContainer }
+      previewAlignmentAnimations.set(this, animation)
+      velocityTween(previewContainer, { tween: [targetScrollTop, currentScrollTop] }, {
         duration,
-        container: previewContainer,
+        progress: (_elements, _complete, _remaining, _start, tweenValue) => {
+          if (previewAlignmentAnimations.get(this) !== animation || typeof tweenValue !== 'number') return
+          previewContainer.scrollTop = tweenValue
+        },
         complete: () => {
-          if (previewAlignmentTargets.get(this) === destination) previewAlignmentTargets.delete(this)
+          if (previewAlignmentAnimations.get(this) !== animation) return
+          previewContainer.scrollTop = targetScrollTop
+          previewAlignmentAnimations.delete(this)
         }
       })
     },
@@ -950,6 +1017,7 @@ export default defineComponent({
     }
 
     const extensions = [
+      markdownEditorInputTheme,
       autocompletion({ override: [completePageLink] }),
       keymap.of([
         { key: 'F11', run: () => { this.toggleFullscreen(); return true } },
@@ -1236,8 +1304,14 @@ export default defineComponent({
 
     .v-toolbar__content {
       min-width: max-content;
-      padding-inline: 0;
-      gap: 2px;
+      padding-block: 2px;
+      padding-inline: 8px;
+      gap: 3px;
+
+      .v-btn.v-btn--icon {
+        width: 44px;
+        height: 44px;
+      }
 
       .v-btn {
         border-radius: var(--wiki-control-radius, 6px);
@@ -1253,11 +1327,18 @@ export default defineComponent({
     flex-direction: column;
     justify-content: flex-start;
     align-items: center;
-    padding: 24px 0;
-    width: 64px;
+    padding-block: 12px 16px;
+    padding-inline: 0;
+    width: 60px;
+    flex: 0 0 60px;
 
-    .v-btn {
-      border-radius: var(--wiki-control-radius, 6px);
+    .v-btn.v-btn--icon {
+      width: 44px;
+      height: 44px;
+    }
+
+    .v-btn.mt-3 {
+      margin-top: 8px !important;
     }
 
     @include until($tablet) {

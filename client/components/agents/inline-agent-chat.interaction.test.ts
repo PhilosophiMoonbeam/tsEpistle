@@ -119,8 +119,13 @@ interface LockState {
   activeRun: ValueRef<{ canCancel: boolean; status: string } | null>
   canPinCurrentChat: ValueRef<boolean>
   canSubmit: ValueRef<boolean>
+  composerFocused: ValueRef<boolean>
+  invocationLimit: ValueRef<number>
   connectionLabel: ValueRef<string>
   connectionTone: ValueRef<string>
+  handleComposerFocusIn: () => void
+  handleComposerFocusOut: (event: FocusEvent) => void
+  handleTranscriptEngagement: (event: FocusEvent | PointerEvent) => void
   openGoal: ValueRef<{ status: string } | null>
   goalSubmitUnavailableReason: ValueRef<string>
   submitUnavailableReason: ValueRef<string>
@@ -242,7 +247,7 @@ const loadGoalLockState = (
   runStatus: 'running' | 'awaiting_approval' | null = status === 'active' ? 'running' : null,
   canPinCurrentChat = true
 ): LockState => {
-  const ref = <T>(value: T): ValueRef<T> => ({ value })
+  const ref = <T>(value: T): ValueRef<T> => Vue.ref(value) as ValueRef<T>
   const thread = ref({
     session: {
       id: 'session-1',
@@ -298,7 +303,7 @@ const loadGoalLockState = (
   }
   const evaluate = new Function(
     '{ computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion }',
-    `${executableScript}\nreturn { activeRun, canPinCurrentChat, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, connectionLabel, connectionTone, ensureInitialized, goalSubmitUnavailableReason, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, submitUnavailableReason, thread }`
+    `${executableScript}\nreturn { activeRun, canPinCurrentChat, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleTranscriptEngagement, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, submitUnavailableReason, thread }`
   ) as (dependencies: Record<string, unknown>) => LockState
 
   const state = evaluate({
@@ -328,9 +333,11 @@ const loadGoalLockState = (
 
 interface MountedInlineAgent {
   activator: HTMLElement
+  composerFocused: ValueRef<boolean>
   historyOpen: ValueRef<boolean>
   memoryOpen: ValueRef<boolean>
   root: HTMLElement
+  transcriptFollowing: ValueRef<boolean>
   unmount: () => void
 }
 
@@ -349,6 +356,24 @@ const mountInlineAgent = (
   const historyOpen = Vue.ref(false)
   const memoryOpen = Vue.ref(false)
   const panelMenuOpen = Vue.ref(false)
+  const composerFocused = lockState?.composerFocused ?? Vue.ref(false)
+  const handleComposerFocusIn = lockState?.handleComposerFocusIn ?? (() => {
+    composerFocused.value = true
+  })
+  const handleComposerFocusOut = lockState?.handleComposerFocusOut ?? ((event: FocusEvent) => {
+    const nextTarget = event.relatedTarget
+    const currentTarget = event.currentTarget
+    if (!(currentTarget instanceof HTMLElement) || !(nextTarget instanceof Node) || !currentTarget.contains(nextTarget)) composerFocused.value = false
+  })
+  const handleComposerPointerDown = (): void => {
+    composerFocused.value = true
+  }
+  const handleTranscriptEngagement = lockState?.handleTranscriptEngagement ?? ((event: FocusEvent | PointerEvent) => {
+    const target = event.target
+    if (target instanceof Element && target.closest('.inline-agent__composer')) return
+    composerFocused.value = false
+  })
+  const transcriptFollowing = Vue.ref(true)
   const goal = lockState?.openGoal.value ?? null
   const thread = lockState?.thread.value ?? null
   const context: Record<string, unknown> = {
@@ -407,8 +432,13 @@ const mountInlineAgent = (
     canSubmit: lockState?.canSubmit.value ?? true,
     goalSubmitUnavailableReason: lockState?.goalSubmitUnavailableReason.value ?? '',
     submitUnavailableReason: lockState?.submitUnavailableReason.value ?? '',
-    preferredSkillIds: [],
-    invocationLimit: 8,
+    transcriptFollowing,
+    invocationLimit: lockState?.invocationLimit.value ?? 8,
+    composerFocused,
+    handleComposerFocusIn,
+    handleComposerFocusOut,
+    handleComposerPointerDown,
+    handleTranscriptEngagement,
     sessionTitle: 'Release planning',
     connectionLabel: lockState?.connectionLabel.value ?? 'Ready',
     connectionTone: lockState?.connectionTone.value ?? 'ready',
@@ -530,7 +560,7 @@ const mountInlineAgent = (
     host.remove()
   }
   mountedApps.push(unmount)
-  return { activator, historyOpen, memoryOpen, root, unmount }
+  return { activator, composerFocused, historyOpen, memoryOpen, root, transcriptFollowing, unmount }
 }
 
 const resolveDescribedBy = (control: HTMLElement): HTMLElement[] => {
@@ -545,22 +575,22 @@ const expectComposerActionStructure = (mounted: MountedInlineAgent): { primary: 
   const actions = mounted.root.querySelector<HTMLElement>('.agent-composer__actions')
   if (!actions) throw new Error('Agent composer actions did not render')
 
-  const children = Array.from(actions.children)
-  expect(children).toHaveLength(3)
-  const [context, status, primary] = children as [HTMLElement, HTMLElement, HTMLElement]
-  expect(context.matches('.agent-composer__context-controls')).toBe(true)
+  const context = actions.querySelector<HTMLElement>('.agent-composer__context-controls')
+  const primary = actions.querySelector<HTMLElement>('.agent-composer__primary-actions')
+  const status = mounted.root.querySelector<HTMLElement>('.agent-composer__live-status')
+  if (!context || !primary || !status) throw new Error('Agent composer accessible status or controls did not render')
+  expect(actions.children).toHaveLength(2)
   expect(context.getAttribute('role')).toBe('group')
   expect(context.getAttribute('aria-label')).toBe('Conversation context controls')
-  expect(status.matches('.agent-composer__state')).toBe(true)
   expect(status.id).not.toBe('')
+  expect(status.matches('.sr-only')).toBe(true)
   expect(status.getAttribute('role')).toBe('status')
   expect(status.getAttribute('aria-live')).toBe('polite')
   expect(status.getAttribute('aria-atomic')).toBe('true')
   expect(primary.matches('.agent-composer__primary-actions')).toBe(true)
   expect(primary.getAttribute('role')).toBe('group')
   expect(primary.getAttribute('aria-label')).toBe('Message actions')
-  expect(status.nextElementSibling).toBe(primary)
-  expect(primary.previousElementSibling).toBe(status)
+  expect(primary.previousElementSibling).toBe(context)
 
   const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
   if (!textarea) throw new Error('Agent composer input did not render')
@@ -634,6 +664,7 @@ describe('Inline Agent workspace actions', () => {
     const close = mounted.root.querySelector<HTMLElement>('.inline-agent__mobile-close')
     if (!newConversation || !temporaryConversation || !close) throw new Error('Session action controls did not render')
     expect(newConversation.textContent?.trim()).toBe('New')
+    expect(newConversation.classList.contains('rounded-pill')).toBe(true)
     expect(newConversation.hasAttribute('aria-haspopup')).toBe(false)
     expect(newConversation.hasAttribute('aria-expanded')).toBe(false)
     expect(newConversation.compareDocumentPosition(temporaryConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -657,6 +688,104 @@ describe('Inline Agent workspace actions', () => {
     expect(mounted.root.querySelector('.inline-agent__composer')).not.toBeNull()
     expect(mounted.root.querySelector('.inline-agent__session-action')?.textContent?.trim()).toBe('New')
     expect(mounted.root.querySelector('.agent-composer__input textarea')).not.toBeNull()
+  })
+
+  it('uses the compact typographic welcome copy and Sparkles workspace mark', () => {
+    const mounted = mountInlineAgent(loadGoalLockState(null))
+    const heading = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome h2')
+    const copy = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome-copy')
+
+    expect(heading?.textContent?.trim()).toBe('A little curiosity, a clearer picture')
+    expect(copy?.textContent?.trim()).toBe('Explore an idea, connect the dots, or work on your wiki.')
+    expect(mounted.root.querySelector('.inline-agent__welcome-mark')).toBeNull()
+    expect(mounted.root.querySelector('.inline-agent__welcome-index')).toBeNull()
+    expect(mounted.root.querySelector('.inline-agent__avatar .mdi-creation-outline')).not.toBeNull()
+  })
+
+  it('keeps the composer glassy while scrolled until real editing focus, then clears on transcript engagement', async () => {
+    const lockState = loadGoalLockState(null)
+    const mounted = mountInlineAgent(lockState)
+    const getComposerDock = (): HTMLElement => {
+      const dock = mounted.root.querySelector<HTMLElement>('.inline-agent__composer')
+      if (!dock) throw new Error('Composer dock did not render')
+      return dock
+    }
+    const getTranscript = (): HTMLElement => {
+      const transcript = mounted.root.querySelector<HTMLElement>('.inline-agent__transcript')
+      if (!transcript) throw new Error('Composer transcript did not render')
+      return transcript
+    }
+    const getTextarea = (): HTMLTextAreaElement => {
+      const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+      if (!textarea) throw new Error('Composer textarea did not render')
+      return textarea
+    }
+    getTranscript()
+    getTextarea()
+    await settle()
+    const initialTranscript = getTranscript()
+    initialTranscript.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    initialTranscript.focus()
+    expect(document.activeElement).toBe(initialTranscript)
+    await settle()
+    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(false)
+    mounted.transcriptFollowing.value = false
+    await settle()
+    expect(getComposerDock().classList.contains('inline-agent__composer--scrolled')).toBe(true)
+    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(false)
+
+    getComposerDock().dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+
+    await settle()
+    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(false)
+
+    const focusedTextarea = getTextarea()
+    focusedTextarea.focus()
+    expect(document.activeElement).toBe(focusedTextarea)
+    lockState.handleComposerFocusIn()
+    await settle()
+    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(true)
+    const editingTranscript = getTranscript()
+    const transcriptPointerEvent = new MouseEvent('pointerdown', { bubbles: true }) as unknown as PointerEvent
+    editingTranscript.dispatchEvent(transcriptPointerEvent)
+    lockState.handleTranscriptEngagement(transcriptPointerEvent)
+    editingTranscript.focus()
+    expect(document.activeElement).toBe(editingTranscript)
+    await settle()
+    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(false)
+
+    const refocusedTextarea = getTextarea()
+    refocusedTextarea.focus()
+    expect(document.activeElement).toBe(refocusedTextarea)
+    lockState.handleComposerFocusIn()
+    await settle()
+    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(true)
+    const refocusTranscript = getTranscript()
+    refocusTranscript.focus()
+    expect(document.activeElement).toBe(refocusTranscript)
+    const transcriptFocusEvent = new FocusEvent('focusin', { bubbles: true })
+    refocusTranscript.dispatchEvent(transcriptFocusEvent)
+    lockState.handleTranscriptEngagement(transcriptFocusEvent)
+    await settle()
+    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(false)
+
+    const disabledState = loadGoalLockState('active')
+    const disabledMounted = mountInlineAgent(disabledState)
+    const getDisabledComposerDock = (): HTMLElement => {
+      const dock = disabledMounted.root.querySelector<HTMLElement>('.inline-agent__composer')
+      if (!dock) throw new Error('Disabled composer dock did not render')
+      return dock
+    }
+    const getDisabledTextarea = (): HTMLTextAreaElement => {
+      const textarea = disabledMounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+      if (!textarea) throw new Error('Disabled composer textarea did not render')
+      return textarea
+    }
+    disabledMounted.transcriptFollowing.value = false
+    await settle()
+    getDisabledTextarea().dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    await settle()
+    expect(getDisabledComposerDock().classList.contains('inline-agent__composer--focused')).toBe(false)
   })
 })
 
@@ -693,7 +822,6 @@ describe('Inline Agent clear-unfiled confirmation', () => {
     expect(lockState.clearUnfiledHistoryOpen.value).toBe(true)
   })
 })
-
 describe('Inline Agent panel semantics', () => {
   it('exposes the computed mode and labelled panel roots without hiding the workspace', async () => {
     const mounted = mountInlineAgent()
@@ -711,7 +839,7 @@ describe('Inline Agent panel semantics', () => {
 })
 
 describe('Inline Agent latest response dock', () => {
-  it('keeps the compact latest response face between the body and composer with an accessible halo', () => {
+  it('keeps the compact latest response face in the sticky conversation dock with an accessible halo', () => {
     const mounted = mountInlineAgent(undefined, { followJumpVisible: true })
     const body = mounted.root.querySelector<HTMLElement>('.inline-agent__body')
     const dock = mounted.root.querySelector<HTMLElement>('.inline-agent__jump-dock')
@@ -721,7 +849,10 @@ describe('Inline Agent latest response dock', () => {
     const halo = mounted.root.querySelector<HTMLElement>('.inline-agent__follow-jump-halo')
 
     if (!body || !dock || !composer || !button || !face || !halo) throw new Error('Latest response control did not render')
-    expect(body.nextElementSibling).toBe(dock)
+    const conversationDock = dock.parentElement
+    if (!conversationDock) throw new Error('Sticky conversation dock did not render')
+    expect(body.contains(conversationDock)).toBe(true)
+    expect(conversationDock.classList.contains('inline-agent__conversation-dock')).toBe(true)
     expect(dock.nextElementSibling).toBe(composer)
     expect(button.getAttribute('aria-label')).toBe('Jump to latest response')
     expect(button.textContent?.trim()).toBe('Latest response')
@@ -740,14 +871,13 @@ describe('Inline Agent latest response dock', () => {
 })
 
 describe('Agent composer action semantics', () => {
-  it('renders Ready immediately before the accessible Send action and exposes Pin', () => {
+  it('keeps the accessible live status before the Send action and exposes Pin', () => {
     const mounted = mountInlineAgent()
     const { primary, status } = expectComposerActionStructure(mounted)
     const submit = primary.querySelector<HTMLButtonElement>('.agent-composer__submit')
     const pin = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__chat-pin')
 
     expect(status.textContent?.trim()).toBe('Ready')
-    expect(status.getAttribute('title')).toBe('Ready')
     expect(primary.children).toHaveLength(1)
     expect(submit?.tagName).toBe('BUTTON')
     expect(submit?.textContent?.trim()).toBe('Send')
@@ -758,14 +888,13 @@ describe('Agent composer action semantics', () => {
     expect(mounted.root.querySelector('.agent-composer__hint')).toBeNull()
   })
 
-  it('keeps Working immediately before the accessible Stop action while Pin stays enabled', () => {
+  it('keeps the accessible Working status before the Stop action while Pin stays enabled', () => {
     const mounted = mountInlineAgent(loadGoalLockState('active'))
     const { primary, status } = expectComposerActionStructure(mounted)
     const stop = primary.querySelector<HTMLButtonElement>('.agent-composer__stop')
     const pin = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__chat-pin')
 
     expect(status.textContent?.trim()).toBe('Working')
-    expect(status.getAttribute('title')).toBe('Working')
     expect(primary.children).toHaveLength(1)
     expect(stop?.tagName).toBe('BUTTON')
     expect(stop?.textContent?.trim()).toBe('Stop response')
@@ -793,7 +922,6 @@ describe('Agent composer action semantics', () => {
     const stop = primary.querySelector<HTMLButtonElement>('.agent-composer__stop')
 
     expect(status.textContent?.trim()).toBe('Review needed')
-    expect(status.getAttribute('title')).toBe('Review needed')
     expect(stop?.textContent?.trim()).toBe('Stop response')
     expect(primary.querySelector('.agent-composer__submit')).toBeNull()
   })

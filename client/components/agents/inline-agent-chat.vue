@@ -44,7 +44,7 @@
           </div>
           <div class="inline-agent__identity">
             <v-avatar class="inline-agent__avatar" color="primary" size="38" variant="tonal">
-              <v-icon icon="mdi-book-open-page-variant-outline" size="20" aria-hidden="true" />
+              <v-icon icon="mdi-creation-outline" size="20" aria-hidden="true" />
             </v-avatar>
             <div class="inline-agent__heading">
               <h2 :id="workspaceTitleId">Wiki Agent</h2>
@@ -112,6 +112,9 @@
             class="inline-agent__session-action inline-agent__new-session"
             prepend-icon="mdi-plus"
             variant="tonal"
+            color="primary"
+            size="small"
+            rounded="pill"
             :loading="creatingRetention === 'saved'"
             aria-label="New conversation"
             :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention)"
@@ -124,6 +127,8 @@
             class="inline-agent__session-action inline-agent__temporary-session"
             icon="mdi-timer-sand-complete"
             variant="text"
+            color="primary"
+            rounded="circle"
             :loading="creatingRetention === 'temporary'"
             aria-label="Temporary conversation"
             title="Start a temporary conversation"
@@ -192,6 +197,8 @@
               role="region"
               aria-label="Conversation transcript"
               @scroll.passive="handleTranscriptScroll"
+              @pointerdown="handleTranscriptEngagement"
+              @focusin="handleTranscriptEngagement"
             >
               <div v-if="loading && !thread" class="inline-agent__loading" role="status">
                 <span class="inline-agent__loading-mark" aria-hidden="true" />
@@ -202,12 +209,9 @@
               </div>
 
               <section v-if="thread && !hasConversation" class="inline-agent__welcome" aria-labelledby="inline-agent-welcome-title">
-                <div class="inline-agent__welcome-mark" aria-hidden="true"><v-icon icon="mdi-book-open-page-variant-outline" size="30" /></div>
-                <p class="inline-agent__welcome-index">Your knowledge, connected</p>
-                <h2 id="inline-agent-welcome-title">A little curiosity.
-                  <em>A clearer picture.</em></h2>
+                <h2 id="inline-agent-welcome-title">A little curiosity, <em>a clearer picture</em></h2>
                 <p class="inline-agent__welcome-copy">
-                  Explore an idea, connect the dots, or work on your Wiki. Start with a question; follow the sources wherever they lead.
+                  Explore an idea, connect the dots, or work on your wiki.
                 </p>
                 <div class="inline-agent__starters" role="group" aria-label="Conversation starters">
                   <v-btn
@@ -240,6 +244,7 @@
                 @ask-source="source => preparePrompt(`Help me understand “${source.title}”.`, source)"
                 @decision="agents.decideProposal"
               />
+              <div class="inline-agent__conversation-dock">
               <div
                 v-if="thread?.goal"
                 class="inline-agent__goal-dock"
@@ -256,95 +261,109 @@
                   @update:expanded="handleGoalExpanded"
                 />
               </div>
+                <nav
+                  v-if="approvalJumpVisible || followJumpVisible"
+                  class="inline-agent__jump-dock"
+                  aria-label="Conversation navigation"
+                >
+                  <v-btn
+                    v-if="approvalJumpVisible"
+                    class="inline-agent__approval-jump"
+                    color="warning"
+                    variant="elevated"
+                    prepend-icon="mdi-shield-alert-outline"
+                    append-icon="mdi-arrow-down"
+                    @click="jumpToApproval"
+                  >Approval required</v-btn>
+                  <v-btn
+                    v-else
+                    class="inline-agent__follow-jump"
+                    color="primary"
+                    variant="text"
+                    aria-label="Jump to latest response"
+                    @click="scrollToLatest"
+                  >
+                    <span class="inline-agent__follow-jump-frame">
+                      <span class="inline-agent__follow-jump-halo" aria-hidden="true" />
+                      <span class="inline-agent__follow-jump-face">
+                        <v-icon icon="mdi-arrow-down" size="16" aria-hidden="true" />
+                        <span>Latest response</span>
+                      </span>
+                    </span>
+                  </v-btn>
+                </nav>
+
+                <footer
+                  class="inline-agent__composer"
+                  :class="{ 'inline-agent__composer--scrolled': !transcriptFollowing, 'inline-agent__composer--focused': composerFocused }"
+                  @focusin="handleComposerFocusIn"
+                  @focusout="handleComposerFocusOut"
+                >
+                  <div class="inline-agent__composer-inner">
+                    <AgentContextPicker
+                      v-if="thread"
+                      :key="thread.session.id"
+                      :draft="activeDraft"
+                      :current-page="currentPage"
+                      :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention)"
+                      @change="patchDraft"
+                      @sources-added="focusComposer"
+                    />
+                    <p
+                      v-if="openGoal || sessionMutationBusy"
+                      id="agent-composer-lock-reason"
+                      class="inline-agent__composer-lock"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <v-icon icon="mdi-lock-outline" size="16" aria-hidden="true" />
+                      <span>{{ openGoal ? goalSubmitUnavailableReason : submitUnavailableReason }}</span>
+                    </p>
+                    <p v-if="pinStorageAvailable === false" class="inline-agent__pin-storage-warning" role="status" aria-live="polite">
+                      <v-icon icon="mdi-information-outline" size="16" aria-hidden="true" />
+                      <span>Pinning is available for this tab, but browser storage is unavailable; it will not survive a reload.</span>
+                    </p>
+                    <AgentComposer
+                      :key="thread?.session.id ?? 'opening'"
+                      ref="composer"
+                      :session-id="thread?.session.id"
+                      :initial-draft="thread ? agents.drafts[thread.session.id]?.text : ''"
+                      :initial-mode="thread ? agents.drafts[thread.session.id]?.mode : 'message'"
+                      :initial-skill-version-ids="thread ? agents.drafts[thread.session.id]?.skillVersionIds : []"
+                      :chat-pinned="Boolean(thread && pinnedSessionId === thread.session.id)"
+                      :chat-pin-disabled="!canPinCurrentChat"
+                      @update:chat-pinned="setCurrentChatPinned"
+                      @draft-change="agents.setDraft"
+                      @composition-change="agents.updateDraft"
+                      :sending="sending"
+                      :can-stop="Boolean(activeRun?.canCancel)"
+                      :disabled="!canSubmit"
+                      :has-messages="hasConversation"
+                      :external-description-id="openGoal || sessionMutationBusy ? 'agent-composer-lock-reason' : undefined"
+                      :skills-enabled="skillsEnabled"
+                      :goals-enabled="goalsEnabled"
+                      :skills="skills"
+                      :skills-loading="skillsLoading"
+                      :skills-load-error="skillsLoadError"
+                      :skills-partial="skillsPartial"
+                      :preferred-skills="thread?.session.skills ?? []"
+                      :invocation-limit="invocationLimit"
+                      :status-label="connectionLabel"
+                      :status-tone="connectionTone"
+                      @send="sendPrompt"
+                      @stop="agents.stop"
+                      @manage-skills="openSkillManager"
+                      @retry-skills="agents.reloadSkills"
+                      @update-skill-preferences="agents.setSkillPreferences"
+                    />
+                  </div>
+                </footer>
+              </div>
             </div>
 
           </div>
 
         </div>
-        <nav
-          v-if="approvalJumpVisible || followJumpVisible"
-          class="inline-agent__jump-dock"
-          aria-label="Conversation navigation"
-        >
-          <v-btn
-            v-if="approvalJumpVisible"
-            class="inline-agent__approval-jump"
-            color="warning"
-            variant="elevated"
-            prepend-icon="mdi-shield-alert-outline"
-            append-icon="mdi-arrow-down"
-            @click="jumpToApproval"
-          >Approval required</v-btn>
-          <v-btn
-            v-else
-            class="inline-agent__follow-jump"
-            color="primary"
-            variant="text"
-            aria-label="Jump to latest response"
-            @click="scrollToLatest"
-          >
-            <span class="inline-agent__follow-jump-frame">
-              <span class="inline-agent__follow-jump-halo" aria-hidden="true" />
-              <span class="inline-agent__follow-jump-face">
-                <v-icon icon="mdi-arrow-down" size="16" aria-hidden="true" />
-                <span>Latest response</span>
-              </span>
-            </span>
-          </v-btn>
-        </nav>
-
-        <footer class="inline-agent__composer">
-          <div class="inline-agent__composer-inner">
-            <AgentContextPicker v-if="thread" :draft="activeDraft" :current-page="currentPage" @change="patchDraft" @find-sources="emit('return-search')" />
-            <p
-              v-if="openGoal || sessionMutationBusy"
-              id="agent-composer-lock-reason"
-              class="inline-agent__composer-lock"
-              role="status"
-              aria-live="polite"
-            >
-              <v-icon icon="mdi-lock-outline" size="16" aria-hidden="true" />
-              <span>{{ openGoal ? goalSubmitUnavailableReason : submitUnavailableReason }}</span>
-            </p>
-            <p v-if="pinStorageAvailable === false" class="inline-agent__pin-storage-warning" role="status" aria-live="polite">
-              <v-icon icon="mdi-information-outline" size="16" aria-hidden="true" />
-              <span>Pinning is available for this tab, but browser storage is unavailable; it will not survive a reload.</span>
-            </p>
-            <AgentComposer
-              :key="thread?.session.id ?? 'opening'"
-              ref="composer"
-              :session-id="thread?.session.id"
-              :initial-draft="thread ? agents.drafts[thread.session.id]?.text : ''"
-              :initial-mode="thread ? agents.drafts[thread.session.id]?.mode : 'message'"
-              :initial-skill-version-ids="thread ? agents.drafts[thread.session.id]?.skillVersionIds : []"
-              :chat-pinned="Boolean(thread && pinnedSessionId === thread.session.id)"
-              :chat-pin-disabled="!canPinCurrentChat"
-              @update:chat-pinned="setCurrentChatPinned"
-              @draft-change="agents.setDraft"
-              @composition-change="agents.updateDraft"
-              :sending="sending"
-              :can-stop="Boolean(activeRun?.canCancel)"
-              :disabled="!canSubmit"
-              :has-messages="hasConversation"
-              :external-description-id="openGoal || sessionMutationBusy ? 'agent-composer-lock-reason' : undefined"
-              :skills-enabled="skillsEnabled"
-              :goals-enabled="goalsEnabled"
-              :skills="skills"
-              :skills-loading="skillsLoading"
-              :skills-load-error="skillsLoadError"
-              :skills-partial="skillsPartial"
-              :preferred-skills="thread?.session.skills ?? []"
-              :invocation-limit="invocationLimit"
-              :status-label="connectionLabel"
-              :status-tone="connectionTone"
-              @send="sendPrompt"
-              @stop="agents.stop"
-              @manage-skills="openSkillManager"
-              @retry-skills="agents.reloadSkills"
-              @update-skill-preferences="agents.setSkillPreferences"
-            />
-          </div>
-        </footer>
       </template>
     </v-card>
 
@@ -497,6 +516,20 @@ const memoryOpen = ref(false)
 const panelMenuOpen = ref(false)
 const memoryMutationBusy = ref(false)
 const initializationError = ref('')
+const composerFocused = ref(false)
+const handleComposerFocusIn = (): void => {
+  composerFocused.value = true
+}
+const handleComposerFocusOut = (event: FocusEvent): void => {
+  const nextTarget = event.relatedTarget
+  const currentTarget = event.currentTarget
+  if (!(currentTarget instanceof HTMLElement) || !(nextTarget instanceof Node) || !currentTarget.contains(nextTarget)) composerFocused.value = false
+}
+const handleTranscriptEngagement = (event: FocusEvent | PointerEvent): void => {
+  const target = event.target
+  if (target instanceof Element && target.closest('.inline-agent__composer')) return
+  composerFocused.value = false
+}
 const transcriptFollowing = ref(true)
 let transcriptObserver: MutationObserver | null = null
 let transcriptFrame: number | null = null
@@ -671,10 +704,12 @@ const sendPrompt = async (
   }
 }
 const focusConversation = async (): Promise<void> => {
+  composerFocused.value = false
   await nextTick()
   transcript.value?.focus({ preventScroll: true })
 }
 const scrollToLatest = async (): Promise<void> => {
+  composerFocused.value = false
   const container = transcript.value
   if (!container) return
   container.scrollTo({ top: container.scrollHeight, behavior: reducedMotion() ? 'auto' : 'smooth' })
@@ -867,7 +902,15 @@ const updateApprovalJump = (): void => {
   if (!container || !proposalId) { approvalJumpVisible.value = false; return }
   const approval = container.querySelector<HTMLElement>(`#agent-approval-${proposalId}`)
   if (!approval) { approvalJumpVisible.value = false; return }
-  approvalJumpVisible.value = isAgentApprovalOutsideViewport(container.getBoundingClientRect(), approval.getBoundingClientRect())
+  const viewport = container.getBoundingClientRect()
+  const dockBounds = container.querySelector<HTMLElement>('.inline-agent__conversation-dock')?.getBoundingClientRect()
+  const visibleBottom = dockBounds && dockBounds.height > 0 && dockBounds.top > viewport.top
+    ? Math.min(viewport.bottom, dockBounds.top)
+    : viewport.bottom
+  approvalJumpVisible.value = isAgentApprovalOutsideViewport(
+    { top: viewport.top, bottom: visibleBottom },
+    approval.getBoundingClientRect()
+  )
 }
 const reducedMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 const jumpToApproval = async (): Promise<void> => {
@@ -1201,6 +1244,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   isolation: isolate;
   overflow: hidden;
   margin-inline-start: var(--wiki-space-1);
+  border-radius: var(--wiki-radius-pill) !important;
 }
 
 .inline-agent__new-session :deep(.v-btn__prepend),
@@ -1212,6 +1256,14 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   width: var(--wiki-control-height);
   min-width: var(--wiki-control-height);
   padding-inline: 0;
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 30%, var(--wiki-surface-border));
+  background: color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 6%, transparent);
+}
+.inline-agent__temporary-session:hover,
+.inline-agent__temporary-session:focus-visible,
+.inline-agent__temporary-session:active {
+  border-color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
+  background: color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 14%, var(--wiki-surface-raised));
 }
 .inline-agent__progress {
   position: absolute;
@@ -1280,6 +1332,23 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   scroll-behavior: smooth;
   scroll-padding-block: var(--wiki-space-4);
 }
+.inline-agent__conversation-dock {
+  position: sticky;
+  z-index: 3;
+  inset-block-end: 0;
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  flex-direction: column;
+  margin: var(--wiki-space-3) auto 0;
+  pointer-events: none;
+}
+.inline-agent__conversation-dock > .inline-agent__goal-dock,
+.inline-agent__conversation-dock > .inline-agent__jump-dock,
+.inline-agent__conversation-dock > .inline-agent__composer {
+  pointer-events: auto;
+}
+
 .inline-agent__goal-dock {
   position: sticky;
   z-index: 2;
@@ -1311,6 +1380,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__transcript:has(> .inline-agent__welcome) {
   display: flex;
+  flex-direction: column;
 }
 
 
@@ -1438,26 +1508,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   text-align: start;
 }
 
-.inline-agent__welcome-mark {
-  display: grid;
-  place-items: center;
-  width: 3.5rem;
-  height: 3.5rem;
-  margin-bottom: 1.75rem;
-  color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
-  border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: 50%;
-  background: var(--wiki-surface-sunken);
-}
-
-.inline-agent__welcome-index {
-  margin: 0 0 1rem;
-  color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
-  font-size: .7rem;
-  font-weight: 650;
-  letter-spacing: .15em;
-  text-transform: uppercase;
-}
+/* The welcome treatment stays typographic and compact; the old decorative mark is intentionally omitted. */
 
 .inline-agent__welcome h2 {
   margin: 0;
@@ -1471,7 +1522,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__welcome h2 em {
-  display: block;
+  display: inline;
   font-weight: inherit;
   color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
 }
@@ -1486,15 +1537,16 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__starters {
   display: grid;
-  width: 100%;
+  width: 85%;
+  margin-inline: auto;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: .65rem;
+  gap: .75rem;
 }
 
 .inline-agent__starter {
   height: auto !important;
-  min-height: 5rem;
-  padding: .8rem;
+  min-height: 4.5rem;
+  padding: .72rem;
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-raised);
@@ -1559,11 +1611,32 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__composer {
   position: relative;
   z-index: 1;
+  box-sizing: border-box;
   flex: 0 0 auto;
   padding: var(--wiki-space-4) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)) max(var(--wiki-space-4), env(safe-area-inset-bottom));
   border-top: 0;
   background: rgb(var(--v-theme-background));
   box-shadow: none;
+  transition: background .2s var(--wiki-motion-ease), box-shadow .2s var(--wiki-motion-ease), backdrop-filter .2s var(--wiki-motion-ease);
+}
+.inline-agent__composer--scrolled:not(.inline-agent__composer--focused) {
+  background: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, transparent);
+  box-shadow: 0 -0.75rem 1.5rem color-mix(in srgb, rgb(var(--v-theme-background)) 35%, transparent);
+  backdrop-filter: blur(12px) saturate(115%);
+  -webkit-backdrop-filter: blur(12px) saturate(115%);
+}
+.inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
+  border-color: color-mix(in srgb, var(--wiki-surface-border-strong) 62%, transparent);
+  background: color-mix(in srgb, var(--wiki-surface-raised) 46%, transparent);
+  box-shadow: 0 .45rem 1.35rem color-mix(in srgb, var(--wiki-shadow-color) 28%, transparent);
+  backdrop-filter: blur(5px) saturate(120%);
+  -webkit-backdrop-filter: blur(5px) saturate(120%);
+}
+.inline-agent__composer--focused {
+  background: rgb(var(--v-theme-background));
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .inline-agent__composer-inner {
   width: min(100%, var(--agent-conversation-width));
@@ -1807,9 +1880,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 @media (max-width: 900px) {
-  .inline-agent__starters { grid-template-columns: 1fr; }
-  .inline-agent__starter { min-height: 4rem; padding: .75rem; }
-
+  .inline-agent__starters { width: 100%; grid-template-columns: 1fr; }
+  .inline-agent__starter { min-height: 3.6rem; padding: .675rem; }
   .inline-agent__welcome {
     max-width: 40rem;
   }
@@ -1822,8 +1894,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__session-action { min-width: var(--wiki-control-height); padding-inline: var(--wiki-space-2); }
   .inline-agent__session-action :deep(.v-btn__prepend) { margin: 0; }
   .inline-agent__notice { display: none; }
-  .inline-agent__starters { grid-template-columns: 1fr; }
-  .inline-agent__starter { min-height: 4rem; padding: .75rem; }
+  .inline-agent__starters { width: 100%; grid-template-columns: 1fr; }
+  .inline-agent__starter { min-height: 3.6rem; padding: .675rem; }
 }
 
 @media (min-width: 640px) and (max-width: 1023.98px) {
@@ -1983,7 +2055,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 
   .inline-agent__welcome h2 { font-size: clamp(2rem, 8vw, 3rem); }
-  .inline-agent__welcome-mark { display: none; }
 
   .inline-agent__welcome-copy {
     margin-block: var(--wiki-space-4);
@@ -2077,11 +2148,15 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     display: none;
   }
 
-  .inline-agent__follow-jump-face {
+  .inline-agent__follow-jump-face,
+  .inline-agent__composer--scrolled:not(.inline-agent__composer--focused),
+  .inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
     border-color: ButtonText;
-    background: ButtonFace;
+    background: Canvas;
     box-shadow: none;
     color: ButtonText;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 }
 

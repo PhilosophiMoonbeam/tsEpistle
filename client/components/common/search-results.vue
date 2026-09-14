@@ -6,27 +6,15 @@
     :aria-modal='isAgentOpen ? `true` : undefined'
     :aria-labelledby='isAgentOpen ? `wiki-agent-title` : `wiki-search-title`'
     :aria-busy='!isAgentOpen && searchIsLoading'
-    tabindex='-1'
+    @click='handleBackdropClick'
   )
     .search-results-container(:class='{ "search-results-container--ask": isAgentOpen }')
       h1#wiki-agent-title.sr-only(v-if='isAgentOpen') Wiki Agent workspace
-      h1#wiki-search-title.sr-only(v-else) Wiki search
-      .search-results-controls(v-if='!isAgentOpen')
-        .search-results-controls-title
-          v-icon(icon='mdi-magnify' size='19')
-          span Search the Wiki
-        v-btn.search-results-agent-entry(
-          v-if='canAsk'
-          variant='text'
-          prepend-icon='mdi-book-open-page-variant-outline'
-          data-modal-focus-key='search-ask-mode'
-          @click='openAsk'
-        ) Open Wiki Agent
-      v-btn.search-results-close.wiki-close-control(
+      v-btn.search-results-close(
           icon='mdi-close'
           variant='text'
           :aria-label='$t(`common:header.searchClose`)'
-          @click='closeSearch'
+          @click.stop='closeSearch'
         )
       InlineAgentChat(
         v-if='isAgentOpen'
@@ -53,12 +41,12 @@
         @close='previewSelector = null'
         @ask='askSource'
       )
-      .search-results-search(v-if='!isAgentOpen')
+      .search-results-search(v-if='!isAgentOpen' @click.stop)
         .search-results-instructions.sr-only#wiki-search-instructions Use Arrow Up and Down to move through results, Enter to open a result, and Escape to close search.
         .search-results-scope
-          .search-results-scope-copy
-            .search-results-eyebrow Search scope
-            .search-results-scope-title Find the right page
+          h1#wiki-search-title.search-results-heading
+            v-icon(icon='mdi-magnify' size='19' aria-hidden='true')
+            span Search the Wiki
           .search-results-scope-actions(role='group' aria-label='Search scope')
             v-btn(
               size='small'
@@ -548,6 +536,12 @@ export default defineComponent({
     handleSearchExit(restoreFocus: boolean): void {
       this.searchExitRestoreFocus = restoreFocus
     },
+    handleBackdropClick(event: MouseEvent): void {
+      if (this.isAgentOpen) return
+      const target = event.target
+      if (target instanceof Element && target.closest('.search-results-search, .wiki-source-preview')) return
+      this.closeSearch()
+    },
     captureSearchRestoreTarget(event: FocusEvent): void {
       if (this.searchModalFocusScope || !this.isSearchControl(event.target)) return
       const previous = event.relatedTarget
@@ -876,15 +870,19 @@ export default defineComponent({
 }
 .search-results {
   --search-overlay-ink: rgb(var(--v-theme-on-background));
+  --search-overlay-top-offset: var(--v-layout-top, 72px);
+  --search-results-reclaimed-space: calc(var(--wiki-control-height) + var(--wiki-space-5));
   animation: searchResultsReveal var(--wiki-motion-normal) var(--wiki-motion-ease-out);
   background:
     radial-gradient(ellipse 52rem 28rem at 50% -10rem, color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent), transparent),
-    color-mix(in srgb, rgb(var(--v-theme-background)) 92%, transparent);
+    color-mix(in srgb, rgb(var(--v-theme-background)) 78%, transparent);
+  backdrop-filter: blur(8px) saturate(115%);
+  -webkit-backdrop-filter: blur(8px) saturate(115%);
   box-sizing: border-box;
   height: 100dvh;
   inset: 0;
   &:not(.search-results--ask) {
-    padding-top: var(--v-layout-top, 72px);
+    padding-top: var(--search-overlay-top-offset);
   }
   overflow-x: hidden;
   overflow-y: auto;
@@ -920,33 +918,31 @@ export default defineComponent({
     }
   }
 
-  &-controls {
-    position: relative;
-    display: flex;
-    width: min(64rem, 100%);
-    min-height: calc(var(--wiki-control-height) + var(--wiki-space-5));
-    flex: 0 0 auto;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--wiki-space-1) calc(var(--wiki-control-height) + var(--wiki-space-2)) var(--wiki-space-1) 0;
-    color: var(--search-overlay-ink);
-  }
-
-  &-controls-title {
-    align-items: center;
-    display: flex;
-    font-size: .82rem;
-    font-weight: 650;
-    gap: .45rem;
-    letter-spacing: .04em;
-  }
-
   &-close {
     position: absolute !important;
-    inset-inline-end: var(--wiki-space-1);
+    inset-inline-end: var(--wiki-space-2);
+    top: calc(var(--search-overlay-top-offset) + var(--wiki-space-1));
+    border-radius: var(--wiki-radius-pill);
+    color: color-mix(in srgb, var(--search-overlay-ink) 78%, transparent);
+    transition:
+      background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+    &:hover,
+    &:active {
+      background-color: color-mix(in srgb, var(--search-overlay-ink) 9%, transparent);
+      color: var(--search-overlay-ink);
+      transform: none;
+    }
+
+    &:focus-visible {
+      outline: .125rem solid var(--wiki-focus-color);
+      outline-offset: var(--wiki-focus-offset);
+      box-shadow: var(--wiki-focus-ring);
+    }
   }
 
-  &-agent-entry { margin-inline-start: auto; letter-spacing: 0; text-transform: none; }
+  &--ask &-close { top: var(--wiki-space-2); }
 
   &-keyboard-hint {
     display: flex;
@@ -960,7 +956,11 @@ export default defineComponent({
 
   &-search {
     margin-inline: auto;
-    overflow: hidden;
+    max-height: calc(100dvh - var(--search-overlay-top-offset) - max(var(--wiki-space-4), env(safe-area-inset-bottom, 0px)));
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-bottom: var(--search-results-reclaimed-space);
+    scrollbar-gutter: stable;
     border: 1px solid var(--wiki-surface-border-strong);
     border-radius: var(--wiki-hero-radius);
     background: var(--wiki-surface-raised);
@@ -981,8 +981,23 @@ export default defineComponent({
       var(--wiki-surface-sunken);
   }
 
-  &-scope-copy { min-width: 12rem; }
-  &-scope-title { font-size: .9rem; font-weight: 550; margin-top: .12rem; }
+  &-heading {
+    align-items: center;
+    display: flex;
+    gap: .55rem;
+    min-width: 0;
+    margin: 0;
+    color: var(--search-overlay-ink);
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    line-height: 1.2;
+  }
+
+  &-heading .v-icon {
+    flex: 0 0 auto;
+    color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
+  }
 
   &-scope-actions {
     align-items: center;
@@ -1237,7 +1252,8 @@ export default defineComponent({
   @media #{map-get($display-breakpoints, 'sm-and-down')} {
     &:not(.search-results--ask) {
       --search-mobile-app-bar-extension-height: 48px;
-      padding-top: calc(var(--v-layout-top, 72px) + var(--search-mobile-app-bar-extension-height));
+      --search-overlay-top-offset: calc(var(--v-layout-top, 72px) + var(--search-mobile-app-bar-extension-height));
+      padding-top: var(--search-overlay-top-offset);
     }
     &-container { padding-inline: var(--wiki-space-2); }
     &-container--ask { padding: 0; }
@@ -1249,7 +1265,6 @@ export default defineComponent({
 
   @media (max-width: 599.98px) {
     &-search { border-radius: var(--wiki-panel-radius); }
-    &-scope-copy { min-width: 0; }
     &-scope-actions .v-btn { max-width: 100%; padding-inline: var(--wiki-space-3); }
     &-summary { align-items: flex-start; flex-wrap: wrap; }
     &-ask .v-btn__content { font-size: .78rem; }

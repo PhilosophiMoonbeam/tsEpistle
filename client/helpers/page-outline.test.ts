@@ -1,6 +1,7 @@
 import { describe, expect, test } from '../../server/test/bun-test.mts'
 import {
   activeOutlineIndex,
+  activeOutlineIndexAtScroll,
   buildOutlineTree,
   filterOutline,
   filterOutlineTree,
@@ -106,6 +107,13 @@ describe('document outline', () => {
     expect(activeOutlineIndex(positions, 1200)).toBe(3)
     expect(activeOutlineIndex(positions, 499)).toBe(1)
     expect(activeOutlineIndex([], 100)).toBe(-1)
+  })
+
+  test('promotes the final heading when the viewport reaches the article bottom', () => {
+    const positions = [100, 1_000]
+
+    expect(activeOutlineIndexAtScroll(positions, 500, 800, 1_300, 104)).toBe(1)
+    expect(activeOutlineIndexAtScroll(positions, 400, 800, 1_300, 104)).toBe(0)
   })
 
   test('generates deterministic collision-free DOM IDs from anchors for sublists', () => {

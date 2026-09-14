@@ -5,7 +5,8 @@
     :class="{
       'agent-composer--sending': sendInProgress || canStop,
       'agent-composer--disabled': disabled,
-      'agent-composer--retry': sendFailed
+      'agent-composer--retry': sendFailed,
+      'agent-composer--status-error': statusTone === 'error'
     }"
     @submit.prevent="submit"
   >
@@ -66,6 +67,13 @@
         <v-btn prepend-icon="mdi-refresh" size="small" variant="text" :loading="skillsLoading" @click="retrySkills">Retry catalog</v-btn>
       </v-card-actions>
     </v-card>
+    <span
+      :id="composerIds.status"
+      class="agent-composer__live-status sr-only"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >{{ liveStatusLabel }}</span>
 
     <div class="agent-composer__editor">
       <v-textarea
@@ -77,7 +85,7 @@
         :aria-autocomplete="skillsEnabled ? 'list' : undefined"
         :aria-haspopup="skillsEnabled ? 'listbox' : undefined"
         :placeholder="composerInputPlaceholder"
-        rows="3"
+        rows="2"
         variant="solo"
         flat
         hide-details
@@ -246,26 +254,6 @@
         </v-btn>
       </div>
 
-      <div
-        :id="composerIds.status"
-        class="agent-composer__state"
-        :class="`agent-composer__state--${statusTone}`"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        :title="statusLabel"
-      >
-        <StatusIndicator
-          aria-hidden="true"
-          :positive="statusTone === 'ready'"
-          :negative="statusTone === 'error'"
-          :intermediary="statusTone === 'busy'"
-          :pulse="statusTone === 'busy'"
-          :label="statusLabel"
-        />
-        <span>{{ statusLabel }}</span>
-      </div>
-
       <div class="agent-composer__primary-actions" role="group" aria-label="Message actions">
         <v-btn
           v-if="canStop"
@@ -273,6 +261,7 @@
           color="warning"
           variant="outlined"
           prepend-icon="mdi-stop"
+          :aria-describedby="composerIds.status"
           @click="$emit('stop')"
         >Stop response</v-btn>
         <v-btn
@@ -280,11 +269,13 @@
           class="agent-composer__submit"
           type="submit"
           color="primary"
-          :prepend-icon="sendFailed ? 'mdi-refresh' : goalMode ? 'mdi-target-arrow' : 'mdi-send'"
+          :prepend-icon="submitIcon"
           :loading="sendInProgress"
           :disabled="disabled || sendInProgress || !draft.trim()"
+          :aria-describedby="composerIds.status"
         >{{ submitLabel }}</v-btn>
       </div>
+
     </div>
 
   </v-form>
@@ -293,7 +284,6 @@
 </template>
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
-import StatusIndicator from '../common/status-indicator.vue'
 import type { AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import type { VisibleAgentSkill } from '../../helpers/agents-api.ts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
@@ -411,7 +401,25 @@ const composerInputPlaceholder = computed(() => {
   }
   return props.hasMessages ? 'Ask a follow-up' : 'Ask a question or search query'
 })
-const submitLabel = computed(() => sendFailed.value ? 'Retry' : goalMode.value ? 'Start goal' : 'Send')
+const liveStatusLabel = computed(() => {
+  if (sendFailed.value) return 'Message failed to send. Retry is available.'
+  const label = props.statusLabel.trim()
+  if (sendInProgress.value || props.canStop) {
+    if (label && label !== 'Ready') return label
+    return props.canStop ? 'Working' : 'Sending'
+  }
+  return label || 'Ready'
+})
+const submitLabel = computed(() => {
+  if (sendFailed.value) return 'Retry'
+  return goalMode.value ? 'Start goal' : 'Send'
+})
+const submitIcon = computed(() => {
+  if (sendFailed.value) return 'mdi-refresh'
+  if (props.statusTone === 'error') return 'mdi-alert-circle-outline'
+  if (props.statusTone === 'busy') return 'mdi-progress-clock'
+  return goalMode.value ? 'mdi-target-arrow' : 'mdi-send'
+})
 const isSelected = (versionId: string): boolean => selectedSkillIdSet.value.has(versionId)
 const getTextarea = (): HTMLTextAreaElement | null => {
   const textarea = messageInput.value?.$el?.querySelector('textarea')
@@ -791,7 +799,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   overflow: visible;
   min-width: 0;
-  padding: var(--wiki-space-3);
+  padding: var(--wiki-space-2);
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
@@ -815,7 +823,8 @@ onBeforeUnmount(() => {
   border-color: color-mix(in srgb, var(--wiki-accent-warm) 42%, var(--wiki-surface-border));
 }
 
-.agent-composer--retry {
+.agent-composer--retry,
+.agent-composer--status-error {
   border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 48%, var(--wiki-surface-border));
 }
 
@@ -844,13 +853,13 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__input :deep(.v-field__input) {
-  min-height: calc(var(--wiki-space-12) * 2);
-  padding: var(--wiki-space-3) var(--wiki-space-1) var(--wiki-space-2);
+  min-height: calc(var(--wiki-space-12) * 1.5);
+  padding: var(--wiki-space-2) var(--wiki-space-1);
 }
 
 .agent-composer__input :deep(textarea) {
   box-sizing: border-box;
-  min-height: calc(var(--wiki-space-12) * 2);
+  min-height: calc(var(--wiki-space-12) * 1.5);
   max-height: min(calc(var(--wiki-space-12) * 3), 30dvh);
   overflow-y: hidden;
   overscroll-behavior: contain;
@@ -907,12 +916,12 @@ onBeforeUnmount(() => {
 .agent-composer__actions {
   display: grid;
   min-width: 0;
-  min-height: max(44px, var(--wiki-control-height));
+  min-height: max(36px, calc(var(--wiki-control-height) * .82));
   flex: 0 0 auto;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--wiki-space-2);
-  padding: var(--wiki-space-2) 0 var(--wiki-space-1);
+  gap: var(--wiki-space-1);
+  padding: var(--wiki-space-1) 0 0;
   margin-top: var(--wiki-space-1);
   border-top: 1px solid var(--wiki-surface-border);
 }
@@ -922,8 +931,9 @@ onBeforeUnmount(() => {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: var(--wiki-space-2);
+  gap: var(--wiki-space-1);
 }
+
 
 .agent-composer__primary-actions {
   min-width: calc(var(--wiki-space-12) * 2);
@@ -937,14 +947,36 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
 }
 
-.agent-composer__actions :deep(.v-btn) {
-  min-height: max(44px, var(--wiki-control-height));
+/* The action faces are compact; their transparent pseudo-elements preserve a 44px pointer target. */
+
+.agent-composer__skill-button,
+.agent-composer__goal-button,
+.agent-composer__chat-pin,
+.agent-composer__submit,
+.agent-composer__stop {
+  position: relative;
+  box-sizing: border-box;
+  height: max(36px, calc(var(--wiki-control-height) * .82));
+  min-height: max(36px, calc(var(--wiki-control-height) * .82));
+  border-radius: var(--wiki-radius-pill);
+}
+
+.agent-composer__skill-button::after,
+.agent-composer__goal-button::after,
+.agent-composer__chat-pin::after,
+.agent-composer__submit::after,
+.agent-composer__stop::after {
+  position: absolute;
+  inset: -4px 0;
+  min-height: 44px;
+  border-radius: inherit;
+  content: '';
+  pointer-events: auto;
 }
 
 .agent-composer__skill-button,
 .agent-composer__goal-button,
 .agent-composer__chat-pin {
-  border-radius: var(--wiki-radius-pill);
   padding-inline: var(--wiki-space-3);
   font-weight: 500;
   letter-spacing: .01em;
@@ -994,40 +1026,9 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
 }
 
-.agent-composer__state {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: center;
-  gap: var(--wiki-space-2);
-  padding: var(--wiki-space-1) var(--wiki-space-2);
-  border-radius: var(--wiki-radius-pill);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
-  font-size: var(--wiki-label-size);
-  font-weight: 600;
-  letter-spacing: .02em;
-  white-space: nowrap;
-}
-
-.agent-composer__state > span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-
-.agent-composer__state--ready {
-  color: rgb(var(--v-theme-success));
-}
-
-
-.agent-composer__state--error {
-  color: rgb(var(--v-theme-error));
-}
 
 .agent-composer__submit {
   min-width: calc(var(--wiki-space-12) * 2);
-  border-radius: var(--wiki-control-radius);
   box-shadow: var(--wiki-shadow-xs);
   font-weight: 600;
   transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease), box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
@@ -1070,7 +1071,6 @@ onBeforeUnmount(() => {
 
 .agent-composer__stop {
   min-width: calc(var(--wiki-space-12) * 1.6);
-  border-radius: var(--wiki-control-radius);
   font-weight: 600;
 }
 
@@ -1125,6 +1125,7 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
+.agent-composer__live-status,
 .agent-composer__command-status {
   position: absolute;
   width: 1px;
@@ -1145,7 +1146,7 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
       "context context"
-      "state primary";
+      ". primary";
     row-gap: var(--wiki-space-1);
   }
 
@@ -1154,11 +1155,8 @@ onBeforeUnmount(() => {
     overflow-x: auto;
     overscroll-behavior-inline: contain;
     scrollbar-width: none;
-  }
-
-  .agent-composer__state {
-    grid-area: state;
-    justify-content: flex-start;
+    padding-block: 4px;
+    margin-block: -4px;
   }
 
   .agent-composer__primary-actions {

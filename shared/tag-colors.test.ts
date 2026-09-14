@@ -9,4 +9,10 @@ describe('tag color buckets', () => {
     expect(tagColorBucket('Éclair')).toBe('error')
     expect(tagColorBucket('—…   ')).toBe('neutral')
   })
+
+  it('keeps numeric-leading tags on a deterministic normalized code-point bucket', () => {
+    expect(tagColorBucket('123 roadmap')).toBe('info')
+    expect(tagColorBucket('１２３ roadmap')).toBe('info')
+    expect(tagColorBucket('999 roadmap')).toBe('warning')
+  })
 })

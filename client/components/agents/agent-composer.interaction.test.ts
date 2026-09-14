@@ -274,6 +274,9 @@ interface MountedComposer {
 interface MountedComposerOptions {
   readonly disabled?: boolean
   readonly sending?: boolean
+  readonly canStop?: boolean
+  readonly statusLabel?: string
+  readonly statusTone?: 'ready' | 'error' | 'busy'
   readonly initialDraft?: string
 }
 
@@ -284,7 +287,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
   const componentProps = {
     disabled: options.disabled ?? false,
     sending: options.sending ?? false,
-    canStop: false,
+    canStop: options.canStop ?? false,
     skillsEnabled: false,
     goalsEnabled: true,
     skills: [],
@@ -293,8 +296,8 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     skillsPartial: false,
     preferredSkills: [],
     invocationLimit: 3,
-    statusLabel: 'Ready',
-    statusTone: 'ready' as const,
+    statusLabel: options.statusLabel ?? 'Ready',
+    statusTone: options.statusTone ?? 'ready',
     initialDraft: options.initialDraft ?? 'draft',
     initialMode: undefined,
     initialSkillVersionIds: undefined,
@@ -353,17 +356,8 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     },
     render: renderAgentComposer
   })
-  const statusIndicator = Vue.defineComponent({
-    props: {
-      label: String
-    },
-    setup(props) {
-      return () => Vue.h('span', { 'aria-label': props.label })
-    }
-  })
   const app = Vue.createApp(composerComponent, componentProps)
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
-  app.component('StatusIndicator', statusIndicator)
   app.mount(host)
   for (const element of host.querySelectorAll<HTMLElement>('*')) element.setAttribute(composerScopeAttribute, '')
   const root = host.querySelector<HTMLElement>('.agent-composer')
@@ -409,6 +403,30 @@ describe('Agent composer submit loading presentation', () => {
     expect(browserWindow.getComputedStyle(loading.root).opacity).toBe('1')
     expect(browserWindow.getComputedStyle(loadingContent).opacity).toBe('0')
     expect(browserWindow.getComputedStyle(loadingPrepend).opacity).toBe('0')
+
+    const idleStatus = idle.root.querySelector<HTMLElement>('.agent-composer__live-status')
+    if (!idleStatus) throw new Error('Idle live composer status did not render')
+    expect(idle.root.querySelector('.agent-composer__state')).toBeNull()
+    expect(idleStatus.getAttribute('role')).toBe('status')
+    expect(idleStatus.getAttribute('aria-live')).toBe('polite')
+    expect(idleStatus.textContent?.trim()).toBe('Ready')
+
+    const loadingStatus = loading.root.querySelector<HTMLElement>('.agent-composer__live-status')
+    if (!loadingStatus) throw new Error('Loading live composer status did not render')
+    expect(loadingStatus.textContent?.trim()).toBe('Sending')
+  })
+
+  it('announces external error feedback without relabeling the ordinary Send action', () => {
+    const error = mountComposer({ statusLabel: 'Try again', statusTone: 'error' })
+    const button = error.root.querySelector<HTMLButtonElement>('.agent-composer__submit')
+    const status = error.root.querySelector<HTMLElement>('.agent-composer__live-status')
+    if (!button || !status) throw new Error('Error composer controls did not render')
+
+    expect(error.root.querySelector('.agent-composer__state')).toBeNull()
+    expect(error.root.classList.contains('agent-composer--status-error')).toBe(true)
+    expect(button.textContent?.trim()).toBe('Send')
+    expect(button.getAttribute('aria-describedby')).toContain(status.id)
+    expect(status.textContent?.trim()).toBe('Try again')
   })
 })
 

@@ -125,6 +125,7 @@ async function selectAppearance (next: Appearance): Promise<void> {
   }
 
   &__options {
+    justify-content: flex-start;
     width: 100%;
 
     :deep(.v-btn) {

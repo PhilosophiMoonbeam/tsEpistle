@@ -201,6 +201,23 @@ export function activeOutlineIndex(positions: number[], scrollTop: number): numb
   return active
 }
 
+/**
+ * Resolve the active outline entry for a viewport position, including the
+ * article-end boundary where the final heading may sit below the scroll
+ * threshold.
+ */
+export function activeOutlineIndexAtScroll (
+  positions: number[],
+  scrollY: number,
+  viewportHeight: number,
+  articleBottom: number,
+  thresholdOffset: number
+): number {
+  if (positions.length === 0) return -1
+  if (scrollY + viewportHeight >= articleBottom - 1) return positions.length - 1
+  return activeOutlineIndex(positions, scrollY + thresholdOffset)
+}
+
 /** Cache geometry on layout changes; scrolling only performs a binary search. */
 export function trackPageOutline(
   container: HTMLElement,
@@ -231,7 +248,13 @@ export function trackPageOutline(
           /* Keep malformed literal IDs usable. */
         }
         const element = document.getElementById(id)
-        return element && container.contains(element) && element.checkVisibility() ? [{ anchor: entry.anchor, element }] : []
+        // Do not use checkVisibility here: content-visibility can report
+        // offscreen headings as hidden, permanently dropping them from the
+        // cached outline on long documents. A rendered client rect keeps
+        // genuinely collapsed headings out while retaining the full outline.
+        return element && container.contains(element) && element.getClientRects().length > 0
+          ? [{ anchor: entry.anchor, element }]
+          : []
       })
       positions = headings.map(({ element }) => element.getBoundingClientRect().top + window.scrollY)
       const article = container.getBoundingClientRect()
@@ -247,7 +270,13 @@ export function trackPageOutline(
       lastProgress = progress
       onProgress?.(progress)
     }
-    const index = activeOutlineIndex(positions, window.scrollY + headerBottom + 40)
+    const index = activeOutlineIndexAtScroll(
+      positions,
+      window.scrollY,
+      viewportHeight,
+      articleBottom,
+      headerBottom + 40
+    )
     const anchor = headings[index]?.anchor ?? ''
     if (anchor !== lastAnchor) {
       lastAnchor = anchor

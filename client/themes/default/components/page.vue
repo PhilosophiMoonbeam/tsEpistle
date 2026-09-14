@@ -60,7 +60,7 @@
           )
             template(v-slot:item='props')
               v-btn.ma-0(
-                v-if='props.item.path === "/"'
+                v-if='props.item.raw.path === "/"'
                 size="small"
                 variant="text"
                 @click='goHome'
@@ -69,11 +69,11 @@
                 v-icon(aria-hidden='true', size="small") mdi-home
               v-btn.ma-0(
                 v-else
-                :href='props.item.path'
+                :href='props.item.raw.path'
                 size="small"
                 variant="text"
-                :aria-current='props.item.path === breadcrumbs[breadcrumbs.length - 1].path ? `page` : undefined'
-              ) {{props.item.title}}
+                :aria-current='props.item.raw.path === breadcrumbs[breadcrumbs.length - 1].path ? `page` : undefined'
+              ) {{props.item.raw.title}}
           template(v-if='!isPublished')
             v-spacer
             .text-body-small.text-warning {{$t('common:page.unpublished')}}
@@ -668,7 +668,7 @@ import { getErrorMessage, pushGraphError, showNotification } from '../../../help
 import { tagColorBucket } from '../../../../shared/tag-colors.ts'
 import { navigateToWikiPage } from '../../../helpers/wiki-navigation'
 import {
-  flattenTableOfContents,
+  normalizeTableOfContents,
   type FlattenedTableOfContentsNode,
   type TableOfContentsNode
 } from '../../../helpers/table-of-contents'
@@ -1232,7 +1232,7 @@ export default defineComponent({
       return decodeBase64Json<TableOfContentsNode[]>(this.toc)
     },
     tocFlattened (): FlattenedTableOfContentsNode[] {
-      return flattenTableOfContents(this.tocDecoded).filter(node => node.depth <= 1)
+      return normalizeTableOfContents(this.tocDecoded)
     },
     tocTree (): OutlineNode[] {
       return buildOutlineTree(this.tocFlattened)
@@ -1670,14 +1670,23 @@ export default defineComponent({
       }
       }
     },
+    tocLinkClicked (event: MouseEvent, anchor: string): void {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      event.preventDefault()
+      event.stopPropagation()
+      this.activeAnchor = anchor
+      this.scrollToPageAnchor(anchor)
+    },
     scrollToPageAnchor(anchor: string, focusDestination = true) {
       const container = this.$refs.container as HTMLElement
       const decodedAnchor = decodePageAnchor(anchor)
+      const activeEntry = this.tocFlattened.find(entry => decodePageAnchor(entry.anchor) === decodedAnchor)
+      if (activeEntry) this.activeAnchor = activeEntry.anchor
+      revealContentExtensionTarget(container, decodedAnchor)
       const id = decodedAnchor.replace(/^#/, '')
       const destination = container.id === id
         ? container
         : [...container.querySelectorAll<HTMLElement>('[id]')].find(element => element.id === id) ?? null
-      revealContentExtensionTarget(container, decodedAnchor)
       this.cancelScheduledScroll()
       const view = container.ownerDocument.defaultView
       const reveal = (): void => {
@@ -2401,6 +2410,12 @@ export default defineComponent({
   display: flex;
   align-items: center;
   justify-content: space-between;
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-newsreader);
+  font-size: 1rem;
+  font-weight: 550 !important;
+  letter-spacing: -.02em !important;
+  text-transform: none;
 }
 
 .page-toc-count {
@@ -2597,15 +2612,15 @@ export default defineComponent({
     inset-block: 0;
     right: 0;
     z-index: 0;
-    width: 33.333%;
+    width: 37.5%;
     pointer-events: none;
     content: '';
     background: linear-gradient(
       to bottom left,
       rgb(var(--page-branding-rgb) / var(--page-branding-alpha)) 0%,
-      rgb(var(--page-branding-rgb) / calc(var(--page-branding-alpha) * .6)) 18%,
-      rgb(var(--page-branding-rgb) / calc(var(--page-branding-alpha) * .2)) 34%,
-      rgb(var(--page-branding-rgb) / 0) 48%,
+      rgb(var(--page-branding-rgb) / calc(var(--page-branding-alpha) * .62)) 20%,
+      rgb(var(--page-branding-rgb) / calc(var(--page-branding-alpha) * .24)) 38%,
+      rgb(var(--page-branding-rgb) / 0) 54%,
       rgb(var(--page-branding-rgb) / 0) 100%
     );
   }
@@ -2699,7 +2714,7 @@ export default defineComponent({
       position: absolute;
       grid-column: 2;
       grid-row: 2 / span 2;
-      top: 0;
+      top: calc(var(--wiki-space-2) * -1);
       right: 0;
       z-index: 2;
       max-inline-size: var(--page-branding-mark-size);
@@ -3052,14 +3067,24 @@ export default defineComponent({
 
   .page-toc-toggle-label {
     color: var(--wiki-accent-ink);
-    font-weight: var(--wiki-label-weight) !important;
-    letter-spacing: .09em !important;
-    text-transform: uppercase;
+    font-family: var(--wiki-font-newsreader);
+    font-size: 1rem;
+    font-weight: 550 !important;
+    letter-spacing: -.02em !important;
+    text-transform: none;
   }
+
 
   .page-toc-content {
     min-width: 0;
   }
+}
+.page-col-sd .page-toc-heading,
+.page-col-sd .page-toc-toggle-label {
+  font-family: var(--wiki-font-newsreader);
+  font-weight: 550 !important;
+  letter-spacing: -.02em !important;
+  text-transform: none;
 }
 
 .page-toc-list,
@@ -3145,7 +3170,8 @@ export default defineComponent({
   transition:
     background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
     border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-    color var(--wiki-motion-fast) var(--wiki-motion-ease);
+    color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
 
   &:hover {
     background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
@@ -3163,6 +3189,9 @@ export default defineComponent({
     background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
     color: var(--wiki-accent-ink);
     font-weight: 600;
+    box-shadow:
+      0 .16rem .4rem color-mix(in srgb, var(--wiki-accent-ink) 13%, transparent),
+      0 0 .55rem color-mix(in srgb, var(--wiki-accent-ink) 8%, transparent);
   }
 
   &.page-toc-item--descendant-active {
@@ -3241,10 +3270,17 @@ export default defineComponent({
     min-height: 28px;
     flex-wrap: nowrap;
     gap: 0;
-    justify-content: center;
+    justify-content: space-between;
+    > :not(.v-spacer) {
+      display: flex;
+      min-width: 0;
+      flex: 1 1 0;
+      justify-content: center;
+    }
     align-items: center;
     padding: 0 !important;
     overflow: visible !important;
+
   }
 
   .v-spacer {
@@ -3902,16 +3938,20 @@ export default defineComponent({
   width: max-content;
   max-width: min(26rem, calc(100% - 2rem));
   padding: .25rem .375rem .25rem .75rem;
-  border: 1px solid var(--wiki-surface-border-strong);
+  border: 1px solid color-mix(in srgb, var(--wiki-surface-border-strong) 82%, transparent);
   border-radius: var(--wiki-radius-pill);
   background: rgb(var(--v-theme-surface));
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 76%, transparent);
   color: rgb(var(--v-theme-on-surface));
   box-shadow: var(--wiki-shadow-md);
+  backdrop-filter: blur(14px) saturate(145%);
+  -webkit-backdrop-filter: blur(14px) saturate(145%);
   transform: translateX(-50%);
 
-  @supports (backdrop-filter: blur(1px)) {
-    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 72%, transparent);
-    backdrop-filter: blur(12px) saturate(140%);
+  .v-icon,
+  .page-reading-dock-title,
+  .v-btn {
+    opacity: 1;
   }
 
   .v-btn { flex-shrink: 0; min-height: 28px; height: 28px; color: var(--wiki-accent-ink); }
@@ -3946,8 +3986,8 @@ export default defineComponent({
 
   .page-header-section .page-header-headings {
     grid-column: 1;
-    max-width: var(--page-reader-copy-max);
-    margin-inline: auto;
+    max-width: none;
+    margin-inline: 0;
     font-size: 1.0625rem;
     padding-inline-start: 0;
   }

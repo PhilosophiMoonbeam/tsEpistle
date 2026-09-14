@@ -951,6 +951,23 @@ export default {
     color var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
+.tags-index-item.wiki-tag-color[data-tag-color]:not(.tags-index-item--selected) {
+  border-color: transparent;
+  background-color: transparent;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.tags-index-item.wiki-tag-color[data-tag-color]:not(.tags-index-item--selected):hover {
+  border-color: color-mix(in srgb, var(--wiki-accent-ink) 24%, var(--wiki-surface-border));
+  background: color-mix(in srgb, var(--wiki-accent-ink) 7%, var(--wiki-surface-raised));
+}
+
+.tags-index-item-icon.wiki-tag-color[data-tag-color] {
+  border: 0;
+  background-color: transparent;
+  color: var(--wiki-tag-color-ink);
+}
+
 .tags-index-item:hover {
   border-color: color-mix(in srgb, var(--wiki-accent-ink) 24%, var(--wiki-surface-border));
   background: color-mix(in srgb, var(--wiki-accent-ink) 7%, var(--wiki-surface-raised));

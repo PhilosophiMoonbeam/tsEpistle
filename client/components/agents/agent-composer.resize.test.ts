@@ -23,9 +23,9 @@ class FakeElement {
   readonly style: FakeStyle = {
     height: '',
     overflowY: '',
-    minHeight: '96px',
+    minHeight: '72px',
     maxHeight: '144px',
-    paddingTop: '12px',
+    paddingTop: '8px',
     paddingBottom: '8px',
     lineHeight: '26px'
   }
@@ -235,7 +235,7 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
 }
 
 describe('Agent composer sizing and caret behavior', () => {
-  it('clamps input height at the minimum, content, and maximum while switching overflow at the cap', () => {
+  it('starts at a compact two-line default, grows with measured content, and only overflows at the maximum', () => {
     expect(calculateComposerSizing(20, 40, 100)).toEqual({ height: 40, overflowing: false })
     expect(calculateComposerSizing(72, 40, 100)).toEqual({ height: 72, overflowing: false })
     expect(calculateComposerSizing(100, 40, 100)).toEqual({ height: 100, overflowing: false })
@@ -246,7 +246,12 @@ describe('Agent composer sizing and caret behavior', () => {
     const composer = loadComposer()
     composer.textarea.scrollHeight = 20
     composer.resizeInput()
-    expect(composer.textarea.style.height).toBe('96px')
+    expect(composer.textarea.style.height).toBe('72px')
+    expect(composer.textarea.style.overflowY).toBe('hidden')
+
+    composer.textarea.scrollHeight = 52
+    composer.resizeInput()
+    expect(composer.textarea.style.height).toBe('72px')
     expect(composer.textarea.style.overflowY).toBe('hidden')
 
     composer.textarea.scrollHeight = 112
@@ -265,7 +270,7 @@ describe('Agent composer sizing and caret behavior', () => {
     expect(composer.textarea.style.overflowY).toBe('auto')
   })
 
-  it('shrinks back to the default height and clears stale scroll when content falls below the cap', () => {
+  it('shrinks back to the compact default height and clears stale scroll when content falls below the cap', () => {
     const composer = loadComposer()
     composer.textarea.scrollHeight = 180
     composer.textarea.scrollTop = 60
@@ -274,7 +279,7 @@ describe('Agent composer sizing and caret behavior', () => {
 
     composer.textarea.scrollHeight = 32
     composer.resizeInput()
-    expect(composer.textarea.style.height).toBe('96px')
+    expect(composer.textarea.style.height).toBe('72px')
     expect(composer.textarea.style.overflowY).toBe('hidden')
     expect(composer.textarea.scrollTop).toBe(0)
   })
@@ -365,7 +370,7 @@ describe('Agent composer send completion', () => {
     expect(composer.selectedSkillIds.value).toEqual([])
     expect(composer.goalMode.value).toBe(false)
     expect(composer.sendFailed.value).toBe(false)
-    expect(composer.textarea.style.height).toBe('96px')
+    expect(composer.textarea.style.height).toBe('72px')
     expect(composer.textarea.scrollTop).toBe(0)
   })
 

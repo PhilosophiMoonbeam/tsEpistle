@@ -14,22 +14,22 @@
       @branding-selected='applyBrandingSelection'
       @branding-cancelled='closeBrandingPicker'
     )
-    .dialog-header(v-show='!brandingPickerShown')
-      v-icon(color='primary') mdi-tag-text-outline
-      .text-body-large.ml-3#editor-properties-title {{$t('editor:props.pageProperties')}}
-      v-spacer
-      v-btn.mx-0.mr-2(
-        variant='text'
-        @click='cancel'
-        )
-        span {{ $t('common:actions.cancel') }}
-      v-btn.mx-0(
-        variant="outlined"
-        @click='close'
-        )
-        v-icon(start) mdi-check
-        span {{ $t('common:actions.ok') }}
-    v-card.editor-properties-card(v-show='!brandingPickerShown', rounded='0')
+    v-card.editor-properties-card(v-show='!brandingPickerShown')
+      .dialog-header
+        v-icon(color='primary') mdi-tag-text-outline
+        .text-body-large.ml-3#editor-properties-title {{$t('editor:props.pageProperties')}}
+        v-spacer
+        v-btn.mx-0.mr-2(
+          variant='text'
+          @click='cancel'
+          )
+          span {{ $t('common:actions.cancel') }}
+        v-btn.mx-0(
+          variant="outlined"
+          @click='close'
+          )
+          v-icon(start) mdi-check
+          span {{ $t('common:actions.ok') }}
       v-tabs(v-model='currentTab', color='primary', align-tabs="center", show-arrows)
         v-tab(:value='0') {{$t('editor:props.info')}}
         v-tab(:value='1') {{$t('editor:props.scheduling')}}
@@ -1219,17 +1219,22 @@ export default defineComponent({
 
 
 .editor-properties-card {
-  background: rgb(var(--v-theme-surface));
-  color: rgb(var(--v-theme-on-surface));
   display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+  background: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
+  color: rgb(var(--v-theme-on-surface));
+
+  > .dialog-header,
+  > .v-tabs {
+    flex: 0 0 auto;
+  }
 
   .editor-properties-subsection {
     background: rgba(var(--v-theme-on-surface), .035);
   }
-
-  flex-direction: column;
-  max-height: calc(100dvh - 32px);
-  min-height: 0;
 
   .editor-properties-tabs-window {
     flex: 1 1 auto;

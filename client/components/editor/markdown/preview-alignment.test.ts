@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from '../../../../server/test/bun-test.mts'
 
-import { PreviewAlignmentScheduler, resolveVisiblePreviewTarget, stampDetailsSourceLine } from './preview-alignment'
+import { PreviewAlignmentScheduler, calculatePreviewAlignment, resolveVisiblePreviewTarget, stampDetailsSourceLine } from './preview-alignment'
 
 afterEach(() => {
   document.body.replaceChildren()
@@ -80,6 +80,47 @@ describe('Markdown preview alignment', () => {
       expect(aligned).toEqual([true])
       state[blocked] = previous
     }
+  })
+
+  it('maps the source cursor position to the destination center and keeps scrolling bounded', () => {
+    const measurements = {
+      sourceViewportTop: 0,
+      sourceViewportHeight: 400,
+      cursorTop: 290,
+      cursorBottom: 310,
+      previewViewportTop: 100,
+      previewViewportHeight: 400,
+      destinationTop: 900,
+      destinationBottom: 940,
+      currentScrollTop: 300,
+      maxScrollTop: 1000
+    }
+    const plan = calculatePreviewAlignment(measurements)
+
+    expect(plan).toEqual({ scrollTop: 820 })
+    const destinationTopAfterScroll = measurements.destinationTop - measurements.previewViewportTop + measurements.currentScrollTop - plan.scrollTop
+    const destinationCenterAfterScroll = destinationTopAfterScroll + (measurements.destinationBottom - measurements.destinationTop) / 2
+    const cursorCenter = (measurements.cursorTop + measurements.cursorBottom) / 2
+    expect(destinationCenterAfterScroll).toBe(cursorCenter)
+
+    const atStart = calculatePreviewAlignment({
+      ...measurements,
+      cursorTop: -40,
+      cursorBottom: -20,
+      destinationTop: 0,
+      destinationBottom: 40,
+      currentScrollTop: 0
+    })
+    const atEnd = calculatePreviewAlignment({
+      ...measurements,
+      cursorTop: 500,
+      cursorBottom: 520,
+      destinationTop: 2000,
+      destinationBottom: 2040,
+      currentScrollTop: 900
+    })
+    expect(atStart.scrollTop).toBe(0)
+    expect(atEnd.scrollTop).toBe(1000)
   })
 
   it('stamps details blocks while preserving their authored attributes', () => {
