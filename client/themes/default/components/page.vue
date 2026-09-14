@@ -4,7 +4,7 @@
     nav-header(v-if='!printView', reserve-actions)
     .page-position(v-if='!printView && !talkActive', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100')
       .page-position-fill(:style='{ transform: `scaleX(${readingProgress / 100})` }')
-    .page-reading-dock(v-if='readerFocus && !printView && !talkActive', role='region', :aria-label='$t(`common:page.focusReading`)')
+    .page-reading-dock(v-if='readerFocus && !printView && !talkActive', role='region', :aria-label='$t(`common:page.focusReading`)', style='backdrop-filter: blur(14px) saturate(145%);')
       v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
       span.page-reading-dock-title {{ title }}
       v-btn(variant='text', size='small', prepend-icon='mdi-arrow-collapse-horizontal', @click='toggleReaderFocus') {{$t('common:page.exitFocus')}}

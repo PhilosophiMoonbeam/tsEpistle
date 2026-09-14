@@ -1,8 +1,9 @@
 <template lang='pug'>
-  v-app-bar.nav-header(:height='dense ? 56 : 64', color='surface', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown')
+  v-app-bar.nav-header(:height='dense ? 56 : 64', color='surface', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', style='backdrop-filter: blur(14px) saturate(145%);')
     template(v-slot:extension)
-      v-toolbar.nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search', color='surface', flat)
+      v-toolbar.nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search', color='surface', flat, style='backdrop-filter: blur(14px) saturate(145%);')
         v-text-field.nav-header-search-control(
+          style='backdrop-filter: blur(12px) saturate(150%);'
           ref='searchFieldMobile'
           v-model='search'
           clearable
@@ -40,6 +41,7 @@
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
               v-text-field.nav-header-search-control(
+                style='backdrop-filter: blur(12px) saturate(150%);'
                 ref='searchField',
                 v-if='searchIsShown && $vuetify.display.mdAndUp',
                 v-model='search',
