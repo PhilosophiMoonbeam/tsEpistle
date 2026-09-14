@@ -2818,6 +2818,10 @@ test.describe('reader metadata rendering', () => {
       await expect(date).toHaveAttribute('datetime', updatedAt)
       await expect(date).toHaveAttribute('title', expectedDateTitle)
 
+      const provenance = page.locator('.page-provenance-card')
+      await expect(provenance.locator('.mdi-history')).toHaveCount(1)
+      await expect(provenance.locator('.page-history-btn')).toBeVisible()
+
       const author = page.locator('bdi.page-provenance-author')
       await expect(author).toHaveText(new RegExp(`^${authorName}$`))
       await expect(author.locator('*')).toHaveCount(0)
@@ -2885,6 +2889,15 @@ test.describe('focused reading', () => {
     await expect(page.locator('.page-navigation.v-navigation-drawer--active')).toHaveCount(0)
     await expect(page.locator('.page-toc-card')).toBeHidden()
     await expectLocatorWithinViewport(dock, 'Focused reading controls')
+    const dockGlass = await dock.evaluate(element => {
+      const styles = getComputedStyle(element)
+      return {
+        backdropFilter: styles.backdropFilter || styles.getPropertyValue('-webkit-backdrop-filter'),
+        backgroundImage: styles.backgroundImage
+      }
+    })
+    expect(dockGlass.backdropFilter).not.toBe('none')
+    expect(dockGlass.backgroundImage).not.toBe('none')
     await expectResponsiveLayout(page, 'Focused reading')
     await openSearch(page)
     await expect(page.getByRole('dialog', { name: 'Wiki search', exact: true })).toBeVisible()

@@ -325,7 +325,6 @@
               role='group'
             )
               .page-provenance-card__content
-                v-icon.page-provenance-card__icon(icon='mdi-history', size='16', aria-hidden='true')
                 .page-document-provenance
                   .page-document-row.page-document-row--date(v-if='updatedAt')
                     v-tooltip(location='top', v-if='canViewHistory')
@@ -3248,7 +3247,7 @@ export default defineComponent({
   overflow: hidden !important;
   border: 1px solid var(--wiki-surface-border) !important;
   border-radius: var(--wiki-panel-radius);
-  background: color-mix(in srgb, var(--wiki-accent-spectral) 5%, var(--wiki-surface-raised)) !important;
+  background: var(--wiki-surface-raised) !important;
   box-shadow: var(--wiki-shadow-xs);
 
   &__content {
@@ -3256,21 +3255,17 @@ export default defineComponent({
     min-width: 0;
     min-height: 32px;
     align-items: center;
-    gap: var(--wiki-space-2);
-    padding: 2px var(--wiki-space-3);
-  }
-
-  &__icon {
-    flex: 0 0 auto;
-    color: var(--wiki-accent-spectral);
-    opacity: .76;
+    padding: 3px var(--wiki-space-3);
   }
 
   .page-document-provenance {
     flex: 1 1 auto;
     align-items: center;
     column-gap: var(--wiki-space-3);
+    font-size: .75rem;
+    line-height: 1.35;
   }
+
 }
 
 .page-shortcuts-card {
@@ -3830,7 +3825,6 @@ export default defineComponent({
     color: CanvasText;
   }
 
-  .page-provenance-card__icon,
   .page-provenance-card .page-document-row--date,
   .page-provenance-card .page-document-row--author,
   .page-provenance-card .page-document-author,
@@ -3990,15 +3984,21 @@ export default defineComponent({
   gap: .5rem;
   width: max-content;
   max-width: min(26rem, calc(100% - 2rem));
+  isolation: isolate;
   padding: .25rem .375rem .25rem .75rem;
   border: 1px solid color-mix(in srgb, var(--wiki-surface-border-strong) 82%, transparent);
   border-radius: var(--wiki-radius-pill);
-  background-color: var(--wiki-chrome-surface);
+  background-color: var(--wiki-chrome-surface) !important;
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent)) !important;
   color: rgb(var(--v-theme-on-surface));
   box-shadow: var(--wiki-shadow-md);
-  backdrop-filter: var(--wiki-chrome-blur);
-  -webkit-backdrop-filter: var(--wiki-chrome-blur);
+  backdrop-filter: var(--wiki-chrome-blur) !important;
+  -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
   transform: translateX(-50%);
+
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    border-color: var(--wiki-glass-border);
+  }
 
   .v-icon,
   .page-reading-dock-title,
