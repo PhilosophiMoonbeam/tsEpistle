@@ -3940,8 +3940,7 @@ export default defineComponent({
   padding: .25rem .375rem .25rem .75rem;
   border: 1px solid color-mix(in srgb, var(--wiki-surface-border-strong) 82%, transparent);
   border-radius: var(--wiki-radius-pill);
-  background: rgb(var(--v-theme-surface));
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 76%, transparent);
+  background-color: rgba(var(--v-theme-surface), .36);
   color: rgb(var(--v-theme-on-surface));
   box-shadow: var(--wiki-shadow-md);
   backdrop-filter: blur(14px) saturate(145%);

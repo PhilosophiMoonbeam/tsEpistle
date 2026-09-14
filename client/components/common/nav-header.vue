@@ -898,8 +898,8 @@ export default defineComponent({
 }
 
 .nav-header {
-  --nav-header-tint: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 5%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 3%, transparent));
-  --nav-header-surface: rgba(var(--v-theme-surface), .82);
+  --nav-header-tint: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent));
+  --nav-header-surface: rgba(var(--v-theme-surface), .36);
   isolation: isolate;
   border-bottom: 1px solid var(--wiki-surface-border) !important;
   background-color: var(--nav-header-surface) !important;
@@ -1032,7 +1032,7 @@ export default defineComponent({
       overflow: hidden;
       border: 1px solid var(--wiki-glass-border, var(--wiki-surface-border-strong));
       border-radius: var(--wiki-control-radius);
-      background-color: rgba(var(--v-theme-surface), .68) !important;
+      background-color: rgba(var(--v-theme-surface), .42) !important;
       background-image: none !important;
       color: rgb(var(--v-theme-on-surface)) !important;
       backdrop-filter: blur(12px) saturate(150%) !important;
@@ -1081,7 +1081,7 @@ export default defineComponent({
 
     .v-field--focused {
       border-color: color-mix(in srgb, var(--wiki-ambient-accent) 62%, transparent);
-      background-color: rgba(var(--v-theme-surface), .78) !important;
+      background-color: rgba(var(--v-theme-surface), .54) !important;
       box-shadow: var(--wiki-focus-ring), var(--wiki-shadow-inset);
 
       .v-field__prepend-inner {
