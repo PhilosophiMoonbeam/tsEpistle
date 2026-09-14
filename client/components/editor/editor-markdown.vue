@@ -229,16 +229,17 @@
           span {{$t('editor:markup.insertAbbreviation')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
-          v-tooltip(location="right", color='primary')
-            template(v-slot:activator='{ props }')
-              v-btn.mt-3.animated.fadeInLeft.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen').mx-0
-                v-icon mdi-arrow-expand-all
-            span {{$t('editor:markup.distractionFreeMode')}}
-          v-tooltip(location="right", color='primary')
-            template(v-slot:activator='{ props }')
-              v-btn.mt-3.animated.fadeInLeft.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.markdownFormattingHelp`)', :aria-pressed='helpShown', @click='toggleHelp').mx-0
-                v-icon mdi-help-circle
-            span {{$t('editor:markup.markdownFormattingHelp')}}
+          .editor-markdown-sidebar-actions
+            v-tooltip(location="right", color='primary')
+              template(v-slot:activator='{ props }')
+                v-btn.mt-3.animated.fadeInLeft.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen').mx-0
+                  v-icon mdi-arrow-expand-all
+              span {{$t('editor:markup.distractionFreeMode')}}
+            v-tooltip(location="right", color='primary')
+              template(v-slot:activator='{ props }')
+                v-btn.mt-3.animated.fadeInLeft.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.markdownFormattingHelp`)', :aria-pressed='helpShown', @click='toggleHelp').mx-0
+                  v-icon mdi-help-circle
+              span {{$t('editor:markup.markdownFormattingHelp')}}
       .editor-markdown-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
         div(ref='cm')
       transition(name='editor-markdown-preview', :css='$vuetify.display.mdAndUp')
@@ -1344,6 +1345,12 @@ export default defineComponent({
     @include until($tablet) {
       display: none;
     }
+  }
+  &-sidebar-actions {
+    align-items: center;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(-24px);
   }
 
   &-sysbar {

@@ -1144,10 +1144,9 @@ onBeforeUnmount(() => {
 
   .agent-composer__actions {
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "context context"
-      ". primary";
-    row-gap: var(--wiki-space-1);
+    grid-template-areas: "context primary";
+    column-gap: var(--wiki-space-1);
+    row-gap: 0;
   }
 
   .agent-composer__context-controls {

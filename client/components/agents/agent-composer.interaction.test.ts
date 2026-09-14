@@ -65,7 +65,6 @@ let nextComposerId = 0
 const testUseId = (): string => `agent-composer-test-${++nextComposerId}`
 const descriptor = parse(source, { filename: componentPath }).descriptor
 if (!descriptor.template || descriptor.styles.length === 0) throw new Error('agent-composer.vue template and styles are required')
-
 const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
   pretendToBeVisual: true,
   url: 'http://localhost/'
@@ -415,6 +414,7 @@ describe('Agent composer submit loading presentation', () => {
     if (!loadingStatus) throw new Error('Loading live composer status did not render')
     expect(loadingStatus.textContent?.trim()).toBe('Sending')
   })
+
 
   it('announces external error feedback without relabeling the ordinary Send action', () => {
     const error = mountComposer({ statusLabel: 'Try again', statusTone: 'error' })

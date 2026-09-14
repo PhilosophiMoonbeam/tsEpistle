@@ -1,13 +1,12 @@
 <template lang='pug'>
-  v-app-bar.nav-header(:height='dense ? 56 : 64', color='surface', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', style='backdrop-filter: blur(14px) saturate(145%);')
+  v-app-bar.nav-header(:height='dense ? 56 : 64', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', style='backdrop-filter: blur(14px) saturate(145%);')
     template(v-slot:extension)
-      v-toolbar.nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search', color='surface', flat, style='backdrop-filter: blur(14px) saturate(145%);')
+      v-toolbar.nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search', flat, style='backdrop-filter: blur(14px) saturate(145%);')
         v-text-field.nav-header-search-control(
           style='backdrop-filter: blur(12px) saturate(150%);'
           ref='searchFieldMobile'
           v-model='search'
           clearable
-          bg-color='surface'
           color='primary'
           :label='searchInputLabel'
           single-line
@@ -38,6 +37,20 @@
             span {{title}}
       v-col.nav-header-search-col(md='4', v-if='$vuetify.display.mdAndUp')
         .nav-header-inner.nav-header-command
+          v-tooltip(location="bottom")
+            template(v-slot:activator='{ props }')
+              v-btn.nav-header-browse(
+                v-bind='props'
+                icon
+                href='/t'
+                data-search-modal-action
+                variant='outlined'
+                :aria-current='mode === `tags` ? `page` : undefined'
+                :aria-label='$t(`common:header.browseTags`)'
+              )
+                v-icon(size='18') mdi-tag-outline
+            span {{$t('common:header.browseTags')}}
+
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
               v-text-field.nav-header-search-control(
@@ -66,19 +79,6 @@
                 template(v-slot:append-inner)
                   kbd.nav-header-search-key(v-if='!search && !searchIsFocused', aria-hidden='true') {{ searchShortcutLabel }}
 
-          v-tooltip(location="bottom")
-            template(v-slot:activator='{ props }')
-              v-btn.nav-header-browse(
-                v-bind='props'
-                icon
-                href='/t'
-                data-search-modal-action
-                variant='outlined'
-                :aria-current='mode === `tags` ? `page` : undefined'
-                :aria-label='$t(`common:header.browseTags`)'
-              )
-                v-icon(size='18') mdi-tag-outline
-            span {{$t('common:header.browseTags')}}
 
 
       v-col.nav-header-actions-col(cols='7', md='4')
@@ -716,8 +716,14 @@ export default defineComponent({
       this.searchClose()
       await this.$nextTick()
       const desktop = this.$vuetify.display.mdAndUp
-      const previousTarget = document.querySelector<HTMLElement>(desktop ? '.nav-header-logo' : '.nav-header-agent') ?? document.querySelector<HTMLElement>('.nav-header-logo')
-      const forwardTarget = document.querySelector<HTMLElement>('.nav-header-browse') ?? document.querySelector<HTMLElement>('.nav-header-actions button:not(:disabled), .nav-header-actions a[href]')
+      const previousTarget = document.querySelector<HTMLElement>(
+        desktop ? '.nav-header-browse' : '.nav-header-agent'
+      ) ?? document.querySelector<HTMLElement>('.nav-header-logo')
+      const forwardTarget = document.querySelector<HTMLElement>(
+        desktop
+          ? '.nav-header-actions button:not(:disabled), .nav-header-actions a[href]'
+          : '.nav-header-browse'
+      ) ?? document.querySelector<HTMLElement>('.nav-header-actions button:not(:disabled), .nav-header-actions a[href]')
       const target = event.shiftKey ? previousTarget : forwardTarget
       target?.focus({ preventScroll: true })
     },
@@ -893,38 +899,38 @@ export default defineComponent({
 
 .nav-header {
   --nav-header-tint: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 5%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 3%, transparent));
-  --nav-header-surface: color-mix(in srgb, rgb(var(--v-theme-surface)) 82%, transparent);
+  --nav-header-surface: rgba(var(--v-theme-surface), .82);
   isolation: isolate;
   border-bottom: 1px solid var(--wiki-surface-border) !important;
-  background: var(--nav-header-tint), var(--nav-header-surface) !important;
+  background-color: var(--nav-header-surface) !important;
+  background-image: var(--nav-header-tint) !important;
   color: rgb(var(--v-theme-on-surface));
   box-shadow: 0 3px 10px color-mix(in srgb, var(--wiki-shadow-color) 35%, transparent) !important;
+  backdrop-filter: var(--wiki-glass-blur, blur(16px) saturate(180%)) !important;
+  -webkit-backdrop-filter: var(--wiki-glass-blur, blur(16px) saturate(180%)) !important;
 
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    background: var(--nav-header-tint), var(--wiki-glass-bg, var(--nav-header-surface)) !important;
-    backdrop-filter: var(--wiki-glass-blur);
-    -webkit-backdrop-filter: var(--wiki-glass-blur);
     border-bottom-color: var(--wiki-glass-border) !important;
   }
 
   > .v-toolbar__content {
     overflow: hidden;
+    background: transparent !important;
   }
 
   .v-toolbar__extension {
     overflow: hidden;
     padding-inline: var(--wiki-space-4);
-    background: var(--wiki-glass-bg, var(--nav-header-surface)) !important;
-
-    @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-      backdrop-filter: var(--wiki-glass-blur);
-      -webkit-backdrop-filter: var(--wiki-glass-blur);
-    }
+    background-color: var(--nav-header-surface) !important;
+    background-image: var(--nav-header-tint) !important;
+    backdrop-filter: var(--wiki-glass-blur, blur(16px) saturate(180%)) !important;
+    -webkit-backdrop-filter: var(--wiki-glass-blur, blur(16px) saturate(180%)) !important;
 
     .v-toolbar__content {
       height: auto !important;
       min-height: var(--wiki-control-height);
       padding: 0;
+      background: transparent !important;
     }
   }
 
@@ -1026,14 +1032,21 @@ export default defineComponent({
       overflow: hidden;
       border: 1px solid var(--wiki-glass-border, var(--wiki-surface-border-strong));
       border-radius: var(--wiki-control-radius);
-      background: var(--nav-header-surface) !important;
-      backdrop-filter: blur(12px) saturate(150%);
-      -webkit-backdrop-filter: blur(12px) saturate(150%);
+      background-color: rgba(var(--v-theme-surface), .68) !important;
+      background-image: none !important;
+      color: rgb(var(--v-theme-on-surface)) !important;
+      backdrop-filter: blur(12px) saturate(150%) !important;
+      -webkit-backdrop-filter: blur(12px) saturate(150%) !important;
       box-shadow: var(--wiki-shadow-inset);
       transition:
         border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
         background-color var(--wiki-motion-normal) var(--wiki-motion-ease),
         box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
+    }
+
+    .v-field__overlay {
+      background: transparent !important;
+      opacity: 1 !important;
     }
 
     .v-field__input {
@@ -1042,11 +1055,22 @@ export default defineComponent({
       font-size: .875rem;
       font-weight: 560;
       letter-spacing: .005em;
+      opacity: 1 !important;
+    }
+
+    .v-field__input input {
+      opacity: 1 !important;
     }
 
     .v-field__prepend-inner {
       color: var(--wiki-ambient-accent);
       opacity: 1;
+    }
+
+    .v-field__prepend-inner > .v-icon,
+    .v-field__append-inner > .v-icon,
+    .v-field__clearable > .v-icon {
+      opacity: 1 !important;
     }
 
     .v-label {
@@ -1057,7 +1081,7 @@ export default defineComponent({
 
     .v-field--focused {
       border-color: color-mix(in srgb, var(--wiki-ambient-accent) 62%, transparent);
-      background: color-mix(in srgb, rgb(var(--v-theme-surface)) 88%, transparent) !important;
+      background-color: rgba(var(--v-theme-surface), .78) !important;
       box-shadow: var(--wiki-focus-ring), var(--wiki-shadow-inset);
 
       .v-field__prepend-inner {
@@ -1072,12 +1096,10 @@ export default defineComponent({
 
   .nav-header-mobile-search {
     width: 100%;
-    background: var(--nav-header-surface) !important;
-
-    @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-      backdrop-filter: var(--wiki-glass-blur);
-      -webkit-backdrop-filter: var(--wiki-glass-blur);
-    }
+    background-color: var(--nav-header-surface) !important;
+    background-image: var(--nav-header-tint) !important;
+    backdrop-filter: var(--wiki-glass-blur, blur(16px) saturate(180%)) !important;
+    -webkit-backdrop-filter: var(--wiki-glass-blur, blur(16px) saturate(180%)) !important;
 
     .nav-header-search-control {
       max-width: none;
@@ -1434,20 +1456,20 @@ export default defineComponent({
 
     .nav-header-command {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 36px;
+      grid-template-columns: 36px minmax(0, 1fr);
       gap: var(--wiki-space-1);
     }
 
-    .nav-header-command > .nav-header-search-control {
-      grid-column: 1;
-      justify-self: stretch;
-      width: 100%;
-    }
-
     .nav-header-command > .nav-header-browse {
-      grid-column: 2;
+      grid-column: 1;
       justify-self: start;
       margin: 0;
+    }
+
+    .nav-header-command > .nav-header-search-control {
+      grid-column: 2;
+      justify-self: stretch;
+      width: 100%;
     }
 
 

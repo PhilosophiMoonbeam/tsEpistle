@@ -47,7 +47,10 @@
               <v-icon icon="mdi-creation-outline" size="20" aria-hidden="true" />
             </v-avatar>
             <div class="inline-agent__heading">
-              <h2 :id="workspaceTitleId">Wiki Agent</h2>
+              <h2 :id="workspaceTitleId">
+                <span class="inline-agent__workspace-title--wide">Wiki Agent</span>
+                <span class="inline-agent__workspace-title--compact">Agent</span>
+              </h2>
               <p class="inline-agent__session-title" :title="sessionTitle">{{ sessionTitle }}</p>
             </div>
           </div>
@@ -125,13 +128,16 @@
           </v-btn>
           <v-btn
             class="inline-agent__session-action inline-agent__temporary-session"
+            :class="{ 'inline-agent__temporary-session--active': isTemporary }"
             icon="mdi-timer-sand-complete"
-            variant="text"
-            color="primary"
+            :variant="isTemporary ? 'tonal' : 'text'"
+            :color="isTemporary ? 'primary' : undefined"
             rounded="circle"
             :loading="creatingRetention === 'temporary'"
             aria-label="Temporary conversation"
-            title="Start a temporary conversation"
+            :aria-pressed="isTemporary"
+            :data-state="isTemporary ? 'active' : undefined"
+            :title="isTemporary ? 'Current temporary conversation' : 'Start a temporary conversation'"
             :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention)"
             @click="newTemporarySession"
           />
@@ -1199,6 +1205,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   line-height: 1.2;
 }
 
+.inline-agent__workspace-title--compact {
+  display: none;
+}
+
 .inline-agent__session-title {
   max-width: 28rem;
   margin-top: var(--wiki-space-1);
@@ -1240,11 +1250,19 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__new-session {
   position: relative;
-  min-height: calc(var(--wiki-control-height) - var(--wiki-space-1));
+  height: calc(var(--wiki-control-height) - var(--wiki-space-2)) !important;
+  min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
   isolation: isolate;
   overflow: hidden;
   margin-inline-start: var(--wiki-space-1);
+  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 32%, transparent);
   border-radius: var(--wiki-radius-pill) !important;
+  background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent) !important;
+  color: var(--wiki-accent-ink) !important;
+  transition:
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    color var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
 .inline-agent__new-session :deep(.v-btn__prepend),
@@ -1252,18 +1270,48 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__new-session :deep(.v-btn__append) {
   z-index: 1;
 }
+
+.inline-agent__new-session:hover {
+  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 42%, transparent);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 16%, transparent) !important;
+}
+
+.inline-agent__new-session.v-btn--disabled {
+  border-color: transparent;
+  background: transparent !important;
+  color: rgb(var(--v-theme-on-surface)) !important;
+  opacity: .38;
+}
+
 .inline-agent__temporary-session {
   width: var(--wiki-control-height);
+  height: var(--wiki-control-height);
   min-width: var(--wiki-control-height);
+  min-height: var(--wiki-control-height);
   padding-inline: 0;
-  border: 1px solid color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 30%, var(--wiki-surface-border));
-  background: color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 6%, transparent);
+  border: 1px solid transparent !important;
+  border-radius: 50% !important;
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 72%, transparent) !important;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 80%, rgb(var(--v-theme-surface)) 20%) !important;
 }
-.inline-agent__temporary-session:hover,
-.inline-agent__temporary-session:focus-visible,
-.inline-agent__temporary-session:active {
-  border-color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
-  background: color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 14%, var(--wiki-surface-raised));
+
+.inline-agent__temporary-session:hover:not(.inline-agent__temporary-session--active),
+.inline-agent__temporary-session:focus-visible:not(.inline-agent__temporary-session--active) {
+  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent) !important;
+  background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent) !important;
+  color: var(--wiki-accent-warm) !important;
+}
+
+.inline-agent__temporary-session--active {
+  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 32%, transparent) !important;
+  background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent) !important;
+  color: var(--wiki-accent-ink) !important;
+}
+
+.inline-agent__temporary-session--active:hover,
+.inline-agent__temporary-session--active:focus-visible {
+  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 42%, transparent) !important;
+  background: color-mix(in srgb, var(--wiki-accent-warm) 16%, transparent) !important;
 }
 .inline-agent__progress {
   position: absolute;
@@ -2003,6 +2051,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .inline-agent__workspace-title--wide { display: none; }
+  .inline-agent__workspace-title--compact { display: inline; }
 
 
   .inline-agent__desktop-panel-btn {

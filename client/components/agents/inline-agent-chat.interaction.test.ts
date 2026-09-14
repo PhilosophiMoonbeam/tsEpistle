@@ -16,7 +16,6 @@ const composerComponentPath = path.join(process.cwd(), 'client/components/agents
 const composerComponentSource = fs.readFileSync(composerComponentPath, 'utf8')
 const composerDescriptor = parse(composerComponentSource, { filename: composerComponentPath }).descriptor
 if (!composerDescriptor.template || !composerDescriptor.scriptSetup) throw new Error('agent-composer.vue template and setup script are required')
-const componentStyles = descriptor.styles.map(style => style.content).join('\n')
 const composerStyles = composerDescriptor.styles.map(style => style.content).join('\n')
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
@@ -349,7 +348,7 @@ const settle = async (): Promise<void> => {
 
 const mountInlineAgent = (
   lockState?: LockState,
-  options: { readonly approvalJumpVisible?: boolean; readonly followJumpVisible?: boolean } = {}
+  options: { readonly approvalJumpVisible?: boolean; readonly followJumpVisible?: boolean; readonly isTemporary?: boolean } = {}
 ): MountedInlineAgent => {
   const host = document.createElement('div')
   document.body.append(host)
@@ -448,7 +447,7 @@ const mountInlineAgent = (
     setCurrentChatPinned: () => undefined,
     creatingRetention: null,
     keepingConversation: false,
-    isTemporary: false,
+    isTemporary: options.isTemporary ?? false,
     temporaryExpiry: '',
     sessionNotice: '',
     closePanels: () => {
@@ -667,10 +666,30 @@ describe('Inline Agent workspace actions', () => {
     expect(newConversation.classList.contains('rounded-pill')).toBe(true)
     expect(newConversation.hasAttribute('aria-haspopup')).toBe(false)
     expect(newConversation.hasAttribute('aria-expanded')).toBe(false)
-    expect(newConversation.compareDocumentPosition(temporaryConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(temporaryConversation.classList.contains('inline-agent__temporary-session--active')).toBe(false)
+    expect(temporaryConversation.getAttribute('aria-pressed')).toBe('false')
+    expect(temporaryConversation.getAttribute('data-state')).toBeNull()
     expect(temporaryConversation.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
+    const active = mountInlineAgent(undefined, { isTemporary: true })
+    const activeTemporary = active.root.querySelector<HTMLElement>('.inline-agent__temporary-session')
+    if (!activeTemporary) throw new Error('Active temporary conversation control did not render')
+    expect(activeTemporary.classList.contains('inline-agent__temporary-session--active')).toBe(true)
+    expect(activeTemporary.getAttribute('aria-pressed')).toBe('true')
+    expect(activeTemporary.getAttribute('data-state')).toBe('active')
+
     await openPanelMenu(mounted)
+  })
+
+  it('renders distinct desktop and mobile workspace titles', () => {
+    const mounted = mountInlineAgent()
+    const title = mounted.root.querySelector<HTMLElement>('.inline-agent__heading h2')
+    const wideTitle = mounted.root.querySelector<HTMLElement>('.inline-agent__workspace-title--wide')
+    const compactTitle = mounted.root.querySelector<HTMLElement>('.inline-agent__workspace-title--compact')
+    if (!title || !wideTitle || !compactTitle) throw new Error('Responsive workspace title did not render')
+
+    expect(wideTitle.textContent?.trim()).toBe('Wiki Agent')
+    expect(compactTitle.textContent?.trim()).toBe('Agent')
   })
 
   it('creates temporary and saved conversations with distinct retention', async () => {

@@ -3992,6 +3992,19 @@ export default defineComponent({
     padding-inline-start: 0;
   }
 
+  // The focused copy keeps its centered shell, while the decorative mark
+  // remains positioned against the full-width hero like it is in standard mode.
+  .page-header-section,
+  .page-header-section > .is-page-header,
+  .page-header-headings--branded {
+    position: static;
+  }
+
+  .page-header-headings--branded > .page-branding-mark {
+    top: var(--wiki-space-2);
+    right: var(--wiki-page-gutter);
+  }
+
   .page-col-content:not(.is-page-header) {
     flex: 0 0 100%;
     max-width: 100%;
