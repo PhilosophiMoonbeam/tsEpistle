@@ -2157,6 +2157,7 @@ test.describe('managed login logo auth independence', () => {
   test('switches an animated field immediately to static on reduced-motion opt-in and permanently tears down its resources', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
     await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await installLogoResourceTrace(page)
     const artifacts = await installManagedLogo(page, squareEffect)
     const sceneRequests: string[] = []
     page.on('request', request => {
@@ -2368,7 +2369,11 @@ test.describe('managed login logo auth independence', () => {
     await email.focus()
     await expect(email).toBeFocused()
 
-    await canvas.dispatchEvent('webglcontextlost', { cancelable: true })
+    await page.evaluate(() => {
+      const canvas = document.querySelector('.login-particle-logo canvas')
+      if (!(canvas instanceof HTMLCanvasElement)) throw new Error('The committed particle canvas is unavailable.')
+      canvas.dispatchEvent(new Event('webglcontextlost', { bubbles: true, cancelable: true }))
+    })
     await expect(staticImage).toHaveCSS('opacity', '1')
     await expect(canvas).toHaveCount(0)
     await expect(email).toBeFocused()

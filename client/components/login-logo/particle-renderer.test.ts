@@ -28,6 +28,7 @@ const testCanvas = {} as HTMLCanvasElement
 class FakeWebGPURenderer {
   readonly options: FakeRendererOptions
   readonly disposeCalls = { count: 0 }
+  readonly initCalls = { count: 0 }
   coordinateSystem: number
   initialized = false
   onDeviceLost: (info: unknown) => void = () => {}
@@ -41,6 +42,7 @@ class FakeWebGPURenderer {
 
 
   async init(): Promise<this> {
+    this.initCalls.count += 1
     const plan = initPlans.shift() ?? {
       coordinateSystem: this.options.forceWebGL === true ? WebGLCoordinateSystem : WebGPUCoordinateSystem
     }
@@ -135,6 +137,21 @@ describe('LogoParticleRenderer', () => {
     renderer.dispose()
 
     expect(rendererRecord(renderer).disposeCalls.count).toBe(1)
+  })
+
+  it('coalesces concurrent public initialization calls', async () => {
+    const gate = deferred<void>()
+    queuePlans({ ...planFor('webgpu'), gate: gate.promise })
+    const renderer = new LogoParticleRenderer()
+
+    const first = renderer.init()
+    const second = renderer.init()
+    expect(first).toBe(second)
+    expect(rendererRecord(renderer).initCalls.count).toBe(1)
+
+    gate.resolve()
+    await expect(first).resolves.toBe(renderer)
+    expect(rendererRecord(renderer).initCalls.count).toBe(1)
   })
 })
 

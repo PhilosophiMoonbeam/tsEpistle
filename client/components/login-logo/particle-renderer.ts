@@ -102,6 +102,7 @@ const freezeDiagnostics = (diagnostics: ParticleBackendDiagnostics): ParticleBac
 export class LogoParticleRenderer extends WebGPURenderer {
   private disposeRequested = false
   private disposed = false
+  private initializationPromise: Promise<this> | null = null
   constructor(options: LogoParticleRendererOptions = {}) {
     const rendererParameters = {
       alpha: true,
@@ -121,20 +122,24 @@ export class LogoParticleRenderer extends WebGPURenderer {
     this.toneMapping = NoToneMapping
   }
 
-  override async init(): Promise<this> {
-    if (this.disposeRequested) throw retiredError()
+  override init(): Promise<this> {
+    if (this.disposeRequested) return Promise.reject(retiredError())
+    if (this.initializationPromise !== null) return this.initializationPromise
 
-    try {
-      const renderer = await super.init()
-      if (this.disposeRequested) {
-        this.dispose()
-        throw retiredError()
+    this.initializationPromise = (async () => {
+      try {
+        const renderer = await super.init()
+        if (this.disposeRequested) {
+          this.dispose()
+          throw retiredError()
+        }
+        return renderer
+      } catch (error) {
+        if (this.disposeRequested && this.initialized) this.dispose()
+        throw error
       }
-      return renderer
-    } catch (error) {
-      if (this.disposeRequested && this.initialized) this.dispose()
-      throw error
-    }
+    })()
+    return this.initializationPromise
   }
 
   override dispose(): void {
