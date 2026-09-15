@@ -75,7 +75,7 @@ type RegistrationLike = {
 
 type PwaModule = {
   readonly pwaState: PwaState
-  registerPwa(callbacks?: PwaLifecycleCallbacks): Promise<ServiceWorkerRegistration | null>
+  registerPwa(callbacks?: PwaLifecycleCallbacks): Promise<RegistrationLike | null>
   setReloadSafetyProvider(provider: ReloadSafetyProvider | null): void
 }
 
@@ -88,6 +88,7 @@ type PwaHarness = {
   readonly registration: RegistrationLike
   readonly container: { controller: WorkerLike | null }
   readonly registerCalls: unknown[][]
+  readonly fetchCalls: string[]
   setRegisterImplementation(implementation: () => Promise<RegistrationLike>): void
   sendWorkerMessage(data: unknown, source?: WorkerLike): void
   restore(): void
@@ -131,6 +132,7 @@ const createHarness = async (mode: 'feature' | 'retirement' = 'feature'): Promis
     removeEventListener: workerHub.removeEventListener.bind(workerHub)
   }
   const registerCalls: unknown[][] = []
+  const fetchCalls: string[] = []
   let registerImplementation = async (): Promise<RegistrationLike> => registration
   const container = {
     controller: activeWorker as WorkerLike | null,
@@ -154,7 +156,10 @@ const createHarness = async (mode: 'feature' | 'retirement' = 'feature'): Promis
   const window = {
     location: { origin: ORIGIN, href: `${ORIGIN}/` },
     matchMedia: () => ({ matches: false, addEventListener: () => undefined, removeEventListener: () => undefined }),
-    fetch: async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    fetch: async (input: string) => {
+      fetchCalls.push(input)
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    },
     addEventListener: windowHub.addEventListener.bind(windowHub),
     removeEventListener: windowHub.removeEventListener.bind(windowHub)
   }
@@ -173,6 +178,7 @@ const createHarness = async (mode: 'feature' | 'retirement' = 'feature'): Promis
     registration,
     container,
     registerCalls,
+    fetchCalls,
     setRegisterImplementation(implementation) {
       registerImplementation = implementation
     },
@@ -200,6 +206,35 @@ const readyMessage = (overrides: Record<string, unknown> = {}): Record<string, u
 })
 
 describe('PWA helper lifecycle', () => {
+  it('probes an initially online server during registration without browser online events or explicit Retry', async () => {
+    const harness = await createHarness()
+    try {
+      expect(harness.module.pwaState.connectionState).toBe('checking')
+      await harness.module.registerPwa()
+
+      await vi.waitFor(() => expect(harness.module.pwaState.connectionState).toBe('online'))
+      expect(harness.module.pwaState.serverReachable).toBe(true)
+      expect(harness.module.pwaState.serverHealthy).toBe(true)
+      expect(harness.fetchCalls).toEqual(['/healthz'])
+    } finally {
+      harness.restore()
+    }
+  })
+
+  it('does not repeat the automatic initial health probe on repeated registration calls', async () => {
+    const harness = await createHarness()
+    try {
+      await harness.module.registerPwa()
+      await vi.waitFor(() => expect(harness.module.pwaState.connectionState).toBe('online'))
+      expect(harness.fetchCalls).toEqual(['/healthz'])
+
+      await harness.module.registerPwa()
+      expect(harness.fetchCalls).toEqual(['/healthz'])
+    } finally {
+      harness.restore()
+    }
+  })
+
   it('allows an explicit Retry after an initial registration failure', async () => {
     const harness = await createHarness()
     try {
@@ -214,7 +249,7 @@ describe('PWA helper lifecycle', () => {
       expect(first).toBeNull()
       expect(harness.module.pwaState.registrationState).toBe('error')
       expect(harness.module.pwaState.registrationError).toBe('initial registration failed')
-      expect(onError).toHaveBeenCalledOnce()
+      expect(onError).toHaveBeenCalledTimes(1)
 
       const second = await harness.module.registerPwa()
       expect(second).toBe(harness.registration)
@@ -277,7 +312,7 @@ describe('PWA helper lifecycle', () => {
       expect(harness.module.pwaState.offlineReady).toBe(true)
       expect(harness.module.pwaState.offlineReadyRelease).toBe(RELEASE)
       expect(harness.module.pwaState.offlineReadyManifestDigest).toBe(DIGEST)
-      expect(onOfflineReady).toHaveBeenCalledOnce()
+      expect(onOfflineReady).toHaveBeenCalledTimes(1)
 
       // Eviction makes readiness unavailable again even though registration remains active.
       cache.entries.clear()
@@ -307,7 +342,7 @@ describe('PWA helper lifecycle', () => {
       expect(onNeedReload).not.toHaveBeenCalled()
 
       harness.module.setReloadSafetyProvider(() => ({ safe: true, revision: 'clean-revision', actorEpoch: 'actor-2' }))
-      await vi.waitFor(() => expect(onNeedReload).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(onNeedReload).toHaveBeenCalledTimes(1))
       expect(harness.module.pwaState.reloadSafe).toBe(true)
       expect(harness.module.pwaState.safetyRevision).toBe('clean-revision')
 
@@ -330,7 +365,7 @@ describe('PWA helper lifecycle', () => {
       harness.sendWorkerMessage({ type: 'PWA_UPDATE_PREPARING', ...activation, phase: 'activating' })
       harness.sendWorkerMessage({ type: 'PWA_UPDATE_ACTIVATED', ...activation })
       harness.sendWorkerMessage({ type: 'PWA_UPDATE_ACTIVATED', ...activation })
-      await vi.waitFor(() => expect(onNeedReload).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(onNeedReload).toHaveBeenCalledTimes(1))
       expect(onNeedReload).toHaveBeenCalledTimes(1)
       expect(harness.module.pwaState.reloadNeeded).toBe(false)
       expect(harness.module.pwaState.reloadSafe).toBe(true)
@@ -362,7 +397,7 @@ describe('PWA helper lifecycle', () => {
       expect(harness.module.pwaState.reloadNeeded).toBe(false)
 
       harness.sendWorkerMessage({ type: 'PWA_UPDATE_ACTIVATED', ...activation }, replacement)
-      await vi.waitFor(() => expect(onNeedReload).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(onNeedReload).toHaveBeenCalledTimes(1))
       expect(onNeedReload).toHaveBeenCalledTimes(1)
     } finally {
       harness.restore()
@@ -398,7 +433,7 @@ describe('PWA helper lifecycle', () => {
 
       snapshot = { safe: true, revision: 'clean-revision' }
       harness.module.setReloadSafetyProvider(() => snapshot)
-      await vi.waitFor(() => expect(onNeedReload).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(onNeedReload).toHaveBeenCalledTimes(1))
       expect(harness.module.pwaState.reloadSafe).toBe(true)
       expect(harness.module.pwaState.reloadNeeded).toBe(false)
       expect(harness.module.pwaState.safetyRevision).toBe('clean-revision')

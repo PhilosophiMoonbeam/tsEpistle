@@ -184,6 +184,7 @@ let installPromptInFlight: Promise<InstallChoice['outcome'] | null> | undefined
 let installListenersAttached = false
 let serviceWorkerListenersAttached = false
 let registrationInFlight: Promise<ServiceWorkerRegistration | null> | undefined
+let initialConnectionProbeStarted = false
 let registrationReference: ServiceWorkerRegistration | null = null
 let activeController: ServiceWorker | null = null
 let safetyProvider: ReloadSafetyProvider = () => ({ safe: true, revision: 'initial' })
@@ -897,6 +898,10 @@ export function registerPwa(callbacks: PwaLifecycleCallbacks = {}): Promise<Serv
     state.registrationState = 'unsupported'
     markOfflineUnavailable()
     return Promise.resolve(null)
+  }
+  if (!initialConnectionProbeStarted) {
+    initialConnectionProbeStarted = true
+    void retryServerConnection()
   }
   if (registrationReference) return Promise.resolve(registrationReference)
   if (registrationInFlight) return registrationInFlight
