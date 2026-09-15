@@ -15,6 +15,7 @@
         :active="sceneActive"
         :style="sceneStyle"
         @first-frame="sceneMount.onFirstFrame"
+        @frame-pending="sceneMount.onFramePending"
         @error="sceneMount.onError"
         @context-lost="sceneMount.onContextLost"
       )
@@ -70,12 +71,46 @@ interface SceneMount {
   readonly particles: ParsedLogoParticles
   readonly epoch: number
   readonly onFirstFrame: () => void
+  readonly onFramePending: () => void
   readonly onError: () => void
   readonly onContextLost: () => void
 }
 
 interface ParticleSceneInstance {
   readonly teardown: () => void
+}
+
+interface ParticlePerformanceStartup {
+  enhancementScheduledAt?: number
+  importStartedAt?: number
+  importEndedAt?: number
+  fetchStartedAt?: number
+  fetchEndedAt?: number
+  parseStartedAt?: number
+  parseEndedAt?: number
+}
+
+interface ParticlePerformanceBenchmark {
+  readonly startup?: ParticlePerformanceStartup
+}
+
+type ParticlePerformanceWindow = Window & {
+  readonly __logoParticlePerformance?: ParticlePerformanceBenchmark
+}
+
+type ParticlePerformanceMilestone = keyof ParticlePerformanceStartup
+
+const readParticlePerformanceStartup = (): ParticlePerformanceStartup | null => {
+  if (typeof window === 'undefined') return null
+  return (window as ParticlePerformanceWindow).__logoParticlePerformance?.startup ?? null
+}
+
+const stampParticlePerformanceStartup = (
+  startup: ParticlePerformanceStartup | null,
+  milestone: ParticlePerformanceMilestone
+): void => {
+  if (!startup || startup[milestone] !== undefined) return
+  startup[milestone] = performance.now()
 }
 
 type IdleWindow = Omit<Window, 'requestIdleCallback' | 'cancelIdleCallback'> & {
@@ -89,6 +124,8 @@ const FIELD_CLEARANCE = 0.08
 const MIN_RENDERED_LONG_AXIS_PX = 256
 const MIN_RENDERED_SHORT_AXIS_PX = 48
 const ENHANCEMENT_DEADLINE_MS = 1_500
+const SCENE_IMAGE_CROSSFADE = 'opacity 280ms cubic-bezier(0.16, 1, 0.3, 1)'
+const RESUME_DEADLINE_MS = 1_500
 const IDLE_TIMEOUT_MS = 750
 
 const toPixels = (value: number): string => `${Math.round(value * 1000) / 1000}px`
@@ -112,6 +149,7 @@ export default defineComponent({
   },
   setup (props) {
     const instance = getCurrentInstance()
+    const particlePerformanceStartup = readParticlePerformanceStartup()
     const mediaEligible = ref(false)
     const surfaceVisible = ref(false)
     const pageVisible = ref(false)
@@ -122,8 +160,10 @@ export default defineComponent({
     const loadedStaticUrl = ref<string | null>(null)
     const sceneMount = shallowRef<SceneMount | null>(null)
     const sceneReady = ref(false)
+    const sceneCommitted = ref(false)
     const sceneInstance = useTemplateRef<ParticleSceneInstance>('sceneInstance')
     const staticImageElement = useTemplateRef<HTMLImageElement>('staticImageElement')
+    let terminalEffect: LogoEffectDescriptor | null = null
     const activeEffect = computed(() => isLogoEffectDescriptor(props.effect) ? props.effect : null)
     const animationSizeEligible = computed(() => {
       const currentLayout = layout.value
@@ -160,6 +200,7 @@ export default defineComponent({
     let cancelIdleWork: (() => void) | null = null
     let fetchController: AbortController | null = null
     let deadlineTimer: number | null = null
+    let resumeDeadlineTimer: number | null = null
     let enhancementEpoch = 0
     let reducedMotionLatched = false
     let previousAura = ''
@@ -235,9 +276,41 @@ export default defineComponent({
     }
 
     const clearDeadline = (): void => {
-      if (deadlineTimer === null) return
-      window.clearTimeout(deadlineTimer)
-      deadlineTimer = null
+      if (deadlineTimer !== null) {
+        window.clearTimeout(deadlineTimer)
+        deadlineTimer = null
+      }
+      if (resumeDeadlineTimer !== null) {
+        window.clearTimeout(resumeDeadlineTimer)
+        resumeDeadlineTimer = null
+      }
+    }
+
+    const setSceneReady = (ready: boolean): void => {
+      sceneReady.value = ready
+      const image = staticImageElement.value
+      if (!image) return
+      image.style.transition = ready
+        ? (reducedMotion.value ? 'none' : SCENE_IMAGE_CROSSFADE)
+        : 'none'
+      image.style.opacity = ready ? '0' : '1'
+    }
+
+    const scheduleResumeDeadline = (epoch: number, effect: LogoEffectDescriptor): void => {
+      if (
+        resumeDeadlineTimer !== null ||
+        !sceneCommitted.value ||
+        !isCurrentLoad(epoch, effect)
+      ) return
+      resumeDeadlineTimer = window.setTimeout(() => {
+        resumeDeadlineTimer = null
+        if (
+          !isCurrentLoad(epoch, effect) ||
+          sceneMount.value?.epoch !== epoch ||
+          sceneReady.value
+        ) return
+        failEnhancement(epoch)
+      }, RESUME_DEADLINE_MS)
     }
 
     const invalidateEnhancement = (): number => {
@@ -249,6 +322,7 @@ export default defineComponent({
       clearDeadline()
       sceneMount.value = null
       sceneReady.value = false
+      sceneCommitted.value = false
       return enhancementEpoch
     }
 
@@ -257,15 +331,19 @@ export default defineComponent({
 
     const isCurrentLoad = (epoch: number, effect: LogoEffectDescriptor): boolean =>
       isCurrentEpoch(epoch, effect) && hardEligible.value && activityEligible.value
-
     const failEnhancement = (epoch: number): void => {
       if (epoch !== enhancementEpoch) return
+      if (sceneCommitted.value && sceneMount.value?.epoch === epoch) {
+        terminalEffect = activeEffect.value
+      }
       invalidateEnhancement()
     }
 
     const loadEnhancement = async (epoch: number, effect: LogoEffectDescriptor): Promise<void> => {
       try {
+        stampParticlePerformanceStartup(particlePerformanceStartup, 'importStartedAt')
         const sceneModule = await import('./LogoParticleScene.vue')
+        stampParticlePerformanceStartup(particlePerformanceStartup, 'importEndedAt')
         if (!isCurrentLoad(epoch, effect)) return
 
         const particleUrl = new URL(effect.particleUrl, window.location.href)
@@ -273,6 +351,7 @@ export default defineComponent({
 
         const controller = new AbortController()
         fetchController = controller
+        stampParticlePerformanceStartup(particlePerformanceStartup, 'fetchStartedAt')
         const response = await fetch(effect.particleUrl, {
           credentials: 'omit',
           signal: controller.signal
@@ -281,8 +360,11 @@ export default defineComponent({
         if (!response.ok) throw new Error(`Particle rendition request failed with ${response.status}`)
 
         const bytes = await response.arrayBuffer()
+        stampParticlePerformanceStartup(particlePerformanceStartup, 'fetchEndedAt')
         if (!isCurrentLoad(epoch, effect)) return
+        stampParticlePerformanceStartup(particlePerformanceStartup, 'parseStartedAt')
         const particles = parseParticleV1(bytes, effect)
+        stampParticlePerformanceStartup(particlePerformanceStartup, 'parseEndedAt')
         if (!isCurrentLoad(epoch, effect)) return
 
         fetchController = null
@@ -294,7 +376,13 @@ export default defineComponent({
           onFirstFrame: () => {
             if (!isCurrentLoad(epoch, effect) || sceneMount.value?.epoch !== epoch) return
             clearDeadline()
-            sceneReady.value = true
+            sceneCommitted.value = true
+            setSceneReady(true)
+          },
+          onFramePending: () => {
+            if (!isCurrentEpoch(epoch, effect) || sceneMount.value?.epoch !== epoch) return
+            setSceneReady(false)
+            scheduleResumeDeadline(epoch, effect)
           },
           onError: () => failEnhancement(epoch),
           onContextLost: () => failEnhancement(epoch)
@@ -306,7 +394,8 @@ export default defineComponent({
 
     const scheduleEnhancement = (): void => {
       const effect = activeEffect.value
-      if (!effect || !hardEligible.value || !activityEligible.value) return
+      if (!effect || terminalEffect === effect || !hardEligible.value || !activityEligible.value) return
+      stampParticlePerformanceStartup(particlePerformanceStartup, 'enhancementScheduledAt')
       const epoch = invalidateEnhancement()
 
       deadlineTimer = window.setTimeout(() => failEnhancement(epoch), ENHANCEMENT_DEADLINE_MS)
@@ -329,19 +418,31 @@ export default defineComponent({
       cancelIdleWork !== null ||
       fetchController !== null ||
       deadlineTimer !== null ||
+      resumeDeadlineTimer !== null ||
       sceneMount.value !== null
 
     const reconcileEnhancement = (): void => {
+      const effect = activeEffect.value
+      if (effect && terminalEffect === effect) {
+        if (hasEnhancementWork()) invalidateEnhancement()
+        return
+      }
       if (!hardEligible.value) {
         if (hasEnhancementWork()) invalidateEnhancement()
         return
       }
       if (!activityEligible.value) {
-        if (!sceneReady.value && hasEnhancementWork()) invalidateEnhancement()
+        if (!sceneCommitted.value && hasEnhancementWork()) invalidateEnhancement()
+        else clearDeadline()
         return
+      }
+      const retainedScene = sceneMount.value
+      if (sceneCommitted.value && !sceneReady.value && retainedScene) {
+        scheduleResumeDeadline(retainedScene.epoch, retainedScene.effect)
       }
       if (!hasEnhancementWork()) scheduleEnhancement()
     }
+
 
     const updateMediaEligibility = (): void => {
       mediaEligible.value = desktopQuery?.matches === true
@@ -351,12 +452,8 @@ export default defineComponent({
     const updateMotionPreference = (): void => {
       if (reducedMotionLatched || motionQuery?.matches !== true) return
       reducedMotionLatched = true
-      sceneReady.value = false
-      const staticImage = staticImageElement.value
-      if (staticImage) {
-        staticImage.style.transition = 'none'
-        staticImage.style.opacity = '1'
-      }
+      sceneCommitted.value = false
+      setSceneReady(false)
       sceneInstance.value?.teardown()
       reducedMotion.value = true
       instance?.update()
@@ -390,6 +487,7 @@ export default defineComponent({
     }
 
     watch(activeEffect, () => {
+      terminalEffect = null
       loadedStaticUrl.value = null
       failedStaticUrl.value = null
       invalidateEnhancement()
@@ -466,6 +564,7 @@ export default defineComponent({
           loginElement.style.removeProperty('--login-logo-aura')
         }
       }
+      terminalEffect = null
       loginElement = null
       cardElement = null
       desktopQuery = null
@@ -499,7 +598,7 @@ export default defineComponent({
         position: 'relative',
         zIndex: '1',
         opacity: sceneReady.value ? '0' : '1',
-        transition: reducedMotion.value ? 'none' : 'opacity 280ms cubic-bezier(0.16, 1, 0.3, 1)'
+        transition: reducedMotion.value ? 'none' : SCENE_IMAGE_CROSSFADE
       }
     })
     const sceneStyle: Record<string, string> = {

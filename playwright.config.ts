@@ -1,5 +1,14 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const performanceViewport = { width: 1440, height: 900 }
+const performanceExecution = {
+  workers: 1,
+  retries: process.env.CI ? 2 : 0
+}
+const linuxWebGpuCapabilityFlags = process.platform === 'linux'
+  ? ['--enable-unsafe-webgpu', '--enable-features=Vulkan']
+  : []
+
 export default defineConfig({
   testDir: './dev/e2e',
   testMatch: '**/*.e2e.ts',
@@ -118,8 +127,38 @@ export default defineConfig({
     {
       name: 'performance-desktop',
       dependencies: ['chromium'],
-      testMatch: ['**/runtime-performance.e2e.ts', '**/logo-particle-performance.e2e.ts'],
+      ...performanceExecution,
+      testMatch: '**/runtime-performance.e2e.ts',
       use: { ...devices['Desktop Chrome'] }
+    },
+    {
+      name: 'performance-webgpu',
+      dependencies: ['chromium'],
+      ...performanceExecution,
+      testMatch: '**/logo-particle-performance.e2e.ts',
+      metadata: {
+        webgpuCapabilityFlags: linuxWebGpuCapabilityFlags,
+        webgpuCapabilityFlagsPurpose: 'runner-capability-enablement-only'
+      },
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: performanceViewport,
+        launchOptions: { args: linuxWebGpuCapabilityFlags }
+      }
+    },
+    {
+      name: 'performance-webgl2',
+      dependencies: ['chromium'],
+      ...performanceExecution,
+      testMatch: '**/logo-particle-performance.e2e.ts',
+      metadata: {
+        webgpuCapabilityFlags: [],
+        webgpuCapabilityFlagsPurpose: 'not-applicable'
+      },
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: performanceViewport
+      }
     }
   ]
 })

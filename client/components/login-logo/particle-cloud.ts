@@ -14,7 +14,7 @@ const TAU = Math.PI * 2
 
 export class ParticleCloud {
   readonly brush = new ParticleBrush()
-  /** CSS displacement and a bead flag. Original logo attributes remain immutable. */
+  /** CSS displacement for each source particle. Original logo attributes remain immutable. */
   readonly motion: Float32Array
   readonly indices: Uint16Array
   readonly count: number
@@ -37,7 +37,7 @@ export class ParticleCloud {
   private accumulator = 0
 
   constructor(private readonly particles: ParsedLogoParticles) {
-    this.motion = new Float32Array(particles.count * 3)
+    this.motion = new Float32Array(particles.count * 2)
     const indices: number[] = []
     let candidates = 0
     for (const seed of particles.seed) if (seed / 65535 > 1 - CLOUD_BEAD_FRACTION) candidates++
@@ -50,7 +50,6 @@ export class ParticleCloud {
       if (selection < candidates) continue
       selection -= candidates
       indices.push(i)
-      this.motion[i * 3 + 2] = 1
     }
     this.indices = new Uint16Array(indices)
     this.count = indices.length
@@ -124,7 +123,7 @@ export class ParticleCloud {
       this.accumulator -= STEP
     }
     for (let b = 0; b < this.count; b++) {
-      const offset = this.indices[b]! * 3
+      const offset = this.indices[b]! * 2
       this.motion[offset] = this.x[b]! - this.homeX[b]!
       this.motion[offset + 1] = this.y[b]! - this.homeY[b]!
     }

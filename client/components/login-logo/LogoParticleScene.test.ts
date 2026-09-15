@@ -1,14 +1,17 @@
-import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { JSDOM } from 'jsdom'
-import type { WebGLRenderer } from 'three'
+import type { WebGPURenderer } from 'three/webgpu'
+import { beforeEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { Component } from 'vue'
-import { describe, expect, it } from '../../../server/test/bun-test.mts'
-import type { ParticleSceneEventFence as ParticleSceneEventFenceClass, ParticleSceneFrame, ParticleSceneResources } from './LogoParticleScene.vue'
+import type {
+  ParticleSceneEventFence as ParticleSceneEventFenceClass,
+  ParticleSceneFrame,
+  ParticleSceneResources
+} from './LogoParticleScene.vue'
 import type { LogoEffectDescriptor, ParsedLogoParticles } from './particle-logo.ts'
-import { LOGO_POINTER_MAX_TRAVEL_CSS, type LogoPointerState } from './useLogoPointer.ts'
+import type { LogoPointerState } from './useLogoPointer.ts'
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   pretendToBeVisual: true,
@@ -25,51 +28,44 @@ for (const [name, value] of Object.entries({
   MutationObserver: browserWindow.MutationObserver,
   document: browserWindow.document,
   window: browserWindow
-}))
+})) {
   Object.defineProperty(globalThis, name, { configurable: true, value, writable: true })
+}
 
 const componentPath = path.join(process.cwd(), 'client/components/login-logo/LogoParticleScene.vue')
-const componentSource = fs.readFileSync(componentPath, 'utf8')
+const componentSource = await Bun.file(componentPath).text()
 const parsed = parse(componentSource, { filename: componentPath })
 if (parsed.errors.length > 0) throw new Error(`Could not parse LogoParticleScene.vue: ${parsed.errors.join(', ')}`)
-if (!parsed.descriptor.script || parsed.descriptor.scriptSetup) {
-  throw new Error('LogoParticleScene.vue ordinary script was not found')
-}
+if (!parsed.descriptor.script || parsed.descriptor.scriptSetup) throw new Error('LogoParticleScene ordinary script was not found')
 const compiledScript = compileScript(parsed.descriptor, {
-  id: 'logo-particle-scene-test',
+  id: 'logo-particle-scene-tsl-test',
   genDefaultAs: '__sfc__'
 })
 const compiledComponent = `${compiledScript.content}\nexport default __sfc__\n`
-const [Vue, Tres, Three, WebGLModule] = await Promise.all([
+const [Vue, Tres, ThreeWebgpu, ThreeTsl, Three] = await Promise.all([
   import('vue'),
   import('@tresjs/core'),
-  import('three'),
-  import('three/addons/capabilities/WebGL.js')
+  import('three/webgpu'),
+  import('three/tsl'),
+  import('three')
 ])
-const shaderSources: Record<string, string> = {
-  './particle.frag.glsl?raw': fs.readFileSync(path.join(path.dirname(componentPath), 'particle.frag.glsl'), 'utf8'),
-  './particle.vert.glsl?raw': fs.readFileSync(path.join(path.dirname(componentPath), 'particle.vert.glsl'), 'utf8')
-}
 
-interface LoopTestContext {
+interface LoopContext {
   readonly elapsed: number
-  readonly renderer: WebGLRenderer
+  readonly renderer: WebGPURenderer
   readonly sizes: {
     readonly height: { readonly value: number }
     readonly width: { readonly value: number }
   }
 }
-
-type LoopTestCallback = (context: LoopTestContext) => void
-
+type LoopCallback = (context: LoopContext) => void
 const loopHarness = {
-  beforeRender: null as LoopTestCallback | null,
+  beforeRender: null as LoopCallback | null,
   invalidations: 0,
-  render: null as LoopTestCallback | null,
+  render: null as LoopCallback | null,
   starts: 0,
   stops: 0
 }
-
 const resetLoopHarness = (): void => {
   loopHarness.beforeRender = null
   loopHarness.invalidations = 0
@@ -77,64 +73,37 @@ const resetLoopHarness = (): void => {
   loopHarness.starts = 0
   loopHarness.stops = 0
 }
-
 const tresTestModule = {
   ...Tres,
   useLoop: () => ({
-    onBeforeRender: (callback: LoopTestCallback) => {
+    onBeforeRender: (callback: LoopCallback) => {
       loopHarness.beforeRender = callback
-      return {
-        off: () => {
-          if (loopHarness.beforeRender === callback) loopHarness.beforeRender = null
-        }
-      }
+      return { off: () => { if (loopHarness.beforeRender === callback) loopHarness.beforeRender = null } }
     },
-    onRender: (callback: LoopTestCallback) => {
+    onRender: (callback: LoopCallback) => {
       loopHarness.render = callback
-      return {
-        off: () => {
-          if (loopHarness.render === callback) loopHarness.render = null
-        }
-      }
+      return { off: () => { if (loopHarness.render === callback) loopHarness.render = null } }
     },
-    start: () => {
-      loopHarness.starts += 1
-    },
-    stop: () => {
-      loopHarness.stops += 1
-    }
+    start: () => { loopHarness.starts += 1 },
+    stop: () => { loopHarness.stops += 1 }
   }),
-  useTres: () => ({
-    invalidate: () => {
-      loopHarness.invalidations += 1
-    }
-  })
+  useTres: () => ({ invalidate: () => { loopHarness.invalidations += 1 } })
 }
 const bundle = await Bun.build({
   entrypoints: ['virtual:LogoParticleScene.vue'],
-  external: ['@tresjs/core', 'three', 'three/addons/capabilities/WebGL.js', 'vue'],
+  external: ['@tresjs/core', 'three', 'three/webgpu', 'three/tsl', 'vue'],
   format: 'cjs',
-  plugins: [
-    {
-      name: 'logo-particle-scene-test-sfc',
-      setup(build) {
-        build.onResolve({ filter: /^virtual:LogoParticleScene\.vue$/ }, () => ({ path: componentPath }))
-        build.onLoad({ filter: /LogoParticleScene\.vue$/, namespace: 'file' }, () => ({
-          contents: compiledComponent,
-          loader: 'ts',
-          resolveDir: path.dirname(componentPath)
-        }))
-        build.onResolve({ filter: /particle\.(?:frag|vert)\.glsl\?raw$/ }, args => ({
-          namespace: 'logo-particle-test-shader',
-          path: args.path
-        }))
-        build.onLoad({ filter: /.*/, namespace: 'logo-particle-test-shader' }, args => ({
-          contents: `export default ${JSON.stringify(shaderSources[args.path])}`,
-          loader: 'js'
-        }))
-      }
+  plugins: [{
+    name: 'logo-particle-scene-tsl-test-sfc',
+    setup(build) {
+      build.onResolve({ filter: /^virtual:LogoParticleScene\.vue$/ }, () => ({ path: componentPath }))
+      build.onLoad({ filter: /LogoParticleScene\.vue$/, namespace: 'file' }, () => ({
+        contents: compiledComponent,
+        loader: 'ts',
+        resolveDir: path.dirname(componentPath)
+      }))
     }
-  ],
+  }],
   target: 'bun'
 })
 if (!bundle.success || bundle.outputs.length !== 1) {
@@ -143,21 +112,8 @@ if (!bundle.success || bundle.outputs.length !== 1) {
 const bundleCode = await bundle.outputs[0].text()
 const moduleStart = bundleCode.indexOf('(function(')
 if (moduleStart < 0) throw new Error('Compiled LogoParticleScene.vue did not produce a CommonJS module')
-interface SceneModule {
-  ParticleSceneEventFence: typeof ParticleSceneEventFenceClass
-  createParticleSceneResources: (particles: ParsedLogoParticles, effect: LogoEffectDescriptor) => ParticleSceneResources
-  default: { components?: Record<string, Component>; props?: Record<string, unknown>; emits?: Record<string, unknown> }
-  disposeParticleSceneResources: (resources: ParticleSceneResources) => void
-  updateParticleSceneFrame: (
-    resources: ParticleSceneResources,
-    pointerController: {
-      update: (renderedLongAxis: number) => LogoPointerState
-    },
-    frame: ParticleSceneFrame
-  ) => void
-}
 interface CompiledModule {
-  exports: Partial<SceneModule>
+  exports: Record<string, unknown>
 }
 const moduleFactory = new Function(`return ${bundleCode.slice(moduleStart)}`)() as (
   exports: CompiledModule['exports'],
@@ -173,35 +129,49 @@ moduleFactory(
     if (specifier === 'vue') return Vue
     if (specifier === '@tresjs/core') return tresTestModule
     if (specifier === 'three') return Three
-    if (specifier === 'three/addons/capabilities/WebGL.js') return WebGLModule
+    if (specifier === 'three/webgpu') return ThreeWebgpu
+    if (specifier === 'three/tsl') return ThreeTsl
     throw new Error(`Unexpected import in LogoParticleScene.vue: ${specifier}`)
   },
   compiledModule,
   componentPath,
   path.dirname(componentPath)
 )
+
 const {
   ParticleSceneEventFence,
   createParticleSceneResources,
   default: LogoParticleScene,
   disposeParticleSceneResources,
   updateParticleSceneFrame
-} = compiledModule.exports as SceneModule
+} = compiledModule.exports as {
+  ParticleSceneEventFence: typeof ParticleSceneEventFenceClass
+  createParticleSceneResources: (
+    particles: ParsedLogoParticles,
+    effect: LogoEffectDescriptor
+  ) => ParticleSceneResources
+  default: { components?: Record<string, Component>; emits?: Record<string, unknown> }
+  disposeParticleSceneResources: (resources: ParticleSceneResources) => void
+  updateParticleSceneFrame: (
+    resources: ParticleSceneResources,
+    pointerController: { update: (renderedLongAxis: number, time?: number) => LogoPointerState },
+    frame: ParticleSceneFrame
+  ) => void
+}
 const ParticleSceneContents = LogoParticleScene.components?.ParticleSceneContents
-if (!ParticleSceneContents) throw new Error('LogoParticleScene.vue inner scene component was not found')
+if (!ParticleSceneContents) throw new Error('ParticleSceneContents was not exported by the compiled scene')
 
 const effect: LogoEffectDescriptor = {
-  logoUrl: '/_site-logo/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/logo.png',
-  particleUrl: '/_site-logo/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/particle.bin',
-  staticUrl: '/_site-logo/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/effect.png',
-  pipelineVersion: 5,
+  logoUrl: '/logo.png',
+  particleUrl: '/particle.bin',
+  staticUrl: '/effect.png',
+  pipelineVersion: 6,
   width: 640,
   height: 320,
   aspect: 2,
   count: 3,
   medianStroke: 10
 }
-
 const makeParticles = (): ParsedLogoParticles => {
   const buffer = new ArrayBuffer(36)
   const xy = new Int16Array(buffer, 0, 6)
@@ -217,833 +187,277 @@ const makeParticles = (): ParsedLogoParticles => {
   return Object.freeze({ buffer, width: 640, height: 320, count: 3, xy, depth, rgba, size, seed })
 }
 
-interface RendererHarness {
-  readonly canvas: HTMLCanvasElement
-  readonly renderer: WebGLRenderer
-  readonly clearAlpha: number[]
+const pointerState: LogoPointerState = {
+  activeImpulseCount: 0,
+  activeExplosionCount: 0,
+  influenceRadiusCss: 32,
+  impulses: Array.from({ length: 6 }, () => ({
+    active: false,
+    ageSeconds: 0,
+    directionX: 1,
+    directionY: 0,
+    radiusCss: 18,
+    travelCss: 0,
+    strength: 1,
+    x: 0,
+    y: 0
+  })) as unknown as LogoPointerState['impulses'],
+  explosions: Array.from({ length: 6 }, () => ({ active: false, ageSeconds: 0, scale: 1, x: 0, y: 0 })) as unknown as LogoPointerState['explosions']
 }
 
-const makeRenderer = (points = effect.count): RendererHarness => {
+interface FakeRenderer {
+  readonly canvas: HTMLCanvasElement
+  readonly renderer: WebGPURenderer
+}
+const makeRenderer = (): FakeRenderer => {
   const canvas = document.createElement('canvas')
   canvas.width = 640
   canvas.height = 320
-  const clearAlpha: number[] = []
   const renderer = {
     debug: { checkShaderErrors: false, onShaderError: null },
     domElement: canvas,
-    info: { render: { points } },
-    setClearAlpha: (alpha: number) => clearAlpha.push(alpha)
-  } as unknown as WebGLRenderer
-  return { canvas, clearAlpha, renderer }
+    info: { render: { drawCalls: 0, triangles: 0 } },
+    getPixelRatio: () => 1,
+    setClearAlpha: () => {},
+    coordinateSystem: Three.WebGLCoordinateSystem,
+    toneMapping: Three.NoToneMapping,
+    outputColorSpace: Three.SRGBColorSpace
+  } as unknown as WebGPURenderer
+  return { canvas, renderer }
 }
 
-const pointerState: LogoPointerState = {
-  activeImpulseCount: 2,
-  activeExplosionCount: 2,
-  influenceRadiusCss: 32,
-  impulses: [
-    { active: true, ageSeconds: 0.24, directionX: 0.6, directionY: 0.8, radiusCss: 32, travelCss: 6, strength: 2.2, x: 0.25, y: -0.5 },
-    { active: true, ageSeconds: 0.1, directionX: -1, directionY: 0, radiusCss: 24, travelCss: 3, strength: 1.1, x: -0.25, y: 0.5 },
-    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, strength: 1, x: 0, y: 0 },
-    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, strength: 1, x: 0, y: 0 },
-    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, strength: 1, x: 0, y: 0 },
-    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, strength: 1, x: 0, y: 0 }
-  ],
-  explosions: [
-    { scale: 1, active: true, ageSeconds: 0.24, x: 0.25, y: -0.5 },
-    { scale: 1, active: true, ageSeconds: 0.1, x: -0.25, y: 0.5 },
-    { scale: 1, active: false, ageSeconds: 0, x: 0, y: 0 },
-    { scale: 1, active: false, ageSeconds: 0, x: 0, y: 0 },
-    { scale: 1, active: false, ageSeconds: 0, x: 0, y: 0 },
-    { scale: 1, active: false, ageSeconds: 0, x: 0, y: 0 }
-  ]
-}
-interface TestFrameCapture {
-  readonly capturedAt: number
-  readonly dataUrl: string
-}
-
-interface TestFrameCaptureOptions {
-  readonly elapsedSeconds?: number
-  readonly pointerTimeMilliseconds?: number
-}
-
-interface TestFrameCaptureHook {
-  request: ((options?: TestFrameCaptureOptions) => Promise<TestFrameCapture>) | null
-}
-
-const installFrameCaptureHook = (): TestFrameCaptureHook => {
-  const hook: TestFrameCaptureHook = { request: null }
-  Object.defineProperty(window, '__logoParticleFrameCapture', {
-    configurable: true,
-    value: hook
-  })
-  return hook
-}
-
-const makeLoopContext = (canvas: HTMLCanvasElement): LoopTestContext => ({
-  elapsed: 1,
-  renderer: {
-    domElement: canvas,
-    getPixelRatio: () => 1
-  } as unknown as WebGLRenderer,
-  sizes: {
-    height: { value: 320 },
-    width: { value: 640 }
+const makeBenchmark = () => {
+  const benchmark = {
+    callbackCount: 0,
+    callbackCpuMilliseconds: [] as number[],
+    frameIntervalsMilliseconds: [] as number[],
+    firstFrameMilliseconds: null as number | null,
+    lastFrameAt: null as number | null,
+    requestedBackend: 'webgl2' as const,
+    effectiveBackend: null as string | null,
+    backendDiagnostics: [] as Array<Record<string, unknown>>,
+    startup: {} as Record<string, number>,
+    resumes: [] as Array<Record<string, unknown>>,
+    frames: [] as Array<Record<string, unknown>>,
+    counters: {
+      updateCallbacks: 0,
+      renderInvocations: 0,
+      afterRenderCallbacks: 0,
+      rafCallbacks: 0,
+      draws: 0,
+      uploads: 0,
+      sampleOverflow: 0
+    }
   }
+  Object.defineProperty(window, '__logoParticlePerformance', { configurable: true, value: benchmark })
+  return benchmark
+}
+
+const makeFrameContext = (renderer: WebGPURenderer, elapsed = 1): LoopContext => ({
+  elapsed,
+  renderer,
+  sizes: { height: { value: 320 }, width: { value: 640 } }
 })
 
-const mountParticleSceneContents = (
-  pointerController: { update: (renderedLongAxis: number, time?: number) => LogoPointerState } = { update: () => pointerState },
-  options: { active?: boolean } = {}
-) => {
+beforeEach(() => {
   resetLoopHarness()
-  const resources = createParticleSceneResources(makeParticles(), effect)
-  const active = Vue.ref(options.active ?? true)
-  const loopControl = { ready: false, stop: null as (() => void) | null }
-  const host = document.createElement('div')
-  document.body.append(host)
-  const app = Vue.createApp({
-    setup: () => () =>
-      Vue.h(ParticleSceneContents, {
-        active: active.value,
-        loopControl,
-        pointerController,
-        resources
-      })
-  })
-  let mounted = true
-  app.mount(host)
+  Reflect.deleteProperty(window, '__logoParticlePerformance')
+  document.body.replaceChildren()
+})
 
-  return {
-    ready: () => {
-      loopHarness.starts += 1
-      loopControl.ready = true
-      if (!active.value) loopControl.stop?.()
-    },
-    resources,
-    setActive: async (nextActive: boolean) => {
-      active.value = nextActive
-      await Vue.nextTick()
-    },
-    unmount: () => {
-      if (!mounted) return
-      mounted = false
-      app.unmount()
-      host.remove()
+describe('LogoParticleScene resource path', () => {
+  it('exposes the scene component with the pending and committed lifecycle events', () => {
+    expect(Object.keys(LogoParticleScene.emits ?? {}).sort()).toEqual(['context-lost', 'error', 'first-frame', 'frame-pending'])
+  })
+
+  it('builds one indexed instanced sprite draw with source-order packed attributes', () => {
+    const particles = makeParticles()
+    const resources = createParticleSceneResources(particles, effect)
+    try {
+      expect(resources.geometry.instanceCount).toBe(particles.count)
+      expect(resources.geometry.index?.count).toBe(6)
+      expect(resources.geometry.getAttribute('logoXY').array).toBe(particles.xy)
+      expect(resources.geometry.getAttribute('logoXY').normalized).toBe(true)
+      expect(resources.geometry.getAttribute('particleColor').array).toBe(resources.particleColor.array)
+      expect(resources.geometry.getAttribute('cloudMotion').itemSize).toBe(2)
+      expect(resources.cloudMotion.array).toBe(resources.cloud.motion)
+      expect(resources.cloudMotion.array.byteLength).toBe(particles.count * 2 * Float32Array.BYTES_PER_ELEMENT)
+      expect(Array.from(resources.geometry.getAttribute('logoParameters').array as Float32Array)).toEqual(Array.from(new Float32Array([
+        -1, 1 / 255, 1 / 65535, 0,
+        0, 128 / 255, 32768 / 65535, 0,
+        1, 1, 1, 1
+      ])))
+      expect(resources.mesh.geometry).toBe(resources.geometry)
+      expect(resources.mesh.material).toBe(resources.material)
+      expect(resources.mesh.frustumCulled).toBe(false)
+      expect(resources.material.transparent).toBe(true)
+      expect(resources.material.depthTest).toBe(false)
+      expect(resources.material.depthWrite).toBe(false)
+    } finally {
       disposeParticleSceneResources(resources)
     }
-  }
-}
+  })
 
-describe('LogoParticleScene render loop lifecycle', () => {
-  it('defers initial active starts until ready and keeps later transitions on demand', async () => {
-    const mounted = mountParticleSceneContents()
+  it('updates only reusable uniforms and the vec2 dynamic motion attribute', () => {
+    const resources = createParticleSceneResources(makeParticles(), effect)
+    const before = new Uint8Array(resources.particles.buffer).slice()
+    const pointerController = { update: () => pointerState }
+    const sourceAttributes = ['logoXY', 'logoParameters', 'particleColor'].map(name => resources.geometry.getAttribute(name))
+    const sourceVersions = sourceAttributes.map(attribute => attribute.version)
+    const motionVersion = resources.cloudMotion.version
 
     try {
-      expect(loopHarness.starts).toBe(0)
-      mounted.ready()
-      expect(loopHarness.starts).toBe(1)
-      expect(loopHarness.stops).toBe(0)
-
-      await mounted.setActive(false)
-      expect(loopHarness.stops).toBe(1)
-
-      const invalidationsBeforeActivation = loopHarness.invalidations
-      await mounted.setActive(true)
-      expect(loopHarness.starts).toBe(2)
-      expect(loopHarness.invalidations).toBe(invalidationsBeforeActivation + 1)
-    } finally {
-      mounted.unmount()
-    }
-  })
-
-  it('stops the eagerly started loop immediately when ready finds the scene inactive', () => {
-    const mounted = mountParticleSceneContents(undefined, { active: false })
-
-    try {
-      expect(loopHarness.starts).toBe(0)
-      expect(loopHarness.stops).toBe(0)
-
-      mounted.ready()
-
-      expect(loopHarness.starts).toBe(1)
-      expect(loopHarness.stops).toBe(1)
-    } finally {
-      mounted.unmount()
-    }
-  })
-})
-
-describe('LogoParticleScene resources', () => {
-  it('publishes only the contracted props and events', () => {
-    expect(Object.keys(LogoParticleScene.props ?? {}).sort()).toEqual(['active', 'effect', 'particles'])
-    expect(Object.keys(LogoParticleScene.emits ?? {}).sort()).toEqual(['context-lost', 'error', 'first-frame'])
-  })
-
-  it('creates a configured front-on orthographic camera', () => {
-    const resources = createParticleSceneResources(makeParticles(), effect)
-
-    expect(resources.camera.isOrthographicCamera).toBe(true)
-    expect(resources.camera.position.toArray()).toEqual([0, 0, 2])
-    expect(resources.camera.rotation.x).toBeCloseTo(0)
-    expect(resources.camera.rotation.y).toBeCloseTo(0)
-    expect(resources.camera.rotation.z).toBeCloseTo(0)
-    disposeParticleSceneResources(resources)
-  })
-
-  it('configures stable brush and six-slot explosion uniforms', () => {
-    const resources = createParticleSceneResources(makeParticles(), effect)
-
-    expect(resources.uniforms.uExplosionPositionAge.value).toHaveLength(6)
-    expect(resources.uniforms.uBrushPositionRadius.value.toArray()).toEqual([0, 0, 18, 0])
-    expect(resources.uniforms.uBrushDirection.value.toArray()).toEqual([0, 0])
-    expect(resources.uniforms.uExplosionPositionAge.value.map(value => value.toArray())).toEqual(Array.from({ length: 6 }, () => [0, 0, 0, 0]))
-
-    disposeParticleSceneResources(resources)
-  })
-
-  it('constructs zero-copy source geometry and initializes a separate color cache before rendering', () => {
-    const particles = makeParticles()
-    const before = new Uint8Array(particles.buffer).slice()
-    const resources = createParticleSceneResources(particles, effect)
-    const expected = [
-      ['logoXY', particles.xy, 2],
-      ['logoDepth', particles.depth, 1],
-      ['logoSize', particles.size, 1],
-      ['logoSeed', particles.seed, 1]
-    ] as const
-
-    for (const [name, array, itemSize] of expected) {
-      const attribute = resources.geometry.getAttribute(name)
-      expect(attribute.array).toBe(array)
-      expect(attribute.itemSize).toBe(itemSize)
-      expect(attribute.normalized).toBe(true)
-      expect(attribute.count).toBe(effect.count)
-    }
-    expect(resources.geometry.getAttribute('particleColor')).toBe(resources.particleColor)
-    expect(resources.particleColor.array).toBeInstanceOf(Float32Array)
-    expect(resources.particleColor.array.buffer).not.toBe(particles.buffer)
-    expect(resources.particleColor.itemSize).toBe(4)
-    expect(resources.particleColor.count).toBe(effect.count)
-    expect(resources.particleColor.normalized).toBe(false)
-    expect(resources.particleColor.array.every(Number.isFinite)).toBe(true)
-    expect(resources.particleColor.getW(0)).toBeGreaterThan(0)
-    expect(resources.geometry.drawRange).toEqual({ start: 0, count: effect.count })
-    expect(resources.points.geometry).toBe(resources.geometry)
-    expect(resources.points.material).toBe(resources.material)
-    expect(resources.points.frustumCulled).toBe(false)
-    expect(resources.material.transparent).toBe(true)
-    expect(resources.material.depthTest).toBe(false)
-    expect(resources.material.depthWrite).toBe(false)
-    expect(resources.material.blending).toBe(Three.NormalBlending)
-    expect(resources.material.premultipliedAlpha).toBe(false)
-    expect(new Uint8Array(particles.buffer)).toEqual(before)
-
-    disposeParticleSceneResources(resources)
-  })
-
-  it('animates while keeping uploaded source attributes immutable', () => {
-    const particles = makeParticles()
-    const before = new Uint8Array(particles.buffer).slice()
-    const resources = createParticleSceneResources(particles, effect)
-    const attributes = ['logoXY', 'logoDepth', 'particleColor', 'logoSize', 'logoSeed'].map(name => resources.geometry.getAttribute(name))
-    const arrays = attributes.map(attribute => attribute.array)
-    const versions = attributes.map(attribute => attribute.version)
-    const impulseDirectionUniforms = resources.uniforms.uBrushDirection.value
-    const impulsePositionUniforms = resources.uniforms.uBrushPositionRadius.value
-    const explosionPositionUniforms = resources.uniforms.uExplosionPositionAge.value
-    const renderedLongAxes: number[] = []
-    const pointerController = {
-      update: (renderedLongAxis: number) => {
-        renderedLongAxes.push(renderedLongAxis)
-        return pointerState
-      }
-    }
-    const uniformOnlyResources = new Proxy(resources, {
-      get: (target, property, receiver) => {
-        if (property === 'camera' || property === 'geometry' || property === 'material' || property === 'points') {
-          throw new Error(`Frame callback read per-particle resource ${String(property)}`)
-        }
-        return Reflect.get(target, property, receiver)
-      }
-    })
-
-    for (let frame = 0; frame < 120; frame += 1) {
-      updateParticleSceneFrame(uniformOnlyResources, pointerController, {
-        elapsed: frame / 60,
+      updateParticleSceneFrame(resources, pointerController, {
+        elapsed: 2.5,
         height: 320,
         pixelRatio: 2,
         width: 640
       })
-    }
-
-    expect(renderedLongAxes).toHaveLength(120)
-    expect(renderedLongAxes.every(value => value === 640)).toBe(true)
-    expect(attributes.map(attribute => attribute.array)).toEqual(arrays)
-    expect(attributes.map(attribute => attribute.version)).toEqual(versions)
-    expect(resources.uniforms.uBrushDirection.value).toBe(impulseDirectionUniforms)
-    expect(resources.uniforms.uBrushPositionRadius.value).toBe(impulsePositionUniforms)
-    expect(resources.uniforms.uExplosionPositionAge.value).toBe(explosionPositionUniforms)
-    expect(resources.uniforms.uBrushPositionRadius.value.x).toBeCloseTo(-0.25)
-    expect(resources.uniforms.uBrushPositionRadius.value.y).toBeCloseTo(0.5)
-    expect(resources.uniforms.uBrushPositionRadius.value.w).toBeGreaterThan(0)
-    expect(resources.uniforms.uBrushPositionRadius.value.w).toBeLessThanOrEqual(LOGO_POINTER_MAX_TRAVEL_CSS)
-    expect(resources.uniforms.uExplosionPositionAge.value.map(value => value.toArray())).toEqual([
-      [0.25, -0.5, 0.24, 1],
-      [-0.25, 0.5, 0.1, 1],
-      [0, 0, 0, 0],
-      [0, 0, 0, 0],
-      [0, 0, 0, 0],
-      [0, 0, 0, 0]
-    ])
-    expect(resources.uniforms.uBrushDirection.value.x).toBeCloseTo(-1)
-    expect(resources.uniforms.uBrushDirection.value.y).toBe(0)
-    expect(resources.uniforms.uDpr.value).toBe(1.5)
-    expect(resources.uniforms.uTime.value).toBeCloseTo(119 / 60)
-    disposeParticleSceneResources(resources)
-    updateParticleSceneFrame(uniformOnlyResources, pointerController, {
-      elapsed: 99,
-      height: 320,
-      pixelRatio: 1,
-      width: 640
-    })
-    expect(renderedLongAxes).toHaveLength(120)
-    expect(resources.uniforms.uTime.value).toBeCloseTo(119 / 60)
-  })
-
-  it('ignores NaN and infinite frame dimensions before updating uniforms or pointer sampling', () => {
-    const resources = createParticleSceneResources(makeParticles(), effect)
-    let pointerUpdates = 0
-    const pointerController = {
-      update: () => {
-        pointerUpdates += 1
-        return pointerState
-      }
-    }
-    updateParticleSceneFrame(resources, pointerController, {
-      elapsed: 2,
-      height: 320,
-      pixelRatio: 1.25,
-      width: 640
-    })
-    const viewport = resources.uniforms.uViewport.value.clone()
-    const dpr = resources.uniforms.uDpr.value
-    const renderedLongAxis = resources.uniforms.uRenderedLongAxis.value
-    const elapsed = resources.uniforms.uTime.value
-
-    for (const [width, height] of [
-      [Number.NaN, 320],
-      [Number.POSITIVE_INFINITY, 320],
-      [640, Number.NaN],
-      [640, Number.POSITIVE_INFINITY]
-    ] as const) {
-      updateParticleSceneFrame(resources, pointerController, {
-        elapsed: 99,
-        height,
-        pixelRatio: 1.5,
-        width
-      })
-    }
-
-    expect(pointerUpdates).toBe(1)
-    expect(resources.uniforms.uViewport.value.equals(viewport)).toBe(true)
-    expect(resources.uniforms.uDpr.value).toBe(dpr)
-    expect(resources.uniforms.uRenderedLongAxis.value).toBe(renderedLongAxis)
-    expect(resources.uniforms.uTime.value).toBe(elapsed)
-    disposeParticleSceneResources(resources)
-  })
-
-  it('derives each motion frame from absolute time rather than callback cadence', () => {
-    const scheduled = createParticleSceneResources(makeParticles(), effect)
-    const direct = createParticleSceneResources(makeParticles(), effect)
-    const pointerController = { update: () => pointerState }
-    const at = (resources: ParticleSceneResources, elapsed: number): void => {
-      updateParticleSceneFrame(resources, pointerController, {
-        elapsed,
-        height: 320,
-        pixelRatio: 1,
-        width: 640
-      })
-    }
-
-    at(scheduled, 0.125)
-    at(scheduled, 0.9)
-    at(scheduled, 4.25)
-    at(direct, 4.25)
-
-    expect(scheduled.uniforms.uTime.value).toBe(4.25)
-    expect(direct.uniforms.uTime.value).toBe(4.25)
-    expect(scheduled.uniforms.uBrushPositionRadius.value.toArray()).toEqual(direct.uniforms.uBrushPositionRadius.value.toArray())
-    expect(scheduled.uniforms.uBrushDirection.value.toArray()).toEqual(direct.uniforms.uBrushDirection.value.toArray())
-
-    disposeParticleSceneResources(scheduled)
-    disposeParticleSceneResources(direct)
-    expect(scheduled.uniforms.uExplosionPositionAge.value.map(value => value.toArray())).toEqual(
-      direct.uniforms.uExplosionPositionAge.value.map(value => value.toArray())
-    )
-  })
-
-  it('publishes one bounded aggregate motion record only through an opt-in hook', () => {
-    const benchmark = {
-      callbackCount: 0,
-      callbackCpuMilliseconds: [] as number[],
-      frameIntervalsMilliseconds: [] as number[],
-      firstFrameMilliseconds: null,
-      lastFrameAt: null,
-      lastMotion: undefined as unknown
-    }
-    Object.defineProperty(window, '__logoParticlePerformance', {
-      configurable: true,
-      value: benchmark
-    })
-
-    try {
-      const particles = makeParticles()
-      const before = new Uint8Array(particles.buffer).slice()
-      const resources = createParticleSceneResources(particles, effect)
-      const diagnostics = benchmark.lastMotion
-      const boundedPointer: LogoPointerState = {
-        ...pointerState,
-        activeImpulseCount: 2,
-        impulses: [
-          { active: true, ageSeconds: -4, directionX: 12, directionY: 16, radiusCss: 200, travelCss: 80, strength: 4, x: 4, y: -4 },
-          { active: true, ageSeconds: 1.4, directionX: 0, directionY: 0, radiusCss: 1, travelCss: 5, strength: 1.6, x: 0, y: 0 },
-          { active: false, ageSeconds: 0.4, directionX: 0, directionY: 1, radiusCss: 20, travelCss: 4, strength: 1, x: 0.2, y: 0.3 },
-          { active: false, ageSeconds: 0.2, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 4, strength: 1, x: 0, y: 0 },
-          { active: false, ageSeconds: 0.2, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 4, strength: 1, x: 0, y: 0 },
-          { active: false, ageSeconds: 0.2, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 4, strength: 1, x: 0, y: 0 }
-        ]
-      }
-
-      updateParticleSceneFrame(
-        resources,
-        { update: () => boundedPointer },
-        {
-          elapsed: 123.5,
-          height: 320,
-          pixelRatio: 1,
-          width: 640
-        }
-      )
-      expect(resources.uniforms.uBrushPositionRadius.value.toArray()).toEqual([1, -1, 72, 0])
-      expect(resources.uniforms.uBrushDirection.value.toArray()).toEqual([0, 0])
-      expect(resources.uniforms.uExplosionPositionAge.value).toHaveLength(6)
-
-      expect(benchmark.lastMotion).toBe(diagnostics)
-      expect(Object.keys(diagnostics as object).sort()).toEqual([
-        'activeExplosionCount',
-        'activeImpulseCount',
-        'bounceRatio',
-        'collisionParticleCount',
-        'depthScaleMax',
-        'depthScaleMin',
-        'elapsedSeconds',
-        'explosionHoldSeconds',
-        'explosionLifetimeSeconds',
-        'explosionRefillSeconds',
-        'idleAmplitudeCss',
-        'impulseLifetimeSeconds',
-        'maxImpulseTravelCss',
-        'neighborForceRatio',
-        'particleCount'
-      ])
-      expect(diagnostics).toEqual({
-        activeExplosionCount: 2,
-        activeImpulseCount: 1,
-        bounceRatio: 0.4,
-        collisionParticleCount: 1,
-        depthScaleMax: 1.18,
-        depthScaleMin: 0.82,
-        elapsedSeconds: 123.5,
-        explosionHoldSeconds: 0.35,
-        explosionLifetimeSeconds: 2.8,
-        explosionRefillSeconds: 2.4,
-        idleAmplitudeCss: 3.5,
-        impulseLifetimeSeconds: 1.4,
-        maxImpulseTravelCss: 42,
-        neighborForceRatio: 0.72,
-        particleCount: effect.count
-      })
-      expect(new Uint8Array(particles.buffer)).toEqual(before)
-
+      expect(resources.uniforms.elapsedSeconds.value).toBe(2.5)
+      expect(resources.uniforms.viewportSize.value.toArray()).toEqual([640, 320])
+      expect(resources.uniforms.pixelRatio.value).toBe(1.5)
+      expect(resources.cloudMotion.version).toBeGreaterThan(motionVersion)
+      expect(sourceAttributes.map(attribute => attribute.version)).toEqual(sourceVersions)
+      expect(new Uint8Array(resources.particles.buffer)).toEqual(before)
+    } finally {
       disposeParticleSceneResources(resources)
-      expect(benchmark.lastMotion).toBeUndefined()
-      updateParticleSceneFrame(
-        resources,
-        { update: () => pointerState },
-        {
-          elapsed: 999,
-          height: 320,
-          pixelRatio: 1,
-          width: 640
-        }
-      )
-      expect(benchmark.lastMotion).toBeUndefined()
-    } finally {
-      Reflect.deleteProperty(window, '__logoParticlePerformance')
     }
   })
 
-  it('keeps the newest diagnostic record when older resources dispose and clears only its owner', () => {
-    const benchmark = {
-      callbackCount: 0,
-      callbackCpuMilliseconds: [] as number[],
-      frameIntervalsMilliseconds: [] as number[],
-      firstFrameMilliseconds: null,
-      lastFrameAt: null,
-      lastMotion: undefined as unknown
-    }
-    Object.defineProperty(window, '__logoParticlePerformance', {
-      configurable: true,
-      value: benchmark
-    })
-    const created: ParticleSceneResources[] = []
-
-    try {
-      const older = createParticleSceneResources(makeParticles(), effect)
-      created.push(older)
-      const olderDiagnostics = benchmark.lastMotion
-      const newest = createParticleSceneResources(makeParticles(), effect)
-      created.push(newest)
-      const newestDiagnostics = benchmark.lastMotion
-
-      expect(newestDiagnostics).toBe(newest.motionDiagnostics)
-      expect(newestDiagnostics).not.toBe(olderDiagnostics)
-      updateParticleSceneFrame(
-        older,
-        { update: () => pointerState },
-        {
-          elapsed: 11,
-          height: 320,
-          pixelRatio: 1,
-          width: 640
-        }
-      )
-      expect(benchmark.lastMotion).toBe(newestDiagnostics)
-      disposeParticleSceneResources(older)
-      expect(benchmark.lastMotion).toBe(newestDiagnostics)
-
-      const replacementRecord = { owner: 'external' }
-      benchmark.lastMotion = replacementRecord
-      disposeParticleSceneResources(newest)
-      expect(benchmark.lastMotion).toBe(replacementRecord)
-
-      const finalOwner = createParticleSceneResources(makeParticles(), effect)
-      created.push(finalOwner)
-      expect(benchmark.lastMotion).toBe(finalOwner.motionDiagnostics)
-      disposeParticleSceneResources(finalOwner)
-      expect(benchmark.lastMotion).toBeUndefined()
-      expect(Object.hasOwn(benchmark, 'lastMotion')).toBe(false)
-    } finally {
-      for (const resources of created) disposeParticleSceneResources(resources)
-      Reflect.deleteProperty(window, '__logoParticlePerformance')
-    }
-  })
-
-  it('rejects attributes detached from the parser-owned buffer', () => {
+  it('disposes the mesh resources idempotently without mutating parser-owned bytes', () => {
     const particles = makeParticles()
-    const detached = Object.freeze({ ...particles, size: new Uint8Array([1, 2, 3]) })
-    expect(() => createParticleSceneResources(detached, effect)).toThrow('owned input buffer')
-  })
-
-  it('disposes geometry and material exactly once without changing input bytes', () => {
-    const particles = makeParticles()
-    const before = new Uint8Array(particles.buffer).slice()
     const resources = createParticleSceneResources(particles, effect)
-    const scene = new Three.Scene()
-    scene.add(resources.camera, resources.points)
+    const before = new Uint8Array(particles.buffer).slice()
     let geometryDisposals = 0
     let materialDisposals = 0
     const disposeGeometry = resources.geometry.dispose.bind(resources.geometry)
     const disposeMaterial = resources.material.dispose.bind(resources.material)
-    resources.geometry.dispose = () => {
-      geometryDisposals += 1
-      disposeGeometry()
-    }
-    resources.material.dispose = () => {
-      materialDisposals += 1
-      disposeMaterial()
-    }
+    resources.geometry.dispose = () => { geometryDisposals += 1; disposeGeometry() }
+    resources.material.dispose = () => { materialDisposals += 1; disposeMaterial() }
 
     disposeParticleSceneResources(resources)
     disposeParticleSceneResources(resources)
-
     expect(geometryDisposals).toBe(1)
     expect(materialDisposals).toBe(1)
-    expect(resources.points.parent).toBeNull()
-    expect(resources.camera.parent).toBeNull()
+    expect(resources.mesh.parent).toBeNull()
     expect(new Uint8Array(particles.buffer)).toEqual(before)
   })
 })
 
-describe('LogoParticleScene test frame capture lifecycle', () => {
-  it('does not expose or serialize a frame when the opt-in hook is absent', () => {
-    Reflect.deleteProperty(window, '__logoParticleFrameCapture')
-    const mounted = mountParticleSceneContents()
-
-    try {
-      expect('__logoParticleFrameCapture' in window).toBe(false)
-      const canvas = document.createElement('canvas')
-      let serializations = 0
-      canvas.toDataURL = () => {
-        serializations += 1
-        return 'data:image/png;base64,absent'
-      }
-      const render = loopHarness.render
-      if (!render) throw new Error('Tres after-render callback was not registered')
-
-      render(makeLoopContext(canvas))
-
-      expect(serializations).toBe(0)
-      expect('__logoParticleFrameCapture' in window).toBe(false)
-    } finally {
-      mounted.unmount()
-      Reflect.deleteProperty(window, '__logoParticleFrameCapture')
-    }
-  })
-
-  it('resolves one owned request only from Tres after-render with the rendered PNG and page timestamp', async () => {
-    const hook = installFrameCaptureHook()
-    const mounted = mountParticleSceneContents()
-
-    try {
-      const request = hook.request
-      if (!request) throw new Error('Particle frame capture request was not registered')
-      const canvas = document.createElement('canvas')
-      const requestedTypes: string[] = []
-      canvas.toDataURL = type => {
-        requestedTypes.push(type ?? '')
-        return 'data:image/png;base64,rendered'
-      }
-      const beforeRender = loopHarness.beforeRender
-      const render = loopHarness.render
-      if (!beforeRender || !render) throw new Error('Tres frame callbacks were not registered')
-      const invalidationsBeforeRequest = loopHarness.invalidations
-      let settled = false
-      const capturePromise = request().then(capture => {
-        settled = true
-        return capture
-      })
-
-      expect(loopHarness.invalidations).toBe(invalidationsBeforeRequest + 1)
-      await Promise.resolve()
-      expect(settled).toBe(false)
-      beforeRender(makeLoopContext(canvas))
-      await Promise.resolve()
-      expect(settled).toBe(false)
-      const earliestCapture = performance.now()
-      render(makeLoopContext(canvas))
-      const capture = await capturePromise
-
-      expect(capture.dataUrl).toBe('data:image/png;base64,rendered')
-      expect(capture.capturedAt).toBeGreaterThanOrEqual(earliestCapture)
-      expect(capture.capturedAt).toBeLessThanOrEqual(performance.now())
-      expect(requestedTypes).toEqual(['image/png'])
-      expect(hook.request).toBe(request)
-
-      const pending = request()
-      await expect(request()).rejects.toThrow('already pending')
-      render(makeLoopContext(canvas))
-      await expect(pending).resolves.toEqual({
-        capturedAt: expect.any(Number),
-        dataUrl: 'data:image/png;base64,rendered'
-      })
-
-      const replacement = async (): Promise<TestFrameCapture> => ({
-        capturedAt: -1,
-        dataUrl: 'data:image/png;base64,replacement'
-      })
-      hook.request = replacement
-      mounted.unmount()
-      expect(hook.request).toBe(replacement)
-    } finally {
-      mounted.unmount()
-      Reflect.deleteProperty(window, '__logoParticleFrameCapture')
-    }
-  })
-  it('applies exact shader and pointer-clock overrides once before rendering, then resumes real elapsed time', async () => {
-    const hook = installFrameCaptureHook()
-    const pointerTimes: Array<number | undefined> = []
-    const mounted = mountParticleSceneContents({
-      update: (_renderedLongAxis, time) => {
-        pointerTimes.push(time)
-        return pointerState
-      }
-    })
-
-    try {
-      const request = hook.request
-      const beforeRender = loopHarness.beforeRender
-      const render = loopHarness.render
-      if (!request || !beforeRender || !render) throw new Error('Tres frame callbacks were not registered')
-      const canvas = document.createElement('canvas')
-      canvas.toDataURL = () => 'data:image/png;base64,override'
-
-      const overridden = request({ elapsedSeconds: 7.25, pointerTimeMilliseconds: 12_345 })
-      beforeRender(makeLoopContext(canvas))
-      expect(mounted.resources.uniforms.uTime.value).toBe(7.25)
-      expect(pointerTimes).toEqual([12_345])
-      expect(mounted.resources.uniforms.uBrushPositionRadius.value.x).toBeCloseTo(-0.25)
-      expect(mounted.resources.uniforms.uBrushPositionRadius.value.y).toBeCloseTo(0.5)
-      expect(mounted.resources.uniforms.uExplosionPositionAge.value).toHaveLength(6)
-      render(makeLoopContext(canvas))
-      await expect(overridden).resolves.toEqual({
-        capturedAt: expect.any(Number),
-        dataUrl: 'data:image/png;base64,override'
-      })
-
-      const ordinary = request()
-      beforeRender(makeLoopContext(canvas))
-      expect(mounted.resources.uniforms.uTime.value).toBe(1)
-      expect(pointerTimes).toEqual([12_345, undefined])
-      render(makeLoopContext(canvas))
-      await expect(ordinary).resolves.toEqual({
-        capturedAt: expect.any(Number),
-        dataUrl: 'data:image/png;base64,override'
-      })
-    } finally {
-      mounted.unmount()
-      Reflect.deleteProperty(window, '__logoParticleFrameCapture')
-    }
-  })
-
-  it('rejects invalid elapsed overrides without scheduling a capture', async () => {
-    const hook = installFrameCaptureHook()
-    const mounted = mountParticleSceneContents()
-
-    try {
-      const request = hook.request
-      if (!request) throw new Error('Particle frame capture request was not registered')
-      const invalidationsBeforeRequest = loopHarness.invalidations
-      await expect(request({ elapsedSeconds: Number.NaN })).rejects.toThrow('elapsedSeconds override is invalid')
-      expect(loopHarness.invalidations).toBe(invalidationsBeforeRequest)
-      await expect(request({ elapsedSeconds: -1 })).rejects.toThrow('elapsedSeconds override is invalid')
-      await expect(request({ elapsedSeconds: Number.POSITIVE_INFINITY })).rejects.toThrow('elapsedSeconds override is invalid')
-      await expect(request({ pointerTimeMilliseconds: Number.NaN })).rejects.toThrow('pointerTimeMilliseconds override is invalid')
-      await expect(request({ pointerTimeMilliseconds: -1 })).rejects.toThrow('pointerTimeMilliseconds override is invalid')
-      await expect(request({ pointerTimeMilliseconds: Number.POSITIVE_INFINITY })).rejects.toThrow('pointerTimeMilliseconds override is invalid')
-      await expect(request({})).rejects.toThrow('capture options are invalid')
-      await expect(request({ elapsedSeconds: 1, extra: 2 } as TestFrameCaptureOptions)).rejects.toThrow('capture options are invalid')
-    } finally {
-      mounted.unmount()
-      Reflect.deleteProperty(window, '__logoParticleFrameCapture')
-    }
-  })
-
-  it('rejects a pending request and removes its registration during cleanup', async () => {
-    const hook = installFrameCaptureHook()
-    const mounted = mountParticleSceneContents()
-
-    try {
-      const request = hook.request
-      if (!request) throw new Error('Particle frame capture request was not registered')
-      const pending = request({ elapsedSeconds: 4 })
-      mounted.unmount()
-
-      await expect(pending).rejects.toThrow('Particle frame capture is unavailable')
-      await expect(request()).rejects.toThrow('Particle frame capture is unavailable')
-      expect(hook.request).toBeNull()
-      expect(loopHarness.beforeRender).toBeNull()
-      expect(loopHarness.render).toBeNull()
-    } finally {
-      mounted.unmount()
-      Reflect.deleteProperty(window, '__logoParticleFrameCapture')
-    }
-  })
-
-  it('rejects and removes a pending registration when after-render serialization faults', async () => {
-    const hook = installFrameCaptureHook()
-    const mounted = mountParticleSceneContents()
-
-    try {
-      const request = hook.request
-      const render = loopHarness.render
-      if (!request || !render) throw new Error('Particle frame capture lifecycle was not registered')
-      const pending = request()
-      const canvas = document.createElement('canvas')
-      canvas.toDataURL = () => {
-        throw new Error('PNG serialization failed')
-      }
-
-      render(makeLoopContext(canvas))
-
-      await expect(pending).rejects.toThrow('PNG serialization failed')
-      expect(hook.request).toBeNull()
-    } finally {
-      mounted.unmount()
-      Reflect.deleteProperty(window, '__logoParticleFrameCapture')
-    }
-  })
-})
-
-describe('LogoParticleScene frame and failure fence', () => {
-  it('emits first-frame once and only after an active nonzero particle render', () => {
-    const events: string[] = []
-    const harness = makeRenderer(0)
-    const fence = new ParticleSceneEventFence(effect.count, {
-      firstFrame: () => events.push('first-frame'),
-      error: () => events.push('error'),
-      contextLost: () => events.push('context-lost')
-    })
-
-    fence.ready(harness.renderer)
-    expect(harness.clearAlpha).toEqual([0])
-    expect(harness.renderer.debug.checkShaderErrors).toBe(true)
-    fence.rendered(harness.renderer, false)
-    fence.rendered(harness.renderer, true)
-    expect(events).toEqual([])
-
-    harness.renderer.info.render.points = effect.count
-    fence.rendered(harness.renderer, true)
-    fence.rendered(harness.renderer, true)
-    expect(events).toEqual(['first-frame'])
-    fence.dispose()
-  })
-
-  it('routes shader failure before committing a frame and removes renderer hooks on disposal', () => {
-    const events: string[] = []
-    const harness = makeRenderer()
-    const previousShaderError = (): void => {}
-    harness.renderer.debug.onShaderError = previousShaderError
-    const fence = new ParticleSceneEventFence(effect.count, {
-      firstFrame: () => events.push('first-frame'),
-      error: error => events.push(error.message),
-      contextLost: () => events.push('context-lost')
-    })
-
-    fence.ready(harness.renderer)
-    harness.renderer.debug.onShaderError?.(null as never, null as never, null as never, null as never)
-    fence.rendered(harness.renderer, true)
-    expect(events).toEqual(['Particle shader compilation failed'])
-
-    fence.dispose()
-    expect(harness.renderer.debug.onShaderError).toBe(previousShaderError)
-    expect(harness.renderer.debug.checkShaderErrors).toBe(false)
-    harness.canvas.dispatchEvent(new browserWindow.Event('webglcontextlost'))
-    expect(events).toEqual(['Particle shader compilation failed'])
-  })
-
-  it('emits one context-lost event and fences every later frame and error', () => {
+describe('LogoParticleScene frame fence and loop', () => {
+  it('proves first frames from renderer draw and triangle deltas, then requires pending before a resumed proof', () => {
+    const benchmark = makeBenchmark()
+    const resources = createParticleSceneResources(makeParticles(), effect)
     const events: string[] = []
     const harness = makeRenderer()
     const fence = new ParticleSceneEventFence(effect.count, {
+      submission: () => events.push('submission'),
       firstFrame: () => events.push('first-frame'),
+      framePending: () => events.push('frame-pending'),
       error: () => events.push('error'),
-      contextLost: event => events.push(event.type)
+      contextLost: () => events.push('context-lost')
     })
+    fence.ready(harness.renderer)
 
+    try {
+      fence.rendered(harness.renderer, true)
+      expect(fence.lastRenderDrawCalls).toBe(0)
+      expect(fence.lastRenderTriangles).toBe(0)
+      harness.renderer.info.render.drawCalls = 1
+      harness.renderer.info.render.triangles = effect.count * 2
+      fence.rendered(harness.renderer, true)
+      expect(fence.lastRenderDrawCalls).toBe(1)
+      expect(fence.lastRenderTriangles).toBe(effect.count * 2)
+      expect(events).toEqual(['submission', 'first-frame'])
+
+      fence.markPending()
+      expect(events).toEqual(['submission', 'first-frame', 'frame-pending'])
+      harness.renderer.info.render.drawCalls += 1
+      harness.renderer.info.render.triangles += effect.count * 2
+      fence.rendered(harness.renderer, true)
+      expect(events).toEqual(['submission', 'first-frame', 'frame-pending', 'submission', 'first-frame'])
+    } finally {
+      fence.dispose()
+      disposeParticleSceneResources(resources)
+    }
+  })
+
+  it('records active frames while staying callback-free after deactivation', async () => {
+    const benchmark = makeBenchmark()
+    const resources = createParticleSceneResources(makeParticles(), effect)
+    const renderer = makeRenderer()
+    const events: string[] = []
+    const fence = new ParticleSceneEventFence(effect.count, {
+      firstFrame: () => events.push('first-frame'),
+      framePending: () => events.push('frame-pending'),
+      error: () => events.push('error'),
+      contextLost: () => events.push('context-lost')
+    })
+    fence.ready(renderer.renderer)
+    const active = Vue.ref(true)
+    const loopControl = { ready: false, start: null as (() => void) | null, stop: null as (() => void) | null }
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = Vue.createApp({
+      setup: () => () => Vue.h(ParticleSceneContents, {
+        active: active.value,
+        fence,
+        loopControl,
+        pointerController: { update: () => pointerState },
+        resources
+      })
+    })
+    app.mount(host)
+
+    try {
+      loopControl.ready = true
+      if (!loopHarness.beforeRender || !loopHarness.render) throw new Error('Loop callbacks were not registered')
+      const context = makeFrameContext(renderer.renderer)
+      loopHarness.beforeRender(context)
+      renderer.renderer.info.render.drawCalls = 1
+      renderer.renderer.info.render.triangles = effect.count * 2
+      loopHarness.render(context)
+      expect(benchmark.frames).toHaveLength(1)
+      expect((benchmark.frames[0] as Record<string, unknown>).totalDrawCalls).toBe(1)
+      expect((benchmark.frames[0] as Record<string, unknown>).particleInstances).toBe(effect.count)
+      expect((benchmark.frames[0] as Record<string, unknown>).triangles).toBe(effect.count * 2)
+      expect((benchmark.frames[0] as Record<string, unknown>).motionScheduledBytes).toBe(resources.cloud.motion.byteLength)
+      expect((benchmark.frames[0] as Record<string, unknown>).computeDispatches).toBe(0)
+      expect((benchmark.frames[0] as Record<string, unknown>).colorUploadBytes).toBe(0)
+
+      const callbackCount = benchmark.callbackCount
+      active.value = false
+      await Vue.nextTick()
+      loopHarness.beforeRender(context)
+      loopHarness.render(context)
+      expect(benchmark.callbackCount).toBe(callbackCount)
+      expect(loopHarness.stops).toBeGreaterThan(0)
+    } finally {
+      app.unmount()
+      host.remove()
+      fence.dispose()
+      disposeParticleSceneResources(resources)
+    }
+  })
+
+  it('fences context loss and all later renderer events', () => {
+    const resources = createParticleSceneResources(makeParticles(), effect)
+    const harness = makeRenderer()
+    const events: string[] = []
+    const fence = new ParticleSceneEventFence(effect.count, {
+      firstFrame: () => events.push('first-frame'),
+      framePending: () => events.push('frame-pending'),
+      error: () => events.push('error'),
+      contextLost: (event: Event) => events.push(event.type)
+    })
     fence.ready(harness.renderer)
     harness.canvas.dispatchEvent(new browserWindow.Event('webglcontextlost'))
     harness.canvas.dispatchEvent(new browserWindow.Event('webglcontextlost'))
-    fence.fail(new Error('late renderer error'))
-    fence.rendered(harness.renderer, true)
+    fence.lost()
+    fence.fail(new Error('late failure'))
     expect(events).toEqual(['webglcontextlost'])
     expect(fence.hasFailed).toBe(true)
     fence.dispose()
-    harness.canvas.dispatchEvent(new browserWindow.Event('webglcontextlost'))
-    fence.fail(new Error('post-disposal error'))
-    fence.rendered(harness.renderer, true)
-    expect(events).toEqual(['webglcontextlost'])
+    disposeParticleSceneResources(resources)
   })
 })

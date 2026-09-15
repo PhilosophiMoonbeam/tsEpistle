@@ -1,6 +1,6 @@
 <template>
   <TresCanvas
-    v-if="resources && webglAvailable"
+    v-if="resources && canvasMounted"
     class="login-logo-particle-scene"
     aria-hidden="true"
     :alpha="true"
@@ -12,6 +12,7 @@
     :dpr="[1, 1.5]"
     :premultiplied-alpha="true"
     :output-color-space="SRGBColorSpace"
+    :renderer="rendererFactory"
     render-mode="on-demand"
     :stencil="false"
     :tone-mapping="NoToneMapping"
@@ -22,32 +23,33 @@
     <ParticleSceneContents
       :active="renderEnabled"
       :loop-control="loopControl"
+      :fence="fence"
       :resources="resources"
       :pointer-controller="pointerController"
       @fault="handleRendererError"
     />
   </TresCanvas>
+  <canvas
+    v-else-if="resources"
+    class="login-logo-particle-scene"
+    aria-hidden="true"
+  />
 </template>
 
 <script lang="ts">
 import { TresCanvas, useLoop, useTres } from '@tresjs/core'
-import type { TresContext } from '@tresjs/core'
+import type { TresContext, TresRenderer, TresRendererSetupContext } from '@tresjs/core'
 import {
-  BufferAttribute,
-  BufferGeometry,
-  DynamicDrawUsage,
-  NormalBlending,
+  InstancedBufferAttribute,
+  InstancedBufferGeometry,
+  Mesh,
   NoToneMapping,
   OrthographicCamera,
-  Points,
-  ShaderMaterial,
   SRGBColorSpace,
   Vector2,
-  Vector4,
-  WebGLRenderer
-} from 'three'
-import type { IUniform } from 'three'
-import WebGL from 'three/addons/capabilities/WebGL.js'
+  Vector4
+} from 'three/webgpu'
+import { uniform } from 'three/tsl'
 import {
   defineComponent,
   h,
@@ -57,13 +59,24 @@ import {
   type PropType,
   ref,
   shallowRef,
+  unref,
   watch
 } from 'vue'
 import type { LogoEffectDescriptor, ParsedLogoParticles } from './particle-logo'
-import { CLOUD_BEAD_FRACTION, CLOUD_DUST_FRACTION, ParticleCloud } from './particle-cloud'
+import { ParticleCloud } from './particle-cloud'
 import { updateParticleColors } from './particle-colors'
-import fragmentShader from './particle.frag.glsl?raw'
-import vertexShader from './particle.vert.glsl?raw'
+import {
+  createParticleSpriteGeometry,
+  createParticleSpriteMaterial,
+  type ParticleNodeUniforms
+} from './particle-material'
+import {
+  createParticleBackendLease,
+  type ParticleBackendDiagnostics,
+  type ParticleBackendLease,
+  type ParticleBackendRequest,
+  type LogoParticleRenderer
+} from './particle-renderer'
 import {
   LOGO_POINTER_BOUNCE_RATIO,
   LOGO_POINTER_EXPLOSION_CAPACITY,
@@ -78,7 +91,7 @@ import {
   LOGO_POINTER_MAX_TRAVEL_CSS,
   useLogoPointer
 } from './useLogoPointer'
-import type { LogoPointerController } from './useLogoPointer'
+import type { LogoPointerController, LogoPointerState } from './useLogoPointer'
 
 const DEPTH_SCALE_MIN = 0.82
 const DEPTH_SCALE_MAX = 1.18
@@ -86,19 +99,9 @@ const MIN_IDLE_AMPLITUDE_CSS = 3.5
 const MAX_IDLE_AMPLITUDE_CSS = 10
 const MAX_DIAGNOSTIC_ELAPSED_SECONDS = Number.MAX_SAFE_INTEGER
 const MAX_DIAGNOSTIC_PARTICLES = 16_000
+const MAX_BENCHMARK_FRAMES = 2048
 
-interface ParticleUniforms {
-  [uniform: string]: IUniform
-  readonly uAspect: { value: number }
-  readonly uDpr: { value: number }
-  readonly uBrushPositionRadius: { value: Vector4 }
-  readonly uBrushDirection: { value: Vector2 }
-  readonly uExplosionPositionAge: { value: Vector4[] }
-  readonly uMedianStroke: { value: number }
-  readonly uRenderedLongAxis: { value: number }
-  readonly uTime: { value: number }
-  readonly uViewport: { value: Vector2 }
-}
+export type ParticleUniforms = ParticleNodeUniforms
 
 export interface ParticleMotionDiagnostics {
   activeExplosionCount: number
@@ -121,14 +124,14 @@ export interface ParticleMotionDiagnostics {
 export interface ParticleSceneResources {
   readonly camera: OrthographicCamera
   readonly cloud: ParticleCloud
-  readonly cloudMotion: BufferAttribute
-  readonly particleColor: BufferAttribute
+  readonly cloudMotion: InstancedBufferAttribute
+  readonly particleColor: InstancedBufferAttribute
   readonly particles: ParsedLogoParticles
-  readonly geometry: BufferGeometry
-  readonly material: ShaderMaterial
+  readonly geometry: InstancedBufferGeometry
+  readonly material: ReturnType<typeof createParticleSpriteMaterial>
   readonly motionDiagnostics: ParticleMotionDiagnostics | null
   readonly motionDiagnosticsBenchmark: ParticlePerformanceBenchmark | null
-  readonly points: Points<BufferGeometry, ShaderMaterial>
+  readonly mesh: Mesh<InstancedBufferGeometry, ReturnType<typeof createParticleSpriteMaterial>>
   readonly uniforms: ParticleUniforms
   disposed: boolean
 }
@@ -143,7 +146,9 @@ export interface ParticleSceneFrame {
 
 interface ParticleLoopControl {
   disposeFrameCapture?: (reason: Error) => void
+  onFailure?: (outcome: 'failed' | 'lost' | 'retired', reason: string) => void
   ready: boolean
+  start: (() => void) | null
   stop: (() => void) | null
 }
 
@@ -191,8 +196,54 @@ const particleFrameCaptureClocks = new WeakMap<ParticleFrameCaptureHook, Particl
 
 interface SceneEvents {
   readonly firstFrame: () => void
+  readonly submission?: (submittedAt: number) => void
+  readonly framePending: () => void
   readonly error: (error: Error) => void
   readonly contextLost: (event: Event) => void
+}
+
+interface ParticlePerformanceStartup {
+  enhancementScheduledAt?: number
+  resourcesStartedAt?: number
+  resourcesEndedAt?: number
+  initStartedAt?: number
+  initEndedAt?: number
+  firstSubmissionAt?: number
+  visibleCommitAt?: number
+}
+
+interface ParticlePerformanceResume {
+  readonly startedAt: number
+  firstSubmissionAt?: number | null
+  visibleCommitAt?: number | null
+  outcome?: 'committed' | 'failed' | 'lost' | 'retired'
+  reason?: string
+}
+
+interface ParticlePerformanceFrame {
+  readonly frameId: number
+  readonly submittedAt: number
+  readonly updateCpuMs: number
+  readonly renderInvocationCpuMs: number
+  readonly afterRenderCpuMs: number
+  readonly totalDrawCalls: number
+  readonly particleInstances: number
+  readonly triangles: number
+  readonly computeDispatches: number
+  readonly motionScheduledBytes: number
+  readonly actualUploadBytes: number | null
+  readonly uploadCalls: number | null
+  readonly colorUploadBytes: number
+}
+
+interface ParticlePerformanceCounters {
+  updateCallbacks?: number
+  renderInvocations?: number
+  afterRenderCallbacks?: number
+  rafCallbacks?: number
+  draws?: number
+  uploads?: number
+  sampleOverflow?: number
 }
 
 interface ParticlePerformanceBenchmark {
@@ -202,6 +253,16 @@ interface ParticlePerformanceBenchmark {
   firstFrameMilliseconds: number | null
   lastFrameAt: number | null
   lastMotion?: ParticleMotionDiagnostics
+  maximumActiveExplosionCount?: number
+  maximumActiveImpulseCount?: number
+  requestedBackend?: ParticleBackendRequest
+  effectiveBackend?: ParticleBackendDiagnostics['effectiveBackend']
+  backendDiagnostics?: ParticleBackendDiagnostics[]
+  onDiagnostics?: (diagnostics: ParticleBackendDiagnostics) => void
+  startup?: ParticlePerformanceStartup
+  resumes?: ParticlePerformanceResume[]
+  frames?: ParticlePerformanceFrame[]
+  counters?: ParticlePerformanceCounters
 }
 
 type ParticlePerformanceWindow = Window & {
@@ -412,6 +473,21 @@ const assertParticleViews = (particles: ParsedLogoParticles, effect: LogoEffectD
   }
 }
 
+const createParticleUniforms = (effect: LogoEffectDescriptor): ParticleNodeUniforms => ({
+  aspectRatio: uniform(effect.aspect),
+  pixelRatio: uniform(1),
+  brushPositionRadius: uniform(new Vector4(0, 0, 18, 0)),
+  brushDirection: uniform(new Vector2(0, 0)),
+  explosionPositionAge: Array.from(
+    { length: LOGO_POINTER_EXPLOSION_CAPACITY },
+    () => uniform(new Vector4(0, 0, 0, 0))
+  ),
+  medianStroke: uniform(effect.medianStroke),
+  renderedLongAxis: uniform(1),
+  elapsedSeconds: uniform(0),
+  viewportSize: uniform(new Vector2(1, 1))
+})
+
 export const createParticleSceneResources = (
   particles: ParsedLogoParticles,
   effect: LogoEffectDescriptor
@@ -419,55 +495,18 @@ export const createParticleSceneResources = (
   assertParticleViews(particles, effect)
 
   const cloud = new ParticleCloud(particles)
-  const cloudMotion = new BufferAttribute(cloud.motion, 3).setUsage(DynamicDrawUsage)
   const colors = new Float32Array(particles.count * 4)
   updateParticleColors(particles, colors)
-  const particleColor = new BufferAttribute(colors, 4)
-  const geometry = new BufferGeometry()
-  geometry.setAttribute('cloudMotion', cloudMotion)
-  geometry.setAttribute('logoXY', new BufferAttribute(particles.xy, 2, true))
-  geometry.setAttribute('logoDepth', new BufferAttribute(particles.depth, 1, true))
-  geometry.setAttribute('particleColor', particleColor)
-  geometry.setAttribute('logoSize', new BufferAttribute(particles.size, 1, true))
-  geometry.setAttribute('logoSeed', new BufferAttribute(particles.seed, 1, true))
-  geometry.setDrawRange(0, particles.count)
-  const uniforms: ParticleUniforms = {
-    uAspect: { value: effect.aspect },
-    uDpr: { value: 1 },
-    uBrushPositionRadius: { value: new Vector4(0, 0, 18, 0) },
-    uBrushDirection: { value: new Vector2(0, 0) },
-    uExplosionPositionAge: {
-      value: [
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0)
-      ]
-    },
-    uMedianStroke: { value: effect.medianStroke },
-    uRenderedLongAxis: { value: 1 },
-    uTime: { value: 0 },
-    uViewport: { value: new Vector2(1, 1) }
-  }
-  const material = new ShaderMaterial({
-    blending: NormalBlending,
-    defines: { CLOUD_BEAD_START: 1 - CLOUD_BEAD_FRACTION, CLOUD_DUST_END: CLOUD_DUST_FRACTION },
-    depthTest: false,
-    depthWrite: false,
-    fragmentShader,
-    premultipliedAlpha: false,
-    toneMapped: false,
-    transparent: true,
-    uniforms,
-    vertexShader
-  })
-  const points = new Points(geometry, material)
-  points.frustumCulled = false
-  points.matrixAutoUpdate = false
-  points.updateMatrix()
-  points.matrixWorldNeedsUpdate = true
+  const particleColor = new InstancedBufferAttribute(colors, 4, false)
+  const { cloudMotion, geometry } = createParticleSpriteGeometry(particles, cloud, particleColor)
+  geometry.instanceCount = particles.count
+  const uniforms = createParticleUniforms(effect)
+  const material = createParticleSpriteMaterial(uniforms)
+  const mesh = new Mesh(geometry, material)
+  mesh.frustumCulled = false
+  mesh.matrixAutoUpdate = false
+  mesh.updateMatrix()
+  mesh.matrixWorldNeedsUpdate = true
 
   const camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 10)
   camera.position.z = 2
@@ -476,9 +515,7 @@ export const createParticleSceneResources = (
 
   const motionDiagnosticsBenchmark = readParticlePerformanceBenchmark()
   const motionDiagnostics = motionDiagnosticsBenchmark ? createMotionDiagnostics(particles.count, cloud.count) : null
-  if (motionDiagnosticsBenchmark && motionDiagnostics) {
-    motionDiagnosticsBenchmark.lastMotion = motionDiagnostics
-  }
+  if (motionDiagnosticsBenchmark && motionDiagnostics) motionDiagnosticsBenchmark.lastMotion = motionDiagnostics
 
   return {
     camera,
@@ -489,9 +526,9 @@ export const createParticleSceneResources = (
     disposed: false,
     geometry,
     material,
+    mesh,
     motionDiagnostics,
     motionDiagnosticsBenchmark,
-    points,
     uniforms
   }
 }
@@ -502,20 +539,40 @@ export const disposeParticleSceneResources = (resources: ParticleSceneResources)
   if (resources.motionDiagnosticsBenchmark?.lastMotion === resources.motionDiagnostics) {
     Reflect.deleteProperty(resources.motionDiagnosticsBenchmark, 'lastMotion')
   }
-  resources.points.removeFromParent()
+  resources.mesh.removeFromParent()
   resources.camera.removeFromParent()
   resources.geometry.dispose()
   resources.material.dispose()
+}
+
+type ParticleRenderMetric = 'drawCalls' | 'triangles'
+
+const readParticleRenderMetric = (
+  renderer: LogoParticleRenderer,
+  metric: ParticleRenderMetric
+): number | null => {
+  const render = renderer.info?.render
+  const value = render?.[metric]
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 export class ParticleSceneEventFence {
   private canvas: HTMLCanvasElement | null = null
   private disposed = false
   private failed = false
+  private committed = false
   private firstFrameEmitted = false
+  private pendingFrame = false
   private previousCheckShaderErrors = true
-  private previousShaderError: WebGLRenderer['debug']['onShaderError'] = null
-  private renderer: WebGLRenderer | null = null
+  private previousShaderError: LogoParticleRenderer['debug']['onShaderError'] = null
+  private renderer: LogoParticleRenderer | null = null
+  private previousDrawCalls: number | null = null
+  private previousTriangles: number | null = null
+  private pendingDrawCalls: number | null = null
+  private pendingTriangles: number | null = null
+  private lastDrawCalls = 0
+  private lastTriangles = 0
+  private lastSubmissionAt: number | null = null
   private readonly shaderError = (): void => {
     this.fail(new Error('Particle shader compilation failed'))
   }
@@ -529,10 +586,32 @@ export class ParticleSceneEventFence {
     return this.failed
   }
 
-  ready(renderer: WebGLRenderer): void {
-    if (this.disposed || this.failed || this.renderer) return
+  get hasCommittedFrame(): boolean {
+    return this.committed
+  }
+
+  get lastRenderDrawCalls(): number {
+    return this.lastDrawCalls
+  }
+
+  get lastRenderTriangles(): number {
+    return this.lastTriangles
+  }
+
+  get lastRenderSubmissionAt(): number | null {
+    return this.lastSubmissionAt
+  }
+
+  ready(renderer: LogoParticleRenderer): void {
+    if (this.disposed || this.failed) return
+    if (this.renderer === renderer) return
+    this.detachRenderer()
     this.renderer = renderer
     this.canvas = renderer.domElement
+    this.previousDrawCalls = readParticleRenderMetric(renderer, 'drawCalls')
+    this.previousTriangles = readParticleRenderMetric(renderer, 'triangles')
+    this.pendingDrawCalls = null
+    this.pendingTriangles = null
     this.previousCheckShaderErrors = renderer.debug.checkShaderErrors
     this.previousShaderError = renderer.debug.onShaderError
     renderer.debug.checkShaderErrors = true
@@ -541,19 +620,60 @@ export class ParticleSceneEventFence {
     this.canvas.addEventListener('webglcontextlost', this.onContextLost)
   }
 
-  rendered(renderer: WebGLRenderer, active: boolean): void {
+  beforeRender(renderer: LogoParticleRenderer): void {
+    this.pendingDrawCalls = null
+    this.pendingTriangles = null
+    if (this.disposed || this.failed || renderer !== this.renderer) return
+    this.pendingDrawCalls = readParticleRenderMetric(renderer, 'drawCalls')
+    this.pendingTriangles = readParticleRenderMetric(renderer, 'triangles')
+  }
+
+  markPending(): void {
+    if (this.disposed || this.failed || this.pendingFrame) return
+    if (!this.committed && !this.firstFrameEmitted) return
+    this.pendingFrame = true
+    this.firstFrameEmitted = false
+    this.events.framePending()
+  }
+
+  rendered(renderer: LogoParticleRenderer, active: boolean): void {
+    this.lastDrawCalls = 0
+    this.lastTriangles = 0
+    this.lastSubmissionAt = null
     if (
       !active ||
       this.disposed ||
       this.failed ||
-      this.firstFrameEmitted ||
       renderer !== this.renderer ||
       renderer.domElement.width <= 0 ||
-      renderer.domElement.height <= 0 ||
-      renderer.info.render.points < this.particleCount
+      renderer.domElement.height <= 0
     ) return
 
+    const afterDrawCalls = readParticleRenderMetric(renderer, 'drawCalls')
+    const afterTriangles = readParticleRenderMetric(renderer, 'triangles')
+    if (afterDrawCalls === null || afterTriangles === null) return
+    const baselineDrawCalls = this.pendingDrawCalls ?? this.previousDrawCalls
+    const baselineTriangles = this.pendingTriangles ?? this.previousTriangles
+    this.previousDrawCalls = afterDrawCalls
+    this.previousTriangles = afterTriangles
+    this.pendingDrawCalls = null
+    this.pendingTriangles = null
+    if (baselineDrawCalls === null || baselineTriangles === null) return
+
+    this.lastDrawCalls = Math.max(0, afterDrawCalls - baselineDrawCalls)
+    this.lastTriangles = Math.max(0, afterTriangles - baselineTriangles)
+    if (
+      this.firstFrameEmitted ||
+      this.lastDrawCalls < 1 ||
+      this.lastTriangles < this.particleCount * 2
+    ) return
+
+    const submittedAt = performance.now()
+    this.lastSubmissionAt = submittedAt
+    this.events.submission?.(submittedAt)
     this.firstFrameEmitted = true
+    this.committed = true
+    this.pendingFrame = false
     this.events.firstFrame()
   }
 
@@ -563,9 +683,20 @@ export class ParticleSceneEventFence {
     this.events.error(asError(reason))
   }
 
+  lost(): void {
+    if (this.disposed || this.failed) return
+    this.failed = true
+    const event = typeof Event === 'function' ? new Event('webglcontextlost') : ({ type: 'webglcontextlost' } as Event)
+    this.events.contextLost(event)
+  }
+
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.detachRenderer()
+  }
+
+  private detachRenderer(): void {
     this.canvas?.removeEventListener('webglcontextlost', this.onContextLost)
     if (this.renderer?.debug.onShaderError === this.shaderError) {
       this.renderer.debug.onShaderError = this.previousShaderError
@@ -573,6 +704,10 @@ export class ParticleSceneEventFence {
     }
     this.canvas = null
     this.renderer = null
+    this.previousDrawCalls = null
+    this.previousTriangles = null
+    this.pendingDrawCalls = null
+    this.pendingTriangles = null
   }
 
   private readonly onContextLost = (event: Event): void => {
@@ -600,16 +735,17 @@ export const updateParticleSceneFrame = (
     frame.width <= 0 ||
     frame.height <= 0
   ) return
-  resources.uniforms.uViewport.value.set(frame.width, frame.height)
-  resources.uniforms.uDpr.value = clamp(1, finiteOr(frame.pixelRatio, 1), 1.5)
-  resources.uniforms.uRenderedLongAxis.value = renderedLongAxis(
+
+  resources.uniforms.viewportSize.value.set(frame.width, frame.height)
+  resources.uniforms.pixelRatio.value = clamp(1, finiteOr(frame.pixelRatio, 1), 1.5)
+  resources.uniforms.renderedLongAxis.value = renderedLongAxis(
     frame.width,
     frame.height,
-    resources.uniforms.uAspect.value
+    resources.uniforms.aspectRatio.value
   )
   const pointer = frame.pointerTimeMilliseconds === undefined
-    ? pointerController.update(resources.uniforms.uRenderedLongAxis.value)
-    : pointerController.update(resources.uniforms.uRenderedLongAxis.value, frame.pointerTimeMilliseconds)
+    ? pointerController.update(resources.uniforms.renderedLongAxis.value)
+    : pointerController.update(resources.uniforms.renderedLongAxis.value, frame.pointerTimeMilliseconds)
   let activeImpulseCount = 0
   for (let index = 0; index < LOGO_POINTER_IMPULSE_CAPACITY; index += 1) {
     const impulse = pointer.impulses[index]
@@ -630,7 +766,7 @@ export const updateParticleSceneFrame = (
       LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS
     )
     const active = explosion.active && ageSeconds < LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS
-    resources.uniforms.uExplosionPositionAge.value[index].set(
+    resources.uniforms.explosionPositionAge[index]!.value.set(
       active ? clamp(-1, finiteOr(explosion.x, 0), 1) : 0,
       active ? clamp(-1, finiteOr(explosion.y, 0), 1) : 0,
       ageSeconds,
@@ -638,22 +774,28 @@ export const updateParticleSceneFrame = (
     )
     if (active) activeExplosionCount += 1
   }
-  const elapsed = clamp(0, finiteOr(frame.elapsed, 0), Number.MAX_SAFE_INTEGER)
-  resources.uniforms.uTime.value = elapsed
-  resources.cloud.update(elapsed, frame.width, frame.height, pointer, frame.pointerTimeMilliseconds === undefined ? elapsed : frame.pointerTimeMilliseconds / 1000)
+  const elapsed = clamp(0, finiteOr(frame.elapsed, 0), MAX_DIAGNOSTIC_ELAPSED_SECONDS)
+  resources.uniforms.elapsedSeconds.value = elapsed
+  resources.cloud.update(
+    elapsed,
+    frame.width,
+    frame.height,
+    pointer,
+    frame.pointerTimeMilliseconds === undefined ? elapsed : frame.pointerTimeMilliseconds / 1000
+  )
   const brush = resources.cloud.brush
-  resources.uniforms.uBrushPositionRadius.value.set(brush.x, brush.y, brush.radius, brush.travel)
-  resources.uniforms.uBrushDirection.value.set(brush.directionX, brush.directionY)
+  resources.uniforms.brushPositionRadius.value.set(brush.x, brush.y, brush.radius, brush.travel)
+  resources.uniforms.brushDirection.value.set(brush.directionX, brush.directionY)
   if (resources.cloud.count > 0) resources.cloudMotion.needsUpdate = true
 
   const diagnostics = resources.motionDiagnostics
   if (diagnostics) {
     diagnostics.activeImpulseCount = activeImpulseCount
     diagnostics.activeExplosionCount = activeExplosionCount
-    diagnostics.elapsedSeconds = Math.min(elapsed, MAX_DIAGNOSTIC_ELAPSED_SECONDS)
+    diagnostics.elapsedSeconds = elapsed
     diagnostics.idleAmplitudeCss = idleAmplitudeCss(
-      resources.uniforms.uMedianStroke.value,
-      resources.uniforms.uRenderedLongAxis.value
+      resources.uniforms.medianStroke.value,
+      resources.uniforms.renderedLongAxis.value
     )
   }
 }
@@ -663,6 +805,7 @@ const ParticleSceneContents = defineComponent({
   props: {
     active: { type: Boolean, required: true },
     loopControl: { type: Object as PropType<ParticleLoopControl>, required: true },
+    fence: { type: Object as PropType<ParticleSceneEventFence>, required: true },
     pointerController: { type: Object as PropType<LogoPointerController>, required: true },
     resources: { type: Object as PropType<ParticleSceneResources>, required: true }
   },
@@ -672,11 +815,16 @@ const ParticleSceneContents = defineComponent({
   setup (props, { emit }) {
     const { invalidate } = useTres()
     const { onBeforeRender, onRender, start, stop } = useLoop()
+    props.loopControl.start = start
     props.loopControl.stop = stop
     const benchmark = readParticlePerformanceBenchmark()
     const frameCapture = createParticleFrameCaptureRegistration(invalidate)
     if (frameCapture) props.loopControl.disposeFrameCapture = frameCapture.dispose
     let callbackFailed = false
+    let nextFrameId = 1
+    let pendingFrameId = 0
+    let pendingUpdateCpuMs = 0
+    let pendingRenderStartedAt = 0
     const frame: ParticleSceneFrame = {
       elapsed: 0,
       height: 1,
@@ -685,18 +833,29 @@ const ParticleSceneContents = defineComponent({
       width: 1
     }
 
+    const incrementCounter = (name: keyof ParticlePerformanceCounters, amount = 1): void => {
+      if (!benchmark?.counters || typeof benchmark.counters[name] !== 'number') return
+      benchmark.counters[name] += amount
+    }
+    const recordCallback = (startedAt: number): void => {
+      if (!benchmark) return
+      benchmark.callbackCount += 1
+      benchmark.callbackCpuMilliseconds.push(performance.now() - startedAt)
+    }
     const fail = (reason: unknown): void => {
       if (callbackFailed) return
       callbackFailed = true
       stop()
-      frameCapture?.dispose(asError(reason))
+      props.loopControl.onFailure?.('failed', asError(reason).message)
       emit('fault', asError(reason))
     }
 
     const beforeSubscription = onBeforeRender(({ elapsed, renderer, sizes }) => {
       const callbackStartedAt = benchmark ? performance.now() : 0
+      let shouldRecord = false
       try {
         if (!props.active || callbackFailed) return
+        const typedRenderer = renderer as unknown as LogoParticleRenderer
         frame.elapsed = elapsed
         const elapsedSecondsOverride = frameCapture?.consumeElapsedSecondsOverride()
         if (elapsedSecondsOverride !== undefined) frame.elapsed = elapsedSecondsOverride
@@ -704,38 +863,68 @@ const ParticleSceneContents = defineComponent({
         frame.height = sizes.height.value
         frame.pixelRatio = renderer.getPixelRatio()
         frame.width = sizes.width.value
+        const updateStartedAt = benchmark ? performance.now() : 0
         updateParticleSceneFrame(props.resources, props.pointerController, frame)
+        const updateEndedAt = benchmark ? performance.now() : 0
+        pendingUpdateCpuMs = benchmark ? updateEndedAt - updateStartedAt : 0
+        pendingRenderStartedAt = benchmark ? updateEndedAt : 0
+        props.fence.beforeRender(typedRenderer)
+        pendingFrameId = nextFrameId
+        nextFrameId += 1
+        shouldRecord = true
+        incrementCounter('updateCallbacks')
       } catch (error) {
         fail(error)
       } finally {
-        if (benchmark) {
-          benchmark.callbackCount += 1
-          benchmark.callbackCpuMilliseconds.push(performance.now() - callbackStartedAt)
-        }
+        if (shouldRecord) recordCallback(callbackStartedAt)
       }
     })
     const renderSubscription = onRender(({ renderer }) => {
       const callbackStartedAt = benchmark ? performance.now() : 0
+      let shouldRecord = false
       try {
         frameCapture?.afterRender(renderer.domElement)
         if (!props.active || callbackFailed) return
+        const typedRenderer = renderer as unknown as LogoParticleRenderer
+        props.fence.rendered(typedRenderer, true)
+        const submittedAt = props.fence.lastRenderSubmissionAt ?? performance.now()
         if (benchmark) {
           if (benchmark.lastFrameAt !== null) {
-            benchmark.frameIntervalsMilliseconds.push(callbackStartedAt - benchmark.lastFrameAt)
+            benchmark.frameIntervalsMilliseconds.push(submittedAt - benchmark.lastFrameAt)
           }
-          benchmark.lastFrameAt = callbackStartedAt
+          benchmark.lastFrameAt = submittedAt
+          const totalDrawCalls = props.fence.lastRenderDrawCalls
+          const triangles = props.fence.lastRenderTriangles
+          if (benchmark.frames) {
+            if (benchmark.frames.length < MAX_BENCHMARK_FRAMES) {
+              benchmark.frames.push({
+                frameId: pendingFrameId,
+                submittedAt,
+                updateCpuMs: pendingUpdateCpuMs,
+                renderInvocationCpuMs: Math.max(0, callbackStartedAt - pendingRenderStartedAt),
+                afterRenderCpuMs: Math.max(0, performance.now() - callbackStartedAt),
+                totalDrawCalls,
+                particleInstances: props.resources.geometry.instanceCount,
+                triangles,
+                computeDispatches: 0,
+                motionScheduledBytes: props.resources.cloud.motion.byteLength,
+                actualUploadBytes: null,
+                uploadCalls: null,
+                colorUploadBytes: 0
+              })
+            } else incrementCounter('sampleOverflow')
+          }
+          incrementCounter('renderInvocations')
+          incrementCounter('afterRenderCallbacks')
+          incrementCounter('draws', totalDrawCalls)
         }
-        // TresJS v5's ready hook eagerly activates loop.start(). In order to maintain
-        // zero-cost CPU/GPU idle state when the scene is inactive, we operate on-demand
-        // and re-queue the subsequent frame via invalidate() only while props.active is true.
+        shouldRecord = true
+        // TresJS on-demand mode renders only invalidated frames. Re-queue while active.
         invalidate()
       } catch (error) {
         fail(error)
       } finally {
-        if (benchmark) {
-          benchmark.callbackCount += 1
-          benchmark.callbackCpuMilliseconds.push(performance.now() - callbackStartedAt)
-        }
+        if (shouldRecord) recordCallback(callbackStartedAt)
       }
     })
 
@@ -746,9 +935,7 @@ const ParticleSceneContents = defineComponent({
         if (active) {
           start()
           invalidate()
-        } else {
-          stop()
-        }
+        } else stop()
       },
       { flush: 'sync', immediate: true }
     )
@@ -764,7 +951,7 @@ const ParticleSceneContents = defineComponent({
     })
 
     return () => props.resources && !props.resources.disposed
-      ? h('primitive', { dispose: null, object: props.resources.points })
+      ? h('primitive', { dispose: null, object: props.resources.mesh })
       : null
   }
 })
@@ -779,20 +966,103 @@ export default defineComponent({
   },
   emits: {
     'first-frame': (): boolean => true,
+    'frame-pending': (): boolean => true,
     error: (_error: Error): boolean => true,
     'context-lost': (_event: Event): boolean => true
   },
   setup (props, { emit, expose }) {
     const resources = shallowRef<ParticleSceneResources | null>(null)
-    const renderEnabled = ref(false)
-    const webglAvailable = ref(false)
-    const loopControl = markRaw<ParticleLoopControl>({ ready: false, stop: null })
+    const renderEnabled = ref(props.active)
+    const canvasMounted = ref(props.active)
     const pointerTarget = shallowRef<HTMLElement | null>(null)
     const pointerCoordinateTarget = shallowRef<HTMLElement | null>(null)
-    let setupError: Error | null = null
-    let tornDown = false
     const benchmark = readParticlePerformanceBenchmark()
     const frameCaptureClock = readParticleFrameCaptureClock()
+    const startup = benchmark?.startup
+    let setupError: Error | null = null
+    let tornDown = false
+    let backendLease: ParticleBackendLease | null = null
+    let backendCanvas: HTMLCanvasElement | null = null
+    let backendGeneration = 0
+    let activeResume: ParticlePerformanceResume | null = null
+
+    const recordSubmission = (submittedAt: number): void => {
+      if (startup && startup.firstSubmissionAt === undefined) startup.firstSubmissionAt = submittedAt
+      if (activeResume && activeResume.firstSubmissionAt === null) activeResume.firstSubmissionAt = submittedAt
+    }
+    const recordFailure = (outcome: 'failed' | 'lost' | 'retired', reason: string): void => {
+      if (!activeResume) return
+      activeResume.outcome = outcome
+      activeResume.reason = reason
+      activeResume = null
+    }
+    const beginResume = (): void => {
+      if (!benchmark?.resumes || !startup || !fenceForScene.hasCommittedFrame) return
+      const sample: ParticlePerformanceResume = {
+        startedAt: performance.now(),
+        firstSubmissionAt: null,
+        visibleCommitAt: null
+      }
+      benchmark.resumes.push(sample)
+      activeResume = sample
+    }
+    const loopControl = markRaw<ParticleLoopControl>({
+      onFailure: recordFailure,
+      ready: false,
+      start: null,
+      stop: null
+    })
+    const retireBackend = (): void => {
+      const lease = backendLease
+      backendLease = null
+      backendCanvas = null
+      loopControl.ready = false
+      if (lease && lease.status !== 'lost') {
+        lease.retire()
+        recordFailure('retired', 'Particle backend was retired')
+      }
+    }
+    const publishDiagnostic = (owner: ParticleBackendLease, diagnostic: ParticleBackendDiagnostics): void => {
+      if (tornDown || owner !== backendLease) return
+      if (benchmark) {
+        try {
+          if (benchmark.onDiagnostics) benchmark.onDiagnostics(diagnostic)
+          else benchmark.backendDiagnostics?.push({ ...diagnostic })
+          benchmark.effectiveBackend = diagnostic.effectiveBackend
+        } catch {
+          // Benchmark diagnostics are observational and must not block lifecycle fencing.
+        }
+      }
+      if (diagnostic.reason === 'backend-error' && diagnostic.phase === 'ready') {
+        fenceForScene.fail(new Error('Particle backend reported an error'))
+        return
+      }
+      if (diagnostic.reason === 'device-lost') fenceForScene.lost()
+    }
+    const rendererFactory = ({ canvas }: TresRendererSetupContext): TresRenderer => {
+      const resolvedCanvas = unref(canvas)
+      if (
+        backendLease &&
+        backendCanvas === resolvedCanvas &&
+        backendLease.status !== 'retired' &&
+        backendLease.status !== 'failed' &&
+        backendLease.status !== 'lost'
+      ) {
+        return backendLease.renderer
+      }
+      retireBackend()
+      backendCanvas = resolvedCanvas
+      if (startup && startup.initStartedAt === undefined) startup.initStartedAt = performance.now()
+      const lease = createParticleBackendLease({
+        canvas: resolvedCanvas,
+        directSrgbMaterialPipeline: true,
+        generation: ++backendGeneration,
+        onDiagnostics: diagnostic => publishDiagnostic(lease, diagnostic),
+        requestedBackend: benchmark?.requestedBackend ?? 'auto'
+      })
+      backendLease = lease
+      return lease.renderer
+    }
 
     const pointerController = markRaw(useLogoPointer({
       active: renderEnabled,
@@ -804,21 +1074,34 @@ export default defineComponent({
       renderEnabled.value = false
       loopControl.stop?.()
     }
-    const fence = new ParticleSceneEventFence(props.particles.count, {
+    const fenceForScene = new ParticleSceneEventFence(props.particles.count, {
+      submission: recordSubmission,
       firstFrame: () => {
-        if (benchmark && benchmark.firstFrameMilliseconds === null) {
-          benchmark.firstFrameMilliseconds = performance.now()
+        const committedAt = performance.now()
+        if (startup && startup.visibleCommitAt === undefined) startup.visibleCommitAt = committedAt
+        if (activeResume) {
+          activeResume.visibleCommitAt = committedAt
+          activeResume.outcome = 'committed'
+          activeResume = null
         }
+        if (benchmark && benchmark.firstFrameMilliseconds === null) benchmark.firstFrameMilliseconds = committedAt
         emit('first-frame')
       },
+      framePending: () => emit('frame-pending'),
       error: error => {
         disableRendering()
+        loopControl.onFailure?.('failed', error.message)
         loopControl.disposeFrameCapture?.(error)
+        canvasMounted.value = false
+        retireBackend()
         emit('error', error)
       },
       contextLost: event => {
         disableRendering()
-        loopControl.disposeFrameCapture?.(new Error('Particle WebGL context was lost'))
+        loopControl.onFailure?.('lost', 'Particle backend device was lost')
+        loopControl.disposeFrameCapture?.(new Error('Particle backend device was lost'))
+        canvasMounted.value = false
+        retireBackend()
         emit('context-lost', event)
       }
     })
@@ -831,82 +1114,109 @@ export default defineComponent({
       pointerController.dispose()
       pointerTarget.value = null
       pointerCoordinateTarget.value = null
-      fence.dispose()
+      canvasMounted.value = false
+      retireBackend()
+      fenceForScene.dispose()
       if (resources.value) disposeParticleSceneResources(resources.value)
       resources.value = null
-      webglAvailable.value = false
     }
     expose({ teardown })
 
     try {
-      webglAvailable.value = WebGL.isWebGL2Available()
-      if (!webglAvailable.value) throw new Error('WebGL 2 is unavailable')
+      if (startup && startup.resourcesStartedAt === undefined) startup.resourcesStartedAt = performance.now()
       resources.value = markRaw(createParticleSceneResources(props.particles, props.effect))
-      renderEnabled.value = props.active
+      if (startup && startup.resourcesEndedAt === undefined) startup.resourcesEndedAt = performance.now()
     } catch (error) {
       setupError = asError(error)
+      canvasMounted.value = false
+      renderEnabled.value = false
     }
 
     watch(
       () => props.active,
       active => {
-        if (tornDown || !active || fence.hasFailed || resources.value === null) {
+        if (tornDown || resources.value === null || fenceForScene.hasFailed) {
           disableRendering()
+          canvasMounted.value = false
+          retireBackend()
           return
+        }
+        if (!active) {
+          disableRendering()
+          fenceForScene.markPending()
+          canvasMounted.value = false
+          retireBackend()
+          return
+        }
+        if (!canvasMounted.value) {
+          fenceForScene.markPending()
+          beginResume()
+          loopControl.ready = false
+          canvasMounted.value = true
         }
         renderEnabled.value = true
       },
       { flush: 'sync' }
     )
 
-    const handleRendererReady = (context: TresContext): void => {
-      if (tornDown || fence.hasFailed) return
-      const renderer = context.renderer.instance
-      if (!(renderer instanceof WebGLRenderer)) {
-        fence.fail(new Error('Particle scene requires a WebGL renderer'))
+    const handleRendererReady = async (context: TresContext): Promise<void> => {
+      if (tornDown || fenceForScene.hasFailed) return
+      const lease = backendLease
+      if (!lease || context.renderer.instance !== lease.renderer || lease.status !== 'ready') {
+        fenceForScene.fail(new Error('Particle backend identity was not committed'))
         return
       }
-
+      const renderer = lease.renderer
       try {
-        // TresJS 5.8.3 skips its zero-valued NoToneMapping prop, so enforce it on the renderer.
         renderer.toneMapping = NoToneMapping
         renderer.outputColorSpace = SRGBColorSpace
-        fence.ready(renderer)
+        fenceForScene.ready(renderer)
+        if (startup && startup.initEndedAt === undefined) startup.initEndedAt = performance.now()
+        await renderer.compileAsync(context.scene.value, context.camera.activeCamera.value)
+        if (
+          tornDown ||
+          fenceForScene.hasFailed ||
+          backendLease !== lease ||
+          lease.status !== 'ready' ||
+          !renderEnabled.value ||
+          !canvasMounted.value
+        ) return
         loopControl.ready = true
-        if (!renderEnabled.value) loopControl.stop?.()
+        if (renderEnabled.value) loopControl.start?.()
+        else loopControl.stop?.()
         const wrapper = renderer.domElement.closest('.login-particle-logo')
         pointerTarget.value = wrapper instanceof HTMLElement ? wrapper : null
         pointerCoordinateTarget.value = renderer.domElement
       } catch (error) {
-        fence.fail(error)
+        fenceForScene.fail(error)
       }
     }
 
-    const handleRendererRender = (context: TresContext): void => {
-      const renderer = context.renderer.instance
-      if (renderer instanceof WebGLRenderer) fence.rendered(renderer, renderEnabled.value)
+    const handleRendererRender = (_context: TresContext): void => {
+      // Per-frame proof is recorded by ParticleSceneContents around the actual render.
     }
-
     const handleRendererError = (reason: unknown): void => {
-      fence.fail(reason)
+      fenceForScene.fail(reason)
     }
 
     onMounted(() => {
-      if (setupError && !tornDown) fence.fail(setupError)
+      if (setupError && !tornDown) fenceForScene.fail(setupError)
     })
     onBeforeUnmount(teardown)
 
     return {
+      canvasMounted,
+      fence: fenceForScene,
       handleRendererError,
       handleRendererReady,
       handleRendererRender,
       NoToneMapping,
-      SRGBColorSpace,
-      loopControl,
       pointerController,
+      rendererFactory,
       renderEnabled,
       resources,
-      webglAvailable
+      SRGBColorSpace,
+      loopControl
     }
   }
 })

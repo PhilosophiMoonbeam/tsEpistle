@@ -63,8 +63,12 @@ export const LOGIN_DIRECT_BASELINE = {
 
 const LOGIN_JAVASCRIPT_GZIP_DELTA_LIMIT = 5 * KiB
 const LOGIN_CSS_GZIP_DELTA_LIMIT = 2 * KiB
-const LOGO_SCENE_RAW_LIMIT = 950 * KiB
-const LOGO_SCENE_GZIP_LIMIT = 260 * KiB
+// Shared Three WebGPU + Tres retains both public renderer families. These caps
+// keep five percent headroom over the measured 1,490.4 KiB / 403.9 KiB closure.
+const LOGO_SCENE_RAW_LIMIT = 1_565 * KiB
+const LOGO_SCENE_GZIP_LIMIT = 425 * KiB
+const LARGEST_JAVASCRIPT_CHUNK_RAW_LIMIT = 1_565 * KiB
+const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_552 * KiB
 
 export function findManifestKey(manifest: Manifest, source: string): string {
   if (manifest[source]) return source
@@ -292,8 +296,8 @@ export async function checkBundleBudgets(assetsDirectory = path.resolve('assets'
     { name: 'setup initial JavaScript (gzip)', actual: setupScripts.gzipBytes, limit: 340 * KiB },
     { name: 'setup initial CSS (raw)', actual: setupStyles.rawBytes, limit: 1_000 * KiB },
     { name: 'setup initial CSS (gzip)', actual: setupStyles.gzipBytes, limit: 170 * KiB },
-    { name: 'largest JavaScript chunk (raw)', actual: largestJavascriptChunk, limit: 1_400 * KiB },
-    { name: 'all JavaScript chunks (raw)', actual: allJavascript.rawBytes, limit: 12_288 * KiB },
+    { name: 'largest JavaScript chunk (raw)', actual: largestJavascriptChunk, limit: LARGEST_JAVASCRIPT_CHUNK_RAW_LIMIT },
+    { name: 'all JavaScript chunks (raw)', actual: allJavascript.rawBytes, limit: ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT },
     ...buildLoginBundleBudgets({
       directJavascript,
       directStyles,

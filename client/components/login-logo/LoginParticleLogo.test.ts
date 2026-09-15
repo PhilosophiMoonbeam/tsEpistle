@@ -40,6 +40,7 @@ let pageVisibility: DocumentVisibilityState = 'visible'
 
 interface SceneControls {
   firstFrame: () => void
+  framePending: () => void
   error: () => void
   contextLost: () => void
   tick: () => void
@@ -51,6 +52,33 @@ interface PendingFetch {
   readonly credentials: RequestCredentials | undefined
   resolve: (response: Response) => void
   reject: (reason: unknown) => void
+}
+
+interface StartupMilestones {
+  enhancementScheduledAt?: number
+  importStartedAt?: number
+  importEndedAt?: number
+  fetchStartedAt?: number
+  fetchEndedAt?: number
+  parseStartedAt?: number
+  parseEndedAt?: number
+}
+
+interface PerformanceBenchmark {
+  readonly startup: StartupMilestones
+}
+
+type PerformanceWindow = Window & {
+  readonly __logoParticlePerformance?: PerformanceBenchmark
+}
+
+const installPerformanceBenchmark = (): StartupMilestones => {
+  const startup: StartupMilestones = {}
+  Object.defineProperty(browserWindow, '__logoParticlePerformance', {
+    configurable: true,
+    value: { startup }
+  })
+  return startup
 }
 
 const idleCallbacks = new Map<number, () => void>()
@@ -109,9 +137,6 @@ const fetchStub = ((input: RequestInfo | URL, init?: RequestInit): Promise<Respo
 }) as typeof fetch
 
 const sceneTestBridge = {
-  moduleLoaded: (): void => {
-    resourceEvents.push('loader')
-  },
   tornDown: (): void => {
     resourceEvents.push('scene-teardown')
   },
@@ -380,7 +405,6 @@ const sceneStubSource = `
 import { defineComponent, h, onBeforeUnmount, onMounted } from 'vue'
 
 const bridge = globalThis.__loginLogoSceneTestBridge
-bridge.moduleLoaded()
 
 export default defineComponent({
   name: 'LogoParticleSceneTestStub',
@@ -389,7 +413,7 @@ export default defineComponent({
     particles: { type: Object, required: true },
     active: { type: Boolean, required: true }
   },
-  emits: ['first-frame', 'error', 'context-lost'],
+  emits: ['first-frame', 'frame-pending', 'error', 'context-lost'],
   setup (props, { emit, expose }) {
     let tornDown = false
     const teardown = () => {
@@ -401,6 +425,7 @@ export default defineComponent({
     onBeforeUnmount(teardown)
     onMounted(() => bridge.mounted({
       firstFrame: () => emit('first-frame'),
+      framePending: () => emit('frame-pending'),
       error: () => emit('error'),
       contextLost: () => emit('context-lost'),
       tick: () => {
@@ -620,6 +645,7 @@ beforeEach(() => {
     card: { left: 86, top: 120, width: 480, height: 660 }
   }
   pageVisibility = 'visible'
+  Reflect.deleteProperty(browserWindow, '__logoParticlePerformance')
   idleCallbacks.clear()
   pendingFetches.length = 0
   sceneControls.length = 0
@@ -639,6 +665,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const unmount of mountedApps.splice(0)) unmount()
   document.body.replaceChildren()
+  Reflect.deleteProperty(browserWindow, '__logoParticlePerformance')
 })
 
 describe('LoginParticleLogo static behavior', () => {
@@ -874,6 +901,56 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     expect(gated.host.querySelector('canvas')).toBeNull()
   })
 
+  it('records wrapper startup boundaries in order for an opted-in cold enhancement', async () => {
+    const startup = installPerformanceBenchmark()
+    const mounted = await mountLogo(particleEffect)
+    await loadStaticRendition(mounted, particleEffect)
+    await runIdleWork()
+
+    expect(startup.enhancementScheduledAt).toEqual(expect.any(Number))
+    expect(startup.importStartedAt).toEqual(expect.any(Number))
+    expect(startup.importEndedAt).toEqual(expect.any(Number))
+    expect(startup.fetchStartedAt).toEqual(expect.any(Number))
+    expect(startup.fetchEndedAt).toBeUndefined()
+    expect(startup.parseStartedAt).toBeUndefined()
+    expect(startup.parseEndedAt).toBeUndefined()
+
+    const request = pendingFetches[0]
+    if (!request) throw new Error('Particle request did not start')
+    request.resolve(new Response(particleFixture))
+    await settle()
+
+    const milestones = [
+      startup.enhancementScheduledAt,
+      startup.importStartedAt,
+      startup.importEndedAt,
+      startup.fetchStartedAt,
+      startup.fetchEndedAt,
+      startup.parseStartedAt,
+      startup.parseEndedAt
+    ]
+    expect(milestones.every(timestamp => typeof timestamp === 'number')).toBe(true)
+    for (let index = 1; index < milestones.length; index += 1) {
+      const previous = milestones[index - 1]
+      const current = milestones[index]
+      if (typeof previous !== 'number' || typeof current !== 'number') throw new Error('Startup milestone is missing')
+      expect(previous).toBeLessThanOrEqual(current)
+    }
+  })
+
+  it('keeps enhancement behavior unchanged and leaves no startup trace when the benchmark hook is absent', async () => {
+    const mounted = await mountLogo(particleEffect)
+    await loadStaticRendition(mounted, particleEffect)
+    await runIdleWork()
+    const request = pendingFetches[0]
+    if (!request) throw new Error('Particle request did not start')
+    request.resolve(new Response(particleFixture))
+    await settle()
+
+    expect(mounted.host.querySelector('.login-particle-logo__scene-stub')).not.toBeNull()
+    expect((browserWindow as unknown as PerformanceWindow).__logoParticlePerformance).toBeUndefined()
+  })
+
   it('waits for a valid static rendition and idle time before loading, then crossfades only after the first frame', async () => {
     const mounted = await mountLogo(particleEffect)
     expect(idleCallbacks.size).toBe(0)
@@ -885,7 +962,7 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     expect(pendingFetches).toHaveLength(0)
 
     await runIdleWork()
-    expect(resourceEvents).toEqual(['static', 'idle', 'loader', 'fetch'])
+    expect(resourceEvents).toEqual(['static', 'idle', 'fetch'])
     expect(pendingFetches).toHaveLength(1)
     expect(deadlineCallbacks.size).toBe(1)
     expect(pendingFetches[0]?.url).toBe(particleEffect.particleUrl)
@@ -905,6 +982,125 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     await settle()
     expect(deadlineCallbacks.size).toBe(0)
     expect(staticImage(mounted.host)?.style.opacity).toBe('0')
+  })
+
+  it('keeps static coverage through initial and resumed frame gaps without reloading particles', async () => {
+    const mounted = await mountLogo(particleEffect)
+    const image = await loadStaticRendition(mounted, particleEffect)
+    await runIdleWork()
+    const request = pendingFetches[0]
+    if (!request) throw new Error('Particle request did not start')
+    request.resolve(new Response(particleFixture))
+    await settle()
+
+    const controls = sceneControls[0]
+    const scene = mounted.host.querySelector<HTMLCanvasElement>('.login-particle-logo__scene-stub')
+    if (!controls || !scene) throw new Error('Particle scene did not mount')
+
+    controls.framePending()
+    expect(image.style.opacity).toBe('1')
+    expect(deadlineCallbacks.size).toBe(1)
+
+    controls.firstFrame()
+    await settle()
+    expect(image.style.opacity).toBe('0')
+    expect(deadlineCallbacks.size).toBe(0)
+
+    const resourceTrace = [...resourceEvents]
+    await setPageVisibility('hidden')
+    controls.framePending()
+    expect(image.style.opacity).toBe('1')
+    expect(deadlineCallbacks.size).toBe(0)
+    await setPageVisibility('visible')
+    expect(deadlineCallbacks.size).toBe(1)
+    expect(pendingFetches).toHaveLength(1)
+    expect(resourceEvents).toEqual(resourceTrace)
+
+    controls.firstFrame()
+    await settle()
+    expect(image.style.opacity).toBe('0')
+    expect(deadlineCallbacks.size).toBe(0)
+    expect(mounted.host.querySelector<HTMLCanvasElement>('.login-particle-logo__scene-stub')).toBe(scene)
+    expect(pendingFetches).toHaveLength(1)
+    expect(resourceEvents).toEqual(resourceTrace)
+  })
+
+  it('restores static coverage and retires a retained scene when active resume misses its deadline', async () => {
+    const mounted = await mountLogo(particleEffect)
+    await loadStaticRendition(mounted, particleEffect)
+    await runIdleWork()
+    pendingFetches[0]?.resolve(new Response(particleFixture))
+    await settle()
+    const controls = sceneControls[0]
+    const scene = mounted.host.querySelector<HTMLCanvasElement>('.login-particle-logo__scene-stub')
+    if (!controls || !scene) throw new Error('Particle scene did not mount')
+    controls.firstFrame()
+    await settle()
+
+    await setPageVisibility('hidden')
+    await setPageVisibility('visible')
+    const teardownCount = resourceEvents.filter(event => event === 'scene-teardown').length
+    controls.framePending()
+    expect(staticImage(mounted.host)?.style.opacity).toBe('1')
+    expect(deadlineCallbacks.size).toBe(1)
+    await setPageVisibility('hidden')
+    expect(deadlineCallbacks.size).toBe(0)
+    expect(mounted.host.querySelector('.login-particle-logo__scene-stub')).toBe(scene)
+    await setPageVisibility('visible')
+    controls.framePending()
+    const resumeDeadline = [...deadlineCallbacks.values()][0]
+    if (!resumeDeadline) throw new Error('Active resume deadline did not start')
+    expect(staticImage(mounted.host)?.style.opacity).toBe('1')
+    resumeDeadline()
+    await settle()
+    expect(staticImage(mounted.host)?.style.opacity).toBe('1')
+    expect(mounted.host.querySelector('.login-particle-logo__scene-stub')).toBeNull()
+    expect(scene.isConnected).toBe(false)
+    expect(resourceEvents.filter(event => event === 'scene-teardown')).toHaveLength(teardownCount + 1)
+
+    controls.firstFrame()
+    controls.error()
+    controls.contextLost()
+    await settle()
+    expect(resourceEvents.filter(event => event === 'scene-teardown')).toHaveLength(teardownCount + 1)
+  })
+
+  it('latches a committed scene failure to static fallback until the effect descriptor changes', async () => {
+    const mounted = await mountLogo(particleEffect)
+    await loadStaticRendition(mounted, particleEffect)
+    await runIdleWork()
+    pendingFetches[0]?.resolve(new Response(particleFixture))
+    await settle()
+
+    const controls = sceneControls[0]
+    if (!controls) throw new Error('Committed particle scene did not mount')
+    controls.firstFrame()
+    await settle()
+    const requestCount = pendingFetches.length
+    const resourceTrace = [...resourceEvents]
+
+    controls.error()
+    await settle()
+    expect(staticImage(mounted.host)?.style.opacity).toBe('1')
+    expect(mounted.host.querySelector('.login-particle-logo__scene-stub')).toBeNull()
+    expect(resourceEvents).toEqual([...resourceTrace, 'scene-teardown'])
+
+    await setPageVisibility('hidden')
+    await setPageVisibility('visible')
+    await setSurfaceVisibility(false)
+    await setSurfaceVisibility(true)
+    expect(idleCallbacks.size).toBe(0)
+    expect(pendingFetches).toHaveLength(requestCount)
+    expect(sceneControls).toHaveLength(1)
+    expect(resourceEvents).toEqual([...resourceTrace, 'scene-teardown'])
+
+    const replacementEffect: LogoEffectDescriptor = {
+      ...particleEffect,
+      staticUrl: '/_site-logo/9999999999999999999999999999999999999999999999999999999999999999/effect.png'
+    }
+    await mounted.setEffect(replacementEffect)
+    await loadStaticRendition(mounted, replacementEffect)
+    expect(idleCallbacks.size).toBe(1)
   })
 
   it('retains one inert canvas while hidden or offscreen, resumes it, and tears it down once only at a hard gate', async () => {
@@ -1116,22 +1312,35 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
   })
 
   it('restores static output after network/parser failures and tears down each context/error scene exactly once', async () => {
+    const networkStartup = installPerformanceBenchmark()
     const networkFailure = await mountLogo(particleEffect)
     await loadStaticRendition(networkFailure, particleEffect)
     await runIdleWork()
     pendingFetches[0]?.resolve(new Response(null, { status: 503 }))
     await settle()
+    expect(typeof networkStartup.enhancementScheduledAt).toBe('number')
+    expect(typeof networkStartup.importStartedAt).toBe('number')
+    expect(typeof networkStartup.importEndedAt).toBe('number')
+    expect(typeof networkStartup.fetchStartedAt).toBe('number')
+    expect(networkStartup.fetchEndedAt).toBeUndefined()
+    expect(networkStartup.parseStartedAt).toBeUndefined()
+    expect(networkStartup.parseEndedAt).toBeUndefined()
     expect(staticImage(networkFailure.host)?.style.opacity).toBe('1')
     expect(networkFailure.host.querySelector('.login-particle-logo__scene-stub')).toBeNull()
     networkFailure.unmount()
     mountedApps.pop()
 
     pendingFetches.length = 0
+    const parserStartup = installPerformanceBenchmark()
     const parserFailure = await mountLogo(particleEffect)
     await loadStaticRendition(parserFailure, particleEffect)
     await runIdleWork()
     pendingFetches[0]?.resolve(new Response(new Uint8Array([1, 2, 3])))
     await settle()
+    expect(typeof parserStartup.fetchStartedAt).toBe('number')
+    expect(typeof parserStartup.fetchEndedAt).toBe('number')
+    expect(typeof parserStartup.parseStartedAt).toBe('number')
+    expect(parserStartup.parseEndedAt).toBeUndefined()
     expect(staticImage(parserFailure.host)?.style.opacity).toBe('1')
     expect(parserFailure.host.querySelector('.login-particle-logo__scene-stub')).toBeNull()
     parserFailure.unmount()

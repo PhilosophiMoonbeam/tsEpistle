@@ -20,7 +20,7 @@ const particles = (count: number, allBeads = false): ParsedLogoParticles => {
 const pointer = () => new LogoPointerController({ hasFinePointer: () => true }).state
 const displacement = (cloud: ParticleCloud): number => {
   let sum = 0
-  for (const i of cloud.indices) sum += Math.hypot(cloud.motion[i * 3]!, cloud.motion[i * 3 + 1]!)
+  for (const i of cloud.indices) sum += Math.hypot(cloud.motion[i * 2]!, cloud.motion[i * 2 + 1]!)
   return sum / Math.max(1, cloud.count)
 }
 
@@ -103,12 +103,38 @@ describe('particle cloud physics', () => {
     const before = new Uint8Array(input.buffer).slice()
     const cloud = new ParticleCloud(input)
     expect(cloud.count).toBe(CLOUD_BEAD_LIMIT)
+    expect(cloud.motion.length).toBe(input.count * 2)
+    for (let slot = 0; slot < cloud.count; slot++) {
+      expect(cloud.indices[slot]).toBe(Math.floor(((slot + 1) * input.count - 1) / CLOUD_BEAD_LIMIT))
+    }
     expect(cloud.indices[0]).toBeLessThan(40)
     expect(cloud.indices.at(-1)).toBeGreaterThan(15960)
     for (let i = 0; i < 60; i++) cloud.update(i / 60, 800, 600, pointer())
     expect(new Uint8Array(input.buffer)).toEqual(before)
     expect(cloud.motion.every(Number.isFinite)).toBe(true)
-    expect(cloud.motion.filter((_, i) => i % 3 === 2 && cloud.motion[i] === 1).length).toBe(CLOUD_BEAD_LIMIT)
+    let selected = 0
+    for (let i = 0; i < input.count; i++) {
+      if (selected < cloud.count && cloud.indices[selected] === i) {
+        selected++
+        continue
+      }
+      expect(cloud.motion[i * 2]).toBe(0)
+      expect(cloud.motion[i * 2 + 1]).toBe(0)
+    }
+    expect(selected).toBe(cloud.count)
+  })
+
+  it('exposes no selected indices and zero motion for a source without beads', () => {
+    const input = particles(4)
+    input.seed.fill(0)
+    const before = new Uint8Array(input.buffer).slice()
+    const cloud = new ParticleCloud(input)
+    expect(cloud.count).toBe(0)
+    expect(Array.from(cloud.indices)).toEqual([])
+    expect(cloud.motion.length).toBe(input.count * 2)
+    cloud.update(0, 800, 600, pointer())
+    expect(cloud.motion.every(value => value === 0)).toBe(true)
+    expect(new Uint8Array(input.buffer)).toEqual(before)
   })
 
   it('separates overlapping beads and exchanges approaching velocities', () => {
@@ -160,8 +186,8 @@ describe('particle cloud physics', () => {
     for (let i = 0; i <= 120; i++) a.update(i / 60, 800, 600, state)
     for (let i = 0; i <= 240; i++) b.update(i / 120, 800, 600, state)
     for (const index of a.indices) {
-      expect(Math.abs(a.motion[index * 3]! - b.motion[index * 3]!)).toBeLessThan(0.5)
-      expect(Math.abs(a.motion[index * 3 + 1]! - b.motion[index * 3 + 1]!)).toBeLessThan(0.5)
+      expect(Math.abs(a.motion[index * 2]! - b.motion[index * 2]!)).toBeLessThan(0.5)
+      expect(Math.abs(a.motion[index * 2 + 1]! - b.motion[index * 2 + 1]!)).toBeLessThan(0.5)
     }
     a.update(3600, 800, 600, state)
     expect(displacement(a)).toBeLessThan(20)
