@@ -1,5 +1,7 @@
 import { createPinia, defineStore } from 'pinia'
 import { sameOriginJsonFetch } from '../helpers/json-transport.ts'
+import { invalidateOfflineSession } from '../helpers/offline-session.ts'
+import { openOfflineStorage, type OfflineStorage } from '../helpers/offline-storage.ts'
 import type { PageOkfView } from '../helpers/pages-api.ts'
 import type { SystemSummary } from '../helpers/system-api.ts'
 import { isUserTimeFormat, normalizeUserFontFamily, type UserTimeFormat } from '../../shared/user-presentation.ts'
@@ -42,7 +44,6 @@ const defaultPageOkf = (): PageOkfView => ({
 })
 
 export const pinia = createPinia()
-
 type WhoAmIResponse = {
   ok: boolean
   json(): Promise<unknown>
@@ -50,6 +51,49 @@ type WhoAmIResponse = {
 
 export type AuthRefreshOutcome = 'authenticated' | 'anonymous' | 'unavailable'
 
+type AuthOutcomeEvent = {
+  outcome: AuthRefreshOutcome
+  accountChanged: boolean
+}
+
+const dispatchAuthOutcome = (outcome: AuthRefreshOutcome, accountChanged: boolean): void => {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function' || typeof CustomEvent === 'undefined') return
+  try {
+    window.dispatchEvent(
+      new CustomEvent<AuthOutcomeEvent>('tsepistle:auth-outcome', {
+        detail: { outcome, accountChanged }
+      })
+    )
+  } catch {
+    // The auth result remains authoritative even if an optional observer fails.
+  }
+}
+
+const isPositiveAccountId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+
+/**
+ * Establishes the persisted identity boundary before an auth transition is
+ * published. Immutable submission receipts deliberately survive the purge.
+ */
+export const invalidateOfflineIdentity = async (accountId?: number): Promise<boolean> => {
+  invalidateOfflineSession()
+  let storage: OfflineStorage | null = null
+  try {
+    storage = await openOfflineStorage()
+    const currentGeneration = await storage.currentSessionGeneration()
+    const nextGeneration = await storage.bumpSessionGeneration(undefined, {
+      expectedSessionGeneration: currentGeneration
+    })
+    if (accountId !== undefined && accountId > 0) {
+      await storage.purgeAccount(accountId, { expectedSessionGeneration: nextGeneration })
+    }
+    return true
+  } catch {
+    return false
+  } finally {
+    storage?.close()
+  }
+}
 let authRefresh: Promise<AuthRefreshOutcome> | undefined
 export const useWikiStore = defineStore('wiki', {
   state: () => ({
@@ -146,6 +190,10 @@ export const useWikiStore = defineStore('wiki', {
       searchRestrictPath: false,
       printView: false
     },
+    authRefreshPending: false,
+    authRefreshSettled: false,
+    authRefreshOutcome: null as AuthRefreshOutcome | null,
+    offlineIdentityReady: false,
     user: defaultUser()
   }),
   getters: {
@@ -189,6 +237,27 @@ export const useWikiStore = defineStore('wiki', {
     },
     refreshAuth(): Promise<AuthRefreshOutcome> {
       if (authRefresh) return authRefresh
+      const authWasSettled = this.authRefreshSettled
+      this.authRefreshPending = true
+      this.authRefreshSettled = false
+      this.authRefreshOutcome = null
+      this.offlineIdentityReady = false
+
+      const publishOutcome = (outcome: AuthRefreshOutcome, accountChanged: boolean): void => {
+        this.authRefreshPending = false
+        this.authRefreshSettled = true
+        this.authRefreshOutcome = outcome
+        dispatchAuthOutcome(outcome, accountChanged)
+      }
+
+      const settleAnonymous = async (outcome: Exclude<AuthRefreshOutcome, 'authenticated'>): Promise<AuthRefreshOutcome> => {
+        const previousAccountId = this.user.authenticated && this.user.id > 0 ? this.user.id : undefined
+        if (previousAccountId !== undefined) await invalidateOfflineIdentity(previousAccountId)
+        this.user = defaultUser()
+        this.offlineIdentityReady = false
+        publishOutcome(outcome, previousAccountId !== undefined)
+        return outcome
+      }
 
       const refresh = (async (): Promise<AuthRefreshOutcome> => {
         try {
@@ -196,35 +265,22 @@ export const useWikiStore = defineStore('wiki', {
             credentials: 'same-origin',
             cache: 'no-store'
           })) as WhoAmIResponse
-          if (!response.ok) {
-            this.user = defaultUser()
-            return 'unavailable'
-          }
+          if (!response.ok) return await settleAnonymous('unavailable')
           const payload = await response.json()
-          if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-            this.user = defaultUser()
-            return 'unavailable'
-          }
+          if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return await settleAnonymous('unavailable')
           const record = payload as Record<string, unknown>
-          if (record.authenticated === false) {
-            this.user = defaultUser()
-            return 'anonymous'
-          }
-          if (record.authenticated !== true) {
-            this.user = defaultUser()
-            return 'unavailable'
-          }
+          if (record.authenticated === false) return await settleAnonymous('anonymous')
+          if (record.authenticated !== true) return await settleAnonymous('unavailable')
           const user = record.user
-          if (!user || typeof user !== 'object' || Array.isArray(user)) {
-            this.user = defaultUser()
-            return 'unavailable'
-          }
+          if (!user || typeof user !== 'object' || Array.isArray(user)) return await settleAnonymous('unavailable')
           const profile = user as Record<string, unknown>
           const id = profile.id
-          if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
-            this.user = defaultUser()
-            return 'unavailable'
-          }
+          if (!isPositiveAccountId(id)) return await settleAnonymous('unavailable')
+
+          const previousAuthenticatedId = this.user.authenticated && this.user.id > 0 ? this.user.id : null
+          const accountChanged = previousAuthenticatedId !== null && previousAuthenticatedId !== id
+          const passiveLogin = authWasSettled && previousAuthenticatedId === null
+          const boundaryReady = accountChanged || passiveLogin ? await invalidateOfflineIdentity(accountChanged ? previousAuthenticatedId : undefined) : true
           this.user = {
             ...defaultUser(),
             id,
@@ -243,18 +299,31 @@ export const useWikiStore = defineStore('wiki', {
               : [],
             authenticated: true
           }
+          this.offlineIdentityReady = boundaryReady
+          publishOutcome('authenticated', accountChanged)
           return 'authenticated'
         } catch {
-          this.user = defaultUser()
-          return 'unavailable'
+          return await settleAnonymous('unavailable')
         }
       })()
 
-      const inFlight = refresh.finally(() => {
+      const settled = refresh.then(
+        outcome => outcome,
+        error => {
+          this.authRefreshPending = false
+          this.authRefreshSettled = true
+          this.authRefreshOutcome = 'unavailable'
+          throw error
+        }
+      )
+      const inFlight = settled.finally(() => {
         if (authRefresh === inFlight) authRefresh = undefined
       })
       authRefresh = inFlight
       return inFlight
+    },
+    waitForAuthRefresh(): Promise<AuthRefreshOutcome | null> {
+      return authRefresh ?? Promise.resolve(this.authRefreshOutcome)
     },
     pushMediaFolder(folder: unknown) {
       this.editor.media.folderTree.push(folder)

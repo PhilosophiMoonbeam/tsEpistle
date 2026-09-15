@@ -1,5 +1,16 @@
 <template lang="pug">
   v-list(nav, density="compact", :aria-label='$t(`common:page.share`)')
+    v-list-item(
+      v-if='canUseNativeShare'
+      tag='button'
+      type='button'
+      role='button'
+      :disabled='nativeShareLoading'
+      @click='shareNative'
+    )
+      template(v-slot:prepend)
+        v-icon(color='primary', size="small") mdi-share-variant
+      v-list-item-title.px-3 {{ offline ? 'Share saved copy' : 'Share' }}
     v-list-item(tag='button', type='button', role='button', @click='copyUrl')
       template(v-slot:prepend)
         v-icon(
@@ -9,6 +20,10 @@
           size="small"
         ) {{ copied ? 'mdi-check-bold' : 'mdi-content-copy' }}
       v-list-item-title.px-3 {{$t('common:actions.copy')}} URL
+    v-list-item(tag='button', type='button', role='button', @click='copyText')
+      template(v-slot:prepend)
+        v-icon(color='grey', size="small") mdi-text-box-outline
+      v-list-item-title.px-3 Copy page text
     v-list-item(:href='shareUrls.email')
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-email-outline
@@ -45,11 +60,22 @@
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-whatsapp
       v-list-item-title.px-3 WhatsApp
+    span.social-sharing-status.sr-only(role='status', aria-live='polite') {{ copyStatus }}
 </template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
 import { wikiStore } from '@/store/index.ts'
+
+type SharePayload = {
+  title?: string
+  text?: string
+  url?: string
+}
+type ShareCapableNavigator = {
+  share?: (data: SharePayload) => Promise<void>
+  canShare?: (data?: SharePayload) => boolean
+}
 
 function copyWithLegacyFallback (text: string): boolean {
   const activeElement = document.activeElement
@@ -69,6 +95,14 @@ function copyWithLegacyFallback (text: string): boolean {
   }
 }
 
+function getShareNavigator (): ShareCapableNavigator | null {
+  return typeof navigator === 'undefined' ? null : navigator as ShareCapableNavigator
+}
+
+function isAbortError (error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && Reflect.get(error, 'name') === 'AbortError')
+}
+
 export default defineComponent({
   props: {
     url: {
@@ -82,28 +116,91 @@ export default defineComponent({
     description: {
       type: String,
       default: ''
+    },
+    offline: {
+      type: Boolean,
+      default: false
+    },
+    offlineUrl: {
+      type: String,
+      default: ''
+    },
+    offlineText: {
+      type: String,
+      default: ''
     }
   },
   data () {
     return {
       copied: false,
       copiedTimer: null as ReturnType<typeof setTimeout> | null,
-      copyOperationId: 0
+      copyOperationId: 0,
+      copyStatus: '',
+      nativeShareLoading: false,
+      shareOperationId: 0
     }
   },
   beforeUnmount () {
     this.invalidateCopyFeedback()
+    this.shareOperationId += 1
   },
   watch: {
     url (): void {
       this.invalidateCopyFeedback()
+    },
+    title (): void {
+      this.invalidateCopyFeedback()
+    },
+    description (): void {
+      this.invalidateCopyFeedback()
+    },
+    offlineUrl (): void {
+      this.invalidateCopyFeedback()
+    },
+    offline (): void {
+      this.invalidateCopyFeedback()
     }
   },
   computed: {
+    shareUrl (): string {
+      const localUrl = this.offlineUrl.trim()
+      return this.offline && localUrl ? localUrl : this.url.trim()
+    },
+    shareText (): string {
+      const content = (this.offlineText || this.description).trim()
+      const parts = [this.title.trim(), content].filter(Boolean)
+      if (this.offline) parts.push('This is a local copy saved on this device.')
+      return parts.join('\n\n')
+    },
+    shareData (): SharePayload {
+      const data: SharePayload = {}
+      const title = this.title.trim()
+      const text = this.offline
+        ? (this.offlineText || this.description).trim()
+        : this.description.trim()
+      if (title) data.title = title
+      if (text) data.text = text
+      if (this.offline) {
+        data.text = [data.text, 'This is a local copy saved on this device.'].filter(Boolean).join('\n\n')
+      }
+      const url = this.shareUrl
+      if (url) data.url = url
+      return data
+    },
+    canUseNativeShare (): boolean {
+      const shareNavigator = getShareNavigator()
+      if (!shareNavigator?.share) return false
+      if (!shareNavigator.canShare) return true
+      try {
+        return shareNavigator.canShare(this.shareData)
+      } catch {
+        return false
+      }
+    },
     shareUrls() {
-      const url = encodeURIComponent(this.url)
+      const url = encodeURIComponent(this.shareUrl)
       const title = encodeURIComponent(this.title)
-      const description = encodeURIComponent(this.description)
+      const description = encodeURIComponent(this.offline ? this.shareText : this.description)
 
       return {
         email: `mailto:?subject=${title}&body=${url}%0D%0A%0D%0A${description}`,
@@ -128,15 +225,15 @@ export default defineComponent({
     invalidateCopyFeedback (): void {
       this.copyOperationId += 1
       this.copied = false
+      this.copyStatus = ''
       this.clearCopiedTimer()
     },
     isCurrentCopyOperation (operationId: number): boolean {
       return this.copyOperationId === operationId
     },
-    async copyUrl (): Promise<void> {
+    async copyValue (text: string, successMessage: string): Promise<void> {
       this.invalidateCopyFeedback()
       const operationId = this.copyOperationId
-      const text = this.url
       try {
         let copied = false
         if (navigator.clipboard?.writeText) {
@@ -154,23 +251,59 @@ export default defineComponent({
         if (!copied) throw new Error('Clipboard copy was rejected')
         if (!this.isCurrentCopyOperation(operationId)) return
         this.copied = true
+        this.copyStatus = successMessage
         this.copiedTimer = setTimeout(() => {
           if (!this.isCurrentCopyOperation(operationId)) return
           this.copied = false
+          this.copyStatus = ''
           this.copiedTimer = null
         }, 2000)
         wikiStore.showNotification({
           style: 'success',
-          message: `URL copied successfully`,
+          message: successMessage,
           icon: 'content-copy'
         })
       } catch {
         if (!this.isCurrentCopyOperation(operationId)) return
+        this.copyStatus = 'Failed to copy to clipboard'
         wikiStore.showNotification({
           style: 'red',
-          message: `Failed to copy to clipboard`,
+          message: this.copyStatus,
           icon: 'alert'
         })
+      }
+    },
+    async copyUrl (): Promise<void> {
+      await this.copyValue(this.shareUrl, 'URL copied successfully')
+    },
+    async copyText (): Promise<void> {
+      await this.copyValue(this.shareText, 'Page text copied successfully')
+    },
+    async shareNative (): Promise<void> {
+      const shareNavigator = getShareNavigator()
+      if (!shareNavigator?.share || !this.canUseNativeShare || this.nativeShareLoading) return
+      if (shareNavigator.canShare) {
+        try {
+          if (!shareNavigator.canShare(this.shareData)) return
+        } catch {
+          return
+        }
+      }
+      const operationId = ++this.shareOperationId
+      this.nativeShareLoading = true
+      try {
+        await shareNavigator.share(this.shareData)
+      } catch (error) {
+        if (isAbortError(error)) return
+        if (operationId === this.shareOperationId) {
+          wikiStore.showNotification({
+            style: 'red',
+            message: 'Unable to share this page. Use Copy URL or Copy page text instead.',
+            icon: 'alert'
+          })
+        }
+      } finally {
+        if (operationId === this.shareOperationId) this.nativeShareLoading = false
       }
     },
     openSocialPop (url: string): void {

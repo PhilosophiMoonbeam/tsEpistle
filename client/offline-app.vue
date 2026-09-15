@@ -1,63 +1,139 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import OfflineLibrary from './components/pwa/offline-library.vue'
+import {
+  OfflineStorageError,
+  openOfflineStorage,
+  type OfflineStorage
+} from './helpers/offline-storage.ts'
+import type { OfflineStorageEstimate } from '../shared/offline.ts'
+import {
+  promptPwaInstall,
+  pwaState,
+  requestPwaUpdate,
+  retryServerConnection
+} from './helpers/pwa.ts'
 
-type ConnectionState = 'checking' | 'online' | 'offline' | 'server-unavailable'
-type InstallAvailability = 'unavailable' | 'available' | 'installed'
-type InstallPromptEvent = Event & {
-  prompt(): Promise<void>
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
+type StorageState = 'uninspected' | 'checking' | 'available' | 'unavailable' | 'unsupported-schema' | 'blocked-upgrade' | 'quota'
+const browserAvailable = typeof window !== 'undefined' && typeof navigator !== 'undefined'
+type OfflinePageSelector = {
+  readonly siteId: string
+  readonly pageId: number
+  readonly locale: string
 }
 
-type StorageState = 'uninspected' | 'checking' | 'available' | 'unavailable'
+type OfflineSelectorParse = {
+  readonly selector: OfflinePageSelector | null
+  readonly error: string
+}
 
-const connectionState = ref<ConnectionState>('checking')
-const connectionMessage = ref('Checking the connection without opening an account session.')
-const searchQuery = ref('')
-const installAvailability = ref<InstallAvailability>('unavailable')
-const installPrompt = shallowRef<InstallPromptEvent | null>(null)
-const installMessage = ref('Installation is optional and depends on the browser.')
+const OFFLINE_DOCUMENT_PATH = '/_offline'
+const OFFLINE_LOCALE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{1,34}$/u
+
+const parseOfflineSelector = (): OfflineSelectorParse => {
+  if (!browserAvailable || window.location.pathname !== OFFLINE_DOCUMENT_PATH) return { selector: null, error: '' }
+  const url = new URL(window.location.href)
+  const entries = [...url.searchParams.entries()]
+  if (entries.length === 0 && !url.hash) return { selector: null, error: '' }
+  if (url.hash || entries.length !== 3 || entries.some(([key]) => !['site', 'pageId', 'locale'].includes(key)))
+    return { selector: null, error: 'This local page link is invalid or incomplete.' }
+  const siteValues = url.searchParams.getAll('site')
+  const pageIdValues = url.searchParams.getAll('pageId')
+  const localeValues = url.searchParams.getAll('locale')
+  if (siteValues.length !== 1 || pageIdValues.length !== 1 || localeValues.length !== 1)
+    return { selector: null, error: 'This local page link is invalid or incomplete.' }
+  const siteId = siteValues[0]
+  const pageIdText = pageIdValues[0]
+  const locale = localeValues[0]
+  if (
+    siteId !== window.location.origin ||
+    !/^[1-9]\d*$/u.test(pageIdText) ||
+    !Number.isSafeInteger(Number(pageIdText)) ||
+    Number(pageIdText) < 1 ||
+    !OFFLINE_LOCALE_PATTERN.test(locale)
+  )
+    return { selector: null, error: 'This local page link is invalid or belongs to another site.' }
+  return { selector: { siteId, pageId: Number(pageIdText), locale }, error: '' }
+}
+
+const parsedOfflineSelector = parseOfflineSelector()
+const offlineSelector = parsedOfflineSelector.selector
+
+const offlineStorage = shallowRef<OfflineStorage | null>(null)
+const storageEstimate = shallowRef<OfflineStorageEstimate | null>(null)
 const storageState = ref<StorageState>('uninspected')
-const storageUsage = ref<number | null>(null)
-const storageQuota = ref<number | null>(null)
-const storagePersistent = ref<boolean | null>(null)
 const storageMessage = ref('Storage has not been inspected.')
+const storageBusy = ref(false)
+const persistenceBusy = ref(false)
+const clearBusy = ref(false)
 const isRetrying = ref(false)
 const isInstalling = ref(false)
-const isStandalone = ref(false)
-
-const browserAvailable = typeof window !== 'undefined' && typeof navigator !== 'undefined'
+const isUpdating = ref(false)
+const libraryRefreshToken = ref(0)
+const libraryNotice = ref(parsedOfflineSelector.error)
+let storageOpenToken = 0
 
 const connectionLabel = computed(() => {
-  const labels: Record<ConnectionState, string> = {
+  const labels: Record<string, string> = {
     checking: 'Checking connection',
-    online: 'Connection available',
+    online: 'Server reachable',
     offline: 'Waiting for a connection',
     'server-unavailable': 'Server unavailable'
   }
-  return labels[connectionState.value]
+  return labels[pwaState.connectionState] ?? 'Connection status unknown'
 })
 
-
-const searchDetail = computed(() => {
-  if (searchQuery.value.trim()) return 'No downloaded pages match this search in the empty local library.'
-  return 'Search is bounded to pages saved on this device; it never claims server or Agent search parity.'
-})
-
-const installDetail = computed(() => {
-  if (isStandalone.value || installAvailability.value === 'installed') return 'This app is already running in an installed window.'
-  if (installAvailability.value === 'available') return 'Your browser exposed an install action. It is safe to dismiss it and continue in the browser.'
-  if (browserAvailable && /iPad|iPhone|iPod/.test(navigator.userAgent)) return 'On iPhone or iPad, use Share, then Add to Home Screen. Availability varies by browser.'
-  return 'Use your browser’s install or add-to-home-screen menu when it offers one. No prompt is promised.'
+const connectionMessage = computed(() => {
+  if (pwaState.connectionState === 'checking') return 'Checking the server without opening an account session.'
+  if (pwaState.connectionState === 'online' && pwaState.serverReachable === true)
+    return 'The server answered a neutral probe. This does not sign you in or change local page scope.'
+  if (pwaState.connectionState === 'offline') return 'The browser reports no network path. Downloaded guest pages remain available on this device.'
+  if (pwaState.onlineHint) return 'The browser hint is positive, but a server request has not succeeded.'
+  return 'The server could not be reached. Local guest snapshots remain bounded and read-only.'
 })
 
 const storageDetail = computed(() => {
-  if (storageState.value === 'checking') return 'Reading the browser estimate…'
-  if (storageState.value === 'unavailable') return storageMessage.value
-  if (storageUsage.value === null || storageQuota.value === null) return storageMessage.value
-  const usage = formatBytes(storageUsage.value)
-  const quota = formatBytes(storageQuota.value)
-  return `${usage} used of an estimated ${quota}. This estimate includes browser-managed origin data.`
+  if (storageState.value === 'checking') return 'Opening the versioned local notebook…'
+  if (storageState.value !== 'available') return storageMessage.value
+  const estimate = storageEstimate.value
+  if (!estimate) return storageMessage.value
+  const browserPart =
+    estimate.usageBytes === null || estimate.quotaBytes === null
+      ? 'The browser did not provide a complete capacity estimate.'
+      : `${formatBytes(estimate.usageBytes)} used of an estimated ${formatBytes(estimate.quotaBytes)}.`
+  return `${browserPart} This notebook manages ${formatBytes(estimate.managedBytes)} across ${estimate.snapshotCount} downloaded page${estimate.snapshotCount === 1 ? '' : 's'}.`
 })
+
+const lockedDraftDetail = computed(() => {
+  const count = storageEstimate.value?.lockedDraftCount
+  if (count === undefined) return 'The count is unavailable until local storage opens.'
+  if (count === 0) return 'No opaque account-owned draft envelopes are currently counted.'
+  return `${count} opaque account-owned draft envelope${count === 1 ? '' : 's'} is present. Titles, routes, and source text stay hidden until the same account is verified online.`
+})
+
+const installDetail = computed(() => {
+  if (pwaState.isStandalone || pwaState.installed || pwaState.installAvailability === 'installed') return 'This app is already running in an installed window.'
+  if (pwaState.installPromptAvailable) return 'Your browser exposed an optional install action. It is safe to dismiss it and continue in the browser.'
+  if (browserAvailable && /iPad|iPhone|iPod/u.test(navigator.userAgent)) return 'On iPhone or iPad, use Share, then Add to Home Screen. Availability varies by browser.'
+  return 'Use your browser’s install or add-to-home-screen menu when it offers one. No prompt is promised.'
+})
+
+const installMessage = computed(() => {
+  if (pwaState.installError) return pwaState.installError
+  if (pwaState.installed || pwaState.isStandalone) return 'Installation is active for this browser window.'
+  return 'Installation is optional and depends on browser capability.'
+})
+
+const updateMessage = computed(() => {
+  if (pwaState.updateError) return pwaState.updateError
+  if (pwaState.updateReady || pwaState.reloadNeeded) return 'A newer neutral shell is ready. Reload is requested only after this client reports that it is safe.'
+  if (pwaState.offlineReady) return 'The neutral shell and its explicit build assets are ready for offline navigation.'
+  return 'The offline shell is checking for an update when the browser exposes one.'
+})
+
+const pwaError = computed(() => pwaState.error ?? '')
+
+const hasUpdateNotice = computed(() => Boolean(pwaState.updateReady || pwaState.reloadNeeded || pwaState.updateError))
 
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value < 0) return 'unknown size'
@@ -72,37 +148,108 @@ function formatBytes(value: number): string {
   return `${amount.toFixed(amount >= 10 ? 0 : 1)} ${unit}`
 }
 
-function standaloneDisplay(): boolean {
-  if (!browserAvailable) return false
-  const mediaStandalone = window.matchMedia?.('(display-mode: standalone)').matches ?? false
-  const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean }
-  return mediaStandalone || navigatorWithStandalone.standalone === true
+function storageFailure(error: unknown): { state: StorageState; message: string } {
+  const code = error instanceof OfflineStorageError ? error.code : ''
+  if (code === 'unsupported-schema')
+    return { state: 'unsupported-schema', message: 'A newer offline database schema is present. It is preserved, but this build will not write or render records from it.' }
+  if (code === 'blocked-upgrade')
+    return { state: 'blocked-upgrade', message: 'Another tab is holding the offline database open. Close that tab or retry the local notebook.' }
+  if (code === 'quota') return { state: 'quota', message: 'The browser declined local storage because its quota is full. No records were evicted silently.' }
+  return {
+    state: 'unavailable',
+    message: error instanceof Error && error.message.trim() ? error.message : 'This browser could not open the local offline notebook. Downloaded pages remain on the server.'
+  }
 }
 
-async function probeConnection(): Promise<boolean> {
-  connectionState.value = 'checking'
-  connectionMessage.value = 'Checking the connection without opening an account session.'
+async function refreshStorageStatus(): Promise<void> {
+  const storage = offlineStorage.value
+  if (!storage) return
   try {
-    const response = await fetch(`/_offline?offline-probe=${Date.now()}`, {
-      method: 'GET',
-      cache: 'no-store',
-      credentials: 'same-origin',
-      headers: { Accept: 'text/html' }
-    })
-    if (!response.ok) {
-      connectionState.value = 'server-unavailable'
-      connectionMessage.value = `The server answered with HTTP ${response.status}.`
-      return false
+    storageEstimate.value = await storage.storageStatus()
+    storageState.value = 'available'
+  } catch (error) {
+    const failure = storageFailure(error)
+    storageState.value = failure.state
+    storageMessage.value = failure.message
+    storageEstimate.value = null
+    if (failure.state === 'unsupported-schema' || failure.state === 'blocked-upgrade') {
+      storage.close()
+      offlineStorage.value = null
     }
-    connectionState.value = 'online'
-    connectionMessage.value = 'The server answered without creating an account session.'
-    return true
-  } catch {
-    connectionState.value = navigator.onLine ? 'server-unavailable' : 'offline'
-    connectionMessage.value = navigator.onLine
-      ? 'The network hint is positive, but the server could not be reached.'
-      : 'The browser reports no network path. This shell remains neutral and local-only.'
-    return false
+  }
+}
+
+async function openStorage(): Promise<void> {
+  if (storageBusy.value) return
+  storageBusy.value = true
+  const token = ++storageOpenToken
+  const previous = offlineStorage.value
+  offlineStorage.value = null
+  storageEstimate.value = null
+  previous?.close()
+  storageState.value = 'checking'
+  storageMessage.value = 'Opening the versioned local notebook without an account session.'
+  try {
+    const opened = await openOfflineStorage()
+    if (token !== storageOpenToken) {
+      opened.close()
+      return
+    }
+    offlineStorage.value = opened
+    await refreshStorageStatus()
+    if (offlineStorage.value) libraryRefreshToken.value += 1
+  } catch (error) {
+    if (token !== storageOpenToken) return
+    const failure = storageFailure(error)
+    storageState.value = failure.state
+    storageMessage.value = failure.message
+  } finally {
+    if (token === storageOpenToken) storageBusy.value = false
+  }
+}
+
+async function requestPersistence(): Promise<void> {
+  const storage = offlineStorage.value
+  if (!storage || persistenceBusy.value) return
+  persistenceBusy.value = true
+  storageMessage.value = 'Asking the browser for durable storage; denial is normal degradation.'
+  try {
+    const granted = await storage.requestPersistence()
+    await refreshStorageStatus()
+    if (storageState.value === 'available') {
+      storageMessage.value = granted
+        ? 'Persistent storage is granted or was accepted by the browser.'
+        : 'Persistent storage was not granted. The browser may still retain this bounded notebook.'
+    }
+  } catch (error) {
+    const failure = storageFailure(error)
+    storageState.value = failure.state
+    storageMessage.value = failure.message
+  } finally {
+    persistenceBusy.value = false
+  }
+}
+
+async function clearDownloadedPages(): Promise<void> {
+  const storage = offlineStorage.value
+  if (!storage || clearBusy.value) return
+  clearBusy.value = true
+  try {
+    if (!browserAvailable) return
+    const origin = window.location.origin
+    const expectedSessionGeneration = await storage.currentSessionGeneration()
+    const records = await storage.listSnapshots(origin, { expectedSessionGeneration })
+    for (const record of records)
+      await storage.removeSnapshot(origin, record.pageId, record.locale, { expectedSessionGeneration })
+    libraryRefreshToken.value += 1
+    await refreshStorageStatus()
+    storageMessage.value = 'Downloaded guest pages were cleared. Opaque account-owned drafts were not inspected or changed.'
+  } catch (error) {
+    const failure = storageFailure(error)
+    storageState.value = failure.state
+    storageMessage.value = failure.message
+  } finally {
+    clearBusy.value = false
   }
 }
 
@@ -110,87 +257,50 @@ async function retryConnection(): Promise<void> {
   if (isRetrying.value) return
   isRetrying.value = true
   try {
-    const connected = await probeConnection()
-    if (connected && browserAvailable && window.location.pathname === '/_offline') window.location.assign('/')
+    await retryServerConnection()
+    if (pwaState.serverReachable === true && browserAvailable && window.location.pathname === '/_offline') window.location.assign('/')
   } finally {
     isRetrying.value = false
   }
 }
 
-async function inspectStorage(): Promise<void> {
-  if (!browserAvailable || !navigator.storage?.estimate) {
-    storageState.value = 'unavailable'
-    storageMessage.value = 'This browser does not expose a storage estimate.'
-    return
-  }
-  storageState.value = 'checking'
-  storageMessage.value = 'Reading a browser-provided estimate; no local records are opened.'
-  try {
-    const estimate = await navigator.storage.estimate()
-    storageUsage.value = typeof estimate.usage === 'number' ? estimate.usage : null
-    storageQuota.value = typeof estimate.quota === 'number' ? estimate.quota : null
-    storagePersistent.value = navigator.storage.persisted ? await navigator.storage.persisted() : null
-    storageState.value = storageUsage.value === null || storageQuota.value === null ? 'unavailable' : 'available'
-    storageMessage.value = storageState.value === 'available' ? 'Storage estimate updated.' : 'The browser did not provide a complete estimate.'
-  } catch {
-    storageState.value = 'unavailable'
-    storageMessage.value = 'The browser declined the storage estimate. This is normal degradation.'
-  }
-}
-
 async function installApplication(): Promise<void> {
-  if (!installPrompt.value || isInstalling.value) return
+  if (isInstalling.value || !pwaState.installPromptAvailable) return
   isInstalling.value = true
   try {
-    await installPrompt.value.prompt()
-    const choice = await installPrompt.value.userChoice
-    installMessage.value = choice.outcome === 'accepted' ? 'Installation accepted by the browser.' : 'Installation dismissed; the browser remains available.'
-    if (choice.outcome === 'accepted') installAvailability.value = 'installed'
-  } catch {
-    installMessage.value = 'The browser closed the install action. You can use its install menu later.'
+    await promptPwaInstall()
   } finally {
-    installPrompt.value = null
     isInstalling.value = false
   }
 }
 
-function captureInstallPrompt(event: Event): void {
-  event.preventDefault()
-  installPrompt.value = event as InstallPromptEvent
-  installAvailability.value = 'available'
-  installMessage.value = 'The browser exposed an optional install action.'
+async function acceptUpdate(): Promise<void> {
+  if (isUpdating.value) return
+  isUpdating.value = true
+  try {
+    await requestPwaUpdate()
+  } finally {
+    isUpdating.value = false
+  }
 }
 
-function markInstalled(): void {
-  installPrompt.value = null
-  installAvailability.value = 'installed'
-  installMessage.value = 'The browser reports that this app is installed.'
+function handleLibraryError(message: string): void {
+  libraryNotice.value = message
 }
 
-function handleOnlineHint(): void {
-  if (connectionState.value === 'offline' || connectionState.value === 'server-unavailable') void probeConnection()
-}
-
-function handleOfflineHint(): void {
-  connectionState.value = 'offline'
-  connectionMessage.value = 'The browser reports no network path. This shell remains neutral and local-only.'
+function handleLibraryChanged(): void {
+  libraryNotice.value = ''
+  void refreshStorageStatus()
 }
 
 onMounted(() => {
-  isStandalone.value = standaloneDisplay()
-  window.addEventListener('beforeinstallprompt', captureInstallPrompt)
-  window.addEventListener('appinstalled', markInstalled)
-  window.addEventListener('online', handleOnlineHint)
-  window.addEventListener('offline', handleOfflineHint)
-  void probeConnection()
+  void openStorage()
 })
 
 onBeforeUnmount(() => {
-  if (!browserAvailable) return
-  window.removeEventListener('beforeinstallprompt', captureInstallPrompt)
-  window.removeEventListener('appinstalled', markInstalled)
-  window.removeEventListener('online', handleOnlineHint)
-  window.removeEventListener('offline', handleOfflineHint)
+  storageOpenToken += 1
+  offlineStorage.value?.close()
+  offlineStorage.value = null
 })
 </script>
 
@@ -202,7 +312,7 @@ onBeforeUnmount(() => {
         <span>tsEpistle</span>
       </a>
       <p class="eyebrow">FIELD NOTE <span aria-hidden="true">/</span> LOCAL RECOVERY</p>
-      <div class="connection-status" :data-state="connectionState" role="status" aria-live="polite">
+      <div class="connection-status" :data-state="pwaState.connectionState" role="status" aria-live="polite">
         <span class="status-dot" aria-hidden="true"></span>
         <span>{{ connectionLabel }}</span>
       </div>
@@ -221,46 +331,33 @@ onBeforeUnmount(() => {
         </button>
         <p class="connection-detail">{{ connectionMessage }}</p>
       </div>
+      <p v-if="pwaError" class="connection-detail" role="status">{{ pwaError }}</p>
     </section>
 
     <div class="notebook-grid">
       <section class="surface library-surface" aria-labelledby="downloaded-pages-title">
-        <div class="surface-heading">
-          <div>
-            <p class="section-kicker">Local index <span aria-hidden="true">01</span></p>
-            <h2 id="downloaded-pages-title">Downloaded pages</h2>
-          </div>
-          <span class="count-note">0 saved</span>
-        </div>
-        <div class="search-field">
-          <label for="downloaded-pages-search">Downloaded pages</label>
-          <input
-            id="downloaded-pages-search"
-            v-model="searchQuery"
-            type="search"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="Search this device"
-            aria-describedby="downloaded-pages-search-detail"
-          />
-          <p id="downloaded-pages-search-detail" class="field-hint">{{ searchDetail }}</p>
-        </div>
-        <div class="empty-state" role="status" aria-live="polite">
-          <span class="empty-rule" aria-hidden="true"></span>
-          <h3>{{ searchQuery.trim() ? 'No matching pages yet' : 'Your local index is empty' }}</h3>
-          <p>
-            {{ searchQuery.trim() ? 'Try a different phrase after saving an eligible page.' : 'When you save an eligible public page, it will appear here with its revision and expiry.' }}
-          </p>
-          <small>Only explicit downloads are kept. Ordinary reader visits are never cached as offline pages.</small>
-        </div>
+        <OfflineLibrary
+          :storage="offlineStorage"
+          :storage-state="storageState"
+          :storage-message="storageMessage"
+          :refresh-token="libraryRefreshToken"
+          :requested-selector="offlineSelector"
+          @changed="handleLibraryChanged"
+          @error="handleLibraryError"
+          @retry-storage="openStorage"
+        />
+        <p v-if="libraryNotice" class="connection-detail library-notice" role="alert">{{ libraryNotice }}</p>
       </section>
 
       <aside class="side-stack" aria-label="Offline capability notes">
         <section class="surface note-surface" aria-labelledby="drafts-title">
           <p class="section-kicker">Protected workspace <span aria-hidden="true">02</span></p>
           <h2 id="drafts-title">Locked drafts</h2>
-          <p class="note-lead">Account-owned drafts stay opaque until the same account is verified online.</p>
-          <p class="note-detail">No titles, routes, source text, or permissions are shown in this neutral shell.</p>
+          <p class="note-lead">
+            <strong class="locked-count">{{ storageEstimate?.lockedDraftCount ?? '—' }}</strong>
+            {{ storageEstimate?.lockedDraftCount === 1 ? 'opaque draft envelope' : 'opaque draft envelopes' }}
+          </p>
+          <p class="note-detail">{{ lockedDraftDetail }}</p>
         </section>
 
         <section class="surface utility-surface" aria-labelledby="storage-title">
@@ -272,18 +369,21 @@ onBeforeUnmount(() => {
             <span class="utility-icon" aria-hidden="true">+</span>
           </div>
           <p class="utility-copy">{{ storageDetail }}</p>
-          <p v-if="storagePersistent !== null" class="field-hint">
-            Persistent storage: {{ storagePersistent ? 'granted' : 'not granted' }}. Browser eviction remains possible.
+          <p v-if="storageEstimate?.persisted !== null && storageEstimate?.persisted !== undefined" class="field-hint">
+            Persistent storage: {{ storageEstimate.persisted ? 'granted' : 'not granted' }}. Browser eviction remains possible.
           </p>
           <div class="utility-actions">
-            <button class="secondary-button" type="button" @click="inspectStorage">
-              {{ storageState === 'checking' ? 'Inspecting…' : 'Check storage' }}
+            <button class="secondary-button" type="button" :disabled="storageState === 'checking' || storageBusy" @click="openStorage">
+              {{ storageState === 'checking' ? 'Opening…' : 'Refresh storage' }}
             </button>
-            <button class="text-button" type="button" disabled title="There is no loaded library to clear in this neutral shell.">
-              Clear device data
+            <button class="secondary-button" type="button" :disabled="!offlineStorage || persistenceBusy" @click="requestPersistence">
+              {{ persistenceBusy ? 'Requesting…' : 'Request persistence' }}
+            </button>
+            <button class="text-button" type="button" :disabled="!offlineStorage || clearBusy || storageEstimate?.snapshotCount === 0" @click="clearDownloadedPages">
+              {{ clearBusy ? 'Clearing…' : 'Clear downloaded pages' }}
             </button>
           </div>
-          <p class="field-hint">Nothing is loaded into the shell itself; clearing becomes available from the library after it has data.</p>
+          <p class="field-hint">Clear removes guest snapshots and their local search index. It never reveals or purges opaque account drafts.</p>
         </section>
 
         <section class="surface utility-surface install-surface" aria-labelledby="install-title">
@@ -295,10 +395,25 @@ onBeforeUnmount(() => {
             <span class="utility-icon" aria-hidden="true">↗</span>
           </div>
           <p class="utility-copy">{{ installDetail }}</p>
-          <button v-if="installAvailability === 'available'" class="secondary-button" type="button" :disabled="isInstalling" @click="installApplication">
+          <button v-if="pwaState.installPromptAvailable" class="secondary-button" type="button" :disabled="isInstalling" @click="installApplication">
             {{ isInstalling ? 'Opening install…' : 'Install tsEpistle' }}
           </button>
           <p class="field-hint">{{ installMessage }}</p>
+        </section>
+
+        <section v-if="hasUpdateNotice || pwaState.offlineReady" class="surface utility-surface update-surface" aria-labelledby="update-title">
+          <div class="surface-heading compact">
+            <div>
+              <p class="section-kicker">Build lifecycle <span aria-hidden="true">05</span></p>
+              <h2 id="update-title">{{ pwaState.updateReady || pwaState.reloadNeeded ? 'Update ready' : 'Offline ready' }}</h2>
+            </div>
+            <span class="utility-icon" aria-hidden="true">↻</span>
+          </div>
+          <p class="utility-copy">{{ updateMessage }}</p>
+          <button v-if="pwaState.updateReady || pwaState.reloadNeeded || pwaState.updateError" class="secondary-button" type="button" :disabled="isUpdating" @click="acceptUpdate">
+            {{ isUpdating ? 'Preparing safe reload…' : pwaState.updateError ? 'Retry update check' : 'Apply update safely' }}
+          </button>
+          <p class="field-hint">The neutral client acknowledges reload safety; no editor memory or publish request is present here.</p>
         </section>
       </aside>
     </div>

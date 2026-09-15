@@ -23,6 +23,9 @@
       />
       <span class="agent-history__search-status" role="status" aria-live="polite">{{ searchStatus }}</span>
     </div>
+    <v-alert v-if="networkBlocked" class="mx-3 mb-3" density="compact" type="warning" variant="tonal" role="status">
+      Connection required to change conversation history. Retry connection in the Agent workspace before continuing.
+    </v-alert>
     <span id="agent-history-drag-instructions" class="agent-history__search-status">
       Drag a conversation to Recent, a saved folder, or the new-folder area. Use its actions menu to move it with a keyboard.
     </span>
@@ -34,13 +37,13 @@
     <v-alert v-if="sessionsRefreshError" class="mx-3 mb-3" density="compact" type="warning" variant="tonal">
       <div class="agent-history__refresh-error">
         <span>{{ sessionsRefreshError }}</span>
-        <v-btn size="small" variant="text" :loading="refreshingSessions" :disabled="refreshingSessions" @click="refreshSessions">Retry conversations</v-btn>
+        <v-btn size="small" variant="text" :loading="refreshingSessions" :disabled="refreshingSessions || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="refreshSessions">Retry conversations</v-btn>
       </div>
     </v-alert>
     <v-alert v-if="foldersRefreshError" class="mx-3 mb-3" density="compact" type="warning" variant="tonal">
       <div class="agent-history__refresh-error">
         <span>{{ foldersRefreshError }}</span>
-        <v-btn size="small" variant="text" :loading="refreshingFolders" :disabled="refreshingFolders" @click="refreshFolders">Retry folders</v-btn>
+        <v-btn size="small" variant="text" :loading="refreshingFolders" :disabled="refreshingFolders || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="refreshFolders">Retry folders</v-btn>
       </div>
     </v-alert>
 
@@ -111,7 +114,7 @@
                       :session="session"
                       :folders="folders"
                       :busy="sessionBusy(session.id)"
-                      :disabled="sessionMutationBusy"
+                      :disabled="sessionMutationBusy || networkBlocked"
                       @move="folderId => moveSession(session, folderId)"
                       @new-folder="(selectedSession, restoreTarget) => beginCreateFolderForSession(selectedSession, restoreTarget)"
                       @rename="restoreTarget => beginRenameSession(session, restoreTarget)"
@@ -139,7 +142,7 @@
               <v-alert v-else-if="sessionsLoadMoreError" density="compact" role="alert" type="warning" variant="tonal">
                 <div class="agent-history__refresh-error">
                   <span>{{ sessionsLoadMoreError }}</span>
-                  <v-btn aria-label="Retry loading older conversations" size="small" variant="text" @click="loadMoreSessions">Retry</v-btn>
+                  <v-btn aria-label="Retry loading older conversations" size="small" variant="text" :disabled="networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="loadMoreSessions">Retry</v-btn>
                 </div>
               </v-alert>
               <v-btn
@@ -147,7 +150,7 @@
                 block
                 prepend-icon="mdi-chevron-down"
                 variant="tonal"
-                :disabled="refreshingHistory || sessionsReloading"
+                :disabled="refreshingHistory || sessionsReloading || networkBlocked"
                 @click="loadMoreSessions"
               >
                 Load more
@@ -161,7 +164,7 @@
               <h3 id="agent-history-folders-title" class="agent-history__section-title">Saved folders</h3>
               <div class="agent-history__section-copy">Kept without expiry</div>
             </div>
-            <v-btn class="agent-history__new-folder" prepend-icon="mdi-folder-plus-outline" size="small" variant="text" aria-label="Create a conversation folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" @click="beginCreateFolder">New folder</v-btn>
+            <v-btn class="agent-history__new-folder" prepend-icon="mdi-folder-plus-outline" size="small" variant="text" aria-label="Create a conversation folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="beginCreateFolder">New folder</v-btn>
           </div>
 
           <v-expansion-panels v-if="visibleFolderGroups.length" v-model="openFolderIds" class="agent-history__folder-panels" multiple variant="accordion">
@@ -187,12 +190,12 @@
               </v-expansion-panel-title>
               <v-menu content-class="agent-owned-overlay" location="bottom end">
                 <template #activator="{ props: menuProps }">
-                  <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="`Actions for ${group.folder.name}`" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" />
+                  <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="`Actions for ${group.folder.name}`" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" />
                 </template>
                 <v-list density="compact" :aria-label="`Folder actions for ${group.folder.name}`">
-                  <v-list-item link prepend-icon="mdi-pencil-outline" title="Rename folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" @click="beginRenameFolder(group.folder)" />
+                  <v-list-item link prepend-icon="mdi-pencil-outline" title="Rename folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginRenameFolder(group.folder)" />
                   <v-divider />
-                  <v-list-item link class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" @click="beginRemoveFolder(group.folder)" />
+                  <v-list-item link class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" @click="beginRemoveFolder(group.folder)" />
                 </v-list>
               </v-menu>
               <v-expansion-panel-text>
@@ -224,7 +227,7 @@
                         :session="session"
                         :folders="folders"
                         :busy="sessionBusy(session.id)"
-                        :disabled="sessionMutationBusy"
+                        :disabled="sessionMutationBusy || networkBlocked"
                         @move="folderId => moveSession(session, folderId)"
                         @new-folder="(selectedSession, restoreTarget) => beginCreateFolderForSession(selectedSession, restoreTarget)"
                         @rename="restoreTarget => beginRenameSession(session, restoreTarget)"
@@ -304,7 +307,8 @@
         <v-btn
           color="primary"
           variant="tonal"
-          :disabled="loading || !folderName.trim() || savingFolder || sessionMutationBusy"
+          :disabled="loading || !folderName.trim() || savingFolder || sessionMutationBusy || networkBlocked"
+          :title="networkBlocked ? networkRequiredMessage : undefined"
           :loading="savingFolder"
           @click="saveFolder"
         >
@@ -327,7 +331,7 @@
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
         <v-btn variant="text" :disabled="savingSessionTitle" @click="sessionEditorOpen = false">Cancel</v-btn>
-        <v-btn color="primary" variant="tonal" :disabled="loading || !sessionRenameTitle.trim() || savingSessionTitle || sessionMutationBusy" :loading="savingSessionTitle" @click="saveSessionTitle">
+        <v-btn color="primary" variant="tonal" :disabled="loading || !sessionRenameTitle.trim() || savingSessionTitle || sessionMutationBusy || networkBlocked" :loading="savingSessionTitle" :title="networkBlocked ? networkRequiredMessage : undefined" @click="saveSessionTitle">
           Save title
         </v-btn>
       </v-card-actions>
@@ -347,7 +351,7 @@
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
         <v-btn variant="text" :disabled="deleting || sessionMutationBusy" @click="cancelDeleteSession">Cancel</v-btn>
-        <v-btn color="error" variant="tonal" :loading="deleting" :disabled="deleting || sessionMutationBusy" @click="deleteSession">Delete permanently</v-btn>
+        <v-btn color="error" variant="tonal" :loading="deleting" :disabled="deleting || sessionMutationBusy || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="deleteSession">Delete permanently</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -366,7 +370,7 @@
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
         <v-btn variant="text" :disabled="deleting || sessionMutationBusy" @click="cancelRemoveFolder">Cancel</v-btn>
-        <v-btn color="warning" variant="tonal" :loading="deleting" :disabled="loading || deleting || sessionMutationBusy" @click="deleteFolder">Remove folder</v-btn>
+        <v-btn color="warning" variant="tonal" :loading="deleting" :disabled="loading || deleting || sessionMutationBusy || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="deleteFolder">Remove folder</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -382,10 +386,13 @@ import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 import { useAgentsStore } from '../../store/agents.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 import AgentHistorySessionActions from './agent-history-session-actions.vue'
-const { headingId, descriptionId } = defineProps<{ headingId: string; descriptionId: string }>()
+const props = defineProps<{ headingId: string; descriptionId: string; networkBlocked?: boolean }>()
 const emit = defineEmits<{ close: []; clear: [] }>()
+const { headingId, descriptionId } = props
 const agents = useAgentsStore()
 const { folders, loading, sessionMutationBusy, sessions, sessionsLoadMoreError, sessionsLoadingMore, sessionsNextCursor, sessionsReloading, thread } = storeToRefs(agents)
+const networkBlocked = computed(() => props.networkBlocked === true)
+const networkRequiredMessage = 'Connection required to change conversation history. Retry connection in the Agent workspace before continuing.'
 const openFolderIds = ref<string[]>([])
 const localError = ref('')
 const folderEditorOpen = ref(false)
@@ -561,6 +568,7 @@ const draggedSession = computed<AgentSessionSummary | null>(() => {
 const filteredRecentSessions = computed(() => historyPartition.value.recentSessions)
 const hasUnfiledSessions = computed(() => displaySessions.value.some(session => session.folderId === null))
 const clearHistoryDisabled = computed(() =>
+  networkBlocked.value ||
   !hasUnfiledSessions.value ||
   loading.value ||
   refreshingHistory.value ||
@@ -609,13 +617,13 @@ const sessionBusy = (sessionId: string): boolean =>
 const hasRenderedDropDestination = (session: AgentSessionSummary): boolean =>
   session.folderId !== null || visibleFolderGroups.value.length > 0 || !normalizedSearch.value
 const canDragSession = (session: AgentSessionSummary): boolean =>
-  !sessionMutationBusy.value && !sessionBusy(session.id) && hasRenderedDropDestination(session)
+  !networkBlocked.value && !sessionMutationBusy.value && !sessionBusy(session.id) && hasRenderedDropDestination(session)
 const dropTargetKey = (folderId: string | null): string => folderId ?? recentDropTarget
 const isActiveDropTarget = (folderId: string | null): boolean =>
   activeDropTarget.value === dropTargetKey(folderId)
 const canDropTo = (folderId: string | null): boolean => {
   const session = draggedSession.value
-  if (!session || sessionMutationBusy.value || sessionBusy(session.id)) return false
+  if (!session || networkBlocked.value || sessionMutationBusy.value || sessionBusy(session.id)) return false
   if (folderId !== null && folderId !== newFolderDropTarget && !folders.value.some(folder => folder.id === folderId)) return false
   return folderId === newFolderDropTarget || session.folderId !== folderId
 }
@@ -682,6 +690,7 @@ const showCommittedRefreshFailure = (): boolean => {
   return true
 }
 const refreshHistoryBlocked = (): boolean =>
+  networkBlocked.value ||
   loading.value ||
   refreshingHistory.value ||
   sessionMutationBusy.value ||
@@ -690,7 +699,7 @@ const refreshHistoryBlocked = (): boolean =>
   Boolean(deletingSession.value) ||
   Boolean(removingFolder.value)
 const refreshSessions = async (): Promise<boolean> => {
-  if (loading.value || refreshingSessions.value || sessionMutationBusy.value) return false
+  if (loading.value || refreshingSessions.value || sessionMutationBusy.value || networkBlocked.value) return false
   refreshingSessions.value = true
   sessionsRefreshError.value = ''
   try {
@@ -709,7 +718,7 @@ const refreshSessions = async (): Promise<boolean> => {
   }
 }
 const refreshFolders = async (): Promise<boolean> => {
-  if (loading.value || refreshingFolders.value || sessionMutationBusy.value) return false
+  if (loading.value || refreshingFolders.value || sessionMutationBusy.value || networkBlocked.value) return false
   refreshingFolders.value = true
   foldersRefreshError.value = ''
   try {
@@ -732,7 +741,7 @@ const refreshHistory = async (): Promise<boolean> => {
   return true
 }
 const loadMoreSessions = async (): Promise<void> => {
-  if (refreshingHistory.value || sessionsReloading.value || sessionsLoadingMore.value) return
+  if (networkBlocked.value || refreshingHistory.value || sessionsReloading.value || sessionsLoadingMore.value) return
   await agents.loadMoreSessions()
 }
 const componentElement = (component: ComponentRoot | null): HTMLElement | null => {
@@ -800,13 +809,16 @@ const errorStatus = (value: unknown): number | null => {
 }
 const isConflictError = (value: unknown): boolean => errorStatus(value) === 409
 const moveSession = async (session: AgentSessionSummary, folderId: string | null): Promise<boolean> => {
-  if (loading.value || sessionMutationBusy.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0 || session.folderId === folderId || movingSessionIds.value.has(session.id)) return false
+  if (networkBlocked.value || loading.value || sessionMutationBusy.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0 || session.folderId === folderId || movingSessionIds.value.has(session.id)) return false
   lastMoveRefresh.value = null
   const title = session.title || 'New conversation'
   const destination = dropDestinationName(folderId)
   const originalLocation = sessionLocationName(session)
   localError.value = ''
-  sessionsRefreshError.value = ''
+  if (networkBlocked.value) {
+    dialogError.value = networkRequiredMessage
+    return false
+  }
   agents.error = ''
   dragStatus.value = `Moving ${title} to ${destination}.`
   updatePendingSet(movingSessionIds, session.id, true)
@@ -889,7 +901,7 @@ const beginRenameSession = (session: AgentSessionSummary, restoreTarget: HTMLEle
 const saveSessionTitle = async (): Promise<void> => {
   const title = sessionRenameTitle.value.trim()
   const session = editingSession.value
-  if (!title || !session || savingSessionTitle.value || loading.value || sessionMutationBusy.value) return
+  if (!title || !session || networkBlocked.value || savingSessionTitle.value || loading.value || sessionMutationBusy.value) return
   savingSessionTitle.value = true
   sessionDialogError.value = ''
   try {
@@ -968,6 +980,10 @@ const moveCreatedFolder = async (folder: AgentConversationFolderView): Promise<b
     return true
   }
   const authoritativeLatest = sessions.value.find(candidate => candidate.id === source.id)
+  if (networkBlocked.value) {
+    dialogError.value = networkRequiredMessage
+    return false
+  }
   const latest = displaySessions.value.find(candidate => candidate.id === source.id) ?? source
   folderWorkflowSession.value = latest
   const moved = authoritativeLatest?.folderId === folder.id || await moveSession(latest, folder.id)
@@ -1006,7 +1022,7 @@ const cancelFolderEditor = (): void => {
 }
 const saveFolder = async (): Promise<void> => {
   const name = cleanAgentConversationFolderName(folderName.value)
-  if (!name || loading.value || savingFolder.value || deleting.value || sessionMutationBusy.value) return
+  if (!name || networkBlocked.value || loading.value || savingFolder.value || deleting.value || sessionMutationBusy.value) return
   savingFolder.value = true
   dialogError.value = ''
   try {
@@ -1031,6 +1047,11 @@ const saveFolder = async (): Promise<void> => {
       return
     }
     folderWorkflowState.value = 'creating'
+      if (networkBlocked.value) {
+        dialogError.value = networkRequiredMessage
+        folderWorkflowState.value = 'create-unknown'
+        return
+      }
     try {
       const created = await agents.createFolder(name)
       const folder = isFolderView(created) ? created : await reconcileFolderByName(name)
@@ -1075,7 +1096,7 @@ watch(folderEditorOpen, async open => {
 })
 const deleteSession = async (): Promise<void> => {
   const session = deletingSession.value
-  if (!session || deleting.value || savingFolder.value || sessionMutationBusy.value) return
+  if (!session || networkBlocked.value || deleting.value || savingFolder.value || sessionMutationBusy.value) return
   deleting.value = true; dialogError.value = ''; sessionsRefreshError.value = ''; agents.error = ''
   try {
     const committed = await agents.removeSession(session.id)
@@ -1092,7 +1113,7 @@ const deleteSession = async (): Promise<void> => {
 }
 const deleteFolder = async (): Promise<void> => {
   const folder = removingFolder.value
-  if (!folder || loading.value || deleting.value || savingFolder.value || sessionMutationBusy.value) return
+  if (!folder || networkBlocked.value || loading.value || deleting.value || savingFolder.value || sessionMutationBusy.value) return
   const affectedSessionIds = displaySessions.value.filter(session => session.folderId === folder.id).map(session => session.id)
   deleting.value = true; dialogError.value = ''; sessionsRefreshError.value = ''; agents.error = ''
   try {

@@ -86,6 +86,7 @@
           v-spacer
           .navHeaderLoading(v-show='isLoading')
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2', aria-label='Page loading')
+          PwaStatus
           v-btn.nav-header-agent(
             v-if='canEnterAgent && $vuetify.display.mdAndUp'
             prepend-icon='mdi-creation-outline'
@@ -319,10 +320,10 @@
               section.account-menu__preferences(role='region' aria-label='Appearance settings')
                 appearance-selector
               v-divider
-              form(action='/logout', method='post', @submit='clearAgentChatPinOnLogout')
-                v-list-item(tag='button', type='submit', link)
+              form(action='/logout', method='post', :aria-busy='logoutPending ? `true` : undefined', @submit='clearAgentChatPinOnLogout')
+                v-list-item(tag='button', type='submit', link, :disabled='logoutPending')
                   template(v-slot:append): v-icon(color='error') mdi-logout
-                  v-list-item-title.text-error {{$t('common:header.logout')}}
+                  v-list-item-title.text-error {{ logoutPending ? `Signing out…` : $t('common:header.logout') }}
 
           v-tooltip(v-else, location="left")
             template(v-slot:activator='{ props }')
@@ -345,10 +346,11 @@
 
 <script lang='ts'>
 import { defineAsyncComponent, defineComponent, markRaw, mergeProps } from 'vue'
-import { wikiStore } from '@/store/index.ts'
+import { invalidateOfflineIdentity, wikiStore } from '@/store/index.ts'
 import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
 import AccountNotifications from './account-notifications.vue'
 import ControlBorderBeam from './control-border-beam.vue'
+import PwaStatus from '../pwa/pwa-status.vue'
 import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
 import { clearAgentChatPin } from '../../helpers/agent-chat-pin'
 import {
@@ -388,6 +390,7 @@ const ADMIN_PERMISSION_NAMES = new Set([
 export default defineComponent({
   components: {
     AccountNotifications,
+    PwaStatus,
     ControlBorderBeam,
     AppearanceSelector: defineAsyncComponent(() => import('./appearance-selector.vue')),
     PageDelete: defineAsyncComponent(() => import('./page-delete.vue')),
@@ -428,6 +431,7 @@ export default defineComponent({
       pageActionsFocusFrame: null as number | null,
       notificationIdentityRecovery: null as Promise<void> | null,
       notificationIdentityRecoveryGeneration: 0,
+      logoutPending: false,
       duplicateOpts: {
         locale: 'en',
         path: 'new-page',
@@ -601,10 +605,27 @@ export default defineComponent({
   },
   methods: {
     mergeProps,
-    clearAgentChatPinOnLogout (): void {
+    clearAgentChatPinOnLogout (event: SubmitEvent): void {
+      event.preventDefault()
+      if (this.logoutPending) return
+      this.logoutPending = true
+
+      const currentTarget = event.currentTarget
+      const form = currentTarget && typeof (currentTarget as HTMLFormElement).submit === 'function'
+        ? currentTarget as HTMLFormElement
+        : null
+      const accountId = this.isAuthenticated && Number.isSafeInteger(wikiStore.user.id) && wikiStore.user.id > 0
+        ? wikiStore.user.id
+        : undefined
+
       this.notificationIdentityRecoveryGeneration += 1
       clearAgentChatPin()
       this.siteNotifications.reset()
+
+      void (async () => {
+        await invalidateOfflineIdentity(accountId)
+        if (form) form.submit()
+      })()
     },
     clearNotificationData (): void {
       this.siteNotifications.watches = []

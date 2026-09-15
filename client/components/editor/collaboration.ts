@@ -1,9 +1,11 @@
+import { watch, type WatchStopHandle } from 'vue'
 import type { Extension } from '@codemirror/state'
 import { Awareness } from 'y-protocols/awareness'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
 import { fetchCollaborationSession } from '../../helpers/pages-api'
+import { pwaState } from '../../helpers/pwa'
 import {
   COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE,
   COLLABORATION_MAX_UPDATE_BYTES,
@@ -21,6 +23,8 @@ import {
 const REMOTE_ORIGIN = Symbol('collaboration-remote')
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_500, 5_000, 10_000] as const
 
+const isConnectivityBlocked = (): boolean => pwaState.connectionState === 'offline' || pwaState.connectionState === 'server-unavailable'
+
 export type CollaborationConnectionState = 'connecting' | 'connected' | 'offline' | 'conflict'
 
 export interface CollaborationStatus {
@@ -34,7 +38,7 @@ interface MarkdownCollaborationOptions {
   expectedUpdatedAt: () => string
   fetchImpl: typeof window.fetch
   onStatus: (status: CollaborationStatus) => void
-  onBaseline: (baseline: { updatedAt: string, sourceRevision: string }) => void
+  onBaseline: (baseline: { updatedAt: string; sourceRevision: string }) => void
 }
 
 export interface MarkdownCollaboration {
@@ -55,26 +59,43 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
   private reconnectAttempt = 0
   private destroyed = false
   private conflicted = false
+  private pausedForConnectivity: boolean
+  private session: CollaborationSession | null = null
+  private stopPwaWatch: WatchStopHandle | null = null
   private participants = 1
   readonly generation: number
 
   readonly extension: Extension
 
-  private constructor (private readonly options: MarkdownCollaborationOptions, session: CollaborationSession) {
+  private constructor(
+    private readonly options: MarkdownCollaborationOptions,
+    session: CollaborationSession
+  ) {
     this.generation = session.generation
     this.options.onBaseline({ updatedAt: session.baseUpdatedAt, sourceRevision: session.baseSourceRevision })
     Y.applyUpdate(this.document, sessionState(session), REMOTE_ORIGIN)
     this.extension = yCollab(this.text, this.awareness)
     this.document.on('update', this.handleDocumentUpdate)
-    this.connect(session)
+    this.pausedForConnectivity = isConnectivityBlocked()
+    this.session = session
+    this.stopPwaWatch = watch(
+      () => pwaState.connectionState,
+      state => this.handleConnectionState(state)
+    )
+    if (this.pausedForConnectivity) this.report('offline')
+    else this.connect(session)
   }
 
   static async create(options: MarkdownCollaborationOptions): Promise<MarkdownCollaborationImpl> {
-    const session = await fetchCollaborationSession(
-      options.fetchImpl.bind(window),
-      options.pageId,
-      options.expectedUpdatedAt()
-    )
+    if (isConnectivityBlocked()) {
+      options.onStatus({ state: 'offline', participants: 1, conflict: null })
+      throw new Error('Connection required for live collaboration.')
+    }
+    const session = await fetchCollaborationSession(options.fetchImpl.bind(window), options.pageId, options.expectedUpdatedAt())
+    if (isConnectivityBlocked()) {
+      options.onStatus({ state: 'offline', participants: 1, conflict: null })
+      throw new Error('Connection required for live collaboration.')
+    }
     return new MarkdownCollaborationImpl(options, session)
   }
 
@@ -94,23 +115,30 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
 
   private connect(session: CollaborationSession): void {
     if (this.destroyed || this.conflicted) return
+    this.session = session
+    if (this.pausedForConnectivity || isConnectivityBlocked()) {
+      this.pausedForConnectivity = true
+      this.report('offline')
+      return
+    }
     this.report('connecting')
     const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = new WebSocket(
-      `${scheme}//${window.location.host}${session.websocketPath}`,
-      [COLLABORATION_WEBSOCKET_PROTOCOL, session.token]
-    )
+    const socket = new WebSocket(`${scheme}//${window.location.host}${session.websocketPath}`, [COLLABORATION_WEBSOCKET_PROTOCOL, session.token])
     this.socket = socket
     socket.binaryType = 'arraybuffer'
     socket.addEventListener('open', () => {
       if (this.socket !== socket || this.destroyed) return
+      if (isConnectivityBlocked()) {
+        socket.close()
+        return
+      }
       this.reconnectAttempt = 0
       this.inFlight = null
       this.report('connected')
       this.flushPending()
     })
     socket.addEventListener('message', event => {
-      if (this.socket !== socket || typeof event.data !== 'string') return
+      if (this.socket !== socket || typeof event.data !== 'string' || isConnectivityBlocked()) return
       try {
         const message = parseCollaborationServerMessage(JSON.parse(event.data))
         if ((message.type === 'sync' || message.type === 'update') && message.generation !== this.generation) {
@@ -153,6 +181,11 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
       if (this.conflicted) return
       this.socket = null
       this.inFlight = null
+      if (this.pausedForConnectivity || isConnectivityBlocked()) {
+        this.pausedForConnectivity = true
+        this.report('offline')
+        return
+      }
       if (event.code === 4409 || event.code === 4401) {
         this.setConflict(event.code === 4409 ? 'page-changed' : 'permission-revoked')
       } else {
@@ -161,23 +194,30 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
       }
     })
     socket.addEventListener('error', () => {
-      if (this.socket === socket && !this.destroyed && !this.conflicted) this.report('offline')
+      if (this.socket !== socket || this.destroyed || this.conflicted) return
+      if (isConnectivityBlocked()) {
+        this.handleConnectionState(pwaState.connectionState)
+        return
+      }
+      this.report('offline')
     })
   }
 
   private flushPending(): void {
     const socket = this.socket
     const update = this.pending[0]
-    if (!socket || socket.readyState !== WebSocket.OPEN || this.inFlight || !update) return
+    if (this.pausedForConnectivity || isConnectivityBlocked() || !socket || socket.readyState !== WebSocket.OPEN || this.inFlight || !update) return
     this.inFlight = encodeCollaborationUpdate(update)
     try {
-      socket.send(JSON.stringify({
-        type: 'update',
-        protocolVersion: COLLABORATION_PROTOCOL_VERSION,
-        generation: this.generation,
-        updateVersion: COLLABORATION_UPDATE_VERSION,
-        update: this.inFlight
-      }))
+      socket.send(
+        JSON.stringify({
+          type: 'update',
+          protocolVersion: COLLABORATION_PROTOCOL_VERSION,
+          generation: this.generation,
+          updateVersion: COLLABORATION_UPDATE_VERSION,
+          update: this.inFlight
+        })
+      )
     } catch {
       this.inFlight = null
       socket.close()
@@ -186,34 +226,74 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer || this.destroyed || this.conflicted) return
+    if (this.pausedForConnectivity || isConnectivityBlocked()) {
+      this.pausedForConnectivity = true
+      this.report('offline')
+      return
+    }
     const delay = RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)]
     this.reconnectAttempt += 1
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
-      void fetchCollaborationSession(
-        this.options.fetchImpl.bind(window),
-        this.options.pageId,
-        this.options.expectedUpdatedAt()
-      ).then(session => {
-        if (session.generation !== this.generation) {
-          this.setConflict('draft-discarded')
-          return
-        }
-        this.options.onBaseline({ updatedAt: session.baseUpdatedAt, sourceRevision: session.baseSourceRevision })
-        Y.applyUpdate(this.document, sessionState(session), REMOTE_ORIGIN)
-        this.connect(session)
-      }).catch((error: unknown) => {
-        const status = error && typeof error === 'object' ? Number(Reflect.get(error, 'status')) : 0
-        if (status === 409) {
-          this.setConflict('page-changed')
-        } else if ([401, 403, 404].includes(status)) {
-          this.setConflict('permission-revoked')
-        } else {
-          this.report('offline')
-          this.scheduleReconnect()
-        }
-      })
+      if (this.destroyed || this.conflicted) return
+      if (this.pausedForConnectivity || isConnectivityBlocked()) {
+        this.pausedForConnectivity = true
+        this.report('offline')
+        return
+      }
+      const session = this.session
+      if (!session) return
+      void fetchCollaborationSession(this.options.fetchImpl.bind(window), this.options.pageId, this.options.expectedUpdatedAt())
+        .then(session => {
+          if (this.destroyed || this.conflicted) return
+          if (this.pausedForConnectivity || isConnectivityBlocked()) {
+            this.pausedForConnectivity = true
+            this.report('offline')
+            return
+          }
+          if (session.generation !== this.generation) {
+            this.setConflict('draft-discarded')
+            return
+          }
+          this.options.onBaseline({ updatedAt: session.baseUpdatedAt, sourceRevision: session.baseSourceRevision })
+          Y.applyUpdate(this.document, sessionState(session), REMOTE_ORIGIN)
+          this.connect(session)
+        })
+        .catch((error: unknown) => {
+          if (this.destroyed || this.conflicted) return
+          const status = error && typeof error === 'object' ? Number(Reflect.get(error, 'status')) : 0
+          if (status === 409) {
+            this.setConflict('page-changed')
+          } else if ([401, 403, 404].includes(status)) {
+            this.setConflict('permission-revoked')
+          } else if (this.pausedForConnectivity || isConnectivityBlocked()) {
+            this.pausedForConnectivity = true
+            this.report('offline')
+          } else {
+            this.report('offline')
+            this.scheduleReconnect()
+          }
+        })
     }, delay)
+  }
+
+  private handleConnectionState(state: typeof pwaState.connectionState): void {
+    if (this.destroyed || this.conflicted) return
+    const blocked = state === 'offline' || state === 'server-unavailable'
+    if (blocked) {
+      this.pausedForConnectivity = true
+      clearTimeout(this.reconnectTimer ?? undefined)
+      this.reconnectTimer = null
+      this.inFlight = null
+      const socket = this.socket
+      this.socket = null
+      socket?.close()
+      this.report('offline')
+      return
+    }
+    if (state !== 'online' || !this.pausedForConnectivity) return
+    this.pausedForConnectivity = false
+    this.scheduleReconnect()
   }
 
   private setConflict(reason: CollaborationConflictReason): void {
@@ -233,6 +313,8 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
   destroy(): void {
     if (this.destroyed) return
     this.destroyed = true
+    this.stopPwaWatch?.()
+    this.stopPwaWatch = null
     clearTimeout(this.reconnectTimer ?? undefined)
     this.reconnectTimer = null
     this.document.off('update', this.handleDocumentUpdate)
@@ -243,11 +325,10 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
   }
 }
 
-const sessionState = (message: { state?: string, update?: string }): Uint8Array => {
+const sessionState = (message: { state?: string; update?: string }): Uint8Array => {
   const encoded = message.state ?? message.update
   if (!encoded) throw new TypeError('Collaboration state is missing')
   return decodeCollaborationUpdate(encoded)
 }
 
-export const createMarkdownCollaboration = (options: MarkdownCollaborationOptions): Promise<MarkdownCollaboration> =>
-  MarkdownCollaborationImpl.create(options)
+export const createMarkdownCollaboration = (options: MarkdownCollaborationOptions): Promise<MarkdownCollaboration> => MarkdownCollaborationImpl.create(options)

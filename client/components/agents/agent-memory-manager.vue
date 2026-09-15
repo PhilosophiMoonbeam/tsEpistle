@@ -10,12 +10,15 @@
     </div>
 
     <v-progress-linear v-if="loading" indeterminate color="primary" aria-label="Loading agent memory" />
+    <v-alert v-if="networkBlocked" class="agent-memory__connection-warning" density="compact" type="warning" variant="tonal" role="status">
+      Connection required to change Agent memory. Retry connection in the Agent workspace before saving.
+    </v-alert>
 
     <v-card-text class="agent-memory__body">
       <v-alert v-if="error" class="agent-memory__error" type="error" variant="tonal" :closable="!stale" role="alert" @click:close="error = ''">
         <div class="agent-memory__error-content">
           <span>{{ error }}</span>
-          <v-btn v-if="!loading" variant="text" size="small" @click="load()">Refresh memory</v-btn>
+          <v-btn v-if="!loading" variant="text" size="small" :disabled="networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="load()">Refresh memory</v-btn>
         </div>
       </v-alert>
 
@@ -73,7 +76,7 @@
             <div class="agent-memory__editor-actions">
               <span class="agent-memory__shortcut">Esc to cancel · <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to save</span>
               <v-btn variant="text" :disabled="saving" @click="cancelEdit">Cancel</v-btn>
-              <v-btn color="primary" :disabled="!draftContent.trim() || draftOverLimit || saving || stale || loading" :loading="saving" @click="save">
+              <v-btn color="primary" :disabled="!draftContent.trim() || draftOverLimit || saving || stale || loading || networkBlocked" :loading="saving" :title="networkBlocked ? networkRequiredMessage : undefined" @click="save">
                 {{ editing.id ? 'Save revision' : 'Save memory' }}
               </v-btn>
             </div>
@@ -134,7 +137,7 @@
     <v-card-actions class="agent-memory__footer">
       <v-menu content-class="agent-owned-overlay" location="top start">
         <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" icon="mdi-dots-horizontal" variant="text" aria-label="Memory options" :disabled="Boolean(actionBusy)" /></template>
-        <v-list density="compact"><v-list-item link prepend-icon="mdi-delete-sweep-outline" title="Clear all memory" :disabled="Boolean(clearMemoryDisabledReason) || Boolean(actionBusy)" @click="beginClear($event)" /></v-list>
+        <v-list density="compact"><v-list-item link prepend-icon="mdi-delete-sweep-outline" title="Clear all memory" :disabled="Boolean(clearMemoryDisabledReason) || Boolean(actionBusy) || networkBlocked" :subtitle="networkBlocked ? networkRequiredMessage : undefined" @click="beginClear($event)" /></v-list>
       </v-menu>
       <v-spacer />
       <v-btn color="primary" prepend-icon="mdi-plus" variant="flat" :disabled="!canAddMemory || Boolean(actionBusy)" :title="addMemoryDisabledReason" @click="beginAdd()">
@@ -157,7 +160,7 @@
       <v-card-actions>
         <v-spacer />
         <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="cancelRemove">Keep record</v-btn>
-        <v-btn color="error" :loading="actionBusy === 'remove'" :disabled="Boolean(actionBusy)" @click="remove">Remove memory</v-btn>
+        <v-btn color="error" :loading="actionBusy === 'remove'" :disabled="Boolean(actionBusy) || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="remove">Remove memory</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -175,7 +178,7 @@
       <v-card-actions>
         <v-spacer />
         <v-btn variant="text" :disabled="Boolean(actionBusy)" @click="cancelClear">Keep memories</v-btn>
-        <v-btn color="error" :loading="actionBusy === 'clear'" :disabled="Boolean(actionBusy)" @click="clear">Clear memory</v-btn>
+        <v-btn color="error" :loading="actionBusy === 'clear'" :disabled="Boolean(actionBusy) || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="clear">Clear memory</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -187,8 +190,11 @@ import { computed, nextTick, onBeforeUnmount, onWatcherCleanup, ref, shallowRef,
 import { clearAgentMemories, createAgentMemory, getAgentMemories, removeAgentMemory, updateAgentMemory, type AgentMemoryEntry, type AgentMemoryTarget, type AgentMemoryView } from '../../helpers/agents-api.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 
-const { csrfToken, headingId, descriptionId } = defineProps<{ csrfToken: string; headingId: string; descriptionId: string }>()
+const props = defineProps<{ csrfToken: string; headingId: string; descriptionId: string; networkBlocked?: boolean }>()
+const { csrfToken, headingId, descriptionId } = props
 const open = defineModel<boolean>({ required: true })
+const networkBlocked = computed(() => props.networkBlocked === true)
+const networkRequiredMessage = 'Connection required to change Agent memory. Retry connection in the Agent workspace before saving.'
 const instanceId = useId()
 const removeDialogTitleId = `${instanceId}-remove-title`
 const removeDialogDescriptionId = `${instanceId}-remove-description`
@@ -302,7 +308,14 @@ const focusEditor = async (): Promise<void> => {
 }
 const message = (value: unknown, fallback: string): string => value instanceof Error ? value.message : fallback
 const load = async (committedMessage?: string): Promise<boolean> => {
-  if (disposed) return false
+  if (disposed || networkBlocked.value) {
+    if (networkBlocked.value) {
+      loadController?.abort()
+      loadController = null
+      loading.value = false
+    }
+    return false
+  }
   loadController?.abort()
   const controller = new AbortController()
   loadController = controller
@@ -380,6 +393,10 @@ const componentElement = (component: ComponentRoot | null): HTMLElement | null =
 const save = async (): Promise<void> => {
   const current = editing.value
   const content = draftContent.value.trim()
+  if (networkBlocked.value) {
+    error.value = networkRequiredMessage
+    return
+  }
   if (!current || !content || draftOverLimit.value || saving.value || actionBusy.value || stale.value || loading.value) return
   saving.value = true; actionBusy.value = 'save'; error.value = ''
   try {
@@ -399,6 +416,10 @@ const save = async (): Promise<void> => {
 }
 const remove = async (): Promise<void> => {
   const entry = removing.value
+  if (networkBlocked.value) {
+    dialogError.value = networkRequiredMessage
+    return
+  }
   if (!entry || saving.value || actionBusy.value || stale.value || loading.value) return
   saving.value = true; actionBusy.value = 'remove'; dialogError.value = ''
   try {
@@ -429,6 +450,10 @@ const remove = async (): Promise<void> => {
   saving.value = false; actionBusy.value = ''
 }
 const clear = async (): Promise<void> => {
+  if (networkBlocked.value) {
+    clearError.value = networkRequiredMessage
+    return
+  }
   if (saving.value || actionBusy.value || stale.value || loading.value) return
   saving.value = true; actionBusy.value = 'clear'; clearError.value = ''
   try {
@@ -485,6 +510,16 @@ watch([open, removing, clearing], async ([managerOpen, entry, clearOpen]) => {
   })
 })
 watch(open, value => { if (value) void load() }, { immediate: true })
+watch(networkBlocked, blocked => {
+  if (blocked) {
+    loadGeneration += 1
+    loadController?.abort()
+    loadController = null
+    loading.value = false
+    return
+  }
+  if (open.value && !disposed) void load()
+})
 watch(actionBusy, busy => emit('update:busy', Boolean(busy)), { immediate: true, flush: 'sync' })
 onBeforeUnmount(() => {
   disposed = true

@@ -238,6 +238,22 @@ const isSameSubmission = (left: OfflineDraftEnvelopeV1, right: OfflineDraftEnvel
   left.draftRevision === right.draftRevision &&
   left.submissionId === right.submissionId
 
+const sameBytes = (left: Uint8Array, right: Uint8Array): boolean => {
+  if (left.byteLength !== right.byteLength) return false
+  for (let index = 0; index < left.byteLength; index += 1) {
+    if (left[index] !== right[index]) return false
+  }
+  return true
+}
+
+const isSameEnvelope = (left: OfflineDraftEnvelopeV1, right: OfflineDraftEnvelopeV1): boolean =>
+  isSameSubmission(left, right) &&
+  left.accountId === right.accountId &&
+  left.authVersion === right.authVersion &&
+  left.keyVersion === right.keyVersion &&
+  sameBytes(left.nonce, right.nonce) &&
+  sameBytes(left.ciphertext, right.ciphertext)
+
 type OfflineTransaction = IDBPTransaction<OfflineStorageDbSchema, ['meta', 'snapshots', 'drafts', 'searchDocuments'], IDBTransactionMode>
 type OfflineWriteTransaction = IDBPTransaction<OfflineStorageDbSchema, ['meta', 'snapshots', 'drafts', 'searchDocuments'], 'readwrite'>
 
@@ -514,6 +530,57 @@ export class OfflineStorage {
     } catch (error) {
       this.abort(tx)
       throw toFailure(error, 'transaction', 'The encrypted draft envelope could not be committed.')
+    }
+  }
+
+  /**
+   * Atomically rewrap an immutable submission into the current generation.
+   * The old envelope is the compare-and-swap value; ordinary drafts never use
+   * this path.
+   */
+  async rewrapSubmission(
+    expectedEnvelope: OfflineDraftEnvelopeV1,
+    replacementEnvelope: OfflineDraftEnvelopeV1,
+    options: OfflineStorageGenerationOptions = {}
+  ): Promise<OfflineDraftEnvelopeV1> {
+    this.assertOpen(true)
+    const expectedParsed = OfflineDraftEnvelopeV1Schema.parse(expectedEnvelope)
+    const replacementParsed = OfflineDraftEnvelopeV1Schema.parse(replacementEnvelope)
+    if (
+      expectedParsed.submissionId === null ||
+      replacementParsed.submissionId === null ||
+      expectedParsed.recordId !== replacementParsed.recordId ||
+      expectedParsed.accountId !== replacementParsed.accountId ||
+      expectedParsed.authVersion !== replacementParsed.authVersion ||
+      expectedParsed.keyVersion !== replacementParsed.keyVersion ||
+      expectedParsed.draftRevision !== replacementParsed.draftRevision ||
+      expectedParsed.sessionGeneration === replacementParsed.sessionGeneration
+    )
+      throw new OfflineStorageError('invalid-record', 'Only an immutable submission can be rewrapped.')
+    const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
+    if (replacementParsed.sessionGeneration !== expectedGeneration) {
+      throw new OfflineGenerationFencedError(expectedGeneration, replacementParsed.sessionGeneration)
+    }
+    const serialized = serializedBytes(replacementParsed)
+    if (serialized > OFFLINE_RECORD_BYTES_LIMIT) throw new OfflineStorageError('quota', 'The encrypted draft envelope exceeds the per-record limit.')
+    let tx: OfflineWriteTransaction | undefined
+    try {
+      tx = this.db.transaction(['meta', 'drafts', 'snapshots'], 'readwrite')
+      await this.assertGenerationInTransaction(tx, expectedGeneration)
+      const store = tx.objectStore('drafts')
+      const existingValue = await store.get(expectedParsed.recordId)
+      if (existingValue === undefined) throw new OfflineDraftConflictError(expectedParsed.recordId)
+      const existing = OfflineDraftEnvelopeV1Schema.parse(existingValue)
+      if (!isSameEnvelope(existing, expectedParsed)) throw new OfflineDraftConflictError(expectedParsed.recordId)
+      const managedBefore = await this.managedBytes(tx)
+      const oldBytes = serializedBytes(existing)
+      if (managedBefore - oldBytes + serialized > OFFLINE_MANAGED_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded; no draft was evicted.')
+      await store.put(cloneEnvelope(replacementParsed))
+      return await this.finish(tx, cloneEnvelope(replacementParsed))
+    } catch (error) {
+      this.abort(tx)
+      throw toFailure(error, 'transaction', 'The immutable submission could not be rewrapped.')
     }
   }
 

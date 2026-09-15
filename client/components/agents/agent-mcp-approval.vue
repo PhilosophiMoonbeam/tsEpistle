@@ -37,6 +37,17 @@
     </div>
 
     <v-alert
+      v-if="networkBlocked"
+      class="approval-connection-warning"
+      type="warning"
+      variant="tonal"
+      role="status"
+      icon="mdi-cloud-off-outline"
+    >
+      Connection required to decide this request. Retry connection in the Agent workspace before choosing.
+    </v-alert>
+
+    <v-alert
       v-if="error"
       ref="errorAlert"
       class="approval-error"
@@ -54,7 +65,7 @@
           variant="outlined"
           prepend-icon="mdi-refresh"
           :loading="loading"
-          :disabled="loading"
+          :disabled="loading || networkBlocked"
           @click="load"
         >Retry</v-btn>
       </div>
@@ -229,7 +240,7 @@
               <v-btn
                 variant="outlined"
                 prepend-icon="mdi-close-circle-outline"
-                :disabled="Boolean(pendingDecision)"
+                :disabled="Boolean(pendingDecision) || networkBlocked"
                 :loading="pendingDecision === 'denied'"
                 @click="decide('denied')"
               >Deny request</v-btn>
@@ -240,7 +251,7 @@
                 :color="proposal.risk === 'destructive-write' ? 'error' : 'primary'"
                 :prepend-icon="proposal.risk === 'destructive-write' ? 'mdi-delete-alert-outline' : 'mdi-check-decagram-outline'"
                 :loading="pendingDecision === 'approved'"
-                :disabled="Boolean(pendingDecision) || !reviewAdequate || (proposal.risk === 'destructive-write' && confirmationPath !== proposal.confirmationPath)"
+                :disabled="Boolean(pendingDecision) || networkBlocked || !reviewAdequate || (proposal.risk === 'destructive-write' && confirmationPath !== proposal.confirmationPath)"
                 @click="decide('approved')"
               >{{ approveLabel }}</v-btn>
               <small>Authorizes this proposal once.</small>
@@ -278,7 +289,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { decideAgentProposal, getMcpAgentProposal, type McpAgentProposal } from '../../helpers/agents-api.ts'
 
-const props = defineProps<{ csrfToken: string; proposalId: string }>()
+const props = defineProps<{ csrfToken: string; proposalId: string; networkBlocked?: boolean }>()
 const instanceId = useId()
 const approvalTitleId = `${instanceId}-approval-title`
 const requestRecordTitleId = `${instanceId}-request-record-title`
@@ -298,8 +309,9 @@ const clockTick = ref(0)
 type ComponentRoot = { $el?: unknown }
 const settledReceipt = useTemplateRef<ComponentRoot | HTMLElement>('settledReceipt')
 const errorAlert = useTemplateRef<ComponentRoot | HTMLElement>('errorAlert')
-let clockTimer: number | null = null
+const networkBlocked = computed(() => props.networkBlocked === true)
 let expiryDeadlineTimer: number | null = null
+let clockTimer: number | null = null
 let loadController: AbortController | null = null
 let loadGeneration = 0
 let decisionGeneration = 0
@@ -477,7 +489,10 @@ const focusError = async (): Promise<void> => {
   componentElement(errorAlert.value)?.focus()
 }
 const load = async (): Promise<void> => {
-  if (disposed) return
+  if (disposed || networkBlocked.value) {
+    loading.value = false
+    return
+  }
   loadController?.abort()
   const controller = new AbortController()
   loadController = controller
@@ -510,6 +525,7 @@ const load = async (): Promise<void> => {
 }
 
 const decide = async (decision: 'approved' | 'denied'): Promise<void> => {
+  if (networkBlocked.value) return
   const current = proposal.value
   if (!current || pendingDecision.value || current.approval.status !== 'pending' || current.status !== 'pending') return
   if (hasExpired(current.expiresAt)) {
@@ -560,6 +576,16 @@ watch(
   },
   { immediate: true }
 )
+watch(networkBlocked, blocked => {
+  if (blocked) {
+    loadGeneration++
+    loadController?.abort()
+    loadController = null
+    loading.value = false
+    return
+  }
+  if (!disposed) void load()
+})
 onBeforeUnmount(() => {
   disposed = true
   loadGeneration++

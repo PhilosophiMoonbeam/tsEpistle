@@ -10,6 +10,7 @@ import boot from './modules/boot.ts'
 import localization from './modules/localization.ts'
 import { pinia, wikiStore } from './store/index.ts'
 import { router } from './router'
+import { registerPwa } from './helpers/pwa.ts'
 import { createWikiThemes, resolveThemeName, WIKI_THEME_VARIATIONS } from './helpers/theme.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
 import { createAsyncComponent } from './components/common/async-component-state.vue'
@@ -46,7 +47,9 @@ const registrations = [
 ]
 
 applyReaderLayout(siteConfig.readerLayout)
-await wikiStore.refreshAuth()
+// Auth is fail-closed in the store and must not prevent the neutral shell from
+// mounting when the server is slow or unavailable.
+const authRefresh = wikiStore.refreshAuth()
 
 const resolveVuetifyMessageLocale = (language: string): keyof typeof vuetifyLocaleMessages | undefined => {
   const languageParts = language.trim().toLowerCase().replaceAll('_', '-').split('-')
@@ -170,3 +173,17 @@ moment.locale(siteConfig.lang)
 applyUserPresentation(wikiStore.user)
 
 app.mount('#root')
+void authRefresh.then(outcome => {
+  if (outcome === 'authenticated') {
+    applyUserPresentation(wikiStore.user)
+    vuetify.theme.global.name.value = resolveThemeName(wikiStore.user.appearance, siteConfig.darkMode)
+  }
+})
+
+boot.onDOMReady(() => {
+  void registerPwa({
+    onNeedReload: () => {
+      window.location.reload()
+    }
+  })
+})

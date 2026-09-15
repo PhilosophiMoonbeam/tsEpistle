@@ -1,8 +1,13 @@
 <template lang="pug">
   div.comments(v-intersect.once='onIntersect')
     v-alert.mb-4(v-if='availability && (availability.closed || !availability.enabled)', type='info', variant='tonal') {{ availability.closed ? 'This discussion is closed to new comments.' : 'Discussions are currently unavailable.' }}
+    v-alert.mb-4(v-if='connectionBlocked', type='warning', variant='tonal', role='status')
+      .d-flex.align-center.ga-2
+        span Connection required to load or change comments.
+        v-spacer
+        v-btn(size='small', variant='text', prepend-icon='mdi-refresh', :loading='connectionRetrying', :disabled='connectionRetrying', @click='retryConnection') Retry connection
     form.comments-composer(
-      v-if='permissions.write && availability?.canPost'
+      v-if='connectionBlocked || (permissions.write && availability?.canPost)'
       :aria-label='$t(`common:comments.postComment`)'
       :aria-busy='isPosting'
       novalidate
@@ -91,7 +96,7 @@
           prepend-icon='mdi-comment'
           :aria-label='$t(`common:comments.postComment`)'
           :loading='isPosting'
-          :disabled='isPosting'
+          :disabled='isPosting || connectionBlocked'
         )
           span.text-none {{$t('common:comments.postComment')}}
     async-state.comments-loading(
@@ -105,7 +110,7 @@
       :title='$t(`common:error.unexpected`)'
       :message='fetchError'
       :retry-label='$t(`common:actions.refresh`)'
-      @retry='fetch(false)'
+      @retry='retryFetch'
     )
     v-timeline.comments-thread(
       density="compact"
@@ -145,6 +150,7 @@
                 size='small'
                 variant='text'
                 :aria-label='$t(`common:comments.updateComment`) + `: ` + cm.authorName'
+                :disabled='connectionBlocked'
                 @click='editComment(cm)'
               ): v-icon(size="small") mdi-pencil
               v-btn(
@@ -153,6 +159,7 @@
                 size='small'
                 variant='text'
                 :aria-label='$t(`common:comments.deleteConfirmTitle`) + `: ` + cm.authorName'
+                :disabled='connectionBlocked'
                 @click='deleteCommentConfirm(cm)'
               ): v-icon(size="small") mdi-delete
             .comments-post-name.text-body-small(:id='`comment-author-${cm.id}`'): strong {{cm.authorName}}
@@ -184,12 +191,11 @@
                 )
                   span.text-none {{$t('common:actions.cancel')}}
                 v-btn(
-                  color="primary"
+                  prepend-icon='mdi-comment'
                   type='submit'
                   variant="flat"
-                  prepend-icon='mdi-comment'
                   :loading='isBusy'
-                  :disabled='isBusy'
+                  :disabled='isBusy || connectionBlocked'
                 )
                   span.text-none {{$t('common:comments.updateComment')}}
     async-state.comments-empty(
@@ -216,7 +222,7 @@
         v-card-actions
           v-spacer
           v-btn(variant="text", @click='deleteCommentDialogShown = false', :disabled='isBusy') {{$t('common:actions.cancel')}}
-          v-btn(color='error', variant='flat', @click='deleteComment', :loading='isBusy', :disabled='isBusy') {{$t('common:actions.delete')}}
+          v-btn(color='error', variant='flat', @click='deleteComment', :loading='isBusy', :disabled='isBusy || connectionBlocked') {{$t('common:actions.delete')}}
 </template>
 
 <script lang='ts'>
@@ -228,6 +234,7 @@ import type { CommentRow, MentionCandidate } from '../helpers/comments-api'
 import { wikiStore } from '@/store/index.ts'
 import validateValues from '../../shared/validation'
 import { getErrorMessage, showNotification } from '../helpers/root-ui-store'
+import { pwaState, retryServerConnection } from '../helpers/pwa'
 import AsyncState from '@/components/common/async-state.vue'
 type CommentWithInitials = CommentRow & {
   initials: string
@@ -298,6 +305,8 @@ export default defineComponent({
       commentEditContent: null as string | null,
       deleteCommentDialogShown: false,
       isBusy: false,
+      connectionRetrying: false,
+      connectionPaused: false,
       scrollOpts: {
         duration: 1500,
         offset: 0,
@@ -308,6 +317,13 @@ export default defineComponent({
   computed: {
     pageId(): number { return wikiStore.page.id },
     permissions(): CommentPermissions { return wikiStore.page.effectivePermissions.comments },
+    pwaConnectionState(): string { return pwaState.connectionState },
+    connectionUnavailable(): boolean {
+      return pwaState.connectionState === 'offline' || pwaState.connectionState === 'server-unavailable'
+    },
+    connectionBlocked(): boolean {
+      return this.connectionPaused || this.connectionUnavailable
+    },
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
     userDisplayName(): string { return wikiStore.user.name },
     orderedComments(): CommentWithInitials[] {
@@ -341,6 +357,24 @@ export default defineComponent({
       this.reportedUnavailableAnchor = ''
       this.deleteCommentDialogShown = false
       if (this.hasIntersected) void this.fetch(true)
+    },
+    pwaConnectionState (state: string) {
+      const blocked = state === 'offline' || state === 'server-unavailable'
+      if (blocked) {
+        this.connectionPaused = true
+        this.fetchController?.abort()
+        this.fetchController = null
+        this.fetchGeneration += 1
+        this.isLoading = false
+        this.fetchError = state === 'server-unavailable'
+          ? 'Connection required. The server is unavailable right now.'
+          : 'Connection required to load comments.'
+        return
+      }
+      if (state === 'online' && this.connectionPaused) {
+        this.connectionPaused = false
+        if (this.hasIntersected) void this.fetch(true)
+      }
     }
   },
   beforeUnmount () {
@@ -365,7 +399,7 @@ export default defineComponent({
     queueMentionSearch(event?: Event): void {
       if (event instanceof KeyboardEvent && ['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) return
       this.clearMentionSearch()
-      if (!this.isAuthenticated) return
+      if (!this.isAuthenticated || this.connectionBlocked) return
       const textarea = this.newCommentTextarea()
       const cursor = textarea?.selectionStart ?? this.newcomment.length
       const match = this.newcomment.slice(0, cursor).match(/(?:^|[^\w@/])@([a-z0-9_-]{2,32})$/i)
@@ -377,6 +411,7 @@ export default defineComponent({
       this.mentionRange = range
       this.mentionTimer = window.setTimeout(async () => {
         this.mentionTimer = null
+        if (this.connectionBlocked) return
         try {
           const candidates = await fetchMentionCandidates(window.fetch.bind(window), pageId, query)
           if (pageId === this.pageId && generation === this.mentionGeneration && this.mentionRange?.start === range.start && this.mentionRange.end === range.end && this.newcomment.slice(range.start, range.end).toLowerCase() === `@${query}`) {
@@ -451,6 +486,17 @@ export default defineComponent({
       })
     },
     async fetch (silent = false) {
+      if (this.connectionBlocked) {
+        this.connectionPaused = true
+        this.fetchController?.abort()
+        this.fetchController = null
+        this.fetchGeneration += 1
+        this.isLoading = false
+        this.fetchError = pwaState.connectionState === 'server-unavailable'
+          ? 'Connection required. The server is unavailable right now.'
+          : 'Connection required to load comments.'
+        return
+      }
       this.fetchController?.abort()
       const controller = markRaw(new AbortController())
       this.fetchController = controller
@@ -491,10 +537,36 @@ export default defineComponent({
         }
       }
     },
+    async retryConnection (): Promise<void> {
+      if (this.connectionRetrying) return
+      this.connectionRetrying = true
+      try {
+        const reachable = await retryServerConnection()
+        if (!reachable) {
+          this.connectionPaused = true
+          this.fetchError = pwaState.connectionState === 'server-unavailable'
+            ? 'Connection required. The server is unavailable right now.'
+            : 'Connection required to load comments.'
+          return
+        }
+        this.connectionPaused = false
+        if (this.hasIntersected) await this.fetch(false)
+      } finally {
+        this.connectionRetrying = false
+      }
+    },
+    retryFetch (): void {
+      if (this.connectionBlocked) {
+        void this.retryConnection()
+        return
+      }
+      void this.fetch(false)
+    },
     /**
      * Post New Comment
      */
     async postComment () {
+      if (this.connectionBlocked) return
       if (this.isPosting || !this.availability?.canPost) return
       const pageId = this.pageId
       const rules: CommentValidationRules = {
@@ -576,6 +648,7 @@ export default defineComponent({
      * Show Comment Editing Form
      */
     async editComment (cm: CommentWithInitials) {
+      if (this.connectionBlocked) return
       if (this.isBusy) return
       const pageId = this.pageId
       wikiStore.startLoading('comments-edit')
@@ -609,6 +682,7 @@ export default defineComponent({
      * Update Comment with new content
      */
     async updateComment () {
+      if (this.connectionBlocked) return
       if (this.isBusy) return
       const pageId = this.pageId
       const commentId = this.commentEditId
@@ -659,6 +733,7 @@ export default defineComponent({
      * Delete Comment
      */
     async deleteComment () {
+      if (this.connectionBlocked) return
       if (this.isBusy) return
       const commentToDelete = this.commentToDelete
       if (!commentToDelete) return

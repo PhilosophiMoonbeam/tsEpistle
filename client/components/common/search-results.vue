@@ -51,11 +51,19 @@
             v-btn(
               size='small'
               prepend-icon='mdi-earth'
-              :variant='!searchRestrictLocale && !searchRestrictPath ? `tonal` : `text`'
-              :color='!searchRestrictLocale && !searchRestrictPath ? `primary` : undefined'
-              :aria-pressed='!searchRestrictLocale && !searchRestrictPath'
-              @click='clearSearchScope'
+              :variant='!offlineSearchActive ? `tonal` : `text`'
+              :color='!offlineSearchActive ? `primary` : undefined'
+              :aria-pressed='!offlineSearchActive'
+              @click='selectSearchScope(`wiki`)'
             ) All Wiki
+            v-btn(
+              size='small'
+              prepend-icon='mdi-download-box-outline'
+              :variant='offlineSearchActive ? `tonal` : `text`'
+              :color='offlineSearchActive ? `primary` : undefined'
+              :aria-pressed='offlineSearchActive'
+              @click='selectSearchScope(`downloaded`)'
+            ) Downloaded pages
             v-btn(
               v-if='currentPageLocale'
               size='small'
@@ -63,6 +71,8 @@
               :variant='searchRestrictLocale ? `tonal` : `text`'
               :color='searchRestrictLocale ? `primary` : undefined'
               :aria-pressed='searchRestrictLocale'
+              :disabled='offlineSearchActive'
+              :title='offlineSearchActive ? `Wiki scope filters require a live server.` : undefined'
               @click='searchRestrictLocale = !searchRestrictLocale'
             ) {{ currentPageLocale.toLocaleUpperCase() }}
             v-btn(
@@ -72,15 +82,29 @@
               :variant='searchRestrictPath ? `tonal` : `text`'
               :color='searchRestrictPath ? `primary` : undefined'
               :aria-pressed='searchRestrictPath'
+              :disabled='offlineSearchActive'
+              :title='offlineSearchActive ? `Wiki scope filters require a live server.` : undefined'
               @click='searchRestrictPath = !searchRestrictPath'
             ) This page tree
+        .search-results-capability-note(v-if='offlineSearchActive || serverUnavailable' role='status' aria-live='polite')
+          .search-results-capability-note-title {{ serverUnavailable ? `Server unavailable · Downloaded pages only` : `Downloaded pages` }}
+          p {{ serverUnavailable ? `Wiki search, Ask/Agent, and server preview need a live server. This bounded local search uses only public pages saved on this device.` : `This search is bounded to public pages saved on this device; it does not include server suggestions, graph matches, or private metadata.` }}
+          v-btn(
+            v-if='serverUnavailable'
+            size='small'
+            variant='tonal'
+            prepend-icon='mdi-refresh'
+            :loading='serverRetryPending'
+            @click='retrySearch'
+          ) Retry connection
         .search-results-content
           .search-results-help(v-if='normalizedSearch.length < 2')
             .search-results-help-mark
               v-icon(icon='mdi-text-search' size='34')
             h2 Search your knowledge base
-            p Type at least two characters to find pages by title, content, path, or tag.
-            .search-results-syntax-tips
+            p(v-if='offlineSearchActive') Type plain text to search downloaded page titles, descriptions, and content. Advanced syntax and path or tag filters require a live server.
+            p(v-else) Type at least two characters to find pages by title, content, path, or tag.
+            .search-results-syntax-tips(v-if='!offlineSearchActive')
               span.search-results-syntax-tip
                 kbd "exact phrase"
                 | exact match
@@ -94,28 +118,32 @@
             async-state(
               state='loading'
               :title='$t(`common:header.searchLoading`)'
-              message='Searching the pages you can access.'
+              :message='searchLoadingMessage'
             )
           .search-results-none(v-else-if='searchError')
             async-state(
               state='error'
-              title='Search is temporarily unavailable'
+              :title='offlineSearchActive ? `Downloaded search is temporarily unavailable` : `Search is temporarily unavailable`'
               :message='searchError'
-              retry-label='Try again'
+              :retry-label='serverUnavailable ? `Retry connection` : `Try again`'
               @retry='retrySearch'
             )
           template(v-else)
             .search-results-summary(v-if='hasFreshResponse')
               div(role='status' aria-live='polite' aria-atomic='true')
-                .search-results-eyebrow Search results
-                .search-results-count(v-if='results.length')
-                  span {{ response.windowTruncated ? `At least ${response.totalHits} matches` : `${response.totalHits} ${response.totalHits === 1 ? 'match' : 'matches'}` }}
-                  span.search-results-window(v-if='response.results.length < response.totalHits')  · Showing the top {{ response.results.length }}
+                .search-results-eyebrow {{ offlineSearchActive ? `Downloaded pages` : `Search results` }}
+                .search-results-count(v-if='offlineSearchActive') {{ offlineCorpusSummary }}
+                template(v-else-if='results.length')
+                  .search-results-count
+                    span {{ response.windowTruncated ? `At least ${response.totalHits} matches` : `${response.totalHits} ${response.totalHits === 1 ? 'match' : 'matches'}` }}
+                    span.search-results-window(v-if='response.results.length < response.totalHits')  · Showing the top {{ response.results.length }}
               v-btn.search-results-ask(
-                v-if='canAsk'
+                v-if='canAsk || serverUnavailable'
                 color='primary'
                 variant='tonal'
                 prepend-icon='mdi-book-open-page-variant-outline'
+                :disabled='!canAsk'
+                :title='!canAsk ? askUnavailableReason : undefined'
                 @click='askCurrentQuery'
                 data-modal-focus-key='search-ask-query'
               ) Ask about this
@@ -123,13 +151,15 @@
               async-state(
                 state='empty'
                 :title='$t(`common:header.searchNoResult`)'
-                :message='canAsk ? `Ask Wiki for a grounded answer, or try a different term or scope.` : `Try a different term or broader scope.`'
+                :message='emptyResultsMessage'
               )
-              .search-results-empty-actions(v-if='canAsk')
+              .search-results-empty-actions(v-if='canAsk || serverUnavailable')
                 v-btn.search-results-empty-ask(
                   color='primary'
                   variant='tonal'
                   prepend-icon='mdi-book-open-page-variant-outline'
+                  :disabled='!canAsk'
+                  :title='!canAsk ? askUnavailableReason : undefined'
                   @click='askCurrentQuery'
                   data-modal-focus-key='search-ask-empty'
                 ) Ask Wiki about "{{ normalizedSearch }}"
@@ -146,6 +176,7 @@
                       v-list-item.search-results-item(
                         lines='three'
                         :href='pageHref(item)'
+                        :data-no-wiki-navigation='isDownloadedResult(item) ? `true` : undefined'
                         :class='idx === cursor ? `highlighted` : ``'
                         @click='closeSearch'
                       )
@@ -182,7 +213,13 @@
                             v-chip(size='x-small' label variant='outlined') {{ item.locale.toLocaleUpperCase() }}
                             v-icon.search-results-item-chevron(icon='mdi-chevron-right' size='19')
                     .search-results-preview-cell(role='gridcell')
-                      button.search-results-preview(type='button' :aria-label='`Preview ${item.title}`' @click='previewSelector = { id: Number(item.id) }')
+                      button.search-results-preview(
+                        type='button'
+                        :aria-label='`Preview ${item.title}`'
+                        :disabled='!serverCapabilitiesAvailable'
+                        :title='!serverCapabilitiesAvailable ? previewUnavailableReason : undefined'
+                        @click='openPreview(item)'
+                      )
                         v-icon(icon='mdi-text-box-search-outline' size='18')
                         span Preview
                   v-divider(v-if='idx < results.length - 1' aria-hidden='true')
@@ -194,10 +231,11 @@
                 :total-visible='$vuetify.display.xs ? 3 : 7'
                 rounded
               )
-            .search-results-continuation(v-if='response.nextCursor || moreError || response.windowTruncated')
-              v-btn(v-if='response.nextCursor' variant='tonal' :loading='loadingMore' prepend-icon='mdi-chevron-down' @click='loadMoreResults') More results
-              p(v-if='moreError' role='alert') {{ moreError }}
-              p(v-if='response.windowTruncated') Showing a bounded set of matches. Narrow the query or scope to find a more specific page.
+            .search-results-continuation(v-if='offlineSearchActive ? offlineResultsTruncated : (response.nextCursor || moreError || response.windowTruncated)')
+              v-btn(v-if='!offlineSearchActive && response.nextCursor' variant='tonal' :loading='loadingMore' prepend-icon='mdi-chevron-down' @click='loadMoreResults') More results
+              p(v-if='offlineSearchActive && offlineResultsTruncated' role='status') Showing a bounded set of local matches. Narrow the query to search more precisely.
+              p(v-if='!offlineSearchActive && moreError' role='alert') {{ moreError }}
+              p(v-if='!offlineSearchActive && response.windowTruncated') Showing a bounded set of matches. Narrow the query or scope to find a more specific page.
             .search-results-suggestion-block(v-if='suggestions.length')
               .search-results-eyebrow Suggested searches
               v-list.search-results-suggestions(
@@ -226,8 +264,8 @@
           kbd ↑↓
           kbd ↵
           kbd Esc
-</template>
 
+</template>
 <script lang='ts'>
 import { defineComponent } from 'vue'
 import AsyncState from '@/components/common/async-state.vue'
@@ -241,8 +279,67 @@ import { onSearchEnter, onSearchExit, onSearchMove, offSearchEnter, offSearchExi
 import { useAgentsStore } from '../../store/agents.ts'
 import { isAgentSessionId } from '../../helpers/agent-chat-pin.ts'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
+import { openOfflineStorage } from '../../helpers/offline-storage.ts'
+import { OFFLINE_SEARCH_RESULT_LIMIT, searchOfflineDocuments, type OfflineSearchResult } from '../../helpers/offline-search.ts'
+import type { OfflineSearchDocumentV1, OfflineSnapshotRecord } from '../../../shared/offline.ts'
+import { pwaState, retryServerConnection } from '../../helpers/pwa.ts'
 import { activeOwnedOverlayRoots, createModalFocusScope, type ModalFocusScope } from './modal-focus-scope'
 import { navigateToWikiPage } from '../../helpers/wiki-navigation'
+
+type SearchScope = 'wiki' | 'downloaded'
+type OnlineSearchRow = PageSearchRow & {
+  readonly offline?: false
+}
+type DownloadedSearchRow = PageSearchRow & {
+  readonly offline: true
+  readonly offlineSiteId: string
+  readonly offlinePageId: number
+  readonly offlineLocale: string
+}
+type SearchResultRow = OnlineSearchRow | DownloadedSearchRow
+type SearchResponse = Omit<PageSearchResult, 'results'> & {
+  results: SearchResultRow[]
+}
+
+const OFFLINE_DOCUMENT_PATH = '/_offline'
+const OFFLINE_LOCALE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{1,34}$/u
+
+const offlineRecordKey = (siteId: string, pageId: number, locale: string): string =>
+  `${siteId}\u0000${pageId}\u0000${locale}`
+
+const isOfflineLocale = (value: string): boolean => OFFLINE_LOCALE_PATTERN.test(value)
+
+const isOfflineSnapshotRecord = (record: OfflineSnapshotRecord, origin: string): boolean =>
+  record.siteId === origin &&
+  record.pageId === record.snapshot.pageId &&
+  record.locale === record.snapshot.locale &&
+  Number.isSafeInteger(record.pageId) &&
+  record.pageId > 0 &&
+  isOfflineLocale(record.locale)
+
+const isOfflineSnapshotExpired = (record: OfflineSnapshotRecord, at = Date.now()): boolean => {
+  if (!record.snapshot.expiresAt) return false
+  const expiry = Date.parse(record.snapshot.expiresAt)
+  return Number.isFinite(expiry) && expiry <= at
+}
+
+const isDownloadedSearchRow = (item: SearchResultRow): item is DownloadedSearchRow =>
+  item.offline === true &&
+  typeof item.offlineSiteId === 'string' &&
+  Number.isSafeInteger(item.offlinePageId) &&
+  item.offlinePageId > 0 &&
+  typeof item.offlineLocale === 'string'
+
+const offlineSelectorHref = (siteId: string, pageId: number, locale: string): string | null => {
+  if (typeof window === 'undefined') return null
+  const origin = window.location.origin
+  if (siteId !== origin || !Number.isSafeInteger(pageId) || pageId < 1 || !isOfflineLocale(locale)) return null
+  const url = new URL(OFFLINE_DOCUMENT_PATH, origin)
+  url.searchParams.set('site', origin)
+  url.searchParams.set('pageId', String(pageId))
+  url.searchParams.set('locale', locale)
+  return `${url.pathname}?${url.searchParams.toString()}`
+}
 
 type InlineAgentChatRef = {
   focusComposer: () => Promise<void>
@@ -251,7 +348,7 @@ type InlineAgentChatRef = {
   focusConversation: () => Promise<void>
 }
 
-const emptySearchResponse = (): PageSearchResult => ({
+const emptySearchResponse = (): SearchResponse => ({
   results: [],
   suggestions: [],
   totalHits: 0
@@ -269,6 +366,10 @@ export default defineComponent({
       loadingMore: false,
       moreError: '',
       previewSelector: null as WikiSourceSelector | null,
+      searchScope: 'wiki' as SearchScope,
+      offlineCorpusCount: null as number | null,
+      offlineResultsTruncated: false,
+      serverRetryPending: false,
       cursor: -1,
       approvalId: '',
       pagination: 1,
@@ -310,11 +411,40 @@ export default defineComponent({
       get(): boolean { return wikiStore.site.searchRestrictLocale },
       set(value: boolean) { wikiStore.site.searchRestrictLocale = value }
     },
+    serverUnavailable(): boolean {
+      return pwaState.connectionState === 'offline' || pwaState.connectionState === 'server-unavailable' || pwaState.serverReachable === false
+    },
+    serverCapabilitiesAvailable(): boolean {
+      return pwaState.connectionState === 'online' && pwaState.serverReachable === true
+    },
+    offlineSearchActive(): boolean {
+      return this.searchScope === 'downloaded' || this.serverUnavailable || this.serverRetryPending
+    },
+    offlineCorpusSummary(): string {
+      const count = this.offlineCorpusCount
+      if (count === null) return 'Bounded downloaded-page corpus'
+      return `Bounded corpus: ${count} downloaded ${count === 1 ? 'page' : 'pages'}`
+    },
+    searchLoadingMessage(): string {
+      if (!this.offlineSearchActive) return 'Searching the pages you can access.'
+      if (this.offlineCorpusCount === null) return 'Searching the bounded downloaded-page corpus on this device.'
+      return `Searching ${this.offlineCorpusCount} downloaded ${this.offlineCorpusCount === 1 ? 'page' : 'pages'} on this device.`
+    },
+    emptyResultsMessage(): string {
+      if (this.offlineSearchActive) return 'No downloaded pages match this query in the bounded local corpus.'
+      return this.canAsk ? 'Ask Wiki for a grounded answer, or try a different term or scope.' : 'Try a different term or broader scope.'
+    },
+    askUnavailableReason(): string {
+      return this.serverUnavailable ? 'Ask and Agent require a live server. Retry connection to enable them.' : 'Ask and Agent are available after the server connection is verified.'
+    },
+    previewUnavailableReason(): string {
+      return 'Server preview requires a live server. Retry connection to enable it.'
+    },
     searchRestrictPath: {
       get(): boolean { return wikiStore.site.searchRestrictPath },
       set(value: boolean) { wikiStore.site.searchRestrictPath = value }
     },
-    results(): PageSearchRow[] {
+    results(): SearchResultRow[] {
       const currentIndex = (this.pagination - 1) * this.perPage
       return this.response.results.slice(currentIndex, currentIndex + this.perPage)
     },
@@ -325,7 +455,7 @@ export default defineComponent({
       return this.response.suggestions
     },
     canAsk(): boolean {
-      return siteConfig.agentsEnabled && wikiStore.user.authenticated && wikiStore.user.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')
+      return this.serverCapabilitiesAvailable && siteConfig.agentsEnabled && wikiStore.user.authenticated && wikiStore.user.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')
     },
     isAgentOpen(): boolean {
       return this.canAsk && this.searchMode === 'ask'
@@ -343,7 +473,8 @@ export default defineComponent({
       return JSON.stringify([
         this.normalizedSearch,
         this.searchRestrictLocale ? wikiStore.page.locale : '',
-        this.searchRestrictPath ? wikiStore.page.path : ''
+        this.searchRestrictPath ? wikiStore.page.path : '',
+        this.offlineSearchActive ? 'downloaded' : 'wiki'
       ])
     },
     hasFreshResponse(): boolean {
@@ -371,6 +502,13 @@ export default defineComponent({
     },
     searchRequestKey() {
       this.queueSearch(this.search)
+    },
+    offlineSearchActive(active: boolean) {
+      if (active && this.previewSelector) this.previewSelector = null
+      if (active && this.searchMode === 'ask') this.searchMode = 'search'
+    },
+    serverCapabilitiesAvailable(available: boolean) {
+      if (!available) this.previewSelector = null
     },
     searchMode(mode: 'search' | 'ask') {
       if (mode === 'search') {
@@ -642,6 +780,13 @@ export default defineComponent({
       this.searchMode = 'search'
       this.searchIsFocused = true
     },
+    selectSearchScope(scope: SearchScope): void {
+      this.searchScope = scope
+      this.searchRestrictLocale = false
+      this.searchRestrictPath = false
+      this.previewSelector = null
+      if (scope === 'downloaded' && this.searchMode === 'ask') this.searchMode = 'search'
+    },
     queueSearch(query: string): void {
       this.cursor = -1
       this.searchRequestId += 1
@@ -764,7 +909,11 @@ export default defineComponent({
       this.search = term
       void this.$nextTick(() => this.findSearchControl()?.focus({ preventScroll: true }))
     },
-    resultKey(item: PageSearchRow): string {
+    isDownloadedResult(item: SearchResultRow): boolean {
+      return isDownloadedSearchRow(item)
+    },
+    resultKey(item: SearchResultRow): string {
+      if (isDownloadedSearchRow(item)) return `offline:${offlineRecordKey(item.offlineSiteId, item.offlinePageId, item.offlineLocale)}`
       return `${typeof item.id}:${item.id}`
     },
     occurrenceKey(values: readonly string[], value: string, index: number): string {
@@ -777,17 +926,23 @@ export default defineComponent({
     resultOptionId(index: number): string {
       return `wiki-search-result-${this.pagination}-${index}`
     },
-    pageHref(item: PageSearchRow): string {
+    pageHref(item: SearchResultRow): string {
+      if (isDownloadedSearchRow(item)) return offlineSelectorHref(item.offlineSiteId, item.offlinePageId, item.offlineLocale) ?? OFFLINE_DOCUMENT_PATH
       const visibilityScope = item.visibility === 'private' ? '/_private' : ''
       return `${visibilityScope}/${item.locale}/${item.path}`
     },
-    navigateToPage(item: PageSearchRow): void {
+    openPreview(item: PageSearchRow): void {
+      if (!this.serverCapabilitiesAvailable) return
+      this.previewSelector = { id: Number(item.id) }
+    },
+    navigateToPage(item: SearchResultRow): void {
       const href = this.pageHref(item)
       this.closeSearch()
-      navigateToWikiPage(href)
+      if (isDownloadedSearchRow(item)) window.location.assign(href)
+      else navigateToWikiPage(href)
     },
     async loadMoreResults(): Promise<void> {
-      if (!this.response.nextCursor || this.loadingMore) return
+      if (this.offlineSearchActive || !this.response.nextCursor || this.loadingMore) return
       this.loadingMore = true
       this.moreError = ''
       const requestKey = this.searchRequestKey
@@ -808,9 +963,30 @@ export default defineComponent({
       } catch (value) { if (requestKey === this.searchRequestKey) this.moreError = getErrorMessage(value) }
       finally { this.loadingMore = false }
     },
-    retrySearch(): void {
+    async retrySearch(): Promise<void> {
       const query = this.normalizedSearch
       if (query.length < 2) return
+      if (this.serverUnavailable) {
+        const requestId = ++this.searchRequestId
+        this.searchAbortController?.abort()
+        this.searchAbortController = null
+        this.searchError = ''
+        this.responseKey = ''
+        this.response = emptySearchResponse()
+        this.cursor = -1
+        this.pagination = 1
+        this.serverRetryPending = true
+        this.searchIsLoading = true
+        try {
+          await retryServerConnection()
+        } finally {
+          if (requestId !== this.searchRequestId) return
+          const keepLocal = this.searchScope === 'downloaded' || this.serverUnavailable
+          this.serverRetryPending = false
+          if (keepLocal) this.queueSearch(query)
+        }
+        return
+      }
       this.searchRequestId += 1
       this.searchAbortController?.abort()
       this.searchAbortController = null
@@ -824,6 +1000,10 @@ export default defineComponent({
     },
     async runSearch(query: string, requestKey: string, requestId: number): Promise<void> {
       if (requestId !== this.searchRequestId || this.searchMode !== 'search') return
+      if (this.offlineSearchActive) {
+        await this.runOfflineSearch(query, requestKey, requestId)
+        return
+      }
       const controller = new AbortController()
       this.searchAbortController?.abort()
       this.searchAbortController = controller
@@ -851,8 +1031,91 @@ export default defineComponent({
         if (this.searchAbortController === controller) this.searchAbortController = null
         if (requestId === this.searchRequestId) this.searchIsLoading = false
       }
+    },
+    async runOfflineSearch(query: string, requestKey: string, requestId: number): Promise<void> {
+      if (requestId !== this.searchRequestId || this.searchMode !== 'search' || !this.offlineSearchActive) return
+      const controller = new AbortController()
+      this.searchAbortController?.abort()
+      this.searchAbortController = controller
+      let storage: Awaited<ReturnType<typeof openOfflineStorage>> | null = null
+      try {
+        const origin = window.location.origin
+        storage = await openOfflineStorage()
+        const expectedSessionGeneration = await storage.currentSessionGeneration()
+        if (requestId !== this.searchRequestId || requestKey !== this.searchRequestKey || controller.signal.aborted) return
+        const snapshots = await storage.listSnapshots(origin, { expectedSessionGeneration })
+        const documents: OfflineSearchDocumentV1[] = await storage.searchDocuments(origin, '', { expectedSessionGeneration })
+        if (requestId !== this.searchRequestId || requestKey !== this.searchRequestKey || controller.signal.aborted) return
+
+        const snapshotsByKey = new Map<string, OfflineSnapshotRecord>()
+        const cleanup = new Map<string, { siteId: string; pageId: number; locale: string }>()
+        for (const record of snapshots) {
+          const key = offlineRecordKey(origin, record.pageId, record.locale)
+          if (!isOfflineSnapshotRecord(record, origin) || isOfflineSnapshotExpired(record)) {
+            cleanup.set(key, { siteId: origin, pageId: record.pageId, locale: record.locale })
+            continue
+          }
+          snapshotsByKey.set(key, record)
+        }
+        for (const document of documents) {
+          const key = offlineRecordKey(origin, document.pageId, document.locale)
+          if (document.siteId !== origin || !isOfflineLocale(document.locale) || !snapshotsByKey.has(key))
+            cleanup.set(key, { siteId: origin, pageId: document.pageId, locale: document.locale })
+        }
+        for (const selector of cleanup.values()) {
+          if (requestId !== this.searchRequestId || requestKey !== this.searchRequestKey || controller.signal.aborted) return
+          await storage.removeSnapshot(selector.siteId, selector.pageId, selector.locale, { expectedSessionGeneration })
+        }
+        const currentSessionGeneration = await storage.currentSessionGeneration()
+        if (currentSessionGeneration !== expectedSessionGeneration) throw new Error('Downloaded search belongs to an obsolete session.')
+        if (requestId !== this.searchRequestId || requestKey !== this.searchRequestKey || controller.signal.aborted) return
+        const activeDocuments = documents.filter(document => {
+          if (document.siteId !== origin || !isOfflineLocale(document.locale)) return false
+          const record = snapshotsByKey.get(offlineRecordKey(origin, document.pageId, document.locale))
+          return record !== undefined && !isOfflineSnapshotExpired(record)
+        })
+        const ranked = searchOfflineDocuments(activeDocuments, query, {
+          limit: OFFLINE_SEARCH_RESULT_LIMIT,
+          signal: controller.signal
+        })
+        if (requestId !== this.searchRequestId || requestKey !== this.searchRequestKey || controller.signal.aborted) return
+        this.offlineCorpusCount = activeDocuments.length
+        this.offlineResultsTruncated = activeDocuments.length > OFFLINE_SEARCH_RESULT_LIMIT
+        this.moreError = ''
+        this.searchError = ''
+        this.response = {
+          results: ranked.map(({ document, score }: OfflineSearchResult): DownloadedSearchRow => ({
+            id: document.pageId,
+            title: document.title,
+            description: document.description,
+            path: document.path,
+            locale: document.locale,
+            visibility: 'public',
+            tags: [],
+            score,
+            matchedFields: [],
+            offline: true,
+            offlineSiteId: origin,
+            offlinePageId: document.pageId,
+            offlineLocale: document.locale
+          })),
+          suggestions: [],
+          totalHits: 0
+        }
+        this.responseKey = requestKey
+        this.pagination = 1
+      } catch (error) {
+        if (requestId !== this.searchRequestId || controller.signal.aborted) return
+        this.searchError = getErrorMessage(error)
+        this.responseKey = ''
+        this.response = emptySearchResponse()
+      } finally {
+        storage?.close()
+        if (this.searchAbortController === controller) this.searchAbortController = null
+        if (requestId === this.searchRequestId) this.searchIsLoading = false
+      }
+    },
     }
-  }
 })
 </script>
 
@@ -1301,6 +1564,13 @@ export default defineComponent({
   .search-results-container--ask,
   .search-results-item { animation: none; transition: none; }
 }
+</style>
+
+<style scoped>
+.search-results-capability-note { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem 1rem; padding: .8rem 1.25rem; border-bottom: 1px solid var(--wiki-surface-border); background: color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, transparent); color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 76%, transparent); font-size: .78rem; }
+.search-results-capability-note-title { color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); font-weight: 700; }
+.search-results-capability-note p { flex: 1 1 20rem; margin: 0; }
+.search-results-capability-note .v-btn { flex: 0 0 auto; }
 </style>
 
 <style scoped>
