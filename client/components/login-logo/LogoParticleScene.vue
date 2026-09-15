@@ -277,23 +277,10 @@ const readParticlePerformanceBenchmark = (): ParticlePerformanceBenchmark | null
     : null
 }
 
-let selectedBackend: ParticleBackendRequest = 'webgl2'
+let selectedBackend: ParticleBackendRequest = 'auto'
 
 export const probe = async (): Promise<void> => {
-  const request = (window as ParticlePerformanceWindow).__logoParticlePerformance?.requestedBackend
-  if (request) {
-    selectedBackend = request
-    return
-  }
-  try {
-    const adapter = await navigator.gpu?.requestAdapter()
-    if (!adapter) return
-    const device = await adapter.requestDevice()
-    device.destroy()
-    selectedBackend = 'webgpu'
-  } catch {
-    selectedBackend = 'webgl2'
-  }
+  selectedBackend = (window as ParticlePerformanceWindow).__logoParticlePerformance?.requestedBackend ?? 'auto'
 }
 
 
