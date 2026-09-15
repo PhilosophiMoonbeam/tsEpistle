@@ -1,4 +1,5 @@
 import {
+  LinearSRGBColorSpace,
   NoToneMapping,
   SRGBColorSpace,
   WebGLCoordinateSystem,
@@ -38,9 +39,6 @@ class FakeWebGPURenderer {
     createdRenderers.push(this)
   }
 
-  get needsFrameBufferTarget(): boolean {
-    return true
-  }
 
   async init(): Promise<this> {
     const plan = initPlans.shift() ?? {
@@ -59,6 +57,7 @@ class FakeWebGPURenderer {
 }
 
 vi.mockModule('three/webgpu', import.meta.url, () => ({
+  LinearSRGBColorSpace,
   NoToneMapping,
   SRGBColorSpace,
   WebGLCoordinateSystem,
@@ -118,14 +117,13 @@ beforeEach(() => {
 })
 
 describe('LogoParticleRenderer', () => {
-  it('uses the direct-output option to bypass the frame-buffer target', () => {
+  it('uses working-space output to avoid re-encoding a direct-sRGB material', () => {
     const direct = new LogoParticleRenderer({ directSrgbMaterialPipeline: true })
     const buffered = new LogoParticleRenderer()
 
-    expect(direct.directSrgbMaterialPipeline).toBe(true)
-    expect(direct.needsFrameBufferTarget).toBe(false)
-    expect(buffered.directSrgbMaterialPipeline).toBe(false)
-    expect(buffered.needsFrameBufferTarget).toBe(true)
+    expect(direct.outputColorSpace).toBe(LinearSRGBColorSpace)
+    expect(direct.toneMapping).toBe(NoToneMapping)
+    expect(buffered.outputColorSpace).toBe(SRGBColorSpace)
   })
 
   it('provides an idempotent public disposal boundary after initialization', async () => {
@@ -156,8 +154,7 @@ describe('particle backend leases', () => {
     expect(lease.requestedBackend).toBe('webgl2')
     expect(lease.effectiveBackend).toBeNull()
     expect(lease.status).toBe('created')
-    expect(lease.renderer.directSrgbMaterialPipeline).toBe(true)
-    expect(lease.renderer.needsFrameBufferTarget).toBe(false)
+    expect(lease.renderer.outputColorSpace).toBe(LinearSRGBColorSpace)
     expect(lease.diagnostics).toEqual({
       generation: 7,
       requestedBackend: 'webgl2',
@@ -241,8 +238,7 @@ describe('particle backend leases', () => {
     expect(createdRenderers).toHaveLength(1)
     expect(rendererRecord(nativeAttempt).options.forceWebGL).toBe(false)
     expect(rendererRecord(nativeAttempt).disposeCalls.count).toBe(0)
-    expect(nativeAttempt.directSrgbMaterialPipeline).toBe(true)
-    expect(nativeAttempt.needsFrameBufferTarget).toBe(false)
+    expect(nativeAttempt.outputColorSpace).toBe(LinearSRGBColorSpace)
     expect(observations).toContainEqual(expect.objectContaining({
       effectiveBackend: 'webgl2',
       phase: 'initializing',

@@ -11,7 +11,7 @@
     :depth="false"
     :dpr="[1, 1.5]"
     :premultiplied-alpha="true"
-    :output-color-space="SRGBColorSpace"
+    :output-color-space="LinearSRGBColorSpace"
     :renderer="rendererFactory"
     render-mode="on-demand"
     :stencil="false"
@@ -42,10 +42,10 @@ import type { TresContext, TresRenderer, TresRendererSetupContext } from '@tresj
 import {
   InstancedBufferAttribute,
   InstancedBufferGeometry,
+  LinearSRGBColorSpace,
   Mesh,
   NoToneMapping,
   OrthographicCamera,
-  SRGBColorSpace,
   Vector2,
   Vector4
 } from 'three/webgpu'
@@ -1170,7 +1170,7 @@ export default defineComponent({
       const renderer = lease.renderer
       try {
         renderer.toneMapping = NoToneMapping
-        renderer.outputColorSpace = SRGBColorSpace
+        renderer.outputColorSpace = LinearSRGBColorSpace
         fenceForScene.ready(renderer)
         if (startup && startup.initEndedAt === undefined) startup.initEndedAt = performance.now()
         await renderer.compileAsync(context.scene.value, context.camera.activeCamera.value)
@@ -1216,7 +1216,7 @@ export default defineComponent({
       rendererFactory,
       renderEnabled,
       resources,
-      SRGBColorSpace,
+      LinearSRGBColorSpace,
       loopControl
     }
   }

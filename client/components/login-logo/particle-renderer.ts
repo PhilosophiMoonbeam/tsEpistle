@@ -1,4 +1,5 @@
 import {
+  LinearSRGBColorSpace,
   NoToneMapping,
   SRGBColorSpace,
   WebGLCoordinateSystem,
@@ -99,7 +100,6 @@ const freezeDiagnostics = (diagnostics: ParticleBackendDiagnostics): ParticleBac
  * disposes immediately after the common renderer starts its RAF.
  */
 export class LogoParticleRenderer extends WebGPURenderer {
-  private directSrgbMaterialPipeline = false
   private disposeRequested = false
   private disposed = false
   constructor(options: LogoParticleRendererOptions = {}) {
@@ -115,13 +115,10 @@ export class LogoParticleRenderer extends WebGPURenderer {
 
     super(rendererParameters)
 
-    this.directSrgbMaterialPipeline = options.directSrgbMaterialPipeline === true
-    this.outputColorSpace = SRGBColorSpace
+    this.outputColorSpace = options.directSrgbMaterialPipeline === true
+      ? LinearSRGBColorSpace
+      : SRGBColorSpace
     this.toneMapping = NoToneMapping
-  }
-
-  override get needsFrameBufferTarget(): boolean {
-    return this.directSrgbMaterialPipeline ? false : super.needsFrameBufferTarget
   }
 
   override async init(): Promise<this> {
