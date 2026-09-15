@@ -17,6 +17,8 @@ import type {
 } from './logo-particle-benchmark.ts'
 import { responsiveTest as test } from './helpers.ts'
 
+test.use({ serviceWorkers: 'block' })
+
 const LOGO_URL = `/_site-logo/${'a'.repeat(64)}/logo.png`
 const SQUARE_PARTICLE_URL = `/_site-logo/${'b'.repeat(64)}/particle.bin`
 const SQUARE_STATIC_URL = `/_site-logo/${'c'.repeat(64)}/effect.png`

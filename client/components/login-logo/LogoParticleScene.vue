@@ -1061,6 +1061,7 @@ export default defineComponent({
         requestedBackend: benchmark?.requestedBackend ?? 'auto'
       })
       backendLease = lease
+      void lease.init().catch(error => fenceForScene.fail(error))
       return lease.renderer
     }
 

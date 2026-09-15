@@ -353,6 +353,7 @@ async function createMeasuredPage(
   const context = await browser.newContext({
     deviceScaleFactor,
     reducedMotion: 'no-preference',
+    serviceWorkers: 'block',
     viewport: measuredViewport
   })
   const page = await context.newPage()
