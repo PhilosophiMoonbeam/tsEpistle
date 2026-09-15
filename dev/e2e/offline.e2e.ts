@@ -386,7 +386,7 @@ test.describe('neutral offline saved-page surface', () => {
       }
       return results
     }, ['/verify/token', '/login-reset/token', '/_unlock', '/u', '/_api/users/whoami'])
-    expect(sensitiveResults.every(result => !result.fulfilled)).toBe(true)
+    expect(sensitiveResults.every(result => !result.fulfilled), JSON.stringify(sensitiveResults)).toBe(true)
 
     await page.evaluate(path => window.location.assign(path), `/en/${SEEDED_PAGE_PATHS[0]}`)
     await waitForOfflineShell(page)
@@ -487,8 +487,7 @@ test.describe('neutral offline saved-page surface', () => {
     await expect(page.locator('.page-card')).toHaveCount(1)
     await page.context().setOffline(true)
     await page.waitForTimeout(Math.max(0, Date.parse(expiresAt) - Date.now() + 250))
-    await page.evaluate(path => window.location.assign(path), `/en/${SEEDED_PAGE_PATHS[0]}`)
-    await waitForOfflineShell(page)
+    await page.getByRole('button', { name: 'Refresh storage', exact: true }).click()
     await expect(page.locator('.page-card')).toHaveCount(0)
     const expiredDatabase = await inspectOfflineDatabase(page)
     expect(expiredDatabase.snapshots).toHaveLength(1)

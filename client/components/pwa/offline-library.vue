@@ -584,15 +584,16 @@ const loadRecords = async (): Promise<void> => {
   loadError.value = ''
   try {
     const loaded = await storage.readSnapshotCorpus()
+    const loadedAt = Date.now()
     const previousRevision = corpusRevision.value
     const previousGeneration = sessionGeneration.value
     const sameCommittedCorpus =
       previousRevision === loaded.corpusRevision &&
       previousGeneration === loaded.sessionGeneration &&
       preparedCorpus.value !== null &&
-      !records.value.some(record => isExpired(record))
+      !records.value.some(record => isExpired(record, loadedAt))
     const validRecords = loaded.snapshots
-      .filter(record => isValidSnapshotRecord(record, origin) && !isExpired(record))
+      .filter(record => isValidSnapshotRecord(record, origin) && !isExpired(record, loadedAt))
       .sort((left, right) => {
         const capturedOrder = right.snapshot.capturedAt.localeCompare(left.snapshot.capturedAt)
         if (capturedOrder !== 0) return capturedOrder
