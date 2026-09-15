@@ -985,6 +985,7 @@ export default defineComponent({
     let backendCanvas: HTMLCanvasElement | null = null
     let backendGeneration = 0
     let activeResume: ParticlePerformanceResume | null = null
+    let tresContext: TresContext | null = null
 
     const recordSubmission = (submittedAt: number): void => {
       if (startup && startup.firstSubmissionAt === undefined) startup.firstSubmissionAt = submittedAt
@@ -1074,6 +1075,7 @@ export default defineComponent({
     const disableRendering = (): void => {
       renderEnabled.value = false
       loopControl.stop?.()
+      if (tresContext?.renderer.loop.isActive.value) tresContext.renderer.loop.stop()
     }
     const fenceForScene = new ParticleSceneEventFence(props.particles.count, {
       submission: recordSubmission,
@@ -1145,22 +1147,22 @@ export default defineComponent({
         if (!active) {
           disableRendering()
           fenceForScene.markPending()
-          canvasMounted.value = false
-          retireBackend()
           return
         }
+        beginResume()
         if (!canvasMounted.value) {
-          fenceForScene.markPending()
-          beginResume()
           loopControl.ready = false
           canvasMounted.value = true
         }
+        if (tresContext && !tresContext.renderer.loop.isActive.value) tresContext.renderer.loop.start()
         renderEnabled.value = true
       },
       { flush: 'sync' }
     )
 
     const handleRendererReady = async (context: TresContext): Promise<void> => {
+      tresContext = context
+      if (!renderEnabled.value && context.renderer.loop.isActive.value) context.renderer.loop.stop()
       if (tornDown || fenceForScene.hasFailed) return
       const lease = backendLease
       if (!lease || context.renderer.instance !== lease.renderer || lease.status !== 'ready') {
