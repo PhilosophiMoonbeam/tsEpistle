@@ -597,6 +597,7 @@ const updateEnvironment = async (changes: Partial<Environment>): Promise<void> =
 const setPageVisibility = async (visibility: DocumentVisibilityState): Promise<void> => {
   pageVisibility = visibility
   document.dispatchEvent(new browserWindow.Event('visibilitychange'))
+  await new Promise<void>(resolve => nativeWindowSetTimeout(resolve, 0))
   await settle()
 }
 
