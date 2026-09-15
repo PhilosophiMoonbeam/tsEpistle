@@ -29,11 +29,6 @@
       @fault="handleRendererError"
     />
   </TresCanvas>
-  <canvas
-    v-else-if="resources"
-    class="login-logo-particle-scene"
-    aria-hidden="true"
-  />
 </template>
 
 <script lang="ts">

@@ -563,25 +563,30 @@ async function waitForBackendOutcome(page: Page): Promise<LogoPerformanceHook> {
   return readLogoPerformance(page)
 }
 
-async function expectBackendReady(page: Page, backend: StrictParticleBackend, effect: ManagedEffect): Promise<LogoPerformanceHook> {
+async function expectBackendReady(
+  page: Page,
+  backend: StrictParticleBackend,
+  effect: ManagedEffect,
+  requestedBackend: ParticleBackendRequest = backend
+): Promise<LogoPerformanceHook> {
   await expect
     .poll(async () => (await readLogoPerformance(page)).effectiveBackend ?? null, { timeout: 15_000 })
     .toBe(backend)
   const benchmark = await readLogoPerformance(page)
-  expect(benchmark.requestedBackend).toBe(backend)
+  expect(benchmark.requestedBackend).toBe(requestedBackend)
   expect(benchmark.effectiveBackend).toBe(backend)
   expect(benchmark.backendDiagnostics).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
-        requestedBackend: backend,
+        requestedBackend,
         effectiveBackend: backend,
-        fallback: false,
+        fallback: requestedBackend !== backend,
         phase: 'ready',
         reason: 'ready'
       })
     ])
   )
-  expect(benchmark.backendDiagnostics?.every((diagnostic: LogoBackendDiagnostic) => diagnostic.requestedBackend === backend)).toBe(true)
+  expect(benchmark.backendDiagnostics?.every((diagnostic: LogoBackendDiagnostic) => diagnostic.requestedBackend === requestedBackend)).toBe(true)
 
   const field = page.locator('.login-particle-logo')
   const canvas = field.locator('canvas')
@@ -2358,7 +2363,7 @@ test.describe('managed login logo auth independence', () => {
       return
     }
 
-    await expectBackendReady(page, outcome.effectiveBackend, squareEffect)
+    await expectBackendReady(page, outcome.effectiveBackend, squareEffect, 'auto')
     const email = page.getByLabel('Email Address', { exact: true })
     await email.focus()
     await expect(email).toBeFocused()
@@ -2600,7 +2605,7 @@ test.describe('particle compositor without service workers', () => {
         test.skip(true, description)
         return
       }
-      await expectBackendReady(target, outcome.effectiveBackend, colorProbeEffect)
+      await expectBackendReady(target, outcome.effectiveBackend, colorProbeEffect, 'auto')
       const field = target.locator('.login-particle-logo')
       await expect(field.locator('canvas')).toHaveCount(1)
       await expect(field.locator('.login-particle-logo__image')).toHaveCSS('opacity', '0')
