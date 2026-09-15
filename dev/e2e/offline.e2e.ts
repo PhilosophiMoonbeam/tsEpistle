@@ -478,7 +478,7 @@ test.describe('neutral offline saved-page surface', () => {
   test('expires a downloaded page offline, requests revalidation after reconnecting, and commits the refreshed copy', async ({ page }) => {
     await warmFeatureWorker(page)
     await authenticateAsAdmin(page)
-    const expiresAt = new Date(Date.now() + 2_000).toISOString()
+    const expiresAt = new Date(Date.now() + 15_000).toISOString()
     const saved = await savePageFromReader(page, SEEDED_PAGE_PATHS[0], { expiresAt })
     expect(saved.snapshot.expiresAt).toBe(expiresAt)
 
@@ -486,8 +486,8 @@ test.describe('neutral offline saved-page surface', () => {
     await waitForOfflineShell(page)
     await expect(page.locator('.page-card')).toHaveCount(1)
     await page.context().setOffline(true)
-    await page.waitForTimeout(2_500)
-    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(Math.max(0, Date.parse(expiresAt) - Date.now() + 250))
+    await page.evaluate(path => window.location.assign(path), `/en/${SEEDED_PAGE_PATHS[0]}`)
     await waitForOfflineShell(page)
     await expect(page.locator('.page-card')).toHaveCount(0)
     const expiredDatabase = await inspectOfflineDatabase(page)
