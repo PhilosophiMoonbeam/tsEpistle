@@ -314,7 +314,7 @@ export default defineConfig(({ command }) => ({
       // Server Pug views provide the root component template mounted by client-app.ts.
       vue: 'vue/dist/vue.esm-bundler.js'
     },
-    dedupe: ['@codemirror/state', '@codemirror/view']
+    dedupe: ['@codemirror/state', '@codemirror/view', 'katex']
   },
   css: {
     preprocessorOptions: {
