@@ -406,6 +406,7 @@ import { defineComponent, h, onBeforeUnmount, onMounted } from 'vue'
 
 const bridge = globalThis.__loginLogoSceneTestBridge
 
+export const probe = async () => {}
 export default defineComponent({
   name: 'LogoParticleSceneTestStub',
   props: {

@@ -105,6 +105,7 @@ const readParticlePerformanceStartup = (): ParticlePerformanceStartup | null => 
   return (window as ParticlePerformanceWindow).__logoParticlePerformance?.startup ?? null
 }
 
+
 const stampParticlePerformanceStartup = (
   startup: ParticlePerformanceStartup | null,
   milestone: ParticlePerformanceMilestone
@@ -344,6 +345,7 @@ export default defineComponent({
         stampParticlePerformanceStartup(particlePerformanceStartup, 'importStartedAt')
         const sceneModule = await import('./LogoParticleScene.vue')
         stampParticlePerformanceStartup(particlePerformanceStartup, 'importEndedAt')
+        await sceneModule.probe()
         if (!isCurrentLoad(epoch, effect)) return
 
         const particleUrl = new URL(effect.particleUrl, window.location.href)

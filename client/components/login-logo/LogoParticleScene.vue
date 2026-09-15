@@ -277,6 +277,22 @@ const readParticlePerformanceBenchmark = (): ParticlePerformanceBenchmark | null
     : null
 }
 
+let selectedBackend: ParticleBackendRequest = 'webgl2'
+
+export const probe = async (): Promise<void> => {
+  const request = (window as ParticlePerformanceWindow).__logoParticlePerformance?.requestedBackend
+  if (request) {
+    selectedBackend = request
+    return
+  }
+  try {
+    selectedBackend = await navigator.gpu?.requestAdapter() ? 'webgpu' : 'webgl2'
+  } catch {
+    selectedBackend = 'webgl2'
+  }
+}
+
+
 const readParticleFrameCaptureHook = (): ParticleFrameCaptureHook | null => {
   if (typeof window === 'undefined') return null
   const hook = (window as ParticleFrameCaptureWindow).__logoParticleFrameCapture
@@ -957,7 +973,7 @@ export default defineComponent({
   props: {
     effect: { type: Object as PropType<LogoEffectDescriptor>, required: true },
     particles: { type: Object as PropType<ParsedLogoParticles>, required: true },
-    active: { type: Boolean, required: true }
+    active: { type: Boolean, required: true },
   },
   emits: {
     'first-frame': (): boolean => true,
@@ -1055,7 +1071,7 @@ export default defineComponent({
         directSrgbMaterialPipeline: true,
         generation: ++backendGeneration,
         onDiagnostics: diagnostic => publishDiagnostic(lease, diagnostic),
-        requestedBackend: benchmark?.requestedBackend ?? 'auto'
+        requestedBackend: selectedBackend
       })
       backendLease = lease
       void lease.init().catch(error => fenceForScene.fail(error))
