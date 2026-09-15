@@ -1015,16 +1015,16 @@ export default defineComponent({
     })
     const retireBackend = (): void => {
       const lease = backendLease
-      backendLease = null
-      backendCanvas = null
       loopControl.ready = false
       if (lease && lease.status !== 'lost') {
         lease.retire()
         recordFailure('retired', 'Particle backend was retired')
       }
+      backendLease = null
+      backendCanvas = null
     }
     const publishDiagnostic = (owner: ParticleBackendLease, diagnostic: ParticleBackendDiagnostics): void => {
-      if (tornDown || owner !== backendLease) return
+      if (owner !== backendLease) return
       if (benchmark) {
         try {
           if (benchmark.onDiagnostics) benchmark.onDiagnostics(diagnostic)
@@ -1034,6 +1034,7 @@ export default defineComponent({
           // Benchmark diagnostics are observational and must not block lifecycle fencing.
         }
       }
+      if (tornDown) return
       if (diagnostic.reason === 'backend-error' && diagnostic.phase === 'ready') {
         fenceForScene.fail(new Error('Particle backend reported an error'))
         return
