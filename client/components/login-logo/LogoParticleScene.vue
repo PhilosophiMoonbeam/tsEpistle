@@ -286,7 +286,11 @@ export const probe = async (): Promise<void> => {
     return
   }
   try {
-    selectedBackend = await navigator.gpu?.requestAdapter() ? 'webgpu' : 'webgl2'
+    const adapter = await navigator.gpu?.requestAdapter()
+    if (!adapter) return
+    const device = await adapter.requestDevice()
+    device.destroy()
+    selectedBackend = 'webgpu'
   } catch {
     selectedBackend = 'webgl2'
   }
