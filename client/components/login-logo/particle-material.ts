@@ -132,10 +132,6 @@ const createExplosionDisplacement = (
     })
   }
   return displacement
-}).setLayout({
-  name: 'logoExplosionDisplacement',
-  type: 'vec2',
-  inputs: []
 })()
 const createVertexState = (uniforms: ParticleNodeUniforms) => {
   const logoXY = attribute<'vec2'>('logoXY', 'vec2')
@@ -209,10 +205,6 @@ const createVertexState = (uniforms: ParticleNodeUniforms) => {
       )
     })
     return displacement
-  }).setLayout({
-    name: 'logoCursorDisplacement',
-    type: 'vec2',
-    inputs: []
   })()
   const displacement = mix(
     idleCss.add(cursorCss).add(explosionCss),
@@ -291,10 +283,6 @@ export const createParticleSpriteMaterial = (uniforms: ParticleNodeUniforms): Sp
       vec4(color, particleColor.a.mul(lifecycle).mul(coverage)),
       SRGBColorSpace
     )
-  }).setLayout({
-    name: 'logoParticleFragment',
-    type: 'vec4',
-    inputs: []
   })()
   material.blending = NormalBlending
   material.transparent = true
