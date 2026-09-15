@@ -144,6 +144,7 @@ type SearchAutomatonNode = {
 type SearchAutomaton = {
   nodes: SearchAutomatonNode[]
   patterns: SearchPattern[]
+  queryTermCount: number
 }
 
 type TextScan = {
@@ -151,6 +152,7 @@ type TextScan = {
   charactersScanned: number
   hasPhrase: boolean
   hasTerm: boolean
+  matchedTerms: boolean[]
   phraseCount: number
   termCount: number
   wordCount: number
@@ -217,14 +219,15 @@ const createSearchAutomaton = (normalizedQuery: string, queryTerms: string[]): S
     }
   }
 
-  return { nodes, patterns }
+  return { nodes, patterns, queryTermCount: queryTerms.length }
 }
 
-const createTextScan = (patternCount: number): TextScan => ({
+const createTextScan = (patternCount: number, queryTermCount: number): TextScan => ({
   state: 0,
   charactersScanned: 0,
   hasPhrase: false,
   hasTerm: false,
+  matchedTerms: new Array(queryTermCount).fill(false),
   phraseCount: 0,
   termCount: 0,
   wordCount: 0,
@@ -242,6 +245,7 @@ const recordMatches = (automaton: SearchAutomaton, scan: TextScan, endIndex: num
       scan.phraseCount = incrementBounded(scan.phraseCount)
     } else {
       scan.hasTerm = true
+      scan.matchedTerms[(patternIndex - 1) % automaton.queryTermCount] = true
       if (pattern.kind === 'term') scan.termCount = incrementBounded(scan.termCount)
       else scan.wordCount = incrementBounded(scan.wordCount)
     }
@@ -275,7 +279,7 @@ const scanText = (
   maxCharacters: number,
   signal?: AbortSignal
 ): TextScan => {
-  const scan = createTextScan(automaton.patterns.length)
+  const scan = createTextScan(automaton.patterns.length, automaton.queryTermCount)
   const endIndex = Math.min(text.length, Math.max(0, maxCharacters))
   for (let startIndex = 0; startIndex < endIndex; startIndex += OFFLINE_SEARCH_SCORING_CHUNK_CHARACTERS) {
     const chunkEnd = Math.min(startIndex + OFFLINE_SEARCH_SCORING_CHUNK_CHARACTERS, endIndex)
@@ -294,7 +298,7 @@ const scanTextAsync = async (
   maxCharacters: number,
   signal?: AbortSignal
 ): Promise<TextScan> => {
-  const scan = createTextScan(automaton.patterns.length)
+  const scan = createTextScan(automaton.patterns.length, automaton.queryTermCount)
   const endIndex = Math.min(text.length, Math.max(0, maxCharacters))
   for (let startIndex = 0; startIndex < endIndex; startIndex += OFFLINE_SEARCH_SCORING_CHUNK_CHARACTERS) {
     const chunkEnd = Math.min(startIndex + OFFLINE_SEARCH_SCORING_CHUNK_CHARACTERS, endIndex)
@@ -313,6 +317,9 @@ const scoreBody = (scan: TextScan): number =>
   scan.termCount * BODY_TERM_SCORE +
   scan.wordCount
 
+const matchesEveryQueryTerm = (queryTerms: readonly string[], scans: readonly TextScan[]): boolean =>
+  queryTerms.every((_term, index) => scans.some(scan => scan.matchedTerms[index]))
+
 const scoreDocument = (
   prepared: PreparedOfflineSearchDocument,
   normalizedQuery: string,
@@ -324,7 +331,7 @@ const scoreDocument = (
   const titleExact = title === normalizedQuery
   const titlePrefix = !titleExact && title.startsWith(normalizedQuery)
   const titleToken =
-    !titleExact && !titlePrefix && queryTerms.some(queryTerm => titleTerms.some(titleTerm => titleTerm === queryTerm || titleTerm.startsWith(queryTerm)))
+    !titleExact && !titlePrefix && queryTerms.every(queryTerm => titleTerms.some(titleTerm => titleTerm === queryTerm || titleTerm.startsWith(queryTerm)))
   if (titleExact) return { prepared, score: EXACT_TITLE_SCORE }
   if (titlePrefix) return { prepared, score: TITLE_PREFIX_SCORE }
   if (titleToken) return { prepared, score: TITLE_TOKEN_SCORE }
@@ -332,12 +339,14 @@ const scoreDocument = (
   let remainingCharacters = OFFLINE_SEARCH_DOCUMENT_CHARACTER_LIMIT
   const titleScan = scanText(automaton, title, remainingCharacters, signal)
   remainingCharacters -= titleScan.charactersScanned
+  const scans = [titleScan]
   let metadataMatch = titleScan.hasPhrase || titleScan.hasTerm
 
-  const descriptionToken = queryTerms.some(queryTerm => descriptionTerms.some(term => term.startsWith(queryTerm)))
+  const descriptionToken = queryTerms.every(queryTerm => descriptionTerms.some(term => term.startsWith(queryTerm)))
   if (descriptionToken) return { prepared, score: DESCRIPTION_SCORE }
   const descriptionScan = scanText(automaton, description, remainingCharacters, signal)
   remainingCharacters -= descriptionScan.charactersScanned
+  scans.push(descriptionScan)
   if (descriptionScan.hasPhrase) return { prepared, score: DESCRIPTION_SCORE }
   metadataMatch ||= descriptionScan.hasTerm
 
@@ -345,16 +354,20 @@ const scoreDocument = (
     const titleBoundary = `${title.slice(-normalizedQuery.length)} ${description.slice(0, normalizedQuery.length)}`
     const boundaryScan = scanText(automaton, titleBoundary, remainingCharacters, signal)
     remainingCharacters -= boundaryScan.charactersScanned
+    scans.push(boundaryScan)
     metadataMatch ||= boundaryScan.hasPhrase || boundaryScan.hasTerm
   }
   if (!metadataMatch && remainingCharacters > 0) {
     const descriptionBoundary = `${description.slice(-normalizedQuery.length)} ${body.slice(0, normalizedQuery.length)}`
     const boundaryScan = scanText(automaton, descriptionBoundary, remainingCharacters, signal)
     remainingCharacters -= boundaryScan.charactersScanned
+    scans.push(boundaryScan)
     metadataMatch ||= boundaryScan.hasPhrase || boundaryScan.hasTerm
   }
 
   const bodyScan = scanText(automaton, body, remainingCharacters, signal)
+  scans.push(bodyScan)
+  if (!matchesEveryQueryTerm(queryTerms, scans)) return null
   if (!metadataMatch && !bodyScan.hasPhrase && !bodyScan.hasTerm) return null
   return { prepared, score: scoreBody(bodyScan) }
 }
@@ -370,7 +383,7 @@ const scoreDocumentAsync = async (
   const titleExact = title === normalizedQuery
   const titlePrefix = !titleExact && title.startsWith(normalizedQuery)
   const titleToken =
-    !titleExact && !titlePrefix && queryTerms.some(queryTerm => titleTerms.some(titleTerm => titleTerm === queryTerm || titleTerm.startsWith(queryTerm)))
+    !titleExact && !titlePrefix && queryTerms.every(queryTerm => titleTerms.some(titleTerm => titleTerm === queryTerm || titleTerm.startsWith(queryTerm)))
   if (titleExact) return { prepared, score: EXACT_TITLE_SCORE }
   if (titlePrefix) return { prepared, score: TITLE_PREFIX_SCORE }
   if (titleToken) return { prepared, score: TITLE_TOKEN_SCORE }
@@ -378,12 +391,14 @@ const scoreDocumentAsync = async (
   let remainingCharacters = OFFLINE_SEARCH_DOCUMENT_CHARACTER_LIMIT
   const titleScan = await scanTextAsync(automaton, title, remainingCharacters, signal)
   remainingCharacters -= titleScan.charactersScanned
+  const scans = [titleScan]
   let metadataMatch = titleScan.hasPhrase || titleScan.hasTerm
 
-  const descriptionToken = queryTerms.some(queryTerm => descriptionTerms.some(term => term.startsWith(queryTerm)))
+  const descriptionToken = queryTerms.every(queryTerm => descriptionTerms.some(term => term.startsWith(queryTerm)))
   if (descriptionToken) return { prepared, score: DESCRIPTION_SCORE }
   const descriptionScan = await scanTextAsync(automaton, description, remainingCharacters, signal)
   remainingCharacters -= descriptionScan.charactersScanned
+  scans.push(descriptionScan)
   if (descriptionScan.hasPhrase) return { prepared, score: DESCRIPTION_SCORE }
   metadataMatch ||= descriptionScan.hasTerm
 
@@ -391,16 +406,20 @@ const scoreDocumentAsync = async (
     const titleBoundary = `${title.slice(-normalizedQuery.length)} ${description.slice(0, normalizedQuery.length)}`
     const boundaryScan = await scanTextAsync(automaton, titleBoundary, remainingCharacters, signal)
     remainingCharacters -= boundaryScan.charactersScanned
+    scans.push(boundaryScan)
     metadataMatch ||= boundaryScan.hasPhrase || boundaryScan.hasTerm
   }
   if (!metadataMatch && remainingCharacters > 0) {
     const descriptionBoundary = `${description.slice(-normalizedQuery.length)} ${body.slice(0, normalizedQuery.length)}`
     const boundaryScan = await scanTextAsync(automaton, descriptionBoundary, remainingCharacters, signal)
     remainingCharacters -= boundaryScan.charactersScanned
+    scans.push(boundaryScan)
     metadataMatch ||= boundaryScan.hasPhrase || boundaryScan.hasTerm
   }
 
   const bodyScan = await scanTextAsync(automaton, body, remainingCharacters, signal)
+  scans.push(bodyScan)
+  if (!matchesEveryQueryTerm(queryTerms, scans)) return null
   if (!metadataMatch && !bodyScan.hasPhrase && !bodyScan.hasTerm) return null
   return { prepared, score: scoreBody(bodyScan) }
 }

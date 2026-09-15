@@ -15,6 +15,7 @@ type PageRow = {
 
 type OfflineWindow = Window & {
   __rejectOfflineClipboard?: (() => void) | undefined
+  __restoreOfflineSnapshotFetch?: (() => void) | undefined
 }
 
 type OfflineSnapshotRow = {
@@ -219,27 +220,44 @@ async function savePageFromReader(page: Page, path: string, options: SavePageOpt
     await expect(control).toHaveAttribute('aria-label', 'Save for offline', { timeout: 30_000 })
   }
 
-  const routePattern = `**/_api/pages/${pageId}/offline-snapshot`
+  let restoreSnapshotFetch = false
   if (options.expiresAt) {
-    await page.route(routePattern, async route => {
-      const response = await route.fetch()
-      const snapshot = (await response.json()) as OfflinePageSnapshotV1
-      const withExpiry: OfflinePageSnapshotV1 = {
-        ...snapshot,
-        expiresAt: options.expiresAt as string,
-        integrity: ''
-      }
-      withExpiry.integrity = snapshotIntegrity(withExpiry)
-      await route.fulfill({
-        status: response.status(),
-        headers: {
-          'cache-control': 'private, no-store',
-          'content-type': 'application/json',
-          vary: 'Cookie'
-        },
+    const response = await page.request.get(`/_api/pages/${pageId}/offline-snapshot`)
+    expect(response.ok(), `Offline snapshot fixture request failed: HTTP ${response.status()}`).toBe(true)
+    const snapshot = (await response.json()) as OfflinePageSnapshotV1
+    const withExpiry: OfflinePageSnapshotV1 = {
+      ...snapshot,
+      expiresAt: options.expiresAt,
+      integrity: ''
+    }
+    withExpiry.integrity = snapshotIntegrity(withExpiry)
+    await page.evaluate(
+      ({ pathname, body }) => {
+        const target = window as OfflineWindow
+        const originalFetch = window.fetch
+        target.__restoreOfflineSnapshotFetch = () => {
+          window.fetch = originalFetch
+          delete target.__restoreOfflineSnapshotFetch
+        }
+        window.fetch = async (input, init) => {
+          const requestUrl = input instanceof Request ? input.url : String(input)
+          if (new URL(requestUrl, window.location.origin).pathname !== pathname) return originalFetch(input, init)
+          return new Response(body, {
+            status: 200,
+            headers: {
+              'cache-control': 'private, no-store',
+              'content-type': 'application/json',
+              vary: 'Cookie'
+            }
+          })
+        }
+      },
+      {
+        pathname: `/_api/pages/${pageId}/offline-snapshot`,
         body: JSON.stringify(withExpiry)
-      })
-    })
+      }
+    )
+    restoreSnapshotFetch = true
   }
 
   try {
@@ -247,7 +265,9 @@ async function savePageFromReader(page: Page, path: string, options: SavePageOpt
     await expect(control).toHaveAttribute('aria-label', 'Remove offline copy', { timeout: 30_000 })
     await expect(page.locator('.page-offline-status')).toContainText('Saved on this device', { timeout: 30_000 })
   } finally {
-    if (options.expiresAt) await page.unroute(routePattern)
+    if (restoreSnapshotFetch) {
+      await page.evaluate(() => (window as OfflineWindow).__restoreOfflineSnapshotFetch?.())
+    }
   }
 
   const saved = (await inspectOfflineDatabase(page)).snapshots.find(record => record.pageId === pageId)
@@ -368,8 +388,7 @@ test.describe('neutral offline saved-page surface', () => {
     }, ['/verify/token', '/login-reset/token', '/_unlock', '/u', '/_api/users/whoami'])
     expect(sensitiveResults.every(result => !result.fulfilled)).toBe(true)
 
-    const fallbackResponse = await page.goto('/en/visual-markdown-browser', { waitUntil: 'domcontentloaded' })
-    expect(fallbackResponse?.status()).toBe(200)
+    await page.evaluate(path => window.location.assign(path), `/en/${SEEDED_PAGE_PATHS[0]}`)
     await waitForOfflineShell(page)
     const search = page.getByRole('searchbox', { name: 'Search saved pages', exact: true })
     await search.fill('Visual Markdown')

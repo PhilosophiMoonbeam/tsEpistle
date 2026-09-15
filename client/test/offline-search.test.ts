@@ -46,6 +46,17 @@ describe('offline search', () => {
     expect(pageIds(searchPreparedOfflineDocuments(corpus, '  ALPHA  ').results)).toEqual([1, 2, 3, 4, 6, 5])
   })
 
+  test('requires every query term while matching them across fields', async () => {
+    const corpus = await prepareOfflineSearchCorpus([
+      makeDocument(1, { title: 'Visual Markdown Browser' }),
+      makeDocument(2, { title: 'Visual HTML Browser' }),
+      makeDocument(3, { title: 'Visual guide', searchText: 'Markdown reference' })
+    ])
+
+    expect(pageIds(searchPreparedOfflineDocuments(corpus, 'Visual Markdown').results)).toEqual([1, 3])
+    expect(pageIds((await searchPreparedOfflineDocumentsAsync(corpus, 'Visual Markdown')).results)).toEqual([1, 3])
+  })
+
   test('uses deterministic title, locale, and page ordering for equal matches', async () => {
     const documents = [
       makeDocument(30, { title: 'Same title', locale: 'en', searchText: 'needle' }),
