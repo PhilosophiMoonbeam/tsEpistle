@@ -460,7 +460,11 @@ export default defineComponent({
     }
 
     const updatePageVisibility = (): void => {
-      pageVisible.value = document.visibilityState !== 'hidden'
+      // Three's Timer also listens for visibilitychange. Let every listener finish
+      // before reactive teardown disconnects and disposes that timer.
+      queueMicrotask(() => {
+        if (loginElement) pageVisible.value = document.visibilityState !== 'hidden'
+      })
     }
 
     const handleImageError = (event: Event): void => {

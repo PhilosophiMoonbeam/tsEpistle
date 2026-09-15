@@ -971,12 +971,11 @@ export default defineComponent({
   &-logo {
     position: relative;
     display: flex;
-    flex: 0 1 auto;
-    width: max-content;
-    min-width: 3.25rem;
-    max-width: 10rem;
+    flex: 0 0 3.25rem;
+    width: 3.25rem;
     height: 3.25rem;
     padding: var(--wiki-space-2);
+    box-sizing: border-box;
     align-items: center;
     justify-content: center;
     overflow: hidden;
@@ -992,9 +991,9 @@ export default defineComponent({
 
     > img {
       display: block;
-      width: auto;
+      width: 100%;
       max-width: 100%;
-      height: auto;
+      height: 100%;
       max-height: 100%;
       object-fit: contain;
       object-position: center;
