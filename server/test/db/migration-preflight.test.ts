@@ -7,6 +7,7 @@ import type { DurableJob } from '../../core/durable-jobs.ts'
 import { MigrationPreflightError, preflightMigrations } from '../../db/migration-preflight.ts'
 import { MIGRATION_LINEAGE_V1 } from '../../db/migration-contract.ts'
 import { up as createSiteLogoAuthority } from '../../db/migrations/tsepistle-000013-site-logo-authority.ts'
+import { up as upgradeSiteLogoRenditions } from '../../db/migrations/tsepistle-000040-site-logo-renditions.ts'
 import { cleanupSiteLogoRevisions } from '../../jobs/site-logo-process.ts'
 
 type MigrationSpec = { name: string }
@@ -339,7 +340,24 @@ siteLogoMigrationSuite('PostgreSQL managed site-logo migration contract', () => 
     postgres = createKnex({ client: 'pg', connection: siteLogoConnection ?? undefined })
     await dropManagedLogoSchema()
     await postgres.schema.createTable('users', table => table.integer('id').primary())
-    await postgres.schema.createTable('durableJobs', table => table.uuid('id').primary())
+    await postgres.schema.createTable('durableJobs', table => {
+      table.uuid('id').primary()
+      table.string('type', 128).notNullable()
+      table.integer('version').unsigned().notNullable().defaultTo(1)
+      table.text('payload').notNullable()
+      table.string('state', 16).notNullable().defaultTo('pending')
+      table.integer('attempts').unsigned().notNullable().defaultTo(0)
+      table.integer('maxAttempts').unsigned().notNullable().defaultTo(5)
+      table.dateTime('nextRunAt').notNullable()
+      table.string('leaseOwner', 128).nullable()
+      table.uuid('leaseToken').nullable()
+      table.dateTime('leaseExpiresAt').nullable()
+      table.text('lastError').nullable()
+      table.string('deduplicationKey', 255).nullable().unique('durable_jobs_deduplication_unique')
+      table.dateTime('createdAt').notNullable()
+      table.dateTime('updatedAt').notNullable()
+      table.dateTime('completedAt').nullable()
+    })
   })
 
   afterEach(async () => {
@@ -585,6 +603,433 @@ siteLogoMigrationSuite('PostgreSQL managed site-logo migration contract', () => 
       normalizedHeight: 320,
       particleCount: 1,
       medianStroke: 4
+    })
+  })
+  it('backfills one v6 successor, cancels legacy work, and preserves the active v5 bundle', async () => {
+    await createSiteLogoAuthority(postgres)
+
+    const now = new Date('2026-09-10T00:00:00.000Z')
+    const sourceBytes = Buffer.from('legacy-source')
+    const logoBytes = Buffer.from('legacy-logo')
+    const particleBytes = Buffer.alloc(68, 1)
+    const staticBytes = Buffer.from('legacy-static')
+    const sourceHash = digest(sourceBytes)
+    const logoHash = digest(logoBytes)
+    const particleHash = digest(particleBytes)
+    const staticHash = digest(staticBytes)
+    const activeRevisionId = '00000000-0000-4000-8000-000000000021'
+    const desiredRevisionId = '00000000-0000-4000-8000-000000000022'
+    const legacyJobId = '00000000-0000-4000-8000-000000000023'
+
+    await postgres('siteLogoObjects').insert([
+      { kind: 'source', sha256: sourceHash, bytes: sourceBytes, byteLength: sourceBytes.byteLength, contentType: 'image/png', createdAt: now },
+      { kind: 'logo-png', sha256: logoHash, bytes: logoBytes, byteLength: logoBytes.byteLength, contentType: 'image/png', createdAt: now },
+      {
+        kind: 'particle-v1',
+        sha256: particleHash,
+        bytes: particleBytes,
+        byteLength: particleBytes.byteLength,
+        contentType: 'application/octet-stream',
+        createdAt: now
+      },
+      {
+        kind: 'effect-static-png',
+        sha256: staticHash,
+        bytes: staticBytes,
+        byteLength: staticBytes.byteLength,
+        contentType: 'image/png',
+        createdAt: now
+      }
+    ])
+    await postgres('siteLogoRevisions').insert([
+      {
+        id: activeRevisionId,
+        sourceKind: 'source',
+        sourceHash,
+        pipelineVersion: 5,
+        status: 'ready',
+        retrySequence: 0,
+        logoPngKind: 'logo-png',
+        logoPngHash: logoHash,
+        particleV1Kind: 'particle-v1',
+        particleV1Hash: particleHash,
+        effectStaticPngKind: 'effect-static-png',
+        effectStaticPngHash: staticHash,
+        normalizedWidth: 640,
+        normalizedHeight: 320,
+        particleCount: 1,
+        medianStroke: 4,
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+        completedAt: now
+      },
+      {
+        id: desiredRevisionId,
+        sourceKind: 'source',
+        sourceHash,
+        pipelineVersion: 5,
+        status: 'pending',
+        jobId: legacyJobId,
+        retrySequence: 0,
+        createdAt: now,
+        updatedAt: now
+      }
+    ])
+    await postgres('durableJobs').insert({
+      id: legacyJobId,
+      type: 'process-site-logo',
+      version: 3,
+      payload: JSON.stringify({ revisionId: desiredRevisionId, retrySequence: 0 }),
+      state: 'pending',
+      attempts: 0,
+      maxAttempts: 5,
+      nextRunAt: now,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      lastError: null,
+      deduplicationKey: null,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null
+    })
+    await postgres('siteLogoState').where({ id: 1 }).update({ desiredRevisionId, activeRevisionId, updatedAt: now })
+
+    await upgradeSiteLogoRenditions(postgres)
+
+    const state = await postgres('siteLogoState').where({ id: 1 }).first()
+    expect(state?.activeRevisionId).toBe(activeRevisionId)
+    expect(state?.desiredRevisionId).not.toBe(desiredRevisionId)
+    expect(await postgres('siteLogoObjects').where({ kind: 'logo-png', sha256: logoHash }).first('bytes')).toEqual({ bytes: logoBytes })
+    expect(await postgres('siteLogoRevisions').where({ id: activeRevisionId }).first('status', 'pipelineVersion', 'logoPngHash')).toEqual({
+      status: 'ready',
+      pipelineVersion: 5,
+      logoPngHash: logoHash
+    })
+    expect(await postgres('siteLogoRevisions').where({ id: desiredRevisionId }).first('status', 'errorCode', 'retiredAt')).toEqual(
+      expect.objectContaining({ status: 'failed', errorCode: 'PROCESSING_FAILED', retiredAt: expect.anything() })
+    )
+    expect(await postgres('durableJobs').where({ id: legacyJobId }).first('state', 'version')).toEqual({ state: 'cancelled', version: 3 })
+
+    const successors = await postgres('siteLogoRevisions').where({ pipelineVersion: 6 })
+    expect(successors).toHaveLength(1)
+    expect(successors[0]).toEqual(
+      expect.objectContaining({
+        sourceHash,
+        pipelineVersion: 6,
+        status: 'pending',
+        retrySequence: 0
+      })
+    )
+    const successorJob = await postgres('durableJobs').where({ id: successors[0]?.jobId }).first('version', 'type', 'state')
+    expect(successorJob).toEqual({ version: 4, type: 'process-site-logo', state: 'pending' })
+  })
+
+  it('fences stale v5 writers after migration commit while preserving reads and allowing v6 activation', async () => {
+    await createSiteLogoAuthority(postgres)
+
+    const now = new Date('2026-09-12T00:00:00.000Z')
+    const sourceBytes = Buffer.from('rolling-deployment-source')
+    const logoBytes = Buffer.from('rolling-deployment-logo')
+    const particleBytes = Buffer.alloc(68, 3)
+    const staticBytes = Buffer.from('rolling-deployment-static')
+    const sourceHash = digest(sourceBytes)
+    const logoHash = digest(logoBytes)
+    const particleHash = digest(particleBytes)
+    const staticHash = digest(staticBytes)
+    const historicalActiveId = '00000000-0000-4000-8000-000000000041'
+    const staleRevisionId = '00000000-0000-4000-8000-000000000042'
+    const staleInsertId = '00000000-0000-4000-8000-000000000043'
+
+    await postgres('siteLogoObjects').insert([
+      { kind: 'source', sha256: sourceHash, bytes: sourceBytes, byteLength: sourceBytes.byteLength, contentType: 'image/png', createdAt: now },
+      { kind: 'logo-png', sha256: logoHash, bytes: logoBytes, byteLength: logoBytes.byteLength, contentType: 'image/png', createdAt: now },
+      {
+        kind: 'particle-v1',
+        sha256: particleHash,
+        bytes: particleBytes,
+        byteLength: particleBytes.byteLength,
+        contentType: 'application/octet-stream',
+        createdAt: now
+      },
+      {
+        kind: 'effect-static-png',
+        sha256: staticHash,
+        bytes: staticBytes,
+        byteLength: staticBytes.byteLength,
+        contentType: 'image/png',
+        createdAt: now
+      }
+    ])
+    await postgres('siteLogoRevisions').insert([
+      {
+        id: historicalActiveId,
+        sourceKind: 'source',
+        sourceHash,
+        pipelineVersion: 5,
+        status: 'ready',
+        retrySequence: 0,
+        logoPngKind: 'logo-png',
+        logoPngHash: logoHash,
+        particleV1Kind: 'particle-v1',
+        particleV1Hash: particleHash,
+        effectStaticPngKind: 'effect-static-png',
+        effectStaticPngHash: staticHash,
+        normalizedWidth: 640,
+        normalizedHeight: 320,
+        particleCount: 1,
+        medianStroke: 4,
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+        completedAt: now
+      },
+      {
+        id: staleRevisionId,
+        sourceKind: 'source',
+        sourceHash,
+        pipelineVersion: 5,
+        status: 'pending',
+        retrySequence: 0,
+        createdAt: now,
+        updatedAt: now
+      }
+    ])
+    await postgres('siteLogoState').where({ id: 1 }).update({
+      desiredRevisionId: staleRevisionId,
+      activeRevisionId: historicalActiveId,
+      updatedAt: now
+    })
+
+    await upgradeSiteLogoRenditions(postgres)
+
+    const migratedState = await postgres('siteLogoState').where({ id: 1 }).first()
+    const successorId = migratedState?.desiredRevisionId
+    expect(successorId).toEqual(expect.any(String))
+    if (typeof successorId !== 'string') throw new Error('migration did not create a v6 successor')
+    expect(migratedState?.activeRevisionId).toBe(historicalActiveId)
+    expect(await postgres('siteLogoRevisions').where({ id: historicalActiveId }).first('pipelineVersion', 'status', 'logoPngHash')).toEqual({
+      pipelineVersion: 5,
+      status: 'ready',
+      logoPngHash: logoHash
+    })
+    expect(await postgres('siteLogoRevisions').where({ id: staleRevisionId }).first('pipelineVersion', 'status', 'errorCode')).toEqual({
+      pipelineVersion: 5,
+      status: 'failed',
+      errorCode: 'PROCESSING_FAILED'
+    })
+
+    const stateBeforeStaleActions = await postgres('siteLogoState').where({ id: 1 }).first()
+    const staleRevisionBeforeReadyAttempt = await postgres('siteLogoRevisions').where({ id: staleRevisionId }).first()
+
+    await expect(
+      postgres.transaction(async transaction => {
+        await transaction('siteLogoRevisions').insert({
+          id: staleInsertId,
+          sourceKind: 'source',
+          sourceHash,
+          pipelineVersion: 5,
+          status: 'pending',
+          retrySequence: 0,
+          createdAt: now,
+          updatedAt: now
+        })
+      })
+    ).rejects.toThrow()
+    expect(await postgres('siteLogoRevisions').where({ id: staleInsertId }).first()).toBeUndefined()
+    expect(await postgres('siteLogoState').where({ id: 1 }).first()).toEqual(stateBeforeStaleActions)
+
+    await expect(
+      postgres.transaction(async transaction => {
+        await transaction('siteLogoRevisions').where({ id: staleRevisionId }).update({
+          status: 'ready',
+          logoPngKind: 'logo-png',
+          logoPngHash: logoHash,
+          particleV1Kind: 'particle-v1',
+          particleV1Hash: particleHash,
+          effectStaticPngKind: 'effect-static-png',
+          effectStaticPngHash: staticHash,
+          normalizedWidth: 640,
+          normalizedHeight: 320,
+          particleCount: 1,
+          medianStroke: 4,
+          errorCode: null,
+          startedAt: now,
+          completedAt: now
+        })
+      })
+    ).rejects.toThrow()
+    expect(await postgres('siteLogoRevisions').where({ id: staleRevisionId }).first()).toEqual(staleRevisionBeforeReadyAttempt)
+    expect(await postgres('siteLogoState').where({ id: 1 }).first()).toEqual(stateBeforeStaleActions)
+
+    await expect(
+      postgres.transaction(async transaction => {
+        await transaction('siteLogoState').where({ id: 1 }).update({ desiredRevisionId: staleRevisionId, updatedAt: now })
+      })
+    ).rejects.toThrow()
+    expect(await postgres('siteLogoState').where({ id: 1 }).first()).toEqual(stateBeforeStaleActions)
+
+    await expect(
+      postgres.transaction(async transaction => {
+        await transaction('siteLogoState').where({ id: 1 }).update({ activeRevisionId: staleRevisionId, updatedAt: now })
+      })
+    ).rejects.toThrow()
+    expect(await postgres('siteLogoState').where({ id: 1 }).first()).toEqual(stateBeforeStaleActions)
+
+    expect(
+      await postgres('siteLogoRevisions')
+        .innerJoin('siteLogoState', 'siteLogoState.activeRevisionId', 'siteLogoRevisions.id')
+        .where('siteLogoState.id', 1)
+        .first('siteLogoRevisions.pipelineVersion', 'siteLogoRevisions.status', 'siteLogoRevisions.logoPngHash')
+    ).toEqual({
+      pipelineVersion: 5,
+      status: 'ready',
+      logoPngHash: logoHash
+    })
+
+    const iconBytes = Buffer.from('rolling-deployment-icon')
+    const icoBytes = Buffer.from('rolling-deployment-ico')
+    const iconHash = digest(iconBytes)
+    const icoHash = digest(icoBytes)
+    await postgres('siteLogoObjects').insert([
+      { kind: 'icon-png', sha256: iconHash, bytes: iconBytes, byteLength: iconBytes.byteLength, contentType: 'image/png', createdAt: now },
+      { kind: 'favicon-ico', sha256: icoHash, bytes: icoBytes, byteLength: icoBytes.byteLength, contentType: 'image/x-icon', createdAt: now }
+    ])
+
+    await postgres.transaction(async transaction => {
+      await transaction('siteLogoRevisions').where({ id: successorId }).update({
+        status: 'ready',
+        logoPngKind: 'logo-png',
+        logoPngHash: logoHash,
+        iconPngKind: 'icon-png',
+        favicon16Hash: iconHash,
+        favicon32Hash: iconHash,
+        tile150Hash: iconHash,
+        apple180Hash: iconHash,
+        app192Hash: iconHash,
+        app512Hash: iconHash,
+        maskable512Hash: iconHash,
+        faviconIcoKind: 'favicon-ico',
+        faviconIcoHash: icoHash,
+        errorCode: null,
+        enhancementErrorCode: 'UNSUITABLE_LOGO',
+        startedAt: now,
+        completedAt: now
+      })
+      await transaction('siteLogoState').where({ id: 1 }).update({ activeRevisionId: successorId, updatedAt: now })
+    })
+
+    expect(await postgres('siteLogoState').where({ id: 1 }).first('desiredRevisionId', 'activeRevisionId')).toEqual({
+      desiredRevisionId: successorId,
+      activeRevisionId: successorId
+    })
+    expect(await postgres('siteLogoRevisions').where({ id: successorId }).first('pipelineVersion', 'status')).toEqual({
+      pipelineVersion: 6,
+      status: 'ready'
+    })
+  })
+
+  it('accepts complete v6 ordinary-only and effect bundles while rejecting half bundles', async () => {
+    await createSiteLogoAuthority(postgres)
+    await upgradeSiteLogoRenditions(postgres)
+
+    const now = new Date('2026-09-11T00:00:00.000Z')
+    const sourceBytes = Buffer.from('v6-source')
+    const logoBytes = Buffer.from('v6-logo')
+    const iconBytes = Buffer.from('v6-icon')
+    const icoBytes = Buffer.from('v6-ico')
+    const particleBytes = Buffer.alloc(68, 2)
+    const staticBytes = Buffer.from('v6-static')
+    const sourceHash = digest(sourceBytes)
+    const logoHash = digest(logoBytes)
+    const iconHash = digest(iconBytes)
+    const icoHash = digest(icoBytes)
+    const particleHash = digest(particleBytes)
+    const staticHash = digest(staticBytes)
+    await postgres('siteLogoObjects').insert([
+      { kind: 'source', sha256: sourceHash, bytes: sourceBytes, byteLength: sourceBytes.byteLength, contentType: 'image/png', createdAt: now },
+      { kind: 'logo-png', sha256: logoHash, bytes: logoBytes, byteLength: logoBytes.byteLength, contentType: 'image/png', createdAt: now },
+      { kind: 'icon-png', sha256: iconHash, bytes: iconBytes, byteLength: iconBytes.byteLength, contentType: 'image/png', createdAt: now },
+      { kind: 'favicon-ico', sha256: icoHash, bytes: icoBytes, byteLength: icoBytes.byteLength, contentType: 'image/x-icon', createdAt: now },
+      {
+        kind: 'particle-v1',
+        sha256: particleHash,
+        bytes: particleBytes,
+        byteLength: particleBytes.byteLength,
+        contentType: 'application/octet-stream',
+        createdAt: now
+      },
+      {
+        kind: 'effect-static-png',
+        sha256: staticHash,
+        bytes: staticBytes,
+        byteLength: staticBytes.byteLength,
+        contentType: 'image/png',
+        createdAt: now
+      }
+    ])
+
+    const iconReferences = {
+      iconPngKind: 'icon-png',
+      favicon16Hash: iconHash,
+      favicon32Hash: iconHash,
+      tile150Hash: iconHash,
+      apple180Hash: iconHash,
+      app192Hash: iconHash,
+      app512Hash: iconHash,
+      maskable512Hash: iconHash,
+      faviconIcoKind: 'favicon-ico',
+      faviconIcoHash: icoHash
+    }
+    const ordinaryId = '00000000-0000-4000-8000-000000000031'
+    const effectId = '00000000-0000-4000-8000-000000000032'
+    const ordinary = {
+      id: ordinaryId,
+      sourceKind: 'source',
+      sourceHash,
+      pipelineVersion: 6,
+      status: 'ready',
+      retrySequence: 0,
+      logoPngKind: 'logo-png',
+      logoPngHash: logoHash,
+      ...iconReferences,
+      enhancementErrorCode: 'UNSUITABLE_LOGO',
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      completedAt: now
+    }
+    await postgres('siteLogoRevisions').insert(ordinary)
+    await expect(Promise.resolve(postgres('siteLogoRevisions').where({ id: ordinaryId }).update({ favicon32Hash: null }))).rejects.toMatchObject({
+      code: '23514'
+    })
+
+    await postgres('siteLogoRevisions').insert({
+      id: effectId,
+      sourceKind: 'source',
+      sourceHash,
+      pipelineVersion: 6,
+      status: 'ready',
+      retrySequence: 0,
+      logoPngKind: 'logo-png',
+      logoPngHash: logoHash,
+      ...iconReferences,
+      particleV1Kind: 'particle-v1',
+      particleV1Hash: particleHash,
+      effectStaticPngKind: 'effect-static-png',
+      effectStaticPngHash: staticHash,
+      normalizedWidth: 640,
+      normalizedHeight: 320,
+      particleCount: 1,
+      medianStroke: 4,
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      completedAt: now
+    })
+    await expect(Promise.resolve(postgres('siteLogoRevisions').where({ id: effectId }).update({ effectStaticPngHash: null }))).rejects.toMatchObject({
+      code: '23514'
     })
   })
 })

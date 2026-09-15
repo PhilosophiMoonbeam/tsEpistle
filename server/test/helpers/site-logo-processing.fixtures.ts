@@ -71,9 +71,9 @@ export const SQUARE_BADGE_VECTOR = {
 export const LOW_RESOLUTION_EMBLEM_VECTOR = {
   sourceWidth: 481,
   sourceHeight: 481,
-  normalizedWidth: 460,
-  normalizedHeight: 461,
-  particleCount: 4_704
+  normalizedWidth: 1104,
+  normalizedHeight: 1106,
+  particleCount: 4_702
 } as const
 
 export const rgbaImage = (width: number, height: number, pixel: readonly [number, number, number, number]): Buffer => {
@@ -228,6 +228,27 @@ export const sparseVisibleFixture = async (): Promise<Buffer> => {
   const data = rgbaImage(width, height, [0, 0, 0, 0])
   paintRectangle(data, width, 112, 112, 144, 144, [17, 83, 191, 255])
   return await encodeRgbaFixture(data, width, height, 'png-alpha')
+}
+
+export const onePixelFixture = async (): Promise<Buffer> => await encodeFixture('png', 1, 1, [17, 83, 191, 255])
+
+export const extremeAspectFixture = async (): Promise<Buffer> => await encodeFixture('png', 1, 4096, [17, 83, 191, 255])
+
+export const highEntropyFixture = async (): Promise<Buffer> => {
+  const width = 256
+  const height = 256
+  const data = Buffer.alloc(width * height * 4)
+  let state = 0x9e3779b9
+  for (let offset = 0; offset < data.length; offset += 4) {
+    state = Math.imul(state ^ (state >>> 16), 0x21f0aaad)
+    state = Math.imul(state ^ (state >>> 15), 0x735a2d97)
+    state ^= state >>> 15
+    data[offset] = state & 0xff
+    data[offset + 1] = (state >>> 8) & 0xff
+    data[offset + 2] = (state >>> 16) & 0xff
+    data[offset + 3] = 255
+  }
+  return await encodeRgbaFixture(data, width, height, 'png-opaque')
 }
 
 export const tallFineDetailFixture = async (): Promise<Buffer> => {

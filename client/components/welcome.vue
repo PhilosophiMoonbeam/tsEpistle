@@ -2,7 +2,19 @@
   v-app
     main.onboarding(aria-labelledby='welcome-title')
       .onboarding-content
-        img.onboarding-logo(src='/_assets/svg/logo-tsepistle.svg', alt='tsEpistle')
+        .onboarding-brand
+          .onboarding-logo-frame
+            img.onboarding-logo(
+              v-if='logoUrl && !logoImageFailed'
+              :key='logoUrl'
+              :src='logoUrl'
+              :data-logo-source='logoUrl'
+              alt=''
+              @error='handleLogoError'
+              @load='handleLogoLoad'
+            )
+            .onboarding-logo-fallback(v-else, aria-hidden='true') {{ logoFallback }}
+          .onboarding-brand-title {{ siteTitle }}
         h1#welcome-title.text-headline-medium {{ $t('welcome.title') }}
         p.onboarding-subtitle.text-body-large {{ $t('welcome.subtitle') }}
         .onboarding-actions
@@ -11,11 +23,39 @@
 </template>
 
 <script setup lang='ts'>
+import { computed, ref } from 'vue'
+import { wikiStore } from '@/store/index.ts'
+
 const {
   locale = 'en'
 } = defineProps<{
   locale?: string
 }>()
+
+const failedLogoUrl = ref<string | null>(null)
+const logoUrl = computed(() => wikiStore.site.logoUrl)
+const siteTitle = computed(() => wikiStore.site.title)
+const logoImageFailed = computed(() => failedLogoUrl.value === logoUrl.value)
+const logoFallback = computed(() => {
+  const title = siteTitle.value.trim()
+  return title ? title.charAt(0).toUpperCase() : '?'
+})
+
+const handleLogoError = (event: Event): void => {
+  const image = event.currentTarget
+  if (!(image instanceof HTMLImageElement)) return
+  const source = image.getAttribute('data-logo-source')
+  if (!source || source !== logoUrl.value) return
+  failedLogoUrl.value = source
+}
+
+const handleLogoLoad = (event: Event): void => {
+  const image = event.currentTarget
+  if (!(image instanceof HTMLImageElement)) return
+  const source = image.getAttribute('data-logo-source')
+  if (!source || source !== logoUrl.value) return
+  if (failedLogoUrl.value === source) failedLogoUrl.value = null
+}
 </script>
 
 <style lang='scss'>
@@ -114,13 +154,66 @@ const {
     }
   }
 
+  .onboarding-brand {
+    display: flex;
+    width: min(100%, 28rem);
+    min-width: 0;
+    align-items: center;
+    gap: var(--wiki-space-4);
+    margin: 0 0 var(--wiki-space-8);
+    animation: onboardingReveal var(--wiki-motion-slow) var(--wiki-motion-ease-out) both;
+  }
+
+  .onboarding-logo-frame {
+    position: relative;
+    display: inline-flex;
+    flex: 0 1 auto;
+    width: max-content;
+    min-width: 52px;
+    max-width: min(18rem, 100%);
+    height: clamp(4rem, 10vw, 6rem);
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    padding: clamp(4px, 1vw, 8px);
+    border: 1px solid var(--wiki-surface-border-strong);
+    border-radius: var(--wiki-panel-radius);
+    background: var(--wiki-surface-raised);
+    box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+  }
+
   img.onboarding-logo {
     display: block;
-    width: min(15rem, 72%);
+    width: auto;
+    max-width: 100%;
     height: auto;
-    margin: 0 0 var(--wiki-space-8);
-    filter: none;
-    animation: onboardingReveal var(--wiki-motion-slow) var(--wiki-motion-ease-out) both;
+    max-height: 100%;
+    object-fit: contain;
+    object-position: center;
+  }
+
+  .onboarding-logo-fallback {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    color: rgb(var(--v-theme-on-surface));
+    font-size: 1.5rem;
+    font-weight: 740;
+    line-height: 1;
+  }
+
+  .onboarding-brand-title {
+    min-width: 0;
+    overflow: hidden;
+    color: rgb(var(--v-theme-on-surface));
+    font-family: var(--wiki-font-heading);
+    font-size: 1.25rem;
+    font-weight: 720;
+    letter-spacing: -.03em;
+    line-height: var(--wiki-leading-heading);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   h1 {
@@ -200,9 +293,15 @@ const {
       }
     }
 
-    img.onboarding-logo {
-      width: min(13rem, 72%);
+    &-brand {
+      width: 100%;
+      gap: var(--wiki-space-3);
       margin-bottom: var(--wiki-space-10);
+    }
+
+    &-logo-frame {
+      max-width: min(13rem, 100%);
+      height: clamp(3.5rem, 18vw, 5rem);
     }
 
     h1 {
@@ -229,9 +328,12 @@ const {
       padding: var(--wiki-space-4) var(--wiki-space-6);
     }
 
-    img.onboarding-logo {
-      width: 10rem;
+    &-brand {
       margin-bottom: var(--wiki-space-3);
+    }
+
+    &-logo-frame {
+      height: clamp(3rem, 12vw, 4rem);
     }
 
     h1 {
@@ -250,6 +352,7 @@ const {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .onboarding-brand,
   .onboarding-logo,
   .onboarding h1,
   .onboarding-subtitle,

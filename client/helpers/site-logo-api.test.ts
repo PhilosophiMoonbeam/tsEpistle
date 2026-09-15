@@ -2,10 +2,27 @@ import { describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { fetchSiteLogoStatus, retrySiteLogo, SiteLogoApiError, uploadSiteLogo } from './site-logo-api.ts'
 
 const hash = 'a'.repeat(64)
+const logoUrl = `/_site-logo/${hash}/logo.png`
+const iconUrl = `/_site-logo/${hash}/icon.png`
+const faviconIcoUrl = `/_site-logo/${hash}/favicon.ico`
 const status = {
-  active: { revisionId: 'active-revision', logoUrl: `/_site-logo/${hash}/logo.png` },
+  active: {
+    revisionId: 'active-revision',
+    logoUrl,
+    logoIcons: {
+      favicon16Url: iconUrl,
+      favicon32Url: iconUrl,
+      tile150Url: iconUrl,
+      apple180Url: iconUrl,
+      app192Url: iconUrl,
+      app512Url: iconUrl,
+      maskable512Url: iconUrl,
+      faviconIcoUrl
+    },
+    enhancement: { status: 'ready', reason: null }
+  },
   candidate: { revisionId: 'candidate-revision', status: 'running', errorCode: null }
-}
+} as const
 
 function jsonResponse(payload: unknown, ok = true): Response {
   return {
@@ -16,14 +33,47 @@ function jsonResponse(payload: unknown, ok = true): Response {
 }
 
 describe('site logo API', () => {
-  it('gets and validates the managed active and candidate status from the same-origin endpoint', async () => {
+  it('gets an immutable shared-contract status with the complete v6 active bundle', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(status))
 
-    await expect(fetchSiteLogoStatus(fetchImpl)).resolves.toEqual(status)
+    const received = await fetchSiteLogoStatus(fetchImpl)
+
+    expect(received).toEqual(status)
+    expect(Object.isFrozen(received)).toBe(true)
+    expect(Object.isFrozen(received.active)).toBe(true)
+    expect(Object.isFrozen(received.active?.logoIcons)).toBe(true)
     expect(fetchImpl).toHaveBeenCalledWith('/_api/site/logo', {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' },
       signal: undefined
+    })
+  })
+
+  it('accepts a historical active logo with nullable icons while retaining the shared enhancement shape', async () => {
+    const historical = {
+      active: { revisionId: 'legacy', logoUrl },
+      candidate: null
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse({
+        ...historical,
+        active: { ...historical.active, logoIcons: null, enhancement: { status: 'ready', reason: null } }
+      })
+    )
+
+    await expect(fetchSiteLogoStatus(fetchImpl)).resolves.toMatchObject({ active: { logoIcons: null } })
+  })
+
+  it('accepts a published ordinary logo when the optional enhancement is unavailable', async () => {
+    const ordinaryOnly = {
+      ...status,
+      candidate: null,
+      active: { ...status.active, enhancement: { status: 'unavailable', reason: 'UNSUITABLE_LOGO' } }
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(ordinaryOnly))
+
+    await expect(fetchSiteLogoStatus(fetchImpl)).resolves.toMatchObject({
+      active: { enhancement: { status: 'unavailable', reason: 'UNSUITABLE_LOGO' } }
     })
   })
 
@@ -50,7 +100,7 @@ describe('site logo API', () => {
     expect(new Uint8Array(await uploaded.arrayBuffer())).toEqual(new TextEncoder().encode('image bytes'))
   })
 
-  it('retries only through the dedicated endpoint without a request body', async () => {
+  it('retries only through the dedicated endpoint without replaying the selected upload', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ ...status, statusUrl: '/_api/site/logo' }))
 
     await retrySiteLogo(fetchImpl)
@@ -61,44 +111,38 @@ describe('site logo API', () => {
       headers: { Accept: 'application/json' },
       signal: undefined
     })
+    expect((fetchImpl.mock.calls[0] as [string, RequestInit])[1].body).toBeUndefined()
   })
 
   it.each([
     ['upload', 'UNSUPPORTED_IMAGE'],
     ['upload', 'IMAGE_TOO_LARGE'],
     ['upload', 'ARTIFACT_TOO_LARGE'],
-    ['retry', 'MANAGED_LOGO_CONFLICT']
+    ['retry', 'PROCESSING_FAILED']
   ] as const)('surfaces the allow-listed %s failure code %s', async (operation, code) => {
     const failure = vi.fn().mockResolvedValue(jsonResponse({ error: 'Request failed.', code }, false))
     const request = operation === 'upload' ? uploadSiteLogo(failure, new File(['image bytes'], 'mark.png', { type: 'image/png' })) : retrySiteLogo(failure)
 
-    await expect(request).rejects.toMatchObject<Partial<SiteLogoApiError>>({ code })
+    await expect(request).rejects.toMatchObject({ code })
   })
 
   it('falls back to null for unknown codes without treating server error text or legacy fields as codes', async () => {
     const failure = vi.fn().mockResolvedValue(jsonResponse({ error: 'UNSUPPORTED_IMAGE', code: 'decoder stack trace', errorCode: 'IMAGE_TOO_LARGE' }, false))
 
-    await expect(retrySiteLogo(failure)).rejects.toMatchObject<Partial<SiteLogoApiError>>({ code: null })
+    await expect(retrySiteLogo(failure)).rejects.toMatchObject({ code: null })
   })
 
-  it('accepts allow-listed errorCode values in candidate status payloads', async () => {
-    const failedStatus = {
-      ...status,
-      candidate: { revisionId: 'candidate-revision', status: 'failed', errorCode: 'ARTIFACT_TOO_LARGE' }
+  it('rejects malformed shared status objects and untrusted public artifact URLs', async () => {
+    const invalidStatuses = [
+      { ...status, active: { ...status.active, logoUrl: 'https://example.com/logo.png' } },
+      { ...status, active: { ...status.active, logoIcons: { ...status.active.logoIcons, app512Url: 'https://example.com/icon.png' } } },
+      { ...status, active: { ...status.active, enhancement: { status: 'unavailable', reason: null } } },
+      { ...status, candidate: { ...status.candidate, status: 'unknown' } }
+    ]
+
+    for (const invalidStatus of invalidStatuses) {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(invalidStatus))
+      await expect(fetchSiteLogoStatus(fetchImpl)).rejects.toBeInstanceOf(SiteLogoApiError)
     }
-    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(failedStatus))
-
-    await expect(fetchSiteLogoStatus(fetchImpl)).resolves.toEqual(failedStatus)
-  })
-
-  it('rejects untrusted response URLs', async () => {
-    const invalidStatus = vi.fn().mockResolvedValue(
-      jsonResponse({
-        ...status,
-        active: { revisionId: 'active-revision', logoUrl: 'https://example.com/logo.png' }
-      })
-    )
-
-    await expect(fetchSiteLogoStatus(invalidStatus)).rejects.toBeInstanceOf(SiteLogoApiError)
   })
 })

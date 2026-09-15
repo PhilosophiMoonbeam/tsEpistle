@@ -75,7 +75,7 @@ export const renderWorkspaceGraphiQL = (options: GraphiQLOptions): string => {
   const ideOptions: GraphiQLOptions & { query?: string } = { ...options, ...(options.defaultQuery ? { query: options.defaultQuery } : {}) }
   return renderGraphiQL(ideOptions)
     .replaceAll(`https://unpkg.com/@graphql-yoga/graphiql@${GRAPHQL_IDE_VERSION}/dist/`, `/_assets/graphiql/${GRAPHQL_IDE_VERSION}/`)
-    .replace('https://raw.githubusercontent.com/graphql-hive/graphql-yoga/refs/heads/main/website/src/app/favicon.ico', '/_assets/favicon.ico')
+    .replace('https://raw.githubusercontent.com/graphql-hive/graphql-yoga/refs/heads/main/website/src/app/favicon.ico', '/favicon.ico')
     .replace('</head>', styles + '</head>')
     .replace('<noscript>', chrome + '<noscript>')
     .replace('</body>', script + '</body>')

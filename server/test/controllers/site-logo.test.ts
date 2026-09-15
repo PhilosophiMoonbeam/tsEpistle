@@ -8,8 +8,8 @@ import createSiteLogoController from '../../controllers/site-logo.ts'
 const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 
 interface PublicObject {
-  kind: 'source' | 'logo-png' | 'particle-v1' | 'effect-static-png'
-  filename: 'logo.png' | 'particle.bin' | 'effect.png'
+  kind: 'source' | 'logo-png' | 'icon-png' | 'favicon-ico' | 'particle-v1' | 'effect-static-png'
+  filename: 'logo.png' | 'icon.png' | 'favicon.ico' | 'particle.bin' | 'effect.png'
   contentType: string
   bytes: Buffer
   hash: string
@@ -43,6 +43,8 @@ describe('public managed site logo objects', () => {
 
     objects = [
       { kind: 'logo-png', filename: 'logo.png', contentType: 'image/png', bytes: Buffer.from('exact ordinary logo bytes'), hash: '' },
+      { kind: 'icon-png', filename: 'icon.png', contentType: 'image/png', bytes: Buffer.from('exact square icon bytes'), hash: '' },
+      { kind: 'favicon-ico', filename: 'favicon.ico', contentType: 'image/x-icon', bytes: Buffer.from('exact favicon bytes'), hash: '' },
       {
         kind: 'particle-v1',
         filename: 'particle.bin',
@@ -124,6 +126,8 @@ describe('public managed site logo objects', () => {
 
   it('authorizes by the lowercase composite role and hash rather than hash alone', async () => {
     const logo = objects.find(object => object.kind === 'logo-png')!
+    const icon = objects.find(object => object.kind === 'icon-png')!
+    const favicon = objects.find(object => object.kind === 'favicon-ico')!
     const particle = objects.find(object => object.kind === 'particle-v1')!
     const sourceBytes = Buffer.from('private source image')
     const sourceHash = digest(sourceBytes)
@@ -139,6 +143,10 @@ describe('public managed site logo objects', () => {
     const negativePaths = [
       `/_site-logo/${logo.hash}/particle.bin`,
       `/_site-logo/${particle.hash}/logo.png`,
+      `/_site-logo/${logo.hash}/icon.png`,
+      `/_site-logo/${icon.hash}/logo.png`,
+      `/_site-logo/${logo.hash}/favicon.ico`,
+      `/_site-logo/${favicon.hash}/icon.png`,
       `/_site-logo/${sourceHash}/logo.png`,
       `/_site-logo/${logo.hash.toUpperCase()}/logo.png`,
       `/_site-logo/${logo.hash}/LOGO.PNG`,

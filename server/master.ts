@@ -242,9 +242,15 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     '/',
     createPwaController({
       ROOTPATH: wiki.ROOTPATH,
-      config: { host: wiki.config.host },
+      config: {
+        host: wiki.config.host,
+        title: wiki.config.title,
+        description: wiki.config.description,
+        theming: { colors: wiki.config.theming.colors }
+      },
       pwaMode,
-      pwaRelease: wiki.product.revision
+      pwaRelease: wiki.product.revision,
+      resolveBranding: () => resolveActiveBranding(wiki.models.knex, wiki.config.logoUrl)
     })
   )
 
@@ -540,6 +546,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     ...(viteOrigin === undefined ? {} : { origin: viteOrigin })
   })
 
+  const themeColors = normalizeThemeColors(wiki.config.theming.colors)
   app.use(async (_req, res, next) => {
     const branding = await resolveActiveBranding(wiki.models.knex, wiki.config.logoUrl)
     res.locals.faviconUrl = normalizeFaviconUrl(branding.logoUrl)
@@ -547,7 +554,9 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       title: wiki.config.title,
       theme: wiki.config.theming.theme,
       darkMode: wiki.config.theming.darkMode,
-      themeColors: normalizeThemeColors(wiki.config.theming.colors),
+      themeColors,
+      themeColor: themeColors.light.primary,
+      backgroundColor: themeColors.light.background,
       tocPosition: wiki.config.theming.tocPosition || 'left',
       readerLayout: normalizeReaderLayout(wiki.config.theming.reading),
       lang: wiki.config.lang.code,
@@ -559,6 +568,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       banner: publicSiteBanner(wiki.config.banner),
       logoUrl: branding.logoUrl,
       logoEffect: branding.logoEffect,
+      logoIcons: branding.logoIcons,
       availableEditors: normalizeAvailableEditors(wiki.config.editors?.available),
       recommendedEditor: normalizeEditorPolicy(wiki.config.editors).recommended,
       product: wiki.product,

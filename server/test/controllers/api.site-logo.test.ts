@@ -10,7 +10,10 @@ import { SITE_LOGO_SOURCE_LIMIT } from '../../operations/site-logo.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 const legacyGeneral = vi.fn().mockResolvedValue(undefined)
-vi.mockModule('../../operations/general-administration.ts', import.meta.url, () => ({ patchLegacyGeneralConfiguration: legacyGeneral, getGeneralAdministrationStore: vi.fn() }))
+vi.mockModule('../../operations/general-administration.ts', import.meta.url, () => ({
+  patchLegacyGeneralConfiguration: legacyGeneral,
+  getGeneralAdministrationStore: vi.fn()
+}))
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 const PNG_BYTES = Buffer.concat([PNG_SIGNATURE, Buffer.from('observable-logo-source')])
@@ -23,48 +26,89 @@ const createLogoTables = async (db: Knex): Promise<void> => {
   await createDurableJobs(db)
   await addDurableJobLeaseToken(db)
   await db.schema.createTable('siteLogoObjects', table => {
-    table.string('kind').notNullable()
+    table.string('kind', 32).notNullable()
     table.string('sha256', 64).notNullable()
     table.binary('bytes').notNullable()
-    table.integer('byteLength').notNullable()
-    table.string('contentType').notNullable()
+    table.integer('byteLength').unsigned().notNullable()
+    table.string('contentType', 64).notNullable()
     table.dateTime('createdAt').notNullable()
     table.primary(['kind', 'sha256'])
+    table.check(`"kind" IN ('source', 'logo-png', 'icon-png', 'favicon-ico', 'particle-v1', 'effect-static-png')`)
+    table.check(`"byteLength" = length("bytes")`)
+    table.check(
+      `"byteLength" > 0 AND (
+        ("kind" = 'source' AND "contentType" IN ('image/png', 'image/jpeg', 'image/webp') AND "byteLength" <= ${SITE_LOGO_SOURCE_LIMIT})
+        OR ("kind" = 'logo-png' AND "contentType" = 'image/png' AND "byteLength" <= 5242880)
+        OR ("kind" = 'icon-png' AND "contentType" = 'image/png' AND "byteLength" <= 2097152)
+        OR ("kind" = 'favicon-ico' AND "contentType" = 'image/x-icon' AND "byteLength" <= 16384)
+        OR ("kind" = 'particle-v1' AND "contentType" = 'application/octet-stream' AND "byteLength" BETWEEN 68 AND 192056)
+        OR ("kind" = 'effect-static-png' AND "contentType" = 'image/png' AND "byteLength" <= 1048576)
+      )`
+    )
   })
   await db.schema.createTable('siteLogoRevisions', table => {
     table.uuid('id').primary()
-    table.string('sourceKind').notNullable()
+    table.string('sourceKind', 32).notNullable()
     table.string('sourceHash', 64).notNullable()
-    table.integer('pipelineVersion').notNullable()
-    table.string('status').notNullable()
+    table.integer('pipelineVersion').unsigned().notNullable()
+    table.string('status', 16).notNullable()
     table.uuid('jobId').nullable()
-    table.integer('retrySequence').notNullable()
-    table.string('logoPngKind').nullable()
+    table.integer('retrySequence').unsigned().notNullable()
+    table.string('logoPngKind', 32).nullable()
     table.string('logoPngHash', 64).nullable()
-    table.string('particleV1Kind').nullable()
+    table.string('iconPngKind', 32).nullable()
+    table.string('favicon16Hash', 64).nullable()
+    table.string('favicon32Hash', 64).nullable()
+    table.string('tile150Hash', 64).nullable()
+    table.string('apple180Hash', 64).nullable()
+    table.string('app192Hash', 64).nullable()
+    table.string('app512Hash', 64).nullable()
+    table.string('maskable512Hash', 64).nullable()
+    table.string('faviconIcoKind', 32).nullable()
+    table.string('faviconIcoHash', 64).nullable()
+    table.string('particleV1Kind', 32).nullable()
     table.string('particleV1Hash', 64).nullable()
-    table.string('effectStaticPngKind').nullable()
+    table.string('effectStaticPngKind', 32).nullable()
     table.string('effectStaticPngHash', 64).nullable()
-    table.integer('normalizedWidth').nullable()
-    table.integer('normalizedHeight').nullable()
-    table.integer('particleCount').nullable()
-    table.float('medianStroke').nullable()
-    table.string('auraColor').nullable()
-    table.string('errorCode').nullable()
-    table.integer('requestedBy').nullable()
+    table.integer('normalizedWidth').unsigned().nullable()
+    table.integer('normalizedHeight').unsigned().nullable()
+    table.integer('particleCount').unsigned().nullable()
+    table.double('medianStroke').nullable()
+    table.string('auraColor', 7).nullable()
+    table.string('enhancementErrorCode', 64).nullable()
+    table.string('errorCode', 64).nullable()
+    table.integer('requestedBy').unsigned().nullable()
     table.dateTime('createdAt').notNullable()
     table.dateTime('updatedAt').notNullable()
     table.dateTime('startedAt').nullable()
     table.dateTime('completedAt').nullable()
     table.dateTime('retiredAt').nullable()
+    table.foreign(['sourceKind', 'sourceHash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
+    table.foreign(['logoPngKind', 'logoPngHash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
+    table.foreign(['iconPngKind', 'favicon16Hash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
+    table.foreign(['iconPngKind', 'favicon32Hash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
+    table.foreign(['iconPngKind', 'tile150Hash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
+    table.foreign(['iconPngKind', 'apple180Hash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
+    table.foreign(['iconPngKind', 'app192Hash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
+    table.foreign(['iconPngKind', 'app512Hash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
+    table.foreign(['iconPngKind', 'maskable512Hash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
+    table.foreign(['faviconIcoKind', 'faviconIcoHash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
+    table.foreign(['particleV1Kind', 'particleV1Hash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
+    table.foreign(['effectStaticPngKind', 'effectStaticPngHash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
+    table.check(`"sourceKind" = 'source'`)
+    table.check(`"pipelineVersion" BETWEEN 1 AND 6`)
+    table.check(`"retrySequence" >= 0`)
+    table.check(`"status" IN ('pending', 'running', 'ready', 'failed')`)
   })
   await db.schema.createTable('siteLogoState', table => {
     table.integer('id').primary()
-    table.integer('generation').notNullable()
+    table.integer('generation').unsigned().notNullable()
     table.uuid('desiredRevisionId').nullable()
     table.uuid('activeRevisionId').nullable()
     table.dateTime('createdAt').notNullable()
     table.dateTime('updatedAt').notNullable()
+    table.check(`"id" = 1`)
+    table.check(`"generation" >= 0`)
   })
   await db.schema.createTable('settings', table => {
     table.string('key').primary()
@@ -75,15 +119,22 @@ const createLogoTables = async (db: Knex): Promise<void> => {
   await db('siteLogoState').insert({ id: 1, generation: 0, desiredRevisionId: null, activeRevisionId: null, createdAt: now, updatedAt: now })
 }
 
+const ICON_NAMES = ['favicon16', 'favicon32', 'tile150', 'apple180', 'app192', 'app512', 'maskable512'] as const
+type IconName = (typeof ICON_NAMES)[number]
+type IconHashes = { [Name in IconName]: string }
+
 type ReadyRevision = {
   revisionId: string
   sourceHash: string
   logoHash: string
+  iconHashes: IconHashes | null
+  faviconIcoHash: string | null
   particleHash: string
   staticHash: string
 }
 
-const objectContentType = (kind: string): string => (kind === 'particle-v1' ? 'application/octet-stream' : 'image/png')
+const objectContentType = (kind: string): string =>
+  kind === 'particle-v1' ? 'application/octet-stream' : kind === 'favicon-ico' ? 'image/x-icon' : 'image/png'
 
 const insertObject = async (db: Knex, kind: string, bytes: Buffer, claimedHash = digest(bytes)): Promise<string> => {
   await db('siteLogoObjects').insert({
@@ -101,7 +152,7 @@ const seedReadyRevision = async (
   db: Knex,
   source: Buffer,
   revisionId: string,
-  pipelineVersion = 5,
+  pipelineVersion = 6,
   retrySequence = 0,
   omitKind?: 'logo-png' | 'particle-v1' | 'effect-static-png',
   corruptKind?: 'logo-png' | 'particle-v1' | 'effect-static-png'
@@ -128,6 +179,35 @@ const seedReadyRevision = async (
     await insertObject(db, kind, bytes, hashes[kind])
   }
 
+  const iconBytes = {
+    favicon16: Buffer.from(`icon:favicon16:${sourceHash}`),
+    favicon32: Buffer.from(`icon:favicon32:${sourceHash}`),
+    tile150: Buffer.from(`icon:tile150:${sourceHash}`),
+    apple180: Buffer.from(`icon:apple180:${sourceHash}`),
+    app192: Buffer.from(`icon:app192:${sourceHash}`),
+    app512: Buffer.from(`icon:app512:${sourceHash}`),
+    maskable512: Buffer.from(`icon:maskable512:${sourceHash}`)
+  } as const
+  const iconHashes: IconHashes = {
+    favicon16: digest(iconBytes.favicon16),
+    favicon32: digest(iconBytes.favicon32),
+    tile150: digest(iconBytes.tile150),
+    apple180: digest(iconBytes.apple180),
+    app192: digest(iconBytes.app192),
+    app512: digest(iconBytes.app512),
+    maskable512: digest(iconBytes.maskable512)
+  }
+  const faviconIco = Buffer.from(`ico:${sourceHash}`)
+  const faviconIcoHash = digest(faviconIco)
+  const hasLogo = omitKind !== 'logo-png'
+  const hasParticle = omitKind !== 'particle-v1'
+  const hasEffect = omitKind !== 'effect-static-png'
+  const hasEnhancement = hasParticle && hasEffect
+  if (pipelineVersion === 6) {
+    for (const name of ICON_NAMES) await insertObject(db, 'icon-png', iconBytes[name], iconHashes[name])
+    await insertObject(db, 'favicon-ico', faviconIco, faviconIcoHash)
+  }
+
   const now = new Date()
   await db('siteLogoRevisions').insert({
     id: revisionId,
@@ -136,17 +216,29 @@ const seedReadyRevision = async (
     pipelineVersion,
     status: 'ready',
     retrySequence,
-    logoPngKind: 'logo-png',
-    logoPngHash: hashes['logo-png'],
-    particleV1Kind: 'particle-v1',
-    particleV1Hash: hashes['particle-v1'],
-    effectStaticPngKind: 'effect-static-png',
-    effectStaticPngHash: hashes['effect-static-png'],
-    normalizedWidth: 320,
-    normalizedHeight: 96,
-    particleCount: 12,
-    medianStroke: 2,
-    auraColor: '#112233',
+    logoPngKind: hasLogo ? 'logo-png' : null,
+    logoPngHash: hasLogo ? hashes['logo-png'] : null,
+    iconPngKind: pipelineVersion === 6 ? 'icon-png' : null,
+    favicon16Hash: pipelineVersion === 6 ? iconHashes.favicon16 : null,
+    favicon32Hash: pipelineVersion === 6 ? iconHashes.favicon32 : null,
+    tile150Hash: pipelineVersion === 6 ? iconHashes.tile150 : null,
+    apple180Hash: pipelineVersion === 6 ? iconHashes.apple180 : null,
+    app192Hash: pipelineVersion === 6 ? iconHashes.app192 : null,
+    app512Hash: pipelineVersion === 6 ? iconHashes.app512 : null,
+    maskable512Hash: pipelineVersion === 6 ? iconHashes.maskable512 : null,
+    faviconIcoKind: pipelineVersion === 6 ? 'favicon-ico' : null,
+    faviconIcoHash: pipelineVersion === 6 ? faviconIcoHash : null,
+    particleV1Kind: hasParticle ? 'particle-v1' : null,
+    particleV1Hash: hasParticle ? hashes['particle-v1'] : null,
+    effectStaticPngKind: hasEffect ? 'effect-static-png' : null,
+    effectStaticPngHash: hasEffect ? hashes['effect-static-png'] : null,
+    normalizedWidth: hasEnhancement ? 320 : null,
+    normalizedHeight: hasEnhancement ? 96 : null,
+    particleCount: hasEnhancement ? 12 : null,
+    medianStroke: hasEnhancement ? 2 : null,
+    auraColor: hasEnhancement ? '#112233' : null,
+    enhancementErrorCode: null,
+    errorCode: null,
     requestedBy: 3,
     createdAt: now,
     updatedAt: now,
@@ -156,6 +248,8 @@ const seedReadyRevision = async (
     revisionId,
     sourceHash,
     logoHash: hashes['logo-png'],
+    iconHashes: pipelineVersion === 6 ? iconHashes : null,
+    faviconIcoHash: pipelineVersion === 6 ? faviconIcoHash : null,
     particleHash: hashes['particle-v1'],
     staticHash: hashes['effect-static-png']
   }
@@ -163,11 +257,48 @@ const seedReadyRevision = async (
 
 const json = async <Value>(response: Response): Promise<Value> => (await response.json()) as Value
 
+type LogoIconsBody = {
+  favicon16Url: string
+  favicon32Url: string
+  tile150Url: string
+  apple180Url: string
+  app192Url: string
+  app512Url: string
+  maskable512Url: string
+  faviconIcoUrl: string
+}
+
+type ActiveBody = {
+  revisionId: string
+  logoUrl: string
+  logoIcons: LogoIconsBody | null
+  enhancement: { status: 'ready'; reason: null } | { status: 'unavailable'; reason: string }
+}
+
 interface StatusBody {
-  active: { revisionId: string; logoUrl: string } | null
-  candidate: { revisionId: string; status: string; errorCode: string | null } | null
+  active: ActiveBody | null
+  candidate: { revisionId: string; status: 'pending' | 'running' | 'ready' | 'failed'; errorCode: string | null } | null
   statusUrl?: string
 }
+
+const activeBody = (revision: ReadyRevision): ActiveBody => ({
+  revisionId: revision.revisionId,
+  logoUrl: `/_site-logo/${revision.logoHash}/logo.png`,
+  logoIcons:
+    revision.iconHashes === null || revision.faviconIcoHash === null
+      ? null
+      : {
+          favicon16Url: `/_site-logo/${revision.iconHashes.favicon16}/icon.png`,
+          favicon32Url: `/_site-logo/${revision.iconHashes.favicon32}/icon.png`,
+          tile150Url: `/_site-logo/${revision.iconHashes.tile150}/icon.png`,
+          apple180Url: `/_site-logo/${revision.iconHashes.apple180}/icon.png`,
+          app192Url: `/_site-logo/${revision.iconHashes.app192}/icon.png`,
+          app512Url: `/_site-logo/${revision.iconHashes.app512}/icon.png`,
+          maskable512Url: `/_site-logo/${revision.iconHashes.maskable512}/icon.png`,
+          faviconIcoUrl: `/_site-logo/${revision.faviconIcoHash}/favicon.ico`
+        },
+  enhancement: { status: 'ready', reason: null }
+})
 
 interface ControllerModule {
   default: Router
@@ -319,7 +450,9 @@ describe('managed site logo HTTP contracts', () => {
 
     const response = await upload({ bytes })
     expect(response.status).toBe(202)
-    expect(await response.json()).toMatchObject({ candidate: { status: 'pending' }, statusUrl: '/_api/site/logo' })
+    const body = await json<StatusBody>(response)
+    expect(body).toMatchObject({ active: null, candidate: { status: 'pending', errorCode: null }, statusUrl: '/_api/site/logo' })
+    expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 6 })
     expect(await db('siteLogoObjects').where({ kind: 'source' }).first('byteLength')).toEqual({ byteLength: SITE_LOGO_SOURCE_LIMIT })
     expect(globalJsonParserCalls).toBe(0)
     expect(globalUrlencodedParserCalls).toBe(0)
@@ -330,8 +463,7 @@ describe('managed site logo HTTP contracts', () => {
     const first = await upload({ bytes: PNG_BYTES, name: 'same-name.png' })
     expect(first.status).toBe(202)
     const firstBody = await json<StatusBody>(first)
-    expect(firstBody).toMatchObject({ active: null, candidate: { status: 'pending', errorCode: null }, statusUrl: '/_api/site/logo' })
-    expect(await db('siteLogoRevisions').where({ id: firstBody.candidate!.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 5 })
+    expect(await db('siteLogoRevisions').where({ id: firstBody.candidate!.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 6 })
 
     const pending = await upload({ bytes: Buffer.from(PNG_BYTES), name: 'renamed.png' })
     expect(pending.status).toBe(202)
@@ -344,42 +476,47 @@ describe('managed site logo HTTP contracts', () => {
 
     const jobs = await db('durableJobs').select('type', 'version', 'payload')
     expect(jobs).toEqual([
-      { type: 'process-site-logo', version: 3, payload: JSON.stringify({ revisionId: firstBody.candidate!.revisionId, retrySequence: 0 }) }
+      { type: 'process-site-logo', version: 4, payload: JSON.stringify({ revisionId: firstBody.candidate!.revisionId, retrySequence: 0 }) }
     ])
   })
 
-  it('returns 200 without work for an intact active pipeline-v5 upload', async () => {
-    const active = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000011')
+  it('creates v6 work instead of reusing an intact active historical pipeline-v5 revision', async () => {
+    const active = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000011', 5)
     await db('siteLogoState').where({ id: 1 }).update({ generation: 1, desiredRevisionId: active.revisionId, activeRevisionId: active.revisionId })
 
     const response = await upload({ bytes: Buffer.from(PNG_BYTES) })
-    expect(response.status).toBe(200)
-    expect(await json<StatusBody>(response)).toEqual({
-      active: { revisionId: active.revisionId, logoUrl: `/_site-logo/${active.logoHash}/logo.png` },
-      candidate: null,
-      statusUrl: '/_api/site/logo'
+    expect(response.status).toBe(202)
+    const body = await json<StatusBody>(response)
+    expect(body.active).toEqual(activeBody(active))
+    expect(body.candidate).toMatchObject({ status: 'pending', errorCode: null })
+    expect(body.candidate?.revisionId).not.toBe(active.revisionId)
+    expect(body.statusUrl).toBe('/_api/site/logo')
+    expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion', 'retrySequence')).toEqual({
+      pipelineVersion: 6,
+      retrySequence: 1
     })
-    expect(await db('durableJobs')).toHaveLength(0)
+    expect(await db('durableJobs')).toHaveLength(1)
   })
-
-  it('activates an intact reusable ready pipeline-v5 revision with 200 instead of enqueuing it again', async () => {
+  it('activates an intact reusable ready pipeline-v6 revision with 200 instead of enqueuing it again', async () => {
     const active = await seedReadyRevision(db, ACTIVE_SOURCE, '00000000-0000-4000-8000-000000000021')
-    const reusable = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000022', 5, 2)
+    const reusable = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000022', 6, 2)
     await db('siteLogoState').where({ id: 1 }).update({ generation: 2, desiredRevisionId: reusable.revisionId, activeRevisionId: active.revisionId })
 
     const response = await upload({ bytes: PNG_BYTES })
     expect(response.status).toBe(200)
-    expect(await json<StatusBody>(response)).toMatchObject({
-      active: { revisionId: reusable.revisionId, logoUrl: `/_site-logo/${reusable.logoHash}/logo.png` },
-      candidate: null
+    expect(await json<StatusBody>(response)).toEqual({
+      active: activeBody(reusable),
+      candidate: null,
+      statusUrl: '/_api/site/logo'
     })
+    expect(await db('siteLogoRevisions').where({ id: reusable.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 6 })
     expect(await db('durableJobs')).toHaveLength(0)
     expect(global.WIKI.config.logoUrl).toBe(`/_site-logo/${reusable.logoHash}/logo.png`)
     expect(await db('settings').where({ key: 'logoUrl' }).first('value')).toEqual({ value: JSON.stringify({ v: `/_site-logo/${reusable.logoHash}/logo.png` }) })
   })
 
-  it.each([1, 2, 3, 4] as const)(
-    'does not reuse a ready pipeline-v%s revision and preserves the active bundle while creating pipeline v5 work',
+  it.each([1, 2, 3, 4, 5] as const)(
+    'does not reuse a ready historical pipeline-v%s revision and preserves the active bundle while creating pipeline v6 work',
     async pipelineVersion => {
       const active = await seedReadyRevision(db, ACTIVE_SOURCE, '00000000-0000-4000-8000-000000000023')
       const olderReady = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000024', pipelineVersion, 2)
@@ -388,11 +525,11 @@ describe('managed site logo HTTP contracts', () => {
       const response = await upload({ bytes: PNG_BYTES })
       expect(response.status).toBe(202)
       const body = await json<StatusBody>(response)
-      expect(body.active).toEqual({ revisionId: active.revisionId, logoUrl: `/_site-logo/${active.logoHash}/logo.png` })
+      expect(body.active).toEqual(activeBody(active))
       expect(body.candidate).toMatchObject({ status: 'pending', errorCode: null })
       expect(body.candidate?.revisionId).not.toBe(olderReady.revisionId)
       expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion', 'retrySequence')).toEqual({
-        pipelineVersion: 5,
+        pipelineVersion: 6,
         retrySequence: 3
       })
       expect((await db('siteLogoRevisions').where({ id: olderReady.revisionId }).first('retiredAt'))?.retiredAt).not.toBeNull()
@@ -400,35 +537,38 @@ describe('managed site logo HTTP contracts', () => {
     }
   )
 
-  it.each([1, 2, 3, 4] as const)('keeps an active pipeline-v%s bundle visible while identical-source pipeline v5 work is pending', async pipelineVersion => {
-    const olderActive = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000025', pipelineVersion)
-    await db('siteLogoState').where({ id: 1 }).update({
-      generation: 1,
-      desiredRevisionId: olderActive.revisionId,
-      activeRevisionId: olderActive.revisionId
-    })
+  it.each([1, 2, 3, 4, 5] as const)(
+    'keeps an active historical pipeline-v%s bundle visible while identical-source pipeline v6 work is pending',
+    async pipelineVersion => {
+      const olderActive = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000025', pipelineVersion)
+      await db('siteLogoState').where({ id: 1 }).update({
+        generation: 1,
+        desiredRevisionId: olderActive.revisionId,
+        activeRevisionId: olderActive.revisionId
+      })
 
-    const response = await upload({ bytes: PNG_BYTES })
-    expect(response.status).toBe(202)
-    const body = await json<StatusBody>(response)
-    expect(body.active).toEqual({ revisionId: olderActive.revisionId, logoUrl: `/_site-logo/${olderActive.logoHash}/logo.png` })
-    expect(body.candidate).toMatchObject({ status: 'pending', errorCode: null })
-    expect(body.candidate?.revisionId).not.toBe(olderActive.revisionId)
-    expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 5 })
-  })
+      const response = await upload({ bytes: PNG_BYTES })
+      expect(response.status).toBe(202)
+      const body = await json<StatusBody>(response)
+      expect(body.active).toEqual(activeBody(olderActive))
+      expect(body.candidate).toMatchObject({ status: 'pending', errorCode: null })
+      expect(body.candidate?.revisionId).not.toBe(olderActive.revisionId)
+      expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 6 })
+    }
+  )
 
   it.each([
     ['digest-mismatched', undefined, 'logo-png'],
     ['incomplete', 'particle-v1', undefined]
   ] as const)('retires a %s ready candidate and creates fresh fenced work without hiding the active preview', async (_label, omitKind, corruptKind) => {
     const active = await seedReadyRevision(db, ACTIVE_SOURCE, '00000000-0000-4000-8000-000000000031')
-    const broken = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000032', 5, 4, omitKind, corruptKind)
+    const broken = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000032', 6, 4, omitKind, corruptKind)
     await db('siteLogoState').where({ id: 1 }).update({ generation: 2, desiredRevisionId: broken.revisionId, activeRevisionId: active.revisionId })
 
     const response = await upload({ bytes: PNG_BYTES })
     expect(response.status).toBe(202)
     const body = await json<StatusBody>(response)
-    expect(body.active).toEqual({ revisionId: active.revisionId, logoUrl: `/_site-logo/${active.logoHash}/logo.png` })
+    expect(body.active).toEqual(activeBody(active))
     expect(body.candidate).toMatchObject({ status: 'pending', errorCode: null })
     expect(body.candidate?.revisionId).not.toBe(broken.revisionId)
     expect((await db('siteLogoRevisions').where({ id: broken.revisionId }).first('retiredAt'))?.retiredAt).not.toBeNull()
@@ -449,27 +589,28 @@ describe('managed site logo HTTP contracts', () => {
     expect(status.status).toBe(200)
     expect(status.headers.get('cache-control')).toBe('no-store')
     expect(await json<StatusBody>(status)).toEqual({
-      active: { revisionId: active.revisionId, logoUrl: `/_site-logo/${active.logoHash}/logo.png` },
+      active: activeBody(active),
       candidate: { revisionId: pending.revisionId, status: 'failed', errorCode: 'ARTIFACT_TOO_LARGE' }
     })
 
     const retried = await fetch(`${baseUrl}/_api/site/logo/retry`, { method: 'POST' })
     expect(retried.status).toBe(202)
     const retriedBody = await json<StatusBody>(retried)
-    expect(retriedBody.active?.revisionId).toBe(active.revisionId)
+    expect(retriedBody.active).toEqual(activeBody(active))
     expect(retriedBody.candidate).toMatchObject({ status: 'pending', errorCode: null })
     expect(retriedBody.candidate?.revisionId).not.toBe(pending.revisionId)
+    expect(retriedBody.statusUrl).toBe('/_api/site/logo')
     const retriedRevision = await db('siteLogoRevisions')
       .where({ id: retriedBody.candidate!.revisionId })
       .first('pipelineVersion', 'retrySequence', 'requestedBy', 'jobId')
     expect(retriedRevision).toMatchObject({
-      pipelineVersion: 5,
+      pipelineVersion: 6,
       retrySequence: 1,
       requestedBy: 7
     })
     expect(await db('durableJobs').where({ id: retriedRevision.jobId }).first('type', 'version')).toEqual({
       type: 'process-site-logo',
-      version: 3
+      version: 4
     })
     expect((await db('siteLogoRevisions').where({ id: pending.revisionId }).first('retiredAt'))?.retiredAt).not.toBeNull()
   })

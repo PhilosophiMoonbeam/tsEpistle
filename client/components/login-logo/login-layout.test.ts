@@ -59,7 +59,7 @@ if (compiledTemplate.errors.length > 0) {
 const renderLogin = new Function('Vue', compiledTemplate.code)(Vue) as Vue.RenderFunction
 
 const managedEffect: LogoEffectDescriptor = {
-  pipelineVersion: 5,
+  pipelineVersion: 6,
   logoUrl: '/_site-logo/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/logo.png',
   particleUrl: '/_site-logo/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/particle.bin',
   staticUrl: '/_site-logo/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/effect.png',
@@ -201,6 +201,7 @@ type TestHostNode = {
   kind: 'element' | 'text' | 'comment'
   type: string
   props: Record<string, unknown>
+  style: { display: string }
   children: TestHostNode[]
   parent: TestHostNode | null
   text: string
@@ -210,6 +211,7 @@ const createTestHostNode = (kind: TestHostNode['kind'], type = ''): TestHostNode
   kind,
   type,
   props: {},
+  style: { display: '' },
   children: [],
   parent: null,
   text: ''
@@ -273,6 +275,7 @@ const testRenderer = Vue.createRenderer<TestHostNode, TestHostNode>({
   cloneNode(node) {
     const clone = createTestHostNode(node.kind, node.type)
     clone.props = { ...node.props }
+    clone.style = { ...node.style }
     clone.text = node.text
     return clone
   },
@@ -416,6 +419,7 @@ const createLoginHarness = (effect: LogoEffectDescriptor | null, initialLoading 
       loaderTitle: initialLoaderTitle,
       loginStyle: {},
       logoEffect: effect,
+      logoImageFailed: false,
       logoUrl: managedEffect.logoUrl,
       newPassword: '',
       newPasswordVerify: '',
@@ -545,7 +549,7 @@ describe('login personalized static-logo integration', () => {
     expect(isLogoEffectDescriptor(staleEffect)).toBe(true)
 
     expect(resolveConfiguredLogoEffect(managedEffect.logoUrl, staleEffect)).toBeNull()
-    expect(resolveConfiguredLogoEffect(managedEffect.logoUrl, { ...managedEffect, pipelineVersion: 6 })).toBeNull()
+    expect(resolveConfiguredLogoEffect(managedEffect.logoUrl, { ...managedEffect, pipelineVersion: 7 })).toBeNull()
     expect(resolveConfiguredLogoEffect(managedEffect.logoUrl, managedEffect)).toBe(managedEffect)
   })
 

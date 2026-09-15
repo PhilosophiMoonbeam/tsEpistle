@@ -1,6 +1,16 @@
 # Login logo particle cloud
 
-Existing managed logo uploads automatically use the cloud renderer; no upload, migration, or server-side reprocessing is required. The ordinary login logo preserves the full-canvas PNG and is displayed inside the credential card's framed `.login-logo` container with a contained image; this frame is ordinary branding and does not alter the particle source. Move the pointer through the cloud to stir it; click to scatter particles. The displaced particles return to their logo positions.
+Managed workspace logos use the ordinary image everywhere; the particle cloud is an optional login enhancement. If particle extraction is unsuitable, the accepted logo still publishes and the login page keeps the contained ordinary image.
+
+## Upload and rendition contract
+
+The Workspace logo control accepts one visible static PNG, JPEG, or WebP file up to 5 MiB. Oriented dimensions must be 1–4096 pixels per axis and at most 16,777,216 pixels total. Small images and arbitrary aspect ratios are valid.
+
+Pipeline 6 converts the source to sRGB, preserves its complete oriented canvas, transparency, internal margins, and aspect ratio, and emits a deterministic PNG. It never upscales; only sources with a long axis above 1024 pixels are downscaled. Consumers use contained presentation instead of cropping or stretching the logo.
+
+The same activation publishes a complete browser-icon family: 16 px and 32 px favicons, a 150 px tile, a 180 px Apple touch icon, 192 px and 512 px application icons, a 512 px maskable icon, and a two-size ICO. Icons are square and opaque, contain the source with safe padding, and choose a light or dark backdrop for contrast. The document head, favicon redirect, web app manifest, browser configuration, navigation, authentication, registration, unlock, welcome, administration, error, and mail surfaces all resolve from the active logo revision.
+
+Particle and static-effect artifacts are generated only when the source is suitable for the effect. Their absence never blocks the ordinary logo or icon bundle. Historical pipeline 1–5 revisions remain readable, but new uploads and migration backfills publish pipeline 6 revisions.
 
 ## Rendering and physics
 

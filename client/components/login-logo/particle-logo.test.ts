@@ -6,7 +6,7 @@ const VECTOR_HEX =
   '545345500107380008000000080000000200000018000000cf8f46fd3800000040000000420000004a0000004c000000500000000000000025c94912db36b7eded4ddc283cc81e6edca05578d20431d4'
 const HASH = '0'.repeat(64)
 const descriptor: LogoEffectDescriptor = {
-  pipelineVersion: 5,
+  pipelineVersion: 6,
   logoUrl: `/_site-logo/${HASH}/logo.png`,
   particleUrl: `/_site-logo/${HASH}/particle.bin`,
   staticUrl: `/_site-logo/${HASH}/effect.png`,
@@ -75,13 +75,13 @@ describe('particle-v1 browser parser', () => {
     expect(new Uint8Array(source)).toEqual(before)
   })
   it('requires an exact supported pipeline version in every descriptor', () => {
-    for (const pipelineVersion of [1, 2, 3, 4, 5]) {
+    for (const pipelineVersion of [1, 2, 3, 4, 5, 6]) {
       expect(isLogoEffectDescriptor({ ...descriptor, pipelineVersion })).toBe(true)
     }
 
     const { pipelineVersion: _pipelineVersion, ...missingVersion } = descriptor
     expect(isLogoEffectDescriptor(missingVersion)).toBe(false)
-    for (const pipelineVersion of [0, 1.5, 6, '5', null]) {
+    for (const pipelineVersion of [0, 1.5, 7, '6', null]) {
       expect(isLogoEffectDescriptor({ ...descriptor, pipelineVersion })).toBe(false)
     }
   })

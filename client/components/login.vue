@@ -4,8 +4,16 @@
       main.login-sd(:aria-busy='isLoading', aria-labelledby='login-site-title')
         .login-brand
           .login-logo
-            v-avatar(rounded='0', size='34', variant='text')
-              img(:src='logoUrl', alt='')
+            img(
+              :key='logoUrl'
+              :src='logoUrl'
+              :data-logo-source='logoUrl'
+              v-show='!logoImageFailed'
+              alt=''
+              @error='handleLogoError'
+              @load='handleLogoLoad'
+            )
+            .login-logo-fallback(v-if='logoImageFailed', aria-hidden='true') {{ logoFallback }}
           .login-title
             .login-eyebrow {{ $t('auth:loginRequired') }}
             h1#login-site-title {{ siteTitle }}
@@ -445,6 +453,7 @@ export default defineComponent({
       redirectTimer: null as number | null,
       errorShown: false,
       errorMessage: '',
+      failedLogoUrl: null as string | null,
       successMessage: '',
       fieldErrors: {
         username: '',
@@ -472,6 +481,13 @@ export default defineComponent({
       return siteConfig.title
     },
     logoUrl () { return siteConfig.logoUrl },
+    logoImageFailed (): boolean {
+      return this.failedLogoUrl === this.logoUrl
+    },
+    logoFallback (): string {
+      const title = this.siteTitle.trim()
+      return title ? title.charAt(0).toUpperCase() : '?'
+    },
     logoEffect (): LogoEffectDescriptor | null {
       const candidate = (siteConfig as { logoEffect?: unknown }).logoEffect
       return isLogoEffectDescriptor(candidate) && candidate.logoUrl === siteConfig.logoUrl ? candidate : null
@@ -533,6 +549,20 @@ export default defineComponent({
     if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)
   },
   methods: {
+    handleLogoError (event: Event): void {
+      const image = event.currentTarget
+      if (!(image instanceof HTMLImageElement)) return
+      const source = image.getAttribute('data-logo-source')
+      if (!source || source !== this.logoUrl) return
+      this.failedLogoUrl = source
+    },
+    handleLogoLoad (event: Event): void {
+      const image = event.currentTarget
+      if (!(image instanceof HTMLImageElement)) return
+      const source = image.getAttribute('data-logo-source')
+      if (!source || source !== this.logoUrl) return
+      if (this.failedLogoUrl === source) this.failedLogoUrl = null
+    },
     showError (error: unknown) {
       this.errorMessage = typeof error === 'string' ? error : getErrorMessage(error)
       this.errorShown = true
@@ -940,12 +970,15 @@ export default defineComponent({
 
   &-logo {
     position: relative;
-    display: grid;
-    flex: 0 0 3.25rem;
-    width: 3.25rem;
+    display: flex;
+    flex: 0 1 auto;
+    width: max-content;
+    min-width: 3.25rem;
+    max-width: 10rem;
     height: 3.25rem;
     padding: var(--wiki-space-2);
-    place-items: center;
+    align-items: center;
+    justify-content: center;
     overflow: hidden;
     border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
     border-radius: var(--wiki-control-radius);
@@ -957,19 +990,24 @@ export default defineComponent({
       );
     box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
 
-    > .v-avatar {
-      width: 100% !important;
-      height: 100% !important;
-      min-width: 0 !important;
-      min-height: 0 !important;
-    }
-
-    > .v-avatar > img {
+    > img {
       display: block;
-      width: 100%;
-      height: 100%;
+      width: auto;
+      max-width: 100%;
+      height: auto;
+      max-height: 100%;
       object-fit: contain;
       object-position: center;
+    }
+    &-fallback {
+      display: grid;
+      width: 100%;
+      height: 100%;
+      place-items: center;
+      color: rgb(var(--v-theme-on-surface));
+      font-size: 1.25rem;
+      font-weight: 720;
+      line-height: 1;
     }
   }
 

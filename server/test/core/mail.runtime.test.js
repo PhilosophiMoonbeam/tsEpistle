@@ -114,6 +114,8 @@ describe('Mail runtime configuration and lifecycle', () => {
       expect(result.html).not.toContain('<img src=x onerror=alert(1)>')
       expect(result.html).toContain('&lt;img src=x onerror=alert(1)&gt;')
       expect(result.html).toContain('one=1&amp;two=2')
+      expect(result.html).toMatch(/<img\b[^>]*src="https:\/\/wiki\.example\.test\/logo\.png\?one=1&amp;two=2"[^>]*alt=""[^>]*style="[^"]*max-width:120px;[^"]*max-height:36px;[^"]*width:auto;[^"]*height:auto;/)
+      expect(result.html).not.toContain('height="36"')
     }
     await expect(mail.loadTemplate('../unknown')).rejects.toThrow()
   })

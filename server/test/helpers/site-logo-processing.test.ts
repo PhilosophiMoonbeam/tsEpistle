@@ -13,14 +13,22 @@ import {
   removeNeutralMatte,
   resizeLinearPremultiplied,
   roundHalfAwayFromZero,
+  SiteLogoProcessingError,
+  trimTransparent
+} from '../../helpers/site-logo-processing.ts'
+import {
+  SITE_LOGO_CANONICAL_LONG_AXIS,
+  SITE_LOGO_FAVICON_ICO_BYTE_LIMIT,
+  SITE_LOGO_ICON_PNG_BYTE_LIMIT,
+  SITE_LOGO_ICON_SIZES,
+  SITE_LOGO_MAX_INPUT_DIMENSION,
   SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT,
   SITE_LOGO_PIPELINE_VERSION,
   SITE_LOGO_PNG_BYTE_LIMIT,
   SITE_LOGO_SOURCE_BYTE_LIMIT,
-  SiteLogoProcessingError,
-  type SiteLogoProcessingErrorCode,
-  trimTransparent
-} from '../../helpers/site-logo-processing.ts'
+  SITE_LOGO_STATIC_PNG_BYTE_LIMIT,
+  type SiteLogoErrorCode
+} from '../../../shared/site-logo.ts'
 import { describe, expect, it } from '../bun-test.mts'
 import {
   decodeFixtureRgba,
@@ -42,6 +50,7 @@ import {
   neutralMatteFixture,
   opaqueMatteDetachedFixture,
   opaqueMatteDetachedRaster,
+  onePixelFixture,
   orientedProfiledJpegFixture,
   oversizedDimensionFixture,
   rgbaImage,
@@ -52,10 +61,12 @@ import {
   tallFineDetailFixture,
   transparentContrastFixture,
   transparentLowAlphaContrastFixture,
-  transparentMulticolorDetachedFixture
+  transparentMulticolorDetachedFixture,
+  extremeAspectFixture,
+  highEntropyFixture
 } from './site-logo-processing.fixtures.ts'
 
-const expectCode = async (promise: Promise<unknown>, code: SiteLogoProcessingErrorCode): Promise<void> => {
+const expectCode = async (promise: Promise<unknown>, code: SiteLogoErrorCode): Promise<void> => {
   try {
     await promise
   } catch (error: unknown) {
@@ -72,8 +83,12 @@ const rgbaAt = (data: Buffer, width: number, x: number, y: number): number[] => 
 
 const normalizedNativeAlphaRaster = async (source: Buffer): Promise<RgbaRaster> => {
   const trimmed = trimTransparent(removeNeutralMatte(await decodeFixtureRgba(source), true))
-  const scale = Math.min(1, 1024 / Math.max(trimmed.width, trimmed.height))
-  const working = resizeLinearPremultiplied(trimmed, roundHalfAwayFromZero(scale * trimmed.width), roundHalfAwayFromZero(scale * trimmed.height))
+  const scale = 1024 / Math.max(trimmed.width, trimmed.height)
+  const working = resizeLinearPremultiplied(
+    trimmed,
+    Math.max(1, roundHalfAwayFromZero(scale * trimmed.width)),
+    Math.max(1, roundHalfAwayFromZero(scale * trimmed.height))
+  )
   return padRaster(working, roundHalfAwayFromZero(0.04 * Math.max(working.width, working.height)))
 }
 
@@ -83,11 +98,50 @@ const particleMaskIou = (source: RgbaRaster, particleV1: Buffer): number => {
   return reconstructedMaskIou(source, rasterizeParticles(parsed.width, parsed.height, parsed.records, coreScale).alpha)
 }
 
-const containsRgba = (data: Buffer, pixel: readonly [number, number, number, number]): boolean => {
-  for (let offset = 0; offset < data.length; offset += 4) {
-    if (data[offset] === pixel[0] && data[offset + 1] === pixel[1] && data[offset + 2] === pixel[2] && data[offset + 3] === pixel[3]) return true
+interface OpaqueIconSummary {
+  readonly opaquePixels: number
+  readonly foregroundPixels: number
+  readonly foregroundArea: number
+  readonly contained: boolean
+  readonly safe: boolean
+}
+
+const summarizeOpaqueIcon = (data: Buffer, size: number, foreground: readonly [number, number, number, number], maskable: boolean): OpaqueIconSummary => {
+  let opaquePixels = 0
+  let foregroundPixels = 0
+  let left = size
+  let top = size
+  let right = -1
+  let bottom = -1
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const offset = (y * size + x) * 4
+      if (data[offset + 3] === 255) opaquePixels += 1
+      if (data[offset] === foreground[0] && data[offset + 1] === foreground[1] && data[offset + 2] === foreground[2] && data[offset + 3] === foreground[3]) {
+        foregroundPixels += 1
+        left = Math.min(left, x)
+        top = Math.min(top, y)
+        right = Math.max(right, x)
+        bottom = Math.max(bottom, y)
+      }
+    }
   }
-  return false
+  const foregroundArea = right < left || bottom < top ? 0 : (right - left + 1) * (bottom - top + 1)
+  const contained = left >= 0 && top >= 0 && right < size && bottom < size && foregroundPixels === foregroundArea && foregroundArea > 0
+  const center = size / 2
+  const maxDistance = 0.4 * size
+  const rightEdge = right + 1
+  const bottomEdge = bottom + 1
+  const safe =
+    !maskable ||
+    (contained &&
+      [
+        [left, top],
+        [rightEdge, top],
+        [left, bottomEdge],
+        [rightEdge, bottomEdge]
+      ].every(([x, y]) => Math.hypot(x - center, y - center) <= maxDistance + 1e-9))
+  return { opaquePixels, foregroundPixels, foregroundArea, contained, safe }
 }
 
 const fakePngWithActl = (): Buffer => {
@@ -112,8 +166,8 @@ const animatedWebpHeader = (): Buffer => {
 }
 
 describe('site logo deterministic primitives', () => {
-  it('uses pipeline version five and rounds every tie away from zero', () => {
-    expect(SITE_LOGO_PIPELINE_VERSION).toBe(5)
+  it('uses pipeline version six and rounds every tie away from zero', () => {
+    expect(SITE_LOGO_PIPELINE_VERSION).toBe(6)
     expect([-2.5, -1.5, -0.5, 0.5, 1.5, 2.5].map(roundHalfAwayFromZero)).toEqual([-3, -2, -1, 1, 2, 3])
   })
 
@@ -297,7 +351,7 @@ describe('site logo masking and particle normalization', () => {
   })
 })
 
-describe('site logo source processing and hard gates', () => {
+describe('site logo source processing and v6 publication contract', () => {
   it('maps empty, unsupported, spoofed, animated, corrupt, and digest failures to safe codes', async () => {
     const empty = Buffer.alloc(0)
     await expectCode(processSiteLogoSource(empty, sha256(empty)), 'INVALID_IMAGE')
@@ -319,20 +373,129 @@ describe('site logo source processing and hard gates', () => {
     await expectCode(processSiteLogoSource(valid, 'f'.repeat(64)), 'INVALID_IMAGE')
   })
 
-  it('rejects tiny, fully transparent, and sampling-infeasible decoded images with safe codes', async () => {
-    const tiny = await encodeFixture('png', 63, 64)
-    await expectCode(processSiteLogoSource(tiny, sha256(tiny)), 'INVALID_IMAGE')
+  it('publishes mandatory ordinary and icon artifacts when tiny enhancement inputs are unsuitable', async () => {
+    const onePixel = await onePixelFixture()
+    const tiny = await processSiteLogoSource(onePixel, sha256(onePixel))
+    expect({ width: tiny.logoWidth, height: tiny.logoHeight }).toEqual({ width: 1, height: 1 })
+    expect(tiny.enhancement).toEqual({ status: 'unavailable', reason: 'UNSUITABLE_LOGO' })
+    expect(tiny.faviconIco.readUInt16LE(2)).toBe(1)
+    expect(tiny.faviconIco.readUInt16LE(4)).toBe(2)
+    const iconSummaries: Array<OpaqueIconSummary & { name: string; size: number }> = []
+    for (const name of Object.keys(SITE_LOGO_ICON_SIZES) as Array<keyof typeof tiny.icons>) {
+      const size = SITE_LOGO_ICON_SIZES[name]
+      const icon = await decodeFixtureRgba(tiny.icons[name])
+      iconSummaries.push({
+        name,
+        size,
+        ...summarizeOpaqueIcon(icon.data, icon.width, [17, 83, 191, 255], name === 'maskable512')
+      })
+    }
+    expect(iconSummaries.map(({ name, size }) => ({ name, size }))).toEqual(Object.entries(SITE_LOGO_ICON_SIZES).map(([name, size]) => ({ name, size })))
+    expect(
+      iconSummaries.every(summary => summary.opaquePixels === summary.size * summary.size && summary.foregroundPixels > 0 && summary.contained && summary.safe)
+    ).toBe(true)
+
+    const sparse = await sparseVisibleFixture()
+    const sparseArtifacts = await processSiteLogoSource(sparse, sha256(sparse))
+    expect({ width: sparseArtifacts.logoWidth, height: sparseArtifacts.logoHeight }).toEqual({ width: 256, height: 256 })
+    expect(sparseArtifacts.logoPng.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+
     const transparent = await encodeFixture('png', 256, 256, [0, 0, 0, 0])
     await expectCode(processSiteLogoSource(transparent, sha256(transparent)), 'NO_VISIBLE_PIXELS')
-    const sparse = await sparseVisibleFixture()
-    await expectCode(processSiteLogoSource(sparse, sha256(sparse)), 'UNSUITABLE_LOGO')
   })
 
-  it('rejects a valid over-dimension image and a compressed pixel-count bomb before processing', async () => {
+  it('preserves arbitrary 1:4096 and inverse aspect ratios in the canonical ordinary canvas', async () => {
+    const tall = await extremeAspectFixture()
+    const tallArtifacts = await processSiteLogoSource(tall, sha256(tall))
+    expect({ width: tallArtifacts.logoWidth, height: tallArtifacts.logoHeight }).toEqual({ width: 1, height: SITE_LOGO_CANONICAL_LONG_AXIS })
+    expect(tallArtifacts.enhancement).toEqual({ status: 'unavailable', reason: 'UNSUITABLE_LOGO' })
+    const wide = await encodeFixture('png', 4096, 1, [17, 83, 191, 255])
+    const wideArtifacts = await processSiteLogoSource(wide, sha256(wide))
+    expect({ width: wideArtifacts.logoWidth, height: wideArtifacts.logoHeight }).toEqual({ width: SITE_LOGO_CANONICAL_LONG_AXIS, height: 1 })
+    expect(wideArtifacts.enhancement).toEqual({ status: 'unavailable', reason: 'UNSUITABLE_LOGO' })
+  })
+  it(
+    'publishes the exact mandatory bundle for a legal maximum-axis simple source',
+    async () => {
+      const source = await extremeAspectFixture()
+      expect(await fixtureMetadata(source)).toMatchObject({ width: 1, height: SITE_LOGO_MAX_INPUT_DIMENSION })
+      const artifacts = await processSiteLogoSource(source, sha256(source))
+
+      expect(Object.keys(artifacts).sort()).toEqual(['enhancement', 'faviconIco', 'icons', 'logoHeight', 'logoPng', 'logoWidth'])
+      expect({ width: artifacts.logoWidth, height: artifacts.logoHeight }).toEqual({
+        width: 1,
+        height: SITE_LOGO_CANONICAL_LONG_AXIS
+      })
+      const logo = await decodeFixtureRgba(artifacts.logoPng)
+      expect({ width: logo.width, height: logo.height }).toEqual({ width: 1, height: SITE_LOGO_CANONICAL_LONG_AXIS })
+      expect(logo.data).toEqual(rgbaImage(1, SITE_LOGO_CANONICAL_LONG_AXIS, [17, 83, 191, 255]))
+
+      const decodedIcons = await Promise.all(
+        Object.entries(artifacts.icons).map(async ([name, bytes]) => {
+          const raster = await decodeFixtureRgba(bytes)
+          return { name, width: raster.width, height: raster.height, raster }
+        })
+      )
+      expect(decodedIcons.map(({ name, width, height }) => ({ name, width, height }))).toEqual(
+        Object.entries(SITE_LOGO_ICON_SIZES).map(([name, size]) => ({ name, width: size, height: size }))
+      )
+      expect(
+        decodedIcons.every(({ name, raster, width, height }) => {
+          const summary = summarizeOpaqueIcon(raster.data, width, [17, 83, 191, 255], name === 'maskable512')
+          return summary.opaquePixels === width * height && summary.foregroundPixels > 0 && summary.contained && summary.safe
+        })
+      ).toBe(true)
+
+      const favicon = artifacts.faviconIco
+      const faviconDirectoryEnd = 6 + 2 * 16
+      expect([favicon.readUInt16LE(0), favicon.readUInt16LE(2), favicon.readUInt16LE(4)]).toEqual([0, 1, 2])
+      expect(
+        [0, 1].map(index => {
+          const entry = 6 + index * 16
+          return {
+            width: favicon[entry]!,
+            height: favicon[entry + 1]!,
+            colorCount: favicon[entry + 2]!,
+            reserved: favicon[entry + 3]!,
+            planes: favicon.readUInt16LE(entry + 4),
+            bitsPerPixel: favicon.readUInt16LE(entry + 6),
+            byteLength: favicon.readUInt32LE(entry + 8),
+            byteOffset: favicon.readUInt32LE(entry + 12)
+          }
+        })
+      ).toEqual([
+        {
+          width: SITE_LOGO_ICON_SIZES.favicon16,
+          height: SITE_LOGO_ICON_SIZES.favicon16,
+          colorCount: 0,
+          reserved: 0,
+          planes: 1,
+          bitsPerPixel: 32,
+          byteLength: artifacts.icons.favicon16.length,
+          byteOffset: faviconDirectoryEnd
+        },
+        {
+          width: SITE_LOGO_ICON_SIZES.favicon32,
+          height: SITE_LOGO_ICON_SIZES.favicon32,
+          colorCount: 0,
+          reserved: 0,
+          planes: 1,
+          bitsPerPixel: 32,
+          byteLength: artifacts.icons.favicon32.length,
+          byteOffset: faviconDirectoryEnd + artifacts.icons.favicon16.length
+        }
+      ])
+      expect(favicon.subarray(faviconDirectoryEnd)).toEqual(Buffer.concat([artifacts.icons.favicon16, artifacts.icons.favicon32]))
+      expect(artifacts.enhancement).toEqual({ status: 'unavailable', reason: 'UNSUITABLE_LOGO' })
+    },
+    GENERATED_CORPUS_TIMEOUT_MS
+  )
+
+  it('classifies oriented axis and pixel resource overflow as IMAGE_TOO_LARGE', async () => {
     const oversized = await oversizedDimensionFixture()
     expect(await fixtureMetadata(oversized)).toMatchObject({ width: 4097, height: 64 })
     expect(oversized.length).toBeLessThan(SITE_LOGO_SOURCE_BYTE_LIMIT)
-    await expectCode(processSiteLogoSource(oversized, sha256(oversized)), 'INVALID_IMAGE')
+    await expectCode(processSiteLogoSource(oversized, sha256(oversized)), 'IMAGE_TOO_LARGE')
     const bomb = await decompressionBombFixture()
     expect(await fixtureMetadata(bomb)).toMatchObject({ width: 4097, height: 4096 })
     expect(bomb.length).toBeLessThan(SITE_LOGO_SOURCE_BYTE_LIMIT)
@@ -340,100 +503,29 @@ describe('site logo source processing and hard gates', () => {
   })
 
   it(
-    'uses the shader-equivalent 1024-reference core footprint for a normalized 1106px wordmark',
+    'downscales only the ordinary long axis while retaining high-entropy source pixels and exact icons',
     async () => {
-      const source = await transparentMulticolorDetachedFixture()
-      const artifacts = await processSiteLogoSource(source, sha256(source))
-      expect({ width: artifacts.normalizedWidth, height: artifacts.normalizedHeight }).toEqual({ width: 1106, height: 606 })
-      const parsed = parseParticleV1(artifacts.particleV1)
-      const sourceIndices = parsed.records.map(record => Math.round(record.y) * parsed.width + Math.round(record.x))
-      expect(sourceIndices.every((sourceIndex, index) => index === 0 || sourceIndex > sourceIndices[index - 1]!)).toBe(true)
-      for (const color of [
-        [220, 40, 60, 255],
-        [30, 180, 90, 255],
-        [30, 110, 220, 255],
-        [245, 180, 30, 255]
-      ] as const)
-        expect(parsed.records.filter(record => record.rgba.every((channel, index) => channel === color[index])).length).toBeGreaterThanOrEqual(4)
-      expect(await decodeFixtureRgba(artifacts.logoPng)).toEqual(await decodeFixtureRgba(source))
-
-      const coreScale = Math.max(parsed.width, parsed.height) / 1024
-      expect(coreScale).toBe(1106 / 1024)
-      const shaderEquivalentFootprint = rasterizeParticles(parsed.width, parsed.height, parsed.records, coreScale)
-      const staticEffect = await decodeFixtureRgba(artifacts.effectStaticPng)
-      expect(staticEffect).toEqual({ width: parsed.width, height: parsed.height, data: shaderEquivalentFootprint.staticRgba })
-      expect(reconstructedMaskIou(await normalizedNativeAlphaRaster(source), shaderEquivalentFootprint.alpha)).toBeGreaterThanOrEqual(0.75)
-    },
-    GENERATED_CORPUS_TIMEOUT_MS
-  )
-  it(
-    'accepts the exact 481px PNG at 4,704 deterministic particles with 0.75 mask fidelity and full canonical canvas',
-    async () => {
-      const source = await lowResolutionDetailedEmblemFixture()
-      const artifacts = await processSiteLogoSource(source, sha256(source))
-      expect({
-        width: artifacts.normalizedWidth,
-        height: artifacts.normalizedHeight,
-        count: artifacts.particleCount
-      }).toEqual({
-        width: LOW_RESOLUTION_EMBLEM_VECTOR.normalizedWidth,
-        height: LOW_RESOLUTION_EMBLEM_VECTOR.normalizedHeight,
-        count: LOW_RESOLUTION_EMBLEM_VECTOR.particleCount
-      })
-      const parsed = parseParticleV1(artifacts.particleV1)
-      expect(parsed).toMatchObject({
-        width: artifacts.normalizedWidth,
-        height: artifacts.normalizedHeight,
-        count: artifacts.particleCount
-      })
-      expect(particleMaskIou(await normalizedNativeAlphaRaster(source), artifacts.particleV1)).toBeGreaterThanOrEqual(0.75)
-      expect(parsed.records.some(record => record.rgba[0] === 249 && record.rgba[1] === 161 && record.rgba[2] === 52 && record.rgba[3] === 160)).toBe(true)
-      const canonical = await decodeFixtureRgba(source)
-      const logo = await decodeFixtureRgba(artifacts.logoPng)
-      expect({ width: logo.width, height: logo.height }).toEqual({
-        width: LOW_RESOLUTION_EMBLEM_VECTOR.sourceWidth,
-        height: LOW_RESOLUTION_EMBLEM_VECTOR.sourceHeight
-      })
-      expect(logo.data).toEqual(canonical.data)
-      expect(containsRgba(logo.data, [249, 161, 52, 160])).toBe(true)
-      const effect = await decodeFixtureRgba(artifacts.effectStaticPng)
-      expect({ width: effect.width, height: effect.height }).toEqual({
-        width: LOW_RESOLUTION_EMBLEM_VECTOR.normalizedWidth,
-        height: LOW_RESOLUTION_EMBLEM_VECTOR.normalizedHeight
-      })
-      expect(rgbaAt(effect.data, effect.width, 0, 0)).toEqual([0, 0, 0, 0])
+      const highEntropy = await highEntropyFixture()
+      const artifacts = await processSiteLogoSource(highEntropy, sha256(highEntropy))
+      expect({ width: artifacts.logoWidth, height: artifacts.logoHeight }).toEqual({ width: 256, height: 256 })
+      expect(Object.entries(artifacts.icons).map(([name, bytes]) => [name, bytes.length])).toHaveLength(7)
     },
     GENERATED_CORPUS_TIMEOUT_MS
   )
 
   it(
-    'accepts the exact square badge at 7,407 deterministic particles with 0.75 mask fidelity and separate canvases',
+    'downscales a transparent multicolor wordmark and publishes its enhancement effect',
     async () => {
-      const source = await squareBadgeFixture()
-      const artifacts = await processSiteLogoSource(source, sha256(source))
-      expect({
-        width: artifacts.normalizedWidth,
-        height: artifacts.normalizedHeight,
-        count: artifacts.particleCount
-      }).toEqual({
-        width: SQUARE_BADGE_VECTOR.normalizedWidth,
-        height: SQUARE_BADGE_VECTOR.normalizedHeight,
-        count: SQUARE_BADGE_VECTOR.particleCount
-      })
-      expect(particleMaskIou(await normalizedNativeAlphaRaster(source), artifacts.particleV1)).toBeGreaterThanOrEqual(0.75)
-      expect(await decodeFixtureRgba(artifacts.logoPng)).toEqual(await decodeFixtureRgba(source))
-      const effect = await decodeFixtureRgba(artifacts.effectStaticPng)
-      expect({ width: effect.width, height: effect.height }).toEqual({
-        width: SQUARE_BADGE_VECTOR.normalizedWidth,
-        height: SQUARE_BADGE_VECTOR.normalizedHeight
-      })
-      expect(rgbaAt(effect.data, effect.width, 0, 0)).toEqual([0, 0, 0, 0])
+      const wordmark = await transparentMulticolorDetachedFixture()
+      const wordmarkArtifacts = await processSiteLogoSource(wordmark, sha256(wordmark))
+      expect({ width: wordmarkArtifacts.logoWidth, height: wordmarkArtifacts.logoHeight }).toEqual({ width: 1024, height: 512 })
+      expect(wordmarkArtifacts.enhancement.status).toBe('ready')
     },
     GENERATED_CORPUS_TIMEOUT_MS
   )
 
   it(
-    'keeps opaque neutral mattes in the ordinary logo while removing them only from particle artifacts',
+    'preserves opaque matte fidelity without changing ordinary logo pixels',
     async () => {
       for (const [polarity, foreground, background] of [
         ['dark-on-white', [12, 12, 12, 255], [250, 250, 250, 255]],
@@ -441,10 +533,8 @@ describe('site logo source processing and hard gates', () => {
       ] as const) {
         const source = await neutralMatteFixture(polarity)
         const artifacts = await processSiteLogoSource(source, sha256(source))
-        expect({ width: artifacts.normalizedWidth, height: artifacts.normalizedHeight }).toEqual({ width: 692, height: 436 })
         const logo = await decodeFixtureRgba(artifacts.logoPng)
         expect(logo).toEqual(await decodeFixtureRgba(source))
-        expect({ width: logo.width, height: logo.height }).toEqual({ width: 800, height: 480 })
         expect(rgbaAt(logo.data, logo.width, 0, 0)).toEqual([...background])
         expect(rgbaAt(logo.data, logo.width, 400, 240)).toEqual([...foreground])
       }
@@ -453,102 +543,110 @@ describe('site logo source processing and hard gates', () => {
   )
 
   it(
-    'rejects an opaque matte source rather than publishing after its meaningful detached glyph is lost',
+    'keeps detached opaque mattes from publishing unsuitable enhancement data',
     async () => {
-      const source = await opaqueMatteDetachedFixture()
-      await expectCode(processSiteLogoSource(source, sha256(source)), 'UNSUITABLE_LOGO')
+      const detached = await opaqueMatteDetachedFixture()
+      const detachedArtifacts = await processSiteLogoSource(detached, sha256(detached))
+      expect(detachedArtifacts.enhancement).toEqual({ status: 'unavailable', reason: 'UNSUITABLE_LOGO' })
     },
     GENERATED_CORPUS_TIMEOUT_MS
   )
 
   it(
-    'adds deterministic neutral rings to static near-white and near-black particles without a backplate',
+    'reports unavailable enhancement when low-alpha contrast cannot be established',
     async () => {
-      for (const [polarity, foreground, ring] of [
-        ['near-white', [250, 250, 250, 255], [0, 0, 0, 255]],
-        ['near-black', [5, 5, 5, 255], [255, 255, 255, 255]]
-      ] as const) {
-        const source = await transparentContrastFixture(polarity)
-        const artifacts = await processSiteLogoSource(source, sha256(source))
-        expect({ width: artifacts.normalizedWidth, height: artifacts.normalizedHeight }).toEqual({ width: 692, height: 436 })
-        expect(await decodeFixtureRgba(artifacts.logoPng)).toEqual(await decodeFixtureRgba(source))
-        const effect = await decodeFixtureRgba(artifacts.effectStaticPng)
-        expect(containsRgba(effect.data, foreground)).toBe(true)
-        expect(containsRgba(effect.data, ring)).toBe(true)
-        expect(rgbaAt(effect.data, effect.width, 0, 0)).toEqual([0, 0, 0, 0])
-      }
+      const lowAlpha = await transparentLowAlphaContrastFixture()
+      const lowAlphaArtifacts = await processSiteLogoSource(lowAlpha, sha256(lowAlpha))
+      expect(lowAlphaArtifacts.enhancement).toEqual({ status: 'unavailable', reason: 'UNSUITABLE_LOGO' })
     },
     GENERATED_CORPUS_TIMEOUT_MS
   )
 
   it(
-    'rejects publication when low-alpha particles cannot reach contrast coverage on both surfaces',
+    'retains the existing enhancement quality gates as an isolated ready result',
     async () => {
-      const source = await transparentLowAlphaContrastFixture()
-      await expectCode(processSiteLogoSource(source, sha256(source)), 'UNSUITABLE_LOGO')
-    },
-    GENERATED_CORPUS_TIMEOUT_MS
-  )
-
-  it(
-    'accepts a 1:4 tall fine-detail mark without changing its authoritative aspect',
-    async () => {
-      const source = await tallFineDetailFixture()
+      const source = await lowResolutionDetailedEmblemFixture()
       const artifacts = await processSiteLogoSource(source, sha256(source))
-      expect({ width: artifacts.normalizedWidth, height: artifacts.normalizedHeight }).toEqual({ width: 338, height: 1106 })
-      expect((artifacts.normalizedWidth - 82) / (artifacts.normalizedHeight - 82)).toBe(0.25)
-      expect(artifacts.particleCount).toBeGreaterThanOrEqual(2_000)
-      expect(artifacts.particleCount).toBeLessThanOrEqual(8_000)
+      expect(artifacts.enhancement.status).toBe('ready')
+      if (artifacts.enhancement.status !== 'ready') return
+      expect({
+        width: artifacts.enhancement.normalizedWidth,
+        height: artifacts.enhancement.normalizedHeight,
+        count: artifacts.enhancement.particleCount
+      }).toEqual({
+        width: LOW_RESOLUTION_EMBLEM_VECTOR.normalizedWidth,
+        height: LOW_RESOLUTION_EMBLEM_VECTOR.normalizedHeight,
+        count: LOW_RESOLUTION_EMBLEM_VECTOR.particleCount
+      })
+      const parsed = parseParticleV1(artifacts.enhancement.particleV1)
+      expect(parsed).toMatchObject({
+        width: artifacts.enhancement.normalizedWidth,
+        height: artifacts.enhancement.normalizedHeight,
+        count: artifacts.enhancement.particleCount
+      })
+      expect(particleMaskIou(await normalizedNativeAlphaRaster(source), artifacts.enhancement.particleV1)).toBeGreaterThanOrEqual(0.75)
+      const logo = await decodeFixtureRgba(artifacts.logoPng)
+      expect({ width: logo.width, height: logo.height }).toEqual({ width: 481, height: 481 })
+      const effect = await decodeFixtureRgba(artifacts.enhancement.effectStaticPng)
+      expect({ width: effect.width, height: effect.height }).toEqual({
+        width: LOW_RESOLUTION_EMBLEM_VECTOR.normalizedWidth,
+        height: LOW_RESOLUTION_EMBLEM_VECTOR.normalizedHeight
+      })
     },
     GENERATED_CORPUS_TIMEOUT_MS
   )
 
   it(
-    'accepts and auto-orients a profiled EXIF JPEG before normalization',
+    'auto-orients profiled EXIF input and preserves the arbitrary aspect in ordinary dimensions',
     async () => {
       const source = await orientedProfiledJpegFixture()
       expect(await fixtureMetadata(source)).toEqual({ width: 1200, height: 720, orientation: 6, hasProfile: true })
       const artifacts = await processSiteLogoSource(source, sha256(source))
-      expect({ width: artifacts.normalizedWidth, height: artifacts.normalizedHeight }).toEqual({ width: 696, height: 1106 })
-      const logo = await decodeFixtureRgba(artifacts.logoPng)
-      expect({ width: logo.width, height: logo.height }).toEqual({ width: 720, height: 1200 })
+      expect({ width: artifacts.logoWidth, height: artifacts.logoHeight }).toEqual({ width: 614, height: 1024 })
+      expect(artifacts.enhancement.status).toBe('ready')
     },
     GENERATED_CORPUS_TIMEOUT_MS
   )
 
   it(
-    'produces byte-identical complete artifacts for identical PNG bytes and hash',
+    'produces deterministic ordinary, icon, ICO, and optional enhancement bytes',
     async () => {
       const source = await squareBadgeFixture()
       const digest = sha256(source)
       const first = await processSiteLogoSource(source, digest)
       const second = await processSiteLogoSource(Buffer.from(source), digest)
       expect(first).toEqual(second)
-      const artifactHashes = (artifacts: typeof first): string[] => [artifacts.logoPng, artifacts.particleV1, artifacts.effectStaticPng].map(sha256)
-      expect(artifactHashes(first)).toEqual(artifactHashes(second))
-      expect(new Set(artifactHashes(first)).size).toBe(3)
-      expect(first.particleCount).toBe(SQUARE_BADGE_VECTOR.particleCount)
-      expect(first.particleCount).toBeGreaterThanOrEqual(2_000)
-      expect(first.particleCount).toBeLessThanOrEqual(8_000)
-      expect(first.particleV1.length).toBeLessThanOrEqual(SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT)
-      expect(parseParticleV1(first.particleV1)).toMatchObject({
-        width: first.normalizedWidth,
-        height: first.normalizedHeight,
-        count: first.particleCount
-      })
+      const artifactBytes = (artifacts: typeof first): Buffer[] => [
+        artifacts.logoPng,
+        ...Object.values(artifacts.icons),
+        artifacts.faviconIco,
+        ...(artifacts.enhancement.status === 'ready' ? [artifacts.enhancement.particleV1, artifacts.enhancement.effectStaticPng] : [])
+      ]
+      expect(artifactBytes(first).map(sha256)).toEqual(artifactBytes(second).map(sha256))
+      expect(new Set(artifactBytes(first).map(sha256)).size).toBeGreaterThan(3)
       expect(first.logoPng.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-      expect(first.effectStaticPng.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+      expect(first.faviconIco.subarray(0, 4)).toEqual(Buffer.from([0, 0, 1, 0]))
       expect(() => assertArtifactBudgets(first)).not.toThrow()
-      expect(await decodeFixtureRgba(first.logoPng)).toEqual(await decodeFixtureRgba(source))
     },
     GENERATED_CORPUS_TIMEOUT_MS
   )
 
-  it('enforces raw, gzip, ordinary PNG, and static PNG publication budgets', () => {
-    const base = { logoPng: Buffer.alloc(1), particleV1: Buffer.alloc(1), effectStaticPng: Buffer.alloc(1) }
-    expect(() => assertArtifactBudgets(base)).not.toThrow()
-    expect(() => assertArtifactBudgets({ ...base, particleV1: Buffer.alloc(SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT + 1) })).toThrow('ARTIFACT_TOO_LARGE')
-    expect(() => assertArtifactBudgets({ ...base, logoPng: Buffer.alloc(SITE_LOGO_PNG_BYTE_LIMIT + 1) })).toThrow('ARTIFACT_TOO_LARGE')
-    expect(() => assertArtifactBudgets({ ...base, effectStaticPng: Buffer.alloc(1024 * 1024 + 1) })).toThrow('ARTIFACT_TOO_LARGE')
+  it('enforces mandatory icon/ordinary budgets and optional enhancement budgets', async () => {
+    const source = await onePixelFixture()
+    const valid = await processSiteLogoSource(source, sha256(source))
+    expect(() => assertArtifactBudgets({ ...valid, icons: { ...valid.icons, favicon16: Buffer.alloc(SITE_LOGO_ICON_PNG_BYTE_LIMIT + 1) } })).toThrow(
+      'ARTIFACT_TOO_LARGE'
+    )
+    expect(() => assertArtifactBudgets({ ...valid, logoPng: Buffer.alloc(SITE_LOGO_PNG_BYTE_LIMIT + 1) })).toThrow('ARTIFACT_TOO_LARGE')
+    expect(() => assertArtifactBudgets({ ...valid, faviconIco: Buffer.alloc(SITE_LOGO_FAVICON_ICO_BYTE_LIMIT + 1) })).toThrow('ARTIFACT_TOO_LARGE')
+    if (valid.enhancement.status === 'ready') {
+      expect(() =>
+        assertArtifactBudgets({
+          ...valid,
+          enhancement: { ...valid.enhancement, effectStaticPng: Buffer.alloc(SITE_LOGO_STATIC_PNG_BYTE_LIMIT + 1) }
+        })
+      ).toThrow('ARTIFACT_TOO_LARGE')
+      expect(valid.enhancement.particleV1.length).toBeLessThanOrEqual(SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT)
+    }
   })
 })

@@ -5,8 +5,16 @@
         v-card-text.page-unlock-content
           .page-unlock-brand
             .page-unlock-logo
-              v-avatar(rounded='0', size='40')
-                img(:src='logoUrl', alt='')
+              img.page-unlock-logo-image(
+                v-if='logoUrl && !logoImageFailed'
+                :key='logoUrl'
+                :src='logoUrl'
+                :data-logo-source='logoUrl'
+                alt=''
+                @error='handleLogoError'
+                @load='handleLogoLoad'
+              )
+              .page-unlock-logo-fallback(v-else, aria-hidden='true') {{ logoFallback }}
             .page-unlock-brand-title
               .page-unlock-eyebrow Secure page access
               .text-title-large {{ siteTitle }}
@@ -61,21 +69,26 @@
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
-
-/* global siteConfig */
+import { wikiStore } from '@/store/index.ts'
 
 export default defineComponent({
   data() {
     return {
+      failedLogoUrl: null as string | null,
       hidePassword: true
     }
   },
   computed: {
     siteTitle (): string {
-      return siteConfig.title
+      return wikiStore.site.title
     },
     logoUrl (): string {
-      return siteConfig.logoUrl
+      return wikiStore.site.logoUrl
+    },
+    logoImageFailed (): boolean { return this.failedLogoUrl === this.logoUrl },
+    logoFallback (): string {
+      const title = this.siteTitle.trim()
+      return title ? title.charAt(0).toUpperCase() : '?'
     },
     validPageId (): number | null {
       return Number.isInteger(this.pageId) && this.pageId > 0 ? this.pageId : null
@@ -97,6 +110,22 @@ export default defineComponent({
     error: {
       type: String,
       default: ''
+    }
+  },
+  methods: {
+    handleLogoError (event: Event): void {
+      const image = event.currentTarget
+      if (!(image instanceof HTMLImageElement)) return
+      const source = image.getAttribute('data-logo-source')
+      if (!source || source !== this.logoUrl) return
+      this.failedLogoUrl = source
+    },
+    handleLogoLoad (event: Event): void {
+      const image = event.currentTarget
+      if (!(image instanceof HTMLImageElement)) return
+      const source = image.getAttribute('data-logo-source')
+      if (!source || source !== this.logoUrl) return
+      if (this.failedLogoUrl === source) this.failedLogoUrl = null
     }
   }
 })
@@ -129,24 +158,54 @@ export default defineComponent({
 
 .page-unlock-brand {
   display: flex;
+  min-width: 0;
   gap: var(--wiki-space-3);
   align-items: center;
   margin-bottom: var(--wiki-space-6);
 }
 
 .page-unlock-logo {
-  display: grid;
-  width: 52px;
+  position: relative;
+  display: inline-flex;
+  flex: 0 1 auto;
+  width: max-content;
+  min-width: 52px;
+  max-width: 128px;
   height: 52px;
-  flex: 0 0 52px;
-  place-items: center;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 4px;
   border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 22%, transparent);
   border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, rgb(var(--v-theme-surface)));
 }
 
+.page-unlock-logo-image {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: 42px;
+  max-height: 42px;
+  object-fit: contain;
+  object-position: center;
+}
+
+.page-unlock-logo-fallback {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 1.25rem;
+  font-weight: 720;
+  line-height: 1;
+}
+
 .page-unlock-brand-title {
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
   overflow-wrap: anywhere;
 }
 

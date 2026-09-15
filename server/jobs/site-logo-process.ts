@@ -3,25 +3,32 @@ import { gzipSync } from 'node:zlib'
 import type { Knex } from 'knex'
 
 import type { DurableJob, DurableJobHandler } from '../core/durable-jobs.ts'
+import { parseParticleV1, processSiteLogoSource, SiteLogoProcessingError, type SiteLogoArtifacts } from '../helpers/site-logo-processing.ts'
 import {
-  parseParticleV1,
-  processSiteLogoSource,
+  SITE_LOGO_FAVICON_ICO_BYTE_LIMIT,
+  SITE_LOGO_ICON_PNG_BYTE_LIMIT,
+  SITE_LOGO_ICON_SIZES,
+  SITE_LOGO_JOB_VERSION,
+  SITE_LOGO_MAX_INPUT_DIMENSION,
+  SITE_LOGO_MAX_INPUT_PIXELS,
+  SITE_LOGO_MIN_INPUT_DIMENSION,
   SITE_LOGO_PARTICLE_GZIP_BYTE_LIMIT,
   SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT,
   SITE_LOGO_PIPELINE_VERSION,
   SITE_LOGO_PNG_BYTE_LIMIT,
   SITE_LOGO_SOURCE_BYTE_LIMIT,
   SITE_LOGO_STATIC_PNG_BYTE_LIMIT,
-  type SiteLogoArtifacts,
-  SiteLogoProcessingError,
-  type SiteLogoProcessingErrorCode
-} from '../helpers/site-logo-processing.ts'
+  type SiteLogoEnhancementUnavailableReason,
+  type SiteLogoErrorCode
+} from '../../shared/site-logo.ts'
 
 const RETENTION_MS = 37 * 24 * 60 * 60 * 1_000
 const SHA256_PATTERN = /^[0-9a-f]{64}$/
 const AURA_COLOR_PATTERN = /^#[0-9a-f]{6}$/
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-const SAFE_ERROR_CODES: Readonly<Record<SiteLogoProcessingErrorCode, true>> = {
+const ICO_HEADER_BYTES = 6
+const ICO_ENTRY_BYTES = 16
+const SAFE_ERROR_CODES: Readonly<Record<SiteLogoErrorCode, true>> = {
   UNSUPPORTED_IMAGE: true,
   IMAGE_TOO_LARGE: true,
   INVALID_IMAGE: true,
@@ -31,8 +38,12 @@ const SAFE_ERROR_CODES: Readonly<Record<SiteLogoProcessingErrorCode, true>> = {
   ARTIFACT_TOO_LARGE: true
 }
 
-type ObjectKind = 'source' | 'logo-png' | 'particle-v1' | 'effect-static-png'
-type SafeErrorCode = SiteLogoProcessingErrorCode
+type IconName = keyof SiteLogoArtifacts['icons']
+const ICON_NAMES = Object.keys(SITE_LOGO_ICON_SIZES) as readonly IconName[]
+type ObjectKind = 'source' | 'logo-png' | 'icon-png' | 'favicon-ico' | 'particle-v1' | 'effect-static-png'
+type SafeErrorCode = SiteLogoErrorCode
+type Enhancement = SiteLogoArtifacts['enhancement']
+type ReadyEnhancement = Extract<Enhancement, { status: 'ready' }>
 
 interface DurableJobRow {
   id: string
@@ -65,6 +76,16 @@ interface RevisionRow {
   retrySequence: number
   logoPngKind: 'logo-png' | null
   logoPngHash: string | null
+  iconPngKind: 'icon-png' | null
+  favicon16Hash: string | null
+  favicon32Hash: string | null
+  tile150Hash: string | null
+  apple180Hash: string | null
+  app192Hash: string | null
+  app512Hash: string | null
+  maskable512Hash: string | null
+  faviconIcoKind: 'favicon-ico' | null
+  faviconIcoHash: string | null
   particleV1Kind: 'particle-v1' | null
   particleV1Hash: string | null
   effectStaticPngKind: 'effect-static-png' | null
@@ -74,6 +95,7 @@ interface RevisionRow {
   particleCount: number | null
   medianStroke: number | null
   auraColor: string | null
+  enhancementErrorCode: SiteLogoEnhancementUnavailableReason | null
   requestedBy: number | null
   createdAt: Date | string
   updatedAt: Date | string
@@ -106,16 +128,20 @@ interface ProcessPayload {
   retrySequence: number
 }
 
-type SiteLogoJobVersion = 1 | 2 | 3
+type SiteLogoJobVersion = 1 | 2 | 3 | 4
 
 interface SiteLogoJobProtocol {
   readonly jobVersion: SiteLogoJobVersion
   readonly pipelineVersions: readonly number[]
 }
+
 interface ValidatedArtifacts {
   logoPng: Buffer
-  particleV1: Buffer
-  effectStaticPng: Buffer
+  logoWidth: number
+  logoHeight: number
+  icons: Record<IconName, Buffer>
+  faviconIco: Buffer
+  enhancement: Enhancement
 }
 
 interface ArtifactObject extends ObjectRow {
@@ -225,7 +251,11 @@ const lockState = async (transaction: Knex.Transaction): Promise<StateRow> => {
 const EXHAUSTED_SITE_LOGO_ERROR = 'Durable job lease expired after its final allowed attempt'
 const LEGACY_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({ jobVersion: 1, pipelineVersions: Object.freeze([1, 2, 3]) })
 const PIPELINE_V4_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({ jobVersion: 2, pipelineVersions: Object.freeze([4]) })
-const CURRENT_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({ jobVersion: 3, pipelineVersions: Object.freeze([SITE_LOGO_PIPELINE_VERSION]) })
+const PIPELINE_V5_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({ jobVersion: 3, pipelineVersions: Object.freeze([5]) })
+const CURRENT_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({
+  jobVersion: SITE_LOGO_JOB_VERSION,
+  pipelineVersions: Object.freeze([SITE_LOGO_PIPELINE_VERSION])
+})
 
 const protocolForJobVersion = (jobVersion: number): SiteLogoJobProtocol | undefined => {
   switch (jobVersion) {
@@ -233,6 +263,8 @@ const protocolForJobVersion = (jobVersion: number): SiteLogoJobProtocol | undefi
       return LEGACY_SITE_LOGO_PROTOCOL
     case PIPELINE_V4_SITE_LOGO_PROTOCOL.jobVersion:
       return PIPELINE_V4_SITE_LOGO_PROTOCOL
+    case PIPELINE_V5_SITE_LOGO_PROTOCOL.jobVersion:
+      return PIPELINE_V5_SITE_LOGO_PROTOCOL
     case CURRENT_SITE_LOGO_PROTOCOL.jobVersion:
       return CURRENT_SITE_LOGO_PROTOCOL
     default:
@@ -257,6 +289,11 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
             v4
               .where('job.version', PIPELINE_V4_SITE_LOGO_PROTOCOL.jobVersion)
               .whereIn('revision.pipelineVersion', PIPELINE_V4_SITE_LOGO_PROTOCOL.pipelineVersions)
+          )
+          .orWhere(v5 =>
+            v5
+              .where('job.version', PIPELINE_V5_SITE_LOGO_PROTOCOL.jobVersion)
+              .whereIn('revision.pipelineVersion', PIPELINE_V5_SITE_LOGO_PROTOCOL.pipelineVersions)
           )
           .orWhere(current =>
             current.where('job.version', CURRENT_SITE_LOGO_PROTOCOL.jobVersion).whereIn('revision.pipelineVersion', CURRENT_SITE_LOGO_PROTOCOL.pipelineVersions)
@@ -346,13 +383,7 @@ const transitionToRunning = async (knex: Knex, job: DurableJob, payload: Process
       throw new TypeError('Site logo processing job does not match its revision')
     }
     if (revision.status === 'ready' || revision.status === 'failed') {
-      if (
-        protocolSupportsPipeline(protocol, pipelineVersion) ||
-        (revision.status === 'ready' &&
-          protocol.jobVersion === LEGACY_SITE_LOGO_PROTOCOL.jobVersion &&
-          protocolSupportsPipeline(PIPELINE_V4_SITE_LOGO_PROTOCOL, pipelineVersion))
-      )
-        return null
+      if (protocolSupportsPipeline(protocol, pipelineVersion)) return null
       throw new TypeError('Site logo processing job does not match its revision')
     }
     if (!protocolSupportsPipeline(protocol, pipelineVersion)) {
@@ -399,42 +430,104 @@ const readVerifiedSource = async (knex: Knex, revision: RevisionRow): Promise<Bu
   return bytes
 }
 
-const validateArtifacts = (artifacts: SiteLogoArtifacts): ValidatedArtifacts => {
-  const logoPng = asBuffer(artifacts.logoPng)
-  const particleV1 = asBuffer(artifacts.particleV1)
-  const effectStaticPng = asBuffer(artifacts.effectStaticPng)
+const isPng = (bytes: Buffer): boolean => bytes.byteLength >= PNG_SIGNATURE.byteLength && bytes.subarray(0, PNG_SIGNATURE.byteLength).equals(PNG_SIGNATURE)
+
+const pngDimensions = (bytes: Buffer): { width: number; height: number } | null => {
+  if (!isPng(bytes)) return null
+  let offset = PNG_SIGNATURE.byteLength
+  let width = 0
+  let height = 0
+  let sawHeader = false
+  let sawData = false
+  while (offset < bytes.byteLength) {
+    if (offset + 12 > bytes.byteLength) return null
+    const length = bytes.readUInt32BE(offset)
+    const end = offset + 12 + length
+    if (end > bytes.byteLength) return null
+    const type = bytes.toString('ascii', offset + 4, offset + 8)
+    if (!sawHeader && type !== 'IHDR') return null
+    if (type === 'IHDR') {
+      if (sawHeader || length !== 13) return null
+      width = bytes.readUInt32BE(offset + 8)
+      height = bytes.readUInt32BE(offset + 12)
+      if (
+        width < SITE_LOGO_MIN_INPUT_DIMENSION ||
+        width > SITE_LOGO_MAX_INPUT_DIMENSION ||
+        height < SITE_LOGO_MIN_INPUT_DIMENSION ||
+        height > SITE_LOGO_MAX_INPUT_DIMENSION
+      ) {
+        return null
+      }
+      if (width * height > SITE_LOGO_MAX_INPUT_PIXELS) return null
+      sawHeader = true
+    } else if (type === 'IDAT') {
+      sawData = true
+    } else if (type === 'IEND') {
+      if (length !== 0 || !sawHeader || !sawData || end !== bytes.byteLength) return null
+      return { width, height }
+    }
+    offset = end
+  }
+  return null
+}
+
+const icoDimensions = (bytes: Buffer): boolean => {
+  if (bytes.byteLength < ICO_HEADER_BYTES + 2 * ICO_ENTRY_BYTES || bytes.readUInt16LE(0) !== 0 || bytes.readUInt16LE(2) !== 1) return false
+  const count = bytes.readUInt16LE(4)
+  if (count !== 2) return false
+  const ranges: Array<{ start: number; end: number; width: number; height: number }> = []
+  const seen = new Set<number>()
+  for (let index = 0; index < count; index += 1) {
+    const offset = ICO_HEADER_BYTES + index * ICO_ENTRY_BYTES
+    const width = bytes.readUInt8(offset)
+    const height = bytes.readUInt8(offset + 1)
+    const length = bytes.readUInt32LE(offset + 8)
+    const dataOffset = bytes.readUInt32LE(offset + 12)
+    if ((width !== SITE_LOGO_ICON_SIZES.favicon16 && width !== SITE_LOGO_ICON_SIZES.favicon32) || height !== width || seen.has(width)) return false
+    seen.add(width)
+    if (length === 0 || dataOffset < ICO_HEADER_BYTES + count * ICO_ENTRY_BYTES || dataOffset + length > bytes.byteLength) return false
+    const dimensions = pngDimensions(bytes.subarray(dataOffset, dataOffset + length))
+    if (!dimensions || dimensions.width !== width || dimensions.height !== height) return false
+    ranges.push({ start: dataOffset, end: dataOffset + length, width, height })
+  }
+  if (seen.size !== 2) return false
+  ranges.sort((left, right) => left.start - right.start)
+  return ranges[0]!.end <= ranges[1]!.start && ranges[1]!.end === bytes.byteLength
+}
+
+const validateReadyEnhancement = (enhancement: ReadyEnhancement): ReadyEnhancement => {
+  const particleV1 = asBuffer(enhancement.particleV1)
+  const effectStaticPng = asBuffer(enhancement.effectStaticPng)
   if (
-    logoPng.byteLength === 0 ||
     particleV1.byteLength === 0 ||
     effectStaticPng.byteLength === 0 ||
-    !logoPng.subarray(0, PNG_SIGNATURE.byteLength).equals(PNG_SIGNATURE) ||
-    !effectStaticPng.subarray(0, PNG_SIGNATURE.byteLength).equals(PNG_SIGNATURE)
-  ) {
-    throw new SiteLogoJobError('PROCESSING_FAILED', 'Site logo processor returned invalid artifacts')
-  }
-  if (
-    logoPng.byteLength > SITE_LOGO_PNG_BYTE_LIMIT ||
+    !isPng(effectStaticPng) ||
     effectStaticPng.byteLength > SITE_LOGO_STATIC_PNG_BYTE_LIMIT ||
     particleV1.byteLength > SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT ||
     gzipSync(particleV1, { level: 9 }).byteLength > SITE_LOGO_PARTICLE_GZIP_BYTE_LIMIT
   ) {
-    throw new SiteLogoJobError('ARTIFACT_TOO_LARGE', 'Site logo processor artifacts exceed publication limits')
+    throw new SiteLogoJobError('ARTIFACT_TOO_LARGE', 'Site logo enhancement artifacts exceed publication limits')
   }
   if (
-    !Number.isSafeInteger(artifacts.normalizedWidth) ||
-    artifacts.normalizedWidth < 2 ||
-    artifacts.normalizedWidth > 4096 ||
-    !Number.isSafeInteger(artifacts.normalizedHeight) ||
-    artifacts.normalizedHeight < 2 ||
-    artifacts.normalizedHeight > 4096 ||
-    !Number.isSafeInteger(artifacts.particleCount) ||
-    artifacts.particleCount < 1 ||
-    artifacts.particleCount > 16_000 ||
-    !Number.isFinite(artifacts.medianStroke) ||
-    artifacts.medianStroke <= 0 ||
-    (artifacts.auraColor !== undefined && !AURA_COLOR_PATTERN.test(artifacts.auraColor))
+    !Number.isSafeInteger(enhancement.normalizedWidth) ||
+    enhancement.normalizedWidth < 2 ||
+    enhancement.normalizedWidth > SITE_LOGO_MAX_INPUT_DIMENSION ||
+    !Number.isSafeInteger(enhancement.normalizedHeight) ||
+    enhancement.normalizedHeight < 2 ||
+    enhancement.normalizedHeight > SITE_LOGO_MAX_INPUT_DIMENSION ||
+    enhancement.normalizedWidth * enhancement.normalizedHeight > SITE_LOGO_MAX_INPUT_PIXELS ||
+    !Number.isSafeInteger(enhancement.particleCount) ||
+    enhancement.particleCount < 1 ||
+    enhancement.particleCount > 16_000 ||
+    !Number.isFinite(enhancement.medianStroke) ||
+    enhancement.medianStroke <= 0 ||
+    (enhancement.auraColor !== undefined && !AURA_COLOR_PATTERN.test(enhancement.auraColor))
   ) {
-    throw new SiteLogoJobError('PROCESSING_FAILED', 'Site logo processor returned invalid metadata')
+    throw new SiteLogoJobError('PROCESSING_FAILED', 'Site logo processor returned invalid enhancement metadata')
+  }
+  const dimensions = pngDimensions(effectStaticPng)
+  if (!dimensions || dimensions.width !== enhancement.normalizedWidth || dimensions.height !== enhancement.normalizedHeight) {
+    throw new SiteLogoJobError('PROCESSING_FAILED', 'Site logo static enhancement dimensions do not match its metadata')
   }
   let parsed: ParsedParticleMetadata
   try {
@@ -442,10 +535,83 @@ const validateArtifacts = (artifacts: SiteLogoArtifacts): ValidatedArtifacts => 
   } catch {
     throw new SiteLogoJobError('PROCESSING_FAILED', 'Site logo processor returned an invalid particle artifact')
   }
-  if (parsed.width !== artifacts.normalizedWidth || parsed.height !== artifacts.normalizedHeight || parsed.count !== artifacts.particleCount) {
-    throw new SiteLogoJobError('PROCESSING_FAILED', 'Site logo particle artifact does not match its revision metadata')
+  if (parsed.width !== enhancement.normalizedWidth || parsed.height !== enhancement.normalizedHeight || parsed.count !== enhancement.particleCount) {
+    throw new SiteLogoJobError('PROCESSING_FAILED', 'Site logo particle artifact does not match its enhancement metadata')
   }
-  return { logoPng, particleV1, effectStaticPng }
+  return { ...enhancement, particleV1, effectStaticPng }
+}
+
+const validateArtifacts = (artifacts: SiteLogoArtifacts): ValidatedArtifacts => {
+  const logoPng = asBuffer(artifacts.logoPng)
+  const dimensions = pngDimensions(logoPng)
+  if (
+    !dimensions ||
+    !Number.isSafeInteger(artifacts.logoWidth) ||
+    !Number.isSafeInteger(artifacts.logoHeight) ||
+    artifacts.logoWidth < SITE_LOGO_MIN_INPUT_DIMENSION ||
+    artifacts.logoWidth > SITE_LOGO_MAX_INPUT_DIMENSION ||
+    artifacts.logoHeight < SITE_LOGO_MIN_INPUT_DIMENSION ||
+    artifacts.logoHeight > SITE_LOGO_MAX_INPUT_DIMENSION ||
+    artifacts.logoWidth * artifacts.logoHeight > SITE_LOGO_MAX_INPUT_PIXELS ||
+    dimensions.width !== artifacts.logoWidth ||
+    dimensions.height !== artifacts.logoHeight
+  ) {
+    throw new SiteLogoJobError('PROCESSING_FAILED', 'Site logo processor returned an invalid canonical PNG')
+  }
+  if (logoPng.byteLength > SITE_LOGO_PNG_BYTE_LIMIT) {
+    throw new SiteLogoJobError('ARTIFACT_TOO_LARGE', 'Site logo canonical PNG exceeds publication limits')
+  }
+
+  const icons = {} as Record<IconName, Buffer>
+  for (const name of ICON_NAMES) {
+    const expectedSize = SITE_LOGO_ICON_SIZES[name]
+    const bytes = asBuffer(artifacts.icons[name])
+    const iconDimensions = pngDimensions(bytes)
+    if (!iconDimensions || iconDimensions.width !== expectedSize || iconDimensions.height !== expectedSize) {
+      throw new SiteLogoJobError('PROCESSING_FAILED', `Site logo ${name} icon has invalid dimensions`)
+    }
+    if (bytes.byteLength > SITE_LOGO_ICON_PNG_BYTE_LIMIT) {
+      throw new SiteLogoJobError('ARTIFACT_TOO_LARGE', `Site logo ${name} icon exceeds publication limits`)
+    }
+    icons[name] = bytes
+  }
+
+  const faviconIco = asBuffer(artifacts.faviconIco)
+  if (faviconIco.byteLength === 0 || faviconIco.byteLength > SITE_LOGO_FAVICON_ICO_BYTE_LIMIT || !icoDimensions(faviconIco)) {
+    throw new SiteLogoJobError(
+      faviconIco.byteLength > SITE_LOGO_FAVICON_ICO_BYTE_LIMIT ? 'ARTIFACT_TOO_LARGE' : 'PROCESSING_FAILED',
+      'Site logo favicon ICO is invalid'
+    )
+  }
+
+  const enhancement = artifacts.enhancement
+  if (!enhancement || typeof enhancement !== 'object') {
+    throw new SiteLogoJobError('PROCESSING_FAILED', 'Site logo processor returned no enhancement outcome')
+  }
+  if (enhancement.status === 'ready') {
+    return {
+      logoPng,
+      logoWidth: dimensions.width,
+      logoHeight: dimensions.height,
+      icons,
+      faviconIco,
+      enhancement: validateReadyEnhancement(enhancement)
+    }
+  }
+  if (
+    enhancement.status !== 'unavailable' ||
+    !(['UNSUITABLE_LOGO', 'ARTIFACT_TOO_LARGE', 'PROCESSING_FAILED'] as readonly SiteLogoEnhancementUnavailableReason[]).includes(enhancement.reason)
+  ) {
+    throw new SiteLogoJobError('PROCESSING_FAILED', 'Site logo processor returned an invalid enhancement outcome')
+  }
+  return {
+    logoPng,
+    logoWidth: dimensions.width,
+    logoHeight: dimensions.height,
+    icons,
+    faviconIco,
+    enhancement
+  }
 }
 
 const safeFailureCode = (error: unknown): SafeErrorCode => {
@@ -526,16 +692,7 @@ const ensureImmutableObject = async (transaction: Knex.Transaction, object: Arti
     bytes.equals(object.bytes)
   )
     return
-  const reference = objectReference(object.kind)
-  await transaction<RevisionRow>('siteLogoRevisions')
-    .where({ [reference.kindColumn]: object.kind, [reference.hashColumn]: object.sha256 })
-    .forUpdate()
-
-  await transaction('siteLogoObjects').where({ kind: object.kind, sha256: object.sha256 }).update({
-    bytes: object.bytes,
-    byteLength: object.byteLength,
-    contentType: object.contentType
-  })
+  throw new SiteLogoJobError('PROCESSING_FAILED', `Site logo object ${object.kind}:${object.sha256} is immutable and failed its integrity check`)
 }
 
 const persistManagedLogoUrl = async (transaction: Knex.Transaction, logoUrl: string, now: Date): Promise<void> => {
@@ -549,7 +706,6 @@ const publishArtifacts = async (
   job: DurableJob,
   payload: ProcessPayload,
   protocol: SiteLogoJobProtocol,
-  artifacts: SiteLogoArtifacts,
   validated: ValidatedArtifacts
 ): Promise<void> => {
   await knex.transaction(async transaction => {
@@ -571,14 +727,28 @@ const publishArtifacts = async (
     if (revision.status !== 'running') throw new TypeError('Site logo revision is not running')
 
     const logo = artifactIdentity('logo-png', validated.logoPng, 'image/png', now)
-    const particle = artifactIdentity('particle-v1', validated.particleV1, 'application/octet-stream', now)
-    const effect = artifactIdentity('effect-static-png', validated.effectStaticPng, 'image/png', now)
+    const iconObjects: Record<IconName, ArtifactObject> = {
+      favicon16: artifactIdentity('icon-png', validated.icons.favicon16, 'image/png', now),
+      favicon32: artifactIdentity('icon-png', validated.icons.favicon32, 'image/png', now),
+      tile150: artifactIdentity('icon-png', validated.icons.tile150, 'image/png', now),
+      apple180: artifactIdentity('icon-png', validated.icons.apple180, 'image/png', now),
+      app192: artifactIdentity('icon-png', validated.icons.app192, 'image/png', now),
+      app512: artifactIdentity('icon-png', validated.icons.app512, 'image/png', now),
+      maskable512: artifactIdentity('icon-png', validated.icons.maskable512, 'image/png', now)
+    }
+    const faviconIco = artifactIdentity('favicon-ico', validated.faviconIco, 'image/x-icon', now)
     await ensureImmutableObject(transaction, logo)
-    await ensureImmutableObject(transaction, particle)
-    await ensureImmutableObject(transaction, effect)
+    for (const icon of Object.values(iconObjects)) await ensureImmutableObject(transaction, icon)
+    await ensureImmutableObject(transaction, faviconIco)
+    const enhancement = validated.enhancement
+    const readyEnhancement = enhancement.status === 'ready' ? enhancement : null
+    const particle = readyEnhancement ? artifactIdentity('particle-v1', readyEnhancement.particleV1, 'application/octet-stream', now) : null
+    const effectStaticPng = readyEnhancement ? artifactIdentity('effect-static-png', readyEnhancement.effectStaticPng, 'image/png', now) : null
+    if (particle) await ensureImmutableObject(transaction, particle)
+    if (effectStaticPng) await ensureImmutableObject(transaction, effectStaticPng)
 
     const isDesired = state.desiredRevisionId === revision.id
-    const updated = await transaction<RevisionRow>('siteLogoRevisions')
+    const updated = await transaction('siteLogoRevisions')
       .where({
         id: revision.id,
         jobId: job.id,
@@ -591,15 +761,26 @@ const publishArtifacts = async (
         status: 'ready',
         logoPngKind: 'logo-png',
         logoPngHash: logo.sha256,
-        particleV1Kind: 'particle-v1',
-        particleV1Hash: particle.sha256,
-        effectStaticPngKind: 'effect-static-png',
-        effectStaticPngHash: effect.sha256,
-        normalizedWidth: artifacts.normalizedWidth,
-        normalizedHeight: artifacts.normalizedHeight,
-        particleCount: artifacts.particleCount,
-        medianStroke: artifacts.medianStroke,
-        auraColor: artifacts.auraColor ?? null,
+        iconPngKind: 'icon-png',
+        favicon16Hash: iconObjects.favicon16.sha256,
+        favicon32Hash: iconObjects.favicon32.sha256,
+        tile150Hash: iconObjects.tile150.sha256,
+        apple180Hash: iconObjects.apple180.sha256,
+        app192Hash: iconObjects.app192.sha256,
+        app512Hash: iconObjects.app512.sha256,
+        maskable512Hash: iconObjects.maskable512.sha256,
+        faviconIcoKind: 'favicon-ico',
+        faviconIcoHash: faviconIco.sha256,
+        particleV1Kind: particle ? 'particle-v1' : null,
+        particleV1Hash: particle?.sha256 ?? null,
+        effectStaticPngKind: effectStaticPng ? 'effect-static-png' : null,
+        effectStaticPngHash: effectStaticPng?.sha256 ?? null,
+        normalizedWidth: readyEnhancement?.normalizedWidth ?? null,
+        normalizedHeight: readyEnhancement?.normalizedHeight ?? null,
+        particleCount: readyEnhancement?.particleCount ?? null,
+        medianStroke: readyEnhancement?.medianStroke ?? null,
+        auraColor: readyEnhancement?.auraColor ?? null,
+        enhancementErrorCode: readyEnhancement ? null : enhancement.status === 'unavailable' ? enhancement.reason : null,
         errorCode: null,
         completedAt: now,
         retiredAt: isDesired ? null : now,
@@ -628,13 +809,13 @@ const publishArtifacts = async (
 export const createSiteLogoProcessHandler = (jobVersion: SiteLogoJobVersion, processor?: SiteLogoProcessor): DurableJobHandler => {
   const protocol = protocolForJobVersion(jobVersion)
   if (!protocol) throw new TypeError(`Unsupported site logo job protocol ${jobVersion}`)
-  const isDefaultLegacyHandler = processor === undefined && protocol.jobVersion !== CURRENT_SITE_LOGO_PROTOCOL.jobVersion
+  const isLegacyProtocol = protocol.jobVersion !== CURRENT_SITE_LOGO_PROTOCOL.jobVersion
   const selectedProcessor = processor ?? processSiteLogoSource
   return async (job, { knex, signal }) => {
     const payload = parsePayload(job)
     const revision = await transitionToRunning(knex, job, payload, protocol)
     if (!revision) return
-    if (isDefaultLegacyHandler) {
+    if (isLegacyProtocol) {
       await markFailed(knex, job, payload, protocol, 'PROCESSING_FAILED')
       return
     }
@@ -658,7 +839,7 @@ export const createSiteLogoProcessHandler = (jobVersion: SiteLogoJobVersion, pro
     }
 
     signal.throwIfAborted()
-    await publishArtifacts(knex, job, payload, protocol, artifacts, validated)
+    await publishArtifacts(knex, job, payload, protocol, validated)
   }
 }
 
@@ -668,6 +849,10 @@ const objectReference = (kind: ObjectKind): { kindColumn: keyof RevisionRow; has
       return { kindColumn: 'sourceKind', hashColumn: 'sourceHash' }
     case 'logo-png':
       return { kindColumn: 'logoPngKind', hashColumn: 'logoPngHash' }
+    case 'icon-png':
+      return { kindColumn: 'iconPngKind', hashColumn: 'favicon16Hash' }
+    case 'favicon-ico':
+      return { kindColumn: 'faviconIcoKind', hashColumn: 'faviconIcoHash' }
     case 'particle-v1':
       return { kindColumn: 'particleV1Kind', hashColumn: 'particleV1Hash' }
     case 'effect-static-png':
@@ -715,6 +900,19 @@ export const cleanupSiteLogoRevisions: DurableJobHandler = async (_job, { knex, 
     for (const revision of revisions) {
       identities.set(`source:${revision.sourceHash}`, { kind: 'source', hash: revision.sourceHash })
       if (revision.logoPngKind && revision.logoPngHash) identities.set(`logo-png:${revision.logoPngHash}`, { kind: 'logo-png', hash: revision.logoPngHash })
+      for (const hash of [
+        revision.favicon16Hash,
+        revision.favicon32Hash,
+        revision.tile150Hash,
+        revision.apple180Hash,
+        revision.app192Hash,
+        revision.app512Hash,
+        revision.maskable512Hash
+      ]) {
+        if (revision.iconPngKind && hash) identities.set(`icon-png:${hash}`, { kind: 'icon-png', hash })
+      }
+      if (revision.faviconIcoKind && revision.faviconIcoHash)
+        identities.set(`favicon-ico:${revision.faviconIcoHash}`, { kind: 'favicon-ico', hash: revision.faviconIcoHash })
       if (revision.particleV1Kind && revision.particleV1Hash)
         identities.set(`particle-v1:${revision.particleV1Hash}`, { kind: 'particle-v1', hash: revision.particleV1Hash })
       if (revision.effectStaticPngKind && revision.effectStaticPngHash)
@@ -728,10 +926,27 @@ export const cleanupSiteLogoRevisions: DurableJobHandler = async (_job, { knex, 
       .delete()
 
     for (const { kind, hash } of identities.values()) {
-      const reference = objectReference(kind)
-      const reachable = await transaction<RevisionRow>('siteLogoRevisions')
-        .where({ [reference.kindColumn]: kind, [reference.hashColumn]: hash })
-        .first('id')
+      let reachable: Pick<RevisionRow, 'id'> | undefined
+      if (kind === 'icon-png') {
+        reachable = await transaction<RevisionRow>('siteLogoRevisions')
+          .where('iconPngKind', 'icon-png')
+          .andWhere(builder => {
+            builder
+              .where('favicon16Hash', hash)
+              .orWhere('favicon32Hash', hash)
+              .orWhere('tile150Hash', hash)
+              .orWhere('apple180Hash', hash)
+              .orWhere('app192Hash', hash)
+              .orWhere('app512Hash', hash)
+              .orWhere('maskable512Hash', hash)
+          })
+          .first('id')
+      } else {
+        const reference = objectReference(kind)
+        reachable = await transaction<RevisionRow>('siteLogoRevisions')
+          .where({ [reference.kindColumn]: kind, [reference.hashColumn]: hash })
+          .first('id')
+      }
       if (!reachable) await transaction<ObjectRow>('siteLogoObjects').where({ kind, sha256: hash }).delete()
     }
   })

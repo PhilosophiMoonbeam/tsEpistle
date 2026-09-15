@@ -52,7 +52,7 @@ const cases = (): SiteLogoProcessingCaseInput[] => [
   {
     id: 'decompression-bomb-4097x4095-grayscale-png',
     category: 'decompression-bomb',
-    expected: { status: 'rejected', errorCodes: ['INVALID_IMAGE', 'IMAGE_TOO_LARGE'] },
+    expected: { status: 'rejected', errorCodes: ['IMAGE_TOO_LARGE'] },
     fixture: { byteLength: 67_890, sha256: 'c'.repeat(64) },
     samples: samples({ status: 'rejected', errorCode: 'IMAGE_TOO_LARGE' })
   }

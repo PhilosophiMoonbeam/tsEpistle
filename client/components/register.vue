@@ -20,8 +20,16 @@
                   v-card-text
                     .register-brand
                       .register-logo
-                        v-avatar(rounded='0', size='34')
-                          img(:src='logoUrl', alt='')
+                        img.register-logo-image(
+                          v-if='logoUrl && !logoImageFailed'
+                          :key='logoUrl'
+                          :src='logoUrl'
+                          :data-logo-source='logoUrl'
+                          alt=''
+                          @error='handleLogoError'
+                          @load='handleLogoLoad'
+                        )
+                        .register-logo-fallback(v-else, aria-hidden='true') {{ logoFallback }}
                       .register-brand-copy
                         .register-eyebrow {{ $t('auth:registerTitle') }}
                         h1#register-site-title.register-site-title {{ siteTitle }}
@@ -136,7 +144,7 @@
 <script lang='ts'>
 import { passwordPolicyMixin } from '../helpers/password-policy.ts'
 import { newPasswordIssue } from '../../shared/security-policy.ts'
-/* global siteConfig */
+import { wikiStore } from '@/store/index.ts'
 
 import validateValues from '../../shared/validation'
 import PasswordStrength from './common/password-strength.vue'
@@ -177,6 +185,7 @@ export default {
       loaderMode: 'icon',
       loaderIcon: 'checkmark',
       errorShown: false,
+      failedLogoUrl: null as string | null,
       errorMessage: '',
       fieldErrors: {
         email: '',
@@ -188,10 +197,15 @@ export default {
   },
   computed: {
     siteTitle () {
-      return siteConfig.title
+      return wikiStore.site.title
     },
     logoUrl () {
-      return siteConfig.logoUrl
+      return wikiStore.site.logoUrl
+    },
+    logoImageFailed (): boolean { return this.failedLogoUrl === this.logoUrl },
+    logoFallback (): string {
+      const title = this.siteTitle.trim()
+      return title ? title.charAt(0).toUpperCase() : '?'
     },
     registerStyle () {
       return this.bgUrl ? { backgroundImage: `url(${this.bgUrl})` } : {}
@@ -204,6 +218,20 @@ export default {
     })
   },
   methods: {
+    handleLogoError (event: Event): void {
+      const image = event.currentTarget
+      if (!(image instanceof HTMLImageElement)) return
+      const source = image.getAttribute('data-logo-source')
+      if (!source || source !== this.logoUrl) return
+      this.failedLogoUrl = source
+    },
+    handleLogoLoad (event: Event): void {
+      const image = event.currentTarget
+      if (!(image instanceof HTMLImageElement)) return
+      const source = image.getAttribute('data-logo-source')
+      if (!source || source !== this.logoUrl) return
+      if (this.failedLogoUrl === source) this.failedLogoUrl = null
+    },
     clearError () {
       this.errorShown = false
       this.errorMessage = ''
@@ -386,24 +414,53 @@ export default {
 
 .register-brand {
   display: flex;
+  min-width: 0;
   gap: var(--wiki-space-4);
   align-items: center;
 }
 
 .register-logo {
-  display: grid;
-  flex: 0 0 3.25rem;
-  width: 3.25rem;
-  height: 3.25rem;
-  place-items: center;
+  position: relative;
+  display: inline-flex;
+  flex: 0 1 auto;
+  width: max-content;
+  min-width: 52px;
+  max-width: 128px;
+  height: 52px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 4px;
   border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, transparent);
   border-radius: var(--wiki-panel-radius);
   background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised));
   box-shadow: var(--wiki-shadow-sm);
 }
 
+.register-logo-image {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: 42px;
+  max-height: 42px;
+  object-fit: contain;
+  object-position: center;
+}
+
+.register-logo-fallback {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 1.25rem;
+  font-weight: 720;
+  line-height: 1;
+}
+
 .register-brand-copy {
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .register-eyebrow {

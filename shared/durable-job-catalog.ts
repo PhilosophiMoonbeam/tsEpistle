@@ -7,6 +7,7 @@ export const durableJobIdentities = [
   'process-site-logo@1',
   'process-site-logo@2',
   'process-site-logo@3',
+  'process-site-logo@4',
   'rerender-content-extension@1',
   'deliver-webhook@1',
   'notify-page-watcher@1',

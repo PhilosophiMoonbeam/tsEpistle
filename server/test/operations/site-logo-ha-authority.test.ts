@@ -1,21 +1,101 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
+import type { DurableJob } from '../../core/durable-jobs.ts'
 import { DurableJobStore } from '../../core/durable-jobs.ts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { up as addDurableJobLeaseToken } from '../../db/migrations/2.5.158.ts'
-import type { ActiveBranding, SiteLogoObjectKind } from '../../helpers/site-logo-branding.ts'
-import { readSiteLogoObject, resolveActiveBranding } from '../../helpers/site-logo-branding.ts'
-import type { SiteLogoArtifacts } from '../../helpers/site-logo-processing.ts'
-import { encodeParticleV1 } from '../../helpers/site-logo-processing.ts'
-import type { SiteLogoProcessor } from '../../jobs/site-logo-process.ts'
-import { createSiteLogoProcessHandler } from '../../jobs/site-logo-process.ts'
+import { encodeParticleV1, SiteLogoProcessingError, type ParticleRecord, type SiteLogoArtifacts } from '../../helpers/site-logo-processing.ts'
 import type { SiteLogoMutationResult, SiteLogoStatusResponse } from '../../operations/site-logo.ts'
-import { getSiteLogoStatus, uploadSiteLogoCandidate } from '../../operations/site-logo.ts'
-import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
+import { createSiteLogoProcessHandler } from '../../jobs/site-logo-process.ts'
+import { getSiteLogoStatus, retrySiteLogoCandidate, uploadSiteLogoCandidate } from '../../operations/site-logo.ts'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 const sourceBytes = Buffer.concat([PNG_SIGNATURE, Buffer.from('ha-source-owned-by-database')])
-const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
+const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
+
+const png = (width: number, height: number, payload = 'pixel'): Buffer => {
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const result = Buffer.alloc(data.length + 12)
+    result.writeUInt32BE(data.length, 0)
+    result.write(type, 4, 4, 'ascii')
+    data.copy(result, 8)
+    return result
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  ihdr[8] = 8
+  ihdr[9] = 6
+  return Buffer.concat([PNG_SIGNATURE, chunk('IHDR', ihdr), chunk('IDAT', Buffer.from(payload)), chunk('IEND', Buffer.alloc(0))])
+}
+
+const ico = (suffix: string): Buffer => {
+  const images = [png(16, 16, `${suffix}-16`), png(32, 32, `${suffix}-32`)]
+  const header = Buffer.alloc(38)
+  header.writeUInt16LE(1, 2)
+  header.writeUInt16LE(2, 4)
+  let offset = header.length
+  for (const [index, image] of images.entries()) {
+    const entry = 6 + index * 16
+    const size = index === 0 ? 16 : 32
+    header.writeUInt8(size, entry)
+    header.writeUInt8(size, entry + 1)
+    header.writeUInt16LE(1, entry + 4)
+    header.writeUInt16LE(32, entry + 6)
+    header.writeUInt32LE(image.length, entry + 8)
+    header.writeUInt32LE(offset, entry + 12)
+    offset += image.length
+  }
+  return Buffer.concat([header, ...images])
+}
+
+const records: readonly ParticleRecord[] = [
+  {
+    sourceIndex: 0,
+    x: 12,
+    y: 8,
+    xEncoded: -12_000,
+    yEncoded: 10_000,
+    depth: -12,
+    rgba: [18, 52, 86, 255] as const,
+    size: 7,
+    seed: 1_337
+  }
+]
+
+const artifacts = (suffix: string, ordinaryOnly = false): SiteLogoArtifacts => {
+  const particleV1 = encodeParticleV1(64, 32, records)
+  return {
+    logoPng: png(64, 32, `logo-${suffix}`),
+    logoWidth: 64,
+    logoHeight: 32,
+    icons: {
+      favicon16: png(16, 16, `${suffix}-favicon16`),
+      favicon32: png(32, 32, `${suffix}-favicon32`),
+      tile150: png(150, 150, `${suffix}-tile150`),
+      apple180: png(180, 180, `${suffix}-apple180`),
+      app192: png(192, 192, `${suffix}-app192`),
+      app512: png(512, 512, `${suffix}-app512`),
+      maskable512: png(512, 512, `${suffix}-maskable512`)
+    },
+    faviconIco: ico(suffix),
+    enhancement: ordinaryOnly
+      ? ({ status: 'unavailable', reason: 'UNSUITABLE_LOGO' } as const)
+      : ({
+          status: 'ready',
+          particleV1,
+          effectStaticPng: png(64, 32, `effect-${suffix}`),
+          normalizedWidth: 64,
+          normalizedHeight: 32,
+          particleCount: 1,
+          medianStroke: 4,
+          auraColor: '#345678'
+        } as const)
+  }
+}
+
+type Artifacts = ReturnType<typeof artifacts>
 
 const createLogoTables = async (db: Knex): Promise<void> => {
   await createDurableJobs(db)
@@ -39,6 +119,16 @@ const createLogoTables = async (db: Knex): Promise<void> => {
     table.integer('retrySequence').notNullable()
     table.string('logoPngKind').nullable()
     table.string('logoPngHash', 64).nullable()
+    table.string('iconPngKind').nullable()
+    table.string('favicon16Hash', 64).nullable()
+    table.string('favicon32Hash', 64).nullable()
+    table.string('tile150Hash', 64).nullable()
+    table.string('apple180Hash', 64).nullable()
+    table.string('app192Hash', 64).nullable()
+    table.string('app512Hash', 64).nullable()
+    table.string('maskable512Hash', 64).nullable()
+    table.string('faviconIcoKind').nullable()
+    table.string('faviconIcoHash', 64).nullable()
     table.string('particleV1Kind').nullable()
     table.string('particleV1Hash', 64).nullable()
     table.string('effectStaticPngKind').nullable()
@@ -48,6 +138,7 @@ const createLogoTables = async (db: Knex): Promise<void> => {
     table.integer('particleCount').nullable()
     table.float('medianStroke').nullable()
     table.string('auraColor').nullable()
+    table.string('enhancementErrorCode').nullable()
     table.string('errorCode').nullable()
     table.integer('requestedBy').nullable()
     table.dateTime('createdAt').notNullable()
@@ -73,243 +164,267 @@ const createLogoTables = async (db: Knex): Promise<void> => {
   await db('siteLogoState').insert({ id: 1, generation: 0, desiredRevisionId: null, activeRevisionId: null, createdAt: now, updatedAt: now })
 }
 
-interface LogoNodeDependencies {
-  readonly getStatus: typeof getSiteLogoStatus
-  readonly upload: typeof uploadSiteLogoCandidate
-  readonly resolveBranding: typeof resolveActiveBranding
-  readonly readObject: typeof readSiteLogoObject
+const insertSource = async (db: Knex, bytes: Buffer): Promise<string> => {
+  const hash = digest(bytes)
+  await db('siteLogoObjects').insert({ kind: 'source', sha256: hash, bytes, byteLength: bytes.length, contentType: 'image/png', createdAt: new Date() })
+  return hash
 }
 
-interface RevisionSnapshot {
-  readonly id: string
-  readonly sourceHash: string
-  readonly pipelineVersion: number
-  readonly status: string
-  readonly retrySequence: number
-  readonly logoPngHash: string
-  readonly particleV1Hash: string
-  readonly effectStaticPngHash: string
-  readonly normalizedWidth: number
-  readonly normalizedHeight: number
-  readonly particleCount: number
-  readonly medianStroke: number
-  readonly auraColor: string | null
+const insertBundle = async (db: Knex, output: Artifacts): Promise<void> => {
+  const now = new Date()
+  const rows = [
+    ['logo-png', output.logoPng, 'image/png'],
+    ...Object.values(output.icons).map(bytes => ['icon-png', bytes, 'image/png']),
+    ['favicon-ico', output.faviconIco, 'image/x-icon']
+  ] as Array<[string, Buffer, string]>
+  if (output.enhancement.status === 'ready') {
+    rows.push(
+      ['particle-v1', output.enhancement.particleV1, 'application/octet-stream'],
+      ['effect-static-png', output.enhancement.effectStaticPng, 'image/png']
+    )
+  }
+  await db('siteLogoObjects').insert(
+    rows.map(([kind, bytes, contentType]) => ({ kind, sha256: digest(bytes), bytes, byteLength: bytes.length, contentType, createdAt: now }))
+  )
 }
 
-interface LogoNode {
-  upload(bytes: Buffer, requestedBy: number): Promise<SiteLogoMutationResult>
-  processNext(processor: SiteLogoProcessor): Promise<void>
-  status(): Promise<SiteLogoStatusResponse>
-  snapshot(): Promise<ActiveBranding>
-  bytes(kind: SiteLogoObjectKind, hash: string): Promise<Buffer | null>
-  revision(revisionId: string): Promise<RevisionSnapshot | undefined>
+const startAndClaim = async (db: Knex, workerId: string, revisionId: string, sourceHash: string, jobVersion = 4): Promise<DurableJob> => {
+  const revision = await db('siteLogoRevisions').where({ id: revisionId }).first('jobId', 'sourceHash')
+  if (!revision || revision.jobId === null) throw new Error('Site logo revision job was not found')
+  await db('siteLogoState').where({ id: 1 }).update({ desiredRevisionId: revisionId })
+  const [claimed] = await new DurableJobStore(db).claim({ workerId, leaseMs: 60_000, supportedIdentities: [`process-site-logo@${jobVersion}`] })
+  if (
+    !claimed ||
+    claimed.id !== revision.jobId ||
+    claimed.payload.revisionId !== revisionId ||
+    claimed.version !== jobVersion ||
+    revision.sourceHash !== sourceHash
+  ) {
+    throw new Error('Site logo job was not claimed')
+  }
+  return claimed
 }
 
-const defaultDependencies: LogoNodeDependencies = {
-  getStatus: getSiteLogoStatus,
-  upload: uploadSiteLogoCandidate,
-  resolveBranding: resolveActiveBranding,
-  readObject: readSiteLogoObject
+const insertRevision = async (db: Knex, sourceHash: string, output?: Artifacts, status: 'pending' | 'ready' = 'pending'): Promise<string> => {
+  const id = randomUUID()
+  const now = new Date()
+  const readyEnhancement = output?.enhancement.status === 'ready' ? output.enhancement : undefined
+  const iconHashes = output ? Object.values(output.icons).map(digest) : []
+  await db('siteLogoRevisions').insert({
+    id,
+    sourceKind: 'source',
+    sourceHash,
+    pipelineVersion: output ? 6 : 5,
+    status,
+    jobId: null,
+    retrySequence: 0,
+    logoPngKind: output ? 'logo-png' : null,
+    logoPngHash: output ? digest(output.logoPng) : null,
+    iconPngKind: output ? 'icon-png' : null,
+    favicon16Hash: iconHashes[0] ?? null,
+    favicon32Hash: iconHashes[1] ?? null,
+    tile150Hash: iconHashes[2] ?? null,
+    apple180Hash: iconHashes[3] ?? null,
+    app192Hash: iconHashes[4] ?? null,
+    app512Hash: iconHashes[5] ?? null,
+    maskable512Hash: iconHashes[6] ?? null,
+    faviconIcoKind: output ? 'favicon-ico' : null,
+    faviconIcoHash: output ? digest(output.faviconIco) : null,
+    particleV1Kind: readyEnhancement ? 'particle-v1' : null,
+    particleV1Hash: readyEnhancement ? digest(readyEnhancement.particleV1) : null,
+    effectStaticPngKind: readyEnhancement ? 'effect-static-png' : null,
+    effectStaticPngHash: readyEnhancement ? digest(readyEnhancement.effectStaticPng) : null,
+    normalizedWidth: readyEnhancement?.normalizedWidth ?? null,
+    normalizedHeight: readyEnhancement?.normalizedHeight ?? null,
+    particleCount: readyEnhancement?.particleCount ?? null,
+    medianStroke: readyEnhancement?.medianStroke ?? null,
+    auraColor: readyEnhancement?.auraColor ?? null,
+    enhancementErrorCode: output?.enhancement.status === 'unavailable' ? output.enhancement.reason : null,
+    errorCode: status === 'failed' ? 'PROCESSING_FAILED' : null,
+    requestedBy: null,
+    createdAt: now,
+    updatedAt: now,
+    startedAt: status === 'pending' ? null : now,
+    completedAt: status === 'ready' ? now : null,
+    retiredAt: null
+  })
+  return id
 }
 
-const createLogoNode = (name: string, db: Knex, legacyLogoUrl: string, dependencies: LogoNodeDependencies = defaultDependencies): LogoNode => ({
-  upload: async (bytes: Buffer, requestedBy: number) => await dependencies.upload(bytes, requestedBy, db),
-  processNext: async (processor: SiteLogoProcessor): Promise<void> => {
-    const store = new DurableJobStore(db)
-    const jobs = await store.claim({ workerId: name, limit: 1, leaseMs: 60_000 })
-    if (jobs.length !== 1) throw new Error(`${name} expected exactly one site logo job`)
-    const job = jobs[0]!
-    await createSiteLogoProcessHandler(3, processor)(job, { knex: db, signal: new AbortController().signal })
-    if (!(await store.complete(job))) throw new Error(`${name} lost its site logo job before completion`)
-  },
-  status: async () => await dependencies.getStatus(db),
-  snapshot: async () => await dependencies.resolveBranding(db, legacyLogoUrl),
-  bytes: async (kind: SiteLogoObjectKind, hash: string) => await dependencies.readObject(db, kind, hash),
-  revision: async (revisionId: string) =>
-    await db('siteLogoRevisions')
-      .where({ id: revisionId })
-      .first(
-        'id',
-        'sourceHash',
-        'pipelineVersion',
-        'status',
-        'retrySequence',
-        'logoPngHash',
-        'particleV1Hash',
-        'effectStaticPngHash',
-        'normalizedWidth',
-        'normalizedHeight',
-        'particleCount',
-        'medianStroke',
-        'auraColor'
-      )
+const processNext = async (db: Knex, job: DurableJob, processor: (bytes: Buffer | Uint8Array, hash: string) => Promise<SiteLogoArtifacts>): Promise<void> => {
+  await createSiteLogoProcessHandler(4, processor)(job, { knex: db, signal: new AbortController().signal })
+  if (!(await new DurableJobStore(db).complete(job))) throw new Error('Site logo job lease was lost')
+}
+
+let db: Knex
+
+beforeEach(async () => {
+  db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, pool: { min: 1, max: 1 }, useNullAsDefault: true })
+  await createLogoTables(db)
 })
 
-const readPublishedBundle = async (
-  node: LogoNode,
-  hashes: { logo: string; particle: string; effect: string }
-): Promise<{ logo: Buffer; particle: Buffer; effect: Buffer }> => {
-  const [logo, particle, effect] = await Promise.all([
-    node.bytes('logo-png', hashes.logo),
-    node.bytes('particle-v1', hashes.particle),
-    node.bytes('effect-static-png', hashes.effect)
-  ])
-  if (!logo || !particle || !effect) throw new Error('Published site logo bundle was not readable')
-  return { logo, particle, effect }
-}
+afterEach(async () => {
+  await db.destroy()
+})
 
-describe('site logo HA database authority', () => {
-  let db: Knex | undefined
+describe('site logo v6 HA authority', () => {
+  it('deduplicates the same pending source and publishes an identical active snapshot on another node', async () => {
+    const first: SiteLogoMutationResult = await uploadSiteLogoCandidate(sourceBytes, 42, db)
+    expect(first.statusCode).toBe(202)
+    const candidate = first.status.candidate!
+    const revisionId = candidate.revisionId
+    expect(await db('siteLogoRevisions')).toHaveLength(1)
+    expect(await db('durableJobs').where({ type: 'process-site-logo' })).toHaveLength(1)
+    const firstJob = await startAndClaim(db, 'node-a', revisionId, digest(sourceBytes))
+    expect(first.status.candidate?.revisionId).toBe(revisionId)
 
-  afterEach(async () => {
-    await db?.destroy()
+    await processNext(db, firstJob, async (bytes, sourceHash) => {
+      expect(Buffer.from(bytes)).toEqual(sourceBytes)
+      expect(sourceHash).toBe(digest(sourceBytes))
+      return artifacts('shared')
+    })
+    const status: SiteLogoStatusResponse = await getSiteLogoStatus(db)
+    expect(status.active).toMatchObject({
+      revisionId,
+      logoUrl: `/_site-logo/${digest(artifacts('shared').logoPng)}/logo.png`,
+      enhancement: { status: 'ready', reason: null }
+    })
+    expect(status.active?.logoIcons).toEqual({
+      favicon16Url: `/_site-logo/${digest(artifacts('shared').icons.favicon16)}/icon.png`,
+      favicon32Url: `/_site-logo/${digest(artifacts('shared').icons.favicon32)}/icon.png`,
+      tile150Url: `/_site-logo/${digest(artifacts('shared').icons.tile150)}/icon.png`,
+      apple180Url: `/_site-logo/${digest(artifacts('shared').icons.apple180)}/icon.png`,
+      app192Url: `/_site-logo/${digest(artifacts('shared').icons.app192)}/icon.png`,
+      app512Url: `/_site-logo/${digest(artifacts('shared').icons.app512)}/icon.png`,
+      maskable512Url: `/_site-logo/${digest(artifacts('shared').icons.maskable512)}/icon.png`,
+      faviconIcoUrl: `/_site-logo/${digest(artifacts('shared').faviconIco)}/favicon.ico`
+    })
+
+    const second = await uploadSiteLogoCandidate(sourceBytes, 9, db)
+    expect(second.statusCode).toBe(200)
+    expect(second.status.active).toEqual(status.active)
+    expect(second.status.candidate).toBeNull()
   })
 
-  it('publishes on another node and resolves identically after a cold reader restart without shared disk or refresh', async () => {
-    db = createKnex({
-      client: 'better-sqlite3',
-      connection: { filename: ':memory:' },
-      pool: { min: 1, max: 1 },
-      useNullAsDefault: true
-    })
-    await createLogoTables(db)
+  it('activates ordinary branding when optional enhancement is unavailable', async () => {
+    const output = artifacts('ordinary-only', true)
+    const upload = await uploadSiteLogoCandidate(sourceBytes, 7, db)
+    const candidate = upload.status.candidate!
+    expect(await db('durableJobs').where({ type: 'process-site-logo' })).toHaveLength(1)
+    const job = await startAndClaim(db, 'ordinary-node', candidate.revisionId, digest(sourceBytes))
+    await processNext(db, job, async () => output)
 
-    const particleV1 = encodeParticleV1(160, 64, [
+    const status = await getSiteLogoStatus(db)
+    expect(status.active).toMatchObject({
+      revisionId: candidate.revisionId,
+      logoUrl: `/_site-logo/${digest(output.logoPng)}/logo.png`,
+      enhancement: { status: 'unavailable', reason: 'UNSUITABLE_LOGO' }
+    })
+    expect(status.active?.logoIcons).not.toBeNull()
+    expect(await db('siteLogoObjects').where({ kind: 'particle-v1' })).toHaveLength(0)
+  })
+
+  it('keeps the prior active logo and makes a failed v6 candidate retryable', async () => {
+    const activeOutput = artifacts('active', true)
+    const activeHash = await insertSource(db, Buffer.concat([sourceBytes, Buffer.from('active')]))
+    await insertBundle(db, activeOutput)
+    const activeId = await insertRevision(db, activeHash, activeOutput, 'ready')
+    await db('siteLogoState').where({ id: 1 }).update({ generation: 4, activeRevisionId: activeId, desiredRevisionId: activeId })
+    await db('settings').insert({
+      key: 'logoUrl',
+      value: JSON.stringify({ v: `/_site-logo/${digest(activeOutput.logoPng)}/logo.png` }),
+      updatedAt: new Date().toISOString()
+    })
+
+    const upload = await uploadSiteLogoCandidate(sourceBytes, 2, db)
+    const candidateId = upload.status.candidate!.revisionId
+    const job = await startAndClaim(db, 'failure-node', candidateId, digest(sourceBytes))
+    await processNext(db, job, async () => {
+      throw new SiteLogoProcessingError('PROCESSING_FAILED')
+    })
+
+    expect((await getSiteLogoStatus(db)).active).toMatchObject({ revisionId: activeId })
+    expect((await getSiteLogoStatus(db)).candidate).toEqual({ revisionId: candidateId, status: 'failed', errorCode: 'PROCESSING_FAILED' })
+    const retry = await retrySiteLogoCandidate(3, db)
+    expect(retry.statusCode).toBe(202)
+    const retried = await db('siteLogoRevisions').where({ id: retry.status.candidate?.revisionId }).first('pipelineVersion', 'retrySequence', 'jobId')
+    expect(retried).toMatchObject({ pipelineVersion: 6, retrySequence: 1 })
+    expect(await db('durableJobs').where({ id: retried.jobId }).first('version')).toEqual({ version: 4 })
+    expect((await getSiteLogoStatus(db)).active?.revisionId).toBe(activeId)
+  })
+
+  it('retains a historical v5 active ordinary logo while reporting no v6 icon bundle', async () => {
+    const legacyParticle = encodeParticleV1(64, 32, records)
+    const legacyLogo = png(64, 32, 'legacy-logo')
+    const legacyStatic = png(64, 32, 'legacy-static')
+    const hash = await insertSource(db, sourceBytes)
+    const revisionId = randomUUID()
+    const now = new Date()
+    await db('siteLogoObjects').insert([
+      { kind: 'logo-png', sha256: digest(legacyLogo), bytes: legacyLogo, byteLength: legacyLogo.length, contentType: 'image/png', createdAt: now },
       {
-        sourceIndex: 0,
-        x: 20,
-        y: 12,
-        xEncoded: -12_000,
-        yEncoded: 10_000,
-        depth: -12,
-        rgba: [18, 52, 86, 255],
-        size: 7,
-        seed: 1_337
+        kind: 'particle-v1',
+        sha256: digest(legacyParticle),
+        bytes: legacyParticle,
+        byteLength: legacyParticle.length,
+        contentType: 'application/octet-stream',
+        createdAt: now
       },
       {
-        sourceIndex: 1,
-        x: 132,
-        y: 48,
-        xEncoded: 21_000,
-        yEncoded: -17_000,
-        depth: 19,
-        rgba: [170, 187, 204, 220],
-        size: 11,
-        seed: 9_001
+        kind: 'effect-static-png',
+        sha256: digest(legacyStatic),
+        bytes: legacyStatic,
+        byteLength: legacyStatic.length,
+        contentType: 'image/png',
+        createdAt: now
       }
     ])
-    const artifacts: SiteLogoArtifacts = {
-      logoPng: Buffer.concat([PNG_SIGNATURE, Buffer.from('ordinary-logo')]),
-      particleV1,
-      effectStaticPng: Buffer.concat([PNG_SIGNATURE, Buffer.from('static-effect')]),
-      normalizedWidth: 160,
-      normalizedHeight: 64,
-      particleCount: 2,
-      medianStroke: 5.5,
-      auraColor: '#345678'
-    }
-    const hashes = {
-      logo: sha256(artifacts.logoPng),
-      particle: sha256(artifacts.particleV1),
-      effect: sha256(artifacts.effectStaticPng)
-    }
-
-    const nodeA = createLogoNode('logo-node-a', db, '/node-a-stale-logo.svg')
-    const nodeB = createLogoNode('logo-node-b', db, '/node-b-stale-logo.svg')
-    const upload = await nodeA.upload(sourceBytes, 42)
-    const candidate = upload.status.candidate
-    if (!candidate) throw new Error('Accepted site logo upload did not create a candidate revision')
-    const revisionId = candidate.revisionId
-    expect(revisionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
-    expect(upload).toEqual({
-      statusCode: 202,
-      status: {
-        active: null,
-        candidate: { revisionId, status: 'pending', errorCode: null },
-        statusUrl: '/_api/site/logo'
-      }
-    })
-
-    await nodeB.processNext(async (bytes, sourceHash) => {
-      if (!Buffer.from(bytes).equals(sourceBytes) || sourceHash !== sha256(sourceBytes)) {
-        throw new Error('Node B did not receive Node A database-owned source')
-      }
-      return artifacts
-    })
-
-    const freshOperations = await vi.importFresh<{
-      getSiteLogoStatus: LogoNodeDependencies['getStatus']
-      uploadSiteLogoCandidate: LogoNodeDependencies['upload']
-    }>('../../operations/site-logo.ts', import.meta.url)
-    const freshBranding = await vi.importFresh<{
-      resolveActiveBranding: LogoNodeDependencies['resolveBranding']
-      readSiteLogoObject: LogoNodeDependencies['readObject']
-    }>('../../helpers/site-logo-branding.ts', import.meta.url)
-    const restartedNodeA = createLogoNode('logo-node-a-restarted', db, '/cold-node-unrefreshed-logo.svg', {
-      getStatus: freshOperations.getSiteLogoStatus,
-      upload: freshOperations.uploadSiteLogoCandidate,
-      resolveBranding: freshBranding.resolveActiveBranding,
-      readObject: freshBranding.readSiteLogoObject
-    })
-
-    const [statusA, statusB, snapshotA, snapshotB] = await Promise.all([restartedNodeA.status(), nodeB.status(), restartedNodeA.snapshot(), nodeB.snapshot()])
-    expect(statusA).toEqual(statusB)
-    expect(statusA).toEqual({
-      active: { revisionId, logoUrl: `/_site-logo/${hashes.logo}/logo.png` },
-      candidate: null
-    })
-    expect(snapshotA).toEqual(snapshotB)
-    expect(snapshotA).toEqual({
-      logoUrl: `/_site-logo/${hashes.logo}/logo.png`,
-      logoEffect: {
-        pipelineVersion: 5,
-        logoUrl: `/_site-logo/${hashes.logo}/logo.png`,
-        particleUrl: `/_site-logo/${hashes.particle}/particle.bin`,
-        staticUrl: `/_site-logo/${hashes.effect}/effect.png`,
-        width: 160,
-        height: 64,
-        aspect: 2.5,
-        count: 2,
-        medianStroke: 5.5,
-        auraColor: '#345678'
-      }
-    })
-
-    const [revisionA, revisionB, bundleA, bundleB] = await Promise.all([
-      restartedNodeA.revision(revisionId),
-      nodeB.revision(revisionId),
-      readPublishedBundle(restartedNodeA, hashes),
-      readPublishedBundle(nodeB, hashes)
-    ])
-    expect(revisionA).toEqual(revisionB)
-    expect(revisionA).toEqual({
+    await db('siteLogoRevisions').insert({
       id: revisionId,
-      sourceHash: sha256(sourceBytes),
+      sourceKind: 'source',
+      sourceHash: hash,
       pipelineVersion: 5,
       status: 'ready',
+      jobId: null,
       retrySequence: 0,
-      logoPngHash: hashes.logo,
-      particleV1Hash: hashes.particle,
-      effectStaticPngHash: hashes.effect,
-      normalizedWidth: 160,
-      normalizedHeight: 64,
-      particleCount: 2,
-      medianStroke: 5.5,
-      auraColor: '#345678'
+      logoPngKind: 'logo-png',
+      logoPngHash: digest(legacyLogo),
+      iconPngKind: null,
+      favicon16Hash: null,
+      favicon32Hash: null,
+      tile150Hash: null,
+      apple180Hash: null,
+      app192Hash: null,
+      app512Hash: null,
+      maskable512Hash: null,
+      faviconIcoKind: null,
+      faviconIcoHash: null,
+      particleV1Kind: 'particle-v1',
+      particleV1Hash: digest(legacyParticle),
+      effectStaticPngKind: 'effect-static-png',
+      effectStaticPngHash: digest(legacyStatic),
+      normalizedWidth: 64,
+      normalizedHeight: 32,
+      particleCount: 1,
+      medianStroke: 4,
+      auraColor: null,
+      enhancementErrorCode: null,
+      errorCode: null,
+      requestedBy: null,
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      completedAt: now,
+      retiredAt: null
     })
-    expect(bundleA).toEqual(bundleB)
-    expect({ logo: sha256(bundleA.logo), particle: sha256(bundleA.particle), effect: sha256(bundleA.effect) }).toEqual(hashes)
+    await db('siteLogoState').where({ id: 1 }).update({ activeRevisionId: revisionId, desiredRevisionId: revisionId })
 
-    const particleHeader = {
-      width: bundleA.particle.readUInt32LE(8),
-      height: bundleA.particle.readUInt32LE(12),
-      count: bundleA.particle.readUInt32LE(16)
-    }
-    expect(particleHeader).toEqual({
-      width: snapshotA.logoEffect!.width,
-      height: snapshotA.logoEffect!.height,
-      count: snapshotA.logoEffect!.count
+    const status = await getSiteLogoStatus(db)
+    expect(status.active).toEqual({
+      revisionId,
+      logoUrl: `/_site-logo/${digest(legacyLogo)}/logo.png`,
+      logoIcons: null,
+      enhancement: { status: 'ready', reason: null }
     })
-    expect(snapshotA.logoEffect!.aspect).toBe(particleHeader.width / particleHeader.height)
   })
 })

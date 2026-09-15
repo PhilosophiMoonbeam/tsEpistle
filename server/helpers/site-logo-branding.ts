@@ -1,25 +1,25 @@
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
+import {
+  SITE_LOGO_FAVICON_ICO_BYTE_LIMIT,
+  SITE_LOGO_ICON_PNG_BYTE_LIMIT,
+  SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT,
+  SITE_LOGO_PNG_BYTE_LIMIT,
+  SITE_LOGO_SOURCE_BYTE_LIMIT,
+  SITE_LOGO_STATIC_PNG_BYTE_LIMIT,
+  type LogoEffectDescriptor,
+  type LogoIconDescriptor
+} from '../../shared/site-logo.ts'
 
-export const SITE_LOGO_OBJECT_KINDS = ['source', 'logo-png', 'particle-v1', 'effect-static-png'] as const
+export const SITE_LOGO_OBJECT_KINDS = ['source', 'logo-png', 'icon-png', 'favicon-ico', 'particle-v1', 'effect-static-png'] as const
 export type SiteLogoObjectKind = (typeof SITE_LOGO_OBJECT_KINDS)[number]
 
-export interface SiteLogoEffectDescriptor {
-  readonly pipelineVersion: number
-  readonly logoUrl: string
-  readonly particleUrl: string
-  readonly staticUrl: string
-  readonly width: number
-  readonly height: number
-  readonly aspect: number
-  readonly count: number
-  readonly medianStroke: number
-  readonly auraColor?: string
-}
+export type SiteLogoEffectDescriptor = LogoEffectDescriptor
 
 export interface ActiveBranding {
   readonly logoUrl: string
   readonly logoEffect: SiteLogoEffectDescriptor | null
+  readonly logoIcons: LogoIconDescriptor | null
 }
 
 interface SiteLogoObjectRecord {
@@ -34,6 +34,16 @@ interface ActiveRevisionRow {
   readonly pipelineVersion: number | string
   readonly logoPngKind: string | null
   readonly logoPngHash: string | null
+  readonly iconPngKind: string | null
+  readonly favicon16Hash: string | null
+  readonly favicon32Hash: string | null
+  readonly tile150Hash: string | null
+  readonly apple180Hash: string | null
+  readonly app192Hash: string | null
+  readonly app512Hash: string | null
+  readonly maskable512Hash: string | null
+  readonly faviconIcoKind: string | null
+  readonly faviconIcoHash: string | null
   readonly particleV1Kind: string | null
   readonly particleV1Hash: string | null
   readonly effectStaticPngKind: string | null
@@ -43,6 +53,7 @@ interface ActiveRevisionRow {
   readonly particleCount: number | string | null
   readonly medianStroke: number | string | null
   readonly auraColor: string | null
+  readonly enhancementErrorCode: string | null
 }
 
 interface ParticleHeader {
@@ -58,16 +69,37 @@ const MAX_PARTICLE_COUNT = 16_000
 const PARTICLE_BYTES_PER_RECORD = 12
 const MAX_PARTICLE_PAYLOAD_BYTES = PARTICLE_BYTES_PER_RECORD * MAX_PARTICLE_COUNT
 const MAX_PARTICLE_FILE_BYTES = PARTICLE_HEADER_BYTES + MAX_PARTICLE_PAYLOAD_BYTES
+const MANAGED_LOGO_URL_PATTERN = /^\/_site-logo\/[^/]+\/logo\.png(?:[?#].*)?$/
 
 const expectedContentType = (kind: SiteLogoObjectKind): string | null => {
   switch (kind) {
     case 'logo-png':
+    case 'icon-png':
     case 'effect-static-png':
       return 'image/png'
+    case 'favicon-ico':
+      return 'image/x-icon'
     case 'particle-v1':
       return 'application/octet-stream'
     case 'source':
       return null
+  }
+}
+
+const maximumByteLength = (kind: SiteLogoObjectKind): number => {
+  switch (kind) {
+    case 'logo-png':
+      return SITE_LOGO_PNG_BYTE_LIMIT
+    case 'icon-png':
+      return SITE_LOGO_ICON_PNG_BYTE_LIMIT
+    case 'favicon-ico':
+      return SITE_LOGO_FAVICON_ICO_BYTE_LIMIT
+    case 'particle-v1':
+      return SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT
+    case 'effect-static-png':
+      return SITE_LOGO_STATIC_PNG_BYTE_LIMIT
+    case 'source':
+      return SITE_LOGO_SOURCE_BYTE_LIMIT
   }
 }
 
@@ -79,13 +111,22 @@ export const readSiteLogoObject = async (knex: Knex | Knex.Transaction, kind: Si
   if (!row || (!Buffer.isBuffer(row.bytes) && !(row.bytes instanceof Uint8Array))) return null
 
   const bytes = Buffer.isBuffer(row.bytes) ? row.bytes : Buffer.from(row.bytes)
-  if (Number(row.byteLength) !== bytes.byteLength) return null
+  if (bytes.byteLength < 1 || bytes.byteLength > maximumByteLength(kind) || Number(row.byteLength) !== bytes.byteLength) return null
   const requiredContentType = expectedContentType(kind)
   if (requiredContentType !== null && row.contentType !== requiredContentType) return null
   return bytes
 }
 
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
+
+const readVerifiedObject = async (knex: Knex | Knex.Transaction, kind: SiteLogoObjectKind, hash: string): Promise<Buffer | null> => {
+  try {
+    const bytes = await readSiteLogoObject(knex, kind, hash)
+    return bytes && sha256(bytes) === hash ? bytes : null
+  } catch {
+    return null
+  }
+}
 
 const crc32Table = new Uint32Array(256)
 for (let index = 0; index < crc32Table.length; index += 1) {
@@ -142,17 +183,127 @@ const parseParticleHeader = (bytes: Buffer): ParticleHeader | null => {
   return { width, height, count }
 }
 
-const integerInRange = (value: number | string | null, minimum: number, maximum: number): number | null => {
+const integerInRange = (value: number | string | null | undefined, minimum: number, maximum: number): number | null => {
   const parsed = Number(value)
   return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null
 }
 
-const validMedianStroke = (value: number | string | null, maximum: number): number | null => {
+const validMedianStroke = (value: number | string | null | undefined, maximum: number): number | null => {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 && parsed <= maximum ? parsed : null
 }
 
-const legacyBranding = (legacyLogoUrl: string): ActiveBranding => ({ logoUrl: legacyLogoUrl, logoEffect: null })
+const freezeBranding = (logoUrl: string, logoEffect: SiteLogoEffectDescriptor | null, logoIcons: LogoIconDescriptor | null): ActiveBranding => {
+  const branding: ActiveBranding = { logoUrl, logoEffect, logoIcons }
+  return Object.freeze(branding)
+}
+
+const legacyBranding = (legacyLogoUrl: string): ActiveBranding => {
+  const logoUrl = MANAGED_LOGO_URL_PATTERN.test(legacyLogoUrl.trim()) ? '' : legacyLogoUrl
+  return freezeBranding(logoUrl, null, null)
+}
+
+const resolveIconDescriptor = async (knex: Knex | Knex.Transaction, row: ActiveRevisionRow): Promise<LogoIconDescriptor | null> => {
+  if (
+    row.iconPngKind !== 'icon-png' ||
+    row.faviconIcoKind !== 'favicon-ico' ||
+    !row.favicon16Hash ||
+    !row.favicon32Hash ||
+    !row.tile150Hash ||
+    !row.apple180Hash ||
+    !row.app192Hash ||
+    !row.app512Hash ||
+    !row.maskable512Hash ||
+    !row.faviconIcoHash
+  )
+    return null
+
+  const iconHashes = [row.favicon16Hash, row.favicon32Hash, row.tile150Hash, row.apple180Hash, row.app192Hash, row.app512Hash, row.maskable512Hash]
+  if (iconHashes.some(hash => !SHA256_PATTERN.test(hash)) || !SHA256_PATTERN.test(row.faviconIcoHash ?? '')) return null
+
+  const iconReads = new Map<string, Promise<Buffer | null>>()
+  const readIcon = (hash: string): Promise<Buffer | null> => {
+    const existing = iconReads.get(hash)
+    if (existing) return existing
+    const pending = readVerifiedObject(knex, 'icon-png', hash)
+    iconReads.set(hash, pending)
+    return pending
+  }
+  const [favicon16, favicon32, tile150, apple180, app192, app512, maskable512, faviconIco] = await Promise.all([
+    ...iconHashes.map(readIcon),
+    readVerifiedObject(knex, 'favicon-ico', row.faviconIcoHash)
+  ])
+  if ([favicon16, favicon32, tile150, apple180, app192, app512, maskable512, faviconIco].some(bytes => bytes === null)) return null
+
+  return Object.freeze({
+    favicon16Url: `/_site-logo/${row.favicon16Hash}/icon.png`,
+    favicon32Url: `/_site-logo/${row.favicon32Hash}/icon.png`,
+    tile150Url: `/_site-logo/${row.tile150Hash}/icon.png`,
+    apple180Url: `/_site-logo/${row.apple180Hash}/icon.png`,
+    app192Url: `/_site-logo/${row.app192Hash}/icon.png`,
+    app512Url: `/_site-logo/${row.app512Hash}/icon.png`,
+    maskable512Url: `/_site-logo/${row.maskable512Hash}/icon.png`,
+    faviconIcoUrl: `/_site-logo/${row.faviconIcoHash}/favicon.ico`
+  })
+}
+
+const resolveEffectDescriptor = async (
+  knex: Knex | Knex.Transaction,
+  row: ActiveRevisionRow,
+  pipelineVersion: number,
+  logoUrl: string
+): Promise<SiteLogoEffectDescriptor | null> => {
+  const effectValues = [
+    row.particleV1Kind,
+    row.particleV1Hash,
+    row.effectStaticPngKind,
+    row.effectStaticPngHash,
+    row.normalizedWidth,
+    row.normalizedHeight,
+    row.particleCount,
+    row.medianStroke,
+    row.auraColor
+  ]
+  if (!effectValues.some(value => value !== null && value !== undefined)) return null
+  if (pipelineVersion === 6 && row.enhancementErrorCode !== null && row.enhancementErrorCode !== undefined) return null
+  if (
+    row.particleV1Kind !== 'particle-v1' ||
+    row.effectStaticPngKind !== 'effect-static-png' ||
+    !row.particleV1Hash ||
+    !SHA256_PATTERN.test(row.particleV1Hash) ||
+    !row.effectStaticPngHash ||
+    !SHA256_PATTERN.test(row.effectStaticPngHash)
+  )
+    return null
+
+  const width = integerInRange(row.normalizedWidth, 2, 4096)
+  const height = integerInRange(row.normalizedHeight, 2, 4096)
+  const count = integerInRange(row.particleCount, 1, MAX_PARTICLE_COUNT)
+  if (width === null || height === null || count === null) return null
+  const medianStroke = validMedianStroke(row.medianStroke, Math.max(width, height))
+  if (medianStroke === null || (row.auraColor !== null && row.auraColor !== undefined && !AURA_COLOR_PATTERN.test(row.auraColor))) return null
+
+  const [particleBytes, staticBytes] = await Promise.all([
+    readVerifiedObject(knex, 'particle-v1', row.particleV1Hash),
+    readVerifiedObject(knex, 'effect-static-png', row.effectStaticPngHash)
+  ])
+  if (!particleBytes || !staticBytes) return null
+  const particleHeader = parseParticleHeader(particleBytes)
+  if (!particleHeader || particleHeader.width !== width || particleHeader.height !== height || particleHeader.count !== count) return null
+
+  return Object.freeze({
+    pipelineVersion,
+    logoUrl,
+    particleUrl: `/_site-logo/${row.particleV1Hash}/particle.bin`,
+    staticUrl: `/_site-logo/${row.effectStaticPngHash}/effect.png`,
+    width,
+    height,
+    aspect: width / height,
+    count,
+    medianStroke,
+    ...(row.auraColor === null || row.auraColor === undefined ? {} : { auraColor: row.auraColor })
+  })
+}
 
 export const resolveActiveBranding = async (knex: Knex | Knex.Transaction, legacyLogoUrl: string): Promise<ActiveBranding> => {
   const row = (await knex('siteLogoState as state')
@@ -163,6 +314,16 @@ export const resolveActiveBranding = async (knex: Knex | Knex.Transaction, legac
       'revision.pipelineVersion',
       'revision.logoPngKind',
       'revision.logoPngHash',
+      'revision.iconPngKind',
+      'revision.favicon16Hash',
+      'revision.favicon32Hash',
+      'revision.tile150Hash',
+      'revision.apple180Hash',
+      'revision.app192Hash',
+      'revision.app512Hash',
+      'revision.maskable512Hash',
+      'revision.faviconIcoKind',
+      'revision.faviconIcoHash',
       'revision.particleV1Kind',
       'revision.particleV1Hash',
       'revision.effectStaticPngKind',
@@ -171,62 +332,21 @@ export const resolveActiveBranding = async (knex: Knex | Knex.Transaction, legac
       'revision.normalizedHeight',
       'revision.particleCount',
       'revision.medianStroke',
-      'revision.auraColor'
+      'revision.auraColor',
+      'revision.enhancementErrorCode'
     )) as ActiveRevisionRow | undefined
 
-  if (
-    !row ||
-    row.logoPngKind !== 'logo-png' ||
-    row.particleV1Kind !== 'particle-v1' ||
-    row.effectStaticPngKind !== 'effect-static-png' ||
-    !row.logoPngHash ||
-    !SHA256_PATTERN.test(row.logoPngHash) ||
-    !row.particleV1Hash ||
-    !SHA256_PATTERN.test(row.particleV1Hash) ||
-    !row.effectStaticPngHash ||
-    !SHA256_PATTERN.test(row.effectStaticPngHash)
-  )
-    return legacyBranding(legacyLogoUrl)
-  const pipelineVersion = integerInRange(row.pipelineVersion, 1, 5)
+  if (!row || row.logoPngKind !== 'logo-png' || !row.logoPngHash || !SHA256_PATTERN.test(row.logoPngHash)) return legacyBranding(legacyLogoUrl)
+  const pipelineVersion = integerInRange(row.pipelineVersion, 1, 6)
+  if (pipelineVersion === null) return legacyBranding(legacyLogoUrl)
 
-  const width = integerInRange(row.normalizedWidth, 2, 4096)
-  const height = integerInRange(row.normalizedHeight, 2, 4096)
-  const count = integerInRange(row.particleCount, 1, MAX_PARTICLE_COUNT)
-  if (pipelineVersion === null || width === null || height === null || count === null) return legacyBranding(legacyLogoUrl)
-  const medianStroke = validMedianStroke(row.medianStroke, Math.max(width, height))
-  if (medianStroke === null || (row.auraColor !== null && !AURA_COLOR_PATTERN.test(row.auraColor))) return legacyBranding(legacyLogoUrl)
-
-  const [logoBytes, particleBytes, staticBytes] = await Promise.all([
-    readSiteLogoObject(knex, 'logo-png', row.logoPngHash),
-    readSiteLogoObject(knex, 'particle-v1', row.particleV1Hash),
-    readSiteLogoObject(knex, 'effect-static-png', row.effectStaticPngHash)
-  ])
-  if (
-    !logoBytes ||
-    !particleBytes ||
-    !staticBytes ||
-    sha256(logoBytes) !== row.logoPngHash ||
-    sha256(particleBytes) !== row.particleV1Hash ||
-    sha256(staticBytes) !== row.effectStaticPngHash
-  )
-    return legacyBranding(legacyLogoUrl)
-
-  const particleHeader = parseParticleHeader(particleBytes)
-  if (!particleHeader || particleHeader.width !== width || particleHeader.height !== height || particleHeader.count !== count)
-    return legacyBranding(legacyLogoUrl)
+  const logoBytes = await readVerifiedObject(knex, 'logo-png', row.logoPngHash)
+  if (!logoBytes) return legacyBranding(legacyLogoUrl)
 
   const logoUrl = `/_site-logo/${row.logoPngHash}/logo.png`
-  const logoEffect: SiteLogoEffectDescriptor = {
-    pipelineVersion,
-    logoUrl,
-    particleUrl: `/_site-logo/${row.particleV1Hash}/particle.bin`,
-    staticUrl: `/_site-logo/${row.effectStaticPngHash}/effect.png`,
-    width,
-    height,
-    aspect: width / height,
-    count,
-    medianStroke,
-    ...(row.auraColor === null ? {} : { auraColor: row.auraColor })
-  }
-  return { logoUrl, logoEffect }
+  const [logoIcons, logoEffect] = await Promise.all([
+    pipelineVersion === 6 ? resolveIconDescriptor(knex, row) : Promise.resolve(null),
+    resolveEffectDescriptor(knex, row, pipelineVersion, logoUrl)
+  ])
+  return freezeBranding(logoUrl, logoEffect, logoIcons)
 }

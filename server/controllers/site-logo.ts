@@ -10,11 +10,12 @@ interface PublicObjectRoute {
 
 const PUBLIC_OBJECT_ROUTES: Readonly<Record<string, PublicObjectRoute>> = {
   'logo.png': { kind: 'logo-png', contentType: 'image/png' },
+  'icon.png': { kind: 'icon-png', contentType: 'image/png' },
+  'favicon.ico': { kind: 'favicon-ico', contentType: 'image/x-icon' },
   'particle.bin': { kind: 'particle-v1', contentType: 'application/octet-stream' },
   'effect.png': { kind: 'effect-static-png', contentType: 'image/png' }
 }
-
-const CANONICAL_OBJECT_PATH = /^\/_site-logo\/([0-9a-f]{64})\/(logo\.png|particle\.bin|effect\.png)$/
+const CANONICAL_OBJECT_PATH = /^\/_site-logo\/([0-9a-f]{64})\/(logo\.png|icon\.png|favicon\.ico|particle\.bin|effect\.png)$/
 // Holds one maximum-sized generated public artifact set while bounding each router's retained memory.
 const VERIFIED_OBJECT_CACHE_MAX_BYTES = 2 * 1024 * 1024
 const VERIFIED_OBJECT_CACHE_MAX_ENTRIES = 64

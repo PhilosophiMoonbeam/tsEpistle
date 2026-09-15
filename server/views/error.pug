@@ -5,7 +5,12 @@ block body
     main.app-error
       section.app-error-content(role='alert')
         a.app-error-brand(href='/', aria-label='Return home')
-          img(src='/_assets/svg/logo-tsepistle.svg', alt='')
+          img(
+            src=siteConfig.logoUrl || '/_assets/svg/logo-tsepistle.svg'
+            alt=''
+            style='filter: none;'
+          )
+        .app-error-workspace-title= siteConfig.title || config.title || 'Workspace'
         .app-error-eyebrow Request interrupted
         h1 Something went wrong
         p.app-error-message= message

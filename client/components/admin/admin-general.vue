@@ -495,7 +495,15 @@
         <aside class="general-aside">
           <div class="general-identity-card">
             <span class="general-kicker">Workspace at a glance</span
-            ><img v-if="logoUrl" :src="logoUrl" alt="Current workspace logo" />
+            ><img
+              v-if="logoUrl && !logoImageFailed"
+              :key="logoUrl"
+              :src="logoUrl"
+              :data-logo-source="logoUrl"
+              alt="Current workspace logo"
+              @error="handleLogoError"
+              @load="handleLogoLoad"
+            />
             <h3>{{ draft.title || "Workspace name" }}</h3>
             <p>{{ draft.company || "Your shared knowledge space" }}</p>
             <code>{{ draft.host || "Public address not set" }}</code
@@ -661,6 +669,7 @@ export default {
       notice: "",
       attention: false,
       sequence: 0,
+      failedLogoUrl: null as string | null,
       disposed: false,
       reviewing: false,
       reason: "",
@@ -710,6 +719,9 @@ export default {
     },
     logoUrl(): string {
       return wikiStore.site.logoUrl;
+    },
+    logoImageFailed(): boolean {
+      return this.failedLogoUrl === this.logoUrl;
     },
     footerPreview(): string {
       return renderFooterMarkdown(this.draft?.footerOverride || "");
@@ -818,6 +830,20 @@ export default {
     );
   },
   methods: {
+    handleLogoError(event: Event): void {
+      const image = event.currentTarget;
+      if (!(image instanceof HTMLImageElement)) return;
+      const source = image.getAttribute("data-logo-source");
+      if (!source || source !== this.logoUrl) return;
+      this.failedLogoUrl = source;
+    },
+    handleLogoLoad(event: Event): void {
+      const image = event.currentTarget;
+      if (!(image instanceof HTMLImageElement)) return;
+      const source = image.getAttribute("data-logo-source");
+      if (!source || source !== this.logoUrl) return;
+      if (this.failedLogoUrl === source) this.failedLogoUrl = null;
+    },
     async load() {
       if (this.busy) return;
       const seq = ++this.sequence;

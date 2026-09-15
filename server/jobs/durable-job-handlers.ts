@@ -17,15 +17,13 @@ export const cleanupDurableJobs: DurableJobHandler = async (_job, { knex, signal
   const query = knex('durableJobs').whereIn('state', ['succeeded', 'failed', 'cancelled']).where('completedAt', '<', before)
   if (await knex.schema.hasTable('assetRelocationEffects')) {
     query.andWhere(relocationJobs => {
-      relocationJobs
-        .whereNot('durableJobs.type', 'asset-relocation')
-        .orWhereExists(successfulEffect => {
-          successfulEffect
-            .select(knex.raw('1'))
-            .from('assetRelocationEffects as effect')
-            .whereRaw('?? = ??', ['effect.jobId', 'durableJobs.id'])
-            .where('effect.status', 'succeeded')
-        })
+      relocationJobs.whereNot('durableJobs.type', 'asset-relocation').orWhereExists(successfulEffect => {
+        successfulEffect
+          .select(knex.raw('1'))
+          .from('assetRelocationEffects as effect')
+          .whereRaw('?? = ??', ['effect.jobId', 'durableJobs.id'])
+          .where('effect.status', 'succeeded')
+      })
     })
   }
   await query.delete()
@@ -107,6 +105,7 @@ export const createDurableJobHandlers = (
     'process-site-logo@1': createSiteLogoProcessHandler(1),
     'process-site-logo@2': createSiteLogoProcessHandler(2),
     'process-site-logo@3': createSiteLogoProcessHandler(3),
+    'process-site-logo@4': createSiteLogoProcessHandler(4),
     'rerender-content-extension@1': createContentExtensionRerenderHandler(wiki),
     'deliver-webhook@1': createWebhookDeliveryHandler(sessionSecret),
     'notify-page-watcher@1': createPageWatchNotificationHandler(wiki),

@@ -1,15 +1,24 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 
+import {
+  SITE_LOGO_JOB_VERSION,
+  SITE_LOGO_PIPELINE_VERSION,
+  SITE_LOGO_SOURCE_BYTE_LIMIT,
+  type LogoIconDescriptor,
+  type SiteLogoActiveStatus,
+  type SiteLogoEnhancementUnavailableReason,
+  type SiteLogoEnhancementStatus,
+  type SiteLogoErrorCode,
+  type SiteLogoStatus
+} from '../../shared/site-logo.ts'
 import { DurableJobStore } from '../core/durable-jobs.ts'
 
-export const SITE_LOGO_SOURCE_LIMIT = 5_242_880
-const SITE_LOGO_PIPELINE_VERSION = 5
-const SITE_LOGO_JOB_VERSION = 3
-const STATUS_URL = '/_api/site/logo'
+export const SITE_LOGO_SOURCE_LIMIT = SITE_LOGO_SOURCE_BYTE_LIMIT
+const STATUS_URL = '/_api/site/logo' as const
 const SHA256 = /^[a-f0-9]{64}$/
 
-const SAFE_ERROR_CODES: Readonly<Record<string, true>> = {
+const SAFE_ERROR_CODES: Readonly<Record<SiteLogoErrorCode, true>> = {
   UNSUPPORTED_IMAGE: true,
   IMAGE_TOO_LARGE: true,
   INVALID_IMAGE: true,
@@ -24,7 +33,7 @@ const RIFF_SIGNATURE = Buffer.from('RIFF', 'ascii')
 const WEBP_SIGNATURE = Buffer.from('WEBP', 'ascii')
 
 type RevisionStatus = 'pending' | 'running' | 'ready' | 'failed'
-type ObjectKind = 'source' | 'logo-png' | 'particle-v1' | 'effect-static-png'
+type ObjectKind = 'source' | 'logo-png' | 'icon-png' | 'favicon-ico' | 'particle-v1' | 'effect-static-png'
 type SourceContentType = 'image/png' | 'image/jpeg' | 'image/webp'
 
 interface SiteLogoObjectRow {
@@ -46,6 +55,16 @@ interface SiteLogoRevisionRow {
   retrySequence: number
   logoPngKind: 'logo-png' | null
   logoPngHash: string | null
+  iconPngKind: 'icon-png' | null
+  favicon16Hash: string | null
+  favicon32Hash: string | null
+  tile150Hash: string | null
+  apple180Hash: string | null
+  app192Hash: string | null
+  app512Hash: string | null
+  maskable512Hash: string | null
+  faviconIcoKind: 'favicon-ico' | null
+  faviconIcoHash: string | null
   particleV1Kind: 'particle-v1' | null
   particleV1Hash: string | null
   effectStaticPngKind: 'effect-static-png' | null
@@ -55,7 +74,8 @@ interface SiteLogoRevisionRow {
   particleCount: number | null
   medianStroke: number | null
   auraColor: string | null
-  errorCode: string | null
+  enhancementErrorCode: SiteLogoEnhancementUnavailableReason | null
+  errorCode: SiteLogoErrorCode | string | null
   requestedBy: number | null
   createdAt: Date | string
   updatedAt: Date | string
@@ -73,14 +93,11 @@ interface SiteLogoStateRow {
   updatedAt: Date | string
 }
 
-export interface SiteLogoStatusResponse {
-  active: { revisionId: string; logoUrl: string } | null
-  candidate: { revisionId: string; status: RevisionStatus; errorCode: string | null } | null
-}
+export type SiteLogoStatusResponse = SiteLogoStatus
 
 export interface SiteLogoMutationResult {
   statusCode: 200 | 202
-  status: SiteLogoStatusResponse & { statusUrl: string }
+  status: SiteLogoStatus & { statusUrl: typeof STATUS_URL }
 }
 
 export class SiteLogoOperationError extends Error {
@@ -104,7 +121,8 @@ const runtimeKnex = (): Knex => {
 
 const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 const publicUrl = (hash: string): string => `/_site-logo/${hash}/logo.png`
-const safeErrorCode = (code: string | null): string | null => (code !== null && SAFE_ERROR_CODES[code] ? code : code === null ? null : 'PROCESSING_FAILED')
+const safeErrorCode = (code: string | null): SiteLogoErrorCode | null =>
+  code !== null && SAFE_ERROR_CODES[code as SiteLogoErrorCode] ? (code as SiteLogoErrorCode) : code === null ? null : 'PROCESSING_FAILED'
 const isBytes = (value: unknown): value is Uint8Array => Buffer.isBuffer(value) || value instanceof Uint8Array
 const sourceContentType = (bytes: Buffer): SourceContentType | null => {
   if (bytes.byteLength >= PNG_SIGNATURE.byteLength && bytes.subarray(0, PNG_SIGNATURE.byteLength).equals(PNG_SIGNATURE)) return 'image/png'
@@ -113,13 +131,26 @@ const sourceContentType = (bytes: Buffer): SourceContentType | null => {
   return null
 }
 
-const verifiedObject = (row: SiteLogoObjectRow | undefined, kind: ObjectKind, hash: string): boolean =>
-  row !== undefined &&
-  row.kind === kind &&
-  row.sha256 === hash &&
-  isBytes(row.bytes) &&
-  Number(row.byteLength) === row.bytes.byteLength &&
-  digest(row.bytes) === hash
+const verifiedObject = (row: SiteLogoObjectRow | undefined, kind: ObjectKind, hash: string): boolean => {
+  if (
+    row === undefined ||
+    row.kind !== kind ||
+    row.sha256 !== hash ||
+    !isBytes(row.bytes) ||
+    Number(row.byteLength) !== row.bytes.byteLength ||
+    digest(row.bytes) !== hash
+  )
+    return false
+  const expectedContentType =
+    kind === 'logo-png' || kind === 'icon-png' || kind === 'effect-static-png'
+      ? 'image/png'
+      : kind === 'favicon-ico'
+        ? 'image/x-icon'
+        : kind === 'particle-v1'
+          ? 'application/octet-stream'
+          : null
+  return expectedContentType === null || row.contentType === expectedContentType
+}
 
 const stateForUpdate = async (transaction: Knex.Transaction): Promise<SiteLogoStateRow> => {
   const state = await transaction<SiteLogoStateRow>('siteLogoState').where({ id: 1 }).forUpdate().first()
@@ -140,29 +171,104 @@ const objectByIdentity = async (knex: Knex | Knex.Transaction, kind: ObjectKind,
   return await query.first()
 }
 
-const readyRevisionIsIntact = async (transaction: Knex.Transaction, revision: SiteLogoRevisionRow): Promise<boolean> => {
+const readyRevisionIsIntact = async (transaction: Knex | Knex.Transaction, revision: SiteLogoRevisionRow): Promise<boolean> => {
+  const pipelineVersion = Number(revision.pipelineVersion)
   if (
     revision.status !== 'ready' ||
     revision.sourceKind !== 'source' ||
     revision.logoPngKind !== 'logo-png' ||
-    revision.particleV1Kind !== 'particle-v1' ||
-    revision.effectStaticPngKind !== 'effect-static-png' ||
     !SHA256.test(revision.sourceHash) ||
     !revision.logoPngHash ||
     !SHA256.test(revision.logoPngHash) ||
-    !revision.particleV1Hash ||
-    !SHA256.test(revision.particleV1Hash) ||
-    !revision.effectStaticPngHash ||
-    !SHA256.test(revision.effectStaticPngHash)
-  )
+    !Number.isInteger(pipelineVersion) ||
+    pipelineVersion < 1 ||
+    pipelineVersion > SITE_LOGO_PIPELINE_VERSION
+  ) {
     return false
+  }
 
   const identities: Array<[ObjectKind, string]> = [
     ['source', revision.sourceHash],
-    ['logo-png', revision.logoPngHash],
-    ['particle-v1', revision.particleV1Hash],
-    ['effect-static-png', revision.effectStaticPngHash]
+    ['logo-png', revision.logoPngHash]
   ]
+  if (pipelineVersion === SITE_LOGO_PIPELINE_VERSION) {
+    if (
+      revision.iconPngKind !== 'icon-png' ||
+      !revision.favicon16Hash ||
+      !SHA256.test(revision.favicon16Hash) ||
+      !revision.favicon32Hash ||
+      !SHA256.test(revision.favicon32Hash) ||
+      !revision.tile150Hash ||
+      !SHA256.test(revision.tile150Hash) ||
+      !revision.apple180Hash ||
+      !SHA256.test(revision.apple180Hash) ||
+      !revision.app192Hash ||
+      !SHA256.test(revision.app192Hash) ||
+      !revision.app512Hash ||
+      !SHA256.test(revision.app512Hash) ||
+      !revision.maskable512Hash ||
+      !SHA256.test(revision.maskable512Hash) ||
+      revision.faviconIcoKind !== 'favicon-ico' ||
+      !revision.faviconIcoHash ||
+      !SHA256.test(revision.faviconIcoHash)
+    ) {
+      return false
+    }
+    identities.push(
+      ['icon-png', revision.favicon16Hash],
+      ['icon-png', revision.favicon32Hash],
+      ['icon-png', revision.tile150Hash],
+      ['icon-png', revision.apple180Hash],
+      ['icon-png', revision.app192Hash],
+      ['icon-png', revision.app512Hash],
+      ['icon-png', revision.maskable512Hash],
+      ['favicon-ico', revision.faviconIcoHash]
+    )
+    if (revision.enhancementErrorCode === null) {
+      if (
+        revision.particleV1Kind !== 'particle-v1' ||
+        !revision.particleV1Hash ||
+        !SHA256.test(revision.particleV1Hash) ||
+        revision.effectStaticPngKind !== 'effect-static-png' ||
+        !revision.effectStaticPngHash ||
+        !SHA256.test(revision.effectStaticPngHash) ||
+        revision.normalizedWidth === null ||
+        revision.normalizedHeight === null ||
+        revision.particleCount === null ||
+        revision.medianStroke === null
+      ) {
+        return false
+      }
+      identities.push(['particle-v1', revision.particleV1Hash], ['effect-static-png', revision.effectStaticPngHash])
+    } else if (
+      !(['UNSUITABLE_LOGO', 'ARTIFACT_TOO_LARGE', 'PROCESSING_FAILED'] as readonly SiteLogoEnhancementUnavailableReason[]).includes(
+        revision.enhancementErrorCode
+      ) ||
+      revision.particleV1Kind !== null ||
+      revision.particleV1Hash !== null ||
+      revision.effectStaticPngKind !== null ||
+      revision.effectStaticPngHash !== null ||
+      revision.normalizedWidth !== null ||
+      revision.normalizedHeight !== null ||
+      revision.particleCount !== null ||
+      revision.medianStroke !== null ||
+      revision.auraColor !== null
+    ) {
+      return false
+    }
+  } else {
+    if (
+      revision.particleV1Kind !== 'particle-v1' ||
+      !revision.particleV1Hash ||
+      !SHA256.test(revision.particleV1Hash) ||
+      revision.effectStaticPngKind !== 'effect-static-png' ||
+      !revision.effectStaticPngHash ||
+      !SHA256.test(revision.effectStaticPngHash)
+    ) {
+      return false
+    }
+    identities.push(['particle-v1', revision.particleV1Hash], ['effect-static-png', revision.effectStaticPngHash])
+  }
   for (const [kind, hash] of identities) {
     const object = await objectByIdentity(transaction, kind, hash, true)
     if (!verifiedObject(object, kind, hash)) return false
@@ -188,7 +294,7 @@ const ensureSourceObject = async (
   now: Date
 ): Promise<void> => {
   const stored = await objectByIdentity(transaction, 'source', sourceHash, true)
-  if (verifiedObject(stored, 'source', sourceHash)) return
+  if (verifiedObject(stored, 'source', sourceHash) && stored?.contentType === contentType) return
 
   if (stored) {
     let terminalReferencesQuery = transaction<SiteLogoRevisionRow>('siteLogoRevisions').where({ sourceKind: 'source', sourceHash })
@@ -219,13 +325,40 @@ const statusFrom = async (knex: Knex | Knex.Transaction, state: SiteLogoStateRow
     revisionById(knex, state.activeRevisionId),
     state.desiredRevisionId === state.activeRevisionId ? Promise.resolve(undefined) : revisionById(knex, state.desiredRevisionId)
   ])
-  const active =
-    activeRevision?.status === 'ready' &&
-    activeRevision.logoPngKind === 'logo-png' &&
-    typeof activeRevision.logoPngHash === 'string' &&
-    SHA256.test(activeRevision.logoPngHash)
-      ? { revisionId: activeRevision.id, logoUrl: publicUrl(activeRevision.logoPngHash) }
-      : null
+  let active: SiteLogoActiveStatus | null = null
+  if (activeRevision && (await readyRevisionIsIntact(knex, activeRevision))) {
+    const logoUrl = publicUrl(activeRevision.logoPngHash!)
+    const logoIcons: LogoIconDescriptor | null =
+      activeRevision.pipelineVersion === SITE_LOGO_PIPELINE_VERSION &&
+      activeRevision.iconPngKind === 'icon-png' &&
+      activeRevision.favicon16Hash &&
+      activeRevision.favicon32Hash &&
+      activeRevision.tile150Hash &&
+      activeRevision.apple180Hash &&
+      activeRevision.app192Hash &&
+      activeRevision.app512Hash &&
+      activeRevision.maskable512Hash &&
+      activeRevision.faviconIcoKind === 'favicon-ico' &&
+      activeRevision.faviconIcoHash
+        ? {
+            favicon16Url: `/_site-logo/${activeRevision.favicon16Hash}/icon.png`,
+            favicon32Url: `/_site-logo/${activeRevision.favicon32Hash}/icon.png`,
+            tile150Url: `/_site-logo/${activeRevision.tile150Hash}/icon.png`,
+            apple180Url: `/_site-logo/${activeRevision.apple180Hash}/icon.png`,
+            app192Url: `/_site-logo/${activeRevision.app192Hash}/icon.png`,
+            app512Url: `/_site-logo/${activeRevision.app512Hash}/icon.png`,
+            maskable512Url: `/_site-logo/${activeRevision.maskable512Hash}/icon.png`,
+            faviconIcoUrl: `/_site-logo/${activeRevision.faviconIcoHash}/favicon.ico`
+          }
+        : null
+    const enhancement: SiteLogoEnhancementStatus =
+      activeRevision.pipelineVersion === SITE_LOGO_PIPELINE_VERSION
+        ? activeRevision.enhancementErrorCode === null
+          ? { status: 'ready', reason: null }
+          : { status: 'unavailable', reason: activeRevision.enhancementErrorCode }
+        : { status: 'ready', reason: null }
+    active = { revisionId: activeRevision.id, logoUrl, logoIcons, enhancement }
+  }
   const candidate =
     desiredRevision && desiredRevision.retiredAt === null
       ? {
@@ -237,7 +370,7 @@ const statusFrom = async (knex: Knex | Knex.Transaction, state: SiteLogoStateRow
   return { active, candidate }
 }
 
-const statusWithUrl = async (knex: Knex | Knex.Transaction, state: SiteLogoStateRow): Promise<SiteLogoStatusResponse & { statusUrl: string }> => ({
+const statusWithUrl = async (knex: Knex | Knex.Transaction, state: SiteLogoStateRow): Promise<SiteLogoStatusResponse & { statusUrl: typeof STATUS_URL }> => ({
   ...(await statusFrom(knex, state)),
   statusUrl: STATUS_URL
 })
@@ -260,6 +393,16 @@ const enqueueCandidate = async (
     retrySequence,
     logoPngKind: null,
     logoPngHash: null,
+    iconPngKind: null,
+    favicon16Hash: null,
+    favicon32Hash: null,
+    tile150Hash: null,
+    apple180Hash: null,
+    app192Hash: null,
+    app512Hash: null,
+    maskable512Hash: null,
+    faviconIcoKind: null,
+    faviconIcoHash: null,
     particleV1Kind: null,
     particleV1Hash: null,
     effectStaticPngKind: null,
@@ -269,6 +412,7 @@ const enqueueCandidate = async (
     particleCount: null,
     medianStroke: null,
     auraColor: null,
+    enhancementErrorCode: null,
     errorCode: null,
     requestedBy,
     createdAt: now,

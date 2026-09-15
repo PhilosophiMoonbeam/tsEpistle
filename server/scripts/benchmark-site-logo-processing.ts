@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { deflateSync } from 'node:zlib'
 import sharp from 'sharp'
 
-import { SiteLogoProcessingError, type SiteLogoProcessingErrorCode, crc32, processSiteLogoSource } from '../helpers/site-logo-processing.ts'
+import { SITE_LOGO_ICON_SIZES, type SiteLogoEnhancementUnavailableReason, type SiteLogoErrorCode } from '../../shared/site-logo.ts'
+import { SiteLogoProcessingError, crc32, processSiteLogoSource, type SiteLogoArtifacts } from '../helpers/site-logo-processing.ts'
 
 export const SITE_LOGO_PROCESSING_ITERATIONS = 3
 export const SITE_LOGO_PROCESSING_CONCURRENCY = 1 as const
@@ -26,10 +27,10 @@ export const SITE_LOGO_PROCESSING_SAFE_ERROR_CODES = Object.freeze([
   'UNSUITABLE_LOGO',
   'PROCESSING_FAILED',
   'ARTIFACT_TOO_LARGE'
-] satisfies readonly SiteLogoProcessingErrorCode[])
+] satisfies readonly SiteLogoErrorCode[])
 
 type CorpusCategory = 'accepted' | 'malformed' | 'decompression-bomb'
-type ExpectedOutcome = { status: 'accepted' } | { status: 'rejected'; errorCodes: readonly SiteLogoProcessingErrorCode[] }
+type ExpectedOutcome = { status: 'accepted' } | { status: 'rejected'; errorCodes: readonly SiteLogoErrorCode[] }
 
 export interface SiteLogoProcessingEnvironment {
   runtime: { name: 'bun' | 'node'; version: string }
@@ -43,7 +44,7 @@ export interface SiteLogoProcessingSample {
   durationMilliseconds: number
   // Retained for the existing report gate; isolated samples contain an absolute process peak, not a baseline delta.
   peakRssDeltaBytes: number
-  outcome: { status: 'accepted' } | { status: 'rejected'; errorCode: SiteLogoProcessingErrorCode }
+  outcome: { status: 'accepted' } | { status: 'rejected'; errorCode: SiteLogoErrorCode }
 }
 
 export interface SiteLogoProcessingFixtureIdentity {
@@ -333,7 +334,7 @@ const corpus = [
   {
     id: 'decompression-bomb-4097x4095-grayscale-png',
     category: 'decompression-bomb',
-    expected: { status: 'rejected', errorCodes: ['INVALID_IMAGE', 'IMAGE_TOO_LARGE'] },
+    expected: { status: 'rejected', errorCodes: ['IMAGE_TOO_LARGE'] },
     createFixture: createDecompressionBombFixture
   }
 ] satisfies ReadonlyArray<{
@@ -372,9 +373,58 @@ const fixtureIdentity = (bytes: Buffer): SiteLogoProcessingFixtureIdentity => ({
 
 const maxRssKilobytesToBytes = (maxRssKilobytes: number): number => (Number.isFinite(maxRssKilobytes) && maxRssKilobytes >= 0 ? maxRssKilobytes * 1024 : 0)
 
-const safeErrorCode = (error: unknown): SiteLogoProcessingErrorCode => {
+const safeErrorCode = (error: unknown): SiteLogoErrorCode => {
   if (error instanceof SiteLogoProcessingError && SITE_LOGO_PROCESSING_SAFE_ERROR_CODES.includes(error.code)) return error.code
   return 'PROCESSING_FAILED'
+}
+
+const isPng = (value: unknown): value is Buffer =>
+  Buffer.isBuffer(value) && value.length >= 8 && value.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+
+const isPositiveInteger = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 1
+
+const SITE_LOGO_ENHANCEMENT_UNAVAILABLE_REASONS = Object.freeze([
+  'UNSUITABLE_LOGO',
+  'ARTIFACT_TOO_LARGE',
+  'PROCESSING_FAILED'
+] satisfies readonly SiteLogoEnhancementUnavailableReason[])
+
+const isEnhancementUnavailableReason = (value: unknown): value is SiteLogoEnhancementUnavailableReason =>
+  typeof value === 'string' && SITE_LOGO_ENHANCEMENT_UNAVAILABLE_REASONS.includes(value as SiteLogoEnhancementUnavailableReason)
+
+const hasV6ArtifactShape = (value: unknown): value is SiteLogoArtifacts => {
+  if (value === null || typeof value !== 'object') return false
+  const artifacts = value as Record<string, unknown>
+  if (!isPng(artifacts.logoPng) || !isPositiveInteger(artifacts.logoWidth) || !isPositiveInteger(artifacts.logoHeight)) return false
+
+  const faviconIco = artifacts.faviconIco
+  if (!Buffer.isBuffer(faviconIco) || faviconIco.length < 6 || faviconIco.readUInt16LE(2) !== 1 || faviconIco.readUInt16LE(4) !== 2) return false
+
+  const iconValue = artifacts.icons
+  if (iconValue === null || typeof iconValue !== 'object') return false
+  const icons = iconValue as Record<string, unknown>
+  const iconNames = Object.keys(SITE_LOGO_ICON_SIZES) as Array<keyof SiteLogoArtifacts['icons']>
+  const iconKeys = Object.keys(icons)
+  if (iconKeys.length !== iconNames.length || iconNames.some(name => !(name in icons))) return false
+  if (iconNames.some(name => !isPng(icons[name]))) return false
+
+  const enhancementValue = artifacts.enhancement
+  if (enhancementValue === null || typeof enhancementValue !== 'object') return false
+  const enhancement = enhancementValue as Record<string, unknown>
+  if (enhancement.status === 'unavailable') return isEnhancementUnavailableReason(enhancement.reason)
+  if (enhancement.status !== 'ready') return false
+  if (enhancement.auraColor !== undefined && typeof enhancement.auraColor !== 'string') return false
+  return (
+    Buffer.isBuffer(enhancement.particleV1) &&
+    enhancement.particleV1.length > 0 &&
+    isPng(enhancement.effectStaticPng) &&
+    isPositiveInteger(enhancement.normalizedWidth) &&
+    isPositiveInteger(enhancement.normalizedHeight) &&
+    isPositiveInteger(enhancement.particleCount) &&
+    typeof enhancement.medianStroke === 'number' &&
+    Number.isFinite(enhancement.medianStroke) &&
+    enhancement.medianStroke >= 0
+  )
 }
 
 const runFixtureChild = async (fixturePath: string): Promise<void> => {
@@ -383,9 +433,10 @@ const runFixtureChild = async (fixturePath: string): Promise<void> => {
     const bytes = await fs.readFile(fixturePath)
     const fixture = fixtureIdentity(bytes)
     const startedAt = performance.now()
-    let outcome: SiteLogoProcessingSample['outcome']
+    let outcome: SiteLogoProcessingSample['outcome'] = { status: 'rejected', errorCode: 'PROCESSING_FAILED' }
     try {
-      await processSiteLogoSource(bytes, fixture.sha256)
+      const artifacts = await processSiteLogoSource(bytes, fixture.sha256)
+      if (!hasV6ArtifactShape(artifacts)) throw new Error('Site logo processor returned an invalid v6 artifact shape')
       outcome = { status: 'accepted' }
     } catch (error: unknown) {
       outcome = { status: 'rejected', errorCode: safeErrorCode(error) }
@@ -433,31 +484,38 @@ const parseChildMeasurement = (serialized: string, expectedFixture: SiteLogoProc
     return undefined
   }
   if (candidate === null || typeof candidate !== 'object') return undefined
-  const value = candidate as Partial<ChildFixtureMeasurement>
-  if (
-    value.fixture?.byteLength !== expectedFixture.byteLength ||
-    value.fixture.sha256 !== expectedFixture.sha256 ||
-    typeof value.durationMilliseconds !== 'number' ||
-    !Number.isFinite(value.durationMilliseconds) ||
-    value.durationMilliseconds < 0 ||
-    typeof value.peakRssDeltaBytes !== 'number' ||
-    !Number.isSafeInteger(value.peakRssDeltaBytes) ||
-    value.peakRssDeltaBytes < 0
-  ) {
-    return undefined
-  }
-  if (value.outcome?.status === 'accepted') {
+  const value = candidate as Record<string, unknown>
+
+  const fixtureValue = value.fixture
+  if (fixtureValue === null || typeof fixtureValue !== 'object') return undefined
+  const fixture = fixtureValue as Record<string, unknown>
+  if (fixture.byteLength !== expectedFixture.byteLength || fixture.sha256 !== expectedFixture.sha256) return undefined
+
+  const durationMilliseconds = value.durationMilliseconds
+  if (typeof durationMilliseconds !== 'number' || !Number.isFinite(durationMilliseconds) || durationMilliseconds < 0) return undefined
+  const peakRssDeltaBytes = value.peakRssDeltaBytes
+  if (typeof peakRssDeltaBytes !== 'number' || !Number.isSafeInteger(peakRssDeltaBytes) || peakRssDeltaBytes < 0) return undefined
+
+  const outcomeValue = value.outcome
+  if (outcomeValue === null || typeof outcomeValue !== 'object') return undefined
+  const outcome = outcomeValue as Record<string, unknown>
+  if (outcome.status === 'accepted') {
     return {
-      durationMilliseconds: value.durationMilliseconds,
-      peakRssDeltaBytes: value.peakRssDeltaBytes,
+      durationMilliseconds,
+      peakRssDeltaBytes,
       outcome: { status: 'accepted' }
     }
   }
-  if (value.outcome?.status === 'rejected' && SITE_LOGO_PROCESSING_SAFE_ERROR_CODES.includes(value.outcome.errorCode as SiteLogoProcessingErrorCode)) {
+  if (
+    outcome.status === 'rejected' &&
+    typeof outcome.errorCode === 'string' &&
+    SITE_LOGO_PROCESSING_SAFE_ERROR_CODES.includes(outcome.errorCode as SiteLogoErrorCode)
+  ) {
+    const errorCode = outcome.errorCode as SiteLogoErrorCode
     return {
-      durationMilliseconds: value.durationMilliseconds,
-      peakRssDeltaBytes: value.peakRssDeltaBytes,
-      outcome: { status: 'rejected', errorCode: value.outcome.errorCode as SiteLogoProcessingErrorCode }
+      durationMilliseconds,
+      peakRssDeltaBytes,
+      outcome: { status: 'rejected', errorCode }
     }
   }
   return undefined

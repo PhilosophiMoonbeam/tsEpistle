@@ -1,18 +1,27 @@
 doctype html
 html(lang=siteConfig.lang)
   head
+    - const managedIcons = siteConfig.logoIcons || null
+    - const favicon16Href = managedIcons ? managedIcons.favicon16Url : '/_assets/favicons/favicon-16x16.png'
+    - const favicon32Href = managedIcons ? managedIcons.favicon32Url : '/_assets/favicons/favicon-32x32.png'
+    - const tile150Href = managedIcons ? managedIcons.tile150Url : '/_assets/favicons/mstile-150x150.png'
+    - const apple180Href = managedIcons ? managedIcons.apple180Url : '/_assets/favicons/apple-touch-icon.png'
+    - const app192Href = managedIcons ? managedIcons.app192Url : '/_assets/favicons/android-chrome-192x192.png'
+    - const app512Href = managedIcons ? managedIcons.app512Url : '/_assets/favicons/android-chrome-512x512.png'
+    - const faviconIcoHref = managedIcons ? managedIcons.faviconIcoUrl : '/_assets/favicon.ico'
     meta(http-equiv='X-UA-Compatible', content='IE=edge')
     meta(charset='UTF-8')
     meta(name='viewport', content='user-scalable=yes, width=device-width, initial-scale=1, maximum-scale=5')
-    meta(name='theme-color', content='#4f46e5')
+    meta(name='theme-color', content=siteConfig.themeColor || '#4f46e5')
     meta(name='tsepistle-pwa-mode', content=siteConfig.pwaMode)
     meta(name='application-name', content=config.title)
     meta(name='mobile-web-app-capable', content='yes')
     meta(name='apple-mobile-web-app-capable', content='yes')
     meta(name='apple-mobile-web-app-title', content=config.title)
     meta(name='apple-mobile-web-app-status-bar-style', content='default')
-    meta(name='msapplication-TileColor', content='#4f46e5')
-    meta(name='msapplication-TileImage', content='/_assets/favicons/mstile-150x150.png')
+    meta(name='msapplication-TileColor', content=siteConfig.themeColor || '#4f46e5')
+    meta(name='msapplication-TileImage', content=tile150Href)
+    meta(name='msapplication-config', content='/_assets/browserconfig.xml')
 
     title= pageMeta.title + ' | ' + config.title
 
@@ -26,11 +35,14 @@ html(lang=siteConfig.lang)
     meta(property='og:site_name', content=config.title)
 
     //- Favicon
-    link(rel='apple-touch-icon', sizes='180x180', href='/_assets/favicons/apple-touch-icon.png')
-    link(rel='icon', type='image/png', sizes='192x192', href='/_assets/favicons/android-chrome-192x192.png')
-    link(rel='icon', type='image/png', sizes='512x512', href='/_assets/favicons/android-chrome-512x512.png')
-    link(rel='icon', href=faviconUrl)
-    link(rel='mask-icon', href='/_assets/favicons/safari-pinned-tab.svg', color='#4f46e5')
+    link(rel='icon', type='image/png', sizes='16x16', href=favicon16Href, data-site-logo-icon='favicon16')
+    link(rel='icon', type='image/png', sizes='32x32', href=favicon32Href, data-site-logo-icon='favicon32')
+    link(rel='apple-touch-icon', type='image/png', sizes='180x180', href=apple180Href, data-site-logo-icon='apple180')
+    link(rel='icon', type='image/png', sizes='192x192', href=app192Href, data-site-logo-icon='app192')
+    link(rel='icon', type='image/png', sizes='512x512', href=app512Href, data-site-logo-icon='app512')
+    link(rel='icon', type='image/x-icon', sizes='16x16 32x32', href=faviconIcoHref, data-site-logo-icon='faviconIco')
+    if !managedIcons
+      link(rel='mask-icon', href='/_assets/favicons/safari-pinned-tab.svg', color='#4f46e5')
     link(rel='manifest', href='/_assets/manifest-tsepistle.json')
 
     //- Site Properties

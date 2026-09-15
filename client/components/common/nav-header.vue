@@ -34,7 +34,16 @@
             :aria-label='$t(`common:header.home`)'
             @click='guardHeaderNavigation'
           )
-            img.org-logo(:src='logoUrl', :alt='title')
+            img.org-logo(
+              v-if='logoUrl && !logoImageFailed'
+              :key='logoUrl'
+              :src='logoUrl'
+              :data-logo-source='logoUrl'
+              alt=''
+              @error='handleLogoError'
+              @load='handleLogoLoad'
+            )
+            .nav-header-logo-fallback(v-else, aria-hidden='true') {{ logoFallback }}
           v-toolbar-title.nav-header-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp')
             span {{title}}
       v-col.nav-header-search-col(md='4', v-if='$vuetify.display.mdAndUp')
@@ -602,6 +611,7 @@ export default defineComponent({
       deletePageModal: false,
       locales: markRaw(siteLangs),
       isDevMode: false,
+      failedLogoUrl: null as string | null,
       pageActionsAreOpen: false,
       pageActionsFocusFrame: null as number | null,
       notificationIdentityRecovery: null as Promise<void> | null,
@@ -632,6 +642,11 @@ export default defineComponent({
     isLoading(): boolean { return wikiStore.isLoading },
     title(): string { return wikiStore.site.title },
     logoUrl(): string { return wikiStore.site.logoUrl },
+    logoImageFailed (): boolean { return this.failedLogoUrl === this.logoUrl },
+    logoFallback (): string {
+      const title = this.title.trim()
+      return title ? title.charAt(0).toUpperCase() : '?'
+    },
     homePath(): string { return this.locales.length > 0 ? `/${this.locale}/home` : '/' },
     path(): string { return wikiStore.page.path },
     mode(): string { return wikiStore.page.mode },
@@ -817,6 +832,20 @@ export default defineComponent({
   },
   methods: {
     mergeProps,
+    handleLogoError (event: Event): void {
+      const image = event.currentTarget
+      if (!(image instanceof HTMLImageElement)) return
+      const source = image.getAttribute('data-logo-source')
+      if (!source || source !== this.logoUrl) return
+      this.failedLogoUrl = source
+    },
+    handleLogoLoad (event: Event): void {
+      const image = event.currentTarget
+      if (!(image instanceof HTMLImageElement)) return
+      const source = image.getAttribute('data-logo-source')
+      if (!source || source !== this.logoUrl) return
+      if (this.failedLogoUrl === source) this.failedLogoUrl = null
+    },
     clearAgentChatPinOnLogout (event: SubmitEvent): void {
       event.preventDefault()
       if (this.logoutPending) return
@@ -1222,18 +1251,24 @@ export default defineComponent({
   }
 
   .nav-header-brand {
+    min-width: 0;
     gap: var(--wiki-space-3);
     padding-inline: var(--wiki-space-4) var(--wiki-space-3);
   }
 
   .nav-header-logo {
     position: relative;
-    display: inline-grid;
-    flex: 0 0 calc(var(--wiki-control-height) - var(--wiki-space-1));
-    width: calc(var(--wiki-control-height) - var(--wiki-space-1));
-    height: calc(var(--wiki-control-height) - var(--wiki-space-1));
-    padding: var(--wiki-space-2);
-    place-items: center;
+    display: inline-flex;
+    flex: 0 1 auto;
+    width: max-content;
+    min-width: 44px;
+    max-width: 112px;
+    height: 44px;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    padding: 2px 4px;
     border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
     border-radius: var(--wiki-control-radius);
     background:
@@ -1244,6 +1279,7 @@ export default defineComponent({
       );
     box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
     cursor: pointer;
+    text-decoration: none;
     transition:
       transform var(--wiki-motion-normal) var(--wiki-motion-ease-out),
       border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
@@ -1262,14 +1298,30 @@ export default defineComponent({
 
   .org-logo {
     display: block;
-    width: 100%;
-    height: 100%;
+    width: auto;
+    max-width: 100%;
+    height: 40px;
+    max-height: 40px;
     object-fit: contain;
+    object-position: center;
+  }
+
+  .nav-header-logo-fallback {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    color: rgb(var(--v-theme-on-surface));
+    font-size: 1rem;
+    font-weight: 720;
+    line-height: 1;
   }
 
   .nav-header-title {
     min-width: 0;
+    flex: 1 1 auto;
     margin: 0;
+    overflow: hidden;
     color: rgb(var(--v-theme-on-surface));
     font-family: var(--wiki-font-heading);
     font-size: 1rem;
@@ -1284,6 +1336,7 @@ export default defineComponent({
       white-space: nowrap;
     }
   }
+
 
   .nav-header-command {
     justify-content: stretch;
@@ -1682,10 +1735,13 @@ export default defineComponent({
 
 .nav-header--dense {
   .nav-header-logo {
-    flex-basis: calc(var(--wiki-control-height) - var(--wiki-space-2));
-    width: calc(var(--wiki-control-height) - var(--wiki-space-2));
-    height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+    min-width: 44px;
+    max-width: 100px;
+    width: max-content;
+    height: 40px;
+    min-height: 40px;
   }
+
 
   .nav-header-inner .v-btn {
     min-width: calc(var(--wiki-control-height) - var(--wiki-space-1));
@@ -1846,11 +1902,14 @@ export default defineComponent({
     }
 
     .nav-header-logo {
-      flex-basis: calc(var(--wiki-control-height) - var(--wiki-space-2));
-      width: calc(var(--wiki-control-height) - var(--wiki-space-2));
-      height: calc(var(--wiki-control-height) - var(--wiki-space-2));
-      padding: var(--wiki-space-1);
+      min-width: 44px;
+      max-width: 72px;
+      width: max-content;
+      height: 40px;
+      min-height: 40px;
+      padding: 2px 3px;
     }
+
 
     .nav-header-inner .v-btn {
       min-width: calc(var(--wiki-control-height) - var(--wiki-space-1));

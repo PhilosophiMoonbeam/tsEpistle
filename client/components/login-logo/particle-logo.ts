@@ -87,7 +87,7 @@ export function isLogoEffectDescriptor(value: unknown): value is LogoEffectDescr
   if (REQUIRED_KEYS.some(key => !Object.hasOwn(descriptor, key))) return false
   if (keys.some(key => ALLOWED_KEYS[key] !== true)) return false
   if (
-    !isIntegerInRange(descriptor.pipelineVersion, 1, 5) ||
+    !isIntegerInRange(descriptor.pipelineVersion, 1, 6) ||
     typeof descriptor.logoUrl !== 'string' ||
     !LOGO_URL_PATTERN.test(descriptor.logoUrl) ||
     typeof descriptor.particleUrl !== 'string' ||
