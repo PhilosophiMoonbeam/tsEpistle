@@ -148,7 +148,6 @@ interface SceneModule {
   createParticleSceneResources: (particles: ParsedLogoParticles, effect: LogoEffectDescriptor) => ParticleSceneResources
   default: { components?: Record<string, Component>; props?: Record<string, unknown>; emits?: Record<string, unknown> }
   disposeParticleSceneResources: (resources: ParticleSceneResources) => void
-  updateParticleSceneBackground: (resources: ParticleSceneResources, canvas: HTMLCanvasElement) => void
   updateParticleSceneFrame: (
     resources: ParticleSceneResources,
     pointerController: {
@@ -186,7 +185,6 @@ const {
   createParticleSceneResources,
   default: LogoParticleScene,
   disposeParticleSceneResources,
-  updateParticleSceneBackground,
   updateParticleSceneFrame
 } = compiledModule.exports as SceneModule
 const ParticleSceneContents = LogoParticleScene.components?.ParticleSceneContents
@@ -397,18 +395,6 @@ describe('LogoParticleScene resources', () => {
   it('configures stable brush and six-slot explosion uniforms', () => {
     const resources = createParticleSceneResources(makeParticles(), effect)
 
-    expect(Object.keys(resources.uniforms).sort()).toEqual([
-      'uAspect',
-      'uBackground',
-      'uBrushDirection',
-      'uBrushPositionRadius',
-      'uDpr',
-      'uExplosionPositionAge',
-      'uMedianStroke',
-      'uRenderedLongAxis',
-      'uTime',
-      'uViewport'
-    ])
     expect(resources.uniforms.uExplosionPositionAge.value).toHaveLength(6)
     expect(resources.uniforms.uBrushPositionRadius.value.toArray()).toEqual([0, 0, 18, 0])
     expect(resources.uniforms.uBrushDirection.value.toArray()).toEqual([0, 0])
@@ -588,12 +574,8 @@ describe('LogoParticleScene resources', () => {
 
     expect(scheduled.uniforms.uTime.value).toBe(4.25)
     expect(direct.uniforms.uTime.value).toBe(4.25)
-    expect(scheduled.uniforms.uBrushPositionRadius.value.toArray()).toEqual(
-      direct.uniforms.uBrushPositionRadius.value.toArray()
-    )
-    expect(scheduled.uniforms.uBrushDirection.value.toArray()).toEqual(
-      direct.uniforms.uBrushDirection.value.toArray()
-    )
+    expect(scheduled.uniforms.uBrushPositionRadius.value.toArray()).toEqual(direct.uniforms.uBrushPositionRadius.value.toArray())
+    expect(scheduled.uniforms.uBrushDirection.value.toArray()).toEqual(direct.uniforms.uBrushDirection.value.toArray())
 
     disposeParticleSceneResources(scheduled)
     disposeParticleSceneResources(direct)
@@ -757,62 +739,6 @@ describe('LogoParticleScene resources', () => {
       for (const resources of created) disposeParticleSceneResources(resources)
       Reflect.deleteProperty(window, '__logoParticlePerformance')
     }
-  })
-
-  it('uploads cached colors only when the actual surface color changes', () => {
-    const particles = makeParticles()
-    const before = new Uint8Array(particles.buffer).slice()
-    const resources = createParticleSceneResources(particles, effect)
-    const attributes = ['logoXY', 'logoDepth', 'logoSize', 'logoSeed'].map(name => resources.geometry.getAttribute(name))
-    const versions = attributes.map(attribute => attribute.version)
-    const stableUniformValues = [
-      resources.uniforms.uAspect.value,
-      resources.uniforms.uDpr.value,
-      resources.uniforms.uBrushDirection.value,
-      resources.uniforms.uBrushPositionRadius.value,
-      resources.uniforms.uMedianStroke.value,
-      resources.uniforms.uRenderedLongAxis.value,
-      resources.uniforms.uTime.value,
-      resources.uniforms.uViewport.value
-    ]
-    const surface = document.createElement('div')
-    const canvas = document.createElement('canvas')
-    surface.append(canvas)
-    document.body.append(surface)
-
-    surface.style.backgroundColor = 'rgb(10, 20, 30)'
-    updateParticleSceneBackground(resources, canvas)
-    const darkBackground = resources.uniforms.uBackground.value.clone()
-    const colors = resources.particleColor.array
-    const darkColors = colors.slice()
-    const darkVersion = resources.particleColor.version
-    updateParticleSceneBackground(resources, canvas)
-    expect(resources.particleColor.version).toBe(darkVersion)
-    surface.style.backgroundColor = 'rgb(230, 220, 210)'
-    updateParticleSceneBackground(resources, canvas)
-
-    expect(resources.particleColor.array).toBe(colors)
-    expect(colors).not.toEqual(darkColors)
-    expect(resources.particleColor.version).toBe(darkVersion + 1)
-    updateParticleSceneBackground(resources, canvas)
-    expect(resources.particleColor.version).toBe(darkVersion + 1)
-
-    expect(resources.uniforms.uBackground.value.equals(darkBackground)).toBe(false)
-    expect([
-      resources.uniforms.uAspect.value,
-      resources.uniforms.uDpr.value,
-      resources.uniforms.uBrushDirection.value,
-      resources.uniforms.uBrushPositionRadius.value,
-      resources.uniforms.uMedianStroke.value,
-      resources.uniforms.uRenderedLongAxis.value,
-      resources.uniforms.uTime.value,
-      resources.uniforms.uViewport.value
-    ]).toEqual(stableUniformValues)
-    expect(attributes.map(attribute => attribute.version)).toEqual(versions)
-    expect(new Uint8Array(particles.buffer)).toEqual(before)
-
-    surface.remove()
-    disposeParticleSceneResources(resources)
   })
 
   it('rejects attributes detached from the parser-owned buffer', () => {

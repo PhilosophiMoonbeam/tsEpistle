@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "b41046004a77152ba4cf180701fa934dd2ec9d9bed4877c2900f39d41cd44067",
+    "sha256": "250ef816686bb7ed2242a9f7f50c2525fc8d41e12363b29fb94de1d8d9202125",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -2085,7 +2085,7 @@
     {
       "name": "@types/three",
       "versions": [
-        "0.184.1"
+        "0.185.4"
       ],
       "license": "MIT",
       "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/three"
@@ -6117,7 +6117,7 @@
     {
       "name": "three",
       "versions": [
-        "0.184.0"
+        "0.185.1"
       ],
       "license": "MIT",
       "author": "mrdoob",

@@ -10,7 +10,8 @@
     clear-color="#000000"
     :depth="false"
     :dpr="[1, 1.5]"
-    :premultiplied-alpha="false"
+    :premultiplied-alpha="true"
+    :output-color-space="SRGBColorSpace"
     render-mode="on-demand"
     :stencil="false"
     :tone-mapping="NoToneMapping"
@@ -34,7 +35,6 @@ import type { TresContext } from '@tresjs/core'
 import {
   BufferAttribute,
   BufferGeometry,
-  Color,
   DynamicDrawUsage,
   NormalBlending,
   NoToneMapping,
@@ -80,7 +80,6 @@ import {
 } from './useLogoPointer'
 import type { LogoPointerController } from './useLogoPointer'
 
-const DEFAULT_BACKGROUND = 0xffffff
 const DEPTH_SCALE_MIN = 0.82
 const DEPTH_SCALE_MAX = 1.18
 const MIN_IDLE_AMPLITUDE_CSS = 3.5
@@ -88,11 +87,9 @@ const MAX_IDLE_AMPLITUDE_CSS = 10
 const MAX_DIAGNOSTIC_ELAPSED_SECONDS = Number.MAX_SAFE_INTEGER
 const MAX_DIAGNOSTIC_PARTICLES = 16_000
 
-
 interface ParticleUniforms {
   [uniform: string]: IUniform
   readonly uAspect: { value: number }
-  readonly uBackground: { value: Color }
   readonly uDpr: { value: number }
   readonly uBrushPositionRadius: { value: Vector4 }
   readonly uBrushDirection: { value: Vector2 }
@@ -423,9 +420,8 @@ export const createParticleSceneResources = (
 
   const cloud = new ParticleCloud(particles)
   const cloudMotion = new BufferAttribute(cloud.motion, 3).setUsage(DynamicDrawUsage)
-  const background = new Color(DEFAULT_BACKGROUND)
   const colors = new Float32Array(particles.count * 4)
-  updateParticleColors(particles, background, colors)
+  updateParticleColors(particles, colors)
   const particleColor = new BufferAttribute(colors, 4)
   const geometry = new BufferGeometry()
   geometry.setAttribute('cloudMotion', cloudMotion)
@@ -437,7 +433,6 @@ export const createParticleSceneResources = (
   geometry.setDrawRange(0, particles.count)
   const uniforms: ParticleUniforms = {
     uAspect: { value: effect.aspect },
-    uBackground: { value: background },
     uDpr: { value: 1 },
     uBrushPositionRadius: { value: new Vector4(0, 0, 18, 0) },
     uBrushDirection: { value: new Vector2(0, 0) },
@@ -585,49 +580,6 @@ export class ParticleSceneEventFence {
     this.failed = true
     this.events.contextLost(event)
   }
-}
-
-const isTransparent = (color: string): boolean =>
-  color === '' ||
-  color === 'transparent' ||
-  /rgba\([^)]*,\s*0(?:\.0+)?\s*\)$/i.test(color) ||
-  /rgba?\([^)]*\/\s*0(?:\.0+)?%?\s*\)$/i.test(color)
-
-const normalizeCssColor = (color: string): string => {
-  const modernRgb = /^\s*rgba?\(\s*([\d.]+%?)\s+([\d.]+%?)\s+([\d.]+%?)(?:\s*\/\s*([\d.]+%?))?\s*\)$/i.exec(color)
-  if (modernRgb) {
-    const [, r, g, b, a] = modernRgb
-    return a !== undefined ? `rgba(${r}, ${g}, ${b}, ${a})` : `rgb(${r}, ${g}, ${b})`
-  }
-  return color
-}
-
-const readSurfaceColor = (canvas: HTMLCanvasElement): Color => {
-  let element: HTMLElement | null = canvas.parentElement
-  while (element) {
-    const color = window.getComputedStyle(element).backgroundColor
-    if (!isTransparent(color)) {
-      try {
-        return new Color().setStyle(normalizeCssColor(color), SRGBColorSpace)
-      } catch {
-        break
-      }
-    }
-    element = element.parentElement
-  }
-  return new Color(DEFAULT_BACKGROUND)
-}
-
-export const updateParticleSceneBackground = (
-  resources: ParticleSceneResources,
-  canvas: HTMLCanvasElement
-): void => {
-  if (resources.disposed) return
-  const background = readSurfaceColor(canvas)
-  if (resources.uniforms.uBackground.value.equals(background)) return
-  resources.uniforms.uBackground.value.copy(background)
-  updateParticleColors(resources.particles, background, resources.particleColor.array as Float32Array)
-  resources.particleColor.needsUpdate = true
 }
 
 const renderedLongAxis = (width: number, height: number, aspect: number): number => {
@@ -838,7 +790,6 @@ export default defineComponent({
     const pointerTarget = shallowRef<HTMLElement | null>(null)
     const pointerCoordinateTarget = shallowRef<HTMLElement | null>(null)
     let setupError: Error | null = null
-    let surfaceObserver: MutationObserver | null = null
     let tornDown = false
     const benchmark = readParticlePerformanceBenchmark()
     const frameCaptureClock = readParticleFrameCaptureClock()
@@ -880,8 +831,6 @@ export default defineComponent({
       pointerController.dispose()
       pointerTarget.value = null
       pointerCoordinateTarget.value = null
-      surfaceObserver?.disconnect()
-      surfaceObserver = null
       fence.dispose()
       if (resources.value) disposeParticleSceneResources(resources.value)
       resources.value = null
@@ -921,22 +870,13 @@ export default defineComponent({
       try {
         // TresJS 5.8.3 skips its zero-valued NoToneMapping prop, so enforce it on the renderer.
         renderer.toneMapping = NoToneMapping
-        if (resources.value) updateParticleSceneBackground(resources.value, renderer.domElement)
+        renderer.outputColorSpace = SRGBColorSpace
         fence.ready(renderer)
         loopControl.ready = true
         if (!renderEnabled.value) loopControl.stop?.()
         const wrapper = renderer.domElement.closest('.login-particle-logo')
         pointerTarget.value = wrapper instanceof HTMLElement ? wrapper : null
         pointerCoordinateTarget.value = renderer.domElement
-        surfaceObserver = new MutationObserver(() => {
-          if (!resources.value || fence.hasFailed) return
-          updateParticleSceneBackground(resources.value, renderer.domElement)
-          context.renderer.invalidate()
-        })
-        const observed = new Set<Element>([document.documentElement, document.body])
-        const loginSurface = renderer.domElement.closest('.login')
-        if (loginSurface) observed.add(loginSurface)
-        for (const element of observed) surfaceObserver.observe(element, { attributeFilter: ['class', 'style'], attributes: true })
       } catch (error) {
         fence.fail(error)
       }
@@ -961,6 +901,7 @@ export default defineComponent({
       handleRendererReady,
       handleRendererRender,
       NoToneMapping,
+      SRGBColorSpace,
       loopControl,
       pointerController,
       renderEnabled,

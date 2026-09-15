@@ -105,8 +105,8 @@ if (!rootWorkspace) throw new Error('bun.lock does not define the root workspace
 const reviewedRendererRootDevDependencies = {
   '@graphql-yoga/graphiql': '4.4.4',
   '@tresjs/core': '5.8.3',
-  '@types/three': '0.184.1',
-  three: '0.184.0'
+  '@types/three': '0.185.4',
+  three: '0.185.1'
 } as const
 
 // Yoga 4.4.4 ships a prebuilt IDE with these peer ranges out of step with

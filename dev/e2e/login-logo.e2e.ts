@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs'
 import type { Locator, Page, Request, TestInfo } from '@playwright/test'
 import { expect } from '@playwright/test'
 import sharp from 'sharp'
-import { updateParticleColors } from '../../client/components/login-logo/particle-colors'
 import { responsiveTest as test } from './helpers.ts'
 
 const LOGO_URL = `/_site-logo/${'a'.repeat(64)}/logo.png`
@@ -50,7 +49,38 @@ const wideEffect = {
   medianStroke: 12
 }
 
-type ManagedEffect = typeof squareEffect | typeof wideEffect
+const COLOR_PROBE_LOGO_URL = `/_site-logo/${'f'.repeat(64)}/logo.png`
+const COLOR_PROBE_PARTICLE_URL = `/_site-logo/${'1'.repeat(64)}/particle.bin`
+const COLOR_PROBE_STATIC_URL = `/_site-logo/${'2'.repeat(64)}/effect.png`
+const colorProbeEffect = {
+  logoUrl: COLOR_PROBE_LOGO_URL,
+  particleUrl: COLOR_PROBE_PARTICLE_URL,
+  staticUrl: COLOR_PROBE_STATIC_URL,
+  pipelineVersion: 5,
+  width: 8,
+  height: 8,
+  aspect: 1,
+  count: 4,
+  medianStroke: 2
+} as const
+
+type ColorProbeParticle = {
+  readonly x: number
+  readonly y: number
+  readonly color: readonly [number, number, number, number]
+  readonly seed: number
+  readonly size: number
+  readonly kind: 'dust' | 'bead'
+}
+
+const colorProbeParticles = [
+  { x: -0.68, y: 0.28, color: [54, 163, 217, 238], seed: 20_000, size: 255, kind: 'dust' },
+  { x: -0.22, y: 0.28, color: [128, 128, 128, 238], seed: 30_000, size: 255, kind: 'dust' },
+  { x: 0.22, y: -0.24, color: [54, 163, 217, 238], seed: 64_000, size: 255, kind: 'bead' },
+  { x: 0.68, y: -0.24, color: [128, 128, 128, 238], seed: 62_000, size: 255, kind: 'bead' }
+] as const satisfies readonly ColorProbeParticle[]
+
+type ManagedEffect = typeof squareEffect | typeof wideEffect | typeof colorProbeEffect
 const PIPELINE_V5_RESERVED_SAMPLES_PER_COMPONENT = 8
 
 const crcTable = (() => {
@@ -158,6 +188,51 @@ function createParticleFixture(effect: ManagedEffect): Buffer {
   return bytes
 }
 
+function createColorProbeFixture(): Buffer {
+  const headerBytes = 56
+  const count = colorProbeParticles.length
+  const xyOffset = headerBytes
+  const depthOffset = xyOffset + 4 * count
+  const rgbaOffset = depthOffset + count
+  const sizeOffset = rgbaOffset + 4 * count
+  const seedOffset = sizeOffset + count
+  const fileLength = seedOffset + 2 * count
+  const bytes = Buffer.allocUnsafe(fileLength)
+
+  bytes.write('TSEP', 0, 'ascii')
+  bytes[4] = 1
+  bytes[5] = 0x07
+  bytes.writeUInt16LE(headerBytes, 6)
+  bytes.writeUInt32LE(colorProbeEffect.width, 8)
+  bytes.writeUInt32LE(colorProbeEffect.height, 12)
+  bytes.writeUInt32LE(count, 16)
+  bytes.writeUInt32LE(12 * count, 20)
+  bytes.writeUInt32LE(0, 24)
+  bytes.writeUInt32LE(xyOffset, 28)
+  bytes.writeUInt32LE(depthOffset, 32)
+  bytes.writeUInt32LE(rgbaOffset, 36)
+  bytes.writeUInt32LE(sizeOffset, 40)
+  bytes.writeUInt32LE(seedOffset, 44)
+  bytes.writeUInt32LE(fileLength, 48)
+  bytes.writeUInt32LE(0, 52)
+
+  for (const [index, sample] of colorProbeParticles.entries()) {
+    bytes.writeInt16LE(Math.round(sample.x * 32_767), xyOffset + index * 4)
+    bytes.writeInt16LE(Math.round(sample.y * 32_767), xyOffset + index * 4 + 2)
+    bytes.writeInt8(0, depthOffset + index)
+    bytes[rgbaOffset + index * 4] = sample.color[0]
+    bytes[rgbaOffset + index * 4 + 1] = sample.color[1]
+    bytes[rgbaOffset + index * 4 + 2] = sample.color[2]
+    bytes[rgbaOffset + index * 4 + 3] = sample.color[3]
+    bytes[sizeOffset + index] = sample.size
+    bytes.writeUInt16LE(sample.seed, seedOffset + index * 2)
+  }
+  bytes.writeUInt32LE(crc32(bytes.subarray(headerBytes)), 24)
+  return bytes
+}
+
+const colorProbeParticleFixture = createColorProbeFixture()
+
 const squareParticleFixture = createParticleFixture(squareEffect)
 const wideParticleFixture = createParticleFixture(wideEffect)
 
@@ -197,23 +272,6 @@ interface LogoMotionDiagnostics {
   readonly neighborForceRatio: number
   readonly particleCount: number
 }
-const motionDiagnosticKeys = [
-  'activeExplosionCount',
-  'activeImpulseCount',
-  'bounceRatio',
-  'collisionParticleCount',
-  'depthScaleMax',
-  'depthScaleMin',
-  'elapsedSeconds',
-  'explosionHoldSeconds',
-  'explosionLifetimeSeconds',
-  'explosionRefillSeconds',
-  'idleAmplitudeCss',
-  'impulseLifetimeSeconds',
-  'maxImpulseTravelCss',
-  'neighborForceRatio',
-  'particleCount'
-] as const
 
 interface LogoPerformanceHook {
   callbackCount: number
@@ -311,7 +369,7 @@ async function installManagedLogo(page: Page, effect: ManagedEffect, options: Ar
 
   const ordinaryImage = ordinarySvgFixture(effect.width, effect.height)
   const staticImage = staticSvgFixture(effect.width, effect.height)
-  const particles = effect === squareEffect ? squareParticleFixture : wideParticleFixture
+  const particles = effect === squareEffect ? squareParticleFixture : effect === wideEffect ? wideParticleFixture : colorProbeParticleFixture
   const requests: ArtifactRequests = { logo: [], particle: [], static: [] }
   await page.route(`**${effect.logoUrl}`, route => {
     requests.logo.push(route.request())
@@ -880,6 +938,284 @@ async function decodeScreenshot(image: Buffer): Promise<RgbaFrame> {
   if (decoded.info.channels !== 4) throw new Error('Expected an RGBA screenshot.')
   return { data: decoded.data, height: decoded.info.height, width: decoded.info.width }
 }
+
+interface CanvasSurfaceGeometry {
+  readonly backingHeight: number
+  readonly backingWidth: number
+  readonly height: number
+  readonly left: number
+  readonly top: number
+  readonly viewportHeight: number
+  readonly viewportWidth: number
+  readonly width: number
+}
+
+interface ColorProbePixel {
+  readonly alpha: number
+  readonly red: number
+  readonly green: number
+  readonly blue: number
+  readonly x: number
+  readonly y: number
+}
+
+interface PageCompositionCapture {
+  readonly backdrop: RgbaFrame
+  readonly frame: RgbaFrame
+  readonly geometry: CanvasSurfaceGeometry
+  readonly visible: RgbaFrame
+}
+
+const COLOR_PROBE_PIXEL_TOLERANCE = 3
+
+const srgbToLinear = (value: number): number => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+
+function readColorProbeAlpha(sample: ColorProbeParticle): number {
+  const seed = sample.seed / 65_535
+  const t = Math.min(1, Math.max(0, seed / 0.94))
+  const smooth = t * t * (3 - 2 * t)
+  return (sample.color[3] / 255) * (0.66 + 0.28 * smooth)
+}
+
+async function withFrozenLogoFrame<T>(page: Page, capture: () => Promise<T>): Promise<T> {
+  await page.evaluate(() => {
+    const freezeWindow = window as Window & {
+      __loginLogoFrameFreeze?: { restore: () => void }
+    }
+    if (freezeWindow.__loginLogoFrameFreeze) throw new Error('A logo frame freeze is already active.')
+    const originalRequestAnimationFrame = window.requestAnimationFrame
+    const originalCancelAnimationFrame = window.cancelAnimationFrame
+    const nativeRequestAnimationFrame = originalRequestAnimationFrame.bind(window)
+    const nativeCancelAnimationFrame = originalCancelAnimationFrame.bind(window)
+    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL
+    let frozen = false
+    let restored = false
+    let nextQueuedFrame = 1
+    const queuedFrames = new Map<number, FrameRequestCallback>()
+    const requestAnimationFrame = (callback: FrameRequestCallback): number => {
+      if (!frozen) return nativeRequestAnimationFrame(callback)
+      const frame = nextQueuedFrame
+      nextQueuedFrame += 1
+      queuedFrames.set(frame, callback)
+      return frame
+    }
+    const cancelAnimationFrame = (frame: number): void => {
+      if (queuedFrames.delete(frame)) return
+      nativeCancelAnimationFrame(frame)
+    }
+    window.requestAnimationFrame = requestAnimationFrame
+    window.cancelAnimationFrame = cancelAnimationFrame
+    HTMLCanvasElement.prototype.toDataURL = function (this: HTMLCanvasElement, ...args: Parameters<typeof originalToDataURL>): string {
+      if (!restored && this.closest('.login-particle-logo') !== null) frozen = true
+      return originalToDataURL.apply(this, args)
+    }
+    freezeWindow.__loginLogoFrameFreeze = {
+      restore: () => {
+        if (restored) return
+        restored = true
+        frozen = false
+        window.requestAnimationFrame = originalRequestAnimationFrame
+        window.cancelAnimationFrame = originalCancelAnimationFrame
+        HTMLCanvasElement.prototype.toDataURL = originalToDataURL
+        const pending = [...queuedFrames.values()]
+        queuedFrames.clear()
+        for (const callback of pending) nativeRequestAnimationFrame(callback)
+        Reflect.deleteProperty(freezeWindow, '__loginLogoFrameFreeze')
+      }
+    }
+  })
+  try {
+    return await capture()
+  } finally {
+    await page.evaluate(() => {
+      const freezeWindow = window as Window & {
+        __loginLogoFrameFreeze?: { restore: () => void }
+      }
+      freezeWindow.__loginLogoFrameFreeze?.restore()
+    })
+  }
+}
+
+function readColorProbeLuminance(pixel: ColorProbePixel): number {
+  return 0.2126 * srgbToLinear(pixel.red / 255) + 0.7152 * srgbToLinear(pixel.green / 255) + 0.0722 * srgbToLinear(pixel.blue / 255)
+}
+
+async function readCanvasSurfaceGeometry(page: Page): Promise<CanvasSurfaceGeometry> {
+  return page.locator('.login-particle-logo canvas').evaluate(element => {
+    if (!(element instanceof HTMLCanvasElement)) throw new Error('The particle canvas is unavailable.')
+    const rect = element.getBoundingClientRect()
+    return {
+      backingHeight: element.height,
+      backingWidth: element.width,
+      height: rect.height,
+      left: rect.left,
+      top: rect.top,
+      viewportHeight: window.innerHeight,
+      viewportWidth: window.innerWidth,
+      width: rect.width
+    }
+  })
+}
+
+interface ApplicationThemeObservation {
+  readonly background: string
+  readonly className: string
+}
+
+async function readApplicationTheme(page: Page): Promise<ApplicationThemeObservation> {
+  return page.locator('.v-application').evaluate(element => {
+    const style = getComputedStyle(element)
+    return { background: style.backgroundColor, className: element.className }
+  })
+}
+
+function locateColorProbePixel(frame: RgbaFrame, sample: ColorProbeParticle): ColorProbePixel {
+  const viewportAspect = frame.width / frame.height
+  const fitX = viewportAspect >= colorProbeEffect.aspect ? colorProbeEffect.aspect / viewportAspect : 1
+  const fitY = viewportAspect >= colorProbeEffect.aspect ? 1 : viewportAspect / colorProbeEffect.aspect
+  const centerX = ((sample.x * fitX + 1) * frame.width) / 2
+  const centerY = ((1 - sample.y * fitY) * frame.height) / 2
+  const radius = sample.kind === 'bead' ? 16 : 10
+  const fullCoverageAlpha = readColorProbeAlpha(sample) * 255 - COLOR_PROBE_PIXEL_TOLERANCE
+  let best: ColorProbePixel | null = null
+  for (let y = Math.max(0, Math.floor(centerY) - radius); y <= Math.min(frame.height - 1, Math.ceil(centerY) + radius); y += 1) {
+    for (let x = Math.max(0, Math.floor(centerX) - radius); x <= Math.min(frame.width - 1, Math.ceil(centerX) + radius); x += 1) {
+      const offset = (y * frame.width + x) * 4
+      const candidate = {
+        alpha: frame.data[offset + 3] ?? 0,
+        blue: frame.data[offset + 2] ?? 0,
+        green: frame.data[offset + 1] ?? 0,
+        red: frame.data[offset] ?? 0,
+        x,
+        y
+      }
+      if (sample.kind === 'bead' && candidate.alpha < fullCoverageAlpha) continue
+      const candidateWins =
+        sample.kind === 'bead'
+          ? best === null || readColorProbeLuminance(candidate) > readColorProbeLuminance(best)
+          : best === null || candidate.alpha > best.alpha
+      if (candidateWins) best = candidate
+    }
+  }
+  if (!best || best.alpha < (sample.kind === 'bead' ? fullCoverageAlpha : 64)) {
+    throw new Error(`Color probe particle ${sample.kind} is not fully covered.`)
+  }
+  return best
+}
+
+function mapCanvasPixelToScreenshot(
+  geometry: CanvasSurfaceGeometry,
+  screenshot: RgbaFrame,
+  pixel: Pick<ColorProbePixel, 'x' | 'y'>
+): { readonly x: number; readonly y: number } {
+  const cssX = geometry.left + ((pixel.x + 0.5) * geometry.width) / geometry.backingWidth
+  const cssY = geometry.top + ((pixel.y + 0.5) * geometry.height) / geometry.backingHeight
+  return {
+    x: Math.max(0, Math.min(screenshot.width - 1, Math.floor((cssX * screenshot.width) / geometry.viewportWidth))),
+    y: Math.max(0, Math.min(screenshot.height - 1, Math.floor((cssY * screenshot.height) / geometry.viewportHeight)))
+  }
+}
+
+
+function readRgbaPixel(frame: RgbaFrame, x: number, y: number): ColorProbePixel {
+  const offset = (y * frame.width + x) * 4
+  return {
+    alpha: frame.data[offset + 3] ?? 0,
+    blue: frame.data[offset + 2] ?? 0,
+    green: frame.data[offset + 1] ?? 0,
+    red: frame.data[offset] ?? 0,
+    x,
+    y
+  }
+}
+
+
+function expectIntrinsicFramesEquivalent(first: RgbaFrame, second: RgbaFrame): void {
+  expect(second.width).toBe(first.width)
+  expect(second.height).toBe(first.height)
+  let maximumDifference = 0
+  for (let offset = 0; offset < first.data.length; offset += 1) {
+    maximumDifference = Math.max(maximumDifference, Math.abs((first.data[offset] ?? 0) - (second.data[offset] ?? 0)))
+  }
+  expect(maximumDifference).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
+}
+
+function expectColorProbePixels(frame: RgbaFrame): void {
+  for (const sample of colorProbeParticles) {
+    const pixel = locateColorProbePixel(frame, sample)
+    expect(Math.abs(pixel.alpha - readColorProbeAlpha(sample) * 255)).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
+    if (sample.kind === 'dust') {
+      const actualChannels = [pixel.red, pixel.green, pixel.blue]
+      for (const [channel, value] of sample.color.slice(0, 3).entries()) {
+        expect(Math.abs(actualChannels[channel]! - value)).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
+      }
+      continue
+    }
+    const sourceLinear = sample.color.slice(0, 3).map(channel => srgbToLinear(channel / 255))
+    const actualLinear = [pixel.red, pixel.green, pixel.blue].map(channel => srgbToLinear(channel / 255))
+    const denominator = sourceLinear.reduce((sum, channel) => sum + channel * channel, 0)
+    const scalar = sourceLinear.reduce((sum, channel, index) => sum + channel * actualLinear[index]!, 0) / denominator
+    expect(Number.isFinite(scalar)).toBe(true)
+    for (const [index, channel] of actualLinear.entries()) {
+      expect(Math.abs(channel - sourceLinear[index]! * scalar) * 255).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
+    }
+  }
+}
+
+async function capturePageComposition(page: Page): Promise<PageCompositionCapture> {
+  return withFrozenLogoFrame(page, async () => {
+    const geometry = await readCanvasSurfaceGeometry(page)
+    const frame = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, 0, 0)).png)
+    const canvas = page.locator('.login-particle-logo canvas')
+    const previousVisibility = await canvas.evaluate(element => (element instanceof HTMLCanvasElement ? element.style.visibility : ''))
+    let backdrop: RgbaFrame
+    await canvas.evaluate(element => {
+      if (!(element instanceof HTMLCanvasElement)) throw new Error('The particle canvas is unavailable.')
+      element.style.visibility = 'hidden'
+    })
+    try {
+      backdrop = await decodeScreenshot(await page.screenshot({ animations: 'disabled', fullPage: false }))
+    } finally {
+      await canvas.evaluate((element, visibility) => {
+        if (element instanceof HTMLCanvasElement) element.style.visibility = visibility
+      }, previousVisibility)
+    }
+    const visible = await decodeScreenshot(await page.screenshot({ animations: 'disabled', fullPage: false }))
+    return { backdrop, frame, geometry, visible }
+  })
+}
+
+function expectStraightSourceOver(composition: PageCompositionCapture): void {
+  expect(composition.visible.width).toBe(composition.backdrop.width)
+  expect(composition.visible.height).toBe(composition.backdrop.height)
+  const frame = composition.frame
+  for (const sample of colorProbeParticles) {
+    if (sample.kind !== 'dust') continue
+    const canvasPixel = locateColorProbePixel(frame, sample)
+    const screenshotPixel = mapCanvasPixelToScreenshot(composition.geometry, composition.visible, canvasPixel)
+    const pagePixel = readRgbaPixel(composition.visible, screenshotPixel.x, screenshotPixel.y)
+    const backdropPixel = readRgbaPixel(composition.backdrop, screenshotPixel.x, screenshotPixel.y)
+    const source = [sample.color[0], sample.color[1], sample.color[2]]
+    const backdrop = [backdropPixel.red, backdropPixel.green, backdropPixel.blue]
+    const actual = [pagePixel.red, pagePixel.green, pagePixel.blue]
+    const sourceDistances = source.map((channel, index) => backdrop[index]! - channel)
+    const denominator = sourceDistances.reduce((sum, distance) => sum + distance * distance, 0)
+    const numerator = sourceDistances.reduce((sum, distance, index) => sum + distance * (backdrop[index]! - actual[index]!), 0)
+    const effectiveAlpha = numerator / denominator
+    const diagnostic = `Straight source-over mismatch for ${sample.kind} color=[${sample.color.join(',')}] canvas=(${canvasPixel.x},${canvasPixel.y}) screenshot=(${screenshotPixel.x},${screenshotPixel.y}) canvas-rgba=[${canvasPixel.red},${canvasPixel.green},${canvasPixel.blue},${canvasPixel.alpha}] backdrop-rgb=[${backdrop.join(',')}] actual-rgb=[${actual.join(',')}] fitted-alpha=${effectiveAlpha.toFixed(6)}`
+    expect(effectiveAlpha, diagnostic).toBeGreaterThan(0)
+    expect(effectiveAlpha, diagnostic).toBeLessThan(1)
+    const expected = source.map((channel, index) => channel * effectiveAlpha + backdrop[index]! * (1 - effectiveAlpha))
+    for (const [channel, value] of expected.entries()) {
+      const channelName = ['red', 'green', 'blue'][channel] ?? `channel-${channel}`
+      expect(
+        Math.abs(actual[channel]! - value),
+        `${diagnostic} expected-rgb=[${expected.map(channelValue => channelValue.toFixed(3)).join(',')}] ${channelName} delta=${(actual[channel]! - value).toFixed(3)}`
+      ).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
+    }
+  }
+}
+
 const CANVAS_PNG_DATA_URL_PREFIX = 'data:image/png;base64,'
 async function captureLogoRenderedFrame(
   page: Page,
@@ -1761,174 +2097,98 @@ test.describe('managed login logo auth independence', () => {
 
 const particleVertexShader = readFileSync(new URL('../../client/components/login-logo/particle.vert.glsl', import.meta.url), 'utf8')
 
-const particleColorReferenceShader = readFileSync(new URL('./fixtures/particle-color-reference.vert.glsl', import.meta.url), 'utf8')
+test.describe('particle compositor without service workers', () => {
+  test.use({ serviceWorkers: 'block' })
 
-test('cached particle colors match the original GPU treatment and retain light contrast', async ({ page }, testInfo) => {
-  requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
-  const linear = (value: number) => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
-  const colors = [
-    [255, 255, 255],
-    [255, 232, 173],
-    [89, 184, 240],
-    [242, 122, 41],
-    [249, 161, 52],
-    [13, 15, 26],
-    [2, 2, 2],
-    [0, 0, 0]
-  ]
-  const backgrounds = [
-    [1, 1, 1],
-    [0.96, 0.94, 0.89],
-    [0.055, 0.065, 0.085],
-    [0.18, 0.18, 0.18],
-    [0.64, 0.64, 0.64]
-  ]
-  const inputs = colors.flatMap(color => [255, 140, 38, 1].flatMap(alpha => [1, 19661, 45874, 64000].map(seed => ({ color, alpha, seed }))))
-  for (let index = 0; index < 256; index++) {
-    inputs.push({
-      color: [(index * 73) & 255, (index * 151) & 255, (index * 199) & 255],
-      alpha: 1 + ((index * 11) % 255),
-      seed: 1 + ((index * 40503) % 65535)
-    })
-  }
-  const particles = {
-    count: inputs.length,
-    rgba: Uint8Array.from(inputs.flatMap(input => [...input.color, input.alpha])),
-    seed: Uint16Array.from(inputs.map(input => input.seed))
-  }
-  const samples = backgrounds.flatMap(background => {
-    const cached = new Float32Array(particles.count * 4)
-    updateParticleColors(particles, { r: linear(background[0]!), g: linear(background[1]!), b: linear(background[2]!) }, cached)
-    return inputs.map((input, index) => ({
-      background,
-      color: input.color.map(channel => channel / 255),
-      sourceAlpha: input.alpha / 255,
-      seed: input.seed / 65535,
-      cached: Array.from(cached.subarray(index * 4, index * 4 + 4))
-    }))
-  })
-  const result = await page.evaluate(
-    ({ source, reference, samples }) => {
-      const gl = document.createElement('canvas').getContext('webgl2')
-      if (!gl) return null
-      const compile = (type: number, code: string) => {
-        const shader = gl.createShader(type)!
-        gl.shaderSource(shader, code)
-        gl.compileShader(shader)
-        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) ?? 'Shader compile failed')
-        return shader
+  test('keeps rendered particle colors intrinsic across theme changes and composites straight-alpha samples', async ({ context, page }, testInfo) => {
+    requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
+    test.skip(!(await browserSupportsWebGL2(page)), 'WebGL2 unavailable')
+
+    const prepare = async (target: Page, colorScheme: 'light' | 'dark', query: string): Promise<void> => {
+      await target.emulateMedia({ colorScheme, reducedMotion: 'no-preference' })
+      await installLogoFrameCapture(target)
+      await installManagedLogo(target, colorProbeEffect, { particleBody: colorProbeParticleFixture })
+      await target.goto(`/login?${query}`, { waitUntil: 'domcontentloaded' })
+      const card = target.locator('main.login-sd')
+      const title = card.locator('#login-site-title')
+      await expect(card).toBeVisible({ timeout: 15_000 })
+      const ordinaryLogo = card.locator('.login-brand .login-logo img')
+      await expect(ordinaryLogo).toHaveCount(1)
+      await expect(ordinaryLogo).toHaveAttribute('src', colorProbeEffect.logoUrl)
+      await expect(title).toBeVisible()
+      expect((await title.textContent())?.trim()).toBeTruthy()
+      await expect(target.getByLabel('Email Address', { exact: true })).toBeVisible()
+      await expect(target.getByLabel('Password', { exact: true })).toBeVisible()
+      await expect(target.getByRole('button', { name: 'Log In', exact: true })).toBeEnabled()
+      const field = target.locator('.login-particle-logo')
+      await expect(field.locator('canvas')).toHaveCount(1)
+      await expect(field.locator('.login-particle-logo__image')).toHaveCSS('opacity', '0')
+      await expect(target.locator('.v-application')).toHaveClass(colorScheme === 'light' ? /v-theme--light/ : /v-theme--dark/)
+    }
+
+    const captureIntrinsic = async (target: Page): Promise<RgbaFrame> =>
+      withFrozenLogoFrame(target, async () => decodeScreenshot((await captureLogoRenderedFrame(target, undefined, 0, 0)).png))
+
+    const cold = async (colorScheme: 'light' | 'dark'): Promise<{ readonly frame: RgbaFrame; readonly theme: ApplicationThemeObservation }> => {
+      const target = await context.newPage()
+      try {
+        await prepare(target, colorScheme, `logo-color-probe-cold-${colorScheme}`)
+        const frame = await captureIntrinsic(target)
+        return { frame, theme: await readApplicationTheme(target) }
+      } finally {
+        await target.close()
       }
-      const fragment = compile(gl.FRAGMENT_SHADER, '#version 300 es\nprecision highp float;\nout vec4 color;\nvoid main(){color=vec4(1.0);}')
-      const shaders: WebGLShader[] = []
-      const programs = [source, reference].map(shaderSource => {
-        const vertex = compile(
-          gl.VERTEX_SHADER,
-          `#version 300 es
-#define CLOUD_DUST_END 0.7
-#define CLOUD_BEAD_START 0.935
-${shaderSource
-  .replace(/attribute /g, 'in ')
-  .replace(/varying /g, 'out ')
-  .replace(
-    'precision highp float;',
-    `precision highp float;
-uniform mat4 projectionMatrix;
-uniform mat4 modelViewMatrix;`
-  )}`
-        )
-        shaders.push(vertex)
-        const program = gl.createProgram()!
-        gl.attachShader(program, vertex)
-        gl.attachShader(program, fragment)
-        gl.transformFeedbackVaryings(program, ['vColor'], gl.INTERLEAVED_ATTRIBS)
-        gl.linkProgram(program)
-        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) ?? 'Shader link failed')
-        return program
-      })
-      const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
-      const buffer = gl.createBuffer()!
-      gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER, buffer)
-      gl.bufferData(gl.TRANSFORM_FEEDBACK_BUFFER, 16, gl.STREAM_READ)
-      const feedback = gl.createTransformFeedback()!
-      gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, feedback)
-      gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, buffer)
-      gl.enable(gl.RASTERIZER_DISCARD)
-      const linear = (value: number) => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
-      const outputs = programs.map(program => {
-        gl.useProgram(program)
-        const uniform = (name: string) => gl.getUniformLocation(program, name)
-        const attr = (name: string, x: number, y = 0, z = 0, w = 1) => {
-          const location = gl.getAttribLocation(program, name)
-          if (location >= 0) gl.vertexAttrib4f(location, x, y, z, w)
-        }
-        gl.uniformMatrix4fv(uniform('projectionMatrix'), false, identity)
-        gl.uniformMatrix4fv(uniform('modelViewMatrix'), false, identity)
-        gl.uniform1f(uniform('uAspect'), 1)
-        gl.uniform1f(uniform('uRenderedLongAxis'), 800)
-        gl.uniform1f(uniform('uDpr'), 1)
-        gl.uniform2f(uniform('uViewport'), 800, 800)
-        attr('logoSize', 1)
-        attr('cloudMotion', 0, 0, 0)
-        return samples.map(sample => {
-          gl.uniform3f(uniform('uBackground'), linear(sample.background[0]!), linear(sample.background[1]!), linear(sample.background[2]!))
-          attr('logoSeed', sample.seed)
-          attr('logoColor', sample.color[0]!, sample.color[1]!, sample.color[2]!, sample.sourceAlpha)
-          attr('particleColor', sample.cached[0]!, sample.cached[1]!, sample.cached[2]!, sample.cached[3]!)
-          gl.beginTransformFeedback(gl.POINTS)
-          gl.drawArrays(gl.POINTS, 0, 1)
-          gl.endTransformFeedback()
-          const output = new Float32Array(4)
-          gl.getBufferSubData(gl.TRANSFORM_FEEDBACK_BUFFER, 0, output)
-          return Array.from(output)
-        })
-      })
-      const error = gl.getError()
-      gl.disable(gl.RASTERIZER_DISCARD)
-      gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null)
-      gl.deleteTransformFeedback(feedback)
-      gl.deleteBuffer(buffer)
-      for (const program of programs) gl.deleteProgram(program)
-      for (const shader of shaders) gl.deleteShader(shader)
-      gl.deleteShader(fragment)
-      gl.getExtension('WEBGL_lose_context')?.loseContext()
-      return { error, outputs }
-    },
-    { source: particleVertexShader, reference: particleColorReferenceShader, samples }
-  )
-  test.skip(!result, 'WebGL2 unavailable')
-  if (!result) return
-  expect(result.error).toBe(0)
-  const srgb = (value: number) => (value <= 0.0031308 ? value * 12.92 : 1.055 * value ** (1 / 2.4) - 0.055)
-  const luminance = (color: number[]) => 0.2126 * linear(color[0]!) + 0.7152 * linear(color[1]!) + 0.0722 * linear(color[2]!)
-  let maximumEncodedChannelDifference = 0
-  let maximumAlphaDifference = 0
-  for (const [index, sample] of samples.entries()) {
-    const output = result.outputs[0]![index]!
-    const reference = result.outputs[1]![index]!
-    expect(output.every(Number.isFinite)).toBe(true)
-    expect(output[3]).toBeCloseTo(reference[3]!, 6)
-    maximumAlphaDifference = Math.max(maximumAlphaDifference, Math.abs(output[3]! - reference[3]!))
-    const encoded = output.slice(0, 3).map(srgb)
-    const original = reference.slice(0, 3).map(srgb)
-    for (let channel = 0; channel < 3; channel++) {
-      const difference = Math.abs(encoded[channel]! - original[channel]!)
-      maximumEncodedChannelDifference = Math.max(maximumEncodedChannelDifference, difference)
-      expect(difference).toBeLessThanOrEqual(1 / 255)
     }
-    // Core output only: coverage, sphere glints and canvas composition stay unchanged.
-    const composited = encoded.map((channel, channelIndex) => channel * output[3]! + sample.background[channelIndex]! * (1 - output[3]!))
-    const surface = luminance(sample.background)
-    if (surface > 0.5) {
-      const foreground = luminance(composited)
-      const contrast = (Math.max(surface, foreground) + 0.05) / (Math.min(surface, foreground) + 0.05)
-      const darkestComposite = sample.background.map(channel => channel * (1 - output[3]!))
-      const attainableContrast = (surface + 0.05) / (luminance(darkestComposite) + 0.05)
-      expect(contrast).toBeGreaterThanOrEqual(Math.min(3, attainableContrast) - 0.02)
+
+    const coldLight = await cold('light')
+    const coldDark = await cold('dark')
+    expect(coldLight.theme.className).toMatch(/v-theme--light/)
+    expect(coldDark.theme.className).toMatch(/v-theme--dark/)
+    expect(coldLight.theme.background).not.toBe(coldDark.theme.background)
+    expectColorProbePixels(coldLight.frame)
+    expectColorProbePixels(coldDark.frame)
+    expectIntrinsicFramesEquivalent(coldLight.frame, coldDark.frame)
+
+    await prepare(page, 'light', 'logo-color-probe-live')
+    const liveLightComposition = await capturePageComposition(page)
+    const liveLight = {
+      frame: liveLightComposition.frame,
+      theme: await readApplicationTheme(page)
     }
-  }
-  await testInfo.attach('particle-color-cache-equivalence', {
-    body: Buffer.from(JSON.stringify({ samples: samples.length, maximumEncodedChannelDifference, maximumAlphaDifference })),
-    contentType: 'application/json'
+
+    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' })
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--dark/)
+    await expect.poll(async () => (await readApplicationTheme(page)).background).not.toBe(liveLight.theme.background)
+    const liveDarkComposition = await capturePageComposition(page)
+    const liveDark = {
+      frame: liveDarkComposition.frame,
+      theme: await readApplicationTheme(page)
+    }
+
+    await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+    await expect.poll(async () => (await readApplicationTheme(page)).background).toBe(liveLight.theme.background)
+    const liveLightAgainComposition = await capturePageComposition(page)
+    const liveLightAgain = {
+      frame: liveLightAgainComposition.frame,
+      theme: await readApplicationTheme(page)
+    }
+
+    expect(liveLight.theme.className).toMatch(/v-theme--light/)
+    expect(liveDark.theme.className).toMatch(/v-theme--dark/)
+    expect(liveLightAgain.theme.className).toMatch(/v-theme--light/)
+    expect(liveLight.theme.background).not.toBe(liveDark.theme.background)
+    expect(liveDark.theme.background).not.toBe(liveLightAgain.theme.background)
+    expectColorProbePixels(liveLight.frame)
+    expectColorProbePixels(liveDark.frame)
+    expectColorProbePixels(liveLightAgain.frame)
+    expectIntrinsicFramesEquivalent(coldLight.frame, liveLight.frame)
+    expectIntrinsicFramesEquivalent(coldDark.frame, liveDark.frame)
+    expectIntrinsicFramesEquivalent(liveLight.frame, liveDark.frame)
+    expectIntrinsicFramesEquivalent(liveLight.frame, liveLightAgain.frame)
+    expectStraightSourceOver(liveLightComposition)
+    expectStraightSourceOver(liveDarkComposition)
+    expectStraightSourceOver(liveLightAgainComposition)
   })
 })
 
