@@ -472,6 +472,7 @@
                       :class='`account-menu__notification-indicator--${notificationState}`'
                       aria-hidden='true'
                     )
+            v-list.nav-header-menu.account-menu(aria-label='Account menu')
               v-list-item.py-3.bg-surface-variant(
                 href='/p'
                 :aria-label='`Open profile for ${name}`'

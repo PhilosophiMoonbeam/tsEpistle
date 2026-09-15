@@ -327,6 +327,14 @@ const slotForwardingStub = VueRuntime.defineComponent({
     return () => VueRuntime.h('div', [slots.activator?.({ props: {} }), slots.default?.()])
   }
 })
+const menuSlotForwardingStub = VueRuntime.defineComponent({
+  setup(_, { slots }) {
+    return () => VueRuntime.h('div', { class: 'menu-stub' }, [
+      VueRuntime.h('div', { class: 'menu-stub__activator' }, slots.activator?.({ props: {} })),
+      VueRuntime.h('div', { class: 'menu-stub__content' }, slots.default?.())
+    ])
+  }
+})
 
 interface HeaderMountOptions {
   hideSearch?: boolean
@@ -337,7 +345,7 @@ const mountHeader = async ({ hideSearch = true, smAndDown = false }: HeaderMount
   const host = browserWindow.document.createElement('div')
   browserWindow.document.body.append(host)
   const app = VueRuntime.createApp(NavHeader, { dense: true, hideSearch })
-  app.component('v-menu', slotForwardingStub)
+  app.component('v-menu', menuSlotForwardingStub)
   app.component('v-tooltip', slotForwardingStub)
   app.config.globalProperties.$t = translate
   app.config.globalProperties.$vuetify = {
@@ -472,6 +480,21 @@ describe('notification header identity recovery', () => {
     expect(calls.filter(call => call.kind === 'initialize').map(call => call.ownerId)).toEqual([2])
     expect(calls.filter(call => call.kind === 'initialize').map(call => call.ownerId)).not.toContain(1)
     expect(siteNotifications.identityStale).toBe(false)
+  })
+})
+
+describe('account menu containment', () => {
+  it('keeps profile and session controls inside the account menu surface', async () => {
+    const mounted = await mountHeader()
+    const accountMenu = mounted.host.querySelector('.nav-header-menu.account-menu')
+    const profileLink = mounted.host.querySelector('[aria-label="Open profile for User 1"]')
+    const logoutForm = mounted.host.querySelector('form[action="/logout"][method="post"]')
+
+    expect(accountMenu).not.toBeNull()
+    expect(profileLink?.closest('.account-menu')).toBe(accountMenu)
+    expect(logoutForm?.closest('.account-menu')).toBe(accountMenu)
+    expect(accountMenu?.closest('.menu-stub__content')).not.toBeNull()
+    expect(accountMenu?.closest('.menu-stub__activator')).toBeNull()
   })
 })
 
