@@ -428,7 +428,6 @@ async function installLogoPerformanceProbe(page: Page, requestedBackend: Particl
         updateCallbacks: 0,
         renderInvocations: 0,
         afterRenderCallbacks: 0,
-        rafCallbacks: 0,
         draws: 0,
         uploads: 0,
         sampleOverflow: 0
@@ -499,7 +498,6 @@ async function resetLogoPerformance(page: Page): Promise<void> {
       benchmark.counters.updateCallbacks = 0
       benchmark.counters.renderInvocations = 0
       benchmark.counters.afterRenderCallbacks = 0
-      benchmark.counters.rafCallbacks = 0
       benchmark.counters.draws = 0
       benchmark.counters.uploads = 0
       benchmark.counters.sampleOverflow = 0
@@ -554,8 +552,10 @@ async function waitForBackendOutcome(page: Page): Promise<LogoPerformanceHook> {
     () => {
       const logoPerformanceWindow = (): LogoPerformanceWindow => window as LogoPerformanceWindow
       const benchmark = logoPerformanceWindow().__logoParticlePerformance
-      return benchmark !== undefined &&
-        (benchmark.effectiveBackend !== null || document.querySelector('.login-particle-logo canvas') === null)
+      return benchmark !== undefined && (
+        benchmark.effectiveBackend !== null ||
+        benchmark.backendDiagnostics?.some(diagnostic => diagnostic.phase === 'failed' || diagnostic.phase === 'lost') === true
+      )
     },
     undefined,
     { timeout: 15_000 }
@@ -1535,7 +1535,6 @@ function expectInactivePerformance(benchmark: LogoPerformanceHook): void {
     updateCallbacks: 0,
     renderInvocations: 0,
     afterRenderCallbacks: 0,
-    rafCallbacks: 0,
     draws: 0
   })
   expect((benchmark.frames ?? []).reduce((total: number, frame: LogoPerformanceFrame) => total + (frame.motionScheduledBytes ?? 0), 0)).toBe(0)
@@ -1707,6 +1706,14 @@ test.describe('strict particle backend consumer coverage', () => {
       const canvas = field.locator('canvas')
       const staticImage = field.locator('.login-particle-logo__image')
       await installLogoOpacityTrace(page)
+      const initialCanvas = await canvas.elementHandle()
+      if (!initialCanvas) throw new Error('The committed particle canvas is unavailable.')
+      const initialPerformance = await readLogoPerformance(page)
+      const initialDiagnosticCount = initialPerformance.backendDiagnostics?.length ?? 0
+      const readyGeneration = initialPerformance.backendDiagnostics
+        ?.findLast((diagnostic: LogoBackendDiagnostic) => diagnostic.phase === 'ready')
+        ?.generation
+      expect(readyGeneration).toEqual(expect.any(Number))
 
       await page.evaluate(() => {
         const setVisibility = window.__setLogoParticleVisibility
@@ -1754,6 +1761,20 @@ test.describe('strict particle backend consumer coverage', () => {
       expect(resume?.visibleCommitAt).toEqual(expect.any(Number))
       expect(resume?.visibleCommitAt).toBeGreaterThanOrEqual(resume?.firstSubmissionAt ?? Number.POSITIVE_INFINITY)
       expect(resumed.frames?.some((frame: LogoPerformanceFrame) => frame.totalDrawCalls === 1 && frame.triangles === squareEffect.count * 2)).toBe(true)
+      expect(
+        await initialCanvas.evaluate(element =>
+          element.isConnected && element === document.querySelector('.login-particle-logo canvas')
+        )
+      ).toBe(true)
+      const transitionDiagnostics = (resumed.backendDiagnostics ?? []).slice(initialDiagnosticCount)
+      expect(
+        transitionDiagnostics.some((diagnostic: LogoBackendDiagnostic) =>
+          diagnostic.phase === 'initializing' || diagnostic.phase === 'retired'
+        )
+      ).toBe(false)
+      expect(
+        transitionDiagnostics.every((diagnostic: LogoBackendDiagnostic) => diagnostic.generation === readyGeneration)
+      ).toBe(true)
 
       await page.getByLabel('Email Address', { exact: true }).focus()
       await installReducedMotionChangeProbe(page)

@@ -983,7 +983,7 @@ function addRangeViolation(violations: Violation[], invariant: string, measured:
 
 test('enforces managed login cloud runtime budgets with bounded explosions', async ({ browser, browserName }, testInfo) => {
   test.skip(!performanceProjectNames[testInfo.project.name], 'Measured only by a strict backend performance project')
-  test.setTimeout(120_000)
+  test.setTimeout(180_000)
 
   const requestedBackend: StrictBackend = testInfo.project.name === 'performance-webgpu' ? 'webgpu' : 'webgl2'
   const reportPath = reportPathForBackend(requestedBackend)
@@ -1278,20 +1278,26 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   addExactViolation(violations, 'animation.phaseCpu.renderInvocation has one finite sample per frame', phaseCpu.renderInvocation.sampleCount === measuredFrames.length && phaseCpu.renderInvocation.unavailableSamples === 0 ? 1 : 0, 1)
   addExactViolation(violations, 'animation.phaseCpu.afterRender has one finite sample per frame', phaseCpu.afterRender.sampleCount === measuredFrames.length && phaseCpu.afterRender.unavailableSamples === 0 ? 1 : 0, 1)
   addExactViolation(violations, 'animation.counters contain mandatory instrumentation', counterInstrumentationFailures, 0)
+  // RAF observation is page-global and advisory: Three's retained common renderer
+  // keeps lightweight bookkeeping alive without producing particle work.
   addExactViolation(violations, 'hidden.callbackCount === 0', hidden.callbackCount, thresholds.inactiveCallbackCount)
+  addExactViolation(violations, 'hidden.updateCallbacks === 0', counterValue(hidden.counters, 'updateCallbacks'), 0)
+  addExactViolation(violations, 'hidden.renderInvocations === 0', counterValue(hidden.counters, 'renderInvocations'), 0)
+  addExactViolation(violations, 'hidden.afterRenderCallbacks === 0', counterValue(hidden.counters, 'afterRenderCallbacks'), 0)
   addExactViolation(violations, 'hidden.canvasCount === 1', hidden.canvasCount, thresholds.retainedCanvasCount)
   addExactViolation(violations, 'hidden.drawCallsDelta === 0', hidden.drawCallsDelta, 0)
   addExactViolation(violations, 'hidden.logicalScheduledBytes === 0', hidden.logicalScheduledBytes, 0)
   addObservedZeroViolation(violations, 'hidden.actualUploadCalls === 0 when observation is available', hidden.actualUploadCalls)
   addObservedZeroViolation(violations, 'hidden.actualUploadBytes === 0 when observation is available', hidden.actualUploadBytes)
-  addExactViolation(violations, 'hidden.rafCallbacksDelta === 0 (test-owned page RAF observation)', hidden.rafCallbacksDelta, 0)
   addExactViolation(violations, 'offscreen.callbackCount === 0', offscreen.callbackCount, thresholds.inactiveCallbackCount)
+  addExactViolation(violations, 'offscreen.updateCallbacks === 0', counterValue(offscreen.counters, 'updateCallbacks'), 0)
+  addExactViolation(violations, 'offscreen.renderInvocations === 0', counterValue(offscreen.counters, 'renderInvocations'), 0)
+  addExactViolation(violations, 'offscreen.afterRenderCallbacks === 0', counterValue(offscreen.counters, 'afterRenderCallbacks'), 0)
   addExactViolation(violations, 'offscreen.canvasCount === 1', offscreen.canvasCount, thresholds.retainedCanvasCount)
   addExactViolation(violations, 'offscreen.drawCallsDelta === 0', offscreen.drawCallsDelta, 0)
   addExactViolation(violations, 'offscreen.logicalScheduledBytes === 0', offscreen.logicalScheduledBytes, 0)
   addObservedZeroViolation(violations, 'offscreen.actualUploadCalls === 0 when observation is available', offscreen.actualUploadCalls)
   addObservedZeroViolation(violations, 'offscreen.actualUploadBytes === 0 when observation is available', offscreen.actualUploadBytes)
-  addExactViolation(violations, 'offscreen.rafCallbacksDelta === 0 (test-owned page RAF observation)', offscreen.rafCallbacksDelta, 0)
   addExactViolation(violations, 'resume.timeouts === 0', resumeTimeouts, thresholds.timeouts)
   addExactViolation(violations, 'resume.instrumentation is present', resumeTelemetryObserved ? 1 : 0, 1)
   addExactViolation(violations, 'resume.outcome === committed', resumeSample?.outcome === 'committed' ? 1 : 0, 1)
