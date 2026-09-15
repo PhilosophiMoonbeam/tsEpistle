@@ -103,7 +103,6 @@ const ACTIVE_ATTRIBUTES = new Set([
   'ping'
 ])
 const DOM_CLOBBERING_ATTRIBUTES = new Set(['id', 'name', 'slot'])
-const SAME_ORIGIN_BASE = 'https://offline.invalid/'
 
 export class OfflinePageProjectionError extends Error {
   readonly status = 404
@@ -113,6 +112,29 @@ export class OfflinePageProjectionError extends Error {
     super(message)
     this.name = 'OfflinePageProjectionError'
   }
+}
+
+/**
+ * Authority loading and projection configuration are server failures, not
+ * candidate eligibility decisions. Controllers must leave this error on their
+ * normal 5xx path rather than exposing an eligibility response.
+ */
+export class OfflinePageAuthorityError extends Error {
+  readonly code = 'OFFLINE_PAGE_AUTHORITY_UNAVAILABLE'
+
+  constructor(message = 'Offline page authority is unavailable') {
+    super(message)
+    this.name = 'OfflinePageAuthorityError'
+  }
+}
+
+/**
+ * The configured site origin and the page's canonical public route are the
+ * only base coordinates permitted for resolving passive document links.
+ */
+export interface OfflinePageLinkProjection {
+  readonly canonicalOrigin: string
+  readonly canonicalPath: string
 }
 
 export interface OfflinePageSource extends Record<string, unknown> {
@@ -131,10 +153,11 @@ export interface OfflinePageSource extends Record<string, unknown> {
   editorKey: string
   render: string
   sourceRevision: string | number | bigint
+  renderedSourceRevision?: string | number | bigint | null
   extra?: unknown
 }
 
-export interface OfflinePageSnapshotInput {
+export interface OfflinePageSnapshotInput extends OfflinePageLinkProjection {
   page: unknown
   guest: PagePrincipal
   authority: PageRuleAuthority
@@ -174,42 +197,117 @@ const canonicalSourceRevision = (value: unknown): string => {
   return revision
 }
 
-const safeAnchorUrl = (value: string): boolean => {
-  const hasControlCharacter = [...value].some(character => {
-    const code = character.codePointAt(0) ?? 0
-    return code <= 0x1f || code === 0x7f
-  })
-  if (value.length === 0 || value !== value.trim() || hasControlCharacter || value.includes('\\') || value.startsWith('//')) return false
-  let url: URL
+export const canonicalOfflineOrigin = (value: unknown): string => {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 2048 || value !== value.trim()) throw new TypeError('Offline page origin is invalid')
+  let parsed: URL
   try {
-    url = new URL(value, SAME_ORIGIN_BASE)
+    parsed = new URL(value)
   } catch {
-    return false
+    throw new TypeError('Offline page origin is invalid')
   }
-  if (url.username || url.password) return false
-  if (url.protocol !== 'http:' && url.protocol !== 'https:' && url.protocol !== 'mailto:') return false
-  if (url.protocol === 'http:' || url.protocol === 'https:') {
-    const isRelative = !/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(value)
-    if (isRelative && url.origin !== SAME_ORIGIN_BASE.slice(0, -1)) return false
-    if (url.origin === SAME_ORIGIN_BASE.slice(0, -1)) {
-      const pathname = url.pathname.toLowerCase()
-      if (
-        pathname === '/_api' ||
-        pathname.startsWith('/_api/') ||
-        pathname === '/api' ||
-        pathname.startsWith('/api/') ||
-        pathname === '/_private' ||
-        pathname.startsWith('/_private/') ||
-        pathname === '/uploads' ||
-        pathname.startsWith('/uploads/')
-      )
-        return false
-    }
-  }
-  return true
+  if (
+    (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+    parsed.username ||
+    parsed.password ||
+    parsed.pathname !== '/' ||
+    parsed.search ||
+    parsed.hash
+  )
+    throw new TypeError('Offline page origin is invalid')
+  return parsed.origin
 }
 
-const hasUnsafeProjectionMarkup = (fragment: string): boolean => {
+interface ResolvedOfflinePageLinkProjection {
+  readonly origin: string
+  readonly pageUrl: URL
+}
+
+const resolveLinkProjection = (projection: OfflinePageLinkProjection): ResolvedOfflinePageLinkProjection => {
+  const origin = canonicalOfflineOrigin(projection.canonicalOrigin)
+  const route = projection.canonicalPath
+  if (
+    typeof route !== 'string' ||
+    route.length === 0 ||
+    route.length > 2048 ||
+    route !== route.trim() ||
+    !route.startsWith('/') ||
+    route.includes('\\') ||
+    [...route].some(character => {
+      const code = character.codePointAt(0) ?? 0
+      return code <= 0x1f || (code >= 0x7f && code <= 0x9f)
+    })
+  )
+    throw new TypeError('Offline page route is invalid')
+  let pageUrl: URL
+  try {
+    pageUrl = new URL(route, `${origin}/`)
+  } catch {
+    throw new TypeError('Offline page route is invalid')
+  }
+  if (pageUrl.origin !== origin || pageUrl.pathname !== route || pageUrl.search || pageUrl.hash)
+    throw new TypeError('Offline page route is invalid')
+  return { origin, pageUrl }
+}
+
+const RESERVED_SAME_ORIGIN_PATH_PATTERNS = [
+  /^\/(?:_api|api|graphql|mcp)(?:\/|$)/iu,
+  /^\/(?:login|logout|register|auth|session|unlock|_unlock|verify|login-reset)(?:\/|$)/iu,
+  /^\/(?:u|upload|uploads|setup|admin|a|p|_admin|_private|_userav)(?:\/|$)/iu,
+  /^\/(?:d|e|h|s|i|t)(?:\/|$)/iu,
+  /^\/(?:_offline|sw\.js|sw-tombstone\.js|manifest(?:\.webmanifest|\.json)?|robots\.txt|health|healthz|metrics)(?:\/|$)/iu,
+  /^\/_assets(?:\/|$)/iu
+] as const
+
+const decodedPath = (pathname: string): string | null => {
+  let current = pathname
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    let decoded: string
+    try {
+      decoded = decodeURIComponent(current)
+    } catch {
+      return null
+    }
+    if (decoded === current) return current
+    current = decoded
+  }
+  return current
+}
+
+const reservedSameOriginPath = (pathname: string): boolean => {
+  const decoded = decodedPath(pathname)
+  if (decoded === null) return true
+  if (
+    decoded.includes('\\') ||
+    [...decoded].some(character => {
+      const code = character.codePointAt(0) ?? 0
+      return code <= 0x1f || (code >= 0x7f && code <= 0x9f)
+    })
+  )
+    return true
+  const normalized = decoded.replace(/\/+/gu, '/')
+  return RESERVED_SAME_ORIGIN_PATH_PATTERNS.some(pattern => pattern.test(normalized))
+}
+
+const canonicalAnchorUrl = (value: string, projection: ResolvedOfflinePageLinkProjection): string | null => {
+  const hasControlCharacter = [...value].some(character => {
+    const code = character.codePointAt(0) ?? 0
+    return code <= 0x1f || (code >= 0x7f && code <= 0x9f)
+  })
+  if (value.length === 0 || value !== value.trim() || hasControlCharacter || value.includes('\\') || value.startsWith('//')) return null
+  let url: URL
+  try {
+    url = new URL(value, projection.pageUrl)
+  } catch {
+    return null
+  }
+  if (url.username || url.password) return null
+  if (url.protocol !== 'http:' && url.protocol !== 'https:' && url.protocol !== 'mailto:') return null
+  if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin === projection.origin && reservedSameOriginPath(url.pathname))
+    return null
+  return url.href
+}
+
+const hasUnsafeProjectionMarkup = (fragment: string, projection: ResolvedOfflinePageLinkProjection): boolean => {
   const template = createTemplate()
   template.innerHTML = fragment
   for (const element of template.content.querySelectorAll('*')) {
@@ -218,7 +316,7 @@ const hasUnsafeProjectionMarkup = (fragment: string): boolean => {
     if (!ALLOWED_TAG_SET.has(tagName) && !PASSIVE_WRAPPER_TAGS.has(tagName)) return true
     if (tagName === 'a') {
       const href = element.getAttribute('href')
-      if (href !== null && !safeAnchorUrl(href)) return true
+      if (href !== null && canonicalAnchorUrl(href, projection) === null) return true
     }
     for (const attribute of element.attributes) {
       const name = attribute.name.toLowerCase()
@@ -238,11 +336,20 @@ const hasUnsafeProjectionMarkup = (fragment: string): boolean => {
   return false
 }
 
-export const sanitizeOfflineHtmlFragment = (fragment: string): string => {
-  if (typeof fragment !== 'string' || fragment.length > OFFLINE_RECORD_BYTES_LIMIT || hasUnsafeProjectionMarkup(fragment))
-    invalid('The page contains unsupported active content')
+export const sanitizeOfflineHtmlFragment = (fragment: string, projection: OfflinePageLinkProjection): string => {
+  if (typeof fragment !== 'string' || fragment.length > OFFLINE_RECORD_BYTES_LIMIT) invalid('The page contains unsupported active content')
+  const resolvedProjection = resolveLinkProjection(projection)
+  if (hasUnsafeProjectionMarkup(fragment, resolvedProjection)) invalid('The page contains unsupported active content')
+  const sourceTemplate = createTemplate()
+  sourceTemplate.innerHTML = fragment
+  for (const element of sourceTemplate.content.querySelectorAll('a')) {
+    const href = element.getAttribute('href')
+    if (href === null) continue
+    const canonical = canonicalAnchorUrl(href, resolvedProjection) ?? invalid('The page contains an unsafe link')
+    element.setAttribute('href', canonical)
+  }
   const sanitized = String(
-    domPurify.sanitize(fragment, {
+    domPurify.sanitize(sourceTemplate.innerHTML, {
       ALLOWED_TAGS: [...ALLOWED_TAGS],
       ALLOWED_ATTR: ['href'],
       ALLOW_ARIA_ATTR: false,
@@ -258,7 +365,8 @@ export const sanitizeOfflineHtmlFragment = (fragment: string): string => {
     if (!ALLOWED_TAG_SET.has(tagName)) invalid('The page projection contains an unsupported element')
     for (const attribute of element.attributes) {
       if (attribute.name.toLowerCase() !== 'href' || tagName !== 'a') invalid('The page projection contains an unsupported attribute')
-      if (!safeAnchorUrl(attribute.value)) invalid('The page projection contains an unsafe link')
+      const canonical = canonicalAnchorUrl(attribute.value, resolvedProjection) ?? invalid('The page projection contains an unsafe link')
+      element.setAttribute('href', canonical)
     }
   }
   return template.innerHTML
@@ -298,7 +406,7 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
     !Array.isArray(authority.groups) ||
     !isRecord(authority.tagAliases)
   )
-    invalid('Offline page authority is unavailable')
+    throw new OfflinePageAuthorityError()
   const page = input.page as Partial<OfflinePageSource> & Record<string, unknown>
   const ownerId = page.ownerId
   let pageOwnerId: number | null = null
@@ -318,6 +426,16 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
       ? localeCodeValue
       : invalid('The page identity is invalid')
   if (!Array.isArray(tags)) invalid('The page identity is invalid')
+  const sourceRevision = canonicalSourceRevision(page.sourceRevision)
+  const renderedSourceRevision =
+    page.renderedSourceRevision === undefined || page.renderedSourceRevision === null
+      ? null
+      : canonicalSourceRevision(page.renderedSourceRevision)
+  if (renderedSourceRevision === null || renderedSourceRevision !== sourceRevision) invalid('The page render is not current for its source revision')
+  const canonicalPath = pageRoute({ visibility: 'public', localeCode, path })
+  if (input.canonicalPath !== canonicalPath) throw new TypeError('Offline page route is invalid')
+  const linkProjection: OfflinePageLinkProjection = { canonicalOrigin: input.canonicalOrigin, canonicalPath }
+  resolveLinkProjection(linkProjection)
 
   const titleValue = page.title
   const descriptionValue = page.description
@@ -355,19 +473,18 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
   if ((editorKey === 'markdown' || editorKey === 'visual-markdown') && contentType !== 'markdown') invalid('The page content type is not supported offline')
   if (editorKey === 'asciidoc' && contentType !== 'asciidoc') invalid('The page content type is not supported offline')
   if (normalizedExtra(page.extra) === null) invalid('The page contains unsupported custom content')
-  const html = sanitizeOfflineHtmlFragment(render)
+  const html = sanitizeOfflineHtmlFragment(render, linkProjection)
   const contentTemplate = createTemplate()
   contentTemplate.innerHTML = html
   const searchText = (contentTemplate.content.textContent ?? '').replace(/\s+/gu, ' ').trim()
   if (Buffer.byteLength(html, 'utf8') > OFFLINE_RECORD_BYTES_LIMIT || Buffer.byteLength(searchText, 'utf8') > OFFLINE_RECORD_BYTES_LIMIT)
     invalid('The page projection exceeds the offline size limit')
-  const sourceRevision = canonicalSourceRevision(page.sourceRevision)
   const snapshotWithoutIntegrity: Omit<OfflinePageSnapshotV1, 'integrity'> = {
     schemaVersion: 1,
     pageId,
     locale: localeCode,
     path,
-    canonicalPath: pageRoute({ visibility: 'public', localeCode, path }),
+    canonicalPath,
     title,
     description: typeof description === 'string' ? description : '',
     sourceRevision,

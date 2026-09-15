@@ -1,13 +1,14 @@
 <template lang="pug">
   div.comments(v-intersect.once='onIntersect')
     v-alert.mb-4(v-if='availability && (availability.closed || !availability.enabled)', type='info', variant='tonal') {{ availability.closed ? 'This discussion is closed to new comments.' : 'Discussions are currently unavailable.' }}
-    v-alert.mb-4(v-if='connectionBlocked', type='warning', variant='tonal', role='status')
+    v-alert.mb-4(v-if='readinessBlocked', type='warning', variant='tonal', role='status', aria-live='polite')
       .d-flex.align-center.ga-2
-        span Connection required to load or change comments.
+        span {{ readinessMessage }}
         v-spacer
-        v-btn(size='small', variant='text', prepend-icon='mdi-refresh', :loading='connectionRetrying', :disabled='connectionRetrying', @click='retryConnection') Retry connection
+        v-btn(size='small', variant='text', prepend-icon='mdi-refresh', :loading='connectionRetrying', :disabled='connectionRetrying', @click='retryFetch') {{ readinessRetryLabel }}
+
     form.comments-composer(
-      v-if='connectionBlocked || (permissions.write && availability?.canPost)'
+      v-if='permissions.write && (connectionBlocked || !authorityReady || availability?.canPost)'
       :aria-label='$t(`common:comments.postComment`)'
       :aria-busy='isPosting'
       novalidate
@@ -28,23 +29,32 @@
         rows='3'
         hide-details
         v-model='newcomment'
-        @input='queueMentionSearch'
+        @input='handleComposerInput'
         @click='queueMentionSearch'
         @keyup='queueMentionSearch'
         @keydown='handleMentionKeydown'
+        @compositionstart='handleMentionCompositionStart'
+        @compositionend='handleMentionCompositionEnd'
         color="primary"
         bg-color='surface'
         :aria-label='$t(`common:comments.fieldContent`)'
+        role='combobox'
+        aria-autocomplete='list'
+        aria-controls='comment-mention-options'
+        :aria-expanded='mentionCandidates.length > 0'
+        :aria-activedescendant='activeMentionOptionId'
         :disabled='isPosting'
         required
       )
       v-card.comments-mentions(v-if='mentionCandidates.length > 0' variant='outlined')
-        v-list(density='compact' aria-label='Mention suggestions')
+        v-list#comment-mention-options(density='compact', role='listbox', aria-label='Mention suggestions')
           v-list-item(
             v-for='(candidate, candidateIndex) of mentionCandidates'
             :id='`mention-option-${candidate.id}`'
             :key='candidate.handle'
             :active='mentionIndex === candidateIndex'
+            role='option'
+            :aria-selected='mentionIndex === candidateIndex'
             prepend-icon='mdi-at'
             :title='`@${candidate.handle}`'
             :subtitle='candidate.name'
@@ -62,6 +72,7 @@
             density="compact"
             autocomplete='name'
             v-model='guestName'
+            @input='noteComposerInput'
             :aria-label='$t(`common:comments.fieldName`)'
             :disabled='isPosting'
             required
@@ -77,6 +88,7 @@
             density="compact"
             autocomplete='email'
             v-model='guestEmail'
+            @input='noteComposerInput'
             :aria-label='$t(`common:comments.fieldEmail`)'
             :disabled='isPosting'
             required
@@ -96,7 +108,7 @@
           prepend-icon='mdi-comment'
           :aria-label='$t(`common:comments.postComment`)'
           :loading='isPosting'
-          :disabled='isPosting || connectionBlocked'
+          :disabled='isPosting || !commentReady'
         )
           span.text-none {{$t('common:comments.postComment')}}
     async-state.comments-loading(
@@ -105,7 +117,7 @@
       :title='$t(`common:comments.loading`)'
     )
     async-state(
-      v-else-if='fetchError'
+      v-else-if='fetchError && !readinessBlocked'
       state='error'
       :title='$t(`common:error.unexpected`)'
       :message='fetchError'
@@ -137,7 +149,7 @@
           v-card-text
             .comments-post-actions(v-if='!isBusy && commentEditId === 0')
               v-btn(
-                v-if='permissions.write && availability?.canPost'
+                v-if='commentReady'
                 icon
                 size='small'
                 variant='text'
@@ -150,7 +162,7 @@
                 size='small'
                 variant='text'
                 :aria-label='$t(`common:comments.updateComment`) + `: ` + cm.authorName'
-                :disabled='connectionBlocked'
+                :disabled='!managementReady'
                 @click='editComment(cm)'
               ): v-icon(size="small") mdi-pencil
               v-btn(
@@ -159,7 +171,7 @@
                 size='small'
                 variant='text'
                 :aria-label='$t(`common:comments.deleteConfirmTitle`) + `: ` + cm.authorName'
-                :disabled='connectionBlocked'
+                :disabled='!managementReady'
                 @click='deleteCommentConfirm(cm)'
               ): v-icon(size="small") mdi-delete
             .comments-post-name.text-body-small(:id='`comment-author-${cm.id}`'): strong {{cm.authorName}}
@@ -173,6 +185,7 @@
                 rows='3'
                 hide-details
                 v-model='commentEditContent'
+                @input='noteEditInput'
                 :disabled='isBusy'
                 color="primary"
                 bg-color='surface'
@@ -195,7 +208,7 @@
                   type='submit'
                   variant="flat"
                   :loading='isBusy'
-                  :disabled='isBusy || connectionBlocked'
+                  :disabled='isBusy || !managementReady'
                 )
                   span.text-none {{$t('common:comments.updateComment')}}
     async-state.comments-empty(
@@ -222,22 +235,28 @@
         v-card-actions
           v-spacer
           v-btn(variant="text", @click='deleteCommentDialogShown = false', :disabled='isBusy') {{$t('common:actions.cancel')}}
-          v-btn(color='error', variant='flat', @click='deleteComment', :loading='isBusy', :disabled='isBusy || connectionBlocked') {{$t('common:actions.delete')}}
+          v-btn(color='error', variant='flat', @click='deleteComment', :loading='isBusy', :disabled='isBusy || !managementReady') {{$t('common:actions.delete')}}
 </template>
 
 <script lang='ts'>
-import { defineComponent } from 'vue'
-import { markRaw } from 'vue'
+import { defineComponent, markRaw } from 'vue'
 import { useGoTo } from 'vuetify'
-import { createComment, deleteComment, fetchComment, fetchComments, fetchDiscussionAvailability, fetchMentionCandidates, updateComment } from '../helpers/comments-api'
-import type { CommentRow, MentionCandidate } from '../helpers/comments-api'
+import { CommentApiError, createComment, deleteComment, fetchComment, fetchComments, fetchDiscussionAvailability, fetchMentionCandidates, updateComment } from '../helpers/comments-api'
+import type { CommentOutcomeKind, CommentRow, MentionCandidate } from '../helpers/comments-api'
 import { wikiStore } from '@/store/index.ts'
 import validateValues from '../../shared/validation'
 import { getErrorMessage, showNotification } from '../helpers/root-ui-store'
 import { pwaState, retryServerConnection } from '../helpers/pwa'
 import AsyncState from '@/components/common/async-state.vue'
+
 type CommentWithInitials = CommentRow & {
   initials: string
+}
+
+type CommentAvailability = {
+  enabled: boolean
+  closed: boolean
+  canPost: boolean
 }
 
 type CommentPermissions = {
@@ -267,7 +286,26 @@ type CommentScrollOptions = {
   offset: number
   easing: 'easeInOutCubic'
 }
+
 type MentionRange = { start: number; end: number }
+
+type CommentContext = {
+  pageId: number
+  ownerId: number
+  pageGeneration: number
+  ownerGeneration: number
+  componentGeneration: number
+  transportGeneration: number
+}
+
+type ComposerSnapshot = {
+  pageId: number
+  replyTo: number
+  content: string
+  guestName: string
+  guestEmail: string
+  revision: number
+}
 
 export default defineComponent({
   components: {
@@ -280,7 +318,17 @@ export default defineComponent({
   },
   data () {
     return {
-      availability: null as { enabled: boolean; closed: boolean; canPost: boolean } | null,
+      availability: null as CommentAvailability | null,
+      authorityReady: false,
+      authorityError: '',
+      authorityErrorKind: null as CommentOutcomeKind | null,
+      activeContextKey: '',
+      activePageId: null as number | null,
+      activeOwnerId: null as number | null,
+      pageGeneration: 0,
+      ownerGeneration: 0,
+      componentGeneration: 1,
+      transportGeneration: 0,
       newcomment: '',
       replyTo: 0,
       replyAuthor: '',
@@ -289,6 +337,8 @@ export default defineComponent({
       mentionGeneration: 0,
       mentionIndex: -1,
       mentionTimer: null as number | null,
+      mentionController: null as AbortController | null,
+      mentionComposing: false,
       isLoading: true,
       hasLoadedOnce: false,
       fetchError: '',
@@ -297,15 +347,22 @@ export default defineComponent({
       hasIntersected: false,
       reportedUnavailableAnchor: '',
       isPosting: false,
+      postGeneration: 0,
+      composerRevision: 0,
+      uncertainCreate: false,
       comments: [] as CommentWithInitials[],
       guestName: '',
       guestEmail: '',
       commentToDelete: null as CommentWithInitials | null,
+      deleteGeneration: 0,
       commentEditId: 0,
       commentEditContent: null as string | null,
+      commentEditRevision: 0,
+      editGeneration: 0,
       deleteCommentDialogShown: false,
       isBusy: false,
       connectionRetrying: false,
+      retryGeneration: 0,
       connectionPaused: false,
       scrollOpts: {
         duration: 1500,
@@ -316,16 +373,45 @@ export default defineComponent({
   },
   computed: {
     pageId(): number { return wikiStore.page.id },
+    ownerId(): number {
+      const id = wikiStore.user.id
+      return this.isAuthenticated && Number.isSafeInteger(id) && id > 0 ? id : 0
+    },
+    contextKey(): string { return `${this.ownerId}:${this.pageId}` },
     permissions(): CommentPermissions { return wikiStore.page.effectivePermissions.comments },
     pwaConnectionState(): string { return pwaState.connectionState },
     connectionUnavailable(): boolean {
-      return pwaState.connectionState === 'offline' || pwaState.connectionState === 'server-unavailable'
+      return pwaState.connectionState !== 'online'
     },
     connectionBlocked(): boolean {
       return this.connectionPaused || this.connectionUnavailable
     },
+    readinessBlocked(): boolean {
+      return this.connectionBlocked || this.authorityError.length > 0
+    },
+    readinessMessage(): string {
+      if (this.connectionBlocked) {
+        if (this.pwaConnectionState === 'checking') return 'Checking the connection before loading comments.'
+        if (this.pwaConnectionState === 'server-unavailable') return 'Connection required. The server is unavailable right now.'
+        return 'Connection required to load or change comments.'
+      }
+      return this.authorityError || 'Comment access is not ready. Refresh before trying again.'
+    },
+    readinessRetryLabel(): string {
+      return this.connectionBlocked ? 'Retry connection' : 'Retry comments'
+    },
+    commentReady(): boolean {
+      return this.authorityReady && !this.connectionBlocked && this.permissions.write && this.availability?.canPost === true
+    },
+    managementReady(): boolean {
+      return this.authorityReady && !this.connectionBlocked && this.permissions.manage
+    },
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
     userDisplayName(): string { return wikiStore.user.name },
+    activeMentionOptionId(): string | undefined {
+      const candidate = this.mentionCandidates[this.mentionIndex]
+      return candidate ? `mention-option-${candidate.id}` : undefined
+    },
     orderedComments(): CommentWithInitials[] {
       const roots: CommentWithInitials[] = []
       const replies = new Map<number, CommentWithInitials[]>()
@@ -337,69 +423,204 @@ export default defineComponent({
     }
   },
   watch: {
-    pageId (pageId: number, previousPageId: number) {
-      if (pageId === previousPageId) return
-      this.newcomment = ''
-      this.guestName = ''
-      this.guestEmail = ''
-      this.fetchController?.abort()
-      this.fetchController = null
-      this.fetchGeneration += 1
-      this.comments = []
-      this.availability = null
-      this.hasLoadedOnce = false
-      this.fetchError = ''
-      this.commentToDelete = null
-      this.commentEditId = 0
-      this.commentEditContent = null
-      this.cancelReply()
-      this.clearMentionSearch()
-      this.reportedUnavailableAnchor = ''
-      this.deleteCommentDialogShown = false
-      if (this.hasIntersected) void this.fetch(true)
+    contextKey: {
+      handler (value: string, previous: string) {
+        if (value === previous && value === this.activeContextKey) return
+        this.rotateContext(value)
+        if (this.hasIntersected && !this.connectionBlocked) void this.fetch(true)
+      },
+      flush: 'sync'
     },
-    pwaConnectionState (state: string) {
-      const blocked = state === 'offline' || state === 'server-unavailable'
-      if (blocked) {
-        this.connectionPaused = true
-        this.fetchController?.abort()
-        this.fetchController = null
-        this.fetchGeneration += 1
-        this.isLoading = false
-        this.fetchError = state === 'server-unavailable'
-          ? 'Connection required. The server is unavailable right now.'
-          : 'Connection required to load comments.'
-        return
-      }
-      if (state === 'online' && this.connectionPaused) {
-        this.connectionPaused = false
-        if (this.hasIntersected) void this.fetch(true)
-      }
+    pwaConnectionState: {
+      handler (state: string, previous: string) {
+        if (state === previous) return
+        this.transportGeneration += 1
+        if (state !== 'online') {
+          this.connectionPaused = true
+          this.authorityReady = false
+          this.availability = null
+          this.authorityErrorKind = 'transport'
+          this.authorityError = state === 'server-unavailable'
+            ? 'Connection required. The server is unavailable right now.'
+            : state === 'checking'
+              ? 'Checking the connection before loading comments.'
+              : 'Connection required to load comments.'
+          this.fetchController?.abort()
+          this.fetchController = null
+          this.fetchGeneration += 1
+          this.isLoading = false
+          this.fetchError = this.authorityError
+          return
+        }
+        if (this.connectionPaused) {
+          this.connectionPaused = false
+          if (this.authorityErrorKind === 'transport') {
+            this.authorityError = ''
+            this.authorityErrorKind = null
+          }
+          if (this.hasIntersected) void this.fetch(true)
+        }
+      },
+      flush: 'sync'
     }
   },
   beforeUnmount () {
+    this.componentGeneration += 1
+    this.transportGeneration += 1
     this.fetchGeneration += 1
+    this.postGeneration += 1
+    this.editGeneration += 1
+    this.deleteGeneration += 1
+    this.retryGeneration += 1
     this.fetchController?.abort()
     this.fetchController = null
+    this.mentionController?.abort()
+    this.mentionController = null
     if (this.mentionTimer !== null) window.clearTimeout(this.mentionTimer)
+    this.mentionTimer = null
+    wikiStore.stopLoading('comments-edit')
+    wikiStore.stopLoading('comments-delete')
   },
   methods: {
-    newCommentTextarea(): HTMLTextAreaElement | null {
+    rotateContext (value: string): void {
+      const pageId = this.pageId
+      const ownerId = this.ownerId
+      const firstContext = this.activeContextKey.length === 0
+      const pageChanged = !firstContext && this.activePageId !== pageId
+      const ownerChanged = !firstContext && this.activeOwnerId !== ownerId
+      if (!firstContext && !pageChanged && !ownerChanged && this.activeContextKey === value) return
+
+      this.activeContextKey = value
+      this.activePageId = pageId
+      this.activeOwnerId = ownerId
+      if (!firstContext && pageChanged) this.pageGeneration += 1
+      if (!firstContext && ownerChanged) this.ownerGeneration += 1
+      if (firstContext) {
+        this.pageGeneration = 1
+        this.ownerGeneration = 1
+        return
+      }
+
+      this.fetchController?.abort()
+      this.fetchController = null
+      this.mentionController?.abort()
+      this.mentionController = null
+      if (this.mentionTimer !== null) window.clearTimeout(this.mentionTimer)
+      this.mentionTimer = null
+      this.fetchGeneration += 1
+      this.mentionGeneration += 1
+      this.postGeneration += 1
+      this.editGeneration += 1
+      this.deleteGeneration += 1
+      this.retryGeneration += 1
+      this.authorityReady = false
+      this.authorityError = ''
+      this.authorityErrorKind = null
+      this.availability = null
+      this.comments = []
+      this.isLoading = false
+      this.hasLoadedOnce = false
+      this.fetchError = ''
+      this.newcomment = ''
+      this.guestName = ''
+      this.guestEmail = ''
+      this.composerRevision += 1
+      this.uncertainCreate = false
+      this.replyTo = 0
+      this.replyAuthor = ''
+      this.mentionRange = null
+      this.mentionIndex = -1
+      this.mentionCandidates = []
+      this.commentToDelete = null
+      this.commentEditId = 0
+      this.commentEditContent = null
+      this.commentEditRevision += 1
+      this.deleteCommentDialogShown = false
+      this.isPosting = false
+      this.isBusy = false
+      this.connectionRetrying = false
+      this.reportedUnavailableAnchor = ''
+      wikiStore.stopLoading('comments-edit')
+      wikiStore.stopLoading('comments-delete')
+    },
+    ensureContext (): void {
+      if (this.activeContextKey !== this.contextKey) this.rotateContext(this.contextKey)
+    },
+    captureContext (): CommentContext {
+      this.ensureContext()
+      return {
+        pageId: this.pageId,
+        ownerId: this.ownerId,
+        pageGeneration: this.pageGeneration,
+        ownerGeneration: this.ownerGeneration,
+        componentGeneration: this.componentGeneration,
+        transportGeneration: this.transportGeneration
+      }
+    },
+    isCurrentContext (context: CommentContext): boolean {
+      this.ensureContext()
+      return (
+        context.pageId === this.pageId &&
+        context.ownerId === this.ownerId &&
+        context.pageGeneration === this.pageGeneration &&
+        context.ownerGeneration === this.ownerGeneration &&
+        context.componentGeneration === this.componentGeneration &&
+        context.transportGeneration === this.transportGeneration &&
+        context.pageId === this.activePageId &&
+        context.ownerId === this.activeOwnerId
+      )
+    },
+    isCurrentIdentityContext (context: CommentContext): boolean {
+      this.ensureContext()
+      return (
+        context.pageId === this.pageId &&
+        context.ownerId === this.ownerId &&
+        context.pageGeneration === this.pageGeneration &&
+        context.ownerGeneration === this.ownerGeneration &&
+        context.componentGeneration === this.componentGeneration &&
+        context.pageId === this.activePageId &&
+        context.ownerId === this.activeOwnerId
+      )
+    },
+    newCommentTextarea (): HTMLTextAreaElement | null {
       const field = this.$refs.newCommentField as { $el?: Element } | undefined
       return field?.$el?.querySelector('textarea') ?? null
     },
-    clearMentionSearch(): void {
+    clearMentionSearch (): void {
       this.mentionGeneration += 1
+      this.mentionController?.abort()
+      this.mentionController = null
       if (this.mentionTimer !== null) window.clearTimeout(this.mentionTimer)
       this.mentionTimer = null
       this.mentionRange = null
       this.mentionIndex = -1
       this.mentionCandidates = []
     },
-    queueMentionSearch(event?: Event): void {
-      if (event instanceof KeyboardEvent && ['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) return
+    handleComposerInput (event?: Event): void {
+      this.composerRevision += 1
+      this.uncertainCreate = false
+      this.queueMentionSearch(event)
+    },
+    noteComposerInput (): void {
+      this.composerRevision += 1
+      this.uncertainCreate = false
+      this.clearMentionSearch()
+    },
+    handleMentionCompositionStart (): void {
+      this.mentionComposing = true
+      this.clearMentionSearch()
+    },
+    handleMentionCompositionEnd (event?: Event): void {
+      this.mentionComposing = false
+      this.queueMentionSearch(event)
+    },
+    queueMentionSearch (event?: Event): void {
+      const keyboardEvent = event as KeyboardEvent | undefined
+      if (this.mentionComposing || keyboardEvent?.isComposing || keyboardEvent?.keyCode === 229) return
+      if (keyboardEvent && ['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(keyboardEvent.key)) return
       this.clearMentionSearch()
       if (!this.isAuthenticated || this.connectionBlocked) return
+      const context = this.captureContext()
       const textarea = this.newCommentTextarea()
       const cursor = textarea?.selectionStart ?? this.newcomment.length
       const match = this.newcomment.slice(0, cursor).match(/(?:^|[^\w@/])@([a-z0-9_-]{2,32})$/i)
@@ -407,24 +628,37 @@ export default defineComponent({
       if (!query) return
       const range = { start: cursor - query.length - 1, end: cursor }
       const generation = this.mentionGeneration
-      const pageId = this.pageId
       this.mentionRange = range
       this.mentionTimer = window.setTimeout(async () => {
         this.mentionTimer = null
-        if (this.connectionBlocked) return
+        if (!this.isCurrentContext(context) || generation !== this.mentionGeneration || this.connectionBlocked) return
+        const controller = markRaw(new AbortController())
+        this.mentionController = controller
         try {
-          const candidates = await fetchMentionCandidates(window.fetch.bind(window), pageId, query)
-          if (pageId === this.pageId && generation === this.mentionGeneration && this.mentionRange?.start === range.start && this.mentionRange.end === range.end && this.newcomment.slice(range.start, range.end).toLowerCase() === `@${query}`) {
-            this.mentionCandidates = candidates
-            this.mentionIndex = candidates.length > 0 ? 0 : -1
-          }
-        } catch {
-          if (pageId === this.pageId && generation === this.mentionGeneration) this.mentionCandidates = []
+          const fetch = (url: string, options?: RequestInit) => window.fetch(url, { ...options, signal: controller.signal })
+          const candidates = await fetchMentionCandidates(fetch, context.pageId, query)
+          if (
+            !this.isCurrentContext(context) ||
+            generation !== this.mentionGeneration ||
+            this.mentionController !== controller ||
+            this.mentionRange?.start !== range.start ||
+            this.mentionRange?.end !== range.end ||
+            this.newcomment.slice(range.start, range.end).toLowerCase() !== `@${query}`
+          ) return
+          this.mentionCandidates = candidates
+          this.mentionIndex = candidates.length > 0 ? 0 : -1
+        } catch (error) {
+          if (!this.isCurrentContext(context) || generation !== this.mentionGeneration || this.mentionController !== controller) return
+          this.mentionCandidates = []
+          const kind = this.commentErrorKind(error)
+          if (kind === 'auth' || kind === 'permission' || kind === 'not-found') this.setAuthorityFailure(error)
+        } finally {
+          if (this.mentionController === controller) this.mentionController = null
         }
       }, 150)
     },
-    handleMentionKeydown(event: KeyboardEvent): void {
-      if (this.mentionCandidates.length === 0) return
+    handleMentionKeydown (event: KeyboardEvent): void {
+      if (event.isComposing || event.keyCode === 229 || this.mentionComposing || this.mentionCandidates.length === 0) return
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
         const direction = event.key === 'ArrowDown' ? 1 : -1
@@ -438,45 +672,58 @@ export default defineComponent({
         this.clearMentionSearch()
       }
     },
-    insertMention(candidate: MentionCandidate): void {
+    insertMention (candidate: MentionCandidate): void {
       const range = this.mentionRange
       if (!range) return
+      const context = this.captureContext()
       const insertion = `@${candidate.handle} `
       this.newcomment = this.newcomment.slice(0, range.start) + insertion + this.newcomment.slice(range.end)
+      this.composerRevision += 1
       const cursor = range.start + insertion.length
       this.clearMentionSearch()
       this.$nextTick(() => {
+        if (!this.isCurrentContext(context)) return
         const textarea = this.newCommentTextarea()
         textarea?.focus()
         textarea?.setSelectionRange(cursor, cursor)
       })
     },
-    startReply(comment: CommentWithInitials): void {
+    startReply (comment: CommentWithInitials): void {
+      if (!this.commentReady) return
+      const context = this.captureContext()
       this.replyTo = comment.id
       this.replyAuthor = comment.authorName
-      if (comment.authorHandle && !this.newcomment.trim()) this.newcomment = `@${comment.authorHandle} `
+      if (comment.authorHandle && !this.newcomment.trim()) {
+        this.newcomment = `@${comment.authorHandle} `
+        this.composerRevision += 1
+      }
       this.clearMentionSearch()
       this.$nextTick(() => {
-        void this.goTo('#discussion-new', { ...this.scrollOpts, duration: 250 })
+        if (!this.isCurrentContext(context)) return
+        void this.goTo('#discussion-new', this.scrollOptions(250))
         this.newCommentTextarea()?.focus()
       })
     },
-    cancelReply(): void {
+    cancelReply (): void {
+      if (this.replyTo !== 0 || this.replyAuthor.length > 0) this.composerRevision += 1
       this.replyTo = 0
       this.replyAuthor = ''
     },
     onIntersect (isIntersecting: boolean, _entries: IntersectionObserverEntry[], _observer: IntersectionObserver): void {
       if (!isIntersecting) return
+      this.ensureContext()
       this.hasIntersected = true
       void this.fetch(true)
     },
-    focusRequestedComment(): void {
+    focusRequestedComment (expectedContext?: CommentContext): void {
+      const context = expectedContext ?? this.captureContext()
       const anchor = window.location.hash
       if (!/^#comment-post-id-[1-9]\d*$/.test(anchor)) return
       this.$nextTick(() => {
+        if (!this.isCurrentContext(context)) return
         const target = document.querySelector<HTMLElement>(anchor)
         if (target) {
-          void this.goTo(anchor, { ...this.scrollOpts, duration: 250 })
+          void this.goTo(anchor, this.scrollOptions(250))
           target.setAttribute('tabindex', '-1')
           target.focus({ preventScroll: true })
         } else if (this.reportedUnavailableAnchor !== anchor) {
@@ -485,28 +732,100 @@ export default defineComponent({
         }
       })
     },
-    async fetch (silent = false) {
+    scrollOptions (duration?: number): CommentScrollOptions {
+      const scrollDuration = duration === undefined ? this.scrollOpts.duration : duration
+      const reduceMotion = typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      return {
+        ...this.scrollOpts,
+        duration: reduceMotion ? 0 : scrollDuration
+      }
+    },
+    commentErrorKind (error: unknown): CommentOutcomeKind | null {
+      if (error instanceof CommentApiError) return error.kind
+      if (!error || typeof error !== 'object') return null
+      const status = Reflect.get(error, 'status')
+      if (typeof status !== 'number' || !Number.isSafeInteger(status)) return null
+      if (status === 401) return 'auth'
+      if (status === 403) return 'permission'
+      if (status === 404) return 'not-found'
+      if (status === 409) return 'conflict'
+      if (status === 400 || status === 422) return 'validation'
+      if (status === 429) return 'rate-limit'
+      if (status >= 500) return 'server'
+      return 'server'
+    },
+    commentErrorMessage (error: unknown): string {
+      const kind = this.commentErrorKind(error)
+      if (kind === 'auth') return 'Your session is no longer authorized to load or change comments. Sign in again, then retry.'
+      if (kind === 'permission' || kind === 'not-found') return 'Comments are unavailable for this page.'
+      if (kind === 'transport') return 'Connection required to load or change comments.'
+      if (kind === 'transport-unknown') return 'The comment request outcome is unknown. Refresh comments before trying again; it was not sent again.'
+      return getErrorMessage(error)
+    },
+    setAuthorityFailure (error: unknown): void {
+      const kind = this.commentErrorKind(error) ?? 'server'
+      this.authorityReady = false
+      this.availability = null
+      this.authorityErrorKind = kind
+      this.authorityError = this.commentErrorMessage(error)
+      this.fetchError = this.authorityError
+      if (kind === 'auth' || kind === 'permission' || kind === 'not-found') this.comments = []
+    },
+    isUnknownMutationOutcome (error: unknown): boolean {
+      if (error instanceof CommentApiError) return error.outcome === 'unknown'
+      const kind = this.commentErrorKind(error)
+      return kind === null || kind === 'transport' || kind === 'transport-unknown' || kind === 'server'
+    },
+    composerMatches (snapshot: ComposerSnapshot): boolean {
+      return (
+        this.composerRevision === snapshot.revision &&
+        this.newcomment === snapshot.content &&
+        this.guestName === snapshot.guestName &&
+        this.guestEmail === snapshot.guestEmail &&
+        this.replyTo === snapshot.replyTo &&
+        this.pageId === snapshot.pageId
+      )
+    },
+    clearComposerIfUnchanged (snapshot: ComposerSnapshot): boolean {
+      if (!this.composerMatches(snapshot)) return false
+      this.newcomment = ''
+      this.guestName = ''
+      this.guestEmail = ''
+      this.replyTo = 0
+      this.replyAuthor = ''
+      this.composerRevision += 1
+      this.uncertainCreate = false
+      this.clearMentionSearch()
+      return true
+    },
+    async fetch (silent = false): Promise<boolean> {
+      const context = this.captureContext()
       if (this.connectionBlocked) {
         this.connectionPaused = true
-        this.fetchController?.abort()
-        this.fetchController = null
-        this.fetchGeneration += 1
+        this.authorityReady = false
+        this.availability = null
+        this.authorityErrorKind = 'transport'
+        this.authorityError = this.readinessMessage
         this.isLoading = false
-        this.fetchError = pwaState.connectionState === 'server-unavailable'
-          ? 'Connection required. The server is unavailable right now.'
-          : 'Connection required to load comments.'
-        return
+        this.fetchError = this.authorityError
+        return false
       }
       this.fetchController?.abort()
       const controller = markRaw(new AbortController())
       this.fetchController = controller
       const requestId = ++this.fetchGeneration
+      this.authorityReady = false
+      this.authorityError = ''
+      this.authorityErrorKind = null
       this.isLoading = true
       this.fetchError = ''
       try {
         const fetch = (url: string, options?: RequestInit) => window.fetch(url, { ...options, signal: controller.signal })
-        const [comments, availability] = await Promise.all([fetchComments(fetch, this.pageId), fetchDiscussionAvailability(fetch, this.pageId)])
-        if (requestId !== this.fetchGeneration) return
+        const [comments, availability] = await Promise.all([
+          fetchComments(fetch, context.pageId),
+          fetchDiscussionAvailability(fetch, context.pageId)
+        ])
+        if (!this.isCurrentContext(context) || requestId !== this.fetchGeneration || controller.signal.aborted || this.connectionBlocked) return false
         this.availability = availability
         this.comments = comments.map(comment => {
           const nameParts = comment.authorName.trim().toUpperCase().split(/\s+/)
@@ -517,20 +836,27 @@ export default defineComponent({
             initials: firstInitial + lastInitial
           }
         })
-        this.focusRequestedComment()
-      } catch (err) {
-        if (requestId !== this.fetchGeneration) return
-        console.warn(err)
-        this.fetchError = getErrorMessage(err)
+        this.authorityReady = true
+        this.authorityError = ''
+        this.authorityErrorKind = null
+        this.fetchError = ''
+        this.focusRequestedComment(context)
+        return true
+      } catch (error) {
+        if (!this.isCurrentContext(context) || requestId !== this.fetchGeneration) return false
+        if (error instanceof CommentApiError && error.kind === 'transport-unknown') return false
+        console.warn(error)
+        this.setAuthorityFailure(error)
         if (!silent) {
           showNotification(wikiStore, {
             style: 'red',
-            message: this.fetchError,
+            message: this.authorityError,
             icon: 'alert'
           })
         }
+        return false
       } finally {
-        if (requestId === this.fetchGeneration) {
+        if (this.isCurrentContext(context) && requestId === this.fetchGeneration) {
           this.fetchController = null
           this.isLoading = false
           this.hasLoadedOnce = true
@@ -539,20 +865,28 @@ export default defineComponent({
     },
     async retryConnection (): Promise<void> {
       if (this.connectionRetrying) return
+      const context = this.captureContext()
+      const generation = ++this.retryGeneration
       this.connectionRetrying = true
       try {
         const reachable = await retryServerConnection()
+        if (!this.isCurrentContext(context) || generation !== this.retryGeneration) return
         if (!reachable) {
-          this.connectionPaused = true
-          this.fetchError = pwaState.connectionState === 'server-unavailable'
+          this.authorityReady = false
+          this.authorityErrorKind = 'transport'
+          this.authorityError = this.pwaConnectionState === 'server-unavailable'
             ? 'Connection required. The server is unavailable right now.'
             : 'Connection required to load comments.'
+          this.fetchError = this.authorityError
           return
         }
         this.connectionPaused = false
         if (this.hasIntersected) await this.fetch(false)
+      } catch (error) {
+        if (!this.isCurrentContext(context) || generation !== this.retryGeneration) return
+        this.setAuthorityFailure(error)
       } finally {
-        this.connectionRetrying = false
+        if (this.isCurrentIdentityContext(context) && generation === this.retryGeneration) this.connectionRetrying = false
       }
     },
     retryFetch (): void {
@@ -562,13 +896,44 @@ export default defineComponent({
       }
       void this.fetch(false)
     },
+    async reconcileCreate (context: CommentContext, snapshot: ComposerSnapshot, generation: number): Promise<void> {
+      if (!this.isCurrentContext(context) || generation !== this.postGeneration) return
+      const refreshed = await this.fetch(false)
+      if (!this.isCurrentContext(context) || generation !== this.postGeneration) return
+      const reconciled = refreshed && this.comments.some(comment =>
+        comment.content === snapshot.content && comment.replyTo === snapshot.replyTo
+      )
+      if (reconciled) {
+        this.clearComposerIfUnchanged(snapshot)
+        wikiStore.showNotification({
+          style: 'success',
+          message: 'Your comment was found after the connection was restored.',
+          icon: 'check'
+        })
+        return
+      }
+      this.uncertainCreate = true
+      wikiStore.showNotification({
+        style: 'warning',
+        message: 'The comment request outcome is unknown. Comments were refreshed and the request was not sent again. Review the thread before trying again.',
+        icon: 'alert'
+      })
+    },
     /**
      * Post New Comment
      */
-    async postComment () {
-      if (this.connectionBlocked) return
-      if (this.isPosting || !this.availability?.canPost) return
-      const pageId = this.pageId
+    async postComment (): Promise<void> {
+      this.ensureContext()
+      if (!this.commentReady || this.isPosting) return
+      const context = this.captureContext()
+      const snapshot: ComposerSnapshot = {
+        pageId: context.pageId,
+        replyTo: this.replyTo,
+        content: this.newcomment,
+        guestName: this.guestName,
+        guestEmail: this.guestEmail,
+        revision: this.composerRevision
+      }
       const rules: CommentValidationRules = {
         comment: {
           presence: {
@@ -597,11 +962,10 @@ export default defineComponent({
         }
       }
       const validationResults = validateValues({
-        comment: this.newcomment,
-        name: this.guestName,
-        email: this.guestEmail
+        comment: snapshot.content,
+        name: snapshot.guestName,
+        email: snapshot.guestEmail
       }, rules, { format: 'flat' }) as string[] | undefined
-
       if (validationResults) {
         wikiStore.showNotification({
           style: 'red',
@@ -611,159 +975,196 @@ export default defineComponent({
         return
       }
 
+      const generation = ++this.postGeneration
       this.isPosting = true
       try {
         const response = await createComment(window.fetch.bind(window), {
-          pageId,
-          replyTo: this.replyTo,
-          content: this.newcomment,
-          guestName: this.guestName,
-          guestEmail: this.guestEmail
+          pageId: snapshot.pageId,
+          replyTo: snapshot.replyTo,
+          content: snapshot.content,
+          guestName: snapshot.guestName,
+          guestEmail: snapshot.guestEmail
         })
+        if (!this.isCurrentContext(context) || generation !== this.postGeneration) return
+        const cleared = this.clearComposerIfUnchanged(snapshot)
         wikiStore.showNotification({
           style: 'success',
           message: this.$t('common:comments.postSuccess'),
           icon: 'check'
         })
-        if (pageId !== this.pageId) return
-        this.newcomment = ''
-        this.cancelReply()
-        await this.fetch()
-        if (pageId !== this.pageId || !this.comments.some(comment => comment.id === response.id)) return
+        const refreshed = await this.fetch(false)
+        if (!this.isCurrentContext(context) || generation !== this.postGeneration || !refreshed || !cleared) return
+        if (!this.comments.some(comment => comment.id === response.id)) return
         this.$nextTick(() => {
-          void this.goTo(`#comment-post-id-${response.id}`, this.scrollOpts)
+          if (!this.isCurrentContext(context) || generation !== this.postGeneration) return
+          void this.goTo(`#comment-post-id-${response.id}`, this.scrollOptions())
         })
-      } catch (err) {
-        if (pageId === this.pageId) void this.fetch(true)
+      } catch (error) {
+        if (!this.isCurrentContext(context) || generation !== this.postGeneration) return
+        if (this.isUnknownMutationOutcome(error)) {
+          await this.reconcileCreate(context, snapshot, generation)
+          return
+        }
+        this.setAuthorityFailure(error)
+        if (this.hasIntersected) await this.fetch(true)
+        if (!this.isCurrentContext(context) || generation !== this.postGeneration) return
         wikiStore.showNotification({
           style: 'red',
-          message: getErrorMessage(err),
+          message: this.commentErrorMessage(error),
           icon: 'alert'
         })
       } finally {
-        this.isPosting = false
+        if (this.isCurrentIdentityContext(context) && generation === this.postGeneration) this.isPosting = false
       }
     },
     /**
      * Show Comment Editing Form
      */
-    async editComment (cm: CommentWithInitials) {
-      if (this.connectionBlocked) return
-      if (this.isBusy) return
-      const pageId = this.pageId
+    async editComment (cm: CommentWithInitials): Promise<void> {
+      this.ensureContext()
+      if (!this.managementReady || this.isBusy) return
+      const context = this.captureContext()
+      const generation = ++this.editGeneration
       wikiStore.startLoading('comments-edit')
       this.isBusy = true
       try {
         const comment = await fetchComment(window.fetch.bind(window), cm.id)
-        if (pageId !== this.pageId) return
+        if (!this.isCurrentContext(context) || generation !== this.editGeneration || comment.id !== cm.id) return
         this.commentEditContent = comment.content
         this.commentEditId = cm.id
-      } catch (err) {
-        if (pageId !== this.pageId) return
-        console.warn(err)
+        this.commentEditRevision += 1
+      } catch (error) {
+        if (!this.isCurrentContext(context) || generation !== this.editGeneration) return
+        this.setAuthorityFailure(error)
+        console.warn(error)
         wikiStore.showNotification({
           style: 'red',
-          message: getErrorMessage(err),
+          message: this.commentErrorMessage(error),
           icon: 'alert'
         })
       } finally {
-        this.isBusy = false
-        wikiStore.stopLoading('comments-edit')
+        if (this.isCurrentIdentityContext(context) && generation === this.editGeneration) {
+          this.isBusy = false
+          wikiStore.stopLoading('comments-edit')
+        }
       }
+    },
+    noteEditInput (): void {
+      this.commentEditRevision += 1
     },
     /**
      * Cancel Comment Edit
      */
-    editCommentCancel () {
+    editCommentCancel (): void {
+      this.editGeneration += 1
       this.commentEditId = 0
       this.commentEditContent = null
+      this.commentEditRevision += 1
     },
     /**
      * Update Comment with new content
      */
-    async updateComment () {
-      if (this.connectionBlocked) return
-      if (this.isBusy) return
-      const pageId = this.pageId
+    async updateComment (): Promise<void> {
+      this.ensureContext()
+      if (!this.managementReady || this.isBusy || this.commentEditId < 1) return
+      const context = this.captureContext()
       const commentId = this.commentEditId
+      const content = this.commentEditContent
+      const editRevision = this.commentEditRevision
+      if (content === null || content.trim().length < 2) {
+        wikiStore.showNotification({
+          style: 'red',
+          message: this.$t('common:comments.contentMissingError'),
+          icon: 'alert'
+        })
+        return
+      }
+      const generation = ++this.editGeneration
       wikiStore.startLoading('comments-edit')
       this.isBusy = true
       try {
-        const content = this.commentEditContent
-        if (content === null || content.trim().length < 2) {
-          throw new Error(this.$t('common:comments.contentMissingError'))
-        }
-        const response = await updateComment(
-          window.fetch.bind(window),
-          commentId,
-          content
-        )
-        if (pageId !== this.pageId || commentId !== this.commentEditId) return
-        wikiStore.showNotification({
-          style: 'success',
-          message: this.$t('common:comments.updateSuccess'),
-          icon: 'check'
-        })
+        const response = await updateComment(window.fetch.bind(window), commentId, content)
+        if (!this.isCurrentContext(context) || generation !== this.editGeneration || commentId !== this.commentEditId) return
         const cm = this.comments.find(comment => comment.id === commentId)
         if (cm) {
           cm.render = response.render
           cm.updatedAt = (new Date()).toISOString()
         }
-        this.editCommentCancel()
-      } catch (err) {
-        console.warn(err)
+        const unchanged = this.commentEditRevision === editRevision && this.commentEditContent === content
+        if (unchanged) {
+          this.commentEditId = 0
+          this.commentEditContent = null
+          this.commentEditRevision += 1
+        }
+        wikiStore.showNotification({
+          style: 'success',
+          message: this.$t('common:comments.updateSuccess'),
+          icon: 'check'
+        })
+      } catch (error) {
+        if (!this.isCurrentContext(context) || generation !== this.editGeneration) return
+        this.setAuthorityFailure(error)
+        console.warn(error)
         wikiStore.showNotification({
           style: 'red',
-          message: getErrorMessage(err),
+          message: this.commentErrorMessage(error),
           icon: 'alert'
         })
       } finally {
-        this.isBusy = false
-        wikiStore.stopLoading('comments-edit')
+        if (this.isCurrentIdentityContext(context) && generation === this.editGeneration) {
+          this.isBusy = false
+          wikiStore.stopLoading('comments-edit')
+        }
       }
     },
     /**
      * Show Delete Comment Confirmation Dialog
      */
-    deleteCommentConfirm (cm: CommentWithInitials) {
+    deleteCommentConfirm (cm: CommentWithInitials): void {
+      if (!this.managementReady) return
       this.commentToDelete = cm
       this.deleteCommentDialogShown = true
     },
     /**
      * Delete Comment
      */
-    async deleteComment () {
-      if (this.connectionBlocked) return
-      if (this.isBusy) return
+    async deleteComment (): Promise<void> {
+      this.ensureContext()
+      if (!this.managementReady || this.isBusy) return
       const commentToDelete = this.commentToDelete
       if (!commentToDelete) return
-      const pageId = this.pageId
+      const context = this.captureContext()
+      const commentId = commentToDelete.id
+      const generation = ++this.deleteGeneration
       wikiStore.startLoading('comments-delete')
       this.isBusy = true
       this.deleteCommentDialogShown = false
 
       try {
-        await deleteComment(window.fetch.bind(window), commentToDelete.id)
+        await deleteComment(window.fetch.bind(window), commentId)
+        if (!this.isCurrentContext(context) || generation !== this.deleteGeneration || this.commentToDelete?.id !== commentId) return
         wikiStore.showNotification({
           style: 'success',
           message: this.$t('common:comments.deleteSuccess'),
           icon: 'check'
         })
-        if (pageId === this.pageId) {
-          this.comments = this.comments
-            .filter(comment => comment.id !== commentToDelete.id)
-            .map(comment => comment.replyTo === commentToDelete.id ? { ...comment, replyTo: 0 } : comment)
-        }
+        this.comments = this.comments
+          .filter(comment => comment.id !== commentId)
+          .map(comment => comment.replyTo === commentId ? { ...comment, replyTo: 0 } : comment)
         this.commentToDelete = null
-      } catch (err) {
+      } catch (error) {
+        if (!this.isCurrentContext(context) || generation !== this.deleteGeneration) return
+        this.setAuthorityFailure(error)
         wikiStore.showNotification({
           style: 'red',
-          message: getErrorMessage(err),
+          message: this.commentErrorMessage(error),
           icon: 'alert'
         })
       } finally {
-        this.isBusy = false
-        wikiStore.stopLoading('comments-delete')
+        if (this.isCurrentIdentityContext(context) && generation === this.deleteGeneration) {
+          this.isBusy = false
+          wikiStore.stopLoading('comments-delete')
+        }
       }
     }
   }

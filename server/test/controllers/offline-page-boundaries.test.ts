@@ -107,6 +107,27 @@ const publicPage = {
   tags: []
 }
 
+const offlineSnapshot = {
+  schemaVersion: 1,
+  pageId: 7,
+  locale: 'en',
+  path: 'docs/alpha',
+  canonicalPath: '/en/docs/alpha',
+  title: 'Alpha',
+  description: 'A public page',
+  sourceRevision: '8',
+  capturedAt: '2026-09-02T00:00:00.000Z',
+  expiresAt: null,
+  content: {
+    representation: 'sanitized-html-fragment',
+    sanitizerVersion: 'offline-html-allowlist-v1',
+    html: '<p>Readable</p>'
+  },
+  searchText: 'Readable',
+  contentType: 'sanitized-html-fragment',
+  integrity: 'integrity'
+}
+
 beforeEach(() => {
   for (const operation of [
     pageOperations.get,
@@ -135,26 +156,7 @@ beforeEach(() => {
   auth.loadPageRuleAuthority.mockResolvedValue(authority)
   buildPageOkfView.mockResolvedValue({ authority: { state: 'missing', metadata: null, trust: null }, projection: { state: 'pending', value: null } })
   pageOperations.get.mockResolvedValue(publicPage)
-  pageOperations.getOfflineSnapshot.mockResolvedValue({
-    schemaVersion: 1,
-    pageId: 7,
-    locale: 'en',
-    path: 'docs/alpha',
-    canonicalPath: '/en/docs/alpha',
-    title: 'Alpha',
-    description: 'A public page',
-    sourceRevision: '8',
-    capturedAt: '2026-09-02T00:00:00.000Z',
-    expiresAt: null,
-    content: {
-      representation: 'sanitized-html-fragment',
-      sanitizerVersion: 'offline-html-allowlist-v1',
-      html: '<p>Readable</p>'
-    },
-    searchText: 'Readable',
-    contentType: 'sanitized-html-fragment',
-    integrity: 'integrity'
-  })
+  pageOperations.getOfflineSnapshot.mockResolvedValue(offlineSnapshot)
 })
 
 describe('page response privacy boundaries', () => {
@@ -190,14 +192,36 @@ describe('offline snapshot transport boundary', () => {
     await getOfflineSnapshot({ params: { id: '7' } }, res, vi.fn())
 
     expect(pageOperations.getOfflineSnapshot).toHaveBeenCalledWith({ id: 7 })
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ pageId: 7, contentType: 'sanitized-html-fragment' }))
+    expect(res.json).toHaveBeenCalledWith(offlineSnapshot)
+    const payload = res.json.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(Object.keys(payload).sort()).toEqual([
+      'canonicalPath',
+      'capturedAt',
+      'content',
+      'contentType',
+      'description',
+      'expiresAt',
+      'integrity',
+      'locale',
+      'pageId',
+      'path',
+      'schemaVersion',
+      'searchText',
+      'sourceRevision',
+      'title'
+    ])
     expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
     expect(res.vary).toHaveBeenCalledWith('Cookie')
   })
 
-  it('does not turn an ineligible snapshot into a successful response or leak its source', async () => {
-    const denial = Object.assign(new Error('This page is not available for offline use.'), {
-      status: 404,
+  it.each([
+    ['absent', 404, 'database row was absent'],
+    ['protected', 403, 'protected page source was secret'],
+    ['stale render', 404, 'rendered bytes came from another revision'],
+    ['unsafe projection', 404, 'unsafe projection source was secret']
+  ])('normalizes %s snapshot denial to one bounded public response', async (_label: string, status: number, internalMessage: string) => {
+    const denial = Object.assign(new Error(internalMessage), {
+      status,
       code: 'OFFLINE_PAGE_INELIGIBLE'
     })
     pageOperations.getOfflineSnapshot.mockRejectedValueOnce(denial)
@@ -207,9 +231,35 @@ describe('offline snapshot transport boundary', () => {
     await getOfflineSnapshot({ params: { id: '7' } }, res, next)
 
     expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'This page is not available for offline use.',
+      code: 'OFFLINE_PAGE_INELIGIBLE'
+    })
     expect(JSON.stringify(res.json.mock.calls)).not.toContain('secret')
     expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
     expect(res.vary).toHaveBeenCalledWith('Cookie')
     expect(next).not.toHaveBeenCalled()
+  })
+
+  it('leaves infrastructure failures on the normal error path', async () => {
+    const failure = Object.assign(new Error('database credentials leaked'), { status: 503 })
+    pageOperations.getOfflineSnapshot.mockRejectedValueOnce(failure)
+    const res = response()
+    const next = vi.fn()
+
+    await getOfflineSnapshot({ params: { id: '7' } }, res, next)
+
+    expect(next).toHaveBeenCalledWith(failure)
+    expect(res.json).not.toHaveBeenCalled()
+  })
+
+  it('keeps malformed IDs as 400 instead of converting them to eligibility denial', async () => {
+    const res = response()
+
+    await getOfflineSnapshot({ params: { id: 'not-an-id' } }, res, vi.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
+    expect(pageOperations.getOfflineSnapshot).not.toHaveBeenCalled()
   })
 })

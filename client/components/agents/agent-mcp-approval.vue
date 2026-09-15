@@ -194,7 +194,7 @@
         </section>
 
         <section
-          v-if="proposal.approval.status === 'pending' && !locallyExpired"
+          v-if="proposal.approval.status === 'pending' && !locallyExpired && !acceptedDecisionForProposal"
           class="operation-section decision-zone"
           :aria-labelledby="decisionTitleId"
         >
@@ -240,7 +240,7 @@
               <v-btn
                 variant="outlined"
                 prepend-icon="mdi-close-circle-outline"
-                :disabled="Boolean(pendingDecision) || networkBlocked"
+                :disabled="Boolean(pendingDecision) || networkBlocked || !decisionReady"
                 :loading="pendingDecision === 'denied'"
                 @click="decide('denied')"
               >Deny request</v-btn>
@@ -251,7 +251,7 @@
                 :color="proposal.risk === 'destructive-write' ? 'error' : 'primary'"
                 :prepend-icon="proposal.risk === 'destructive-write' ? 'mdi-delete-alert-outline' : 'mdi-check-decagram-outline'"
                 :loading="pendingDecision === 'approved'"
-                :disabled="Boolean(pendingDecision) || networkBlocked || !reviewAdequate || (proposal.risk === 'destructive-write' && confirmationPath !== proposal.confirmationPath)"
+                :disabled="Boolean(pendingDecision) || networkBlocked || !decisionReady || !reviewAdequate || (proposal.risk === 'destructive-write' && confirmationPath !== proposal.confirmationPath)"
                 @click="decide('approved')"
               >{{ approveLabel }}</v-btn>
               <small>Authorizes this proposal once.</small>
@@ -288,6 +288,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { decideAgentProposal, getMcpAgentProposal, type McpAgentProposal } from '../../helpers/agents-api.ts'
+import type { AgentRefreshResult } from '../../store/agents.ts'
 
 const props = defineProps<{ csrfToken: string; proposalId: string; networkBlocked?: boolean }>()
 const instanceId = useId()
@@ -302,6 +303,16 @@ const loading = ref(true)
 const pendingDecision = ref<'approved' | 'denied' | null>(null)
 const error = ref('')
 const proposal = shallowRef<McpAgentProposal | null>(null)
+type AcceptedDecision = {
+  readonly csrfToken: string
+  readonly proposalId: string
+  readonly decision: 'approved' | 'denied'
+}
+const acceptedDecision = shallowRef<AcceptedDecision | null>(null)
+const proposalReadAccepted = ref(false)
+const decisionNeedsReconciliation = ref(true)
+const acceptedReadStateKey = ref('')
+const acceptedReadIdentity = shallowRef<ApprovalIdentity | null>(null)
 const expanded = ref(false)
 const decisionNote = ref('')
 const confirmationPath = ref('')
@@ -310,6 +321,8 @@ type ComponentRoot = { $el?: unknown }
 const settledReceipt = useTemplateRef<ComponentRoot | HTMLElement>('settledReceipt')
 const errorAlert = useTemplateRef<ComponentRoot | HTMLElement>('errorAlert')
 const networkBlocked = computed(() => props.networkBlocked === true)
+const componentGeneration = ref(0)
+const transportGeneration = ref(0)
 let expiryDeadlineTimer: number | null = null
 let clockTimer: number | null = null
 let loadController: AbortController | null = null
@@ -317,6 +330,12 @@ let loadGeneration = 0
 let decisionGeneration = 0
 let disposed = false
 
+type ApprovalIdentity = {
+  readonly csrfToken: string
+  readonly proposalId: string
+  readonly componentGeneration: number
+  readonly transportGeneration: number
+}
 type ApprovalSurfaceStatus = 'pending' | 'running' | 'success' | 'failed' | 'denied' | 'cancelled' | 'expired' | 'idle'
 const statusIcons: Readonly<Record<ApprovalSurfaceStatus, string>> = {
   idle: 'mdi-progress-clock',
@@ -339,7 +358,6 @@ const statusColors: Readonly<Record<ApprovalSurfaceStatus, string | undefined>> 
   expired: 'warning'
 }
 
-
 const actionLabels: Partial<Record<McpAgentProposal['actionName'], string>> = {
   'pages.prepareCreate': 'Create Wiki page',
   'pages.preparePatch': 'Edit Wiki page',
@@ -358,6 +376,32 @@ const proposalStatusLabels: Record<McpAgentProposal['status'], string> = {
   cancelled: 'Cancelled',
   recovery_required: 'Recovery required'
 }
+const captureIdentity = (proposalId = props.proposalId): ApprovalIdentity => ({
+  csrfToken: props.csrfToken,
+  proposalId,
+  componentGeneration: componentGeneration.value,
+  transportGeneration: transportGeneration.value
+})
+const isBaseIdentityCurrent = (identity: ApprovalIdentity): boolean =>
+  !disposed
+  && identity.csrfToken === props.csrfToken
+  && identity.proposalId === props.proposalId
+  && identity.componentGeneration === componentGeneration.value
+const isTransportIdentityCurrent = (identity: ApprovalIdentity): boolean =>
+  isBaseIdentityCurrent(identity)
+  && identity.transportGeneration === transportGeneration.value
+  && !networkBlocked.value
+const isDecisionCurrent = (identity: ApprovalIdentity, generation: number): boolean =>
+  generation === decisionGeneration && isTransportIdentityCurrent(identity)
+const proposalReadStateKeyFor = (value: McpAgentProposal | null): string => value
+  ? `${value.id}\u0000${value.status}\u0000${value.approval.status}\u0000${value.expiresAt}`
+  : ''
+const proposalReadStateKey = computed(() => proposalReadStateKeyFor(proposal.value))
+const acceptedDecisionForProposal = computed(() => {
+  const decision = acceptedDecision.value
+  if (!decision || decision.proposalId !== props.proposalId || decision.csrfToken !== props.csrfToken) return null
+  return decision
+})
 const actionLabel = computed(() => proposal.value ? actionLabels[proposal.value.actionName] ?? 'Review Wiki operation' : 'Review Wiki operation')
 const approveLabel = computed(() => proposal.value?.risk === 'destructive-write' ? 'Approve page deletion' : 'Approve reviewed proposal')
 const hasExpired = (expiresAt: string): boolean => new Date(expiresAt).valueOf() <= Date.now()
@@ -365,6 +409,7 @@ const locallyExpired = computed(() => {
   void clockTick.value
   const current = proposal.value
   return Boolean(current
+    && !acceptedDecisionForProposal.value
     && current.approval.status === 'pending'
     && current.status === 'pending'
     && hasExpired(current.expiresAt))
@@ -376,6 +421,8 @@ const statusKey = computed<ApprovalSurfaceStatus>(() => {
   if (proposal.value.approval.status === 'expired' || proposal.value.status === 'expired' || locallyExpired.value) return 'expired'
   if (proposal.value.status === 'failed' || proposal.value.status === 'recovery_required') return 'failed'
   if (proposal.value.status === 'applied') return 'success'
+  if (acceptedDecisionForProposal.value?.decision === 'denied') return 'denied'
+  if (acceptedDecisionForProposal.value?.decision === 'approved') return 'running'
   if (proposal.value.status === 'approved' || proposal.value.status === 'applying' || proposal.value.approval.status === 'approved') return 'running'
   return 'pending'
 })
@@ -384,12 +431,13 @@ const statusLabel = computed(() => {
   if (proposal.value.approval.status === 'denied') return 'Denied'
   if (proposal.value.approval.status === 'cancelled') return 'Cancelled'
   if (proposal.value.approval.status === 'expired' || locallyExpired.value) return 'Expired'
+  if (acceptedDecisionForProposal.value?.decision === 'denied') return 'Denied'
+  if (acceptedDecisionForProposal.value?.decision === 'approved' && proposal.value.status === 'pending') return 'Approved'
   if (proposal.value.approval.status === 'approved' && proposal.value.status === 'pending') return 'Approved'
   return proposalStatusLabels[proposal.value.status]
 })
 const statusIcon = computed(() => statusIcons[statusKey.value])
 const statusColor = computed(() => statusColors[statusKey.value])
-const decisionStageLabel = computed(() => statusKey.value === 'pending' ? 'Awaiting you' : statusLabel.value)
 const decisionAlertType = computed<'success' | 'error' | 'warning' | 'info'>(() => {
   if (statusKey.value === 'success' || statusKey.value === 'running') return 'success'
   if (statusKey.value === 'failed' || statusKey.value === 'denied') return 'error'
@@ -417,9 +465,32 @@ const diffLines = computed(() => (proposal.value?.diff ?? '').split('\n').map((t
     : text.startsWith('-') && !text.startsWith('---')
       ? 'delete'
       : 'context'
-} as const)))
+})))
 const visibleDiff = computed(() => expanded.value ? diffLines.value : diffLines.value.slice(0, collapsedLineCount))
 const reviewAdequate = computed(() => Boolean(proposal.value && (proposal.value.path?.trim() || proposal.value.pageId || proposal.value.diff?.trim())))
+const decisionReady = computed(() => {
+  const current = proposal.value
+  const readIdentity = acceptedReadIdentity.value
+  return Boolean(
+    !networkBlocked.value
+    && !loading.value
+    && !pendingDecision.value
+    && proposalReadAccepted.value
+    && !decisionNeedsReconciliation.value
+    && acceptedReadStateKey.value === proposalReadStateKey.value
+    && readIdentity
+    && isTransportIdentityCurrent(readIdentity)
+    && !acceptedDecisionForProposal.value
+    && current
+    && current.id === props.proposalId
+    && current.approval.status === 'pending'
+    && current.status === 'pending'
+    && !hasExpired(current.expiresAt)
+  )
+})
+const decisionStageLabel = computed(() => statusKey.value === 'pending'
+  ? (decisionReady.value ? 'Awaiting you' : 'Refresh required')
+  : statusLabel.value)
 const decisionReviewCopy = computed(() => reviewAdequate.value
   ? 'Approve authorizes only the effect represented by the available target or proposed diff. The visible command, target, diff, and hashes are this bounded review record.'
   : 'Approval is unavailable because neither a target nor proposed diff represents the effect.')
@@ -452,72 +523,111 @@ const stopClockTimer = (): void => {
   if (clockTimer !== null) window.clearInterval(clockTimer)
   clockTimer = null
 }
-const syncClockTimer = (): void => {
+const syncClockTimer = (identity: ApprovalIdentity = captureIdentity()): void => {
   stopClockTimer()
   const current = proposal.value
-  if (!current || current.approval.decidedAt || (statusKey.value !== 'pending' && statusKey.value !== 'running')) return
-  clockTimer = window.setInterval(() => { clockTick.value++ }, 30_000)
+  if (!current || networkBlocked.value || !isBaseIdentityCurrent(identity) || current.approval.decidedAt || (statusKey.value !== 'pending' && statusKey.value !== 'running')) return
+  clockTimer = window.setInterval(() => {
+    if (!isBaseIdentityCurrent(identity) || networkBlocked.value) {
+      stopClockTimer()
+      return
+    }
+    clockTick.value++
+  }, 30_000)
 }
 const clearExpiryDeadline = (): void => {
   if (expiryDeadlineTimer !== null) window.clearTimeout(expiryDeadlineTimer)
   expiryDeadlineTimer = null
 }
-const syncExpiryDeadline = (): void => {
+const syncExpiryDeadline = (identity: ApprovalIdentity = captureIdentity()): void => {
   clearExpiryDeadline()
   const current = proposal.value
-  if (!current || current.approval.status !== 'pending' || current.status !== 'pending') return
+  if (!current || networkBlocked.value || acceptedDecisionForProposal.value || !isBaseIdentityCurrent(identity) || current.approval.status !== 'pending' || current.status !== 'pending') return
   if (hasExpired(current.expiresAt)) {
     clockTick.value++
-    syncClockTimer()
+    syncClockTimer(identity)
     return
   }
   const remaining = Math.min(new Date(current.expiresAt).valueOf() - Date.now(), 2_147_483_647)
   expiryDeadlineTimer = window.setTimeout(() => {
     expiryDeadlineTimer = null
+    if (!isBaseIdentityCurrent(identity)) return
     clockTick.value++
-    syncClockTimer()
-    if (!hasExpired(current.expiresAt)) syncExpiryDeadline()
+    syncClockTimer(identity)
+    if (!hasExpired(current.expiresAt)) syncExpiryDeadline(identity)
   }, remaining)
 }
-
 const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLElement | null => {
   if (component instanceof HTMLElement) return component
   return component?.$el instanceof HTMLElement ? component.$el : null
 }
-const focusError = async (): Promise<void> => {
+const focusError = async (identity: ApprovalIdentity): Promise<void> => {
   await nextTick()
+  if (!isTransportIdentityCurrent(identity)) return
   componentElement(errorAlert.value)?.focus()
 }
-const load = async (): Promise<void> => {
-  if (disposed || networkBlocked.value) {
-    loading.value = false
-    return
+const rejectedRefresh = (error?: unknown, current = false): AgentRefreshResult => ({
+  accepted: false,
+  current,
+  ...(error === undefined ? {} : { error })
+})
+const invalidateDecisionReadiness = (): void => {
+  proposalReadAccepted.value = false
+  acceptedReadStateKey.value = ''
+  acceptedReadIdentity.value = null
+  decisionNeedsReconciliation.value = true
+}
+const load = async (requestedIdentity?: ApprovalIdentity): Promise<AgentRefreshResult> => {
+  const identity = requestedIdentity ?? captureIdentity()
+  if (!isBaseIdentityCurrent(identity) || networkBlocked.value) {
+    if (isBaseIdentityCurrent(identity)) {
+      loadGeneration++
+      loadController?.abort()
+      loadController = null
+      loading.value = false
+      invalidateDecisionReadiness()
+    }
+    return rejectedRefresh(undefined, false)
   }
   loadController?.abort()
   const controller = new AbortController()
   loadController = controller
   const generation = ++loadGeneration
+  const proposalId = identity.proposalId
   loading.value = true
   error.value = ''
-  if (!props.proposalId) {
-    error.value = 'Proposal URL is invalid.'
-    loading.value = false
-    if (loadController === controller) loadController = null
-    await focusError()
-    return
+  invalidateDecisionReadiness()
+  if (!proposalId) {
+    const invalid = new Error('Proposal URL is invalid.')
+    error.value = invalid.message
+    await focusError(identity)
+    if (!isTransportIdentityCurrent(identity) || generation !== loadGeneration || controller.signal.aborted) return rejectedRefresh(undefined, false)
+    return rejectedRefresh(invalid, true)
   }
   try {
-    const nextProposal = await getMcpAgentProposal(window.fetch.bind(window), props.csrfToken, props.proposalId, controller.signal)
-    if (generation !== loadGeneration) return
+    const nextProposal = await getMcpAgentProposal(window.fetch.bind(window), identity.csrfToken, proposalId, controller.signal)
+    if (!isTransportIdentityCurrent(identity) || generation !== loadGeneration || controller.signal.aborted) return rejectedRefresh(undefined, false)
+    if (nextProposal.id !== proposalId) throw new Error('Proposal response did not match the requested record.')
     proposal.value = nextProposal
-    syncExpiryDeadline()
-    syncClockTimer()
+    proposalReadAccepted.value = true
+    acceptedReadStateKey.value = proposalReadStateKeyFor(nextProposal)
+    acceptedReadIdentity.value = identity
+    decisionNeedsReconciliation.value = false
+    syncExpiryDeadline(identity)
+    syncClockTimer(identity)
+    return { accepted: true, current: true }
   } catch (value) {
-    if (generation !== loadGeneration || controller.signal.aborted) return
+    if (!isTransportIdentityCurrent(identity) || generation !== loadGeneration || controller.signal.aborted) return rejectedRefresh(undefined, false)
+    proposalReadAccepted.value = false
+    acceptedReadStateKey.value = ''
+    acceptedReadIdentity.value = null
+    decisionNeedsReconciliation.value = true
     error.value = value instanceof Error ? value.message : 'Proposal could not be loaded.'
-    await focusError()
+    await focusError(identity)
+    if (!isTransportIdentityCurrent(identity) || generation !== loadGeneration || controller.signal.aborted) return rejectedRefresh(undefined, false)
+    return rejectedRefresh(value, true)
   } finally {
-    if (generation === loadGeneration) {
+    if (isBaseIdentityCurrent(identity) && generation === loadGeneration) {
       loading.value = false
       if (loadController === controller) loadController = null
     }
@@ -525,72 +635,142 @@ const load = async (): Promise<void> => {
 }
 
 const decide = async (decision: 'approved' | 'denied'): Promise<void> => {
-  if (networkBlocked.value) return
-  const current = proposal.value
-  if (!current || pendingDecision.value || current.approval.status !== 'pending' || current.status !== 'pending') return
-  if (hasExpired(current.expiresAt)) {
-    clockTick.value++
-    clearExpiryDeadline()
-    syncClockTimer()
+  const identity = captureIdentity()
+  if (!decisionReady.value || !isTransportIdentityCurrent(identity)) {
+    if (proposal.value && hasExpired(proposal.value.expiresAt)) {
+      clockTick.value++
+      clearExpiryDeadline()
+      syncClockTimer(identity)
+    }
     return
   }
-  if (decision === 'approved' && !reviewAdequate.value) return
-  if (decision === 'approved' && current.risk === 'destructive-write' && confirmationPath.value !== current.confirmationPath) return
+  const current = proposal.value
+  if (!current || current.id !== identity.proposalId) return
   pendingDecision.value = decision
   error.value = ''
-  const proposalId = props.proposalId
   const generation = ++decisionGeneration
+  const note = decisionNote.value.trim()
+  const confirmedPath = confirmationPath.value
   try {
-    await decideAgentProposal(window.fetch.bind(window), props.csrfToken, current.id, current.approval.id, {
+    await decideAgentProposal(window.fetch.bind(window), identity.csrfToken, current.id, current.approval.id, {
       decision,
-      ...(decisionNote.value.trim() ? { decisionNote: decisionNote.value.trim() } : {}),
-      ...(decision === 'approved' && current.confirmationPath ? { confirmationPath: confirmationPath.value } : {})
+      ...(note ? { decisionNote: note } : {}),
+      ...(decision === 'approved' && current.confirmationPath ? { confirmationPath: confirmedPath } : {})
     })
-    if (disposed || props.proposalId !== proposalId || generation !== decisionGeneration) return
-    await load()
-    if (!disposed && props.proposalId === proposalId && generation === decisionGeneration && proposal.value?.approval.status !== 'pending') {
-      await nextTick()
-      componentElement(settledReceipt.value)?.focus()
+    if (!isDecisionCurrent(identity, generation)) return
+    acceptedDecision.value = {
+      csrfToken: identity.csrfToken,
+      proposalId: identity.proposalId,
+      decision
     }
+    proposalReadAccepted.value = false
+    acceptedReadStateKey.value = ''
+    acceptedReadIdentity.value = null
+    decisionNeedsReconciliation.value = false
+    const refreshResult = await load(identity)
+    if (!isDecisionCurrent(identity, generation)) return
+    if (!refreshResult.current) return
+    if (!refreshResult.accepted) {
+      decisionNeedsReconciliation.value = true
+      proposalReadAccepted.value = false
+      acceptedReadStateKey.value = ''
+      acceptedReadIdentity.value = null
+      error.value = 'Decision saved, but the proposal could not be refreshed. Do not submit another decision until it is reconciled.'
+      await focusError(identity)
+      return
+    }
+    await nextTick()
+    if (!isDecisionCurrent(identity, generation)) return
+    componentElement(settledReceipt.value)?.focus()
   } catch (value) {
-    if (disposed || props.proposalId !== proposalId || generation !== decisionGeneration) return
-    error.value = value instanceof Error ? value.message : 'Proposal decision failed.'
-    await focusError()
+    if (!isDecisionCurrent(identity, generation)) return
+    acceptedDecision.value = null
+    invalidateDecisionReadiness()
+    const outcomeMessage = value instanceof Error ? value.message : 'Decision outcome is unknown.'
+    const reconciliation = await load(identity)
+    if (!isDecisionCurrent(identity, generation)) return
+    if (reconciliation.current && reconciliation.accepted) return
+    if (!reconciliation.current) return
+    invalidateDecisionReadiness()
+    const refreshMessage = reconciliation.error instanceof Error ? ` ${reconciliation.error.message}` : ''
+    error.value = `${outcomeMessage} Refresh the proposal before trying again.${refreshMessage}`
+    await focusError(identity)
   } finally {
-    if (generation === decisionGeneration) pendingDecision.value = null
+    if (isDecisionCurrent(identity, generation)) pendingDecision.value = null
   }
+}
+
+const resetContext = (): void => {
+  componentGeneration.value += 1
+  loadGeneration += 1
+  decisionGeneration += 1
+  loadController?.abort()
+  loadController = null
+  pendingDecision.value = null
+  acceptedDecision.value = null
+  invalidateDecisionReadiness()
+  stopClockTimer()
+  clearExpiryDeadline()
+  proposal.value = null
+  expanded.value = false
+  decisionNote.value = ''
+  confirmationPath.value = ''
+  loading.value = false
+  error.value = ''
 }
 
 watch(
   () => [props.proposalId, props.csrfToken] as const,
   () => {
-    decisionGeneration++
-    pendingDecision.value = null
-    stopClockTimer()
-    clearExpiryDeadline()
-    proposal.value = null
-    expanded.value = false
-    decisionNote.value = ''
-    confirmationPath.value = ''
-    void load()
+    resetContext()
+    if (disposed || networkBlocked.value) return
+    const identity = captureIdentity()
+    void load(identity)
   },
-  { immediate: true }
+  { immediate: true, flush: 'sync' }
 )
 watch(networkBlocked, blocked => {
+  transportGeneration.value += 1
+  loadGeneration += 1
+  loadController?.abort()
+  loadController = null
   if (blocked) {
-    loadGeneration++
-    loadController?.abort()
-    loadController = null
+    decisionGeneration += 1
+    pendingDecision.value = null
     loading.value = false
+    stopClockTimer()
+    clearExpiryDeadline()
+    invalidateDecisionReadiness()
     return
   }
-  if (!disposed) void load()
-})
+  if (disposed) return
+  const identity = captureIdentity()
+  void load(identity)
+}, { flush: 'sync' })
+watch(proposalReadStateKey, () => {
+  if (acceptedReadStateKey.value === proposalReadStateKey.value && acceptedReadIdentity.value) return
+  proposalReadAccepted.value = false
+  acceptedReadStateKey.value = ''
+  acceptedReadIdentity.value = null
+  if (proposal.value) decisionNeedsReconciliation.value = true
+}, { flush: 'sync' })
+watch(locallyExpired, expired => {
+  if (!expired) return
+  invalidateDecisionReadiness()
+  stopClockTimer()
+  clearExpiryDeadline()
+}, { flush: 'sync' })
 onBeforeUnmount(() => {
   disposed = true
-  loadGeneration++
-  decisionGeneration++
+  componentGeneration.value += 1
+  transportGeneration.value += 1
+  loadGeneration += 1
+  decisionGeneration += 1
   loadController?.abort()
+  loadController = null
+  pendingDecision.value = null
+  acceptedDecision.value = null
+  invalidateDecisionReadiness()
   stopClockTimer()
   clearExpiryDeadline()
 })

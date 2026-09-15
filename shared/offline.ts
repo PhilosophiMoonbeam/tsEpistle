@@ -4,7 +4,7 @@ import { PAGE_EDITOR_KEYS } from './page-editors.ts'
 
 export const OFFLINE_SCHEMA_VERSION = 1 as const
 export const OFFLINE_DB_NAME = 'tsepistle-offline' as const
-export const OFFLINE_DB_VERSION = OFFLINE_SCHEMA_VERSION
+export const OFFLINE_DB_VERSION = 2 as const
 export const OFFLINE_KEY_VERSION = 'session-secret-v1' as const
 export const OFFLINE_DRAFT_KEY_MAGIC = 'TSODK1' as const
 export const OFFLINE_HTML_SANITIZER_VERSION = 'offline-html-allowlist-v1' as const
@@ -20,7 +20,7 @@ export const OFFLINE_DRAFT_TAG_BYTES = 16
 export const OFFLINE_STORE_NAMES = ['meta', 'snapshots', 'drafts', 'searchDocuments'] as const
 export type OfflineStoreName = (typeof OFFLINE_STORE_NAMES)[number]
 
-export const OFFLINE_DRAFT_STATES = ['local', 'needs-review', 'publishing', 'conflict', 'locked', 'outcome-unknown'] as const
+export const OFFLINE_DRAFT_STATES = ['local', 'needs-review', 'publishing', 'conflict', 'locked', 'unavailable', 'outcome-unknown'] as const
 export const OfflineDraftStateSchema = z.enum(OFFLINE_DRAFT_STATES)
 export type OfflineDraftState = z.infer<typeof OfflineDraftStateSchema>
 
@@ -173,6 +173,10 @@ export const OfflineMetaRecordSchema = z
     key: z.literal('state'),
     schemaVersion: z.number().int().positive(),
     sessionGeneration: nonnegativeSafeInteger,
+    managedBytes: nonnegativeSafeInteger,
+    snapshotCount: nonnegativeSafeInteger,
+    corpusRevision: nonnegativeSafeInteger,
+    accountingComplete: z.boolean(),
     lastCleanupAt: isoDateTime.nullable(),
     storage: z
       .object({
@@ -185,6 +189,54 @@ export const OfflineMetaRecordSchema = z
   })
   .strict()
 export type OfflineMetaRecord = z.infer<typeof OfflineMetaRecordSchema>
+
+export const OfflineSnapshotCorpusSchema = z
+  .object({
+    snapshots: z.array(OfflineSnapshotRecordSchema),
+    sessionGeneration: nonnegativeSafeInteger,
+    corpusRevision: nonnegativeSafeInteger
+  })
+  .strict()
+export type OfflineSnapshotCorpus = {
+  readonly snapshots: readonly OfflineSnapshotRecord[]
+  readonly sessionGeneration: number
+  readonly corpusRevision: number
+}
+
+export const OfflineSnapshotSelectorSchema = z
+  .object({
+    siteId: boundedIdentifier,
+    pageId: positiveSafeInteger,
+    locale: boundedLocale
+  })
+  .strict()
+export type OfflineSnapshotSelector = z.infer<typeof OfflineSnapshotSelectorSchema>
+
+export const OfflineCorpusNoticeSchema = z
+  .object({
+    kind: z.enum(['corpus', 'generation']),
+    sessionGeneration: nonnegativeSafeInteger,
+    corpusRevision: nonnegativeSafeInteger
+  })
+  .strict()
+export type OfflineCorpusNotice = z.infer<typeof OfflineCorpusNoticeSchema>
+
+export const OfflineFinalizationSelectorsSchema = z
+  .object({
+    receipt: OfflineDraftEnvelopeV1Schema,
+    source: OfflineDraftEnvelopeV1Schema.nullable(),
+    survivingFork: OfflineDraftEnvelopeV1Schema.nullable()
+  })
+  .strict()
+export type OfflineFinalizationSelectors = z.infer<typeof OfflineFinalizationSelectorsSchema>
+
+export const OfflineMetaRecoverySchema = z
+  .object({
+    required: z.boolean(),
+    reason: z.enum(['missing', 'invalid', 'incomplete']).nullable()
+  })
+  .strict()
+export type OfflineMetaRecovery = z.infer<typeof OfflineMetaRecoverySchema>
 
 export const OfflineStoredDraftRecordSchema = OfflineDraftEnvelopeV1Schema
 export type OfflineStoredDraftRecord = OfflineDraftEnvelopeV1
@@ -205,6 +257,7 @@ export type OfflineStorageEstimate = z.infer<typeof OfflineStorageEstimateSchema
 
 export const OfflineStorageFailureCodeSchema = z.enum([
   'unsupported-schema',
+  'metadata-recovery',
   'blocked-upgrade',
   'version-change',
   'quota',

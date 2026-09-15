@@ -194,6 +194,7 @@ import { convert } from '@asciidoctor/core'
 
 import { keymap } from '@codemirror/view'
 import { TextEditor, type TextEditorHandle, type TextPosition } from './common/text-editor'
+import { EditorAdapterController } from './common/editor-adapter'
 
 // ========================================
 // INIT
@@ -215,6 +216,7 @@ interface MarkerOptions {
 // ========================================
 
 export default defineComponent({
+  emits: ['editor-adapter', 'editor-adapter-clear'],
   setup() {
     const { mdAndUp } = useDisplay()
     return { mdAndUp }
@@ -222,6 +224,7 @@ export default defineComponent({
   data() {
     return {
       cm: null as TextEditorHandle | null,
+      editorAdapter: null as EditorAdapterController | null,
       debouncedProcessContent: null as ReturnType<typeof _.debounce> | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
       previewShown: this.mdAndUp,
@@ -273,6 +276,21 @@ export default defineComponent({
     }
   },
   methods: {
+    flushEligibleEditorText() {
+      const editor = this.cm
+      if (!editor) return
+      wikiStore.editor.content = editor.getValue()
+      this.editorAdapter?.notifyState()
+    },
+    clearEditorText() {
+      if (this.cm?.reset) this.cm.reset('')
+      else this.cm?.setValue('')
+      wikiStore.editor.content = ''
+      this.previewHTML = ''
+      this.previewDirty = true
+      this.previewError = ''
+      this.previewRequestId += 1
+    },
     toggleModal(key: string) {
       this.activeModal = this.activeModal === key ? '' : key
     },
@@ -475,12 +493,27 @@ export default defineComponent({
       ],
       onChange: value => {
         wikiStore.editor.content = value
+        this.editorAdapter?.noteTextChange()
         this.previewDirty = true
         this.debouncedProcessContent?.(value)
       },
       onCursor: position => this.positionSync(position)
     })
     this.cm = markRaw(cm)
+    const adapter = new EditorAdapterController({
+      readText: () => cm.getValue(),
+      writeText: text => {
+        cm.setValue(text)
+        wikiStore.editor.content = text
+        this.previewDirty = true
+        void this.processContent(text)
+      },
+      clearText: () => this.clearEditorText(),
+      flushText: () => this.flushEligibleEditorText()
+    })
+    this.editorAdapter = markRaw(adapter)
+    adapter.initialize()
+    this.$emit('editor-adapter', adapter)
 
     // Render initial preview
     void this.processContent(wikiStore.editor.content)
@@ -492,6 +525,12 @@ export default defineComponent({
     onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
   beforeUnmount() {
+    const adapter = this.editorAdapter
+    if (adapter) {
+      this.$emit('editor-adapter-clear', adapter)
+      adapter.destroy()
+      this.editorAdapter = null
+    }
     this.previewRequestId += 1
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)

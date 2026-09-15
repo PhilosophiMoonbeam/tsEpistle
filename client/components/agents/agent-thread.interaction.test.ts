@@ -229,7 +229,8 @@ const mountThread = async (initialThread: AgentThreadState, initialConnection = 
       thread: { type: Object, required: true },
       connection: { type: String, required: true },
       decidingApprovalId: { type: String, default: null },
-      canSubmit: { type: Boolean, default: true }
+      canSubmit: { type: Boolean, default: true },
+      networkBlocked: { type: Boolean, default: false }
     },
     emits: ['askSource', 'suggest', 'decision'],
     setup(props, { emit }) {

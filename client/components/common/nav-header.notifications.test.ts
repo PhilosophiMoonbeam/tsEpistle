@@ -118,6 +118,10 @@ const wikiStore = VueRuntime.reactive({
     }
   },
   user: user(1),
+  authRefreshPending: false,
+  authRefreshSettled: true,
+  authRefreshOutcome: 'authenticated' as AuthRefreshOutcome,
+  offlineIdentityReady: true,
   isLoading: false,
   refreshAuth: async () => {
     calls.push({ kind: 'refreshAuth' })
@@ -222,7 +226,16 @@ const bundle = await Bun.build({
         build.onResolve({ filter: /^.*$/ }, args => ({ path: args.path, namespace: 'header-notifications-stub' }))
         build.onLoad({ filter: /.*/, namespace: 'header-notifications-stub' }, args => {
           if (args.path === '@/store/index.ts') {
-            return { contents: 'export const wikiStore = globalThis.__headerWikiStore', loader: 'js' }
+            return {
+              contents: 'export const wikiStore = globalThis.__headerWikiStore; export const invalidateOfflineIdentity = async () => true',
+              loader: 'js'
+            }
+          }
+          if (args.path.endsWith('/helpers/pwa.ts')) {
+            return {
+              contents: 'export const pwaState = { connectionState: "online", serverReachable: true, serverHealthy: true }',
+              loader: 'js'
+            }
           }
           if (args.path === '../../store/site-notifications.ts') {
             return { contents: 'export const useSiteNotificationsStore = () => globalThis.__headerSiteNotifications', loader: 'js' }
@@ -348,6 +361,10 @@ afterEach(() => {
   calls.splice(0)
   translationCalls.splice(0)
   wikiStore.user = user(1)
+  wikiStore.authRefreshPending = false
+  wikiStore.authRefreshSettled = true
+  wikiStore.authRefreshOutcome = 'authenticated'
+  wikiStore.offlineIdentityReady = true
   siteNotifications.ownerId = 1
   siteNotifications.identityStale = false
   siteNotifications.notificationState = 'unknown'

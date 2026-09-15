@@ -4,7 +4,7 @@ import { buildTocFromHtml } from './render-page-toc.ts'
 
 interface PageRecord {
   id: number
-  sourceRevision: string | number
+  renderedSourceRevision: string | number | null
   content: string
   contentType: string
   [key: string]: unknown
@@ -71,7 +71,7 @@ export default async function renderPage(pageId: number | string): Promise<void>
     const toc = buildTocFromHtml(output)
     const updatedRows = await wiki.models.pages
       .query()
-      .patch({ render: output, toc: JSON.stringify(toc) })
+      .patch({ render: output, toc: JSON.stringify(toc), renderedSourceRevision: page.sourceRevision })
       .where('id', normalizedPageId)
       .where('sourceRevision', page.sourceRevision)
     if (updatedRows !== 1) {
@@ -79,7 +79,13 @@ export default async function renderPage(pageId: number | string): Promise<void>
       return
     }
     const renderedPage = await wiki.models.pages.getPageFromDb(normalizedPageId)
-    if (!renderedPage || String(renderedPage.sourceRevision) !== String(page.sourceRevision)) {
+    if (
+      !renderedPage ||
+      String(renderedPage.sourceRevision) !== String(page.sourceRevision) ||
+      renderedPage.renderedSourceRevision === null ||
+      renderedPage.renderedSourceRevision === undefined ||
+      String(renderedPage.renderedSourceRevision) !== String(page.sourceRevision)
+    ) {
       wiki.logger.info(`Skipped caching page ID ${normalizedPageId} because its source revision changed. [ SKIPPED ]`)
       return
     }

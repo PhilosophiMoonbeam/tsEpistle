@@ -114,6 +114,9 @@
           </ul>
         </aside>
 
+        <p v-if="networkBlocked" class="agent-goal__network-note" role="status" aria-live="polite">
+          Connection required to change this goal. Your progress is preserved until the workspace reconnects.
+        </p>
         <p v-if="busy" class="agent-goal__pending" role="status" aria-live="polite">
           <v-progress-circular color="primary" indeterminate size="15" width="2" aria-hidden="true" />
           {{ pendingActionLabel }}
@@ -126,7 +129,7 @@
             variant="tonal"
             prepend-icon="mdi-pause"
             :loading="pendingAction === 'pause' && busy"
-            :disabled="busy"
+            :disabled="busy || networkBlocked"
             @click="runAction('pause')"
           >Pause</v-btn>
           <v-btn
@@ -136,7 +139,7 @@
             variant="tonal"
             prepend-icon="mdi-play"
             :loading="pendingAction === 'resume' && busy"
-            :disabled="busy"
+            :disabled="busy || networkBlocked"
             @click="runAction('resume')"
           >Resume goal</v-btn>
           <v-btn
@@ -145,7 +148,7 @@
             color="error"
             variant="text"
             prepend-icon="mdi-close"
-            :disabled="busy"
+            :disabled="busy || networkBlocked"
             :loading="pendingAction === 'cancel' && busy"
             @click="cancelDialogOpen = true"
           >Cancel goal</v-btn>
@@ -166,7 +169,7 @@
         <v-card-actions class="agent-goal__dialog-actions">
           <v-spacer />
           <v-btn variant="text" :disabled="busy" @click="cancelDialogOpen = false">Keep goal</v-btn>
-          <v-btn color="error" variant="tonal" :loading="pendingAction === 'cancel' && busy" :disabled="busy" @click="confirmCancel">Cancel goal</v-btn>
+          <v-btn color="error" variant="tonal" :loading="pendingAction === 'cancel' && busy" :disabled="busy || networkBlocked" @click="confirmCancel">Cancel goal</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -177,7 +180,7 @@
 import { computed, ref, watch } from 'vue'
 import type { AgentGoalView } from '../../../shared/agents/contracts.ts'
 
-const { goal, busy, runActive } = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boolean }>()
+const { goal, busy, runActive, networkBlocked } = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boolean; networkBlocked?: boolean }>()
 const expanded = defineModel<boolean>('expanded', { required: true })
 const emit = defineEmits<{ pause: []; resume: []; cancel: [] }>()
 const pendingAction = ref<'pause' | 'resume' | 'cancel' | null>(null)
@@ -204,13 +207,13 @@ watch(() => goal.status, status => {
   if (!['active', 'paused', 'blocked'].includes(status)) cancelDialogOpen.value = false
 })
 const runAction = (action: 'pause' | 'resume') => {
-  if (busy) return
+  if (busy || networkBlocked) return
   pendingAction.value = action
   if (action === 'pause') emit('pause')
   else emit('resume')
 }
 const confirmCancel = () => {
-  if (busy) return
+  if (busy || networkBlocked) return
   pendingAction.value = 'cancel'
   cancelDialogOpen.value = false
   emit('cancel')

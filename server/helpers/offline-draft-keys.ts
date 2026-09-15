@@ -1,6 +1,11 @@
 import { createHash, createHmac } from 'node:crypto'
 import type { Request } from 'express'
-import { OFFLINE_DRAFT_KEY_MAGIC as SHARED_OFFLINE_DRAFT_KEY_MAGIC, OFFLINE_KEY_VERSION, type DraftKeyContext } from '../../shared/offline.ts'
+import {
+  OFFLINE_DRAFT_KEY_MAGIC as SHARED_OFFLINE_DRAFT_KEY_MAGIC,
+  OFFLINE_DRAFT_KEY_BYTES,
+  OFFLINE_KEY_VERSION,
+  type DraftKeyContext
+} from '../../shared/offline.ts'
 import { accountSessionIsCurrent, sessionVersion } from './account-session.ts'
 import { getAuthenticatedUserContext, RequestAuthenticationError } from './request-auth.ts'
 import { getTransportRuntime } from '../controllers/_types.ts'
@@ -16,9 +21,10 @@ interface OfflineDraftKeyAccount {
 }
 
 export interface OfflineDraftKeyRuntime {
-  readonly INSTANCE_ID: string
   readonly config: {
     readonly host: string
+    /** Installation identity; fresh installs may use the canonical origin until persisted. */
+    readonly offlineDraftSiteId?: string
     readonly sessionSecret: string
   }
   readonly models: {
@@ -45,6 +51,10 @@ const lpUtf8 = (value: string): Buffer => {
   return Buffer.concat([length, bytes])
 }
 
+const assertBoundedUtf8 = (value: string, label: string, maximumBytes: number): void => {
+  if (Buffer.byteLength(value, 'utf8') > maximumBytes) throw new RangeError(`${label} is too large`)
+}
+
 const u64be = (value: number, label: string, minimum = 0): Buffer => {
   const integer = assertUnsignedInteger(value, label, minimum)
   const encoded = Buffer.allocUnsafe(8)
@@ -59,8 +69,8 @@ const contextFields = (
   if (typeof context.canonicalOrigin !== 'string' || typeof context.siteId !== 'string') throw new TypeError('Offline draft-key context is invalid')
   const canonicalOrigin = context.canonicalOrigin
   const siteId = context.siteId
-  lpUtf8(canonicalOrigin)
-  lpUtf8(siteId)
+  assertBoundedUtf8(canonicalOrigin, 'Canonical origin', 2048)
+  assertBoundedUtf8(siteId, 'Site identity', 256)
   const accountId = assertUnsignedInteger(context.accountId, 'accountId', 1)
   const authVersion = assertUnsignedInteger(context.authVersion, 'authVersion', 0)
   return { canonicalOrigin, siteId, accountId, authVersion }
@@ -91,7 +101,7 @@ export const deriveOfflineDraftKey = (context: DraftKeyContext, sessionSecret: s
     info = encodeOfflineDraftKeyInfo(context)
     expansionInput = Buffer.concat([info, Buffer.from([1])])
     block = createHmac('sha256', prk).update(expansionInput).digest()
-    return Buffer.from(block.subarray(0, 32))
+    return Buffer.from(block.subarray(0, OFFLINE_DRAFT_KEY_BYTES))
   } finally {
     secret.fill(0)
     prk?.fill(0)
@@ -103,7 +113,7 @@ export const deriveOfflineDraftKey = (context: DraftKeyContext, sessionSecret: s
 
 export const encodeOfflineDraftKeyFrame = (context: DraftKeyContext, key: Uint8Array): Buffer => {
   const { canonicalOrigin, siteId, accountId, authVersion } = contextFields(context)
-  if (key.byteLength !== 32) throw new RangeError('Offline draft key must contain exactly 32 bytes')
+  if (key.byteLength !== OFFLINE_DRAFT_KEY_BYTES) throw new RangeError(`Offline draft key must contain exactly ${OFFLINE_DRAFT_KEY_BYTES} bytes`)
   return Buffer.concat([
     Buffer.from(OFFLINE_DRAFT_KEY_MAGIC, 'ascii'),
     lpUtf8(canonicalOrigin),
@@ -111,7 +121,7 @@ export const encodeOfflineDraftKeyFrame = (context: DraftKeyContext, key: Uint8A
     u64be(accountId, 'accountId', 1),
     u64be(authVersion, 'authVersion'),
     lpUtf8(OFFLINE_DRAFT_KEY_VERSION),
-    Buffer.from(key)
+    key
   ])
 }
 
@@ -135,12 +145,14 @@ const canonicalOriginFromConfig = (value: unknown): string => {
   const localHttp = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)
   if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && localHttp)) throw new Error('Configured site origin is invalid')
   if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) throw new Error('Configured site origin is invalid')
-  return parsed.origin
+  const origin = parsed.origin
+  assertBoundedUtf8(origin, 'Configured site origin', 2048)
+  return origin
 }
 
 const configuredSiteId = (value: unknown): string => {
   if (typeof value !== 'string' || value.length === 0) throw new Error('Configured site identity is unavailable')
-  lpUtf8(value)
+  assertBoundedUtf8(value, 'Configured site identity', 256)
   return value
 }
 
@@ -163,9 +175,15 @@ export const resolveOfflineDraftKeyContext = async (
   const currentAccountId = assertUnsignedInteger(account?.id, 'accountId', 1)
   const currentAuthVersion = sessionVersion(account?.authVersion)
   if (currentAuthVersion === null) throw new RequestAuthenticationError('A current human user session is required')
+  const canonicalOrigin = canonicalOriginFromConfig(runtime.config.host)
+  const configuredSiteIdentity = propertyValue(runtime.config, 'offlineDraftSiteId')
+  const siteId =
+    configuredSiteIdentity === undefined || configuredSiteIdentity === null || configuredSiteIdentity === ''
+      ? configuredSiteId(canonicalOrigin)
+      : configuredSiteId(configuredSiteIdentity)
   return {
-    canonicalOrigin: canonicalOriginFromConfig(runtime.config.host),
-    siteId: configuredSiteId(runtime.INSTANCE_ID),
+    canonicalOrigin,
+    siteId,
     accountId: currentAccountId,
     authVersion: currentAuthVersion,
     keyVersion: OFFLINE_DRAFT_KEY_VERSION

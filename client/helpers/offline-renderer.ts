@@ -210,6 +210,17 @@ const copyChildren = (source: Node, context: CopyContext): Node[] => {
   for (const child of source.childNodes) copied.push(...copyNode(child, context))
   return copied
 }
+const makeOverflowRegion = (tagName: string, target: HTMLElement, context: CopyContext): HTMLElement => {
+  const region = document.createElement('div')
+  region.className = tagName === 'pre' ? 'offline-code-region' : 'offline-table-region'
+  region.tabIndex = 0
+  region.setAttribute('role', 'region')
+  region.setAttribute('aria-label', tagName === 'pre' ? 'Scrollable code block' : 'Scrollable table')
+  context.nodeCount += 1
+  if (context.nodeCount > MAX_RENDER_NODES) throw new OfflineRenderError('unsafe-fragment', 'The offline page contains too many nodes.')
+  region.append(target)
+  return region
+}
 
 const copyNode = (source: Node, context: CopyContext): Node[] => {
   if (source.nodeType === Node.TEXT_NODE) {
@@ -235,7 +246,9 @@ const copyNode = (source: Node, context: CopyContext): Node[] => {
     }
   }
   for (const child of copyChildren(element, context)) target.appendChild(child)
-  return [target]
+  return tagName === 'pre' || tagName === 'table'
+    ? [makeOverflowRegion(tagName, target, context)]
+    : [target]
 }
 
 const installSafeNavigation = (target: HTMLElement): void => {

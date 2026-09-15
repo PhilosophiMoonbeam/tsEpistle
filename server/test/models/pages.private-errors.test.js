@@ -21,6 +21,7 @@ const privatePage = {
   ownerId: 7,
   isSearchable: true,
   editorKey: 'markdown',
+  renderedSourceRevision: null,
   tags: privatePageTags,
   $relatedQuery: vi.fn(async (relation, _transaction) => relation === 'tags' ? privatePageTags : [])
 }
@@ -40,6 +41,7 @@ describe('private page mutation existence isolation', () => {
           first: vi.fn().mockResolvedValue({
             id: 17,
             sourceRevision: '2',
+            renderedSourceRevision: null,
             updatedAt: '2026-08-14T00:00:00.000Z',
             content: 'changed content',
             localeCode: 'en',
@@ -835,6 +837,7 @@ describe('private page mutation existence isolation', () => {
       ownerId: null,
       path: 'docs',
       sourceRevision: '1',
+      renderedSourceRevision: null,
       title: 'Docs',
       updatedAt: null,
       visibility: 'public',
@@ -915,6 +918,7 @@ describe('private page mutation existence isolation', () => {
         table.string('toc').notNullable()
         table.text('extra').notNullable()
         table.bigInteger('sourceRevision').notNullable().defaultTo(1)
+        table.bigInteger('renderedSourceRevision').nullable()
         table.dateTime('createdAt').nullable()
         table.dateTime('updatedAt').nullable()
       })

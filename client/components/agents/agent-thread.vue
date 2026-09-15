@@ -104,7 +104,7 @@
                 v-if="entry.retryPrompt"
                 size="small"
                 variant="text"
-                :disabled="canSubmit === false"
+                :disabled="canSubmit === false || networkBlocked"
                 prepend-icon="mdi-reload"
                 @click="emit('suggest', entry.retryPrompt)"
               >
@@ -209,6 +209,7 @@
           :tool="proposalEntry.tool"
           :proposal="proposalEntry.proposal"
           :busy="Boolean(decidingApprovalId)"
+          :network-blocked="networkBlocked"
           @decision="forwardDecision"
         />
       </template>
@@ -241,11 +242,11 @@
         variant="tonal"
         size="small"
         append-icon="mdi-arrow-top-right"
-        :disabled="canSubmit === false"
+        :disabled="canSubmit === false || networkBlocked"
         @click="emit('suggest', suggestion.prompt)"
       >{{ suggestion.label }}</v-btn>
     </div>
-    <WikiSourcePreview v-if="previewSelector" :selector="previewSelector" :can-ask="canSubmit !== false" @close="previewSelector = null" @ask="source => { previewSelector = null; emit('askSource', source) }" />
+    <WikiSourcePreview v-if="previewSelector" :selector="previewSelector" :can-ask="canSubmit !== false && !networkBlocked" @close="previewSelector = null" @ask="source => { previewSelector = null; emit('askSource', source) }" />
   </section>
 </template>
 
@@ -269,7 +270,7 @@ import {
   type AgentThreadPresentation
 } from './agent-thread-presentation.ts'
 
-const props = defineProps<{ thread: AgentThreadState; connection: string; decidingApprovalId?: string | null; canSubmit?: boolean }>()
+const props = defineProps<{ thread: AgentThreadState; connection: string; decidingApprovalId?: string | null; canSubmit?: boolean; networkBlocked?: boolean }>()
 const emit = defineEmits<{
   askSource: [source: WikiSource]
   suggest: [prompt: string]

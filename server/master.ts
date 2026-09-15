@@ -21,7 +21,7 @@ import securityMiddleware from './middlewares/security.ts'
 import createOriginMiddleware from './middlewares/origin.ts'
 import seoMiddleware from './middlewares/seo.ts'
 import createAuthController, { normalizeFaviconUrl, type AuthWiki } from './controllers/auth.ts'
-import createPwaController from './controllers/pwa.ts'
+import createPwaController, { currentPwaMode } from './controllers/pwa.ts'
 import createSiteLogoController from './controllers/site-logo.ts'
 import createAgentsHostController from './controllers/agents-host.ts'
 import createUploadController, { type UploadWiki } from './controllers/upload.ts'
@@ -58,6 +58,7 @@ import { createApiPrincipal } from './helpers/api-principal.ts'
 import pageOperations from './operations/pages.ts'
 import { PageKnowledgeLifecycle } from './knowledge/lifecycle.ts'
 import { PageProjectionLifecycle } from './core/page-mutation-outbox.ts'
+import { OFFLINE_DRAFT_KEY_PATH, offlineDraftKeyPrivacyHeaders } from './controllers/api/offline.ts'
 const { collectEntry } = viteAssets
 
 interface MasterConfig extends Record<string, unknown> {
@@ -220,6 +221,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
 
   const app = express()
   wiki.app = app
+  const pwaMode = currentPwaMode()
+  app.use(OFFLINE_DRAFT_KEY_PATH, offlineDraftKeyPrivacyHeaders)
   const agentLimits = parseAgentOperationalLimits(wiki.config.agents)
   app.set('views', path.join(wiki.SERVERPATH, 'views'))
   app.set('view engine', 'pug')
@@ -235,6 +238,15 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   if (wiki.config.security.securityTrustProxy) {
     app.set('trust proxy', 1)
   }
+  app.use(
+    '/',
+    createPwaController({
+      ROOTPATH: wiki.ROOTPATH,
+      config: { host: wiki.config.host },
+      pwaMode,
+      pwaRelease: wiki.product.revision
+    })
+  )
 
   app.use(favicon(path.join(wiki.ROOTPATH, 'assets', 'favicon.ico')))
   app.use('/_assets/svg/twemoji', async (req, res, next) => {
@@ -253,7 +265,6 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   )
   app.use('/', createSslController(wiki))
   app.use('/', createSiteLogoController(wiki.models.knex))
-  app.use('/', createPwaController({ ROOTPATH: wiki.ROOTPATH, config: { host: wiki.config.host } }))
 
   app.use(cookieParser())
   const currentSessionCookieOptions = sessionCookieOptions(() => wiki.config.host)
@@ -551,6 +562,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       availableEditors: normalizeAvailableEditors(wiki.config.editors?.available),
       recommendedEditor: normalizeEditorPolicy(wiki.config.editors).recommended,
       product: wiki.product,
+      pwaMode,
       agentsEnabled: wiki.config.agents.enabled,
       agentProviderEnabled: wiki.config.agents.provider.enabled,
       agentSkillsEnabled: wiki.config.agents.skills.enabled,

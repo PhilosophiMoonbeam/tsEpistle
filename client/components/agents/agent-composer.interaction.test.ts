@@ -302,7 +302,8 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     initialSkillVersionIds: undefined,
     hasMessages: false,
     chatPinned: false,
-    chatPinDisabled: false
+    chatPinDisabled: false,
+    networkBlocked: false
   }
   const composerComponent = Vue.defineComponent({
     name: 'AgentComposerInteractionHarness',
@@ -322,10 +323,10 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
       statusTone: String,
       initialDraft: String,
       initialMode: String,
-      initialSkillVersionIds: Array,
       hasMessages: Boolean,
       chatPinned: Boolean,
-      chatPinDisabled: Boolean
+      chatPinDisabled: Boolean,
+      networkBlocked: Boolean
     },
     emits: ['draftChange', 'compositionChange', 'send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'update:chatPinned'],
     setup(props, { emit, expose }) {

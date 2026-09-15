@@ -30,8 +30,10 @@
           a.nav-header-logo(
             v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp'
             :href='homePath'
+            :title='!transportVerified ? navigationUnavailableReason : undefined'
             :aria-label='$t(`common:header.home`)'
-            )
+            @click='guardHeaderNavigation'
+          )
             img.org-logo(:src='logoUrl', :alt='title')
           v-toolbar-title.nav-header-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp')
             span {{title}}
@@ -43,10 +45,13 @@
                 v-bind='props'
                 icon
                 href='/t'
+                :disabled='!transportVerified'
+                :title='!transportVerified ? navigationUnavailableReason : undefined'
                 data-search-modal-action
                 variant='outlined'
                 :aria-current='mode === `tags` ? `page` : undefined'
                 :aria-label='$t(`common:header.browseTags`)'
+                @click='guardHeaderNavigation'
               )
                 v-icon(size='18') mdi-tag-outline
             span {{$t('common:header.browseTags')}}
@@ -107,6 +112,8 @@
               size='small'
               rounded='lg'
               prepend-icon='mdi-pencil'
+              :disabled='!onlineActionReady'
+              :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
               @click='pageEdit'
               :aria-label='$t(`common:header.edit`)'
             )
@@ -146,9 +153,12 @@
                 v-bind='props'
                 icon
                 href='/t'
+                :disabled='!transportVerified'
+                :title='!transportVerified ? navigationUnavailableReason : undefined'
                 data-search-modal-action
                 :aria-current='mode === `tags` ? `page` : undefined'
                 :aria-label='$t(`common:header.browseTags`)'
+                @click='guardHeaderNavigation'
               )
                 v-icon mdi-tag-outline
             span {{$t('common:header.browseTags')}}
@@ -172,7 +182,14 @@
                   span {{$t('common:header.language')}}
               v-list.nav-header-menu(nav)
                 template(v-for='lc of locales', :key='lc.code')
-                  v-list-item(role='button', link, :aria-current='lc.code === locale ? `true` : undefined', @click='changeLocale(lc)')
+                  v-list-item(
+                    role='button'
+                    link
+                    :disabled='!readerActionReady'
+                    :title='!readerActionReady ? onlineActionUnavailableReason : undefined'
+                    :aria-current='lc.code === locale ? `true` : undefined'
+                    @click='changeLocale(lc)'
+                  )
                     template(v-slot:append): v-chip(:color='lc.code === locale ? `primary` : `grey`', size="small", label) {{lc.code.toUpperCase()}}
                     v-list-item-title {{lc.name}}
 
@@ -193,25 +210,74 @@
                   span {{$t('common:header.pageActions')}}
               v-list.nav-header-menu.page-actions-menu(ref='pageActionsMenu' nav)
                 .text-label-small.pa-4.text-grey {{$t('common:header.currentPage')}}
-                v-list-item.pl-4(role='button', link, @click='pageView', v-if='mode !== `view`')
+                v-list-item.pl-4(
+                  role='button'
+                  link
+                  :disabled='!readerActionReady'
+                  :title='!readerActionReady ? onlineActionUnavailableReason : undefined'
+                  @click='pageView'
+                  v-if='mode !== `view`'
+                )
                   template(v-slot:prepend): v-icon(color='primary') mdi-file-document-outline
                   v-list-item-title.text-body-medium {{$t('common:header.view')}}
-                v-list-item.pl-4(role='button', link, @click='pageHistory', v-if='mode !== `history` && hasReadHistoryPermission')
+                v-list-item.pl-4(
+                  role='button'
+                  link
+                  :disabled='!onlineActionReady'
+                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                  @click='pageHistory'
+                  v-if='mode !== `history` && hasReadHistoryPermission'
+                )
                   template(v-slot:prepend): v-icon(color='primary') mdi-history
                   v-list-item-title.text-body-medium {{$t('common:header.history')}}
-                v-list-item.pl-4(role='button', link, @click='pageSource', v-if='mode !== `source` && hasReadSourcePermission')
+                v-list-item.pl-4(
+                  role='button'
+                  link
+                  :disabled='!onlineActionReady'
+                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                  @click='pageSource'
+                  v-if='mode !== `source` && hasReadSourcePermission'
+                )
                   template(v-slot:prepend): v-icon(color='primary') mdi-code-tags
                   v-list-item-title.text-body-medium {{$t('common:header.viewSource')}}
-                v-list-item.pl-4(role='button', link, @click='pageConvert', v-if='hasWritePagesPermission')
+                v-list-item.pl-4(
+                  role='button'
+                  link
+                  :disabled='!onlineActionReady'
+                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                  @click='pageConvert'
+                  v-if='hasWritePagesPermission'
+                )
                   template(v-slot:prepend): v-icon(color='primary') mdi-lightning-bolt
                   v-list-item-title.text-body-medium {{$t('common:header.convert')}}
-                v-list-item.pl-4(role='button', link, @click='pageDuplicate', v-if='hasWritePagesPermission')
+                v-list-item.pl-4(
+                  role='button'
+                  link
+                  :disabled='!onlineActionReady'
+                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                  @click='pageDuplicate'
+                  v-if='hasWritePagesPermission'
+                )
                   template(v-slot:prepend): v-icon(color='primary') mdi-content-duplicate
                   v-list-item-title.text-body-medium {{$t('common:header.duplicate')}}
-                v-list-item.pl-4(role='button', link, @click='pageMove', v-if='hasManagePagesPermission')
+                v-list-item.pl-4(
+                  role='button'
+                  link
+                  :disabled='!onlineActionReady'
+                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                  @click='pageMove'
+                  v-if='hasManagePagesPermission'
+                )
                   template(v-slot:prepend): v-icon(color='primary') mdi-content-save-move-outline
                   v-list-item-title.text-body-medium {{$t('common:header.move')}}
-                v-list-item.pl-4(role='button', link, @click='pageDelete', v-if='hasDeletePagesPermission')
+                v-list-item.pl-4(
+                  role='button'
+                  link
+                  :disabled='!onlineActionReady'
+                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                  @click='pageDelete'
+                  v-if='hasDeletePagesPermission'
+                )
                   template(v-slot:prepend): v-icon(color='error') mdi-trash-can-outline
                   v-list-item-title.text-body-medium {{$t('common:header.delete')}}
 
@@ -220,7 +286,15 @@
           template(v-if='hasNewPagePermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
             v-tooltip(location="bottom")
               template(v-slot:activator='{ props }')
-                v-btn(icon, rounded='lg', v-bind='props', @click='pageNew', :aria-label='$t(`common:header.newPage`)')
+                v-btn(
+                  icon
+                  rounded='lg'
+                  v-bind='props'
+                  :disabled='!onlineActionReady'
+                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                  @click='pageNew'
+                  :aria-label='$t(`common:header.newPage`)'
+                )
                   v-icon mdi-text-box-plus-outline
               span {{$t('common:header.newPage')}}
 
@@ -229,10 +303,18 @@
           template(v-if='isAuthenticated && isAdmin && $vuetify.display.mdAndUp')
             v-tooltip(location="bottom", v-if='mode !== `admin`')
               template(v-slot:activator='{ props }')
-                v-btn(icon, rounded='lg', v-bind='props', href='/a', :aria-label='$t(`common:header.admin`)')
+                v-btn(
+                  icon
+                  rounded='lg'
+                  v-bind='props'
+                  :disabled='!onlineActionReady'
+                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                  @click='openAdmin'
+                  :aria-label='$t(`common:header.admin`)'
+                )
                   v-icon mdi-cog
               span {{$t('common:header.admin')}}
-            v-btn(v-else, variant="text", rounded='lg', href='/', :aria-label='$t(`common:actions.exit`)')
+            v-btn(v-else, variant="text", rounded='lg', @click='exitAdmin', :aria-label='$t(`common:actions.exit`)')
               v-icon(start) mdi-exit-to-app
           v-menu(v-if='hasMobilePageActions && $vuetify.display.smAndDown', location='bottom end', min-width='240')
             template(v-slot:activator='{ props }')
@@ -245,33 +327,126 @@
                 v-icon mdi-dots-vertical
             v-list.nav-header-menu(nav)
               v-list-subheader Page actions
-              v-list-item(role='button', link, v-if='path && mode !== `view`', prepend-icon='mdi-file-document-outline', @click='pageView')
+              v-list-item(
+                role='button'
+                link
+                v-if='path && mode !== `view`'
+                :disabled='!readerActionReady'
+                :title='!readerActionReady ? onlineActionUnavailableReason : undefined'
+                prepend-icon='mdi-file-document-outline'
+                @click='pageView'
+              )
                 v-list-item-title {{$t('common:header.view')}}
-              v-list-item(role='button', link, v-if='path && hasWritePagesPermission && mode !== `edit`', prepend-icon='mdi-file-document-edit-outline', @click='pageEdit')
+              v-list-item(
+                role='button'
+                link
+                v-if='path && hasWritePagesPermission && mode !== `edit`'
+                :disabled='!onlineActionReady'
+                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                prepend-icon='mdi-file-document-edit-outline'
+                @click='pageEdit'
+              )
                 v-list-item-title {{$t('common:header.edit')}}
-              v-list-item(role='button', link, v-if='path && hasReadHistoryPermission && mode !== `history`', prepend-icon='mdi-history', @click='pageHistory')
+              v-list-item(
+                role='button'
+                link
+                v-if='path && hasReadHistoryPermission && mode !== `history`'
+                :disabled='!onlineActionReady'
+                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                prepend-icon='mdi-history'
+                @click='pageHistory'
+              )
                 v-list-item-title {{$t('common:header.history')}}
-              v-list-item(role='button', link, v-if='path && hasReadSourcePermission && mode !== `source`', prepend-icon='mdi-code-tags', @click='pageSource')
+              v-list-item(
+                role='button'
+                link
+                v-if='path && hasReadSourcePermission && mode !== `source`'
+                :disabled='!onlineActionReady'
+                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                prepend-icon='mdi-code-tags'
+                @click='pageSource'
+              )
                 v-list-item-title {{$t('common:header.viewSource')}}
-              v-list-item(role='button', link, v-if='path && hasWritePagesPermission', prepend-icon='mdi-lightning-bolt', @click='pageConvert')
+              v-list-item(
+                role='button'
+                link
+                v-if='path && hasWritePagesPermission'
+                :disabled='!onlineActionReady'
+                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                prepend-icon='mdi-lightning-bolt'
+                @click='pageConvert'
+              )
                 v-list-item-title {{$t('common:header.convert')}}
-              v-list-item(role='button', link, v-if='path && hasWritePagesPermission', prepend-icon='mdi-content-duplicate', @click='pageDuplicate')
+              v-list-item(
+                link
+                v-if='path && hasWritePagesPermission'
+                :disabled='!onlineActionReady'
+                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                prepend-icon='mdi-content-duplicate'
+                @click='pageDuplicate'
+              )
                 v-list-item-title {{$t('common:header.duplicate')}}
-              v-list-item(role='button', link, v-if='path && hasManagePagesPermission', prepend-icon='mdi-content-save-move-outline', @click='pageMove')
+              v-list-item(
+                role='button'
+                link
+                v-if='path && hasManagePagesPermission'
+                :disabled='!onlineActionReady'
+                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                prepend-icon='mdi-content-save-move-outline'
+                @click='pageMove'
+              )
                 v-list-item-title {{$t('common:header.move')}}
-              v-list-item.nav-header-menu-danger(role='button', link, v-if='path && hasDeletePagesPermission', prepend-icon='mdi-trash-can-outline', @click='pageDelete')
+              v-list-item.nav-header-menu-danger(
+                role='button'
+                link
+                v-if='path && hasDeletePagesPermission'
+                :disabled='!onlineActionReady'
+                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                prepend-icon='mdi-trash-can-outline'
+                @click='pageDelete'
+              )
                 v-list-item-title {{$t('common:header.delete')}}
               v-divider(v-if='hasNewPagePermission || (isAuthenticated && isAdmin)')
-              v-list-item(role='button', link, v-if='hasNewPagePermission && path && mode !== `edit`', prepend-icon='mdi-text-box-plus-outline', @click='pageNew')
+              v-list-item(
+                role='button'
+                link
+                v-if='hasNewPagePermission && path && mode !== `edit`'
+                :disabled='!onlineActionReady'
+                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                prepend-icon='mdi-text-box-plus-outline'
+                @click='pageNew'
+              )
                 v-list-item-title {{$t('common:header.newPage')}}
-              v-list-item(v-if='isAuthenticated && isAdmin && mode !== `admin`', prepend-icon='mdi-cog', href='/a')
+              v-list-item(
+                v-if='isAuthenticated && isAdmin && mode !== `admin`'
+                :disabled='!onlineActionReady'
+                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                prepend-icon='mdi-cog'
+                @click='openAdmin'
+              )
                 v-list-item-title {{$t('common:header.admin')}}
-              v-list-item(v-if='isAuthenticated && isAdmin && mode === `admin`', prepend-icon='mdi-exit-to-app', href='/')
+              v-list-item(
+                v-if='isAuthenticated && isAdmin && mode === `admin`'
+                :disabled='!onlineActionReady'
+                :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                prepend-icon='mdi-exit-to-app'
+                @click='exitAdmin'
+              )
                 v-list-item-title {{$t('common:actions.exit')}}
               template(v-if='mode === `view` && locales.length > 0')
                 v-divider
                 v-list-subheader {{$t('common:header.language')}}
-                v-list-item(role='button', link, v-for='lc of locales', :key='`mobile-locale-${lc.code}`', :aria-current='lc.code === locale ? `true` : undefined', prepend-icon='mdi-web', @click='changeLocale(lc)')
+                v-list-item(
+                  role='button'
+                  link
+                  v-for='lc of locales'
+                  :key='`mobile-locale-${lc.code}`'
+                  :disabled='!readerActionReady'
+                  :title='!readerActionReady ? onlineActionUnavailableReason : undefined'
+                  :aria-current='lc.code === locale ? `true` : undefined'
+                  prepend-icon='mdi-web'
+                  @click='changeLocale(lc)'
+                )
                   v-list-item-title {{lc.name}}
 
           //- ACCOUNT
@@ -297,8 +472,6 @@
                       :class='`account-menu__notification-indicator--${notificationState}`'
                       aria-hidden='true'
                     )
-                span {{$t('common:header.account')}}
-            v-list.nav-header-menu.account-menu(aria-label='Account menu')
               v-list-item.py-3.bg-surface-variant(
                 href='/p'
                 :aria-label='`Open profile for ${name}`'
@@ -370,6 +543,7 @@ import {
   onPageSource
 } from '../../helpers/page-action-events'
 import { emitSearchEnter, emitSearchExit, emitSearchMove } from '../../helpers/search-navigation-events'
+import * as pwa from '../../helpers/pwa.ts'
 
 type PageLocation = { path: string, locale: string }
 type SiteLocale = { code: string, name: string }
@@ -431,6 +605,7 @@ export default defineComponent({
       pageActionsFocusFrame: null as number | null,
       notificationIdentityRecovery: null as Promise<void> | null,
       notificationIdentityRecoveryGeneration: 0,
+      headerActionGeneration: 1,
       logoutPending: false,
       duplicateOpts: {
         locale: 'en',
@@ -463,6 +638,40 @@ export default defineComponent({
     name(): string { return wikiStore.user.name },
     email(): string { return wikiStore.user.email },
     pictureUrl(): string { return wikiStore.user.pictureUrl },
+    transportVerified(): boolean {
+      return pwa.pwaState?.connectionState === 'online' &&
+        pwa.pwaState?.serverReachable === true &&
+        pwa.pwaState?.serverHealthy === true
+    },
+    navigationUnavailableReason(): string {
+      return this.transportVerified ? '' : 'This navigation requires a verified server connection.'
+    },
+    authorizationFresh(): boolean {
+      return this.isAuthenticated &&
+        wikiStore.authRefreshPending === false &&
+        wikiStore.authRefreshSettled === true &&
+        wikiStore.authRefreshOutcome === 'authenticated' &&
+        wikiStore.offlineIdentityReady === true
+    },
+    pageResourceReady(): boolean {
+      return Number.isSafeInteger(wikiStore.page.id) &&
+        wikiStore.page.id > 0 &&
+        typeof this.path === 'string' &&
+        this.path.length > 0
+    },
+    readerActionReady(): boolean {
+      return this.transportVerified &&
+        this.pageResourceReady &&
+        (wikiStore.page.visibility !== 'private' || this.authorizationFresh)
+    },
+    onlineActionReady(): boolean {
+      return this.transportVerified && this.authorizationFresh
+    },
+    onlineActionUnavailableReason(): string {
+      if (!this.transportVerified) return 'This action requires a verified server connection.'
+      if (!this.authorizationFresh) return 'This action requires a freshly verified signed-in session.'
+      return ''
+    },
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
     notificationOwnerId(): number { return this.isAuthenticated ? wikiStore.user.id : 0 },
     notificationState(): 'available' | 'unknown' | 'clear' { return this.siteNotifications.notificationState },
@@ -482,7 +691,7 @@ export default defineComponent({
     canEnterAgent(): boolean {
       return Boolean(
         siteConfig.agentsEnabled &&
-        this.isAuthenticated &&
+        this.onlineActionReady &&
         this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system') &&
         !this.hideSearch &&
         !this.dense &&
@@ -587,6 +796,8 @@ export default defineComponent({
     this.syncSiteNotifications()
   },
   beforeUnmount () {
+    this.notificationIdentityRecoveryGeneration += 1
+    this.headerActionGeneration += 1
     offPageEdit(this.pageEdit)
     offPageHistory(this.pageHistory)
     offPageSource(this.pageSource)
@@ -728,6 +939,9 @@ export default defineComponent({
         }
       })
     },
+    guardHeaderNavigation (event: Event): void {
+      if (!this.transportVerified) event.preventDefault()
+    },
     searchFocus () {
       this.searchIsFocused = true
     },
@@ -777,7 +991,7 @@ export default defineComponent({
       else this.searchClose()
     },
     openAgent(): void {
-      if (!this.canEnterAgent) return
+      if (!this.canEnterAgent || !this.onlineActionReady) return
       this.searchMode = 'ask'
       void this.focusSearchField()
     },
@@ -813,28 +1027,35 @@ export default defineComponent({
       emitSearchMove(dir)
     },
     pageNew () {
+      if (!this.onlineActionReady) return
       this.newPageModal = true
     },
     pageNewCreate ({ path, locale }: PageLocation): void {
+      if (!this.onlineActionReady) return
       window.location.assign(`/e/${locale}/${path}`)
     },
     pageView () {
+      if (!this.readerActionReady) return
       const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
       window.location.assign(`${scope}/${this.locale}/${this.path}`)
     },
     pageEdit () {
+      if (!this.onlineActionReady || !this.pageResourceReady) return
       const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
       window.location.assign(`/e${scope}/${this.locale}/${this.path}`)
     },
     pageHistory () {
+      if (!this.onlineActionReady || !this.pageResourceReady) return
       const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
       window.location.assign(`/h${scope}/${this.locale}/${this.path}`)
     },
     pageSource () {
+      if (!this.onlineActionReady || !this.pageResourceReady) return
       const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
       window.location.assign(`/s${scope}/${this.locale}/${this.path}`)
     },
     pageDuplicate () {
+      if (!this.onlineActionReady || !this.pageResourceReady) return
       const pathParts = this.path.split('/')
       this.duplicateOpts = {
         locale: this.locale,
@@ -843,15 +1064,20 @@ export default defineComponent({
       }
     },
     pageDuplicateHandle ({ locale, path }: PageLocation): void {
+      if (!this.onlineActionReady || !this.pageResourceReady) return
       window.location.assign(`/e/${locale}/${path}?from=${wikiStore.page.id}`)
     },
     pageConvert () {
+      if (!this.onlineActionReady || !this.pageResourceReady) return
       this.convertPageModal = true
     },
     pageMove () {
+      if (!this.onlineActionReady || !this.pageResourceReady) return
       this.movePageModal = true
     },
     async pageMoveRename ({ path, locale }: PageLocation): Promise<void> {
+      if (!this.onlineActionReady || !this.pageResourceReady) return
+      const generation = this.headerActionGeneration
       wikiStore.startLoading('page-move')
       try {
         await movePage(
@@ -861,31 +1087,50 @@ export default defineComponent({
           path,
           wikiStore.page.sourceRevision
         )
+        if (generation !== this.headerActionGeneration || !this.onlineActionReady) {
+          wikiStore.stopLoading('page-move')
+          return
+        }
         const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
         window.location.replace(`${scope}/${locale}/${path}`)
       } catch (err) {
+        if (generation !== this.headerActionGeneration) return
         wikiStore.showError(err)
         wikiStore.stopLoading('page-move')
       }
     },
     pageDelete () {
+      if (!this.onlineActionReady || !this.pageResourceReady) return
       this.deletePageModal = true
     },
     async changeLocale (locale: SiteLocale): Promise<void> {
+      if (!this.readerActionReady) return
+      const generation = this.headerActionGeneration
       let destinationPath = this.path
       let destinationVisibility = wikiStore.page.visibility
       try {
         const translations = await fetchPageLocaleRelations(window.fetch.bind(window), wikiStore.page.id)
+        if (generation !== this.headerActionGeneration || !this.readerActionReady) return
         const translation = translations.find(candidate => candidate.locale === locale.code)
         if (translation) {
           destinationPath = translation.path
           destinationVisibility = translation.visibility
         }
       } catch (err) {
+        if (generation !== this.headerActionGeneration) return
         console.warn(err)
       }
+      if (generation !== this.headerActionGeneration || !this.readerActionReady) return
       const scope = destinationVisibility === 'private' ? '/_private' : ''
       window.location.assign(`${scope}/${locale.code}/${destinationPath}`)
+    },
+    openAdmin (): void {
+      if (!this.onlineActionReady || !this.isAdmin) return
+      window.location.assign('/a')
+    },
+    exitAdmin (): void {
+      if (!this.onlineActionReady) return
+      window.location.assign('/')
     }
   }
 })

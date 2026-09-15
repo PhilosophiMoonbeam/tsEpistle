@@ -178,7 +178,7 @@
                         :href='pageHref(item)'
                         :data-no-wiki-navigation='isDownloadedResult(item) ? `true` : undefined'
                         :class='idx === cursor ? `highlighted` : ``'
-                        @click='closeSearch'
+                        @click='handleResultClick($event, item)'
                       )
                         template(v-slot:prepend)
                           .search-results-item-mark
@@ -216,8 +216,8 @@
                       button.search-results-preview(
                         type='button'
                         :aria-label='`Preview ${item.title}`'
-                        :disabled='!serverCapabilitiesAvailable'
-                        :title='!serverCapabilitiesAvailable ? previewUnavailableReason : undefined'
+                        :disabled='!serverCapabilitiesAvailable || !hasFreshResponse'
+                        :title='!serverCapabilitiesAvailable || !hasFreshResponse ? previewUnavailableReason : undefined'
                         @click='openPreview(item)'
                       )
                         v-icon(icon='mdi-text-box-search-outline' size='18')
@@ -280,7 +280,12 @@ import { useAgentsStore } from '../../store/agents.ts'
 import { isAgentSessionId } from '../../helpers/agent-chat-pin.ts'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
 import { openOfflineStorage } from '../../helpers/offline-storage.ts'
-import { OFFLINE_SEARCH_RESULT_LIMIT, searchOfflineDocuments, type OfflineSearchResult } from '../../helpers/offline-search.ts'
+import {
+  OFFLINE_SEARCH_RESULT_LIMIT,
+  prepareOfflineSearchCorpus,
+  searchPreparedOfflineDocumentsAsync,
+  type OfflineSearchCorpus
+} from '../../helpers/offline-search.ts'
 import type { OfflineSearchDocumentV1, OfflineSnapshotRecord } from '../../../shared/offline.ts'
 import { pwaState, retryServerConnection } from '../../helpers/pwa.ts'
 import { activeOwnedOverlayRoots, createModalFocusScope, type ModalFocusScope } from './modal-focus-scope'
@@ -317,6 +322,19 @@ const isOfflineSnapshotRecord = (record: OfflineSnapshotRecord, origin: string):
   record.pageId > 0 &&
   isOfflineLocale(record.locale)
 
+const toOfflineSearchDocument = (record: OfflineSnapshotRecord): OfflineSearchDocumentV1 => ({
+  schemaVersion: record.snapshot.schemaVersion,
+  siteId: record.siteId,
+  pageId: record.snapshot.pageId,
+  locale: record.snapshot.locale,
+  path: record.snapshot.path,
+  canonicalPath: record.snapshot.canonicalPath,
+  title: record.snapshot.title,
+  description: record.snapshot.description,
+  searchText: record.snapshot.searchText,
+  capturedAt: record.snapshot.capturedAt,
+  byteSize: record.byteSize
+})
 const isOfflineSnapshotExpired = (record: OfflineSnapshotRecord, at = Date.now()): boolean => {
   if (!record.snapshot.expiresAt) return false
   const expiry = Date.parse(record.snapshot.expiresAt)
@@ -369,7 +387,12 @@ export default defineComponent({
       searchScope: 'wiki' as SearchScope,
       offlineCorpusCount: null as number | null,
       offlineResultsTruncated: false,
+      offlineSearchCorpus: null as OfflineSearchCorpus | null,
+      offlineSearchCorpusRevision: null as number | null,
+      offlineSearchCorpusSessionGeneration: null as number | null,
+      offlineSearchCorpusExpiresAt: null as number | null,
       serverRetryPending: false,
+      searchRetryId: 0,
       cursor: -1,
       approvalId: '',
       pagination: 1,
@@ -412,13 +435,22 @@ export default defineComponent({
       set(value: boolean) { wikiStore.site.searchRestrictLocale = value }
     },
     serverUnavailable(): boolean {
-      return pwaState.connectionState === 'offline' || pwaState.connectionState === 'server-unavailable' || pwaState.serverReachable === false
+      return pwaState.connectionState !== 'online' || pwaState.serverReachable !== true || pwaState.serverHealthy !== true
     },
     serverCapabilitiesAvailable(): boolean {
-      return pwaState.connectionState === 'online' && pwaState.serverReachable === true
+      return pwaState.connectionState === 'online' &&
+        pwaState.serverReachable === true &&
+        pwaState.serverHealthy === true
+    },
+    authAuthorityReady(): boolean {
+      return wikiStore.user.authenticated &&
+        wikiStore.authRefreshPending === false &&
+        wikiStore.authRefreshSettled === true &&
+        wikiStore.authRefreshOutcome === 'authenticated' &&
+        wikiStore.offlineIdentityReady === true
     },
     offlineSearchActive(): boolean {
-      return this.searchScope === 'downloaded' || this.serverUnavailable || this.serverRetryPending
+      return this.searchScope === 'downloaded' || this.serverUnavailable
     },
     offlineCorpusSummary(): string {
       const count = this.offlineCorpusCount
@@ -435,10 +467,13 @@ export default defineComponent({
       return this.canAsk ? 'Ask Wiki for a grounded answer, or try a different term or scope.' : 'Try a different term or broader scope.'
     },
     askUnavailableReason(): string {
-      return this.serverUnavailable ? 'Ask and Agent require a live server. Retry connection to enable them.' : 'Ask and Agent are available after the server connection is verified.'
+      if (this.serverUnavailable) return 'Ask and Agent require a live server. Retry connection to enable them.'
+      if (!this.authAuthorityReady) return 'Ask and Agent require a freshly verified signed-in session. Refresh your session, then try again.'
+      return 'Ask and Agent are available after the server connection is verified.'
     },
     previewUnavailableReason(): string {
-      return 'Server preview requires a live server. Retry connection to enable it.'
+      if (!this.serverCapabilitiesAvailable) return 'Server preview requires a verified live server. Retry connection to enable it.'
+      return 'Server preview is available only for the current verified search results.'
     },
     searchRestrictPath: {
       get(): boolean { return wikiStore.site.searchRestrictPath },
@@ -455,7 +490,11 @@ export default defineComponent({
       return this.response.suggestions
     },
     canAsk(): boolean {
-      return this.serverCapabilitiesAvailable && siteConfig.agentsEnabled && wikiStore.user.authenticated && wikiStore.user.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')
+      return this.serverCapabilitiesAvailable &&
+        this.authAuthorityReady &&
+        siteConfig.agentsEnabled &&
+        Array.isArray(wikiStore.user.permissions) &&
+        wikiStore.user.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')
     },
     isAgentOpen(): boolean {
       return this.canAsk && this.searchMode === 'ask'
@@ -551,15 +590,6 @@ export default defineComponent({
     currentPageId(newPageId: number, oldPageId: number | undefined) {
       if (oldPageId !== undefined && newPageId !== oldPageId) this.agentResumeSessionId = null
     },
-    currentPageLocale(newLocale: string, oldLocale: string | undefined) {
-      if (oldLocale !== undefined && newLocale !== oldLocale) this.agentResumeSessionId = null
-    },
-    currentPagePath(newPath: string, oldPath: string | undefined) {
-      if (oldPath !== undefined && newPath !== oldPath) this.agentResumeSessionId = null
-    },
-    canAsk(allowed: boolean) {
-      if (!allowed && this.searchMode === 'ask') this.searchMode = 'search'
-    },
     results() {
       this.cursor = -1
       void this.$nextTick(this.syncSearchInputA11y)
@@ -592,11 +622,13 @@ export default defineComponent({
   },
   beforeUnmount() {
     this.searchRequestId += 1
+    this.searchRetryId += 1
     this.directPromptHandoffId += 1
     if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
     this.searchAbortController?.abort()
     this.searchAbortController = null
     this.searchTimer = null
+    this.serverRetryPending = false
     this.searchIsLoading = false
     offSearchMove(this.handleSearchMove)
     offSearchEnter(this.handleSearchEnter)
@@ -932,17 +964,31 @@ export default defineComponent({
       return `${visibilityScope}/${item.locale}/${item.path}`
     },
     openPreview(item: PageSearchRow): void {
-      if (!this.serverCapabilitiesAvailable) return
+      if (!this.serverCapabilitiesAvailable || !this.hasFreshResponse) return
       this.previewSelector = { id: Number(item.id) }
     },
+    handleResultClick(event: MouseEvent, item: SearchResultRow): void {
+      if (!isDownloadedSearchRow(item) && (!this.serverCapabilitiesAvailable || !this.hasFreshResponse)) {
+        event.preventDefault()
+        return
+      }
+      this.closeSearch()
+    },
     navigateToPage(item: SearchResultRow): void {
+      if (!isDownloadedSearchRow(item) && (!this.serverCapabilitiesAvailable || !this.hasFreshResponse)) return
       const href = this.pageHref(item)
       this.closeSearch()
       if (isDownloadedSearchRow(item)) window.location.assign(href)
       else navigateToWikiPage(href)
     },
     async loadMoreResults(): Promise<void> {
-      if (this.offlineSearchActive || !this.response.nextCursor || this.loadingMore) return
+      if (
+        this.offlineSearchActive ||
+        !this.serverCapabilitiesAvailable ||
+        !this.hasFreshResponse ||
+        !this.response.nextCursor ||
+        this.loadingMore
+      ) return
       this.loadingMore = true
       this.moreError = ''
       const requestKey = this.searchRequestKey
@@ -954,52 +1000,83 @@ export default defineComponent({
           path: this.searchRestrictPath ? wikiStore.page.path : undefined,
           paginated: true, cursor
         })
-        if (requestKey !== this.searchRequestKey || requestId !== this.searchRequestId) return
+        if (
+          requestKey !== this.searchRequestKey ||
+          requestId !== this.searchRequestId ||
+          !this.serverCapabilitiesAvailable ||
+          !this.hasFreshResponse
+        ) return
         const known = new Set(this.response.results.map(item => this.resultKey(item)))
         const added = next.results.filter(item => !known.has(this.resultKey(item)))
         const firstNewPage = Math.floor(this.response.results.length / this.perPage) + 1
         this.response = { ...next, results: [...this.response.results, ...added] }
         if (added.length) this.pagination = firstNewPage
-      } catch (value) { if (requestKey === this.searchRequestKey) this.moreError = getErrorMessage(value) }
-      finally { this.loadingMore = false }
+      } catch (value) {
+        if (
+          requestKey === this.searchRequestKey &&
+          requestId === this.searchRequestId &&
+          this.serverCapabilitiesAvailable
+        ) this.moreError = getErrorMessage(value)
+      } finally {
+        this.loadingMore = false
+      }
     },
     async retrySearch(): Promise<void> {
       const query = this.normalizedSearch
-      if (query.length < 2) return
-      if (this.serverUnavailable) {
-        const requestId = ++this.searchRequestId
-        this.searchAbortController?.abort()
-        this.searchAbortController = null
-        this.searchError = ''
-        this.responseKey = ''
-        this.response = emptySearchResponse()
-        this.cursor = -1
-        this.pagination = 1
-        this.serverRetryPending = true
-        this.searchIsLoading = true
-        try {
-          await retryServerConnection()
-        } finally {
-          if (requestId !== this.searchRequestId) return
-          const keepLocal = this.searchScope === 'downloaded' || this.serverUnavailable
-          this.serverRetryPending = false
-          if (keepLocal) this.queueSearch(query)
-        }
-        return
-      }
-      this.searchRequestId += 1
+      const retryId = ++this.searchRetryId
+      const requestId = ++this.searchRequestId
+      const serverWasUnavailable = this.serverUnavailable
+      if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
+      this.searchTimer = null
       this.searchAbortController?.abort()
       this.searchAbortController = null
       this.searchError = ''
+      this.moreError = ''
       this.responseKey = ''
       this.response = emptySearchResponse()
       this.cursor = -1
       this.pagination = 1
-      this.searchIsLoading = true
-      void this.runSearch(query, this.searchRequestKey, this.searchRequestId)
+      this.serverRetryPending = serverWasUnavailable
+      this.searchIsLoading = query.length >= 2
+
+      if (!serverWasUnavailable) {
+        if (query.length >= 2 && this.searchMode === 'search') {
+          void this.runSearch(query, this.searchRequestKey, requestId)
+        } else {
+          this.searchIsLoading = false
+        }
+        return
+      }
+
+      try {
+        await retryServerConnection()
+      } catch (error) {
+        if (retryId === this.searchRetryId && requestId === this.searchRequestId && query.length >= 2) {
+          this.searchError = getErrorMessage(error)
+          this.response = emptySearchResponse()
+          this.responseKey = ''
+        }
+      } finally {
+        if (retryId === this.searchRetryId) this.serverRetryPending = false
+      }
+
+      if (
+        retryId !== this.searchRetryId ||
+        requestId !== this.searchRequestId ||
+        this.searchMode !== 'search' ||
+        query.length < 2
+      ) {
+        if (retryId === this.searchRetryId && requestId === this.searchRequestId) this.searchIsLoading = false
+        return
+      }
+      this.queueSearch(query)
     },
     async runSearch(query: string, requestKey: string, requestId: number): Promise<void> {
-      if (requestId !== this.searchRequestId || this.searchMode !== 'search') return
+      if (
+        requestId !== this.searchRequestId ||
+        requestKey !== this.searchRequestKey ||
+        this.searchMode !== 'search'
+      ) return
       if (this.offlineSearchActive) {
         await this.runOfflineSearch(query, requestKey, requestId)
         return
@@ -1017,13 +1094,22 @@ export default defineComponent({
             path: this.searchRestrictPath ? wikiStore.page.path : undefined
           }
         )
-        if (requestId !== this.searchRequestId || controller.signal.aborted) return
+        if (
+          requestId !== this.searchRequestId ||
+          requestKey !== this.searchRequestKey ||
+          controller.signal.aborted ||
+          !this.serverCapabilitiesAvailable
+        ) return
         this.moreError = ''
         this.response = response
         this.responseKey = requestKey
         this.pagination = 1
       } catch (err) {
-        if (requestId !== this.searchRequestId || controller.signal.aborted) return
+        if (
+          requestId !== this.searchRequestId ||
+          requestKey !== this.searchRequestKey ||
+          controller.signal.aborted
+        ) return
         this.searchError = getErrorMessage(err)
         this.responseKey = ''
         this.response = emptySearchResponse()
@@ -1033,7 +1119,12 @@ export default defineComponent({
       }
     },
     async runOfflineSearch(query: string, requestKey: string, requestId: number): Promise<void> {
-      if (requestId !== this.searchRequestId || this.searchMode !== 'search' || !this.offlineSearchActive) return
+      if (
+        requestId !== this.searchRequestId ||
+        requestKey !== this.searchRequestKey ||
+        this.searchMode !== 'search' ||
+        !this.offlineSearchActive
+      ) return
       const controller = new AbortController()
       this.searchAbortController?.abort()
       this.searchAbortController = controller
@@ -1041,50 +1132,64 @@ export default defineComponent({
       try {
         const origin = window.location.origin
         storage = await openOfflineStorage()
-        const expectedSessionGeneration = await storage.currentSessionGeneration()
         if (requestId !== this.searchRequestId || requestKey !== this.searchRequestKey || controller.signal.aborted) return
-        const snapshots = await storage.listSnapshots(origin, { expectedSessionGeneration })
-        const documents: OfflineSearchDocumentV1[] = await storage.searchDocuments(origin, '', { expectedSessionGeneration })
-        if (requestId !== this.searchRequestId || requestKey !== this.searchRequestKey || controller.signal.aborted) return
+        const corpus = await storage.readSnapshotCorpus()
+        if (
+          requestId !== this.searchRequestId ||
+          requestKey !== this.searchRequestKey ||
+          controller.signal.aborted
+        ) return
 
-        const snapshotsByKey = new Map<string, OfflineSnapshotRecord>()
-        const cleanup = new Map<string, { siteId: string; pageId: number; locale: string }>()
-        for (const record of snapshots) {
-          const key = offlineRecordKey(origin, record.pageId, record.locale)
-          if (!isOfflineSnapshotRecord(record, origin) || isOfflineSnapshotExpired(record)) {
-            cleanup.set(key, { siteId: origin, pageId: record.pageId, locale: record.locale })
-            continue
-          }
-          snapshotsByKey.set(key, record)
+        const now = Date.now()
+        const activeRecords = corpus.snapshots.filter(record =>
+          isOfflineSnapshotRecord(record, origin) && !isOfflineSnapshotExpired(record, now)
+        )
+        const activeDocuments = activeRecords.map(toOfflineSearchDocument)
+        const nextExpiry = activeRecords.reduce<number | null>((soonest, record) => {
+          if (!record.snapshot.expiresAt) return soonest
+          const expiry = Date.parse(record.snapshot.expiresAt)
+          if (!Number.isFinite(expiry) || expiry <= now) return soonest
+          return soonest === null || expiry < soonest ? expiry : soonest
+        }, null)
+        const corpusRevision = corpus.corpusRevision
+        const corpusSessionGeneration = corpus.sessionGeneration
+        const cacheExpired =
+          this.offlineSearchCorpusExpiresAt !== null &&
+          this.offlineSearchCorpusExpiresAt <= now
+        if (
+          this.offlineSearchCorpus === null ||
+          this.offlineSearchCorpusRevision !== corpusRevision ||
+          this.offlineSearchCorpusSessionGeneration !== corpusSessionGeneration ||
+          cacheExpired
+        ) {
+          const prepared = await prepareOfflineSearchCorpus(activeDocuments, { signal: controller.signal })
+          if (
+            requestId !== this.searchRequestId ||
+            requestKey !== this.searchRequestKey ||
+            controller.signal.aborted
+          ) return
+          this.offlineSearchCorpus = prepared
+          this.offlineSearchCorpusRevision = corpusRevision
+          this.offlineSearchCorpusSessionGeneration = corpusSessionGeneration
+          this.offlineSearchCorpusExpiresAt = nextExpiry
         }
-        for (const document of documents) {
-          const key = offlineRecordKey(origin, document.pageId, document.locale)
-          if (document.siteId !== origin || !isOfflineLocale(document.locale) || !snapshotsByKey.has(key))
-            cleanup.set(key, { siteId: origin, pageId: document.pageId, locale: document.locale })
-        }
-        for (const selector of cleanup.values()) {
-          if (requestId !== this.searchRequestId || requestKey !== this.searchRequestKey || controller.signal.aborted) return
-          await storage.removeSnapshot(selector.siteId, selector.pageId, selector.locale, { expectedSessionGeneration })
-        }
-        const currentSessionGeneration = await storage.currentSessionGeneration()
-        if (currentSessionGeneration !== expectedSessionGeneration) throw new Error('Downloaded search belongs to an obsolete session.')
-        if (requestId !== this.searchRequestId || requestKey !== this.searchRequestKey || controller.signal.aborted) return
-        const activeDocuments = documents.filter(document => {
-          if (document.siteId !== origin || !isOfflineLocale(document.locale)) return false
-          const record = snapshotsByKey.get(offlineRecordKey(origin, document.pageId, document.locale))
-          return record !== undefined && !isOfflineSnapshotExpired(record)
-        })
-        const ranked = searchOfflineDocuments(activeDocuments, query, {
+        const preparedCorpus = this.offlineSearchCorpus
+        if (!preparedCorpus) throw new Error('Downloaded search corpus is unavailable.')
+        const ranked = await searchPreparedOfflineDocumentsAsync(preparedCorpus, query, {
           limit: OFFLINE_SEARCH_RESULT_LIMIT,
           signal: controller.signal
         })
-        if (requestId !== this.searchRequestId || requestKey !== this.searchRequestKey || controller.signal.aborted) return
+        if (
+          requestId !== this.searchRequestId ||
+          requestKey !== this.searchRequestKey ||
+          controller.signal.aborted
+        ) return
         this.offlineCorpusCount = activeDocuments.length
-        this.offlineResultsTruncated = activeDocuments.length > OFFLINE_SEARCH_RESULT_LIMIT
+        this.offlineResultsTruncated = ranked.hasMore
         this.moreError = ''
         this.searchError = ''
         this.response = {
-          results: ranked.map(({ document, score }: OfflineSearchResult): DownloadedSearchRow => ({
+          results: ranked.results.map(({ document, score }): DownloadedSearchRow => ({
             id: document.pageId,
             title: document.title,
             description: document.description,
@@ -1105,7 +1210,11 @@ export default defineComponent({
         this.responseKey = requestKey
         this.pagination = 1
       } catch (error) {
-        if (requestId !== this.searchRequestId || controller.signal.aborted) return
+        if (
+          requestId !== this.searchRequestId ||
+          requestKey !== this.searchRequestKey ||
+          controller.signal.aborted
+        ) return
         this.searchError = getErrorMessage(error)
         this.responseKey = ''
         this.response = emptySearchResponse()
@@ -1115,7 +1224,7 @@ export default defineComponent({
         if (requestId === this.searchRequestId) this.searchIsLoading = false
       }
     },
-    }
+  }
 })
 </script>
 

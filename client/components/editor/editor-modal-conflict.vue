@@ -109,7 +109,7 @@ import { TextEditor, type TextEditorHandle } from './common/text-editor'
 /* global siteConfig */
 
 
-type ConflictLatest = Pick<PageConflictLatest, 'title' | 'description' | 'updatedAt' | 'authorName' | 'content'>
+type ConflictLatest = Pick<PageConflictLatest, 'title' | 'description' | 'updatedAt' | 'authorName' | 'content' | 'sourceRevision'>
 export default defineComponent({
   data() {
     return {
@@ -119,7 +119,8 @@ export default defineComponent({
         description: '',
         updatedAt: '',
         authorName: '',
-        content: ''
+        content: '',
+        sourceRevision: ''
       } as ConflictLatest,
       latestLoaded: false,
       isLoading: true,
@@ -201,6 +202,7 @@ export default defineComponent({
     overwriteAndClose() {
       if (!this.latestLoaded) return
       this.checkoutDateActive = this.latest.updatedAt
+      wikiStore.page.sourceRevision = this.latest.sourceRevision
       emitEditorConflictResolved()
       this.finishClose()
     },

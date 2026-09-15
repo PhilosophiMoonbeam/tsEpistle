@@ -93,13 +93,20 @@
           strong {{ offlineSaveNotice }}
         v-alert.editor-draft-notice(
           v-if='offlineDraftError || offlineDraftCandidate || offlineDraftCandidates.length > 0 || offlineSubmissionCandidates.length > 0 || offlineDraftStatusText'
-          type='info'
+          :type='offlineDraftStatus === `locked` || offlineDraftStatus === `unavailable` ? `warning` : `info`'
           variant='tonal'
           role='status'
           aria-live='polite'
         )
           .text-body-medium(v-if='offlineDraftError') {{ offlineDraftError }}
           .text-body-medium(v-else) {{ offlineDraftStatusText }}
+          .editor-draft-recovery-actions(v-if='offlineDraftStatus === `locked` || !offlineDraftCoordinator')
+            v-btn(
+              size='small'
+              variant='tonal'
+              color='primary'
+              @click='reloadEditor'
+            ) Reload editor
           .editor-draft-review-actions(v-if='offlineDraftCandidate')
             v-btn(
               size='small'
@@ -167,6 +174,14 @@
               :disabled='offlineDraftBusy'
               @click='resolveOfflineSubmission(`continue`)'
             ) Keep as new draft
+      component(
+        v-if='currentEditor'
+        :key='editorInstanceKey'
+        :save='save'
+        @collaboration-state='handleCollaborationState'
+        @editor-adapter='handleEditorAdapter'
+        @editor-adapter-clear='handleEditorAdapterClear'
+      )
       editor-modal-properties(v-if='dialogProps', v-model='dialogProps')
       editor-modal-unsaved(
         v-if='dialogUnsaved'
@@ -220,7 +235,6 @@
     loader(v-model='dialogProgress', :title='$t(`editor:save.processing`)', :subtitle='$t(`editor:save.pleaseWait`)')
       template(v-slot:illustration)
         login-success-animation
-    notify
 </template>
 
 <script lang='ts'>
@@ -228,8 +242,9 @@ import { defineAsyncComponent, defineComponent, type PropType } from 'vue'
 import { useHotkey } from 'vuetify'
 import { createAsyncComponent } from './common/async-component-state.vue'
 import _ from 'lodash'
-import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, updatePage, type PageDetails } from '../helpers/pages-api'
+import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, updatePage, type PageDetails, type PageWriteInput } from '../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
+import { notifyReloadSafetyChanged, pwaState, setReloadSafetyProvider } from '../helpers/pwa.ts'
 import { Base64 } from 'js-base64'
 import StatusIndicator from '@/components/common/status-indicator.vue'
 import { emitEditorSaveConflict, onEditorConflictReset, offEditorConflictReset } from '../helpers/editor-conflict-events'
@@ -237,15 +252,17 @@ import { getErrorMessage } from '../helpers/root-ui-store'
 import { decodeBase64Json } from '../helpers/base64'
 import { getEditorComponentName } from '../helpers/editor-key.ts'
 import { normalizeAvailableEditors, type PageEditorKey } from '../../shared/page-editors.ts'
-import { pwaState, setReloadSafetyProvider } from '../helpers/pwa.ts'
-import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../helpers/offline-session.ts'
 import {
   OfflineEditorDraftCoordinator,
   createOfflineDraftIdentity,
   type OfflineDraftRecovery,
-  type OfflineDraftSubmission,
-  type OfflineDraftSubmissionRecovery
+  type OfflineDraftSubmissionRecovery,
+  type OfflineEditorDraftIdentity,
+  type OfflineEditorDraftValues,
+  type PreparedOfflineSubmission
 } from '../helpers/offline-editor-drafts.ts'
+import { OFFLINE_SESSION_INVALIDATED_EVENT, requestOfflineIdentityBoundary } from '../helpers/offline-session.ts'
+import { bindEditorFlushSignals, type EditorAdapter, type EditorAdapterCapture, type EditorAdapterSafety } from './editor/common/editor-adapter'
 import type { OfflineDraftPayloadV1, OfflineDraftState } from '../../shared/offline.ts'
 import {
   PageBrandingAssignmentSchema,
@@ -319,6 +336,33 @@ function normalizeEditorBrandingView (value: unknown, assignment: PageBrandingAs
   if (assignment === null || value === null || value === undefined) return null
   const result = PageBrandingViewSchema.safeParse(value)
   return result.success && result.data.assetId === assignment.assetId ? result.data : null
+}
+type EditorSaveCapture = {
+  readonly pageInput: PageWriteInput
+  readonly editVersion: number
+  readonly identity: OfflineEditorDraftIdentity
+  readonly content: string
+  readonly title: string
+  readonly description: string
+  readonly locale: string
+  readonly path: string
+  readonly tags: string[]
+  readonly isPublished: boolean
+  readonly isSearchable: boolean
+  readonly visibility: 'public' | 'private'
+  readonly publishStartDate: string
+  readonly publishEndDate: string
+  readonly scriptCss: string
+  readonly scriptJs: string
+  readonly brandingAssignment: PageBrandingAssignment | null
+  readonly okf: unknown
+}
+
+const freezePageInput = (input: PageWriteInput): PageWriteInput => {
+  Object.freeze(input.tags)
+  if (input.okfMetadata !== undefined) Object.freeze(input.okfMetadata)
+  if (input.branding !== undefined && input.branding !== null) Object.freeze(input.branding)
+  return Object.freeze(input) as PageWriteInput
 }
 
 
@@ -457,6 +501,22 @@ export default defineComponent({
   data() {
     return {
       isSaving: false,
+      editorAdapter: null as EditorAdapter | null,
+      editorAdapterUnsubscribe: null as (() => void) | null,
+      editorFlushUnsubscribe: null as (() => void) | null,
+      editorAdapterSafety: {
+        ready: false,
+        editVersion: 0,
+        nonPersisted: true,
+        mergeDirty: false,
+        collaborationBacklog: Number.MAX_SAFE_INTEGER,
+        revision: 'uninitialized'
+      } as EditorAdapterSafety,
+      submissionCaptureValues: null as OfflineEditorDraftValues | null,
+      submissionCaptureIdentity: null as OfflineEditorDraftIdentity | null,
+      safetyRevision: 0,
+      lifecycleGeneration: 0,
+      editorInstanceKey: 0,
       discardPending: false,
       collaborationActive: false,
       collaborationGeneration: null as number | null,
@@ -530,10 +590,16 @@ export default defineComponent({
     authRefreshPending(): boolean {
       return wikiStore.authRefreshPending || !wikiStore.authRefreshSettled
     },
+    warmAuthenticatedActor(): boolean {
+      return this.isAuthenticated && Number.isSafeInteger(this.accountId) && this.accountId > 0
+    },
+    offlineDraftMutationBlocked(): boolean {
+      return this.offlineDraftStatus === 'locked' || this.offlineDraftStatus === 'unavailable' || !this.offlineDraftCoordinator
+    },
     offlineMutationBlocked(): boolean {
       return (
-        this.authRefreshPending ||
-        !wikiStore.offlineIdentityReady ||
+        this.offlineDraftMutationBlocked ||
+        ((this.authRefreshPending || !wikiStore.offlineIdentityReady) && !this.warmAuthenticatedActor) ||
         this.offlineSubmissionCandidates.length > 0 ||
         this.offlineDraftStatus === 'publishing' ||
         this.offlineDraftStatus === 'outcome-unknown'
@@ -557,7 +623,9 @@ export default defineComponent({
       if (this.offlineDraftStatus === 'needs-review') return 'Needs review before publishing.'
       if (this.offlineDraftStatus === 'publishing') return 'Publishing…'
       if (this.offlineDraftStatus === 'conflict') return 'Conflict needs resolution before publishing.'
-      if (this.offlineDraftStatus === 'locked') return 'Local draft locked until this account is verified online.'
+      if (this.offlineDraftStatus === 'locked') return 'Local draft recovery is locked. Verify this account online, then reload the editor to recover encrypted drafts.'
+      if (this.offlineDraftStatus === 'unavailable') return 'The page may have been deleted or access may have been denied. Publishing and replay are blocked; local recovery and deletion remain available.'
+      if (!this.offlineDraftCoordinator) return 'Offline draft recovery is unavailable. Reload the editor before saving.'
       if (this.offlineDraftStatus === 'outcome-unknown') return 'Outcome unknown. Review the submission before trying again.'
       return ''
     },
@@ -589,7 +657,43 @@ export default defineComponent({
         !_.isEqual(this.savedState.brandingAssignment, wikiStore.page.brandingAssignment) ||
         !_.isEqual(this.savedState.okf, wikiStore.page.okf)
       )
-    }
+    },
+    reloadSafetyInputs(): readonly unknown[] {
+      return [
+        this.isDirty,
+        wikiStore.editor.content,
+        wikiStore.page.title,
+        wikiStore.page.description,
+        wikiStore.page.locale,
+        wikiStore.page.path,
+        wikiStore.page.tags,
+        wikiStore.page.isPublished,
+        wikiStore.page.isSearchable,
+        wikiStore.page.visibility,
+        wikiStore.page.publishStartDate,
+        wikiStore.page.publishEndDate,
+        wikiStore.page.scriptCss,
+        wikiStore.page.scriptJs,
+        wikiStore.page.brandingAssignment,
+        wikiStore.page.brandingView,
+        wikiStore.page.okf,
+        wikiStore.page.id,
+        wikiStore.page.sourceRevision,
+        this.checkoutDateActive,
+        this.currentEditor,
+        this.activeModal,
+        this.isConflict,
+        this.isSaving,
+        this.offlineDraftBusy,
+        this.offlineDraftStatus,
+        this.offlineDraftError,
+        this.collaborationActive,
+        this.collaborationGeneration,
+        this.collaborationDiscarded,
+        this.offlineSubmissionCandidates,
+        this.offlineDraftCandidates
+      ]
+    },
   },
   watch: {
     currentEditor(newValue: string) {
@@ -604,8 +708,14 @@ export default defineComponent({
     currentStyling(newValue: string) {
       this.injectCustomCss(newValue)
     },
+    reloadSafetyInputs: {
+      deep: true,
+      handler() {
+        this.notifySafetyChanged()
+      }
+    },
     offlineDraftSource() {
-      if (this.isDirty) this.offlineDraftCoordinator?.scheduleCapture()
+      if (this.isDirty) this.offlineDraftCoordinator?.scheduleCapture(this.editorAdapterSafety.editVersion)
     },
     offlineConnectionState(newValue: string, oldValue: string) {
       if (newValue === 'online' && oldValue !== 'online') void this.offlineDraftCoordinator?.markReconnected()
@@ -624,6 +734,10 @@ export default defineComponent({
       writeOfflineCreateIdentity(this.offlineCreateIdentity)
     }
     this.setSaveHotkeyHandler(() => {
+      if (this.offlineDraftMutationBlocked) {
+        this.notifyOfflineMutationBlocked()
+        return
+      }
       void this.save()
     })
     wikiStore.page.id = this.pageId
@@ -672,16 +786,16 @@ export default defineComponent({
     } else {
       this.currentEditor = getEditorComponentName(this.initEditor || 'markdown')
     }
-
     this.setupOfflineDraftCoordinator()
     setReloadSafetyProvider(() => {
-      const coordinator = this.offlineDraftCoordinator
-      return (
-        !this.isSaving &&
-        coordinator?.hasInFlightWork !== true &&
-        (!this.isDirty || coordinator?.hasCommittedCurrentValues === true)
-      )
+      const snapshot = this.offlineDraftCoordinator?.reloadSafetySnapshot
+      return snapshot ?? {
+        safe: false,
+        revision: `editor:${this.safetyRevision}`,
+        actorEpoch: wikiStore.offlineIdentityEpoch
+      }
     })
+    this.notifySafetyChanged()
     void this.initializeOfflineDrafts()
 
     window.addEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, this.handleOfflineSessionInvalidated)
@@ -696,6 +810,7 @@ export default defineComponent({
   },
 
   beforeUnmount() {
+    this.lifecycleGeneration += 1
     this.setSaveHotkeyHandler(null)
     offEditorConflictReset(this.handleEditorConflictReset)
     if (this.conflictTimer !== null) window.clearInterval(this.conflictTimer)
@@ -704,12 +819,149 @@ export default defineComponent({
     if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
     window.removeEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, this.handleOfflineSessionInvalidated)
     window.removeEventListener('beforeunload', this.handleBeforeUnload)
+    this.editorFlushUnsubscribe?.()
+    this.editorFlushUnsubscribe = null
+    this.editorAdapterUnsubscribe?.()
+    this.editorAdapterUnsubscribe = null
     setReloadSafetyProvider(null)
     this.offlineDraftCoordinator?.destroy()
     this.offlineDraftCoordinator = null
     removeEditorPageCss()
   },
   methods: {
+    isMetadataDirty(): boolean {
+      return (
+        this.savedState.locale !== wikiStore.page.locale ||
+        this.savedState.path !== wikiStore.page.path ||
+        this.savedState.title !== wikiStore.page.title ||
+        this.savedState.description !== wikiStore.page.description ||
+        !_.isEqual(this.savedState.tags, wikiStore.page.tags) ||
+        this.savedState.isPublished !== wikiStore.page.isPublished ||
+        this.savedState.isSearchable !== wikiStore.page.isSearchable ||
+        this.savedState.visibility !== wikiStore.page.visibility ||
+        this.savedState.publishStartDate !== wikiStore.page.publishStartDate ||
+        this.savedState.publishEndDate !== wikiStore.page.publishEndDate ||
+        this.savedState.scriptCss !== wikiStore.page.scriptCss ||
+        this.savedState.scriptJs !== wikiStore.page.scriptJs ||
+        !_.isEqual(this.savedState.brandingAssignment, wikiStore.page.brandingAssignment) ||
+        !_.isEqual(this.savedState.brandingView, wikiStore.page.brandingView) ||
+        !_.isEqual(this.savedState.okf, wikiStore.page.okf)
+      )
+    },
+    notifySafetyChanged() {
+      this.safetyRevision += 1
+      notifyReloadSafetyChanged()
+    },
+    offlineMutationBlockMessage(): string {
+      if (this.offlineDraftStatus === 'locked') {
+        return this.offlineDraftError || 'Offline draft recovery is locked. Verify this account online, then reload the editor before saving.'
+      }
+      if (this.offlineDraftStatus === 'unavailable') {
+        return 'Publishing is unavailable because the page may have been deleted or access may have been denied. Local recovery and deletion remain available.'
+      }
+      if (!this.offlineDraftCoordinator) return 'Offline draft recovery is unavailable. Reload the editor before saving.'
+      return 'Offline editor recovery is not ready. Reload the editor before saving.'
+    },
+    notifyOfflineMutationBlocked(): string {
+      const message = this.offlineMutationBlockMessage()
+      if (!this.offlineDraftError) this.offlineDraftError = message
+      wikiStore.showNotification({
+        message,
+        style: 'warning',
+        icon: 'warning'
+      })
+      return message
+    },
+    reloadEditor() {
+      if (typeof window.location.reload === 'function') window.location.reload()
+    },
+    isCurrentActorSession(expectedAuthenticated: boolean, expectedAccountId: number, expectedOfflineIdentityEpoch: number, expectedLifecycleGeneration?: number): boolean {
+      return (
+        this.isAuthenticated === expectedAuthenticated &&
+        this.accountId === expectedAccountId &&
+        wikiStore.offlineIdentityEpoch === expectedOfflineIdentityEpoch &&
+        (expectedLifecycleGeneration === undefined || this.lifecycleGeneration === expectedLifecycleGeneration)
+      )
+    },
+    assertCurrentActorSession(expectedAuthenticated: boolean, expectedAccountId: number, expectedOfflineIdentityEpoch: number, expectedLifecycleGeneration?: number): void {
+      if (!this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, expectedLifecycleGeneration)) {
+        throw new Error('Your account session changed while saving. Retry with the current account.')
+      }
+    },
+    getReloadSafetyFacts() {
+      const adapter = this.editorAdapterSafety
+      return {
+        dirtyMetadata: this.isMetadataDirty(),
+        mergeState: !adapter.ready || adapter.nonPersisted || adapter.mergeDirty || this.activeModal !== '' || this.dialogUnsaved || this.dialogProps || this.dialogEditorSelector,
+        collaborationBacklog: Math.max(adapter.collaborationBacklog, this.collaborationActive ? 1 : 0),
+        routeIdentity: JSON.stringify({
+          mode: this.mode,
+          pageId: wikiStore.page.id,
+          locale: wikiStore.page.locale,
+          path: wikiStore.page.path,
+          sourceRevision: wikiStore.page.sourceRevision,
+          checkoutDate: this.checkoutDateActive,
+          accountId: this.accountId,
+          authenticated: this.isAuthenticated,
+          adapterRevision: adapter.revision,
+          editVersion: adapter.editVersion,
+          offlineIdentityEpoch: wikiStore.offlineIdentityEpoch,
+          nonPersisted: adapter.nonPersisted,
+          mergeDirty: adapter.mergeDirty,
+          collaborationGeneration: this.collaborationGeneration,
+          collaborationDiscarded: this.collaborationDiscarded,
+          submissionCandidates: this.offlineSubmissionCandidates.map(candidate => candidate.submission.recordId),
+          draftCandidates: this.offlineDraftCandidates.map(candidate => candidate.recordId),
+          offlineDraftStatus: this.offlineDraftStatus,
+          offlineDraftError: this.offlineDraftError,
+          isSaving: this.isSaving,
+          dialogUnsaved: this.dialogUnsaved,
+          dialogProps: this.dialogProps,
+          dialogEditorSelector: this.dialogEditorSelector,
+          offlineDraftBusy: this.offlineDraftBusy,
+          safetyRevision: this.safetyRevision
+        })
+      }
+    },
+    handleEditorAdapter(adapter: EditorAdapter) {
+      this.editorFlushUnsubscribe?.()
+      this.editorFlushUnsubscribe = bindEditorFlushSignals(adapter)
+      this.editorAdapterUnsubscribe?.()
+      this.editorAdapter = adapter
+      this.editorAdapterSafety = adapter.snapshot()
+      this.editorAdapterUnsubscribe = adapter.onState(safety => {
+        this.editorAdapterSafety = safety
+        this.notifySafetyChanged()
+      })
+    },
+    handleEditorAdapterClear(adapter?: EditorAdapter) {
+      if (adapter && adapter !== this.editorAdapter) return
+      this.editorFlushUnsubscribe?.()
+      this.editorFlushUnsubscribe = null
+      this.editorAdapterUnsubscribe?.()
+      this.editorAdapterUnsubscribe = null
+      this.editorAdapter = null
+      this.editorAdapterSafety = {
+        ready: false,
+        editVersion: 0,
+        nonPersisted: true,
+        mergeDirty: false,
+        collaborationBacklog: Number.MAX_SAFE_INTEGER,
+        revision: 'uninitialized'
+      }
+      this.notifySafetyChanged()
+    },
+    captureEditorState(): EditorAdapterCapture {
+      const adapter = this.editorAdapter
+      if (adapter && !this.editorAdapterSafety.ready) throw new Error('The editor is still initializing. Retry in a moment.')
+      const captured = adapter?.capture() ?? {
+        text: wikiStore.editor.content,
+        editVersion: this.editorAdapterSafety.editVersion
+      }
+      wikiStore.editor.content = captured.text
+      this.editorAdapterSafety = adapter?.snapshot() ?? this.editorAdapterSafety
+      return Object.freeze({ text: captured.text, editVersion: captured.editVersion })
+    },
     setupOfflineDraftCoordinator() {
       if (this.offlineDraftCoordinator) return
       if (this.mode === 'create' && !this.offlineCreateIdentity) {
@@ -720,18 +972,23 @@ export default defineComponent({
         fetchImpl: window.fetch.bind(window),
         isAuthenticated: () => wikiStore.user.authenticated,
         accountId: () => wikiStore.user.id,
+        getActorEpoch: () => wikiStore.offlineIdentityEpoch,
         isOfflineBoundaryReady: () =>
-          wikiStore.authRefreshSettled &&
-          wikiStore.authRefreshOutcome === 'authenticated' &&
-          wikiStore.offlineIdentityReady,
-        getIdentity: () => this.getOfflineDraftIdentity(),
-        getValues: () => ({
+          (wikiStore.authRefreshPending || !wikiStore.authRefreshSettled)
+            ? this.warmAuthenticatedActor && wikiStore.offlineIdentityReady
+            : (wikiStore.authRefreshOutcome === 'authenticated' || wikiStore.authRefreshOutcome === 'unavailable') &&
+              wikiStore.offlineIdentityReady,
+        getIdentity: () => this.submissionCaptureIdentity ?? this.getOfflineDraftIdentity(),
+        getValues: () => this.submissionCaptureValues ?? ({
           title: wikiStore.page.title,
           description: wikiStore.page.description,
           content: wikiStore.editor.content
         }),
-        applyDraft: payload => this.applyOfflineDraft(payload),
+        detachedApply: payload => this.applyOfflineDraft(payload),
+        detachedReplace: payload => this.applyOfflineDraft(payload),
+        detachedClear: () => this.editorAdapter?.clear(),
         isDirty: () => this.isDirty,
+        getReloadSafetyFacts: () => this.getReloadSafetyFacts(),
         isOnline: () => pwaState.connectionState === 'online',
         onChange: view => {
           if (this.offlineDraftCoordinator !== coordinator) return
@@ -740,7 +997,12 @@ export default defineComponent({
           this.offlineDraftCandidates = [...view.candidates]
           this.offlineSubmissionCandidates = [...view.submissionCandidates]
           this.offlineDraftError = view.error ?? ''
-        }
+          if (view.committed && coordinator.hasCommittedCurrentValues) {
+            this.editorAdapter?.markPersisted?.(this.editorAdapterSafety.editVersion)
+          }
+          this.notifySafetyChanged()
+        },
+        onSafetyChange: () => this.notifySafetyChanged()
       })
       this.offlineDraftCoordinator = coordinator
     },
@@ -772,35 +1034,57 @@ export default defineComponent({
       }
     },
     applyOfflineDraft(payload: OfflineDraftPayloadV1) {
+      if (!this.offlineDraftCoordinator || this.offlineDraftStatus === 'locked' || !this.isAuthenticated) return
+      this.editorAdapter?.replaceText(payload.content, { detached: true })
       wikiStore.page.title = payload.title
       wikiStore.page.description = payload.description
       wikiStore.editor.content = payload.content
+      this.notifySafetyChanged()
     },
     async initializeOfflineDrafts() {
-      const coordinator = this.offlineDraftCoordinator
+      let coordinator = this.offlineDraftCoordinator
+      const lifecycleGeneration = this.lifecycleGeneration
+      if (!coordinator) {
+        if (!this.isAuthenticated || this.authRefreshPending || !wikiStore.authRefreshSettled || !wikiStore.offlineIdentityReady) return
+        this.setupOfflineDraftCoordinator()
+        coordinator = this.offlineDraftCoordinator
+      }
       if (!coordinator || !coordinator.isAuthenticatedUser()) return
+      const expectedAuthenticated = this.isAuthenticated
+      const expectedAccountId = this.accountId
+      const expectedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
       await coordinator.initialize()
+      if (
+        this.lifecycleGeneration === lifecycleGeneration &&
+        this.offlineDraftCoordinator === coordinator &&
+        this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)
+      )
+        this.notifySafetyChanged()
     },
     async restoreOfflineDraft(recordId?: string) {
       if (this.offlineDraftBusy || !this.offlineDraftCoordinator) return
       this.offlineDraftBusy = true
       try {
-        await this.offlineDraftCoordinator.restoreCandidate(recordId)
+        await this.offlineDraftCoordinator.applyDetachedCandidate(recordId)
       } finally {
         this.offlineDraftBusy = false
+        this.notifySafetyChanged()
       }
     },
     async discardOfflineDraft(recordId?: string) {
       if (this.offlineDraftBusy || !this.offlineDraftCoordinator) return
       this.offlineDraftBusy = true
       try {
-        await this.offlineDraftCoordinator.discardCandidate(recordId)
+        await this.offlineDraftCoordinator.clearDetachedCandidate(recordId)
       } finally {
         this.offlineDraftBusy = false
+        this.notifySafetyChanged()
       }
     },
     async inspectOfflineSubmission(recordId: string) {
       if (this.offlineDraftBusy) return
+      const coordinator = this.offlineDraftCoordinator
+      const lifecycleGeneration = this.lifecycleGeneration
       const candidate = this.offlineSubmissionCandidates.find(item => item.submission.recordId === recordId)
       if (!candidate) return
       this.offlineDraftBusy = true
@@ -810,55 +1094,166 @@ export default defineComponent({
           return
         }
         const page = await fetchPage(window.fetch.bind(window), candidate.payload.pageId, 'The authoritative page could not be checked.')
+        if (
+          this.lifecycleGeneration !== lifecycleGeneration ||
+          this.offlineDraftCoordinator !== coordinator ||
+          !this.offlineSubmissionCandidates.some(item => item.submission.recordId === recordId)
+        )
+          return
         this.offlineReconcilePrompt = { recordId, kind: 'update', revision: page.sourceRevision }
       } catch (error) {
-        wikiStore.showNotification({ message: getErrorMessage(error), style: 'error', icon: 'warning' })
+        if (this.lifecycleGeneration === lifecycleGeneration && this.offlineDraftCoordinator === coordinator) {
+          wikiStore.showNotification({ message: getErrorMessage(error), style: 'error', icon: 'warning' })
+        }
       } finally {
-        this.offlineDraftBusy = false
+        if (this.lifecycleGeneration === lifecycleGeneration) this.offlineDraftBusy = false
       }
     },
     async deleteOfflineSubmission(recordId: string) {
       if (this.offlineDraftBusy || !this.offlineDraftCoordinator) return
       this.offlineDraftBusy = true
       try {
-        if (await this.offlineDraftCoordinator.deleteSubmission(recordId)) {
+        if (await this.offlineDraftCoordinator.clearDetachedCandidate(recordId)) {
           if (this.offlineReconcilePrompt?.recordId === recordId) this.offlineReconcilePrompt = null
           if (this.mode === 'create' && this.offlineSubmissionCandidates.length <= 1) clearOfflineCreateIdentity()
         }
       } finally {
         this.offlineDraftBusy = false
+        this.notifySafetyChanged()
       }
     },
     async resolveOfflineSubmission(resolution: 'discard' | 'continue') {
       const prompt = this.offlineReconcilePrompt
       if (!prompt || this.offlineDraftBusy || !this.offlineDraftCoordinator) return
+      const candidate = this.offlineSubmissionCandidates.find(item => item.submission.recordId === prompt.recordId)
+      if (!candidate) return
       this.offlineDraftBusy = true
       try {
-        if (await this.offlineDraftCoordinator.resolveSubmission(prompt.recordId, resolution)) {
+        const resolved = resolution === 'discard'
+          ? await this.offlineDraftCoordinator.clearDetachedCandidate(prompt.recordId)
+          : await this.offlineDraftCoordinator.replaceDetachedCandidate(candidate.payload, prompt.recordId)
+        if (resolved) {
           this.offlineReconcilePrompt = null
           if (resolution === 'discard' && prompt.kind === 'create') clearOfflineCreateIdentity()
         }
       } finally {
         this.offlineDraftBusy = false
+        this.notifySafetyChanged()
       }
     },
     handleOfflineSessionInvalidated() {
-      this.offlineDraftCoordinator?.lock()
-      this.restoreCurrentSavedState()
+      this.lifecycleGeneration += 1
+      if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
+      if (this.customCssTimer !== null) window.clearTimeout(this.customCssTimer)
+      if (this.modalTimer !== null) window.clearTimeout(this.modalTimer)
+      this.navigationTimer = null
+      this.customCssTimer = null
+      this.modalTimer = null
+
+      const adapter = this.editorAdapter
+      const coordinator = this.offlineDraftCoordinator
+      if (coordinator) {
+        try {
+          coordinator.lock()
+        } catch {
+          adapter?.clear()
+        } finally {
+          coordinator.destroy()
+          this.offlineDraftCoordinator = null
+        }
+      } else {
+        adapter?.clear()
+      }
+      if (adapter) {
+        this.handleEditorAdapterClear(adapter)
+        adapter.destroy()
+      }
+      this.editorInstanceKey += 1
+
+      const emptyOkf: typeof wikiStore.page.okf = {
+        authority: { state: 'invalid', metadata: null, trust: null },
+        projection: { state: 'pending', value: null }
+      }
+      wikiStore.editor.content = ''
+      wikiStore.editor.id = 0
+      wikiStore.editor.mode = 'create'
+      wikiStore.editor.activeModal = ''
+      wikiStore.editor.activeModalData = null
+      wikiStore.editor.checkoutDateActive = ''
+      wikiStore.page.id = 0
+      wikiStore.page.description = ''
+      wikiStore.page.isPublished = false
+      wikiStore.page.isSearchable = true
+      wikiStore.page.visibility = 'public'
+      wikiStore.page.locale = 'en'
+      wikiStore.page.path = ''
+      wikiStore.page.publishEndDate = ''
+      wikiStore.page.publishStartDate = ''
+      wikiStore.page.tags = []
+      wikiStore.page.title = ''
+      wikiStore.page.scriptCss = ''
+      wikiStore.page.scriptJs = ''
+      wikiStore.page.sourceRevision = ''
+      wikiStore.page.brandingAssignment = null
+      wikiStore.page.brandingView = null
+      this.offlineDraftStatus = 'locked'
+      this.offlineDraftError = 'Your offline editor session was locked. Unsaved plaintext was cleared. Verify this account online, then reload the editor to recover any encrypted draft.'
+      wikiStore.page.okfLoading = false
+      this.savedState = {
+        content: '',
+        description: '',
+        isPublished: false,
+        isSearchable: true,
+        visibility: 'public',
+        locale: 'en',
+        path: '',
+        publishEndDate: '',
+        publishStartDate: '',
+        tags: [],
+        title: '',
+        scriptCss: '',
+        scriptJs: '',
+        brandingAssignment: null,
+        brandingView: null,
+        okf: _.cloneDeep(emptyOkf)
+      }
+      this.submissionCaptureValues = null
+      this.submissionCaptureIdentity = null
+      this.offlineCreateIdentity = null
+      clearOfflineCreateIdentity()
       this.offlineDraftCandidate = null
       this.offlineDraftCandidates = []
       this.offlineSubmissionCandidates = []
       this.offlineReconcilePrompt = null
+      this.offlineDraftStatus = 'locked'
       this.offlineDraftError = 'Your offline editor session was locked. Unsaved plaintext was cleared.'
+      this.offlineDraftBusy = false
+      this.dialogUnsaved = false
+      this.dialogProgress = false
+      this.dialogProps = false
+      this.dialogEditorSelector = false
+      this.activeModal = ''
+      this.isConflict = false
+      this.collaborationActive = false
+      this.collaborationGeneration = null
+      this.collaborationDiscarded = false
+      this.isSaving = false
+      this.conflictCheckPending = false
+      this.discardPending = false
+      removeEditorPageCss()
+      this.notifySafetyChanged()
     },
     handleCollaborationState(state: { active: boolean, discarded: boolean, generation: number | null }) {
       if (this.collaborationDiscarded) return
       this.collaborationActive = state.active
       this.collaborationDiscarded = state.discarded
       this.collaborationGeneration = state.generation
+      this.notifySafetyChanged()
     },
     handleBeforeUnload(event: BeforeUnloadEvent) {
-      if (!this.exitConfirmed && (this.isDirty || this.offlineDraftCoordinator?.hasInFlightWork === true)) {
+      const snapshot = this.offlineDraftCoordinator?.reloadSafetySnapshot
+      const safe = snapshot?.safe === true && !this.isSaving && !this.editorAdapterSafety.nonPersisted
+      if (!this.exitConfirmed && !safe) {
         event.preventDefault()
         event.returnValue = true
       }
@@ -891,54 +1286,111 @@ export default defineComponent({
     },
     async hydratePage() {
       if (this.mode === 'create' || this.pageId <= 0 || wikiStore.page.okfLoading) return
-      const expectedBrandingAssignment = wikiStore.page.brandingAssignment
+      const lifecycleGeneration = this.lifecycleGeneration
+      const expectedPageId = this.pageId
+      const coordinator = this.offlineDraftCoordinator
+      const expectedAccountId = this.accountId
+      const expectedAuthenticated = this.isAuthenticated
+      const expectedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
+      const expectedBrandingAssignment = _.cloneDeep(wikiStore.page.brandingAssignment)
       wikiStore.page.okfLoading = true
       wikiStore.page.okfError = null
       try {
-        const page = await fetchPage(window.fetch.bind(window), this.pageId, this.$t('common:error.unexpected'))
-        if (this.isDirty) return
+        if (!this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)) return
+        const page = await fetchPage(window.fetch.bind(window), expectedPageId, this.$t('common:error.unexpected'))
+        if (
+          this.lifecycleGeneration !== lifecycleGeneration ||
+          this.offlineDraftCoordinator !== coordinator ||
+          this.pageId !== expectedPageId ||
+          !this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration) ||
+          this.mode === 'create' ||
+          this.isDirty
+        )
+          return
         this.applyHydratedBranding(page, expectedBrandingAssignment)
         wikiStore.page.okf = page.okf
         wikiStore.page.sourceRevision = page.sourceRevision
         wikiStore.page.isSearchable = page.isSearchable !== false
         this.setCurrentSavedState()
       } catch (err) {
-        wikiStore.page.okfError = getErrorMessage(err)
+        if (
+          this.lifecycleGeneration === lifecycleGeneration &&
+          this.offlineDraftCoordinator === coordinator &&
+          this.pageId === expectedPageId &&
+          this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)
+        )
+          wikiStore.page.okfError = getErrorMessage(err)
       } finally {
-        wikiStore.page.okfLoading = false
+        if (this.lifecycleGeneration === lifecycleGeneration && this.pageId === expectedPageId && this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)) wikiStore.page.okfLoading = false
       }
     },
     async refreshOkfAfterSave(expectedBrandingAssignment: PageBrandingAssignment | null = wikiStore.page.brandingAssignment) {
+      const lifecycleGeneration = this.lifecycleGeneration
+      const expectedPageId = this.pageId
+      const coordinator = this.offlineDraftCoordinator
+      const expectedAccountId = this.accountId
+      const expectedAuthenticated = this.isAuthenticated
+      const expectedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
       wikiStore.page.okfLoading = true
       wikiStore.page.okfError = null
       try {
-        const page = await fetchPage(window.fetch.bind(window), this.pageId, this.$t('common:error.unexpected'))
+        if (!this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)) return
+        const page = await fetchPage(window.fetch.bind(window), expectedPageId, this.$t('common:error.unexpected'))
+        if (
+          this.lifecycleGeneration !== lifecycleGeneration ||
+          this.offlineDraftCoordinator !== coordinator ||
+          this.pageId !== expectedPageId ||
+          !this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)
+        )
+          return
         this.applyHydratedBranding(page, expectedBrandingAssignment)
         wikiStore.page.okf = page.okf
         wikiStore.page.isSearchable = page.isSearchable !== false
         wikiStore.page.sourceRevision = page.sourceRevision
       } catch (err) {
-        wikiStore.page.okfError = getErrorMessage(err)
+        if (
+          this.lifecycleGeneration === lifecycleGeneration &&
+          this.offlineDraftCoordinator === coordinator &&
+          this.pageId === expectedPageId &&
+          this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)
+        )
+          wikiStore.page.okfError = getErrorMessage(err)
         throw err
       } finally {
-        wikiStore.page.okfLoading = false
+        if (this.lifecycleGeneration === lifecycleGeneration && this.pageId === expectedPageId && this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)) wikiStore.page.okfLoading = false
       }
     },
     async refreshConflict() {
       if (this.mode === 'create' || this.isSaving || !this.isDirty || this.conflictCheckPending) return
+      const lifecycleGeneration = this.lifecycleGeneration
+      const expectedPageId = this.pageId
+      const expectedAccountId = this.accountId
+      const expectedAuthenticated = this.isAuthenticated
+      const expectedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
+      const coordinator = this.offlineDraftCoordinator
+      const checkoutDate = this.checkoutDateActive
       this.conflictCheckPending = true
       try {
-        this.isConflict = await checkPageConflict(window.fetch.bind(window), this.pageId, this.checkoutDateActive)
+        if (!this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)) return
+        const conflict = await checkPageConflict(window.fetch.bind(window), expectedPageId, checkoutDate)
+        if (
+          this.lifecycleGeneration === lifecycleGeneration &&
+          this.offlineDraftCoordinator === coordinator &&
+          this.pageId === expectedPageId &&
+          this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration) &&
+          !this.isSaving
+        )
+          this.isConflict = conflict
       } catch (err) {
-        console.warn(err)
+        if (this.lifecycleGeneration === lifecycleGeneration && this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)) console.warn(err)
       } finally {
-        this.conflictCheckPending = false
+        if (this.lifecycleGeneration === lifecycleGeneration && this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)) this.conflictCheckPending = false
       }
     },
     openConflict() {
       emitEditorSaveConflict()
     },
-    async save({ rethrow = false, overwrite = false }: { rethrow?: boolean, overwrite?: boolean } = {}) {
+    async save({ rethrow = false, overwrite = false }: { rethrow?: boolean, overwrite?: boolean } = {}): Promise<boolean> {
       if (this.collaborationDiscarded) {
         const error = new Error('This collaboration draft was discarded. Reload the page before saving.')
         wikiStore.showNotification({
@@ -947,199 +1399,365 @@ export default defineComponent({
           icon: 'warning'
         })
         if (rethrow) throw error
-        return
+        return false
       }
-      const authOutcome = await wikiStore.waitForAuthRefresh()
-      if (
-        wikiStore.authRefreshPending ||
-        !wikiStore.authRefreshSettled ||
-        (wikiStore.user.authenticated &&
-          (authOutcome !== 'authenticated' || !wikiStore.offlineIdentityReady))
-      ) {
-        const error = new Error('Your account session could not establish a safe local draft boundary. Retry while online.')
-        wikiStore.showNotification({ message: error.message, style: 'error', icon: 'warning' })
+      if (this.offlineDraftMutationBlocked) {
+        const error = new Error(this.notifyOfflineMutationBlocked())
         if (rethrow) throw error
-        return
+        return false
       }
-      if (this.mode !== 'create' && !this.isDirty) return
-      if (this.serverSaveDisabled === true && this.offlineDraftCoordinator?.isAuthenticatedUser() === true) {
-        const offlineCoordinator = this.offlineDraftCoordinator
-        this.showProgressDialog()
-        this.isSaving = true
-        try {
-          if (!(await offlineCoordinator.captureNow({ force: true }))) {
+      if (this.mode !== 'create' && !this.isDirty) return true
+
+      let capture: EditorSaveCapture
+      try {
+        capture = this.captureSaveSnapshot()
+      } catch (error) {
+        wikiStore.showNotification({
+          message: getErrorMessage(error),
+          style: 'error',
+          icon: 'warning'
+        })
+        if (rethrow) throw error
+        return false
+      }
+      const saveMode: 'create' | 'update' = this.mode === 'create' ? 'create' : 'update'
+      const capturedAuthenticated = this.isAuthenticated
+      const capturedAccountId = this.accountId
+      const capturedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
+      const capturedLifecycleGeneration = this.lifecycleGeneration
+      const collaborationGenerationAtSave = this.collaborationActive ? this.collaborationGeneration ?? undefined : undefined
+      const coordinator = this.offlineDraftCoordinator
+
+      this.isSaving = true
+      this.notifySafetyChanged()
+      this.showProgressDialog()
+      let prepared: PreparedOfflineSubmission | null = null
+      let completionAttempted = false
+      let postWriteError: string | null = null
+      let receiptPreparationWarning: string | null = null
+      const routeChanged = saveMode === 'update' && (
+        capture.locale !== this.savedState.locale ||
+        capture.path !== this.savedState.path ||
+        capture.visibility !== this.savedState.visibility
+      )
+
+      try {
+        if (this.serverSaveDisabled && coordinator?.isAuthenticatedUser() === true) {
+          this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+          if (!(await coordinator.captureThrough(capture.editVersion))) {
             throw new Error('Your changes could not be saved on this device.')
+          }
+          this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+          if (coordinator.hasCommittedCurrentValues) {
+            this.editorAdapter?.markPersisted?.(capture.editVersion)
           }
           wikiStore.showNotification({
             message: 'Saved on this device. Reconnect to review and publish.',
             style: 'success',
             icon: 'check'
           })
-          return
-        } catch (err) {
-          wikiStore.showNotification({
-            message: getErrorMessage(err),
-            style: 'error',
-            icon: 'warning'
-          })
-          if (rethrow) throw err
-          return
-        } finally {
-          this.isSaving = false
-          this.hideProgressDialog()
+          return true
         }
-      }
-      this.isSaving = true
-      let offlineSubmission: OfflineDraftSubmission | null = null
-      let redirectAfterCreate: string | null = null
 
-      try {
-        const pageInput = this.getPageInput()
-        const brandingAssignmentAtSave = _.cloneDeep(wikiStore.page.brandingAssignment)
-        if (wikiStore.editor.mode === 'create') {
-          // --------------------------------------------
-          // -> CREATE PAGE
-          // --------------------------------------------
-          if (this.offlineDraftCoordinator?.isAuthenticatedUser() === true) {
-            offlineSubmission = await this.offlineDraftCoordinator.prepareSubmission() ?? null
-            if (!offlineSubmission) throw new Error('The page was not submitted because the encrypted draft receipt could not be committed.')
+        this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+        const authOutcome = await wikiStore.waitForAuthRefresh()
+        this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+        if (capturedAuthenticated !== this.isAuthenticated || capturedAccountId !== this.accountId) {
+          throw new Error('Your account session changed while saving. Retry with the current account.')
+        }
+
+        const verifiedForNetwork = !capturedAuthenticated || (
+          authOutcome === 'authenticated' &&
+          wikiStore.authRefreshSettled &&
+          !wikiStore.authRefreshPending &&
+          wikiStore.offlineIdentityReady
+        )
+        if (!verifiedForNetwork) {
+          throw new Error('Your account session could not establish a safe local draft boundary. Retry while online.')
+        }
+        if (saveMode !== (this.mode === 'create' ? 'create' : 'update')) {
+          throw new Error('The editor changed pages while saving. Retry the save.')
+        }
+        if (capturedAuthenticated && this.serverSaveDisabled) {
+          throw new Error('Server publishing is unavailable while disconnected.')
+        }
+
+        if (saveMode === 'update') {
+          const expectedSourceRevision = capture.identity.baseSourceRevision
+          if (!expectedSourceRevision) throw new Error('The page revision is unavailable. Reload before saving.')
+          if (!overwrite) {
+            this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+            const conflict = await checkPageConflict(
+              window.fetch.bind(window),
+              capture.identity.pageId ?? wikiStore.page.id,
+              capture.identity.baseUpdatedAt ?? ''
+            )
+            this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+            if (conflict) {
+              const conflictError = new Error(this.$t('editor:conflict.warning'))
+              Object.defineProperty(conflictError, 'status', {
+                configurable: true,
+                enumerable: true,
+                value: 409,
+                writable: false
+              })
+              throw conflictError
+            }
           }
+        }
 
-          const page = await createPage(window.fetch.bind(window), pageInput)
-          this.checkoutDateActive = page.updatedAt || this.checkoutDateActive
-          this.isConflict = false
-          wikiStore.showNotification({
-            message: this.$t('editor:save.createSuccess'),
-            style: 'success',
-            icon: 'check'
+        if (coordinator?.isAuthenticatedUser() === true) {
+          const receiptRequired =
+            coordinator.hasCommittedCurrentValues ||
+            coordinator.hasUnresolvedSubmission ||
+            this.offlineDraftCandidate !== null ||
+            this.offlineDraftCandidates.length > 0 ||
+            this.offlineSubmissionCandidates.length > 0 ||
+            this.offlineDraftStatus === 'needs-review' ||
+            this.offlineDraftStatus === 'outcome-unknown' ||
+            this.offlineDraftStatus === 'publishing' ||
+            this.offlineDraftStatus === 'conflict'
+          this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+          this.submissionCaptureValues = Object.freeze({
+            title: capture.title,
+            description: capture.description,
+            content: capture.content
           })
+          this.submissionCaptureIdentity = capture.identity
+          let receiptPreparationError: unknown = null
+          try {
+            prepared = await coordinator.prepareSubmission({ editVersion: capture.editVersion })
+            this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+          } catch (error) {
+            this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+            receiptPreparationError = error
+          } finally {
+            this.submissionCaptureValues = null
+            this.submissionCaptureIdentity = null
+          }
+          if (!prepared) {
+            if (
+              !receiptRequired &&
+              authOutcome === 'authenticated' &&
+              this.offlineConnectionState === 'online' &&
+              this.serverSaveDisabled !== true
+            ) {
+              receiptPreparationWarning = 'Local recovery receipt could not be committed; this online save is not available for offline recovery.'
+            } else if (receiptPreparationError instanceof Error) {
+              throw receiptPreparationError
+            } else {
+              throw new Error('The page was not submitted because the encrypted draft receipt could not be committed.')
+            }
+          }
+        }
+        if (capturedAuthenticated && this.serverSaveDisabled) {
+          throw new Error('Server publishing is unavailable while disconnected.')
+        }
+
+        if (saveMode === 'create') {
+          this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+          const page = await createPage(window.fetch.bind(window), capture.pageInput)
+          this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+          this.checkoutDateActive = page.updatedAt || capture.identity.baseUpdatedAt || this.checkoutDateActive
+          this.isConflict = false
           wikiStore.editor.id = page.id
           wikiStore.page.id = page.id
+          wikiStore.page.sourceRevision = page.sourceRevision
           wikiStore.editor.mode = 'update'
-          if (
-            offlineSubmission &&
-            this.offlineDraftCoordinator &&
-            !(await this.offlineDraftCoordinator.captureNow({ force: true }))
-          ) {
-            throw new Error('The page was saved, but the local draft could not be migrated to the created page.')
-          }
-          redirectAfterCreate = wikiStore.page.visibility === 'private'
-            ? `/_private/${wikiStore.page.locale}/${wikiStore.page.path}`
-            : `/${wikiStore.page.locale}/${wikiStore.page.path}`
         } else {
-          // --------------------------------------------
-          // -> UPDATE EXISTING PAGE
-          // --------------------------------------------
-
-          if (!overwrite && await checkPageConflict(window.fetch.bind(window), this.pageId, this.checkoutDateActive)) {
-            emitEditorSaveConflict()
-            throw new Error(this.$t('editor:conflict.warning'))
-          }
-          if (this.offlineDraftCoordinator?.isAuthenticatedUser() === true) {
-            offlineSubmission = await this.offlineDraftCoordinator.prepareSubmission() ?? null
-            if (!offlineSubmission) throw new Error('The page was not submitted because the encrypted draft receipt could not be committed.')
-          }
-
+          this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
           const page = await updatePage(
             window.fetch.bind(window),
-            wikiStore.page.id,
-            pageInput,
-            wikiStore.page.sourceRevision,
-            this.collaborationActive ? this.collaborationGeneration ?? undefined : undefined
+            capture.identity.pageId ?? wikiStore.page.id,
+            capture.pageInput,
+            capture.identity.baseSourceRevision!,
+            collaborationGenerationAtSave
           )
+          this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
           wikiStore.page.sourceRevision = page.sourceRevision
-          if (this.savedState.visibility !== wikiStore.page.visibility) {
-            const visibilityPage = await changePageVisibility(
-              window.fetch.bind(window),
-              wikiStore.page.id,
-              wikiStore.page.visibility,
-              wikiStore.page.sourceRevision,
-              wikiStore.page.visibility === 'public'
-            )
-            wikiStore.page.sourceRevision = visibilityPage.sourceRevision
+          if (capture.visibility !== this.savedState.visibility) {
+            try {
+              this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+              const visibilityPage = await changePageVisibility(
+                window.fetch.bind(window),
+                capture.identity.pageId ?? wikiStore.page.id,
+                capture.visibility,
+                wikiStore.page.sourceRevision,
+                capture.visibility === 'public'
+              )
+              this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+              wikiStore.page.sourceRevision = visibilityPage.sourceRevision
+            } catch (error) {
+              this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+              postWriteError = getErrorMessage(error)
+            }
           }
-          await this.refreshOkfAfterSave(brandingAssignmentAtSave)
-          this.checkoutDateActive = page.updatedAt || this.checkoutDateActive
-          this.isConflict = false
-          wikiStore.showNotification({
-            message: this.$t('editor:save.updateSuccess'),
-            style: 'success',
-            icon: 'check'
-          })
-          if (
-            this.savedState.locale !== wikiStore.page.locale ||
-            this.savedState.path !== wikiStore.page.path ||
-            this.savedState.visibility !== wikiStore.page.visibility
-          ) {
-            if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
-            this.navigationTimer = window.setTimeout(() => {
-              const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
-              window.location.replace(`/e${scope}/${wikiStore.page.locale}/${wikiStore.page.path}`)
-              this.navigationTimer = null
-            }, 1000)
-          }
-        }
-        if (offlineSubmission && this.offlineDraftCoordinator) {
-          if (!(await this.offlineDraftCoordinator.completeSubmission(offlineSubmission, 'success'))) {
-            throw new Error('The server response was received, but the local submission receipt could not be finalized.')
-          }
-        }
-        if (
-          wikiStore.editor.content === pageInput.content &&
-          wikiStore.page.title === pageInput.title &&
-          wikiStore.page.description === pageInput.description
-        ) {
-          this.setCurrentSavedState()
-        }
-        if (redirectAfterCreate) {
-          this.exitConfirmed = true
-          window.location.assign(redirectAfterCreate)
-        }
-      } catch (err) {
-        const message = getErrorMessage(err)
-        if (offlineSubmission && this.offlineDraftCoordinator) {
-          const status = err && typeof err === 'object' ? Number(Reflect.get(err, 'status')) : 0
-          const outcome = status === 409
-            ? 'conflict'
-            : status === 401
-              ? 'locked'
-              : status === 403 || status === 404
-                ? 'invalid'
-                : 'outcome-unknown'
           try {
-            await this.offlineDraftCoordinator.completeSubmission(offlineSubmission, outcome)
+            await this.refreshOkfAfterSave(capture.brandingAssignment)
+            this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+          } catch (error) {
+            this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+            postWriteError = postWriteError ?? getErrorMessage(error)
+          }
+          this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+          this.checkoutDateActive = page.updatedAt || capture.identity.baseUpdatedAt || this.checkoutDateActive
+          this.isConflict = false
+        }
+
+        if (prepared && coordinator) {
+          this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+          completionAttempted = true
+          const completion = postWriteError
+            ? await coordinator.completeSubmission(prepared, { kind: 'post-write', reason: postWriteError })
+            : await coordinator.completeSubmission(prepared, {
+                kind: 'success',
+                identity: this.getOfflineDraftIdentity(),
+                baseSourceRevision: wikiStore.page.sourceRevision || null,
+                baseUpdatedAt: this.checkoutDateActive || null
+              })
+          this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+          if (!completion) {
+            throw new Error('The page was saved, but local submission finalization needs attention.')
+          }
+        }
+
+        this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+        const currentSnapshot = this.isCurrentSaveSnapshot(capture)
+        if (currentSnapshot) {
+          this.setCurrentSavedState()
+          this.markSaveSnapshotPersisted(capture)
+        }
+
+        const saveMessage = receiptPreparationWarning
+          ? `${saveMode === 'create' ? this.$t('editor:save.createSuccess') : this.$t('editor:save.updateSuccess')}; ${receiptPreparationWarning}`
+          : postWriteError
+            ? `Page saved, but ${postWriteError}`
+            : (saveMode === 'create' ? this.$t('editor:save.createSuccess') : this.$t('editor:save.updateSuccess'))
+        wikiStore.showNotification({
+          message: saveMessage,
+          style: postWriteError || receiptPreparationWarning ? 'warning' : 'success',
+          icon: postWriteError || receiptPreparationWarning ? 'warning' : 'check'
+        })
+
+        const canNavigateAfterSave = (): boolean => {
+          const safety = coordinator?.reloadSafetySnapshot
+          return (
+            this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration) &&
+            !receiptPreparationWarning &&
+            currentSnapshot &&
+            this.activeModal === '' &&
+            !this.offlineDraftBusy &&
+            !this.editorAdapterSafety.mergeDirty &&
+            this.editorAdapterSafety.collaborationBacklog === 0 &&
+            this.editorAdapterSafety.nonPersisted === false &&
+            coordinator?.hasInFlightWork !== true &&
+            coordinator?.hasUnresolvedSubmission !== true &&
+            safety?.safe !== false
+          )
+        }
+        if (saveMode === 'create') {
+          if (canNavigateAfterSave()) {
+            this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+            this.exitConfirmed = true
+            const scope = capture.visibility === 'private' ? '/_private' : ''
+            window.location.assign(`${scope}/${capture.locale}/${capture.path}`)
+          }
+        } else if (routeChanged) {
+          if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
+          this.navigationTimer = window.setTimeout(() => {
+            if (canNavigateAfterSave()) {
+              this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+              const scope = capture.visibility === 'private' ? '/_private' : ''
+              window.location.replace(`/e${scope}/${capture.locale}/${capture.path}`)
+            }
+            this.navigationTimer = null
+          }, 1000)
+        }
+        return true
+      } catch (error) {
+        if (!this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)) {
+          const staleError = new Error('Your account session changed while saving. Retry with the current account.')
+          if (rethrow) throw staleError
+          return false
+        }
+        let message = getErrorMessage(error)
+        const rawStatus = error && typeof error === 'object' ? Number(Reflect.get(error, 'status')) : NaN
+        const status = Number.isSafeInteger(rawStatus) && rawStatus > 0 ? rawStatus : undefined
+        if (status === 401 && !(prepared && coordinator)) {
+          await requestOfflineIdentityBoundary({
+            accountId: capturedAccountId,
+            reason: 'unauthorized'
+          })
+          if (!this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)) return false
+        }
+        if (prepared && coordinator && !completionAttempted) {
+          completionAttempted = true
+          const outcome = status === 409 || status === 401 || status === 403 || status === 404
+            ? { kind: 'rejected' as const, status, reason: message }
+            : { kind: 'unknown' as const, status, reason: message }
+          try {
+            await coordinator.completeSubmission(prepared, outcome)
           } catch {
             // Keep the immutable receipt when outcome reconciliation itself fails.
           }
-          if (status === 409) {
-            this.isConflict = true
-            emitEditorSaveConflict()
-          }
+          if (!this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)) return false
         }
-        if (this.collaborationActive && message === 'This collaboration draft was discarded. Reload the page before saving.') {
+        if (status === 403 || status === 404) {
+          const unavailableMessage = 'Publishing is unavailable because the page may have been deleted or access may have been denied. Local recovery and deletion remain available.'
+          let attemptedUnavailableCapture = false
+          let capturedUnavailableDraft = false
+          if (!prepared && coordinator?.isAuthenticatedUser() === true) {
+            attemptedUnavailableCapture = true
+            try {
+              capturedUnavailableDraft = await coordinator.captureNow({
+                force: true,
+                state: 'unavailable',
+                editVersion: capture.editVersion
+              })
+            } catch {
+              capturedUnavailableDraft = false
+            }
+          }
+          this.offlineDraftStatus = 'unavailable'
+          message = capturedUnavailableDraft
+            ? unavailableMessage
+            : attemptedUnavailableCapture
+              ? 'Publishing is unavailable because the page may have been deleted or access may have been denied, but the local draft could not be retained.'
+              : unavailableMessage
+        }
+        if (status === 409) {
+          this.isConflict = true
+          emitEditorSaveConflict()
+        }
+        if (collaborationGenerationAtSave !== undefined && message === 'This collaboration draft was discarded. Reload the page before saving.') {
           this.handleCollaborationState({ active: false, discarded: true, generation: null })
         }
         wikiStore.showNotification({
           message,
-          style: 'error',
+          style: status === 409 ? 'warning' : 'error',
           icon: 'warning'
         })
-        if (rethrow === true) {
-          this.isSaving = false
-          this.hideProgressDialog()
-          throw err
-        }
+        if (rethrow) throw error
+        return false
+      } finally {
+        this.isSaving = false
+        this.hideProgressDialog()
+        this.notifySafetyChanged()
       }
-      this.isSaving = false
-      this.hideProgressDialog()
     },
     async saveAndClose(): Promise<boolean> {
       if (this.isSaving) return false
+      const capturedAuthenticated = this.isAuthenticated
+      const capturedAccountId = this.accountId
+      const capturedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
+      const capturedLifecycleGeneration = this.lifecycleGeneration
       const wasCreate = wikiStore.editor.mode === 'create'
       try {
         await this.save({ rethrow: true })
+        if (!this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)) return false
         if (!wasCreate) {
           await this.exit()
+          if (!this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)) return false
         }
         return true
       } catch (err) {
@@ -1148,8 +1766,13 @@ export default defineComponent({
       }
     },
     async saveUnsavedAndClose() {
-      if (await this.saveAndClose()) {
-        this.dialogUnsaved = false
+      const dialogWasUnsaved = this.dialogUnsaved
+      this.dialogUnsaved = false
+      let saved = false
+      try {
+        saved = await this.saveAndClose()
+      } finally {
+        this.dialogUnsaved = saved && !this.isDirty ? false : dialogWasUnsaved
       }
     },
     async exit() {
@@ -1201,22 +1824,64 @@ export default defineComponent({
         window.location.assign(`${scope}/${this.savedState.locale}/${this.savedState.path}`)
       }
     },
-    getPageInput () {
+    captureSaveSnapshot(): EditorSaveCapture {
+      const editorCapture = this.captureEditorState()
+      const pageInput = this.getPageInput(editorCapture.text)
+      const identity = Object.freeze({ ...this.getOfflineDraftIdentity() })
+      return Object.freeze({
+        pageInput,
+        editVersion: editorCapture.editVersion,
+        identity,
+        content: pageInput.content,
+        title: pageInput.title,
+        description: pageInput.description,
+        locale: pageInput.locale,
+        path: pageInput.path,
+        tags: [...pageInput.tags],
+        isPublished: pageInput.isPublished,
+        isSearchable: pageInput.isSearchable ?? true,
+        visibility: pageInput.visibility,
+        publishStartDate: pageInput.publishStartDate,
+        publishEndDate: pageInput.publishEndDate,
+        scriptCss: pageInput.scriptCss,
+        scriptJs: pageInput.scriptJs,
+        brandingAssignment: _.cloneDeep(wikiStore.page.brandingAssignment),
+        okf: _.cloneDeep(wikiStore.page.okf)
+      })
+    },
+    isCurrentSaveSnapshot(capture: EditorSaveCapture): boolean {
+      try {
+        const adapterCapture = this.editorAdapter?.capture()
+        if (
+          adapterCapture &&
+          (adapterCapture.editVersion !== capture.editVersion || adapterCapture.text !== capture.content)
+        )
+          return false
+        if (!adapterCapture && wikiStore.editor.content !== capture.content) return false
+        return _.isEqual(this.getPageInput(adapterCapture?.text ?? capture.content), capture.pageInput)
+      } catch {
+        return false
+      }
+    },
+    markSaveSnapshotPersisted(capture: EditorSaveCapture): void {
+      if (this.isCurrentSaveSnapshot(capture)) this.editorAdapter?.markPersisted?.(capture.editVersion)
+    },
+    getPageInput(content = wikiStore.editor.content): PageWriteInput {
       const okfMetadata = buildOkfMetadataPayload(wikiStore.page.okf.authority.metadata)
       const rawBrandingAssignment = wikiStore.page.brandingAssignment
       let brandingAssignment: PageBrandingAssignment | null = null
       if (rawBrandingAssignment !== null) {
         const brandingResult = PageBrandingAssignmentSchema.safeParse(rawBrandingAssignment)
         if (!brandingResult.success) throw new Error('Page branding assignment is invalid.')
-        brandingAssignment = brandingResult.data
+        brandingAssignment = _.cloneDeep(brandingResult.data)
       }
       const brandingChanged = !_.isEqual(this.savedState.brandingAssignment, brandingAssignment)
       const brandingInput =
         this.mode === 'create'
           ? (brandingAssignment === null ? {} : { branding: brandingAssignment })
           : (brandingChanged ? { branding: brandingAssignment } : {})
-      return {
-        content: wikiStore.editor.content,
+      const pageInput: PageWriteInput = {
+        content,
         description: wikiStore.page.description,
         editor: wikiStore.editor.editorKey,
         locale: wikiStore.page.locale,
@@ -1228,11 +1893,12 @@ export default defineComponent({
         publishStartDate: wikiStore.page.publishStartDate || '',
         scriptCss: wikiStore.page.scriptCss,
         scriptJs: wikiStore.page.scriptJs,
-        tags: wikiStore.page.tags,
+        tags: [...wikiStore.page.tags],
         title: wikiStore.page.title,
         ...brandingInput,
-        ...(okfMetadata === undefined ? {} : { okfMetadata })
+        ...(okfMetadata === undefined ? {} : { okfMetadata: _.cloneDeep(okfMetadata) })
       }
+      return freezePageInput(pageInput)
     },
     setCurrentSavedState () {
       this.savedState = {

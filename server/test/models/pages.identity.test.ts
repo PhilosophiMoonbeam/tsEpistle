@@ -73,6 +73,7 @@ const pageRow = (overrides: Record<string, unknown> = {}) => ({
   createdAt: '2026-08-29T00:00:00.000Z',
   updatedAt: '2026-08-29T01:00:00.000Z',
   sourceRevision: 1,
+  renderedSourceRevision: 1,
   editorKey: 'markdown',
   localeCode: 'en',
   localeGroupId: null,
@@ -101,6 +102,7 @@ const installSchema = async () => {
     table.text('createdAt').notNullable()
     table.text('updatedAt').notNullable()
     table.bigInteger('sourceRevision').notNullable().defaultTo(1)
+    table.bigInteger('renderedSourceRevision').nullable()
     table.text('editorKey').notNullable()
     table.text('localeCode').notNullable()
     table.text('localeGroupId').nullable()
@@ -317,10 +319,11 @@ describe('models/pages identity aggregate', () => {
     const visibilityEvent = writeOutboxEvent.mock.calls.find(([, event]) => event.type === 'page.visibility-changed')?.[1]
     expect(visibilityEvent?.payload).toMatchObject({ pageId: 42, visibility: 'private', ownerId: 11 })
     expect(visibilityPage).toMatchObject({ visibility: 'private', ownerId: 11, sourceRevision: 2 })
-    expect(await db('pages').where({ id: 42 }).first('visibility', 'ownerId', 'sourceRevision')).toMatchObject({
+    expect(await db('pages').where({ id: 42 }).first('visibility', 'ownerId', 'sourceRevision', 'renderedSourceRevision')).toMatchObject({
       visibility: 'private',
       ownerId: 11,
-      sourceRevision: 2
+      sourceRevision: 2,
+      renderedSourceRevision: null
     })
 
     const visibilityEffects = await db('pageMutationOutbox').where({ pageId: 42, sourceRevision: 2 }).orderBy('effectKind')
@@ -350,10 +353,11 @@ describe('models/pages identity aggregate', () => {
     const ownershipEvent = writeOutboxEvent.mock.calls.find(([, event]) => event.type === 'page.ownership-transferred')?.[1]
     expect(ownershipEvent?.payload).toMatchObject({ pageId: 42, visibility: 'private', ownerId: 27 })
     expect(ownershipPage).toMatchObject({ visibility: 'private', ownerId: 27, sourceRevision: 3 })
-    expect(await db('pages').where({ id: 42 }).first('visibility', 'ownerId', 'sourceRevision')).toMatchObject({
+    expect(await db('pages').where({ id: 42 }).first('visibility', 'ownerId', 'sourceRevision', 'renderedSourceRevision')).toMatchObject({
       visibility: 'private',
       ownerId: 27,
-      sourceRevision: 3
+      sourceRevision: 3,
+      renderedSourceRevision: null
     })
 
     const ownershipEffects = await db('pageMutationOutbox').where({ pageId: 42, sourceRevision: 3 }).orderBy('effectKind')
@@ -417,10 +421,11 @@ describe('models/pages identity aggregate', () => {
 
     await expect(Page.migrateToLocale({ sourceLocale: 'en', targetLocale: 'fr', user: actor })).resolves.toBe(1)
 
-    expect(await db('pages').where({ id: 42 }).first('localeCode', 'hash', 'sourceRevision')).toMatchObject({
+    expect(await db('pages').where({ id: 42 }).first('localeCode', 'hash', 'sourceRevision', 'renderedSourceRevision')).toMatchObject({
       localeCode: 'fr',
       hash: newHash,
-      sourceRevision: 2
+      sourceRevision: 2,
+      renderedSourceRevision: null
     })
     expect(await db('pageHistory').where({ pageId: 42 }).select('localeCode', 'hash', 'sourceRevision').orderBy('id')).toEqual([
       { localeCode: 'fr', hash: newHash, sourceRevision: 1 },
@@ -502,7 +507,11 @@ describe('models/pages identity aggregate', () => {
 
     await expect(Page.migrateToLocale({ sourceLocale: 'en', targetLocale: 'fr', user: actor })).rejects.toThrow('The page changed after history was opened.')
 
-    expect(await db('pages').where({ id: 42 }).first('localeCode', 'hash')).toMatchObject({ localeCode: 'en', hash: oldHash })
+    expect(await db('pages').where({ id: 42 }).first('localeCode', 'hash', 'renderedSourceRevision')).toMatchObject({
+      localeCode: 'en',
+      hash: oldHash,
+      renderedSourceRevision: 1
+    })
     expect(await db('pageHistory').where({ pageId: 42 }).select('localeCode', 'hash')).toEqual([expect.objectContaining({ localeCode: 'en', hash: oldHash })])
     expect(await db('pageTree').where({ pageId: 42 }).first('localeCode')).toMatchObject({ localeCode: 'en' })
     expect(storagePageEvent).not.toHaveBeenCalled()

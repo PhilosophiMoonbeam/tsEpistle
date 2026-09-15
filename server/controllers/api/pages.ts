@@ -104,6 +104,8 @@ const errorStatus = (err: unknown, fallback: number): number => {
   if (err instanceof Error && (err.name === 'PagePathCollision' || err.name === 'PageUpdateConflict')) return 409
   return fallback
 }
+const OFFLINE_PAGE_INELIGIBLE_CODE = 'OFFLINE_PAGE_INELIGIBLE'
+const OFFLINE_PAGE_INELIGIBLE_MESSAGE = 'This page is not available for offline use.'
 
 const requestBody = (req: Request): Record<string, unknown> => {
   const body: unknown = req.body
@@ -1098,6 +1100,8 @@ router.get('/:id/offline-snapshot', async (req, res, next) => {
   try {
     return res.json(await pageOperations.getOfflineSnapshot({ id }))
   } catch (err) {
+    if (typeof err === 'object' && err !== null && Reflect.get(err, 'code') === OFFLINE_PAGE_INELIGIBLE_CODE)
+      return res.status(404).json({ error: OFFLINE_PAGE_INELIGIBLE_MESSAGE, code: OFFLINE_PAGE_INELIGIBLE_CODE })
     return sendOperationError(res, next, err, 'Offline snapshot is unavailable')
   }
 })

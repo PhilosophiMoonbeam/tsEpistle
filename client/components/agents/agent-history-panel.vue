@@ -383,7 +383,7 @@ import { storeToRefs } from 'pinia'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
 import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../../shared/agents/conversation-folders.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
-import { useAgentsStore } from '../../store/agents.ts'
+import { useAgentsStore, type AgentRefreshResult } from '../../store/agents.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 import AgentHistorySessionActions from './agent-history-session-actions.vue'
 const props = defineProps<{ headingId: string; descriptionId: string; networkBlocked?: boolean }>()
@@ -420,7 +420,10 @@ const openingSessionIds = shallowRef(new Set<string>())
 const movingSessionIds = shallowRef(new Set<string>())
 const committedDeletedSessionIds = shallowRef(new Set<string>())
 const projectedFolderIds = shallowRef(new Map<string, string | null>())
-const lastMoveRefresh = shallowRef<{ readonly sessionId: string; readonly refreshed: boolean } | null>(null)
+const lastMoveRefresh = shallowRef<{
+  readonly sessionId: string
+  readonly result: AgentRefreshResult
+} | null>(null)
 const sessionsRefreshError = ref('')
 const foldersRefreshError = ref('')
 const refreshingSessions = ref(false)
@@ -444,6 +447,47 @@ const removeFolderDialogCard = useTemplateRef<ComponentRoot>('removeFolderDialog
 const folderInput = useTemplateRef<ComponentRoot>('folderInput')
 const destructiveRestoreTarget = shallowRef<HTMLElement | null>(null)
 let destructiveFocusScope: ModalFocusScope | null = null
+interface HistoryOperationIdentity {
+  readonly ownerId: number | null
+  readonly ownerGeneration: number
+  readonly workspaceVersion: number
+  readonly componentGeneration: number
+  readonly workflowGeneration: number
+  readonly activeSessionId: string | null
+  readonly workflow: boolean
+}
+const componentGeneration = ref(0)
+const workflowGeneration = ref(0)
+const folderWorkflowIdentity = shallowRef<HistoryOperationIdentity | null>(null)
+let disposed = false
+const currentOwnerId = (): number | null => agents.pinOwnerId ?? null
+const currentOwnerGeneration = (): number => agents.ownerGeneration ?? 0
+const currentWorkspaceVersion = (): number => agents.workspaceVersion ?? 0
+const captureOperationIdentity = (workflow = false): HistoryOperationIdentity => ({
+  ownerId: currentOwnerId(),
+  ownerGeneration: currentOwnerGeneration(),
+  workspaceVersion: currentWorkspaceVersion(),
+  componentGeneration: componentGeneration.value,
+  workflowGeneration: workflowGeneration.value,
+  activeSessionId: thread.value?.session.id ?? null,
+  workflow
+})
+const isOperationCurrent = (identity: HistoryOperationIdentity): boolean =>
+  !disposed &&
+  identity.componentGeneration === componentGeneration.value &&
+  identity.workflowGeneration === workflowGeneration.value &&
+  identity.ownerId === currentOwnerId() &&
+  identity.ownerGeneration === currentOwnerGeneration() &&
+  identity.workspaceVersion === currentWorkspaceVersion() &&
+  (!identity.workflow || (
+    folderWorkflowIdentity.value === identity &&
+    identity.activeSessionId === (thread.value?.session.id ?? null)
+  ))
+const rejectedRefresh = (error?: unknown): AgentRefreshResult => ({
+  accepted: false,
+  current: false,
+  ...(error === undefined ? {} : { error })
+})
 
 const normalizedSearch = computed(() => (searchQuery.value ?? '').trim().toLocaleLowerCase())
 type SessionTimeGroupLabel = 'Today' | 'Yesterday' | 'Previous 7 days' | 'Earlier'
@@ -684,12 +728,8 @@ const dropDestinationName = (folderId: string | null): string =>
   folderId === null ? 'Recent' : folders.value.find(folder => folder.id === folderId)?.name ?? 'the saved folder'
 const sessionLocationName = (session: AgentSessionSummary): string =>
   session.folderId === null ? 'Recent' : folders.value.find(folder => folder.id === session.folderId)?.name ?? 'its current folder'
-const showCommittedRefreshFailure = (): boolean => {
-  if (!agents.error) return false
-  sessionsRefreshError.value = `Showing last-loaded conversations. ${agents.error}`
-  return true
-}
 const refreshHistoryBlocked = (): boolean =>
+  disposed ||
   networkBlocked.value ||
   loading.value ||
   refreshingHistory.value ||
@@ -698,47 +738,67 @@ const refreshHistoryBlocked = (): boolean =>
   deleting.value ||
   Boolean(deletingSession.value) ||
   Boolean(removingFolder.value)
-const refreshSessions = async (): Promise<boolean> => {
-  if (loading.value || refreshingSessions.value || sessionMutationBusy.value || networkBlocked.value) return false
+const refreshResultMessage = (result: AgentRefreshResult, fallback: string): string =>
+  result.current ? message(result.error, fallback) : 'This history refresh no longer applies to the current workspace.'
+const refreshSessions = async (identity: HistoryOperationIdentity = captureOperationIdentity()): Promise<AgentRefreshResult> => {
+  if (loading.value || refreshingSessions.value || sessionMutationBusy.value || networkBlocked.value || !isOperationCurrent(identity)) return rejectedRefresh()
   refreshingSessions.value = true
   sessionsRefreshError.value = ''
   try {
-    await agents.reloadSessions()
-    if (!sessionMutationBusy.value) {
-      committedDeletedSessionIds.value = new Set()
-      projectedFolderIds.value = new Map()
+    const result = await agents.reloadSessions()
+    if (!isOperationCurrent(identity)) return rejectedRefresh(result.error)
+    if (!result.current || !result.accepted) {
+      sessionsRefreshError.value = `Showing last-loaded conversations. ${refreshResultMessage(result, 'Conversations could not be refreshed.')}`
+      return result
     }
+    if (sessionMutationBusy.value) {
+      const superseded = rejectedRefresh('A conversation mutation changed while history was refreshing.')
+      sessionsRefreshError.value = `Showing last-loaded conversations. ${message(superseded.error, 'Conversations could not be refreshed.')}`
+      return superseded
+    }
+    committedDeletedSessionIds.value = new Set()
+    projectedFolderIds.value = new Map()
     localError.value = ''
-    return true
+    return result
   } catch (value) {
+    if (!isOperationCurrent(identity)) return rejectedRefresh(value)
+    const result = rejectedRefresh(value)
     sessionsRefreshError.value = `Showing last-loaded conversations. ${message(value, 'Conversations could not be refreshed.')}`
-    return false
+    return result
   } finally {
-    refreshingSessions.value = false
+    if (!disposed) refreshingSessions.value = false
   }
 }
-const refreshFolders = async (): Promise<boolean> => {
-  if (loading.value || refreshingFolders.value || sessionMutationBusy.value || networkBlocked.value) return false
+const refreshFolders = async (identity: HistoryOperationIdentity = captureOperationIdentity()): Promise<AgentRefreshResult> => {
+  if (loading.value || refreshingFolders.value || sessionMutationBusy.value || networkBlocked.value || !isOperationCurrent(identity)) return rejectedRefresh()
   refreshingFolders.value = true
   foldersRefreshError.value = ''
   try {
-    await agents.reloadFolders()
+    const result = await agents.reloadFolders()
+    if (!isOperationCurrent(identity)) return rejectedRefresh(result.error)
+    if (!result.current || !result.accepted) {
+      foldersRefreshError.value = `Showing last-loaded folders. ${refreshResultMessage(result, 'Folders could not be refreshed.')}`
+      return result
+    }
     localError.value = ''
-    return true
+    return result
   } catch (value) {
+    if (!isOperationCurrent(identity)) return rejectedRefresh(value)
+    const result = rejectedRefresh(value)
     foldersRefreshError.value = `Showing last-loaded folders. ${message(value, 'Folders could not be refreshed.')}`
-    return false
+    return result
   } finally {
-    refreshingFolders.value = false
+    if (!disposed) refreshingFolders.value = false
   }
 }
 const refreshHistory = async (): Promise<boolean> => {
   if (refreshHistoryBlocked()) return false
   initialRefreshPending.value = false
-  const sessionsRefresh = refreshSessions()
-  const foldersRefresh = refreshFolders()
-  await Promise.allSettled([sessionsRefresh, foldersRefresh])
-  return true
+  const identity = captureOperationIdentity()
+  const sessionsRefresh = refreshSessions(identity)
+  const foldersRefresh = refreshFolders(identity)
+  const [sessionsResult, foldersResult] = await Promise.all([sessionsRefresh, foldersRefresh])
+  return sessionsResult.accepted && sessionsResult.current && foldersResult.accepted && foldersResult.current
 }
 const loadMoreSessions = async (): Promise<void> => {
   if (networkBlocked.value || refreshingHistory.value || sessionsReloading.value || sessionsLoadingMore.value) return
@@ -780,6 +840,9 @@ const cancelPendingSessionRead = (): void => {
   if (openingSessionIds.value.size > 0) agents.cancelSessionReadTransition()
 }
 const closeHistory = (): void => {
+  if (disposed) return
+  componentGeneration.value += 1
+  resetFolderWorkflow()
   cancelPendingSessionRead()
   emit('close')
 }
@@ -789,17 +852,18 @@ const requestClear = (): void => {
 }
 
 const openSession = async (sessionId: string): Promise<void> => {
-  if (loading.value || sessionMutationBusy.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0) return
+  if (disposed || loading.value || sessionMutationBusy.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0) return
   if (sessionId === thread.value?.session.id) return
   if (openingSessionIds.value.has(sessionId)) return
+  const identity = captureOperationIdentity()
   localError.value = ''
   updatePendingSet(openingSessionIds, sessionId, true)
   try {
     await agents.openSession(sessionId)
   } catch (value) {
-    localError.value = message(value, 'The conversation could not be opened.')
+    if (isOperationCurrent(identity)) localError.value = message(value, 'The conversation could not be opened.')
   } finally {
-    updatePendingSet(openingSessionIds, sessionId, false)
+    if (!disposed) updatePendingSet(openingSessionIds, sessionId, false)
   }
 }
 
@@ -808,36 +872,64 @@ const errorStatus = (value: unknown): number | null => {
   return typeof record?.status === 'number' ? record.status : null
 }
 const isConflictError = (value: unknown): boolean => errorStatus(value) === 409
-const moveSession = async (session: AgentSessionSummary, folderId: string | null): Promise<boolean> => {
-  if (networkBlocked.value || loading.value || sessionMutationBusy.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0 || session.folderId === folderId || movingSessionIds.value.has(session.id)) return false
+const moveSession = async (
+  session: AgentSessionSummary,
+  folderId: string | null,
+  operationIdentity?: HistoryOperationIdentity
+): Promise<boolean> => {
+  const identity = operationIdentity ?? captureOperationIdentity()
+  if (
+    networkBlocked.value ||
+    loading.value ||
+    sessionMutationBusy.value ||
+    refreshingHistory.value ||
+    sessionsReloading.value ||
+    openingSessionIds.value.size > 0 ||
+    session.folderId === folderId ||
+    movingSessionIds.value.has(session.id) ||
+    !isOperationCurrent(identity)
+  )
+    return false
   lastMoveRefresh.value = null
   const title = session.title || 'New conversation'
   const destination = dropDestinationName(folderId)
   const originalLocation = sessionLocationName(session)
   localError.value = ''
-  if (networkBlocked.value) {
-    dialogError.value = networkRequiredMessage
-    return false
-  }
   agents.error = ''
   dragStatus.value = `Moving ${title} to ${destination}.`
   updatePendingSet(movingSessionIds, session.id, true)
   try {
     const projected = await agents.moveSessionToFolder(session.id, folderId)
-    if (!projected) return false
+    if (!projected || !isOperationCurrent(identity)) return false
     setProjectedFolder(session.id, folderId)
-    if (!showCommittedRefreshFailure()) clearProjectedFolder(session.id)
+    const refreshResult = await refreshSessions(identity)
+    if (!isOperationCurrent(identity)) return false
+    if (refreshResult.accepted && refreshResult.current) {
+      clearProjectedFolder(session.id)
+    } else {
+      sessionsRefreshError.value = `Moved ${title} to ${destination}, but history could not be reconciled. ${refreshResultMessage(refreshResult, 'Refresh history before relying on the displayed location.')}`
+    }
     if (folderId && !openFolderIds.value.includes(folderId)) openFolderIds.value.push(folderId)
     dragStatus.value = `Moved ${title} to ${destination}.`
     return true
   } catch (value) {
-    const refreshed = await refreshSessions()
-    lastMoveRefresh.value = { sessionId: session.id, refreshed }
+    if (!isOperationCurrent(identity)) return false
+    const refreshResult = await refreshSessions(identity)
+    if (!isOperationCurrent(identity)) return false
+    lastMoveRefresh.value = { sessionId: session.id, result: refreshResult }
+    if (refreshResult.accepted && refreshResult.current) {
+      const refreshed = sessions.value.find(candidate => candidate.id === session.id)
+      if (refreshed?.folderId === folderId) {
+        localError.value = ''
+        dragStatus.value = `Moved ${title} to ${destination}.`
+        return true
+      }
+    }
     localError.value = message(value, 'The conversation could not be moved.')
     dragStatus.value = `${title} could not be moved. It remains in ${originalLocation}. Refresh history, then retry the move.`
     return false
   } finally {
-    updatePendingSet(movingSessionIds, session.id, false)
+    if (!disposed) updatePendingSet(movingSessionIds, session.id, false)
   }
 }
 const dropSession = async (event: DragEvent, folderId: string | null): Promise<void> => {
@@ -853,6 +945,8 @@ const dropSession = async (event: DragEvent, folderId: string | null): Promise<v
   await moveSession(session, folderId)
 }
 const resetFolderWorkflow = (): void => {
+  workflowGeneration.value += 1
+  folderWorkflowIdentity.value = null
   folderWorkflowState.value = 'idle'
   folderWorkflowSession.value = null
   folderWorkflowFolderId.value = null
@@ -871,9 +965,11 @@ const beginCreateFolderForSession = (session: AgentSessionSummary, restoreTarget
   if (loading.value || sessionMutationBusy.value || sessionBusy(session.id)) return
   dialogError.value = ''
   editingFolder.value = null
+  resetFolderWorkflow()
   folderName.value = ''
   folderWorkflowState.value = 'creating'
   folderWorkflowSession.value = session
+  folderWorkflowIdentity.value = captureOperationIdentity(true)
   folderWorkflowFolderId.value = null
   folderWorkflowFolder.value = null
   folderEditorRestoreTarget.value = restoreTarget ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
@@ -901,16 +997,17 @@ const beginRenameSession = (session: AgentSessionSummary, restoreTarget: HTMLEle
 const saveSessionTitle = async (): Promise<void> => {
   const title = sessionRenameTitle.value.trim()
   const session = editingSession.value
-  if (!title || !session || networkBlocked.value || savingSessionTitle.value || loading.value || sessionMutationBusy.value) return
+  if (disposed || !title || !session || networkBlocked.value || savingSessionTitle.value || loading.value || sessionMutationBusy.value) return
+  const identity = captureOperationIdentity()
   savingSessionTitle.value = true
   sessionDialogError.value = ''
   try {
     await agents.renameSession(session.id, title)
-    sessionEditorOpen.value = false
+    if (isOperationCurrent(identity)) sessionEditorOpen.value = false
   } catch (value) {
-    sessionDialogError.value = message(value, 'The conversation could not be renamed.')
+    if (isOperationCurrent(identity)) sessionDialogError.value = message(value, 'The conversation could not be renamed.')
   } finally {
-    savingSessionTitle.value = false
+    if (!disposed) savingSessionTitle.value = false
   }
 }
 watch(sessionEditorOpen, async open => {
@@ -953,25 +1050,36 @@ const isFolderView = (value: unknown): value is AgentConversationFolderView => {
   const record = value as Record<string, unknown>
   return typeof record.id === 'string' && typeof record.name === 'string' && typeof record.version === 'number'
 }
-const reconcileFolderByName = async (name: string): Promise<AgentConversationFolderView | null> => {
-  const local = folderByName(name)
-  if (local) return local
-  if (!await refreshFolders()) return null
+const reconcileFolderByName = async (
+  name: string,
+  identity: HistoryOperationIdentity
+): Promise<AgentConversationFolderView | null> => {
+  if (!isOperationCurrent(identity)) return null
+  const refreshed = await refreshFolders(identity)
+  if (!refreshed.accepted || !refreshed.current || !isOperationCurrent(identity)) return null
   return folderByName(name)
 }
 const closeFolderEditorAfterCommit = (): void => {
   folderEditorOpen.value = false
   resetFolderWorkflow()
 }
-const completeCreatedFolderMove = (folder: AgentConversationFolderView, session: AgentSessionSummary): void => {
+const completeCreatedFolderMove = (
+  folder: AgentConversationFolderView,
+  session: AgentSessionSummary,
+  identity: HistoryOperationIdentity
+): void => {
+  if (!isOperationCurrent(identity)) return
   localError.value = ''
   dialogError.value = ''
-  setProjectedFolder(session.id, folder.id)
   if (!openFolderIds.value.includes(folder.id)) openFolderIds.value.push(folder.id)
   dragStatus.value = `Moved ${session.title || 'New conversation'} to ${folder.name}.`
   closeFolderEditorAfterCommit()
 }
-const moveCreatedFolder = async (folder: AgentConversationFolderView): Promise<boolean> => {
+const moveCreatedFolder = async (
+  folder: AgentConversationFolderView,
+  identity: HistoryOperationIdentity | null = folderWorkflowIdentity.value
+): Promise<boolean> => {
+  if (!identity || !isOperationCurrent(identity)) return false
   folderWorkflowFolderId.value = folder.id
   folderWorkflowFolder.value = folder
   const source = folderWorkflowSession.value
@@ -986,49 +1094,57 @@ const moveCreatedFolder = async (folder: AgentConversationFolderView): Promise<b
   }
   const latest = displaySessions.value.find(candidate => candidate.id === source.id) ?? source
   folderWorkflowSession.value = latest
-  const moved = authoritativeLatest?.folderId === folder.id || await moveSession(latest, folder.id)
+  folderWorkflowState.value = 'moving'
+  const moved = authoritativeLatest?.folderId === folder.id || await moveSession(latest, folder.id, identity)
+  if (!isOperationCurrent(identity)) return false
   if (moved) {
-    completeCreatedFolderMove(folder, latest)
+    completeCreatedFolderMove(folder, latest, identity)
     return true
   }
   const refreshed = sessions.value.find(candidate => candidate.id === source.id)
   if (refreshed) folderWorkflowSession.value = refreshed
   if (
     lastMoveRefresh.value?.sessionId === source.id &&
-    lastMoveRefresh.value.refreshed &&
+    lastMoveRefresh.value.result.accepted &&
+    lastMoveRefresh.value.result.current &&
     refreshed?.folderId === folder.id
   ) {
-    completeCreatedFolderMove(folder, refreshed)
+    completeCreatedFolderMove(folder, refreshed, identity)
     return true
   }
   folderWorkflowState.value = 'move-retry'
-  dialogError.value = `Folder “${folder.name}” was created, but the conversation could not be moved. Retry the move.`
+  dialogError.value = lastMoveRefresh.value?.result.accepted
+    ? `Folder “${folder.name}” was created, but the conversation could not be moved. Retry the move.`
+    : `Folder “${folder.name}” was created, but the move outcome could not be confirmed. Refresh history, then retry the move.`
   return false
 }
 const retryFolderMove = async (): Promise<void> => {
   const folderId = folderWorkflowFolderId.value
   const source = folderWorkflowSession.value
   const folder = folderWorkflowFolder.value ?? (folderId ? folders.value.find(candidate => candidate.id === folderId) ?? null : null)
-  if (!folderId || !source || !folder) {
-    dialogError.value = 'The created folder is no longer available. Refresh folders before retrying.'
+  const identity = folderWorkflowIdentity.value
+  if (!identity || !isOperationCurrent(identity) || !folderId || !source || !folder) {
+    if (!disposed) dialogError.value = 'The created folder is no longer available. Refresh folders before retrying.'
     return
   }
-  await moveCreatedFolder(folder)
+  await moveCreatedFolder(folder, identity)
 }
 const cancelFolderEditor = (): void => {
   if (savingFolder.value) return
-  folderEditorOpen.value = false
   resetFolderWorkflow()
+  folderEditorOpen.value = false
 }
 const saveFolder = async (): Promise<void> => {
   const name = cleanAgentConversationFolderName(folderName.value)
-  if (!name || networkBlocked.value || loading.value || savingFolder.value || deleting.value || sessionMutationBusy.value) return
+  if (disposed || !name || networkBlocked.value || loading.value || savingFolder.value || deleting.value || sessionMutationBusy.value) return
+  const identity = folderWorkflowIdentity.value ?? captureOperationIdentity()
+  if (!isOperationCurrent(identity)) return
   savingFolder.value = true
   dialogError.value = ''
   try {
     if (editingFolder.value) {
       await agents.renameFolder(editingFolder.value.id, editingFolder.value.version, name)
-      closeFolderEditorAfterCommit()
+      if (isOperationCurrent(identity)) closeFolderEditorAfterCommit()
       return
     }
     if (folderWorkflowState.value === 'move-retry') {
@@ -1036,8 +1152,9 @@ const saveFolder = async (): Promise<void> => {
       return
     }
     if (folderWorkflowState.value === 'create-unknown') {
-      const reconciled = await reconcileFolderByName(name)
-      if (reconciled) await moveCreatedFolder(reconciled)
+      const reconciled = await reconcileFolderByName(name, identity)
+      if (!isOperationCurrent(identity)) return
+      if (reconciled) await moveCreatedFolder(reconciled, identity)
       else if (!foldersRefreshError.value) {
         folderWorkflowState.value = 'creating'
         dialogError.value = 'No matching folder was found. You can create it now.'
@@ -1047,25 +1164,27 @@ const saveFolder = async (): Promise<void> => {
       return
     }
     folderWorkflowState.value = 'creating'
-      if (networkBlocked.value) {
-        dialogError.value = networkRequiredMessage
-        folderWorkflowState.value = 'create-unknown'
-        return
-      }
     try {
       const created = await agents.createFolder(name)
-      const folder = isFolderView(created) ? created : await reconcileFolderByName(name)
+      if (!isOperationCurrent(identity)) return
+      const folder = isFolderView(created) ? created : await reconcileFolderByName(name, identity)
+      if (!isOperationCurrent(identity)) return
       if (!folder) {
-        folderWorkflowState.value = 'create-unknown'
-        dialogError.value = 'The folder may have been created, but its result could not be confirmed. Check again before retrying.'
+        const refreshFailed = Boolean(foldersRefreshError.value)
+        folderWorkflowState.value = refreshFailed ? 'create-unknown' : 'creating'
+        dialogError.value = refreshFailed
+          ? 'The folder creation result is unknown. Refresh folders, then check again before retrying.'
+          : 'No matching folder was found. You can create it now.'
         return
       }
-      await moveCreatedFolder(folder)
+      await moveCreatedFolder(folder, identity)
     } catch (value) {
+      if (!isOperationCurrent(identity)) return
       const createError = message(value, 'The folder could not be saved.')
-      const reconciled = await reconcileFolderByName(name)
+      const reconciled = await reconcileFolderByName(name, identity)
+      if (!isOperationCurrent(identity)) return
       if (reconciled) {
-        await moveCreatedFolder(reconciled)
+        await moveCreatedFolder(reconciled, identity)
         return
       }
       const refreshFailed = Boolean(foldersRefreshError.value)
@@ -1075,18 +1194,18 @@ const saveFolder = async (): Promise<void> => {
         : createError
     }
   } finally {
-    savingFolder.value = false
+    if (!disposed) savingFolder.value = false
   }
 }
 watch(folderEditorOpen, async open => {
   let cancelled = false
   onWatcherCleanup(() => { cancelled = true })
   if (open) return
+  resetFolderWorkflow()
   await nextTick()
-  if (cancelled) return
+  if (cancelled || disposed) return
   const target = folderEditorRestoreTarget.value
   folderEditorRestoreTarget.value = null
-  resetFolderWorkflow()
   const focusTarget = [
     target,
     componentControl(historySearchField.value),
@@ -1096,45 +1215,63 @@ watch(folderEditorOpen, async open => {
 })
 const deleteSession = async (): Promise<void> => {
   const session = deletingSession.value
-  if (!session || networkBlocked.value || deleting.value || savingFolder.value || sessionMutationBusy.value) return
+  if (disposed || !session || networkBlocked.value || deleting.value || savingFolder.value || sessionMutationBusy.value) return
+  const identity = captureOperationIdentity()
   deleting.value = true; dialogError.value = ''; sessionsRefreshError.value = ''; agents.error = ''
   try {
     const committed = await agents.removeSession(session.id)
-    if (!committed) return
+    if (!committed || !isOperationCurrent(identity)) return
     committedDeletedSessionIds.value = new Set(committedDeletedSessionIds.value).add(session.id)
     destructiveRestoreTarget.value = componentElement(historyCloseButton.value)
     deletingSession.value = null
-    showCommittedRefreshFailure()
+    const refreshResult = await refreshSessions(identity)
+    if (!isOperationCurrent(identity)) return
+    if (!refreshResult.accepted || !refreshResult.current) {
+      sessionsRefreshError.value = `Conversation deleted, but history could not be reconciled. ${refreshResultMessage(refreshResult, 'Refresh history before relying on the displayed list.')}`
+    }
   } catch (value) {
-    dialogError.value = message(value, 'The conversation could not be deleted.')
+    if (isOperationCurrent(identity)) dialogError.value = message(value, 'The conversation could not be deleted.')
   } finally {
-    deleting.value = false
+    if (!disposed) deleting.value = false
   }
 }
 const deleteFolder = async (): Promise<void> => {
   const folder = removingFolder.value
-  if (!folder || networkBlocked.value || loading.value || deleting.value || savingFolder.value || sessionMutationBusy.value) return
+  if (disposed || !folder || networkBlocked.value || loading.value || deleting.value || savingFolder.value || sessionMutationBusy.value) return
+  const identity = captureOperationIdentity()
   const affectedSessionIds = displaySessions.value.filter(session => session.folderId === folder.id).map(session => session.id)
-  deleting.value = true; dialogError.value = ''; sessionsRefreshError.value = ''; agents.error = ''
+  deleting.value = true; dialogError.value = ''; sessionsRefreshError.value = ''; foldersRefreshError.value = ''; agents.error = ''
   try {
     const committed = await agents.deleteFolder(folder.id, folder.version)
-    if (!committed) return
+    if (!committed || !isOperationCurrent(identity)) return
     for (const sessionId of affectedSessionIds) setProjectedFolder(sessionId, null)
     openFolderIds.value = openFolderIds.value.filter(id => id !== folder.id)
     destructiveRestoreTarget.value = componentElement(historyCloseButton.value)
     removingFolder.value = null
-    if (!showCommittedRefreshFailure()) {
+    const folderRefresh = await refreshFolders(identity)
+    const sessionsRefresh = await refreshSessions(identity)
+    if (!isOperationCurrent(identity)) return
+    if (folderRefresh.accepted && folderRefresh.current && sessionsRefresh.accepted && sessionsRefresh.current) {
       for (const sessionId of affectedSessionIds) clearProjectedFolder(sessionId)
+    } else {
+      const failedResource = !folderRefresh.accepted || !folderRefresh.current ? 'folders' : 'conversations'
+      const failedResult = failedResource === 'folders' ? folderRefresh : sessionsRefresh
+      const errorTarget = failedResource === 'folders' ? foldersRefreshError : sessionsRefreshError
+      errorTarget.value = `Folder removed, but ${failedResource} could not be reconciled. ${refreshResultMessage(failedResult, 'Refresh history before relying on the displayed location.')}`
     }
   } catch (value) {
+    if (!isOperationCurrent(identity)) return
     if (isConflictError(value)) {
-      const refreshed = await refreshFolders()
-      const renewed = refreshed ? folders.value.find(candidate => candidate.id === folder.id) ?? null : null
+      const refreshed = await refreshFolders(identity)
+      if (!isOperationCurrent(identity)) return
+      const renewed = refreshed.accepted && refreshed.current
+        ? folders.value.find(candidate => candidate.id === folder.id) ?? null
+        : null
       if (renewed) {
         removingFolder.value = renewed
         dialogError.value = 'The folder changed while you were reviewing it. Review the updated folder, then remove it again.'
       } else {
-        dialogError.value = refreshed
+        dialogError.value = refreshed.accepted && refreshed.current
           ? 'The folder is no longer available. Refresh folders before trying again.'
           : 'The folder changed while you were reviewing it. Refresh folders, then review the confirmation again.'
       }
@@ -1142,7 +1279,7 @@ const deleteFolder = async (): Promise<void> => {
     }
     dialogError.value = message(value, 'The folder could not be removed.')
   } finally {
-    deleting.value = false
+    if (!disposed) deleting.value = false
   }
 }
 const expandActiveFolder = (): void => {
@@ -1176,7 +1313,19 @@ watch([deletingSession, removingFolder], async ([session, folder]) => {
     }
   })
 })
-watch(() => thread.value?.session.id, expandActiveFolder, { immediate: true })
+watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
+  if (sessionId === previousSessionId) return
+  componentGeneration.value += 1
+  const identity = folderWorkflowIdentity.value
+  if (identity && identity.activeSessionId !== sessionId) {
+    workflowGeneration.value += 1
+    folderWorkflowIdentity.value = null
+    folderWorkflowSession.value = null
+    folderWorkflowState.value = 'create-unknown'
+    dialogError.value = 'The active conversation changed. Close this folder editor and start the folder move again.'
+  }
+  expandActiveFolder()
+})
 watch(folders, expandActiveFolder, { immediate: true })
 watch(normalizedSearch, query => {
   if (!query) return
@@ -1193,6 +1342,10 @@ onMounted(() => {
   startPendingInitialRefresh()
 })
 onBeforeUnmount(() => {
+  disposed = true
+  componentGeneration.value += 1
+  workflowGeneration.value += 1
+  folderWorkflowIdentity.value = null
   initialRefreshPending.value = false
   destructiveFocusScope?.deactivate({ restoreFocus: false })
   cancelPendingSessionRead()

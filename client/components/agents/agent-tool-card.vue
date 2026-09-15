@@ -96,6 +96,7 @@
       </div>
     </details>
 
+    <p v-if="networkBlocked" class="agent-operation__network-note" role="status">Connection required to approve or deny this operation. Your review remains open until the workspace reconnects.</p>
     <div v-if="!locallyExpired && proposal.risk === 'destructive-write'" class="agent-operation__confirmation">
       <p><strong>Deletion confirmation</strong> · This cannot be undone from the Agent conversation.</p>
       <v-text-field
@@ -233,7 +234,7 @@ import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 
 import type { AgentProposalView, AgentToolCallView, AgentToolState } from '../../../shared/agents/contracts.ts'
 import { agentApprovalTitle, agentProposalReceiptLabel } from './agent-thread-presentation.ts'
 
-const props = defineProps<{ tool: AgentToolCallView; proposal: AgentProposalView; busy?: boolean }>()
+const props = defineProps<{ tool: AgentToolCallView; proposal: AgentProposalView; busy?: boolean; networkBlocked?: boolean }>()
 const emit = defineEmits<{ decision: [proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string] }>()
 const collapsedLineCount = 80
 const expanded = ref(false)
@@ -328,7 +329,7 @@ const expiryLabel = computed(() => {
   const minutes = Math.ceil((new Date(props.proposal.expiresAt).valueOf() - Date.now()) / 60_000)
   return minutes === 1 ? 'expires in 1 minute' : `expires in ${minutes} minutes`
 })
-const canDecide = computed(() => approvalPending.value && !locallyExpired.value && !props.busy && !decisionInFlight.value)
+const canDecide = computed(() => approvalPending.value && !locallyExpired.value && !props.busy && !props.networkBlocked && !decisionInFlight.value)
 const diffLines = computed(() => {
   if (!props.proposal.diff) return []
   return props.proposal.diff.split('\n').map((text, index) => ({

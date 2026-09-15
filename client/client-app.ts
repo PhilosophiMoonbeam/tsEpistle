@@ -10,7 +10,7 @@ import boot from './modules/boot.ts'
 import localization from './modules/localization.ts'
 import { pinia, wikiStore } from './store/index.ts'
 import { router } from './router'
-import { registerPwa } from './helpers/pwa.ts'
+import { registerPwa, setReloadSafetyProvider } from './helpers/pwa.ts'
 import { createWikiThemes, resolveThemeName, WIKI_THEME_VARIATIONS } from './helpers/theme.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
 import { createAsyncComponent } from './components/common/async-component-state.vue'
@@ -181,6 +181,9 @@ void authRefresh.then(outcome => {
 })
 
 boot.onDOMReady(() => {
+  // Non-editor documents have no mutable editor facts to protect. The editor
+  // coordinator replaces this provider with its complete safety snapshot.
+  setReloadSafetyProvider(() => ({ safe: true, revision: 'client-app-ready', actorEpoch: 'client' }))
   void registerPwa({
     onNeedReload: () => {
       window.location.reload()

@@ -71,6 +71,19 @@ const summaryForThread = (thread: AgentThreadState) => ({
   expiresAt: thread.session.expiresAt,
   deletedAt: null
 })
+type ReadyAgentStoreFixture = {
+  loading: boolean
+  networkPaused: boolean
+  connection: 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed'
+  workspaceVersion: number
+  initializedWorkspaceVersion: number | null
+}
+const markWorkspaceReady = (store: ReadyAgentStoreFixture): void => {
+  store.loading = false
+  store.networkPaused = false
+  store.connection = 'connected'
+  store.initializedWorkspaceVersion = store.workspaceVersion
+}
 
 const folderForTest = (id: string, name: string, version = 1): AgentConversationFolderView => ({
   id,
@@ -386,7 +399,7 @@ describe('Agent store initialization', () => {
     expect(store.profiles).toEqual([])
   })
 
-  it('rejects folder mutations until the initial authoritative folders have loaded', async () => {
+  it('blocks folder mutations until the initial authoritative folders have loaded', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     const existing = folderForTest('00000000-0000-4000-8000-000000000062', 'Existing')
@@ -402,15 +415,18 @@ describe('Agent store initialization', () => {
       if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
     })
-    store.newSession = vi.fn(async () => true)
+    store.newSession = vi.fn(async () => {
+      markWorkspaceReady(store)
+      return true
+    })
 
     const initializing = store.initialize('csrf-token', { ownerId: 1, routeSync: false })
     const movable = threadForSession('00000000-0000-4000-8000-000000000063', '00000000-0000-4000-8000-000000000065')
     store.sessions = [summaryForThread(movable)]
-    const creatingRejection = expect(store.createFolder('New')).rejects.toThrow('Conversation folders are still loading')
-    const renamingRejection = expect(store.renameFolder(existing.id, existing.version, 'Renamed')).rejects.toThrow('Conversation folders are still loading')
-    const deletingRejection = expect(store.deleteFolder(existing.id, existing.version)).rejects.toThrow('Conversation folders are still loading')
-    const movingRejection = expect(store.moveSessionToFolder(movable.session.id, existing.id)).rejects.toThrow('Conversation folders are still loading')
+    const creatingRejection = expect(store.createFolder('New')).rejects.toThrow('workspace is not ready')
+    const renamingRejection = expect(store.renameFolder(existing.id, existing.version, 'Renamed')).rejects.toThrow('workspace is not ready')
+    const deletingRejection = expect(store.deleteFolder(existing.id, existing.version)).resolves.toBe(false)
+    const movingRejection = expect(store.moveSessionToFolder(movable.session.id, existing.id)).resolves.toBeUndefined()
 
     await Promise.all([creatingRejection, renamingRejection, deletingRejection, movingRejection])
     expect(fetcher.mock.calls.filter(call => (call[1]?.method ?? 'GET') !== 'GET')).toHaveLength(0)
@@ -616,6 +632,7 @@ describe('Agent store initialization', () => {
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
     })
 
+    markWorkspaceReady(store)
     const moving = store.moveSessionToFolder(current.session.id, '00000000-0000-4000-8000-000000000141')
     await flushMicrotasks()
     store.thread = latest
@@ -762,6 +779,7 @@ describe('Agent session mutations', () => {
     const refreshSignals: AbortSignal[] = []
     store.thread = current
     store.sessions = [summaryForThread(current)]
+    markWorkspaceReady(store)
     vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
@@ -783,7 +801,7 @@ describe('Agent session mutations', () => {
     expect(store.sessions).toEqual([summaryForThread(renamed)])
 
     staleRefreshResponse.resolve(Response.json(current))
-    await expect(staleRefresh).resolves.toBe(false)
+    await expect(staleRefresh).resolves.toEqual({ accepted: false, current: false })
     expect(store.thread).toEqual(renamed)
 
     historyResponse.resolve(Response.json({ sessions: [summaryForThread(renamed)], nextCursor: null }))
@@ -821,6 +839,7 @@ describe('Agent session mutations', () => {
     }
     store.thread = initial
     store.sessions = [summaryForThread(initial)]
+    markWorkspaceReady(store)
     const staleRenameResponse = deferred<Response>()
     const renameHistoryResponse = deferred<Response>()
     const patchBodies: unknown[] = []
@@ -884,6 +903,7 @@ describe('Agent session mutations', () => {
     }
     store.thread = current
     store.sessions = [summaryForThread(current)]
+    markWorkspaceReady(store)
     const refresh = deferred<Response>()
     const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
@@ -926,6 +946,7 @@ describe('Agent session mutations', () => {
     }
     store.thread = current
     store.sessions = [summaryForThread(current)]
+    markWorkspaceReady(store)
     const refresh = deferred<Response>()
     vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
@@ -973,6 +994,7 @@ describe('Agent session mutations', () => {
       let latest = current
       store.thread = current
       store.sessions = [summaryForThread(current)]
+      markWorkspaceReady(store)
       const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
         const path = String(input)
         const method = init?.method ?? 'GET'
@@ -1044,6 +1066,7 @@ describe('Agent session mutations', () => {
     store.sessions = [summaryForThread(accountA)]
     store.csrfToken = 'csrf-a'
     store.pinOwnerId = 1
+    markWorkspaceReady(store)
     const pendingSend = deferred<Response>()
     const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
@@ -1085,6 +1108,7 @@ describe('Agent session mutations', () => {
     store.csrfToken = 'csrf-token'
     store.thread = current
     store.sessions = previousSessions
+    markWorkspaceReady(store)
     store.sessionsNextCursor = 'older'
     const sourceClose = vi.fn()
     store.source = { close: sourceClose } as unknown as EventSource
@@ -1124,6 +1148,7 @@ describe('Agent session mutations', () => {
     store.sessionsLoadingMore = true
     store.sessionsLoadMoreError = 'Previous error'
     store.source = source
+    markWorkspaceReady(store)
     const deleteResponse = deferred<Response>()
     const reloadResponse = deferred<Response>()
     const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
@@ -1201,6 +1226,7 @@ describe('Agent session mutations', () => {
         isGlobalDefault: true
       }
     ]
+    markWorkspaceReady(store)
     store.connectCurrentRun = vi.fn()
     const requestBodies: unknown[] = []
     const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
@@ -1245,6 +1271,7 @@ describe('Agent session mutations', () => {
         store.thread = current
         store.sessions = [summaryForThread(current)]
         store.folders = [folderForTest(folderId, 'Folder')]
+        markWorkspaceReady(store)
         store.connectCurrentRun = vi.fn()
 
         const request = deferred<Response>()
@@ -1363,12 +1390,13 @@ describe('Agent folder refresh ordering', () => {
     await freshRefresh
     first.reject(new TypeError('Stale folder request failed'))
 
-    await expect(staleRefresh).resolves.toBeUndefined()
+    await expect(staleRefresh).resolves.toMatchObject({ accepted: false, current: false })
     expect(store.folders).toEqual([fresh])
   })
 
   it('fences deferred folder reads before applying create, rename, and delete results', async () => {
     const store = createStore()
+    markWorkspaceReady(store)
     const created = folderForTest('00000000-0000-4000-8000-000000000093', 'Created')
     const renamed = { ...created, name: 'Renamed', version: 2, updatedAt: '2026-08-23T00:01:00.000Z' }
     const staleReads = [deferred<Response>(), deferred<Response>(), deferred<Response>()]
@@ -1574,9 +1602,9 @@ describe('Agent session selection', () => {
     const latestRefresh = store.refreshThread()
     expect(signals[0]?.aborted).toBe(true)
     second.resolve(Response.json(latest))
-    expect(await latestRefresh).toBe(true)
+    expect(await latestRefresh).toEqual({ accepted: true, current: true })
     first.resolve(Response.json(older))
-    expect(await olderRefresh).toBe(false)
+    expect(await olderRefresh).toEqual({ accepted: false, current: false })
 
     expect(store.thread?.session.title).toBe('Latest refresh')
     expect(store.thread?.session.version).toBe(3)
@@ -1600,7 +1628,7 @@ describe('Agent session selection', () => {
     expect(signal?.aborted).toBe(true)
     pending.resolve(Response.json({ ...displayed, session: { ...displayed.session, title: 'Late response', version: 2 } }))
 
-    expect(await refreshing).toBe(false)
+    expect(await refreshing).toEqual({ accepted: false, current: false })
     expect(store.thread?.session.id).toBe(displayed.session.id)
     expect(store.thread?.session.title).toBe(displayed.session.title)
     expect(store.thread?.session.title).not.toBe('Late response')
@@ -1812,6 +1840,7 @@ describe('Agent session mutation transitions', () => {
     store.csrfToken = 'csrf-token'
     store.routeSync = false
     store.thread = activeThread()
+    markWorkspaceReady(store)
     const created = threadForSession('00000000-0000-4000-8000-000000000040', '00000000-0000-4000-8000-000000000041')
     const selected = threadForSession('00000000-0000-4000-8000-000000000050', '00000000-0000-4000-8000-000000000051')
     const pendingCreation = deferred<Response>()
@@ -1857,6 +1886,7 @@ describe('Agent session mutation transitions', () => {
     const deleted = activeThread()
     store.thread = deleted
     store.sessions = [summaryForThread(deleted)]
+    markWorkspaceReady(store)
     const pendingDeletion = deferred<Response>()
     const json = { headers: { 'content-type': 'application/json' } }
     const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
@@ -1895,6 +1925,7 @@ describe('Agent session mutation transitions', () => {
     store.thread = origin
     store.setDraft(origin.session.id, 'Keep this in the original conversation')
     store.setDraft(selected.session.id, 'Another draft')
+    markWorkspaceReady(store)
     const fetcher = vi.spyOn(window, 'fetch').mockImplementation(() => pending.promise)
 
     const sending = store.send('Keep this in the original conversation')
@@ -1922,6 +1953,7 @@ describe('Agent session mutation transitions', () => {
     store.pinOwnerId = 1
     store.thread = empty
     store.setDraft(active.session.id, 'Pending question')
+    markWorkspaceReady(store)
     store.connectCurrentRun = vi.fn()
     const pending = deferred<Response>()
     let accepted = false
@@ -1957,6 +1989,7 @@ describe('Agent session mutation transitions', () => {
     store.csrfToken = 'csrf-token'
     const active = activeThread()
     store.thread = { ...active, session: { ...active.session, currentRun: null } }
+    markWorkspaceReady(store)
     store.contextPage = { id: 99, locale: 'en', path: 'unrelated', observedUpdatedAt: '2026-09-01T00:00:00Z' }
     const source = {
       id: 42,
@@ -1998,6 +2031,7 @@ describe('Agent session mutation transitions', () => {
     const active = activeThread()
     const submittedRun = active.session.currentRun!
     store.thread = { ...active, session: { ...active.session, currentRun: null } }
+    markWorkspaceReady(store)
     const fetcher = vi
       .spyOn(window, 'fetch')
       .mockResolvedValueOnce(Response.json({ run: submittedRun, replayed: false }))
@@ -2016,6 +2050,7 @@ describe('Agent session mutation transitions', () => {
     store.csrfToken = 'csrf-token'
     const active = activeThread()
     store.thread = { ...active, session: { ...active.session, currentRun: null } }
+    markWorkspaceReady(store)
     store.setDraft(active.session.id, 'First question')
     const pending = deferred<Response>()
     vi.spyOn(window, 'fetch')
@@ -2041,6 +2076,7 @@ describe('Agent session mutation transitions', () => {
     const terminal = { ...active, session: { ...active.session, version: 2, currentRun: null } }
     const cancellation = deferred<Response>()
     store.thread = active
+    markWorkspaceReady(store)
     const fetcher = vi
       .spyOn(window, 'fetch')
       .mockImplementationOnce(() => cancellation.promise)
@@ -2070,6 +2106,7 @@ describe('Agent empty conversation lifecycle', () => {
     const running = activeThread()
     const empty = { ...running, session: { ...running.session, currentRun: null } }
     store.thread = empty
+    markWorkspaceReady(store)
     store.setDraft(empty.session.id, 'Unsent original draft')
     const replacement = {
       ...empty,
@@ -2106,6 +2143,7 @@ describe('Agent empty conversation lifecycle', () => {
     const active = activeThread()
     store.thread = { ...active, session: { ...active.session, currentRun: null } }
     store.setDraft(active.session.id, 'Do not lose this question')
+    markWorkspaceReady(store)
     const fetcher = vi.spyOn(window, 'fetch').mockResolvedValueOnce(Response.json({ message: 'Temporarily unavailable' }, { status: 503 }))
 
     await expect(store.newSession('temporary')).rejects.toThrow('Temporarily unavailable')
@@ -2146,6 +2184,7 @@ describe('Agent unfiled history clearing', () => {
         deletedAt: null
       }
     ]
+    markWorkspaceReady(store)
     store.error = 'No default provider profile is configured for your groups.'
     const fetcher = vi
       .spyOn(window, 'fetch')
@@ -2168,6 +2207,7 @@ describe('Agent unfiled history clearing', () => {
     store.csrfToken = 'csrf-token'
     const thread = activeThread()
     store.thread = thread
+    markWorkspaceReady(store)
     vi.spyOn(window, 'fetch').mockResolvedValue(Response.json({ message: 'Clear unavailable' }, { status: 503 }))
 
     await expect(store.clearUnfiledHistory()).rejects.toThrow('Clear unavailable')

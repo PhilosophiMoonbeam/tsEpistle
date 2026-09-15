@@ -5,7 +5,7 @@
     :class="{ 'inline-agent--history': historyOpen, 'inline-agent--memory': memoryOpen }"
     :data-panel-mode="panelMode"
     :aria-labelledby="workspaceTitleId"
-    :aria-busy="loading || Boolean(creatingRetention)"
+    :aria-busy="loading || Boolean(creatingRetention) || connectionRetrying || sessionMutationBusy"
   >
     <button
       v-if="panelMode === 'modal' && (historyOpen || memoryOpen)"
@@ -121,7 +121,7 @@
             rounded="pill"
             :loading="creatingRetention === 'saved'"
             aria-label="New conversation"
-            :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked"
+            :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
             @click="newSession"
           >
             New
@@ -138,7 +138,7 @@
             :aria-pressed="isTemporary"
             :data-state="isTemporary ? 'active' : undefined"
             :title="isTemporary ? 'Current temporary conversation' : 'Start a temporary conversation'"
-            :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked"
+            :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
             @click="newTemporarySession"
           />
           <v-btn class="inline-agent__mobile-close wiki-close-control" icon="mdi-close" variant="text" aria-label="Close Wiki Agent" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('close')" />
@@ -176,7 +176,7 @@
             <strong>Temporary conversation</strong>
             <p>Hidden from history<span v-if="temporaryExpiry"> · Expires {{ temporaryExpiry }}</span>. Personal memory still applies.</p>
           </div>
-          <v-btn variant="text" size="small" prepend-icon="mdi-bookmark-outline" :loading="keepingConversation" :disabled="sessionMutationBusy || loading || sending || connectionBlocked" :title="connectionBlocked ? connectionRequiredMessage : undefined" @click="keepConversation">Keep conversation</v-btn>
+          <v-btn variant="text" size="small" prepend-icon="mdi-bookmark-outline" :loading="keepingConversation" :disabled="sessionMutationBusy || loading || sending || connectionBlocked || !workspaceReady" :title="connectionBlocked ? connectionRequiredMessage : undefined" @click="keepConversation">Keep conversation</v-btn>
         </div>
         <p v-else-if="sessionNotice" class="inline-agent__session-notice" role="status">{{ sessionNotice }}</p>
         <div class="inline-agent__body">
@@ -197,7 +197,7 @@
           >
             <div class="inline-agent__initialization-error-content">
               <span>{{ initializationError }}</span>
-              <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :disabled="loading" @click="retryInitialization">Retry opening conversation</v-btn>
+              <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :disabled="loading || connectionRetrying" @click="retryInitialization">Retry opening conversation</v-btn>
             </div>
           </v-alert>
           <v-alert
@@ -257,27 +257,29 @@
                 :connection="connection"
                 :deciding-approval-id="decidingApprovalId"
                 :can-submit="canSubmit"
+                :network-blocked="connectionBlocked"
                 @suggest="preparePrompt"
                 @ask-source="source => preparePrompt(`Help me understand “${source.title}”.`, source)"
                 @decision="handleDecision"
               />
               <div class="inline-agent__conversation-dock">
-              <div
-                v-if="thread?.goal"
-                class="inline-agent__goal-dock"
-                :class="{ 'inline-agent__goal-dock--expanded': goalExpanded }"
-              >
-                <AgentGoalStatus
-                  :goal="thread.goal"
-                  :busy="goalBusy"
-                  :run-active="Boolean(activeRun)"
-                  :expanded="goalExpanded"
-                  @pause="pauseGoal"
-                  @resume="resumeGoal"
-                  @cancel="cancelGoal"
-                  @update:expanded="handleGoalExpanded"
-                />
-              </div>
+                <div
+                  v-if="thread?.goal"
+                  class="inline-agent__goal-dock"
+                  :class="{ 'inline-agent__goal-dock--expanded': goalExpanded }"
+                >
+                  <AgentGoalStatus
+                    :goal="thread.goal"
+                    :busy="goalBusy"
+                    :network-blocked="connectionBlocked"
+                    :run-active="Boolean(activeRun)"
+                    :expanded="goalExpanded"
+                    @pause="pauseGoal"
+                    @resume="resumeGoal"
+                    @cancel="cancelGoal"
+                    @update:expanded="handleGoalExpanded"
+                  />
+                </div>
                 <nav
                   v-if="approvalJumpVisible || followJumpVisible"
                   class="inline-agent__jump-dock"
@@ -322,9 +324,12 @@
                       :key="thread.session.id"
                       :draft="activeDraft"
                       :current-page="currentPage"
-                      :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention)"
+                      :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || !workspaceReady"
+                      :connection-blocked="connectionBlocked"
+                      :connection-retrying="connectionRetrying"
                       @change="patchDraft"
                       @sources-added="focusComposer"
+                      @retry-connection="retryAgentConnection"
                     />
                     <p
                       v-if="openGoal || sessionMutationBusy"
@@ -341,7 +346,7 @@
                       <span>Pinning is available for this tab, but browser storage is unavailable; it will not survive a reload.</span>
                     </p>
                     <AgentComposer
-                      :key="thread?.session.id ?? 'opening'"
+                      :key="`${ownerId}:${thread?.session.id ?? 'opening'}`"
                       ref="composer"
                       :session-id="thread?.session.id ?? offlineSessionId"
                       :initial-draft="thread ? agents.drafts[thread.session.id]?.text ?? offlineComposerDraft : offlineComposerDraft"
@@ -349,13 +354,14 @@
                       :initial-skill-version-ids="thread ? agents.drafts[thread.session.id]?.skillVersionIds : []"
                       :chat-pinned="Boolean(thread && pinnedSessionId === thread.session.id)"
                       :chat-pin-disabled="!canPinCurrentChat"
+                      :has-messages="hasConversation"
                       @update:chat-pinned="setCurrentChatPinned"
                       @draft-change="handleDraftChange"
                       @composition-change="agents.updateDraft"
                       :sending="sending"
+                      :network-blocked="connectionBlocked"
                       :can-stop="Boolean(activeRun?.canCancel)"
                       :disabled="composerDisabled"
-                      :has-messages="hasConversation"
                       :external-description-id="openGoal || sessionMutationBusy ? 'agent-composer-lock-reason' : undefined"
                       :skills-enabled="skillsEnabled"
                       :goals-enabled="goalsEnabled"
@@ -407,7 +413,16 @@
     </div>
   </section>
 
-  <AgentPersonalSkills v-if="skillsEnabled" v-model="skillManagerOpen" :csrf-token="csrfToken" @changed="reloadSkillCatalog" />
+  <AgentPersonalSkills
+    v-if="skillsEnabled"
+    v-model="skillManagerOpen"
+    :csrf-token="csrfToken"
+    :owner-id="ownerId"
+    :network-blocked="connectionBlocked"
+    :connection-retrying="connectionRetrying"
+    @changed="reloadSkillCatalog"
+    @retry-connection="retryAgentConnection"
+  />
 
   <v-dialog
     content-class="agent-owned-overlay"
@@ -508,7 +523,7 @@ const emit = defineEmits<{
 }>()
 
 const agents = useAgentsStore()
-const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, loading, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread } = storeToRefs(agents)
+const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void> }>('composer')
@@ -566,7 +581,16 @@ let transcriptFrameShouldFollow = false
 let panelFocusScope: ModalFocusScope | null = null
 let panelFocusKind: 'history' | 'memory' | null = null
 let pendingPanelFocusKind: 'history' | 'memory' | null = null
+let disposed = false
+let initializationEpoch = 0
+let initializationKey = ''
 let initialization: Promise<boolean> | null = null
+let componentGeneration = 0
+let retryGeneration = 0
+let promptGeneration = 0
+let actionGeneration = 0
+const isComponentCurrent = (generation: number, ownerId: number): boolean =>
+  !disposed && componentGeneration === generation && props.ownerId === ownerId
 const panelMode = ref<'wide' | 'docked' | 'modal'>('wide')
 let panelModeMedia: MediaQueryList[] = []
 const mobilePanelQuery = '(max-width: 639.98px)'
@@ -587,14 +611,34 @@ const hasConversation = computed(() => Boolean(thread.value && (thread.value.mes
 const followJumpVisible = computed(() => Boolean(hasConversation.value && !transcriptFollowing.value && !approvalJumpVisible.value))
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
 const providerAvailable = computed(() => props.providerEnabled && profiles.value.length > 0)
-const connectionBlocked = computed(() => pwaState.connectionState === 'offline' || pwaState.connectionState === 'server-unavailable' || waitingForConnection.value)
-const connectionRequiredMessage = computed(() => pwaState.connectionState === 'server-unavailable'
-  ? 'Connection required. The server is unavailable right now.'
-  : 'Connection required to open or message Wiki Agent.')
+const workspaceReady = computed(() => agents.isWorkspaceReady())
+const connectionBlocked = computed(() =>
+  pwaState.connectionState === 'offline' ||
+  pwaState.connectionState === 'server-unavailable' ||
+  networkPaused.value ||
+  waitingForConnection.value
+)
+const connectionRequiredMessage = computed(() => {
+  if (pwaState.connectionState === 'server-unavailable') return 'Connection required. The server is unavailable right now.'
+  if (pwaState.connectionState === 'offline') return 'Connection required. You appear to be offline.'
+  if (networkPaused.value || waitingForConnection.value) return 'Connection required. Reconnect to continue this conversation.'
+  return 'Connection required to open or message Wiki Agent.'
+})
 const providerUnavailableMessage = computed(() => props.providerEnabled
   ? 'No enabled provider profile is available for your account. Ask an administrator to grant one in Administration → Agents.'
   : 'Agent inference is currently disabled. An administrator can configure it in Administration → Agents.')
-const canSubmit = computed(() => providerAvailable.value && !connectionBlocked.value && !initializationError.value && !loading.value && !sending.value && !sessionMutationBusy.value && Boolean(thread.value) && !activeRun.value && !openGoal.value)
+const canSubmit = computed(() =>
+  providerAvailable.value &&
+  workspaceReady.value &&
+  !connectionBlocked.value &&
+  !initializationError.value &&
+  !loading.value &&
+  !sending.value &&
+  !sessionMutationBusy.value &&
+  Boolean(thread.value) &&
+  !activeRun.value &&
+  !openGoal.value
+)
 const composerDisabled = computed(() => connectionBlocked.value
   ? loading.value || sending.value || sessionMutationBusy.value
   : !canSubmit.value)
@@ -607,19 +651,21 @@ const submitUnavailableReason = computed(() => connectionBlocked.value
   ? connectionRequiredMessage.value
   : !providerAvailable.value
     ? providerUnavailableMessage.value
-    : loading.value
-      ? 'Opening conversation'
-      : initializationError.value
-        ? 'The requested conversation could not be opened'
-        : sending.value
-          ? 'Sending your message'
-          : sessionMutationBusy.value
-            ? 'Wait for the current conversation update to finish'
-            : activeRun.value
-              ? 'Wait for the current response to finish'
-              : openGoal.value
-                ? goalSubmitUnavailableReason.value
-                : '')
+    : !workspaceReady.value
+      ? 'Reauthorizing the conversation'
+      : loading.value
+        ? 'Opening conversation'
+        : initializationError.value
+          ? 'The requested conversation could not be opened'
+          : sending.value
+            ? 'Sending your message'
+            : sessionMutationBusy.value
+              ? 'Wait for the current conversation update to finish'
+              : activeRun.value
+                ? 'Wait for the current response to finish'
+                : openGoal.value
+                  ? goalSubmitUnavailableReason.value
+                  : '')
 const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
 const invocationLimit = computed(() => Math.max(0, 8 - preferredSkillIds.value.length))
 const isTemporary = computed(() => thread.value?.session.retention === 'temporary' && !thread.value.session.folderId)
@@ -679,7 +725,9 @@ const handleDraftChange = (sessionId: string, text: string): void => {
 }
 
 const preparePrompt = async (prompt: string, source?: WikiSource, scope?: AgentSearchScope): Promise<void> => {
-  if (!await ensureInitialized()) return
+  const generation = componentGeneration
+  const ownerId = props.ownerId
+  if (!await ensureInitialized() || !isComponentCurrent(generation, ownerId)) return
   const sessionId = thread.value?.session.id
   if (!sessionId) return
   if (scope) agents.updateDraft(sessionId, { scope })
@@ -691,6 +739,7 @@ const preparePrompt = async (prompt: string, source?: WikiSource, scope?: AgentS
     }
   }
   await nextTick()
+  if (!isComponentCurrent(generation, ownerId) || thread.value?.session.id !== sessionId) return
   const existing = agents.drafts[sessionId]?.text ?? ''
   await composer.value?.setDraft(existing.trim() && existing.trim() !== prompt.trim() ? source ? existing : `${existing}\n\n${prompt}` : prompt)
 }
@@ -700,21 +749,50 @@ const initializationFailureMessage = (value: unknown): string =>
     : typeof value === 'string' && value
       ? value
       : 'The conversation could not be opened.'
-const ensureInitialized = (): Promise<boolean> => {
-  if (connectionBlocked.value) {
+type InitializationRequest = {
+  readonly allowCreate?: boolean
+  readonly bypassConnectionGate?: boolean
+  readonly forceFresh?: boolean
+}
+const initializationAuthorityKey = (): string =>
+  JSON.stringify({
+    csrfToken: props.csrfToken,
+    ownerId: props.ownerId,
+    resumeSessionId: props.resumeSessionId ?? null,
+    currentPage: currentPage.value
+  })
+const ensureInitialized = (request: InitializationRequest = {}): Promise<boolean> => {
+  if (disposed) return Promise.resolve(false)
+  const allowCreate = request.allowCreate ?? true
+  const authorityKey = `${initializationAuthorityKey()}:create=${allowCreate}`
+  if (!request.bypassConnectionGate && connectionBlocked.value) {
     waitingForConnection.value = true
     return Promise.resolve(false)
   }
-  if (initialization) return initialization
+  const storeOwnerId = (agents as unknown as { pinOwnerId?: number | null }).pinOwnerId
+  if (
+    !request.forceFresh &&
+    workspaceReady.value &&
+    (storeOwnerId === undefined || storeOwnerId === props.ownerId) &&
+    !initializationError.value
+  )
+    return Promise.resolve(true)
+  if (initialization && initializationKey === authorityKey) return initialization
+
+  const epoch = ++initializationEpoch
+  initializationKey = authorityKey
   initializationError.value = ''
+  agents.error = ''
   const pending = agents.initialize(props.csrfToken, {
     ownerId: props.ownerId,
     resumeSessionId: props.resumeSessionId,
     routeSync: false,
-    currentPage: currentPage.value
+    currentPage: currentPage.value,
+    allowCreate
   })
   const tracked = pending.then(
     success => {
+      if (disposed || epoch !== initializationEpoch || initializationKey !== authorityKey) return false
       const initialized = Boolean(success)
       if (initialized) {
         waitingForConnection.value = false
@@ -727,46 +805,59 @@ const ensureInitialized = (): Promise<boolean> => {
         }
       } else {
         initializationError.value = error.value || 'The conversation could not be opened. Retry to try again.'
-        if (initialization === tracked) initialization = null
       }
       return initialized
     },
     value => {
+      if (disposed || epoch !== initializationEpoch || initializationKey !== authorityKey) return false
       initializationError.value = initializationFailureMessage(value)
-      if (initialization === tracked) initialization = null
       return false
     }
   )
   initialization = tracked
+  void tracked.finally(() => {
+    if (epoch === initializationEpoch && initializationKey === authorityKey && initialization === tracked) {
+      initialization = null
+      initializationKey = ''
+    }
+  })
   return tracked
 }
 const retryAgentConnection = async (): Promise<void> => {
-  if (connectionRetrying.value) return
+  if (disposed || connectionRetrying.value) return
+  const generation = retryGeneration + 1
+  retryGeneration = generation
+  const componentOwnerId = props.ownerId
   connectionRetrying.value = true
+  waitingForConnection.value = true
   try {
     const reachable = await retryServerConnection()
-    if (!reachable) {
-      waitingForConnection.value = true
-      return
-    }
-    waitingForConnection.value = false
+    if (!reachable || !isComponentCurrent(componentGeneration, componentOwnerId) || retryGeneration !== generation) return
     initializationError.value = ''
     agents.error = ''
-    await ensureInitialized()
+    await ensureInitialized({ allowCreate: false, bypassConnectionGate: true, forceFresh: true })
   } finally {
-    connectionRetrying.value = false
+    if (isComponentCurrent(componentGeneration, componentOwnerId) && retryGeneration === generation) connectionRetrying.value = false
   }
 }
 const retryInitialization = async (): Promise<void> => {
-  if (loading.value) return
+  if (disposed || loading.value || connectionRetrying.value) return
   if (connectionBlocked.value) {
     await retryAgentConnection()
     return
   }
   if (!initializationError.value) return
+  const generation = retryGeneration + 1
+  retryGeneration = generation
+  const componentOwnerId = props.ownerId
+  connectionRetrying.value = true
   initializationError.value = ''
   agents.error = ''
-  await ensureInitialized()
+  try {
+    await ensureInitialized({ allowCreate: false, bypassConnectionGate: true, forceFresh: true })
+  } finally {
+    if (isComponentCurrent(componentGeneration, componentOwnerId) && retryGeneration === generation) connectionRetrying.value = false
+  }
 }
 const focusComposer = async (): Promise<void> => {
   if (!await ensureInitialized()) return
@@ -780,6 +871,7 @@ const sendPrompt = async (
   completion?: (success: boolean) => void
 ): Promise<boolean> => {
   const prompt = content.trim()
+  if (disposed) { completion?.(false); return false }
   if (connectionBlocked.value) {
     waitingForConnection.value = true
     completion?.(false)
@@ -788,22 +880,32 @@ const sendPrompt = async (
   if (sessionMutationBusy.value) { completion?.(false); return false }
   if (!prompt) { completion?.(false); return false }
   if (promptSubmissionPending.value) { completion?.(false); return false }
+  const generation = promptGeneration + 1
+  promptGeneration = generation
+  const ownerId = props.ownerId
   promptSubmissionPending.value = true
   try {
     const initialized = await ensureInitialized()
+    if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
     if (!initialized || !canSubmit.value || (mode === 'goal' && !props.goalsEnabled)) { completion?.(false); return false }
     const success = await agents.send(prompt, invokedSkillVersionIds, mode)
+    if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
     completion?.(success)
     return success
   } catch (value) {
+    if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
     agents.error = value instanceof Error ? value.message : 'The message could not be sent.'
     completion?.(false)
     return false
   } finally {
-    promptSubmissionPending.value = false
+    if (isComponentCurrent(componentGeneration, ownerId) && promptGeneration === generation) promptSubmissionPending.value = false
   }
 }
 const networkActionAllowed = (): boolean => {
+  if (disposed || !workspaceReady.value) {
+    if (connectionBlocked.value) waitingForConnection.value = true
+    return false
+  }
   if (!connectionBlocked.value) return true
   waitingForConnection.value = true
   return false
@@ -842,7 +944,10 @@ const scrollToLatest = async (): Promise<void> => {
 }
 const reloadSkillCatalog = async (): Promise<void> => {
   if (!networkActionAllowed()) return
-  await agents.reloadSkills()
+  const generation = componentGeneration
+  const ownerId = props.ownerId
+  const loaded = await agents.reloadSkills()
+  if (!isComponentCurrent(generation, ownerId) || !loaded) return
 }
 const updateSkillPreferences = (skillIds: readonly string[]): void => {
   if (networkActionAllowed()) void agents.setSkillPreferences(skillIds)
@@ -851,35 +956,43 @@ const keepConversation = async (): Promise<void> => {
   if (!networkActionAllowed()) return
   const sessionId = thread.value?.session.id
   if (!sessionId || sessionMutationBusy.value || keepingConversation.value) return
+  const generation = actionGeneration
+  const ownerId = props.ownerId
   keepingConversation.value = true
   try {
     const kept = await agents.setSessionRetention(sessionId, 'saved')
-    if (!kept || thread.value?.session.id !== sessionId) return
+    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation || !kept || thread.value?.session.id !== sessionId) return
     sessionNotice.value = hasConversation.value ? 'Conversation kept in history.' : 'Conversation kept. It will appear in history after your first message.'
   } catch (value) {
-    agents.error = value instanceof Error ? value.message : 'The conversation could not be kept.'
+    if (isComponentCurrent(generation, ownerId) && actionGeneration === generation)
+      agents.error = value instanceof Error ? value.message : 'The conversation could not be kept.'
   } finally {
-    keepingConversation.value = false
+    if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) keepingConversation.value = false
   }
 }
 const createSession = async (retention: 'saved' | 'temporary'): Promise<void> => {
   if (!networkActionAllowed()) return
   if (sessionMutationBusy.value || creatingRetention.value) return
+  const generation = actionGeneration
+  const ownerId = props.ownerId
   creatingRetention.value = retention
   sessionNotice.value = ''
   try {
     const initialized = await ensureInitialized()
-    if (!initialized || sessionMutationBusy.value || !networkActionAllowed()) return
+    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation || !initialized || sessionMutationBusy.value || !networkActionAllowed()) return
     const created = await agents.newSession(retention)
+    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
     if (created && thread.value?.session.retention === retention) {
       await nextTick()
+      if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
       await composer.value?.focusInput()
     }
   } catch (value) {
+    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
     const kind = retention === 'temporary' ? 'temporary conversation' : 'new saved conversation'
     agents.error = value instanceof Error ? value.message : `A ${kind} could not be created.`
   } finally {
-    creatingRetention.value = null
+    if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) creatingRetention.value = null
   }
 }
 const newTemporarySession = (): Promise<void> => createSession('temporary')
@@ -989,6 +1102,8 @@ const closeClearUnfiledHistory = (): void => {
 const clearUnfiledHistory = async (): Promise<void> => {
   if (!networkActionAllowed()) return
   if (clearingUnfiledHistory.value || sessionMutationBusy.value) return
+  const generation = actionGeneration
+  const ownerId = props.ownerId
   const originalSessionId = thread.value?.session.id ?? null
   const clearingCurrentSession = thread.value?.session.folderId === null
   clearingUnfiledHistory.value = true
@@ -996,6 +1111,7 @@ const clearUnfiledHistory = async (): Promise<void> => {
   clearUnfiledCommitted.value = false
   try {
     await agents.clearUnfiledHistory()
+    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
     if (clearingCurrentSession && originalSessionId && !thread.value) {
       clearUnfiledCommitted.value = true
       clearUnfiledError.value = error.value
@@ -1005,28 +1121,40 @@ const clearUnfiledHistory = async (): Promise<void> => {
     }
     clearUnfiledHistoryOpen.value = false
   } catch (value) {
+    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
     const detail = value instanceof Error ? value.message : 'Try again.'
     clearUnfiledError.value = `Unfiled conversations could not be cleared. Saved folders and their filed conversations remain unchanged. ${detail}`
   } finally {
-    clearingUnfiledHistory.value = false
+    if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) clearingUnfiledHistory.value = false
   }
 }
 const recoverClearUnfiledHistory = async (): Promise<void> => {
   if (!networkActionAllowed()) return
   if (clearingUnfiledHistory.value || sessionMutationBusy.value) return
+  const generation = actionGeneration
+  const ownerId = props.ownerId
   clearingUnfiledHistory.value = true
   try {
-    await agents.reloadSessions()
-    if (!thread.value && profiles.value.length > 0 && networkActionAllowed()) await agents.newSession('saved')
-    if (!thread.value) throw new Error('No replacement conversation is available yet. Retry.')
+    const refreshed = await agents.reloadSessions()
+    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
+    if (!refreshed.accepted || !refreshed.current) {
+      const detail = refreshed.error instanceof Error ? refreshed.error.message : 'History could not be refreshed.'
+      throw new Error(detail)
+    }
+    if (!thread.value) {
+      const candidate = agents.sessions.find(session => !session.deletedAt)
+      if (!candidate || !await agents.openSession(candidate.id)) throw new Error('No replacement conversation is available yet. Retry.')
+      if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
+    }
     clearUnfiledHistoryOpen.value = false
     clearUnfiledError.value = ''
     clearUnfiledCommitted.value = false
   } catch (value) {
+    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
     const detail = value instanceof Error ? value.message : 'A replacement conversation could not be opened.'
     clearUnfiledError.value = `Unfiled conversations were cleared, but a replacement conversation still could not be opened. Saved folders and their filed conversations remain unchanged. ${detail}`
   } finally {
-    clearingUnfiledHistory.value = false
+    if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) clearingUnfiledHistory.value = false
   }
 }
 const updateApprovalJump = (): void => {
@@ -1107,6 +1235,9 @@ const observeTranscript = (container: HTMLElement | null): void => {
 }
 
 watch(transcript, observeTranscript, { flush: 'post' })
+watch(connection, state => {
+  if ((state === 'reconnecting' || state === 'connecting' || state === 'closed') && !loading.value) waitingForConnection.value = true
+})
 watch(() => pwaState.connectionState, state => {
   if (state === 'offline' || state === 'server-unavailable') {
     waitingForConnection.value = true
@@ -1114,9 +1245,31 @@ watch(() => pwaState.connectionState, state => {
     return
   }
   if (state !== 'online' || !waitingForConnection.value) return
+  void retryAgentConnection()
+})
+watch(() => props.ownerId, (ownerId, previousOwnerId) => {
+  if (disposed || ownerId === previousOwnerId) return
+  componentGeneration += 1
+  retryGeneration += 1
+  promptGeneration += 1
+  actionGeneration += 1
+  connectionRetrying.value = false
+  promptSubmissionPending.value = false
+  keepingConversation.value = false
+  creatingRetention.value = null
+  clearingUnfiledHistory.value = false
+  initializationEpoch += 1
+  initialization = null
+  initializationKey = ''
   waitingForConnection.value = false
-  agents.connectCurrentRun()
-  void ensureInitialized()
+  initializationError.value = ''
+  offlineComposerDraft.value = ''
+  agents.destroyWorkspace()
+  void ensureInitialized({
+    allowCreate: true,
+    bypassConnectionGate: pwaState.connectionState === 'online',
+    forceFresh: true
+  })
 })
 watch(currentPage, page => agents.setCurrentPage(page), { immediate: true })
 watch(skillManagerOpen, (open, wasOpen) => {
@@ -1200,6 +1353,14 @@ onMounted(() => {
   void ensureInitialized()
 })
 onBeforeUnmount(() => {
+  disposed = true
+  componentGeneration += 1
+  retryGeneration += 1
+  promptGeneration += 1
+  actionGeneration += 1
+  initializationEpoch += 1
+  initialization = null
+  initializationKey = ''
   transcriptObserver?.disconnect()
   if (transcriptFrame !== null) window.cancelAnimationFrame(transcriptFrame)
   panelFocusScope?.deactivate({ restoreFocus: false })

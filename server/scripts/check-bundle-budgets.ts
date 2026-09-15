@@ -47,6 +47,7 @@ const KiB = 1024
 const APP_SOURCE = 'client/index-app.ts'
 const LOGIN_SOURCE = 'client/components/login.vue'
 const LOGO_PARTICLE_SCENE_SOURCE = 'client/components/login-logo/LogoParticleScene.vue'
+const OFFLINE_SOURCE = 'client/offline.html'
 
 /**
  * Clean commit 16fa062, production Vite output. Raw bytes were recorded
@@ -227,11 +228,14 @@ export async function checkBundleBudgets(assetsDirectory = path.resolve('assets'
 
   const appKey = findManifestKey(manifest, APP_SOURCE)
   const setupKey = findManifestKey(manifest, 'client/index-setup.ts')
+  const offlineKey = findManifestKey(manifest, OFFLINE_SOURCE)
   const appFiles = collectManifestFiles(manifest, collectManifestClosure(manifest, [appKey]))
   const setupFiles = collectManifestFiles(manifest, collectManifestClosure(manifest, [setupKey]))
   const graph = buildLoginBundleGraph(manifest)
+  const offlineChunks = collectManifestClosure(manifest, [offlineKey], true)
+  const offlineFiles = collectManifestFiles(manifest, offlineChunks)
   const directLoginFiles = collectManifestFiles(manifest, [graph.loginKey])
-  const [appScripts, appStyles, setupScripts, setupStyles, directJavascript, directStyles, loginInitial, lazyScene] = await Promise.all([
+  const [appScripts, appStyles, setupScripts, setupStyles, directJavascript, directStyles, loginInitial, lazyScene, neutralClosure] = await Promise.all([
     measureFiles(appFiles.scripts),
     measureFiles(appFiles.styles),
     measureFiles(setupFiles.scripts),
@@ -239,7 +243,8 @@ export async function checkBundleBudgets(assetsDirectory = path.resolve('assets'
     measureFiles(directLoginFiles.scripts),
     measureFiles(directLoginFiles.styles),
     measureManifestFiles(graph.initialFiles),
-    measureManifestFiles(graph.sceneOnlyFiles)
+    measureManifestFiles(graph.sceneOnlyFiles),
+    measureManifestFiles(offlineFiles)
   ])
   const initialForbiddenFiles = findForbiddenLoginInitialFiles(manifest, graph.initialChunks, graph.initialFiles)
   const javascriptFiles = (await readdir(path.join(assetsDirectory, 'js'))).filter(file => file.endsWith('.js')).map(file => `js/${file}`)
@@ -249,6 +254,8 @@ export async function checkBundleBudgets(assetsDirectory = path.resolve('assets'
     const measurement = await measureFile(file)
     largestJavascriptChunk = Math.max(largestJavascriptChunk, measurement.rawBytes)
   }
+  const offlineChunkMembership = [...offlineChunks].sort()
+  const offlineFileMembership = [...allManifestFiles(offlineFiles)].sort()
 
   console.log(
     `MEASURE login direct JavaScript: ${directJavascript.rawBytes} raw bytes, ${directJavascript.gzipBytes} gzip-9-n bytes ` +
@@ -266,6 +273,12 @@ export async function checkBundleBudgets(assetsDirectory = path.resolve('assets'
     `MEASURE lazy login particle scene reachable-only closure: ${graph.sceneOnlyChunks.size} chunks, ` +
       `${allManifestFiles(graph.sceneOnlyFiles).size} files, ${lazyScene.rawBytes} raw bytes, ${lazyScene.gzipBytes} gzip-9-n bytes`
   )
+  console.log(`MEASURE neutral offline closure membership: chunks=${offlineChunkMembership.join(', ')}`)
+  console.log(`MEASURE neutral offline closure files: ${offlineFileMembership.join(', ')}`)
+  console.log(
+    `MEASURE neutral offline closure: ${offlineChunks.size} chunks, ${offlineFileMembership.length} files, ` +
+      `${neutralClosure.rawBytes} raw bytes, ${neutralClosure.gzipBytes} gzip-9-n bytes`
+  )
   if (initialForbiddenFiles.length > 0) {
     console.log(`MEASURE forbidden login initial files: ${initialForbiddenFiles.join(', ')}`)
   }
@@ -280,7 +293,7 @@ export async function checkBundleBudgets(assetsDirectory = path.resolve('assets'
     { name: 'setup initial CSS (raw)', actual: setupStyles.rawBytes, limit: 1_000 * KiB },
     { name: 'setup initial CSS (gzip)', actual: setupStyles.gzipBytes, limit: 170 * KiB },
     { name: 'largest JavaScript chunk (raw)', actual: largestJavascriptChunk, limit: 1_400 * KiB },
-    { name: 'all JavaScript chunks (raw)', actual: allJavascript.rawBytes, limit: 12_416 * KiB },
+    { name: 'all JavaScript chunks (raw)', actual: allJavascript.rawBytes, limit: 12_288 * KiB },
     ...buildLoginBundleBudgets({
       directJavascript,
       directStyles,

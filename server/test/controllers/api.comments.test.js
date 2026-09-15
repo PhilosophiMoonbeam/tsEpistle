@@ -208,6 +208,8 @@ describe('controllers/api comments endpoints', () => {
     const router = express.__routers[0]
     return {
       list: router.get.mock.calls.find(([path]) => path === '/')[1],
+      availability: router.get.mock.calls.find(([path]) => path === '/availability/:id')[1],
+      mentions: router.get.mock.calls.find(([path]) => path === '/mentions')[1],
       create: router.post.mock.calls.find(([path]) => path === '/')[1],
       get: router.get.mock.calls.find(([path]) => path === '/:id')[1],
       update: router.patch.mock.calls.find(([path]) => path === '/:id')[1],
@@ -535,6 +537,7 @@ describe('controllers/api comments endpoints', () => {
     expect(global.WIKI.models.comments.deleteComment).toHaveBeenCalledWith({ id: 73, user, ip: deleteReq.ip, sessionId: '' })
     expect(deleteRes.json).toHaveBeenCalledWith({ message: 'Comment deleted successfully' })
   })
+
 
   it('delegates unexpected comment mutation failures without serializing internal messages', async () => {
     const err = new Error('comment database credentials rejected')

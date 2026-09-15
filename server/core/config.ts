@@ -17,6 +17,7 @@ interface AppConfig {
   setup?: boolean
   title?: string
   logoUrl?: string
+  offlineDraftSiteId?: string
 }
 
 interface AppData {
@@ -80,7 +81,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-const INSTALLATION_CONFIGURATION_KEYS = ['auth', 'certs', 'sessionSecret', 'title'] as const
+// Installation-scoped draft identity; INSTANCE_ID remains process/replica-scoped.
+const OFFLINE_DRAFT_SITE_ID_CONFIG_KEY = 'offlineDraftSiteId' as const
+const OFFLINE_DRAFT_SITE_ID_ENVIRONMENT_VARIABLE = 'OFFLINE_DRAFT_SITE_ID' as const
+const OFFLINE_DRAFT_SITE_ID_MAX_LENGTH = 256
+const INSTALLATION_CONFIGURATION_KEYS = ['auth', 'certs', 'offlineDraftSiteId', 'sessionSecret', 'title'] as const
+
+const configuredOfflineDraftSiteId = (): string | undefined => {
+  const value = process.env[OFFLINE_DRAFT_SITE_ID_ENVIRONMENT_VARIABLE]?.trim()
+  if (!value) return undefined
+  if (value.length > OFFLINE_DRAFT_SITE_ID_MAX_LENGTH) throw new RangeError(`${OFFLINE_DRAFT_SITE_ID_ENVIRONMENT_VARIABLE} must contain at most ${OFFLINE_DRAFT_SITE_ID_MAX_LENGTH} characters`)
+  return value
+}
+
+const canonicalOriginForOfflineDraftSite = (value: unknown): string | undefined => {
+  if (typeof value !== 'string' || value.length === 0) return undefined
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return undefined
+  }
+  const localHttp = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && localHttp)) return undefined
+  if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return undefined
+  const origin = parsed.origin
+  return origin.length <= OFFLINE_DRAFT_SITE_ID_MAX_LENGTH ? origin : undefined
+}
 
 function hasSigningConfiguration(config: Record<string, unknown>): boolean {
   if (typeof config.sessionSecret !== 'string' || config.sessionSecret.length === 0 || !isRecord(config.certs)) return false
@@ -91,14 +118,21 @@ function hasSigningConfiguration(config: Record<string, unknown>): boolean {
 
 function isAppConfig(value: unknown): value is AppConfig {
   if (!isRecord(value) || !isRecord(value.db) || !isRecord(value.flags)) return false
+  if (
+    Object.hasOwn(value, OFFLINE_DRAFT_SITE_ID_CONFIG_KEY) &&
+    (typeof value[OFFLINE_DRAFT_SITE_ID_CONFIG_KEY] !== 'string' ||
+      value[OFFLINE_DRAFT_SITE_ID_CONFIG_KEY].trim().length === 0 ||
+      value[OFFLINE_DRAFT_SITE_ID_CONFIG_KEY].length > OFFLINE_DRAFT_SITE_ID_MAX_LENGTH)
+  )
+    return false
   return (
     (typeof value.db.pass === 'string' || typeof value.db.pass === 'number') &&
     typeof value.flags.ldapdebug === 'boolean' &&
     typeof value.flags.sqllog === 'boolean' &&
     (typeof value.port === 'string' || typeof value.port === 'number')
   )
-}
 
+}
 function isAppData(value: unknown): value is AppData {
   return isRecord(value) && isRecord(value.defaults) && isAppConfig(value.defaults.config)
 }
@@ -184,6 +218,9 @@ const configService: ConfigService = {
       }
     }
 
+    const offlineDraftSiteId = configuredOfflineDraftSiteId()
+    if (offlineDraftSiteId !== undefined) appconfig[OFFLINE_DRAFT_SITE_ID_CONFIG_KEY] = offlineDraftSiteId
+
     wiki.config = appconfig
     wiki.data = appdata
     wiki.product = loadProductMetadata(wiki.ROOTPATH)
@@ -203,19 +240,48 @@ const configService: ConfigService = {
       const reloadedConfig = mergeSavedConfiguration(conf, canonicalConfig) as AppConfig
       // An omitted publication-window field means no schedule, not the previous notice’s window.
       if (Object.hasOwn(conf, 'banner')) reloadedConfig.banner = _.cloneDeep(conf.banner)
+      const configuredSiteId = configuredOfflineDraftSiteId()
+      if (configuredSiteId !== undefined) reloadedConfig[OFFLINE_DRAFT_SITE_ID_CONFIG_KEY] = configuredSiteId
       Object.assign(canonicalConfig, reloadedConfig)
       const migratedKeys = normalizeLegacyProductDefaults(canonicalConfig, wiki.product.name)
+      if (configuredSiteId !== undefined && conf[OFFLINE_DRAFT_SITE_ID_CONFIG_KEY] !== configuredSiteId) {
+        if (!migratedKeys.includes(OFFLINE_DRAFT_SITE_ID_CONFIG_KEY)) migratedKeys.push(OFFLINE_DRAFT_SITE_ID_CONFIG_KEY)
+      }
       if (migratedKeys.length > 0) await this.saveToDb(migratedKeys, false)
     } else {
       wiki.logger.warn('DB Configuration is empty or incomplete. Switching to Setup mode...')
       wiki.config.setup = true
+      if (!Object.hasOwn(wiki.config, OFFLINE_DRAFT_SITE_ID_CONFIG_KEY)) {
+        const fallbackSiteId = canonicalOriginForOfflineDraftSite(wiki.config.host)
+        if (fallbackSiteId !== undefined) wiki.config[OFFLINE_DRAFT_SITE_ID_CONFIG_KEY] = fallbackSiteId
+      }
     }
   },
 
   async saveToDb(keys: string[], propagate = true) {
     const wiki = getWiki()
+    const persistedKeys = [...keys]
+    const configuredSiteId = configuredOfflineDraftSiteId()
+    let offlineDraftSiteId = wiki.config[OFFLINE_DRAFT_SITE_ID_CONFIG_KEY]
+    if (configuredSiteId !== undefined) {
+      offlineDraftSiteId = configuredSiteId
+      wiki.config[OFFLINE_DRAFT_SITE_ID_CONFIG_KEY] = configuredSiteId
+    } else if (wiki.config.setup === true && typeof offlineDraftSiteId !== 'string') {
+      const fallbackSiteId = canonicalOriginForOfflineDraftSite(wiki.config.host)
+      if (fallbackSiteId !== undefined) {
+        offlineDraftSiteId = fallbackSiteId
+        wiki.config[OFFLINE_DRAFT_SITE_ID_CONFIG_KEY] = fallbackSiteId
+      }
+    }
+    if (
+      (configuredSiteId !== undefined || wiki.config.setup === true) &&
+      typeof offlineDraftSiteId === 'string' &&
+      !persistedKeys.includes(OFFLINE_DRAFT_SITE_ID_CONFIG_KEY)
+    ) {
+      persistedKeys.push(OFFLINE_DRAFT_SITE_ID_CONFIG_KEY)
+    }
     try {
-      for (const key of keys) {
+      for (const key of persistedKeys) {
         let value = _.get(wiki.config, key, null)
         if (!_.isPlainObject(value)) value = { v: value }
         const affectedRows = await wiki.models.settings.query().patch({ value }).where('key', key)

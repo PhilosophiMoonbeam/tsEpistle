@@ -198,6 +198,7 @@ export const encryptOfflineDraft = async (
   let aad: Uint8Array | undefined
   let plaintextBytes: Uint8Array | undefined
   let ciphertextBytes: Uint8Array | undefined
+  let returned = false
   try {
     aad = encodeOfflineDraftAad(handle, { ...selectors, nonce })
     const serialized = JSON.stringify(parsedPayload)
@@ -221,11 +222,12 @@ export const encryptOfflineDraft = async (
       sessionGeneration: handle.sessionGeneration,
       draftRevision: selectors.draftRevision,
       submissionId: selectors.submissionId,
-      nonce: new Uint8Array(nonce),
-      ciphertext: new Uint8Array(ciphertextBytes)
+      nonce,
+      ciphertext: ciphertextBytes
     }
     const parsedEnvelope = OfflineDraftEnvelopeV1Schema.safeParse(envelope)
     if (!parsedEnvelope.success) throw opaque()
+    returned = true
     return parsedEnvelope.data
   } catch (error) {
     if (error instanceof OfflineDraftOpaqueError) throw error
@@ -233,8 +235,10 @@ export const encryptOfflineDraft = async (
   } finally {
     aad?.fill(0)
     plaintextBytes?.fill(0)
-    ciphertextBytes?.fill(0)
-    nonce.fill(0)
+    if (!returned) {
+      ciphertextBytes?.fill(0)
+      nonce.fill(0)
+    }
   }
 }
 
@@ -287,6 +291,59 @@ export const decryptOfflineDraft = async (handle: OfflineDraftKeyHandle, envelop
     plaintextBytes?.fill(0)
   }
 }
+/** Decrypts one ordinary draft from an older generation for same-owner recovery. */
+export const decryptOfflineDraftForReconciliation = async (
+  handle: OfflineDraftKeyHandle,
+  envelope: OfflineDraftEnvelopeV1
+): Promise<OfflineDraftPayloadV1> => {
+  let aad: Uint8Array | undefined
+  let plaintextBytes: Uint8Array | undefined
+  try {
+    const parsedEnvelope = OfflineDraftEnvelopeV1Schema.safeParse(envelope)
+    if (!parsedEnvelope.success) throw opaque()
+    const value = parsedEnvelope.data
+    if (
+      value.submissionId !== null ||
+      value.accountId !== handle.context.accountId ||
+      value.authVersion !== handle.context.authVersion ||
+      value.keyVersion !== handle.context.keyVersion ||
+      value.sessionGeneration >= handle.sessionGeneration ||
+      value.ciphertext.byteLength > OFFLINE_RECORD_BYTES_LIMIT
+    )
+      throw opaque()
+    const key = requireCurrentOfflineDraftKey(handle)
+    aad = encodeOfflineDraftAadForGeneration(handle, {
+      recordId: value.recordId,
+      draftRevision: value.draftRevision,
+      submissionId: value.submissionId,
+      nonce: value.nonce
+    }, value.sessionGeneration)
+    const decrypted = await subtleCrypto().decrypt(
+      { name: 'AES-GCM', iv: value.nonce as unknown as BufferSource, additionalData: aad as unknown as BufferSource, tagLength: OFFLINE_DRAFT_TAG_BYTES * 8 },
+      key,
+      value.ciphertext as unknown as BufferSource
+    )
+    plaintextBytes = new Uint8Array(decrypted)
+    if (!isCurrentOfflineDraftKey(handle)) throw opaque()
+    const serialized = new TextDecoder('utf-8', { fatal: true }).decode(plaintextBytes)
+    let decoded: unknown
+    try {
+      decoded = JSON.parse(serialized) as unknown
+    } catch {
+      throw opaque()
+    }
+    const payload = OfflineDraftPayloadV1Schema.safeParse(decoded)
+    if (!payload.success || !isCurrentOfflineDraftKey(handle)) throw opaque()
+    return canonicalPayload(payload.data)
+  } catch (error) {
+    if (error instanceof OfflineDraftOpaqueError) throw error
+    throw opaque()
+  } finally {
+    aad?.fill(0)
+    plaintextBytes?.fill(0)
+  }
+}
+
 /**
  * Decrypts an immutable submission from an older generation for same-account
  * reconciliation only. The current verified key remains the only key input;

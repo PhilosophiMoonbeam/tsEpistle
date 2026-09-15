@@ -2,11 +2,11 @@
   <div class="agent-context" aria-label="Sources and search scope">
     <div class="agent-context__scope">
       <v-menu content-class="agent-owned-overlay" location="top start">
-        <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" variant="text" size="small" prepend-icon="mdi-text-search" append-icon="mdi-chevron-down" aria-label="Choose Agent search scope">{{ scopeLabel }}</v-btn></template>
+        <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" :disabled="disabled || connectionBlocked" variant="text" size="small" prepend-icon="mdi-text-search" append-icon="mdi-chevron-down" aria-label="Choose Agent search scope">{{ scopeLabel }}</v-btn></template>
         <v-list density="compact" aria-label="Agent search scope">
-          <v-list-item title="All Wiki" subtitle="Search every page you can access" prepend-icon="mdi-earth" :active="draft.scope.kind === 'all'" @click="setScope({ kind: 'all' })" />
-          <v-list-item v-if="currentPage" title="This page tree" :subtitle="currentPage.path" prepend-icon="mdi-file-tree-outline" :active="draft.scope.kind === 'section'" @click="setScope({ kind: 'section', locale: currentPage.locale, path: currentPage.path })" />
-          <v-list-item title="Selected pages" subtitle="Search within the sources attached here" prepend-icon="mdi-file-multiple-outline" :disabled="!draft.sources.length" :active="draft.scope.kind === 'selected'" @click="setScope({ kind: 'selected' })" />
+          <v-list-item title="All Wiki" subtitle="Search every page you can access" prepend-icon="mdi-earth" :active="draft.scope.kind === 'all'" :disabled="disabled || connectionBlocked" @click="setScope({ kind: 'all' })" />
+          <v-list-item v-if="currentPage" title="This page tree" :subtitle="currentPage.path" prepend-icon="mdi-file-tree-outline" :active="draft.scope.kind === 'section'" :disabled="disabled || connectionBlocked" @click="setScope({ kind: 'section', locale: currentPage.locale, path: currentPage.path })" />
+          <v-list-item title="Selected pages" subtitle="Search within the sources attached here" prepend-icon="mdi-file-multiple-outline" :disabled="disabled || connectionBlocked || !draft.sources.length" :active="draft.scope.kind === 'selected'" @click="setScope({ kind: 'selected' })" />
         </v-list>
       </v-menu>
       <v-btn
@@ -14,14 +14,14 @@
         size="small"
         variant="text"
         prepend-icon="mdi-plus"
-        :disabled="disabled"
+        :disabled="disabled || connectionBlocked"
         @click="openSources"
       >Add sources</v-btn>
     </div>
     <div v-if="currentPage || draft.sources.length" class="agent-context__sources" aria-label="Pages attached to the next message">
-      <v-chip v-if="currentPage && draft.includeCurrentPage" closable :close-label="`Remove current page ${currentPage.path}`" size="small" variant="tonal" prepend-icon="mdi-file-link-outline" @click:close="emit('change', { includeCurrentPage: false })"><span class="agent-context__source-label">Current page · {{ currentPage.locale }}/{{ currentPage.path }}</span></v-chip>
-      <v-btn v-else-if="currentPage" size="small" variant="text" prepend-icon="mdi-file-link-outline" @click="emit('change', { includeCurrentPage: true })">Include current page</v-btn>
-      <v-chip v-for="source in draft.sources" :key="source.id" size="small" closable :close-label="`Remove source ${source.title}`" :aria-label="`Preview attached source ${source.title}`" variant="outlined" prepend-icon="mdi-file-document-outline" @click="previewSelector = { id: source.id }" @click:close="removeSource(source.id)"><span class="agent-context__source-label">{{ source.title }}</span></v-chip>
+      <v-chip v-if="currentPage && draft.includeCurrentPage" closable :disabled="disabled || connectionBlocked" :close-label="`Remove current page ${currentPage.path}`" size="small" variant="tonal" prepend-icon="mdi-file-link-outline" @click:close="emit('change', { includeCurrentPage: false })"><span class="agent-context__source-label">Current page · {{ currentPage.locale }}/{{ currentPage.path }}</span></v-chip>
+      <v-btn v-else-if="currentPage" size="small" variant="text" prepend-icon="mdi-file-link-outline" :disabled="disabled || connectionBlocked" @click="emit('change', { includeCurrentPage: true })">Include current page</v-btn>
+      <v-chip v-for="source in draft.sources" :key="source.id" size="small" closable :disabled="disabled || connectionBlocked" :close-label="`Remove source ${source.title}`" :aria-label="`Preview attached source ${source.title}`" variant="outlined" prepend-icon="mdi-file-document-outline" @click="previewSelector = { id: source.id }" @click:close="removeSource(source.id)"><span class="agent-context__source-label">{{ source.title }}</span></v-chip>
     </div>
     <p v-if="draft.sources.length === 8" class="agent-context__limit" role="status">Eight sources attached. Remove one to add another.</p>
     <WikiSourcePreview v-if="previewSelector" :selector="previewSelector" @close="previewSelector = null" />
@@ -48,6 +48,10 @@
         </header>
         <v-card-text class="agent-context__dialog-body">
           <p class="agent-context__dialog-guidance">Select up to eight pages to attach to this conversation. Your pending selections stay here while you search or load more results.</p>
+          <v-alert v-if="connectionBlocked" class="agent-context__connection-alert" type="warning" variant="tonal" density="compact" role="status">
+            <span>Connection required to search or attach sources.</span>
+            <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" @click="emit('retry-connection')">Retry connection</v-btn>
+          </v-alert>
           <v-text-field
             ref="sourceSearchInput"
             v-model="sourceQuery"
@@ -58,7 +62,7 @@
             clearable
             hide-details="auto"
             autocomplete="off"
-            :disabled="addingSources"
+            :disabled="addingSources || disabled || connectionBlocked"
             @keydown.enter.prevent="queueSourceSearch(true)"
           />
           <p class="agent-context__search-scope" role="note"><v-icon icon="mdi-earth" size="15" aria-hidden="true" /> Attachments are discovered across All Wiki; your existing Agent scope remains {{ scopeLabel }}.</p>
@@ -73,7 +77,7 @@
               <span>{{ selectedRows.length }} of 8</span>
             </div>
             <div class="agent-context__pending-list">
-              <v-chip v-for="row in selectedRows" :key="rowIdentity(row)" closable size="small" variant="tonal" :close-label="`Remove ${row.title} from pending sources`" @click:close="removePending(row)">
+              <v-chip v-for="row in selectedRows" :key="rowIdentity(row)" closable size="small" variant="tonal" :disabled="addingSources || disabled || connectionBlocked" :close-label="`Remove ${row.title} from pending sources`" @click:close="removePending(row)">
                 <span class="agent-context__pending-label">{{ row.title }}<small>{{ row.locale }} · {{ row.path }}</small></span>
               </v-chip>
             </div>
@@ -113,14 +117,14 @@
             class="agent-context__more"
             variant="text"
             :loading="loadingMore"
-            :disabled="loadingMore || addingSources"
+            :disabled="loadingMore || addingSources || disabled || connectionBlocked"
             @click="loadMoreSources"
           >More results</v-btn>
         </v-card-text>
         <v-card-actions class="agent-context__dialog-actions">
           <v-btn variant="text" @click="cancelSources">Cancel</v-btn>
           <v-spacer />
-          <v-btn color="primary" variant="flat" :loading="addingSources" :disabled="!selectedRows.length || addingSources || disabled" @click="addSources">
+          <v-btn color="primary" variant="flat" :loading="addingSources" :disabled="!selectedRows.length || addingSources || disabled || connectionBlocked" @click="addSources">
             {{ selectedRows.length ? `Add ${selectedRows.length} source${selectedRows.length === 1 ? '' : 's'} and return` : 'Add sources and return' }}
           </v-btn>
         </v-card-actions>
@@ -145,10 +149,13 @@ const props = defineProps<{
   draft: AgentDraft
   currentPage: AgentCurrentPageHint | null
   disabled?: boolean
+  connectionBlocked?: boolean
+  connectionRetrying?: boolean
 }>()
 const emit = defineEmits<{
   change: [patch: Partial<AgentDraft>]
   sourcesAdded: []
+  'retry-connection': []
 }>()
 
 const previewSelector = ref<WikiSourceSelector | null>(null)
@@ -167,9 +174,11 @@ const sourceSearchInput = ref<{ focus?: () => void; $el?: HTMLElement } | null>(
 const sourcesActivator = ref<{ focus?: () => void; $el?: HTMLElement } | HTMLElement | null>(null)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 let searchController: AbortController | null = null
+let disposed = false
 let moreController: AbortController | null = null
 let resolveController: AbortController | null = null
 let requestGeneration = 0
+const interactionBlocked = computed(() => Boolean(props.disabled || props.connectionBlocked))
 
 const scopeLabel = computed(() => props.draft.scope.kind === 'selected' ? 'Selected pages' : props.draft.scope.kind === 'section' ? `Within ${props.draft.scope.path}` : props.draft.scope.kind === 'locale' ? `${props.draft.scope.locale.toUpperCase()} pages` : 'All Wiki')
 const attachedIds = computed(() => new Set(props.draft.sources.map(source => source.id)))
@@ -217,13 +226,17 @@ const toggleReason = (row: PageSearchRow): string => {
   if (atCapacity.value) return 'Eight sources is the maximum; remove a pending or attached source first'
   return ''
 }
-const canToggle = (row: PageSearchRow): boolean => !addingSources.value && !props.disabled && !isAttached(row) && (isPending(row) || (!atCapacity.value && rowId(row) !== null))
+const canToggle = (row: PageSearchRow): boolean => !addingSources.value && !interactionBlocked.value && !isAttached(row) && (isPending(row) || (!atCapacity.value && rowId(row) !== null))
 const rowAriaLabel = (row: PageSearchRow): string => {
   const state = isAttached(row) ? 'Attached' : isPending(row) ? 'Pending addition' : atCapacity.value ? 'Unavailable, eight-source limit reached' : ''
   return `${row.title}, ${row.locale}, ${row.path}${state ? `, ${state}` : ''}`
 }
-const setScope = (scope: AgentSearchScope): void => emit('change', { scope })
+const setScope = (scope: AgentSearchScope): void => {
+  if (interactionBlocked.value) return
+  emit('change', { scope })
+}
 const removeSource = (id: number): void => {
+  if (interactionBlocked.value) return
   const sources = props.draft.sources.filter(source => source.id !== id)
   emit('change', { sources, ...(props.draft.scope.kind === 'selected' && !sources.length ? { scope: { kind: 'all' } } : {}) })
 }
@@ -272,7 +285,7 @@ const focusSourceSearch = (): void => {
   void nextTick(() => focusElement(sourceSearchInput.value))
 }
 const openSources = (): void => {
-  if (props.disabled) return
+  if (interactionBlocked.value) return
   invalidateAll()
   resetTransient()
   successfulClose.value = false
@@ -286,7 +299,7 @@ const cancelSources = (): void => {
 }
 const handleSourcesModel = (open: boolean): void => {
   if (open) {
-    if (!props.disabled) sourcesOpen.value = true
+    if (!interactionBlocked.value) sourcesOpen.value = true
     return
   }
   if (!successfulClose.value) cancelSources()
@@ -304,7 +317,7 @@ const onSourcesAfterLeave = (): void => {
   void nextTick(() => focusElement(sourcesActivator.value))
 }
 const queueSourceSearch = (immediate = false): void => {
-  if (!sourcesOpen.value || addingSources.value) return
+  if (!sourcesOpen.value || interactionBlocked.value || addingSources.value) return
   clearSearchTimer()
   abortDiscovery()
   requestGeneration += 1
@@ -326,7 +339,7 @@ const queueSourceSearch = (immediate = false): void => {
   }, 300)
 }
 const runSearch = async (query: string, generation: number): Promise<void> => {
-  if (!sourcesOpen.value || props.disabled || generation !== requestGeneration || query.length < 2) return
+  if (disposed || !sourcesOpen.value || interactionBlocked.value || generation !== requestGeneration || query.length < 2) return
   const controller = new AbortController()
   searchController = controller
   searchLoading.value = true
@@ -336,10 +349,10 @@ const runSearch = async (query: string, generation: number): Promise<void> => {
       query,
       { paginated: true }
     )
-    if (controller.signal.aborted || generation !== requestGeneration || !sourcesOpen.value) return
+    if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value) return
     sourceResult.value = { ...response, results: dedupeRows(response.results) }
   } catch (value) {
-    if (controller.signal.aborted || generation !== requestGeneration || !sourcesOpen.value) return
+    if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value) return
     searchError.value = value instanceof Error ? value.message : 'Page search could not be completed.'
   } finally {
     if (searchController === controller) searchController = null
@@ -347,7 +360,7 @@ const runSearch = async (query: string, generation: number): Promise<void> => {
   }
 }
 const loadMoreSources = async (): Promise<void> => {
-  if (loadingMore.value || addingSources.value || props.disabled || !sourceResult.value.nextCursor || sourceQuery.value.trim().length < 2) return
+  if (disposed || loadingMore.value || addingSources.value || interactionBlocked.value || !sourceResult.value.nextCursor || sourceQuery.value.trim().length < 2) return
   const generation = requestGeneration
   const query = sourceQuery.value.trim()
   const cursor = sourceResult.value.nextCursor
@@ -362,7 +375,7 @@ const loadMoreSources = async (): Promise<void> => {
       query,
       { paginated: true, cursor }
     )
-    if (controller.signal.aborted || generation !== requestGeneration || !sourcesOpen.value || query !== sourceQuery.value.trim()) return
+    if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value || query !== sourceQuery.value.trim()) return
     const existingResults = dedupeRows(sourceResult.value.results)
     const existingIds = new Set(existingResults.map(row => rowId(row)))
     const added = dedupeRows(next.results).filter(row => {
@@ -371,7 +384,7 @@ const loadMoreSources = async (): Promise<void> => {
     })
     sourceResult.value = { ...next, results: [...existingResults, ...added] }
   } catch (value) {
-    if (controller.signal.aborted || generation !== requestGeneration || !sourcesOpen.value) return
+    if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value) return
     moreError.value = value instanceof Error ? value.message : 'More results could not be loaded. Try again.'
   } finally {
     if (moreController === controller) moreController = null
@@ -380,14 +393,14 @@ const loadMoreSources = async (): Promise<void> => {
 }
 const removePending = (row: PageSearchRow): void => {
   const id = rowId(row)
-  if (id === null || addingSources.value) return
+  if (interactionBlocked.value || id === null || addingSources.value) return
   selectedRows.value = selectedRows.value.filter(selected => rowId(selected) !== id)
   attachmentError.value = ''
 }
 const toggleSource = (row: PageSearchRow, event: Event): void => {
   const checked = (event.target as HTMLInputElement | null)?.checked ?? false
   const id = rowId(row)
-  if (id === null || addingSources.value || props.disabled || isAttached(row)) return
+  if (id === null || addingSources.value || interactionBlocked.value || isAttached(row)) return
   if (checked) {
     if (isPending(row)) return
     if (props.draft.sources.length + selectedRows.value.length >= 8) {
@@ -405,7 +418,7 @@ const transactionError = (row: PageSearchRow, value: unknown): Error => {
   return new Error(`${row.title}: ${message}`)
 }
 const addSources = async (): Promise<void> => {
-  if (!sourcesOpen.value || props.disabled || addingSources.value || !selectedRows.value.length) return
+  if (disposed || !sourcesOpen.value || interactionBlocked.value || addingSources.value || !selectedRows.value.length) return
   const pending = [...selectedRows.value]
   const query = sourceQuery.value.trim()
   const controller = new AbortController()
@@ -426,7 +439,7 @@ const addSources = async (): Promise<void> => {
         throw transactionError(row, value)
       }
     }))
-    if (controller.signal.aborted || resolveController !== controller || !sourcesOpen.value || props.disabled) return
+    if (disposed || controller.signal.aborted || resolveController !== controller || interactionBlocked.value || !sourcesOpen.value) return
     const currentSources = [...props.draft.sources]
     const currentIds = new Set(currentSources.map(source => source.id))
     const additions = hydrated.filter(source => !currentIds.has(source.id))
@@ -446,23 +459,30 @@ const addSources = async (): Promise<void> => {
       }))
     })
     if (!context.success) throw new Error(context.error.issues[0]?.message || 'The selected sources do not fit the Agent context limits.')
-    if (controller.signal.aborted || resolveController !== controller || !sourcesOpen.value || props.disabled) return
+    if (disposed || controller.signal.aborted || resolveController !== controller || interactionBlocked.value || !sourcesOpen.value) return
     emit('change', { sources: mergedSources })
     successfulClose.value = true
     sourcesOpen.value = false
   } catch (value) {
-    if (controller.signal.aborted || resolveController !== controller || !sourcesOpen.value) return
+    if (disposed || controller.signal.aborted || resolveController !== controller || interactionBlocked.value || !sourcesOpen.value) return
     attachmentError.value = value instanceof Error ? value.message : 'The selected sources could not be added. Deselect the failing page and try again.'
   } finally {
-    if (resolveController === controller) resolveController = null
-    if (sourcesOpen.value) addingSources.value = false
+    if (resolveController === controller) {
+      resolveController = null
+      if (sourcesOpen.value) addingSources.value = false
+    }
   }
 }
 watch(() => sourceQuery.value, () => queueSourceSearch())
-watch(() => props.disabled, disabled => {
-  if (disabled && sourcesOpen.value) cancelSources()
+watch([() => props.disabled, () => props.connectionBlocked], ([disabled, blocked], [previousDisabled, previousBlocked]) => {
+  if (disabled || blocked) {
+    invalidateAll()
+    return
+  }
+  if ((previousDisabled || previousBlocked) && sourcesOpen.value && sourceQuery.value.trim().length >= 2) queueSourceSearch(true)
 })
 onBeforeUnmount(() => {
+  disposed = true
   invalidateAll()
   sourcesOpen.value = false
 })

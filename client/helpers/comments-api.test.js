@@ -42,6 +42,32 @@ describe('comments api helper', () => {
       headers: { Accept: 'application/json' }
     })
   })
+  test('preserves clear comment content in typed rows for uncertain-create reconciliation', async () => {
+    const source = 'Useful guide'
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{
+      id: 31,
+      pageId: 17,
+      content: source,
+      render: 'rendered comment',
+      authorName: 'Owner',
+      replyTo: 0,
+      authorHandle: 'owner',
+      createdAt: '2026-08-14T00:00:00.000Z',
+      updatedAt: '2026-08-14T00:00:00.000Z'
+    }]))
+
+    await expect(fetchComments(fetchImpl, 17)).resolves.toEqual([{
+      id: 31,
+      render: 'rendered comment',
+      content: source,
+      authorName: 'Owner',
+      replyTo: 0,
+      authorHandle: 'owner',
+      createdAt: '2026-08-14T00:00:00.000Z',
+      updatedAt: '2026-08-14T00:00:00.000Z'
+    }])
+  })
+
 
   test('scopes mention discovery to the current page and validates candidates', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ id: 7, handle: 'alice', name: 'Alice' }]))

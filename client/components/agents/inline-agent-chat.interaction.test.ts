@@ -92,6 +92,7 @@ const Vue = await import('vue')
 const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
 const vuetifyDirectives = await import('vuetify/directives')
+const testPwaState = { connectionState: 'online' as const }
 
 const compiledTemplate = compileTemplate({
   source: descriptor.template.content,
@@ -132,8 +133,10 @@ interface LockState {
   agentCalls: {
     clearUnfiledHistory: (...args: unknown[]) => unknown
     initialize: (...args: unknown[]) => unknown
+    isWorkspaceReady: (...args: unknown[]) => unknown
     newSession: (...args: unknown[]) => unknown
     reloadSessions: (...args: unknown[]) => unknown
+    sessions: Array<{ id: string; deletedAt: string | null }>
     send: (...args: unknown[]) => unknown
     setCurrentChatPinned: (...args: unknown[]) => unknown
   }
@@ -272,6 +275,7 @@ const loadGoalLockState = (
     pinStorageAvailable: ref(true),
     profiles: ref([{ id: 'profile-1' }]),
     sending: ref(false),
+    networkPaused: ref(false),
     sessionMutationBusy: ref(mutationBusy),
     sessions: ref([]),
     skills: ref([]),
@@ -295,13 +299,15 @@ const loadGoalLockState = (
   const agentCalls = {
     clearUnfiledHistory: vi.fn(() => Promise.resolve()),
     initialize: vi.fn(() => Promise.resolve(true)),
+    isWorkspaceReady: vi.fn(() => true),
     newSession: vi.fn(() => Promise.resolve(true)),
-    reloadSessions: vi.fn(() => Promise.resolve()),
+    reloadSessions: vi.fn(() => Promise.resolve({ accepted: true, current: true })),
+    sessions: [] as Array<{ id: string; deletedAt: string | null }>,
     send: vi.fn(() => Promise.resolve(true)),
     setCurrentChatPinned: vi.fn()
   }
   const evaluate = new Function(
-    '{ computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion }',
+    '{ computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection }',
     `${executableScript}\nreturn { activeRun, canPinCurrentChat, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleTranscriptEngagement, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, submitUnavailableReason, thread }`
   ) as (dependencies: Record<string, unknown>) => LockState
 
@@ -325,7 +331,9 @@ const loadGoalLockState = (
     activeOwnedOverlayRoots: () => [],
     createModalFocusScope: () => ({ deactivate: () => undefined }),
     isAgentApprovalOutsideViewport: () => false,
-    shouldFollowGoalExpansion: () => false
+    shouldFollowGoalExpansion: () => false,
+    pwaState: testPwaState,
+    retryServerConnection: async () => true
   }) as LockState
   return { ...state, agentCalls }
 }
@@ -394,6 +402,12 @@ const mountInlineAgent = (
     pagePath: '',
     pageUpdatedAt: '',
     loading: false,
+    connectionRetrying: false,
+    connectionBlocked: false,
+    workspaceReady: lockState?.canPinCurrentChat.value ?? true,
+    offlineSessionId: 'offline-agent-draft',
+    offlineComposerDraft: '',
+    composerDisabled: !(lockState?.canSubmit.value ?? true),
     sending: false,
     sessionMutationBusy: lockState?.sessionMutationBusy.value ?? false,
     connection: 'connected',
@@ -434,8 +448,11 @@ const mountInlineAgent = (
     hasConversation: Boolean(goal),
     providerAvailable: true,
     providerUnavailableMessage: '',
+    activeDraft: {},
+    pinnedSessionId: null,
     canSubmit: lockState?.canSubmit.value ?? true,
     goalSubmitUnavailableReason: lockState?.goalSubmitUnavailableReason.value ?? '',
+    handleDraftChange: () => undefined,
     submitUnavailableReason: lockState?.submitUnavailableReason.value ?? '',
     transcriptFollowing,
     invocationLimit: lockState?.invocationLimit.value ?? 8,
@@ -498,6 +515,18 @@ const mountInlineAgent = (
     'closeClearUnfiledHistory',
     'handleGoalExpanded',
     'handleTranscriptScroll',
+    'preparePrompt',
+    'handleDecision',
+    'pauseGoal',
+    'resumeGoal',
+    'cancelGoal',
+    'patchDraft',
+    'focusComposer',
+    'retryAgentConnection',
+    'reloadSkillCatalog',
+    'stopRun',
+    'updateSkillPreferences',
+    'keepConversation',
     'jumpToApproval',
     'newSession',
     'newTemporarySession',
@@ -528,7 +557,6 @@ const mountInlineAgent = (
       skillsEnabled: Boolean,
       goalsEnabled: Boolean,
       skills: Array,
-      skillsLoading: Boolean,
       skillsLoadError: String,
       skillsPartial: Boolean,
       preferredSkills: Array,
@@ -538,11 +566,12 @@ const mountInlineAgent = (
       hasMessages: Boolean,
       chatPinned: Boolean,
       chatPinDisabled: Boolean,
-      externalDescriptionId: String
+      externalDescriptionId: String,
+      networkBlocked: Boolean
     },
     emits: ['send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'update:chatPinned', 'draftChange'],
     setup(props, { emit, expose }) {
-      return evaluateComposer(
+      const bindings = evaluateComposer(
         Vue.computed,
         Vue.nextTick,
         Vue.onBeforeUnmount,
@@ -561,6 +590,7 @@ const mountInlineAgent = (
         calculateComposerSizing,
         scrollTopForCaret
       )
+      return { ...bindings, canStop: props.canStop, skillsEnabled: props.skillsEnabled, goalsEnabled: props.goalsEnabled }
     },
     render: renderAgentComposer
   })
@@ -571,7 +601,7 @@ const mountInlineAgent = (
   })
   const app = Vue.createApp(inlineHarness)
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
-  for (const name of ['AgentGoalStatus', 'AgentHistoryPanel', 'AgentMcpApproval', 'AgentMemoryManager', 'AgentPersonalSkills', 'AgentThread'])
+  for (const name of ['AgentContextPicker', 'AgentGoalStatus', 'AgentHistoryPanel', 'AgentMcpApproval', 'AgentMemoryManager', 'AgentPersonalSkills', 'AgentThread', 'ControlBorderBeam'])
     app.component(name, componentStub)
   app.component('AgentComposer', composerComponent)
   app.mount(host)
@@ -865,7 +895,7 @@ describe('Inline Agent clear-unfiled confirmation', () => {
     expect(lockState.clearUnfiledHistoryOpen.value).toBe(false)
   })
 
-  it('keeps recovery open and retries a new saved conversation after a committed clear', async () => {
+  it('keeps recovery open when no replacement conversation is available after a committed clear', async () => {
     const lockState = loadGoalLockState(null)
     lockState.agentCalls.clearUnfiledHistory = vi.fn(() => {
       lockState.thread.value = null
@@ -882,7 +912,7 @@ describe('Inline Agent clear-unfiled confirmation', () => {
     await lockState.recoverClearUnfiledHistory()
 
     expect(lockState.agentCalls.reloadSessions).toHaveBeenCalledTimes(1)
-    expect(lockState.agentCalls.newSession).toHaveBeenLastCalledWith('saved')
+    expect(lockState.clearUnfiledError.value).toContain('No replacement conversation is available yet. Retry.')
     expect(lockState.clearUnfiledHistoryOpen.value).toBe(true)
   })
 })

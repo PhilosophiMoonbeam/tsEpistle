@@ -22,6 +22,22 @@ import {
 
 const REMOTE_ORIGIN = Symbol('collaboration-remote')
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_500, 5_000, 10_000] as const
+const MAX_PENDING_UPDATES = 128
+const MAX_PENDING_BYTES = 256 * 1024
+
+
+const pendingByteLength = (updates: readonly Uint8Array[]): number =>
+  updates.reduce((total, update) => total + update.byteLength, 0)
+
+const compactUpdates = (updates: readonly Uint8Array[]): Uint8Array | null => {
+  if (updates.length < 2) return updates[0] ?? null
+  try {
+    return Y.mergeUpdates([...updates])
+  } catch {
+    return null
+  }
+}
+
 
 const isConnectivityBlocked = (): boolean => pwaState.connectionState === 'offline' || pwaState.connectionState === 'server-unavailable'
 
@@ -45,11 +61,15 @@ export interface MarkdownCollaboration {
   readonly content: string
   readonly extension: Extension
   readonly generation: number
+  readonly pendingUpdateCount: number
+  readonly pendingUpdateBytes: number
+  flushPending(): void
   destroy(): void
 }
 
 class MarkdownCollaborationImpl implements MarkdownCollaboration {
   private readonly document = new Y.Doc()
+  private pendingBytes = 0
   private readonly awareness = new Awareness(this.document)
   private readonly text = this.document.getText(COLLABORATION_TEXT_KEY)
   private readonly pending: Uint8Array[] = []
@@ -103,6 +123,34 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     return this.text.toString()
   }
 
+  get pendingUpdateCount(): number {
+    return this.pending.length
+  }
+
+  get pendingUpdateBytes(): number {
+    return this.pendingBytes
+  }
+
+  private compactPending(): void {
+    const inFlightCount = this.inFlight === null ? 0 : 1
+    const unsent = this.pending.slice(inFlightCount)
+    if (
+      this.pending.length <= MAX_PENDING_UPDATES &&
+      this.pendingBytes <= MAX_PENDING_BYTES
+    ) return
+    const compacted = compactUpdates(unsent)
+    if (
+      !compacted ||
+      compacted.byteLength > COLLABORATION_MAX_UPDATE_BYTES ||
+      compacted.byteLength > MAX_PENDING_BYTES
+    ) {
+      this.setConflict('protocol-error')
+      return
+    }
+    this.pending.splice(inFlightCount, unsent.length, compacted)
+    this.pendingBytes = pendingByteLength(this.pending)
+  }
+
   private readonly handleDocumentUpdate = (update: Uint8Array, origin: unknown): void => {
     if (origin === REMOTE_ORIGIN || this.destroyed || this.conflicted) return
     if (update.byteLength > COLLABORATION_MAX_UPDATE_BYTES) {
@@ -110,6 +158,8 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
       return
     }
     this.pending.push(update)
+    this.pendingBytes += update.byteLength
+    this.compactPending()
     this.flushPending()
   }
 
@@ -148,7 +198,8 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
         if (message.type === 'sync' || message.type === 'update') {
           Y.applyUpdate(this.document, sessionState(message), REMOTE_ORIGIN)
           if (message.type === 'update' && message.update === this.inFlight) {
-            this.pending.shift()
+            const acknowledged = this.pending.shift()
+            this.pendingBytes = Math.max(0, this.pendingBytes - (acknowledged?.byteLength ?? 0))
             this.inFlight = null
             this.flushPending()
           }
@@ -175,6 +226,7 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
         this.socket = null
         this.inFlight = null
         this.pending.length = 0
+        this.pendingBytes = 0
         this.setConflict('draft-discarded')
         return
       }
@@ -203,7 +255,7 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     })
   }
 
-  private flushPending(): void {
+  flushPending(): void {
     const socket = this.socket
     const update = this.pending[0]
     if (this.pausedForConnectivity || isConnectivityBlocked() || !socket || socket.readyState !== WebSocket.OPEN || this.inFlight || !update) return
@@ -320,6 +372,8 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     this.document.off('update', this.handleDocumentUpdate)
     this.socket?.close(1000, 'Editor closed')
     this.socket = null
+    this.pending.length = 0
+    this.pendingBytes = 0
     this.awareness.destroy()
     this.document.destroy()
   }

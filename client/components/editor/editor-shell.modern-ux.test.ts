@@ -25,6 +25,43 @@ type OkfState = {
     value: unknown
   }
 }
+type EditorAdapterSafety = {
+  ready: boolean
+  editVersion: number
+  nonPersisted: boolean
+  mergeDirty: boolean
+  collaborationBacklog: number
+  revision: string
+}
+
+type EditorAdapterHarness = {
+  capture: () => { text: string; editVersion: number }
+  snapshot: () => EditorAdapterSafety
+  replaceText: (text: string, options?: { detached?: boolean }) => void
+  clear: () => void
+  destroy: () => void
+  flushEligibleText: () => void
+  markPersisted: (editVersion?: number) => void
+}
+
+type OfflineCoordinatorHarness = {
+  isAuthenticatedUser: () => boolean
+  lock: () => void
+  destroy: () => void
+  applyDetachedCandidate: (recordId?: string) => Promise<unknown>
+  discardCurrentDraft: () => Promise<boolean>
+  prepareSubmission: (options?: { editVersion?: number }) => Promise<unknown>
+  completeSubmission: (prepared: unknown, outcome: unknown) => Promise<boolean>
+  captureNow: (options?: { force?: boolean; state?: string; editVersion?: number }) => Promise<boolean>
+  readonly captureStates: string[]
+  readonly hasCommittedCurrentValues: boolean
+  readonly hasInFlightWork: boolean
+  readonly hasUnresolvedSubmission: boolean
+  readonly reloadSafetySnapshot: { safe: boolean; revision: string; actorEpoch?: string | number }
+}
+
+type AuthOutcome = 'authenticated' | 'unavailable'
+
 
 type EditorStore = {
   editor: {
@@ -57,6 +94,13 @@ type EditorStore = {
   }
   notifications: Array<Record<string, unknown>>
   loadingOwners: string[]
+  user: { authenticated: boolean; id: number }
+  authRefreshPending: boolean
+  authRefreshSettled: boolean
+  authRefreshOutcome: AuthOutcome
+  offlineIdentityReady: boolean
+  offlineIdentityEpoch: number
+  waitForAuthRefresh: () => Promise<AuthOutcome>
   showNotification: (notification: Record<string, unknown>) => void
   startLoading: (owner: string) => void
 }
@@ -95,6 +139,7 @@ type PageInput = {
   tags: string[]
   title: string
   okfMetadata?: Record<string, unknown>
+  branding?: PageBrandingAssignment | null
 }
 
 type ShellContext = {
@@ -104,7 +149,11 @@ type ShellContext = {
   dialogUnsaved: boolean
   dialogProgress: boolean
   exitConfirmed: boolean
+  lifecycleGeneration: number
+  editorInstanceKey: number
+  offlineConnectionState: string
   isSaving: boolean
+  discardPending: boolean
   collaborationActive: boolean
   collaborationGeneration: number | null
   collaborationDiscarded: boolean
@@ -112,35 +161,55 @@ type ShellContext = {
   pageId: number
   checkoutDateActive: string
   currentEditor: string
+  isAuthenticated: boolean
+  accountId: number
+  activeModal: string
+  offlineDraftBusy: boolean
+  offlineDraftStatus: string | null
+  offlineDraftStatusText: string
+  offlineDraftMutationBlocked: boolean
+  offlineMutationBlocked: boolean
+  offlineDraftError: string
+  localDiscardCalls: number
+  offlineDraftCandidates: unknown[]
+  offlineSubmissionCandidates: unknown[]
+  dialogProps: boolean
+  dialogEditorSelector: boolean
+  editorAdapter: EditorAdapterHarness
+  editorAdapterSafety: EditorAdapterSafety
+  offlineDraftCoordinator: OfflineCoordinatorHarness | null
+  applyOfflineDraft: (payload: { content: string; title: string; description: string }) => void
+  restoreOfflineDraft: (recordId?: string) => Promise<void>
+  submissionCaptureValues: unknown
+  submissionCaptureIdentity: unknown
   isDirty: boolean
   mode: string
   progressShown: number
   progressHidden: number
   $t: (key: string) => string
-  setCurrentSavedState: () => void
-  restoreCurrentSavedState: () => void
-  discardAndExit: () => Promise<void>
   exitGo: () => void
-  handleCollaborationState: (state: { active: boolean; discarded: boolean; generation: number | null }) => void
+  handleOfflineSessionInvalidated: () => void
   exit: () => Promise<void>
   handleBeforeUnload: (event: BeforeUnloadEvent) => void
-  save: (options?: { rethrow?: boolean; overwrite?: boolean }) => Promise<void>
+  save: (options?: { rethrow?: boolean; overwrite?: boolean }) => Promise<boolean>
   saveAndClose: () => Promise<boolean>
   saveUnsavedAndClose: () => Promise<void>
   showProgressDialog: () => void
-  hideProgressDialog: () => void
 }
-
 type ShellBehavior = {
   computed: {
     isDirty: (this: ShellContext) => boolean
     mode: (this: ShellContext) => string
+    offlineDraftMutationBlocked: (this: ShellContext) => boolean
+    offlineMutationBlocked: (this: ShellContext) => boolean
+    offlineDraftStatusText: (this: ShellContext) => string
   }
   methods: Record<string, (this: ShellContext, ...args: never[]) => unknown>
 }
 
 type ApiDependencies = {
   buildOkfMetadataPayload: (metadata: Record<string, unknown> | null) => Record<string, unknown> | undefined
+  freezePageInput: (input: PageInput) => PageInput
   changePageVisibility: (
     fetcher: typeof fetch,
     id: number,
@@ -151,7 +220,7 @@ type ApiDependencies = {
   checkPageConflict: (fetcher: typeof fetch, id: number, checkoutDate: string) => Promise<boolean>
   createPage: (fetcher: typeof fetch, input: PageInput) => Promise<{ id: number; updatedAt: string }>
   discardCollaborationDraft: (fetcher: typeof fetch, pageId: number, expectedUpdatedAt: string, expectedSourceRevision: string) => Promise<void>
-  fetchPage: (fetcher: typeof fetch, id: number, errorMessage: string) => Promise<{ okf: OkfState; sourceRevision: string }>
+  fetchPage: (fetcher: typeof fetch, id: number, errorMessage: string) => Promise<{ okf: OkfState; sourceRevision: string; isSearchable?: boolean }>
   updatePage: (
     fetcher: typeof fetch,
     id: number,
@@ -159,6 +228,8 @@ type ApiDependencies = {
     sourceRevision: string,
     expectedCollaborationGeneration?: number
   ) => Promise<{ sourceRevision: string; updatedAt: string }>
+  notifyReloadSafetyChanged: () => void
+  requestOfflineIdentityBoundary: (request: { accountId: number; reason: 'unauthorized' }) => Promise<boolean>
 }
 
 type TestWindow = {
@@ -243,6 +314,16 @@ const createStore = (mode: 'create' | 'update' = 'update'): EditorStore => {
       okfLoading: false,
       okfError: null
     },
+    user: {
+      authenticated: true,
+      id: 42
+    },
+    authRefreshPending: false,
+    authRefreshSettled: true,
+    authRefreshOutcome: 'authenticated',
+    offlineIdentityReady: true,
+    offlineIdentityEpoch: 0,
+    waitForAuthRefresh: async () => store.authRefreshOutcome,
     notifications: [],
     loadingOwners: [],
     showNotification(notification) {
@@ -285,12 +366,20 @@ const createTestWindow = (): TestWindow => {
 
 const defaultDependencies = (store: EditorStore): ApiDependencies => ({
   buildOkfMetadataPayload: metadata => metadata ?? undefined,
+  freezePageInput: input => {
+    Object.freeze(input.tags)
+    if (input.okfMetadata !== undefined) Object.freeze(input.okfMetadata)
+    if (input.branding !== undefined && input.branding !== null) Object.freeze(input.branding)
+    return Object.freeze(input)
+  },
   changePageVisibility: async () => ({ sourceRevision: 'revision-3' }),
   checkPageConflict: async () => false,
   createPage: async () => ({ id: 91, updatedAt: '2026-09-03T12:00:00.000Z' }),
   discardCollaborationDraft: async () => undefined,
-  fetchPage: async () => ({ okf: _.cloneDeep(store.page.okf), sourceRevision: 'revision-4' }),
-  updatePage: async () => ({ sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' })
+  requestOfflineIdentityBoundary: async () => true,
+  fetchPage: async () => ({ okf: _.cloneDeep(store.page.okf), sourceRevision: 'revision-4', isSearchable: store.page.isSearchable }),
+  updatePage: async () => ({ sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }),
+  notifyReloadSafetyChanged: () => undefined
 })
 
 const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides: Partial<ApiDependencies> = {}): ShellBehavior => {
@@ -301,15 +390,19 @@ const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides
     'wikiStore',
     'window',
     'buildOkfMetadataPayload',
+    'freezePageInput',
     'changePageVisibility',
     'checkPageConflict',
     'createPage',
     'discardCollaborationDraft',
     'fetchPage',
     'updatePage',
+    'notifyReloadSafetyChanged',
+    'requestOfflineIdentityBoundary',
     'emitEditorSaveConflict',
     'getErrorMessage',
     'removeEditorPageCss',
+    'clearOfflineCreateIdentity',
     'scopeEditorPageCss',
     `${executableShellBehavior}\nreturn shellBehavior`
   ) as (...args: unknown[]) => ShellBehavior
@@ -319,14 +412,18 @@ const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides
     store,
     testWindow,
     dependencies.buildOkfMetadataPayload,
+    dependencies.freezePageInput,
     dependencies.changePageVisibility,
     dependencies.checkPageConflict,
     dependencies.createPage,
     dependencies.discardCollaborationDraft,
     dependencies.fetchPage,
     dependencies.updatePage,
+    dependencies.notifyReloadSafetyChanged,
+    dependencies.requestOfflineIdentityBoundary,
     () => undefined,
     (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    () => undefined,
     () => undefined,
     (css: string) => css
   )
@@ -334,12 +431,22 @@ const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides
 
 const createShellHarness = (store: EditorStore, testWindow: TestWindow, overrides: Partial<ApiDependencies> = {}): ShellContext => {
   const behavior = loadShellBehavior(store, testWindow, overrides)
+  const adapterState: EditorAdapterSafety = {
+    ready: true,
+    editVersion: 0,
+    nonPersisted: false,
+    mergeDirty: false,
+    collaborationBacklog: 0,
+    revision: 'test-adapter:0'
+  }
   const context = {
     savedState: {} as SavedState,
     navigationTimer: null,
     dialogUnsaved: false,
     dialogProgress: false,
     exitConfirmed: false,
+    lifecycleGeneration: 0,
+    editorInstanceKey: 0,
     isSaving: false,
     discardPending: false,
     collaborationActive: store.editor.mode === 'update' && store.editor.editorKey === 'markdown',
@@ -349,11 +456,140 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     pageId: store.page.id,
     checkoutDateActive: '2026-09-03T11:00:00.000Z',
     currentEditor: store.editor.editor,
+    isAuthenticated: store.user.authenticated,
+    accountId: store.user.id,
+    offlineConnectionState: 'online',
+    activeModal: '',
+    offlineDraftBusy: false,
+    offlineDraftStatus: null,
+    offlineDraftError: '',
+    offlineDraftCandidates: [],
+    offlineSubmissionCandidates: [],
+    localDiscardCalls: 0,
+    dialogProps: false,
+    dialogEditorSelector: false,
+    offlineDraftCandidate: null,
+    offlineCreateIdentity: store.editor.mode === 'create' ? 'test-create-identity' : null,
+    submissionCaptureValues: null,
+    submissionCaptureIdentity: null,
     progressShown: 0,
     progressHidden: 0,
     $t: (key: string) => key
   } as unknown as ShellContext
 
+  const syncAdapterSafety = () => {
+    context.editorAdapterSafety = adapter.snapshot()
+  }
+  const adapter: EditorAdapterHarness = {
+    capture: () => ({ text: store.editor.content, editVersion: adapterState.editVersion }),
+    snapshot: () => ({
+      ...adapterState,
+      revision: `test-adapter:${adapterState.editVersion}:${adapterState.nonPersisted ? 1 : 0}`
+    }),
+    replaceText: text => {
+      store.editor.content = text
+      adapterState.editVersion += 1
+      adapterState.nonPersisted = true
+      syncAdapterSafety()
+    },
+    clear: () => {
+      store.editor.content = ''
+      adapterState.editVersion += 1
+      adapterState.nonPersisted = true
+      syncAdapterSafety()
+    },
+    destroy: () => {
+      adapterState.ready = false
+      adapterState.revision = 'test-adapter:destroyed'
+      syncAdapterSafety()
+    },
+    flushEligibleText: () => undefined,
+    markPersisted: (editVersion = adapterState.editVersion) => {
+      if (editVersion !== adapterState.editVersion) return
+      adapterState.nonPersisted = false
+      adapterState.revision = `test-adapter:${adapterState.editVersion}:persisted`
+      syncAdapterSafety()
+    }
+  }
+  context.editorAdapter = adapter
+  context.editorAdapterSafety = adapter.snapshot()
+
+  const coordinatorState = {
+    discardCalls: 0,
+    captureStates: [] as string[],
+    hasCommittedCurrentValues: false,
+    hasInFlightWork: false,
+    hasUnresolvedSubmission: false,
+    destroyed: false,
+    nextSubmission: 0
+  }
+  const coordinator: OfflineCoordinatorHarness = {
+    isAuthenticatedUser: () => context.isAuthenticated,
+    lock: () => {
+      adapter.clear()
+    },
+    destroy: () => {
+      coordinatorState.destroyed = true
+      coordinatorState.hasCommittedCurrentValues = false
+      coordinatorState.hasInFlightWork = false
+      coordinatorState.hasUnresolvedSubmission = false
+    },
+    applyDetachedCandidate: async () => null,
+    discardCurrentDraft: async () => {
+      coordinatorState.discardCalls++
+      context.localDiscardCalls++
+      return true
+    },
+    prepareSubmission: async options => {
+      coordinatorState.hasInFlightWork = true
+      coordinatorState.hasUnresolvedSubmission = true
+      const prepared = Object.freeze({
+        submission: Object.freeze({ recordId: `test-submission-${++coordinatorState.nextSubmission}` }),
+        envelope: Object.freeze({}),
+        editVersion: options?.editVersion ?? adapterState.editVersion
+      })
+      coordinatorState.hasInFlightWork = false
+      return prepared
+    },
+    captureNow: async options => {
+      coordinatorState.captureStates.push(options?.state ?? 'local')
+      coordinatorState.hasCommittedCurrentValues = true
+      context.offlineDraftStatus = options?.state ?? 'local'
+      context.offlineDraftError = ''
+      adapter.markPersisted(options?.editVersion ?? adapterState.editVersion)
+      return true
+    },
+    completeSubmission: async () => {
+      coordinatorState.hasInFlightWork = false
+      coordinatorState.hasUnresolvedSubmission = false
+      return true
+    },
+    get captureStates() {
+      return coordinatorState.captureStates
+    },
+    get hasCommittedCurrentValues() {
+      return coordinatorState.hasCommittedCurrentValues
+    },
+    get hasInFlightWork() {
+      return coordinatorState.hasInFlightWork
+    },
+    get hasUnresolvedSubmission() {
+      return coordinatorState.hasUnresolvedSubmission
+    },
+    get reloadSafetySnapshot() {
+      const safe = !context.isDirty &&
+        !context.dialogUnsaved &&
+        !coordinatorState.hasInFlightWork &&
+        !coordinatorState.hasUnresolvedSubmission
+      return {
+        safe,
+        revision: `test-coordinator:${safe ? 'safe' : 'unsafe'}`,
+        actorEpoch: store.offlineIdentityEpoch
+      }
+    }
+  }
+
+  context.offlineDraftCoordinator = coordinator
   for (const [name, method] of Object.entries(behavior.methods)) {
     context[name] = method.bind(context)
   }
@@ -362,6 +598,15 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
   })
   Object.defineProperty(context, 'mode', {
     get: () => behavior.computed.mode.call(context)
+  })
+  Object.defineProperty(context, 'offlineDraftMutationBlocked', {
+    get: () => behavior.computed.offlineDraftMutationBlocked.call(context)
+  })
+  Object.defineProperty(context, 'offlineMutationBlocked', {
+    get: () => behavior.computed.offlineMutationBlocked.call(context)
+  })
+  Object.defineProperty(context, 'offlineDraftStatusText', {
+    get: () => behavior.computed.offlineDraftStatusText.call(context)
   })
 
   const showProgressDialog = context.showProgressDialog
@@ -467,6 +712,7 @@ describe('modern editor shell interaction contract', () => {
     expect(store.notifications).toEqual([])
     expect(store.loadingOwners).toEqual([])
     expect(persistenceCalls).toBe(0)
+    expect(context.localDiscardCalls).toBe(1)
     expect(discardedDrafts).toEqual([
       {
         pageId: 12,
@@ -528,6 +774,7 @@ describe('modern editor shell interaction contract', () => {
     await context.discardAndExit()
 
     expect(collaborationDiscardCalls).toBe(0)
+    expect(context.localDiscardCalls).toBe(1)
     expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
     expect(context.isDirty).toBe(false)
   })
@@ -547,6 +794,7 @@ describe('modern editor shell interaction contract', () => {
     await context.discardAndExit()
 
     expect(collaborationDiscardCalls).toBe(0)
+    expect(context.localDiscardCalls).toBe(1)
     expect(context.isDirty).toBe(false)
     expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
   })
@@ -672,10 +920,15 @@ describe('modern editor shell interaction contract', () => {
     const store = createStore()
     const testWindow = createTestWindow()
     let updateInput: PageInput | undefined
+    let updateInputFrozen = false
     let updateFence: { sourceRevision: string; generation: number | undefined } | undefined
     let visibilityCalls = 0
     const context = createShellHarness(store, testWindow, {
       updatePage: async (_fetcher, _id, input, sourceRevision, generation) => {
+        updateInputFrozen = Object.isFrozen(input) &&
+          Object.isFrozen(input.tags) &&
+          (input.okfMetadata === undefined || Object.isFrozen(input.okfMetadata)) &&
+          (input.branding === undefined || input.branding === null || Object.isFrozen(input.branding))
         updateInput = _.cloneDeep(input)
         updateFence = { sourceRevision, generation }
         return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
@@ -686,7 +939,8 @@ describe('modern editor shell interaction contract', () => {
       },
       fetchPage: async () => ({
         okf: _.cloneDeep(store.page.okf),
-        sourceRevision: 'revision-4'
+        sourceRevision: 'revision-4',
+        isSearchable: store.page.isSearchable
       })
     })
     applyEveryEdit(store)
@@ -703,6 +957,7 @@ describe('modern editor shell interaction contract', () => {
       title: 'Discarded title'
     })
     expect(updateFence).toEqual({ sourceRevision: '1', generation: 1 })
+    expect(updateInputFrozen).toBe(true)
     expect(visibilityCalls).toBe(1)
     expect(context.savedState).toEqual(mutableSnapshot(store))
     expect(context.isDirty).toBe(false)
@@ -761,8 +1016,13 @@ describe('modern editor shell interaction contract', () => {
     const store = createStore('create')
     const testWindow = createTestWindow()
     let createdInput: PageInput | undefined
+    let createdInputFrozen = false
     const context = createShellHarness(store, testWindow, {
       createPage: async (_fetcher, input) => {
+        createdInputFrozen = Object.isFrozen(input) &&
+          Object.isFrozen(input.tags) &&
+          (input.okfMetadata === undefined || Object.isFrozen(input.okfMetadata)) &&
+          (input.branding === undefined || input.branding === null || Object.isFrozen(input.branding))
         createdInput = _.cloneDeep(input)
         return { id: 91, updatedAt: '2026-09-03T12:00:00.000Z' }
       }
@@ -773,6 +1033,7 @@ describe('modern editor shell interaction contract', () => {
     await context.saveUnsavedAndClose()
 
     expect(createdInput?.content).toBe('discarded content')
+    expect(createdInputFrozen).toBe(true)
     expect(store.editor.id).toBe(91)
     expect(store.editor.mode).toBe('update')
     expect(context.savedState).toEqual(mutableSnapshot(store))
@@ -824,6 +1085,356 @@ describe('modern editor shell interaction contract', () => {
     context.handleBeforeUnload(confirmedEvent)
     expect(prevented).toBe(1)
     expect(confirmedEvent.returnValue).toBe(false)
+  })
+  test('invalidating the offline session destroys the editor boundary without restoring plaintext', () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    const context = createShellHarness(store, testWindow)
+    applyEveryEdit(store)
+    context.activeModal = 'editorModalConflict'
+    context.dialogUnsaved = true
+    context.navigationTimer = 77
+    store.offlineIdentityEpoch = 1
+
+    context.handleOfflineSessionInvalidated()
+
+    expect(store.editor.content).toBe('')
+    expect(store.editor.mode).toBe('create')
+    expect(store.page.title).toBe('')
+    expect(store.page.description).toBe('')
+    expect(store.page.scriptCss).toBe('')
+    expect(store.page.scriptJs).toBe('')
+    expect(store.page.tags).toEqual([])
+    expect(context.savedState.content).toBe('')
+    expect(context.savedState.title).toBe('')
+    expect(context.activeModal).toBe('')
+    expect(context.dialogUnsaved).toBe(false)
+    expect(context.offlineDraftStatus).toBe('locked')
+    expect(context.collaborationActive).toBe(false)
+    expect(context.collaborationGeneration).toBeNull()
+    expect(context.editorAdapterSafety.ready).toBe(false)
+    expect(context.editorInstanceKey).toBe(1)
+    expect(testWindow.clearedTimers).toEqual([77])
+    expect(JSON.stringify(context.savedState)).not.toContain('persisted content')
+    expect(JSON.stringify(store.page)).not.toContain('persisted description')
+  })
+  test('blocks every save entry point while local draft recovery is locked or unavailable', async () => {
+    const lockedStore = createStore()
+    const lockedWindow = createTestWindow()
+    let lockedWrites = 0
+    const lockedContext = createShellHarness(lockedStore, lockedWindow, {
+      updatePage: async () => {
+        lockedWrites++
+        return { sourceRevision: 'unexpected', updatedAt: '' }
+      }
+    })
+    applyEveryEdit(lockedStore)
+    lockedContext.offlineDraftStatus = 'locked'
+    expect(lockedContext.offlineDraftStatusText).toBe('Local draft recovery is locked. Verify this account online, then reload the editor to recover encrypted drafts.')
+    expect(lockedContext.offlineDraftMutationBlocked).toBe(true)
+    expect(lockedContext.offlineMutationBlocked).toBe(true)
+    expect(await lockedContext.save()).toBe(false)
+    expect(lockedWrites).toBe(0)
+    expect(lockedContext.progressShown).toBe(0)
+    expect(lockedContext.progressHidden).toBe(0)
+    expect(lockedStore.notifications).toEqual([
+      {
+        message: 'Offline draft recovery is locked. Verify this account online, then reload the editor before saving.',
+        style: 'warning',
+        icon: 'warning'
+      }
+    ])
+
+    const missingStore = createStore()
+    const missingWindow = createTestWindow()
+    let missingWrites = 0
+    const missingContext = createShellHarness(missingStore, missingWindow, {
+      updatePage: async () => {
+        missingWrites++
+        return { sourceRevision: 'unexpected', updatedAt: '' }
+      }
+    })
+    applyEveryEdit(missingStore)
+    missingContext.offlineDraftCoordinator = null
+
+    expect(missingContext.offlineDraftMutationBlocked).toBe(true)
+    expect(missingContext.offlineMutationBlocked).toBe(true)
+    expect(missingContext.offlineDraftStatusText).toBe('Offline draft recovery is unavailable. Reload the editor before saving.')
+    expect(await missingContext.save()).toBe(false)
+    expect(missingWrites).toBe(0)
+    expect(missingStore.notifications).toEqual([
+      {
+        message: 'Offline draft recovery is unavailable. Reload the editor before saving.',
+        style: 'warning',
+        icon: 'warning'
+      }
+    ])
+
+    expect(shellScript).toMatch(/setSaveHotkeyHandler\(\(\) => \{[\s\S]*offlineDraftMutationBlocked[\s\S]*notifyOfflineMutationBlocked/)
+    expect(shellSfc.descriptor.template?.content ?? '').toMatch(/offlineDraftStatus === `locked` \|\| !offlineDraftCoordinator/)
+  })
+  test('blocks unavailable resource publication without converting it into identity lock recovery', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    let updateCalls = 0
+    const context = createShellHarness(store, testWindow, {
+      updatePage: async () => {
+        updateCalls++
+        return { sourceRevision: 'unexpected', updatedAt: '' }
+      }
+    })
+    applyEveryEdit(store)
+    context.offlineDraftStatus = 'unavailable'
+
+    expect(context.offlineDraftStatusText).toBe('The page may have been deleted or access may have been denied. Publishing and replay are blocked; local recovery and deletion remain available.')
+    expect(context.offlineDraftMutationBlocked).toBe(true)
+    expect(context.offlineMutationBlocked).toBe(true)
+    expect(await context.save()).toBe(false)
+    expect(updateCalls).toBe(0)
+    expect(store.notifications).toEqual([
+      {
+        message: 'Publishing is unavailable because the page may have been deleted or access may have been denied. Local recovery and deletion remain available.',
+        style: 'warning',
+        icon: 'warning'
+      }
+    ])
+    expect(shellSfc.descriptor.template?.content ?? '').toMatch(/offlineDraftStatus === `locked` \|\| !offlineDraftCoordinator/)
+    expect(shellSfc.descriptor.template?.content ?? '').toMatch(/editor-draft-review-actions\(v-if='offlineDraftCandidate'\)/)
+    expect(shellSfc.descriptor.template?.content ?? '').not.toMatch(/editor-draft-recovery-actions\(v-if='offlineDraftStatus === `unavailable`'/)
+  })
+  test('requests the global identity boundary for a receiptless unauthorized save', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    const boundaryRequests: Array<{ accountId: number; reason: 'unauthorized' }> = []
+    let updateCalls = 0
+    let context: ShellContext | null = null
+    const shell = createShellHarness(store, testWindow, {
+      requestOfflineIdentityBoundary: async request => {
+        boundaryRequests.push(request)
+        context?.handleOfflineSessionInvalidated()
+        return true
+      },
+      updatePage: async () => {
+        updateCalls++
+        const error = new Error('unauthorized')
+        Object.defineProperty(error, 'status', { value: 401 })
+        throw error
+      }
+    })
+    context = shell
+    const coordinator = shell.offlineDraftCoordinator
+    if (!coordinator) throw new Error('Expected an offline draft coordinator')
+    coordinator.prepareSubmission = async () => undefined
+    applyEveryEdit(store)
+
+    expect(await shell.save()).toBe(false)
+    expect(boundaryRequests).toEqual([{ accountId: 42, reason: 'unauthorized' }])
+    expect(updateCalls).toBe(1)
+    expect(shell.offlineDraftCoordinator).toBeNull()
+    expect(store.notifications).toEqual([])
+  })
+
+  test('blocks receiptless forbidden saves even when unavailable-draft capture fails', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    let updateCalls = 0
+    let captureOptions: { force?: boolean; state?: string; editVersion?: number } | undefined
+    const context = createShellHarness(store, testWindow, {
+      updatePage: async () => {
+        updateCalls++
+        const error = new Error('forbidden')
+        Object.defineProperty(error, 'status', { value: 403 })
+        throw error
+      }
+    })
+    const coordinator = context.offlineDraftCoordinator
+    if (!coordinator) throw new Error('Expected an offline draft coordinator')
+    coordinator.prepareSubmission = async () => undefined
+    coordinator.captureNow = async options => {
+      captureOptions = options
+      return false
+    }
+    applyEveryEdit(store)
+
+    expect(await context.save()).toBe(false)
+    expect(captureOptions?.state).toBe('unavailable')
+    expect(context.offlineDraftStatus).toBe('unavailable')
+    expect(context.offlineDraftMutationBlocked).toBe(true)
+    expect(context.offlineMutationBlocked).toBe(true)
+    expect(store.notifications).toEqual([
+      {
+        message: 'Publishing is unavailable because the page may have been deleted or access may have been denied, but the local draft could not be retained.',
+        style: 'error',
+        icon: 'warning'
+      }
+    ])
+
+    expect(await context.save()).toBe(false)
+    expect(updateCalls).toBe(1)
+    expect(shellScript).toMatch(/if \(this\.offlineDraftMutationBlocked\)/)
+  })
+
+  test('persists a receiptless not-found save as unavailable without replay', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    let updateCalls = 0
+    const context = createShellHarness(store, testWindow, {
+      updatePage: async () => {
+        updateCalls++
+        const error = new Error('not found')
+        Object.defineProperty(error, 'status', { value: 404 })
+        throw error
+      }
+    })
+    const coordinator = context.offlineDraftCoordinator
+    if (!coordinator) throw new Error('Expected an offline draft coordinator')
+    coordinator.prepareSubmission = async () => undefined
+    applyEveryEdit(store)
+
+    expect(await context.save()).toBe(false)
+    expect(coordinator.captureStates).toEqual(['unavailable'])
+    expect(context.offlineDraftStatus).toBe('unavailable')
+    expect(context.offlineDraftMutationBlocked).toBe(true)
+    expect(store.notifications).toEqual([
+      {
+        message: 'Publishing is unavailable because the page may have been deleted or access may have been denied. Local recovery and deletion remain available.',
+        style: 'error',
+        icon: 'warning'
+      }
+    ])
+    expect(await context.save()).toBe(false)
+    expect(updateCalls).toBe(1)
+  })
+
+  test('does not let a conflict response from the previous account mutate the editor', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    let releaseConflict: ((value: boolean) => void) | undefined
+    let conflictCalls = 0
+    let updateCalls = 0
+    const conflict = new Promise<boolean>(resolve => {
+      releaseConflict = resolve
+    })
+    const context = createShellHarness(store, testWindow, {
+      checkPageConflict: async () => {
+        conflictCalls++
+        return conflict
+      },
+      updatePage: async () => {
+        updateCalls++
+        return { sourceRevision: 'stale', updatedAt: '' }
+      }
+    })
+    applyEveryEdit(store)
+
+    const savePromise = context.save()
+    for (let attempt = 0; attempt < 8 && conflictCalls === 0; attempt++) await Promise.resolve()
+    expect(conflictCalls).toBe(1)
+
+    context.accountId = 99
+    store.user.id = 99
+    store.offlineIdentityEpoch = 1
+    context.handleOfflineSessionInvalidated()
+    releaseConflict?.(false)
+
+    expect(await savePromise).toBe(false)
+    expect(updateCalls).toBe(0)
+    expect(store.editor.content).toBe('')
+    expect(store.notifications).toEqual([])
+  })
+
+  test('does not apply a previous account write response or follow-up mutation', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    let releaseUpdate: ((value: { sourceRevision: string; updatedAt: string }) => void) | undefined
+    let updateCalls = 0
+    let visibilityCalls = 0
+    const update = new Promise<{ sourceRevision: string; updatedAt: string }>(resolve => {
+      releaseUpdate = resolve
+    })
+    const context = createShellHarness(store, testWindow, {
+      updatePage: async () => {
+        updateCalls++
+        return update
+      },
+      changePageVisibility: async () => {
+        visibilityCalls++
+        return { sourceRevision: 'stale-visibility' }
+      }
+    })
+    applyEveryEdit(store)
+
+    const savePromise = context.save()
+    for (let attempt = 0; attempt < 8 && updateCalls === 0; attempt++) await Promise.resolve()
+    expect(updateCalls).toBe(1)
+
+    context.accountId = 99
+    store.user.id = 99
+    store.offlineIdentityEpoch = 1
+    context.handleOfflineSessionInvalidated()
+    releaseUpdate?.({ sourceRevision: 'stale', updatedAt: 'stale' })
+
+    expect(await savePromise).toBe(false)
+    expect(visibilityCalls).toBe(0)
+    expect(store.page.sourceRevision).toBe('')
+    expect(store.notifications).toEqual([])
+  })
+  test('ignores a late detached draft completion after identity invalidation', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    let releaseDetached: (() => void) | undefined
+    const detached = new Promise<void>(resolve => {
+      releaseDetached = resolve
+    })
+    const context = createShellHarness(store, testWindow)
+    const coordinator = context.offlineDraftCoordinator
+    if (!coordinator) throw new Error('Expected an offline draft coordinator')
+    coordinator.applyDetachedCandidate = async () => {
+      await detached
+      context.applyOfflineDraft({
+        content: 'previous-account detached secret',
+        title: 'previous-account title',
+        description: 'previous-account description'
+      })
+      return true
+    }
+
+    const restorePromise = context.restoreOfflineDraft()
+    expect(context.offlineDraftBusy).toBe(true)
+    context.accountId = 99
+    store.user.id = 99
+    store.offlineIdentityEpoch = 1
+    context.handleOfflineSessionInvalidated()
+    releaseDetached?.()
+
+    await restorePromise
+    expect(store.editor.content).toBe('')
+    expect(store.page.title).toBe('')
+    expect(store.page.description).toBe('')
+    expect(context.offlineDraftCoordinator).toBeNull()
+  })
+  test('completes an ordinary verified online save when receipt storage is unavailable with a recovery warning', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    let updateCalls = 0
+    const context = createShellHarness(store, testWindow, {
+      updatePage: async () => {
+        updateCalls++
+        return { sourceRevision: 'revision-online', updatedAt: '2026-09-03T12:00:00.000Z' }
+      }
+    })
+    applyEveryEdit(store)
+    const coordinator = context.offlineDraftCoordinator
+    if (!coordinator) throw new Error('Expected an offline draft coordinator')
+    coordinator.prepareSubmission = async () => {
+    }
+    expect(await context.save()).toBe(true)
+    expect(updateCalls).toBe(1)
+    expect(context.isDirty).toBe(false)
+    expect(store.notifications).toHaveLength(1)
+    expect(store.notifications[0]).toMatchObject({ style: 'warning', icon: 'warning' })
+    expect(String(store.notifications[0]?.message)).toContain('Local recovery receipt could not be committed')
+    expect(String(store.notifications[0]?.message)).not.toContain('Saved on this device')
   })
   test('renders an optional historical bootstrap warning as an escaped persistent alert', () => {
     const template = shellSfc.descriptor.template?.content ?? ''

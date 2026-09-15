@@ -1,6 +1,12 @@
 import { createPinia, defineStore } from 'pinia'
 import { sameOriginJsonFetch } from '../helpers/json-transport.ts'
-import { invalidateOfflineSession } from '../helpers/offline-session.ts'
+import {
+  invalidateOfflineSession,
+  registerOfflineIdentityBoundaryOwner,
+  registerOfflineSessionInvalidationOwner,
+  type OfflineIdentityBoundaryReason,
+  type OfflineIdentityBoundaryRequest
+} from '../helpers/offline-session.ts'
 import { openOfflineStorage, type OfflineStorage } from '../helpers/offline-storage.ts'
 import type { PageOkfView } from '../helpers/pages-api.ts'
 import type { SystemSummary } from '../helpers/system-api.ts'
@@ -46,6 +52,7 @@ const defaultPageOkf = (): PageOkfView => ({
 export const pinia = createPinia()
 type WhoAmIResponse = {
   ok: boolean
+  status: number
   json(): Promise<unknown>
 }
 
@@ -72,26 +79,112 @@ const dispatchAuthOutcome = (outcome: AuthRefreshOutcome, accountChanged: boolea
 const isPositiveAccountId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 
 /**
- * Establishes the persisted identity boundary before an auth transition is
- * published. Immutable submission receipts deliberately survive the purge.
+ * Establishes one local identity boundary for an explicit logout, confirmed
+ * account switch, or verified anonymous result. The synchronous session fence
+ * runs before storage/network callbacks; the persisted generation and ordinary
+ * account purge commit through one storage transaction.
+ *
+ * Boundaries raised by a failed draft-key acquisition or an authoritative
+ * unauthorized response advance only the persisted generation. Their opaque
+ * drafts and immutable receipts remain available for explicit same-account
+ * recovery; explicit auth transitions still purge ordinary drafts only.
  */
-export const invalidateOfflineIdentity = async (accountId?: number): Promise<boolean> => {
-  invalidateOfflineSession()
+type OfflineIdentityBoundaryMode = 'advance' | 'purge'
+type OfflineIdentityBoundaryFlight = {
+  readonly accountId: number | undefined
+  readonly mode: OfflineIdentityBoundaryMode
+  readonly promise: Promise<boolean>
+}
+
+let identityBoundaryTail: Promise<boolean> = Promise.resolve(true)
+const identityBoundaryFlights: OfflineIdentityBoundaryFlight[] = []
+let identityBoundarySetupLocked = false
+let offlineIdentityEpoch = 0
+let syncOfflineIdentityEpoch: ((epoch: number) => void) | undefined
+
+const advanceOfflineIdentityEpoch = (): void => {
+  const nextEpoch = offlineIdentityEpoch + 1
+  if (!Number.isSafeInteger(nextEpoch)) throw new Error('Offline identity epoch overflowed.')
+  offlineIdentityEpoch = nextEpoch
+  syncOfflineIdentityEpoch?.(nextEpoch)
+}
+
+const runOfflineIdentityBoundary = async (
+  accountId: number | undefined,
+  mode: OfflineIdentityBoundaryMode
+): Promise<boolean> => {
   let storage: OfflineStorage | null = null
   try {
     storage = await openOfflineStorage()
     const currentGeneration = await storage.currentSessionGeneration()
-    const nextGeneration = await storage.bumpSessionGeneration(undefined, {
-      expectedSessionGeneration: currentGeneration
-    })
-    if (accountId !== undefined && accountId > 0) {
-      await storage.purgeAccount(accountId, { expectedSessionGeneration: nextGeneration })
+    if (mode === 'purge' && accountId !== undefined) {
+      await storage.invalidateAccountSession(accountId, {
+        expectedSessionGeneration: currentGeneration
+      })
+    } else {
+      await storage.bumpSessionGeneration(undefined, {
+        expectedSessionGeneration: currentGeneration
+      })
     }
     return true
   } catch {
     return false
   } finally {
     storage?.close()
+  }
+}
+
+export const invalidateOfflineIdentity = (
+  accountId?: number,
+  reason?: OfflineIdentityBoundaryReason
+): Promise<boolean> => {
+  const normalizedAccountId = accountId !== undefined && isPositiveAccountId(accountId) ? accountId : undefined
+  const mode: OfflineIdentityBoundaryMode =
+    reason === 'draft-key-denied' || reason === 'unauthorized' || normalizedAccountId === undefined ? 'advance' : 'purge'
+
+  if (mode === 'advance') {
+    for (let index = identityBoundaryFlights.length - 1; index >= 0; index -= 1) {
+      const flight = identityBoundaryFlights[index]
+      if (flight?.mode === 'purge' && flight.accountId === normalizedAccountId) return flight.promise
+    }
+  }
+  for (let index = identityBoundaryFlights.length - 1; index >= 0; index -= 1) {
+    const flight = identityBoundaryFlights[index]
+    if (flight?.mode === mode && flight.accountId === normalizedAccountId) return flight.promise
+  }
+  if (identityBoundarySetupLocked) return Promise.resolve(false)
+
+  identityBoundarySetupLocked = true
+  try {
+    advanceOfflineIdentityEpoch()
+    invalidateOfflineSession()
+    const previous = identityBoundaryTail
+    const operation = previous.then(
+      () => runOfflineIdentityBoundary(normalizedAccountId, mode),
+      () => runOfflineIdentityBoundary(normalizedAccountId, mode)
+    )
+    let settled: Promise<boolean>
+    settled = operation.finally(() => {
+      const index = identityBoundaryFlights.findIndex(flight => flight.promise === settled)
+      if (index >= 0) identityBoundaryFlights.splice(index, 1)
+    })
+    const flight: OfflineIdentityBoundaryFlight = {
+      accountId: normalizedAccountId,
+      mode,
+      promise: settled
+    }
+    identityBoundaryFlights.push(flight)
+    const tail = settled.then(
+      () => true,
+      () => true
+    )
+    identityBoundaryTail = tail
+    void tail.then(() => {
+      if (identityBoundaryTail === tail && identityBoundaryFlights.length === 0) identityBoundaryTail = Promise.resolve(true)
+    })
+    return settled
+  } finally {
+    identityBoundarySetupLocked = false
   }
 }
 let authRefresh: Promise<AuthRefreshOutcome> | undefined
@@ -194,6 +287,7 @@ export const useWikiStore = defineStore('wiki', {
     authRefreshSettled: false,
     authRefreshOutcome: null as AuthRefreshOutcome | null,
     offlineIdentityReady: false,
+    offlineIdentityEpoch,
     user: defaultUser()
   }),
   getters: {
@@ -238,10 +332,14 @@ export const useWikiStore = defineStore('wiki', {
     refreshAuth(): Promise<AuthRefreshOutcome> {
       if (authRefresh) return authRefresh
       const authWasSettled = this.authRefreshSettled
+      const previousAccountIdAtStart = this.user.authenticated && isPositiveAccountId(this.user.id) ? this.user.id : undefined
+      const warmIdentityAtStart = previousAccountIdAtStart !== undefined && this.offlineIdentityReady
       this.authRefreshPending = true
       this.authRefreshSettled = false
       this.authRefreshOutcome = null
-      this.offlineIdentityReady = false
+      // A verification attempt fences protected online work, but keeps a
+      // previously verified actor/key boundary available for local capture.
+      this.offlineIdentityReady = warmIdentityAtStart
 
       const publishOutcome = (outcome: AuthRefreshOutcome, accountChanged: boolean): void => {
         this.authRefreshPending = false
@@ -251,10 +349,19 @@ export const useWikiStore = defineStore('wiki', {
       }
 
       const settleAnonymous = async (outcome: Exclude<AuthRefreshOutcome, 'authenticated'>): Promise<AuthRefreshOutcome> => {
-        const previousAccountId = this.user.authenticated && this.user.id > 0 ? this.user.id : undefined
-        if (previousAccountId !== undefined) await invalidateOfflineIdentity(previousAccountId)
+        const previousAccountId = this.user.authenticated && isPositiveAccountId(this.user.id) ? this.user.id : undefined
+        if (outcome === 'unavailable' && previousAccountId !== undefined) {
+          // Transport, server, and malformed verification results are not
+          // proof of logout. Keep the verified actor and warm local boundary;
+          // every protected online consumer still sees the unavailable
+          // outcome and must wait for a fresh verification.
+          publishOutcome(outcome, false)
+          return outcome
+        }
+        const boundary = previousAccountId === undefined ? Promise.resolve(true) : invalidateOfflineIdentity(previousAccountId)
         this.user = defaultUser()
         this.offlineIdentityReady = false
+        await boundary
         publishOutcome(outcome, previousAccountId !== undefined)
         return outcome
       }
@@ -265,7 +372,7 @@ export const useWikiStore = defineStore('wiki', {
             credentials: 'same-origin',
             cache: 'no-store'
           })) as WhoAmIResponse
-          if (!response.ok) return await settleAnonymous('unavailable')
+          if (!response.ok) return await settleAnonymous(response.status === 401 ? 'anonymous' : 'unavailable')
           const payload = await response.json()
           if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return await settleAnonymous('unavailable')
           const record = payload as Record<string, unknown>
@@ -276,10 +383,13 @@ export const useWikiStore = defineStore('wiki', {
           const profile = user as Record<string, unknown>
           const id = profile.id
           if (!isPositiveAccountId(id)) return await settleAnonymous('unavailable')
-
-          const previousAuthenticatedId = this.user.authenticated && this.user.id > 0 ? this.user.id : null
+          const previousAuthenticatedId = this.user.authenticated && isPositiveAccountId(this.user.id) ? this.user.id : null
           const accountChanged = previousAuthenticatedId !== null && previousAuthenticatedId !== id
           const passiveLogin = authWasSettled && previousAuthenticatedId === null
+          if (accountChanged) {
+            this.user = defaultUser()
+            this.offlineIdentityReady = false
+          }
           const boundaryReady = accountChanged || passiveLogin ? await invalidateOfflineIdentity(accountChanged ? previousAuthenticatedId : undefined) : true
           this.user = {
             ...defaultUser(),
@@ -335,5 +445,13 @@ export const useWikiStore = defineStore('wiki', {
 })
 
 export const wikiStore = useWikiStore(pinia)
+syncOfflineIdentityEpoch = epoch => {
+  wikiStore.offlineIdentityEpoch = epoch
+}
+registerOfflineSessionInvalidationOwner(() => {
+  advanceOfflineIdentityEpoch()
+  wikiStore.offlineIdentityReady = false
+})
+registerOfflineIdentityBoundaryOwner((request: OfflineIdentityBoundaryRequest) => invalidateOfflineIdentity(request.accountId, request.reason))
 
 export type WikiStore = typeof wikiStore

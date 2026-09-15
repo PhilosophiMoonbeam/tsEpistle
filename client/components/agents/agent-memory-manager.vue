@@ -42,7 +42,15 @@
               </div>
               <v-btn class="wiki-close-control" icon="mdi-close" size="small" variant="text" aria-label="Cancel memory edit" :disabled="saving" @click="cancelEdit" />
             </header>
-
+            <v-alert v-if="draftConflictMessage" class="agent-memory__editor-warning" type="warning" variant="tonal" density="compact" role="alert">
+              <span>{{ draftConflictMessage }}</span>
+              <div class="agent-memory__editor-warning-actions">
+                <v-btn v-if="draftConflict?.latest" size="small" variant="text" @click="keepDraftAfterRefresh">Keep my text</v-btn>
+                <v-btn v-if="draftConflict?.latest" size="small" variant="text" @click="useRefreshedMemory">Use refreshed record</v-btn>
+                <v-btn v-else size="small" variant="text" @click="cancelEdit">Discard draft</v-btn>
+              </div>
+            </v-alert>
+            <p v-if="refreshNotice" class="agent-memory__refresh-notice" role="status" aria-live="polite">{{ refreshNotice }}</p>
             <fieldset class="agent-memory__target" :disabled="saving">
               <legend>Save under</legend>
               <v-btn-toggle v-model="draftTarget" class="agent-memory__target-toggle" mandatory variant="outlined">
@@ -68,15 +76,13 @@
               auto-grow
               autofocus
               :disabled="saving"
-              variant="outlined"
-              @keydown.meta.enter.prevent="save"
               @keydown.ctrl.enter.prevent="save"
             />
             <p v-if="draftOverLimit" class="agent-memory__draft-limit" role="alert">{{ draftCapacityLabel }}</p>
             <div class="agent-memory__editor-actions">
               <span class="agent-memory__shortcut">Esc to cancel · <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to save</span>
               <v-btn variant="text" :disabled="saving" @click="cancelEdit">Cancel</v-btn>
-              <v-btn color="primary" :disabled="!draftContent.trim() || draftOverLimit || saving || stale || loading || networkBlocked" :loading="saving" :title="networkBlocked ? networkRequiredMessage : undefined" @click="save">
+              <v-btn color="primary" :disabled="!draftContent.trim() || draftOverLimit || saving || stale || loading || networkBlocked || !memoryRefreshResult.accepted || !memoryRefreshResult.current || Boolean(draftConflict)" :loading="saving" :title="networkBlocked ? networkRequiredMessage : undefined" @click="save">
                 {{ editing.id ? 'Save revision' : 'Save memory' }}
               </v-btn>
             </div>
@@ -188,6 +194,7 @@
 import AgentPanelHeader from './agent-panel-header.vue'
 import { computed, nextTick, onBeforeUnmount, onWatcherCleanup, ref, shallowRef, useId, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
 import { clearAgentMemories, createAgentMemory, getAgentMemories, removeAgentMemory, updateAgentMemory, type AgentMemoryEntry, type AgentMemoryTarget, type AgentMemoryView } from '../../helpers/agents-api.ts'
+import type { AgentRefreshResult } from '../../store/agents.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 
 const props = defineProps<{ csrfToken: string; headingId: string; descriptionId: string; networkBlocked?: boolean }>()
@@ -212,10 +219,15 @@ const dialogError = ref('')
 const clearError = ref('')
 const memories = shallowRef<AgentMemoryView>({ agent: emptyStore(2_200), user: emptyStore(1_375) })
 const editing = shallowRef<{ id: string; version: number } | null>(null)
+const draftConflict = shallowRef<{ readonly latest: AgentMemoryEntry | null; readonly kind: 'changed' | 'removed' } | null>(null)
+const refreshNotice = ref('')
+const memoryRefreshResult = shallowRef<AgentRefreshResult>({ accepted: false, current: false })
 const removing = shallowRef<AgentMemoryEntry | null>(null)
 const clearing = ref(false)
+const clearReviewCount = ref<number | null>(null)
 const draftTarget = ref<AgentMemoryTarget>('user')
 const draftContent = ref('')
+const draftRevision = ref(0)
 const searchQuery = ref('')
 const searchTerm = computed(() => (searchQuery.value ?? '').trim().toLocaleLowerCase())
 const memoryEditor = useTemplateRef<{ focus: () => void; $el: HTMLElement }>('memoryEditor')
@@ -275,6 +287,13 @@ const clearMemoryDisabledReason = computed<string | undefined>(() => {
   return undefined
 })
 const canAddMemory = computed(() => addMemoryDisabledReason.value === undefined)
+const draftConflictMessage = computed(() => {
+  const conflict = draftConflict.value
+  if (!conflict) return ''
+  return conflict.kind === 'removed'
+    ? 'This memory was removed while you were editing it. Review the current memory list before saving.'
+    : 'This memory changed while you were editing it. Review the refreshed record before saving.'
+})
 const memoryDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 const memoryDateLabel = (entry: AgentMemoryEntry): string => {
   const revised = entry.updatedAt !== entry.createdAt
@@ -307,36 +326,78 @@ const focusEditor = async (): Promise<void> => {
   memoryEditor.value?.focus()
 }
 const message = (value: unknown, fallback: string): string => value instanceof Error ? value.message : fallback
-const load = async (committedMessage?: string): Promise<boolean> => {
-  if (disposed || networkBlocked.value) {
-    if (networkBlocked.value) {
-      loadController?.abort()
-      loadController = null
-      loading.value = false
+const findMemoryEntry = (view: AgentMemoryView, id: string): AgentMemoryEntry | null => {
+  if (!id) return null
+  return view.agent.entries.find(entry => entry.id === id) ?? view.user.entries.find(entry => entry.id === id) ?? null
+}
+const reconcileSelectedMemory = (nextMemories: AgentMemoryView): void => {
+  const selected = editing.value
+  if (selected?.id) {
+    const latest = findMemoryEntry(nextMemories, selected.id)
+    if (!latest) draftConflict.value = { latest: null, kind: 'removed' }
+    else if (latest.version !== selected.version) draftConflict.value = { latest, kind: 'changed' }
+    else if (draftConflict.value?.latest?.version === latest.version) draftConflict.value = null
+  }
+  const pendingRemoval = removing.value
+  if (pendingRemoval) {
+    const latest = findMemoryEntry(nextMemories, pendingRemoval.id)
+    if (!latest) {
+      removing.value = null
+      dialogError.value = 'This memory is no longer available.'
+    } else if (latest.version !== pendingRemoval.version) {
+      removing.value = latest
+      dialogError.value = 'This memory changed while you were reviewing it. Review the updated record before removing it.'
     }
-    return false
+  }
+  if (clearReviewCount.value !== null && clearReviewCount.value !== nextMemories.agent.entries.length + nextMemories.user.entries.length) {
+    clearError.value = 'Memory changed while you were reviewing the clear action. Review the updated count, then confirm again.'
+  }
+}
+const rejectedRefresh = (error?: unknown, current = false): AgentRefreshResult => ({
+  accepted: false,
+  current,
+  ...(error === undefined ? {} : { error })
+})
+const load = async (committedMessage?: string): Promise<AgentRefreshResult> => {
+  if (disposed || networkBlocked.value) {
+    loadGeneration += 1
+    loadController?.abort()
+    loadController = null
+    loading.value = false
+    memoryRefreshResult.value = rejectedRefresh(undefined, false)
+    return memoryRefreshResult.value
   }
   loadController?.abort()
   const controller = new AbortController()
   loadController = controller
   const generation = ++loadGeneration
+  const draftRevisionAtStart = draftRevision.value
   loading.value = true
   error.value = ''
+  refreshNotice.value = ''
+  memoryRefreshResult.value = rejectedRefresh(undefined, false)
   try {
     const nextMemories = await getAgentMemories(window.fetch.bind(window), csrfToken, controller.signal)
-    if (disposed || generation !== loadGeneration) return false
+    if (disposed || generation !== loadGeneration || controller.signal.aborted) return rejectedRefresh(undefined, false)
+    const draftChangedDuringRefresh = draftRevision.value !== draftRevisionAtStart
     memories.value = nextMemories
     stale.value = false
     loaded.value = true
-    return true
+    reconcileSelectedMemory(nextMemories)
+    if (draftChangedDuringRefresh && editing.value) refreshNotice.value = 'Memory refreshed. Your unsaved text was kept.'
+    const result: AgentRefreshResult = { accepted: true, current: true }
+    memoryRefreshResult.value = result
+    return result
   } catch (value) {
-    if (disposed || generation !== loadGeneration || controller.signal.aborted) return false
+    if (disposed || generation !== loadGeneration || controller.signal.aborted) return rejectedRefresh(undefined, false)
     stale.value = loaded.value
     const reason = message(value, loaded.value ? 'Agent memory could not be refreshed.' : 'Agent memory could not be loaded.')
     error.value = loaded.value
       ? `${committedMessage ? `${committedMessage}, but memory could not be refreshed. ` : ''}Showing last-loaded memory. ${reason}`
       : reason
-    return false
+    const result = rejectedRefresh(value, true)
+    memoryRefreshResult.value = result
+    return result
   } finally {
     if (!disposed && generation === loadGeneration) {
       loading.value = false
@@ -352,18 +413,49 @@ const cancelEdit = (): void => {
   editing.value = null
   draftTarget.value = 'user'
   draftContent.value = ''
+  draftConflict.value = null
+  refreshNotice.value = ''
+  draftRevision.value += 1
 }
 const beginAdd = (target?: AgentMemoryTarget): void => {
   editing.value = { id: '', version: 0 }
   draftTarget.value = target ?? (canAddTo('user') ? 'user' : 'agent')
   draftContent.value = ''
+  draftConflict.value = null
+  refreshNotice.value = ''
+  draftRevision.value += 1
   void focusEditor()
 }
 const beginEdit = (entry: AgentMemoryEntry): void => {
   editing.value = { id: entry.id, version: entry.version }
   draftTarget.value = entry.target
   draftContent.value = entry.content
+  draftConflict.value = null
+  refreshNotice.value = ''
+  draftRevision.value += 1
   void focusEditor()
+}
+const keepDraftAfterRefresh = (): void => {
+  const conflict = draftConflict.value
+  if (!conflict?.latest || !editing.value) return
+  editing.value = { id: conflict.latest.id, version: conflict.latest.version }
+  draftConflict.value = null
+  refreshNotice.value = 'Your text was kept and will be saved over the refreshed version.'
+  draftRevision.value += 1
+}
+const useRefreshedMemory = (): void => {
+  const conflict = draftConflict.value
+  if (!conflict) return
+  if (!conflict.latest) {
+    cancelEdit()
+    return
+  }
+  editing.value = { id: conflict.latest.id, version: conflict.latest.version }
+  draftTarget.value = conflict.latest.target
+  draftContent.value = conflict.latest.content
+  draftConflict.value = null
+  refreshNotice.value = 'The refreshed record is now the editing base.'
+  draftRevision.value += 1
 }
 const beginRemove = (entry: AgentMemoryEntry, event: MouseEvent): void => {
   dialogError.value = ''
@@ -372,6 +464,7 @@ const beginRemove = (entry: AgentMemoryEntry, event: MouseEvent): void => {
 }
 const beginClear = (event: Event): void => {
   clearError.value = ''
+  clearReviewCount.value = memoryCount.value
   destructiveRestoreTarget.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
   clearing.value = true
 }
@@ -383,6 +476,7 @@ const cancelRemove = (): void => {
 const cancelClear = (): void => {
   if (actionBusy.value === 'clear') return
   clearing.value = false
+  clearReviewCount.value = null
   clearError.value = ''
 }
 const componentElement = (component: ComponentRoot | null): HTMLElement | null => {
@@ -397,22 +491,28 @@ const save = async (): Promise<void> => {
     error.value = networkRequiredMessage
     return
   }
-  if (!current || !content || draftOverLimit.value || saving.value || actionBusy.value || stale.value || loading.value) return
+  if (!current || !content || draftOverLimit.value || saving.value || actionBusy.value || stale.value || loading.value || !memoryRefreshResult.value.accepted || !memoryRefreshResult.value.current || draftConflict.value) return
+  const draftRevisionAtStart = draftRevision.value
   saving.value = true; actionBusy.value = 'save'; error.value = ''
   try {
     if (current.id) await updateAgentMemory(window.fetch.bind(window), csrfToken, current.id, { expectedVersion: current.version, target: draftTarget.value, content })
     else await createAgentMemory(window.fetch.bind(window), csrfToken, { target: draftTarget.value, content })
-  } catch (value) {
     if (disposed) return
-    error.value = message(value, 'Memory could not be saved.')
-    saving.value = false; actionBusy.value = ''
-    return
+    if (draftRevision.value !== draftRevisionAtStart) {
+      error.value = 'Memory was saved, but newer unsaved text was kept in the editor.'
+      await load('Memory was saved')
+      return
+    }
+    cancelEdit()
+    await load('Memory was saved')
+  } catch (value) {
+    if (!disposed) error.value = message(value, 'Memory could not be saved.')
+  } finally {
+    if (!disposed) {
+      saving.value = false
+      actionBusy.value = ''
+    }
   }
-  if (disposed) return
-  cancelEdit()
-  await load('Memory was saved')
-  if (disposed) return
-  saving.value = false; actionBusy.value = ''
 }
 const remove = async (): Promise<void> => {
   const entry = removing.value
@@ -420,7 +520,8 @@ const remove = async (): Promise<void> => {
     dialogError.value = networkRequiredMessage
     return
   }
-  if (!entry || saving.value || actionBusy.value || stale.value || loading.value) return
+  if (!entry || saving.value || actionBusy.value || stale.value || loading.value || !memoryRefreshResult.value.accepted || !memoryRefreshResult.value.current) return
+  const draftRevisionAtStart = draftRevision.value
   saving.value = true; actionBusy.value = 'remove'; dialogError.value = ''
   try {
     const mutation = await removeAgentMemory(window.fetch.bind(window), csrfToken, entry.id, entry.version)
@@ -435,48 +536,52 @@ const remove = async (): Promise<void> => {
         limit: mutation.limit
       }
     }
+    if (draftRevision.value === draftRevisionAtStart && editing.value?.id === entry.id) cancelEdit()
+    destructiveRestoreTarget.value = componentElement(memoryHeading.value)
+    removing.value = null
+    await load('Memory was removed')
   } catch (value) {
-    if (disposed) return
-    dialogError.value = message(value, 'Memory could not be removed.')
-    saving.value = false; actionBusy.value = ''
-    return
+    if (!disposed) dialogError.value = message(value, 'Memory could not be removed.')
+  } finally {
+    if (!disposed) {
+      saving.value = false
+      actionBusy.value = ''
+    }
   }
-  if (disposed) return
-  if (editing.value?.id === entry.id) cancelEdit()
-  destructiveRestoreTarget.value = componentElement(memoryHeading.value)
-  removing.value = null
-  await load('Memory was removed')
-  if (disposed) return
-  saving.value = false; actionBusy.value = ''
 }
 const clear = async (): Promise<void> => {
   if (networkBlocked.value) {
     clearError.value = networkRequiredMessage
     return
   }
-  if (saving.value || actionBusy.value || stale.value || loading.value) return
+  if (saving.value || actionBusy.value || stale.value || loading.value || !memoryRefreshResult.value.accepted || !memoryRefreshResult.value.current || (clearReviewCount.value !== null && clearReviewCount.value !== memoryCount.value)) return
+  const draftRevisionAtStart = draftRevision.value
   saving.value = true; actionBusy.value = 'clear'; clearError.value = ''
   try {
     await clearAgentMemories(window.fetch.bind(window), csrfToken)
-  } catch (value) {
     if (disposed) return
-    clearError.value = message(value, 'Agent memory could not be cleared.')
-    saving.value = false; actionBusy.value = ''
-    return
+    memories.value = {
+      agent: emptyStore(memories.value.agent.limit),
+      user: emptyStore(memories.value.user.limit)
+    }
+    destructiveRestoreTarget.value = componentElement(memoryHeading.value)
+    clearing.value = false
+    clearReviewCount.value = null
+    if (draftRevision.value === draftRevisionAtStart) cancelEdit()
+    await load('Agent memory was cleared')
+  } catch (value) {
+    if (!disposed) clearError.value = message(value, 'Agent memory could not be cleared.')
+  } finally {
+    if (!disposed) {
+      saving.value = false
+      actionBusy.value = ''
+    }
   }
-  if (disposed) return
-  memories.value = {
-    agent: emptyStore(memories.value.agent.limit),
-    user: emptyStore(memories.value.user.limit)
-  }
-  destructiveRestoreTarget.value = componentElement(memoryHeading.value)
-  clearing.value = false
-  cancelEdit()
-  await load('Agent memory was cleared')
-  if (disposed) return
-  saving.value = false; actionBusy.value = ''
 }
 
+watch([editing, draftTarget, draftContent], () => {
+  draftRevision.value += 1
+}, { flush: 'sync' })
 watch([open, removing, clearing], async ([managerOpen, entry, clearOpen]) => {
   let cancelled = false
   onWatcherCleanup(() => { cancelled = true })
@@ -516,6 +621,8 @@ watch(networkBlocked, blocked => {
     loadController?.abort()
     loadController = null
     loading.value = false
+    stale.value = loaded.value
+    memoryRefreshResult.value = rejectedRefresh(undefined, false)
     return
   }
   if (open.value && !disposed) void load()
@@ -526,6 +633,7 @@ onBeforeUnmount(() => {
   loadGeneration += 1
   loadController?.abort()
   loadController = null
+  memoryRefreshResult.value = rejectedRefresh(undefined, false)
   destructiveFocusScope?.deactivate({ restoreFocus: false })
   destructiveFocusScope = null
 })

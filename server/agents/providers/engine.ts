@@ -2005,7 +2005,7 @@ export class AxAgentEngine implements AgentEngine {
     let actionSession: AxActionSession | null = prepared.actionSession
     let actionSessionClosed = false
     const skillCatalog = prepared.skillCatalog
-    let discovery: ToolDiscoveryController | null = prepared.discovery
+    const discovery: ToolDiscoveryController | null = prepared.discovery
     let discoveryTurn: ToolDiscoveryTurn | null = prepared.discoveryTurn
     let tools: ProviderTools | null = prepared.tools
     const finalizeActionSession = (): AgentExecutionFailure | undefined => {

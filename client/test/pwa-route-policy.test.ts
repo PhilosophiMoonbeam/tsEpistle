@@ -20,33 +20,78 @@ const request = (options: RequestOptions = {}, accept = 'text/html'): PwaRequest
   headers: { get: name => (name.toLowerCase() === 'accept' ? accept : null) },
   ...options
 })
+const RESERVED_ROUTE_FAMILIES = [
+  '/_api',
+  '/api',
+  '/graphql',
+  '/mcp',
+  '/login',
+  '/logout',
+  '/register',
+  '/auth',
+  '/session',
+  '/unlock',
+  '/_unlock',
+  '/verify',
+  '/login-reset',
+  '/u',
+  '/upload',
+  '/uploads',
+  '/setup',
+  '/admin',
+  '/a',
+  '/p',
+  '/profile',
+  '/_admin',
+  '/_private',
+  '/_userav',
+  '/d',
+  '/e',
+  '/h',
+  '/s',
+  '/i',
+  '/t',
+  '/sw.js',
+  '/service-worker.js',
+  '/sw-tombstone.js',
+  '/health',
+  '/healthz',
+  '/metrics',
+  '/robots.txt',
+  '/manifest',
+  '/manifest.json',
+  '/manifest.webmanifest',
+  OFFLINE_DOCUMENT_PATH,
+  '/_assets'
+] as const
 
 describe('PWA route policy', () => {
   test('recognizes HTML negotiation without allocating a header token list', () => {
     expect(acceptsHTML(request({}, 'text/html'))).toBe(true)
     expect(acceptsHTML(request({}, 'application/xhtml+xml, text/html; q=0.9'))).toBe(true)
-    expect(acceptsHTML(request({}, 'application/json, text/plain'))).toBe(false)
+    expect(acceptsHTML(request({}, 'text/html; q=0'))).toBe(false)
     expect(acceptsHTML(request({}, 'text/htmlish'))).toBe(false)
   })
 
-  test('keeps sensitive and non-document routes out of the fallback allowlist', () => {
-    const networkOnlyPaths = [
-      '/_api/pages/7',
-      '/api/v1/pages/7',
-      '/graphql',
-      '/mcp/sessions',
-      '/login',
-      '/auth/callback',
-      '/admin/workspace',
-      '/_admin/users',
-      '/setup',
-      '/_private/en/notes',
-      '/_assets/js/app.js'
-    ]
-    for (const path of networkOnlyPaths) {
+  test('keeps every reserved route family and static resource out of the fallback allowlist', () => {
+    for (const root of RESERVED_ROUTE_FAMILIES) {
+      expect(isNetworkOnlyPath(root)).toBe(true)
+      expect(isNetworkOnlyPath(`${root}/nested`)).toBe(true)
+      expect(isNetworkOnlyPath(root.toUpperCase())).toBe(true)
+      expect(isNetworkOnlyPath(encodeURIComponent(root))).toBe(true)
+      expect(isAllowlistedNavigation(request({ url: `${ORIGIN}${root}` }), ORIGIN)).toBe(false)
+    }
+
+    for (const path of ['/download.zip', '/en/guide.js', '/en/guide%2Ejson']) {
       expect(isNetworkOnlyPath(path)).toBe(true)
       expect(isAllowlistedNavigation(request({ url: `${ORIGIN}${path}` }), ORIGIN)).toBe(false)
     }
+
+    expect(isAllowlistedNavigation(request({ url: `${ORIGIN}/%5Fapi/pages/7` }), ORIGIN)).toBe(false)
+    expect(isAllowlistedNavigation(request({ url: `${ORIGIN}/%5Fassets/js/app.js` }), ORIGIN)).toBe(false)
+    expect(isAllowlistedNavigation(request({ url: `${ORIGIN}/docs/../_api/pages/7` }), ORIGIN)).toBe(false)
+    expect(isAllowlistedNavigation(request({ url: `${ORIGIN}/docs/../_assets/js/app.js` }), ORIGIN)).toBe(false)
+    expect(isAllowlistedNavigation(request({ url: `${ORIGIN}/docs/../guide` }), ORIGIN)).toBe(true)
 
     expect(isNetworkOnlyPath('/_privateer/en/notes')).toBe(false)
     expect(isAllowlistedNavigation(request({ url: `${ORIGIN}/_privateer/en/notes` }), ORIGIN)).toBe(true)
@@ -57,6 +102,7 @@ describe('PWA route policy', () => {
     expect(isAllowlistedNavigation(request({ url: 'https://other.example.test/en/guide' }), ORIGIN)).toBe(false)
     expect(isAllowlistedNavigation(request({ mode: 'cors', url: `${ORIGIN}/en/guide.js`, destination: 'script' }, 'text/javascript'), ORIGIN)).toBe(false)
     expect(isAllowlistedNavigation(request({}, 'application/json'), ORIGIN)).toBe(false)
+    expect(isAllowlistedNavigation(request({}, 'text/html; q=0'), ORIGIN)).toBe(false)
     expect(isAllowlistedNavigation(request({ url: `${ORIGIN}${OFFLINE_DOCUMENT_PATH}` }), ORIGIN)).toBe(false)
     expect(isAllowlistedNavigation(request({ url: `${ORIGIN}/download.zip` }), ORIGIN)).toBe(false)
   })

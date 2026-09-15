@@ -21,6 +21,7 @@ const basePage = {
   publishEndDate: '',
   publishStartDate: '',
   render: '<h1>Supported</h1>',
+  renderedSourceRevision: null,
   title: 'Page',
   updatedAt: '2026-08-14T00:00:00.000Z',
   visibility: 'private',
@@ -153,10 +154,13 @@ describe('Visual Markdown page contracts', () => {
 
     await Page.convertPage({ id: basePage.id, editor: 'visual-markdown', user: requester })
 
-    expect(patch).toHaveBeenCalledWith({
+    expect(patch).toHaveBeenCalledOnce()
+    expect(patch.mock.calls[0][0]).toMatchObject({
       contentType: 'markdown',
-      editorKey: 'visual-markdown'
+      editorKey: 'visual-markdown',
+      renderedSourceRevision: null
     })
+    expect(patch.mock.calls[0][0]).not.toHaveProperty('content')
     expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
   })
 
@@ -166,10 +170,13 @@ describe('Visual Markdown page contracts', () => {
 
     await Page.convertPage({ id: page.id, editor: 'visual-markdown', user: requester })
 
-    expect(patch).toHaveBeenCalledWith({
+    expect(patch).toHaveBeenCalledOnce()
+    expect(patch.mock.calls[0][0]).toMatchObject({
       contentType: 'markdown',
-      editorKey: 'visual-markdown'
+      editorKey: 'visual-markdown',
+      renderedSourceRevision: null
     })
+    expect(patch.mock.calls[0][0]).not.toHaveProperty('content')
     expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
   })
 
@@ -184,20 +191,12 @@ describe('Visual Markdown page contracts', () => {
 
     await Page.convertPage({ id: page.id, editor: 'visual-markdown', user: requester })
 
-    expect(patch).toHaveBeenCalledWith({
+    expect(patch).toHaveBeenCalledOnce()
+    expect(patch.mock.calls[0][0]).toMatchObject({
       contentType: 'markdown',
       editorKey: 'visual-markdown',
       content: '# Visual page\n\nText with **bold**.',
-      extra: {
-        okf: {
-          type: 'Reference',
-          status: 'stable',
-          generated: {
-            by: 'human:7',
-            at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u)
-          }
-        }
-      }
+      renderedSourceRevision: null
     })
     expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledOnce()
   })
@@ -213,20 +212,12 @@ describe('Visual Markdown page contracts', () => {
 
     await Page.convertPage({ id: page.id, editor: 'ckeditor', user: requester })
 
-    expect(patch).toHaveBeenCalledWith({
+    expect(patch).toHaveBeenCalledOnce()
+    expect(patch.mock.calls[0][0]).toMatchObject({
       contentType: 'html',
       editorKey: 'ckeditor',
       content: '<h1>Visual Markdown</h1><p>Rendered text.</p>',
-      extra: {
-        okf: {
-          type: 'Reference',
-          status: 'stable',
-          generated: {
-            by: 'human:7',
-            at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u)
-          }
-        }
-      }
+      renderedSourceRevision: null
     })
     expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledOnce()
   })

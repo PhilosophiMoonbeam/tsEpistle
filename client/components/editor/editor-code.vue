@@ -33,6 +33,7 @@ import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, 
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import type { ContentInsertOptions, LineInsertOptions, MultiLineInsertOptions } from './common/editor-types'
 import { TextEditor, type TextEditorHandle, type TextPosition } from './common/text-editor'
+import { EditorAdapterController } from './common/editor-adapter'
 import { html } from '@codemirror/lang-html'
 const HTML_ESCAPE_REPLACEMENTS: Record<string, string> = {
   '&': '&amp;',
@@ -52,8 +53,10 @@ function escapeHtml(value: string): string {
 // ========================================
 
 export default defineComponent({
+  emits: ['editor-adapter', 'editor-adapter-clear'],
   data() {
     return {
+      editorAdapter: null as EditorAdapterController | null,
       cm: null as TextEditorHandle | null,
       cursorPos: { ch: 0, line: 0 } as TextPosition
     }
@@ -83,6 +86,17 @@ export default defineComponent({
     }
   },
   methods: {
+    flushEligibleEditorText() {
+      const editor = this.cm
+      if (!editor) return
+      wikiStore.editor.content = editor.getValue()
+      this.editorAdapter?.notifyState()
+    },
+    clearEditorText() {
+      if (this.cm?.reset) this.cm.reset('')
+      else this.cm?.setValue('')
+      wikiStore.editor.content = ''
+    },
     toggleModal(key: string) {
       this.activeModal = (this.activeModal === key) ? '' : key
     },
@@ -182,10 +196,23 @@ export default defineComponent({
       language: html(),
       onChange: value => {
         wikiStore.editor.content = value
+        this.editorAdapter?.noteTextChange()
       },
       onCursor: position => this.positionSync(position)
     })
     this.cm = markRaw(cm)
+    const adapter = new EditorAdapterController({
+      readText: () => cm.getValue(),
+      writeText: text => {
+        cm.setValue(text)
+        wikiStore.editor.content = text
+      },
+      clearText: () => this.clearEditorText(),
+      flushText: () => this.flushEligibleEditorText()
+    })
+    this.editorAdapter = markRaw(adapter)
+    adapter.initialize()
+    this.$emit('editor-adapter', adapter)
 
     onEditorInsert(this.handleEditorInsert)
 
@@ -194,6 +221,12 @@ export default defineComponent({
     onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
   beforeUnmount() {
+    const adapter = this.editorAdapter
+    if (adapter) {
+      this.$emit('editor-adapter-clear', adapter)
+      adapter.destroy()
+      this.editorAdapter = null
+    }
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)

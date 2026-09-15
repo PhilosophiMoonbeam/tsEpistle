@@ -444,31 +444,74 @@ export type PageTagRow = {
   updatedAt: string
 }
 
+const responseStatus = (response: JsonResponse): number | undefined =>
+  typeof response.status === 'number' && Number.isSafeInteger(response.status) && response.status > 0 ? response.status : undefined
+
+const errorWithResponseStatus = (error: unknown, response: JsonResponse, fallbackMessage: string): Error => {
+  const result = error instanceof Error ? error : new Error(fallbackMessage)
+  const status = responseStatus(response)
+  if (status !== undefined && (!Object.hasOwn(result, 'status') || typeof Reflect.get(result, 'status') !== 'number')) {
+    Object.defineProperty(result, 'status', {
+      configurable: true,
+      enumerable: true,
+      value: status,
+      writable: false
+    })
+  }
+  return result
+}
+
 async function parseJsonResponse(response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
 
   let payload: unknown = null
   if (contentType.includes('application/json')) {
-    payload = await response.json()
+    try {
+      payload = await response.json()
+    } catch (error) {
+      throw errorWithResponseStatus(error, response, fallbackMessage)
+    }
   }
 
   if (!response.ok) {
     let message = fallbackMessage
-    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-      const error = (payload as { error?: unknown }).error
-      const detail = (payload as { message?: unknown }).message
+    if (isRecord(payload)) {
+      const error = payload.error
+      const detail = payload.message
       if (typeof error === 'string' && error.length > 0) message = error
       else if (typeof detail === 'string' && detail.length > 0) message = detail
     }
-    throw Object.assign(new Error(message), { status: response.status })
+    throw errorWithResponseStatus(new Error(message), response, fallbackMessage)
   }
 
   if (payload === null) {
-    throw new Error(fallbackMessage)
+    throw errorWithResponseStatus(new Error(fallbackMessage), response, fallbackMessage)
   }
 
   return payload
+}
+
+const normalizeResponse = async <T>(
+  response: JsonResponse,
+  fallbackMessage: string,
+  normalize: (payload: unknown, fallbackMessage: string) => T
+): Promise<T> => {
+  try {
+    return normalize(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+  } catch (error) {
+    throw errorWithResponseStatus(error, response, fallbackMessage)
+  }
+}
+
+
+const normalizeArray = <T>(
+  payload: unknown,
+  fallbackMessage: string,
+  normalize: (row: unknown, fallbackMessage: string) => T
+): T[] => {
+  if (!Array.isArray(payload)) throw new Error(fallbackMessage)
+  return payload.map(row => normalize(row, fallbackMessage))
 }
 
 function normalizePageTagRow(row: unknown, fallbackMessage: string): PageTagRow {
@@ -790,12 +833,7 @@ export async function fetchPageLinks(fetchImpl: FetchImpl, locale: string, fallb
     }
   })
 
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!Array.isArray(payload)) {
-    throw new Error(fallbackMessage)
-  }
-
-  return payload.map(row => normalizePageLinkRow(row, fallbackMessage))
+  return normalizeResponse(response, fallbackMessage, payload => normalizeArray(payload, fallbackMessage, normalizePageLinkRow))
 }
 
 export async function fetchPage(fetchImpl: FetchImpl, id: number, fallbackMessage = 'Page response is invalid'): Promise<PageDetails> {
@@ -806,7 +844,7 @@ export async function fetchPage(fetchImpl: FetchImpl, id: number, fallbackMessag
     }
   })
 
-  return normalizePageDetails(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
+  return normalizeResponse(response, fallbackMessage, payload => normalizePageDetails(payload, fallbackMessage))
 }
 
 export async function fetchOfflinePageSnapshot(
@@ -821,10 +859,11 @@ export async function fetchOfflinePageSnapshot(
       Accept: 'application/json'
     }
   })
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  const parsed = OfflinePageSnapshotV1Schema.safeParse(payload)
-  if (!parsed.success) throw new Error(fallbackMessage)
-  return parsed.data
+  return normalizeResponse(response, fallbackMessage, payload => {
+    const parsed = OfflinePageSnapshotV1Schema.safeParse(payload)
+    if (!parsed.success) throw new Error(fallbackMessage)
+    return parsed.data
+  })
 }
 
 export async function fetchPageList(fetchImpl: FetchImpl, fallbackMessage = 'Page list response is invalid'): Promise<PageListRow[]> {
@@ -835,12 +874,7 @@ export async function fetchPageList(fetchImpl: FetchImpl, fallbackMessage = 'Pag
     }
   })
 
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!Array.isArray(payload)) {
-    throw new Error(fallbackMessage)
-  }
-
-  return payload.map(row => normalizePageListRow(row, fallbackMessage))
+  return normalizeResponse(response, fallbackMessage, payload => normalizeArray(payload, fallbackMessage, normalizePageListRow))
 }
 
 export async function fetchPageTags(fetchImpl: FetchImpl, fallbackMessage = 'Page tags response is invalid'): Promise<PageTagRow[]> {
@@ -851,12 +885,7 @@ export async function fetchPageTags(fetchImpl: FetchImpl, fallbackMessage = 'Pag
     }
   })
 
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!Array.isArray(payload)) {
-    throw new Error(fallbackMessage)
-  }
-
-  return payload.map(row => normalizePageTagRow(row, fallbackMessage))
+  return normalizeResponse(response, fallbackMessage, payload => normalizeArray(payload, fallbackMessage, normalizePageTagRow))
 }
 
 export async function fetchRecentPages(fetchImpl: FetchImpl, fallbackMessage = 'Recent pages response is invalid'): Promise<RecentPageRow[]> {
@@ -867,12 +896,7 @@ export async function fetchRecentPages(fetchImpl: FetchImpl, fallbackMessage = '
     }
   })
 
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!Array.isArray(payload)) {
-    throw new Error(fallbackMessage)
-  }
-
-  return payload.map(row => normalizeRecentPageRow(row, fallbackMessage))
+  return normalizeResponse(response, fallbackMessage, payload => normalizeArray(payload, fallbackMessage, normalizeRecentPageRow))
 }
 export async function fetchCollaborationSession(
   fetchImpl: FetchImpl,
@@ -889,7 +913,7 @@ export async function fetchCollaborationSession(
     },
     body: JSON.stringify({ expectedUpdatedAt })
   })
-  return parseCollaborationSession(await parseJsonResponse(response, fallbackMessage))
+  return normalizeResponse(response, fallbackMessage, payload => parseCollaborationSession(payload))
 }
 
 export async function discardCollaborationDraft(
@@ -909,8 +933,9 @@ export async function discardCollaborationDraft(
     },
     body: JSON.stringify({ expectedUpdatedAt, expectedSourceRevision })
   })
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!isRecord(payload) || payload.discarded !== true) throw new Error(fallbackMessage)
+  await normalizeResponse(response, fallbackMessage, payload => {
+    if (!isRecord(payload) || payload.discarded !== true) throw new Error(fallbackMessage)
+  })
 }
 
 export async function deletePage(
@@ -929,20 +954,12 @@ export async function deletePage(
     body: JSON.stringify({ expectedSourceRevision })
   })
 
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (
-    !payload ||
-    typeof payload !== 'object' ||
-    Array.isArray(payload) ||
-    typeof (payload as { message?: unknown }).message !== 'string' ||
-    (payload as { message: string }).message.length < 1
-  ) {
-    throw new Error(fallbackMessage)
-  }
-
-  return {
-    message: (payload as { message: string }).message
-  }
+  return normalizeResponse(response, fallbackMessage, payload => {
+    if (!isRecord(payload) || typeof payload.message !== 'string' || payload.message.length < 1) {
+      throw new Error(fallbackMessage)
+    }
+    return { message: payload.message }
+  })
 }
 
 export type PageWriteInput = {
@@ -972,6 +989,7 @@ export type PageConflictLatest = {
   path: string
   title: string
   description: string
+  sourceRevision: string
 }
 
 export type PageTreeRow = {
@@ -1017,7 +1035,14 @@ function normalizePageWriteInput(input: PageWriteInput, fallbackMessage: string)
   return { ...input, branding: result.data }
 }
 
-async function sendJson(fetchImpl: FetchImpl, url: string, method: string, body: unknown, fallbackMessage: string): Promise<unknown> {
+async function sendJson<T = unknown>(
+  fetchImpl: FetchImpl,
+  url: string,
+  method: string,
+  body: unknown,
+  fallbackMessage: string,
+  normalize?: (payload: unknown, fallbackMessage: string) => T
+): Promise<T> {
   const response = await sameOriginJsonFetch(fetchImpl, url, {
     method,
     credentials: 'same-origin',
@@ -1027,7 +1052,8 @@ async function sendJson(fetchImpl: FetchImpl, url: string, method: string, body:
     },
     body: JSON.stringify(body)
   })
-  return parseJsonResponse(response, fallbackMessage)
+  if (normalize) return normalizeResponse(response, fallbackMessage, normalize)
+  return await parseJsonResponse(response, fallbackMessage) as T
 }
 
 type WrittenPage = {
@@ -1050,7 +1076,9 @@ function isNullableNumber(value: unknown): value is number | null {
 
 export async function createPage(fetchImpl: FetchImpl, input: PageWriteInput, fallbackMessage = 'Page creation failed'): Promise<WrittenPage> {
   const normalizedInput = normalizePageWriteInput(input, fallbackMessage)
-  return normalizeWrittenPage(await sendJson(fetchImpl, '/_api/pages', 'POST', normalizedInput, fallbackMessage), fallbackMessage, true)
+  return sendJson(fetchImpl, '/_api/pages', 'POST', normalizedInput, fallbackMessage, payload =>
+    normalizeWrittenPage(payload, fallbackMessage, true)
+  )
 }
 
 export async function updatePage(
@@ -1067,20 +1095,17 @@ export async function updatePage(
   )
     throw new Error(fallbackMessage)
   const normalizedInput = normalizePageWriteInput(input, fallbackMessage)
-  return normalizeWrittenPage(
-    await sendJson(
-      fetchImpl,
-      `/_api/pages/${encodeURIComponent(id)}`,
-      'PUT',
-      {
-        ...normalizedInput,
-        expectedSourceRevision,
-        ...(expectedCollaborationGeneration === undefined ? {} : { expectedCollaborationGeneration })
-      },
-      fallbackMessage
-    ),
+  return sendJson(
+    fetchImpl,
+    `/_api/pages/${encodeURIComponent(id)}`,
+    'PUT',
+    {
+      ...normalizedInput,
+      expectedSourceRevision,
+      ...(expectedCollaborationGeneration === undefined ? {} : { expectedCollaborationGeneration })
+    },
     fallbackMessage,
-    false
+    payload => normalizeWrittenPage(payload, fallbackMessage, false)
   )
 }
 
@@ -1092,16 +1117,13 @@ export async function changePageVisibility(
   confirmPublication = false,
   fallbackMessage = 'Page visibility update failed'
 ): Promise<WrittenPage> {
-  return normalizeWrittenPage(
-    await sendJson(
-      fetchImpl,
-      `/_api/pages/${encodeURIComponent(id)}/visibility`,
-      'PATCH',
-      { visibility, confirmPublication, expectedSourceRevision },
-      fallbackMessage
-    ),
+  return sendJson(
+    fetchImpl,
+    `/_api/pages/${encodeURIComponent(id)}/visibility`,
+    'PATCH',
+    { visibility, confirmPublication, expectedSourceRevision },
     fallbackMessage,
-    true
+    payload => normalizeWrittenPage(payload, fallbackMessage, true)
   )
 }
 
@@ -1141,9 +1163,7 @@ export async function fetchPageLocaleRelations(
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!Array.isArray(payload)) throw new Error(fallbackMessage)
-  return payload.map(row => normalizePageLocaleRelation(row, fallbackMessage))
+  return normalizeResponse(response, fallbackMessage, payload => normalizeArray(payload, fallbackMessage, normalizePageLocaleRelation))
 }
 
 export async function linkPageLocaleRelation(
@@ -1152,9 +1172,14 @@ export async function linkPageLocaleRelation(
   relatedPageId: number,
   fallbackMessage = 'Page translation link failed'
 ): Promise<PageLocaleRelation[]> {
-  const payload = await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(pageId)}/locale-relations`, 'POST', { relatedPageId }, fallbackMessage)
-  if (!Array.isArray(payload)) throw new Error(fallbackMessage)
-  return payload.map(row => normalizePageLocaleRelation(row, fallbackMessage))
+  return sendJson(
+    fetchImpl,
+    `/_api/pages/${encodeURIComponent(pageId)}/locale-relations`,
+    'POST',
+    { relatedPageId },
+    fallbackMessage,
+    payload => normalizeArray(payload, fallbackMessage, normalizePageLocaleRelation)
+  )
 }
 
 export async function unlinkPageLocaleRelation(
@@ -1163,15 +1188,14 @@ export async function unlinkPageLocaleRelation(
   relatedPageId: number,
   fallbackMessage = 'Page translation unlink failed'
 ): Promise<PageLocaleRelation[]> {
-  const payload = await sendJson(
+  return sendJson(
     fetchImpl,
     `/_api/pages/${encodeURIComponent(pageId)}/locale-relations/${encodeURIComponent(relatedPageId)}`,
     'DELETE',
     {},
-    fallbackMessage
+    fallbackMessage,
+    payload => normalizeArray(payload, fallbackMessage, normalizePageLocaleRelation)
   )
-  if (!Array.isArray(payload)) throw new Error(fallbackMessage)
-  return payload.map(row => normalizePageLocaleRelation(row, fallbackMessage))
 }
 
 export async function checkPageConflict(
@@ -1180,9 +1204,10 @@ export async function checkPageConflict(
   checkoutDate: string,
   fallbackMessage = 'Page conflict check failed'
 ): Promise<boolean> {
-  const payload = await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/conflicts/check`, 'POST', { checkoutDate }, fallbackMessage)
-  if (!isRecord(payload) || typeof payload.conflict !== 'boolean') throw new Error(fallbackMessage)
-  return payload.conflict
+  return sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/conflicts/check`, 'POST', { checkoutDate }, fallbackMessage, payload => {
+    if (!isRecord(payload) || typeof payload.conflict !== 'boolean') throw new Error(fallbackMessage)
+    return payload.conflict
+  })
 }
 
 export async function fetchPageConflictLatest(
@@ -1194,28 +1219,33 @@ export async function fetchPageConflictLatest(
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (
-    !isRecord(payload) ||
-    typeof payload.updatedAt !== 'string' ||
-    typeof payload.authorName !== 'string' ||
-    typeof payload.content !== 'string' ||
-    typeof payload.locale !== 'string' ||
-    typeof payload.path !== 'string' ||
-    typeof payload.title !== 'string' ||
-    typeof payload.description !== 'string'
-  ) {
-    throw new Error(fallbackMessage)
-  }
-  return {
-    updatedAt: payload.updatedAt,
-    authorName: payload.authorName,
-    content: payload.content,
-    locale: payload.locale,
-    path: payload.path,
-    title: payload.title,
-    description: payload.description
-  }
+  return normalizeResponse(response, fallbackMessage, payload => {
+    if (
+      !isRecord(payload) ||
+      typeof payload.updatedAt !== 'string' ||
+      typeof payload.authorName !== 'string' ||
+      typeof payload.content !== 'string' ||
+      typeof payload.locale !== 'string' ||
+      typeof payload.path !== 'string' ||
+      typeof payload.title !== 'string' ||
+      typeof payload.description !== 'string' ||
+      (typeof payload.sourceRevision !== 'string' && typeof payload.sourceRevision !== 'number')
+    ) {
+      throw new Error(fallbackMessage)
+    }
+    const sourceRevision = String(payload.sourceRevision)
+    if (!/^[1-9][0-9]*$/u.test(sourceRevision)) throw new Error(fallbackMessage)
+    return {
+      updatedAt: payload.updatedAt,
+      authorName: payload.authorName,
+      content: payload.content,
+      locale: payload.locale,
+      path: payload.path,
+      title: payload.title,
+      description: payload.description,
+      sourceRevision
+    }
+  })
 }
 
 export async function fetchPageTree(
@@ -1239,38 +1269,39 @@ export async function fetchPageTree(
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!Array.isArray(payload)) throw new Error(fallbackMessage)
-  return payload.map(row => {
-    if (!isRecord(row)) throw new Error(fallbackMessage)
-    const pageId = row.pageId
-    if (!isNullableNumber(pageId)) throw new Error(fallbackMessage)
-    const ownerId = row.ownerId
-    if (
-      !isNullableNumber(ownerId) ||
-      (row.visibility !== 'public' && row.visibility !== 'private') ||
-      typeof row.id !== 'number' ||
-      typeof row.path !== 'string' ||
-      typeof row.title !== 'string' ||
-      typeof row.isFolder !== 'boolean' ||
-      typeof row.parent !== 'number' ||
-      typeof row.locale !== 'string' ||
-      typeof row.canEdit !== 'boolean'
-    ) {
-      throw new Error(fallbackMessage)
-    }
-    return {
-      id: row.id,
-      path: row.path,
-      title: row.title,
-      isFolder: row.isFolder,
-      pageId,
-      parent: row.parent,
-      locale: row.locale,
-      visibility: row.visibility,
-      ownerId,
-      canEdit: row.canEdit
-    }
+  return normalizeResponse(response, fallbackMessage, payload => {
+    if (!Array.isArray(payload)) throw new Error(fallbackMessage)
+    return payload.map(row => {
+      if (!isRecord(row)) throw new Error(fallbackMessage)
+      const pageId = row.pageId
+      if (!isNullableNumber(pageId)) throw new Error(fallbackMessage)
+      const ownerId = row.ownerId
+      if (
+        !isNullableNumber(ownerId) ||
+        (row.visibility !== 'public' && row.visibility !== 'private') ||
+        typeof row.id !== 'number' ||
+        typeof row.path !== 'string' ||
+        typeof row.title !== 'string' ||
+        typeof row.isFolder !== 'boolean' ||
+        typeof row.parent !== 'number' ||
+        typeof row.locale !== 'string' ||
+        typeof row.canEdit !== 'boolean'
+      ) {
+        throw new Error(fallbackMessage)
+      }
+      return {
+        id: row.id,
+        path: row.path,
+        title: row.title,
+        isFolder: row.isFolder,
+        pageId,
+        parent: row.parent,
+        locale: row.locale,
+        visibility: row.visibility,
+        ownerId,
+        canEdit: row.canEdit
+      }
+    })
   })
 }
 
@@ -1289,49 +1320,60 @@ export async function searchPages(
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!isRecord(payload) || !Array.isArray(payload.results) || !Array.isArray(payload.suggestions) || typeof payload.totalHits !== 'number')
-    throw new Error(fallbackMessage)
-  const results = payload.results.map(row => {
+  return normalizeResponse(response, fallbackMessage, payload => {
     if (
-      !isRecord(row) ||
-      (typeof row.id !== 'string' && typeof row.id !== 'number') ||
-      typeof row.title !== 'string' ||
-      typeof row.description !== 'string' ||
-      typeof row.path !== 'string' ||
-      typeof row.locale !== 'string' ||
-      (row.visibility !== 'public' && row.visibility !== 'private') ||
-      !Array.isArray(row.tags) ||
-      row.tags.some(tag => typeof tag !== 'string') ||
-      typeof row.score !== 'number' ||
-      !Number.isFinite(row.score) ||
-      !Array.isArray(row.matchedFields) ||
-      row.matchedFields.some(field => !['title', 'tag', 'path', 'description', 'content', 'graph', 'knowledge'].includes(String(field)))
-    ) {
+      !isRecord(payload) ||
+      !Array.isArray(payload.results) ||
+      !Array.isArray(payload.suggestions) ||
+      typeof payload.totalHits !== 'number'
+    )
       throw new Error(fallbackMessage)
-    }
-    const visibility: 'public' | 'private' = row.visibility
+    const results = payload.results.map(row => {
+      if (
+        !isRecord(row) ||
+        (typeof row.id !== 'string' && typeof row.id !== 'number') ||
+        typeof row.title !== 'string' ||
+        typeof row.description !== 'string' ||
+        typeof row.path !== 'string' ||
+        typeof row.locale !== 'string' ||
+        (row.visibility !== 'public' && row.visibility !== 'private') ||
+        !Array.isArray(row.tags) ||
+        typeof row.score !== 'number' ||
+        !Number.isFinite(row.score) ||
+        !Array.isArray(row.matchedFields)
+      ) {
+        throw new Error(fallbackMessage)
+      }
+      const tags = row.tags
+      const matchedFields = row.matchedFields
+      if (
+        tags.some(tag => typeof tag !== 'string') ||
+        matchedFields.some(field => !['title', 'tag', 'path', 'description', 'content', 'graph', 'knowledge'].includes(String(field)))
+      )
+        throw new Error(fallbackMessage)
+      const visibility: 'public' | 'private' = row.visibility
+      return {
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        path: row.path,
+        locale: row.locale,
+        visibility,
+        tags: tags as string[],
+        score: row.score,
+        matchedFields: matchedFields as PageSearchMatchField[]
+      }
+    })
+    if (payload.suggestions.some(suggestion => typeof suggestion !== 'string')) throw new Error(fallbackMessage)
     return {
-      id: row.id,
-      title: row.title,
-      description: row.description,
-      path: row.path,
-      locale: row.locale,
-      visibility,
-      tags: row.tags as string[],
-      score: row.score,
-      matchedFields: row.matchedFields as PageSearchMatchField[]
+      results,
+      suggestions: payload.suggestions,
+      totalHits: payload.totalHits,
+      ...(typeof payload.nextCursor === 'string' || payload.nextCursor === null ? { nextCursor: payload.nextCursor } : {}),
+      ...(typeof payload.windowTruncated === 'boolean' ? { windowTruncated: payload.windowTruncated } : {}),
+      ...(typeof payload.windowLimit === 'number' ? { windowLimit: payload.windowLimit } : {})
     }
   })
-  if (payload.suggestions.some(suggestion => typeof suggestion !== 'string')) throw new Error(fallbackMessage)
-  return {
-    results,
-    suggestions: payload.suggestions,
-    totalHits: payload.totalHits,
-    ...(typeof payload.nextCursor === 'string' || payload.nextCursor === null ? { nextCursor: payload.nextCursor } : {}),
-    ...(typeof payload.windowTruncated === 'boolean' ? { windowTruncated: payload.windowTruncated } : {}),
-    ...(typeof payload.windowLimit === 'number' ? { windowLimit: payload.windowLimit } : {})
-  }
 }
 
 export async function searchPageTags(fetchImpl: FetchImpl, query: string, fallbackMessage = 'Tag search response is invalid'): Promise<string[]> {
@@ -1339,11 +1381,11 @@ export async function searchPageTags(fetchImpl: FetchImpl, query: string, fallba
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!Array.isArray(payload) || payload.some(tag => typeof tag !== 'string')) throw new Error(fallbackMessage)
-  return payload
+  return normalizeResponse(response, fallbackMessage, payload => {
+    if (!Array.isArray(payload) || payload.some(tag => typeof tag !== 'string')) throw new Error(fallbackMessage)
+    return payload.filter((tag): tag is string => typeof tag === 'string')
+  })
 }
-
 export type PageHistoryTrailItem = {
   versionId: number
   authorId: number
@@ -1384,9 +1426,7 @@ export async function fetchPages(
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!Array.isArray(payload)) throw new Error(fallbackMessage)
-  return payload.map(row => normalizePageListRow(row, fallbackMessage))
+  return normalizeResponse(response, fallbackMessage, payload => normalizeArray(payload, fallbackMessage, normalizePageListRow))
 }
 
 export async function fetchPageHistory(
@@ -1404,23 +1444,24 @@ export async function fetchPageHistory(
       headers: { Accept: 'application/json' }
     }
   )
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!isRecord(payload) || !Array.isArray(payload.trail) || typeof payload.total !== 'number') throw new Error(fallbackMessage)
-  const trail = payload.trail.map(row => {
-    if (
-      !isRecord(row) ||
-      !Number.isInteger(row.versionId) ||
-      !Number.isInteger(row.authorId) ||
-      typeof row.authorName !== 'string' ||
-      typeof row.actionType !== 'string' ||
-      (row.valueBefore !== null && typeof row.valueBefore !== 'string') ||
-      (row.valueAfter !== null && typeof row.valueAfter !== 'string') ||
-      typeof row.versionDate !== 'string'
-    )
-      throw new Error(fallbackMessage)
-    return row as PageHistoryTrailItem
+  return normalizeResponse(response, fallbackMessage, payload => {
+    if (!isRecord(payload) || !Array.isArray(payload.trail) || typeof payload.total !== 'number') throw new Error(fallbackMessage)
+    const trail = payload.trail.map(row => {
+      if (
+        !isRecord(row) ||
+        !Number.isInteger(row.versionId) ||
+        !Number.isInteger(row.authorId) ||
+        typeof row.authorName !== 'string' ||
+        typeof row.actionType !== 'string' ||
+        (row.valueBefore !== null && typeof row.valueBefore !== 'string') ||
+        (row.valueAfter !== null && typeof row.valueAfter !== 'string') ||
+        typeof row.versionDate !== 'string'
+      )
+        throw new Error(fallbackMessage)
+      return row as PageHistoryTrailItem
+    })
+    return { trail, total: payload.total }
   })
-  return { trail, total: payload.total }
 }
 
 export async function fetchPageVersion(
@@ -1433,24 +1474,25 @@ export async function fetchPageVersion(
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (
-    !isRecord(payload) ||
-    !Number.isInteger(payload.versionId) ||
-    typeof payload.content !== 'string' ||
-    typeof payload.contentType !== 'string' ||
-    typeof payload.title !== 'string' ||
-    typeof payload.description !== 'string' ||
-    typeof payload.editor !== 'string' ||
-    typeof payload.locale !== 'string' ||
-    typeof payload.path !== 'string' ||
-    !Array.isArray(payload.tags) ||
-    payload.tags.some(tag => typeof tag !== 'string') ||
-    typeof payload.versionDate !== 'string' ||
-    (payload.visibility !== 'public' && payload.visibility !== 'private')
-  )
-    throw new Error(fallbackMessage)
-  return payload as PageVersion
+  return normalizeResponse(response, fallbackMessage, payload => {
+    if (
+      !isRecord(payload) ||
+      !Number.isInteger(payload.versionId) ||
+      typeof payload.content !== 'string' ||
+      typeof payload.contentType !== 'string' ||
+      typeof payload.title !== 'string' ||
+      typeof payload.description !== 'string' ||
+      typeof payload.editor !== 'string' ||
+      typeof payload.locale !== 'string' ||
+      typeof payload.path !== 'string' ||
+      !Array.isArray(payload.tags) ||
+      payload.tags.some(tag => typeof tag !== 'string') ||
+      typeof payload.versionDate !== 'string' ||
+      (payload.visibility !== 'public' && payload.visibility !== 'private')
+    )
+      throw new Error(fallbackMessage)
+    return payload as PageVersion
+  })
 }
 
 export async function restorePageVersion(

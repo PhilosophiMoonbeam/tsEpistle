@@ -10,7 +10,7 @@
     )
       template(v-slot:prepend)
         v-icon(color='primary', size="small") mdi-share-variant
-      v-list-item-title.px-3 {{ offline ? 'Share saved copy' : 'Share' }}
+      v-list-item-title.px-3 {{ offline ? 'Share excerpt and local link' : 'Share' }}
     v-list-item(tag='button', type='button', role='button', @click='copyUrl')
       template(v-slot:prepend)
         v-icon(
@@ -20,7 +20,11 @@
           size="small"
         ) {{ copied ? 'mdi-check-bold' : 'mdi-content-copy' }}
       v-list-item-title.px-3 {{$t('common:actions.copy')}} URL
-    v-list-item(tag='button', type='button', role='button', @click='copyText')
+    v-list-item(v-if='!offline' tag='button', type='button', role='button', @click='copySummary')
+      template(v-slot:prepend)
+        v-icon(color='grey', size="small") mdi-text-box-outline
+      v-list-item-title.px-3 Copy page summary
+    v-list-item(v-else tag='button', type='button', role='button', @click='copyText')
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-text-box-outline
       v-list-item-title.px-3 Copy page text
@@ -166,10 +170,16 @@ export default defineComponent({
       const localUrl = this.offlineUrl.trim()
       return this.offline && localUrl ? localUrl : this.url.trim()
     },
+    // Ordinary readers copy metadata only; the saved reader keeps its full passive text action below.
+    summaryText (): string {
+      const parts = [this.title.trim(), this.description.trim()].filter(Boolean)
+      return parts.join('\n\n')
+    },
     shareText (): string {
+      if (!this.offline) return this.summaryText
       const content = (this.offlineText || this.description).trim()
       const parts = [this.title.trim(), content].filter(Boolean)
-      if (this.offline) parts.push('This is a local copy saved on this device.')
+      parts.push('This is a local copy saved on this device.')
       return parts.join('\n\n')
     },
     shareData (): SharePayload {
@@ -276,6 +286,9 @@ export default defineComponent({
     async copyUrl (): Promise<void> {
       await this.copyValue(this.shareUrl, 'URL copied successfully')
     },
+    async copySummary (): Promise<void> {
+      await this.copyValue(this.summaryText, 'Page summary copied successfully')
+    },
     async copyText (): Promise<void> {
       await this.copyValue(this.shareText, 'Page text copied successfully')
     },
@@ -298,7 +311,9 @@ export default defineComponent({
         if (operationId === this.shareOperationId) {
           wikiStore.showNotification({
             style: 'red',
-            message: 'Unable to share this page. Use Copy URL or Copy page text instead.',
+            message: this.offline
+              ? 'Unable to share the excerpt and local link. Use Copy URL or Copy page text instead.'
+              : 'Unable to share this page. Use Copy URL or Copy page summary instead.',
             icon: 'alert'
           })
         }

@@ -79,13 +79,15 @@ const loadDragHelpers = (visibleFolderIds: readonly string[], busySessionIds: re
     'sessionBusy',
     'sessionMutationBusy',
     'normalizedSearch',
+    'networkBlocked',
     `${executableDragHelpersScript}\nreturn { hasRenderedDropDestination, canDragSession }`
   ) as (...dependencies: unknown[]) => DragHarness
   return evaluate(
     { value: visibleFolderIds.map(id => ({ folder: { id } })) },
     (sessionId: string) => busySessionIds.includes(sessionId),
     { value: mutationBusy },
-    { value: search }
+    { value: search },
+    { value: false }
   )
 }
 

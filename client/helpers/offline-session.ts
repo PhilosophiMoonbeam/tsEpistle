@@ -170,7 +170,7 @@ export const parseDraftKeyFrame = (input: ArrayBuffer | Uint8Array, rawExpected:
     return {
       context,
       sessionGeneration: expected.expectedSessionGeneration,
-      keyBytes: new Uint8Array(bytes.slice(offset, offset + OFFLINE_DRAFT_KEY_BYTES))
+      keyBytes: bytes.subarray(offset, offset + OFFLINE_DRAFT_KEY_BYTES)
     }
   } catch (error) {
     if (error instanceof OfflineDraftOpaqueError) throw error
@@ -183,20 +183,79 @@ type RegistryEntry = {
   readonly epoch: number
 }
 
+type PendingKeyRequest = {
+  readonly accountId: number
+  readonly sessionGeneration: number
+  readonly epoch: number
+  readonly controller: AbortController
+  readonly promise: Promise<OfflineDraftKeyHandle>
+  consumers: number
+  settled: boolean
+}
+
 const identity = (accountId: number, sessionGeneration: number): string => `${accountId}:${sessionGeneration}`
 const registry = new Map<string, RegistryEntry>()
 const pendingRequests = new Set<AbortController>()
+const pendingKeyRequests = new Map<string, PendingKeyRequest>()
 let registryEpoch = 0
 let activeAccountId: number | undefined
 let activeSessionGeneration: number | undefined
+let sessionInvalidationInProgress = false
+export type OfflineIdentityBoundaryReason = 'draft-key-denied' | 'unauthorized'
+
+export type OfflineIdentityBoundaryRequest = {
+  readonly accountId: number
+  readonly reason: OfflineIdentityBoundaryReason
+}
+
+type OfflineIdentityBoundaryOwner = (request: OfflineIdentityBoundaryRequest) => Promise<boolean> | boolean
+let identityBoundaryOwner: OfflineIdentityBoundaryOwner | undefined
+
+type OfflineSessionInvalidationOwner = () => void
+let offlineSessionInvalidationOwner: OfflineSessionInvalidationOwner | undefined
+
+/** Registers the single global owner for persisted identity boundaries. */
+export const registerOfflineIdentityBoundaryOwner = (owner: OfflineIdentityBoundaryOwner): (() => void) => {
+  identityBoundaryOwner = owner
+  return () => {
+    if (identityBoundaryOwner === owner) identityBoundaryOwner = undefined
+  }
+}
+
+/**
+ * Requests an authoritative identity boundary. The registered owner performs
+ * the synchronous local lock before awaiting its persisted generation CAS.
+ */
+export const requestOfflineIdentityBoundary = (request: OfflineIdentityBoundaryRequest): Promise<boolean> => {
+  if (!isSafePositiveInteger(request.accountId)) {
+    publishSessionInvalidation(true, true)
+    return Promise.resolve(false)
+  }
+  const owner = identityBoundaryOwner
+  if (!owner) {
+    publishSessionInvalidation(true, true)
+    return Promise.resolve(false)
+  }
+  try {
+    return Promise.resolve(owner(request))
+  } catch {
+    publishSessionInvalidation(true, true)
+    return Promise.resolve(false)
+  }
+}
+
 
 const currentEntry = (accountId: number, sessionGeneration: number): RegistryEntry | undefined => registry.get(identity(accountId, sessionGeneration))
 
-const clearRegistry = (): void => {
+const clearRegistry = (preserveOwner = false): void => {
   registryEpoch += 1
   registry.clear()
-  activeAccountId = undefined
-  activeSessionGeneration = undefined
+  for (const request of pendingKeyRequests.values()) request.controller.abort()
+  pendingKeyRequests.clear()
+  if (!preserveOwner) {
+    activeAccountId = undefined
+    activeSessionGeneration = undefined
+  }
   for (const controller of pendingRequests) controller.abort()
 }
 const SESSION_CHANNEL_NAME = 'tsepistle-offline-session'
@@ -214,10 +273,34 @@ const dispatchSessionInvalidation = (): void => {
   }
 }
 
-const onSessionChannelMessage = (event: MessageEvent<unknown>): void => {
-  if (event.data === SESSION_INVALIDATION_MESSAGE) {
-    clearRegistry()
+const broadcastSessionInvalidation = (): void => {
+  const channel = ensureSessionChannel()
+  try {
+    channel?.postMessage(SESSION_INVALIDATION_MESSAGE)
+  } catch {
+    // Cross-tab coordination is best effort; generation fencing is authoritative.
+  }
+}
+
+const publishSessionInvalidation = (broadcast: boolean, preserveOwner = false): void => {
+  if (sessionInvalidationInProgress) return
+  sessionInvalidationInProgress = true
+  try {
+    clearRegistry(preserveOwner)
     dispatchSessionInvalidation()
+    if (broadcast) broadcastSessionInvalidation()
+  } finally {
+    sessionInvalidationInProgress = false
+  }
+}
+
+const onSessionChannelMessage = (event: MessageEvent<unknown>): void => {
+  if (event.data !== SESSION_INVALIDATION_MESSAGE) return
+  publishSessionInvalidation(false)
+  try {
+    offlineSessionInvalidationOwner?.()
+  } catch {
+    // A remote observer cannot undo the in-memory session fence.
   }
 }
 const ensureSessionChannel = (): BroadcastChannel | null => {
@@ -236,13 +319,12 @@ const ensureSessionChannel = (): BroadcastChannel | null => {
   return sessionChannel
 }
 
-
-const broadcastSessionInvalidation = (): void => {
-  const channel = ensureSessionChannel()
-  try {
-    channel?.postMessage(SESSION_INVALIDATION_MESSAGE)
-  } catch {
-    // Cross-tab coordination is best effort; generation fencing is authoritative.
+/** Registers the single owner for remote session invalidations and opens the channel eagerly. */
+export const registerOfflineSessionInvalidationOwner = (owner: OfflineSessionInvalidationOwner): (() => void) => {
+  offlineSessionInvalidationOwner = owner
+  ensureSessionChannel()
+  return () => {
+    if (offlineSessionInvalidationOwner === owner) offlineSessionInvalidationOwner = undefined
   }
 }
 
@@ -256,8 +338,14 @@ const currentOrigin = (): string => {
   return canonicalOrigin(window.location.origin)
 }
 
-const assertRequestCurrent = (accountId: number, sessionGeneration: number, epoch: number): void => {
-  if (registryEpoch !== epoch || activeAccountId !== accountId || activeSessionGeneration !== sessionGeneration) throw opaque()
+const assertRequestCurrent = (accountId: number, sessionGeneration: number, epoch: number, signal?: AbortSignal): void => {
+  if (
+    signal?.aborted ||
+    registryEpoch !== epoch ||
+    activeAccountId !== accountId ||
+    activeSessionGeneration !== sessionGeneration
+  )
+    throw opaque()
 }
 
 const contentTypeIsOctetStream = (response: Response): boolean => {
@@ -266,31 +354,82 @@ const contentTypeIsOctetStream = (response: Response): boolean => {
   return contentType.split(';', 1)[0]?.trim().toLowerCase() === 'application/octet-stream'
 }
 
-/** Requests and imports one server-authoritative draft key for the captured owner/generation. */
-export const requestDraftKey = async (fetchImpl: typeof window.fetch, rawOptions: DraftKeyRequestOptions): Promise<OfflineDraftKeyHandle> => {
-  const options = validRequestOptions(rawOptions)
-  const origin = currentOrigin()
+const callerAbortError = (): Error => {
+  try {
+    return new DOMException('The offline draft key request was aborted.', 'AbortError')
+  } catch {
+    return new OfflineDraftSessionError('The offline draft key request was aborted.')
+  }
+}
+
+const cancelResponseBody = async (response: Response): Promise<void> => {
+  try {
+    await response.body?.cancel()
+  } catch {
+    // The response is already unusable; the bounded reader remains authoritative.
+  }
+}
+const readBoundedFrame = async (
+  response: Response,
+  signal: AbortSignal,
+  assertCurrent: () => void
+): Promise<Uint8Array> => {
+  const contentLength = response.headers.get('content-length')
+  if (contentLength !== null) {
+    const parsedLength = Number(contentLength)
+    if (Number.isFinite(parsedLength) && parsedLength > MAX_FRAME_BYTES) {
+      await cancelResponseBody(response)
+      assertCurrent()
+      throw opaque()
+    }
+  }
+  const body = response.body
+  if (!body) throw opaque()
+  const reader = body.getReader()
+  const cancelReader = (): void => {
+    void reader.cancel().catch(() => undefined)
+  }
+  signal.addEventListener('abort', cancelReader, { once: true })
+  const frame = new Uint8Array(MAX_FRAME_BYTES)
+  let offset = 0
+  let complete = false
+  try {
+    while (true) {
+      const result = await reader.read()
+      assertCurrent()
+      if (result.done) break
+      const chunk = result.value
+      if (!(chunk instanceof Uint8Array) || chunk.byteLength > MAX_FRAME_BYTES - offset) {
+        try {
+          await reader.cancel()
+        } catch {
+          // The stream is rejected below even when cancellation itself fails.
+        }
+        assertCurrent()
+        throw opaque()
+      }
+      frame.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    if (offset < MAGIC_BYTES.byteLength) throw opaque()
+    complete = true
+    return frame.subarray(0, offset)
+  } finally {
+    signal.removeEventListener('abort', cancelReader)
+    reader.releaseLock()
+    if (!complete) frame.fill(0)
+  }
+}
+const acquireDraftKey = async (
+  fetchImpl: typeof window.fetch,
+  options: DraftKeyRequestOptions,
+  origin: string,
+  controller: AbortController,
+  epoch: number
+): Promise<OfflineDraftKeyHandle> => {
+  const { expectedAccountId: accountId, expectedSessionGeneration: sessionGeneration } = options
   const endpoint = new URL('/_api/offline/draft-key', origin)
   if (endpoint.origin !== origin) throw new OfflineDraftSessionError()
-  ensureSessionChannel()
-
-  if (
-    (activeAccountId !== undefined && activeAccountId !== options.expectedAccountId) ||
-    (activeSessionGeneration !== undefined && activeSessionGeneration !== options.expectedSessionGeneration)
-  )
-    throw opaque()
-  activeAccountId = options.expectedAccountId
-  activeSessionGeneration = options.expectedSessionGeneration
-  const entryBefore = currentEntry(options.expectedAccountId, options.expectedSessionGeneration)
-
-  const epoch = registryEpoch
-  const controller = new AbortController()
-  const externalSignal = options.signal
-  const abortExternal = (): void => controller.abort()
-  if (externalSignal?.aborted) controller.abort()
-  else externalSignal?.addEventListener('abort', abortExternal, { once: true })
-  pendingRequests.add(controller)
-
   let frame: Uint8Array | undefined
   let parsed: ParsedDraftKeyFrame | undefined
   let imported: CryptoKey | undefined
@@ -304,43 +443,147 @@ export const requestDraftKey = async (fetchImpl: typeof window.fetch, rawOptions
       headers: { accept: 'application/octet-stream' },
       signal: controller.signal
     })
-    assertRequestCurrent(options.expectedAccountId, options.expectedSessionGeneration, epoch)
-    if (!response.ok || !contentTypeIsOctetStream(response)) throw opaque()
-    const buffer = await response.arrayBuffer()
-    frame = new Uint8Array(buffer)
-    assertRequestCurrent(options.expectedAccountId, options.expectedSessionGeneration, epoch)
+    assertRequestCurrent(accountId, sessionGeneration, epoch, controller.signal)
+    if (!response.ok || !contentTypeIsOctetStream(response)) {
+      await cancelResponseBody(response)
+      assertRequestCurrent(accountId, sessionGeneration, epoch, controller.signal)
+      throw opaque()
+    }
+    frame = await readBoundedFrame(response, controller.signal, () => assertRequestCurrent(accountId, sessionGeneration, epoch, controller.signal))
+    assertRequestCurrent(accountId, sessionGeneration, epoch, controller.signal)
     parsed = parseDraftKeyFrame(frame, {
       canonicalOrigin: origin,
-      expectedAccountId: options.expectedAccountId,
-      expectedSessionGeneration: options.expectedSessionGeneration
+      expectedAccountId: accountId,
+      expectedSessionGeneration: sessionGeneration
     })
-    assertRequestCurrent(options.expectedAccountId, options.expectedSessionGeneration, epoch)
+    assertRequestCurrent(accountId, sessionGeneration, epoch, controller.signal)
     const subtle = globalThis.crypto?.subtle
     if (!subtle) throw new OfflineDraftSessionError('Web Crypto is unavailable.')
     imported = await subtle.importKey('raw', parsed.keyBytes as unknown as BufferSource, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+    assertRequestCurrent(accountId, sessionGeneration, epoch, controller.signal)
+    if (!imported) throw new OfflineDraftSessionError('The offline draft key could not be imported.')
     parsed.keyBytes.fill(0)
-    assertRequestCurrent(options.expectedAccountId, options.expectedSessionGeneration, epoch)
     const handle = Object.freeze({
       context: parsed.context,
       sessionGeneration: parsed.sessionGeneration,
       key: imported
     }) as OfflineDraftKeyHandle
-    imported = undefined
+    assertRequestCurrent(accountId, sessionGeneration, epoch, controller.signal)
+    if (currentEntry(accountId, sessionGeneration) !== undefined) throw opaque()
     registry.clear()
-    registry.set(identity(handle.context.accountId, handle.sessionGeneration), { handle, epoch })
+    registry.set(identity(accountId, sessionGeneration), { handle, epoch })
+    imported = undefined
     return handle
   } catch (error) {
-    const current = currentEntry(options.expectedAccountId, options.expectedSessionGeneration)
-    if (registryEpoch === epoch && (current === undefined || current === entryBefore)) clearRegistry()
-    parsed?.keyBytes.fill(0)
-    imported = undefined
+    if (
+      !controller.signal.aborted &&
+      registryEpoch === epoch &&
+      activeAccountId === accountId &&
+      activeSessionGeneration === sessionGeneration
+    ) {
+      await requestOfflineIdentityBoundary({ accountId, reason: 'draft-key-denied' })
+    }
     if (error instanceof OfflineDraftOpaqueError || error instanceof OfflineDraftSessionError) throw error
     throw new OfflineDraftSessionError()
   } finally {
+    parsed?.keyBytes.fill(0)
     frame?.fill(0)
-    if (externalSignal) externalSignal.removeEventListener('abort', abortExternal)
-    pendingRequests.delete(controller)
+    imported = undefined
   }
+}
+
+const createPendingKeyRequest = (
+  fetchImpl: typeof window.fetch,
+  options: DraftKeyRequestOptions,
+  origin: string
+): PendingKeyRequest => {
+  const key = identity(options.expectedAccountId, options.expectedSessionGeneration)
+  const controller = new AbortController()
+  const epoch = registryEpoch
+  let acquisition: PendingKeyRequest
+  const promise = acquireDraftKey(fetchImpl, options, origin, controller, epoch).finally(() => {
+    acquisition.settled = true
+    if (pendingKeyRequests.get(key) === acquisition) pendingKeyRequests.delete(key)
+    pendingRequests.delete(controller)
+  })
+  acquisition = {
+    accountId: options.expectedAccountId,
+    sessionGeneration: options.expectedSessionGeneration,
+    epoch,
+    controller,
+    promise,
+    consumers: 0,
+    settled: false
+  }
+  pendingKeyRequests.set(key, acquisition)
+  pendingRequests.add(controller)
+  void promise.catch(() => undefined)
+  return acquisition
+}
+
+const releasePendingConsumer = (acquisition: PendingKeyRequest): void => {
+  acquisition.consumers = Math.max(0, acquisition.consumers - 1)
+  if (acquisition.consumers !== 0 || acquisition.settled) return
+  const key = identity(acquisition.accountId, acquisition.sessionGeneration)
+  if (pendingKeyRequests.get(key) === acquisition) pendingKeyRequests.delete(key)
+  acquisition.controller.abort()
+}
+
+const waitForPendingKey = async (
+  acquisition: PendingKeyRequest,
+  signal: AbortSignal | undefined
+): Promise<OfflineDraftKeyHandle> => {
+  acquisition.consumers += 1
+  let onAbort: (() => void) | undefined
+  try {
+    if (signal?.aborted) throw callerAbortError()
+    let result: OfflineDraftKeyHandle
+    if (!signal) {
+      result = await acquisition.promise
+    } else {
+      const aborted = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(callerAbortError())
+        signal.addEventListener('abort', onAbort, { once: true })
+      })
+      result = await Promise.race([acquisition.promise, aborted])
+    }
+    if (signal?.aborted) throw callerAbortError()
+    assertRequestCurrent(acquisition.accountId, acquisition.sessionGeneration, acquisition.epoch, undefined)
+    if (currentEntry(acquisition.accountId, acquisition.sessionGeneration)?.handle !== result) throw opaque()
+    return result
+  } finally {
+    if (signal && onAbort) signal.removeEventListener('abort', onAbort)
+    releasePendingConsumer(acquisition)
+  }
+}
+
+/** Requests and imports one server-authoritative draft key for the captured owner/generation. */
+export const requestDraftKey = async (fetchImpl: typeof window.fetch, rawOptions: DraftKeyRequestOptions): Promise<OfflineDraftKeyHandle> => {
+  const options = validRequestOptions(rawOptions)
+  if (options.signal?.aborted) throw callerAbortError()
+  const origin = currentOrigin()
+  ensureSessionChannel()
+
+  if (
+    (activeAccountId !== undefined && activeAccountId !== options.expectedAccountId) ||
+    (activeSessionGeneration !== undefined && activeSessionGeneration !== options.expectedSessionGeneration)
+  )
+    throw opaque()
+  activeAccountId = options.expectedAccountId
+  activeSessionGeneration = options.expectedSessionGeneration
+
+  const existing = currentEntry(options.expectedAccountId, options.expectedSessionGeneration)
+  if (existing) {
+    if (options.signal?.aborted) throw callerAbortError()
+    assertRequestCurrent(options.expectedAccountId, options.expectedSessionGeneration, existing.epoch, undefined)
+    return existing.handle
+  }
+
+  const key = identity(options.expectedAccountId, options.expectedSessionGeneration)
+  const acquisition =
+    pendingKeyRequests.get(key) ??
+    createPendingKeyRequest(fetchImpl, options, origin)
+  return await waitForPendingKey(acquisition, options.signal)
 }
 
 /** Returns whether this handle is still the current owner/generation key. */
@@ -364,12 +607,12 @@ export const requireCurrentOfflineDraftKey = (handle: OfflineDraftKeyHandle): Cr
 export const invalidateOfflineSession = (expectedSessionGeneration?: number): void => {
   if (
     expectedSessionGeneration !== undefined &&
-    (!isSafeNonnegativeInteger(expectedSessionGeneration) || (activeSessionGeneration !== undefined && activeSessionGeneration !== expectedSessionGeneration))
+    (!isSafeNonnegativeInteger(expectedSessionGeneration) ||
+      activeSessionGeneration === undefined ||
+      activeSessionGeneration !== expectedSessionGeneration)
   )
     return
-  clearRegistry()
-  dispatchSessionInvalidation()
-  broadcastSessionInvalidation()
+  publishSessionInvalidation(true)
 }
 
 /** Explicit alias for callers that need to drop only the in-memory key boundary. */

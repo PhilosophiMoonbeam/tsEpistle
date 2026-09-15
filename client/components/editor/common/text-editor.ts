@@ -1,5 +1,5 @@
 import { defaultHighlightStyle, foldEffect, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { Compartment, EditorSelection, type Extension, Prec, StateEffect, StateField } from '@codemirror/state'
+import { Compartment, EditorSelection, EditorState, type Extension, Prec, StateEffect, StateField } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
 import { basicSetup } from 'codemirror'
@@ -37,6 +37,7 @@ export interface TextEditorHandle {
   getValue: () => string
   setValue: (value: string) => void
   cursor: (which?: 'from' | 'to' | 'head') => TextPosition
+  reset?: (value: string) => void
   positionAt: (offset: number) => TextPosition
   offsetAt: (position: TextPosition) => number
   getLine: (line: number) => string
@@ -137,41 +138,43 @@ type TextEditorOptions = {
 
 export class TextEditor implements TextEditorHandle {
   private readonly view: EditorView
+  private readonly extensions: Extension[]
   private readonly spellcheck = new Compartment()
   private readonly darkTheme = new Compartment()
 
   constructor({ parent, value, ariaLabel, dark, language, direction = 'ltr', spellcheck, onChange, onCursor, onClick, extensions = [] }: TextEditorOptions) {
+    this.extensions = [
+      basicSetup,
+      syntaxHighlighting(defaultHighlightStyle),
+      Prec.highest(syntaxHighlighting(semanticHighlightStyle)),
+      this.darkTheme.of(EditorView.darkTheme.of(dark)),
+      EditorView.lineWrapping,
+      EditorView.contentAttributes.of({ dir: direction, 'aria-label': ariaLabel }),
+      this.spellcheck.of(spellcheck === undefined ? [] : EditorView.contentAttributes.of({ spellcheck: String(spellcheck) })),
+      EditorView.updateListener.of(update => {
+        if (update.docChanged) onChange?.(update.state.doc.toString())
+        if (update.selectionSet) onCursor?.(this.cursor())
+      }),
+      ...(onClick
+        ? [
+            EditorView.domEventObservers({
+              click: (_event, view) => {
+                const offset = view.state.selection.main.head
+                const line = view.state.doc.lineAt(offset)
+                onClick({ line: line.number - 1, ch: offset - line.from })
+              }
+            })
+          ]
+        : []),
+      textEditorTheme,
+      markerField,
+      ...(language ? [language] : []),
+      ...extensions
+    ]
     this.view = new EditorView({
       parent,
       doc: value,
-      extensions: [
-        basicSetup,
-        syntaxHighlighting(defaultHighlightStyle),
-        Prec.highest(syntaxHighlighting(semanticHighlightStyle)),
-        this.darkTheme.of(EditorView.darkTheme.of(dark)),
-        EditorView.lineWrapping,
-        EditorView.contentAttributes.of({ dir: direction, 'aria-label': ariaLabel }),
-        this.spellcheck.of(spellcheck === undefined ? [] : EditorView.contentAttributes.of({ spellcheck: String(spellcheck) })),
-        EditorView.updateListener.of(update => {
-          if (update.docChanged) onChange?.(update.state.doc.toString())
-          if (update.selectionSet) onCursor?.(this.cursor())
-        }),
-        ...(onClick
-          ? [
-              EditorView.domEventObservers({
-                click: (_event, view) => {
-                  const offset = view.state.selection.main.head
-                  const line = view.state.doc.lineAt(offset)
-                  onClick({ line: line.number - 1, ch: offset - line.from })
-                }
-              })
-            ]
-          : []),
-        textEditorTheme,
-        markerField,
-        ...(language ? [language] : []),
-        ...extensions
-      ]
+      extensions: this.extensions
     })
   }
 
@@ -205,6 +208,9 @@ export class TextEditor implements TextEditorHandle {
 
   setValue(value: string): void {
     this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: value } })
+  }
+  reset(value: string): void {
+    this.view.setState(EditorState.create({ doc: value, extensions: this.extensions }))
   }
 
   cursor(which: 'from' | 'to' | 'head' = 'head'): TextPosition {

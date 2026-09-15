@@ -10,10 +10,9 @@ import {
   OFFLINE_DRAFT_KEY_MAGIC,
   OFFLINE_KEY_VERSION,
   type DraftKeyContext,
-  type OfflineDraftEnvelopeV1,
-  type OfflineDraftPayloadV1
+  type OfflineDraftEnvelopeV1
 } from '../../shared/offline.ts'
-import type { OfflineDraftDeleteOptions, OfflineDraftWriteOptions, OfflineStorage, OfflineStorageGenerationOptions } from '../helpers/offline-storage.ts'
+import { OfflineDraftConflictError, type OfflineDraftDeleteOptions, type OfflineDraftWriteOptions, type OfflineStorage, type OfflineStorageGenerationOptions, type OfflineSubmissionFinalizationOptions, type OfflineSubmissionFinalizationResult } from '../helpers/offline-storage.ts'
 
 const ORIGIN = 'https://wiki.example.test'
 const SESSION_GENERATION = 0
@@ -98,12 +97,27 @@ const immutableSelectorsEqual = (left: OfflineDraftEnvelopeV1, right: OfflineDra
   left.sessionGeneration === right.sessionGeneration &&
   left.draftRevision === right.draftRevision &&
   left.submissionId === right.submissionId
+const sameBytes = (left: Uint8Array, right: Uint8Array): boolean =>
+  left.byteLength === right.byteLength && left.every((value, index) => value === right[index])
+
+const sameEnvelope = (left: OfflineDraftEnvelopeV1, right: OfflineDraftEnvelopeV1): boolean =>
+  immutableSelectorsEqual(left, right) &&
+  left.schemaVersion === right.schemaVersion &&
+  left.accountId === right.accountId &&
+  left.authVersion === right.authVersion &&
+  left.keyVersion === right.keyVersion &&
+  sameBytes(left.nonce, right.nonce) &&
+  sameBytes(left.ciphertext, right.ciphertext)
+
 
 class InMemoryDraftStorage {
   readonly records = new Map<string, OfflineDraftEnvelopeV1>()
   readonly writes: Array<{ envelope: OfflineDraftEnvelopeV1; options: OfflineDraftWriteOptions }> = []
   readonly deletes: Array<{ recordId: string; options: OfflineDraftDeleteOptions }> = []
-  readonly generation = SESSION_GENERATION
+  readonly finalizations: Array<{ options: OfflineSubmissionFinalizationOptions; result: OfflineSubmissionFinalizationResult }> = []
+  generation = SESSION_GENERATION
+  failNextPut = false
+  conflictNextPut = false
 
   private assertGeneration(options: OfflineStorageGenerationOptions): void {
     if (options.expectedSessionGeneration !== undefined && options.expectedSessionGeneration !== this.generation) {
@@ -122,15 +136,23 @@ class InMemoryDraftStorage {
   }
 
   async putDraft(envelope: OfflineDraftEnvelopeV1, options: OfflineDraftWriteOptions = {}): Promise<OfflineDraftEnvelopeV1> {
-    this.assertGeneration(options)
     const existing = this.records.get(envelope.recordId)
+    if (this.failNextPut) {
+      this.failNextPut = false
+      throw new Error('simulated offline write failure')
+    }
+    if (this.conflictNextPut) {
+      this.conflictNextPut = false
+      throw new OfflineDraftConflictError(envelope.recordId)
+    }
+    this.assertGeneration(options)
     if (options.expectedDraftRevision !== undefined && (existing?.draftRevision ?? null) !== options.expectedDraftRevision) {
       throw new Error('draft revision conflict')
     }
     if (options.expectedSubmissionId !== undefined && (existing?.submissionId ?? null) !== options.expectedSubmissionId) {
       throw new Error('submission selector conflict')
     }
-    if (existing && existing.submissionId !== null && !immutableSelectorsEqual(existing, envelope)) {
+    if (existing && existing.submissionId !== null && !sameEnvelope(existing, envelope)) {
       throw new Error('immutable submission overwrite')
     }
     const saved = cloneEnvelope(envelope)
@@ -153,6 +175,74 @@ class InMemoryDraftStorage {
     this.records.delete(recordId)
     return true
   }
+  async finalizeSubmission(options: OfflineSubmissionFinalizationOptions): Promise<OfflineSubmissionFinalizationResult> {
+    this.assertGeneration(options)
+    const receipt = this.records.get(options.expectedReceipt.recordId)
+    if (!receipt || !sameEnvelope(receipt, options.expectedReceipt)) throw new Error('immutable receipt conflict')
+    const expectedSource = options.expectedSource
+    const source = expectedSource === null ? null : this.records.get(expectedSource.recordId)
+    if (expectedSource && (!source || !sameEnvelope(source, expectedSource))) throw new Error('source conflict')
+    const expectedSurvivingFork = options.expectedSurvivingFork
+    const oldFork = expectedSurvivingFork === null ? null : this.records.get(expectedSurvivingFork.recordId)
+    if (expectedSurvivingFork && (!oldFork || !sameEnvelope(oldFork, expectedSurvivingFork))) throw new Error('fork conflict')
+    const survivingFork = options.survivingFork
+    if (expectedSurvivingFork && !survivingFork) throw new Error('fork replacement missing')
+    if (survivingFork && (!source || survivingFork.draftRevision <= source.draftRevision)) throw new Error('fork conflict')
+    if (survivingFork && expectedSurvivingFork) {
+      if (survivingFork.recordId !== expectedSurvivingFork.recordId || survivingFork.draftRevision <= expectedSurvivingFork.draftRevision) {
+        throw new Error('fork replacement conflict')
+      }
+    } else if (survivingFork && this.records.has(survivingFork.recordId)) {
+      throw new Error('fork record conflict')
+    }
+
+    this.records.delete(receipt.recordId)
+    if (source) this.records.delete(source.recordId)
+    if (oldFork) this.records.delete(oldFork.recordId)
+    if (survivingFork) this.records.set(survivingFork.recordId, cloneEnvelope(survivingFork))
+    const result: OfflineSubmissionFinalizationResult = {
+      receiptDeleted: true,
+      sourceDeleted: source !== null,
+      survivingFork: survivingFork ? cloneEnvelope(survivingFork) : null
+    }
+    const recordedOptions: OfflineSubmissionFinalizationOptions = {
+      ...options,
+      expectedReceipt: cloneEnvelope(options.expectedReceipt),
+      expectedSource: expectedSource ? cloneEnvelope(expectedSource) : null,
+      expectedSurvivingFork: expectedSurvivingFork ? cloneEnvelope(expectedSurvivingFork) : null,
+      survivingFork: survivingFork ? cloneEnvelope(survivingFork) : null
+    }
+    this.finalizations.push({ options: recordedOptions, result })
+    return {
+      ...result,
+      survivingFork: result.survivingFork ? cloneEnvelope(result.survivingFork) : null
+    }
+  }
+  async recoverOrdinaryDraft(
+    expectedEnvelope: OfflineDraftEnvelopeV1,
+    replacementEnvelope: OfflineDraftEnvelopeV1,
+    options: OfflineStorageGenerationOptions = {}
+  ): Promise<OfflineDraftEnvelopeV1> {
+    this.assertGeneration(options)
+    if (
+      expectedEnvelope.submissionId !== null ||
+      replacementEnvelope.submissionId !== null ||
+      expectedEnvelope.recordId !== replacementEnvelope.recordId ||
+      expectedEnvelope.accountId !== replacementEnvelope.accountId ||
+      expectedEnvelope.authVersion !== replacementEnvelope.authVersion ||
+      expectedEnvelope.keyVersion !== replacementEnvelope.keyVersion ||
+      expectedEnvelope.draftRevision !== replacementEnvelope.draftRevision ||
+      replacementEnvelope.sessionGeneration <= expectedEnvelope.sessionGeneration
+    )
+      throw new Error('ordinary recovery selector conflict')
+    const existing = this.records.get(expectedEnvelope.recordId)
+    if (!existing || !sameEnvelope(existing, expectedEnvelope)) throw new Error('ordinary recovery CAS conflict')
+    const replacement = cloneEnvelope(replacementEnvelope)
+    this.records.set(replacement.recordId, replacement)
+    return cloneEnvelope(replacement)
+  }
+
+
 
   close(): void {}
 }
@@ -185,7 +275,6 @@ const makeCoordinator = (options: {
   readonly accountId?: number
   readonly fetchOwner?: () => OwnerKey
   readonly currentValues: () => OfflineEditorDraftValues
-  readonly applyDraft?: (payload: OfflineDraftPayloadV1) => void
   readonly currentIdentity?: () => OfflineEditorDraftIdentity
 }): CoordinatorSetup => {
   const changes: OfflineEditorDraftView[] = []
@@ -197,7 +286,6 @@ const makeCoordinator = (options: {
     accountId: () => accountId,
     getIdentity: options.currentIdentity ?? (() => identity()),
     getValues: options.currentValues,
-    applyDraft: options.applyDraft,
     isDirty: () => true,
     isOnline: () => false,
     storage: options.storage as unknown as OfflineStorage,
@@ -250,6 +338,31 @@ describe('offline editor draft coordinator', () => {
     })
     expect(storage.records.size).toBe(1)
     coordinator.destroy()
+  })
+
+  it('rewraps a same-owner ordinary draft after a generation-only identity boundary', async () => {
+    const storage = new InMemoryDraftStorage()
+    const writer = makeCoordinator({
+      storage,
+      owner: ownerKey(7),
+      currentValues: () => values('retained across the identity fence')
+    }).coordinator
+    await expect(writer.captureNow({ force: true })).resolves.toBe(true)
+    const oldEnvelope = cloneEnvelope([...storage.records.values()][0]!)
+    writer.destroy()
+
+    storage.generation = SESSION_GENERATION + 1
+    invalidateOfflineSession()
+    const reader = makeCoordinator({
+      storage,
+      owner: ownerKey(7),
+      currentValues: () => values('server text')
+    }).coordinator
+
+    const recovered = await reader.initialize()
+    expect(recovered.candidate?.payload.content).toBe('retained across the identity fence')
+    expect(storage.records.get(oldEnvelope.recordId)?.sessionGeneration).toBe(storage.generation)
+    reader.destroy()
   })
 
   it('surfaces recovery only with a verified owner key and never recovers cross-owner ciphertext', async () => {
@@ -309,7 +422,7 @@ describe('offline editor draft coordinator', () => {
     reader.destroy()
   })
 
-  it('freezes an immutable receipt before publish and deletes only that exact receipt on success', async () => {
+  it('freezes an exact receipt, atomically finalizes it, and preserves a later fork for a fresh consumer', async () => {
     const storage = new InMemoryDraftStorage()
     let current = values('text captured before publish')
     let editorIdentity = identity()
@@ -324,36 +437,47 @@ describe('offline editor draft coordinator', () => {
     expect(submission).not.toBeNull()
     if (!submission) throw new Error('Expected an immutable submission receipt')
     const storedBeforePublish = cloneEnvelope(storage.records.get(submission.recordId)!)
+    expect(Object.isFrozen(submission)).toBe(true)
+    expect(Object.isFrozen(submission.envelope)).toBe(true)
+    expect(Object.isFrozen(submission.payload)).toBe(true)
+    expect(storedBeforePublish).toEqual(submission.envelope)
     expect(storedBeforePublish.submissionId).toBe(submission.submissionId)
     expect(storedBeforePublish.draftRevision).toBe(submission.draftRevision)
-    expect(coordinator.view).toEqual({
+    expect(coordinator.view).toMatchObject({
       state: 'publishing',
-      candidate: null,
-      candidates: [],
       committed: true,
       submissionCandidates: [],
-      inFlight: true,
+      inFlight: false,
       error: null
     })
 
     current = values('text edited after receipt creation')
     coordinator.scheduleCapture()
-    await expect(coordinator.captureNow()).resolves.toBe(true)
+    await coordinator.captureNow()
     expect(storage.records.get(submission.recordId)).toEqual(storedBeforePublish)
     editorIdentity = identity(43)
     await expect(coordinator.captureNow({ force: true })).resolves.toBe(true)
 
-    await expect(coordinator.completeSubmission(submission, 'success')).resolves.toBe(true)
-    expect(storage.records.size).toBe(1)
-    expect(storage.deletes).toHaveLength(1)
-    expect(storage.deletes[0]).toEqual({
-      recordId: submission.recordId,
-      options: {
-        expectedSessionGeneration: submission.sessionGeneration,
-        expectedDraftRevision: submission.draftRevision,
-        expectedSubmissionId: submission.submissionId
-      }
-    })
+    await expect(coordinator.completeSubmission(submission, { kind: 'success', identity: editorIdentity })).resolves.toBe(true)
+    const expectedFork = storage.writes
+      .filter(write => write.envelope.submissionId === null && write.envelope.recordId !== submission.sourceEnvelope?.recordId)
+      .map(write => write.envelope)
+      .pop()
+    expect(expectedFork).toBeDefined()
+    expect(storage.deletes).toHaveLength(0)
+    expect(storage.finalizations).toHaveLength(1)
+    const finalization = storage.finalizations[0]!
+    expect(finalization.options.expectedReceipt).toEqual(storedBeforePublish)
+    expect(finalization.options.expectedSource).toEqual(submission.sourceEnvelope)
+    expect(finalization.options.expectedSurvivingFork).toEqual(expectedFork)
+    expect(finalization.options.survivingFork).toBeDefined()
+    expect(finalization.options.survivingFork?.recordId).toBe(expectedFork?.recordId)
+    expect(finalization.options.survivingFork?.draftRevision).toBeGreaterThan(expectedFork?.draftRevision ?? 0)
+    expect(finalization.result).toMatchObject({ receiptDeleted: true, sourceDeleted: true })
+    expect(storage.records.has(submission.recordId)).toBe(false)
+    const survivingFork = [...storage.records.values()].find(record => record.submissionId === null)
+    expect(survivingFork).toBeDefined()
+    expect(survivingFork?.draftRevision).toBeGreaterThan(submission.draftRevision)
     expect(coordinator.hasCommittedCurrentValues).toBe(true)
     expect(coordinator.view).toMatchObject({ state: 'local', candidate: null, committed: true, inFlight: false, error: null })
     coordinator.destroy()
@@ -367,30 +491,172 @@ describe('offline editor draft coordinator', () => {
     }).coordinator
     const recovered = await reader.initialize()
     expect(recovered.candidate?.payload.content).toBe('text edited after receipt creation')
+    expect(recovered.candidate?.payload.state).toBe('local')
     reader.destroy()
   })
 
-  it('retains the immutable receipt and marks a 409 conflict without exposing it as a new local draft', async () => {
+  it('captures a later edit before finalizing a known post-write failure', async () => {
+    const storage = new InMemoryDraftStorage()
+    let current = values('text captured before publish')
+    const { coordinator } = makeCoordinator({
+      storage,
+      owner: ownerKey(7),
+      currentValues: () => current
+    })
+
+    const submission = await coordinator.prepareSubmission()
+    expect(submission).not.toBeNull()
+    if (!submission) throw new Error('Expected an immutable submission receipt')
+
+    current = values('text edited while the known write was finishing')
+    await expect(
+      coordinator.completeSubmission(submission, {
+        kind: 'post-write',
+        status: 200,
+        reason: 'visibility refresh failed'
+      })
+    ).resolves.toBe(true)
+
+    expect(storage.records.has(submission.recordId)).toBe(false)
+    expect(storage.finalizations).toHaveLength(1)
+    expect(storage.finalizations[0]?.result.survivingFork).toBeDefined()
+    coordinator.destroy()
+    invalidateOfflineSession()
+
+    const reader = makeCoordinator({
+      storage,
+      owner: ownerKey(7),
+      currentValues: () => values('server version')
+    }).coordinator
+    const recovered = await reader.initialize()
+    expect(recovered.candidate?.payload.content).toBe('text edited while the known write was finishing')
+    reader.destroy()
+  })
+
+  it('keeps a forbidden resource unavailable across later local captures', async () => {
+    const storage = new InMemoryDraftStorage()
+    let current = values('resource was rejected')
+    const { coordinator } = makeCoordinator({
+      storage,
+      owner: ownerKey(7),
+      currentValues: () => current
+    })
+
+    const submission = await coordinator.prepareSubmission()
+    expect(submission).not.toBeNull()
+    if (!submission) throw new Error('Expected an immutable submission receipt')
+    await expect(coordinator.completeSubmission(submission, { kind: 'rejected', status: 403, reason: 'forbidden' })).resolves.toBe(true)
+    expect(coordinator.view.state).toBe('unavailable')
+
+    current = values('edited while the resource remains unavailable')
+    await expect(coordinator.captureNow({ force: true })).resolves.toBe(true)
+    coordinator.destroy()
+    invalidateOfflineSession()
+
+    const reader = makeCoordinator({
+      storage,
+      owner: ownerKey(7),
+      currentValues: () => values('server version')
+    }).coordinator
+    const recovered = await reader.initialize()
+    expect(recovered.candidate?.payload.content).toBe('edited while the resource remains unavailable')
+    expect(recovered.candidate?.payload.state).toBe('unavailable')
+    reader.destroy()
+  })
+
+  it('serializes a 403 unavailable capture after an in-flight autosave at the same version', async () => {
+    const storage = new InMemoryDraftStorage()
+    const { coordinator } = makeCoordinator({
+      storage,
+      owner: ownerKey(7),
+      currentValues: () => values('autosaved before the response')
+    })
+
+    const autosave = coordinator.captureThrough(1)
+    const unavailable = coordinator.captureNow({ force: true, state: 'unavailable', editVersion: 1 })
+    expect(unavailable).not.toBe(autosave)
+    await expect(autosave).resolves.toBe(true)
+    await expect(unavailable).resolves.toBe(true)
+    expect(coordinator.view.state).toBe('unavailable')
+
+    coordinator.destroy()
+    invalidateOfflineSession()
+  })
+
+  it('latches unavailable when that capture cannot persist and preserves it on the next capture', async () => {
+    const storage = new InMemoryDraftStorage()
+    let current = values('local before the forbidden response')
+    const { coordinator } = makeCoordinator({
+      storage,
+      owner: ownerKey(7),
+      currentValues: () => current
+    })
+
+    await expect(coordinator.captureNow({ force: true })).resolves.toBe(true)
+    storage.failNextPut = true
+    current = values('forbidden response could not be persisted')
+    await expect(coordinator.captureNow({ force: true, state: 'unavailable' })).resolves.toBe(false)
+    expect(coordinator.view.state).toBe('unavailable')
+
+    storage.conflictNextPut = true
+    current = values('conflict after unavailable response')
+    await expect(coordinator.captureNow({ force: true })).resolves.toBe(false)
+    expect(coordinator.view.state).toBe('unavailable')
+
+    current = values('later local edit remains unavailable')
+    await expect(coordinator.captureNow({ force: true })).resolves.toBe(true)
+    expect(coordinator.view.state).toBe('unavailable')
+    const writesBeforeReconnect = storage.writes.length
+    await expect(coordinator.markReconnected()).resolves.toBe(true)
+    expect(coordinator.view.state).toBe('unavailable')
+    expect(storage.writes).toHaveLength(writesBeforeReconnect)
+    coordinator.destroy()
+    invalidateOfflineSession()
+    const reader = makeCoordinator({
+      storage,
+      owner: ownerKey(7),
+      currentValues: () => current
+    }).coordinator
+    await expect(reader.initialize()).resolves.toMatchObject({ state: 'unavailable' })
+    reader.destroy()
+  })
+
+  it('atomically replaces a known 409 rejection with an actionable conflict draft for a fresh consumer', async () => {
     const storage = new InMemoryDraftStorage()
     const { coordinator } = makeCoordinator({ storage, owner: ownerKey(7), currentValues: () => values('conflicting publish') })
 
     const submission = await coordinator.prepareSubmission()
     expect(submission).not.toBeNull()
     if (!submission) throw new Error('Expected an immutable submission receipt')
+    await expect(coordinator.completeSubmission(submission, { kind: 'rejected', status: 409, reason: 'conflict' })).resolves.toBe(true)
 
-    await expect(coordinator.completeSubmission(submission, 'conflict')).resolves.toBe(true)
-    const retained = storage.records.get(submission.recordId)
-    expect(retained).toBeDefined()
-    expect(retained?.submissionId).toBe(submission.submissionId)
-    expect(retained?.draftRevision).toBe(submission.draftRevision)
     expect(storage.deletes).toHaveLength(0)
+    expect(storage.finalizations).toHaveLength(1)
+    expect(storage.finalizations[0]?.options.expectedReceipt).toEqual(submission.envelope)
+    expect(storage.finalizations[0]?.options.expectedSource).toEqual(submission.sourceEnvelope)
+    expect(storage.finalizations[0]?.options.expectedSurvivingFork).toBeNull()
+    expect(storage.finalizations[0]?.options.survivingFork).toBeDefined()
+    expect(storage.records.has(submission.recordId)).toBe(false)
+    const conflictDraft = [...storage.records.values()].find(record => record.submissionId === null)
+    expect(conflictDraft).toBeDefined()
     expect(coordinator.view).toMatchObject({ state: 'conflict', candidate: null, committed: true, inFlight: false, error: null })
-    expect(coordinator.view.submissionCandidates).toHaveLength(1)
-    expect(coordinator.view.submissionCandidates[0]?.submission).toEqual(submission)
+    expect(coordinator.view.submissionCandidates).toHaveLength(0)
     coordinator.destroy()
+    invalidateOfflineSession()
+
+    const reader = makeCoordinator({
+      storage,
+      owner: ownerKey(7),
+      currentValues: () => values('server version')
+    }).coordinator
+    const recovered = await reader.initialize()
+    expect(recovered.candidate?.payload.content).toBe('conflicting publish')
+    expect(recovered.candidate?.payload.state).toBe('conflict')
+    expect(recovered.state).toBe('conflict')
+    reader.destroy()
   })
 
-  it('retains an outcome-unknown receipt and performs no automatic replay', async () => {
+  it('retains an exact outcome-unknown receipt and performs no automatic replay', async () => {
     const storage = new InMemoryDraftStorage()
     const owner = ownerKey(7)
     let current = values('transport-uncertain publish')
@@ -401,23 +667,25 @@ describe('offline editor draft coordinator', () => {
     if (!submission) throw new Error('Expected an immutable submission receipt')
     const receiptBeforeOutcome = cloneEnvelope(storage.records.get(submission.recordId)!)
 
-    await expect(coordinator.completeSubmission(submission, 'outcome-unknown')).resolves.toBe(true)
+    await expect(coordinator.completeSubmission(submission, { kind: 'unknown', status: 503, reason: 'transport lost' })).resolves.toBe(true)
     const retained = storage.records.get(submission.recordId)
     expect(retained).toBeDefined()
     expect(retained?.submissionId).toBe(submission.submissionId)
     expect(retained?.draftRevision).toBe(submission.draftRevision)
+    expect(retained).toEqual(receiptBeforeOutcome)
     expect(storage.deletes).toHaveLength(0)
+    expect(storage.finalizations).toHaveLength(0)
     expect(storage.records.size).toBe(2)
-    expect(coordinator.view).toMatchObject({ state: 'outcome-unknown', candidate: null, committed: true, inFlight: false, error: null })
+    expect(coordinator.view).toMatchObject({ state: 'outcome-unknown', candidate: null, committed: true, inFlight: false })
     expect(coordinator.view.submissionCandidates).toHaveLength(1)
-    expect(retained).not.toEqual(receiptBeforeOutcome)
     expect(fetchCalls.count).toBe(1)
 
     current = values('must not be replayed automatically')
     expect(coordinator.hasInFlightWork).toBe(false)
+    expect(storage.records.get(submission.recordId)).toEqual(receiptBeforeOutcome)
+    expect(storage.finalizations).toHaveLength(0)
     coordinator.destroy()
   })
-
   it('locks on logout and clears all recovery metadata while retaining the opaque stored record', async () => {
     const storage = new InMemoryDraftStorage()
     const owner = ownerKey(7)

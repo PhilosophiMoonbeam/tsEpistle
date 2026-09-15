@@ -10,7 +10,13 @@ import type { KnowledgeProjectionView } from '../knowledge/projection.ts'
 import type { WikiSource } from '../../shared/wiki-source.ts'
 import type { Knex } from 'knex'
 import type { SearchResult as ProviderSearchResult } from '../modules/types.ts'
-import { buildOfflinePageSnapshot, OfflinePageProjectionError, type OfflinePageSource } from '../helpers/offline-page.ts'
+import {
+  buildOfflinePageSnapshot,
+  canonicalOfflineOrigin,
+  OfflinePageAuthorityError,
+  OfflinePageProjectionError,
+  type OfflinePageSource
+} from '../helpers/offline-page.ts'
 import type { OfflinePageSnapshotV1 } from '../../shared/offline.ts'
 import {
   canDeletePage,
@@ -219,7 +225,7 @@ interface WikiPageOperations {
     checkPageAccess(user: Express.User | undefined, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority): boolean
     loadPageRuleAuthority(requester: Express.User | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
   }
-  config: { db: { type: string }; editors?: { available?: unknown }; lang: { code: string }; search?: { maxHits?: number } }
+  config: { db: { type: string }; editors?: { available?: unknown }; host: string; lang: { code: string }; search?: { maxHits?: number } }
   data: { searchEngine?: { supportsPageFilters?: boolean; query(query: string, options: Record<string, unknown>): Promise<SearchResponse> } }
   models: {
     knex: Knex
@@ -324,18 +330,16 @@ const loadOfflineGuest = async (transaction: Knex.Transaction): Promise<Express.
     .modifyGraph('groups', builder => {
       builder.select('groups.id', 'permissions')
     })
-  if (!guest || guest.id !== 2 || guest.isActive !== true || !Array.isArray(guest.groups))
-    throw new OfflinePageProjectionError('Guest authority is unavailable')
+  if (!guest || guest.id !== 2 || guest.isActive !== true || !Array.isArray(guest.groups)) throw new OfflinePageAuthorityError()
   const getGlobalPermissions = guest.getGlobalPermissions
-  if (typeof getGlobalPermissions !== 'function') throw new OfflinePageProjectionError('Guest authority is unavailable')
+  if (typeof getGlobalPermissions !== 'function') throw new OfflinePageAuthorityError()
   let permissions: unknown
   try {
     permissions = getGlobalPermissions.call(guest)
   } catch {
-    throw new OfflinePageProjectionError('Guest authority is unavailable')
+    throw new OfflinePageAuthorityError()
   }
-  if (!Array.isArray(permissions) || !permissions.every(permission => typeof permission === 'string'))
-    throw new OfflinePageProjectionError('Guest authority is unavailable')
+  if (!Array.isArray(permissions) || !permissions.every(permission => typeof permission === 'string')) throw new OfflinePageAuthorityError()
   guest.permissions = [...new Set(permissions)]
   guest.ownershipUserId = null
   return guest as Express.User
@@ -356,7 +360,8 @@ const OFFLINE_PAGE_COLUMNS = [
   'pages.editorKey',
   'pages.render',
   'pages.sourceRevision',
-  'pages.extra'
+  'pages.extra',
+  'pages.renderedSourceRevision'
 ]
 
 const loadOfflinePage = async (transaction: Knex.Transaction, pageId: number): Promise<OfflinePageSource | undefined> => {
@@ -380,7 +385,15 @@ const getOfflineSnapshot = async (input: OperationInput): Promise<OfflinePageSna
       if (!page) throw new OfflinePageProjectionError()
       const protection = await transaction('pageAccessPasswords').where({ pageId }).first('pageId')
       if (protection) throw new OfflinePageProjectionError()
-      return buildOfflinePageSnapshot({ page, guest, authority, capturedAt: new Date() })
+      if (page.visibility !== 'public') throw new OfflinePageProjectionError()
+      let canonicalPath: string
+      try {
+        canonicalPath = pageRoute({ visibility: 'public', localeCode: page.localeCode, path: page.path })
+      } catch {
+        throw new OfflinePageProjectionError()
+      }
+      const canonicalOrigin = canonicalOfflineOrigin(wiki.config.host)
+      return buildOfflinePageSnapshot({ page, guest, authority, canonicalOrigin, canonicalPath, capturedAt: new Date() })
     },
     { isolationLevel: 'repeatable read' }
   )

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import OfflineLibrary from './components/pwa/offline-library.vue'
 import {
   OfflineStorageError,
@@ -13,6 +13,7 @@ import {
   requestPwaUpdate,
   retryServerConnection
 } from './helpers/pwa.ts'
+import { createModalFocusScope, type ModalFocusScope } from './components/common/modal-focus-scope.ts'
 
 type StorageState = 'uninspected' | 'checking' | 'available' | 'unavailable' | 'unsupported-schema' | 'blocked-upgrade' | 'quota'
 const browserAvailable = typeof window !== 'undefined' && typeof navigator !== 'undefined'
@@ -62,10 +63,18 @@ const offlineSelector = parsedOfflineSelector.selector
 const offlineStorage = shallowRef<OfflineStorage | null>(null)
 const storageEstimate = shallowRef<OfflineStorageEstimate | null>(null)
 const storageState = ref<StorageState>('uninspected')
-const storageMessage = ref('Storage has not been inspected.')
+const storageMessage = ref('Local storage has not been checked yet.')
 const storageBusy = ref(false)
 const persistenceBusy = ref(false)
 const clearBusy = ref(false)
+const clearDialogOpen = ref(false)
+const clearDialog = ref<HTMLElement | null>(null)
+const clearExpectedGeneration = ref<number | null>(null)
+const clearRestoreTarget = shallowRef<HTMLElement | null>(null)
+const clearDeviceToken = ref(0)
+let clearFocusScope: ModalFocusScope | null = null
+const removeNotice = ref('')
+const clearNotice = ref('')
 const isRetrying = ref(false)
 const isInstalling = ref(false)
 const isUpdating = ref(false)
@@ -75,7 +84,7 @@ let storageOpenToken = 0
 
 const connectionLabel = computed(() => {
   const labels: Record<string, string> = {
-    checking: 'Checking connection',
+    checking: 'Checking the server',
     online: 'Server reachable',
     offline: 'Waiting for a connection',
     'server-unavailable': 'Server unavailable'
@@ -229,27 +238,110 @@ async function requestPersistence(): Promise<void> {
     persistenceBusy.value = false
   }
 }
-
-async function clearDownloadedPages(): Promise<void> {
+async function removeDownloadedPages(): Promise<void> {
   const storage = offlineStorage.value
   if (!storage || clearBusy.value) return
   clearBusy.value = true
+  removeNotice.value = ''
   try {
     if (!browserAvailable) return
     const origin = window.location.origin
-    const expectedSessionGeneration = await storage.currentSessionGeneration()
-    const records = await storage.listSnapshots(origin, { expectedSessionGeneration })
-    for (const record of records)
-      await storage.removeSnapshot(origin, record.pageId, record.locale, { expectedSessionGeneration })
+    const corpus = await storage.readSnapshotCorpus()
+    const expectedSessionGeneration = corpus.sessionGeneration
+    for (const record of corpus.snapshots) {
+      if (record.siteId !== origin) continue
+      await storage.removeSnapshot(record.siteId, record.pageId, record.locale, { expectedSessionGeneration })
+    }
     libraryRefreshToken.value += 1
     await refreshStorageStatus()
-    storageMessage.value = 'Downloaded guest pages were cleared. Opaque account-owned drafts were not inspected or changed.'
+    removeNotice.value = 'Saved pages were removed. Locked drafts and submission recovery were not changed.'
   } catch (error) {
     const failure = storageFailure(error)
     storageState.value = failure.state
     storageMessage.value = failure.message
+    removeNotice.value = failure.message
   } finally {
     clearBusy.value = false
+  }
+}
+
+async function beginClearDeviceData(event?: MouseEvent): Promise<void> {
+  const storage = offlineStorage.value
+  if (!storage || clearBusy.value || clearDialogOpen.value) return
+  const trigger = event?.currentTarget
+  clearRestoreTarget.value =
+    trigger instanceof HTMLElement
+      ? trigger
+      : browserAvailable && document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null
+  clearNotice.value = ''
+  try {
+    clearExpectedGeneration.value = await storage.currentSessionGeneration()
+    clearDialogOpen.value = true
+  } catch (error) {
+    const failure = storageFailure(error)
+    storageState.value = failure.state
+    storageMessage.value = failure.message
+    clearNotice.value = failure.message
+    clearRestoreTarget.value = null
+  }
+}
+
+function closeClearDialog(restoreFocus = true): void {
+  const scope = clearFocusScope
+  clearFocusScope = null
+  scope?.deactivate({ restoreFocus })
+  if (!scope && restoreFocus) {
+    const target = clearRestoreTarget.value
+    if (
+      target?.isConnected &&
+      !target.matches(':disabled') &&
+      !target.closest('[inert], [aria-hidden="true"]')
+    )
+      target.focus({ preventScroll: true })
+  }
+  clearDialogOpen.value = false
+  clearExpectedGeneration.value = null
+  clearRestoreTarget.value = null
+}
+
+function cancelClearDeviceData(): void {
+  if (clearBusy.value) return
+  closeClearDialog()
+}
+
+async function confirmClearDeviceData(): Promise<void> {
+  const storage = offlineStorage.value
+  const expectedSessionGeneration = clearExpectedGeneration.value
+  if (!storage || expectedSessionGeneration === null || clearBusy.value) return
+  const restoreTarget = clearRestoreTarget.value
+  // Restore the trigger before marking the action busy; the button is disabled
+  // while the strict clear runs and must not swallow logical focus.
+  closeClearDialog()
+  clearBusy.value = true
+  clearNotice.value = 'Clearing saved pages, locked drafts, and submission recovery…'
+  // Invalidate all local projections before the strict generation-fenced clear.
+  clearDeviceToken.value += 1
+  try {
+    const nextGeneration = await storage.clearDeviceData({ expectedSessionGeneration })
+    libraryRefreshToken.value += 1
+    await refreshStorageStatus()
+    clearNotice.value = `Offline data was cleared on this device. Local generation ${nextGeneration} is active; server data was not deleted.`
+  } catch (error) {
+    const failure = storageFailure(error)
+    storageState.value = failure.state
+    storageMessage.value = failure.message
+    clearNotice.value = failure.message
+  } finally {
+    clearBusy.value = false
+    await nextTick()
+    if (
+      restoreTarget?.isConnected &&
+      !restoreTarget.matches(':disabled') &&
+      (document.activeElement === document.body || document.activeElement === document.documentElement)
+    )
+      restoreTarget.focus({ preventScroll: true })
   }
 }
 
@@ -258,7 +350,6 @@ async function retryConnection(): Promise<void> {
   isRetrying.value = true
   try {
     await retryServerConnection()
-    if (pwaState.serverReachable === true && browserAvailable && window.location.pathname === '/_offline') window.location.assign('/')
   } finally {
     isRetrying.value = false
   }
@@ -293,12 +384,38 @@ function handleLibraryChanged(): void {
   void refreshStorageStatus()
 }
 
+watch(clearDialogOpen, async isOpen => {
+  if (!isOpen) {
+    await nextTick()
+    if (clearDialogOpen.value) return
+    clearFocusScope?.deactivate({ restoreFocus: true })
+    clearFocusScope = null
+    clearRestoreTarget.value = null
+    return
+  }
+  await nextTick()
+  if (!clearDialogOpen.value) return
+  const root = clearDialog.value
+  if (!root) return
+  clearFocusScope?.deactivate({ restoreFocus: false })
+  clearFocusScope = createModalFocusScope({
+    root,
+    restoreTarget: () => clearRestoreTarget.value,
+    onEscape: () => {
+      if (!clearBusy.value) cancelClearDeviceData()
+    }
+  })
+})
+
 onMounted(() => {
   void openStorage()
 })
 
 onBeforeUnmount(() => {
   storageOpenToken += 1
+  clearFocusScope?.deactivate({ restoreFocus: false })
+  clearFocusScope = null
+  clearRestoreTarget.value = null
   offlineStorage.value?.close()
   offlineStorage.value = null
 })
@@ -319,21 +436,21 @@ onBeforeUnmount(() => {
     </header>
 
     <section class="intro" aria-describedby="offline-description">
-      <p class="section-kicker">A quiet place between requests</p>
-      <h1 id="offline-title">Keep your place when the signal drops.</h1>
-      <p id="offline-description" class="intro-copy">
-        This is a neutral offline shell. It can show pages deliberately downloaded on this device; it cannot sign you in,
-        restore permissions, recover private content, or publish changes while disconnected.
-      </p>
+      <div class="intro-copy-block">
+        <p class="section-kicker">A quiet place between requests</p>
+        <h1 id="offline-title">Your saved pages, close at hand.</h1>
+        <p id="offline-description" class="intro-copy">
+          Search public pages saved on this device first. Connection and installation details stay in the notebook margin.
+        </p>
+      </div>
       <div class="intro-actions">
         <button class="primary-button" type="button" :disabled="isRetrying" @click="retryConnection">
-          <span>{{ isRetrying ? 'Checking…' : 'Retry connection' }}</span>
+          <span>{{ isRetrying ? 'Checking…' : 'Check the server' }}</span>
         </button>
         <p class="connection-detail">{{ connectionMessage }}</p>
       </div>
       <p v-if="pwaError" class="connection-detail" role="status">{{ pwaError }}</p>
     </section>
-
     <div class="notebook-grid">
       <section class="surface library-surface" aria-labelledby="downloaded-pages-title">
         <OfflineLibrary
@@ -341,6 +458,7 @@ onBeforeUnmount(() => {
           :storage-state="storageState"
           :storage-message="storageMessage"
           :refresh-token="libraryRefreshToken"
+          :clear-device-token="clearDeviceToken"
           :requested-selector="offlineSelector"
           @changed="handleLibraryChanged"
           @error="handleLibraryError"
@@ -374,18 +492,23 @@ onBeforeUnmount(() => {
           </p>
           <div class="utility-actions">
             <button class="secondary-button" type="button" :disabled="storageState === 'checking' || storageBusy" @click="openStorage">
-              {{ storageState === 'checking' ? 'Opening…' : 'Refresh storage' }}
+              {{ storageState === 'checking' ? 'Checking…' : 'Refresh storage' }}
             </button>
             <button class="secondary-button" type="button" :disabled="!offlineStorage || persistenceBusy" @click="requestPersistence">
-              {{ persistenceBusy ? 'Requesting…' : 'Request persistence' }}
+              {{ persistenceBusy ? 'Requesting…' : 'Request persistent storage' }}
             </button>
-            <button class="text-button" type="button" :disabled="!offlineStorage || clearBusy || storageEstimate?.snapshotCount === 0" @click="clearDownloadedPages">
-              {{ clearBusy ? 'Clearing…' : 'Clear downloaded pages' }}
+            <button class="text-button" type="button" :disabled="!offlineStorage || clearBusy || storageEstimate?.snapshotCount === 0" @click="removeDownloadedPages">
+              {{ clearBusy ? 'Removing…' : 'Remove downloaded pages' }}
+            </button>
+            <button class="text-button danger-button" type="button" :disabled="!offlineStorage || clearBusy" @click="beginClearDeviceData">
+              Clear offline data on this device
             </button>
           </div>
-          <p class="field-hint">Clear removes guest snapshots and their local search index. It never reveals or purges opaque account drafts.</p>
-        </section>
+          <p v-if="removeNotice" class="utility-status" role="status" aria-live="polite">{{ removeNotice }}</p>
+          <p v-if="clearNotice" class="utility-status" role="status" aria-live="polite">{{ clearNotice }}</p>
+          <p class="field-hint">Removing downloaded pages leaves locked drafts and submission recovery alone. Browser storage is not a backup.</p>
 
+        </section>
         <section class="surface utility-surface install-surface" aria-labelledby="install-title">
           <div class="surface-heading compact">
             <div>
@@ -405,7 +528,7 @@ onBeforeUnmount(() => {
           <div class="surface-heading compact">
             <div>
               <p class="section-kicker">Build lifecycle <span aria-hidden="true">05</span></p>
-              <h2 id="update-title">{{ pwaState.updateReady || pwaState.reloadNeeded ? 'Update ready' : 'Offline ready' }}</h2>
+              <h2 id="update-title">{{ pwaState.updateReady || pwaState.reloadNeeded ? 'App update' : 'Offline ready' }}</h2>
             </div>
             <span class="utility-icon" aria-hidden="true">↻</span>
           </div>
@@ -416,6 +539,21 @@ onBeforeUnmount(() => {
           <p class="field-hint">The neutral client acknowledges reload safety; no editor memory or publish request is present here.</p>
         </section>
       </aside>
+    </div>
+    <div v-if="clearDialogOpen" class="clear-dialog-backdrop" role="presentation" @keydown.esc.prevent="cancelClearDeviceData">
+      <section ref="clearDialog" class="clear-dialog" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="clear-device-title" aria-describedby="clear-device-description">
+        <p class="section-kicker">Destructive device action</p>
+        <h2 id="clear-device-title">Clear offline data on this device?</h2>
+        <p id="clear-device-description">
+          This removes downloaded pages, locked drafts, and unresolved submission recovery from this browser.
+          It does not delete anything from the server.
+        </p>
+        <p class="clear-dialog-warning">Cancel leaves every local record and generation unchanged.</p>
+        <div class="clear-dialog-actions">
+          <button class="secondary-button" type="button" :disabled="clearBusy" @click="cancelClearDeviceData">Cancel</button>
+          <button class="primary-button danger-button" type="button" :disabled="clearBusy" @click="confirmClearDeviceData">Clear offline data</button>
+        </div>
+      </section>
     </div>
 
     <footer class="offline-footer">
@@ -433,19 +571,21 @@ onBeforeUnmount(() => {
   --offline-paper-sunken: #ebe5d9;
   --offline-ink: #1c2829;
   --offline-muted: #536260;
-  --offline-faint: #72807b;
+  --offline-faint: #596762;
   --offline-accent: #1d6f69;
   --offline-accent-strong: #0e4f4b;
-  --offline-warm: #c2683f;
+  --offline-warm: #8b3022;
+  --offline-danger-background: #8b3022;
+  --offline-danger-foreground: #fff8f3;
   --offline-border: rgba(28, 40, 41, .16);
   --offline-border-strong: rgba(28, 40, 41, .32);
   --offline-focus: #b3482d;
   --offline-shadow: 0 1.25rem 3rem rgba(38, 48, 45, .1);
   --offline-shadow-small: 0 .35rem 1.1rem rgba(38, 48, 45, .08);
   --offline-radius: 1.2rem;
-  --offline-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
-  --offline-body: 'Avenir Next', 'Segoe UI', sans-serif;
-  --offline-heading: Georgia, 'Times New Roman', serif;
+  --offline-mono: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  --offline-body: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --offline-heading: ui-serif, Georgia, 'Times New Roman', serif;
 }
 
 * {
@@ -497,13 +637,13 @@ button:disabled {
 .offline-shell {
   position: relative;
   isolation: isolate;
-  width: min(100%, 88rem);
-  min-height: 100vh;
-  min-height: 100dvh;
+  inline-size: min(100%, 88rem);
+  max-inline-size: 100vw;
+  min-block-size: 100vh;
+  min-block-size: 100dvh;
   margin: 0 auto;
-  padding-block: max(1.35rem, env(safe-area-inset-top)) max(1.8rem, env(safe-area-inset-bottom));
-  padding-inline: max(1.15rem, env(safe-area-inset-left)) max(1.15rem, env(safe-area-inset-right));
-  overflow: hidden;
+  padding-block: max(1rem, env(safe-area-inset-top)) max(1.3rem, env(safe-area-inset-bottom));
+  padding-inline: max(.9rem, env(safe-area-inset-left)) max(.9rem, env(safe-area-inset-right));
 }
 
 .offline-shell::before {
@@ -641,40 +781,38 @@ button:disabled {
 }
 
 .intro {
-  max-width: 57rem;
-  padding-block: clamp(3.8rem, 9vw, 7.2rem) clamp(3rem, 7vw, 5.5rem);
+  max-inline-size: 57rem;
+  padding-block: 1.1rem .9rem;
 }
 
-.intro .section-kicker {
-  color: var(--offline-accent);
-}
+.intro .section-kicker { color: var(--offline-accent); }
 
 .intro h1 {
-  max-width: 12ch;
-  margin: .7rem 0 1.2rem;
+  max-inline-size: 22ch;
+  margin: .35rem 0 .55rem;
   font-family: var(--offline-heading);
-  font-size: clamp(3rem, 7.2vw, 6.6rem);
-  font-weight: 500;
-  letter-spacing: -.07em;
-  line-height: .93;
+  font-size: clamp(1.9rem, 5vw, 3.35rem);
+  font-weight: 550;
+  letter-spacing: -.06em;
+  line-height: 1;
   text-wrap: balance;
 }
 
 .intro-copy {
-  max-width: 53rem;
+  max-inline-size: 58ch;
   margin: 0;
   color: var(--offline-muted);
-  font-size: clamp(1.02rem, 1.8vw, 1.3rem);
-  line-height: 1.62;
+  font-size: clamp(.9rem, 1.45vw, 1.08rem);
+  line-height: 1.45;
   text-wrap: pretty;
 }
 
 .intro-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: .85rem 1rem;
+  gap: .6rem .85rem;
   align-items: center;
-  margin-block-start: 2rem;
+  margin-block-start: .75rem;
 }
 
 .connection-detail {
@@ -700,6 +838,11 @@ button:disabled {
   background: var(--offline-accent-strong);
   color: #f8fbf5;
   box-shadow: 0 .5rem 1.1rem color-mix(in srgb, var(--offline-accent-strong) 25%, transparent);
+}
+.primary-button.danger-button {
+  background: var(--offline-danger-background);
+  color: var(--offline-danger-foreground);
+  box-shadow: 0 .5rem 1.1rem color-mix(in srgb, var(--offline-danger-background) 25%, transparent);
 }
 
 .secondary-button {
@@ -734,8 +877,8 @@ button:disabled {
 }
 
 .library-surface {
-  min-height: 31rem;
-  padding: clamp(1.25rem, 3.2vw, 2.35rem);
+  min-block-size: 0;
+  padding: clamp(1rem, 2.4vw, 1.7rem);
 }
 
 .surface-heading {
@@ -797,7 +940,6 @@ button:disabled {
   padding: .55rem .8rem;
   border: 1px solid var(--offline-border-strong);
   border-radius: .5rem;
-  outline: 0;
   background: var(--offline-paper);
   color: var(--offline-ink);
 }
@@ -922,6 +1064,67 @@ button:disabled {
   align-items: center;
   margin-block: 1rem .8rem;
 }
+.utility-status {
+  margin: .5rem 0 0;
+  color: var(--offline-muted);
+  font-family: var(--offline-mono);
+  font-size: .75rem;
+  line-height: 1.5;
+}
+
+.text-button.danger-button { color: var(--offline-danger-background); }
+
+.clear-dialog-backdrop {
+  position: fixed;
+  z-index: 10;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  background: color-mix(in srgb, var(--offline-ink) 48%, transparent);
+}
+
+.clear-dialog {
+  inline-size: min(100%, 34rem);
+  max-block-size: calc(100dvh - 2rem);
+  overflow: auto;
+  padding: clamp(1.2rem, 4vw, 2rem);
+  border: 1px solid var(--offline-border-strong);
+  border-radius: var(--offline-radius);
+  background: var(--offline-paper-raised);
+  color: var(--offline-ink);
+  box-shadow: var(--offline-shadow);
+}
+
+.clear-dialog h2 {
+  margin: .45rem 0 .85rem;
+  font-family: var(--offline-heading);
+  font-size: clamp(1.5rem, 5vw, 2.2rem);
+  letter-spacing: -.045em;
+  line-height: 1.05;
+}
+
+.clear-dialog p:not(.section-kicker) {
+  margin: 0;
+  color: var(--offline-muted);
+  line-height: 1.55;
+}
+
+.clear-dialog-warning {
+  margin-block-start: .75rem !important;
+  color: var(--offline-warm) !important;
+  font-family: var(--offline-mono);
+  font-size: .78rem;
+}
+
+.clear-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .65rem;
+  margin-block-start: 1.2rem;
+}
+
+.clear-dialog-actions > * { flex: 1 1 10rem; }
 
 .install-surface {
   background: color-mix(in srgb, var(--offline-paper-raised) 95%, var(--offline-warm) 5%);
@@ -966,6 +1169,8 @@ button:disabled {
     --offline-accent: #72c3b2;
     --offline-accent-strong: #83d2c0;
     --offline-warm: #e09668;
+    --offline-danger-background: #f0a47b;
+    --offline-danger-foreground: #1b2522;
     --offline-border: rgba(238, 241, 232, .16);
     --offline-border-strong: rgba(238, 241, 232, .34);
     --offline-focus: #f0a47b;
@@ -1012,52 +1217,115 @@ button:disabled {
 
 @media (max-width: 480px) {
   .offline-shell {
-    padding-block-start: max(.8rem, env(safe-area-inset-top));
+    padding-block-start: max(.7rem, env(safe-area-inset-top));
+    padding-inline: max(.7rem, env(safe-area-inset-left)) max(.7rem, env(safe-area-inset-right));
   }
 
-  .intro {
-    padding-block: 3.25rem 2.7rem;
-  }
-
+  .intro { padding-block: .65rem .55rem; }
   .intro h1 {
-    max-width: 10ch;
-    font-size: clamp(2.75rem, 15vw, 4.2rem);
+    max-inline-size: 20ch;
+    margin-block: .25rem .45rem;
+    font-size: clamp(1.65rem, 8vw, 2.5rem);
   }
-
-  .intro-actions,
-  .utility-actions {
+  .intro-copy {
+    font-size: .88rem;
+    line-height: 1.4;
+  }
+  .intro-actions {
     align-items: stretch;
-    flex-direction: column;
+    margin-block-start: .5rem;
   }
-
-  .primary-button,
-  .secondary-button,
-  .text-button {
-    width: 100%;
-  }
-
-  .connection-detail {
-    max-width: none;
-  }
-
-  .offline-footer {
-    flex-direction: column;
-    gap: .5rem;
-  }
-
-  .footer-mark {
-    align-self: start;
-    text-align: start;
-  }
+  .intro-actions .primary-button { inline-size: auto; }
+  .utility-actions { align-items: stretch; flex-direction: column; }
+  .utility-actions .secondary-button,
+  .utility-actions .text-button { inline-size: 100%; }
+  .connection-detail { max-inline-size: none; }
+  .offline-footer { flex-direction: column; gap: .5rem; }
+  .footer-mark { align-self: start; text-align: start; }
 }
 
 @media (orientation: landscape) and (max-height: 500px) {
+  .offline-shell {
+    padding-block-start: max(.45rem, env(safe-area-inset-top));
+    padding-block-end: max(.75rem, env(safe-area-inset-bottom));
+  }
+
+  .notebook-header {
+    gap: .45rem 1rem;
+    padding-block-end: .55rem;
+  }
+
   .intro {
-    padding-block: 2.4rem 2rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, 20rem);
+    column-gap: 1rem;
+    align-items: center;
+    padding-block: .35rem .3rem;
   }
 
   .intro h1 {
-    max-width: 16ch;
+    max-inline-size: none;
+    margin-block: .15rem .25rem;
+    font-size: 1.55rem;
+    line-height: 1.05;
+  }
+
+  .intro-copy {
+    display: -webkit-box;
+    max-inline-size: none;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    font-size: .78rem;
+    line-height: 1.3;
+  }
+
+  .intro-actions {
+    min-width: 0;
+    align-items: stretch;
+    flex-direction: column;
+    gap: .2rem;
+    margin-block-start: 0;
+  }
+
+  .intro-actions .connection-detail {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.2;
+  }
+
+  .intro > .connection-detail { grid-column: 1 / -1; }
+
+  .library-surface {
+    padding-block: .35rem;
+    padding-inline: .65rem;
+  }
+
+  .offline-shell .offline-library .library-heading { padding-block-end: .2rem; }
+  .offline-shell .offline-library h2 { font-size: 1.45rem; }
+  .offline-shell .offline-library .scope-note {
+    margin-block-start: .25rem;
+    line-height: 1.3;
+  }
+  .offline-shell .offline-library .search-field {
+    gap: .3rem;
+    margin-block: .25rem .35rem;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 500px) and (min-width: 600px) {
+  .notebook-header {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .eyebrow {
+    grid-column: auto;
+    grid-row: auto;
+    justify-self: center;
+    order: initial;
   }
 }
 
@@ -1072,6 +1340,8 @@ button:disabled {
     --offline-accent: LinkText;
     --offline-accent-strong: LinkText;
     --offline-warm: CanvasText;
+    --offline-danger-background: CanvasText;
+    --offline-danger-foreground: Canvas;
     --offline-border: CanvasText;
     --offline-border-strong: CanvasText;
     --offline-focus: Highlight;
@@ -1087,6 +1357,7 @@ button:disabled {
   .surface,
   .connection-status,
   .search-field input,
+  .clear-dialog,
   .empty-state {
     border-color: CanvasText;
     box-shadow: none;
@@ -1100,6 +1371,10 @@ button:disabled {
   }
 
   .primary-button {
+    background: Highlight;
+    color: HighlightText;
+  }
+  .primary-button.danger-button {
     background: Highlight;
     color: HighlightText;
   }

@@ -9,15 +9,28 @@ type PageApprovalVm = {
   pageId: number
   sourceRevision: string
   approvalLoading: boolean
+  approvalInitialLoading: boolean
   pageApproval: { id: string } | null
   hasWritePagesPermission: boolean
   approvalAssigneeId: number | null
   approvalComment: string
   approvalError: string
+  pageOnlineActionReady: boolean
+  approvalActionReady: boolean
+  approvalAuthorityReady: boolean
+  approvalAuthorityReadyKey: string | null
+  approvalResourceKey: string
+  approvalAuthorityContextKey: string
+  pageAuthorityKey: string
+  pageActionGeneration: number
+  approvalRequestId: number
+  approvalMutationId: number
   submitPageApproval: () => Promise<void>
   transitionPageApproval: (action: ApprovalAction) => Promise<void>
   approvalResponseError: (response: Response, fallback: string) => Promise<Error>
-  loadPageApproval: () => Promise<void>
+  loadPageApproval: () => Promise<boolean>
+  isCurrentPageAction: (pageId: number, generation: number, requestId: number, currentRequestId: number) => boolean
+  isCurrentApprovalAuthority: (pageId: number, generation: number, requestId: number, authorityKey: string | null) => boolean
   $t: (key: string) => string
 }
 
@@ -87,6 +100,9 @@ const componentOptions = new Function(
     submitPageApproval: (this: PageApprovalVm) => Promise<void>
     transitionPageApproval: (this: PageApprovalVm, action: ApprovalAction) => Promise<void>
     approvalResponseError: (this: PageApprovalVm, response: Response, fallback: string) => Promise<Error>
+    loadPageApproval: (this: PageApprovalVm) => Promise<boolean>
+    isCurrentPageAction: (this: PageApprovalVm, pageId: number, generation: number, requestId: number, currentRequestId: number) => boolean
+    isCurrentApprovalAuthority: (this: PageApprovalVm, pageId: number, generation: number, requestId: number, authorityKey: string | null) => boolean
   }
 }
 
@@ -105,17 +121,32 @@ const makeVm = (overrides: Partial<PageApprovalVm> = {}): PageApprovalVm => {
     pageId: 42,
     sourceRevision: 'rendered-revision-17',
     approvalLoading: false,
+    approvalInitialLoading: false,
     pageApproval: { id: 'approval-42' },
     hasWritePagesPermission: true,
     approvalAssigneeId: 9,
     approvalComment: '  Keep the rendered note  ',
     approvalError: '',
+    pageOnlineActionReady: true,
+    approvalActionReady: true,
+    approvalAuthorityReady: true,
+    approvalResourceKey: '42\u0000approval-42\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17',
+    pageAuthorityKey: 'actor:online',
+    approvalAuthorityContextKey: 'actor:online\u000042\u000042\u0000approval-42\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17',
+    approvalAuthorityReadyKey: 'actor:online\u000042\u000042\u0000approval-42\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17',
+    pageActionGeneration: 1,
+    approvalRequestId: 1,
+    approvalMutationId: 0,
     approvalResponseError: async (_response: Response, _fallback: string) => new Error('unbound'),
-    loadPageApproval: vi.fn(async () => {}),
+    loadPageApproval: vi.fn(async () => true),
+    isCurrentPageAction: () => true,
+    isCurrentApprovalAuthority: () => true,
     $t: (key: string) => key,
     ...overrides
   } as PageApprovalVm
   vm.approvalResponseError = componentOptions.methods.approvalResponseError.bind(vm)
+  vm.isCurrentPageAction = componentOptions.methods.isCurrentPageAction.bind(vm)
+  vm.isCurrentApprovalAuthority = componentOptions.methods.isCurrentApprovalAuthority.bind(vm)
   vm.submitPageApproval = componentOptions.methods.submitPageApproval.bind(vm)
   vm.transitionPageApproval = componentOptions.methods.transitionPageApproval.bind(vm)
   return vm
@@ -221,6 +252,179 @@ describe('reader page approval submission', () => {
       expect((graphErrors[0] as Error).message).toBe('Page changed after it was rendered')
       expect(successNotifications).toHaveLength(0)
       expect(notificationsRefresh).not.toHaveBeenCalled()
+    } finally {
+      globalThis.fetch = previousFetch
+    }
+  })
+  it('dispatches only after a fresh current approval read is accepted', async () => {
+    successNotifications.length = 0
+    const calls: FetchCall[] = []
+    let attempt = 0
+    const previousFetch = globalThis.fetch
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push([input, init])
+      attempt += 1
+      if (attempt === 2) return Promise.resolve(new Response('{}', { status: 200 }))
+      return Promise.resolve(new Response(JSON.stringify({ approval: { id: 'approval-42', assigneeId: 9 } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      }))
+    }) as typeof fetch
+    try {
+      const vm = makeVm({
+        approvalActionReady: false,
+        approvalAuthorityReady: false,
+        approvalAuthorityReadyKey: null
+      })
+      vm.loadPageApproval = componentOptions.methods.loadPageApproval.bind(vm)
+      await vm.submitPageApproval()
+      expect(calls).toHaveLength(0)
+
+      await vm.loadPageApproval()
+      expect(vm.approvalAuthorityReady).toBe(true)
+      expect(vm.approvalAuthorityReadyKey).toBe(vm.approvalAuthorityContextKey)
+
+      vm.approvalActionReady = true
+      await vm.submitPageApproval()
+
+      expect(calls.map(([, init]) => init?.method)).toEqual([undefined, 'POST', undefined])
+      expect(successNotifications).toHaveLength(1)
+    } finally {
+      globalThis.fetch = previousFetch
+    }
+  })
+
+  it('does not dispatch cached approval state after transport loss or a context-key change', async () => {
+    const calls: FetchCall[] = []
+    const previousFetch = globalThis.fetch
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push([input, init])
+      return Promise.resolve(new Response('{}', { status: 200 }))
+    }) as typeof fetch
+    try {
+      const offlineVm = makeVm({ pageOnlineActionReady: false, approvalActionReady: false })
+      await offlineVm.submitPageApproval()
+      await offlineVm.transitionPageApproval('approve')
+
+      const staleVm = makeVm({
+        approvalActionReady: false,
+        approvalAuthorityReadyKey: 'actor:online\u000042\u000042\u0000old-resource\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17',
+        approvalAuthorityContextKey: 'actor:online\u000042\u000042\u0000approval-42\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17'
+      })
+      await staleVm.submitPageApproval()
+      await staleVm.transitionPageApproval('approve')
+
+      expect(calls).toHaveLength(0)
+    } finally {
+      globalThis.fetch = previousFetch
+    }
+  })
+
+  it('does not let a late approval read re-enable another page or actor', async () => {
+    const request = deferred<Response>()
+    const calls: FetchCall[] = []
+    const previousFetch = globalThis.fetch
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push([input, init])
+      return request.promise
+    }) as typeof fetch
+    try {
+      const vm = makeVm({
+        approvalAuthorityReady: false,
+        approvalAuthorityReadyKey: null
+      })
+      vm.loadPageApproval = componentOptions.methods.loadPageApproval.bind(vm)
+      const read = vm.loadPageApproval()
+      vm.pageId = 43
+      vm.pageActionGeneration = 2
+      vm.pageAuthorityKey = 'actor-b:online'
+      vm.approvalResourceKey = '43\u0000approval-43\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17'
+      vm.approvalAuthorityContextKey = 'actor-b:online\u000043\u000043\u0000approval-43\u0000none\u0000none\u0000none\u0000none\u0000none\u0000rendered-revision-17'
+      vm.approvalRequestId += 1
+      request.resolve(
+        new Response(JSON.stringify({ approval: { id: 'approval-42', assigneeId: 9 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      )
+      expect(await read).toBe(false)
+      expect(vm.approvalAuthorityReady).toBe(false)
+      expect(vm.approvalAuthorityReadyKey).toBeNull()
+    } finally {
+      globalThis.fetch = previousFetch
+    }
+  })
+
+  it('retries a failed transition with a read and does not replay the transition POST', async () => {
+    graphErrors.length = 0
+    const calls: FetchCall[] = []
+    let attempt = 0
+    const previousFetch = globalThis.fetch
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push([input, init])
+      attempt += 1
+      if (attempt === 1) {
+        return Promise.resolve(new Response(JSON.stringify({ error: 'Transition outcome is unknown' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' }
+        }))
+      }
+      return Promise.resolve(new Response(JSON.stringify({ approval: { id: 'approval-42', assigneeId: 9 } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      }))
+    }) as typeof fetch
+    try {
+      const vm = makeVm()
+      vm.loadPageApproval = componentOptions.methods.loadPageApproval.bind(vm)
+      await vm.transitionPageApproval('approve')
+      expect(calls).toHaveLength(1)
+      expect(vm.approvalAuthorityReady).toBe(false)
+
+      await vm.loadPageApproval()
+
+      expect(calls).toHaveLength(2)
+      expect(calls[0]?.[1]?.method).toBe('POST')
+      expect(calls[1]?.[1]?.method).toBeUndefined()
+      expect(vm.approvalAuthorityReady).toBe(true)
+      expect(graphErrors).toHaveLength(1)
+    } finally {
+      globalThis.fetch = previousFetch
+    }
+  })
+  it('retries by reading approval state and never replays a failed submit', async () => {
+    graphErrors.length = 0
+    const calls: FetchCall[] = []
+    let attempt = 0
+    const previousFetch = globalThis.fetch
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push([input, init])
+      attempt += 1
+      if (attempt === 1) {
+        return Promise.resolve(new Response(JSON.stringify({ error: 'Approval outcome is unknown' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' }
+        }))
+      }
+      return Promise.resolve(new Response(JSON.stringify({ approval: { id: 'approval-42', assigneeId: 9 } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      }))
+    }) as typeof fetch
+    try {
+      const vm = makeVm()
+      vm.loadPageApproval = componentOptions.methods.loadPageApproval.bind(vm)
+      await vm.submitPageApproval()
+      expect(calls).toHaveLength(1)
+      expect(vm.approvalAuthorityReady).toBe(false)
+
+      await vm.loadPageApproval()
+
+      expect(calls).toHaveLength(2)
+      expect(calls[0]?.[1]?.method).toBe('POST')
+      expect(calls[1]?.[1]?.method).toBeUndefined()
+      expect(vm.approvalAuthorityReady).toBe(true)
+      expect(graphErrors).toHaveLength(1)
     } finally {
       globalThis.fetch = previousFetch
     }

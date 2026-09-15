@@ -21,6 +21,10 @@
       </div>
 
       <v-card-text class="personal-skills__body">
+        <v-alert v-if="networkBlocked" class="mb-4" type="warning" variant="tonal" density="compact" role="status">
+          <span>Connection required to load or change personal skills.</span>
+          <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" @click="emit('retry-connection')">Retry connection</v-btn>
+        </v-alert>
         <div class="personal-skills__layout">
           <aside class="personal-inventory" aria-labelledby="personal-inventory-title">
             <div class="personal-inventory__header">
@@ -28,7 +32,7 @@
                 <div class="personal-skills__eyebrow">Your inventory</div>
                 <h3 id="personal-inventory-title">Installed skills</h3>
               </div>
-              <v-btn color="primary" prepend-icon="mdi-plus" size="small" :disabled="loading || saving" @click="requestNew">New skill</v-btn>
+              <v-btn color="primary" prepend-icon="mdi-plus" size="small" :disabled="loading || saving || networkBlocked" @click="requestNew">New skill</v-btn>
             </div>
 
             <v-text-field
@@ -43,7 +47,7 @@
 
             <v-alert v-if="refreshError && !loaded" class="personal-inventory__error" type="error" variant="tonal" density="compact">
               {{ refreshError }}
-              <template #append><v-btn variant="text" size="small" @click="load()">Retry</v-btn></template>
+                <template #append><v-btn variant="text" size="small" :loading="loading" :disabled="loading || networkBlocked" @click="load()">Retry</v-btn></template>
             </v-alert>
 
             <div v-if="loading && !loaded" class="personal-inventory__loading" aria-label="Loading personal skills" aria-busy="true">
@@ -53,7 +57,7 @@
             <template v-else-if="loaded">
               <v-alert v-if="refreshError" class="personal-inventory__error" type="warning" variant="tonal" density="compact">
                 {{ refreshError }}
-                <template #append><v-btn variant="text" size="small" :loading="loading" :disabled="loading" @click="requestRefresh">Retry</v-btn></template>
+                <template #append><v-btn variant="text" size="small" :loading="loading" :disabled="loading || networkBlocked" @click="requestRefresh">Retry</v-btn></template>
               </v-alert>
               <div class="personal-inventory__summary" aria-live="polite">{{ filteredSkills.length }} of {{ skills.length }} shown</div>
               <v-list v-if="filteredSkills.length" class="personal-inventory__list" density="compact" nav aria-label="Personal skills">
@@ -64,7 +68,7 @@
                   :active="editingId === skill.id"
                   :aria-current="editingId === skill.id ? 'true' : undefined"
                   :aria-label="`Edit personal skill ${skill.name}`"
-                  :disabled="saving || loading"
+                  :disabled="saving || loading || networkBlocked"
                   rounded="lg"
                   @click="requestEdit(skill)"
                 >
@@ -96,7 +100,7 @@
                 <v-icon icon="mdi-file-document-plus-outline" size="28" />
                 <strong>Your personal layer is empty</strong>
                 <span>Create a SKILL.md document for a repeatable workflow or preference.</span>
-                <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="requestNew">Create first skill</v-btn>
+                <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" :disabled="networkBlocked" @click="requestNew">Create first skill</v-btn>
               </div>
             </template>
           </aside>
@@ -110,7 +114,7 @@
               </div>
               <div class="personal-editor__header-actions">
                 <v-chip v-if="isDirty" color="warning" size="small" variant="tonal" prepend-icon="mdi-circle-edit-outline">Unsaved</v-chip>
-                <v-btn v-if="editingId" color="error" variant="text" prepend-icon="mdi-delete-outline" :disabled="saving || loading" @click="beginRemove(selectedSkill, $event)">Remove skill</v-btn>
+                <v-btn v-if="editingId" color="error" variant="text" prepend-icon="mdi-delete-outline" :disabled="saving || loading || networkBlocked || !readAccepted" @click="beginRemove(selectedSkill, $event)">Remove skill</v-btn>
               </div>
             </div>
 
@@ -155,7 +159,7 @@
         <div class="personal-skills__trust-note"><v-icon icon="mdi-account-lock-outline" size="18" /><span>Personal skills affect only your account. Organization policy always takes precedence.</span></div>
         <v-spacer />
         <v-btn :disabled="saving" @click="requestClose">Close</v-btn>
-        <v-btn color="primary" type="submit" :loading="saving" :disabled="!loaded || !formValid || loading" form="personal-skill-form">{{ editingId ? 'Save revision' : 'Create skill' }}</v-btn>
+        <v-btn color="primary" type="submit" :loading="saving" :disabled="!loaded || !readAccepted || !formValid || loading || saving || networkBlocked" form="personal-skill-form">{{ editingId ? 'Save revision' : 'Create skill' }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -168,7 +172,7 @@
         <v-alert v-if="removeError" class="mb-4" type="error" variant="tonal">{{ removeError }}</v-alert>
         <p><strong>{{ removing?.name }}</strong> will be removed from your personal library and can no longer be loaded automatically or invoked.</p>
       </v-card-text>
-      <v-card-actions><v-spacer /><v-btn :disabled="saving" @click="cancelRemove">Cancel</v-btn><v-btn color="error" prepend-icon="mdi-delete-outline" :loading="saving" :disabled="saving" @click="remove">Remove skill</v-btn></v-card-actions>
+      <v-card-actions><v-spacer /><v-btn :disabled="saving" @click="cancelRemove">Cancel</v-btn><v-btn color="error" prepend-icon="mdi-delete-outline" :loading="saving" :disabled="saving || networkBlocked || !readAccepted" @click="remove">Remove skill</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 
@@ -192,8 +196,13 @@ import {
 } from '../../helpers/agents-api.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 
-const props = defineProps<{ csrfToken: string }>()
-const emit = defineEmits<{ changed: [] }>()
+const props = defineProps<{
+  csrfToken: string
+  ownerId?: number
+  networkBlocked?: boolean
+  connectionRetrying?: boolean
+}>()
+const emit = defineEmits<{ changed: []; 'retry-connection': [] }>()
 const open = defineModel<boolean>({ required: true })
 const { smAndDown } = useDisplay()
 const discoveryHelpId = useId()
@@ -225,7 +234,14 @@ let discardFocusScope: ModalFocusScope | null = null
 let loadController: AbortController | null = null
 let disposed = false
 let loadGeneration = 0
+let authorityGeneration = 0
+const readAccepted = ref(false)
+let operationGeneration = 0
+const ownerKey = (): number | null => props.ownerId ?? null
+const isCurrent = (generation: number, ownerId: number | null, csrfToken: string): boolean =>
+  !disposed && authorityGeneration === generation && ownerKey() === ownerId && props.csrfToken === csrfToken
 const selectedSkill = computed(() => skills.value.find(skill => skill.id === editingId.value) ?? null)
+const networkBlocked = computed(() => props.networkBlocked === true)
 const compareNames = (left: string, right: string): number => {
   const leftName = left.toLowerCase()
   const rightName = right.toLowerCase()
@@ -295,60 +311,74 @@ const confirmDiscard = (): void => {
   action?.()
 }
 const load = async (selectedId?: string, committedMessage?: string): Promise<boolean> => {
-  if (disposed) return false
+  if (disposed || networkBlocked.value) return false
+  const authority = authorityGeneration
+  const ownerId = ownerKey()
+  const csrfToken = props.csrfToken
+  const preserveEditor = isDirty.value
   loadController?.abort()
   const controller = new AbortController()
   loadController = controller
   const generation = ++loadGeneration
   loading.value = true
+  readAccepted.value = false
   refreshError.value = ''
   try {
-    const nextSkills = await listPersonalAgentSkills(fetcher, props.csrfToken, controller.signal)
-    if (generation !== loadGeneration) return false
+    const nextSkills = await listPersonalAgentSkills(fetcher, csrfToken, controller.signal)
+    if (!isCurrent(authority, ownerId, csrfToken) || generation !== loadGeneration || loadController !== controller) return false
     skills.value = nextSkills
     loaded.value = true
+    readAccepted.value = true
     const selected = skills.value.find(skill => skill.id === selectedId) ?? skills.value.find(skill => skill.id === editingId.value)
-    if (selected) applyEdit(selected)
-    else if (!editingId.value) applyNew()
+    if (!preserveEditor && !isDirty.value) {
+      if (selected) applyEdit(selected)
+      else if (!editingId.value) applyNew()
+    }
     return true
   } catch (caught) {
-    if (generation !== loadGeneration || controller.signal.aborted) return false
+    if (!isCurrent(authority, ownerId, csrfToken) || generation !== loadGeneration || loadController !== controller || controller.signal.aborted) return false
+    readAccepted.value = false
     const reason = caught instanceof Error ? caught.message : loaded.value ? 'Personal skills could not be refreshed.' : 'Personal skills could not be loaded.'
     refreshError.value = loaded.value ? `${committedMessage ? `${committedMessage} ` : ''}Showing last-loaded personal skills. ${reason}` : reason
     return false
   } finally {
-    if (generation === loadGeneration) {
+    if (isCurrent(authority, ownerId, csrfToken) && generation === loadGeneration && loadController === controller) {
       loading.value = false
-      if (loadController === controller) loadController = null
+      loadController = null
     }
   }
 }
 const save = async (): Promise<void> => {
-  if (disposed || saving.value || loading.value || !formValid.value) return
+  if (disposed || networkBlocked.value || !readAccepted.value || saving.value || loading.value || !formValid.value) return
+  const authority = authorityGeneration
+  const ownerId = ownerKey()
+  const csrfToken = props.csrfToken
+  const operation = ++operationGeneration
   saving.value = true
+  readAccepted.value = false
   error.value = ''
-  let saved: PersonalAgentSkill
+  const markdown = skillMarkdown.value
+  const discoverable = isAgentDiscoverable.value
+  const current = selectedSkill.value
   try {
-    const current = selectedSkill.value
-    saved = current
-      ? await updatePersonalAgentSkill(fetcher, props.csrfToken, current.id, { expectedVersionId: current.versionId, skillMarkdown: skillMarkdown.value, isAgentDiscoverable: isAgentDiscoverable.value })
-      : await createPersonalAgentSkill(fetcher, props.csrfToken, { name: name.value, skillMarkdown: skillMarkdown.value, isAgentDiscoverable: isAgentDiscoverable.value })
+    const saved = current
+      ? await updatePersonalAgentSkill(fetcher, csrfToken, current.id, { expectedVersionId: current.versionId, skillMarkdown: markdown, isAgentDiscoverable: discoverable })
+      : await createPersonalAgentSkill(fetcher, csrfToken, { name: name.value, skillMarkdown: markdown, isAgentDiscoverable: discoverable })
+    if (!isCurrent(authority, ownerId, csrfToken) || operationGeneration !== operation) return
+    skills.value = [...skills.value.filter(skill => skill.id !== saved.id), saved]
+    applyEdit(saved)
+    emit('changed')
+    await load(saved.id, 'Skill was saved.')
   } catch (caught) {
-    if (disposed) return
+    if (!isCurrent(authority, ownerId, csrfToken) || operationGeneration !== operation) return
     error.value = caught instanceof Error ? caught.message : 'Personal skill could not be saved.'
-    saving.value = false
-    return
+    readAccepted.value = false
+  } finally {
+    if (isCurrent(authority, ownerId, csrfToken) && operationGeneration === operation) saving.value = false
   }
-  if (disposed) return
-  skills.value = [...skills.value.filter(skill => skill.id !== saved.id), saved]
-  applyEdit(saved)
-  emit('changed')
-  await load(saved.id, 'Skill was saved.')
-  if (disposed) return
-  saving.value = false
 }
 const beginRemove = (skill: PersonalAgentSkill | null, event: MouseEvent): void => {
-  if (!skill) return
+  if (!skill || disposed || networkBlocked.value || !readAccepted.value || saving.value || loading.value) return
   removeError.value = ''
   destructiveRestoreTarget.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
   removing.value = skill
@@ -360,26 +390,30 @@ const cancelRemove = (): void => {
 }
 const remove = async (): Promise<void> => {
   const skill = removing.value
-  if (!skill || disposed || saving.value || loading.value) return
+  if (!skill || disposed || networkBlocked.value || !readAccepted.value || saving.value || loading.value) return
+  const authority = authorityGeneration
+  const ownerId = ownerKey()
+  const csrfToken = props.csrfToken
+  const operation = ++operationGeneration
   saving.value = true
+  readAccepted.value = false
   removeError.value = ''
   try {
-    await removePersonalAgentSkill(fetcher, props.csrfToken, skill.id, skill.versionId)
+    await removePersonalAgentSkill(fetcher, csrfToken, skill.id, skill.versionId)
+    if (!isCurrent(authority, ownerId, csrfToken) || operationGeneration !== operation) return
+    skills.value = skills.value.filter(candidate => candidate.id !== skill.id)
+    applyNew()
+    destructiveRestoreTarget.value = editorRoot.value
+    removing.value = null
+    emit('changed')
+    await load(undefined, 'Skill was removed.')
   } catch (caught) {
-    if (disposed) return
+    if (!isCurrent(authority, ownerId, csrfToken) || operationGeneration !== operation) return
     removeError.value = caught instanceof Error ? caught.message : 'Personal skill could not be removed.'
-    saving.value = false
-    return
+    readAccepted.value = false
+  } finally {
+    if (isCurrent(authority, ownerId, csrfToken) && operationGeneration === operation) saving.value = false
   }
-  if (disposed) return
-  skills.value = skills.value.filter(candidate => candidate.id !== skill.id)
-  applyNew()
-  destructiveRestoreTarget.value = editorRoot.value
-  removing.value = null
-  emit('changed')
-  await load(undefined, 'Skill was removed.')
-  if (disposed) return
-  saving.value = false
 }
 watch(removing, async skill => {
   if (!skill) {
@@ -426,11 +460,58 @@ watch(name, (next, previous) => {
   if (editingId.value || next === previous) return
   skillMarkdown.value = skillMarkdown.value.replace(/^name:\s*.*$/m, `name: ${next}`)
 })
-watch(open, value => { if (value) void load() }, { immediate: true })
+watch(networkBlocked, (blocked, wasBlocked) => {
+  if (blocked) {
+    loadGeneration += 1
+    loadController?.abort()
+    loadController = null
+    loading.value = false
+    readAccepted.value = false
+    return
+  }
+  if (wasBlocked && open.value && !saving.value) void load(editingId.value ?? undefined)
+})
+watch(() => props.ownerId, (ownerId, previousOwnerId) => {
+  if (ownerId === previousOwnerId) return
+  authorityGeneration += 1
+  operationGeneration += 1
+  loadGeneration += 1
+  loadController?.abort()
+  loadController = null
+  loading.value = false
+  saving.value = false
+  readAccepted.value = false
+  loaded.value = false
+  skills.value = []
+  search.value = ''
+  editingId.value = null
+  applyNew()
+  error.value = ''
+  refreshError.value = ''
+  removeError.value = ''
+  removing.value = null
+  discardOpen.value = false
+  pendingNavigation.value = null
+  if (open.value && !networkBlocked.value) void load()
+})
+watch(() => props.csrfToken, (csrfToken, previousCsrfToken) => {
+  if (csrfToken === previousCsrfToken) return
+  authorityGeneration += 1
+  operationGeneration += 1
+  loadGeneration += 1
+  loadController?.abort()
+  loadController = null
+  saving.value = false
+  readAccepted.value = false
+})
+watch(open, value => { if (value && !networkBlocked.value) void load(editingId.value ?? undefined) }, { immediate: true })
 onBeforeUnmount(() => {
   disposed = true
+  authorityGeneration += 1
+  operationGeneration += 1
   loadGeneration++
   loadController?.abort()
+  loadController = null
   destructiveFocusScope?.deactivate({ restoreFocus: false })
   discardFocusScope?.deactivate({ restoreFocus: false })
 })

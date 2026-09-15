@@ -245,6 +245,7 @@ import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, 
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../../helpers/editor-insert-events'
 import { onEditorLinkToPage, offEditorLinkToPage } from '../../../helpers/editor-link-events'
 import { contentExtensionFenceBody } from '../../../helpers/content-extension-insertion'
+import { EditorAdapterController } from '../common/editor-adapter'
 
 /* global siteLangs */
 
@@ -290,6 +291,7 @@ export default defineComponent({
     EditorConflict,
     EditorContent
   },
+  emits: ['editor-adapter', 'editor-adapter-clear'],
   props: {
     format: {
       type: String as PropType<VisualEditorFormat>,
@@ -302,6 +304,7 @@ export default defineComponent({
   },
   data () {
     return {
+      editorAdapter: null as EditorAdapterController | null,
       editor: null as Raw<Editor> | null,
       stats: { characters: 0, words: 0 } as VisualEditorStats,
       toolbarVersion: 0,
@@ -546,6 +549,21 @@ export default defineComponent({
           break
       }
     },
+    flushEligibleEditorText () {
+      const editor = this.editor
+      if (!editor) return
+      this.syncFromEditor(editor)
+      this.editorAdapter?.notifyState()
+    },
+    clearEditorText () {
+      const editor = this.editor
+      if (!editor) return
+      editor.commands.setContent(this.preparedContent(''), {
+        contentType: this.format,
+        emitUpdate: false
+      })
+      this.syncFromEditor(editor)
+    },
     syncFromEditor (editor: EditorEventInstance) {
       wikiStore.editor.content = serializeVisualEditorData(this.format, editor)
       this.stats = getVisualEditorStats(editor)
@@ -581,12 +599,28 @@ export default defineComponent({
       },
       onUpdate: ({ editor }) => {
         this.syncFromEditor(editor)
+        this.editorAdapter?.noteTextChange()
       },
       onSelectionUpdate: () => {
         this.toolbarVersion += 1
       }
     })
     this.editor = markRaw(editor)
+    const adapter = new EditorAdapterController({
+      readText: () => serializeVisualEditorData(this.format, editor),
+      writeText: text => {
+        editor.commands.setContent(this.preparedContent(text), {
+          contentType: this.format,
+          emitUpdate: false
+        })
+        this.syncFromEditor(editor)
+      },
+      clearText: () => this.clearEditorText(),
+      flushText: () => this.flushEligibleEditorText()
+    })
+    this.editorAdapter = markRaw(adapter)
+    adapter.initialize()
+    this.$emit('editor-adapter', adapter)
     const root = this.$refs.root
     if (root instanceof HTMLElement) {
       Object.defineProperty(root as EditorHost, '__wikiEditor', {
@@ -601,6 +635,12 @@ export default defineComponent({
     onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
   beforeUnmount () {
+    const adapter = this.editorAdapter
+    if (adapter) {
+      this.$emit('editor-adapter-clear', adapter)
+      adapter.destroy()
+      this.editorAdapter = null
+    }
     offEditorInsert(this.handleEditorInsert)
     offEditorLinkToPage(this.handleEditorLinkToPage)
     offEditorSaveConflict(this.handleEditorSaveConflict)

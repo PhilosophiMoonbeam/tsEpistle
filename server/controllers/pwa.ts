@@ -7,15 +7,23 @@ export const PWA_TOMBSTONE_ENVIRONMENT_VARIABLE = 'TSEPISTLE_PWA_TOMBSTONE' as c
 
 const OFFLINE_DOCUMENT_PATH = '/_offline'
 const SERVICE_WORKER_PATH = '/sw.js'
+const PWA_MANIFEST_FILE = ['assets', 'manifest-tsepistle.json'] as const
 const OFFLINE_DOCUMENT_FILE = ['assets', 'client', 'offline.html'] as const
 const SERVICE_WORKER_FILE = ['assets', 'service-worker.js'] as const
 const TOMBSTONE_FILE = ['assets', 'sw-tombstone.js'] as const
 const CSP_DOCUMENT_ORIGIN = 'https://tsepistle-offline.invalid'
 const CSP_ASSET_PATH = /^\/_assets\//
-
+export const PWA_MODE_META_NAME = 'tsepistle-pwa-mode' as const
+export const PWA_RELEASE_META_NAME = 'tsepistle-pwa-release' as const
+export const PWA_MANIFEST_PATH = '/_assets/manifest-tsepistle.json' as const
+export const PWA_MODES = ['feature', 'retirement'] as const
+export type PwaMode = (typeof PWA_MODES)[number]
+const PWA_RELEASE_PATTERN = /^[0-9a-f]{40}$/u
 export interface PwaWiki {
   ROOTPATH: string
   config?: { host?: string }
+  pwaMode?: PwaMode
+  pwaRelease?: string
 }
 
 interface Resource {
@@ -24,14 +32,20 @@ interface Resource {
   readonly lastModified: string
 }
 
+const resourceFromBody = (body: Buffer, lastModified: string): Resource => {
+  const digest = createHash('sha256').update(body).digest('hex')
+  return { body, etag: `"${digest}"`, lastModified }
+}
+
 const resource = async (filename: readonly string[]): Promise<Resource> => {
   const filePath = path.join(...filename)
   const [body, metadata] = await Promise.all([readFile(filePath), stat(filePath)])
-  const digest = createHash('sha256').update(body).digest('hex')
-  return { body, etag: `"${digest}"`, lastModified: metadata.mtime.toUTCString() }
+  return resourceFromBody(body, metadata.mtime.toUTCString())
 }
 
 const environmentFlagEnabled = (value: string | undefined): boolean => /^(?:1|true|yes|on)$/i.test(value?.trim() ?? '')
+export const currentPwaMode = (): PwaMode =>
+  environmentFlagEnabled(process.env[PWA_TOMBSTONE_ENVIRONMENT_VARIABLE]) ? 'retirement' : 'feature'
 
 const configuredOrigin = (host: unknown): string | null => {
   if (typeof host !== 'string' || host.length === 0) return null
@@ -58,6 +72,24 @@ const requestOrigin = (request: Request): string | null => {
 const attribute = (tag: string, name: string): string | null => {
   const match = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag)
   return match?.[1] ?? match?.[2] ?? match?.[3] ?? null
+}
+
+const metadataValue = (html: string, name: string): string | null => {
+  const tag = (html.match(/<meta\b[^>]*>/gi) ?? []).find(candidate => attribute(candidate, 'name')?.toLowerCase() === name)
+  return tag === undefined ? null : attribute(tag, 'content')
+}
+
+const replaceMetadataValue = (html: string, name: string, value: string): string | null => {
+  let replaced = false
+  const contentPattern = /(\bcontent\s*=\s*)(["'])([^"']*)\2/i
+  const result = html.replace(/<meta\b[^>]*>/gi, tag => {
+    if (attribute(tag, 'name')?.toLowerCase() !== name) return tag
+    const content = contentPattern.exec(tag)
+    if (!content || !PWA_MODES.includes(content[3] as PwaMode)) return tag
+    replaced = true
+    return tag.replace(contentPattern, (_match, prefix: string, quote: string) => `${prefix}${quote}${value}${quote}`)
+  })
+  return replaced ? result : null
 }
 
 const assetPath = (value: string): string | null => {
@@ -129,6 +161,19 @@ const offlineContentSecurityPolicy = (request: Request, html: string, host: unkn
   ].join('; ')
 }
 
+const preparedOfflineDocument = (file: Resource, mode: PwaMode, expectedRelease?: string): Resource => {
+  const html = file.body.toString('utf8')
+  const release = metadataValue(html, PWA_RELEASE_META_NAME)
+  if (release === null || !PWA_RELEASE_PATTERN.test(release) || (expectedRelease !== undefined && release !== expectedRelease))
+    throw new Error('The neutral offline document belongs to a different or unknown release.')
+  const sourceMode = metadataValue(html, PWA_MODE_META_NAME)
+  if (sourceMode === null || !PWA_MODES.includes(sourceMode as PwaMode)) throw new Error('The neutral offline document has no valid PWA mode metadata.')
+  if (sourceMode === mode) return file
+  const rewritten = replaceMetadataValue(html, PWA_MODE_META_NAME, mode)
+  if (rewritten === null) throw new Error('The neutral offline document has no replaceable PWA mode metadata.')
+  return resourceFromBody(Buffer.from(rewritten, 'utf8'), file.lastModified)
+}
+
 const etagMatches = (request: Request, etag: string): boolean => {
   const value = request.get('if-none-match')
   if (!value) return false
@@ -185,15 +230,23 @@ const unavailable = (response: Response, message: string): void => {
 export default function createPwaController(wiki: PwaWiki): express.Router {
   const router = express.Router()
   const rootPath = path.resolve(wiki.ROOTPATH)
-  // Set TSEPISTLE_PWA_TOMBSTONE=1 (or true/yes/on) only for an approved rollback.
-  // The flag is intentionally process-environment-only, defaults to the feature worker,
-  // and never falls back to the feature worker when the explicit tombstone artifact is missing.
-  const tombstoneSelected = environmentFlagEnabled(process.env[PWA_TOMBSTONE_ENVIRONMENT_VARIABLE])
+  const mode = wiki.pwaMode ?? currentPwaMode()
+  const expectedRelease = wiki.pwaRelease
 
+  const sendManifest = (request: Request, response: Response): void => {
+    void (async () => {
+      try {
+        const file = await resource([rootPath, ...PWA_MANIFEST_FILE])
+        sendResource(request, response, file, 'application/manifest+json', 'public, max-age=0, must-revalidate')
+      } catch {
+        unavailable(response, 'The PWA manifest is unavailable.')
+      }
+    })()
+  }
   const sendOfflineDocument = (request: Request, response: Response): void => {
     void (async () => {
       try {
-        const file = await resource([rootPath, ...OFFLINE_DOCUMENT_FILE])
+        const file = preparedOfflineDocument(await resource([rootPath, ...OFFLINE_DOCUMENT_FILE]), mode, expectedRelease)
         const html = file.body.toString('utf8')
         sendResource(request, response, file, 'text/html; charset=utf-8', 'public, max-age=0, must-revalidate', {
           'Content-Security-Policy': offlineContentSecurityPolicy(request, html, wiki.config?.host)
@@ -206,7 +259,7 @@ export default function createPwaController(wiki: PwaWiki): express.Router {
   const sendServiceWorker = (request: Request, response: Response): void => {
     void (async () => {
       try {
-        const file = await resource([rootPath, ...(tombstoneSelected ? TOMBSTONE_FILE : SERVICE_WORKER_FILE)])
+        const file = await resource([rootPath, ...(mode === 'retirement' ? TOMBSTONE_FILE : SERVICE_WORKER_FILE)])
         sendResource(request, response, file, 'application/javascript; charset=utf-8', 'no-cache', {
           'Service-Worker-Allowed': '/'
         })
@@ -216,6 +269,8 @@ export default function createPwaController(wiki: PwaWiki): express.Router {
     })()
   }
 
+  router.get(PWA_MANIFEST_PATH, sendManifest)
+  router.head(PWA_MANIFEST_PATH, sendManifest)
   router.get(OFFLINE_DOCUMENT_PATH, sendOfflineDocument)
   router.head(OFFLINE_DOCUMENT_PATH, sendOfflineDocument)
   router.get(SERVICE_WORKER_PATH, sendServiceWorker)

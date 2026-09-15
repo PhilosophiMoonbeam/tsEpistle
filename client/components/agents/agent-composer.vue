@@ -64,7 +64,7 @@
       <div class="agent-composer__command-status sr-only" role="status" aria-live="polite">{{ skillCommandStatus }}</div>
       <v-card-actions v-if="skillsLoadError" class="agent-composer__command-retry">
         <span>{{ skills.length > 0 ? 'Showing the last-loaded catalog.' : 'No catalog entries are available.' }}</span>
-        <v-btn prepend-icon="mdi-refresh" size="small" variant="text" :loading="skillsLoading" @click="retrySkills">Retry catalog</v-btn>
+        <v-btn prepend-icon="mdi-refresh" size="small" variant="text" :loading="skillsLoading" :disabled="skillsLoading || networkBlocked" @click="retrySkills">Retry catalog</v-btn>
       </v-card-actions>
     </v-card>
     <span
@@ -162,7 +162,7 @@
                 <strong>{{ skillLoadTitle }}</strong>
                 <span>{{ skillLoadMessage }}</span>
               </div>
-              <v-btn v-if="skillsLoadError" prepend-icon="mdi-refresh" size="small" variant="tonal" :loading="skillsLoading" @click="retrySkills">
+              <v-btn v-if="skillsLoadError" prepend-icon="mdi-refresh" size="small" variant="tonal" :loading="skillsLoading" :disabled="skillsLoading || networkBlocked" @click="retrySkills">
                 Retry
               </v-btn>
             </div>
@@ -195,7 +195,7 @@
                       :color="isPreferred(skill.versionId) ? 'primary' : undefined"
                       :variant="isPreferred(skill.versionId) ? 'tonal' : 'text'"
                       size="small"
-                      :disabled="disabled || sendInProgress || (!isPreferred(skill.versionId) && invocationLimit === 0)"
+                      :disabled="disabled || sendInProgress || networkBlocked || (!isPreferred(skill.versionId) && invocationLimit === 0)"
                       :aria-label="isPreferred(skill.versionId) ? `Stop always loading ${skill.name}` : `Always load ${skill.name} in conversations`"
                       :aria-pressed="isPreferred(skill.versionId)"
                       :title="isPreferred(skill.versionId) ? `Pinned: ${skill.name} always loads` : `Pin ${skill.name} to always load`"
@@ -262,7 +262,8 @@
           variant="outlined"
           prepend-icon="mdi-stop"
           :aria-describedby="composerIds.status"
-          @click="$emit('stop')"
+          :disabled="networkBlocked"
+          @click="emit('stop')"
         >Stop response</v-btn>
         <v-btn
           v-if="!canStop"
@@ -271,7 +272,7 @@
           color="primary"
           :prepend-icon="submitIcon"
           :loading="sendInProgress"
-          :disabled="disabled || sendInProgress || !draft.trim()"
+          :disabled="disabled || sendInProgress || networkBlocked || !draft.trim()"
           :aria-describedby="composerIds.status"
         >{{ submitLabel }}</v-btn>
       </div>
@@ -310,6 +311,7 @@ const props = defineProps<{
   chatPinned?: boolean
   chatPinDisabled: boolean
   externalDescriptionId?: string
+  networkBlocked?: boolean
 }>()
 const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void]; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]]; 'update:chatPinned': [pinned: boolean] }>()
 const draft = ref(props.initialDraft ?? '')
@@ -556,7 +558,7 @@ const focusInput = async (): Promise<void> => {
   messageInput.value?.focus()
 }
 const togglePreference = (versionId: string): void => {
-  if (props.disabled || sendInProgress.value) return
+  if (props.disabled || props.networkBlocked || sendInProgress.value) return
   const skillIds = props.preferredSkills.map(skill => skill.skillId)
   const skillId = skillIdForVersion(versionId)
   if (!skillId) return
@@ -729,7 +731,7 @@ const manageSkills = (): void => {
   emit('manageSkills')
 }
 const retrySkills = (): void => {
-  if (props.skillsLoading) return
+  if (props.skillsLoading || props.networkBlocked) return
   emit('retrySkills')
 }
 const focusSkillsTrigger = async (): Promise<void> => {
@@ -745,7 +747,7 @@ const resetInput = (): void => {
   if (textarea) textarea.scrollTop = 0
 }
 const submit = (): void => {
-  if (props.disabled || sendInProgress.value || !draft.value.trim()) return
+  if (props.disabled || props.networkBlocked || sendInProgress.value || !draft.value.trim()) return
   const content = draft.value
   const invokedSkillVersionIds = [...selectedSkillIds.value]
   const mode = goalMode.value ? 'goal' : 'message'

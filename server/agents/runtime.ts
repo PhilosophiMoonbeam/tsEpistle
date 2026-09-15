@@ -1649,7 +1649,7 @@ export class AgentProductRuntime {
           message.originTransportKind === claim.transportKind &&
           message.originModel === claim.model &&
           message.originCapabilityRevision === claim.capabilityRevision
-        let state: AgentEngineMessage['providerState'] = undefined
+        let state: AgentEngineMessage['providerState']
         if (stateOriginMatches) {
           try {
             state = providerState(message.providerStateCiphertext, message.providerStateSha256, continuationDialectForTransport(claim.transportKind))

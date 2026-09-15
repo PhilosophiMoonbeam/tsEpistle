@@ -260,7 +260,12 @@
                     )
                       v-icon(start, size='small', aria-hidden='true') {{ offlineControlIcon }}
                       span.page-offline-control__label {{ offlineControlLabel }}
-                  span {{ offlineStatusLabel }}
+                  span.page-offline-status(
+                    :id='offlineStatusId'
+                    role='status'
+                    aria-live='polite'
+                    aria-atomic='true'
+                  ) {{ offlineStatusLabel }}
                 v-tooltip(location="bottom", v-if='isAuthenticated')
                   template(v-slot:activator='{ props }')
                     v-btn(
@@ -268,7 +273,8 @@
                       rounded='lg'
                       v-bind='props'
                       :loading='pageWatchLoading'
-                      :disabled='pageWatchLoading'
+                      :disabled='pageWatchLoading || !pageOnlineActionReady || !pageWatchAuthorityReady'
+                      :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : !pageWatchAuthorityReady ? `Refresh page watch state before changing it.` : undefined'
                       @click='togglePageWatch'
                       :aria-label='pageWatched ? $t(`common:page.stopWatchingPage`) : $t(`common:page.watchPage`)'
                     )
@@ -295,7 +301,8 @@
                         color='primary'
                         density='compact'
                         hide-details
-                        :disabled='pageWatchLoading'
+                        :disabled='pageWatchLoading || !pageWatchActionReady'
+                        :title='!pageWatchActionReady ? pageOnlineActionUnavailableReason || `Refresh page watch state before changing it.` : undefined'
                         @update:model-value='savePageWatchSettings'
                       )
                       v-switch(
@@ -304,7 +311,8 @@
                         color='primary'
                         density='compact'
                         hide-details
-                        :disabled='pageWatchLoading'
+                        :disabled='pageWatchLoading || !pageWatchActionReady'
+                        :title='!pageWatchActionReady ? pageOnlineActionUnavailableReason || `Refresh page watch state before changing it.` : undefined'
                         @update:model-value='savePageWatchSettings'
                       )
                 v-tooltip(location="bottom", v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
@@ -313,6 +321,8 @@
                       icon
                       rounded='lg'
                       v-bind='props'
+                      :disabled='!pageOnlineActionReady'
+                      :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : undefined'
                       @click='openApprovalWorkflow'
                       :aria-label='$t(`common:page.approvalWorkflow`)'
                     )
@@ -324,6 +334,8 @@
                       icon
                       rounded='lg'
                       v-bind='props'
+                      :disabled='!pageProtectionActionReady || protectionInitialLoading'
+                      :title='!pageProtectionActionReady ? pageOnlineActionUnavailableReason || `Refresh page protection before changing it.` : undefined'
                       @click='openPageProtection'
                       :aria-label='$t(`common:page.pagePasswordProtection`)'
                     )
@@ -520,7 +532,8 @@
           v-card-actions.flex-wrap.pa-4
             v-btn(
               color='primary'
-              :disabled='pageProtectionPassword.length < 12'
+              :disabled='!pageProtectionActionReady || pageProtectionPassword.length < 12'
+              :title='!pageProtectionActionReady ? pageOnlineActionUnavailableReason || `Refresh page protection before changing it.` : undefined'
               :loading='protectionLoading'
               @click='savePageProtection'
             ) {{ pageProtection.protected ? $t('common:page.rotatePassword') : $t('common:page.enableProtection') }}
@@ -528,7 +541,8 @@
               v-if='pageProtection.protected'
               color='error'
               variant='text'
-              :disabled='protectionLoading'
+              :disabled='protectionLoading || !pageProtectionActionReady'
+              :title='!pageProtectionActionReady ? pageOnlineActionUnavailableReason || `Refresh page protection before changing it.` : undefined'
               @click='removePageProtection'
             ) {{$t('common:page.removeProtection')}}
             v-spacer
@@ -605,22 +619,39 @@
                 :label='$t(`common:page.reviewerUserIdOptional`)'
               )
               v-textarea(v-model='approvalComment', :label='$t(`common:page.submissionNote`)', rows='3', auto-grow)
+            v-alert(
+              v-if='!approvalActionReady && !approvalInitialLoading'
+              type='warning'
+              variant='tonal'
+              role='status'
+              class='mt-4'
+            )
+              span {{ approvalActionUnavailableReason }}
+              v-btn(
+                size='small'
+                variant='text'
+                class='ml-2'
+                :loading='approvalInitialLoading'
+                @click='loadPageApproval'
+              ) {{$t('common:page.tryAgain')}}
           v-divider
           v-card-actions.flex-wrap.pa-4
             v-btn(
               v-if='hasWritePagesPermission && (!pageApproval || [`rejected`, `cancelled`, `published`].includes(pageApproval.status))'
               color='primary'
               :loading='approvalLoading'
+              :disabled='approvalLoading || !approvalActionReady'
+              :title='!approvalActionReady ? approvalActionUnavailableReason : undefined'
               @click='submitPageApproval'
             ) {{ pageApproval ? $t('common:page.submitNewRevision') : $t('common:page.submitForApproval') }}
             template(v-if='pageApproval')
-              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='success', :disabled='approvalLoading || pageApproval.stale', @click='transitionPageApproval(`approve`)') {{$t('common:page.approve')}}
-              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='warning', :disabled='approvalLoading', @click='transitionPageApproval(`request-changes`)') {{$t('common:page.requestChanges')}}
-              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='error', :disabled='approvalLoading', @click='transitionPageApproval(`reject`)') {{$t('common:page.reject')}}
-              v-btn(v-if='pageApproval.status === `changes-requested` && pageApproval.canSubmitter && hasWritePagesPermission', color='primary', :disabled='approvalLoading', @click='transitionPageApproval(`resubmit`)') {{$t('common:page.resubmit')}}
-              v-btn(v-if='pageApproval.status === `approved` && pageApproval.canReview', color='success', :disabled='approvalLoading || pageApproval.stale', @click='transitionPageApproval(`publish`)') {{$t('common:page.publishApprovedRevision')}}
-              v-btn(v-if='pageApproval.canReview && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', :disabled='approvalLoading', @click='transitionPageApproval(`reassign`)') {{$t('common:page.reassign')}}
-              v-btn(v-if='pageApproval.canSubmitter && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', color='error', variant='text', :disabled='approvalLoading', @click='transitionPageApproval(`cancel`)') {{$t('common:page.cancelRequest')}}
+              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='success', :disabled='approvalLoading || !approvalActionReady || pageApproval.stale', :title='!approvalActionReady ? approvalActionUnavailableReason : undefined', @click='transitionPageApproval(`approve`)') {{$t('common:page.approve')}}
+              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='warning', :disabled='approvalLoading || !approvalActionReady', :title='!approvalActionReady ? approvalActionUnavailableReason : undefined', @click='transitionPageApproval(`request-changes`)') {{$t('common:page.requestChanges')}}
+              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='error', :disabled='approvalLoading || !approvalActionReady', :title='!approvalActionReady ? approvalActionUnavailableReason : undefined', @click='transitionPageApproval(`reject`)') {{$t('common:page.reject')}}
+              v-btn(v-if='pageApproval.status === `changes-requested` && pageApproval.canSubmitter && hasWritePagesPermission', color='primary', :disabled='approvalLoading || !approvalActionReady', :title='!approvalActionReady ? approvalActionUnavailableReason : undefined', @click='transitionPageApproval(`resubmit`)') {{$t('common:page.resubmit')}}
+              v-btn(v-if='pageApproval.status === `approved` && pageApproval.canReview', color='success', :disabled='approvalLoading || !approvalActionReady || pageApproval.stale', :title='!approvalActionReady ? approvalActionUnavailableReason : undefined', @click='transitionPageApproval(`publish`)') {{$t('common:page.publishApprovedRevision')}}
+              v-btn(v-if='pageApproval.canReview && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', :disabled='approvalLoading || !approvalActionReady', :title='!approvalActionReady ? approvalActionUnavailableReason : undefined', @click='transitionPageApproval(`reassign`)') {{$t('common:page.reassign')}}
+              v-btn(v-if='pageApproval.canSubmitter && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', color='error', variant='text', :disabled='approvalLoading || !approvalActionReady', :title='!approvalActionReady ? approvalActionUnavailableReason : undefined', @click='transitionPageApproval(`cancel`)') {{$t('common:page.cancelRequest')}}
             v-spacer
             v-btn(@click='approvalDialog = false') {{$t('common:actions.close')}}
     v-fab-transition
@@ -732,7 +763,6 @@ type PageApproval = {
   canSubmitter: boolean
   transitions: ApprovalTransition[]
   title?: string
-  path?: string
   localeCode?: string
   visibility?: 'public' | 'private'
 }
@@ -744,7 +774,7 @@ type PageProtection = {
   updatedAt: string | null
 }
 
-type OfflinePageState = 'checking' | 'eligible' | 'downloading' | 'saved' | 'removing' | 'ineligible' | 'error'
+type OfflinePageState = 'checking' | 'eligible' | 'downloading' | 'saved' | 'expiring' | 'stale' | 'removing' | 'ineligible' | 'error'
 
 const offlineErrorStatus = (error: unknown): number | null => {
   if (!error || typeof error !== 'object') return null
@@ -755,6 +785,13 @@ const offlineErrorStatus = (error: unknown): number | null => {
 const offlineIneligibleError = (error: unknown): boolean => {
   const status = offlineErrorStatus(error)
   return status === 403 || status === 404
+}
+const OFFLINE_EXPIRING_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000
+const offlineSnapshotExpiringSoon = (expiresAt: string | null): boolean => {
+  if (!expiresAt) return false
+  const expiry = Date.parse(expiresAt)
+  const now = Date.now()
+  return Number.isFinite(expiry) && expiry > now && expiry - now <= OFFLINE_EXPIRING_WINDOW_MS
 }
 
 function decodePageAnchor (anchor: string): string {
@@ -1009,6 +1046,7 @@ const PageTocTree = defineComponent({
 })
 
 export default defineComponent({
+  name: 'PageView',
   components: {
     AsyncState,
     NavSidebar,
@@ -1154,14 +1192,18 @@ export default defineComponent({
       upBtnShown: false,
       pageWatched: false,
       pageWatchLoading: false,
+      pageWatchAuthorityReady: false,
+      pageWatchRequestId: 0,
       pageWatchEmailEnabled: true,
       pageWatchInAppEnabled: true,
       offlineState: 'checking' as OfflinePageState,
       offlineError: '',
       offlineHasSnapshot: false,
       offlineSnapshotRevision: '',
+      offlineExpiresAt: null as string | null,
       offlineGeneration: null as number | null,
       offlineOperationId: 0,
+      pageActionGeneration: 1,
       offlineOnlineHandler: null as (() => void) | null,
       offlineRevalidationPromise: null as Promise<void> | null,
       offlineRevalidationKey: null as string | null,
@@ -1170,12 +1212,18 @@ export default defineComponent({
       approvalLoading: false,
       approvalInitialLoading: false,
       approvalError: '',
+      approvalAuthorityReady: false,
+      approvalAuthorityReadyKey: null as string | null,
+      approvalRequestId: 0,
+      approvalMutationId: 0,
       pageApproval: null as PageApproval | null,
       approvalComment: '',
       approvalAssigneeId: null as number | null,
       protectionDialog: false,
       protectionLoading: false,
       protectionInitialLoading: false,
+      protectionAuthorityReady: false,
+      protectionRequestId: 0,
       protectionError: '',
       pageProtection: { protected: false, version: 0, updatedBy: null, updatedAt: null } as PageProtection,
       pageProtectionPassword: '',
@@ -1246,6 +1294,80 @@ export default defineComponent({
     hasPageBrandingAccent (): boolean {
       return this.pageBrandingStyle['--page-branding-rgb'] !== undefined
     },
+    pageTransportVerified (): boolean {
+      return this.pwaConnectionState === 'online' &&
+        pwaState.serverReachable === true &&
+        pwaState.serverHealthy === true
+    },
+    pageAuthorizationFresh (): boolean {
+      return this.isAuthenticated &&
+        wikiStore.authRefreshPending === false &&
+        wikiStore.authRefreshSettled === true &&
+        wikiStore.authRefreshOutcome === 'authenticated' &&
+        wikiStore.offlineIdentityReady === true
+    },
+    pageOnlineActionReady (): boolean {
+      return this.pageTransportVerified && this.pageAuthorizationFresh
+    },
+    pageOnlineActionUnavailableReason (): string {
+      if (!this.pageTransportVerified) {
+        if (this.pwaConnectionState === 'checking') return 'Waiting for a verified server connection.'
+        return 'This action requires a verified server connection.'
+      }
+      if (!this.pageAuthorizationFresh) return 'This action requires a freshly verified signed-in session.'
+      return ''
+    },
+    pageWatchActionReady (): boolean {
+      return this.pageOnlineActionReady && this.pageWatchAuthorityReady
+    },
+    approvalResourceKey (): string {
+      const approval = this.pageApproval
+      return [
+        this.pageId,
+        approval?.id ?? 'none',
+        approval?.status ?? 'none',
+        approval?.assigneeId ?? 'none',
+        approval?.revisionId ?? 'none',
+        approval?.stale ?? 'none',
+        approval?.canReview ?? 'none',
+        approval?.canSubmitter ?? 'none',
+        this.sourceRevision
+      ].join('\u0000')
+    },
+    approvalAuthorityContextKey (): string {
+      return `${this.pageAuthorityKey}\u0000${this.pageId}\u0000${this.approvalResourceKey}`
+    },
+    approvalActionReady (): boolean {
+      return this.pageOnlineActionReady &&
+        this.approvalAuthorityReady &&
+        this.approvalAuthorityReadyKey === this.approvalAuthorityContextKey
+    },
+    approvalActionUnavailableReason (): string {
+      if (!this.pageOnlineActionReady) return this.pageOnlineActionUnavailableReason
+      if (!this.approvalAuthorityReady || this.approvalAuthorityReadyKey !== this.approvalAuthorityContextKey)
+        return 'Refresh approval state before changing it.'
+      return ''
+    },
+    pageProtectionActionReady (): boolean {
+      return this.pageOnlineActionReady && this.protectionAuthorityReady
+    },
+    pageAuthorityKey (): string {
+      return [
+        wikiStore.user.id,
+        wikiStore.user.authenticated,
+        wikiStore.authRefreshPending,
+        wikiStore.authRefreshSettled,
+        wikiStore.authRefreshOutcome,
+        wikiStore.offlineIdentityReady,
+        wikiStore.offlineIdentityEpoch,
+        wikiStore.page.effectivePermissions.pages.write,
+        wikiStore.page.effectivePermissions.pages.manage,
+        wikiStore.page.effectivePermissions.system.manage,
+        pwaState.connectionState,
+        pwaState.serverReachable,
+        pwaState.serverHealthy
+      ].join(':')
+    },
     isAuthenticated (): boolean {
       return wikiStore.user.authenticated
     },
@@ -1294,6 +1416,9 @@ export default defineComponent({
           return 'Saving for offline…'
         case 'removing':
           return 'Removing offline copy…'
+        case 'expiring':
+        case 'stale':
+          return 'Update offline copy'
         case 'saved':
           return 'Remove offline copy'
         case 'ineligible':
@@ -1306,6 +1431,9 @@ export default defineComponent({
     },
     offlineControlIcon (): string {
       switch (this.offlineState) {
+        case 'expiring':
+        case 'stale':
+          return 'mdi-download-outline'
         case 'saved':
         case 'removing':
         case 'error':
@@ -1328,16 +1456,22 @@ export default defineComponent({
           return 'Available offline. Save a local copy on this device.'
         case 'downloading':
           return 'Saving this page for offline use. The copy is not committed yet.'
-        case 'saved':
+        case 'expiring':
+          return 'Saved on this device, but the local copy expires soon. Update it to keep it available.'
+        case 'stale':
           return this.offlineError
-            ? `Saved on this device. ${this.offlineError}`
-            : 'Saved on this device. This local copy is available offline until it expires or is removed.'
+            ? `Saved on this device, but the latest version could not be committed. ${this.offlineError}`
+            : 'Saved on this device, but the latest version could not be verified.'
+        case 'saved':
+          return 'Saved on this device. This local copy is available offline until it expires or is removed.'
         case 'removing':
           return 'Removing this page from offline storage. The deletion is not committed yet.'
         case 'ineligible':
           return 'This page is not available for offline use. No local copy was kept.'
         case 'error':
-          return this.offlineError || 'The offline copy could not be saved or removed.'
+          return this.offlineHasSnapshot
+            ? `The saved offline copy remains available, but this action failed. ${this.offlineError || 'Try again.'}`
+            : this.offlineError || 'The offline copy could not be saved or removed.'
         default:
           return 'Offline availability is unknown.'
       }
@@ -1434,6 +1568,32 @@ export default defineComponent({
   watch: {
     pageBrandingIdentity (value: string | null, previous: string | null) {
       if (value !== previous) this.brandingFailureIdentity = null
+    },
+    pageAuthorityKey (value: string, previous: string) {
+      if (value === previous) return
+      this.pageWatchRequestId += 1
+      this.protectionRequestId += 1
+      this.approvalRequestId += 1
+      this.approvalMutationId += 1
+      this.pageWatchAuthorityReady = false
+      this.protectionAuthorityReady = false
+      this.approvalAuthorityReady = false
+      this.approvalAuthorityReadyKey = null
+      this.approvalInitialLoading = false
+      this.approvalLoading = false
+      if (!this.pageOnlineActionReady) return
+      if (this.isAuthenticated) void this.loadPageWatchState()
+      if (this.hasWritePagesPermission || this.hasManagePagesPermission || this.hasAdminPermission) void this.loadPageProtection()
+    },
+    approvalResourceKey (value: string, previous: string) {
+      if (value === previous) return
+      if (this.approvalAuthorityReadyKey === this.approvalAuthorityContextKey) return
+      this.approvalRequestId += 1
+      this.approvalMutationId += 1
+      this.approvalAuthorityReady = false
+      this.approvalAuthorityReadyKey = null
+      this.approvalInitialLoading = false
+      this.approvalLoading = false
     },
     pwaConnectionState (value: string, previous: string) {
       if (value !== 'online' || previous === 'online') return
@@ -1574,6 +1734,15 @@ export default defineComponent({
     }
   },
   beforeUnmount () {
+    this.pageActionGeneration += 1
+    this.pageWatchRequestId += 1
+    this.protectionRequestId += 1
+    this.approvalRequestId += 1
+    this.approvalMutationId += 1
+    this.pageWatchAuthorityReady = false
+    this.protectionAuthorityReady = false
+    this.approvalAuthorityReady = false
+    this.approvalAuthorityReadyKey = null
     this.offlineOperationId += 1
     this.offlineRevalidationPromise = null
     this.offlineRevalidationKey = null
@@ -1716,6 +1885,7 @@ export default defineComponent({
       this.offlineError = ''
       this.offlineHasSnapshot = false
       this.offlineSnapshotRevision = ''
+      this.offlineExpiresAt = null
       this.offlineGeneration = null
       if (!Number.isSafeInteger(pageId) || pageId < 1) {
         this.offlineState = 'ineligible'
@@ -1726,17 +1896,27 @@ export default defineComponent({
       try {
         storage = await this.offlineStorageForOperation(operationId)
         if (!storage || !this.isCurrentOfflineOperation(operationId, pageId)) return
-        const generation = await storage.currentSessionGeneration()
+        const corpus = await storage.readSnapshotCorpus()
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
-        this.offlineGeneration = generation
-        const records = await storage.listSnapshots(this.offlineSiteId(), {
-          expectedSessionGeneration: generation
+        const origin = this.offlineSiteId()
+        const now = Date.now()
+        const existing = corpus.snapshots.find(record => {
+          if (record.siteId !== origin || record.pageId !== pageId || record.locale !== locale) return false
+          if (!record.snapshot.expiresAt) return true
+          const expiry = Date.parse(record.snapshot.expiresAt)
+          return Number.isFinite(expiry) && expiry > now
         })
-        if (!this.isCurrentOfflineOperation(operationId, pageId)) return
-        const existing = records.find(record => record.pageId === pageId && record.locale === locale)
+        this.offlineGeneration = corpus.sessionGeneration
         this.offlineHasSnapshot = existing !== undefined
         this.offlineSnapshotRevision = existing?.snapshot.sourceRevision ?? ''
-        if (existing && revalidateExisting) this.offlineState = 'downloading'
+        this.offlineExpiresAt = existing?.snapshot.expiresAt ?? null
+        if (!revalidateExisting) {
+          this.offlineState = existing
+            ? (offlineSnapshotExpiringSoon(this.offlineExpiresAt) ? 'expiring' : 'saved')
+            : 'eligible'
+          return
+        }
+        if (existing) this.offlineState = 'downloading'
 
         const snapshot = await fetchOfflinePageSnapshot(
           window.fetch.bind(window),
@@ -1746,17 +1926,18 @@ export default defineComponent({
         if (snapshot.pageId !== pageId || snapshot.locale !== locale) {
           throw new Error('The offline snapshot does not match this page.')
         }
-        if (!existing || !revalidateExisting) {
+        if (!existing) {
           this.offlineState = 'eligible'
           return
         }
 
         await storage.putSnapshot(this.offlineSiteId(), snapshot, {
-          expectedSessionGeneration: generation
+          expectedSessionGeneration: corpus.sessionGeneration
         })
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
         this.offlineHasSnapshot = true
         this.offlineSnapshotRevision = snapshot.sourceRevision
+        this.offlineExpiresAt = snapshot.expiresAt
         this.offlineState = 'saved'
       } catch (error) {
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
@@ -1775,6 +1956,7 @@ export default defineComponent({
           if (!this.isCurrentOfflineOperation(operationId, pageId)) return
           this.offlineHasSnapshot = false
           this.offlineSnapshotRevision = ''
+          this.offlineExpiresAt = null
           this.offlineState = 'ineligible'
           this.offlineError = 'This page is not available for offline use. No local copy was kept.'
           return
@@ -1783,7 +1965,7 @@ export default defineComponent({
         this.offlineError = typeof navigator !== 'undefined' && navigator.onLine === false
           ? 'Waiting for a connection to check offline availability.'
           : detail || 'Offline availability could not be checked.'
-        this.offlineState = this.offlineHasSnapshot ? 'saved' : 'error'
+        this.offlineState = this.offlineHasSnapshot ? 'stale' : 'error'
       }
     },
     async saveOfflinePage (): Promise<void> {
@@ -1814,6 +1996,7 @@ export default defineComponent({
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
         this.offlineHasSnapshot = true
         this.offlineSnapshotRevision = snapshot.sourceRevision
+        this.offlineExpiresAt = snapshot.expiresAt
         this.offlineState = 'saved'
         showNotification(wikiStore, {
           style: 'success',
@@ -1836,6 +2019,7 @@ export default defineComponent({
           if (!this.isCurrentOfflineOperation(operationId, pageId)) return
           this.offlineHasSnapshot = false
           this.offlineSnapshotRevision = ''
+          this.offlineExpiresAt = null
           this.offlineState = 'ineligible'
           this.offlineError = 'This page is not available for offline use. No local copy was kept.'
           return
@@ -1844,7 +2028,7 @@ export default defineComponent({
         this.offlineError = typeof navigator !== 'undefined' && navigator.onLine === false
           ? 'Waiting for a connection to save this page for offline use.'
           : detail || 'The offline copy could not be committed.'
-        this.offlineState = this.offlineHasSnapshot ? 'saved' : 'error'
+        this.offlineState = this.offlineHasSnapshot ? 'stale' : 'error'
         showNotification(wikiStore, {
           style: 'red',
           message: this.offlineError,
@@ -1871,6 +2055,7 @@ export default defineComponent({
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
         this.offlineHasSnapshot = false
         this.offlineSnapshotRevision = ''
+        this.offlineExpiresAt = null
         this.offlineState = 'eligible'
         showNotification(wikiStore, {
           style: 'success',
@@ -1890,13 +2075,22 @@ export default defineComponent({
     },
     async toggleOfflinePage (): Promise<void> {
       if (this.offlineControlDisabled) return
-      if (this.offlineHasSnapshot) {
+      if (this.offlineHasSnapshot && !['expiring', 'stale'].includes(this.offlineState)) {
         await this.removeOfflinePage()
       } else {
         await this.saveOfflinePage()
       }
     },
     resetPageRouteState(): void {
+      this.pageActionGeneration += 1
+      this.pageWatchRequestId += 1
+      this.protectionRequestId += 1
+      this.approvalRequestId += 1
+      this.approvalMutationId += 1
+      this.pageWatchAuthorityReady = false
+      this.protectionAuthorityReady = false
+      this.approvalAuthorityReady = false
+      this.approvalAuthorityReadyKey = null
       this.cancelScheduledScroll()
       this.resetDesktopRailMeasurementState()
       this.tocQuery = ''
@@ -2068,9 +2262,35 @@ export default defineComponent({
       cancelAnimationFrame(this.scrollAnimationFrame)
       this.scrollAnimationFrame = null
     },
-    async loadPageProtection () {
+    isCurrentPageAction (pageId: number, generation: number, requestId: number, currentRequestId: number): boolean {
+      return (
+        pageId === this.pageId &&
+        generation === this.pageActionGeneration &&
+        requestId === currentRequestId
+      )
+    },
+    isCurrentApprovalAuthority (pageId: number, generation: number, requestId: number, authorityKey: string | null): boolean {
+      return this.isCurrentPageAction(pageId, generation, requestId, this.approvalRequestId) &&
+        this.pageOnlineActionReady &&
+        this.approvalAuthorityReady &&
+        authorityKey !== null &&
+        this.approvalAuthorityReadyKey === authorityKey &&
+        this.approvalAuthorityContextKey === authorityKey
+    },
+    async loadPageProtection (): Promise<boolean> {
       const pageId = this.pageId
+      const generation = this.pageActionGeneration
+      const requestId = ++this.protectionRequestId
+      if (!this.pageOnlineActionReady) {
+        if (pageId === this.pageId && generation === this.pageActionGeneration) {
+          this.protectionAuthorityReady = false
+          this.protectionInitialLoading = false
+          this.protectionError = this.pageOnlineActionUnavailableReason
+        }
+        return false
+      }
       this.protectionInitialLoading = true
+      this.protectionAuthorityReady = false
       this.protectionError = ''
       try {
         const response = await fetch(`/_api/pages/${pageId}/protection`, {
@@ -2079,53 +2299,74 @@ export default defineComponent({
         })
         if (!response.ok) throw new Error(this.$t('common:page.pageProtectionRequestError', { status: response.status }))
         const protection = await response.json() as PageProtection
-        if (pageId !== this.pageId) return
+        if (!this.isCurrentPageAction(pageId, generation, requestId, this.protectionRequestId) || !this.pageOnlineActionReady) return false
         this.pageProtection = protection
+        this.protectionAuthorityReady = true
+        return true
       } catch (error) {
-        if (pageId !== this.pageId) return
+        if (pageId !== this.pageId || generation !== this.pageActionGeneration || requestId !== this.protectionRequestId) return false
+        this.protectionAuthorityReady = false
         this.protectionError = getErrorMessage(error)
         pushGraphError(wikiStore, error)
+        return false
       } finally {
-        if (pageId === this.pageId) this.protectionInitialLoading = false
+        if (pageId === this.pageId && generation === this.pageActionGeneration && requestId === this.protectionRequestId)
+          this.protectionInitialLoading = false
       }
     },
-    openPageProtection () {
+    openPageProtection (): void {
+      if (!this.pageOnlineActionReady) {
+        this.protectionError = this.pageOnlineActionUnavailableReason
+        return
+      }
       this.pageProtectionPassword = ''
       this.protectionInitialLoading = true
       this.protectionError = ''
       this.protectionDialog = true
       void this.loadPageProtection()
     },
-    async savePageProtection () {
-      if (this.protectionLoading) return
+    async savePageProtection (): Promise<void> {
+      if (this.protectionLoading || !this.pageProtectionActionReady) return
       const pageId = this.pageId
+      const generation = this.pageActionGeneration
+      const requestId = ++this.protectionRequestId
+      const password = this.pageProtectionPassword
       this.protectionLoading = true
+      this.protectionAuthorityReady = false
       try {
         const response = await fetch(`/_api/pages/${pageId}/protection`, {
           method: 'PUT',
           credentials: 'same-origin',
           headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: this.pageProtectionPassword })
+          body: JSON.stringify({ password })
         })
         if (!response.ok) throw await this.approvalResponseError(response, this.$t('common:page.pageProtectionUpdateError'))
         const protection = await response.json() as PageProtection
-        if (pageId !== this.pageId) return
+        if (!this.isCurrentPageAction(pageId, generation, requestId, this.protectionRequestId)) return
         this.pageProtection = protection
+        this.protectionAuthorityReady = true
         this.pageProtectionPassword = ''
         showNotification(wikiStore, {
           style: 'success',
           message: protection.version > 1 ? this.$t('common:page.passwordRotatedSuccess') : this.$t('common:page.passwordProtectionEnabledSuccess')
         })
       } catch (error) {
-        if (pageId === this.pageId) pushGraphError(wikiStore, error)
+        if (pageId !== this.pageId || generation !== this.pageActionGeneration || requestId !== this.protectionRequestId) return
+        this.protectionAuthorityReady = false
+        this.protectionError = getErrorMessage(error)
+        pushGraphError(wikiStore, error)
       } finally {
-        if (pageId === this.pageId) this.protectionLoading = false
+        if (pageId === this.pageId && generation === this.pageActionGeneration && requestId === this.protectionRequestId)
+          this.protectionLoading = false
       }
     },
-    async removePageProtection () {
-      if (this.protectionLoading) return
+    async removePageProtection (): Promise<void> {
+      if (this.protectionLoading || !this.pageProtectionActionReady) return
       const pageId = this.pageId
+      const generation = this.pageActionGeneration
+      const requestId = ++this.protectionRequestId
       this.protectionLoading = true
+      this.protectionAuthorityReady = false
       try {
         const response = await fetch(`/_api/pages/${pageId}/protection`, {
           method: 'DELETE',
@@ -2133,14 +2374,19 @@ export default defineComponent({
           headers: { Accept: 'application/json' }
         })
         if (!response.ok) throw await this.approvalResponseError(response, this.$t('common:page.pageProtectionRemovalError'))
-        if (pageId !== this.pageId) return
+        if (!this.isCurrentPageAction(pageId, generation, requestId, this.protectionRequestId)) return
         this.pageProtection = { protected: false, version: 0, updatedBy: null, updatedAt: null }
+        this.protectionAuthorityReady = true
         this.pageProtectionPassword = ''
         showNotification(wikiStore, { style: 'success', message: this.$t('common:page.passwordProtectionRemovedSuccess') })
       } catch (error) {
-        if (pageId === this.pageId) pushGraphError(wikiStore, error)
+        if (pageId !== this.pageId || generation !== this.pageActionGeneration || requestId !== this.protectionRequestId) return
+        this.protectionAuthorityReady = false
+        this.protectionError = getErrorMessage(error)
+        pushGraphError(wikiStore, error)
       } finally {
-        if (pageId === this.pageId) this.protectionLoading = false
+        if (pageId === this.pageId && generation === this.pageActionGeneration && requestId === this.protectionRequestId)
+          this.protectionLoading = false
       }
     },
     approvalStatusLabel (status: string) {
@@ -2152,31 +2398,57 @@ export default defineComponent({
       const payload = await response.json().catch(() => ({})) as { error?: unknown }
       return new Error(typeof payload.error === 'string' ? payload.error : `${fallback} (${response.status})`)
     },
-    async loadPageApproval () {
+    async loadPageApproval (): Promise<boolean> {
       const pageId = this.pageId
+      const generation = this.pageActionGeneration
+      const requestId = ++this.approvalRequestId
+      const actorTransportKey = this.pageAuthorityKey
+      const resourceKey = this.approvalResourceKey
+      const isCurrentRead = (): boolean =>
+        this.isCurrentPageAction(pageId, generation, requestId, this.approvalRequestId) &&
+        actorTransportKey === this.pageAuthorityKey
+      this.approvalAuthorityReady = false
+      this.approvalAuthorityReadyKey = null
       this.approvalInitialLoading = true
       this.approvalError = ''
+      if (!this.pageOnlineActionReady) {
+        if (isCurrentRead()) {
+          this.approvalInitialLoading = false
+          this.approvalError = this.pageOnlineActionUnavailableReason
+        }
+        return false
+      }
       try {
         const response = await fetch(`/_api/pages/${pageId}/approval`, {
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
+        if (!isCurrentRead() || !this.pageOnlineActionReady) return false
         if (!response.ok) throw await this.approvalResponseError(response, this.$t('common:page.pageApprovalRequestError'))
         const payload = await response.json() as { approval?: unknown }
-        if (pageId !== this.pageId) return
+        if (!isCurrentRead() || !this.pageOnlineActionReady || this.approvalResourceKey !== resourceKey) return false
         this.pageApproval = payload.approval && typeof payload.approval === 'object' ? payload.approval as PageApproval : null
         this.approvalAssigneeId = this.pageApproval?.assigneeId ?? null
+        const authorityKey = this.approvalAuthorityContextKey
+        if (!isCurrentRead() ||
+          !this.pageOnlineActionReady ||
+          authorityKey !== this.approvalAuthorityContextKey) return false
+        this.approvalAuthorityReadyKey = authorityKey
+        this.approvalAuthorityReady = true
+        return true
       } catch (error) {
-        if (pageId !== this.pageId) return
+        if (!isCurrentRead() || this.approvalResourceKey !== resourceKey) return false
+        this.approvalAuthorityReady = false
+        this.approvalAuthorityReadyKey = null
         this.approvalError = getErrorMessage(error)
         pushGraphError(wikiStore, error)
+        return false
       } finally {
-        if (pageId === this.pageId) this.approvalInitialLoading = false
+        if (requestId === this.approvalRequestId) this.approvalInitialLoading = false
       }
     },
     openApprovalWorkflow () {
       this.approvalComment = ''
-      this.approvalInitialLoading = true
       this.approvalError = ''
       this.approvalDialog = true
       void this.loadPageApproval()
@@ -2184,9 +2456,16 @@ export default defineComponent({
     async submitPageApproval () {
       if (this.approvalLoading) return
       const pageId = this.pageId
+      const generation = this.pageActionGeneration
+      const requestId = this.approvalRequestId
+      const authorityKey = this.approvalAuthorityReadyKey
+      const actorTransportKey = this.pageAuthorityKey
+      if (!this.isCurrentApprovalAuthority(pageId, generation, requestId, authorityKey)) return
       const expectedSourceRevision = this.sourceRevision
+      const mutationId = ++this.approvalMutationId
       this.approvalLoading = true
       try {
+        if (!this.isCurrentApprovalAuthority(pageId, generation, requestId, authorityKey)) return
         const response = await fetch(`/_api/pages/${pageId}/approval`, {
           method: 'POST',
           credentials: 'same-origin',
@@ -2197,24 +2476,70 @@ export default defineComponent({
             ...(this.approvalComment.trim() ? { comment: this.approvalComment.trim() } : {})
           })
         })
+        if (
+          pageId !== this.pageId ||
+          generation !== this.pageActionGeneration ||
+          mutationId !== this.approvalMutationId ||
+          requestId !== this.approvalRequestId ||
+          actorTransportKey !== this.pageAuthorityKey ||
+          !this.pageOnlineActionReady ||
+          this.approvalAuthorityReadyKey !== authorityKey ||
+          this.approvalAuthorityContextKey !== authorityKey
+        ) return
         if (!response.ok) throw await this.approvalResponseError(response, this.$t('common:page.approvalSubmissionError'))
-        if (pageId !== this.pageId) return
+        if (
+          pageId !== this.pageId ||
+          generation !== this.pageActionGeneration ||
+          mutationId !== this.approvalMutationId ||
+          actorTransportKey !== this.pageAuthorityKey ||
+          !this.pageOnlineActionReady
+        ) return
+        const [approvalAccepted] = await Promise.all([this.loadPageApproval(), useSiteNotificationsStore().refresh()])
+        if (
+          pageId !== this.pageId ||
+          generation !== this.pageActionGeneration ||
+          mutationId !== this.approvalMutationId ||
+          actorTransportKey !== this.pageAuthorityKey ||
+          !approvalAccepted ||
+          !this.approvalActionReady
+        ) return
         this.approvalComment = ''
-        await Promise.all([this.loadPageApproval(), useSiteNotificationsStore().refresh()])
         showNotification(wikiStore, { style: 'success', message: this.$t('common:page.approvalSubmittedSuccess') })
       } catch (error) {
-        if (pageId === this.pageId) pushGraphError(wikiStore, error)
+        if (
+          pageId !== this.pageId ||
+          generation !== this.pageActionGeneration ||
+          mutationId !== this.approvalMutationId ||
+          requestId !== this.approvalRequestId ||
+          actorTransportKey !== this.pageAuthorityKey ||
+          !this.pageOnlineActionReady ||
+          this.approvalAuthorityContextKey !== authorityKey
+        ) return
+        this.approvalAuthorityReady = false
+        this.approvalAuthorityReadyKey = null
+        pushGraphError(wikiStore, error)
       } finally {
-        if (pageId === this.pageId) this.approvalLoading = false
+        if (
+          pageId === this.pageId &&
+          generation === this.pageActionGeneration &&
+          mutationId === this.approvalMutationId
+        ) this.approvalLoading = false
       }
     },
     async transitionPageApproval (action: 'approve' | 'request-changes' | 'reject' | 'cancel' | 'resubmit' | 'publish' | 'reassign') {
       if (!this.pageApproval || this.approvalLoading) return
       const pageId = this.pageId
+      const generation = this.pageActionGeneration
+      const requestId = this.approvalRequestId
       const approvalId = this.pageApproval.id
+      const authorityKey = this.approvalAuthorityReadyKey
+      const actorTransportKey = this.pageAuthorityKey
+      if (!this.isCurrentApprovalAuthority(pageId, generation, requestId, authorityKey)) return
       const expectedSourceRevision = action === 'resubmit' ? this.sourceRevision : undefined
+      const mutationId = ++this.approvalMutationId
       this.approvalLoading = true
       try {
+        if (!this.isCurrentApprovalAuthority(pageId, generation, requestId, authorityKey)) return
         const response = await fetch(`/_api/pages/approvals/${encodeURIComponent(approvalId)}/transition`, {
           method: 'POST',
           credentials: 'same-origin',
@@ -2226,20 +2551,69 @@ export default defineComponent({
             ...(action === 'reassign' && this.approvalAssigneeId && this.approvalAssigneeId > 0 ? { assigneeId: this.approvalAssigneeId } : {})
           })
         })
+        if (
+          pageId !== this.pageId ||
+          generation !== this.pageActionGeneration ||
+          mutationId !== this.approvalMutationId ||
+          requestId !== this.approvalRequestId ||
+          actorTransportKey !== this.pageAuthorityKey ||
+          !this.pageOnlineActionReady ||
+          this.approvalAuthorityReadyKey !== authorityKey ||
+          this.approvalAuthorityContextKey !== authorityKey
+        ) return
         if (!response.ok) throw await this.approvalResponseError(response, this.$t('common:page.approvalTransitionError'))
-        if (pageId !== this.pageId) return
+        if (
+          pageId !== this.pageId ||
+          generation !== this.pageActionGeneration ||
+          mutationId !== this.approvalMutationId ||
+          actorTransportKey !== this.pageAuthorityKey ||
+          !this.pageOnlineActionReady
+        ) return
+        const [approvalAccepted] = await Promise.all([this.loadPageApproval(), useSiteNotificationsStore().refresh()])
+        if (
+          pageId !== this.pageId ||
+          generation !== this.pageActionGeneration ||
+          mutationId !== this.approvalMutationId ||
+          actorTransportKey !== this.pageAuthorityKey ||
+          !approvalAccepted ||
+          !this.approvalActionReady
+        ) return
         this.approvalComment = ''
-        await Promise.all([this.loadPageApproval(), useSiteNotificationsStore().refresh()])
         showNotification(wikiStore, { style: 'success', message: this.$t('common:page.approvalTransitionSuccess') })
       } catch (error) {
-        if (pageId === this.pageId) pushGraphError(wikiStore, error)
+        if (
+          pageId !== this.pageId ||
+          generation !== this.pageActionGeneration ||
+          mutationId !== this.approvalMutationId ||
+          requestId !== this.approvalRequestId ||
+          actorTransportKey !== this.pageAuthorityKey ||
+          !this.pageOnlineActionReady ||
+          this.approvalAuthorityContextKey !== authorityKey
+        ) return
+        this.approvalAuthorityReady = false
+        this.approvalAuthorityReadyKey = null
+        pushGraphError(wikiStore, error)
       } finally {
-        if (pageId === this.pageId) this.approvalLoading = false
+        if (
+          pageId === this.pageId &&
+          generation === this.pageActionGeneration &&
+          mutationId === this.approvalMutationId
+        ) this.approvalLoading = false
       }
     },
-    async loadPageWatchState () {
+    async loadPageWatchState (): Promise<boolean> {
       const pageId = this.pageId
+      const generation = this.pageActionGeneration
+      const requestId = ++this.pageWatchRequestId
+      if (!this.pageOnlineActionReady) {
+        if (pageId === this.pageId && generation === this.pageActionGeneration) {
+          this.pageWatchAuthorityReady = false
+          this.pageWatchLoading = false
+        }
+        return false
+      }
       this.pageWatchLoading = true
+      this.pageWatchAuthorityReady = false
       try {
         const response = await fetch(`/_api/pages/${pageId}/watch`, {
           credentials: 'same-origin',
@@ -2247,69 +2621,93 @@ export default defineComponent({
         })
         if (!response.ok) throw new Error(this.$t('common:page.pageWatchRequestError', { status: response.status }))
         const payload = await response.json() as { watched?: unknown; emailEnabled?: unknown; inAppEnabled?: unknown }
-        if (pageId !== this.pageId) return
+        if (!this.isCurrentPageAction(pageId, generation, requestId, this.pageWatchRequestId) || !this.pageOnlineActionReady) return false
         this.pageWatched = payload.watched === true
         this.pageWatchEmailEnabled = payload.emailEnabled === true
         this.pageWatchInAppEnabled = payload.inAppEnabled === true
+        this.pageWatchAuthorityReady = true
+        return true
       } catch (error) {
-        if (pageId === this.pageId) pushGraphError(wikiStore, error)
+        if (pageId !== this.pageId || generation !== this.pageActionGeneration || requestId !== this.pageWatchRequestId) return false
+        this.pageWatchAuthorityReady = false
+        pushGraphError(wikiStore, error)
+        return false
       } finally {
-        if (pageId === this.pageId) this.pageWatchLoading = false
+        if (pageId === this.pageId && generation === this.pageActionGeneration && requestId === this.pageWatchRequestId)
+          this.pageWatchLoading = false
       }
     },
-    async togglePageWatch () {
-      if (this.pageWatchLoading) return
+    async togglePageWatch (): Promise<void> {
+      if (this.pageWatchLoading || !this.pageOnlineActionReady || !this.pageWatchAuthorityReady) return
+      if (!await this.loadPageWatchState() || !this.pageWatchActionReady) return
       const pageId = this.pageId
+      const generation = this.pageActionGeneration
+      const requestId = ++this.pageWatchRequestId
+      const watched = this.pageWatched
       this.pageWatchLoading = true
+      this.pageWatchAuthorityReady = false
       try {
         const response = await fetch(`/_api/pages/${pageId}/watch`, {
-          method: this.pageWatched ? 'DELETE' : 'PUT',
+          method: watched ? 'DELETE' : 'PUT',
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
         if (!response.ok) throw new Error(this.$t('common:page.pageWatchRequestError', { status: response.status }))
         const payload = await response.json() as { watched?: unknown; emailEnabled?: unknown; inAppEnabled?: unknown }
-        if (pageId !== this.pageId) return
+        if (!this.isCurrentPageAction(pageId, generation, requestId, this.pageWatchRequestId) || !this.pageOnlineActionReady) return
         this.pageWatched = payload.watched === true
         if (this.pageWatched) {
           this.pageWatchEmailEnabled = payload.emailEnabled === true
           this.pageWatchInAppEnabled = payload.inAppEnabled === true
         }
+        this.pageWatchAuthorityReady = true
         showNotification(wikiStore, {
           style: 'success',
           message: this.pageWatched ? this.$t('common:page.watchEnabled') : this.$t('common:page.watchDisabled')
         })
       } catch (error) {
-        if (pageId === this.pageId) pushGraphError(wikiStore, error)
+        if (pageId !== this.pageId || generation !== this.pageActionGeneration || requestId !== this.pageWatchRequestId) return
+        this.pageWatchAuthorityReady = false
+        pushGraphError(wikiStore, error)
       } finally {
-        if (pageId === this.pageId) this.pageWatchLoading = false
+        if (pageId === this.pageId && generation === this.pageActionGeneration && requestId === this.pageWatchRequestId)
+          this.pageWatchLoading = false
       }
     },
-    async savePageWatchSettings () {
-      if (!this.pageWatched || this.pageWatchLoading) return
+    async savePageWatchSettings (): Promise<void> {
+      if (!this.pageWatched || this.pageWatchLoading || !this.pageWatchActionReady) return
+      const emailEnabled = this.pageWatchEmailEnabled
+      const inAppEnabled = this.pageWatchInAppEnabled
+      if (!await this.loadPageWatchState() || !this.pageWatchActionReady || !this.pageWatched) return
+      this.pageWatchEmailEnabled = emailEnabled
+      this.pageWatchInAppEnabled = inAppEnabled
       const pageId = this.pageId
+      const generation = this.pageActionGeneration
+      const requestId = ++this.pageWatchRequestId
       this.pageWatchLoading = true
+      this.pageWatchAuthorityReady = false
       try {
         const response = await fetch(`/_api/pages/${pageId}/watch`, {
           method: 'PUT',
           credentials: 'same-origin',
           headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            emailEnabled: this.pageWatchEmailEnabled,
-            inAppEnabled: this.pageWatchInAppEnabled
-          })
+          body: JSON.stringify({ emailEnabled, inAppEnabled })
         })
         if (!response.ok) throw new Error(this.$t('common:page.pageWatchSettingsRequestError', { status: response.status }))
+        const payload = await response.json() as { watched?: unknown; emailEnabled?: unknown; inAppEnabled?: unknown }
+        if (!this.isCurrentPageAction(pageId, generation, requestId, this.pageWatchRequestId) || !this.pageOnlineActionReady) return
+        this.pageWatched = payload.watched === true
+        this.pageWatchEmailEnabled = payload.emailEnabled === true
+        this.pageWatchInAppEnabled = payload.inAppEnabled === true
+        this.pageWatchAuthorityReady = true
       } catch (error) {
-        if (pageId !== this.pageId) return
+        if (pageId !== this.pageId || generation !== this.pageActionGeneration || requestId !== this.pageWatchRequestId) return
+        this.pageWatchAuthorityReady = false
         pushGraphError(wikiStore, error)
-        await this.loadPageWatchState()
       } finally {
-        if (pageId === this.pageId) this.pageWatchLoading = false
+        if (pageId === this.pageId && generation === this.pageActionGeneration && requestId === this.pageWatchRequestId)
+          this.pageWatchLoading = false
       }
-    },
-    goHome () {
-      navigateToWikiPage(this.locales && this.locales.length > 0 ? `/${this.locale}/home` : '/')
     },
     sidebarNavigationStarted () {
       if (this.$vuetify.display.width < 1280) this.navShown = false

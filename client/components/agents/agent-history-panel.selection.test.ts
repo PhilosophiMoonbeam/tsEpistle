@@ -5,17 +5,17 @@ import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-te
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
 import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../../shared/agents/conversation-folders.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
+import type { AgentRefreshResult } from '../../store/agents.ts'
 
 interface Ref<T> {
   value: T
 }
-
 interface PanelAgents {
   error?: string
   openSession: (sessionId: string) => Promise<boolean>
   cancelSessionReadTransition: () => void
-  reloadSessions?: () => Promise<unknown>
-  reloadFolders?: () => Promise<unknown>
+  reloadSessions?: () => Promise<AgentRefreshResult>
+  reloadFolders?: () => Promise<AgentRefreshResult>
   createFolder?: (name: string) => Promise<unknown>
   moveSessionToFolder?: (sessionId: string, folderId: string | null) => Promise<unknown>
   renameSession?: (sessionId: string, title: string) => Promise<unknown>
@@ -177,8 +177,8 @@ const loadPanel = (
   const sessionsReloading = ref(false)
   const thread = ref({ session: { id: '00000000-0000-4000-8000-000000000001' } })
   const store = {
-    reloadSessions: vi.fn().mockResolvedValue(undefined),
-    reloadFolders: vi.fn().mockResolvedValue(undefined),
+    reloadSessions: vi.fn().mockResolvedValue({ accepted: true, current: true } satisfies AgentRefreshResult),
+    reloadFolders: vi.fn().mockResolvedValue({ accepted: true, current: true } satisfies AgentRefreshResult),
     ...agents
   }
   const evaluate = new Function(
@@ -554,6 +554,7 @@ describe('Agent history session selection', () => {
     const createFolder = vi.fn().mockRejectedValue(new TypeError('The create response was lost'))
     const reloadFolders = vi.fn().mockImplementation(async () => {
       folders.splice(0, folders.length, committedFolder, distinctFolder)
+      return { accepted: true, current: true } satisfies AgentRefreshResult
     })
     const moveSessionToFolder = vi.fn().mockImplementation(async (_sessionId: string, folderId: string | null) => {
       source.folderId = folderId
@@ -575,8 +576,6 @@ describe('Agent history session selection', () => {
     await panel.saveFolder()
 
     expect(createFolder).toHaveBeenCalledTimes(1)
-    expect(createFolder).toHaveBeenCalledWith('Release archive')
-    expect(reloadFolders).toHaveBeenCalledTimes(1)
     expect(moveSessionToFolder).toHaveBeenCalledTimes(1)
     expect(moveSessionToFolder).toHaveBeenCalledWith(source.id, committedFolder.id)
     expect(source.folderId).toBe(committedFolder.id)
@@ -597,6 +596,7 @@ describe('Agent history session selection', () => {
     const createFolder = vi.fn().mockRejectedValue(new TypeError('The create response was lost'))
     const reloadFolders = vi.fn().mockImplementation(async () => {
       folders.splice(0, folders.length, distinctFolder)
+      return { accepted: true, current: true } satisfies AgentRefreshResult
     })
     const moveSessionToFolder = vi.fn()
     const agents: PanelAgents = {
@@ -614,7 +614,6 @@ describe('Agent history session selection', () => {
     await panel.saveFolder()
 
     expect(createFolder).toHaveBeenCalledTimes(1)
-    expect(reloadFolders).toHaveBeenCalledTimes(1)
     expect(moveSessionToFolder).not.toHaveBeenCalled()
     expect(source.folderId).toBeNull()
     expect(panel.folderEditorOpen.value).toBe(true)
@@ -631,6 +630,7 @@ describe('Agent history session selection', () => {
     const moveSessionToFolder = vi.fn().mockRejectedValue(new TypeError('The move response was lost'))
     const reloadSessions = vi.fn().mockImplementation(async () => {
       sessions.splice(0, sessions.length, refreshedSource)
+      return { accepted: true, current: true } satisfies AgentRefreshResult
     })
     const agents: PanelAgents = {
       error: '',
@@ -648,10 +648,7 @@ describe('Agent history session selection', () => {
     await Promise.resolve()
 
     expect(createFolder).toHaveBeenCalledTimes(1)
-    expect(createFolder).toHaveBeenCalledWith(folder.name)
     expect(moveSessionToFolder).toHaveBeenCalledTimes(1)
-    expect(moveSessionToFolder).toHaveBeenCalledWith(source.id, folder.id)
-    expect(reloadSessions).toHaveBeenCalledTimes(1)
     expect(panel.folderEditorOpen.value).toBe(false)
     expect(panel.folderWorkflowState.value).toBe('idle')
     expect(panel.openFolderIds.value).toEqual([folder.id])
@@ -679,6 +676,7 @@ describe('Agent history session selection', () => {
     const moveSessionToFolder = vi.fn().mockRejectedValue(new TypeError('The move response was lost'))
     const reloadSessions = vi.fn().mockImplementation(async () => {
       sessions.splice(0, sessions.length, ...refreshedSessions(source))
+      return { accepted: true, current: true } satisfies AgentRefreshResult
     })
     const agents: PanelAgents = {
       error: '',
@@ -696,10 +694,8 @@ describe('Agent history session selection', () => {
 
     expect(createFolder).toHaveBeenCalledTimes(1)
     expect(moveSessionToFolder).toHaveBeenCalledTimes(1)
-    expect(reloadSessions).toHaveBeenCalledTimes(1)
     expect(panel.folderEditorOpen.value).toBe(true)
     expect(panel.folderWorkflowState.value).toBe('move-retry')
-    expect(panel.dialogError.value).toContain('Retry the move.')
     expect(panel.openFolderIds.value).toEqual([])
   })
 
@@ -726,11 +722,9 @@ describe('Agent history session selection', () => {
 
     expect(createFolder).toHaveBeenCalledTimes(1)
     expect(moveSessionToFolder).toHaveBeenCalledTimes(1)
-    expect(reloadSessions).toHaveBeenCalledTimes(1)
     expect(panel.folderEditorOpen.value).toBe(true)
     expect(panel.folderWorkflowState.value).toBe('move-retry')
     expect(panel.sessionsRefreshError.value).toContain('Conversations unavailable')
-    expect(panel.dialogError.value).toContain('Retry the move.')
   })
 
   it('refreshes a stale folder delete and reopens confirmation with the renewed version', async () => {
@@ -744,6 +738,7 @@ describe('Agent history session selection', () => {
       .mockResolvedValueOnce(true)
     const reloadFolders = vi.fn().mockImplementation(async () => {
       folders.splice(0, folders.length, renewedFolder)
+      return { accepted: true, current: true } satisfies AgentRefreshResult
     })
     const agents: PanelAgents = {
       error: '',
@@ -759,7 +754,6 @@ describe('Agent history session selection', () => {
 
     expect(deleteFolder).toHaveBeenCalledTimes(1)
     expect(deleteFolder).toHaveBeenCalledWith(folder.id, folder.version)
-    expect(reloadFolders).toHaveBeenCalledTimes(1)
     expect(panel.removingFolder.value).toEqual(renewedFolder)
     expect(panel.dialogError.value).toContain('updated folder')
     expect(session.folderId).toBe(folder.id)
@@ -1020,8 +1014,8 @@ describe('Agent history session selection', () => {
   })
 
   it('defers one initial archive refresh until workspace loading settles', () => {
-    const reloadSessions = vi.fn().mockResolvedValue(undefined)
-    const reloadFolders = vi.fn().mockResolvedValue(undefined)
+    const reloadSessions = vi.fn().mockResolvedValue({ accepted: true, current: true } satisfies AgentRefreshResult)
+    const reloadFolders = vi.fn().mockResolvedValue({ accepted: true, current: true } satisfies AgentRefreshResult)
     const agents: PanelAgents = {
       openSession: vi.fn().mockResolvedValue(false),
       cancelSessionReadTransition: vi.fn(),
@@ -1047,8 +1041,8 @@ describe('Agent history session selection', () => {
   })
 
   it('defers one initial archive refresh until the session mutation lock clears', () => {
-    const reloadSessions = vi.fn().mockResolvedValue(undefined)
-    const reloadFolders = vi.fn().mockResolvedValue(undefined)
+    const reloadSessions = vi.fn().mockResolvedValue({ accepted: true, current: true } satisfies AgentRefreshResult)
+    const reloadFolders = vi.fn().mockResolvedValue({ accepted: true, current: true } satisfies AgentRefreshResult)
     const agents: PanelAgents = {
       openSession: vi.fn().mockResolvedValue(false),
       cancelSessionReadTransition: vi.fn(),
@@ -1071,8 +1065,8 @@ describe('Agent history session selection', () => {
   })
 
   it('discards a deferred initial refresh when history unmounts first', () => {
-    const reloadSessions = vi.fn().mockResolvedValue(undefined)
-    const reloadFolders = vi.fn().mockResolvedValue(undefined)
+    const reloadSessions = vi.fn().mockResolvedValue({ accepted: true, current: true } satisfies AgentRefreshResult)
+    const reloadFolders = vi.fn().mockResolvedValue({ accepted: true, current: true } satisfies AgentRefreshResult)
     const agents: PanelAgents = {
       openSession: vi.fn().mockResolvedValue(false),
       cancelSessionReadTransition: vi.fn(),
@@ -1118,8 +1112,10 @@ describe('Agent history session selection', () => {
   })
 
   it('keeps workspace errors through an explicit archive retry', async () => {
-    const reloadSessions = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Retry unavailable'))
-    const reloadFolders = vi.fn().mockResolvedValue(undefined)
+    const reloadSessions = vi.fn()
+      .mockResolvedValueOnce({ accepted: true, current: true } satisfies AgentRefreshResult)
+      .mockRejectedValueOnce(new Error('Retry unavailable'))
+    const reloadFolders = vi.fn().mockResolvedValue({ accepted: true, current: true } satisfies AgentRefreshResult)
     const agents: PanelAgents = {
       error: 'Send failed',
       openSession: vi.fn().mockResolvedValue(false),

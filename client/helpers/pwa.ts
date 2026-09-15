@@ -1,29 +1,53 @@
 import { reactive, readonly } from 'vue'
+import { OFFLINE_DOCUMENT_PATH, isOwnedPrecacheCacheName } from './pwa-route-policy.ts'
 
 const SERVICE_WORKER_PATH = '/sw.js'
 const SERVICE_WORKER_SCOPE = '/'
 const SERVER_PROBE_PATH = '/healthz'
 const RELOAD_SAFETY_MESSAGE = 'PWA_RELOAD_SAFETY'
 const RELOAD_SAFETY_REQUEST_MESSAGE = 'PWA_RELOAD_SAFETY_REQUEST'
-const ACTIVATE_UPDATE_MESSAGE = 'PWA_ACTIVATE_UPDATE'
+const PREPARE_UPDATE_MESSAGE = 'PWA_PREPARE_UPDATE'
+const UPDATE_PREPARING_MESSAGE = 'PWA_UPDATE_PREPARING'
+const UPDATE_DEFERRED_MESSAGE = 'PWA_UPDATE_DEFERRED'
+const UPDATE_ACTIVATING_MESSAGE = 'PWA_UPDATE_ACTIVATING'
 const ACTIVATED_UPDATE_MESSAGE = 'PWA_UPDATE_ACTIVATED'
-const PWA_CHANNEL_NAME = 'tsepistle-pwa'
+const OFFLINE_READY_MESSAGE = 'PWA_OFFLINE_READY'
+const OFFLINE_NOT_READY_MESSAGE = 'PWA_OFFLINE_NOT_READY'
+const RETIREMENT_NOTICE_MESSAGE = 'PWA_RETIREMENT_NOTICE'
+const OFFLINE_READY_REQUEST_MESSAGE = 'PWA_OFFLINE_READY_REQUEST'
 const INSTALL_EVENT = 'beforeinstallprompt'
 const INSTALLED_EVENT = 'appinstalled'
+const PROBE_DEADLINE_MS = 5_000
+const WAITING_WORKER_DEADLINE_MS = 8_000
 
 type ServiceWorkerMessageTarget = Pick<ServiceWorker, 'postMessage'>
-type InstallChoice = { outcome: 'accepted' | 'dismissed' }
+export type PwaInstallOutcome = 'accepted' | 'dismissed'
+type InstallChoice = { outcome: PwaInstallOutcome }
+type PwaGlobal = typeof globalThis & {
+  siteConfig?: { pwaMode?: unknown }
+}
 
 export type BeforeInstallPromptEvent = Event & {
   prompt(): Promise<void>
   userChoice: Promise<InstallChoice>
 }
 
+export type PwaMode = 'feature' | 'retirement'
 export type PwaConnectionState = 'checking' | 'online' | 'offline' | 'server-unavailable'
 export type PwaRegistrationState = 'unsupported' | 'idle' | 'registering' | 'registered' | 'ready' | 'error'
 export type PwaUpdateState = 'idle' | 'checking' | 'ready' | 'activating' | 'activated' | 'error'
+export type PwaPreparationState = 'idle' | 'checking' | 'collecting' | 'deferred' | 'activating' | 'activated' | 'error'
+export type PwaOfflineReadinessState = 'unknown' | 'checking' | 'ready' | 'unavailable'
 export type PwaInstallAvailability = 'unavailable' | 'available' | 'installed'
-export type ReloadSafetyProvider = () => boolean | Promise<boolean>
+
+/** Complete facts used for a revision-bound worker safety vote. */
+export interface ReloadSafetySnapshot {
+  readonly safe: boolean
+  readonly revision: string
+  readonly actorEpoch?: string | number
+}
+
+export type ReloadSafetyProvider = () => ReloadSafetySnapshot | Promise<ReloadSafetySnapshot>
 
 export type PwaLifecycleCallbacks = {
   onReady?: (registration: ServiceWorkerRegistration) => void
@@ -34,6 +58,9 @@ export type PwaLifecycleCallbacks = {
 }
 
 export type PwaState = {
+  readonly mode: PwaMode
+  readonly retirement: boolean
+  readonly retirementNotice: boolean
   readonly connection: PwaConnectionState
   readonly connectionState: PwaConnectionState
   readonly onlineHint: boolean | null
@@ -45,14 +72,24 @@ export type PwaState = {
   readonly registrationError: string | null
   readonly controller: ServiceWorker | null
   readonly controlled: boolean
+  readonly offlineReadiness: PwaOfflineReadinessState
   readonly offlineReady: boolean
+  readonly offlineReadyRelease: string | null
+  readonly offlineReadyManifestDigest: string | null
+  readonly workerRelease: string | null
   readonly updateState: PwaUpdateState
   readonly updateReady: boolean
   readonly updateError: string | null
+  readonly preparation: PwaPreparationState
+  readonly preparationReason: string | null
   readonly reloadNeeded: boolean
   readonly reloadSafe: boolean | null
+  readonly safetyRevision: string | null
   readonly installAvailability: PwaInstallAvailability
   readonly installPromptAvailable: boolean
+  readonly installAccepted: boolean
+  readonly installOutcome: PwaInstallOutcome | null
+  readonly appInstalled: boolean
   readonly installed: boolean
   readonly installError: string | null
   readonly isStandalone: boolean
@@ -63,9 +100,23 @@ type MutablePwaState = {
   -readonly [K in keyof PwaState]: PwaState[K]
 }
 
+const readPwaMode = (): PwaMode => {
+  const globalConfig = (globalThis as PwaGlobal).siteConfig?.pwaMode
+  const meta = typeof document !== 'undefined' ? document.querySelector('meta[name="tsepistle-pwa-mode"]')?.getAttribute('content') : null
+  const value = typeof meta === 'string' && meta.trim() ? meta.trim().toLowerCase() : globalConfig
+  return value === 'retirement' ? 'retirement' : 'feature'
+}
+
+const configuredMode = readPwaMode()
+
+/** The process-controlled mode captured by this document at bootstrap. */
+export const currentPwaMode = (): PwaMode => configuredMode
 const state = reactive<MutablePwaState>({
-  connection: 'checking',
-  connectionState: 'checking',
+  mode: configuredMode,
+  retirement: configuredMode === 'retirement',
+  retirementNotice: configuredMode === 'retirement',
+  connection: configuredMode === 'retirement' ? 'server-unavailable' : 'checking',
+  connectionState: configuredMode === 'retirement' ? 'server-unavailable' : 'checking',
   onlineHint: typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean' ? navigator.onLine : null,
   serverReachable: null,
   serverHealthy: null,
@@ -75,14 +126,24 @@ const state = reactive<MutablePwaState>({
   registrationError: null,
   controller: null,
   controlled: false,
+  offlineReadiness: configuredMode === 'retirement' ? 'unavailable' : 'unknown',
   offlineReady: false,
+  offlineReadyRelease: null,
+  offlineReadyManifestDigest: null,
+  workerRelease: null,
   updateState: 'idle',
   updateReady: false,
   updateError: null,
+  preparation: 'idle',
+  preparationReason: null,
   reloadNeeded: false,
   reloadSafe: null,
+  safetyRevision: null,
   installAvailability: 'unavailable',
   installPromptAvailable: false,
+  installAccepted: false,
+  installOutcome: null,
+  appInstalled: false,
   installed: false,
   installError: null,
   isStandalone: false,
@@ -92,30 +153,53 @@ const state = reactive<MutablePwaState>({
 // `readonly(reactive(...))` gives consumers one stable, reactive, mutation-safe view.
 export const pwaState: Readonly<PwaState> = readonly(state)
 
-let installPrompt: BeforeInstallPromptEvent | null = null
-let installListenersAttached = false
-let serviceWorkerListenersAttached = false
-let registrationPromise: Promise<ServiceWorkerRegistration | null> | undefined
-let registrationReference: ServiceWorkerRegistration | null = null
-let activeController: ServiceWorker | null = null
-let safetyProvider: ReloadSafetyProvider = () => true
-let safetySequence = 0
-let probePromise: Promise<boolean> | undefined
-let updateRequestInFlight: Promise<boolean> | undefined
-let channel: BroadcastChannel | null = null
-let callbackSet: PwaLifecycleCallbacks = {}
-let observedWaitingWorker: ServiceWorker | null = null
-let observedInstallingWorker: ServiceWorker | null = null
+type PromptOffer = {
+  event: BeforeInstallPromptEvent
+  token: number
+}
+
 type AcceptedActivation = {
   nonce: string
+  workerId: string
+  release: string
   worker: ServiceWorker | null
   activatedWorker: ServiceWorker | null
 }
 
+type SafetyRequestContext = {
+  workerId?: string
+  release?: string
+  roundNonce?: string
+}
+
+type ProbeAttempt = {
+  epoch: number
+  controller: AbortController
+  promise: Promise<boolean>
+}
+
+let installPrompt: PromptOffer | null = null
+let installOfferSequence = 0
+let installPromptInFlight: Promise<InstallChoice['outcome'] | null> | undefined
+let installListenersAttached = false
+let serviceWorkerListenersAttached = false
+let registrationInFlight: Promise<ServiceWorkerRegistration | null> | undefined
+let registrationReference: ServiceWorkerRegistration | null = null
+let activeController: ServiceWorker | null = null
+let safetyProvider: ReloadSafetyProvider = () => ({ safe: true, revision: 'initial' })
+let safetySequence = 0
+let activeSafetyRequest: { target: ServiceWorkerMessageTarget; context: SafetyRequestContext } | null = null
+let connectionEpoch = 0
+let activeProbe: ProbeAttempt | undefined
+let updateRequestInFlight: Promise<boolean> | undefined
+let callbackSet: PwaLifecycleCallbacks = {}
+const observedWorkers = new WeakSet<ServiceWorker>()
 let acceptedActivation: AcceptedActivation | null = null
 let deferredReloadWorker: ServiceWorker | null = null
-const reloadRequestedWorkers = new WeakSet<ServiceWorker>()
+const reloadRequestedActivations = new Set<string>()
 let readyNotified = false
+let offlineReadinessEpoch = 0
+let offlineReadyNotifiedRelease: string | null = null
 let updateReadyWorker: ServiceWorker | null = null
 
 const hasWindow = (): boolean => typeof window !== 'undefined' && typeof document !== 'undefined'
@@ -162,8 +246,11 @@ const setRegistrationError = (error: unknown, fallback = 'Service worker registr
   state.registrationState = 'error'
   state.registrationError = message
   state.error = message
-  state.updateError = message
-  state.updateState = 'error'
+  if (!state.offlineReady) state.offlineReadiness = 'unavailable'
+  if (state.updateState === 'checking' || state.preparation === 'checking') {
+    state.updateState = 'error'
+    state.preparation = 'error'
+  }
   notifyError(error)
 }
 
@@ -184,64 +271,85 @@ const workerTargets = (registration: ServiceWorkerRegistration | null): ServiceW
   add(currentServiceWorkerContainer()?.controller)
   add(registration?.active)
   add(registration?.waiting)
+  add(registration?.installing)
   return targets
 }
 
-const postToWorkers = (message: unknown, registration = registrationReference): void => {
-  for (const worker of workerTargets(registration)) {
-    try {
-      worker.postMessage(message)
-    } catch {
-      // A worker can become redundant between selecting it and posting. The
-      // registration/controller events will provide the next opportunity.
-    }
-  }
-}
-
-const broadcast = (message: unknown): void => {
+const postToWorker = (worker: ServiceWorkerMessageTarget | null | undefined, message: unknown): void => {
+  if (!worker) return
   try {
-    channel?.postMessage(message)
+    worker.postMessage(message)
   } catch {
-    // BroadcastChannel is an optional coordination enhancement.
+    // A worker can become redundant between selecting it and posting.
   }
 }
 
-const createActivationNonce = (): string => {
-  const cryptoApi = globalThis.crypto
-  if (cryptoApi && typeof cryptoApi.randomUUID === 'function') return cryptoApi.randomUUID()
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+const postToWorkers = (message: unknown, registration = registrationReference): void => {
+  for (const worker of workerTargets(registration)) postToWorker(worker, message)
 }
 
-const noteAcceptedActivation = (nonce: unknown, worker?: ServiceWorker | null): void => {
-  if (typeof nonce !== 'string' || nonce.length === 0) return
-  const resolvedWorker = worker ?? registrationReference?.waiting ?? null
+const knownWorker = (candidate: ServiceWorker | null, registration = registrationReference): boolean =>
+  Boolean(candidate && workerTargets(registration).includes(candidate))
+
+const readSafetySnapshot = async (): Promise<ReloadSafetySnapshot> => {
+  try {
+    const snapshot = await safetyProvider()
+    if (
+      snapshot &&
+      typeof snapshot === 'object' &&
+      typeof snapshot.safe === 'boolean' &&
+      typeof snapshot.revision === 'string' &&
+      snapshot.revision.trim().length > 0
+    ) {
+      return snapshot
+    }
+  } catch {
+    // An unavailable safety provider is unsafe.
+  }
+  return { safe: false, revision: `unavailable-${safetySequence}` }
+}
+
+const noteAcceptedActivation = (
+  nonce: string,
+  workerId: string,
+  release: string,
+  worker: ServiceWorker | null,
+  activatedWorker: ServiceWorker | null = null
+): void => {
   if (acceptedActivation?.nonce === nonce) {
-    if (!acceptedActivation.worker && resolvedWorker) acceptedActivation.worker = resolvedWorker
+    if (!acceptedActivation.worker && worker) acceptedActivation.worker = worker
+    if (!acceptedActivation.activatedWorker && activatedWorker) acceptedActivation.activatedWorker = activatedWorker
     return
   }
-  acceptedActivation = { nonce, worker: resolvedWorker, activatedWorker: null }
+  acceptedActivation = { nonce, workerId, release, worker, activatedWorker }
   deferredReloadWorker = null
+  state.reloadNeeded = false
   state.updateReady = true
   state.updateState = 'activating'
 }
 
 const maybeReloadAcceptedWorker = async (worker: ServiceWorker): Promise<void> => {
-  if (reloadRequestedWorkers.has(worker)) return
+  const activation = acceptedActivation
+  if (
+    !activation ||
+    (activation.worker !== worker && activation.activatedWorker !== worker) ||
+    reloadRequestedActivations.has(activation.nonce)
+  )
+    return
   deferredReloadWorker = worker
-  let safe = false
-  try {
-    safe = (await safetyProvider()) === true
-  } catch {
-    safe = false
-  }
-  state.reloadSafe = safe
-  if (!safe) {
+  const sequence = ++safetySequence
+  const snapshot = await readSafetySnapshot()
+  if (sequence !== safetySequence || acceptedActivation !== activation) return
+  state.reloadSafe = snapshot.safe
+  state.safetyRevision = snapshot.revision
+  if (!snapshot.safe) {
     state.reloadNeeded = true
     return
   }
-  const activation = acceptedActivation
-  if (!activation || (activation.worker !== worker && activation.activatedWorker !== worker)) return
-  reloadRequestedWorkers.add(worker)
+  // No await occurs after this final actor/epoch/revision check and before the
+  // once-per-activated-epoch callback.
+  reloadRequestedActivations.add(activation.nonce)
+  deferredReloadWorker = null
   state.reloadNeeded = false
   try {
     callbackSet.onNeedReload?.()
@@ -254,56 +362,54 @@ const retryDeferredReload = (): void => {
   if (deferredReloadWorker) void maybeReloadAcceptedWorker(deferredReloadWorker)
 }
 
-const reportReloadSafety = async (nonce?: string, target?: ServiceWorkerMessageTarget | null): Promise<boolean> => {
+const reportReloadSafety = async (
+  context: SafetyRequestContext = {},
+  target: ServiceWorkerMessageTarget | null = null
+): Promise<boolean> => {
+  if (target) activeSafetyRequest = { target, context }
   const sequence = ++safetySequence
-  let safe = false
-  try {
-    safe = (await safetyProvider()) === true
-  } catch {
-    safe = false
+  const snapshot = await readSafetySnapshot()
+  if (sequence !== safetySequence) return false
+  state.reloadSafe = snapshot.safe
+  state.safetyRevision = snapshot.revision
+  const message: Record<string, unknown> = {
+    type: RELOAD_SAFETY_MESSAGE,
+    safe: snapshot.safe,
+    revision: snapshot.revision
   }
-  if (sequence === safetySequence) state.reloadSafe = safe
-  const message: { type: string; safe: boolean; nonce?: string } = { type: RELOAD_SAFETY_MESSAGE, safe }
-  if (nonce) message.nonce = nonce
-  if (target) {
-    try {
-      target.postMessage(message)
-    } catch {
-      // A worker can become redundant before the report is sent.
-    }
-  } else {
-    postToWorkers(message)
-  }
-  broadcast(nonce ? { type: 'safety-report', safe, nonce } : { type: 'safety-report', safe })
-  if (sequence === safetySequence) retryDeferredReload()
-  return safe
+  if (snapshot.actorEpoch !== undefined) message.actorEpoch = snapshot.actorEpoch
+  if (context.workerId) message.workerId = context.workerId
+  if (context.release) message.release = context.release
+  if (context.roundNonce) message.roundNonce = context.roundNonce
+  if (target) postToWorker(target, message)
+  else postToWorkers(message)
+  retryDeferredReload()
+  return snapshot.safe
 }
 
-const requestSafetyReports = (): void => {
-  broadcast({ type: 'safety-request' })
-  void reportReloadSafety()
-  const activation = acceptedActivation
-  if (activation && !activation.activatedWorker && activation.worker) {
-    void reportReloadSafety(activation.nonce, activation.worker)
-  }
-}
-
-const handleActivatedUpdate = (nonce: string, source: ServiceWorkerMessageTarget | null): void => {
+const handleActivatedUpdate = (
+  nonce: string,
+  workerId: string,
+  release: string,
+  source: ServiceWorkerMessageTarget | null
+): void => {
   const sourceWorker = source as ServiceWorker | null
   let activation = acceptedActivation
   if (!activation || activation.nonce !== nonce) {
     const currentController = currentServiceWorkerContainer()?.controller ?? null
-    if (!sourceWorker || !currentController || sourceWorker !== currentController) return
-    noteAcceptedActivation(nonce, sourceWorker)
+    if (!sourceWorker || sourceWorker !== currentController || !knownWorker(sourceWorker)) return
+    noteAcceptedActivation(nonce, workerId, release, sourceWorker, sourceWorker)
     activation = acceptedActivation
   }
   if (!activation) return
-  const activatedWorker = sourceWorker ?? activation.worker ?? currentServiceWorkerContainer()?.controller ?? null
+  if (activation.workerId !== workerId || activation.release !== release) return
+  const activatedWorker = sourceWorker ?? activation.activatedWorker ?? activation.worker
   if (!activatedWorker) return
-  if (!activation.worker && sourceWorker) activation.worker = sourceWorker
   activation.activatedWorker = activatedWorker
   state.updateReady = false
   state.updateState = 'activated'
+  state.preparation = 'activated'
+  state.preparationReason = null
   state.reloadNeeded = true
   deferredReloadWorker = activatedWorker
   void maybeReloadAcceptedWorker(activatedWorker)
@@ -314,41 +420,223 @@ const markController = (controller: ServiceWorker | null): void => {
   activeController = controller
   state.controller = controller
   state.controlled = controller !== null
-  if (controller && !state.offlineReady && registrationReference) markOfflineReady(registrationReference)
   const activation = acceptedActivation
-  const acceptedController = Boolean(controller && activation && (activation.worker === controller || activation.activatedWorker === controller))
+  const acceptedController = Boolean(
+    controller && activation && activation.release === state.workerRelease && (activation.worker === controller || activation.activatedWorker === controller)
+  )
   if (controller && previous && controller !== previous && acceptedController) {
     if (activation) activation.activatedWorker = controller
     state.reloadNeeded = true
     deferredReloadWorker = controller
-    broadcast({ type: 'reload-needed', nonce: activation?.nonce })
+    state.updateState = 'activated'
+    state.preparation = 'activated'
     void maybeReloadAcceptedWorker(controller)
   }
   if (acceptedController && controller) {
     state.updateState = 'activated'
     state.updateReady = false
   }
-  requestSafetyReports()
+  requestOfflineReadiness()
 }
 
-const markOfflineReady = (registration: ServiceWorkerRegistration): void => {
-  if (state.offlineReady) return
+const extractMetaContent = (html: string, name: string): string | null => {
+  const expected = name.toLowerCase()
+  for (const tag of html.match(/<meta\b[^>]*>/giu) ?? []) {
+    const nameMatch = /\bname\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/iu.exec(tag)
+    const contentMatch = /\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/iu.exec(tag)
+    const actual = nameMatch?.[1] ?? nameMatch?.[2] ?? nameMatch?.[3]
+    if (actual?.trim().toLowerCase() === expected) return (contentMatch?.[1] ?? contentMatch?.[2] ?? contentMatch?.[3] ?? '').trim()
+  }
+  return null
+}
+
+const verifyOfflineCache = async (
+  cacheName: string,
+  release: string,
+  manifestDigest: string,
+  markerURL: string
+): Promise<boolean> => {
+  if (!isOwnedPrecacheCacheName(cacheName) || /-candidate-/u.test(cacheName) || typeof caches === 'undefined') return false
+  let marker: URL
+  try {
+    marker = new URL(markerURL, window.location.origin)
+  } catch {
+    return false
+  }
+  if (marker.origin !== window.location.origin || marker.pathname !== OFFLINE_DOCUMENT_PATH || !marker.searchParams.has('__tsepistle_pwa_complete')) return false
+  try {
+    const cache = await caches.open(cacheName)
+    const shell = await cache.match(new URL(OFFLINE_DOCUMENT_PATH, window.location.origin).href)
+    const markerResponse = await cache.match(marker.href)
+    if (!shell || !markerResponse) return false
+    const markerValue = (await markerResponse.json()) as { release?: unknown; manifestDigest?: unknown; cacheName?: unknown }
+    if (markerValue.release !== release || markerValue.manifestDigest !== manifestDigest || markerValue.cacheName !== cacheName) return false
+    if (typeof shell.clone === 'function') {
+      const shellRelease = extractMetaContent(await shell.clone().text(), 'tsepistle-pwa-release')
+      if (shellRelease !== null && shellRelease !== release) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+const markOfflineUnavailable = (): void => {
+  offlineReadinessEpoch += 1
+  state.offlineReady = false
+  state.offlineReadiness = 'unavailable'
+  state.offlineReadyRelease = null
+  state.offlineReadyManifestDigest = null
+}
+
+const markOfflineReady = async (
+  registration: ServiceWorkerRegistration,
+  source: ServiceWorker,
+  message: {
+    complete?: unknown
+    release?: unknown
+    manifestDigest?: unknown
+    cacheName?: unknown
+    shellPath?: unknown
+    markerURL?: unknown
+  }
+): Promise<void> => {
+  if (
+    state.mode === 'retirement' ||
+    message.complete !== true ||
+    typeof message.release !== 'string' ||
+    message.release.length === 0 ||
+    typeof message.manifestDigest !== 'string' ||
+    !/^[0-9a-f]{16}$/u.test(message.manifestDigest) ||
+    typeof message.cacheName !== 'string' ||
+    message.shellPath !== OFFLINE_DOCUMENT_PATH ||
+    typeof message.markerURL !== 'string' ||
+    !knownWorker(source, registration)
+  ) {
+    markOfflineUnavailable()
+    return
+  }
+  const release = message.release
+  const manifestDigest = message.manifestDigest
+  const cacheName = message.cacheName
+  const markerURL = message.markerURL
+  if (state.workerRelease && state.workerRelease !== release && source !== registration.waiting && source !== registration.installing) return
+  const readinessEpoch = ++offlineReadinessEpoch
+  state.offlineReadiness = 'checking'
+  const verified = await verifyOfflineCache(cacheName, release, manifestDigest, markerURL)
+  if (readinessEpoch !== offlineReadinessEpoch || registrationReference !== registration || !knownWorker(source, registration)) return
+  if (!verified) {
+    markOfflineUnavailable()
+    return
+  }
   state.offlineReady = true
+  state.offlineReadiness = 'ready'
+  state.offlineReadyRelease = release
+  state.offlineReadyManifestDigest = manifestDigest
+  state.workerRelease = release
   state.registrationState = 'ready'
+  if (offlineReadyNotifiedRelease === release) return
+  offlineReadyNotifiedRelease = release
   try {
     callbackSet.onOfflineReady?.(registration)
   } catch {
-    // Lifecycle callbacks are observers and must not break registration.
+    // Lifecycle callbacks are observers and must not break readiness.
   }
+}
+
+const requestOfflineReadiness = (): void => {
+  if (state.mode === 'retirement' || !registrationReference) return
+  if (!state.offlineReady) state.offlineReadiness = 'checking'
+  postToWorkers({ type: OFFLINE_READY_REQUEST_MESSAGE }, registrationReference)
+}
+
+const handleUpdatePreparing = (
+  message: { workerId?: unknown; release?: unknown; roundNonce?: unknown; phase?: unknown },
+  source: ServiceWorkerMessageTarget | null
+): void => {
+  const sourceWorker = source as ServiceWorker | null
+  if (
+    !sourceWorker ||
+    !knownWorker(sourceWorker) ||
+    typeof message.workerId !== 'string' ||
+    typeof message.release !== 'string' ||
+    typeof message.roundNonce !== 'string' ||
+    (message.phase !== 'collecting' && message.phase !== 'activating')
+  )
+    return
+  state.workerRelease = message.release
+  state.updateReady = true
+  state.preparation = message.phase
+  state.preparationReason = null
+  state.updateState = message.phase === 'activating' ? 'activating' : 'ready'
+  if (message.phase === 'activating') {
+    noteAcceptedActivation(message.roundNonce, message.workerId, message.release, sourceWorker)
+  }
+}
+
+const handleUpdateDeferred = (
+  message: { workerId?: unknown; release?: unknown; roundNonce?: unknown; reason?: unknown },
+  source: ServiceWorkerMessageTarget | null
+): void => {
+  const sourceWorker = source as ServiceWorker | null
+  if (
+    !sourceWorker ||
+    !knownWorker(sourceWorker) ||
+    typeof message.workerId !== 'string' ||
+    typeof message.release !== 'string' ||
+    typeof message.roundNonce !== 'string'
+  )
+    return
+  if (acceptedActivation?.nonce === message.roundNonce) acceptedActivation = null
+  state.preparation = 'deferred'
+  state.preparationReason = typeof message.reason === 'string' ? message.reason : 'The update was deferred until every document is safe.'
+  state.updateState = 'ready'
+  state.updateReady = Boolean(registrationReference?.waiting)
+  state.updateError = null
+}
+
+const observeWorker = (registration: ServiceWorkerRegistration, worker: ServiceWorker | null): void => {
+  if (!worker || typeof worker.addEventListener !== 'function' || observedWorkers.has(worker)) return
+  observedWorkers.add(worker)
+  worker.addEventListener('statechange', () => {
+    const container = currentServiceWorkerContainer()
+    if (worker.state === 'installed') {
+      if (container?.controller && worker !== container.controller) markUpdateReady(registration)
+      requestOfflineReadiness()
+      return
+    }
+    if (worker.state === 'activating') {
+      state.updateState = 'activating'
+      state.preparation = 'activating'
+      return
+    }
+    if (worker.state === 'activated') {
+      markController(container?.controller ?? null)
+      requestOfflineReadiness()
+      return
+    }
+    if (worker.state === 'redundant') {
+      const initialInstallFailure = !registration.active && !container?.controller && registration.waiting !== worker
+      if (initialInstallFailure) {
+        registrationReference = null
+        state.registration = null
+        state.controller = null
+        state.controlled = false
+        activeController = null
+        setRegistrationError(new Error('The service worker installation became redundant.'))
+      } else if (worker === updateReadyWorker && state.updateState === 'activating') {
+        state.updateState = 'error'
+        state.preparation = 'error'
+        state.updateError = 'The service worker update became redundant before activation.'
+      }
+    }
+  })
 }
 
 const markUpdateReady = (registration: ServiceWorkerRegistration): void => {
   const waiting = registration.waiting
   if (!waiting) return
-  if (acceptedActivation?.worker === null) acceptedActivation.worker = waiting
-  const activationPending = acceptedActivation !== null && acceptedActivation.worker === waiting && !acceptedActivation.activatedWorker
   state.updateReady = true
-  state.updateState = activationPending ? 'activating' : 'ready'
+  state.updateState = state.preparation === 'activating' ? 'activating' : 'ready'
   state.updateError = null
   if (updateReadyWorker === waiting) return
   updateReadyWorker = waiting
@@ -357,36 +645,6 @@ const markUpdateReady = (registration: ServiceWorkerRegistration): void => {
   } catch {
     // Lifecycle callbacks are observers and must not break registration.
   }
-  broadcast({ type: 'update-ready' })
-  requestSafetyReports()
-}
-
-const observeWorker = (registration: ServiceWorkerRegistration, worker: ServiceWorker | null): void => {
-  if (!worker || typeof worker.addEventListener !== 'function') return
-  if (worker === observedInstallingWorker || worker === observedWaitingWorker) return
-  if (worker.state === 'installing') observedInstallingWorker = worker
-  if (worker.state === 'installed' || worker.state === 'activating' || worker.state === 'activated') observedWaitingWorker = worker
-  worker.addEventListener('statechange', () => {
-    const container = currentServiceWorkerContainer()
-    if (worker.state === 'installed') {
-      if (container?.controller) markUpdateReady(registration)
-      else markOfflineReady(registration)
-      return
-    }
-    if (worker.state === 'activating') {
-      state.updateState = 'activating'
-      return
-    }
-    if (worker.state === 'activated') {
-      markOfflineReady(registration)
-      markController(container?.controller ?? null)
-      return
-    }
-    if (worker.state === 'redundant' && state.updateState === 'activating') {
-      state.updateState = 'error'
-      state.updateError = 'The service worker update became redundant before activation.'
-    }
-  })
 }
 
 const attachRegistrationListeners = (registration: ServiceWorkerRegistration): void => {
@@ -395,14 +653,18 @@ const attachRegistrationListeners = (registration: ServiceWorkerRegistration): v
       observeWorker(registration, registration.installing)
       state.updateError = null
       state.updateState = 'checking'
+      state.preparation = 'checking'
+      state.preparationReason = null
+      state.updateReady = false
+      updateReadyWorker = null
     })
   }
   observeWorker(registration, registration.installing)
   observeWorker(registration, registration.waiting)
   if (registration.waiting) markUpdateReady(registration)
   if (registration.active) {
-    markOfflineReady(registration)
-    state.registrationState = 'ready'
+    observeWorker(registration, registration.active)
+    requestOfflineReadiness()
   }
 }
 
@@ -416,16 +678,87 @@ const attachServiceWorkerListeners = (): void => {
     container.addEventListener('message', event => {
       const messageEvent = event as MessageEvent
       if (typeof messageEvent.data !== 'object' || messageEvent.data === null) return
-      const message = messageEvent.data as { type?: unknown; nonce?: unknown }
+      const message = messageEvent.data as {
+        type?: unknown
+        workerId?: unknown
+        release?: unknown
+        roundNonce?: unknown
+        safe?: unknown
+        revision?: unknown
+        actorEpoch?: unknown
+        phase?: unknown
+        reason?: unknown
+        complete?: unknown
+        manifestDigest?: unknown
+        cacheName?: unknown
+        shellPath?: unknown
+        markerURL?: unknown
+      }
       const sourceCandidate = messageEvent.source
-      const source = sourceCandidate && typeof sourceCandidate.postMessage === 'function' ? (sourceCandidate as ServiceWorkerMessageTarget) : null
-      if (message.type === RELOAD_SAFETY_REQUEST_MESSAGE && typeof message.nonce === 'string' && message.nonce.length > 0) {
-        noteAcceptedActivation(message.nonce, source as ServiceWorker | null)
-        void reportReloadSafety(message.nonce, source)
+      const source =
+        sourceCandidate && typeof (sourceCandidate as ServiceWorker).postMessage === 'function'
+          ? (sourceCandidate as ServiceWorkerMessageTarget)
+          : null
+      if (message.type === RETIREMENT_NOTICE_MESSAGE) {
+        state.retirementNotice = true
+        markOfflineUnavailable()
         return
       }
-      if (message.type === ACTIVATED_UPDATE_MESSAGE && typeof message.nonce === 'string' && message.nonce.length > 0) {
-        handleActivatedUpdate(message.nonce, source)
+      if (message.type === RELOAD_SAFETY_REQUEST_MESSAGE && source) {
+        void reportReloadSafety(
+          {
+            workerId: typeof message.workerId === 'string' ? message.workerId : undefined,
+            release: typeof message.release === 'string' ? message.release : undefined,
+            roundNonce: typeof message.roundNonce === 'string' ? message.roundNonce : undefined
+          },
+          source
+        )
+        return
+      }
+      if (message.type === OFFLINE_READY_MESSAGE && source) {
+        const registration = registrationReference
+        if (registration) void markOfflineReady(registration, source as ServiceWorker, message)
+        return
+      }
+      if (message.type === OFFLINE_NOT_READY_MESSAGE && source && knownWorker(source as ServiceWorker)) {
+        const registration = registrationReference
+        const release = message.release
+        if (
+          registration &&
+          (!state.workerRelease ||
+            typeof release !== 'string' ||
+            release === state.workerRelease ||
+            source === registration.waiting ||
+            source === registration.installing)
+        )
+          markOfflineUnavailable()
+        return
+      }
+      if (message.type === UPDATE_PREPARING_MESSAGE) {
+        handleUpdatePreparing(message, source)
+        return
+      }
+      if (message.type === UPDATE_DEFERRED_MESSAGE) {
+        handleUpdateDeferred(message, source)
+        return
+      }
+      if (
+        message.type === UPDATE_ACTIVATING_MESSAGE &&
+        typeof message.workerId === 'string' &&
+        typeof message.release === 'string' &&
+        typeof message.roundNonce === 'string'
+      ) {
+        noteAcceptedActivation(message.roundNonce, message.workerId, message.release, source as ServiceWorker | null)
+        state.preparation = 'activating'
+        return
+      }
+      if (
+        message.type === ACTIVATED_UPDATE_MESSAGE &&
+        typeof message.workerId === 'string' &&
+        typeof message.release === 'string' &&
+        typeof message.roundNonce === 'string'
+      ) {
+        handleActivatedUpdate(message.roundNonce, message.workerId, message.release, source)
       }
     })
   }
@@ -436,61 +769,55 @@ const attachServiceWorkerListeners = (): void => {
       if (registrationReference && registration !== registrationReference) return
       registrationReference = registration
       state.registration = registration
-      markOfflineReady(registration)
+      attachRegistrationListeners(registration)
       markController(container.controller ?? null)
       if (registration.waiting) markUpdateReady(registration)
+      requestOfflineReadiness()
       notifyReady(registration)
     })
-    .catch(() => {
-      // Registration errors are reported by register(); `ready` can also
-      // reject when a browser tears down its service-worker context.
+    .catch(error => {
+      if (!registrationReference) setRegistrationError(error, 'The service worker readiness check failed.')
     })
-}
-
-const ensureChannel = (): void => {
-  if (channel || typeof BroadcastChannel === 'undefined') return
-  try {
-    channel = new BroadcastChannel(PWA_CHANNEL_NAME)
-    channel.addEventListener('message', event => {
-      const message = event.data as { type?: unknown; nonce?: unknown }
-      if (message.type === 'safety-request') {
-        void reportReloadSafety()
-        return
-      }
-      if (message.type === 'activate-update' && typeof message.nonce === 'string' && message.nonce.length > 0) {
-        noteAcceptedActivation(message.nonce)
-        void reportReloadSafety(message.nonce, acceptedActivation?.worker)
-      }
-    })
-  } catch {
-    channel = null
-  }
 }
 
 const captureInstallPrompt = (event: Event): void => {
   const promptEvent = event as BeforeInstallPromptEvent
   if (typeof promptEvent.prompt !== 'function' || !promptEvent.userChoice) return
   event.preventDefault()
-  installPrompt = promptEvent
+  installOfferSequence += 1
+  installPrompt = { event: promptEvent, token: installOfferSequence }
   state.installAvailability = 'available'
   state.installPromptAvailable = true
   state.installError = null
 }
 
+const updateStandaloneState = (): void => {
+  const standalone = standaloneDisplay()
+  state.isStandalone = standalone
+  state.installed = standalone || state.appInstalled
+  if (standalone || state.appInstalled) state.installAvailability = 'installed'
+  else if (!installPrompt) state.installAvailability = 'unavailable'
+}
+
 const markInstalled = (): void => {
   installPrompt = null
+  state.appInstalled = true
+  state.installed = true
   state.installAvailability = 'installed'
   state.installPromptAvailable = false
-  state.installed = true
   state.installError = null
 }
 
 const handleOnlineHint = (): void => {
+  connectionEpoch += 1
+  activeProbe?.controller.abort()
   state.onlineHint = true
   void retryServerConnection()
 }
 
 const handleOfflineHint = (): void => {
+  connectionEpoch += 1
+  activeProbe?.controller.abort()
   state.onlineHint = false
   state.serverReachable = null
   state.serverHealthy = null
@@ -500,26 +827,38 @@ const handleOfflineHint = (): void => {
 const attachWindowListeners = (): void => {
   if (!hasWindow() || installListenersAttached) return
   installListenersAttached = true
-  state.isStandalone = standaloneDisplay()
-  state.installed = state.isStandalone
-  if (state.isStandalone) state.installAvailability = 'installed'
+  updateStandaloneState()
   window.addEventListener(INSTALL_EVENT, captureInstallPrompt as EventListener)
   window.addEventListener(INSTALLED_EVENT, markInstalled as EventListener)
   window.addEventListener('online', handleOnlineHint)
   window.addEventListener('offline', handleOfflineHint)
+  window.addEventListener('visibilitychange', () => {
+    updateStandaloneState()
+    requestOfflineReadiness()
+    retryDeferredReload()
+  })
+  const displayMedia = window.matchMedia?.('(display-mode: standalone)')
+  displayMedia?.addEventListener?.('change', updateStandaloneState)
 }
 
 const registerNow = async (): Promise<ServiceWorkerRegistration | null> => {
   attachWindowListeners()
-  ensureChannel()
+  if (state.mode === 'retirement') {
+    state.registrationState = 'unsupported'
+    markOfflineUnavailable()
+    return null
+  }
   const container = currentServiceWorkerContainer()
   if (!container) {
     state.registrationState = 'unsupported'
+    state.offlineReadiness = 'unavailable'
     return null
   }
   state.registrationState = 'registering'
   state.error = null
   state.registrationError = null
+  state.offlineReadiness = 'checking'
+  readyNotified = false
   try {
     const registration = await container.register(SERVICE_WORKER_PATH, { scope: SERVICE_WORKER_SCOPE })
     registrationReference = registration
@@ -529,7 +868,7 @@ const registerNow = async (): Promise<ServiceWorkerRegistration | null> => {
     attachRegistrationListeners(registration)
     markController(container.controller ?? null)
     if (registration.waiting) markUpdateReady(registration)
-    if (registration.active) markOfflineReady(registration)
+    requestOfflineReadiness()
     notifyReady(registration)
     return registration
   } catch (error) {
@@ -538,155 +877,206 @@ const registerNow = async (): Promise<ServiceWorkerRegistration | null> => {
   }
 }
 
+const scheduleRegistration = (): Promise<ServiceWorkerRegistration | null> => {
+  if (!hasWindow() || document.readyState !== 'loading') return registerNow()
+  return new Promise(resolve => {
+    document.addEventListener(
+      'DOMContentLoaded',
+      () => {
+        void registerNow().then(resolve)
+      },
+      { once: true }
+    )
+  })
+}
+
 export function registerPwa(callbacks: PwaLifecycleCallbacks = {}): Promise<ServiceWorkerRegistration | null> {
   callbackSet = { ...callbackSet, ...callbacks }
   attachWindowListeners()
-  ensureChannel()
-  if (!registrationPromise) {
-    const schedule = (): Promise<ServiceWorkerRegistration | null> => {
-      if (!hasWindow() || document.readyState !== 'loading') return registerNow()
-      let resolveRegistration!: (registration: ServiceWorkerRegistration | null) => void
-      const promise = new Promise<ServiceWorkerRegistration | null>(resolve => {
-        resolveRegistration = resolve
-      })
-      document.addEventListener(
-        'DOMContentLoaded',
-        () => {
-          void registerNow().then(resolveRegistration)
-        },
-        { once: true }
-      )
-      return promise
-    }
-    registrationPromise = schedule()
-    void registrationPromise.then(() => {
-      if (state.serverReachable === null) void retryServerConnection()
-    })
+  if (state.mode === 'retirement') {
+    state.registrationState = 'unsupported'
+    markOfflineUnavailable()
+    return Promise.resolve(null)
   }
-  return registrationPromise
+  if (registrationReference) return Promise.resolve(registrationReference)
+  if (registrationInFlight) return registrationInFlight
+  const scheduled = scheduleRegistration()
+  registrationInFlight = scheduled.finally(() => {
+    registrationInFlight = undefined
+  })
+  return registrationInFlight
 }
 
 export async function retryServerConnection(): Promise<boolean> {
-  if (probePromise) return probePromise
+  const epoch = ++connectionEpoch
+  activeProbe?.controller.abort()
   if (!hasWindow() || !hasNavigator()) {
     state.serverReachable = null
     state.serverHealthy = null
     setConnection('server-unavailable')
     return false
   }
-  state.onlineHint = navigator.onLine
+  state.onlineHint = typeof navigator.onLine === 'boolean' ? navigator.onLine : null
+  state.serverReachable = null
+  state.serverHealthy = null
   setConnection('checking')
-  probePromise = (async () => {
+  const controller = new AbortController()
+  let rejectTimeout = (_reason?: unknown): void => {}
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    rejectTimeout = reject
+  })
+  const timeout = setTimeout(() => {
+    controller.abort()
+    rejectTimeout(new Error('The server health check timed out.'))
+  }, PROBE_DEADLINE_MS)
+  const promise = (async () => {
     try {
-      const response = await window.fetch(SERVER_PROBE_PATH, {
-        method: 'GET',
-        credentials: 'same-origin',
-        cache: 'no-store',
-        headers: { Accept: 'application/json' }
-      })
+      const response = await Promise.race([
+        window.fetch(SERVER_PROBE_PATH, {
+          method: 'GET',
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: { Accept: 'application/json' },
+          signal: controller.signal
+        }),
+        timeoutPromise
+      ])
+      if (epoch !== connectionEpoch) return false
       state.lastProbeAt = Date.now()
       const responseUrl = typeof response.url === 'string' && response.url ? new URL(response.url, window.location.href) : null
       const sameOrigin = !responseUrl || responseUrl.origin === window.location.origin
       state.serverReachable = sameOrigin
       state.serverHealthy = sameOrigin && response.ok
-      if (sameOrigin && response.ok) {
-        setConnection('online')
-        return true
-      }
-      setConnection('server-unavailable')
-      return false
+      setConnection(sameOrigin && response.ok ? 'online' : 'server-unavailable')
+      return sameOrigin && response.ok
     } catch {
+      if (epoch !== connectionEpoch) return false
       state.lastProbeAt = Date.now()
       state.serverReachable = false
       state.serverHealthy = false
       setConnection(state.onlineHint === false ? 'offline' : 'server-unavailable')
       return false
     } finally {
-      probePromise = undefined
+      clearTimeout(timeout)
+      if (activeProbe?.epoch === epoch) activeProbe = undefined
     }
   })()
-  return probePromise
+  activeProbe = { epoch, controller, promise }
+  return promise
 }
 
-export async function promptPwaInstall(): Promise<InstallChoice['outcome'] | null> {
-  const promptEvent = installPrompt
-  if (!promptEvent || state.installed || state.installAvailability !== 'available') return null
+export async function promptPwaInstall(): Promise<PwaInstallOutcome | null> {
+  if (installPromptInFlight) return installPromptInFlight
+  const offer = installPrompt
+  if (!offer || state.installed || state.isStandalone || state.installAvailability !== 'available') return null
   state.installError = null
-  try {
-    await promptEvent.prompt()
-    const choice = await promptEvent.userChoice
-    if (choice.outcome === 'accepted') {
-      state.installAvailability = 'installed'
-      state.installed = true
+  const prompt = (async () => {
+    try {
+      await offer.event.prompt()
+      const choice = await offer.event.userChoice
+      if (choice.outcome !== 'accepted' && choice.outcome !== 'dismissed') throw new Error('The browser returned an invalid install choice.')
+      if (choice.outcome === 'accepted') {
+        state.installAccepted = true
+        state.installOutcome = 'accepted'
+      } else {
+        state.installOutcome = 'dismissed'
+      }
+      return choice.outcome
+    } catch (error) {
+      state.installError = errorMessage(error, 'The browser closed the install prompt.')
+      return null
+    } finally {
+      if (installPrompt?.token === offer.token) {
+        installPrompt = null
+        state.installPromptAvailable = false
+        state.installAvailability = state.installed ? 'installed' : 'unavailable'
+      }
     }
-    return choice.outcome
-  } catch (error) {
-    state.installError = errorMessage(error, 'The browser closed the install prompt.')
-    return null
-  } finally {
-    installPrompt = null
-    state.installPromptAvailable = false
-  }
+  })()
+  const inFlight = prompt.finally(() => {
+    installPromptInFlight = undefined
+  })
+  installPromptInFlight = inFlight
+  return inFlight
 }
 
-export function setReloadSafetyProvider(provider: ReloadSafetyProvider | null): void {
+export function notifyReloadSafetyChanged(): void {
   safetySequence += 1
-  safetyProvider = provider ?? (() => true)
   void reportReloadSafety()
-  const activation = acceptedActivation
-  if (activation && !activation.activatedWorker && activation.worker) {
-    void reportReloadSafety(activation.nonce, activation.worker)
+  const request = activeSafetyRequest
+  if (request && registrationReference && workerTargets(registrationReference).includes(request.target as ServiceWorker)) {
+    void reportReloadSafety(request.context, request.target)
+  } else if (request) {
+    activeSafetyRequest = null
   }
   retryDeferredReload()
 }
 
+export function setReloadSafetyProvider(provider: ReloadSafetyProvider | null): void {
+  safetyProvider = provider ?? (() => ({ safe: true, revision: 'default' }))
+  notifyReloadSafetyChanged()
+}
+const waitForWaitingWorker = async (registration: ServiceWorkerRegistration): Promise<ServiceWorker | null> => {
+  if (registration.waiting) return registration.waiting
+  if (typeof registration.addEventListener !== 'function') return null
+  return new Promise(resolve => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout>
+    const finish = (worker: ServiceWorker | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      registration.removeEventListener?.('updatefound', onUpdateFound)
+      resolve(worker)
+    }
+    const onUpdateFound = (): void => {
+      const installing = registration.installing
+      if (!installing) return
+      observeWorker(registration, installing)
+      installing.addEventListener?.('statechange', () => {
+        if (installing.state === 'installed' && registration.waiting) finish(registration.waiting)
+        if (installing.state === 'redundant') finish(null)
+      })
+    }
+    timer = setTimeout(() => finish(registration.waiting ?? null), WAITING_WORKER_DEADLINE_MS)
+    registration.addEventListener('updatefound', onUpdateFound, { once: false })
+    onUpdateFound()
+  })
+}
+
 const requestUpdate = async (): Promise<boolean> => {
+  if (state.mode === 'retirement') return false
   const registration = await registerPwa()
   if (!registration) return false
-  ensureChannel()
   state.updateError = null
   state.updateState = 'checking'
-  const safe = await reportReloadSafety()
-  if (!safe) {
-    state.updateState = registration.waiting ? 'ready' : 'idle'
-    if (registration.waiting) state.updateReady = true
-    return false
-  }
+  state.preparation = 'checking'
+  state.preparationReason = null
   let waiting = registration.waiting
   if (!waiting) {
     try {
-      if (typeof registration.update !== 'function') {
-        state.updateState = 'error'
-        state.updateError = 'The browser cannot check for service worker updates.'
-        return false
-      }
+      if (typeof registration.update !== 'function') throw new Error('The browser cannot check for service worker updates.')
       await registration.update()
     } catch (error) {
       state.updateState = 'error'
+      state.preparation = 'error'
       state.updateError = errorMessage(error, 'The service worker update check failed.')
       notifyError(error)
       return false
     }
-    waiting = registration.waiting
+    waiting = await waitForWaitingWorker(registration)
   }
   if (!waiting) {
     state.updateState = 'idle'
+    state.preparation = 'idle'
+    state.updateReady = false
     return false
   }
-
-  const nonce = createActivationNonce()
-  noteAcceptedActivation(nonce, waiting)
+  updateReadyWorker = waiting
   state.updateReady = true
-  state.updateState = 'activating'
-  try {
-    waiting.postMessage({ type: ACTIVATE_UPDATE_MESSAGE, nonce })
-  } catch {
-    // Registration/state events provide the next opportunity to retry.
-  }
-  // The waiting worker retains this intent and requests fresh reports from
-  // every scoped client before it calls skipWaiting().
-  void reportReloadSafety(nonce, waiting)
-  broadcast({ type: 'activate-update', nonce })
+  state.updateState = 'ready'
+  state.preparation = 'checking'
+  postToWorker(waiting, { type: PREPARE_UPDATE_MESSAGE })
   return true
 }
 

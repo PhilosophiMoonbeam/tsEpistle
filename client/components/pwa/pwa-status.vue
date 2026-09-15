@@ -21,7 +21,7 @@ v-menu.nav-header-pwa-status-menu(
     v-card-text.pwa-status-panel__body
       .pwa-status-panel__heading
         div
-          p.pwa-status-panel__eyebrow PWA status
+          p.pwa-status-panel__eyebrow Connection & app
           h2 App status
         v-icon(:icon='triggerIcon', size='22', aria-hidden='true')
 
@@ -33,13 +33,13 @@ v-menu.nav-header-pwa-status-menu(
 
       dl.pwa-status-panel__facts
         div
-          dt Network hint
+          dt Network
           dd(:class='`pwa-status-panel__value--${pwaState.onlineHint === true ? `positive` : pwaState.onlineHint === false ? `negative` : `neutral`}`') {{ networkHintLabel }}
         div
           dt Server
           dd(:class='`pwa-status-panel__value--${pwaState.serverHealthy === true ? `positive` : pwaState.serverReachable === false || pwaState.serverHealthy === false ? `negative` : `neutral`}`') {{ serverStatusLabel }}
         div
-          dt Offline shell
+          dt Saved app
           dd {{ offlineShellLabel }}
 
       v-alert.pwa-status-panel__alert(
@@ -75,7 +75,7 @@ v-menu.nav-header-pwa-status-menu(
           :loading='isRetrying'
           :disabled='isRetrying'
           @click='retryConnection'
-        ) {{ isRetrying ? `Checking…` : `Retry connection` }}
+        ) {{ isRetrying ? `Checking…` : `Check the server` }}
         v-btn(
           v-if='pwaState.updateReady'
           color='primary'
@@ -84,7 +84,7 @@ v-menu.nav-header-pwa-status-menu(
           :loading='isUpdating'
           :disabled='isUpdating || pwaState.reloadSafe === false'
           @click='applyUpdate'
-        ) {{ isUpdating ? `Applying…` : `Apply update` }}
+        ) {{ isUpdating ? `Applying…` : `Apply app update` }}
 
       p.pwa-status-panel__note(v-if='pwaState.updateReady && pwaState.reloadSafe === false', role='status')
         | Update ready. It will wait until the app reports a safe reload point.
@@ -116,7 +116,7 @@ v-menu.nav-header-pwa-status-menu(
 
       a.pwa-status-panel__library(href='/_offline')
         v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
-        span Downloaded library
+        span Saved pages
         v-icon(icon='mdi-arrow-top-right', size='16', aria-hidden='true')
 </template>
 
@@ -167,7 +167,7 @@ const triggerIcon = computed(() => {
 const networkHintLabel = computed(() => {
   if (pwaState.onlineHint === true) return 'Network path reported'
   if (pwaState.onlineHint === false) return 'No network path reported'
-  return 'Network hint unavailable'
+  return 'Network status unavailable'
 })
 
 const serverStatusLabel = computed(() => {
@@ -202,10 +202,10 @@ const summaryDescription = computed(() => {
   return 'The server has not been verified yet.'
 })
 
-const panelLabel = computed(() => `PWA status: ${summaryLabel.value}`)
+const panelLabel = computed(() => `App status: ${summaryLabel.value}`)
 
 const triggerLabel = computed(() => {
-  if (pwaState.updateReady) return `Update ready · ${summaryLabel.value}`
+  if (pwaState.updateReady) return `App update ready · ${summaryLabel.value}`
   if (canInstall.value) return `Install available · ${summaryLabel.value}`
   if (pwaState.installed || pwaState.isStandalone) return `Installed app · ${summaryLabel.value}`
   return summaryLabel.value

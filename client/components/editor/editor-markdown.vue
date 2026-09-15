@@ -301,6 +301,7 @@ import {
   type TextEditorSelectionChange,
   type TextPosition
 } from './common/text-editor'
+import { EditorAdapterController } from './common/editor-adapter'
 import {
   createMarkdownCollaboration,
   type CollaborationStatus,
@@ -451,7 +452,7 @@ export default defineComponent({
   components: {
     markdownHelp
   },
-  emits: ['collaboration-state'],
+  emits: ['collaboration-state', 'editor-adapter', 'editor-adapter-clear'],
   props: {
     save: {
       type: Function as PropType<() => void>,
@@ -478,6 +479,7 @@ export default defineComponent({
       debouncedProcessContent: null as _.DebouncedFunc<(newContent: string) => void> | null,
       collaborationStatus: null as CollaborationStatus | null,
       editorDisposed: false,
+      editorAdapter: null as EditorAdapterController | null,
       collaborationAbortController: null as AbortController | null
     }
   },
@@ -559,6 +561,30 @@ export default defineComponent({
     }
   },
   methods: {
+    destroyMarkdownCollaboration() {
+      collaborations.get(this)?.destroy()
+      collaborations.delete(this)
+      this.collaborationAbortController?.abort()
+      this.collaborationAbortController = null
+      this.$emit('collaboration-state', { active: false, discarded: false, generation: null })
+      this.editorAdapter?.notifyState()
+    },
+    flushEligibleEditorText() {
+      const editor = this.cm
+      if (!editor) return
+      wikiStore.editor.content = editor.getValue()
+      collaborations.get(this)?.flushPending()
+      this.editorAdapter?.notifyState()
+    },
+    clearEditorText() {
+      this.destroyMarkdownCollaboration()
+      this.cm?.setValue('')
+      wikiStore.editor.content = ''
+      this.previewHTML = ''
+      this.previewDirty = true
+      this.previewError = ''
+      this.previewRevision += 1
+    },
     toggleModal(key: string) {
       this.activeModal = (this.activeModal === key) ? '' : key
       this.helpShown = false
@@ -1061,6 +1087,7 @@ export default defineComponent({
             if (this.editorDisposed) return
             const firstConflict = status.state === 'conflict' && this.collaborationStatus?.state !== 'conflict'
             this.collaborationStatus = status
+            this.editorAdapter?.notifyState()
             if (status.state === 'conflict' && status.conflict === 'draft-discarded') {
               this.$emit('collaboration-state', { active: false, discarded: true, generation: null })
             }
@@ -1121,6 +1148,7 @@ export default defineComponent({
       extensions,
       onChange: value => {
         wikiStore.editor.content = value
+        this.editorAdapter?.noteTextChange()
         this.onCmInput(value)
       },
       onCursor: position => {
@@ -1132,6 +1160,29 @@ export default defineComponent({
       }
     })
     this.cm = markRaw(cm)
+    const adapter = new EditorAdapterController({
+      readText: () => cm.getValue(),
+      writeText: text => {
+        cm.setValue(text)
+        wikiStore.editor.content = text
+        this.previewRevision += 1
+        this.processContent(text)
+      },
+      clearText: () => {
+        cm.setValue('')
+        wikiStore.editor.content = ''
+        this.previewHTML = ''
+        this.previewDirty = true
+        this.previewError = ''
+        this.previewRevision += 1
+      },
+      flushText: () => this.flushEligibleEditorText(),
+      destroyCollaboration: () => this.destroyMarkdownCollaboration(),
+      collaborationBacklog: () => collaborations.get(this)?.pendingUpdateCount ?? 0
+    })
+    this.editorAdapter = markRaw(adapter)
+    adapter.initialize()
+    this.$emit('editor-adapter', adapter)
     Object.defineProperty(root as MarkdownEditorHost, '__wikiSourceEditor', {
       configurable: true,
       value: cm
@@ -1150,6 +1201,12 @@ export default defineComponent({
   },
   beforeUnmount() {
     this.editorDisposed = true
+    const adapter = this.editorAdapter
+    if (adapter) {
+      this.$emit('editor-adapter-clear', adapter)
+      adapter.destroy()
+      this.editorAdapter = null
+    }
     this.debouncedProcessContent?.cancel()
     stopPreviewAlignment(this)
     previewAlignmentSchedulers.delete(this)

@@ -1,11 +1,12 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+import { evaluateGroupAccess, type AccessPage, type PageRuleAuthority } from '../../helpers/group-access.ts'
 
 const assertPageUnlocked = vi.fn(async () => {})
 const protectedAssetRequiresUnlock = vi.fn(async () => false)
 vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({ assertPageUnlocked, protectedAssetRequiresUnlock }))
 
 type SnapshotOperations = {
-  getOfflineSnapshot(input: { id: number; requester?: unknown }): Promise<Record<string, unknown>>
+  getOfflineSnapshot(input: { id: number; requester?: unknown }): Promise<Record<string, unknown> & { content: { html: string } }>
 }
 
 type Query = {
@@ -78,6 +79,7 @@ const basePage = (): Record<string, unknown> => ({
   editorKey: 'markdown',
   render: '<p>Readable offline content</p>',
   sourceRevision: '8',
+  renderedSourceRevision: '8',
   extra: { customMetadata: 'must not be persisted' }
 })
 beforeEach(async () => {
@@ -96,8 +98,13 @@ beforeEach(async () => {
   loadPageRuleAuthority = vi.fn(async (requester: Record<string, unknown>) => ({
     requester,
     permissions: ['read:pages'],
-    groups: [],
-    tagAliases: {}
+    groups: [
+      {
+        id: 1,
+        pageRules: [{ match: 'TAG', path: 'safe', deny: false, roles: ['read:pages'] }]
+      }
+    ],
+    tagAliases: { safe: 'safe' }
   }))
 
   transaction = vi.fn((table: string) => {
@@ -112,12 +119,13 @@ beforeEach(async () => {
   globalThis.WIKI = {
     auth: {
       checkPageAccess: vi.fn(
-        (requester: unknown, permissions: string[], _context: unknown, authority: { requester: unknown }) =>
-          requester === authority.requester && permissions.includes('read:pages')
+        (requester: unknown, permissions: readonly string[], context: unknown, authority: PageRuleAuthority) =>
+          requester === authority.requester &&
+          evaluateGroupAccess(authority.permissions, permissions, authority.groups, context as AccessPage, authority.tagAliases, false).allowed
       ),
       loadPageRuleAuthority
     },
-    config: { db: { type: 'postgres' }, lang: { code: 'en' }, editors: { available: ['markdown'] } },
+    config: { db: { type: 'postgres' }, host: 'https://wiki.example.test/', lang: { code: 'en' }, editors: { available: ['markdown'] } },
     data: {},
     models: {
       knex,
@@ -150,6 +158,7 @@ describe('offline snapshot admission operations', () => {
       pageId: 7,
       locale: 'en',
       path: 'docs/alpha',
+      canonicalPath: '/en/docs/alpha',
       sourceRevision: '8',
       contentType: 'sanitized-html-fragment',
       content: { html: '<p>Readable offline content</p>' },
@@ -175,6 +184,58 @@ describe('offline snapshot admission operations', () => {
   })
 
   it.each([
+    ['unknown', undefined],
+    ['null', null],
+    ['stale', '7'],
+    ['malformed', 'not-a-revision']
+  ])('denies %s rendered-source provenance', async (_label: string, renderedSourceRevision: unknown) => {
+    page.renderedSourceRevision = renderedSourceRevision
+
+    const failure = operations.getOfflineSnapshot({ id: 7 })
+    const error = await failure.catch(value => value as Error)
+
+    expect(error).toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
+  })
+
+  it('resolves relative links from the configured page URL and canonicalizes safe navigation', async () => {
+    page.render = [
+      '<p>Links</p>',
+      '<a href="beta">Sibling</a>',
+      '<a href="../parent">Parent</a>',
+      '<a href="?q=one#section">Query</a>',
+      '<a href="#fragment">Fragment</a>',
+      '<a href="https://external.example.test/api">External</a>',
+      '<a href="mailto:reader@example.test">Mail</a>'
+    ].join('')
+
+    const snapshot = await operations.getOfflineSnapshot({ id: 7 })
+
+    expect(snapshot.content.html).toContain('href="https://wiki.example.test/en/docs/beta"')
+    expect(snapshot.content.html).toContain('href="https://wiki.example.test/en/parent"')
+    expect(snapshot.content.html).toContain('href="https://wiki.example.test/en/docs/alpha?q=one#section"')
+    expect(snapshot.content.html).toContain('href="https://wiki.example.test/en/docs/alpha#fragment"')
+    expect(snapshot.content.html).toContain('href="https://external.example.test/api"')
+    expect(snapshot.content.html).toContain('href="mailto:reader@example.test"')
+    expect(snapshot.content.html).not.toContain('offline.invalid')
+    expect(snapshot.content.html).not.toMatch(/<(?:img|script|iframe)\b/iu)
+  })
+
+  it.each([
+    ['absolute', 'https://wiki.example.test/api/secret'],
+    ['relative', '/api/secret'],
+    ['encoded', '/%61pi/secret'],
+    ['normalized', '/docs/../api/secret'],
+    ['case-insensitive', '/API/secret']
+  ])('rejects %s real-origin reserved links', async (_label: string, href: string) => {
+    page.render = `<p><a href="${href}">Reserved</a></p>`
+
+    const failure = operations.getOfflineSnapshot({ id: 7 })
+    const error = await failure.catch(value => value as Error)
+
+    expect(error).toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
+  })
+
+  it.each([
     [
       'private pages',
       () => {
@@ -193,6 +254,34 @@ describe('offline snapshot admission operations', () => {
       () => {
         page.extra = { js: 'window.privateProjection = true' }
       }
+    ],
+    [
+      'unpublished pages',
+      () => {
+        page.isPublished = false
+      }
+    ],
+    [
+      'unsupported editors',
+      () => {
+        page.editorKey = 'html'
+      }
+    ],
+    [
+      'rule-denied pages',
+      () => {
+        loadPageRuleAuthority.mockImplementation(async requester => ({
+          requester,
+          permissions: ['read:pages'],
+          groups: [
+            {
+              id: 1,
+              pageRules: [{ match: 'TAG', path: 'safe', deny: true, roles: ['read:pages'] }]
+            }
+          ],
+          tagAliases: { safe: 'safe' }
+        }))
+      }
     ]
   ])('fails closed for %s without returning source material', async (_label: string, mutate: () => void) => {
     mutate()
@@ -202,5 +291,24 @@ describe('offline snapshot admission operations', () => {
 
     expect(error).toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
     expect(String(error)).not.toContain('privateProjection')
+  })
+
+  it('uses the same eligibility error for an absent page', async () => {
+    page = undefined as unknown as Record<string, unknown>
+
+    const failure = operations.getOfflineSnapshot({ id: 7 })
+    const error = await failure.catch(value => value as Error)
+
+    expect(error).toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
+  })
+
+  it('keeps unavailable guest authority on the infrastructure path', async () => {
+    guest.isActive = false
+
+    const failure = operations.getOfflineSnapshot({ id: 7 })
+    const error = await failure.catch(value => value as Error)
+
+    expect(error).toMatchObject({ code: 'OFFLINE_PAGE_AUTHORITY_UNAVAILABLE' })
+    expect(error).not.toHaveProperty('status')
   })
 })

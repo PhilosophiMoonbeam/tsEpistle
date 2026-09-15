@@ -13,7 +13,8 @@ export default defineConfig({
     baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:3000',
     screenshot: 'only-on-failure',
     trace: 'on-first-retry',
-    video: 'retain-on-failure'
+    video: 'retain-on-failure',
+    serviceWorkers: 'allow'
   },
   projects: [
     {
@@ -57,7 +58,7 @@ export default defineConfig({
     {
       name: 'responsive-chromium-desktop',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts'],
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1440, height: 900 }
@@ -66,7 +67,7 @@ export default defineConfig({
     {
       name: 'responsive-firefox-desktop',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts'],
       use: {
         ...devices['Desktop Firefox'],
         viewport: { width: 1440, height: 900 }
@@ -75,7 +76,7 @@ export default defineConfig({
     {
       name: 'responsive-webkit-desktop',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts'],
       use: {
         ...devices['Desktop Safari'],
         viewport: { width: 1440, height: 900 }
@@ -99,19 +100,19 @@ export default defineConfig({
     {
       name: 'responsive-chromium-mobile',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts'],
       use: { ...devices['Pixel 7'] }
     },
     {
       name: 'responsive-webkit-mobile',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts'],
       use: { ...devices['iPhone 13'] }
     },
     {
       name: 'responsive-webkit-mobile-landscape',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts'],
       use: { ...devices['iPhone 13 landscape'] }
     },
     {
