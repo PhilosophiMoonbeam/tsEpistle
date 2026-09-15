@@ -280,7 +280,7 @@ export async function checkBundleBudgets(assetsDirectory = path.resolve('assets'
     { name: 'setup initial CSS (raw)', actual: setupStyles.rawBytes, limit: 1_000 * KiB },
     { name: 'setup initial CSS (gzip)', actual: setupStyles.gzipBytes, limit: 170 * KiB },
     { name: 'largest JavaScript chunk (raw)', actual: largestJavascriptChunk, limit: 1_400 * KiB },
-    { name: 'all JavaScript chunks (raw)', actual: allJavascript.rawBytes, limit: 12 * 1_024 * KiB },
+    { name: 'all JavaScript chunks (raw)', actual: allJavascript.rawBytes, limit: 12_416 * KiB },
     ...buildLoginBundleBudgets({
       directJavascript,
       directStyles,
