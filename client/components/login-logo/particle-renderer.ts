@@ -93,6 +93,10 @@ const effectiveBackendOf = (renderer: LogoParticleRenderer): ParticleBackendKind
 const freezeDiagnostics = (diagnostics: ParticleBackendDiagnostics): ParticleBackendDiagnostics =>
   Object.freeze(diagnostics)
 
+const webGpuApiAvailable = (): boolean =>
+  typeof navigator !== 'undefined' &&
+  typeof navigator.gpu?.requestAdapter === 'function'
+
 /**
  * r185's common renderer owns an internal RAF once initialized. This subclass
  * gives it a public, idempotent disposal boundary without reaching into that
@@ -170,7 +174,7 @@ export function createParticleBackendLease(options: ParticleBackendLeaseOptions)
 
   const currentRenderer = new LogoParticleRenderer({
     canvas: options.canvas,
-    forceWebGL: requestedBackend === 'webgl2',
+    forceWebGL: requestedBackend === 'webgl2' || (requestedBackend === 'auto' && !webGpuApiAvailable()),
     directSrgbMaterialPipeline
   })
   let effectiveBackend: ParticleBackendKind | null = null

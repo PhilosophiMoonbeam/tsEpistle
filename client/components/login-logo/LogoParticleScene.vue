@@ -1073,6 +1073,11 @@ export default defineComponent({
       loopControl.stop?.()
       if (tresContext?.renderer.loop.isActive.value) tresContext.renderer.loop.stop()
     }
+    const disposeInteraction = (): void => {
+      pointerController.dispose()
+      pointerTarget.value = null
+      pointerCoordinateTarget.value = null
+    }
     const fenceForScene = new ParticleSceneEventFence(props.particles.count, {
       submission: recordSubmission,
       firstFrame: () => {
@@ -1091,6 +1096,7 @@ export default defineComponent({
         disableRendering()
         loopControl.onFailure?.('failed', error.message)
         loopControl.disposeFrameCapture?.(error)
+        disposeInteraction()
         canvasMounted.value = false
         retireBackend()
         emit('error', error)
@@ -1099,6 +1105,7 @@ export default defineComponent({
         disableRendering()
         loopControl.onFailure?.('lost', 'Particle backend device was lost')
         loopControl.disposeFrameCapture?.(new Error('Particle backend device was lost'))
+        disposeInteraction()
         canvasMounted.value = false
         retireBackend()
         emit('context-lost', event)
@@ -1110,9 +1117,7 @@ export default defineComponent({
       disableRendering()
       loopControl.ready = false
       loopControl.disposeFrameCapture?.(new Error('Particle frame capture is unavailable'))
-      pointerController.dispose()
-      pointerTarget.value = null
-      pointerCoordinateTarget.value = null
+      disposeInteraction()
       canvasMounted.value = false
       retireBackend()
       fenceForScene.dispose()

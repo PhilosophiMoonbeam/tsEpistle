@@ -115,6 +115,10 @@ const triggerDeviceLost = (renderer: RendererInstance, info: unknown): void => {
 
 beforeEach(() => {
   initPlans.length = 0
+  Object.defineProperty(navigator, 'gpu', {
+    configurable: true,
+    value: { requestAdapter: async () => ({}) }
+  })
   createdRenderers.length = 0
 })
 
@@ -155,7 +159,15 @@ describe('LogoParticleRenderer', () => {
   })
 })
 
+
 describe('particle backend leases', () => {
+  it('forces WebGL2 in auto mode when the WebGPU API is unavailable', () => {
+    Object.defineProperty(navigator, 'gpu', { configurable: true, value: undefined })
+    const lease = createParticleBackendLease({ canvas: testCanvas, requestedBackend: 'auto' })
+
+    expect(rendererRecord(lease.renderer).options.forceWebGL).toBe(true)
+    lease.retire()
+  })
   it('validates backend requests before constructing a renderer and exposes stable initial getters', () => {
     expect(() => createParticleBackendLease({ canvas: testCanvas, requestedBackend: 'native' as ParticleBackendRequest })).toThrow('Invalid particle backend request')
     expect(createdRenderers).toHaveLength(0)
