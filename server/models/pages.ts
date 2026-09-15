@@ -721,8 +721,8 @@ export default class Page extends Model {
         contentType: { type: 'string' },
 
         createdAt: { type: 'string' },
-        sourceRevision: { type: 'integer' },
-        renderedSourceRevision: { type: ['integer', 'null'] },
+        sourceRevision: { type: ['integer', 'string'] },
+        renderedSourceRevision: { type: ['integer', 'string', 'null'] },
         updatedAt: { type: 'string' }
 
       }

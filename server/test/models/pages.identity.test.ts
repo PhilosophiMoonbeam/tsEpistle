@@ -312,6 +312,13 @@ afterEach(async () => {
 })
 
 describe('models/pages identity aggregate', () => {
+  it('accepts PostgreSQL BIGINT revision strings for render provenance writes', () => {
+    const page = Page.fromJson(pageRow({ sourceRevision: '9007199254740993', renderedSourceRevision: '9007199254740993' }))
+
+    expect(page.sourceRevision).toBe('9007199254740993')
+    expect(page.renderedSourceRevision).toBe('9007199254740993')
+  })
+
   it('emits visibility and ownership identities from the committed state', async () => {
     await db('pages').insert(pageRow())
 
