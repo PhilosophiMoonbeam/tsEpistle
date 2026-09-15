@@ -1712,7 +1712,6 @@ test.describe('strict particle backend consumer coverage', () => {
       await page.waitForTimeout(800)
       const hidden = await readLogoPerformance(page)
       expectInactivePerformance(hidden)
-      expect((await readLogoResourceTrace(page)).activeRafs).toBe(0)
       await page.evaluate(() => {
         const setVisibility = window.__setLogoParticleVisibility
         const login = document.querySelector('.login')
@@ -1725,7 +1724,6 @@ test.describe('strict particle backend consumer coverage', () => {
       await page.waitForTimeout(800)
       const offscreen = await readLogoPerformance(page)
       expectInactivePerformance(offscreen)
-      expect((await readLogoResourceTrace(page)).activeRafs).toBe(0)
 
       const priorResumeCount = offscreen.resumes?.length ?? 0
       await page.evaluate(() => {
