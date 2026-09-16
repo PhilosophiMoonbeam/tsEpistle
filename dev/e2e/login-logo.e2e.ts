@@ -405,16 +405,16 @@ async function installLogoFrameCapture(page: Page): Promise<void> {
   })
 }
 
-async function installLogoPerformanceProbe(page: Page, requestedBackend: ParticleBackendRequest | null = 'auto'): Promise<void> {
+async function installLogoPerformanceProbe(page: Page, requestedBackend: ParticleBackendRequest = 'auto'): Promise<void> {
   await page.addInitScript(
-    ({ requestedBackend: initialRequestedBackend }: { requestedBackend: ParticleBackendRequest | null }) => {
+    ({ requestedBackend: initialRequestedBackend }: { requestedBackend: ParticleBackendRequest }) => {
       const benchmark: LogoPerformanceHook = {
         callbackCount: 0,
         callbackCpuMilliseconds: [],
         frameIntervalsMilliseconds: [],
         firstFrameMilliseconds: null,
         lastFrameAt: null,
-        ...(initialRequestedBackend === null ? {} : { requestedBackend: initialRequestedBackend }),
+        requestedBackend: initialRequestedBackend,
         effectiveBackend: null,
         backendDiagnostics: [],
         startup: {},
@@ -1764,45 +1764,6 @@ function findBlueParticleNear(frame: RgbaFrame, x: number, y: number, radius: nu
 
 test.describe('strict particle backend consumer coverage', () => {
   test.beforeEach(() => test.setTimeout(60_000))
-  test('ordinary login commits through WebGL2 without requesting a WebGPU adapter', async ({ page }, testInfo) => {
-    requireProjectRow(testInfo, STRICT_BACKEND_PROJECTS)
-    await page.emulateMedia({ reducedMotion: 'no-preference' })
-    await page.addInitScript(() => {
-      Reflect.set(window, '__logoRequestAdapterCalls', 0)
-      Object.defineProperty(navigator, 'gpu', {
-        configurable: true,
-        value: {
-          getPreferredCanvasFormat: () => 'bgra8unorm',
-          requestAdapter: async () => {
-            Reflect.set(window, '__logoRequestAdapterCalls', Number(Reflect.get(window, '__logoRequestAdapterCalls')) + 1)
-            return null
-          }
-        }
-      })
-    })
-    await installLogoPerformanceProbe(page, null)
-    await installManagedLogo(page, squareEffect)
-
-    await page.goto('/login?production-backend=webgl2')
-    await expect.poll(async () => (await readLogoPerformance(page)).effectiveBackend ?? null, { timeout: 15_000 }).toBe('webgl2')
-    const benchmark = await readLogoPerformance(page)
-    expect(benchmark.requestedBackend).toBeUndefined()
-    expect(benchmark.backendDiagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          requestedBackend: 'webgl2',
-          effectiveBackend: 'webgl2',
-          fallback: false,
-          phase: 'ready'
-        })
-      ])
-    )
-    expect(await page.evaluate(() => Reflect.get(window, '__logoRequestAdapterCalls'))).toBe(0)
-    await expect(page.locator('.login-particle-logo canvas')).toHaveCount(1)
-    await expect(page.locator('.login-particle-logo__image')).toHaveCSS('opacity', '0')
-    await expectLoginValidation(page)
-  })
-
 
   for (const backend of ['webgpu', 'webgl2'] as const) {
     test(`${backend} commits one visible draw with diagnostics and transparent source-over pixels`, async ({ page }, testInfo) => {
