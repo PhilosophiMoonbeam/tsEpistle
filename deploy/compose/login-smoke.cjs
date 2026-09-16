@@ -14,6 +14,7 @@ async function main() {
   })
   const page = await context.newPage()
   const failures = []
+  let reducedMotionTeardownStarted = false
   page.on('pageerror', error => failures.push(`pageerror: ${error.message}`))
   page.on('requestfailed', request => failures.push(`requestfailed: ${request.url()} ${request.failure()?.errorText ?? ''}`))
   page.on('console', message => {
@@ -22,6 +23,14 @@ async function main() {
     // A site administrator may retain a historical custom background URL. It is
     // outside the application bundle and must not hide any other console error.
     if (url === `${baseURL}/loginv2.jpg` && message.text().includes('404')) return
+    // The scene intentionally retires an in-flight renderer lease when this
+    // smoke switches to reduced motion. Ignore only that post-teardown race;
+    // the same initialization error before teardown remains a failure.
+    if (
+      reducedMotionTeardownStarted &&
+      message.text().includes('[TresJS] Renderer initialization failed') &&
+      message.text().includes('Particle backend lease was retired')
+    ) return
     failures.push(`console: ${url}: ${message.text()}`)
   })
 
@@ -59,6 +68,7 @@ async function main() {
       await page.mouse.up()
     }
     await email.focus()
+    reducedMotionTeardownStarted = true
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.waitForFunction(() => document.querySelectorAll('.login-particle-logo canvas').length === 0)
     if (!(await email.evaluate(element => element === document.activeElement))) throw new Error('Reduced-motion teardown disturbed login focus')

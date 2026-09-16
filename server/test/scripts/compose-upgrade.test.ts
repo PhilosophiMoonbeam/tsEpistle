@@ -37,4 +37,14 @@ describe('Compose upgrade command', () => {
     expect(profile.databaseService).toBe('database')
     expect(JSON.stringify(profile)).not.toMatch(/password|secret|token|api.?key/iu)
   })
+
+  it('limits the retired-renderer exception to the reduced-motion teardown window', async () => {
+    const smoke = await readFile(path.resolve('deploy/compose/login-smoke.cjs'), 'utf8')
+    const teardown = smoke.indexOf('reducedMotionTeardownStarted = true')
+    const mediaChange = smoke.indexOf("page.emulateMedia({ reducedMotion: 'reduce' })")
+
+    expect(smoke).toContain("message.text().includes('Particle backend lease was retired')")
+    expect(teardown).toBeGreaterThan(0)
+    expect(mediaChange).toBeGreaterThan(teardown)
+  })
 })
