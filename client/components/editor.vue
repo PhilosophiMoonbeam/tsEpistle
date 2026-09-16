@@ -175,6 +175,7 @@
               @click='resolveOfflineSubmission(`continue`)'
             ) Keep as new draft
       component(
+        :is='currentEditor'
         v-if='currentEditor'
         :key='editorInstanceKey'
         :save='save'
