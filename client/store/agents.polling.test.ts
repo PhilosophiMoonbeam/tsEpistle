@@ -284,6 +284,31 @@ describe('Agent chat refresh fallback', () => {
     expect(FakeEventSource.instances).toHaveLength(2)
   })
 
+  it('returns to an idle workspace after a terminal run refresh', async () => {
+    const store = createStore()
+    const thread = activeThread()
+    const runId = thread.session.currentRun!.id
+    const terminalThread = {
+      ...thread,
+      session: {
+        ...thread.session,
+        currentRun: null
+      }
+    }
+    store.thread = thread
+    markWorkspaceReady(store)
+    const fetcher = vi
+      .spyOn(window, 'fetch')
+      .mockResolvedValueOnce(Response.json(terminalThread))
+      .mockResolvedValueOnce(Response.json({ sessions: [summaryForThread(terminalThread)], nextCursor: null }))
+
+    await store.runScheduledRefresh(true, runId, store.connectionGeneration, store.workspaceVersion, thread.session.id)
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(store.connection).toBe('idle')
+    expect(store.isWorkspaceReady()).toBe(true)
+  })
+
   it('pauses the stream and timers while hidden, then performs one authoritative refresh on return', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('EventSource', FakeEventSource)

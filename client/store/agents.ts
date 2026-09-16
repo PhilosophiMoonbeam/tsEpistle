@@ -1603,6 +1603,7 @@ export const useAgentsStore = defineStore('agents', {
             this.scheduleRefresh(true, delay, observedRunId, generation)
           } else {
             this.closeStream()
+            if (!this.workspaceDisposed) this.connection = 'idle'
           }
           return
         }
