@@ -346,7 +346,7 @@ build_candidate() {
   else
     log 'Host Bun is unavailable; running the canonical builder in a pinned Bun container'
     docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$REPO_ROOT:/repo:ro" -w /repo "$BUN_IMAGE" \
-      sh -ec 'apk add --no-cache docker-cli git >/dev/null && bun server/scripts/build-docker.ts "$1"' sh "$image"
+      sh -ec 'apk add --no-cache docker-cli docker-cli-buildx git >/dev/null && bun server/scripts/build-docker.ts "$1"' sh "$image"
   fi
   [[ "$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" == "$target" ]] || die 'Candidate OCI revision label mismatch'
 }

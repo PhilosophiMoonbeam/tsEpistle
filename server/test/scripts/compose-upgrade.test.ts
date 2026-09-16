@@ -25,7 +25,7 @@ describe('Compose upgrade command', () => {
     expect(script).not.toMatch(/pg_restore[^\n]*--clean/u)
     expect(script).toContain('up -d --no-deps --no-build --force-recreate')
     expect(script).toContain('--volumes-from "$APP_CONTAINER":ro')
-    expect(script).toContain('apk add --no-cache docker-cli git')
+    expect(script).toContain('apk add --no-cache docker-cli docker-cli-buildx git')
   })
 
   it('ships a secret-free operator profile template', async () => {
