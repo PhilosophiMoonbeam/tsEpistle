@@ -355,8 +355,8 @@ browserWindow.HTMLElement.prototype.getBoundingClientRect = function (): DOMRect
       const height = Number.isFinite(inlineHeight) ? inlineHeight : Number.parseFloat(field.style.getPropertyValue('--login-logo-image-height'))
       const inlineLeft = Number.parseFloat(this.style.left)
       const inlineTop = Number.parseFloat(this.style.top)
-      const left = Number.isFinite(inlineLeft) ? fieldLeft + inlineLeft : fieldLeft + (fieldWidth - width) / 2
-      const top = Number.isFinite(inlineTop) ? fieldTop + inlineTop : fieldTop + (fieldHeight - height) / 2
+      const left = fieldLeft + (Number.isFinite(inlineLeft) ? inlineLeft : Number.parseFloat(field.style.getPropertyValue('--login-logo-image-left')))
+      const top = fieldTop + (Number.isFinite(inlineTop) ? inlineTop : Number.parseFloat(field.style.getPropertyValue('--login-logo-image-top')))
       if ([fieldLeft, fieldTop, fieldWidth, fieldHeight, width, height, left, top].every(Number.isFinite)) {
         return rect({ left, top, width, height })
       }
@@ -1038,10 +1038,8 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     await settle()
     const scene = mounted.host.querySelector<HTMLElement>('.login-particle-logo__scene-stub')
     expect(scene).not.toBeNull()
-    expect(scene?.style.zIndex).toBe('1')
     expect(scene?.dataset.active).toBe('true')
     expect(sceneControls).toHaveLength(1)
-    expect(staticImage(mounted.host)?.style.zIndex).toBe('2')
     expect(staticImage(mounted.host)?.style.opacity).toBe('1')
 
     sceneControls[0]?.firstFrame()

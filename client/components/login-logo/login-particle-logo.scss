@@ -57,6 +57,17 @@
     );
     pointer-events: none;
   }
+  &__scene {
+    z-index: 1;
+  }
+
+  &__silhouette,
+  &__image {
+    left: var(--login-logo-image-left, 0px);
+    top: var(--login-logo-image-top, 0px);
+    width: var(--login-logo-image-width, 100%);
+    height: var(--login-logo-image-height, 100%);
+  }
 
   &__silhouette {
     position: absolute;
@@ -89,6 +100,7 @@
     object-position: center;
     pointer-events: none;
     transform: translateZ(0);
+    opacity: 1;
   }
 }
 

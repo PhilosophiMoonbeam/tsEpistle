@@ -19,7 +19,6 @@
         :particles="sceneMount.particles"
         :content-rect="contentRect"
         :active="sceneActive"
-        style="z-index: 1"
         @first-frame="sceneMount.onFirstFrame"
         @frame-pending="sceneMount.onFramePending"
         @error="sceneMount.onError"
@@ -29,7 +28,7 @@
         ref="staticImageElement"
         :key="staticUrl"
         :src="staticUrl"
-        :style="imageStyle"
+        style="opacity: 1"
         alt=""
         aria-hidden="true"
         decoding="async"
@@ -368,7 +367,7 @@ export default defineComponent({
       fetchController = null
       clearDeadline()
       sceneMount.value = null
-      sceneReady.value = false
+      setSceneReady(false)
       sceneCommitted.value = false
       return enhancementEpoch
     }
@@ -633,39 +632,25 @@ export default defineComponent({
     const staticUrl = computed(() => activeEffect.value?.staticUrl ?? '')
     const contentRect = computed(() => layout.value?.contentRect)
     const showSilhouette = computed(() => loadedStaticUrl.value !== null)
-    const contentStyle = (rect: ParticleContentRect): Record<string, string> => ({
-      left: toPixels(rect.left),
-      top: toPixels(rect.top),
-      width: toPixels(rect.width),
-      height: toPixels(rect.height)
-    })
     const fieldStyle = computed((): Record<string, string> => {
       const currentLayout = layout.value
-      const effect = activeEffect.value
-      if (!currentLayout || !effect) return {}
+      if (!currentLayout) return {}
+      const content = currentLayout.contentRect
       return {
         left: toPixels(currentLayout.left),
         top: toPixels(currentLayout.top),
         width: toPixels(currentLayout.width),
-        height: toPixels(currentLayout.height)
-      }
-    })
-    const imageStyle = computed((): Record<string, string> => {
-      const currentLayout = layout.value
-      if (!currentLayout) return {}
-      return {
-        ...contentStyle(currentLayout.contentRect),
-        zIndex: '2',
-        opacity: sceneReady.value ? '0' : '1',
-        transition: reducedMotion.value ? 'none' : SCENE_IMAGE_CROSSFADE
+        height: toPixels(currentLayout.height),
+        '--login-logo-image-left': toPixels(content.left),
+        '--login-logo-image-top': toPixels(content.top),
+        '--login-logo-image-width': toPixels(content.width),
+        '--login-logo-image-height': toPixels(content.height)
       }
     })
     const silhouetteStyle = computed((): Record<string, string> => {
-      const currentLayout = layout.value
       const staticUrl = loadedStaticUrl.value
-      if (!currentLayout || !staticUrl) return {}
+      if (!staticUrl) return {}
       return {
-        ...contentStyle(currentLayout.contentRect),
         '--login-logo-silhouette-mask': `url("${staticUrl}")`
       }
     })
@@ -675,7 +660,6 @@ export default defineComponent({
       fieldStyle,
       handleImageError,
       handleImageLoad,
-      imageStyle,
       sceneActive,
       sceneInstance,
       sceneMount,
