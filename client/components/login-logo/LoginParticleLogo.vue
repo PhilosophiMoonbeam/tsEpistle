@@ -1,14 +1,13 @@
 <template lang="pug">
   .login-particle-logo(
-    v-if="showField"
+    v-if="fieldStyle"
     aria-hidden="true"
     :style="fieldStyle"
   )
     .login-particle-logo__stage
       .login-particle-logo__silhouette(
-        v-if="showSilhouette"
+        v-if="loadedStaticUrl"
         aria-hidden="true"
-        :style="silhouetteStyle"
       )
       component.login-particle-logo__scene(
         ref="sceneInstance"
@@ -17,7 +16,7 @@
         :key="sceneMount.epoch"
         :effect="sceneMount.effect"
         :particles="sceneMount.particles"
-        :content-rect="contentRect"
+        :content-rect="layout?.contentRect"
         :active="sceneActive"
         @first-frame="sceneMount.onFirstFrame"
         @frame-pending="sceneMount.onFramePending"
@@ -26,8 +25,8 @@
       )
       img.login-particle-logo__image(
         ref="staticImageElement"
-        :key="staticUrl"
-        :src="staticUrl"
+        :key="activeEffect?.staticUrl ?? ''"
+        :src="activeEffect?.staticUrl ?? ''"
         style="opacity: 1"
         alt=""
         aria-hidden="true"
@@ -171,19 +170,14 @@ export default defineComponent({
     const staticImageElement = useTemplateRef<HTMLImageElement>('staticImageElement')
     let terminalEffect: LogoEffectDescriptor | null = null
     const activeEffect = computed(() => isLogoEffectDescriptor(props.effect) ? props.effect : null)
-    const animationSizeEligible = computed(() => {
-      const currentLayout = layout.value
-      return (
-        currentLayout !== null &&
-        Math.max(currentLayout.contentRect.width, currentLayout.contentRect.height) >= MIN_RENDERED_LONG_AXIS_PX &&
-        Math.min(currentLayout.contentRect.width, currentLayout.contentRect.height) >= MIN_RENDERED_SHORT_AXIS_PX
-      )
-    })
     const hardEligible = computed(() => {
       const effect = activeEffect.value
+      const content = layout.value?.contentRect
       return (
         effect !== null &&
-        animationSizeEligible.value &&
+        content !== undefined &&
+        Math.max(content.width, content.height) >= MIN_RENDERED_LONG_AXIS_PX &&
+        Math.min(content.width, content.height) >= MIN_RENDERED_SHORT_AXIS_PX &&
         mediaEligible.value &&
         !reducedMotion.value &&
         loadedStaticUrl.value === effect.staticUrl &&
@@ -206,7 +200,6 @@ export default defineComponent({
     let cancelIdleWork: (() => void) | null = null
     let fetchController: AbortController | null = null
     let deadlineTimer: number | null = null
-    let resumeDeadlineTimer: number | null = null
     let enhancementEpoch = 0
     let reducedMotionLatched = false
     let previousAura = ''
@@ -326,10 +319,6 @@ export default defineComponent({
         window.clearTimeout(deadlineTimer)
         deadlineTimer = null
       }
-      if (resumeDeadlineTimer !== null) {
-        window.clearTimeout(resumeDeadlineTimer)
-        resumeDeadlineTimer = null
-      }
     }
 
     const setSceneReady = (ready: boolean): void => {
@@ -344,12 +333,12 @@ export default defineComponent({
 
     const scheduleResumeDeadline = (epoch: number, effect: LogoEffectDescriptor): void => {
       if (
-        resumeDeadlineTimer !== null ||
+        deadlineTimer !== null ||
         !sceneCommitted.value ||
         !isCurrentLoad(epoch, effect)
       ) return
-      resumeDeadlineTimer = window.setTimeout(() => {
-        resumeDeadlineTimer = null
+      deadlineTimer = window.setTimeout(() => {
+        deadlineTimer = null
         if (
           !isCurrentLoad(epoch, effect) ||
           sceneMount.value?.epoch !== epoch ||
@@ -465,7 +454,6 @@ export default defineComponent({
       cancelIdleWork !== null ||
       fetchController !== null ||
       deadlineTimer !== null ||
-      resumeDeadlineTimer !== null ||
       sceneMount.value !== null
 
     const reconcileEnhancement = (): void => {
@@ -624,18 +612,12 @@ export default defineComponent({
       clearLayout()
     })
 
-    const showField = computed(() =>
-      layout.value !== null &&
-      activeEffect.value !== null &&
-      failedStaticUrl.value !== activeEffect.value.staticUrl
-    )
-    const staticUrl = computed(() => activeEffect.value?.staticUrl ?? '')
-    const contentRect = computed(() => layout.value?.contentRect)
-    const showSilhouette = computed(() => loadedStaticUrl.value !== null)
-    const fieldStyle = computed((): Record<string, string> => {
+    const fieldStyle = computed((): Record<string, string> | null => {
       const currentLayout = layout.value
-      if (!currentLayout) return {}
+      const effect = activeEffect.value
+      if (!currentLayout || !effect || failedStaticUrl.value === effect.staticUrl) return null
       const content = currentLayout.contentRect
+      const staticUrl = loadedStaticUrl.value
       return {
         left: toPixels(currentLayout.left),
         top: toPixels(currentLayout.top),
@@ -644,30 +626,22 @@ export default defineComponent({
         '--login-logo-image-left': toPixels(content.left),
         '--login-logo-image-top': toPixels(content.top),
         '--login-logo-image-width': toPixels(content.width),
-        '--login-logo-image-height': toPixels(content.height)
-      }
-    })
-    const silhouetteStyle = computed((): Record<string, string> => {
-      const staticUrl = loadedStaticUrl.value
-      if (!staticUrl) return {}
-      return {
-        '--login-logo-silhouette-mask': `url("${staticUrl}")`
+        '--login-logo-image-height': toPixels(content.height),
+        ...(staticUrl ? { '--login-logo-silhouette-mask': `url("${staticUrl}")` } : {})
       }
     })
 
     return {
-      contentRect,
+      activeEffect,
       fieldStyle,
       handleImageError,
       handleImageLoad,
+      layout,
+      loadedStaticUrl,
       sceneActive,
       sceneInstance,
       sceneMount,
-      showField,
-      showSilhouette,
-      silhouetteStyle,
-      staticImageElement,
-      staticUrl
+      staticImageElement
     }
   }
 })
