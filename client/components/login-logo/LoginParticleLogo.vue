@@ -5,10 +5,6 @@
     :style="fieldStyle"
   )
     .login-particle-logo__stage
-      .login-particle-logo__silhouette(
-        v-if="loadedStaticUrl"
-        aria-hidden="true"
-      )
       component.login-particle-logo__scene(
         ref="sceneInstance"
         v-if="sceneMount"
@@ -617,7 +613,6 @@ export default defineComponent({
       const effect = activeEffect.value
       if (!currentLayout || !effect || failedStaticUrl.value === effect.staticUrl) return null
       const content = currentLayout.contentRect
-      const staticUrl = loadedStaticUrl.value
       return {
         left: toPixels(currentLayout.left),
         top: toPixels(currentLayout.top),
@@ -626,8 +621,7 @@ export default defineComponent({
         '--login-logo-image-left': toPixels(content.left),
         '--login-logo-image-top': toPixels(content.top),
         '--login-logo-image-width': toPixels(content.width),
-        '--login-logo-image-height': toPixels(content.height),
-        ...(staticUrl ? { '--login-logo-silhouette-mask': `url("${staticUrl}")` } : {})
+        '--login-logo-image-height': toPixels(content.height)
       }
     })
 

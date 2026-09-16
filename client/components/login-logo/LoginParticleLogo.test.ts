@@ -348,7 +348,7 @@ browserWindow.HTMLElement.prototype.getBoundingClientRect = function (): DOMRect
     if (this === field && [fieldLeft, fieldTop, fieldWidth, fieldHeight].every(Number.isFinite)) {
       return rect({ left: fieldLeft, top: fieldTop, width: fieldWidth, height: fieldHeight })
     }
-    if (this.classList.contains('login-particle-logo__image') || this.classList.contains('login-particle-logo__silhouette')) {
+    if (this.classList.contains('login-particle-logo__image')) {
       const inlineWidth = Number.parseFloat(this.style.width)
       const inlineHeight = Number.parseFloat(this.style.height)
       const width = Number.isFinite(inlineWidth) ? inlineWidth : Number.parseFloat(field.style.getPropertyValue('--login-logo-image-width'))
@@ -610,7 +610,6 @@ const setSurfaceVisibility = async (visible: boolean): Promise<void> => {
 
 const logoField = (host: ParentNode): HTMLElement | null => host.querySelector<HTMLElement>('.login-particle-logo')
 const staticImage = (host: ParentNode): HTMLImageElement | null => logoField(host)?.querySelector<HTMLImageElement>('img') ?? null
-const silhouetteElement = (host: ParentNode): HTMLElement | null => logoField(host)?.querySelector<HTMLElement>('.login-particle-logo__silhouette') ?? null
 
 const sceneContentRect = (host: ParentNode): ParticleContentRect | null => {
   const scene = host.querySelector<HTMLElement>('.login-particle-logo__scene-stub')
@@ -783,16 +782,10 @@ describe('LoginParticleLogo static behavior', () => {
     expect(imageBounds.top).toBeCloseTo(expectedContentTop, 2)
     expect(imageBounds.width).toBeCloseTo(expectedContentWidth, 2)
     expect(imageBounds.height).toBeCloseTo(expectedContentHeight, 2)
-    expect(silhouetteElement(mounted.host)).toBeNull()
+    expect(mounted.host.querySelector('.login-particle-logo__silhouette')).toBeNull()
 
     await loadStaticRendition(mounted, particleEffect)
-    const silhouette = silhouetteElement(mounted.host)
-    if (!silhouette) throw new Error('Validated static rendition did not create its alpha silhouette')
-    const silhouetteBounds = renderedRect(silhouette)
-    expect(silhouetteBounds.left).toBeCloseTo(imageBounds.left, 2)
-    expect(silhouetteBounds.top).toBeCloseTo(imageBounds.top, 2)
-    expect(silhouetteBounds.width).toBeCloseTo(imageBounds.width, 2)
-    expect(silhouetteBounds.height).toBeCloseTo(imageBounds.height, 2)
+    expect(mounted.host.querySelector('.login-particle-logo__silhouette')).toBeNull()
 
     await runIdleWork()
     pendingFetches[0]?.resolve(new Response(particleFixture))

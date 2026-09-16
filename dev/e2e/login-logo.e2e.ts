@@ -1684,7 +1684,6 @@ interface LogoAnchorGeometry {
   readonly paddingBottom: number
   readonly paddingRight: number
   readonly paddingTop: number
-  readonly silhouette: RectSnapshot | null
   readonly viewportHeight: number
   readonly viewportWidth: number
 }
@@ -1724,7 +1723,6 @@ async function readLogoAnchorGeometry(page: Page): Promise<LogoAnchorGeometry> {
       paddingBottom: Number.parseFloat(style.paddingBottom) || 0,
       paddingRight: Number.parseFloat(style.paddingRight) || 0,
       paddingTop: Number.parseFloat(style.paddingTop) || 0,
-      silhouette: readRect(field.querySelector('.login-particle-logo__silhouette')),
       viewportHeight: window.innerHeight,
       viewportWidth: document.documentElement.clientWidth || window.innerWidth
     }
@@ -1762,90 +1760,6 @@ function findBlueParticleNear(frame: RgbaFrame, x: number, y: number, radius: nu
     }
   }
   return best
-}
-
-async function expectLocalizedSilhouette(page: Page, geometry: LogoAnchorGeometry): Promise<void> {
-  const field = page.locator('.login-particle-logo')
-  const image = field.locator('.login-particle-logo__image')
-  const silhouetteLayer = field.locator('.login-particle-logo__silhouette')
-  const previousImageStyle = await image.getAttribute('style')
-  const previousSilhouetteStyle = await silhouetteLayer.getAttribute('style')
-  await image.evaluate(element => {
-    element.style.opacity = '0'
-  })
-  try {
-    const silhouette = await decodeScreenshot(await page.screenshot({ animations: 'disabled', fullPage: false }))
-    await silhouetteLayer.evaluate(element => {
-      element.style.visibility = 'hidden'
-    })
-    const backdrop = await decodeScreenshot(await page.screenshot({ animations: 'disabled', fullPage: false }))
-    const insetX = Math.max(3, Math.min(8, geometry.image.width * 0.08))
-    const insetY = Math.max(3, Math.min(8, geometry.image.height * 0.15))
-    const corners = [
-      [geometry.image.left + insetX, geometry.image.top + insetY],
-      [geometry.image.right - insetX, geometry.image.top + insetY],
-      [geometry.image.left + insetX, geometry.image.bottom - insetY],
-      [geometry.image.right - insetX, geometry.image.bottom - insetY]
-    ] as const
-    for (const [x, y] of corners) {
-      expect(rgbDistance(readFramePixelAtCss(silhouette, geometry, x, y), readFramePixelAtCss(backdrop, geometry, x, y))).toBeLessThan(24)
-    }
-
-    const imageLeft = Math.max(0, Math.floor((geometry.image.left * silhouette.width) / geometry.viewportWidth))
-    const imageRight = Math.min(silhouette.width - 1, Math.ceil((geometry.image.right * silhouette.width) / geometry.viewportWidth) - 1)
-    const imageTop = Math.max(0, Math.floor((geometry.image.top * silhouette.height) / geometry.viewportHeight))
-    const imageBottom = Math.min(silhouette.height - 1, Math.ceil((geometry.image.bottom * silhouette.height) / geometry.viewportHeight) - 1)
-    let changedPixels = 0
-    let maximumDifference = 0
-    for (let y = imageTop; y <= imageBottom; y += 1) {
-      for (let x = imageLeft; x <= imageRight; x += 1) {
-        const difference = rgbDistance(readRgbaPixel(silhouette, x, y), readRgbaPixel(backdrop, x, y))
-        maximumDifference = Math.max(maximumDifference, difference)
-        if (difference > 2) changedPixels += 1
-      }
-    }
-    expect(changedPixels, 'The alpha silhouette must change at least one pixel inside the logical image rectangle.').toBeGreaterThan(0)
-    expect(maximumDifference, 'The alpha silhouette must produce a meaningful localized difference.').toBeGreaterThan(2)
-
-    const interiorTargets = [
-      ['left component', 0.225, 0.5],
-      ['circle component', 0.52, 0.5],
-      ['right component', 0.8, 0.5]
-    ] as const
-    const targetRadiusX = Math.max(2, Math.min(12, Math.round((imageRight - imageLeft + 1) * 0.025)))
-    const targetRadiusY = Math.max(2, Math.min(12, Math.round((imageBottom - imageTop + 1) * 0.05)))
-    for (const [label, x, y] of interiorTargets) {
-      const targetX = imageLeft + x * (imageRight - imageLeft)
-      const targetY = imageTop + y * (imageBottom - imageTop)
-      let targetDifference = 0
-      for (
-        let frameY = Math.max(imageTop, Math.floor(targetY) - targetRadiusY);
-        frameY <= Math.min(imageBottom, Math.ceil(targetY) + targetRadiusY);
-        frameY += 1
-      ) {
-        for (
-          let frameX = Math.max(imageLeft, Math.floor(targetX) - targetRadiusX);
-          frameX <= Math.min(imageRight, Math.ceil(targetX) + targetRadiusX);
-          frameX += 1
-        ) {
-          targetDifference = Math.max(
-            targetDifference,
-            rgbDistance(readRgbaPixel(silhouette, frameX, frameY), readRgbaPixel(backdrop, frameX, frameY))
-          )
-        }
-      }
-      expect(targetDifference, `The ${label} must have a visible alpha-silhouette difference.`).toBeGreaterThan(2)
-    }
-  } finally {
-    await image.evaluate((element, style) => {
-      if (style === null) element.removeAttribute('style')
-      else element.setAttribute('style', style)
-    }, previousImageStyle)
-    await silhouetteLayer.evaluate((element, style) => {
-      if (style === null) element.removeAttribute('style')
-      else element.setAttribute('style', style)
-    }, previousSilhouetteStyle)
-  }
 }
 
 test.describe('strict particle backend consumer coverage', () => {
@@ -2108,17 +2022,16 @@ test.describe('strict particle backend consumer coverage', () => {
     await expectLoginValidation(page)
   })
 
-  test('keeps static, alpha-silhouette, and animated particle anchors coincident', async ({ page }, testInfo) => {
+  test('keeps static and animated particle anchors coincident without a silhouette layer', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, STRICT_BACKEND_PROJECTS)
     const capability = await detectBackendCapability(page, 'webgl2')
     skipUnsupportedStrictBackend(testInfo, 'webgl2', capability)
 
     await prepareStrictBackendPage(page, 'webgl2', squareEffect, 'light')
     const geometry = await readLogoAnchorGeometry(page)
-    expect(geometry.silhouette).not.toBeNull()
+    await expect(page.locator('.login-particle-logo__silhouette')).toHaveCount(0)
     expect(geometry.canvas).not.toBeNull()
-    if (!geometry.silhouette || !geometry.canvas) throw new Error('The committed logo layers are unavailable.')
-    expectRectWithin(geometry.silhouette, geometry.image)
+    if (!geometry.canvas) throw new Error('The committed particle canvas is unavailable.')
     expect(geometry.image.left).toBeGreaterThanOrEqual(geometry.field.left)
     expect(geometry.image.right).toBeLessThanOrEqual(geometry.field.right)
     expect(geometry.image.top).toBeGreaterThanOrEqual(geometry.field.top)
@@ -2298,35 +2211,18 @@ test.describe('managed login logo auth independence', () => {
       expect(themeBackgrounds[0]).not.toBe(themeBackgrounds[1])
     })
   }
-  test('renders a restrained alpha-shaped light/dark silhouette without an aura wash', async ({ context }, testInfo) => {
+  test('omits the alpha silhouette in light and dark static presentation', async ({ context }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
     for (const colorScheme of ['light', 'dark'] as const) {
       const samplePage = await context.newPage()
       try {
         await samplePage.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
         await installManagedLogo(samplePage, wideEffect)
-        await samplePage.goto(`/login?logo-silhouette=${colorScheme}`)
+        await samplePage.goto(`/login?logo-without-silhouette=${colorScheme}`)
         await expectStaticFallback(samplePage, wideEffect)
         const field = samplePage.locator('.login-particle-logo')
-        const silhouette = field.locator('.login-particle-logo__silhouette')
-        await expect(silhouette).toHaveCount(1)
-        const geometry = await readLogoAnchorGeometry(samplePage)
-        if (!geometry.silhouette) throw new Error('The static alpha silhouette is unavailable.')
-        const silhouetteStyle = await silhouette.evaluate(element => {
-          const style = getComputedStyle(element)
-          return {
-            backgroundColor: style.backgroundColor,
-            filter: style.filter,
-            maskImage: style.maskImage,
-            opacity: style.opacity
-          }
-        })
-        expect(silhouetteStyle.opacity).toBe(colorScheme === 'light' ? '0.12' : '0.08')
-        expect(silhouetteStyle.filter).toBe('blur(2px)')
-        expect(silhouetteStyle.backgroundColor).toBe(colorScheme === 'light' ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)')
-        expect(silhouetteStyle.maskImage).toContain(wideEffect.staticUrl)
-        expect(await field.evaluate(element => getComputedStyle(element).getPropertyValue('--login-logo-aura').trim())).toBe('transparent')
-        await expectLocalizedSilhouette(samplePage, geometry)
+        await expect(field.locator('.login-particle-logo__silhouette')).toHaveCount(0)
+        expect(await field.evaluate(element => getComputedStyle(element).getPropertyValue('--login-logo-silhouette-mask').trim())).toBe('')
         await expectLoginValidation(samplePage)
       } finally {
         await samplePage.close()
@@ -3023,9 +2919,7 @@ test.describe('particle compositor without service workers', () => {
       await expect(target.locator('.v-application')).toHaveClass(colorScheme === 'light' ? /v-theme--light/ : /v-theme--dark/)
     }
 
-    const captureIntrinsic = async (
-      target: Page
-    ): Promise<{ readonly frame: RgbaFrame; readonly geometry: CanvasSurfaceGeometry }> =>
+    const captureIntrinsic = async (target: Page): Promise<{ readonly frame: RgbaFrame; readonly geometry: CanvasSurfaceGeometry }> =>
       withFrozenLogoFrame(target, async () => {
         const geometry = await readCanvasSurfaceGeometry(target)
         const frame = await decodeScreenshot((await captureLogoRenderedFrame(target, undefined, 0, 0)).png)
@@ -3052,13 +2946,7 @@ test.describe('particle compositor without service workers', () => {
     expect(coldLight.theme.background).not.toBe(coldDark.theme.background)
     expectColorProbePixels(coldLight.frame, coldLight.geometry)
     expectColorProbePixels(coldDark.frame, coldDark.geometry)
-    expectIntrinsicProbeSamplesEquivalent(
-      'cold light/dark',
-      coldLight.frame,
-      coldLight.geometry,
-      coldDark.frame,
-      coldDark.geometry
-    )
+    expectIntrinsicProbeSamplesEquivalent('cold light/dark', coldLight.frame, coldLight.geometry, coldDark.frame, coldDark.geometry)
 
     await prepare(page, 'light', 'logo-color-probe-live')
     const liveLightComposition = await capturePageComposition(page)

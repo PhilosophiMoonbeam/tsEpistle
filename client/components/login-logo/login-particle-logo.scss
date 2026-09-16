@@ -61,7 +61,6 @@
     z-index: 1;
   }
 
-  &__silhouette,
   &__image {
     left: var(--login-logo-image-left, 0px);
     top: var(--login-logo-image-top, 0px);
@@ -69,26 +68,6 @@
     height: var(--login-logo-image-height, 100%);
   }
 
-  &__silhouette {
-    position: absolute;
-    z-index: 0;
-    display: block;
-    background: rgb(0 0 0);
-    mask-image: var(--login-logo-silhouette-mask);
-    mask-mode: alpha;
-    mask-position: center;
-    mask-repeat: no-repeat;
-    mask-size: 100% 100%;
-    -webkit-mask-image: var(--login-logo-silhouette-mask);
-    -webkit-mask-mode: alpha;
-    -webkit-mask-position: center;
-    -webkit-mask-repeat: no-repeat;
-    -webkit-mask-size: 100% 100%;
-    filter: blur(2px);
-    opacity: 0.12;
-    pointer-events: none;
-    transform: translateY(1px) translateZ(0);
-  }
 
   &__image {
     position: absolute;
@@ -104,11 +83,6 @@
   }
 }
 
-.v-theme--dark .login-particle-logo__silhouette {
-  background: rgb(255 255 255);
-  opacity: 0.08;
-  transform: translateZ(0);
-}
 
 .v-theme--light .login-particle-logo {
   --login-logo-stage-wash: color-mix(in srgb, rgb(var(--v-theme-surface)) 26%, transparent);
