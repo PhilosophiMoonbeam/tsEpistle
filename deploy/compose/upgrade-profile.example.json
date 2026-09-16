@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "repositoryRoot": "/path/to/tsEpistle",
+  "composeFile": "/path/to/tsEpistle/deploy/compose/compose.yml",
+  "envFile": "/opt/tsepistle/deployment.env",
+  "stateDirectory": "/opt/tsepistle",
+  "recoveryDirectory": "/opt/tsepistle-recovery",
+  "project": "tsepistle",
+  "appService": "app",
+  "databaseService": "database",
+  "imageRepository": "local/tsepistle",
+  "publicUrl": "https://canary.example.com",
+  "proxyNetwork": "tsepistle-proxy",
+  "proxyAlias": "tsepistle",
+  "controlUrls": [
+    "https://wiki.example.com"
+  ],
+  "sentinelContainers": [
+    "caddy",
+    "wiki",
+    "wiki-database"
+  ],
+  "playwrightImage": "mcr.microsoft.com/playwright:v1.62.1-noble",
+  "planLifetimeSeconds": 3600,
+  "waitTimeoutSeconds": 300
+}

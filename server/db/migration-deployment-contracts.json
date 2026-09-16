@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "enforceFromSequence": 42,
+  "migrations": {
+    "tsepistle-000041-site-logo-transparent-icons.js": {
+      "persistentState": "stateful",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "site-logo-schema-v7"
+      ],
+      "runtimePostconditions": [
+        "site-logo-pipeline-v7"
+      ]
+    }
+  }
+}

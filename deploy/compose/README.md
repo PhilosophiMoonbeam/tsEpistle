@@ -78,10 +78,28 @@ Feature flags expose the runtime but do not grant access or select a model. Admi
 
 ## Upgrades
 
-Build release images only from clean, reviewed commits and identify them with immutable tags or digests:
+Use [`upgrade.sh`](./upgrade.sh) for repeated app-only redeployments. It never fetches or changes the checkout, so first update the repository by your normal reviewed, fast-forward-only workflow. The checkout must be clean and `--revision` must be its complete 40-character `HEAD` SHA.
+
+Create the root-owned operator profile once, outside the repository:
 
 ```console
-bun run docker:build local/tsepistle:<version>-<commit>
+install -m 600 deploy/compose/upgrade-profile.example.json /opt/tsepistle/upgrade-profile.json
+$EDITOR /opt/tsepistle/upgrade-profile.json
 ```
 
-Back up PostgreSQL, `/wiki/data`, and the Agent keys together before replacing the image. Database migrations are forward-only; rollback means restoring the matching database and data snapshot rather than starting older code against a migrated database.
+Each deployment is deliberately two-phase. Planning is read-only: it inventories the live image, migration ledger, app runtime contract, and protected containers; classifies the diff; then writes a private, expiring JSON plan with a confirmation digest.
+
+```console
+revision=$(git rev-parse HEAD)
+sudo deploy/compose/upgrade.sh plan \
+  --profile /opt/tsepistle/upgrade-profile.json \
+  --revision "$revision"
+```
+
+Review the printed plan and run the exact `apply` command it prints. Apply revalidates that nothing changed, builds the exact revision, replaces only the app service, waits for health, verifies data/config/container continuity, and exercises the public login flow. It never recreates PostgreSQL, runs `compose down`, prunes volumes, or touches the control Wiki.js stack.
+
+Routine code-only changes do not create a database backup. A new migration must have reviewed metadata in [`server/db/migration-deployment-contracts.json`](../../server/db/migration-deployment-contracts.json). When that contract marks persistent-state risk, apply additionally gates public traffic, drains writers, rehearses the migration against a disposable database clone, and captures a paired PostgreSQL plus complete `/wiki/data` recovery point before replacement. Unknown migration, storage, key, or topology risk stops rather than guessing.
+
+If apply fails before replacement begins, it restarts the unchanged app. Once candidate creation has begun, it does not automatically start the old image: inspect the reported state first. If a migration committed, rollback is fix-forward or an explicitly authorized restore of the matching database and data recovery point—never simply starting old code.
+
+The built-in login browser check is an operational smoke test, not a replacement for change-specific CI. Run the relevant tests before creating a deployment plan.

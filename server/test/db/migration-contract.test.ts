@@ -1,8 +1,5 @@
-import { readdir } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-
-import { describe, expect, it } from '../bun-test.mts'
-
 import {
   isLegacyForkMigrationName,
   isNamespacedMigrationName,
@@ -11,6 +8,7 @@ import {
   migrationLedgerName,
   orderMigrationFiles
 } from '../../db/migration-contract.ts'
+import { describe, expect, it } from '../bun-test.mts'
 
 const legacyFiles = LEGACY_MIGRATION_IDS.map(id => `${id}.ts`)
 const deployedNamespacedFiles = Array.from({ length: 12 }, (_, index) => {
@@ -19,6 +17,25 @@ const deployedNamespacedFiles = Array.from({ length: 12 }, (_, index) => {
 })
 const deployedNamespacedIds = deployedNamespacedFiles.map(file => file.slice(0, -'.ts'.length))
 const completeHistoricalFiles = [...legacyFiles, ...deployedNamespacedFiles]
+
+interface DeploymentContractRegistry {
+  schemaVersion: number
+  enforceFromSequence: number
+  migrations: Record<
+    string,
+    {
+      persistentState: 'none' | 'additive' | 'stateful' | 'destructive'
+      reversible: boolean
+      writerCompatibility: 'compatible' | 'breaking'
+      drain: 'graceful' | 'required'
+      rehearsal: 'none' | 'required'
+      recovery: 'none' | 'paired'
+      rollback: 'image-only' | 'fix-forward-or-restore'
+      rehearsalPostconditions: string[]
+      runtimePostconditions: string[]
+    }
+  >
+}
 
 describe('database migration namespace contract', () => {
   it('orders one contiguous sequence across the deployed and current namespaces', () => {
@@ -92,5 +109,32 @@ describe('database migration namespace contract', () => {
     expect(isNamespacedMigrationName('tsepistle-000012-wrong-namespace.js')).toBe(false)
     expect(isNamespacedMigrationName('2.5.159.js')).toBe(false)
     expect(migrationLedgerName('tsfranki-000001-schema-lineage')).toBe(MIGRATION_LINEAGE_V1.namespacedStart)
+  })
+
+  it('requires reviewed deployment metadata for every newly enforced migration', async () => {
+    const registry = JSON.parse(await readFile(path.resolve('server/db/migration-deployment-contracts.json'), 'utf8')) as DeploymentContractRegistry
+    expect(registry.schemaVersion).toBe(1)
+    expect(registry.enforceFromSequence).toBeGreaterThan(41)
+    for (const [name, contract] of Object.entries(registry.migrations)) {
+      expect(name).toMatch(/^tsepistle-\d{6}-.+\.js$/u)
+      expect(['none', 'additive', 'stateful', 'destructive']).toContain(contract.persistentState)
+      expect(typeof contract.reversible).toBe('boolean')
+      expect(['compatible', 'breaking']).toContain(contract.writerCompatibility)
+      expect(['graceful', 'required']).toContain(contract.drain)
+      expect(['none', 'required']).toContain(contract.rehearsal)
+      expect(['none', 'paired']).toContain(contract.recovery)
+      expect(['image-only', 'fix-forward-or-restore']).toContain(contract.rollback)
+      expect(contract.rehearsalPostconditions.length + contract.runtimePostconditions.length).toBeGreaterThan(0)
+    }
+    expect(registry.migrations['tsepistle-000041-site-logo-transparent-icons.js']).toBeDefined()
+    const files = (await readdir(path.resolve('server/db/migrations'))).filter(file => /^tsepistle-\d{6}-.+\.ts$/u.test(file))
+
+    for (const file of files) {
+      const sequence = Number(file.slice('tsepistle-'.length, 'tsepistle-'.length + 6))
+      if (sequence < registry.enforceFromSequence) continue
+      const name = migrationLedgerName(file.slice(0, -'.ts'.length))
+      const contract = registry.migrations[name]
+      if (!contract) throw new Error(`${name} must have reviewed deployment metadata`)
+    }
   })
 })

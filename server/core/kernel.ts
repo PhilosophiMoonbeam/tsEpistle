@@ -1,18 +1,19 @@
-import _ from 'lodash'
 import EventEmitter2Module, { type EventEmitter2 as EventEmitter2Instance } from 'eventemitter2'
+import _ from 'lodash'
+import type { ProductMetadata } from '../../shared/product.ts'
+import type { HttpTransportRuntime, MasterBackgroundWorkers } from '../master.ts'
 import asar from './asar.ts'
 import cache from './cache.ts'
-import database from './db.ts'
 import collaboration, { type CollaborationService } from './collaboration.ts'
 import type { InitializedDatabase } from './db.ts'
-import type { ServerWiki } from './servers.ts'
-import type { HttpTransportRuntime, MasterBackgroundWorkers } from '../master.ts'
+import database from './db.ts'
 import extensions from './extensions.ts'
 import metrics from './metrics.ts'
 import scheduler from './scheduler.ts'
+import type { ServerWiki } from './servers.ts'
 import sideloader from './sideloader.ts'
 import telemetry from './telemetry.ts'
-import type { ProductMetadata } from '../../shared/product.ts'
+
 const EventEmitter2 = EventEmitter2Module.EventEmitter2
 
 interface Logger {
@@ -98,6 +99,25 @@ const kernel: KernelService = {
     wiki.models = initializedModels
     try {
       await initializedModels.onReady
+      if (process.env.TSEPISTLE_MIGRATION_ONLY === '1') {
+        const ledger = await initializedModels
+          .knex<{ id: number; name: string; batch: number }>('migrations')
+          .select('id', 'name', 'batch')
+          .orderBy('id', 'asc')
+        const lock = await initializedModels.knex<{ is_locked: number }>('migrations_lock').select('is_locked').first()
+        const latest = ledger.at(-1)
+        process.stdout.write(
+          `${JSON.stringify({
+            mode: 'migration-only',
+            count: ledger.length,
+            batch: latest?.batch ?? 0,
+            tail: latest?.name ?? null,
+            locked: lock?.is_locked ?? null
+          })}\n`
+        )
+        await initializedModels.knex.destroy()
+        return
+      }
       await wiki.configSvc.loadFromDb()
       await wiki.configSvc.applyFlags()
     } catch (error) {
