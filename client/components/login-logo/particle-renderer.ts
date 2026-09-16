@@ -49,7 +49,7 @@ export interface LogoParticleRendererOptions {
 export interface ParticleBackendLeaseOptions {
   /** The caller-owned canvas used by every backend attempt. */
   readonly canvas: HTMLCanvasElement
-  /** Defaults to auto: accept native WebGPU or WebGPURenderer's built-in WebGL2 fallback. */
+  /** Omission deliberately selects WebGL2; explicit auto retains native WebGPU with built-in WebGL2 fallback. */
   readonly requestedBackend?: ParticleBackendRequest
   /** A caller-owned generation; otherwise the factory assigns a monotonic one. */
   readonly generation?: number
@@ -62,7 +62,7 @@ export interface ParticleBackendLease {
   readonly generation: number
   readonly requestedBackend: ParticleBackendRequest
   readonly effectiveBackend: ParticleBackendKind | null
-  /** The current renderer; auto fallback may replace the first, uncommitted attempt. */
+  /** The renderer wrapper owns the selected native or forced-WebGL2 backend. */
   readonly renderer: LogoParticleRenderer
   readonly status: ParticleBackendPhase
   readonly diagnostics: ParticleBackendDiagnostics
@@ -79,7 +79,7 @@ const strictNativeError = () => new Error('Native WebGPU backend was not selecte
 const unknownBackendError = () => new Error('Renderer returned an unknown coordinate system')
 
 const asRequest = (request: ParticleBackendRequest | undefined): ParticleBackendRequest => {
-  const selected = request ?? 'auto'
+  const selected = request ?? 'webgl2'
   if (!VALID_REQUESTS.includes(selected)) throw new TypeError('Invalid particle backend request')
   return selected
 }

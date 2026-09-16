@@ -30,7 +30,7 @@ During temporary hidden or offscreen visibility pauses, the committed canvas, ba
 
 ## Renderer and backend policy
 
-The shared scene path is `WebGPURenderer` plus TSL `SpriteNodeMaterial`, an indexed instanced quad, and source-order attributes. Native WebGPU is primary. A deliberate `webgl2` request uses `forceWebGL` and requires strict WebGL2; `auto` accepts native WebGPU or only a successful built-in WebGL2 fallback from `WebGPURenderer`. The requested backend, effective backend, generation, phase, fallback flag, and diagnostic reason are committed before the first visible particle frame.
+The shared scene path is `WebGPURenderer` plus TSL `SpriteNodeMaterial`, an indexed instanced quad, and source-order attributes. Ordinary login deliberately requests `webgl2`, which uses `forceWebGL` and requires strict WebGL2 without probing a WebGPU adapter or device. Native `webgpu` and `auto` are explicit profiling modes; `auto` accepts native WebGPU or only a successful built-in WebGL2 fallback from `WebGPURenderer`. The requested backend, effective backend, generation, phase, fallback flag, and diagnostic reason are committed before the first visible particle frame.
 
 The material emits already-encoded sRGB with straight RGB/alpha, `premultipliedAlpha:false`, and `NormalBlending`; the renderer uses `LinearSRGBColorSpace` and `NoToneMapping`, and the premultiplied canvas supplies native source-over composition. No color buffer is recalculated or uploaded on theme changes. Three's common renderer may retain lightweight page-global bookkeeping while visibility is paused, but it must not produce particle updates or draws.
 

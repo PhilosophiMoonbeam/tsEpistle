@@ -161,6 +161,23 @@ describe('LogoParticleRenderer', () => {
 
 
 describe('particle backend leases', () => {
+  it('defaults ordinary rendering to deliberate WebGL2 without probing WebGPU', async () => {
+    const requestAdapter = vi.fn(async () => ({}))
+    Object.defineProperty(navigator, 'gpu', { configurable: true, value: { requestAdapter } })
+    const lease = createParticleBackendLease({ canvas: testCanvas })
+
+    expect(lease.requestedBackend).toBe('webgl2')
+    expect(rendererRecord(lease.renderer).options.forceWebGL).toBe(true)
+    await expect(lease.init()).resolves.toBe('webgl2')
+    expect(lease.diagnostics).toMatchObject({
+      requestedBackend: 'webgl2',
+      effectiveBackend: 'webgl2',
+      fallback: false,
+      phase: 'ready'
+    })
+    expect(requestAdapter).not.toHaveBeenCalled()
+    lease.retire()
+  })
   it('forces WebGL2 in auto mode when the WebGPU API is unavailable', () => {
     Object.defineProperty(navigator, 'gpu', { configurable: true, value: undefined })
     const lease = createParticleBackendLease({ canvas: testCanvas, requestedBackend: 'auto' })

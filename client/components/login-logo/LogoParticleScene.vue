@@ -309,10 +309,10 @@ const installRendererTimingHook = (
   }
 }
 
-let selectedBackend: ParticleBackendRequest = 'auto'
+let selectedBackend: ParticleBackendRequest | undefined
 
 export const probe = async (): Promise<void> => {
-  selectedBackend = (window as ParticlePerformanceWindow).__logoParticlePerformance?.requestedBackend ?? 'auto'
+  selectedBackend = (window as ParticlePerformanceWindow).__logoParticlePerformance?.requestedBackend
 }
 
 
