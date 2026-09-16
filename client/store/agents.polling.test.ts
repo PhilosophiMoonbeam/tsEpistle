@@ -2163,6 +2163,83 @@ describe('Agent empty conversation lifecycle', () => {
   })
 })
 
+describe('Agent proposal decisions', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('submits a pending decision while the run event stream is reconnecting', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    const thread = activeThread()
+    const proposalId = '00000000-0000-4000-8000-000000000003'
+    const approvalId = '00000000-0000-4000-8000-000000000004'
+    store.thread = {
+      ...thread,
+      session: {
+        ...thread.session,
+        currentRun: {
+          ...thread.session.currentRun!,
+          status: 'awaiting_approval'
+        }
+      },
+      proposals: [{
+        id: proposalId,
+        sourceKind: 'agent',
+        actionName: 'pages.prepareCreate',
+        risk: 'proposal',
+        status: 'pending',
+        summary: 'Create a validation page.',
+        target: null,
+        pageLink: null,
+        baseSourceRevision: null,
+        authoritySha256: 'a'.repeat(64),
+        inputHash: 'b'.repeat(64),
+        patchSha256: null,
+        resultCanonicalSha256: 'c'.repeat(64),
+        diffSha256: 'd'.repeat(64),
+        diff: '+Validation page',
+        expiresAt: '2026-08-23T20:10:00.000Z',
+        approval: {
+          id: approvalId,
+          proposalId,
+          status: 'pending',
+          requestedAt: '2026-08-23T20:00:00.000Z',
+          expiresAt: '2026-08-23T20:10:00.000Z',
+          decidedAt: null,
+          decisionNote: null
+        }
+      }]
+    }
+    markWorkspaceReady(store)
+    store.connection = 'reconnecting'
+    const refreshedThread = {
+      ...store.thread,
+      session: { ...store.thread.session, currentRun: null },
+      proposals: []
+    }
+    const fetcher = vi
+      .spyOn(window, 'fetch')
+      .mockResolvedValueOnce(Response.json({
+        proposalId,
+        approvalId,
+        status: 'approved',
+        decidedAt: '2026-08-23T20:01:00.000Z'
+      }))
+      .mockResolvedValueOnce(Response.json(refreshedThread))
+
+    await store.decideProposal(proposalId, approvalId, 'approved')
+
+    expect(fetcher.mock.calls.map(call => call[1]?.method ?? 'GET')).toEqual(['POST', 'GET'])
+    expect(fetcher.mock.calls[0]?.[0]).toBe(`/_api/agents/proposals/${proposalId}/approvals/${approvalId}/decision`)
+    expect(store.thread?.proposals).toEqual([])
+    expect(store.decidingApprovalId).toBeNull()
+  })
+})
+
+
 describe('Agent unfiled history clearing', () => {
   afterEach(() => {
     vi.restoreAllMocks()

@@ -322,14 +322,16 @@ export const useAgentsStore = defineStore('agents', {
     isOwnerContextCurrent(workspaceVersion: number, ownerId: number | null, ownerGeneration: number): boolean {
       return this.isWorkspaceCurrent(workspaceVersion) && this.pinOwnerId === ownerId && this.ownerGeneration === ownerGeneration
     },
-    isWorkspaceReady(): boolean {
+    isWorkspaceMutationReady(): boolean {
       return (
         !this.workspaceDisposed &&
         !this.loading &&
         !this.networkPaused &&
-        (this.connection === 'idle' || this.connection === 'connected') &&
         this.initializedWorkspaceVersion === this.workspaceVersion
       )
+    },
+    isWorkspaceReady(): boolean {
+      return this.isWorkspaceMutationReady() && (this.connection === 'idle' || this.connection === 'connected')
     },
     isSessionContextCurrent(version: number, sessionId: string) {
       return this.isWorkspaceCurrent(version) && this.thread?.session.id === sessionId
@@ -1176,7 +1178,7 @@ export const useAgentsStore = defineStore('agents', {
       }
     },
     async decideProposal(proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string) {
-      if (!this.isWorkspaceReady()) return
+      if (!this.isWorkspaceMutationReady()) return
       const thread = this.thread
       const sessionId = thread?.session.id
       const proposal = thread?.proposals.find(candidate => candidate.id === proposalId)

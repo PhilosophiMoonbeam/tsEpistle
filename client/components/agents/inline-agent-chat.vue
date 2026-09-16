@@ -949,7 +949,7 @@ const networkActionAllowed = (): boolean => {
   return false
 }
 const handleDecision = (proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string): void => {
-  if (!networkActionAllowed()) return
+  if (disposed || connectionBlocked.value || !agents.isWorkspaceMutationReady()) return
   void agents.decideProposal(proposalId, approvalId, decision, confirmationPath)
 }
 const pauseGoal = (): void => {
