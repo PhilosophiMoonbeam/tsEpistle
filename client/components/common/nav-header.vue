@@ -510,7 +510,7 @@
 
           v-tooltip(v-else, location="left")
             template(v-slot:activator='{ props }')
-              v-btn(icon, v-bind='props', href='/login', :aria-label='$t(`common:header.login`)')
+              v-btn(icon, v-bind='props', href='/login', data-no-wiki-navigation, :aria-label='$t(`common:header.login`)')
                 v-icon mdi-account-circle
             span {{$t('common:header.login')}}
 

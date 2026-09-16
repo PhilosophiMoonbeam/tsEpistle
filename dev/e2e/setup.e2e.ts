@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
-import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import tfa from 'node-2fa'
 import { adminEmail, adminPassword, authenticateAsAdmin, sameOriginHeaders } from './helpers.ts'
 
@@ -740,6 +740,7 @@ test.describe('critical post-install workflows', () => {
   test('logs out and authenticates again without browser runtime failures', async ({ page }) => {
     const consoleErrors: string[] = []
     const failedRequests: string[] = []
+    const loginRequests: string[] = []
     page.on('console', message => {
       if (message.type() === 'error') {
         consoleErrors.push(message.text())
@@ -747,6 +748,9 @@ test.describe('critical post-install workflows', () => {
     })
     page.on('requestfailed', request => {
       failedRequests.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText || 'unknown failure'}`)
+    })
+    page.on('request', request => {
+      if (request.method() === 'GET' && new URL(request.url()).pathname === '/login') loginRequests.push(request.url())
     })
 
     await openAuthenticatedHome(page)
@@ -760,7 +764,10 @@ test.describe('critical post-install workflows', () => {
         })
       )
       .toMatchObject({ authenticated: false })
-    await page.goto('/login')
+    loginRequests.length = 0
+    await page.getByRole('link', { name: 'Login', exact: true }).click()
+    await expect(page).toHaveURL('/login')
+    expect(loginRequests).toHaveLength(1)
 
     await page.getByLabel('Email Address', { exact: true }).fill(adminEmail)
     await page.getByLabel('Password', { exact: true }).fill(adminPassword)

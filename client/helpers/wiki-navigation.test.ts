@@ -90,6 +90,14 @@ describe('wiki navigation routing', () => {
 
     expect(isWikiNavigationClick(event, anchor)).toBe(true)
   })
+  test('leaves full-lifecycle links to native navigation', () => {
+    const anchor = document.createElement('a')
+    anchor.href = '/login'
+    anchor.dataset.noWikiNavigation = ''
+    const event = new MouseEvent('click', { button: 0 })
+
+    expect(isWikiNavigationClick(event, anchor)).toBe(false)
+  })
 
   const ignoredClicks: Array<[string, MouseEvent, string]> = [
     ['modified click', new MouseEvent('click', { button: 0, ctrlKey: true }), '/en/next-page'],
