@@ -105,6 +105,24 @@ describe('portable durable jobs', () => {
     })
   })
 
+  it('dispatches the current process-site-logo protocol identity', async () => {
+    const job = await store.enqueue({
+      type: 'process-site-logo',
+      version: 5,
+      payload: { revisionId: 'fixture', retrySequence: 0 }
+    })
+    const handler = vi.fn()
+
+    const claimed = await runDurableJobBatch(knex, {
+      workerId: 'instance-a',
+      handlers: { 'process-site-logo@5': handler }
+    })
+
+    expect(claimed).toEqual([expect.objectContaining({ id: job.id, version: 5, attempts: 1 })])
+    expect(handler).toHaveBeenCalledOnce()
+    expect(await store.get(job.id)).toMatchObject({ state: 'succeeded', attempts: 1 })
+  })
+
   it('renews the lease while a handler remains blocked', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-14T12:00:00.000Z'))
@@ -490,10 +508,7 @@ describe('portable durable jobs', () => {
       updatedAt: oldDate,
       completedAt: oldDate
     })
-    await knex('durableJobs').insert([
-      durableJob(unresolvedJobId, 'asset-relocation', 'failed'),
-      durableJob(resolvedJobId, 'asset-relocation', 'succeeded')
-    ])
+    await knex('durableJobs').insert([durableJob(unresolvedJobId, 'asset-relocation', 'failed'), durableJob(resolvedJobId, 'asset-relocation', 'succeeded')])
     await knex('assetRelocationEffects').insert([
       { id: '00000000-0000-4000-8000-000000000012', jobId: unresolvedJobId, status: 'failed' },
       { id: '00000000-0000-4000-8000-000000000013', jobId: resolvedJobId, status: 'succeeded' }

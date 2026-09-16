@@ -4,7 +4,7 @@ import path from 'node:path'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { JSDOM } from 'jsdom'
 import { afterEach, beforeEach, describe, expect, it } from '../../../server/test/bun-test.mts'
-import type { LogoEffectDescriptor } from './particle-logo.ts'
+import type { LogoEffectDescriptor, ParticleContentRect } from './particle-logo.ts'
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   pretendToBeVisual: true,
@@ -348,18 +348,17 @@ browserWindow.HTMLElement.prototype.getBoundingClientRect = function (): DOMRect
     if (this === field && [fieldLeft, fieldTop, fieldWidth, fieldHeight].every(Number.isFinite)) {
       return rect({ left: fieldLeft, top: fieldTop, width: fieldWidth, height: fieldHeight })
     }
-    if (this.classList.contains('login-particle-logo__image')) {
+    if (this.classList.contains('login-particle-logo__image') || this.classList.contains('login-particle-logo__silhouette')) {
       const inlineWidth = Number.parseFloat(this.style.width)
       const inlineHeight = Number.parseFloat(this.style.height)
       const width = Number.isFinite(inlineWidth) ? inlineWidth : Number.parseFloat(field.style.getPropertyValue('--login-logo-image-width'))
       const height = Number.isFinite(inlineHeight) ? inlineHeight : Number.parseFloat(field.style.getPropertyValue('--login-logo-image-height'))
-      if ([fieldLeft, fieldTop, fieldWidth, fieldHeight, width, height].every(Number.isFinite)) {
-        return rect({
-          left: fieldLeft + (fieldWidth - width) / 2,
-          top: fieldTop + (fieldHeight - height) / 2,
-          width,
-          height
-        })
+      const inlineLeft = Number.parseFloat(this.style.left)
+      const inlineTop = Number.parseFloat(this.style.top)
+      const left = Number.isFinite(inlineLeft) ? fieldLeft + inlineLeft : fieldLeft + (fieldWidth - width) / 2
+      const top = Number.isFinite(inlineTop) ? fieldTop + inlineTop : fieldTop + (fieldHeight - height) / 2
+      if ([fieldLeft, fieldTop, fieldWidth, fieldHeight, width, height, left, top].every(Number.isFinite)) {
+        return rect({ left, top, width, height })
       }
     }
   }
@@ -412,6 +411,7 @@ export default defineComponent({
   props: {
     effect: { type: Object, required: true },
     particles: { type: Object, required: true },
+    contentRect: { type: Object, required: true },
     active: { type: Boolean, required: true }
   },
   emits: ['first-frame', 'frame-pending', 'error', 'context-lost'],
@@ -435,7 +435,8 @@ export default defineComponent({
     }))
     return () => h('canvas', {
       class: 'login-particle-logo__scene-stub',
-      'data-active': String(props.active)
+      'data-active': String(props.active),
+      'data-content-rect': JSON.stringify(props.contentRect)
     })
   }
 })
@@ -508,7 +509,7 @@ const LoginParticleLogo = compiledModule.exports.default
 if (!LoginParticleLogo) throw new Error('LoginParticleLogo.vue did not export a component')
 
 const managedEffect: LogoEffectDescriptor = {
-  pipelineVersion: 6,
+  pipelineVersion: 7,
   logoUrl: '/_site-logo/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/logo.png',
   particleUrl: '/_site-logo/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/particle.bin',
   staticUrl: '/_site-logo/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/effect.png',
@@ -609,6 +610,13 @@ const setSurfaceVisibility = async (visible: boolean): Promise<void> => {
 
 const logoField = (host: ParentNode): HTMLElement | null => host.querySelector<HTMLElement>('.login-particle-logo')
 const staticImage = (host: ParentNode): HTMLImageElement | null => logoField(host)?.querySelector<HTMLImageElement>('img') ?? null
+const silhouetteElement = (host: ParentNode): HTMLElement | null => logoField(host)?.querySelector<HTMLElement>('.login-particle-logo__silhouette') ?? null
+
+const sceneContentRect = (host: ParentNode): ParticleContentRect | null => {
+  const scene = host.querySelector<HTMLElement>('.login-particle-logo__scene-stub')
+  const serialized = scene?.dataset.contentRect
+  return serialized ? (JSON.parse(serialized) as ParticleContentRect) : null
+}
 
 const loadStaticRendition = async (mounted: MountedLogo, effect: LogoEffectDescriptor): Promise<HTMLImageElement> => {
   const image = staticImage(mounted.host)
@@ -739,6 +747,62 @@ describe('LoginParticleLogo static behavior', () => {
       mounted.unmount()
       mountedApps.pop()
     }
+  })
+  it('fills the physical right-hand surface while preserving the old padded logical image rectangle', async () => {
+    const mounted = await mountLogo(particleEffect)
+    const login = mounted.host.querySelector<HTMLElement>('.login')
+    const field = logoField(mounted.host)
+    const image = staticImage(mounted.host)
+    if (!login || !field || !image) throw new Error('Physical logo surface was not rendered')
+
+    login.style.paddingTop = '40px'
+    login.style.paddingRight = '32px'
+    login.style.paddingBottom = '40px'
+    for (const observer of ResizeObserverStub.instances) observer.emit()
+    await settle()
+
+    const fieldBounds = renderedRect(field)
+    const expectedFieldLeft = environment.card.left + environment.card.width + 24
+    const expectedFieldWidth = environment.width - expectedFieldLeft
+    expect(fieldBounds.left).toBeCloseTo(expectedFieldLeft, 2)
+    expect(fieldBounds.top).toBeCloseTo(0, 2)
+    expect(fieldBounds.right).toBeCloseTo(environment.width, 2)
+    expect(fieldBounds.bottom).toBeCloseTo(environment.height, 2)
+    expect(intersects(fieldBounds, rect(environment.card))).toBe(false)
+
+    const paddedWidth = expectedFieldWidth - 32
+    const paddedHeight = environment.height - 40 - 40
+    const scale = Math.min((paddedWidth * 0.84) / particleEffect.width, (paddedHeight * 0.84) / particleEffect.height)
+    const expectedContentWidth = particleEffect.width * scale
+    const expectedContentHeight = particleEffect.height * scale
+    const expectedContentLeft = (paddedWidth - expectedContentWidth) / 2
+    const expectedContentTop = 40 + (paddedHeight - expectedContentHeight) / 2
+
+    const imageBounds = renderedRect(image)
+    expect(imageBounds.left).toBeCloseTo(expectedFieldLeft + expectedContentLeft, 2)
+    expect(imageBounds.top).toBeCloseTo(expectedContentTop, 2)
+    expect(imageBounds.width).toBeCloseTo(expectedContentWidth, 2)
+    expect(imageBounds.height).toBeCloseTo(expectedContentHeight, 2)
+    expect(silhouetteElement(mounted.host)).toBeNull()
+
+    await loadStaticRendition(mounted, particleEffect)
+    const silhouette = silhouetteElement(mounted.host)
+    if (!silhouette) throw new Error('Validated static rendition did not create its alpha silhouette')
+    const silhouetteBounds = renderedRect(silhouette)
+    expect(silhouetteBounds.left).toBeCloseTo(imageBounds.left, 2)
+    expect(silhouetteBounds.top).toBeCloseTo(imageBounds.top, 2)
+    expect(silhouetteBounds.width).toBeCloseTo(imageBounds.width, 2)
+    expect(silhouetteBounds.height).toBeCloseTo(imageBounds.height, 2)
+
+    await runIdleWork()
+    pendingFetches[0]?.resolve(new Response(particleFixture))
+    await settle()
+    const sceneRect = sceneContentRect(mounted.host)
+    if (!sceneRect) throw new Error('Animated scene did not receive its logical content rectangle')
+    expect(sceneRect.left).toBeCloseTo(expectedContentLeft, 2)
+    expect(sceneRect.top).toBeCloseTo(expectedContentTop, 2)
+    expect(sceneRect.width).toBeCloseTo(expectedContentWidth, 2)
+    expect(sceneRect.height).toBeCloseTo(expectedContentHeight, 2)
   })
 
   it('keeps the personalized static rendition visible for reduced motion and falls back to the ordinary logo on image failure', async () => {
@@ -974,10 +1038,10 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
     await settle()
     const scene = mounted.host.querySelector<HTMLElement>('.login-particle-logo__scene-stub')
     expect(scene).not.toBeNull()
-    expect(scene?.style.zIndex).toBe('0')
+    expect(scene?.style.zIndex).toBe('1')
     expect(scene?.dataset.active).toBe('true')
     expect(sceneControls).toHaveLength(1)
-    expect(staticImage(mounted.host)?.style.zIndex).toBe('1')
+    expect(staticImage(mounted.host)?.style.zIndex).toBe('2')
     expect(staticImage(mounted.host)?.style.opacity).toBe('1')
 
     sceneControls[0]?.firstFrame()

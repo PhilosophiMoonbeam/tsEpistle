@@ -106,6 +106,7 @@ export const createDurableJobHandlers = (
     'process-site-logo@2': createSiteLogoProcessHandler(2),
     'process-site-logo@3': createSiteLogoProcessHandler(3),
     'process-site-logo@4': createSiteLogoProcessHandler(4),
+    'process-site-logo@5': createSiteLogoProcessHandler(5),
     'rerender-content-extension@1': createContentExtensionRerenderHandler(wiki),
     'deliver-webhook@1': createWebhookDeliveryHandler(sessionSecret),
     'notify-page-watcher@1': createPageWatchNotificationHandler(wiki),

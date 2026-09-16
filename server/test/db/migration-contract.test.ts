@@ -34,6 +34,16 @@ describe('database migration namespace contract', () => {
     expect(ordered).toHaveLength(files.length)
   })
 
+  it('keeps the site-logo rendition migrations contiguous in the current ledger', async () => {
+    const files = (await readdir(path.resolve('server/db/migrations'))).filter(file => file.endsWith('.ts'))
+    const ordered = orderMigrationFiles(files)
+    const renditions = ordered.indexOf('tsepistle-000040-site-logo-renditions')
+    const transparentIcons = ordered.indexOf('tsepistle-000041-site-logo-transparent-icons')
+
+    expect(renditions).toBeGreaterThanOrEqual(0)
+    expect(transparentIcons).toBe(renditions + 1)
+  })
+
   it('accepts tsepistle-000013 as the first migration in the current namespace', () => {
     expect(orderMigrationFiles([...completeHistoricalFiles, 'tsepistle-000013-product-rename.ts']).at(-1)).toBe('tsepistle-000013-product-rename')
   })

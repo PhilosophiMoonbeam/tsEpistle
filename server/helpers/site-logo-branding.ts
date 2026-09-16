@@ -265,7 +265,7 @@ const resolveEffectDescriptor = async (
     row.auraColor
   ]
   if (!effectValues.some(value => value !== null && value !== undefined)) return null
-  if (pipelineVersion === 6 && row.enhancementErrorCode !== null && row.enhancementErrorCode !== undefined) return null
+  if ((pipelineVersion === 6 || pipelineVersion === 7) && row.enhancementErrorCode !== null && row.enhancementErrorCode !== undefined) return null
   if (
     row.particleV1Kind !== 'particle-v1' ||
     row.effectStaticPngKind !== 'effect-static-png' ||
@@ -337,7 +337,7 @@ export const resolveActiveBranding = async (knex: Knex | Knex.Transaction, legac
     )) as ActiveRevisionRow | undefined
 
   if (!row || row.logoPngKind !== 'logo-png' || !row.logoPngHash || !SHA256_PATTERN.test(row.logoPngHash)) return legacyBranding(legacyLogoUrl)
-  const pipelineVersion = integerInRange(row.pipelineVersion, 1, 6)
+  const pipelineVersion = integerInRange(row.pipelineVersion, 1, 7)
   if (pipelineVersion === null) return legacyBranding(legacyLogoUrl)
 
   const logoBytes = await readVerifiedObject(knex, 'logo-png', row.logoPngHash)
@@ -345,7 +345,7 @@ export const resolveActiveBranding = async (knex: Knex | Knex.Transaction, legac
 
   const logoUrl = `/_site-logo/${row.logoPngHash}/logo.png`
   const [logoIcons, logoEffect] = await Promise.all([
-    pipelineVersion === 6 ? resolveIconDescriptor(knex, row) : Promise.resolve(null),
+    pipelineVersion === 6 || pipelineVersion === 7 ? resolveIconDescriptor(knex, row) : Promise.resolve(null),
     resolveEffectDescriptor(knex, row, pipelineVersion, logoUrl)
   ])
   return freezeBranding(logoUrl, logoEffect, logoIcons)

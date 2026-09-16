@@ -94,6 +94,57 @@ describe('public managed site logo objects', () => {
     }
     expect(accessCheck).not.toHaveBeenCalled()
   })
+  it('serves exact pipeline-v7 transparent favicon/icon and opaque Apple/maskable bytes for GET and HEAD while preserving immutable v6 URLs', async () => {
+    const transparentIconFixture = (role: string): Buffer => Buffer.from(`v7-transparent-${role}`)
+    const opaqueIconFixture = (role: string): Buffer => Buffer.from(`v7-opaque-${role}`)
+    const v7Objects = [
+      { role: 'favicon16', filename: 'icon.png' as const, bytes: transparentIconFixture('favicon16'), contentType: 'image/png' },
+      { role: 'favicon32', filename: 'icon.png' as const, bytes: transparentIconFixture('favicon32'), contentType: 'image/png' },
+      { role: 'tile150', filename: 'icon.png' as const, bytes: transparentIconFixture('tile150'), contentType: 'image/png' },
+      { role: 'apple180', filename: 'icon.png' as const, bytes: opaqueIconFixture('apple180'), contentType: 'image/png' },
+      { role: 'app192', filename: 'icon.png' as const, bytes: opaqueIconFixture('app192'), contentType: 'image/png' },
+      { role: 'app512', filename: 'icon.png' as const, bytes: opaqueIconFixture('app512'), contentType: 'image/png' },
+      { role: 'maskable512', filename: 'icon.png' as const, bytes: opaqueIconFixture('maskable512'), contentType: 'image/png' },
+      { role: 'faviconIco', filename: 'favicon.ico' as const, bytes: Buffer.from('v7-favicon-ico'), contentType: 'image/x-icon' }
+    ]
+    await db('siteLogoObjects').insert(
+      v7Objects.map(object => ({
+        kind: object.filename === 'favicon.ico' ? 'favicon-ico' : 'icon-png',
+        sha256: digest(object.bytes),
+        bytes: object.bytes,
+        byteLength: object.bytes.byteLength,
+        contentType: object.contentType,
+        createdAt: new Date()
+      }))
+    )
+
+    for (const object of v7Objects) {
+      const hash = digest(object.bytes)
+      const url = `${baseUrl}/_site-logo/${hash}/${object.filename}`
+      const response = await fetch(url)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe(object.contentType)
+      expect(response.headers.get('content-length')).toBe(String(object.bytes.byteLength))
+      expect(response.headers.get('cache-control')).toBe('public, max-age=2592000, immutable')
+      expect(response.headers.get('etag')).toBe(`"${hash}"`)
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(object.bytes)
+
+      const head = await fetch(url, { method: 'HEAD' })
+      expect(head.status).toBe(200)
+      expect(head.headers.get('content-type')).toBe(object.contentType)
+      expect(head.headers.get('content-length')).toBe(String(object.bytes.byteLength))
+      expect(head.headers.get('etag')).toBe(`"${hash}"`)
+      expect((await head.arrayBuffer()).byteLength).toBe(0)
+    }
+
+    const historicalV6 = [objects.find(object => object.kind === 'icon-png')!, objects.find(object => object.kind === 'favicon-ico')!]
+    for (const object of historicalV6) {
+      const response = await fetch(`${baseUrl}/_site-logo/${object.hash}/${object.filename}`)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('cache-control')).toBe('public, max-age=2592000, immutable')
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(object.bytes)
+    }
+  })
 
   it('reuses one verified read across anonymous HEAD, conditional, and GET requests', async () => {
     const logo = objects.find(object => object.kind === 'logo-png')!

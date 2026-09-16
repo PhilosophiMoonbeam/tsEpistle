@@ -126,9 +126,10 @@ interface ObjectRow {
 interface ProcessPayload {
   revisionId: string
   retrySequence: number
+  expectedActiveRevisionId?: string
 }
 
-type SiteLogoJobVersion = 1 | 2 | 3 | 4
+type SiteLogoJobVersion = 1 | 2 | 3 | 4 | 5
 
 interface SiteLogoJobProtocol {
   readonly jobVersion: SiteLogoJobVersion
@@ -194,24 +195,38 @@ const asBuffer = (bytes: Buffer | Uint8Array): Buffer => (Buffer.isBuffer(bytes)
 const asDate = (value: Date | string | number | null): Date | null => (value === null ? null : value instanceof Date ? value : new Date(value))
 const publicLogoUrl = (hash: string): string => `/_site-logo/${hash}/logo.png`
 
-const parsePayload = (job: DurableJob): ProcessPayload => {
-  const revisionId = job.payload.revisionId
-  const retrySequence = job.payload.retrySequence
-  if (typeof revisionId !== 'string' || !/^[0-9a-f-]{36}$/i.test(revisionId) || !Number.isSafeInteger(retrySequence) || Number(retrySequence) < 0) {
+const REVISION_ID_PATTERN = /^[0-9a-f-]{36}$/i
+const STRICT_REVISION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+const parsePayloadValue = (value: unknown): ProcessPayload => {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Site logo processing job payload is invalid')
+  const payload = value as Record<string, unknown>
+  const revisionId = payload.revisionId
+  const retrySequence = payload.retrySequence
+  const expectedActiveRevisionId = payload.expectedActiveRevisionId
+  if (
+    typeof revisionId !== 'string' ||
+    !REVISION_ID_PATTERN.test(revisionId) ||
+    !Number.isSafeInteger(retrySequence) ||
+    Number(retrySequence) < 0 ||
+    (expectedActiveRevisionId !== undefined && (typeof expectedActiveRevisionId !== 'string' || !STRICT_REVISION_ID_PATTERN.test(expectedActiveRevisionId)))
+  ) {
     throw new TypeError('Site logo processing job payload is invalid')
   }
-  return { revisionId, retrySequence: Number(retrySequence) }
+  const parsedRetrySequence = Number(retrySequence)
+  if (expectedActiveRevisionId === undefined) return { revisionId, retrySequence: parsedRetrySequence }
+  return { revisionId, retrySequence: parsedRetrySequence, expectedActiveRevisionId }
 }
 
 const storedPayloadMatches = (row: DurableJobRow, payload: ProcessPayload): boolean => {
   try {
     const stored: unknown = JSON.parse(row.payload)
+    if (stored === null || typeof stored !== 'object' || Array.isArray(stored)) return false
+    const storedPayload = stored as Record<string, unknown>
     return (
-      stored !== null &&
-      typeof stored === 'object' &&
-      !Array.isArray(stored) &&
-      (stored as Record<string, unknown>).revisionId === payload.revisionId &&
-      (stored as Record<string, unknown>).retrySequence === payload.retrySequence
+      storedPayload.revisionId === payload.revisionId &&
+      storedPayload.retrySequence === payload.retrySequence &&
+      storedPayload.expectedActiveRevisionId === payload.expectedActiveRevisionId
     )
   } catch {
     return false
@@ -252,6 +267,7 @@ const EXHAUSTED_SITE_LOGO_ERROR = 'Durable job lease expired after its final all
 const LEGACY_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({ jobVersion: 1, pipelineVersions: Object.freeze([1, 2, 3]) })
 const PIPELINE_V4_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({ jobVersion: 2, pipelineVersions: Object.freeze([4]) })
 const PIPELINE_V5_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({ jobVersion: 3, pipelineVersions: Object.freeze([5]) })
+const PIPELINE_V6_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({ jobVersion: 4, pipelineVersions: Object.freeze([6]) })
 const CURRENT_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({
   jobVersion: SITE_LOGO_JOB_VERSION,
   pipelineVersions: Object.freeze([SITE_LOGO_PIPELINE_VERSION])
@@ -265,6 +281,8 @@ const protocolForJobVersion = (jobVersion: number): SiteLogoJobProtocol | undefi
       return PIPELINE_V4_SITE_LOGO_PROTOCOL
     case PIPELINE_V5_SITE_LOGO_PROTOCOL.jobVersion:
       return PIPELINE_V5_SITE_LOGO_PROTOCOL
+    case PIPELINE_V6_SITE_LOGO_PROTOCOL.jobVersion:
+      return PIPELINE_V6_SITE_LOGO_PROTOCOL
     case CURRENT_SITE_LOGO_PROTOCOL.jobVersion:
       return CURRENT_SITE_LOGO_PROTOCOL
     default:
@@ -295,6 +313,11 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
               .where('job.version', PIPELINE_V5_SITE_LOGO_PROTOCOL.jobVersion)
               .whereIn('revision.pipelineVersion', PIPELINE_V5_SITE_LOGO_PROTOCOL.pipelineVersions)
           )
+          .orWhere(v6 =>
+            v6
+              .where('job.version', PIPELINE_V6_SITE_LOGO_PROTOCOL.jobVersion)
+              .whereIn('revision.pipelineVersion', PIPELINE_V6_SITE_LOGO_PROTOCOL.pipelineVersions)
+          )
           .orWhere(current =>
             current.where('job.version', CURRENT_SITE_LOGO_PROTOCOL.jobVersion).whereIn('revision.pipelineVersion', CURRENT_SITE_LOGO_PROTOCOL.pipelineVersions)
           )
@@ -324,11 +347,20 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
       if (!protocol || !protocolSupportsPipeline(protocol, pipelineVersion)) {
         throw new Error(`Exhausted site logo revision ${job.revisionId} lost its protocol fence`)
       }
-      const payload: ProcessPayload = {
-        revisionId: job.revisionId,
-        retrySequence: Number(job.revisionRetrySequence)
+      let rawPayload: unknown
+      try {
+        rawPayload = JSON.parse(job.payload)
+      } catch {
+        throw new TypeError(`Exhausted site logo durable job ${job.id} has an invalid payload`)
       }
-      if (!storedPayloadMatches(job, payload)) throw new TypeError(`Exhausted site logo durable job ${job.id} does not match its revision`)
+      const payload = parsePayloadValue(rawPayload)
+      if (
+        payload.revisionId !== job.revisionId ||
+        payload.retrySequence !== Number(job.revisionRetrySequence) ||
+        !storedPayloadMatches(job, payload) ||
+        (payload.expectedActiveRevisionId !== undefined && protocol.jobVersion !== CURRENT_SITE_LOGO_PROTOCOL.jobVersion)
+      )
+        throw new TypeError(`Exhausted site logo durable job ${job.id} does not match its revision`)
       if (job.state === 'running') {
         const updated = await transaction<DurableJobRow>('durableJobs')
           .where({
@@ -748,6 +780,21 @@ const publishArtifacts = async (
     if (effectStaticPng) await ensureImmutableObject(transaction, effectStaticPng)
 
     const isDesired = state.desiredRevisionId === revision.id
+    const isRepair = payload.expectedActiveRevisionId !== undefined
+    if (isRepair && isDesired) {
+      throw new TypeError('Site logo repair revision must remain separate from the desired revision')
+    }
+    let repairMayActivate = false
+    if (isRepair && state.activeRevisionId === payload.expectedActiveRevisionId) {
+      const expectedActive = await transaction<RevisionRow>('siteLogoRevisions').where({ id: payload.expectedActiveRevisionId }).forUpdate().first()
+      repairMayActivate =
+        expectedActive !== undefined &&
+        expectedActive.status === 'ready' &&
+        expectedActive.retiredAt === null &&
+        expectedActive.sourceHash === revision.sourceHash &&
+        Number(expectedActive.pipelineVersion) < SITE_LOGO_PIPELINE_VERSION
+    }
+    const shouldActivate = isDesired || repairMayActivate
     const updated = await transaction('siteLogoRevisions')
       .where({
         id: revision.id,
@@ -783,12 +830,12 @@ const publishArtifacts = async (
         enhancementErrorCode: readyEnhancement ? null : enhancement.status === 'unavailable' ? enhancement.reason : null,
         errorCode: null,
         completedAt: now,
-        retiredAt: isDesired ? null : now,
+        retiredAt: shouldActivate ? null : now,
         updatedAt: now
       })
     if (updated !== 1) throw new SiteLogoLeaseLostError(job.id)
 
-    if (!isDesired) return
+    if (!shouldActivate) return
     if (state.activeRevisionId && state.activeRevisionId !== revision.id) {
       await transaction<RevisionRow>('siteLogoRevisions')
         .where({ id: state.activeRevisionId, status: 'ready' })
@@ -812,7 +859,10 @@ export const createSiteLogoProcessHandler = (jobVersion: SiteLogoJobVersion, pro
   const isLegacyProtocol = protocol.jobVersion !== CURRENT_SITE_LOGO_PROTOCOL.jobVersion
   const selectedProcessor = processor ?? processSiteLogoSource
   return async (job, { knex, signal }) => {
-    const payload = parsePayload(job)
+    const payload = parsePayloadValue(job.payload)
+    if (payload.expectedActiveRevisionId !== undefined && protocol.jobVersion !== CURRENT_SITE_LOGO_PROTOCOL.jobVersion) {
+      throw new TypeError('Site logo repair payload is only supported by the current protocol')
+    }
     const revision = await transitionToRunning(knex, job, payload, protocol)
     if (!revision) return
     if (isLegacyProtocol) {

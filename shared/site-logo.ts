@@ -1,5 +1,5 @@
-export const SITE_LOGO_PIPELINE_VERSION = 6 as const
-export const SITE_LOGO_JOB_VERSION = 4 as const
+export const SITE_LOGO_PIPELINE_VERSION = 7 as const
+export const SITE_LOGO_JOB_VERSION = 5 as const
 
 export const SITE_LOGO_SOURCE_BYTE_LIMIT = 5_242_880 as const
 export const SITE_LOGO_MIN_INPUT_DIMENSION = 1 as const

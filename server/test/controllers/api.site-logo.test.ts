@@ -6,6 +6,7 @@ import createKnex, { type Knex } from 'knex'
 import { configureTransportRuntime } from '../../controllers/_types.ts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { up as addDurableJobLeaseToken } from '../../db/migrations/2.5.158.ts'
+import type { SiteLogoArtifacts } from '../../helpers/site-logo-processing.ts'
 import { SITE_LOGO_SOURCE_LIMIT } from '../../operations/site-logo.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
@@ -96,7 +97,7 @@ const createLogoTables = async (db: Knex): Promise<void> => {
     table.foreign(['particleV1Kind', 'particleV1Hash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
     table.foreign(['effectStaticPngKind', 'effectStaticPngHash']).references(['kind', 'sha256']).inTable('siteLogoObjects').onDelete('RESTRICT')
     table.check(`"sourceKind" = 'source'`)
-    table.check(`"pipelineVersion" BETWEEN 1 AND 6`)
+    table.check(`"pipelineVersion" BETWEEN 1 AND 7`)
     table.check(`"retrySequence" >= 0`)
     table.check(`"status" IN ('pending', 'running', 'ready', 'failed')`)
   })
@@ -155,7 +156,8 @@ const seedReadyRevision = async (
   pipelineVersion = 6,
   retrySequence = 0,
   omitKind?: 'logo-png' | 'particle-v1' | 'effect-static-png',
-  corruptKind?: 'logo-png' | 'particle-v1' | 'effect-static-png'
+  corruptKind?: 'logo-png' | 'particle-v1' | 'effect-static-png',
+  iconArtifacts?: Pick<SiteLogoArtifacts, 'icons' | 'faviconIco'>
 ): Promise<ReadyRevision> => {
   const sourceHash = digest(source)
   await db('siteLogoObjects')
@@ -179,7 +181,7 @@ const seedReadyRevision = async (
     await insertObject(db, kind, bytes, hashes[kind])
   }
 
-  const iconBytes = {
+  const iconBytes = iconArtifacts?.icons ?? {
     favicon16: Buffer.from(`icon:favicon16:${sourceHash}`),
     favicon32: Buffer.from(`icon:favicon32:${sourceHash}`),
     tile150: Buffer.from(`icon:tile150:${sourceHash}`),
@@ -187,7 +189,7 @@ const seedReadyRevision = async (
     app192: Buffer.from(`icon:app192:${sourceHash}`),
     app512: Buffer.from(`icon:app512:${sourceHash}`),
     maskable512: Buffer.from(`icon:maskable512:${sourceHash}`)
-  } as const
+  }
   const iconHashes: IconHashes = {
     favicon16: digest(iconBytes.favicon16),
     favicon32: digest(iconBytes.favicon32),
@@ -197,13 +199,14 @@ const seedReadyRevision = async (
     app512: digest(iconBytes.app512),
     maskable512: digest(iconBytes.maskable512)
   }
-  const faviconIco = Buffer.from(`ico:${sourceHash}`)
+  const faviconIco = iconArtifacts?.faviconIco ?? Buffer.from(`ico:${sourceHash}`)
   const faviconIcoHash = digest(faviconIco)
   const hasLogo = omitKind !== 'logo-png'
   const hasParticle = omitKind !== 'particle-v1'
   const hasEffect = omitKind !== 'effect-static-png'
   const hasEnhancement = hasParticle && hasEffect
-  if (pipelineVersion === 6) {
+  const hasIcons = pipelineVersion === 6 || pipelineVersion === 7
+  if (hasIcons) {
     for (const name of ICON_NAMES) await insertObject(db, 'icon-png', iconBytes[name], iconHashes[name])
     await insertObject(db, 'favicon-ico', faviconIco, faviconIcoHash)
   }
@@ -218,16 +221,16 @@ const seedReadyRevision = async (
     retrySequence,
     logoPngKind: hasLogo ? 'logo-png' : null,
     logoPngHash: hasLogo ? hashes['logo-png'] : null,
-    iconPngKind: pipelineVersion === 6 ? 'icon-png' : null,
-    favicon16Hash: pipelineVersion === 6 ? iconHashes.favicon16 : null,
-    favicon32Hash: pipelineVersion === 6 ? iconHashes.favicon32 : null,
-    tile150Hash: pipelineVersion === 6 ? iconHashes.tile150 : null,
-    apple180Hash: pipelineVersion === 6 ? iconHashes.apple180 : null,
-    app192Hash: pipelineVersion === 6 ? iconHashes.app192 : null,
-    app512Hash: pipelineVersion === 6 ? iconHashes.app512 : null,
-    maskable512Hash: pipelineVersion === 6 ? iconHashes.maskable512 : null,
-    faviconIcoKind: pipelineVersion === 6 ? 'favicon-ico' : null,
-    faviconIcoHash: pipelineVersion === 6 ? faviconIcoHash : null,
+    iconPngKind: hasIcons ? 'icon-png' : null,
+    favicon16Hash: hasIcons ? iconHashes.favicon16 : null,
+    favicon32Hash: hasIcons ? iconHashes.favicon32 : null,
+    tile150Hash: hasIcons ? iconHashes.tile150 : null,
+    apple180Hash: hasIcons ? iconHashes.apple180 : null,
+    app192Hash: hasIcons ? iconHashes.app192 : null,
+    app512Hash: hasIcons ? iconHashes.app512 : null,
+    maskable512Hash: hasIcons ? iconHashes.maskable512 : null,
+    faviconIcoKind: hasIcons ? 'favicon-ico' : null,
+    faviconIcoHash: hasIcons ? faviconIcoHash : null,
     particleV1Kind: hasParticle ? 'particle-v1' : null,
     particleV1Hash: hasParticle ? hashes['particle-v1'] : null,
     effectStaticPngKind: hasEffect ? 'effect-static-png' : null,
@@ -248,8 +251,8 @@ const seedReadyRevision = async (
     revisionId,
     sourceHash,
     logoHash: hashes['logo-png'],
-    iconHashes: pipelineVersion === 6 ? iconHashes : null,
-    faviconIcoHash: pipelineVersion === 6 ? faviconIcoHash : null,
+    iconHashes: pipelineVersion === 6 || pipelineVersion === 7 ? iconHashes : null,
+    faviconIcoHash: pipelineVersion === 6 || pipelineVersion === 7 ? faviconIcoHash : null,
     particleHash: hashes['particle-v1'],
     staticHash: hashes['effect-static-png']
   }
@@ -452,7 +455,7 @@ describe('managed site logo HTTP contracts', () => {
     expect(response.status).toBe(202)
     const body = await json<StatusBody>(response)
     expect(body).toMatchObject({ active: null, candidate: { status: 'pending', errorCode: null }, statusUrl: '/_api/site/logo' })
-    expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 6 })
+    expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 7 })
     expect(await db('siteLogoObjects').where({ kind: 'source' }).first('byteLength')).toEqual({ byteLength: SITE_LOGO_SOURCE_LIMIT })
     expect(globalJsonParserCalls).toBe(0)
     expect(globalUrlencodedParserCalls).toBe(0)
@@ -463,7 +466,7 @@ describe('managed site logo HTTP contracts', () => {
     const first = await upload({ bytes: PNG_BYTES, name: 'same-name.png' })
     expect(first.status).toBe(202)
     const firstBody = await json<StatusBody>(first)
-    expect(await db('siteLogoRevisions').where({ id: firstBody.candidate!.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 6 })
+    expect(await db('siteLogoRevisions').where({ id: firstBody.candidate!.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 7 })
 
     const pending = await upload({ bytes: Buffer.from(PNG_BYTES), name: 'renamed.png' })
     expect(pending.status).toBe(202)
@@ -476,11 +479,11 @@ describe('managed site logo HTTP contracts', () => {
 
     const jobs = await db('durableJobs').select('type', 'version', 'payload')
     expect(jobs).toEqual([
-      { type: 'process-site-logo', version: 4, payload: JSON.stringify({ revisionId: firstBody.candidate!.revisionId, retrySequence: 0 }) }
+      { type: 'process-site-logo', version: 5, payload: JSON.stringify({ revisionId: firstBody.candidate!.revisionId, retrySequence: 0 }) }
     ])
   })
 
-  it('creates v6 work instead of reusing an intact active historical pipeline-v5 revision', async () => {
+  it('creates v7 work instead of reusing an intact active historical pipeline-v5 revision', async () => {
     const active = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000011', 5)
     await db('siteLogoState').where({ id: 1 }).update({ generation: 1, desiredRevisionId: active.revisionId, activeRevisionId: active.revisionId })
 
@@ -492,31 +495,44 @@ describe('managed site logo HTTP contracts', () => {
     expect(body.candidate?.revisionId).not.toBe(active.revisionId)
     expect(body.statusUrl).toBe('/_api/site/logo')
     expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion', 'retrySequence')).toEqual({
-      pipelineVersion: 6,
+      pipelineVersion: 7,
       retrySequence: 1
     })
     expect(await db('durableJobs')).toHaveLength(1)
   })
-  it('activates an intact reusable ready pipeline-v6 revision with 200 instead of enqueuing it again', async () => {
+  it('activates an intact reusable ready pipeline-v7 revision with 200 and preserves every role URL', async () => {
     const active = await seedReadyRevision(db, ACTIVE_SOURCE, '00000000-0000-4000-8000-000000000021')
-    const reusable = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000022', 6, 2)
+    const sourceHash = digest(PNG_BYTES)
+    const reusable = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000022', 7, 2)
+    expect(await db('siteLogoRevisions').where({ id: reusable.revisionId }).first('sourceHash')).toEqual({ sourceHash })
     await db('siteLogoState').where({ id: 1 }).update({ generation: 2, desiredRevisionId: reusable.revisionId, activeRevisionId: active.revisionId })
 
     const response = await upload({ bytes: PNG_BYTES })
     expect(response.status).toBe(200)
-    expect(await json<StatusBody>(response)).toEqual({
+    const body = await json<StatusBody>(response)
+    expect(body).toEqual({
       active: activeBody(reusable),
       candidate: null,
       statusUrl: '/_api/site/logo'
     })
-    expect(await db('siteLogoRevisions').where({ id: reusable.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 6 })
+    expect(body.active?.logoIcons).toEqual({
+      favicon16Url: `/_site-logo/${reusable.iconHashes!.favicon16}/icon.png`,
+      favicon32Url: `/_site-logo/${reusable.iconHashes!.favicon32}/icon.png`,
+      tile150Url: `/_site-logo/${reusable.iconHashes!.tile150}/icon.png`,
+      apple180Url: `/_site-logo/${reusable.iconHashes!.apple180}/icon.png`,
+      app192Url: `/_site-logo/${reusable.iconHashes!.app192}/icon.png`,
+      app512Url: `/_site-logo/${reusable.iconHashes!.app512}/icon.png`,
+      maskable512Url: `/_site-logo/${reusable.iconHashes!.maskable512}/icon.png`,
+      faviconIcoUrl: `/_site-logo/${reusable.faviconIcoHash!}/favicon.ico`
+    })
+    expect(await db('siteLogoRevisions').where({ id: reusable.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 7 })
     expect(await db('durableJobs')).toHaveLength(0)
     expect(global.WIKI.config.logoUrl).toBe(`/_site-logo/${reusable.logoHash}/logo.png`)
     expect(await db('settings').where({ key: 'logoUrl' }).first('value')).toEqual({ value: JSON.stringify({ v: `/_site-logo/${reusable.logoHash}/logo.png` }) })
   })
 
-  it.each([1, 2, 3, 4, 5] as const)(
-    'does not reuse a ready historical pipeline-v%s revision and preserves the active bundle while creating pipeline v6 work',
+  it.each([1, 2, 3, 4, 5, 6] as const)(
+    'does not reuse a ready historical pipeline-v%s revision and preserves the active bundle while creating pipeline v7 work',
     async pipelineVersion => {
       const active = await seedReadyRevision(db, ACTIVE_SOURCE, '00000000-0000-4000-8000-000000000023')
       const olderReady = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000024', pipelineVersion, 2)
@@ -529,7 +545,7 @@ describe('managed site logo HTTP contracts', () => {
       expect(body.candidate).toMatchObject({ status: 'pending', errorCode: null })
       expect(body.candidate?.revisionId).not.toBe(olderReady.revisionId)
       expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion', 'retrySequence')).toEqual({
-        pipelineVersion: 6,
+        pipelineVersion: 7,
         retrySequence: 3
       })
       expect((await db('siteLogoRevisions').where({ id: olderReady.revisionId }).first('retiredAt'))?.retiredAt).not.toBeNull()
@@ -537,8 +553,8 @@ describe('managed site logo HTTP contracts', () => {
     }
   )
 
-  it.each([1, 2, 3, 4, 5] as const)(
-    'keeps an active historical pipeline-v%s bundle visible while identical-source pipeline v6 work is pending',
+  it.each([1, 2, 3, 4, 5, 6] as const)(
+    'keeps an active historical pipeline-v%s bundle visible while identical-source pipeline v7 work is pending',
     async pipelineVersion => {
       const olderActive = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000025', pipelineVersion)
       await db('siteLogoState').where({ id: 1 }).update({
@@ -553,7 +569,7 @@ describe('managed site logo HTTP contracts', () => {
       expect(body.active).toEqual(activeBody(olderActive))
       expect(body.candidate).toMatchObject({ status: 'pending', errorCode: null })
       expect(body.candidate?.revisionId).not.toBe(olderActive.revisionId)
-      expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 6 })
+      expect(await db('siteLogoRevisions').where({ id: body.candidate!.revisionId }).first('pipelineVersion')).toEqual({ pipelineVersion: 7 })
     }
   )
 
@@ -562,7 +578,7 @@ describe('managed site logo HTTP contracts', () => {
     ['incomplete', 'particle-v1', undefined]
   ] as const)('retires a %s ready candidate and creates fresh fenced work without hiding the active preview', async (_label, omitKind, corruptKind) => {
     const active = await seedReadyRevision(db, ACTIVE_SOURCE, '00000000-0000-4000-8000-000000000031')
-    const broken = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000032', 6, 4, omitKind, corruptKind)
+    const broken = await seedReadyRevision(db, PNG_BYTES, '00000000-0000-4000-8000-000000000032', 7, 4, omitKind, corruptKind)
     await db('siteLogoState').where({ id: 1 }).update({ generation: 2, desiredRevisionId: broken.revisionId, activeRevisionId: active.revisionId })
 
     const response = await upload({ bytes: PNG_BYTES })
@@ -604,13 +620,13 @@ describe('managed site logo HTTP contracts', () => {
       .where({ id: retriedBody.candidate!.revisionId })
       .first('pipelineVersion', 'retrySequence', 'requestedBy', 'jobId')
     expect(retriedRevision).toMatchObject({
-      pipelineVersion: 6,
+      pipelineVersion: 7,
       retrySequence: 1,
       requestedBy: 7
     })
     expect(await db('durableJobs').where({ id: retriedRevision.jobId }).first('type', 'version')).toEqual({
       type: 'process-site-logo',
-      version: 4
+      version: 5
     })
     expect((await db('siteLogoRevisions').where({ id: pending.revisionId }).first('retiredAt'))?.retiredAt).not.toBeNull()
   })

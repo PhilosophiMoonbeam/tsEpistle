@@ -75,13 +75,13 @@ describe('particle-v1 browser parser', () => {
     expect(new Uint8Array(source)).toEqual(before)
   })
   it('requires an exact supported pipeline version in every descriptor', () => {
-    for (const pipelineVersion of [1, 2, 3, 4, 5, 6]) {
+    for (const pipelineVersion of [1, 2, 3, 4, 5, 6, 7]) {
       expect(isLogoEffectDescriptor({ ...descriptor, pipelineVersion })).toBe(true)
     }
 
     const { pipelineVersion: _pipelineVersion, ...missingVersion } = descriptor
     expect(isLogoEffectDescriptor(missingVersion)).toBe(false)
-    for (const pipelineVersion of [0, 1.5, 7, '6', null]) {
+    for (const pipelineVersion of [0, 1.5, 8, '6', null]) {
       expect(isLogoEffectDescriptor({ ...descriptor, pipelineVersion })).toBe(false)
     }
   })

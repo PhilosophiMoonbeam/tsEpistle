@@ -4,13 +4,14 @@ import type { Knex } from 'knex'
 import {
   SITE_LOGO_FAVICON_ICO_BYTE_LIMIT,
   SITE_LOGO_ICON_PNG_BYTE_LIMIT,
-  SITE_LOGO_JOB_VERSION,
-  SITE_LOGO_PIPELINE_VERSION,
   SITE_LOGO_PNG_BYTE_LIMIT,
   SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT,
   SITE_LOGO_SOURCE_BYTE_LIMIT,
   SITE_LOGO_STATIC_PNG_BYTE_LIMIT
 } from '../../../shared/site-logo.ts'
+
+const HISTORICAL_PIPELINE_VERSION = 6 as const
+const HISTORICAL_JOB_VERSION = 4 as const
 
 const OBJECTS = 'siteLogoObjects'
 const REVISIONS = 'siteLogoRevisions'
@@ -345,7 +346,7 @@ export const up = async (knex: Knex): Promise<void> => {
         await transaction(JOBS).insert({
           id: jobId,
           type: 'process-site-logo',
-          version: SITE_LOGO_JOB_VERSION,
+          version: HISTORICAL_JOB_VERSION,
           payload: JSON.stringify({ revisionId, retrySequence: 0 }),
           state: 'pending',
           attempts: 0,
@@ -364,7 +365,7 @@ export const up = async (knex: Knex): Promise<void> => {
           id: revisionId,
           sourceKind: selected.sourceKind,
           sourceHash: selected.sourceHash,
-          pipelineVersion: SITE_LOGO_PIPELINE_VERSION,
+          pipelineVersion: HISTORICAL_PIPELINE_VERSION,
           status: 'pending',
           jobId,
           retrySequence: 0,

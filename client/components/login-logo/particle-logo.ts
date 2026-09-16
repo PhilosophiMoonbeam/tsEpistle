@@ -2,6 +2,13 @@ import type { LogoEffectDescriptor } from '../../../shared/site-logo.ts'
 
 export type { LogoEffectDescriptor } from '../../../shared/site-logo.ts'
 
+export interface ParticleContentRect {
+  readonly left: number
+  readonly top: number
+  readonly width: number
+  readonly height: number
+}
+
 export interface ParsedLogoParticles {
   /** The exact fetched buffer. All attribute views below share this storage. */
   readonly buffer: ArrayBuffer
@@ -87,7 +94,7 @@ export function isLogoEffectDescriptor(value: unknown): value is LogoEffectDescr
   if (REQUIRED_KEYS.some(key => !Object.hasOwn(descriptor, key))) return false
   if (keys.some(key => ALLOWED_KEYS[key] !== true)) return false
   if (
-    !isIntegerInRange(descriptor.pipelineVersion, 1, 6) ||
+    !isIntegerInRange(descriptor.pipelineVersion, 1, 7) ||
     typeof descriptor.logoUrl !== 'string' ||
     !LOGO_URL_PATTERN.test(descriptor.logoUrl) ||
     typeof descriptor.particleUrl !== 'string' ||

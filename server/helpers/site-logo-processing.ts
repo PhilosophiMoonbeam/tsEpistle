@@ -1208,7 +1208,7 @@ const maskableRectangleFitsSafeCircle = (size: number, left: number, top: number
   )
 }
 
-const renderOpaqueIcon = (source: RgbaRaster, size: number, maskable: boolean, backdrop: readonly [number, number, number]): Buffer => {
+const renderIcon = (source: RgbaRaster, size: number, maskable: boolean, backdrop: readonly [number, number, number] | null): Buffer => {
   const inset = Math.ceil(0.06 * size)
   const available = Math.max(1, size - 2 * inset)
   const sourceDiagonal = Math.hypot(source.width, source.height)
@@ -1227,6 +1227,16 @@ const renderOpaqueIcon = (source: RgbaRaster, size: number, maskable: boolean, b
   }
   const scaled = resizeLinearPremultiplied(source, width, height)
   const data = Buffer.alloc(size * size * 4)
+  if (backdrop === null) {
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const sourceOffset = (y * width + x) * 4
+        const targetOffset = ((top + y) * size + left + x) * 4
+        scaled.data.copy(data, targetOffset, sourceOffset, sourceOffset + 4)
+      }
+    }
+    return encodeRgbaPng({ width: size, height: size, data })
+  }
   for (let index = 0; index < size * size; index += 1) {
     const offset = index * 4
     data[offset] = backdrop[0]
@@ -1453,17 +1463,16 @@ const canonicalRaster = (raster: RgbaRaster): RgbaRaster => {
     Math.max(SITE_LOGO_MIN_INPUT_DIMENSION, roundHalfAwayFromZero(scale * raster.height))
   )
 }
-
 const iconArtifacts = (raster: RgbaRaster): SiteLogoArtifacts['icons'] => {
   const backdrop = chooseIconBackdrop(raster)
   return {
-    favicon16: renderOpaqueIcon(raster, SITE_LOGO_ICON_SIZES.favicon16, false, backdrop),
-    favicon32: renderOpaqueIcon(raster, SITE_LOGO_ICON_SIZES.favicon32, false, backdrop),
-    tile150: renderOpaqueIcon(raster, SITE_LOGO_ICON_SIZES.tile150, false, backdrop),
-    apple180: renderOpaqueIcon(raster, SITE_LOGO_ICON_SIZES.apple180, false, backdrop),
-    app192: renderOpaqueIcon(raster, SITE_LOGO_ICON_SIZES.app192, false, backdrop),
-    app512: renderOpaqueIcon(raster, SITE_LOGO_ICON_SIZES.app512, false, backdrop),
-    maskable512: renderOpaqueIcon(raster, SITE_LOGO_ICON_SIZES.maskable512, true, backdrop)
+    favicon16: renderIcon(raster, SITE_LOGO_ICON_SIZES.favicon16, false, null),
+    favicon32: renderIcon(raster, SITE_LOGO_ICON_SIZES.favicon32, false, null),
+    tile150: renderIcon(raster, SITE_LOGO_ICON_SIZES.tile150, false, null),
+    apple180: renderIcon(raster, SITE_LOGO_ICON_SIZES.apple180, false, backdrop),
+    app192: renderIcon(raster, SITE_LOGO_ICON_SIZES.app192, false, null),
+    app512: renderIcon(raster, SITE_LOGO_ICON_SIZES.app512, false, null),
+    maskable512: renderIcon(raster, SITE_LOGO_ICON_SIZES.maskable512, true, backdrop)
   }
 }
 

@@ -1,13 +1,8 @@
 import { JSDOM } from 'jsdom'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { LogoPointerState } from './useLogoPointer.ts'
-import {
-  LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS,
-  LOGO_POINTER_IMPULSE_CAPACITY,
-  LOGO_POINTER_MAX_SEGMENT_CSS,
-  LogoPointerController,
-  logoPointerInfluenceRadius
-} from './useLogoPointer.ts'
+import { LOGO_POINTER_IMPULSE_CAPACITY, LOGO_POINTER_MAX_SEGMENT_CSS, LogoPointerController, logoPointerInfluenceRadius } from './useLogoPointer.ts'
+import { LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS } from './particle-explosion.ts'
 
 const dom = new JSDOM('<!doctype html><html><body><div id="logo"></div></body></html>', {
   pretendToBeVisual: true,
@@ -188,17 +183,14 @@ describe('logo pointer impulse motion', () => {
     controller.dispose()
   })
 
-  it('keeps explosion slots bounded, expires every blast absolutely, and accepts again after expiry', () => {
+  it('rejects a seventh explosion until an inactive slot can be reused without shifting deadlines', () => {
     let time = 0
     const target = targetWithBounds()
     const controller = new LogoPointerController({ hasFinePointer: () => true, now: () => time })
     controller.setTarget(target)
     controller.setCoordinateTarget(target)
     controller.setActive(true)
-    const state = controller.state as LogoPointerState & {
-      activeExplosionCount: number
-      explosions: readonly { active: boolean; ageSeconds: number; x: number; y: number }[]
-    }
+    const state = controller.state
 
     for (let index = 0; index < 6; index += 1) {
       time = index * 10
@@ -211,29 +203,65 @@ describe('logo pointer impulse motion', () => {
         })
       )
     }
-    expect(state.activeExplosionCount).toBe(6)
     const slots = [...state.explosions]
-    const deadlines = slots.map(explosion => time + (LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS - explosion.ageSeconds) * 1000)
+    const positions = slots.map(explosion => [explosion.x, explosion.y])
+    expect(state.activeExplosionCount).toBe(6)
+
     time = 60
     target.dispatchEvent(pointerEvent('pointerdown', { clientX: 200, clientY: 100, pointerId: 99, pointerType: 'pen' }))
     expect(state.activeExplosionCount).toBe(6)
     state.explosions.forEach((explosion, index) => {
       expect(explosion).toBe(slots[index])
-      expect(time + (LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS - explosion.ageSeconds) * 1000).toBeCloseTo(deadlines[index], 10)
+      expect([explosion.x, explosion.y]).toEqual(positions[index])
     })
 
-    time = 2_799
-    expect(controller.update(400, time).activeExplosionCount).toBe(6)
-    expect(state.explosions.every(explosion => Number.isFinite(explosion.x) && Number.isFinite(explosion.y))).toBe(true)
-    time = 2_800
+    time = LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS * 1000
     expect(controller.update(400, time).activeExplosionCount).toBe(5)
-    time = 2_849
-    expect(controller.update(400, time).activeExplosionCount).toBe(1)
-    time = 2_850
-    expect(controller.update(400, time).activeExplosionCount).toBe(0)
+    expect(state.explosions[0].active).toBe(false)
+
+    time += 1
     target.dispatchEvent(pointerEvent('pointerdown', { clientX: 200, clientY: 100, pointerId: 100, pointerType: 'touch' }))
-    expect(state.activeExplosionCount).toBe(1)
+    expect(state.activeExplosionCount).toBe(6)
     expect(state.explosions[0]).toBe(slots[0])
+    expect(state.explosions[0]).toMatchObject({ active: true, ageSeconds: 0 })
+    for (let index = 1; index < slots.length; index += 1) {
+      expect(state.explosions[index]).toBe(slots[index])
+      expect(state.explosions[index].ageSeconds).toBeCloseTo((time - index * 10) / 1000, 12)
+    }
+
+    time = 2_809
+    expect(controller.update(400, time).activeExplosionCount).toBe(6)
+    time = 2_810
+    expect(controller.update(400, time).activeExplosionCount).toBe(5)
+    expect(state.explosions[1].active).toBe(false)
+    controller.dispose()
+  })
+
+  it('preserves explosions while inactive and expires them at their original absolute deadline', () => {
+    let time = 0
+    const target = targetWithBounds()
+    const controller = new LogoPointerController({ hasFinePointer: () => true, now: () => time })
+    controller.setTarget(target)
+    controller.setCoordinateTarget(target)
+    controller.setActive(true)
+
+    target.dispatchEvent(pointerEvent('pointerdown', { clientX: 150, clientY: 100, pointerType: 'touch' }))
+    const explosion = controller.state.explosions[0]
+    expect(controller.state.activeExplosionCount).toBe(1)
+    controller.setActive(false)
+    expect(controller.state.activeExplosionCount).toBe(1)
+    expect(explosion.active).toBe(true)
+
+    time = 1_000
+    expect(controller.update(400, time).activeExplosionCount).toBe(1)
+    expect(explosion.ageSeconds).toBeCloseTo(1, 12)
+    controller.setActive(true)
+    time = LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS * 1000 - 1
+    expect(controller.update(400, time).activeExplosionCount).toBe(1)
+    expect(explosion.ageSeconds).toBeCloseTo(LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS - 0.001, 12)
+    time = LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS * 1000
+    expect(controller.update(400, time).activeExplosionCount).toBe(0)
+    expect(explosion.active).toBe(false)
     controller.dispose()
   })
 

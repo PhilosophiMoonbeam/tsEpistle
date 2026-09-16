@@ -5,6 +5,11 @@
     :style="fieldStyle"
   )
     .login-particle-logo__stage
+      .login-particle-logo__silhouette(
+        v-if="showSilhouette"
+        aria-hidden="true"
+        :style="silhouetteStyle"
+      )
       component.login-particle-logo__scene(
         ref="sceneInstance"
         v-if="sceneMount"
@@ -12,6 +17,7 @@
         :key="sceneMount.epoch"
         :effect="sceneMount.effect"
         :particles="sceneMount.particles"
+        :content-rect="contentRect"
         :active="sceneActive"
         :style="sceneStyle"
         @first-frame="sceneMount.onFirstFrame"
@@ -52,7 +58,8 @@ import {
   isLogoEffectDescriptor,
   parseParticleV1,
   type LogoEffectDescriptor,
-  type ParsedLogoParticles
+  type ParsedLogoParticles,
+  type ParticleContentRect
 } from './particle-logo'
 import './login-particle-logo.scss'
 
@@ -61,8 +68,7 @@ interface FieldLayout {
   readonly top: number
   readonly width: number
   readonly height: number
-  readonly imageWidth: number
-  readonly imageHeight: number
+  readonly contentRect: ParticleContentRect
 }
 
 interface SceneMount {
@@ -128,6 +134,12 @@ const ENHANCEMENT_DEADLINE_MS = 1_500
 const SCENE_IMAGE_CROSSFADE = 'opacity 280ms cubic-bezier(0.16, 1, 0.3, 1)'
 const RESUME_DEADLINE_MS = 1_500
 const IDLE_TIMEOUT_MS = 750
+const EMPTY_CONTENT_RECT: ParticleContentRect = Object.freeze({
+  left: 0,
+  top: 0,
+  width: 0,
+  height: 0
+})
 
 const toPixels = (value: number): string => `${Math.round(value * 1000) / 1000}px`
 
@@ -170,8 +182,8 @@ export default defineComponent({
       const currentLayout = layout.value
       return (
         currentLayout !== null &&
-        Math.max(currentLayout.imageWidth, currentLayout.imageHeight) >= MIN_RENDERED_LONG_AXIS_PX &&
-        Math.min(currentLayout.imageWidth, currentLayout.imageHeight) >= MIN_RENDERED_SHORT_AXIS_PX
+        Math.max(currentLayout.contentRect.width, currentLayout.contentRect.height) >= MIN_RENDERED_LONG_AXIS_PX &&
+        Math.min(currentLayout.contentRect.width, currentLayout.contentRect.height) >= MIN_RENDERED_SHORT_AXIS_PX
       )
     })
     const hardEligible = computed(() => {
@@ -243,25 +255,60 @@ export default defineComponent({
       const paddingTop = Number.parseFloat(loginStyle.paddingTop) || 0
       const paddingRight = Number.parseFloat(loginStyle.paddingRight) || 0
       const paddingBottom = Number.parseFloat(loginStyle.paddingBottom) || 0
+
+      // The physical surface is full bleed within the visible right-hand login area.
       const fieldLeft = cardRect.right + FIELD_GUTTER_PX
-      const fieldRight = Math.min(loginRect.right, viewportWidth) - paddingRight
-      const fieldTop = Math.max(loginRect.top, 0) + paddingTop
-      const fieldBottom = Math.min(loginRect.bottom, viewportHeight) - paddingBottom
+      const fieldRight = Math.min(loginRect.right, viewportWidth)
+      const fieldTop = Math.max(loginRect.top, 0)
+      const fieldBottom = Math.min(loginRect.bottom, viewportHeight)
       const fieldWidth = fieldRight - fieldLeft
       const fieldHeight = fieldBottom - fieldTop
 
-      if (![fieldLeft, fieldRight, fieldTop, fieldBottom, fieldWidth, fieldHeight].every(Number.isFinite) || fieldWidth <= 0 || fieldHeight <= 0) {
-        clearLayout()
-        return
-      }
-
-      const availableWidth = fieldWidth * (1 - 2 * FIELD_CLEARANCE)
-      const availableHeight = fieldHeight * (1 - 2 * FIELD_CLEARANCE)
+      // Preserve the old padded field's fitted logo size and center as a logical rect.
+      const paddedFieldLeft = fieldLeft
+      const paddedFieldRight = fieldRight - paddingRight
+      const paddedFieldTop = fieldTop + paddingTop
+      const paddedFieldBottom = fieldBottom - paddingBottom
+      const paddedFieldWidth = paddedFieldRight - paddedFieldLeft
+      const paddedFieldHeight = paddedFieldBottom - paddedFieldTop
+      const availableWidth = paddedFieldWidth * (1 - 2 * FIELD_CLEARANCE)
+      const availableHeight = paddedFieldHeight * (1 - 2 * FIELD_CLEARANCE)
       const scale = Math.min(availableWidth / effect.width, availableHeight / effect.height)
-      const imageWidth = effect.width * scale
-      const imageHeight = effect.height * scale
+      const contentWidth = effect.width * scale
+      const contentHeight = effect.height * scale
+      const contentLeft = paddedFieldLeft + (paddedFieldWidth - contentWidth) / 2 - fieldLeft
+      const contentTop = paddedFieldTop + (paddedFieldHeight - contentHeight) / 2 - fieldTop
 
-      if (!Number.isFinite(scale) || scale <= 0) {
+      if (
+        ![
+          fieldLeft,
+          fieldRight,
+          fieldTop,
+          fieldBottom,
+          fieldWidth,
+          fieldHeight,
+          paddedFieldLeft,
+          paddedFieldRight,
+          paddedFieldTop,
+          paddedFieldBottom,
+          paddedFieldWidth,
+          paddedFieldHeight,
+          availableWidth,
+          availableHeight,
+          scale,
+          contentLeft,
+          contentTop,
+          contentWidth,
+          contentHeight
+        ].every(Number.isFinite) ||
+        fieldWidth <= 0 ||
+        fieldHeight <= 0 ||
+        paddedFieldWidth <= 0 ||
+        paddedFieldHeight <= 0 ||
+        scale <= 0 ||
+        contentWidth <= 0 ||
+        contentHeight <= 0
+      ) {
         clearLayout()
         return
       }
@@ -271,8 +318,12 @@ export default defineComponent({
         top: fieldTop - loginRect.top,
         width: fieldWidth,
         height: fieldHeight,
-        imageWidth,
-        imageHeight
+        contentRect: Object.freeze({
+          left: contentLeft,
+          top: contentTop,
+          width: contentWidth,
+          height: contentHeight
+        })
       }
     }
 
@@ -585,6 +636,12 @@ export default defineComponent({
       failedStaticUrl.value !== activeEffect.value.staticUrl
     )
     const staticUrl = computed(() => activeEffect.value?.staticUrl ?? '')
+    const contentRect = computed<ParticleContentRect>(() => layout.value?.contentRect ?? EMPTY_CONTENT_RECT)
+    const showSilhouette = computed(() =>
+      activeEffect.value !== null &&
+      loadedStaticUrl.value === activeEffect.value.staticUrl &&
+      failedStaticUrl.value !== activeEffect.value.staticUrl
+    )
     const fieldStyle = computed((): Record<string, string> => {
       if (!layout.value || !activeEffect.value) return {}
       return {
@@ -597,18 +654,33 @@ export default defineComponent({
     })
     const imageStyle = computed((): Record<string, string> => {
       if (!layout.value) return {}
+      const currentRect = layout.value.contentRect
       return {
-        width: toPixels(layout.value.imageWidth),
-        height: toPixels(layout.value.imageHeight),
-        position: 'relative',
-        zIndex: '1',
+        left: toPixels(currentRect.left),
+        top: toPixels(currentRect.top),
+        width: toPixels(currentRect.width),
+        height: toPixels(currentRect.height),
+        position: 'absolute',
+        zIndex: '2',
         opacity: sceneReady.value ? '0' : '1',
         transition: reducedMotion.value ? 'none' : SCENE_IMAGE_CROSSFADE
       }
     })
+    const silhouetteStyle = computed((): Record<string, string> => {
+      if (!layout.value || !loadedStaticUrl.value) return {}
+      const currentRect = layout.value.contentRect
+      return {
+        left: toPixels(currentRect.left),
+        top: toPixels(currentRect.top),
+        width: toPixels(currentRect.width),
+        height: toPixels(currentRect.height),
+        maskImage: `url("${loadedStaticUrl.value}")`,
+        WebkitMaskImage: `url("${loadedStaticUrl.value}")`
+      }
+    })
     const sceneStyle: Record<string, string> = {
       position: 'absolute',
-      zIndex: '0',
+      zIndex: '1',
       inset: '0',
       width: '100%',
       height: '100%'
@@ -616,6 +688,7 @@ export default defineComponent({
 
     return {
       activeEffect,
+      contentRect,
       fieldStyle,
       handleImageError,
       handleImageLoad,
@@ -625,6 +698,8 @@ export default defineComponent({
       sceneMount,
       sceneStyle,
       showField,
+      showSilhouette,
+      silhouetteStyle,
       staticImageElement,
       staticUrl
     }

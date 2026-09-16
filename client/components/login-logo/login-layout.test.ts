@@ -59,7 +59,7 @@ if (compiledTemplate.errors.length > 0) {
 const renderLogin = new Function('Vue', compiledTemplate.code)(Vue) as Vue.RenderFunction
 
 const managedEffect: LogoEffectDescriptor = {
-  pipelineVersion: 6,
+  pipelineVersion: 7,
   logoUrl: '/_site-logo/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/logo.png',
   particleUrl: '/_site-logo/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/particle.bin',
   staticUrl: '/_site-logo/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/effect.png',
@@ -111,6 +111,7 @@ const LoginParticleLogoStub = Vue.defineComponent({
             },
             [
               Vue.h('div', { class: 'login-particle-logo__stage' }, [
+                Vue.h('div', { class: 'login-particle-logo__silhouette', 'aria-hidden': 'true' }),
                 Vue.h('canvas', { class: 'login-logo-particle-scene', 'aria-hidden': 'true' }),
                 Vue.h('img', {
                   class: 'login-particle-logo__image',
@@ -510,6 +511,8 @@ describe('login personalized static-logo integration', () => {
     expect(field.querySelector('[aria-label], [aria-labelledby], [aria-describedby]')).toBeNull()
     expect(field.querySelector('[tabindex], a[href], button, input, select, textarea, summary, [contenteditable]')).toBeNull()
     expect(field.querySelector('[onkeydown], [onkeyup], [onkeypress]')).toBeNull()
+    const decorativeSilhouette = field.querySelector<HTMLElement>('.login-particle-logo__silhouette')
+    expect(decorativeSilhouette?.getAttribute('aria-hidden')).toBe('true')
     const decorativeImage = field.querySelector<HTMLImageElement>('img.login-particle-logo__image')
     const decorativeCanvas = field.querySelector<HTMLCanvasElement>('canvas.login-logo-particle-scene')
     expect(decorativeImage?.getAttribute('alt')).toBe('')
@@ -549,7 +552,7 @@ describe('login personalized static-logo integration', () => {
     expect(isLogoEffectDescriptor(staleEffect)).toBe(true)
 
     expect(resolveConfiguredLogoEffect(managedEffect.logoUrl, staleEffect)).toBeNull()
-    expect(resolveConfiguredLogoEffect(managedEffect.logoUrl, { ...managedEffect, pipelineVersion: 7 })).toBeNull()
+    expect(resolveConfiguredLogoEffect(managedEffect.logoUrl, { ...managedEffect, pipelineVersion: 6 })).not.toBeNull()
     expect(resolveConfiguredLogoEffect(managedEffect.logoUrl, managedEffect)).toBe(managedEffect)
   })
 
@@ -613,6 +616,8 @@ describe('login success illustration contract', () => {
 
 describe('login particle decoration accessibility and privacy hardening', () => {
   it('keeps production decoration hidden from accessibility and keyboard interaction', () => {
+    expect(particleLogoComponent.template).toMatch(/\.login-particle-logo__silhouette\([\s\S]*?\baria-hidden="true"/)
+    expect(particleLogoComponent.template).toMatch(/:content-rect="contentRect"/)
     expect(particleLogoComponent.template).toMatch(/\.login-particle-logo\([\s\S]*?\baria-hidden="true"[\s\S]*?\)/)
     expect(particleLogoComponent.template).toMatch(/img\.login-particle-logo__image\([\s\S]*?\balt=""[\s\S]*?\baria-hidden="true"[\s\S]*?\)/)
     expect(particleSceneComponent.template).toMatch(/<TresCanvas[\s\S]*?\bclass="login-logo-particle-scene"[\s\S]*?\baria-hidden="true"/)

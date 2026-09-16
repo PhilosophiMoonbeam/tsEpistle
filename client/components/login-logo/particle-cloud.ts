@@ -1,5 +1,6 @@
+import { addExplosionDisplacement, LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS } from './particle-explosion'
 import { ParticleBrush } from './particle-brush'
-import type { ParsedLogoParticles } from './particle-logo'
+import type { ParticleContentRect, ParsedLogoParticles } from './particle-logo'
 import type { LogoPointerState } from './useLogoPointer'
 
 /** Dust stays on the GPU; only this bounded population needs collision physics. */
@@ -25,15 +26,21 @@ export class ParticleCloud {
   readonly radius: Float32Array
   private readonly homeX: Float32Array
   private readonly homeY: Float32Array
+  private readonly explosionMotion: Float32Array
   private readonly phases: Float64Array
   private readonly heads = new Int32Array(BUCKETS)
   private readonly next: Int32Array
   private readonly cellX: Int32Array
   private readonly cellY: Int32Array
-  private readonly blastAges = new Float64Array(6).fill(Infinity)
   private lastTime = -1
+  private simulationTime = 0
+  private hasTime = false
   private width = 0
   private height = 0
+  private logicalLeft = Number.NaN
+  private logicalTop = Number.NaN
+  private logicalWidth = Number.NaN
+  private logicalHeight = Number.NaN
   private accumulator = 0
 
   constructor(private readonly particles: ParsedLogoParticles) {
@@ -60,27 +67,50 @@ export class ParticleCloud {
     this.radius = new Float32Array(this.count)
     this.homeX = new Float32Array(this.count)
     this.homeY = new Float32Array(this.count)
+    this.explosionMotion = new Float32Array(this.count * 2)
     this.phases = Float64Array.from(this.indices, i => (particles.seed[i]! / 65535) * TAU)
     this.next = new Int32Array(this.count)
     this.cellX = new Int32Array(this.count)
     this.cellY = new Int32Array(this.count)
   }
 
-  update(time: number, width: number, height: number, pointer: LogoPointerState, interactionTime = time): void {
+  update(time: number, width: number, height: number, pointer: LogoPointerState, interactionTime = time, contentRect?: ParticleContentRect): void {
     this.brush.update(interactionTime, pointer)
     if (this.count === 0) return
     const aspect = this.particles.width / this.particles.height
     const fitX = Math.min(1, (aspect * height) / width)
     const fitY = Math.min(1, width / (height * aspect))
-    const longAxis = Math.max(width * fitX, height * fitY)
-    if (width !== this.width || height !== this.height || time < this.lastTime) {
+    const hasContentRect =
+      contentRect !== undefined &&
+      Number.isFinite(contentRect.left) &&
+      Number.isFinite(contentRect.top) &&
+      Number.isFinite(contentRect.width) &&
+      Number.isFinite(contentRect.height) &&
+      contentRect.width > 0 &&
+      contentRect.height > 0
+    const logicalLeft = hasContentRect ? contentRect.left : (width - fitX * width) * 0.5
+    const logicalTop = hasContentRect ? contentRect.top : (height - fitY * height) * 0.5
+    const logicalWidth = hasContentRect ? contentRect.width : fitX * width
+    const logicalHeight = hasContentRect ? contentRect.height : fitY * height
+    const longAxis = Math.max(logicalWidth, logicalHeight)
+    const resized =
+      width !== this.width ||
+      height !== this.height ||
+      logicalLeft !== this.logicalLeft ||
+      logicalTop !== this.logicalTop ||
+      logicalWidth !== this.logicalWidth ||
+      logicalHeight !== this.logicalHeight
+    if (resized) {
+      const hadLayout = this.width > 0 && this.height > 0
       for (let b = 0; b < this.count; b++) {
         const i = this.indices[b]!
-        this.homeX[b] = ((this.particles.xy[i * 2]! / 32767) * fitX * width) / 2
-        this.homeY[b] = ((this.particles.xy[i * 2 + 1]! / 32767) * fitY * height) / 2
-        this.x[b] = this.homeX[b]!
-        this.y[b] = this.homeY[b]!
-        this.vx[b] = this.vy[b] = 0
+        const residualX = hadLayout ? this.x[b]! - this.homeX[b]! : 0
+        const residualY = hadLayout ? this.y[b]! - this.homeY[b]! : 0
+        this.homeX[b] = logicalLeft + logicalWidth * 0.5 - width * 0.5 + (this.particles.xy[i * 2]! / 32767) * logicalWidth * 0.5
+        this.homeY[b] = height * 0.5 - (logicalTop + logicalHeight * 0.5) + (this.particles.xy[i * 2 + 1]! / 32767) * logicalHeight * 0.5
+        this.x[b] = this.homeX[b]! + residualX
+        this.y[b] = this.homeY[b]! + residualY
+        if (!hadLayout) this.vx[b] = this.vy[b] = 0
         const seed = this.particles.seed[i]! / 65535
         const coverage = 0.65 + (0.35 * this.particles.size[i]!) / 255
         const depthScale = 1 + (0.18 * this.particles.depth[i]!) / 127
@@ -88,44 +118,64 @@ export class ParticleCloud {
       }
       this.width = width
       this.height = height
+      this.logicalLeft = logicalLeft
+      this.logicalTop = logicalTop
+      this.logicalWidth = logicalWidth
+      this.logicalHeight = logicalHeight
       this.accumulator = 0
-      this.blastAges.fill(Infinity)
     }
-    const delta = this.lastTime < 0 ? STEP : Math.min(1 / 30, Math.max(0, time - this.lastTime))
-    this.lastTime = time
+    const safeTime = Number.isFinite(time) ? time : this.lastTime < 0 ? 0 : this.lastTime
+    let delta = 0
+    if (!this.hasTime) {
+      this.hasTime = true
+      this.simulationTime = safeTime
+      this.lastTime = safeTime
+      delta = STEP
+    } else if (safeTime < this.lastTime) {
+      this.lastTime = safeTime
+      this.accumulator = 0
+    } else {
+      delta = Math.min(1 / 30, Math.max(0, safeTime - this.lastTime))
+      this.lastTime = safeTime
+      this.simulationTime += delta
+    }
+    this.updateExplosionMotion(pointer, longAxis)
     this.accumulator += delta
-    // Apply each explosion once, independent of the render rate or ring slot reuse.
-    for (let slot = 0; slot < pointer.explosions.length; slot++) {
-      const blast = pointer.explosions[slot]!
-      if (!blast.active) {
-        this.blastAges[slot] = Infinity
-        continue
-      }
-      const newBurst = blast.ageSeconds < this.blastAges[slot]!
-      this.blastAges[slot] = blast.ageSeconds
-      if (!newBurst || blast.ageSeconds > 0.15) continue
-      const blastX = (blast.x * width) / 2
-      const blastY = (blast.y * height) / 2
-      const reach = Math.min(240, Math.max(100, longAxis * 0.3)) * blast.scale
-      const reachSquared = reach * reach
-      for (let b = 0; b < this.count; b++) {
-        const dx = this.x[b]! - blastX
-        const dy = this.y[b]! - blastY
-        if (dx * dx + dy * dy >= reachSquared) continue
-        const d = Math.max(1, Math.hypot(dx, dy))
-        const force = Math.max(0, 1 - d / reach) ** 2 * 950 * blast.scale
-        this.vx[b] += ((dx / d) * 0.94 - (dy / d) * 0.34) * force
-        this.vy[b] += ((dy / d) * 0.94 + (dx / d) * 0.34) * force
-      }
-    }
     while (this.accumulator >= STEP) {
-      this.step(time)
+      this.step(this.simulationTime)
       this.accumulator -= STEP
     }
     for (let b = 0; b < this.count; b++) {
       const offset = this.indices[b]! * 2
       this.motion[offset] = this.x[b]! - this.homeX[b]!
       this.motion[offset + 1] = this.y[b]! - this.homeY[b]!
+    }
+  }
+
+  private updateExplosionMotion(pointer: LogoPointerState, longAxis: number): void {
+    this.explosionMotion.fill(0)
+    for (let slot = 0; slot < pointer.explosions.length; slot += 1) {
+      const explosion = pointer.explosions[slot]!
+      const age = Number.isFinite(explosion.ageSeconds) ? explosion.ageSeconds : LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS
+      if (!explosion.active || age < 0 || age >= LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS) continue
+      for (let b = 0; b < this.count; b += 1) {
+        const particleIndex = this.indices[b]!
+        addExplosionDisplacement(
+          this.explosionMotion,
+          b * 2,
+          this.homeX[b]!,
+          this.homeY[b]!,
+          explosion.x,
+          explosion.y,
+          this.width,
+          this.height,
+          longAxis,
+          this.particles.depth[particleIndex]! / 127,
+          this.particles.seed[particleIndex]! / 65535,
+          explosion.scale,
+          age
+        )
+      }
     }
   }
 
@@ -137,10 +187,13 @@ export class ParticleCloud {
       const ty = this.homeY[b]! + Math.cos(time * 0.39 + phase * 1.7) * 9
       let ax = (tx - this.x[b]!) * 12
       let ay = (ty - this.y[b]!) * 12
+      const explosionOffset = b * 2
+      const actualX = this.x[b]! + this.explosionMotion[explosionOffset]!
+      const actualY = this.y[b]! + this.explosionMotion[explosionOffset + 1]!
       const brush = this.brush
       if (brush.travel > 0.01) {
-        const dx = this.x[b]! - (brush.x * this.width) / 2
-        const dy = this.y[b]! - (brush.y * this.height) / 2
+        const dx = actualX - (brush.x * this.width) / 2
+        const dy = actualY - (brush.y * this.height) / 2
         if (dx * dx + dy * dy < brush.radius * brush.radius) {
           const d = Math.max(1, Math.hypot(dx, dy))
           const force = Math.max(0, 1 - d / brush.radius) ** 2 * brush.travel * 65
@@ -152,8 +205,8 @@ export class ParticleCloud {
       this.vy[b] = (this.vy[b]! + ay * STEP) * DAMPING
       this.x[b] += this.vx[b]! * STEP
       this.y[b] += this.vy[b]! * STEP
-      const cx = Math.floor(this.x[b]! / CELL)
-      const cy = Math.floor(this.y[b]! / CELL)
+      const cx = Math.floor((this.x[b]! + this.explosionMotion[explosionOffset]!) / CELL)
+      const cy = Math.floor((this.y[b]! + this.explosionMotion[explosionOffset + 1]!) / CELL)
       this.cellX[b] = cx
       this.cellY[b] = cy
       const bucket = ((cx * 73856093) ^ (cy * 19349663)) & (BUCKETS - 1)
@@ -171,8 +224,8 @@ export class ParticleCloud {
           for (let other = this.heads[bucket]!; other !== -1 && remaining > 0; other = this.next[other]!) {
             remaining--
             if (other <= b || this.cellX[other] !== cx || this.cellY[other] !== cy) continue
-            let ox = this.x[other]! - this.x[b]!
-            let oy = this.y[other]! - this.y[b]!
+            let ox = this.x[other]! + this.explosionMotion[other * 2]! - (this.x[b]! + this.explosionMotion[b * 2]!)
+            let oy = this.y[other]! + this.explosionMotion[other * 2 + 1]! - (this.y[b]! + this.explosionMotion[b * 2 + 1]!)
             const separation = this.radius[b]! + this.radius[other]!
             if (ox * ox + oy * oy >= separation * separation) continue
             let distance = Math.hypot(ox, oy)

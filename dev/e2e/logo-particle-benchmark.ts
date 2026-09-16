@@ -1,8 +1,4 @@
-import type {
-  ParticleBackendDiagnostics,
-  ParticleBackendKind,
-  ParticleBackendRequest
-} from '../../client/components/login-logo/particle-renderer.ts'
+import type { ParticleBackendDiagnostics, ParticleBackendKind, ParticleBackendRequest } from '../../client/components/login-logo/particle-renderer.ts'
 
 export interface LogoMotionDiagnostics {
   readonly activeExplosionCount: number
@@ -50,6 +46,12 @@ export interface LogoPerformanceFrame {
   readonly frameId?: number
   readonly submittedAt?: number
   readonly updateCpuMs?: number
+  /**
+   * Wall-clock scheduling time between the update callback and render callback.
+   * This is not renderer CPU time or GPU time.
+   */
+  readonly renderCallbackGapMs?: number
+  /** Synchronous renderer.render() entry-to-return time from the opt-in scene wrapper. */
   readonly renderInvocationCpuMs?: number
   readonly afterRenderCpuMs?: number
   readonly totalDrawCalls?: number
@@ -101,6 +103,14 @@ export interface LogoParticlePerformanceHook {
   frameIntervalsMilliseconds: number[]
   firstFrameMilliseconds: number | null
   lastFrameAt: number | null
+  /**
+   * Set by the opt-in scene renderer wrapper for the current synchronous
+   * renderer.render() invocation, then consumed by the onRender hook.
+   * A missing/null value is unavailable and must not be inferred as zero.
+   */
+  renderInvocationCpuMs?: number | null
+  /** Incremented by the harness when a GPU-timing sample window is reset. */
+  gpuTimingEpoch?: number
   lastMotion?: LogoMotionDiagnostics
   maximumActiveExplosionCount?: number
   maximumActiveImpulseCount?: number

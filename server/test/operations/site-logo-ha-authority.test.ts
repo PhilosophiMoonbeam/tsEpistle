@@ -188,7 +188,7 @@ const insertBundle = async (db: Knex, output: Artifacts): Promise<void> => {
   )
 }
 
-const startAndClaim = async (db: Knex, workerId: string, revisionId: string, sourceHash: string, jobVersion = 4): Promise<DurableJob> => {
+const startAndClaim = async (db: Knex, workerId: string, revisionId: string, sourceHash: string, jobVersion = 5): Promise<DurableJob> => {
   const revision = await db('siteLogoRevisions').where({ id: revisionId }).first('jobId', 'sourceHash')
   if (!revision || revision.jobId === null) throw new Error('Site logo revision job was not found')
   await db('siteLogoState').where({ id: 1 }).update({ desiredRevisionId: revisionId })
@@ -205,7 +205,13 @@ const startAndClaim = async (db: Knex, workerId: string, revisionId: string, sou
   return claimed
 }
 
-const insertRevision = async (db: Knex, sourceHash: string, output?: Artifacts, status: 'pending' | 'ready' = 'pending'): Promise<string> => {
+const insertRevision = async (
+  db: Knex,
+  sourceHash: string,
+  output?: Artifacts,
+  status: 'pending' | 'ready' | 'failed' = 'pending',
+  pipelineVersion = output ? 7 : 5
+): Promise<string> => {
   const id = randomUUID()
   const now = new Date()
   const readyEnhancement = output?.enhancement.status === 'ready' ? output.enhancement : undefined
@@ -214,7 +220,7 @@ const insertRevision = async (db: Knex, sourceHash: string, output?: Artifacts, 
     id,
     sourceKind: 'source',
     sourceHash,
-    pipelineVersion: output ? 6 : 5,
+    pipelineVersion,
     status,
     jobId: null,
     retrySequence: 0,
@@ -252,7 +258,7 @@ const insertRevision = async (db: Knex, sourceHash: string, output?: Artifacts, 
 }
 
 const processNext = async (db: Knex, job: DurableJob, processor: (bytes: Buffer | Uint8Array, hash: string) => Promise<SiteLogoArtifacts>): Promise<void> => {
-  await createSiteLogoProcessHandler(4, processor)(job, { knex: db, signal: new AbortController().signal })
+  await createSiteLogoProcessHandler(5, processor)(job, { knex: db, signal: new AbortController().signal })
   if (!(await new DurableJobStore(db).complete(job))) throw new Error('Site logo job lease was lost')
 }
 
@@ -267,7 +273,7 @@ afterEach(async () => {
   await db.destroy()
 })
 
-describe('site logo v6 HA authority', () => {
+describe('site logo v7 HA authority', () => {
   it('deduplicates the same pending source and publishes an identical active snapshot on another node', async () => {
     const first: SiteLogoMutationResult = await uploadSiteLogoCandidate(sourceBytes, 42, db)
     expect(first.statusCode).toBe(202)
@@ -323,8 +329,23 @@ describe('site logo v6 HA authority', () => {
     expect(status.active?.logoIcons).not.toBeNull()
     expect(await db('siteLogoObjects').where({ kind: 'particle-v1' })).toHaveLength(0)
   })
+  it('continues serving a complete historical v6 icon bundle while v7 is current', async () => {
+    const output = artifacts('historical-v6', true)
+    const sourceHash = await insertSource(db, Buffer.concat([sourceBytes, Buffer.from('historical-v6')]))
+    await insertBundle(db, output)
+    const revisionId = await insertRevision(db, sourceHash, output, 'ready', 6)
+    await db('siteLogoState').where({ id: 1 }).update({ activeRevisionId: revisionId, desiredRevisionId: revisionId })
 
-  it('keeps the prior active logo and makes a failed v6 candidate retryable', async () => {
+    const status = await getSiteLogoStatus(db)
+    expect(status.active).toMatchObject({
+      revisionId,
+      logoUrl: `/_site-logo/${digest(output.logoPng)}/logo.png`,
+      enhancement: { status: 'unavailable', reason: 'UNSUITABLE_LOGO' }
+    })
+    expect(status.active?.logoIcons).not.toBeNull()
+  })
+
+  it('keeps the prior active logo and makes a failed v7 candidate retryable', async () => {
     const activeOutput = artifacts('active', true)
     const activeHash = await insertSource(db, Buffer.concat([sourceBytes, Buffer.from('active')]))
     await insertBundle(db, activeOutput)
@@ -348,8 +369,9 @@ describe('site logo v6 HA authority', () => {
     const retry = await retrySiteLogoCandidate(3, db)
     expect(retry.statusCode).toBe(202)
     const retried = await db('siteLogoRevisions').where({ id: retry.status.candidate?.revisionId }).first('pipelineVersion', 'retrySequence', 'jobId')
-    expect(retried).toMatchObject({ pipelineVersion: 6, retrySequence: 1 })
-    expect(await db('durableJobs').where({ id: retried.jobId }).first('version')).toEqual({ version: 4 })
+    expect(retried).toMatchObject({ pipelineVersion: 7, retrySequence: 1 })
+    if (!retried) throw new Error('retry did not create a revision')
+    expect((await db('durableJobs').where({ id: retried.jobId }).first('version')) as unknown).toEqual({ version: 5 })
     expect((await getSiteLogoStatus(db)).active?.revisionId).toBe(activeId)
   })
 

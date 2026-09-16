@@ -22,6 +22,7 @@
   >
     <ParticleSceneContents
       :active="renderEnabled"
+      :content-rect="contentRect"
       :loop-control="loopControl"
       :fence="fence"
       :resources="resources"
@@ -57,7 +58,7 @@ import {
   unref,
   watch
 } from 'vue'
-import type { LogoEffectDescriptor, ParsedLogoParticles } from './particle-logo'
+import type { LogoEffectDescriptor, ParsedLogoParticles, ParticleContentRect } from './particle-logo'
 import { ParticleCloud } from './particle-cloud'
 import { updateParticleColors } from './particle-colors'
 import {
@@ -73,13 +74,15 @@ import {
   type LogoParticleRenderer
 } from './particle-renderer'
 import {
-  LOGO_POINTER_BOUNCE_RATIO,
   LOGO_POINTER_EXPLOSION_CAPACITY,
   LOGO_POINTER_EXPLOSION_MIN_SCALE,
   LOGO_POINTER_EXPLOSION_MAX_SCALE,
   LOGO_POINTER_EXPLOSION_HOLD_SECONDS,
   LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS,
-  LOGO_POINTER_EXPLOSION_REFILL_SECONDS,
+  LOGO_POINTER_EXPLOSION_REFILL_SECONDS
+} from './particle-explosion'
+import {
+  LOGO_POINTER_BOUNCE_RATIO,
   LOGO_POINTER_IMPULSE_CAPACITY,
   LOGO_POINTER_IMPULSE_LIFETIME_SECONDS,
   LOGO_POINTER_NEIGHBOR_FORCE_RATIO,
@@ -137,6 +140,7 @@ export interface ParticleSceneFrame {
   pixelRatio: number
   pointerTimeMilliseconds?: number
   width: number
+  contentRect: ParticleContentRect
 }
 
 interface ParticleLoopControl {
@@ -219,7 +223,8 @@ interface ParticlePerformanceFrame {
   readonly frameId: number
   readonly submittedAt: number
   readonly updateCpuMs: number
-  readonly renderInvocationCpuMs: number
+  readonly renderCallbackGapMs: number
+  readonly renderInvocationCpuMs: number | null
   readonly afterRenderCpuMs: number
   readonly totalDrawCalls: number
   readonly particleInstances: number
@@ -240,13 +245,13 @@ interface ParticlePerformanceCounters {
   uploads?: number
   sampleOverflow?: number
 }
-
 interface ParticlePerformanceBenchmark {
   callbackCount: number
   readonly callbackCpuMilliseconds: number[]
   readonly frameIntervalsMilliseconds: number[]
   firstFrameMilliseconds: number | null
   lastFrameAt: number | null
+  renderInvocationCpuMs?: number | null
   lastMotion?: ParticleMotionDiagnostics
   maximumActiveExplosionCount?: number
   maximumActiveImpulseCount?: number
@@ -275,6 +280,33 @@ const readParticlePerformanceBenchmark = (): ParticlePerformanceBenchmark | null
     (benchmark.lastFrameAt === null || typeof benchmark.lastFrameAt === 'number')
     ? benchmark
     : null
+}
+const installRendererTimingHook = (
+  renderer: LogoParticleRenderer,
+  benchmark: ParticlePerformanceBenchmark | null
+): (() => void) => {
+  if (!benchmark || !Object.prototype.hasOwnProperty.call(benchmark, 'renderInvocationCpuMs')) return () => {}
+  const previousRender = renderer.render
+  const wrappedRender = ((...args: Parameters<LogoParticleRenderer['render']>): ReturnType<LogoParticleRenderer['render']> => {
+    const startedAt = performance.now()
+    let completed = false
+    try {
+      const result = previousRender.apply(renderer, args)
+      completed = true
+      return result
+    } catch (error) {
+      benchmark.renderInvocationCpuMs = null
+      throw error
+    } finally {
+      if (completed) benchmark.renderInvocationCpuMs = Math.max(0, performance.now() - startedAt)
+    }
+  }) as LogoParticleRenderer['render']
+  renderer.render = wrappedRender
+  benchmark.renderInvocationCpuMs = null
+  return () => {
+    if (renderer.render === wrappedRender) renderer.render = previousRender
+    if (benchmark.renderInvocationCpuMs !== null) benchmark.renderInvocationCpuMs = null
+  }
 }
 
 let selectedBackend: ParticleBackendRequest = 'auto'
@@ -477,6 +509,7 @@ const assertParticleViews = (particles: ParsedLogoParticles, effect: LogoEffectD
 
 const createParticleUniforms = (effect: LogoEffectDescriptor): ParticleNodeUniforms => ({
   aspectRatio: uniform(effect.aspect),
+  contentRect: uniform(new Vector4(0, 0, 1, 1)),
   pixelRatio: uniform(1),
   brushPositionRadius: uniform(new Vector4(0, 0, 18, 0)),
   brushDirection: uniform(new Vector2(0, 0)),
@@ -719,11 +752,11 @@ export class ParticleSceneEventFence {
   }
 }
 
-const renderedLongAxis = (width: number, height: number, aspect: number): number => {
-  const viewportAspect = width / height
-  if (viewportAspect >= aspect) return Math.max(height * aspect, height)
-  return Math.max(width, width / aspect)
-}
+const renderedLongAxis = (contentRect: ParticleContentRect): number =>
+  Math.max(
+    Number.isFinite(contentRect.width) ? Math.max(0, contentRect.width) : 0,
+    Number.isFinite(contentRect.height) ? Math.max(0, contentRect.height) : 0
+  )
 
 export const updateParticleSceneFrame = (
   resources: ParticleSceneResources,
@@ -735,19 +768,26 @@ export const updateParticleSceneFrame = (
     !Number.isFinite(frame.width) ||
     !Number.isFinite(frame.height) ||
     frame.width <= 0 ||
-    frame.height <= 0
+    frame.height <= 0 ||
+    !Number.isFinite(frame.contentRect.left) ||
+    !Number.isFinite(frame.contentRect.top) ||
+    !Number.isFinite(frame.contentRect.width) ||
+    !Number.isFinite(frame.contentRect.height) ||
+    frame.contentRect.width <= 0 ||
+    frame.contentRect.height <= 0
   ) return
 
   resources.uniforms.viewportSize.value.set(frame.width, frame.height)
-  resources.uniforms.pixelRatio.value = clamp(1, finiteOr(frame.pixelRatio, 1), 1.5)
-  resources.uniforms.renderedLongAxis.value = renderedLongAxis(
-    frame.width,
-    frame.height,
-    resources.uniforms.aspectRatio.value
+  resources.uniforms.contentRect.value.set(
+    frame.contentRect.left,
+    frame.contentRect.top,
+    frame.contentRect.width,
+    frame.contentRect.height
   )
-  const pointer = frame.pointerTimeMilliseconds === undefined
-    ? pointerController.update(resources.uniforms.renderedLongAxis.value)
-    : pointerController.update(resources.uniforms.renderedLongAxis.value, frame.pointerTimeMilliseconds)
+  resources.uniforms.pixelRatio.value = clamp(1, finiteOr(frame.pixelRatio, 1), 1.5)
+  const logicalRenderedLongAxis = renderedLongAxis(frame.contentRect)
+  resources.uniforms.renderedLongAxis.value = logicalRenderedLongAxis
+  const pointer = pointerController.update(logicalRenderedLongAxis, frame.pointerTimeMilliseconds)
   let activeImpulseCount = 0
   for (let index = 0; index < LOGO_POINTER_IMPULSE_CAPACITY; index += 1) {
     const impulse = pointer.impulses[index]
@@ -769,8 +809,8 @@ export const updateParticleSceneFrame = (
     )
     const active = explosion.active && ageSeconds < LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS
     resources.uniforms.explosionPositionAge[index]!.value.set(
-      active ? clamp(-1, finiteOr(explosion.x, 0), 1) : 0,
-      active ? clamp(-1, finiteOr(explosion.y, 0), 1) : 0,
+      active ? finiteOr(explosion.x, 0) : 0,
+      active ? finiteOr(explosion.y, 0) : 0,
       ageSeconds,
       active ? clamp(LOGO_POINTER_EXPLOSION_MIN_SCALE, finiteOr(explosion.scale, 1), LOGO_POINTER_EXPLOSION_MAX_SCALE) : 0
     )
@@ -783,7 +823,8 @@ export const updateParticleSceneFrame = (
     frame.width,
     frame.height,
     pointer,
-    frame.pointerTimeMilliseconds === undefined ? elapsed : frame.pointerTimeMilliseconds / 1000
+    frame.pointerTimeMilliseconds === undefined ? elapsed : frame.pointerTimeMilliseconds / 1000,
+    frame.contentRect
   )
   const brush = resources.cloud.brush
   resources.uniforms.brushPositionRadius.value.set(brush.x, brush.y, brush.radius, brush.travel)
@@ -806,6 +847,7 @@ const ParticleSceneContents = defineComponent({
   name: 'ParticleSceneContents',
   props: {
     active: { type: Boolean, required: true },
+    contentRect: { type: Object as PropType<ParticleContentRect>, required: true },
     loopControl: { type: Object as PropType<ParticleLoopControl>, required: true },
     fence: { type: Object as PropType<ParticleSceneEventFence>, required: true },
     pointerController: { type: Object as PropType<LogoPointerController>, required: true },
@@ -832,7 +874,8 @@ const ParticleSceneContents = defineComponent({
       height: 1,
       pixelRatio: 1,
       pointerTimeMilliseconds: undefined,
-      width: 1
+      width: 1,
+      contentRect: props.contentRect
     }
 
     const incrementCounter = (name: keyof ParticlePerformanceCounters, amount = 1): void => {
@@ -864,6 +907,7 @@ const ParticleSceneContents = defineComponent({
         frame.pointerTimeMilliseconds = frameCapture?.currentTimeMilliseconds()
         frame.height = sizes.height.value
         frame.pixelRatio = renderer.getPixelRatio()
+        frame.contentRect = props.contentRect
         frame.width = sizes.width.value
         const updateStartedAt = benchmark ? performance.now() : 0
         updateParticleSceneFrame(props.resources, props.pointerController, frame)
@@ -897,13 +941,18 @@ const ParticleSceneContents = defineComponent({
           benchmark.lastFrameAt = submittedAt
           const totalDrawCalls = props.fence.lastRenderDrawCalls
           const triangles = props.fence.lastRenderTriangles
+          const renderInvocationCpuMs = typeof benchmark.renderInvocationCpuMs === 'number'
+            ? Math.max(0, benchmark.renderInvocationCpuMs)
+            : null
+          benchmark.renderInvocationCpuMs = null
           if (benchmark.frames) {
             if (benchmark.frames.length < MAX_BENCHMARK_FRAMES) {
               benchmark.frames.push({
                 frameId: pendingFrameId,
                 submittedAt,
                 updateCpuMs: pendingUpdateCpuMs,
-                renderInvocationCpuMs: Math.max(0, callbackStartedAt - pendingRenderStartedAt),
+                renderCallbackGapMs: Math.max(0, callbackStartedAt - pendingRenderStartedAt),
+                renderInvocationCpuMs,
                 afterRenderCpuMs: Math.max(0, performance.now() - callbackStartedAt),
                 totalDrawCalls,
                 particleInstances: props.resources.geometry.instanceCount,
@@ -965,6 +1014,7 @@ export default defineComponent({
     effect: { type: Object as PropType<LogoEffectDescriptor>, required: true },
     particles: { type: Object as PropType<ParsedLogoParticles>, required: true },
     active: { type: Boolean, required: true },
+    contentRect: { type: Object as PropType<ParticleContentRect>, required: true },
   },
   emits: {
     'first-frame': (): boolean => true,
@@ -975,6 +1025,7 @@ export default defineComponent({
   setup (props, { emit, expose }) {
     const resources = shallowRef<ParticleSceneResources | null>(null)
     const renderEnabled = ref(props.active)
+    const contentRect = shallowRef(props.contentRect)
     const canvasMounted = ref(props.active)
     const pointerTarget = shallowRef<HTMLElement | null>(null)
     const pointerCoordinateTarget = shallowRef<HTMLElement | null>(null)
@@ -985,6 +1036,7 @@ export default defineComponent({
     let tornDown = false
     let backendLease: ParticleBackendLease | null = null
     let backendCanvas: HTMLCanvasElement | null = null
+    let rendererTimingCleanup: (() => void) | null = null
     let backendGeneration = 0
     let activeResume: ParticlePerformanceResume | null = null
     let tresContext: TresContext | null = null
@@ -1017,6 +1069,8 @@ export default defineComponent({
     })
     const retireBackend = (): void => {
       const lease = backendLease
+      rendererTimingCleanup?.()
+      rendererTimingCleanup = null
       loopControl.ready = false
       if (lease && lease.status !== 'lost') {
         lease.retire()
@@ -1144,6 +1198,13 @@ export default defineComponent({
     }
 
     watch(
+      () => props.contentRect,
+      value => {
+        contentRect.value = value
+      },
+      { flush: 'sync' }
+    )
+    watch(
       () => props.active,
       active => {
         if (tornDown || resources.value === null || fenceForScene.hasFailed) {
@@ -1192,6 +1253,7 @@ export default defineComponent({
           !renderEnabled.value ||
           !canvasMounted.value
         ) return
+        rendererTimingCleanup = installRendererTimingHook(renderer, benchmark)
         loopControl.ready = true
         if (renderEnabled.value) loopControl.start?.()
         else loopControl.stop?.()
@@ -1217,6 +1279,7 @@ export default defineComponent({
 
     return {
       canvasMounted,
+      contentRect,
       fence: fenceForScene,
       handleRendererError,
       handleRendererReady,

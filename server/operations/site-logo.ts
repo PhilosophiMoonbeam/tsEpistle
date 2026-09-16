@@ -17,6 +17,8 @@ import { DurableJobStore } from '../core/durable-jobs.ts'
 export const SITE_LOGO_SOURCE_LIMIT = SITE_LOGO_SOURCE_BYTE_LIMIT
 const STATUS_URL = '/_api/site/logo' as const
 const SHA256 = /^[a-f0-9]{64}$/
+const HISTORICAL_ICON_PIPELINE_VERSIONS: readonly number[] = [6, 7]
+const isIconPipelineVersion = (pipelineVersion: number): boolean => HISTORICAL_ICON_PIPELINE_VERSIONS.includes(pipelineVersion)
 
 const SAFE_ERROR_CODES: Readonly<Record<SiteLogoErrorCode, true>> = {
   UNSUPPORTED_IMAGE: true,
@@ -191,7 +193,7 @@ const readyRevisionIsIntact = async (transaction: Knex | Knex.Transaction, revis
     ['source', revision.sourceHash],
     ['logo-png', revision.logoPngHash]
   ]
-  if (pipelineVersion === SITE_LOGO_PIPELINE_VERSION) {
+  if (isIconPipelineVersion(pipelineVersion)) {
     if (
       revision.iconPngKind !== 'icon-png' ||
       !revision.favicon16Hash ||
@@ -329,7 +331,7 @@ const statusFrom = async (knex: Knex | Knex.Transaction, state: SiteLogoStateRow
   if (activeRevision && (await readyRevisionIsIntact(knex, activeRevision))) {
     const logoUrl = publicUrl(activeRevision.logoPngHash!)
     const logoIcons: LogoIconDescriptor | null =
-      activeRevision.pipelineVersion === SITE_LOGO_PIPELINE_VERSION &&
+      isIconPipelineVersion(Number(activeRevision.pipelineVersion)) &&
       activeRevision.iconPngKind === 'icon-png' &&
       activeRevision.favicon16Hash &&
       activeRevision.favicon32Hash &&
@@ -351,12 +353,11 @@ const statusFrom = async (knex: Knex | Knex.Transaction, state: SiteLogoStateRow
             faviconIcoUrl: `/_site-logo/${activeRevision.faviconIcoHash}/favicon.ico`
           }
         : null
-    const enhancement: SiteLogoEnhancementStatus =
-      activeRevision.pipelineVersion === SITE_LOGO_PIPELINE_VERSION
-        ? activeRevision.enhancementErrorCode === null
-          ? { status: 'ready', reason: null }
-          : { status: 'unavailable', reason: activeRevision.enhancementErrorCode }
-        : { status: 'ready', reason: null }
+    const enhancement: SiteLogoEnhancementStatus = isIconPipelineVersion(Number(activeRevision.pipelineVersion))
+      ? activeRevision.enhancementErrorCode === null
+        ? { status: 'ready', reason: null }
+        : { status: 'unavailable', reason: activeRevision.enhancementErrorCode }
+      : { status: 'ready', reason: null }
     active = { revisionId: activeRevision.id, logoUrl, logoIcons, enhancement }
   }
   const candidate =

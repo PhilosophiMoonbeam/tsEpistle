@@ -31,6 +31,7 @@ import {
 } from '../../../shared/site-logo.ts'
 import { describe, expect, it } from '../bun-test.mts'
 import {
+  alphaAwareIconFixture,
   decodeFixtureRgba,
   decompressionBombFixture,
   encodeFixture,
@@ -143,6 +144,7 @@ const summarizeOpaqueIcon = (data: Buffer, size: number, foreground: readonly [n
       ].every(([x, y]) => Math.hypot(x - center, y - center) <= maxDistance + 1e-9))
   return { opaquePixels, foregroundPixels, foregroundArea, contained, safe }
 }
+const TRANSPARENT_ICON_ROLES: Record<string, true> = { favicon16: true, favicon32: true, tile150: true, app192: true, app512: true }
 
 const fakePngWithActl = (): Buffer => {
   const header = Buffer.alloc(33)
@@ -166,8 +168,8 @@ const animatedWebpHeader = (): Buffer => {
 }
 
 describe('site logo deterministic primitives', () => {
-  it('uses pipeline version six and rounds every tie away from zero', () => {
-    expect(SITE_LOGO_PIPELINE_VERSION).toBe(6)
+  it('uses pipeline version seven and rounds every tie away from zero', () => {
+    expect(SITE_LOGO_PIPELINE_VERSION).toBe(7)
     expect([-2.5, -1.5, -0.5, 0.5, 1.5, 2.5].map(roundHalfAwayFromZero)).toEqual([-3, -2, -1, 1, 2, 3])
   })
 
@@ -351,7 +353,7 @@ describe('site logo masking and particle normalization', () => {
   })
 })
 
-describe('site logo source processing and v6 publication contract', () => {
+describe('site logo source processing and v7 publication contract', () => {
   it('maps empty, unsupported, spoofed, animated, corrupt, and digest failures to safe codes', async () => {
     const empty = Buffer.alloc(0)
     await expectCode(processSiteLogoSource(empty, sha256(empty)), 'INVALID_IMAGE')
@@ -392,7 +394,11 @@ describe('site logo source processing and v6 publication contract', () => {
     }
     expect(iconSummaries.map(({ name, size }) => ({ name, size }))).toEqual(Object.entries(SITE_LOGO_ICON_SIZES).map(([name, size]) => ({ name, size })))
     expect(
-      iconSummaries.every(summary => summary.opaquePixels === summary.size * summary.size && summary.foregroundPixels > 0 && summary.contained && summary.safe)
+      iconSummaries.every(summary =>
+        TRANSPARENT_ICON_ROLES[summary.name] === true
+          ? summary.opaquePixels < summary.size * summary.size && summary.foregroundPixels > 0 && summary.contained
+          : summary.opaquePixels === summary.size * summary.size && summary.foregroundPixels > 0 && summary.contained && summary.safe
+      )
     ).toBe(true)
 
     const sparse = await sparseVisibleFixture()
@@ -403,6 +409,52 @@ describe('site logo source processing and v6 publication contract', () => {
     const transparent = await encodeFixture('png', 256, 256, [0, 0, 0, 0])
     await expectCode(processSiteLogoSource(transparent, sha256(transparent)), 'NO_VISIBLE_PIXELS')
   })
+
+  it(
+    'preserves native alpha for transparent icon roles and embeds exact favicon PNG payloads',
+    async () => {
+      const source = await alphaAwareIconFixture()
+      const digest = sha256(source)
+      const first = await processSiteLogoSource(source, digest)
+      const second = await processSiteLogoSource(Buffer.from(source), digest)
+      expect(await decodeFixtureRgba(first.logoPng)).toEqual(await decodeFixtureRgba(source))
+      expect(first.logoPng).toEqual(second.logoPng)
+      expect(first.enhancement).toEqual(second.enhancement)
+
+      for (const [name, bytes] of Object.entries(first.icons)) {
+        const raster = await decodeFixtureRgba(bytes)
+        let transparentPixels = 0
+        let partialPixels = 0
+        let opaquePixels = 0
+        for (let offset = 3; offset < raster.data.length; offset += 4) {
+          const alpha = raster.data[offset]!
+          if (alpha === 0) transparentPixels += 1
+          else if (alpha === 255) opaquePixels += 1
+          else partialPixels += 1
+        }
+        if (TRANSPARENT_ICON_ROLES[name] === true) {
+          expect(rgbaAt(raster.data, raster.width, 0, 0)).toEqual([0, 0, 0, 0])
+          expect(transparentPixels).toBeGreaterThan(0)
+          expect(partialPixels).toBeGreaterThan(0)
+          expect(opaquePixels).toBeGreaterThan(0)
+        } else {
+          expect(transparentPixels).toBe(0)
+          expect(partialPixels).toBe(0)
+          expect(opaquePixels).toBe(raster.width * raster.height)
+        }
+      }
+      const faviconDirectoryEnd = 6 + 2 * 16
+      const faviconNames = ['favicon16', 'favicon32'] as const
+      for (const [index, name] of faviconNames.entries()) {
+        const entry = 6 + index * 16
+        const length = first.faviconIco.readUInt32LE(entry + 8)
+        const offset = first.faviconIco.readUInt32LE(entry + 12)
+        expect(first.faviconIco.subarray(offset, offset + length)).toEqual(first.icons[name])
+        expect(offset).toBe(faviconDirectoryEnd + (index === 0 ? 0 : first.icons.favicon16.length))
+      }
+    },
+    GENERATED_CORPUS_TIMEOUT_MS
+  )
 
   it('preserves arbitrary 1:4096 and inverse aspect ratios in the canonical ordinary canvas', async () => {
     const tall = await extremeAspectFixture()
@@ -442,7 +494,9 @@ describe('site logo source processing and v6 publication contract', () => {
       expect(
         decodedIcons.every(({ name, raster, width, height }) => {
           const summary = summarizeOpaqueIcon(raster.data, width, [17, 83, 191, 255], name === 'maskable512')
-          return summary.opaquePixels === width * height && summary.foregroundPixels > 0 && summary.contained && summary.safe
+          return TRANSPARENT_ICON_ROLES[name] === true
+            ? summary.opaquePixels < width * height && summary.foregroundPixels > 0 && summary.contained
+            : summary.opaquePixels === width * height && summary.foregroundPixels > 0 && summary.contained && summary.safe
         })
       ).toBe(true)
 

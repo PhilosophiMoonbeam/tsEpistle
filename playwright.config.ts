@@ -5,9 +5,9 @@ const performanceExecution = {
   workers: 1,
   retries: process.env.CI ? 2 : 0
 }
-const linuxWebGpuCapabilityFlags = process.platform === 'linux'
-  ? ['--enable-unsafe-webgpu', '--enable-features=Vulkan']
-  : []
+const linuxWebGpuCapabilityFlags = process.platform === 'linux' ? ['--enable-unsafe-webgpu', '--enable-features=Vulkan'] : []
+const hardwareWebGlLaunchFlags = ['--use-gl=angle', '--use-angle=gl']
+const swiftShaderLaunchFlags = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
 
 export default defineConfig({
   testDir: './dev/e2e',
@@ -138,10 +138,14 @@ export default defineConfig({
       testMatch: '**/logo-particle-performance.e2e.ts',
       metadata: {
         webgpuCapabilityFlags: linuxWebGpuCapabilityFlags,
-        webgpuCapabilityFlagsPurpose: 'runner-capability-enablement-only'
+        webgpuCapabilityFlagsPurpose: 'runner-capability-enablement-only',
+        launchFlags: linuxWebGpuCapabilityFlags,
+        launchFlagsPurpose: 'WebGPU capability enablement only',
+        headless: true
       },
       use: {
         ...devices['Desktop Chrome'],
+        headless: true,
         viewport: performanceViewport,
         launchOptions: { args: linuxWebGpuCapabilityFlags }
       }
@@ -153,11 +157,36 @@ export default defineConfig({
       testMatch: '**/logo-particle-performance.e2e.ts',
       metadata: {
         webgpuCapabilityFlags: [],
-        webgpuCapabilityFlagsPurpose: 'not-applicable'
+        webgpuCapabilityFlagsPurpose: 'not-applicable',
+        launchFlags: hardwareWebGlLaunchFlags,
+        launchFlagsPurpose: 'explicit hardware ANGLE desktop WebGL2 profile',
+        headless: true
       },
       use: {
         ...devices['Desktop Chrome'],
-        viewport: performanceViewport
+        headless: true,
+        viewport: performanceViewport,
+        launchOptions: { args: hardwareWebGlLaunchFlags }
+      }
+    },
+    {
+      name: 'performance-webgl2-swiftshader',
+      dependencies: ['chromium'],
+      ...performanceExecution,
+      testMatch: '**/logo-particle-performance.e2e.ts',
+      metadata: {
+        webgpuCapabilityFlags: [],
+        webgpuCapabilityFlagsPurpose: 'not-applicable',
+        launchFlags: swiftShaderLaunchFlags,
+        launchFlagsPurpose: 'explicit SwiftShader software diagnostic only',
+        performanceProfile: 'swiftshader-webgl2-diagnostic',
+        headless: true
+      },
+      use: {
+        ...devices['Desktop Chrome'],
+        headless: true,
+        viewport: performanceViewport,
+        launchOptions: { args: swiftShaderLaunchFlags }
       }
     }
   ]

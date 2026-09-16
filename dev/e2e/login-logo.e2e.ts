@@ -2,10 +2,7 @@ import { Buffer } from 'node:buffer'
 import type { Locator, Page, Request, TestInfo } from '@playwright/test'
 import { expect } from '@playwright/test'
 import sharp from 'sharp'
-import type {
-  ParticleBackendKind,
-  ParticleBackendRequest
-} from '../../client/components/login-logo/particle-renderer.ts'
+import type { ParticleBackendKind, ParticleBackendRequest } from '../../client/components/login-logo/particle-renderer.ts'
 import type {
   LogoBackendDiagnostic,
   LogoMotionDiagnostics,
@@ -43,7 +40,7 @@ const squareEffect = {
   logoUrl: LOGO_URL,
   particleUrl: SQUARE_PARTICLE_URL,
   staticUrl: SQUARE_STATIC_URL,
-  pipelineVersion: 5,
+  pipelineVersion: 7,
   width: 8,
   height: 8,
   aspect: 1,
@@ -56,7 +53,7 @@ const wideEffect = {
   logoUrl: LOGO_URL,
   particleUrl: WIDE_PARTICLE_URL,
   staticUrl: WIDE_STATIC_URL,
-  pipelineVersion: 5,
+  pipelineVersion: 7,
   width: 1200,
   height: 100,
   aspect: 12,
@@ -71,7 +68,7 @@ const colorProbeEffect = {
   logoUrl: COLOR_PROBE_LOGO_URL,
   particleUrl: COLOR_PROBE_PARTICLE_URL,
   staticUrl: COLOR_PROBE_STATIC_URL,
-  pipelineVersion: 5,
+  pipelineVersion: 7,
   width: 8,
   height: 8,
   aspect: 1,
@@ -96,7 +93,7 @@ const colorProbeParticles = [
 ] as const satisfies readonly ColorProbeParticle[]
 
 type ManagedEffect = typeof squareEffect | typeof wideEffect | typeof colorProbeEffect
-const PIPELINE_V5_RESERVED_SAMPLES_PER_COMPONENT = 8
+const PIPELINE_V7_RESERVED_SAMPLES_PER_COMPONENT = 8
 
 const crcTable = (() => {
   const table = new Uint32Array(256)
@@ -124,7 +121,7 @@ interface ParticleFixtureSample {
 }
 
 function particleFixtureSample(index: number): ParticleFixtureSample {
-  const component = index < 3 * PIPELINE_V5_RESERVED_SAMPLES_PER_COMPONENT ? Math.floor(index / PIPELINE_V5_RESERVED_SAMPLES_PER_COMPONENT) : index % 3
+  const component = index < 3 * PIPELINE_V7_RESERVED_SAMPLES_PER_COMPONENT ? Math.floor(index / PIPELINE_V7_RESERVED_SAMPLES_PER_COMPONENT) : index % 3
   const sequence = Math.floor(index / 3)
   const u = ((sequence * 73) % 997) / 996
   const v = ((sequence * 193) % 991) / 990
@@ -270,9 +267,7 @@ interface ParticleFetchObservation {
   readonly url: string
 }
 
-
 type StrictParticleBackend = Exclude<ParticleBackendRequest, 'auto'>
-
 
 interface LogoFramePointerSample {
   readonly clientX: number
@@ -411,53 +406,56 @@ async function installLogoFrameCapture(page: Page): Promise<void> {
 }
 
 async function installLogoPerformanceProbe(page: Page, requestedBackend: ParticleBackendRequest = 'auto'): Promise<void> {
-  await page.addInitScript(({ requestedBackend: initialRequestedBackend }: { requestedBackend: ParticleBackendRequest }) => {
-    const benchmark: LogoPerformanceHook = {
-      callbackCount: 0,
-      callbackCpuMilliseconds: [],
-      frameIntervalsMilliseconds: [],
-      firstFrameMilliseconds: null,
-      lastFrameAt: null,
-      requestedBackend: initialRequestedBackend,
-      effectiveBackend: null,
-      backendDiagnostics: [],
-      startup: {},
-      resumes: [],
-      frames: [],
-      counters: {
-        updateCallbacks: 0,
-        renderInvocations: 0,
-        afterRenderCallbacks: 0,
-        draws: 0,
-        uploads: 0,
-        sampleOverflow: 0
+  await page.addInitScript(
+    ({ requestedBackend: initialRequestedBackend }: { requestedBackend: ParticleBackendRequest }) => {
+      const benchmark: LogoPerformanceHook = {
+        callbackCount: 0,
+        callbackCpuMilliseconds: [],
+        frameIntervalsMilliseconds: [],
+        firstFrameMilliseconds: null,
+        lastFrameAt: null,
+        requestedBackend: initialRequestedBackend,
+        effectiveBackend: null,
+        backendDiagnostics: [],
+        startup: {},
+        resumes: [],
+        frames: [],
+        counters: {
+          updateCallbacks: 0,
+          renderInvocations: 0,
+          afterRenderCallbacks: 0,
+          draws: 0,
+          uploads: 0,
+          sampleOverflow: 0
+        }
       }
-    }
-    benchmark.onDiagnostics = diagnostic => {
-      benchmark.backendDiagnostics?.push({ ...diagnostic })
-      benchmark.effectiveBackend = diagnostic.effectiveBackend
-    }
-    const logoPerformanceWindow = (): LogoPerformanceWindow => window as LogoPerformanceWindow
-    Object.defineProperty(logoPerformanceWindow(), '__logoParticlePerformance', {
-      configurable: true,
-      value: benchmark,
-      writable: true
-    })
+      benchmark.onDiagnostics = diagnostic => {
+        benchmark.backendDiagnostics?.push({ ...diagnostic })
+        benchmark.effectiveBackend = diagnostic.effectiveBackend
+      }
+      const logoPerformanceWindow = (): LogoPerformanceWindow => window as LogoPerformanceWindow
+      Object.defineProperty(logoPerformanceWindow(), '__logoParticlePerformance', {
+        configurable: true,
+        value: benchmark,
+        writable: true
+      })
 
-    let visibility: DocumentVisibilityState = 'visible'
-    Object.defineProperty(document, 'visibilityState', {
-      configurable: true,
-      get: () => visibility
-    })
-    Object.defineProperty(window, '__setLogoParticleVisibility', {
-      configurable: true,
-      value: (nextVisibility: DocumentVisibilityState): void => {
-        visibility = nextVisibility
-        document.dispatchEvent(new Event('visibilitychange'))
-      },
-      writable: true
-    })
-  }, { requestedBackend })
+      let visibility: DocumentVisibilityState = 'visible'
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => visibility
+      })
+      Object.defineProperty(window, '__setLogoParticleVisibility', {
+        configurable: true,
+        value: (nextVisibility: DocumentVisibilityState): void => {
+          visibility = nextVisibility
+          document.dispatchEvent(new Event('visibilitychange'))
+        },
+        writable: true
+      })
+    },
+    { requestedBackend }
+  )
 }
 
 async function readLogoPerformance(page: Page): Promise<LogoPerformanceHook> {
@@ -520,9 +518,11 @@ async function detectBackendCapability(page: Page, backend: StrictParticleBacken
         : { available: false, evidence: 'HTMLCanvasElement.getContext(webgl2) returned null.' }
     }
 
-    const gpu = (navigator as Navigator & {
-      gpu?: { requestAdapter?: () => Promise<unknown> }
-    }).gpu
+    const gpu = (
+      navigator as Navigator & {
+        gpu?: { requestAdapter?: () => Promise<unknown> }
+      }
+    ).gpu
     if (!gpu || typeof gpu.requestAdapter !== 'function') {
       return { available: false, evidence: 'navigator.gpu.requestAdapter is unavailable.' }
     }
@@ -552,9 +552,10 @@ async function waitForBackendOutcome(page: Page): Promise<LogoPerformanceHook> {
     () => {
       const logoPerformanceWindow = (): LogoPerformanceWindow => window as LogoPerformanceWindow
       const benchmark = logoPerformanceWindow().__logoParticlePerformance
-      return benchmark !== undefined && (
-        benchmark.effectiveBackend !== null ||
-        benchmark.backendDiagnostics?.some(diagnostic => diagnostic.phase === 'failed' || diagnostic.phase === 'lost') === true
+      return (
+        benchmark !== undefined &&
+        (benchmark.effectiveBackend !== null ||
+          benchmark.backendDiagnostics?.some(diagnostic => diagnostic.phase === 'failed' || diagnostic.phase === 'lost') === true)
       )
     },
     undefined,
@@ -569,9 +570,7 @@ async function expectBackendReady(
   effect: ManagedEffect,
   requestedBackend: ParticleBackendRequest = backend
 ): Promise<LogoPerformanceHook> {
-  await expect
-    .poll(async () => (await readLogoPerformance(page)).effectiveBackend ?? null, { timeout: 15_000 })
-    .toBe(backend)
+  await expect.poll(async () => (await readLogoPerformance(page)).effectiveBackend ?? null, { timeout: 15_000 }).toBe(backend)
   const benchmark = await readLogoPerformance(page)
   expect(benchmark.requestedBackend).toBe(requestedBackend)
   expect(benchmark.effectiveBackend).toBe(backend)
@@ -594,15 +593,17 @@ async function expectBackendReady(
   await expect(canvas).toHaveCount(1)
   await expect(staticImage).toHaveCSS('opacity', '0')
   await expect
-    .poll(async () =>
-      (await readLogoPerformance(page)).frames?.some((frame: LogoPerformanceFrame) =>
-        frame.totalDrawCalls === 1 &&
-        frame.particleInstances === effect.count &&
-        frame.triangles === effect.count * 2 &&
-        frame.computeDispatches === 0 &&
-        (frame.motionScheduledBytes ?? 0) > 0 &&
-        frame.colorUploadBytes === 0
-      ) ?? false
+    .poll(
+      async () =>
+        (await readLogoPerformance(page)).frames?.some(
+          (frame: LogoPerformanceFrame) =>
+            frame.totalDrawCalls === 1 &&
+            frame.particleInstances === effect.count &&
+            frame.triangles === effect.count * 2 &&
+            frame.computeDispatches === 0 &&
+            (frame.motionScheduledBytes ?? 0) > 0 &&
+            frame.colorUploadBytes === 0
+        ) ?? false
     )
     .toBe(true)
 
@@ -665,11 +666,7 @@ async function installLogoResourceTrace(page: Page, requestedBackend: ParticleBa
     })
 
     const nativeCreateElement = Document.prototype.createElement
-    Document.prototype.createElement = function (
-      this: Document,
-      qualifiedName: string,
-      options?: ElementCreationOptions
-    ): HTMLElement {
+    Document.prototype.createElement = function (this: Document, qualifiedName: string, options?: ElementCreationOptions): HTMLElement {
       const element = nativeCreateElement.call(this, qualifiedName, options) as HTMLElement
       if (element instanceof HTMLCanvasElement && document.querySelector('.login-particle-logo')) {
         trace.canvasCreated += 1
@@ -1215,10 +1212,7 @@ async function withFrozenLogoFrame<T>(page: Page, capture: () => Promise<T>): Pr
     }
     window.requestAnimationFrame = requestAnimationFrame
     window.cancelAnimationFrame = cancelAnimationFrame
-    HTMLCanvasElement.prototype.toDataURL = function (
-      this: HTMLCanvasElement,
-      ...args: Parameters<typeof originalToDataURL>
-    ): string {
+    HTMLCanvasElement.prototype.toDataURL = function (this: HTMLCanvasElement, ...args: Parameters<typeof originalToDataURL>): string {
       if (!restored && this.closest('.login-particle-logo') !== null) frozen = true
       return originalToDataURL.apply(this, args)
     }
@@ -1326,7 +1320,6 @@ function mapCanvasPixelToScreenshot(
   }
 }
 
-
 function readRgbaPixel(frame: RgbaFrame, x: number, y: number): ColorProbePixel {
   const offset = (y * frame.width + x) * 4
   return {
@@ -1338,7 +1331,6 @@ function readRgbaPixel(frame: RgbaFrame, x: number, y: number): ColorProbePixel 
     y
   }
 }
-
 
 function expectIntrinsicFramesEquivalent(first: RgbaFrame, second: RgbaFrame): void {
   expect(second.width).toBe(first.width)
@@ -1549,11 +1541,7 @@ async function prepareStrictBackendPage(
   await page.emulateMedia({ colorScheme, reducedMotion: 'no-preference' })
   await installLogoResourceTrace(page, backend)
   await installLogoFrameCapture(page)
-  await installManagedLogo(
-    page,
-    effect,
-    effect === colorProbeEffect ? { particleBody: colorProbeParticleFixture } : undefined
-  )
+  await installManagedLogo(page, effect, effect === colorProbeEffect ? { particleBody: colorProbeParticleFixture } : undefined)
   await page.goto(`/login?strict-backend=${backend}-${colorScheme}`, { waitUntil: 'domcontentloaded' })
   await expectOrdinaryLogin(page)
   return expectBackendReady(page, backend, effect)
@@ -1659,6 +1647,146 @@ async function expectFieldGeometry(page: Page, effect: ManagedEffect): Promise<v
   expect(report?.intersectsCard).toBe(false)
 }
 
+interface RectSnapshot {
+  readonly bottom: number
+  readonly left: number
+  readonly right: number
+  readonly top: number
+  readonly width: number
+  readonly height: number
+}
+
+interface LogoAnchorGeometry {
+  readonly canvas: RectSnapshot | null
+  readonly card: RectSnapshot
+  readonly field: RectSnapshot
+  readonly image: RectSnapshot
+  readonly login: RectSnapshot
+  readonly paddingBottom: number
+  readonly paddingRight: number
+  readonly paddingTop: number
+  readonly silhouette: RectSnapshot | null
+  readonly viewportHeight: number
+  readonly viewportWidth: number
+}
+
+async function readLogoAnchorGeometry(page: Page): Promise<LogoAnchorGeometry> {
+  return page.locator('.login-particle-logo').evaluate((field): LogoAnchorGeometry => {
+    const login = field.parentElement
+    const card = document.querySelector('main.login-sd')
+    const image = field.querySelector('.login-particle-logo__image')
+    if (!(login instanceof HTMLElement) || !(card instanceof HTMLElement) || !(image instanceof HTMLImageElement)) {
+      throw new Error('The managed login logo geometry is unavailable.')
+    }
+    const readRect = (element: Element | null): RectSnapshot | null => {
+      if (!element) return null
+      const rect = element.getBoundingClientRect()
+      return {
+        bottom: rect.bottom,
+        height: rect.height,
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        width: rect.width
+      }
+    }
+    const loginRect = readRect(login)
+    const cardRect = readRect(card)
+    const fieldRect = readRect(field)
+    const imageRect = readRect(image)
+    if (!loginRect || !cardRect || !fieldRect || !imageRect) throw new Error('The managed login logo rectangles are unavailable.')
+    const style = getComputedStyle(login)
+    return {
+      canvas: readRect(field.querySelector('canvas')),
+      card: cardRect,
+      field: fieldRect,
+      image: imageRect,
+      login: loginRect,
+      paddingBottom: Number.parseFloat(style.paddingBottom) || 0,
+      paddingRight: Number.parseFloat(style.paddingRight) || 0,
+      paddingTop: Number.parseFloat(style.paddingTop) || 0,
+      silhouette: readRect(field.querySelector('.login-particle-logo__silhouette')),
+      viewportHeight: window.innerHeight,
+      viewportWidth: document.documentElement.clientWidth || window.innerWidth
+    }
+  })
+}
+
+function expectRectWithin(actual: RectSnapshot, expected: RectSnapshot, tolerance = 1): void {
+  for (const edge of ['left', 'right', 'top', 'bottom', 'width', 'height'] as const) {
+    expect(Math.abs(actual[edge] - expected[edge]), `${edge} differs by more than ${tolerance}px`).toBeLessThanOrEqual(tolerance)
+  }
+}
+
+function readFramePixelAtCss(frame: RgbaFrame, geometry: LogoAnchorGeometry, x: number, y: number): ColorProbePixel {
+  const frameX = Math.max(0, Math.min(frame.width - 1, Math.floor((x * frame.width) / geometry.viewportWidth)))
+  const frameY = Math.max(0, Math.min(frame.height - 1, Math.floor((y * frame.height) / geometry.viewportHeight)))
+  return readRgbaPixel(frame, frameX, frameY)
+}
+
+function rgbDistance(first: ColorProbePixel, second: ColorProbePixel): number {
+  return Math.max(Math.abs(first.red - second.red), Math.abs(first.green - second.green), Math.abs(first.blue - second.blue))
+}
+
+function findBlueParticleNear(frame: RgbaFrame, x: number, y: number, radius: number): ColorProbePixel | null {
+  let best: ColorProbePixel | null = null
+  let bestScore = Number.NEGATIVE_INFINITY
+  for (let frameY = Math.max(0, Math.floor(y - radius)); frameY <= Math.min(frame.height - 1, Math.ceil(y + radius)); frameY += 1) {
+    for (let frameX = Math.max(0, Math.floor(x - radius)); frameX <= Math.min(frame.width - 1, Math.ceil(x + radius)); frameX += 1) {
+      const pixel = readRgbaPixel(frame, frameX, frameY)
+      if (pixel.alpha < 24 || pixel.blue <= pixel.green || pixel.green <= pixel.red) continue
+      const score = pixel.alpha + pixel.blue - pixel.red
+      if (score > bestScore) {
+        best = pixel
+        bestScore = score
+      }
+    }
+  }
+  return best
+}
+
+async function expectLocalizedSilhouette(page: Page, geometry: LogoAnchorGeometry): Promise<void> {
+  const field = page.locator('.login-particle-logo')
+  const image = field.locator('.login-particle-logo__image')
+  const previousImageStyle = await image.getAttribute('style')
+  const previousFieldStyle = await field.getAttribute('style')
+  await image.evaluate(element => {
+    element.style.opacity = '0'
+  })
+  try {
+    const silhouette = await decodeScreenshot(await page.screenshot({ animations: 'disabled', fullPage: false }))
+    await field.evaluate(element => {
+      element.style.visibility = 'hidden'
+    })
+    const backdrop = await decodeScreenshot(await page.screenshot({ animations: 'disabled', fullPage: false }))
+    const insetX = Math.max(3, Math.min(8, geometry.image.width * 0.08))
+    const insetY = Math.max(3, Math.min(8, geometry.image.height * 0.15))
+    const corners = [
+      [geometry.image.left + insetX, geometry.image.top + insetY],
+      [geometry.image.right - insetX, geometry.image.top + insetY],
+      [geometry.image.left + insetX, geometry.image.bottom - insetY],
+      [geometry.image.right - insetX, geometry.image.bottom - insetY]
+    ] as const
+    for (const [x, y] of corners) {
+      expect(rgbDistance(readFramePixelAtCss(silhouette, geometry, x, y), readFramePixelAtCss(backdrop, geometry, x, y))).toBeLessThan(24)
+    }
+    const centerX = geometry.image.left + geometry.image.width / 2
+    const centerY = geometry.image.top + geometry.image.height / 2
+    expect(rgbDistance(readFramePixelAtCss(silhouette, geometry, centerX, centerY), readFramePixelAtCss(backdrop, geometry, centerX, centerY))).toBeGreaterThan(
+      2
+    )
+  } finally {
+    await image.evaluate((element, style) => {
+      if (style === null) element.removeAttribute('style')
+      else element.setAttribute('style', style)
+    }, previousImageStyle)
+    await field.evaluate((element, style) => {
+      if (style === null) element.removeAttribute('style')
+      else element.setAttribute('style', style)
+    }, previousFieldStyle)
+  }
+}
+
 test.describe('strict particle backend consumer coverage', () => {
   test.beforeEach(() => test.setTimeout(60_000))
 
@@ -1669,10 +1797,7 @@ test.describe('strict particle backend consumer coverage', () => {
       skipUnsupportedStrictBackend(testInfo, backend, capability)
 
       await prepareStrictBackendPage(page, backend, colorProbeEffect, 'light')
-      const lightFrame = await withFrozenLogoFrame(
-        page,
-        async () => decodeScreenshot((await captureLogoRenderedFrame(page, undefined, 0, 0)).png)
-      )
+      const lightFrame = await withFrozenLogoFrame(page, async () => decodeScreenshot((await captureLogoRenderedFrame(page, undefined, 0, 0)).png))
       const lightComposition = await capturePageComposition(page)
       const lightTheme = await readApplicationTheme(page)
       expect(lightTheme.className).toMatch(/v-theme--light/)
@@ -1682,10 +1807,7 @@ test.describe('strict particle backend consumer coverage', () => {
       await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' })
       await expect(page.locator('.v-application')).toHaveClass(/v-theme--dark/)
       await expect.poll(async () => (await readApplicationTheme(page)).background).not.toBe(lightTheme.background)
-      const darkFrame = await withFrozenLogoFrame(
-        page,
-        async () => decodeScreenshot((await captureLogoRenderedFrame(page, undefined, 0, 0)).png)
-      )
+      const darkFrame = await withFrozenLogoFrame(page, async () => decodeScreenshot((await captureLogoRenderedFrame(page, undefined, 0, 0)).png))
       const darkComposition = await capturePageComposition(page)
       const darkTheme = await readApplicationTheme(page)
       expect(darkTheme.className).toMatch(/v-theme--dark/)
@@ -1710,9 +1832,13 @@ test.describe('strict particle backend consumer coverage', () => {
       if (!initialCanvas) throw new Error('The committed particle canvas is unavailable.')
       const initialPerformance = await readLogoPerformance(page)
       const initialDiagnosticCount = initialPerformance.backendDiagnostics?.length ?? 0
-      const readyGeneration = initialPerformance.backendDiagnostics
-        ?.findLast((diagnostic: LogoBackendDiagnostic) => diagnostic.phase === 'ready')
-        ?.generation
+      let readyGeneration: number | undefined
+      for (let index = (initialPerformance.backendDiagnostics?.length ?? 0) - 1; index >= 0; index--) {
+        const diagnostic = initialPerformance.backendDiagnostics?.[index]
+        if (diagnostic?.phase !== 'ready') continue
+        readyGeneration = diagnostic.generation
+        break
+      }
       expect(readyGeneration).toEqual(expect.any(Number))
 
       await page.evaluate(() => {
@@ -1744,8 +1870,9 @@ test.describe('strict particle backend consumer coverage', () => {
         login.style.transform = ''
       })
       await expect
-        .poll(async () =>
-          (await readLogoPerformance(page)).resumes?.slice(priorResumeCount).some((resume: LogoResumeSample) => resume.outcome === 'committed') ?? false
+        .poll(
+          async () =>
+            (await readLogoPerformance(page)).resumes?.slice(priorResumeCount).some((resume: LogoResumeSample) => resume.outcome === 'committed') ?? false
         )
         .toBe(true)
       await expect(canvas).toHaveCount(1)
@@ -1761,20 +1888,12 @@ test.describe('strict particle backend consumer coverage', () => {
       expect(resume?.visibleCommitAt).toEqual(expect.any(Number))
       expect(resume?.visibleCommitAt).toBeGreaterThanOrEqual(resume?.firstSubmissionAt ?? Number.POSITIVE_INFINITY)
       expect(resumed.frames?.some((frame: LogoPerformanceFrame) => frame.totalDrawCalls === 1 && frame.triangles === squareEffect.count * 2)).toBe(true)
-      expect(
-        await initialCanvas.evaluate(element =>
-          element.isConnected && element === document.querySelector('.login-particle-logo canvas')
-        )
-      ).toBe(true)
+      expect(await initialCanvas.evaluate(element => element.isConnected && element === document.querySelector('.login-particle-logo canvas'))).toBe(true)
       const transitionDiagnostics = (resumed.backendDiagnostics ?? []).slice(initialDiagnosticCount)
-      expect(
-        transitionDiagnostics.some((diagnostic: LogoBackendDiagnostic) =>
-          diagnostic.phase === 'initializing' || diagnostic.phase === 'retired'
-        )
-      ).toBe(false)
-      expect(
-        transitionDiagnostics.every((diagnostic: LogoBackendDiagnostic) => diagnostic.generation === readyGeneration)
-      ).toBe(true)
+      expect(transitionDiagnostics.some((diagnostic: LogoBackendDiagnostic) => diagnostic.phase === 'initializing' || diagnostic.phase === 'retired')).toBe(
+        false
+      )
+      expect(transitionDiagnostics.every((diagnostic: LogoBackendDiagnostic) => diagnostic.generation === readyGeneration)).toBe(true)
 
       await page.getByLabel('Email Address', { exact: true }).focus()
       await installReducedMotionChangeProbe(page)
@@ -1879,6 +1998,151 @@ test.describe('strict particle backend consumer coverage', () => {
     expectPerceptuallyEquivalent('light production screenshot', nativeLight.screenshot, forcedLight.screenshot)
     expectPerceptuallyEquivalent('dark production screenshot', nativeDark.screenshot, forcedDark.screenshot)
   })
+  test('uses a full-bleed physical canvas while preserving the old padded logical logo size and center', async ({ page }, testInfo) => {
+    requireProjectRow(testInfo, STRICT_BACKEND_PROJECTS)
+    const capability = await detectBackendCapability(page, 'webgl2')
+    skipUnsupportedStrictBackend(testInfo, 'webgl2', capability)
+
+    await prepareStrictBackendPage(page, 'webgl2', wideEffect, 'light')
+    const geometry = await readLogoAnchorGeometry(page)
+    const field = geometry.field
+    const expectedField: RectSnapshot = {
+      bottom: Math.min(geometry.login.bottom, geometry.viewportHeight),
+      height: Math.min(geometry.login.bottom, geometry.viewportHeight) - Math.max(geometry.login.top, 0),
+      left: geometry.card.right + 24,
+      right: Math.min(geometry.login.right, geometry.viewportWidth),
+      top: Math.max(geometry.login.top, 0),
+      width: Math.min(geometry.login.right, geometry.viewportWidth) - (geometry.card.right + 24)
+    }
+    expectRectWithin(field, expectedField)
+    expect(geometry.canvas).not.toBeNull()
+    if (!geometry.canvas) throw new Error('The committed particle canvas is unavailable.')
+    expectRectWithin(geometry.canvas, expectedField)
+    expect(field.left).toBeGreaterThanOrEqual(geometry.card.right + 23)
+    expect(field.right).toBeLessThanOrEqual(geometry.viewportWidth + 1)
+    expect(field.top).toBeGreaterThanOrEqual(-1)
+    expect(field.bottom).toBeLessThanOrEqual(geometry.viewportHeight + 1)
+    expect(field.left).toBeGreaterThanOrEqual(geometry.card.right)
+
+    const paddedWidth = field.width - geometry.paddingRight
+    const paddedHeight = field.height - geometry.paddingTop - geometry.paddingBottom
+    const scale = Math.min((paddedWidth * 0.84) / wideEffect.width, (paddedHeight * 0.84) / wideEffect.height)
+    const expectedContentWidth = wideEffect.width * scale
+    const expectedContentHeight = wideEffect.height * scale
+    const expectedContentLeft = field.left + (paddedWidth - expectedContentWidth) / 2
+    const expectedContentTop = field.top + geometry.paddingTop + (paddedHeight - expectedContentHeight) / 2
+    const expectedImage: RectSnapshot = {
+      bottom: expectedContentTop + expectedContentHeight,
+      height: expectedContentHeight,
+      left: expectedContentLeft,
+      right: expectedContentLeft + expectedContentWidth,
+      top: expectedContentTop,
+      width: expectedContentWidth
+    }
+    expectRectWithin(geometry.image, expectedImage, 1.5)
+    expect(Math.abs(geometry.image.left + geometry.image.width / 2 - (field.left + paddedWidth / 2))).toBeLessThanOrEqual(1.5)
+    expect(Math.abs(geometry.image.top + geometry.image.height / 2 - (field.top + geometry.paddingTop + paddedHeight / 2))).toBeLessThanOrEqual(1.5)
+    expect(field.right - geometry.image.right).toBeGreaterThanOrEqual(geometry.paddingRight - 1)
+    expect(field.bottom - geometry.image.bottom).toBeGreaterThanOrEqual(geometry.paddingBottom - 1)
+    await expectLoginValidation(page)
+  })
+
+  test('keeps static, alpha-silhouette, and animated particle anchors coincident', async ({ page }, testInfo) => {
+    requireProjectRow(testInfo, STRICT_BACKEND_PROJECTS)
+    const capability = await detectBackendCapability(page, 'webgl2')
+    skipUnsupportedStrictBackend(testInfo, 'webgl2', capability)
+
+    await prepareStrictBackendPage(page, 'webgl2', squareEffect, 'light')
+    const geometry = await readLogoAnchorGeometry(page)
+    expect(geometry.silhouette).not.toBeNull()
+    expect(geometry.canvas).not.toBeNull()
+    if (!geometry.silhouette || !geometry.canvas) throw new Error('The committed logo layers are unavailable.')
+    expectRectWithin(geometry.silhouette, geometry.image)
+    expect(geometry.image.left).toBeGreaterThanOrEqual(geometry.field.left)
+    expect(geometry.image.right).toBeLessThanOrEqual(geometry.field.right)
+    expect(geometry.image.top).toBeGreaterThanOrEqual(geometry.field.top)
+    expect(geometry.image.bottom).toBeLessThanOrEqual(geometry.field.bottom)
+
+    const frame = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, 0, 0)).png)
+    const sample = particleFixtureSample(0)
+    const expectedCssX = geometry.image.left + ((sample.x + 1) * geometry.image.width) / 2
+    const expectedCssY = geometry.image.top + ((1 - sample.y) * geometry.image.height) / 2
+    const expectedFrameX = ((expectedCssX - geometry.canvas.left) * frame.width) / geometry.canvas.width
+    const expectedFrameY = ((expectedCssY - geometry.canvas.top) * frame.height) / geometry.canvas.height
+    const particle = findBlueParticleNear(frame, expectedFrameX, expectedFrameY, 36)
+    expect(particle).not.toBeNull()
+    if (!particle) throw new Error('The deterministic blue particle anchor was not rendered.')
+    expect(Math.hypot(particle.x - expectedFrameX, particle.y - expectedFrameY)).toBeLessThanOrEqual(36)
+    await expectLoginValidation(page)
+  })
+
+  test('keeps explosion recovery continuous at its endpoint and across a resize', async ({ page }, testInfo) => {
+    requireProjectRow(testInfo, STRICT_BACKEND_PROJECTS)
+    const capability = await detectBackendCapability(page, 'webgl2')
+    skipUnsupportedStrictBackend(testInfo, 'webgl2', capability)
+
+    await prepareStrictBackendPage(page, 'webgl2', squareEffect, 'light')
+    const canvas = page.locator('.login-particle-logo canvas')
+    const bounds = await canvas.boundingBox()
+    if (!bounds) throw new Error('The committed particle canvas has no bounds.')
+    const x = bounds.x + bounds.width / 2
+    const y = bounds.y + bounds.height / 2
+    const baselineTime = 5.25
+    const clock = 1_000_000_000
+    const before = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, baselineTime, clock - 1)).png)
+    await captureLogoRenderedFrame(page, { clientX: x, clientY: y, type: 'pointerdown' }, baselineTime, clock)
+    await dispatchLogoPointerEvent(page, { clientX: x, clientY: y, type: 'pointerup' })
+
+    const at = async (milliseconds: number): Promise<RgbaFrame> =>
+      decodeScreenshot((await captureLogoRenderedFrame(page, undefined, baselineTime, clock + milliseconds)).png)
+    const recovery2600 = await at(2_600)
+    const beforeResizeGeometry = await readLogoAnchorGeometry(page)
+    const beforeResizeCenter = analyzeFrame(recovery2600)
+    await page.setViewportSize({
+      width: Math.round(beforeResizeGeometry.viewportWidth + 96),
+      height: beforeResizeGeometry.viewportHeight
+    })
+    await expect.poll(async () => (await readLogoAnchorGeometry(page)).canvas?.width ?? 0).toBeGreaterThan(0)
+    const resized2600 = await at(2_600)
+    const resized2610 = await at(2_610)
+    const resizedCenter = analyzeFrame(resized2600)
+    expect(Math.abs(beforeResizeCenter.centroidX / recovery2600.width - resizedCenter.centroidX / resized2600.width)).toBeLessThan(0.12)
+    expect(Math.abs(beforeResizeCenter.centroidY / recovery2600.height - resizedCenter.centroidY / resized2600.height)).toBeLessThan(0.12)
+    expect(resizedCenter.inkRatio).toBeGreaterThan(analyzeFrame(before).inkRatio * 0.45)
+
+    const recovery2650 = await at(2_650)
+    const recovery2700 = await at(2_700)
+    const recovery2740 = await at(2_740)
+    const recovery2749 = await at(2_749)
+    const recovery2750 = await at(2_750)
+    const recovery2800 = await at(2_800)
+    const recovery2810 = await at(2_810)
+    expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBe(0)
+    expect(analyzeFrame(recovery2749).inkRatio).toBeGreaterThan(analyzeFrame(before).inkRatio * 0.55)
+    const geometry = await readLogoAnchorGeometry(page)
+    if (!geometry.canvas) throw new Error('The particle canvas geometry is unavailable.')
+    const influence = {
+      radius: Math.max(32, recovery2750.width * 0.22),
+      x: ((geometry.field.left + geometry.field.width / 2 - geometry.canvas.left) * recovery2750.width) / geometry.canvas.width,
+      y: ((geometry.field.top + geometry.field.height / 2 - geometry.canvas.top) * recovery2750.height) / geometry.canvas.height
+    }
+    const tailStep = compareFrames(recovery2749, recovery2750, influence)
+    const endpointStep = compareFrames(recovery2800, recovery2810, influence)
+    expect(tailStep.coreMean).toBeLessThan(0.04)
+    expect(endpointStep.coreMean).toBeLessThan(0.04)
+    expect(compareFrames(resized2600, recovery2700, influence).coreMean).toBeGreaterThan(0)
+
+    const resizedGeometry = await readLogoAnchorGeometry(page)
+    if (!resizedGeometry.canvas) throw new Error('The resized particle canvas geometry is unavailable.')
+    const resizedInfluence = {
+      radius: Math.max(32, resized2610.width * 0.22),
+      x: ((resizedGeometry.field.left + resizedGeometry.field.width / 2 - resizedGeometry.canvas.left) * resized2610.width) / resizedGeometry.canvas.width,
+      y: ((resizedGeometry.field.top + resizedGeometry.field.height / 2 - resizedGeometry.canvas.top) * resized2610.height) / resizedGeometry.canvas.height
+    }
+    expect(compareFrames(resized2600, resized2610, resizedInfluence).coreMean).toBeLessThan(0.04)
+    expect(resizedGeometry.field.right).toBeLessThanOrEqual(resizedGeometry.viewportWidth + 1)
+    await expectLoginValidation(page)
+  })
 })
 
 test.describe('managed login logo auth independence', () => {
@@ -1942,6 +2206,41 @@ test.describe('managed login logo auth independence', () => {
       expect(themeBackgrounds[0]).not.toBe(themeBackgrounds[1])
     })
   }
+  test('renders a restrained alpha-shaped light/dark silhouette without an aura wash', async ({ context }, testInfo) => {
+    requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
+    for (const colorScheme of ['light', 'dark'] as const) {
+      const samplePage = await context.newPage()
+      try {
+        await samplePage.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+        await installManagedLogo(samplePage, wideEffect)
+        await samplePage.goto(`/login?logo-silhouette=${colorScheme}`)
+        await expectStaticFallback(samplePage, wideEffect)
+        const field = samplePage.locator('.login-particle-logo')
+        const silhouette = field.locator('.login-particle-logo__silhouette')
+        await expect(silhouette).toHaveCount(1)
+        const geometry = await readLogoAnchorGeometry(samplePage)
+        if (!geometry.silhouette) throw new Error('The static alpha silhouette is unavailable.')
+        const silhouetteStyle = await silhouette.evaluate(element => {
+          const style = getComputedStyle(element)
+          return {
+            backgroundColor: style.backgroundColor,
+            filter: style.filter,
+            maskImage: style.maskImage,
+            opacity: style.opacity
+          }
+        })
+        expect(silhouetteStyle.opacity).toBe(colorScheme === 'light' ? '0.12' : '0.08')
+        expect(silhouetteStyle.filter).toBe('blur(2px)')
+        expect(silhouetteStyle.backgroundColor).toMatch(colorScheme === 'light' ? /0/ : /255/)
+        expect(silhouetteStyle.maskImage).toContain(wideEffect.staticUrl)
+        expect(await field.evaluate(element => getComputedStyle(element).getPropertyValue('--login-logo-aura').trim())).toBe('transparent')
+        await expectLocalizedSilhouette(samplePage, geometry)
+        await expectLoginValidation(samplePage)
+      } finally {
+        await samplePage.close()
+      }
+    }
+  })
   test('shows the TS Epistle book during the redirect window only after terminal ordinary authentication', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
     await page.emulateMedia({ reducedMotion: 'no-preference' })
@@ -2170,7 +2469,7 @@ test.describe('managed login logo auth independence', () => {
       pointerListenersRemoved: 0,
       rafCallbacks: 0,
       rafsCancelled: 0,
-      rafsScheduled: 0,
+      rafsScheduled: 0
     })
     expect(benchmark.callbackCount).toBe(0)
   })
@@ -2233,14 +2532,12 @@ test.describe('managed login logo auth independence', () => {
     expect(settledTrace.rafCallbacks).toBe(immediateTrace.rafCallbacks)
     expect(sceneRequests).toHaveLength(priorSceneRequestCount)
     expect(artifacts.particle).toHaveLength(priorParticleRequestCount)
-    const settledPerformanceCallbackCount = await page.evaluate(
-      () => {
-        const logoPerformanceWindow = (): LogoPerformanceWindow => window as LogoPerformanceWindow
-        const performance = logoPerformanceWindow().__logoParticlePerformance
-        if (!performance) throw new Error('The logo particle performance hook is unavailable.')
-        return performance.callbackCount
-      }
-    )
+    const settledPerformanceCallbackCount = await page.evaluate(() => {
+      const logoPerformanceWindow = (): LogoPerformanceWindow => window as LogoPerformanceWindow
+      const performance = logoPerformanceWindow().__logoParticlePerformance
+      if (!performance) throw new Error('The logo particle performance hook is unavailable.')
+      return performance.callbackCount
+    })
     expect(settledPerformanceCallbackCount).toBe(changeReport?.performanceCallbackCount)
     await expectLoginValidation(page)
   })
@@ -2596,7 +2893,6 @@ test.describe('managed login logo auth independence', () => {
     await expect(submit).toBeVisible()
   })
 })
-
 
 test.describe('particle compositor without service workers', () => {
   test.use({ serviceWorkers: 'block' })

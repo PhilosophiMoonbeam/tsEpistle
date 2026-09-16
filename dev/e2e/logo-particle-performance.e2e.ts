@@ -4,10 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { Browser, BrowserContext, Page } from '@playwright/test'
 import { errors, expect, test } from '@playwright/test'
-import type {
-  ParticleBackendKind,
-  ParticleBackendRequest
-} from '../../client/components/login-logo/particle-renderer.ts'
+import type { ParticleBackendKind, ParticleBackendRequest } from '../../client/components/login-logo/particle-renderer.ts'
 import type {
   LogoBackendDiagnostic,
   LogoBenchmarkApiObservations,
@@ -39,18 +36,27 @@ const diagnosticFrameSynchronizationTimeoutMilliseconds = 250
 
 type StrictBackend = Exclude<ParticleBackendRequest, 'auto'>
 type EffectiveBackend = ParticleBackendKind | null
+type PerformanceProfile = 'native-webgpu' | 'hardware-angle-webgl2' | 'swiftshader-webgl2-diagnostic'
 
 const performanceProjectNames: Record<string, true> = {
   'performance-webgl2': true,
+  'performance-webgl2-swiftshader': true,
   'performance-webgpu': true
 }
 
-function reportPathForBackend(backend: StrictBackend): string {
+function performanceProfileForProject(projectName: string): PerformanceProfile {
+  if (projectName === 'performance-webgpu') return 'native-webgpu'
+  if (projectName === 'performance-webgl2-swiftshader') return 'swiftshader-webgl2-diagnostic'
+  return 'hardware-angle-webgl2'
+}
+
+function reportPathForBackend(backend: StrictBackend, projectName: string): string {
   const configuredPath = process.env.LOGO_PARTICLE_PERFORMANCE_FILE
-  if (!configuredPath) return `logo-particle-performance.${backend}.json`
+  const suffix = projectName === 'performance-webgl2-swiftshader' ? `${backend}-swiftshader` : backend
+  if (!configuredPath) return `logo-particle-performance.${suffix}.json`
   const extension = path.extname(configuredPath)
   const stem = extension ? configuredPath.slice(0, -extension.length) : configuredPath
-  return `${stem}.${backend}${extension || '.json'}`
+  return `${stem}.${suffix}${extension || '.json'}`
 }
 
 const thresholds = {
@@ -90,7 +96,7 @@ const descriptor = {
   logoUrl,
   particleUrl,
   staticUrl,
-  pipelineVersion: 5,
+  pipelineVersion: 7,
   width: 1_024,
   height: 1_024,
   aspect: 1,
@@ -104,7 +110,6 @@ const logoFixture =
   '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><rect x="64" y="64" width="896" height="896" rx="128" fill="#e8538a"/><circle cx="512" cy="512" r="300" fill="#36a3d9"/></svg>'
 const staticFixture =
   '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><circle cx="512" cy="512" r="448" fill="#336699"/><path d="M256 512h512M512 256v512" stroke="#fff" stroke-width="48"/></svg>'
-
 
 const motionDiagnosticKeys = [
   'activeExplosionCount',
@@ -132,8 +137,6 @@ type BenchmarkCounters = LogoPerformanceCounters
 type UploadApiObservation = LogoUploadApiObservation
 type BenchmarkApiObservations = LogoBenchmarkApiObservations
 
-
-
 type BenchmarkState = LogoParticlePerformanceHook & {
   maximumActiveExplosionCount: number
   maximumActiveImpulseCount: number
@@ -150,7 +153,6 @@ declare global {
     __setLogoParticleVisibility?: (visibility: DocumentVisibilityState) => void
   }
 }
-
 
 interface SynchronizedMotionSample {
   readonly activeExplosionCount: number | null
@@ -189,7 +191,50 @@ interface InactivityMeasurement {
   effectiveBackend: EffectiveBackend
   rafCallbacksDelta: number | null
 }
+interface CanvasEnvironmentObservation {
+  readonly css: {
+    readonly left: number
+    readonly top: number
+    readonly width: number
+    readonly height: number
+  } | null
+  readonly backing: {
+    readonly width: number
+    readonly height: number
+  } | null
+  readonly devicePixelRatio: number | null
+}
 
+interface GraphicsIdentityObservation {
+  readonly webgl2: {
+    readonly source: 'active-canvas' | 'diagnostic-canvas' | 'unavailable'
+    readonly contextAvailable: boolean
+    readonly debugRendererInfoAvailable: boolean
+    readonly vendor: string | null
+    readonly renderer: string | null
+    readonly unmaskedVendor: string | null
+    readonly unmaskedRenderer: string | null
+    readonly reason?: string
+  }
+  readonly webgpu: {
+    readonly adapterAvailable: boolean
+    readonly vendor: string | null
+    readonly architecture: string | null
+    readonly device: string | null
+    readonly description: string | null
+    readonly reason?: string
+  }
+}
+
+interface EnvironmentMetadata {
+  readonly userAgent: string
+  readonly platform: string
+  readonly language: string
+  readonly hardwareConcurrency: number | null
+  readonly timeOrigin: number | null
+  readonly canvas: CanvasEnvironmentObservation
+  readonly graphics: GraphicsIdentityObservation
+}
 
 const crcTable = (() => {
   const table = new Uint32Array(256)
@@ -274,13 +319,7 @@ function sumNullable(samples: readonly (number | null | undefined)[]): number | 
 }
 
 function latencyMilliseconds(start: number | null | undefined, end: number | null | undefined): number | null {
-  return typeof start === 'number' &&
-    Number.isFinite(start) &&
-    typeof end === 'number' &&
-    Number.isFinite(end) &&
-    end >= start
-    ? end - start
-    : null
+  return typeof start === 'number' && Number.isFinite(start) && typeof end === 'number' && Number.isFinite(end) && end >= start ? end - start : null
 }
 
 function effectiveBackend(measurement: BenchmarkMeasurement): EffectiveBackend {
@@ -295,17 +334,14 @@ function failedDiagnostics(measurement: BenchmarkMeasurement): readonly BackendD
   return diagnostics(measurement).filter(diagnostic => diagnostic.phase === 'failed' || diagnostic.phase === 'lost')
 }
 
-function frameField(
-  frames: readonly PerformanceFrameSample[] | undefined,
-  field: keyof PerformanceFrameSample
-): Array<number | null> {
+function frameField(frames: readonly PerformanceFrameSample[] | undefined, field: keyof PerformanceFrameSample): Array<number | null> {
   return (frames ?? []).map(frame => {
     const value = frame[field]
     return typeof value === 'number' && Number.isFinite(value) ? value : null
   })
 }
 
-function counterValue(counters: BenchmarkCounters | undefined, field: keyof BenchmarkCounters): number | null {
+function counterValue(counters: BenchmarkCounters | null | undefined, field: keyof BenchmarkCounters): number | null {
   const value = counters?.[field]
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
@@ -329,8 +365,32 @@ function selectedUploadObservation(measurement: BenchmarkMeasurement): UploadApi
   const backend = effectiveBackend(measurement) ?? measurement.requestedBackend
   return backend ? uploadObservationFor(measurement, backend) : unavailableUploadObservation('Effective upload observation backend is unavailable')
 }
+type GraphicsClassification = 'representative-hardware' | 'software-diagnostic' | 'unavailable'
 
-
+function classifyGraphicsIdentity(
+  profile: PerformanceProfile,
+  graphics: GraphicsIdentityObservation
+): {
+  readonly actualIdentityAvailable: boolean
+  readonly classification: GraphicsClassification
+  readonly softwareHint: boolean
+} {
+  const identityValues = [
+    graphics.webgl2.vendor,
+    graphics.webgl2.renderer,
+    graphics.webgl2.unmaskedVendor,
+    graphics.webgl2.unmaskedRenderer,
+    graphics.webgpu.vendor,
+    graphics.webgpu.architecture,
+    graphics.webgpu.device,
+    graphics.webgpu.description
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  const actualIdentityAvailable = identityValues.some(value => !/^(unknown|generic|none|null|undefined)$/i.test(value.trim()))
+  const softwareHint = identityValues.some(value => /swiftshader|llvmpipe|softpipe|software rasterizer|software renderer/i.test(value))
+  const classification: GraphicsClassification =
+    profile === 'swiftshader-webgl2-diagnostic' || softwareHint ? 'software-diagnostic' : actualIdentityAvailable ? 'representative-hardware' : 'unavailable'
+  return { actualIdentityAvailable, classification, softwareHint }
+}
 
 function writeReportAtomically(reportPath: string, report: object): void {
   const directory = path.dirname(reportPath)
@@ -367,6 +427,8 @@ async function createMeasuredPage(
         frameIntervalsMilliseconds: [],
         firstFrameMilliseconds: null,
         lastFrameAt: null,
+        renderInvocationCpuMs: null,
+        gpuTimingEpoch: 0,
         maximumActiveExplosionCount: 0,
         maximumActiveImpulseCount: 0,
         requestedBackend: initRequestedBackend,
@@ -375,6 +437,7 @@ async function createMeasuredPage(
         startup,
         resumes: [],
         frames: [],
+        gpu: [],
         counters: {
           updateCallbacks: 0,
           renderInvocations: 0,
@@ -460,12 +523,7 @@ async function createMeasuredPage(
         const bytesPerElement = nonNegativeInteger(readProperty(value, 'BYTES_PER_ELEMENT'))
         return bytesPerElement !== null && bytesPerElement > 0 ? bytesPerElement : 1
       }
-      const rangedUploadBytes = (
-        source: unknown,
-        offsetArgument: unknown,
-        lengthArgument: unknown,
-        zeroLengthMeansRemainder: boolean
-      ): number | null => {
+      const rangedUploadBytes = (source: unknown, offsetArgument: unknown, lengthArgument: unknown, zeroLengthMeansRemainder: boolean): number | null => {
         const totalBytes = sourceByteLength(source)
         if (totalBytes === null) return null
         const elementSize = elementByteSize(source)
@@ -479,8 +537,7 @@ async function createMeasuredPage(
         if (length > totalElements - offset) return null
         return length * elementSize
       }
-      const webgpuUploadBytes = (source: unknown, dataOffset: unknown, size: unknown): number | null =>
-        rangedUploadBytes(source, dataOffset, size, false)
+      const webgpuUploadBytes = (source: unknown, dataOffset: unknown, size: unknown): number | null => rangedUploadBytes(source, dataOffset, size, false)
       const webglUploadBytes = (source: unknown, sourceOffset: unknown, length: unknown): number | null => {
         if (typeof source === 'number') return sourceByteLength(source)
         if (source === null) return 0
@@ -583,14 +640,202 @@ async function createMeasuredPage(
         }
       }
 
+      type TimerQueryExtension = {
+        readonly TIME_ELAPSED_EXT: number
+        readonly GPU_DISJOINT_EXT: number
+      }
+      type TimerQuerySlot = {
+        readonly query: WebGLQuery
+        frameId: number
+        epoch: number
+        pending: boolean
+      }
+      type TimerQueryState = {
+        readonly context: WebGL2RenderingContext
+        readonly extension: TimerQueryExtension | null
+        readonly slots: TimerQuerySlot[]
+        nextFrameId: number
+        unavailableEpoch: number
+      }
+      const timerQueryStates: TimerQueryState[] = []
+      const pushGpuSample = (sample: LogoGpuTimingSample): void => {
+        if (!benchmark.gpu || benchmark.gpu.length >= 512) return
+        benchmark.gpu.push(sample)
+      }
+      const markGpuUnavailable = (state: TimerQueryState, reason: string, frameId?: number): void => {
+        const epoch = benchmark.gpuTimingEpoch ?? 0
+        if (frameId === undefined && state.unavailableEpoch === epoch) return
+        if (frameId === undefined) state.unavailableEpoch = epoch
+        pushGpuSample(frameId === undefined ? { status: 'unavailable', reason } : { frameId, status: 'unavailable', reason })
+      }
+      const timerStateFor = (context: WebGL2RenderingContext): TimerQueryState => {
+        const existing = timerQueryStates.find(state => state.context === context)
+        if (existing) return existing
+        let extension: TimerQueryExtension | null = null
+        try {
+          const candidate = context.getExtension('EXT_disjoint_timer_query_webgl2') as TimerQueryExtension | null
+          if (candidate && typeof candidate.TIME_ELAPSED_EXT === 'number' && typeof candidate.GPU_DISJOINT_EXT === 'number') {
+            extension = candidate
+          }
+        } catch {
+          extension = null
+        }
+        const slots: TimerQuerySlot[] = []
+        if (extension) {
+          for (let index = 0; index < 32; index += 1) {
+            let query: WebGLQuery | null = null
+            try {
+              query = context.createQuery()
+            } catch {
+              query = null
+            }
+            if (!query) break
+            slots.push({ query, frameId: 0, epoch: benchmark.gpuTimingEpoch ?? 0, pending: false })
+          }
+        }
+        const state: TimerQueryState = {
+          context,
+          extension,
+          slots,
+          nextFrameId: 1,
+          unavailableEpoch: -1
+        }
+        timerQueryStates.push(state)
+        if (!extension) markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 is unavailable')
+        else if (slots.length === 0) markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 query pool could not be allocated')
+        return state
+      }
+      const pollTimerQueryState = (state: TimerQueryState): void => {
+        const extension = state.extension
+        if (!extension) return
+        const context = state.context
+        const currentEpoch = benchmark.gpuTimingEpoch ?? 0
+        let disjoint = false
+        try {
+          disjoint = Boolean(context.getParameter(extension.GPU_DISJOINT_EXT))
+        } catch {
+          markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 disjoint state was unavailable')
+          return
+        }
+        if (disjoint) {
+          let pendingResultCount = 0
+          for (const slot of state.slots) {
+            if (!slot.pending) continue
+            pendingResultCount += 1
+            slot.pending = false
+            if (slot.epoch === currentEpoch) {
+              markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 reported a disjoint result', slot.frameId)
+            }
+          }
+          if (pendingResultCount === 0) markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 reported a disjoint result')
+          return
+        }
+        for (const slot of state.slots) {
+          if (!slot.pending) continue
+          let available = false
+          try {
+            available = Boolean(context.getQueryParameter(slot.query, context.QUERY_RESULT_AVAILABLE))
+          } catch {
+            slot.pending = false
+            if (slot.epoch === currentEpoch) {
+              markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 query availability was unavailable', slot.frameId)
+            }
+            continue
+          }
+          if (!available) continue
+          let result: unknown
+          try {
+            result = context.getQueryParameter(slot.query, context.QUERY_RESULT)
+          } catch {
+            slot.pending = false
+            if (slot.epoch === currentEpoch) {
+              markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 query result was unavailable', slot.frameId)
+            }
+            continue
+          }
+          slot.pending = false
+          const durationNanoseconds = typeof result === 'number' ? result : typeof result === 'bigint' ? Number(result) : NaN
+          if (slot.epoch !== currentEpoch) continue
+          if (Number.isFinite(durationNanoseconds) && durationNanoseconds >= 0) {
+            pushGpuSample({ frameId: slot.frameId, durationMs: durationNanoseconds / 1_000_000, status: 'available' })
+          } else {
+            markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 returned an invalid duration', slot.frameId)
+          }
+        }
+      }
+      const pollTimerQueryStates = (): void => {
+        for (const state of timerQueryStates) pollTimerQueryState(state)
+      }
+      const webglTimerPrototype = publicPrototype('WebGL2RenderingContext')
+      const webglDrawElementsInstanced = webglTimerPrototype ? publicMethod(webglTimerPrototype, 'drawElementsInstanced') : null
+      if (!webglTimerPrototype) {
+        pushGpuSample({ status: 'unavailable', reason: 'WebGL2RenderingContext constructor/prototype is unavailable' })
+      } else if (!webglDrawElementsInstanced) {
+        pushGpuSample({ status: 'unavailable', reason: 'WebGL2RenderingContext.prototype.drawElementsInstanced is unavailable' })
+      } else {
+        const drawElementsInstanced = webglDrawElementsInstanced
+        const replaced = replaceMethod(webglTimerPrototype, 'drawElementsInstanced', function (this: unknown, ...args: unknown[]): unknown {
+          const context = this as WebGL2RenderingContext
+          const state = timerStateFor(context)
+          pollTimerQueryState(state)
+          const instanceCount = args[4]
+          if (instanceCount !== managedDescriptor.count || !state.extension) {
+            return Reflect.apply(drawElementsInstanced, this, args)
+          }
+          const slot = state.slots.find(candidate => !candidate.pending)
+          if (!slot) {
+            const frameId = state.nextFrameId
+            state.nextFrameId += 1
+            markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 query pool is busy', frameId)
+            return Reflect.apply(drawElementsInstanced, this, args)
+          }
+          const frameId = state.nextFrameId
+          state.nextFrameId += 1
+          slot.frameId = frameId
+          let began = false
+          try {
+            context.beginQuery(state.extension.TIME_ELAPSED_EXT, slot.query)
+            began = true
+          } catch {
+            markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 beginQuery failed', frameId)
+            return Reflect.apply(drawElementsInstanced, this, args)
+          }
+          let failed = false
+          let result: unknown
+          try {
+            result = Reflect.apply(drawElementsInstanced, this, args)
+          } catch (error: unknown) {
+            failed = true
+            result = error
+          }
+          if (began) {
+            try {
+              context.endQuery(state.extension.TIME_ELAPSED_EXT)
+              slot.pending = true
+            } catch {
+              slot.pending = false
+              markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 endQuery failed', frameId)
+            }
+          }
+          if (failed) throw result
+          return result
+        })
+        if (!replaced) {
+          pushGpuSample({ status: 'unavailable', reason: 'WebGL2 drawElementsInstanced could not be wrapped for timer queries' })
+        }
+      }
+      if (initRequestedBackend === 'webgpu') {
+        pushGpuSample({ status: 'unavailable', reason: 'EXT_disjoint_timer_query_webgl2 applies only to strict WebGL2' })
+      }
+
       const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window)
       window.requestAnimationFrame = (callback: FrameRequestCallback): number =>
         nativeRequestAnimationFrame(timestamp => {
+          pollTimerQueryStates()
           const counters = benchmark.counters
           if (counters && typeof counters.rafCallbacks === 'number') counters.rafCallbacks += 1
           callback(timestamp)
         })
-
 
       let visibility: DocumentVisibilityState = 'visible'
       Object.defineProperty(document, 'visibilityState', {
@@ -655,6 +900,8 @@ async function resetMeasurements(page: Page): Promise<void> {
     benchmark.callbackCpuMilliseconds.length = 0
     benchmark.frameIntervalsMilliseconds.length = 0
     benchmark.lastFrameAt = null
+    benchmark.renderInvocationCpuMs = null
+    benchmark.gpuTimingEpoch = (benchmark.gpuTimingEpoch ?? 0) + 1
     benchmark.maximumActiveExplosionCount = 0
     benchmark.maximumActiveImpulseCount = 0
     benchmark.frames?.splice(0)
@@ -687,11 +934,7 @@ async function readMeasurements(page: Page): Promise<BenchmarkMeasurement> {
     if (requestedBackend !== 'webgpu' && requestedBackend !== 'webgl2') {
       throw new Error('Particle performance benchmark requested backend is not strict')
     }
-    if (
-      typeof benchmark.maximumActiveExplosionCount !== 'number' ||
-      typeof benchmark.maximumActiveImpulseCount !== 'number' ||
-      !benchmark.apiObservations
-    ) {
+    if (typeof benchmark.maximumActiveExplosionCount !== 'number' || typeof benchmark.maximumActiveImpulseCount !== 'number' || !benchmark.apiObservations) {
       throw new Error('Particle performance benchmark strict fields are unavailable')
     }
     return {
@@ -700,6 +943,7 @@ async function readMeasurements(page: Page): Promise<BenchmarkMeasurement> {
       frameIntervalsMilliseconds: [...benchmark.frameIntervalsMilliseconds],
       firstFrameMilliseconds: benchmark.firstFrameMilliseconds,
       lastFrameAt: benchmark.lastFrameAt,
+      renderInvocationCpuMs: benchmark.renderInvocationCpuMs,
       lastMotion: benchmark.lastMotion ? { ...benchmark.lastMotion } : undefined,
       lastMotionKeys: benchmark.lastMotion ? Object.keys(benchmark.lastMotion).sort() : null,
       maximumActiveExplosionCount: benchmark.maximumActiveExplosionCount,
@@ -874,11 +1118,7 @@ async function readInactivityMeasurement(page: Page): Promise<InactivityMeasurem
   const measurement = await readMeasurements(page)
   const counters = measurement.counters ?? null
   const frames = measurement.frames
-  const logicalScheduledBytes = frames === undefined
-    ? null
-    : frames.length === 0
-      ? 0
-      : sumNullable(frameField(frames, 'motionScheduledBytes'))
+  const logicalScheduledBytes = frames === undefined ? null : frames.length === 0 ? 0 : sumNullable(frameField(frames, 'motionScheduledBytes'))
   const uploadObservation = selectedUploadObservation(measurement)
   return {
     callbackCount: measurement.callbackCount,
@@ -962,7 +1202,6 @@ function addObservedZeroViolation(violations: Violation[], invariant: string, me
   if (measured !== null) addExactViolation(violations, invariant, measured, 0)
 }
 
-
 function addMinimumViolation(violations: Violation[], invariant: string, measured: number | null, minimum: number): void {
   if (measured === null || !Number.isFinite(measured) || measured < minimum) {
     violations.push({ invariant, measured, threshold: minimum })
@@ -986,7 +1225,8 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   test.setTimeout(180_000)
 
   const requestedBackend: StrictBackend = testInfo.project.name === 'performance-webgpu' ? 'webgpu' : 'webgl2'
-  const reportPath = reportPathForBackend(requestedBackend)
+  const performanceProfile = performanceProfileForProject(testInfo.project.name)
+  const reportPath = reportPathForBackend(requestedBackend, testInfo.project.name)
   const firstFrameSamplesMilliseconds: number[] = []
   const coldRuns: Array<{
     readonly firstFrameMilliseconds: number | null
@@ -1030,13 +1270,7 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   let recoveryDiagnosticFrameSampleFailures = 0
   let actualDeviceScaleFactor: number | undefined
   let actualViewport: { width: number; height: number } | undefined
-  let environmentMetadata: {
-    readonly userAgent: string
-    readonly platform: string
-    readonly language: string
-    readonly hardwareConcurrency: number | null
-    readonly timeOrigin: number | null
-  } | undefined
+  let environmentMetadata: EnvironmentMetadata | undefined
 
   try {
     try {
@@ -1056,13 +1290,147 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
     else recoveredActiveExplosions = recoveryMotion.activeExplosionCount
     actualDeviceScaleFactor = await page.evaluate(() => window.devicePixelRatio)
     actualViewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
-    environmentMetadata = await page.evaluate(() => ({
-      userAgent: navigator.userAgent,
-      platform: navigator.platform,
-      language: navigator.language,
-      hardwareConcurrency: Number.isFinite(navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : null,
-      timeOrigin: Number.isFinite(performance.timeOrigin) ? performance.timeOrigin : null
-    }))
+    environmentMetadata = await page.evaluate(async (): Promise<EnvironmentMetadata> => {
+      const readString = (value: unknown): string | null => (typeof value === 'string' && value.length > 0 ? value : null)
+      const canvasElement = document.querySelector('.login-particle-logo canvas')
+      const canvas: CanvasEnvironmentObservation =
+        canvasElement instanceof HTMLCanvasElement
+          ? (() => {
+              const bounds = canvasElement.getBoundingClientRect()
+              const css = [bounds.left, bounds.top, bounds.width, bounds.height].every(Number.isFinite)
+                ? { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height }
+                : null
+              const backing =
+                Number.isInteger(canvasElement.width) && Number.isInteger(canvasElement.height) && canvasElement.width >= 0 && canvasElement.height >= 0
+                  ? { width: canvasElement.width, height: canvasElement.height }
+                  : null
+              return {
+                css,
+                backing,
+                devicePixelRatio: Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : null
+              }
+            })()
+          : { css: null, backing: null, devicePixelRatio: null }
+      let webglContext: WebGL2RenderingContext | null = null
+      let webglContextReason: string | undefined
+      let webglContextSource: 'active-canvas' | 'diagnostic-canvas' | 'unavailable' = 'unavailable'
+      if (canvasElement instanceof HTMLCanvasElement) {
+        try {
+          webglContext = canvasElement.getContext('webgl2')
+          if (webglContext) webglContextSource = 'active-canvas'
+        } catch {
+          webglContextReason = 'The active canvas WebGL2 context could not be inspected'
+        }
+      }
+      if (!webglContext) {
+        try {
+          const probeCanvas = document.createElement('canvas')
+          probeCanvas.width = 1
+          probeCanvas.height = 1
+          webglContext = probeCanvas.getContext('webgl2')
+          if (webglContext) webglContextSource = 'diagnostic-canvas'
+          else webglContextReason = 'A diagnostic WebGL2 context could not be created'
+        } catch {
+          webglContextReason = 'Creating a diagnostic WebGL2 context threw'
+        }
+      }
+      const readWebglString = (parameter: number): string | null => {
+        if (!webglContext) return null
+        try {
+          return readString(webglContext.getParameter(parameter))
+        } catch {
+          return null
+        }
+      }
+      let debugRendererInfoAvailable = false
+      let unmaskedVendor: string | null = null
+      let unmaskedRenderer: string | null = null
+      if (webglContext) {
+        try {
+          const debugInfo = webglContext.getExtension('WEBGL_debug_renderer_info') as {
+            readonly UNMASKED_VENDOR_WEBGL?: number
+            readonly UNMASKED_RENDERER_WEBGL?: number
+          } | null
+          if (debugInfo) {
+            debugRendererInfoAvailable = true
+            if (typeof debugInfo.UNMASKED_VENDOR_WEBGL === 'number') {
+              unmaskedVendor = readWebglString(debugInfo.UNMASKED_VENDOR_WEBGL)
+            }
+            if (typeof debugInfo.UNMASKED_RENDERER_WEBGL === 'number') {
+              unmaskedRenderer = readWebglString(debugInfo.UNMASKED_RENDERER_WEBGL)
+            }
+          }
+        } catch {
+          debugRendererInfoAvailable = false
+        }
+      }
+
+      type NavigatorWithGpu = Navigator & {
+        readonly gpu?: {
+          requestAdapter?: () => Promise<unknown>
+        }
+      }
+      const gpuNavigator = navigator as NavigatorWithGpu
+      let adapterAvailable = false
+      let adapterReason: string | undefined
+      let gpuVendor: string | null = null
+      let gpuArchitecture: string | null = null
+      let gpuDevice: string | null = null
+      let gpuDescription: string | null = null
+      const readAdapterInfoString = (info: unknown, name: string): string | null => {
+        if (info === null || typeof info !== 'object' || !(name in info)) return null
+        return readString(Reflect.get(info, name))
+      }
+      const gpu = gpuNavigator.gpu
+      const requestAdapter = gpu?.requestAdapter
+      if (!requestAdapter) {
+        adapterReason = 'navigator.gpu.requestAdapter is unavailable'
+      } else {
+        try {
+          const adapter = await requestAdapter.call(gpu)
+          if (!adapter || typeof adapter !== 'object') {
+            adapterReason = 'WebGPU requestAdapter returned no adapter'
+          } else {
+            adapterAvailable = true
+            const info = 'info' in adapter ? adapter.info : undefined
+            gpuVendor = readAdapterInfoString(info, 'vendor')
+            gpuArchitecture = readAdapterInfoString(info, 'architecture')
+            gpuDevice = readAdapterInfoString(info, 'device')
+            gpuDescription = readAdapterInfoString(info, 'description')
+          }
+        } catch {
+          adapterReason = 'WebGPU requestAdapter threw'
+        }
+      }
+      return {
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        language: navigator.language,
+        hardwareConcurrency: Number.isFinite(navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : null,
+        timeOrigin: Number.isFinite(performance.timeOrigin) ? performance.timeOrigin : null,
+        canvas,
+        graphics: {
+          webgl2: {
+            source: webglContextSource,
+            contextAvailable: webglContext !== null,
+            debugRendererInfoAvailable,
+            vendor: webglContext ? readWebglString(webglContext.VENDOR) : null,
+            renderer: webglContext ? readWebglString(webglContext.RENDERER) : null,
+            unmaskedVendor,
+            unmaskedRenderer,
+            ...(webglContextReason ? { reason: webglContextReason } : {})
+          },
+          webgpu: {
+            adapterAvailable,
+            vendor: gpuVendor,
+            architecture: gpuArchitecture,
+            device: gpuDevice,
+            description: gpuDescription,
+            ...(adapterReason ? { reason: adapterReason } : {})
+          }
+        }
+      }
+    })
     hidden = await measureHidden(page)
     offscreen = await measureOffscreen(page)
     const resumed = await resumeFromOffscreen(page)
@@ -1120,6 +1488,7 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
     'frameId',
     'submittedAt',
     'updateCpuMs',
+    'renderCallbackGapMs',
     'renderInvocationCpuMs',
     'afterRenderCpuMs',
     'totalDrawCalls',
@@ -1129,15 +1498,17 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
     'motionScheduledBytes',
     'colorUploadBytes'
   ]
-  const frameInstrumentationFailures = frames === undefined
-    ? 1
-    : frames.reduce((failures, frame) => {
-        const missing = requiredFrameFields.some(field => {
-          const value = frame[field]
-          return typeof value !== 'number' || !Number.isFinite(value)
-        })
-        return failures + (missing ? 1 : 0)
-      }, 0)
+  const renderCallbackGapMilliseconds = frameField(frames, 'renderCallbackGapMs')
+  const frameInstrumentationFailures =
+    frames === undefined
+      ? 1
+      : frames.reduce((failures, frame) => {
+          const missing = requiredFrameFields.some(field => {
+            const value = frame[field]
+            return typeof value !== 'number' || !Number.isFinite(value)
+          })
+          return failures + (missing ? 1 : 0)
+        }, 0)
   const phaseCpu = {
     update: {
       samplesMilliseconds: updateCpuMilliseconds,
@@ -1158,16 +1529,23 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
       nearestRankP95Milliseconds: nearestRankNullable(afterRenderCpuMilliseconds, 0.95)
     }
   }
+  const phaseScheduling = {
+    renderCallbackGap: {
+      samplesMilliseconds: renderCallbackGapMilliseconds,
+      sampleCount: renderCallbackGapMilliseconds.length,
+      unavailableSamples: renderCallbackGapMilliseconds.filter(sample => sample === null).length,
+      nearestRankP95Milliseconds: nearestRankNullable(renderCallbackGapMilliseconds, 0.95)
+    }
+  }
   const startup = animation.startup
   const firstSubmissionLatencyMilliseconds = latencyMilliseconds(startup?.enhancementScheduledAt, startup?.firstSubmissionAt)
   const visibleCommitLatencyMilliseconds = latencyMilliseconds(startup?.enhancementScheduledAt, startup?.visibleCommitAt)
-  const startupInstrumentationFailures = startup === undefined
-    ? 3
-    : [
-        startup.enhancementScheduledAt,
-        startup.firstSubmissionAt,
-        startup.visibleCommitAt
-      ].filter(timestamp => typeof timestamp !== 'number' || !Number.isFinite(timestamp)).length
+  const startupInstrumentationFailures =
+    startup === undefined
+      ? 3
+      : [startup.enhancementScheduledAt, startup.firstSubmissionAt, startup.visibleCommitAt].filter(
+          timestamp => typeof timestamp !== 'number' || !Number.isFinite(timestamp)
+        ).length
   const resumeLatency = {
     firstSubmissionMilliseconds: latencyMilliseconds(resumeSample?.startedAt, resumeSample?.firstSubmissionAt),
     visibleCommitMilliseconds: latencyMilliseconds(resumeSample?.startedAt, resumeSample?.visibleCommitAt)
@@ -1181,20 +1559,18 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   const failedBackendDiagnostics = backendMeasurements.flatMap(measurement => [...failedDiagnostics(measurement)])
   const measuredEffectiveBackends = backendMeasurements.map(measurement => effectiveBackend(measurement))
   const effective = effectiveBackend(animation)
-  const diagnosticsPresent =
-    (animation.backendDiagnostics?.length ?? 0) > 0 &&
-    coldRuns.every(run => (run.measurement.backendDiagnostics?.length ?? 0) > 0)
-  const diagnosticIdentityMatch = diagnosticsPresent && allBackendDiagnostics.every(diagnostic =>
-    diagnostic.requestedBackend === requestedBackend &&
-    (diagnostic.effectiveBackend === null || diagnostic.effectiveBackend === 'webgpu' || diagnostic.effectiveBackend === 'webgl2')
-  )
+  const diagnosticsPresent = (animation.backendDiagnostics?.length ?? 0) > 0 && coldRuns.every(run => (run.measurement.backendDiagnostics?.length ?? 0) > 0)
+  const diagnosticIdentityMatch =
+    diagnosticsPresent &&
+    allBackendDiagnostics.every(
+      diagnostic =>
+        diagnostic.requestedBackend === requestedBackend &&
+        (diagnostic.effectiveBackend === null || diagnostic.effectiveBackend === 'webgpu' || diagnostic.effectiveBackend === 'webgl2')
+    )
   const backendIdentityMatch =
     animation.requestedBackend === requestedBackend &&
     effective === requestedBackend &&
-    coldRuns.every(run =>
-      run.measurement.requestedBackend === requestedBackend &&
-      effectiveBackend(run.measurement) === requestedBackend
-    ) &&
+    coldRuns.every(run => run.measurement.requestedBackend === requestedBackend && effectiveBackend(run.measurement) === requestedBackend) &&
     diagnosticIdentityMatch
   const logicalDynamicUploadBytes = sumNullable(frameMotionScheduledBytes)
   const uploadObservations = uploadObservationsFor(animation)
@@ -1214,22 +1590,31 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
     sampledTotal: sumNullable(frameTriangles),
     unavailableSamples: frameTriangles.filter(sample => sample === null).length
   }
-  const gpuSamples = animation.gpu
-  const gpuAvailableSamples = (gpuSamples ?? []).filter(sample =>
-    sample.status === 'available' &&
-    typeof sample.durationMs === 'number' &&
-    Number.isFinite(sample.durationMs)
+  const gpuSamples = animation.gpu ?? []
+  const gpuReportSamples: readonly LogoGpuTimingSample[] =
+    gpuSamples.length > 0
+      ? gpuSamples
+      : [
+          {
+            status: 'unavailable',
+            reason:
+              requestedBackend === 'webgl2'
+                ? 'No completed EXT_disjoint_timer_query_webgl2 observation was available'
+                : 'EXT_disjoint_timer_query_webgl2 timing applies only to strict WebGL2'
+          }
+        ]
+  const gpuAvailableSamples = gpuReportSamples.filter(
+    sample => sample.status === 'available' && typeof sample.durationMs === 'number' && Number.isFinite(sample.durationMs)
   )
-  const gpuUnavailableSamples = (gpuSamples ?? []).filter(sample => sample.status === 'unavailable')
-  const gpuTiming = gpuSamples === undefined
-    ? undefined
-    : {
-        samples: gpuSamples,
-        available: gpuAvailableSamples.length > 0,
-        availableSamples: gpuAvailableSamples,
-        unavailableSamples: gpuUnavailableSamples,
-        unavailableCount: gpuUnavailableSamples.length
-      }
+  const gpuUnavailableSamples = gpuReportSamples.filter(sample => sample.status === 'unavailable')
+  const gpuTiming = {
+    samples: gpuReportSamples,
+    available: gpuAvailableSamples.length > 0,
+    availableSamples: gpuAvailableSamples,
+    unavailableSamples: gpuUnavailableSamples,
+    unavailableCount: gpuUnavailableSamples.length,
+    unavailableReasons: gpuUnavailableSamples.map(sample => sample.reason).filter((reason): reason is string => typeof reason === 'string' && reason.length > 0)
+  }
   const motion = animation.lastMotion
   const counterFields: readonly (keyof BenchmarkCounters)[] = [
     'updateCallbacks',
@@ -1239,9 +1624,10 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
     'draws',
     'sampleOverflow'
   ]
-  const counterInstrumentationFailures = animation.counters === undefined
-    ? counterFields.length
-    : counterFields.reduce((failures, field) => failures + (counterValue(animation.counters, field) === null ? 1 : 0), 0)
+  const counterInstrumentationFailures =
+    animation.counters === undefined
+      ? counterFields.length
+      : counterFields.reduce((failures, field) => failures + (counterValue(animation.counters, field) === null ? 1 : 0), 0)
   const violations: Violation[] = []
   addExactViolation(violations, 'backend.requestedBackend === options.requestedBackend', backendIdentityMatch ? 1 : 0, 1)
   addExactViolation(violations, 'backend.effectiveBackend === options.requestedBackend', backendIdentityMatch ? 1 : 0, 1)
@@ -1251,8 +1637,18 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   addExactViolation(violations, 'firstFrame.timeouts === 0', firstFrameTimeouts, thresholds.timeouts)
   addExactViolation(violations, 'firstFrame.samples.length === 20', firstFrameSamplesMilliseconds.length, firstFrameRuns)
   addMaximumViolation(violations, 'firstFrame.nearestRankP95Milliseconds <= 1500', firstFrameP95Milliseconds, thresholds.firstFrameP95Milliseconds)
-  addMinimumViolation(violations, 'animation.frameIntervalSampleCount >= 250', animation.frameIntervalsMilliseconds.length, thresholds.animatedFrameMinimumIntervalSamples)
-  addMinimumViolation(violations, 'animation.frameCoverageMilliseconds >= 9000', animatedFrameCoverageMilliseconds, thresholds.animatedFrameMinimumCoverageMilliseconds)
+  addMinimumViolation(
+    violations,
+    'animation.frameIntervalSampleCount >= 250',
+    animation.frameIntervalsMilliseconds.length,
+    thresholds.animatedFrameMinimumIntervalSamples
+  )
+  addMinimumViolation(
+    violations,
+    'animation.frameCoverageMilliseconds >= 9000',
+    animatedFrameCoverageMilliseconds,
+    thresholds.animatedFrameMinimumCoverageMilliseconds
+  )
   addMaximumViolation(violations, 'animation.frameNearestRankP95Milliseconds <= 20', animatedFrameP95Milliseconds, thresholds.animatedFrameP95Milliseconds)
   addMaximumViolation(violations, 'animation.frameNearestRankP99Milliseconds <= 34', animatedFrameP99Milliseconds, thresholds.animatedFrameP99Milliseconds)
   addMaximumViolation(violations, 'animation.callbackCpuNearestRankP95Milliseconds <= 2', callbackCpuP95Milliseconds, thresholds.callbackCpuP95Milliseconds)
@@ -1265,18 +1661,83 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   )
   addExactViolation(violations, 'animation.frames are present and non-empty', frames === undefined || frames.length === 0 ? 0 : 1, 1)
   addExactViolation(violations, 'animation.frames contain mandatory instrumentation', frameInstrumentationFailures, 0)
-  addExactViolation(violations, 'animation.frames.every(frame => frame.totalDrawCalls === 1)', frames !== undefined && frameDrawCalls.length === frames.length && frameDrawCalls.every(sample => sample === 1) ? 1 : 0, 1)
-  addExactViolation(violations, 'animation.frames.every(frame => frame.particleInstances === 16000)', frames !== undefined && frameParticleInstances.length === frames.length && frameParticleInstances.every(sample => sample === descriptor.count) ? 1 : 0, 1)
-  addExactViolation(violations, 'animation.frames.every(frame => frame.triangles === 2N)', frames !== undefined && frameTriangles.length === frames.length && frameTriangles.every(sample => sample === expectedTriangles) ? 1 : 0, 1)
-  addExactViolation(violations, 'animation.frames.every(frame => frame.computeDispatches === 0)', frames !== undefined && frameComputeDispatches.length === frames.length && frameComputeDispatches.every(sample => sample === 0) ? 1 : 0, 1)
-  addExactViolation(violations, 'animation.frames.every(frame => frame.motionScheduledBytes === 128000)', frames !== undefined && frameMotionScheduledBytes.length === frames.length && frameMotionScheduledBytes.every(sample => sample === expectedActiveMotionBytes) ? 1 : 0, 1)
-  addExactViolation(violations, 'animation.frames.every(frame => frame.colorUploadBytes === 0)', frames !== undefined && frameColorUploadBytes.length === frames.length && frameColorUploadBytes.every(sample => sample === 0) ? 1 : 0, 1)
-  addExactViolation(violations, 'animation.logicalDynamicUploadBytes === activeMotionBytes * frameCount', logicalDynamicUploadBytes, expectedActiveMotionBytes * measuredFrames.length)
+  addExactViolation(
+    violations,
+    'animation.frames.every(frame => frame.totalDrawCalls === 1)',
+    frames !== undefined && frameDrawCalls.length === frames.length && frameDrawCalls.every(sample => sample === 1) ? 1 : 0,
+    1
+  )
+  addExactViolation(
+    violations,
+    'animation.frames.every(frame => frame.particleInstances === 16000)',
+    frames !== undefined && frameParticleInstances.length === frames.length && frameParticleInstances.every(sample => sample === descriptor.count) ? 1 : 0,
+    1
+  )
+  addExactViolation(
+    violations,
+    'animation.frames.every(frame => frame.triangles === 2N)',
+    frames !== undefined && frameTriangles.length === frames.length && frameTriangles.every(sample => sample === expectedTriangles) ? 1 : 0,
+    1
+  )
+  addExactViolation(
+    violations,
+    'animation.frames.every(frame => frame.computeDispatches === 0)',
+    frames !== undefined && frameComputeDispatches.length === frames.length && frameComputeDispatches.every(sample => sample === 0) ? 1 : 0,
+    1
+  )
+  addExactViolation(
+    violations,
+    'animation.frames.every(frame => frame.motionScheduledBytes === 128000)',
+    frames !== undefined &&
+      frameMotionScheduledBytes.length === frames.length &&
+      frameMotionScheduledBytes.every(sample => sample === expectedActiveMotionBytes)
+      ? 1
+      : 0,
+    1
+  )
+  addExactViolation(
+    violations,
+    'animation.frames.every(frame => frame.colorUploadBytes === 0)',
+    frames !== undefined && frameColorUploadBytes.length === frames.length && frameColorUploadBytes.every(sample => sample === 0) ? 1 : 0,
+    1
+  )
+  addExactViolation(
+    violations,
+    'animation.logicalDynamicUploadBytes === activeMotionBytes * frameCount',
+    logicalDynamicUploadBytes,
+    expectedActiveMotionBytes * measuredFrames.length
+  )
   addExactViolation(violations, 'animation.draws.delta === animation.frames.length', drawCalls.delta, measuredFrames.length)
-  addExactViolation(violations, 'animation.triangles.sampledTotal === 2N * animation.frames.length', triangles.sampledTotal, expectedTriangles * measuredFrames.length)
-  addExactViolation(violations, 'animation.phaseCpu.update has one finite sample per frame', phaseCpu.update.sampleCount === measuredFrames.length && phaseCpu.update.unavailableSamples === 0 ? 1 : 0, 1)
-  addExactViolation(violations, 'animation.phaseCpu.renderInvocation has one finite sample per frame', phaseCpu.renderInvocation.sampleCount === measuredFrames.length && phaseCpu.renderInvocation.unavailableSamples === 0 ? 1 : 0, 1)
-  addExactViolation(violations, 'animation.phaseCpu.afterRender has one finite sample per frame', phaseCpu.afterRender.sampleCount === measuredFrames.length && phaseCpu.afterRender.unavailableSamples === 0 ? 1 : 0, 1)
+  addExactViolation(
+    violations,
+    'animation.triangles.sampledTotal === 2N * animation.frames.length',
+    triangles.sampledTotal,
+    expectedTriangles * measuredFrames.length
+  )
+  addExactViolation(
+    violations,
+    'animation.phaseCpu.update has one finite sample per frame',
+    phaseCpu.update.sampleCount === measuredFrames.length && phaseCpu.update.unavailableSamples === 0 ? 1 : 0,
+    1
+  )
+  addExactViolation(
+    violations,
+    'animation.phaseCpu.renderInvocation has one finite sample per frame',
+    phaseCpu.renderInvocation.sampleCount === measuredFrames.length && phaseCpu.renderInvocation.unavailableSamples === 0 ? 1 : 0,
+    1
+  )
+  addExactViolation(
+    violations,
+    'animation.phaseCpu.afterRender has one finite sample per frame',
+    phaseCpu.afterRender.sampleCount === measuredFrames.length && phaseCpu.afterRender.unavailableSamples === 0 ? 1 : 0,
+    1
+  )
+  addExactViolation(
+    violations,
+    'animation.phaseScheduling.renderCallbackGap has one finite sample per frame',
+    phaseScheduling.renderCallbackGap.sampleCount === measuredFrames.length && phaseScheduling.renderCallbackGap.unavailableSamples === 0 ? 1 : 0,
+    1
+  )
   addExactViolation(violations, 'animation.counters contain mandatory instrumentation', counterInstrumentationFailures, 0)
   // RAF observation is page-global and advisory: Three's retained common renderer
   // keeps lightweight bookkeeping alive without producing particle work.
@@ -1312,15 +1773,31 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
     JSON.stringify(animation.lastMotionKeys) === JSON.stringify(motionDiagnosticKeys) ? 1 : 0,
     1
   )
-  addExactViolation(violations, 'animation.input.explosionCadenceMilliseconds === 700', animationInput.explosionCadenceMilliseconds, animationExplosionCadenceMilliseconds)
+  addExactViolation(
+    violations,
+    'animation.input.explosionCadenceMilliseconds === 700',
+    animationInput.explosionCadenceMilliseconds,
+    animationExplosionCadenceMilliseconds
+  )
   addMinimumViolation(violations, 'animation.input.peakActiveExplosions >= 1', animation.maximumActiveExplosionCount, 1)
   addMaximumViolation(violations, 'animation.input.peakActiveExplosions <= 6', animation.maximumActiveExplosionCount, thresholds.activeExplosionMaximum)
-  addExactViolation(violations, 'animation.input.synchronizedPeakActiveImpulses === 6', animationInput.maximumSynchronizedActiveImpulseCount, thresholds.activeImpulseMaximum)
+  addExactViolation(
+    violations,
+    'animation.input.synchronizedPeakActiveImpulses === 6',
+    animationInput.maximumSynchronizedActiveImpulseCount,
+    thresholds.activeImpulseMaximum
+  )
   addExactViolation(violations, 'animation.performanceSamples.sampleOverflow === 0', counterValue(animation.counters, 'sampleOverflow'), 0)
   if (motion) {
     addExactViolation(violations, 'animation.lastMotion.collisionParticleCount === 512', motion.collisionParticleCount, 512)
     addMaximumViolation(violations, 'animation.lastMotion.particleCount <= parser maximum 16000', motion.particleCount, thresholds.parserParticleMaximum)
-    addRangeViolation(violations, 'animation.lastMotion.idleAmplitudeCss is within 3.5..10', motion.idleAmplitudeCss, thresholds.idleAmplitudeMinimumCss, thresholds.idleAmplitudeMaximumCss)
+    addRangeViolation(
+      violations,
+      'animation.lastMotion.idleAmplitudeCss is within 3.5..10',
+      motion.idleAmplitudeCss,
+      thresholds.idleAmplitudeMinimumCss,
+      thresholds.idleAmplitudeMaximumCss
+    )
     addExactViolation(violations, 'animation.lastMotion.impulseLifetimeSeconds === 1.4', motion.impulseLifetimeSeconds, thresholds.impulseLifetimeSeconds)
     addExactViolation(violations, 'animation.lastMotion.maxImpulseTravelCss === 42', motion.maxImpulseTravelCss, thresholds.maxImpulseTravelCss)
     addExactViolation(violations, 'animation.lastMotion.neighborForceRatio === 0.72', motion.neighborForceRatio, thresholds.neighborForceRatio)
@@ -1336,14 +1813,24 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   const capabilityFlags = Array.isArray(projectMetadata.webgpuCapabilityFlags)
     ? projectMetadata.webgpuCapabilityFlags.filter((flag: unknown): flag is string => typeof flag === 'string')
     : []
-  const capabilityFlagsPurpose = typeof projectMetadata.webgpuCapabilityFlagsPurpose === 'string'
-    ? projectMetadata.webgpuCapabilityFlagsPurpose
-    : 'runner-capability-enablement-only'
+  const capabilityFlagsPurpose =
+    typeof projectMetadata.webgpuCapabilityFlagsPurpose === 'string' ? projectMetadata.webgpuCapabilityFlagsPurpose : 'runner-capability-enablement-only'
+  const launchFlags = Array.isArray(projectMetadata.launchFlags)
+    ? projectMetadata.launchFlags.filter((flag: unknown): flag is string => typeof flag === 'string')
+    : []
+  const launchFlagsPurpose = typeof projectMetadata.launchFlagsPurpose === 'string' ? projectMetadata.launchFlagsPurpose : 'backend-selection'
+  const headless =
+    typeof testInfo.project.use.headless === 'boolean'
+      ? testInfo.project.use.headless
+      : typeof projectMetadata.headless === 'boolean'
+        ? projectMetadata.headless
+        : true
+  const graphicsClassification = classifyGraphicsIdentity(performanceProfile, environmentMetadata.graphics)
   const report = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     status: violations.length === 0 ? 'passed' : 'failed',
     generatedAt: new Date().toISOString(),
-    options: { requestedBackend, project: testInfo.project.name },
+    options: { requestedBackend, project: testInfo.project.name, performanceProfile },
     backend: {
       requestedBackend,
       effectiveBackend: effective,
@@ -1351,6 +1838,7 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
       failedBackendDiagnostics,
       effectiveBackendsObserved: measuredEffectiveBackends,
       strictIdentityMatch: backendIdentityMatch,
+      identityClassification: graphicsClassification.classification,
       failureDenominator: failedBackendDiagnostics.length + firstFrameTimeouts
     },
     environment: {
@@ -1360,7 +1848,22 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
       arch: process.arch,
       viewport: actualViewport,
       deviceScaleFactor: actualDeviceScaleFactor,
-      ...environmentMetadata,
+      userAgent: environmentMetadata.userAgent,
+      platform: environmentMetadata.platform,
+      language: environmentMetadata.language,
+      hardwareConcurrency: environmentMetadata.hardwareConcurrency,
+      timeOrigin: environmentMetadata.timeOrigin,
+      canvas: environmentMetadata.canvas,
+      graphics: {
+        ...environmentMetadata.graphics,
+        classification: graphicsClassification.classification,
+        actualIdentityAvailable: graphicsClassification.actualIdentityAvailable,
+        softwareHint: graphicsClassification.softwareHint
+      },
+      headless,
+      browserMode: headless ? 'headless' : 'headful',
+      launchFlags,
+      launchFlagsPurpose,
       capabilityFlags,
       capabilityFlagsPurpose,
       cacheScope: 'fresh-browser-context',
@@ -1373,13 +1876,15 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
       gpuCacheState: 'uncontrolled',
       timeoutMilliseconds: firstFrameTimeoutMilliseconds,
       runs: firstFrameRuns,
-      failures: coldRuns.filter(run => run.timedOut).map(run => ({
-        run: run.run,
-        timedOut: run.timedOut,
-        requestedBackend: run.measurement.requestedBackend,
-        effectiveBackend: effectiveBackend(run.measurement),
-        backendDiagnostics: [...diagnostics(run.measurement)]
-      })),
+      failures: coldRuns
+        .filter(run => run.timedOut)
+        .map(run => ({
+          run: run.run,
+          timedOut: run.timedOut,
+          requestedBackend: run.measurement.requestedBackend,
+          effectiveBackend: effectiveBackend(run.measurement),
+          backendDiagnostics: [...diagnostics(run.measurement)]
+        })),
       failureDenominator: coldRuns.length,
       timeouts: firstFrameTimeouts,
       samplesMilliseconds: firstFrameSamplesMilliseconds,
@@ -1389,14 +1894,8 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
         timedOut: run.timedOut,
         firstFrameMilliseconds: run.firstFrameMilliseconds,
         startup: run.measurement.startup,
-        firstSubmissionLatencyMilliseconds: latencyMilliseconds(
-          run.measurement.startup?.enhancementScheduledAt,
-          run.measurement.startup?.firstSubmissionAt
-        ),
-        visibleCommitLatencyMilliseconds: latencyMilliseconds(
-          run.measurement.startup?.enhancementScheduledAt,
-          run.measurement.startup?.visibleCommitAt
-        ),
+        firstSubmissionLatencyMilliseconds: latencyMilliseconds(run.measurement.startup?.enhancementScheduledAt, run.measurement.startup?.firstSubmissionAt),
+        visibleCommitLatencyMilliseconds: latencyMilliseconds(run.measurement.startup?.enhancementScheduledAt, run.measurement.startup?.visibleCommitAt),
         requestedBackend: run.measurement.requestedBackend,
         effectiveBackend: effectiveBackend(run.measurement),
         backendDiagnostics: [...diagnostics(run.measurement)]
@@ -1436,6 +1935,9 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
       callbackCount: animation.callbackCount,
       callbackCpuMilliseconds: animation.callbackCpuMilliseconds,
       callbackCpuNearestRankP95Milliseconds: callbackCpuP95Milliseconds,
+      renderCallbackGapMilliseconds,
+      renderCallbackGapNearestRankP95Milliseconds: phaseScheduling.renderCallbackGap.nearestRankP95Milliseconds,
+      phaseScheduling,
       phaseCpu,
       frames,
       frameSampleFailureDenominator: frames?.length,
@@ -1453,7 +1955,7 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
         activeUploadMetricsAdvisory: true,
         colorUploadBytes
       },
-      ...(gpuTiming === undefined ? {} : { gpuTiming }),
+      gpuTiming,
       counters: animation.counters,
       firstSubmissionAt: startup?.firstSubmissionAt,
       lastMotion: motion

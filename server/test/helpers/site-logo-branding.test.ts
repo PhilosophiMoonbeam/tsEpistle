@@ -1,12 +1,15 @@
 import { createHash } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
+import { processSiteLogoSource } from '../../helpers/site-logo-processing.ts'
 import { type ActiveBranding, resolveActiveBranding } from '../../helpers/site-logo-branding.ts'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { alphaAwareIconFixture } from './site-logo-processing.fixtures.ts'
 
 const HEADER_BYTES = 56
 const BYTES_PER_PARTICLE = 12
 
 const digest = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
+const hasIconBundle = (pipelineVersion: number): boolean => pipelineVersion === 6 || pipelineVersion === 7
 
 const crc32 = (bytes: Buffer): number => {
   let crc = 0xffffffff
@@ -168,21 +171,24 @@ describe('resolved site-logo branding', () => {
     auraColor?: string
     pipelineVersion?: number
     withEffect?: boolean
+    iconBytes?: readonly Buffer[]
+    faviconIco?: Buffer
   }): Promise<Bundle> => {
     const pipelineVersion = input.pipelineVersion ?? 3
     const withEffect = input.withEffect ?? pipelineVersion !== 6
+    const hasIcons = hasIconBundle(pipelineVersion)
     const logoBytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.from(`logo-${input.variant}`)])
     const iconNames = ['favicon16', 'favicon32', 'tile150', 'apple180', 'app192', 'app512', 'maskable512'] as const
-    const iconBytes = iconNames.map(name => Buffer.from(`icon-${name}-${input.variant}`))
-    const faviconIco = Buffer.from(`ico-${input.variant}`)
+    const iconBytes = input.iconBytes ?? iconNames.map(name => Buffer.from(`icon-${name}-${input.variant}`))
+    const faviconIco = input.faviconIco ?? Buffer.from(`ico-${input.variant}`)
     const particles = withEffect ? particleObject(input.width, input.height, input.count, input.variant) : null
     const staticBytes = withEffect ? Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.from(`static-${input.variant}`)]) : null
     const bundle: Bundle = {
       revisionId: input.revisionId,
       pipelineVersion,
       logoHash: digest(logoBytes),
-      iconHashes: pipelineVersion === 6 ? iconBytes.map(digest) : null,
-      faviconIcoHash: pipelineVersion === 6 ? digest(faviconIco) : null,
+      iconHashes: hasIcons ? iconBytes.map(digest) : null,
+      faviconIcoHash: hasIcons ? digest(faviconIco) : null,
       particleHash: particles === null ? null : digest(particles),
       staticHash: staticBytes === null ? null : digest(staticBytes),
       width: input.width,
@@ -199,7 +205,7 @@ describe('resolved site-logo branding', () => {
         byteLength: logoBytes.byteLength,
         contentType: 'image/png'
       },
-      ...(pipelineVersion === 6
+      ...(hasIcons
         ? [
             ...iconBytes.map((bytes, index) => ({
               kind: 'icon-png',
@@ -242,7 +248,7 @@ describe('resolved site-logo branding', () => {
       pipelineVersion: bundle.pipelineVersion,
       logoPngKind: 'logo-png',
       logoPngHash: bundle.logoHash,
-      iconPngKind: pipelineVersion === 6 ? 'icon-png' : null,
+      iconPngKind: hasIcons ? 'icon-png' : null,
       favicon16Hash: bundle.iconHashes?.[0] ?? null,
       favicon32Hash: bundle.iconHashes?.[1] ?? null,
       tile150Hash: bundle.iconHashes?.[2] ?? null,
@@ -250,7 +256,7 @@ describe('resolved site-logo branding', () => {
       app192Hash: bundle.iconHashes?.[4] ?? null,
       app512Hash: bundle.iconHashes?.[5] ?? null,
       maskable512Hash: bundle.iconHashes?.[6] ?? null,
-      faviconIcoKind: pipelineVersion === 6 ? 'favicon-ico' : null,
+      faviconIcoKind: hasIcons ? 'favicon-ico' : null,
       faviconIcoHash: bundle.faviconIcoHash,
       particleV1Kind: particles === null ? null : 'particle-v1',
       particleV1Hash: bundle.particleHash,
@@ -294,7 +300,7 @@ describe('resolved site-logo branding', () => {
     expect(await resolveActiveBranding(db, '/assets/legacy.svg')).toEqual(expectedBranding(active))
   })
 
-  it.each([0, 1.5, 7])('falls back to ordinary legacy branding for unsupported pipeline version %s', async pipelineVersion => {
+  it.each([0, 1.5, 8])('falls back to ordinary legacy branding for unsupported pipeline version %s', async pipelineVersion => {
     const active = await insertReadyBundle({
       revisionId: '00000000-0000-4000-8000-00000000000a',
       variant: 1,
@@ -328,6 +334,40 @@ describe('resolved site-logo branding', () => {
     expect(branding.logoIcons).not.toBeNull()
     expect(Object.isFrozen(branding)).toBe(true)
     expect(Object.isFrozen(branding.logoIcons)).toBe(true)
+  })
+  it('publishes pipeline-v7 icon URLs from the exact transparent-role artifacts while retaining opaque Apple and maskable artifacts', async () => {
+    const source = await alphaAwareIconFixture()
+    const artifacts = await processSiteLogoSource(source, digest(source))
+    const iconBytes = ['favicon16', 'favicon32', 'tile150', 'apple180', 'app192', 'app512', 'maskable512'].map(
+      name => artifacts.icons[name as keyof typeof artifacts.icons]
+    )
+    const active = await insertReadyBundle({
+      revisionId: '00000000-0000-4000-8000-000000000070',
+      variant: 70,
+      width: 640,
+      height: 320,
+      count: 2,
+      medianStroke: 4,
+      pipelineVersion: 7,
+      iconBytes,
+      faviconIco: artifacts.faviconIco
+    })
+    await db('siteLogoState').where({ id: 1 }).update({ activeRevisionId: active.revisionId, desiredRevisionId: active.revisionId })
+
+    const branding = await resolveActiveBranding(db, '/assets/legacy.svg')
+    expect(branding.logoIcons).toEqual({
+      favicon16Url: `/_site-logo/${digest(artifacts.icons.favicon16)}/icon.png`,
+      favicon32Url: `/_site-logo/${digest(artifacts.icons.favicon32)}/icon.png`,
+      tile150Url: `/_site-logo/${digest(artifacts.icons.tile150)}/icon.png`,
+      apple180Url: `/_site-logo/${digest(artifacts.icons.apple180)}/icon.png`,
+      app192Url: `/_site-logo/${digest(artifacts.icons.app192)}/icon.png`,
+      app512Url: `/_site-logo/${digest(artifacts.icons.app512)}/icon.png`,
+      maskable512Url: `/_site-logo/${digest(artifacts.icons.maskable512)}/icon.png`,
+      faviconIcoUrl: `/_site-logo/${digest(artifacts.faviconIco)}/favicon.ico`
+    })
+    expect(branding.logoEffect?.logoUrl).toBe(branding.logoUrl)
+    expect(branding.logoIcons?.favicon16Url).not.toBe(branding.logoIcons?.apple180Url)
+    expect(branding.logoIcons?.app512Url).not.toBe(branding.logoIcons?.maskable512Url)
   })
 
   it('projects a v6 effect only when its complete enhancement is valid', async () => {

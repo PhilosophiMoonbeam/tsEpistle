@@ -156,6 +156,15 @@ export const transparentMulticolorDetachedFixture = async (): Promise<Buffer> =>
   paintCircle(data, width, 1040, 100, 56, [245, 180, 30, 255])
   return await encodeRgbaFixture(data, width, height, 'webp-alpha')
 }
+export const alphaAwareIconFixture = async (): Promise<Buffer> => {
+  const width = 256
+  const height = 256
+  const data = rgbaImage(width, height, [0, 0, 0, 0])
+  paintRectangle(data, width, 48, 48, 208, 208, [17, 83, 191, 255])
+  paintRectangle(data, width, 96, 96, 160, 160, [220, 40, 60, 128])
+  return await encodeRgbaFixture(data, width, height, 'png-alpha')
+}
+
 export const lowResolutionDetailedEmblemFixture = async (): Promise<Buffer> => {
   const width = 481
   const height = 481
