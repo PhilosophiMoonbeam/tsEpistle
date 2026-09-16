@@ -23,6 +23,7 @@ describe('Compose upgrade command', () => {
     expect(script).not.toContain('volume prune')
     expect(script).not.toContain('--renew-anon-volumes')
     expect(script).not.toMatch(/pg_restore[^\n]*--clean/u)
+    expect(script).not.toMatch(/^\s*\(\([^\n]+\)\)\s*&&/mu)
     expect(script).toContain('up -d --no-deps --no-build --force-recreate')
     expect(script).toContain('--volumes-from "$APP_CONTAINER":ro')
     expect(script).toContain('apk add --no-cache docker-cli docker-cli-buildx git')

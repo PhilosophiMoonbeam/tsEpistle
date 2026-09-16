@@ -235,9 +235,9 @@ make_plan() {
       (.runtimePostconditions | type == "array") and
       ((.rehearsalPostconditions | length) + (.runtimePostconditions | length) > 0)
     ' <<< "$contract" >/dev/null || die "Incomplete deployment contract: $migration_name"
-    [[ "$(jq -r '.rehearsal' <<< "$contract")" == required ]] && rehearsal=true
-    [[ "$(jq -r '.recovery' <<< "$contract")" == paired ]] && recovery=true
-    [[ "$(jq -r '.rollback' <<< "$contract")" == fix-forward-or-restore ]] && rollback='fix-forward-or-restore'
+    if [[ "$(jq -r '.rehearsal' <<< "$contract")" == required ]]; then rehearsal=true; fi
+    if [[ "$(jq -r '.recovery' <<< "$contract")" == paired ]]; then recovery=true; fi
+    if [[ "$(jq -r '.rollback' <<< "$contract")" == fix-forward-or-restore ]]; then rollback='fix-forward-or-restore'; fi
   done < <(jq -r '.[]' <<< "$pending")
 
   if jq -e 'any(.[]; test("^(deploy/compose/compose\\.yml|dev/build/Dockerfile|server/(agents/(crypto|provider-secrets|profile-resolution)|modules/storage|repositories/storage|core/durable-jobs)|shared/agent-provider)"))' <<< "$changed_files" >/dev/null; then
@@ -494,7 +494,7 @@ start_candidate() {
   OLD_APP_STOPPED=false
   local count
   count="$(psql_live -Atc 'SELECT count(*) FROM migrations;')"
-  (( count > $(jq -r '.migrationLedger.count' "$PLAN_FILE") )) && MIGRATION_COMMITTED=true
+  if (( count > $(jq -r '.migrationLedger.count' "$PLAN_FILE") )); then MIGRATION_COMMITTED=true; fi
 }
 
 verify_candidate() {
