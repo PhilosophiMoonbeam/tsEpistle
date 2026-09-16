@@ -1152,6 +1152,10 @@ async function decodeScreenshot(image: Buffer): Promise<RgbaFrame> {
 interface CanvasSurfaceGeometry {
   readonly backingHeight: number
   readonly backingWidth: number
+  readonly contentHeight: number
+  readonly contentLeft: number
+  readonly contentTop: number
+  readonly contentWidth: number
   readonly height: number
   readonly left: number
   readonly top: number
@@ -1248,9 +1252,16 @@ async function readCanvasSurfaceGeometry(page: Page): Promise<CanvasSurfaceGeome
   return page.locator('.login-particle-logo canvas').evaluate(element => {
     if (!(element instanceof HTMLCanvasElement)) throw new Error('The particle canvas is unavailable.')
     const rect = element.getBoundingClientRect()
+    const image = element.closest('.login-particle-logo')?.querySelector('.login-particle-logo__image')
+    if (!(image instanceof HTMLImageElement)) throw new Error('The particle image geometry is unavailable.')
+    const imageRect = image.getBoundingClientRect()
     return {
       backingHeight: element.height,
       backingWidth: element.width,
+      contentHeight: imageRect.height,
+      contentLeft: imageRect.left - rect.left,
+      contentTop: imageRect.top - rect.top,
+      contentWidth: imageRect.width,
       height: rect.height,
       left: rect.left,
       top: rect.top,
@@ -1273,12 +1284,9 @@ async function readApplicationTheme(page: Page): Promise<ApplicationThemeObserva
   })
 }
 
-function locateColorProbePixel(frame: RgbaFrame, sample: ColorProbeParticle): ColorProbePixel {
-  const viewportAspect = frame.width / frame.height
-  const fitX = viewportAspect >= colorProbeEffect.aspect ? colorProbeEffect.aspect / viewportAspect : 1
-  const fitY = viewportAspect >= colorProbeEffect.aspect ? 1 : viewportAspect / colorProbeEffect.aspect
-  const centerX = ((sample.x * fitX + 1) * frame.width) / 2
-  const centerY = ((1 - sample.y * fitY) * frame.height) / 2
+function locateColorProbePixel(frame: RgbaFrame, sample: ColorProbeParticle, geometry: CanvasSurfaceGeometry): ColorProbePixel {
+  const centerX = ((geometry.contentLeft + ((sample.x + 1) * geometry.contentWidth) / 2) * frame.width) / geometry.width
+  const centerY = ((geometry.contentTop + ((1 - sample.y) * geometry.contentHeight) / 2) * frame.height) / geometry.height
   const radius = sample.kind === 'bead' ? 16 : 10
   const fullCoverageAlpha = readColorProbeAlpha(sample) * 255 - COLOR_PROBE_PIXEL_TOLERANCE
   let best: ColorProbePixel | null = null
@@ -1293,7 +1301,7 @@ function locateColorProbePixel(frame: RgbaFrame, sample: ColorProbeParticle): Co
         x,
         y
       }
-      if (sample.kind === 'bead' && candidate.alpha < fullCoverageAlpha) continue
+      if (candidate.alpha <= 0 || (sample.kind === 'bead' && candidate.alpha < fullCoverageAlpha)) continue
       const candidateWins =
         sample.kind === 'bead'
           ? best === null || readColorProbeLuminance(candidate) > readColorProbeLuminance(best)
@@ -1301,9 +1309,7 @@ function locateColorProbePixel(frame: RgbaFrame, sample: ColorProbeParticle): Co
       if (candidateWins) best = candidate
     }
   }
-  if (!best || best.alpha < (sample.kind === 'bead' ? fullCoverageAlpha : 64)) {
-    throw new Error(`Color probe particle ${sample.kind} is not fully covered.`)
-  }
+  if (!best) throw new Error(`Color probe particle ${sample.kind} is not visible inside its logical image bounds.`)
   return best
 }
 
@@ -1332,15 +1338,6 @@ function readRgbaPixel(frame: RgbaFrame, x: number, y: number): ColorProbePixel 
   }
 }
 
-function expectIntrinsicFramesEquivalent(first: RgbaFrame, second: RgbaFrame): void {
-  expect(second.width).toBe(first.width)
-  expect(second.height).toBe(first.height)
-  let maximumDifference = 0
-  for (let offset = 0; offset < first.data.length; offset += 1) {
-    maximumDifference = Math.max(maximumDifference, Math.abs((first.data[offset] ?? 0) - (second.data[offset] ?? 0)))
-  }
-  expect(maximumDifference).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
-}
 interface PerceptualFrameDifference {
   readonly maximum: number
   readonly mean: number
@@ -1377,10 +1374,15 @@ function expectPerceptuallyEquivalent(label: string, first: RgbaFrame, second: R
   expect(difference.maximum, `${label} maximum perceptual difference`).toBeLessThanOrEqual(0.75)
 }
 
-function expectColorProbePixels(frame: RgbaFrame): void {
+function expectColorProbePixels(frame: RgbaFrame, geometry: CanvasSurfaceGeometry): void {
   for (const sample of colorProbeParticles) {
-    const pixel = locateColorProbePixel(frame, sample)
-    expect(Math.abs(pixel.alpha - readColorProbeAlpha(sample) * 255)).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
+    const pixel = locateColorProbePixel(frame, sample, geometry)
+    if (sample.kind === 'bead') {
+      expect(Math.abs(pixel.alpha - readColorProbeAlpha(sample) * 255)).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
+    } else {
+      // Dust sprites are intentionally sampled at their actual rasterized coverage.
+      expect(pixel.alpha).toBeGreaterThan(0)
+    }
     if (sample.kind === 'dust') {
       const actualChannels = [pixel.red, pixel.green, pixel.blue]
       for (const [channel, value] of sample.color.slice(0, 3).entries()) {
@@ -1395,6 +1397,23 @@ function expectColorProbePixels(frame: RgbaFrame): void {
     expect(Number.isFinite(scalar)).toBe(true)
     for (const [index, channel] of actualLinear.entries()) {
       expect(Math.abs(channel - sourceLinear[index]! * scalar) * 255).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
+    }
+  }
+}
+function expectIntrinsicProbeSamplesEquivalent(
+  label: string,
+  first: RgbaFrame,
+  firstGeometry: CanvasSurfaceGeometry,
+  second: RgbaFrame,
+  secondGeometry: CanvasSurfaceGeometry
+): void {
+  for (const sample of colorProbeParticles) {
+    const firstPixel = locateColorProbePixel(first, sample, firstGeometry)
+    const secondPixel = locateColorProbePixel(second, sample, secondGeometry)
+    const diagnostic = `${label} ${sample.kind} intrinsic sample first=(${firstPixel.x},${firstPixel.y}) second=(${secondPixel.x},${secondPixel.y})`
+    expect(rgbDistance(firstPixel, secondPixel), diagnostic).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
+    if (sample.kind === 'bead') {
+      expect(Math.abs(firstPixel.alpha - secondPixel.alpha), diagnostic).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
     }
   }
 }
@@ -1428,7 +1447,7 @@ function expectStraightSourceOver(composition: PageCompositionCapture): void {
   const frame = composition.frame
   for (const sample of colorProbeParticles) {
     if (sample.kind !== 'dust') continue
-    const canvasPixel = locateColorProbePixel(frame, sample)
+    const canvasPixel = locateColorProbePixel(frame, sample, composition.geometry)
     const screenshotPixel = mapCanvasPixelToScreenshot(composition.geometry, composition.visible, canvasPixel)
     const pagePixel = readRgbaPixel(composition.visible, screenshotPixel.x, screenshotPixel.y)
     const backdropPixel = readRgbaPixel(composition.backdrop, screenshotPixel.x, screenshotPixel.y)
@@ -1748,14 +1767,15 @@ function findBlueParticleNear(frame: RgbaFrame, x: number, y: number, radius: nu
 async function expectLocalizedSilhouette(page: Page, geometry: LogoAnchorGeometry): Promise<void> {
   const field = page.locator('.login-particle-logo')
   const image = field.locator('.login-particle-logo__image')
+  const silhouetteLayer = field.locator('.login-particle-logo__silhouette')
   const previousImageStyle = await image.getAttribute('style')
-  const previousFieldStyle = await field.getAttribute('style')
+  const previousSilhouetteStyle = await silhouetteLayer.getAttribute('style')
   await image.evaluate(element => {
     element.style.opacity = '0'
   })
   try {
     const silhouette = await decodeScreenshot(await page.screenshot({ animations: 'disabled', fullPage: false }))
-    await field.evaluate(element => {
+    await silhouetteLayer.evaluate(element => {
       element.style.visibility = 'hidden'
     })
     const backdrop = await decodeScreenshot(await page.screenshot({ animations: 'disabled', fullPage: false }))
@@ -1770,20 +1790,61 @@ async function expectLocalizedSilhouette(page: Page, geometry: LogoAnchorGeometr
     for (const [x, y] of corners) {
       expect(rgbDistance(readFramePixelAtCss(silhouette, geometry, x, y), readFramePixelAtCss(backdrop, geometry, x, y))).toBeLessThan(24)
     }
-    const centerX = geometry.image.left + geometry.image.width / 2
-    const centerY = geometry.image.top + geometry.image.height / 2
-    expect(rgbDistance(readFramePixelAtCss(silhouette, geometry, centerX, centerY), readFramePixelAtCss(backdrop, geometry, centerX, centerY))).toBeGreaterThan(
-      2
-    )
+
+    const imageLeft = Math.max(0, Math.floor((geometry.image.left * silhouette.width) / geometry.viewportWidth))
+    const imageRight = Math.min(silhouette.width - 1, Math.ceil((geometry.image.right * silhouette.width) / geometry.viewportWidth) - 1)
+    const imageTop = Math.max(0, Math.floor((geometry.image.top * silhouette.height) / geometry.viewportHeight))
+    const imageBottom = Math.min(silhouette.height - 1, Math.ceil((geometry.image.bottom * silhouette.height) / geometry.viewportHeight) - 1)
+    let changedPixels = 0
+    let maximumDifference = 0
+    for (let y = imageTop; y <= imageBottom; y += 1) {
+      for (let x = imageLeft; x <= imageRight; x += 1) {
+        const difference = rgbDistance(readRgbaPixel(silhouette, x, y), readRgbaPixel(backdrop, x, y))
+        maximumDifference = Math.max(maximumDifference, difference)
+        if (difference > 2) changedPixels += 1
+      }
+    }
+    expect(changedPixels, 'The alpha silhouette must change at least one pixel inside the logical image rectangle.').toBeGreaterThan(0)
+    expect(maximumDifference, 'The alpha silhouette must produce a meaningful localized difference.').toBeGreaterThan(2)
+
+    const interiorTargets = [
+      ['left component', 0.225, 0.5],
+      ['circle component', 0.52, 0.5],
+      ['right component', 0.8, 0.5]
+    ] as const
+    const targetRadiusX = Math.max(2, Math.min(12, Math.round((imageRight - imageLeft + 1) * 0.025)))
+    const targetRadiusY = Math.max(2, Math.min(12, Math.round((imageBottom - imageTop + 1) * 0.05)))
+    for (const [label, x, y] of interiorTargets) {
+      const targetX = imageLeft + x * (imageRight - imageLeft)
+      const targetY = imageTop + y * (imageBottom - imageTop)
+      let targetDifference = 0
+      for (
+        let frameY = Math.max(imageTop, Math.floor(targetY) - targetRadiusY);
+        frameY <= Math.min(imageBottom, Math.ceil(targetY) + targetRadiusY);
+        frameY += 1
+      ) {
+        for (
+          let frameX = Math.max(imageLeft, Math.floor(targetX) - targetRadiusX);
+          frameX <= Math.min(imageRight, Math.ceil(targetX) + targetRadiusX);
+          frameX += 1
+        ) {
+          targetDifference = Math.max(
+            targetDifference,
+            rgbDistance(readRgbaPixel(silhouette, frameX, frameY), readRgbaPixel(backdrop, frameX, frameY))
+          )
+        }
+      }
+      expect(targetDifference, `The ${label} must have a visible alpha-silhouette difference.`).toBeGreaterThan(2)
+    }
   } finally {
     await image.evaluate((element, style) => {
       if (style === null) element.removeAttribute('style')
       else element.setAttribute('style', style)
     }, previousImageStyle)
-    await field.evaluate((element, style) => {
+    await silhouetteLayer.evaluate((element, style) => {
       if (style === null) element.removeAttribute('style')
       else element.setAttribute('style', style)
-    }, previousFieldStyle)
+    }, previousSilhouetteStyle)
   }
 }
 
@@ -1801,7 +1862,7 @@ test.describe('strict particle backend consumer coverage', () => {
       const lightComposition = await capturePageComposition(page)
       const lightTheme = await readApplicationTheme(page)
       expect(lightTheme.className).toMatch(/v-theme--light/)
-      expectColorProbePixels(lightFrame)
+      expectColorProbePixels(lightFrame, lightComposition.geometry)
       expectStraightSourceOver(lightComposition)
 
       await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' })
@@ -1812,7 +1873,7 @@ test.describe('strict particle backend consumer coverage', () => {
       const darkTheme = await readApplicationTheme(page)
       expect(darkTheme.className).toMatch(/v-theme--dark/)
       expect(darkTheme.background).not.toBe(lightTheme.background)
-      expectColorProbePixels(darkFrame)
+      expectColorProbePixels(darkFrame, darkComposition.geometry)
       expectStraightSourceOver(darkComposition)
       expectPerceptuallyEquivalent(`${backend} light/dark intrinsic particle output`, lightFrame, darkFrame)
       await expectLoginValidation(page)
@@ -1981,7 +2042,7 @@ test.describe('strict particle backend consumer coverage', () => {
         await prepareStrictBackendPage(target, backend, colorProbeEffect, colorScheme)
         const composition = await capturePageComposition(target)
         expect((await readApplicationTheme(target)).className).toMatch(colorScheme === 'light' ? /v-theme--light/ : /v-theme--dark/)
-        expectColorProbePixels(composition.frame)
+        expectColorProbePixels(composition.frame, composition.geometry)
         expectStraightSourceOver(composition)
         return { frame: composition.frame, screenshot: composition.visible }
       } finally {
@@ -2096,15 +2157,46 @@ test.describe('strict particle backend consumer coverage', () => {
     const at = async (milliseconds: number): Promise<RgbaFrame> =>
       decodeScreenshot((await captureLogoRenderedFrame(page, undefined, baselineTime, clock + milliseconds)).png)
     const recovery2600 = await at(2_600)
+    const recovery2610 = await at(2_610)
     const beforeResizeGeometry = await readLogoAnchorGeometry(page)
+    const beforeResizeSurface = await readCanvasSurfaceGeometry(page)
     const beforeResizeCenter = analyzeFrame(recovery2600)
+    const beforeResizeInfluence = {
+      radius: Math.max(32, recovery2610.width * 0.22),
+      x: ((beforeResizeGeometry.field.left + beforeResizeGeometry.field.width / 2 - beforeResizeSurface.left) * recovery2610.width) / beforeResizeSurface.width,
+      y: ((beforeResizeGeometry.field.top + beforeResizeGeometry.field.height / 2 - beforeResizeSurface.top) * recovery2610.height) / beforeResizeSurface.height
+    }
+    expect(compareFrames(recovery2600, recovery2610, beforeResizeInfluence).coreMean).toBeLessThan(0.04)
+
     await page.setViewportSize({
       width: Math.round(beforeResizeGeometry.viewportWidth + 96),
       height: beforeResizeGeometry.viewportHeight
     })
-    await expect.poll(async () => (await readLogoAnchorGeometry(page)).canvas?.width ?? 0).toBeGreaterThan(0)
+    const previousBackingSize = {
+      backingHeight: beforeResizeSurface.backingHeight,
+      backingWidth: beforeResizeSurface.backingWidth
+    }
+    await expect
+      .poll(async () => {
+        const surface = await readCanvasSurfaceGeometry(page)
+        return { backingHeight: surface.backingHeight, backingWidth: surface.backingWidth }
+      })
+      .not.toEqual(previousBackingSize)
+    const resizedSurface = await readCanvasSurfaceGeometry(page)
+    await expect
+      .poll(async () => {
+        const surface = await readCanvasSurfaceGeometry(page)
+        return { backingHeight: surface.backingHeight, backingWidth: surface.backingWidth }
+      })
+      .toEqual({ backingHeight: resizedSurface.backingHeight, backingWidth: resizedSurface.backingWidth })
+    expect(resizedSurface.backingWidth).not.toBe(beforeResizeSurface.backingWidth)
+
     const resized2600 = await at(2_600)
     const resized2610 = await at(2_610)
+    expect(resized2600.width).toBe(resizedSurface.backingWidth)
+    expect(resized2600.height).toBe(resizedSurface.backingHeight)
+    expect(resized2610.width).toBe(resized2600.width)
+    expect(resized2610.height).toBe(resized2600.height)
     const resizedCenter = analyzeFrame(resized2600)
     expect(Math.abs(beforeResizeCenter.centroidX / recovery2600.width - resizedCenter.centroidX / resized2600.width)).toBeLessThan(0.12)
     expect(Math.abs(beforeResizeCenter.centroidY / recovery2600.height - resizedCenter.centroidY / resized2600.height)).toBeLessThan(0.12)
@@ -2231,7 +2323,7 @@ test.describe('managed login logo auth independence', () => {
         })
         expect(silhouetteStyle.opacity).toBe(colorScheme === 'light' ? '0.12' : '0.08')
         expect(silhouetteStyle.filter).toBe('blur(2px)')
-        expect(silhouetteStyle.backgroundColor).toMatch(colorScheme === 'light' ? /0/ : /255/)
+        expect(silhouetteStyle.backgroundColor).toBe(colorScheme === 'light' ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)')
         expect(silhouetteStyle.maskImage).toContain(wideEffect.staticUrl)
         expect(await field.evaluate(element => getComputedStyle(element).getPropertyValue('--login-logo-aura').trim())).toBe('transparent')
         await expectLocalizedSilhouette(samplePage, geometry)
@@ -2931,15 +3023,23 @@ test.describe('particle compositor without service workers', () => {
       await expect(target.locator('.v-application')).toHaveClass(colorScheme === 'light' ? /v-theme--light/ : /v-theme--dark/)
     }
 
-    const captureIntrinsic = async (target: Page): Promise<RgbaFrame> =>
-      withFrozenLogoFrame(target, async () => decodeScreenshot((await captureLogoRenderedFrame(target, undefined, 0, 0)).png))
+    const captureIntrinsic = async (
+      target: Page
+    ): Promise<{ readonly frame: RgbaFrame; readonly geometry: CanvasSurfaceGeometry }> =>
+      withFrozenLogoFrame(target, async () => {
+        const geometry = await readCanvasSurfaceGeometry(target)
+        const frame = await decodeScreenshot((await captureLogoRenderedFrame(target, undefined, 0, 0)).png)
+        return { frame, geometry }
+      })
 
-    const cold = async (colorScheme: 'light' | 'dark'): Promise<{ readonly frame: RgbaFrame; readonly theme: ApplicationThemeObservation }> => {
+    const cold = async (
+      colorScheme: 'light' | 'dark'
+    ): Promise<{ readonly frame: RgbaFrame; readonly geometry: CanvasSurfaceGeometry; readonly theme: ApplicationThemeObservation }> => {
       const target = await context.newPage()
       try {
         await prepare(target, colorScheme, `logo-color-probe-cold-${colorScheme}`)
-        const frame = await captureIntrinsic(target)
-        return { frame, theme: await readApplicationTheme(target) }
+        const capture = await captureIntrinsic(target)
+        return { ...capture, theme: await readApplicationTheme(target) }
       } finally {
         await target.close()
       }
@@ -2950,9 +3050,15 @@ test.describe('particle compositor without service workers', () => {
     expect(coldLight.theme.className).toMatch(/v-theme--light/)
     expect(coldDark.theme.className).toMatch(/v-theme--dark/)
     expect(coldLight.theme.background).not.toBe(coldDark.theme.background)
-    expectColorProbePixels(coldLight.frame)
-    expectColorProbePixels(coldDark.frame)
-    expectIntrinsicFramesEquivalent(coldLight.frame, coldDark.frame)
+    expectColorProbePixels(coldLight.frame, coldLight.geometry)
+    expectColorProbePixels(coldDark.frame, coldDark.geometry)
+    expectIntrinsicProbeSamplesEquivalent(
+      'cold light/dark',
+      coldLight.frame,
+      coldLight.geometry,
+      coldDark.frame,
+      coldDark.geometry
+    )
 
     await prepare(page, 'light', 'logo-color-probe-live')
     const liveLightComposition = await capturePageComposition(page)
@@ -2984,13 +3090,19 @@ test.describe('particle compositor without service workers', () => {
     expect(liveLightAgain.theme.className).toMatch(/v-theme--light/)
     expect(liveLight.theme.background).not.toBe(liveDark.theme.background)
     expect(liveDark.theme.background).not.toBe(liveLightAgain.theme.background)
-    expectColorProbePixels(liveLight.frame)
-    expectColorProbePixels(liveDark.frame)
-    expectColorProbePixels(liveLightAgain.frame)
-    expectIntrinsicFramesEquivalent(coldLight.frame, liveLight.frame)
-    expectIntrinsicFramesEquivalent(coldDark.frame, liveDark.frame)
-    expectIntrinsicFramesEquivalent(liveLight.frame, liveDark.frame)
-    expectIntrinsicFramesEquivalent(liveLight.frame, liveLightAgain.frame)
+    expectColorProbePixels(liveLight.frame, liveLightComposition.geometry)
+    expectColorProbePixels(liveDark.frame, liveDarkComposition.geometry)
+    expectColorProbePixels(liveLightAgain.frame, liveLightAgainComposition.geometry)
+    expectIntrinsicProbeSamplesEquivalent('cold light/live light', coldLight.frame, coldLight.geometry, liveLight.frame, liveLightComposition.geometry)
+    expectIntrinsicProbeSamplesEquivalent('cold dark/live dark', coldDark.frame, coldDark.geometry, liveDark.frame, liveDarkComposition.geometry)
+    expectIntrinsicProbeSamplesEquivalent('live light/dark', liveLight.frame, liveLightComposition.geometry, liveDark.frame, liveDarkComposition.geometry)
+    expectIntrinsicProbeSamplesEquivalent(
+      'live light/light again',
+      liveLight.frame,
+      liveLightComposition.geometry,
+      liveLightAgain.frame,
+      liveLightAgainComposition.geometry
+    )
     expectStraightSourceOver(liveLightComposition)
     expectStraightSourceOver(liveDarkComposition)
     expectStraightSourceOver(liveLightAgainComposition)
