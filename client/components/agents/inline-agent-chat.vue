@@ -523,7 +523,7 @@ const emit = defineEmits<{
 }>()
 
 const agents = useAgentsStore()
-const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread } = storeToRefs(agents)
+const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void> }>('composer')
@@ -612,11 +612,14 @@ const followJumpVisible = computed(() => Boolean(hasConversation.value && !trans
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
 const providerAvailable = computed(() => props.providerEnabled && profiles.value.length > 0)
 const workspaceReady = computed(() => agents.isWorkspaceReady())
-const connectionBlocked = computed(() =>
+const serverConnectionUnavailable = computed(() =>
   pwaState.connectionState === 'offline' ||
-  pwaState.connectionState === 'server-unavailable' ||
-  networkPaused.value ||
-  waitingForConnection.value
+  pwaState.connectionState === 'server-unavailable'
+)
+const connectionBlocked = computed(() =>
+  serverConnectionUnavailable.value ||
+  waitingForConnection.value ||
+  (networkPaused.value && !workspaceDisposed.value && !loading.value)
 )
 const connectionRequiredMessage = computed(() => {
   if (pwaState.connectionState === 'server-unavailable') return 'Connection required. The server is unavailable right now.'
@@ -765,7 +768,7 @@ const ensureInitialized = (request: InitializationRequest = {}): Promise<boolean
   if (disposed) return Promise.resolve(false)
   const allowCreate = request.allowCreate ?? true
   const authorityKey = `${initializationAuthorityKey()}:create=${allowCreate}`
-  if (!request.bypassConnectionGate && connectionBlocked.value) {
+  if (!request.bypassConnectionGate && serverConnectionUnavailable.value) {
     waitingForConnection.value = true
     return Promise.resolve(false)
   }
@@ -1235,8 +1238,8 @@ const observeTranscript = (container: HTMLElement | null): void => {
 }
 
 watch(transcript, observeTranscript, { flush: 'post' })
-watch(connection, state => {
-  if ((state === 'reconnecting' || state === 'connecting' || state === 'closed') && !loading.value) waitingForConnection.value = true
+watch(networkPaused, paused => {
+  if (!paused && pwaState.connectionState === 'online') waitingForConnection.value = false
 })
 watch(() => pwaState.connectionState, state => {
   if (state === 'offline' || state === 'server-unavailable') {

@@ -4,8 +4,8 @@ import path from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { JSDOM } from 'jsdom'
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import { calculateComposerSizing, caretBoundsFromMirror, scrollTopForCaret } from './agent-composer-sizing.ts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
-import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/inline-agent-chat.vue')
 const componentSource = fs.readFileSync(componentPath, 'utf8')
@@ -143,6 +143,7 @@ interface LockState {
   clearUnfiledCommitted: ValueRef<boolean>
   clearUnfiledError: ValueRef<string>
   clearUnfiledHistory: () => Promise<void>
+  ensureInitialized: () => Promise<boolean>
   clearUnfiledHistoryOpen: ValueRef<boolean>
   newSession: () => Promise<void>
   newTemporarySession: () => Promise<void>
@@ -247,7 +248,8 @@ const loadGoalLockState = (
   status: 'active' | 'paused' | null,
   mutationBusy = false,
   runStatus: 'running' | 'awaiting_approval' | null = status === 'active' ? 'running' : null,
-  canPinCurrentChat = true
+  canPinCurrentChat = true,
+  workspaceClosed = false
 ): LockState => {
   const ref = <T>(value: T): ValueRef<T> => Vue.ref(value) as ValueRef<T>
   const thread = ref({
@@ -275,7 +277,8 @@ const loadGoalLockState = (
     pinStorageAvailable: ref(true),
     profiles: ref([{ id: 'profile-1' }]),
     sending: ref(false),
-    networkPaused: ref(false),
+    networkPaused: ref(workspaceClosed),
+    workspaceDisposed: ref(workspaceClosed),
     sessionMutationBusy: ref(mutationBusy),
     sessions: ref([]),
     skills: ref([]),
@@ -299,7 +302,7 @@ const loadGoalLockState = (
   const agentCalls = {
     clearUnfiledHistory: vi.fn(() => Promise.resolve()),
     initialize: vi.fn(() => Promise.resolve(true)),
-    isWorkspaceReady: vi.fn(() => true),
+    isWorkspaceReady: vi.fn(() => !workspaceClosed),
     newSession: vi.fn(() => Promise.resolve(true)),
     reloadSessions: vi.fn(() => Promise.resolve({ accepted: true, current: true })),
     sessions: [] as Array<{ id: string; deletedAt: string | null }>,
@@ -601,7 +604,16 @@ const mountInlineAgent = (
   })
   const app = Vue.createApp(inlineHarness)
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
-  for (const name of ['AgentContextPicker', 'AgentGoalStatus', 'AgentHistoryPanel', 'AgentMcpApproval', 'AgentMemoryManager', 'AgentPersonalSkills', 'AgentThread', 'ControlBorderBeam'])
+  for (const name of [
+    'AgentContextPicker',
+    'AgentGoalStatus',
+    'AgentHistoryPanel',
+    'AgentMcpApproval',
+    'AgentMemoryManager',
+    'AgentPersonalSkills',
+    'AgentThread',
+    'ControlBorderBeam'
+  ])
     app.component(name, componentStub)
   app.component('AgentComposer', composerComponent)
   app.mount(host)
@@ -762,6 +774,14 @@ describe('Inline Agent workspace actions', () => {
 
     expect(lockState.agentCalls.newSession).toHaveBeenNthCalledWith(1, 'temporary')
     expect(lockState.agentCalls.newSession).toHaveBeenNthCalledWith(2, 'saved')
+  })
+
+  it('reinitializes a reopened workspace without requiring a connection retry', async () => {
+    const reopened = loadGoalLockState(null, false, null, true, true)
+
+    await expect(reopened.ensureInitialized()).resolves.toBe(true)
+
+    expect(reopened.agentCalls.initialize).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the workspace composer mounted beneath the labelled session controls', () => {
