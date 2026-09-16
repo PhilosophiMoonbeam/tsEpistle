@@ -116,6 +116,52 @@ describe('Ax agent engine', () => {
     expect(result).toMatchObject({ inputTokens: 3, outputTokens: 309, totalTokens: 4_580, costMicros: 9_157 })
     expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ usageVersion: 2, inputTokens: 3, outputTokens: 309, totalTokens: 4_580 }))
   })
+  it('normalizes a root pre-dispatch token exposure fence without calling the provider', async () => {
+    const chat = vi.fn(async () => ({
+      results: [{ index: 0, content: 'should not run' }],
+      modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+    }))
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const reserve = vi.fn(async () => ({ id: 1, tokens: 1, costMicros: 1 }))
+    await expect(
+      new AxAgentEngine(factory).execute(
+        {
+          ...request(new AbortController().signal),
+          purpose: 'root',
+          limits: { maxTokens: 1, maxTurns: 1, maxToolCalls: 0, maxOutputTokens: 1 },
+          dispatchBudget: {
+            reserve,
+            reconcile: vi.fn(async () => {}),
+            release: vi.fn(async () => {}),
+            consumeTool: vi.fn(async () => {}),
+            unsettledExposure: { tokens: 0, costMicros: 0 }
+          }
+        },
+        { text: async () => {}, event: async () => {} }
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_TOKEN_BUDGET_LIMITED', status: 409, stage: 'dispatch_admission' })
+    expect(chat).not.toHaveBeenCalled()
+    expect(reserve).not.toHaveBeenCalled()
+  })
   it('runs bounded provider tool turns and returns encrypted continuation only', async () => {
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [

@@ -115,6 +115,13 @@ export type AgentEvidenceConfidence = 'high' | 'medium' | 'low'
 export const AGENT_GOAL_STATUSES = ['active', 'paused', 'blocked', 'budget_limited', 'completed', 'cancelled', 'failed'] as const
 export type AgentGoalStatus = (typeof AGENT_GOAL_STATUSES)[number]
 export type AgentCompletionOutcome = 'complete' | 'retry' | 'blocked' | 'partial'
+export const AGENT_GOAL_TOKEN_TIERS = ['standard', 'extended'] as const
+export type AgentGoalTokenTier = (typeof AGENT_GOAL_TOKEN_TIERS)[number]
+export const AGENT_GOAL_BUDGET_SELECTIONS = ['pending', 'utility', 'fallback', 'legacy'] as const
+export type AgentGoalBudgetSelection = (typeof AGENT_GOAL_BUDGET_SELECTIONS)[number]
+export const AGENT_GOAL_BUDGET_LIMIT_REASONS = ['tokens', 'tool_calls', 'duration', 'continuations', 'quota', 'accounting', 'authority'] as const
+export type AgentGoalBudgetLimitReason = (typeof AGENT_GOAL_BUDGET_LIMIT_REASONS)[number]
+
 
 export interface AgentCompletionIssue {
   readonly code: string
@@ -356,6 +363,7 @@ export interface AgentTaskView {
   readonly startedAt: string | null
   readonly completedAt: string | null
 }
+
 export interface AgentGoalView {
   readonly id: string
   readonly sessionId: string
@@ -369,6 +377,13 @@ export interface AgentGoalView {
   readonly maxTokens: number
   readonly consumedToolCalls: number
   readonly maxToolCalls: number
+  readonly budgetPolicyVersion: number | null
+  readonly budgetSelection: AgentGoalBudgetSelection
+  readonly tokenTier: AgentGoalTokenTier | null
+  readonly tokenAllowance: number | null
+  readonly budgetCycle: number
+  readonly budgetLimitReason: AgentGoalBudgetLimitReason | null
+  readonly canRenewTokenBudget: boolean
   readonly startedAt: string
   readonly deadlineAt: string
   readonly completedAt: string | null
@@ -549,6 +564,13 @@ export interface CreateAgentGoalRequest {
   readonly currentPage?: AgentCurrentPageHint
   readonly knowledgeContext?: AgentKnowledgeContext
 }
+export interface RenewAgentGoalBudgetRequest {
+  readonly expectedVersion: number
+  readonly runId: string
+  readonly clientRequestId: string
+  readonly confirmed: true
+}
+
 
 export interface PauseAgentGoalRequest {
   readonly expectedVersion: number

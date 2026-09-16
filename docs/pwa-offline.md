@@ -233,6 +233,16 @@ The visual direction is a **resilient field notebook**: a quiet, editorial exten
 
 The page tools surface gains **Save for offline** only when the server snapshot endpoint admits the page. States: downloading, available offline, update available, expiring, unavailable, remove. The control includes text and accessible status, not icon-only color semantics.
 
+### 8.1 Foreground snapshot synchronization
+
+An app-owned foreground coordinator owns offline snapshot reconciliation. It coalesces startup, online, foreground, manual-download, automatic-policy, and tag-subscription triggers, and runs only while the page is visible and the network is reachable. Each pass captures the session generation and policy revision; generation/revision fences reject stale writes and request a fresh pass. The service worker remains shell/cache-only and never replays snapshot mutations in the background.
+
+An admitted page's **Save for offline** action records manual intent and immediately calls the foreground coordinator; it does not wait for a background queue. If the request cannot complete while offline or unavailable, the policy retains its pending and diagnostic state for a later foreground retry.
+
+Automatic saving is opt-in. Eligible reader visits update visit count and recency; each sync selects at most the top 10 eligible pages by visit count, recency, and stable identity tie-break, then captures them. Automatic-only pages with no activity for 60 days are expired and pruned; manual or tag provenance prevents that automatic-only expiry.
+
+Tag subscriptions use union (OR) semantics: each subscribed tag contributes pages to one deduplicated candidate set rather than intersecting tags. Snapshot provenance retains manual, automatic, and tag-name sources; removing one tag removes only that tag's provenance, and the page remains while another source still includes it.
+
 The neutral shell includes:
 
 - clear offline/server-unavailable status;

@@ -1816,7 +1816,7 @@ export class AxAgentEngine implements AgentEngine {
     if (exposure.totalExposureTokens < 1 || (maximumDispatchTokens !== undefined && exposure.totalExposureTokens > maximumDispatchTokens))
       throw classifyAgentExecutionFailure(
         new AgentRepositoryError(
-          request.purpose === 'subagent' ? 'AGENT_CHILD_BUDGET_EXCEEDED' : 'AGENT_BUDGET_LIMITED',
+          request.purpose === 'subagent' ? 'AGENT_CHILD_BUDGET_EXCEEDED' : 'AGENT_TOKEN_BUDGET_LIMITED',
           'Agent token budget was exhausted',
           409
         ),
@@ -2092,7 +2092,7 @@ export class AxAgentEngine implements AgentEngine {
         const remainingTokens = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
         if (remainingTokens < 1)
           throw new AgentRepositoryError(
-            request.purpose === 'subagent' ? 'AGENT_CHILD_BUDGET_EXCEEDED' : 'AGENT_BUDGET_LIMITED',
+            request.purpose === 'subagent' ? 'AGENT_CHILD_BUDGET_EXCEEDED' : 'AGENT_TOKEN_BUDGET_LIMITED',
             'Agent token budget was exhausted',
             409
           )
@@ -2132,7 +2132,7 @@ export class AxAgentEngine implements AgentEngine {
         assertAgentTokenUsage(inputTokens, outputTokens, totalTokens)
         if (maxTokens !== undefined && totalTokens > maxTokens)
           throw new AgentRepositoryError(
-            request.purpose === 'subagent' ? 'AGENT_CHILD_BUDGET_EXCEEDED' : 'AGENT_BUDGET_LIMITED',
+            request.purpose === 'subagent' ? 'AGENT_CHILD_BUDGET_EXCEEDED' : 'AGENT_TOKEN_BUDGET_LIMITED',
             'Agent token budget was exhausted',
             409
           )

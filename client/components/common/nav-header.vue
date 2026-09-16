@@ -100,7 +100,6 @@
           v-spacer
           .navHeaderLoading(v-show='isLoading')
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2', aria-label='Page loading')
-          PwaStatus
           v-btn.nav-header-agent(
             v-if='canEnterAgent && $vuetify.display.mdAndUp'
             prepend-icon='mdi-creation-outline'
@@ -458,9 +457,9 @@
                 )
                   v-list-item-title {{lc.name}}
 
-          //- ACCOUNT
+          //- ACCOUNT & APP
 
-          v-menu(v-if='isAuthenticated', location="bottom end", transition='slide-y-transition', :close-on-content-click='false', @update:model-value='accountMenuVisibilityChanged')
+          v-menu(location="bottom end", transition='slide-y-transition', :close-on-content-click='false', @update:model-value='accountMenuVisibilityChanged')
             template(v-slot:activator='{ props: menuProps }')
               v-tooltip(location="bottom")
                 template(v-slot:activator='{ props: tooltipProps }')
@@ -470,49 +469,60 @@
                     :class='$vuetify.locale.isRtl ? `ml-0` : ``'
                     rounded='lg'
                     :aria-label='accountButtonLabel'
-                    )
-                    v-avatar(v-if='picture.kind === `initials`', :size='32', color='primary')
-                      span.account-menu__initials {{ picture.initials }}
-                    v-avatar(v-else-if='picture.kind === `image`', :size='32')
-                      v-img(:src='picture.url', alt='')
+                  )
+                    template(v-if='isAuthenticated')
+                      v-avatar(v-if='picture.kind === `initials`', :size='32', color='primary')
+                        span.account-menu__initials {{ picture.initials }}
+                      v-avatar(v-else-if='picture.kind === `image`', :size='32')
+                        v-img(:src='picture.url', alt='')
+                      v-icon(v-else) mdi-account-circle
                     v-icon(v-else) mdi-account-circle
                     span.account-menu__notification-indicator(
-                      v-if='notificationState !== `clear`'
+                      v-if='isAuthenticated && notificationState !== `clear`'
                       :class='`account-menu__notification-indicator--${notificationState}`'
                       aria-hidden='true'
                     )
-            v-list.nav-header-menu.account-menu(aria-label='Account menu')
-              v-list-item.py-3.bg-surface-variant(
-                href='/p'
-                :aria-label='`Open profile for ${name}`'
-              )
-                template(v-slot:prepend)
-                  v-avatar
-                    v-avatar.bg-primary(v-if='picture.kind === `initials`', :size='40')
-                      span.text-on-primary.text-body-large {{picture.initials}}
-                    v-avatar(v-else-if='picture.kind === `image`', :size='40')
-                      v-img(:src='picture.url', alt='')
-                v-list-item-title
-                  span.account-menu__profile-label Profile
-                  | {{name}}
-                v-list-item-subtitle {{email}}
-                template(v-slot:append): v-icon(color='secondary') mdi-face-profile
-              v-divider
-              AccountNotifications.account-menu__notifications(v-if='!siteNotifications.identityStale')
-              v-divider
-              section.account-menu__preferences(role='region' aria-label='Appearance settings')
-                appearance-selector
-              v-divider
-              form(action='/logout', method='post', :aria-busy='logoutPending ? `true` : undefined', @submit='clearAgentChatPinOnLogout')
-                v-list-item(tag='button', type='submit', link, :disabled='logoutPending')
-                  template(v-slot:append): v-icon(color='error') mdi-logout
-                  v-list-item-title.text-error {{ logoutPending ? `Signing out…` : $t('common:header.logout') }}
-
-          v-tooltip(v-else, location="left")
-            template(v-slot:activator='{ props }')
-              v-btn(icon, v-bind='props', href='/login', data-no-wiki-navigation, :aria-label='$t(`common:header.login`)')
-                v-icon mdi-account-circle
-            span {{$t('common:header.login')}}
+                span {{accountButtonLabel}}
+            v-list.nav-header-menu.account-menu(:aria-label='accountMenuLabel')
+              template(v-if='isAuthenticated')
+                v-list-item.py-3.bg-surface-variant(
+                  href='/p'
+                  :aria-label='`Open profile for ${name}`'
+                )
+                  template(v-slot:prepend)
+                    v-avatar
+                      v-avatar.bg-primary(v-if='picture.kind === `initials`', :size='40')
+                        span.text-on-primary.text-body-large {{picture.initials}}
+                      v-avatar(v-else-if='picture.kind === `image`', :size='40')
+                        v-img(:src='picture.url', alt='')
+                  v-list-item-title
+                    span.account-menu__profile-label Profile
+                    | {{name}}
+                  v-list-item-subtitle {{email}}
+                  template(v-slot:append): v-icon(color='secondary') mdi-face-profile
+                v-divider
+                AccountNotifications.account-menu__notifications(v-if='!siteNotifications.identityStale')
+                v-divider
+                section.account-menu__preferences(role='region' aria-label='Appearance settings')
+                  appearance-selector
+                v-divider
+                form(action='/logout', method='post', :aria-busy='logoutPending ? `true` : undefined', @submit='clearAgentChatPinOnLogout')
+                  v-list-item(tag='button', type='submit', link, :disabled='logoutPending')
+                    template(v-slot:append): v-icon(color='error') mdi-logout
+                    v-list-item-title.text-error {{ logoutPending ? `Signing out…` : $t('common:header.logout') }}
+                v-divider
+              template(v-else)
+                v-list-item(
+                  role='button'
+                  link
+                  href='/login'
+                  data-no-wiki-navigation
+                  aria-label='Sign in'
+                )
+                  template(v-slot:prepend): v-icon(color='primary') mdi-login
+                  v-list-item-title Sign in
+                v-divider
+              PwaStatus
 
     page-selector(mode='create', v-model='newPageModal', :open-handler='pageNewCreate', :locale='locale')
     page-selector(mode='move', v-model='movePageModal', :open-handler='pageMoveRename', :path='path', :locale='locale')
@@ -694,6 +704,7 @@ export default defineComponent({
     hasNotifications(): boolean { return this.notificationState === 'available' },
     accountButtonLabel(): string {
       const account = this.$t('common:header.account')
+      if (!this.isAuthenticated) return `${account} & app`
       if (this.notificationState === 'available') {
         return this.$t('common:header.accountNotificationsAvailable', { account })
       }
@@ -701,6 +712,9 @@ export default defineComponent({
         return this.$t('common:header.accountNotificationsUnknown', { account })
       }
       return account
+    },
+    accountMenuLabel(): string {
+      return this.isAuthenticated ? 'Account menu' : 'Account & app menu'
     },
     permissions(): string[] { return wikiStore.user.permissions },
     searchInputLabel(): string { return this.searchMode === 'ask' ? this.$t('common:header.askPlaceholder') : this.$t('common:header.search') },

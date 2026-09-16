@@ -29,9 +29,10 @@ import {
   moveAgentSessionToFolder,
   pauseAgentGoal,
   renameAgentConversationFolder,
+  renewAgentGoalBudget,
   resumeAgentGoal,
-  submitAgentMessage,
   subscribeAgentRun,
+  submitAgentMessage,
   updateAgentProfile,
   updateAgentSession,
   updateAgentSkillPreferences,
@@ -1081,6 +1082,74 @@ export const useAgentsStore = defineStore('agents', {
         this.endSessionMutation(mutationToken)
       }
     },
+    async renewGoalBudget(): Promise<boolean> {
+      if (!this.isWorkspaceReady()) return false
+      const thread = this.thread
+      const goal = thread?.goal
+      if (
+        !thread ||
+        !goal ||
+        this.goalBusy ||
+        goal.status !== 'budget_limited' ||
+        goal.budgetLimitReason !== 'tokens' ||
+        !goal.canRenewTokenBudget ||
+        goal.tokenAllowance === null
+      )
+        return false
+      const workspaceVersion = this.workspaceVersion
+      const ownerId = this.pinOwnerId
+      const ownerGeneration = this.ownerGeneration
+      const sessionId = thread.session.id
+      const mutationToken = this.beginSessionMutation()
+      if (mutationToken === null) return false
+      const request = {
+        expectedVersion: goal.version,
+        runId: crypto.randomUUID(),
+        clientRequestId: crypto.randomUUID(),
+        confirmed: true as const
+      }
+      this.goalBusy = true
+      this.error = ''
+      let requestError: unknown = null
+      try {
+        try {
+          await renewAgentGoalBudget(fetchFromWindow, this.csrfToken, goal.id, request)
+        } catch (error) {
+          requestError = error
+        }
+        if (!this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) || !this.isSessionContextCurrent(workspaceVersion, sessionId) || !this.isSessionMutationOwned(mutationToken))
+          return false
+        const refreshed = await this.refreshThread()
+        if (!refreshed.accepted || !refreshed.current || !this.isSessionContextCurrent(workspaceVersion, sessionId)) {
+          if (refreshed.current && this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) && this.isSessionMutationOwned(mutationToken)) {
+            const detail = refreshed.error instanceof Error ? refreshed.error.message : 'Refresh the conversation.'
+            this.error =
+              requestError === null
+                ? `The token budget was renewed, but the conversation could not be refreshed. ${detail}`.trim()
+                : `${requestError instanceof Error ? requestError.message : 'The token budget request could not be completed.'} ${detail}`.trim()
+          }
+          return false
+        }
+        this.connectCurrentRun()
+        if (requestError === null) return true
+        const latestGoal = this.thread?.goal
+        const reconciled =
+          latestGoal !== null &&
+          latestGoal !== undefined &&
+          (latestGoal.version > goal.version ||
+            latestGoal.maxTokens > goal.maxTokens ||
+            latestGoal.budgetCycle > goal.budgetCycle ||
+            latestGoal.status !== goal.status ||
+            latestGoal.currentRunId !== goal.currentRunId)
+        if (reconciled) return true
+        if (this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) && this.isSessionMutationOwned(mutationToken))
+          this.error = requestError instanceof Error ? requestError.message : 'The token budget could not be renewed.'
+        return false
+      } finally {
+        if (this.isSessionMutationOwned(mutationToken)) this.goalBusy = false
+        this.endSessionMutation(mutationToken)
+      }
+    },
     async cancelGoal() {
       if (!this.isWorkspaceReady()) return
       const thread = this.thread
@@ -1427,7 +1496,7 @@ export const useAgentsStore = defineStore('agents', {
       let terminalObserved = false
       this.source = markRaw(
         subscribeAgentRun(runId, run.eventSequence, {
-          event: (type, sequence) => {
+          event: (type: AgentEventType, sequence: number) => {
             if (!this.isConnectionCurrent(generation, workspaceVersion, sessionId, runId)) return
             const terminal = terminalEvents.has(type)
             this.connection = terminal ? 'reconnecting' : 'connected'

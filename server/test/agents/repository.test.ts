@@ -33,6 +33,7 @@ import {
 import { AgentProductRuntime, type AgentAdmissionResolver, type AgentEngine } from '../../agents/runtime.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
+import { up as addAgentGoalBudgetTiers } from '../../db/migrations/tsepistle-000042-agent-goal-budget-tiers.ts'
 import type { AgentEvent } from '../../../shared/agents/contracts.ts'
 import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../../shared/agents/conversation-folders.ts'
 
@@ -358,6 +359,7 @@ describe('durable agent repositories', () => {
   beforeEach(async () => {
     knex = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
     await createTables(knex)
+    await addAgentGoalBudgetTiers(knex)
     await knex('users').insert([{ id: 7 }, { id: 8 }, { id: 9 }])
     await knex('groups').insert([{ id: 1 }])
     await createAgentSession(knex, { id: sessionId, ownerId: 7, title: 'Thread', retention: 'saved', providerProfileId: null, executionMode: 'agent' })

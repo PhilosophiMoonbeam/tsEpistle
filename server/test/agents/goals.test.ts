@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from '../bun-test.mts'
 
-import { assessAgentRunCompletion, decodeCompletionAssessment, encodedCompletionAssessment } from '../../agents/goals.ts'
+import { agentGoalRecord, agentGoalTokenAllowance, assessAgentRunCompletion, decodeCompletionAssessment, encodedCompletionAssessment } from '../../agents/goals.ts'
 import type { AgentTaskRecord } from '../../agents/tasks.ts'
 
 const task = (overrides: Partial<AgentTaskRecord> = {}): AgentTaskRecord => ({
@@ -25,6 +26,68 @@ const task = (overrides: Partial<AgentTaskRecord> = {}): AgentTaskRecord => ({
   startedAt: '2026-09-01T00:00:01.000Z',
   completedAt: '2026-09-01T00:00:02.000Z',
   ...overrides
+})
+
+const renewableGoalRow = ({
+  status = 'budget_limited',
+  budgetLimitReason = 'tokens'
+}: { status?: string; budgetLimitReason?: string | null } = {}) => {
+  const objective = 'Continue the deployment investigation'
+  return {
+    id: '00000000-0000-4000-8000-000000000011',
+    sessionId: '00000000-0000-4000-8000-000000000012',
+    ownerId: 7,
+    createdByUserId: 7,
+    objective,
+    objectiveSha256: createHash('sha256').update(objective).digest('hex'),
+    status,
+    version: 3,
+    continuationCount: 1,
+    maxContinuations: 4,
+    consumedTokens: 500,
+    maxTokens: 500,
+    consumedToolCalls: 1,
+    maxToolCalls: 10,
+    budgetPolicyVersion: 1,
+    budgetSelection: 'utility',
+    tokenTier: 'standard',
+    tokenAllowance: 250,
+    budgetCycle: 1,
+    budgetLimitReason,
+    completionOutcome: null,
+    completionAssessment: null,
+    completionAssessmentSha256: null,
+    errorCode: 'GOAL_BUDGET_LIMITED',
+    errorMessage: 'Goal token budget was exhausted',
+    startedAt: '2026-09-01T00:00:00.000Z',
+    deadlineAt: '2026-09-02T00:00:00.000Z',
+    updatedAt: '2026-09-01T01:00:00.000Z',
+    completedAt: '2026-09-01T01:00:00.000Z'
+  }
+}
+const legacyGoalRow = ({
+  status = 'budget_limited',
+  budgetLimitReason = 'tokens',
+  budgetPolicyVersion = null,
+  budgetSelection = 'legacy',
+  tokenTier = null,
+  tokenAllowance = null,
+  budgetCycle = 0
+}: {
+  status?: string
+  budgetLimitReason?: string | null
+  budgetPolicyVersion?: number | null
+  budgetSelection?: string
+  tokenTier?: string | null
+  tokenAllowance?: number | string | null
+  budgetCycle?: number
+} = {}) => ({
+  ...renewableGoalRow({ status, budgetLimitReason }),
+  budgetPolicyVersion,
+  budgetSelection,
+  tokenTier,
+  tokenAllowance,
+  budgetCycle
 })
 
 describe('agent durable goal completion assessment', () => {
@@ -94,4 +157,44 @@ describe('agent durable goal completion assessment', () => {
     expect(() => decodeCompletionAssessment(`${encoded.encoded} `, assessment.outcome, encoded.sha256)).toThrow('integrity check failed')
     expect(() => decodeCompletionAssessment(encoded.encoded, 'retry', encoded.sha256)).toThrow('does not match')
   })
+  it('derives standard and extended token allowances from the configured budget', () => {
+    expect(agentGoalTokenAllowance(501, 'standard')).toBe(250)
+    expect(agentGoalTokenAllowance(501, 'extended')).toBe(501)
+  })
+
+  it('exposes renewal only when a selected token budget is the limiting reason', () => {
+    expect(agentGoalRecord(renewableGoalRow()).canRenewTokenBudget).toBe(true)
+
+    for (const reason of ['tool_calls', 'duration', 'continuations', 'quota', 'accounting', 'authority']) {
+      expect(agentGoalRecord(renewableGoalRow({ budgetLimitReason: reason })).canRenewTokenBudget).toBe(false)
+    }
+    expect(agentGoalRecord(renewableGoalRow({ status: 'active' })).canRenewTokenBudget).toBe(false)
+  })
+  it('decodes validated lifecycle reasons on legacy goals without enabling renewal', () => {
+    expect(agentGoalRecord(legacyGoalRow({ status: 'budget_limited', budgetLimitReason: 'tokens' }))).toMatchObject({
+      budgetPolicyVersion: null,
+      budgetSelection: 'legacy',
+      tokenTier: null,
+      tokenAllowance: null,
+      budgetCycle: 0,
+      budgetLimitReason: 'tokens',
+      canRenewTokenBudget: false
+    })
+    for (const budgetLimitReason of ['accounting', 'authority']) {
+      expect(agentGoalRecord(legacyGoalRow({ status: 'blocked', budgetLimitReason }))).toMatchObject({
+        budgetPolicyVersion: null,
+        budgetSelection: 'legacy',
+        tokenTier: null,
+        tokenAllowance: null,
+        budgetCycle: 0,
+        budgetLimitReason,
+        canRenewTokenBudget: false
+      })
+    }
+    expect(() => agentGoalRecord(legacyGoalRow({ budgetLimitReason: 'unknown' }))).toThrow('Stored agent goal counters are invalid')
+    expect(() => agentGoalRecord(legacyGoalRow({ tokenTier: 'standard' }))).toThrow('Stored agent goal budget policy is invalid')
+    expect(() => agentGoalRecord(legacyGoalRow({ budgetCycle: 1 }))).toThrow('Stored agent goal budget policy is invalid')
+  })
+
+
 })

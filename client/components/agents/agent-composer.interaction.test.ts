@@ -43,8 +43,6 @@ interface ComposerHarness {
   readonly skillCommandOpen: Ref<boolean>
   readonly handleKeydown: (event: KeyboardEvent) => void
   readonly submit: () => void
-  readonly toggleChatPinned: () => void
-  readonly pinnedEvents: boolean[]
   readonly sent: SentMessage[]
 }
 
@@ -56,10 +54,82 @@ const source = fs.readFileSync(componentPath, 'utf8')
 const script = source.match(/<script setup lang=["']ts["']>\s*([\s\S]*?)\s*<\/script>/)?.[1]
 if (!script) throw new Error('agent-composer.vue script block was not found')
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
-const bindingNames = Array.from(script.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
 const evaluateComposer = new Function(
   '{ computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch, defineProps, defineEmits, defineExpose, filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills, caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret, window, document, HTMLElement, HTMLTextAreaElement }',
-  `${executableScript}\nreturn { ${bindingNames.join(', ')} }`
+  `${executableScript}
+return {
+  props,
+  emit,
+  draft,
+  goalMode,
+  skillMenuOpen,
+  selectedSkillIds,
+  syncingComposition,
+  composerRoot,
+  messageInput,
+  skillsTrigger,
+  dismissedCommandToken,
+  activeCommandIndex,
+  sendFailed,
+  submissionPending,
+  sendInProgress,
+  restoreInputWhenReady,
+  mounted,
+  composerId,
+  composerIds,
+  commandOptionId,
+  preferredSkillIds,
+  preferredSkillIdByVersionId,
+  selectedSkillIdSet,
+  visibleSkillIds,
+  visibleSkillByVersionId,
+  selectedSkills,
+  skillMenuItems,
+  skillIdForVersion,
+  isPreferred,
+  composerInputLabel,
+  composerInputDescriptionIds,
+  composerInputPlaceholder,
+  liveStatusLabel,
+  submitLabel,
+  submitIcon,
+  isSelected,
+  getTextarea,
+  caretMirror,
+  caretMirrorPrefix,
+  caretMirrorMarker,
+  caretMirrorSuffix,
+  mountCaretMirror,
+  unmountCaretMirror,
+  measureCaretBounds,
+  keepCaretVisible,
+  resizeInput,
+  handleSelectionChange,
+  focusInput,
+  togglePreference,
+  skillCommandCandidate,
+  skillCommandMatch,
+  skillCommandQuery,
+  skillCommandOpen,
+  skillCommandResults,
+  skillLoadTitle,
+  skillLoadMessage,
+  skillCommandStatus,
+  isCommandSkillDisabled,
+  usableSkillCommandResults,
+  activeCommandSkill,
+  activeCommandOptionId,
+  setActiveCommandSkill,
+  invokeCommandSkill,
+  handleKeydown,
+  toggleSkill,
+  manageSkills,
+  retrySkills,
+  focusSkillsTrigger,
+  resetInput,
+  submit,
+  setDraft
+}`
 ) as (dependencies: Record<string, unknown>) => Record<string, unknown>
 let nextComposerId = 0
 const testUseId = (): string => `agent-composer-test-${++nextComposerId}`
@@ -195,8 +265,6 @@ const loadComposer = (
     readonly disabled?: boolean
     readonly sending?: boolean
     readonly canStop?: boolean
-    readonly chatPinned?: boolean
-    readonly chatPinDisabled?: boolean
   } = {}
 ): ComposerHarness => {
   const props = {
@@ -215,11 +283,8 @@ const loadComposer = (
     statusTone: 'ready' as const,
     initialSkillVersionIds: options.initialSkillVersionIds,
     initialMode: options.initialMode,
-    chatPinned: options.chatPinned ?? false,
-    chatPinDisabled: options.chatPinDisabled ?? false
   }
   const sent: SentMessage[] = []
-  const pinnedEvents: boolean[] = []
   const composer = evaluateComposer({
     computed: <T>(getter: () => T): Ref<T> => ({
       get value() {
@@ -247,8 +312,6 @@ const loadComposer = (
             mode: args[2] as 'message' | 'goal',
             complete: args[3] as (success: boolean) => void
           })
-        } else if (event === 'update:chatPinned') {
-          pinnedEvents.push(Boolean(args[0]))
         }
       },
     defineExpose: () => {},
@@ -263,7 +326,7 @@ const loadComposer = (
     HTMLElement: FakeElement,
     HTMLTextAreaElement: FakeTextArea
   }) as unknown as ComposerHarness
-  return { ...composer, sent, pinnedEvents }
+  return { ...composer, sent }
 }
 interface MountedComposer {
   readonly root: HTMLElement
@@ -301,8 +364,6 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     initialMode: undefined,
     initialSkillVersionIds: undefined,
     hasMessages: false,
-    chatPinned: false,
-    chatPinDisabled: false,
     networkBlocked: false
   }
   const composerComponent = Vue.defineComponent({
@@ -323,12 +384,11 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
       statusTone: String,
       initialDraft: String,
       initialMode: String,
+      initialSkillVersionIds: Array,
       hasMessages: Boolean,
-      chatPinned: Boolean,
-      chatPinDisabled: Boolean,
       networkBlocked: Boolean
     },
-    emits: ['draftChange', 'compositionChange', 'send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'update:chatPinned'],
+    emits: ['draftChange', 'compositionChange', 'send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences'],
     setup(props, { emit, expose }) {
       return evaluateComposer({
         computed: Vue.computed,
@@ -553,31 +613,6 @@ describe('Agent composer send admission', () => {
   })
 })
 
-describe('Agent composer chat pin semantics', () => {
-  it('emits a pin update while an active run has disabled the composer', () => {
-    const activeRun = loadComposer({ disabled: true, sending: true, canStop: true })
-
-    activeRun.toggleChatPinned()
-
-    expect(activeRun.pinnedEvents).toEqual([true])
-  })
-
-  it('guards the pin update while workspace selection is unsettled', () => {
-    const unsettled = loadComposer({ chatPinDisabled: true })
-
-    unsettled.toggleChatPinned()
-
-    expect(unsettled.pinnedEvents).toHaveLength(0)
-  })
-
-  it('emits an unpin update from the selected tonal state', () => {
-    const pinned = loadComposer({ chatPinned: true })
-
-    pinned.toggleChatPinned()
-
-    expect(pinned.pinnedEvents).toEqual([false])
-  })
-})
 
 describe('Agent composer instance accessibility', () => {
   it('keeps option IDs and descriptions distinct across instances', () => {

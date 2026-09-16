@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
 import OfflineLibrary from './components/pwa/offline-library.vue'
 import {
   OfflineStorageError,
   openOfflineStorage,
   type OfflineStorage
 } from './helpers/offline-storage.ts'
+import { createOfflineSyncCoordinator, type OfflineSyncCoordinator } from './helpers/offline-sync.ts'
 import type { OfflineStorageEstimate } from '../shared/offline.ts'
 import {
   promptPwaInstall,
@@ -79,6 +80,22 @@ const isRetrying = ref(false)
 const isInstalling = ref(false)
 const isUpdating = ref(false)
 const libraryRefreshToken = ref(0)
+type OfflineSyncService = {
+  reconcile: (reason?: string) => Promise<unknown>
+}
+const OFFLINE_SYNC_COORDINATOR_KEY = 'offline-sync-coordinator'
+let offlineSyncCoordinator: OfflineSyncCoordinator | null = null
+let stopOfflinePwaWatch: (() => void) | null = null
+let pendingOfflineSyncReason: string | null = null
+const offlineSyncService: OfflineSyncService = {
+  reconcile (reason = 'manual'): Promise<unknown> {
+    if (offlineSyncCoordinator) return offlineSyncCoordinator.reconcile(reason)
+    pendingOfflineSyncReason = reason
+    return Promise.resolve(null)
+  }
+}
+provide(OFFLINE_SYNC_COORDINATOR_KEY, offlineSyncService)
+
 const libraryNotice = ref(parsedOfflineSelector.error)
 let storageOpenToken = 0
 
@@ -170,21 +187,54 @@ function storageFailure(error: unknown): { state: StorageState; message: string 
   }
 }
 
-async function refreshStorageStatus(): Promise<void> {
+function stopOfflineSync(): void {
+  stopOfflinePwaWatch?.()
+  stopOfflinePwaWatch = null
+  offlineSyncCoordinator?.dispose()
+  offlineSyncCoordinator = null
+}
+
+function startOfflineSync(storage: OfflineStorage): void {
+  stopOfflineSync()
+  const coordinator = createOfflineSyncCoordinator({
+    storage,
+    siteId: window.location.origin,
+    fetchImpl: window.fetch.bind(window),
+    isOnline: () => pwaState.connectionState === 'online',
+    isForeground: () => typeof document === 'undefined' || document.visibilityState === 'visible',
+    isRetired: () => pwaState.mode === 'retirement',
+    onDiagnostics: () => {
+      libraryRefreshToken.value += 1
+    }
+  })
+  offlineSyncCoordinator = coordinator
+  stopOfflinePwaWatch = watch(() => pwaState.connectionState, state => {
+    if (state === 'online') void coordinator.reconcile('online')
+  })
+  coordinator.start()
+  const pendingReason = pendingOfflineSyncReason
+  pendingOfflineSyncReason = null
+  if (pendingReason) void coordinator.reconcile(pendingReason)
+}
+
+async function refreshStorageStatus(): Promise<boolean> {
   const storage = offlineStorage.value
-  if (!storage) return
+  if (!storage) return false
   try {
     storageEstimate.value = await storage.storageStatus()
     storageState.value = 'available'
+    return true
   } catch (error) {
     const failure = storageFailure(error)
     storageState.value = failure.state
     storageMessage.value = failure.message
     storageEstimate.value = null
     if (failure.state === 'unsupported-schema' || failure.state === 'blocked-upgrade') {
+      stopOfflineSync()
       storage.close()
       offlineStorage.value = null
     }
+    return false
   }
 }
 
@@ -193,6 +243,7 @@ async function openStorage(): Promise<void> {
   storageBusy.value = true
   const token = ++storageOpenToken
   const previous = offlineStorage.value
+  stopOfflineSync()
   offlineStorage.value = null
   storageEstimate.value = null
   previous?.close()
@@ -205,8 +256,11 @@ async function openStorage(): Promise<void> {
       return
     }
     offlineStorage.value = opened
-    await refreshStorageStatus()
-    if (offlineStorage.value) libraryRefreshToken.value += 1
+    const storageAvailable = await refreshStorageStatus()
+    if (offlineStorage.value && storageAvailable) {
+      startOfflineSync(offlineStorage.value)
+      libraryRefreshToken.value += 1
+    }
   } catch (error) {
     if (token !== storageOpenToken) return
     const failure = storageFailure(error)
@@ -224,8 +278,8 @@ async function requestPersistence(): Promise<void> {
   storageMessage.value = 'Asking the browser for durable storage; denial is normal degradation.'
   try {
     const granted = await storage.requestPersistence()
-    await refreshStorageStatus()
-    if (storageState.value === 'available') {
+    const storageAvailable = await refreshStorageStatus()
+    if (storageAvailable) {
       storageMessage.value = granted
         ? 'Persistent storage is granted or was accepted by the browser.'
         : 'Persistent storage was not granted. The browser may still retain this bounded notebook.'
@@ -250,7 +304,15 @@ async function removeDownloadedPages(): Promise<void> {
     const expectedSessionGeneration = corpus.sessionGeneration
     for (const record of corpus.snapshots) {
       if (record.siteId !== origin) continue
-      await storage.removeSnapshot(record.siteId, record.pageId, record.locale, { expectedSessionGeneration })
+      const currentPolicy = await storage.readOfflinePolicy({ expectedSessionGeneration })
+      await storage.removeOfflinePage(
+        { siteId: record.siteId, pageId: record.pageId, locale: record.locale },
+        {
+          expectedSessionGeneration,
+          expectedPolicyRevision: currentPolicy.state.policyRevision
+        }
+      )
+      await offlineSyncService?.reconcile('manual')
     }
     libraryRefreshToken.value += 1
     await refreshStorageStatus()
@@ -323,6 +385,7 @@ async function confirmClearDeviceData(): Promise<void> {
   clearNotice.value = 'Clearing saved pages, locked drafts, and submission recovery…'
   // Invalidate all local projections before the strict generation-fenced clear.
   clearDeviceToken.value += 1
+  stopOfflineSync()
   try {
     const nextGeneration = await storage.clearDeviceData({ expectedSessionGeneration })
     libraryRefreshToken.value += 1
@@ -335,6 +398,7 @@ async function confirmClearDeviceData(): Promise<void> {
     clearNotice.value = failure.message
   } finally {
     clearBusy.value = false
+    if (offlineStorage.value === storage && storageState.value === 'available') startOfflineSync(storage)
     await nextTick()
     if (
       restoreTarget?.isConnected &&
@@ -413,6 +477,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   storageOpenToken += 1
+  stopOfflineSync()
   clearFocusScope?.deactivate({ restoreFocus: false })
   clearFocusScope = null
   clearRestoreTarget.value = null

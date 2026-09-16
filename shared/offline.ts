@@ -4,11 +4,22 @@ import { PAGE_EDITOR_KEYS } from './page-editors.ts'
 
 export const OFFLINE_SCHEMA_VERSION = 1 as const
 export const OFFLINE_DB_NAME = 'tsepistle-offline' as const
-export const OFFLINE_DB_VERSION = 2 as const
+/** The physical IndexedDB version. The payload/schema version remains v1. */
+export const OFFLINE_DB_VERSION = 3 as const
 export const OFFLINE_KEY_VERSION = 'session-secret-v1' as const
 export const OFFLINE_DRAFT_KEY_MAGIC = 'TSODK1' as const
 export const OFFLINE_HTML_SANITIZER_VERSION = 'offline-html-allowlist-v1' as const
 export const OFFLINE_CONTENT_TYPE = 'sanitized-html-fragment' as const
+
+export const OFFLINE_POLICY_SCHEMA_VERSION = 1 as const
+export const OFFLINE_POLICY_STORE_NAME = 'policy' as const
+export const OFFLINE_POLICY_STATE_KEY = 'state' as const
+export const OFFLINE_POLICY_PAGE_LIMIT = 1000
+export const OFFLINE_POLICY_TAG_LIMIT = 32
+export const OFFLINE_POLICY_TAG_LENGTH_LIMIT = 256
+export const OFFLINE_AUTOMATIC_PAGE_LIMIT = 10
+export const OFFLINE_AUTOMATIC_INACTIVITY_DAYS = 60
+export const OFFLINE_AUTOMATIC_INACTIVITY_MS = OFFLINE_AUTOMATIC_INACTIVITY_DAYS * 24 * 60 * 60 * 1000
 
 export const OFFLINE_SNAPSHOT_LIMIT = 100
 export const OFFLINE_MANAGED_BYTES_LIMIT = 20 * 1024 * 1024
@@ -17,7 +28,7 @@ export const OFFLINE_DRAFT_KEY_BYTES = 32
 export const OFFLINE_DRAFT_NONCE_BYTES = 12
 export const OFFLINE_DRAFT_TAG_BYTES = 16
 
-export const OFFLINE_STORE_NAMES = ['meta', 'snapshots', 'drafts', 'searchDocuments'] as const
+export const OFFLINE_STORE_NAMES = ['meta', 'snapshots', 'drafts', 'searchDocuments', 'policy'] as const
 export type OfflineStoreName = (typeof OFFLINE_STORE_NAMES)[number]
 
 export const OFFLINE_DRAFT_STATES = ['local', 'needs-review', 'publishing', 'conflict', 'locked', 'unavailable', 'outcome-unknown'] as const
@@ -155,6 +166,90 @@ export const OfflineSearchDocumentV1Schema = z
   })
   .strict()
 export type OfflineSearchDocumentV1 = z.infer<typeof OfflineSearchDocumentV1Schema>
+export const OFFLINE_POLICY_AVAILABILITY = ['unknown', 'available', 'ineligible', 'transient-failure'] as const
+export const OfflinePolicyAvailabilitySchema = z.enum(OFFLINE_POLICY_AVAILABILITY)
+export type OfflinePolicyAvailability = z.infer<typeof OfflinePolicyAvailabilitySchema>
+
+export const OFFLINE_SYNC_DIAGNOSTIC_STATUSES = ['idle', 'running', 'complete', 'partial', 'offline', 'error'] as const
+export const OfflineSyncDiagnosticStatusSchema = z.enum(OFFLINE_SYNC_DIAGNOSTIC_STATUSES)
+export type OfflineSyncDiagnosticStatus = z.infer<typeof OfflineSyncDiagnosticStatusSchema>
+
+const boundedTag = z.string().trim().min(1).max(OFFLINE_POLICY_TAG_LENGTH_LIMIT)
+const policyRecordKey = z.string().min(1).max(1024)
+
+export const OfflineSyncDiagnosticsSchema = z
+  .object({
+    status: OfflineSyncDiagnosticStatusSchema,
+    lastAttemptAt: isoDateTime.nullable(),
+    lastSuccessAt: isoDateTime.nullable(),
+    lastError: z.string().max(4096).nullable(),
+    pendingCount: nonnegativeSafeInteger,
+    retainedCount: nonnegativeSafeInteger,
+    removedCount: nonnegativeSafeInteger
+  })
+  .strict()
+export type OfflineSyncDiagnostics = z.infer<typeof OfflineSyncDiagnosticsSchema>
+
+export const OfflinePolicyStateSchema = z
+  .object({
+    key: z.literal(OFFLINE_POLICY_STATE_KEY),
+    recordType: z.literal('state'),
+    schemaVersion: z.literal(OFFLINE_POLICY_SCHEMA_VERSION),
+    automaticSavingEnabled: z.boolean(),
+    selectedTags: z.array(boundedTag).max(OFFLINE_POLICY_TAG_LIMIT),
+    policyRevision: nonnegativeSafeInteger,
+    syncDiagnostics: OfflineSyncDiagnosticsSchema,
+    byteSize: nonnegativeSafeInteger
+  })
+  .strict()
+export type OfflinePolicyState = z.infer<typeof OfflinePolicyStateSchema>
+export const OfflineSnapshotProvenanceSchema = z
+  .object({
+    manual: z.boolean().optional(),
+    automatic: z.boolean().optional(),
+    tagNames: z.array(boundedTag).max(OFFLINE_POLICY_TAG_LIMIT).optional()
+  })
+  .strict()
+export type OfflineSnapshotProvenance = z.infer<typeof OfflineSnapshotProvenanceSchema>
+
+
+export const OfflinePagePolicyRecordSchema = z
+  .object({
+    key: policyRecordKey,
+    recordType: z.literal('page'),
+    schemaVersion: z.literal(OFFLINE_POLICY_SCHEMA_VERSION),
+    siteId: boundedIdentifier,
+    pageId: positiveSafeInteger,
+    locale: boundedLocale,
+    manual: z.boolean(),
+    automatic: z.boolean(),
+    tag: z.boolean(),
+    tagNames: z.array(boundedTag).max(OFFLINE_POLICY_TAG_LIMIT),
+    visitCount: nonnegativeSafeInteger,
+    lastVisitedAt: isoDateTime.nullable(),
+    automaticSelectedAt: isoDateTime.nullable(),
+    excluded: z.boolean(),
+    availability: OfflinePolicyAvailabilitySchema,
+    byteSize: nonnegativeSafeInteger
+  })
+  .strict()
+export type OfflinePagePolicyRecord = z.infer<typeof OfflinePagePolicyRecordSchema>
+
+export const OfflinePolicyRecordSchema = z.union([OfflinePolicyStateSchema, OfflinePagePolicyRecordSchema])
+export type OfflinePolicyRecord = z.infer<typeof OfflinePolicyRecordSchema>
+
+export const OfflinePolicySnapshotSchema = z
+  .object({
+    state: OfflinePolicyStateSchema,
+    pages: z.array(OfflinePagePolicyRecordSchema),
+    sessionGeneration: nonnegativeSafeInteger
+  })
+  .strict()
+export type OfflinePolicySnapshot = {
+  readonly state: OfflinePolicyState
+  readonly pages: readonly OfflinePagePolicyRecord[]
+  readonly sessionGeneration: number
+}
 
 export const OfflineSnapshotRecordSchema = z
   .object({
@@ -211,6 +306,8 @@ export const OfflineSnapshotSelectorSchema = z
   })
   .strict()
 export type OfflineSnapshotSelector = z.infer<typeof OfflineSnapshotSelectorSchema>
+export const OfflinePolicyPageSelectorSchema = OfflineSnapshotSelectorSchema
+export type OfflinePolicyPageSelector = OfflineSnapshotSelector
 
 export const OfflineCorpusNoticeSchema = z
   .object({
@@ -230,17 +327,6 @@ export const OfflineFinalizationSelectorsSchema = z
   .strict()
 export type OfflineFinalizationSelectors = z.infer<typeof OfflineFinalizationSelectorsSchema>
 
-export const OfflineMetaRecoverySchema = z
-  .object({
-    required: z.boolean(),
-    reason: z.enum(['missing', 'invalid', 'incomplete']).nullable()
-  })
-  .strict()
-export type OfflineMetaRecovery = z.infer<typeof OfflineMetaRecoverySchema>
-
-export const OfflineStoredDraftRecordSchema = OfflineDraftEnvelopeV1Schema
-export type OfflineStoredDraftRecord = OfflineDraftEnvelopeV1
-
 export const OfflineStorageEstimateSchema = z
   .object({
     usageBytes: nonnegativeSafeInteger.nullable(),
@@ -248,9 +334,11 @@ export const OfflineStorageEstimateSchema = z
     persisted: z.boolean().nullable(),
     managedBytes: nonnegativeSafeInteger,
     snapshotCount: nonnegativeSafeInteger,
+    policyPageCount: nonnegativeSafeInteger,
     lockedDraftCount: nonnegativeSafeInteger,
     schemaVersion: z.number().int().positive(),
-    sessionGeneration: nonnegativeSafeInteger
+    sessionGeneration: nonnegativeSafeInteger,
+    policyRevision: nonnegativeSafeInteger
   })
   .strict()
 export type OfflineStorageEstimate = z.infer<typeof OfflineStorageEstimateSchema>
@@ -264,6 +352,7 @@ export const OfflineStorageFailureCodeSchema = z.enum([
   'serialization',
   'transaction',
   'generation-fenced',
+  'policy-revision-fenced',
   'draft-conflict',
   'immutable-submission',
   'invalid-record',

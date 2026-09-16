@@ -96,7 +96,7 @@ describe('login bundle manifest graph', () => {
       directJavascript: { rawBytes: 40_000, gzipBytes: 5_878 + 5 * 1_024 + 1 },
       directStyles: { rawBytes: 12_000, gzipBytes: 2_019 },
       initialForbiddenFiles: forbidden,
-      lazyScene: { rawBytes: 950 * 1_024 + 1, gzipBytes: 200_000 }
+      lazyScene: { rawBytes: 1_565 * 1_024 + 1, gzipBytes: 200_000 }
     }
 
     expect(forbidden).toEqual(['assets/login-particle-data-d70d.bin', 'js/three-core-a550.js'])

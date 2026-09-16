@@ -1,5 +1,5 @@
 import { applyReaderLayout } from './helpers/reader-layout.ts'
-import { createApp } from 'vue'
+import { createApp, shallowRef, watch } from 'vue'
 import type { AsyncComponentLoader } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as vuetifyLocaleMessages from 'vuetify/locale'
@@ -10,10 +10,137 @@ import boot from './modules/boot.ts'
 import localization from './modules/localization.ts'
 import { pinia, wikiStore } from './store/index.ts'
 import { router } from './router'
-import { registerPwa, setReloadSafetyProvider } from './helpers/pwa.ts'
+import { registerPwa, setReloadSafetyProvider, pwaState } from './helpers/pwa.ts'
 import { createWikiThemes, resolveThemeName, WIKI_THEME_VARIATIONS } from './helpers/theme.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
 import { createAsyncComponent } from './components/common/async-component-state.vue'
+import { openOfflineStorage, type OfflineStorage } from './helpers/offline-storage.ts'
+import { createOfflineSyncCoordinator, type OfflineSyncCoordinator } from './helpers/offline-sync.ts'
+
+type OfflineSyncService = {
+  reconcile: (reason?: string) => Promise<unknown>
+}
+const OFFLINE_SYNC_COORDINATOR_KEY = 'offline-sync-coordinator'
+const offlineSyncCoordinator = shallowRef<OfflineSyncCoordinator | null>(null)
+let offlineSyncStorage: OfflineStorage | null = null
+let offlineSyncStartToken = 0
+let offlineSyncStartPromise: Promise<OfflineSyncCoordinator | null> | null = null
+let offlineSyncPendingReconcile: Promise<unknown> | null = null
+let stopOfflinePwaWatch: (() => void) | null = null
+let pendingOfflineSyncReason: string | null = null
+let offlineSyncLifecycleAttached = false
+
+const handleOfflinePageHide = (event: PageTransitionEvent): void => {
+  if (event.persisted) return
+  stopOfflineSync()
+}
+
+const handleOfflinePageShow = (event: PageTransitionEvent): void => {
+  if (!event.persisted) return
+  void offlineSyncCoordinator.value?.reconcile('pageshow')
+}
+
+const attachOfflineSyncLifecycle = (): void => {
+  if (offlineSyncLifecycleAttached) return
+  window.addEventListener('pagehide', handleOfflinePageHide)
+  window.addEventListener('pageshow', handleOfflinePageShow)
+  offlineSyncLifecycleAttached = true
+}
+
+const detachOfflineSyncLifecycle = (): void => {
+  if (!offlineSyncLifecycleAttached) return
+  window.removeEventListener('pagehide', handleOfflinePageHide)
+  window.removeEventListener('pageshow', handleOfflinePageShow)
+  offlineSyncLifecycleAttached = false
+}
+
+const stopOfflineSync = (): void => {
+  offlineSyncStartToken += 1
+  offlineSyncPendingReconcile = null
+  pendingOfflineSyncReason = null
+  stopOfflinePwaWatch?.()
+  stopOfflinePwaWatch = null
+  offlineSyncCoordinator.value?.dispose()
+  offlineSyncCoordinator.value = null
+  offlineSyncStorage?.close()
+  offlineSyncStorage = null
+  detachOfflineSyncLifecycle()
+}
+
+const startOfflineSync = (): Promise<OfflineSyncCoordinator | null> => {
+  const current = offlineSyncCoordinator.value
+  if (current) return Promise.resolve(current)
+  if (offlineSyncStartPromise) return offlineSyncStartPromise
+
+  attachOfflineSyncLifecycle()
+  const token = ++offlineSyncStartToken
+  const started = (async (): Promise<OfflineSyncCoordinator | null> => {
+    let storage: OfflineStorage | null = null
+    let coordinator: OfflineSyncCoordinator | null = null
+    try {
+      storage = await openOfflineStorage()
+      if (token !== offlineSyncStartToken) {
+        storage.close()
+        return null
+      }
+      coordinator = createOfflineSyncCoordinator({
+        storage,
+        siteId: window.location.origin,
+        fetchImpl: window.fetch.bind(window),
+        isOnline: () => pwaState.connectionState === 'online',
+        isForeground: () => typeof document === 'undefined' || document.visibilityState === 'visible',
+        isRetired: () => pwaState.mode === 'retirement'
+      })
+      offlineSyncStorage = storage
+      offlineSyncCoordinator.value = coordinator
+      stopOfflinePwaWatch = watch(() => pwaState.connectionState, state => {
+        if (state === 'online') void coordinator?.reconcile('online')
+      })
+      coordinator.start()
+      return coordinator
+    } catch {
+      stopOfflinePwaWatch?.()
+      stopOfflinePwaWatch = null
+      if (offlineSyncCoordinator.value === coordinator) {
+        coordinator?.dispose()
+        offlineSyncCoordinator.value = null
+        offlineSyncStorage = null
+      }
+      storage?.close()
+      return null
+    }
+  })()
+  let sharedPromise: Promise<OfflineSyncCoordinator | null>
+  sharedPromise = started.finally(() => {
+    if (offlineSyncStartPromise === sharedPromise) offlineSyncStartPromise = null
+  })
+  offlineSyncStartPromise = sharedPromise
+  return sharedPromise
+}
+
+const reconcileAfterOfflineSyncStartup = (reason: string): Promise<unknown> => {
+  pendingOfflineSyncReason = reason
+  if (offlineSyncPendingReconcile) return offlineSyncPendingReconcile
+  let sharedPromise: Promise<unknown>
+  sharedPromise = startOfflineSync().then(coordinator => {
+    if (!coordinator) return null
+    const pendingReason = pendingOfflineSyncReason
+    pendingOfflineSyncReason = null
+    return pendingReason ? coordinator.reconcile(pendingReason) : null
+  }).finally(() => {
+    if (offlineSyncPendingReconcile === sharedPromise) offlineSyncPendingReconcile = null
+  })
+  offlineSyncPendingReconcile = sharedPromise
+  return sharedPromise
+}
+
+const offlineSyncService: OfflineSyncService = {
+  reconcile (reason = 'manual'): Promise<unknown> {
+    const coordinator = offlineSyncCoordinator.value
+    if (coordinator) return coordinator.reconcile(reason)
+    return reconcileAfterOfflineSyncStartup(reason)
+  }
+}
 
 const asyncComponent = (name: string, loader: AsyncComponentLoader) => [name, createAsyncComponent(loader)] as const
 
@@ -164,6 +291,7 @@ app.use(router)
 app.use(vuetify)
 app.use(i18n)
 app.use(helpersPlugin)
+app.provide(OFFLINE_SYNC_COORDINATOR_KEY, offlineSyncService)
 
 window.Hammer = Hammer
 window.WIKI = app
@@ -173,6 +301,7 @@ moment.locale(siteConfig.lang)
 applyUserPresentation(wikiStore.user)
 
 app.mount('#root')
+void startOfflineSync()
 void authRefresh.then(outcome => {
   if (outcome === 'authenticated') {
     applyUserPresentation(wikiStore.user)

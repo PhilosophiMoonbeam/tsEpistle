@@ -16,6 +16,21 @@
       "runtimePostconditions": [
         "site-logo-pipeline-v7"
       ]
+    },
+    "tsepistle-000042-agent-goal-budget-tiers.js": {
+      "persistentState": "stateful",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "image-only",
+      "rehearsalPostconditions": [
+        "agent-goal-budget-columns"
+      ],
+      "runtimePostconditions": [
+        "agent-goal-budget-tier-selection"
+      ]
     }
   }
 }

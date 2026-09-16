@@ -77,6 +77,13 @@ const makeGoal = (overrides: Partial<AgentGoalView> = {}): AgentGoalView => ({
   maxTokens: 1_000,
   consumedToolCalls: 2,
   maxToolCalls: 10,
+  budgetPolicyVersion: 1,
+  budgetSelection: 'pending',
+  tokenTier: null,
+  tokenAllowance: null,
+  budgetCycle: 0,
+  budgetLimitReason: null,
+  canRenewTokenBudget: false,
   startedAt: '2026-08-31T10:00:00.000Z',
   deadlineAt: '2026-09-01T10:00:00.000Z',
   completedAt: null,
@@ -101,17 +108,42 @@ const loadGoal = (goal: AgentGoalView, expanded: boolean): GoalHarness => {
       statusColor,
       statusIcon,
       budgetPercent,
+      budgetAriaLabel,
+      budgetMetrics,
+      formatBudgetValue,
+      tokenTierLabel,
+      budgetLimitReasonLabel,
+      renewalAllowanceDescription,
+      renewalAllowanceLabel,
+      canRenewTokenBudget,
+      progressLabel,
+      timelinePrefix,
+      timelineAt,
+      timelineLabel,
+      canPause,
+      canResume,
+      canCancel,
+      runAction,
+      renewBudget,
+      confirmCancel,
       blockerMessages,
+      blockerEntries,
+      pendingAction,
+      pendingActionLabel,
+      networkBlocked,
       toggleAriaLabel,
       goalToggleTargetStyle,
       toggleExpanded,
       expanded,
+      goalTitleId,
       goalStatusId,
       goalCollapsedObjectiveId,
       goalToggleId,
       goalDetailsId,
+      goalBlockersTitleId,
       cancelDialogOpen,
-      cancelGoalTitleId
+      cancelGoalTitleId,
+      goalBudgetTitleId
     }`
   ) as (...dependencies: unknown[]) => Omit<GoalHarness, 'emit'>
   const harness = evaluate(
@@ -132,8 +164,8 @@ const loadGoal = (goal: AgentGoalView, expanded: boolean): GoalHarness => {
   return { ...harness, emit }
 }
 
-const renderGoalStatus = async (goal: AgentGoalView): Promise<string> => {
-  const harness = loadGoal(goal, false)
+const renderGoalStatus = async (goal: AgentGoalView, expanded = false): Promise<string> => {
+  const harness = loadGoal(goal, expanded)
   const component = Object.assign(
     defineComponent({
       setup: () => ({ ...harness, goal, busy: false }),
@@ -218,4 +250,36 @@ describe('Agent goal status interaction', () => {
     expanded.toggleExpanded()
     expect(expanded.emit).toHaveBeenCalledWith('update:expanded', false)
   })
+  it('shows one-cycle renewal CTA only for a token-limited goal', async () => {
+    const renewable = await renderGoalStatus(
+      makeGoal({
+        status: 'budget_limited',
+        budgetSelection: 'utility',
+        tokenTier: 'standard',
+        tokenAllowance: 500,
+        budgetCycle: 1,
+        budgetLimitReason: 'tokens',
+        canRenewTokenBudget: true
+      }),
+      true
+    )
+    expect(renewable).toContain('Confirm one continuation to add exactly 500 tokens to this goal')
+    expect(renewable).toContain('Add 500 tokens and continue')
+
+    const nonRenewable = await renderGoalStatus(
+      makeGoal({
+        status: 'budget_limited',
+        budgetSelection: 'utility',
+        tokenTier: 'standard',
+        tokenAllowance: 500,
+        budgetCycle: 1,
+        budgetLimitReason: 'tool_calls',
+        canRenewTokenBudget: true
+      }),
+      true
+    )
+    expect(nonRenewable).toContain('This limit cannot be renewed from this goal.')
+    expect(nonRenewable).not.toContain('Add 500 tokens and continue')
+  })
+
 })

@@ -94,6 +94,56 @@
           </div>
         </dl>
 
+        <section
+          v-if="goal.status === 'budget_limited'"
+          class="agent-goal__renewal"
+          :class="{ 'agent-goal__renewal--available': canRenewTokenBudget }"
+          :aria-labelledby="goalBudgetTitleId"
+        >
+          <div class="agent-goal__renewal-heading">
+            <v-icon icon="mdi-information-outline" size="19" aria-hidden="true" />
+            <h3 :id="goalBudgetTitleId">Budget limit details</h3>
+          </div>
+          <dl class="agent-goal__renewal-facts">
+            <div>
+              <dt>Token tier</dt>
+              <dd>{{ tokenTierLabel }}</dd>
+            </div>
+            <div>
+              <dt>Lifetime token usage</dt>
+              <dd>{{ formatBudgetValue(goal.consumedTokens) }} of {{ formatBudgetValue(goal.maxTokens) }} tokens</dd>
+            </div>
+            <div>
+              <dt>Budget cycle</dt>
+              <dd>{{ goal.budgetCycle }}</dd>
+            </div>
+            <div>
+              <dt>Limiting reason</dt>
+              <dd>{{ budgetLimitReasonLabel }}</dd>
+            </div>
+            <div>
+              <dt>Additional token allowance</dt>
+              <dd>{{ renewalAllowanceDescription }}</dd>
+            </div>
+          </dl>
+          <p v-if="canRenewTokenBudget" class="agent-goal__renewal-copy" role="status">
+            Confirm one continuation to add exactly {{ renewalAllowanceLabel }} tokens to this goal's lifetime allowance.
+          </p>
+          <p v-else class="agent-goal__renewal-copy" role="status">
+            This limit cannot be renewed from this goal.
+          </p>
+          <v-btn
+            v-if="canRenewTokenBudget"
+            class="agent-goal__renewal-action"
+            color="primary"
+            variant="tonal"
+            prepend-icon="mdi-lightning-bolt-outline"
+            :loading="pendingAction === 'renew-budget' && busy"
+            :disabled="busy || networkBlocked"
+            @click="renewBudget"
+          >Add {{ renewalAllowanceLabel }} tokens and continue</v-btn>
+        </section>
+
         <p class="agent-goal__summary">{{ progressLabel }}</p>
 
         <aside
@@ -182,8 +232,8 @@ import type { AgentGoalView } from '../../../shared/agents/contracts.ts'
 
 const { goal, busy, runActive, networkBlocked } = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boolean; networkBlocked?: boolean }>()
 const expanded = defineModel<boolean>('expanded', { required: true })
-const emit = defineEmits<{ pause: []; resume: []; cancel: [] }>()
-const pendingAction = ref<'pause' | 'resume' | 'cancel' | null>(null)
+const emit = defineEmits<{ pause: []; resume: []; cancel: []; 'renew-budget': [] }>()
+const pendingAction = ref<'pause' | 'resume' | 'cancel' | 'renew-budget' | null>(null)
 const cancelDialogOpen = ref(false)
 const goalTitleId = computed(() => `agent-goal-${goal.id}-title`)
 const goalCollapsedObjectiveId = computed(() => `agent-goal-${goal.id}-collapsed-objective`)
@@ -192,6 +242,7 @@ const goalToggleId = computed(() => `agent-goal-${goal.id}-toggle`)
 const goalDetailsId = computed(() => `agent-goal-${goal.id}-details`)
 const goalBlockersTitleId = computed(() => `agent-goal-${goal.id}-blockers-title`)
 const cancelGoalTitleId = computed(() => `agent-goal-${goal.id}-cancel-title`)
+const goalBudgetTitleId = computed(() => `agent-goal-${goal.id}-budget-title`)
 const toggleAriaLabel = computed(() => `${expanded.value ? 'Hide' : 'Show'} durable goal details: ${goal.objective}`)
 const goalToggleTargetStyle = {
   minHeight: 'max(44px, var(--wiki-control-height, 44px))',
@@ -218,6 +269,11 @@ const confirmCancel = () => {
   cancelDialogOpen.value = false
   emit('cancel')
 }
+const renewBudget = (): void => {
+  if (busy || networkBlocked || !canRenewTokenBudget.value || pendingAction.value !== null) return
+  pendingAction.value = 'renew-budget'
+  emit('renew-budget')
+}
 
 const statusPresentation = {
   active: { label: 'In progress', icon: 'mdi-bullseye-arrow', color: 'success' },
@@ -236,11 +292,32 @@ const statusColor = computed(() => presentation.value.color)
 const canPause = computed(() => goal.status === 'active')
 const canResume = computed(() => !runActive && (goal.status === 'paused' || goal.status === 'blocked'))
 const canCancel = computed(() => goal.status === 'active' || goal.status === 'paused' || goal.status === 'blocked')
+const canRenewTokenBudget = computed(
+  () =>
+    !runActive &&
+    goal.status === 'budget_limited' &&
+    goal.budgetLimitReason === 'tokens' &&
+    goal.canRenewTokenBudget &&
+    goal.tokenAllowance !== null
+)
 const tokenPercent = computed(() => goal.maxTokens > 0 ? (goal.consumedTokens / goal.maxTokens) * 100 : 0)
 const toolPercent = computed(() => goal.maxToolCalls > 0 ? (goal.consumedToolCalls / goal.maxToolCalls) * 100 : 0)
 const continuationPercent = computed(() => goal.maxContinuations > 0 ? (goal.continuationCount / goal.maxContinuations) * 100 : 0)
 const budgetPercent = computed(() => Math.min(100, Math.max(0, Math.max(tokenPercent.value, toolPercent.value, continuationPercent.value))))
 const formatBudgetValue = (value: number): string => value.toLocaleString()
+const tokenTierLabel = computed(() => goal.tokenTier === 'standard' ? 'Standard' : goal.tokenTier === 'extended' ? 'Extended' : 'Unavailable')
+const renewalAllowanceLabel = computed(() => goal.tokenAllowance === null ? 'Unavailable' : formatBudgetValue(goal.tokenAllowance))
+const renewalAllowanceDescription = computed(() => goal.tokenAllowance === null ? 'Unavailable' : `Exactly ${renewalAllowanceLabel.value} tokens`)
+const budgetLimitReasonLabel = computed(() => {
+  if (goal.budgetLimitReason === 'tokens') return 'Token budget exhausted'
+  if (goal.budgetLimitReason === 'tool_calls') return 'Tool-call limit exhausted'
+  if (goal.budgetLimitReason === 'duration') return 'Time limit exhausted'
+  if (goal.budgetLimitReason === 'continuations') return 'Continuation limit exhausted'
+  if (goal.budgetLimitReason === 'quota') return 'Account quota exhausted'
+  if (goal.budgetLimitReason === 'accounting') return 'Usage accounting requires reconciliation'
+  if (goal.budgetLimitReason === 'authority') return 'Provider authority changed'
+  return 'No limiting reason recorded'
+})
 const budgetMetrics = computed(() => [
   {
     label: 'Tokens',
@@ -313,6 +390,7 @@ const pendingActionLabel = computed(() => {
   if (pendingAction.value === 'pause') return 'Pausing goal…'
   if (pendingAction.value === 'resume') return 'Resuming goal…'
   if (pendingAction.value === 'cancel') return 'Cancelling goal…'
+  if (pendingAction.value === 'renew-budget') return 'Adding token allowance and continuing…'
   return 'Updating goal…'
 })
 const budgetLabel = computed(() => {
@@ -326,7 +404,11 @@ const budgetLabel = computed(() => {
 const budgetAriaLabel = computed(() => `${budgetLabel.value} is ${Math.round(budgetPercent.value)}% used`)
 const progressLabel = computed(() => {
   if (goal.status === 'completed') return `Completed in ${goal.continuationCount + 1} run${goal.continuationCount === 0 ? '' : 's'}.`
-  if (goal.status === 'budget_limited') return 'A host-owned time, token, tool, or continuation limit stopped further work.'
+  if (goal.status === 'budget_limited') {
+    return canRenewTokenBudget.value
+      ? 'The token budget stopped this run. Confirm the additional allowance below to continue once.'
+      : `${budgetLimitReasonLabel.value} stopped further work. This limit cannot be renewed from this goal.`
+  }
   if (goal.status === 'cancelled') return 'No further work will run for this goal.'
   if (goal.status === 'failed') return 'The goal stopped after a non-recoverable failure.'
   if (goal.status === 'paused') return 'Future continuations are paused. Resume when you are ready for the agent to continue.'
@@ -571,6 +653,45 @@ const progressLabel = computed(() => {
   line-height: 1.5;
   margin: var(--wiki-space-3) 0 0;
 }
+.agent-goal__renewal {
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 8%, var(--wiki-surface-raised));
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 30%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  margin-top: var(--wiki-space-3);
+  padding: var(--wiki-space-3);
+}
+.agent-goal__renewal--available {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, var(--wiki-surface-raised));
+  border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 30%, var(--wiki-surface-border));
+}
+.agent-goal__renewal-heading { align-items: center; color: var(--goal-ink); display: flex; gap: var(--wiki-space-2); }
+.agent-goal__renewal-heading h3 { font-size: .76rem; font-weight: 750; margin: 0; }
+.agent-goal__renewal-facts {
+  display: grid;
+  gap: var(--wiki-space-2);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: var(--wiki-space-3) 0 0;
+}
+.agent-goal__renewal-facts div { min-width: 0; }
+.agent-goal__renewal-facts dt {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  font-size: var(--wiki-type-micro, .75rem);
+  font-weight: 650;
+}
+.agent-goal__renewal-facts dd {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .76rem;
+  font-variant-numeric: tabular-nums;
+  margin: var(--wiki-space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+.agent-goal__renewal-copy {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  font-size: .74rem;
+  line-height: 1.5;
+  margin: var(--wiki-space-3) 0 0;
+}
+.agent-goal__renewal-action { margin-top: var(--wiki-space-3); }
 .agent-goal__blockers {
   background: color-mix(in srgb, rgb(var(--v-theme-warning)) 9%, transparent);
   border: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 28%, transparent);
@@ -635,6 +756,7 @@ const progressLabel = computed(() => {
   .agent-goal__budget,
   .agent-goal__budget:first-child { border-inline-start: 0; padding-inline-start: 0; }
   .agent-goal__budget + .agent-goal__budget { border-top: 1px solid var(--wiki-surface-border); padding-top: var(--wiki-space-2); }
+  .agent-goal__renewal-facts { grid-template-columns: 1fr; }
   .agent-goal__actions :deep(.v-btn) { min-height: var(--wiki-control-height); }
   .agent-goal__dialog-actions {
     align-items: stretch;
@@ -656,6 +778,7 @@ const progressLabel = computed(() => {
   .agent-goal__mark,
   .agent-goal__progress,
   .agent-goal__blockers,
+  .agent-goal__renewal,
   .agent-goal__details { border-color: CanvasText; }
   .agent-goal__toggle:focus-visible { outline-color: Highlight; }
   .agent-goal__meter,

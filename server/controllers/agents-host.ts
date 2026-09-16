@@ -85,7 +85,7 @@ interface AgentHostWiki {
   readonly models: {
     readonly knex: Knex
   }
-  readonly agentRuntime?: Pick<AgentProductRuntime, 'cancel' | 'submit' | 'createGoal' | 'pauseGoal' | 'resumeGoal' | 'cancelGoal'>
+  readonly agentRuntime?: Pick<AgentProductRuntime, 'cancel' | 'submit' | 'createGoal' | 'pauseGoal' | 'resumeGoal' | 'renewGoalBudget' | 'cancelGoal'>
   readonly providerRegistry?: Pick<
     AgentProviderRegistry,
     | 'create'
@@ -217,6 +217,7 @@ const CreateGoalSchema = z.strictObject({
 })
 const GoalMutationSchema = z.strictObject({ expectedVersion: z.number().int().positive() })
 const ResumeGoalSchema = GoalMutationSchema.extend({ runId: z.uuid(), clientRequestId: z.uuid() })
+const RenewGoalBudgetSchema = GoalMutationSchema.extend({ runId: z.uuid(), clientRequestId: z.uuid(), confirmed: z.literal(true) })
 const CreatePersonalSkillSchema = z.strictObject({
   name: PersonalSkillNameSchema,
   skillMarkdown: PersonalSkillMarkdownSchema,
@@ -541,6 +542,20 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         goal: await projectGoal(resumed.goal),
         run: resumed.run ? projectAgentRun(resumed.run) : null,
         replayed: resumed.replayed
+      })
+    })
+  )
+  router.post(
+    `${apiPrefix}/goals/:goalId/renew-budget`,
+    asyncRoute(async (req, res) => {
+      if (!wiki.config.agents.goals?.enabled || !wiki.agentRuntime) return disabledRoute(res)
+      const goalId = UUIDSchema.parse(routeParameter(req, 'goalId'))
+      const input = RenewGoalBudgetSchema.parse(req.body)
+      const renewed = await wiki.agentRuntime.renewGoalBudget({ goalId, ownerId: requestSkillPrincipal(req).userId, ...input })
+      return res.status(renewed.run ? 202 : 200).json({
+        goal: await projectGoal(renewed.goal),
+        run: renewed.run ? projectAgentRun(renewed.run) : null,
+        replayed: renewed.replayed
       })
     })
   )

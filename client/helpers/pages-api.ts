@@ -1428,6 +1428,15 @@ export async function fetchPages(
   })
   return normalizeResponse(response, fallbackMessage, payload => normalizeArray(payload, fallbackMessage, normalizePageListRow))
 }
+export async function fetchPagesByTag(
+  fetchImpl: FetchImpl,
+  tag: string,
+  options: { locale?: string } = {},
+  fallbackMessage = 'Tag page list response is invalid'
+): Promise<PageListRow[]> {
+  if (typeof tag !== 'string' || tag.trim().length < 1 || tag.length > 256) throw new Error(fallbackMessage)
+  return fetchPages(fetchImpl, { locale: options.locale, tags: [tag] }, fallbackMessage)
+}
 
 export async function fetchPageHistory(
   fetchImpl: FetchImpl,

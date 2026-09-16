@@ -5,7 +5,10 @@ import { sameOriginJsonFetch } from './json-transport.ts'
 import {
   AGENT_ACTION_NAMES,
   AGENT_EVENT_TYPES,
+  AGENT_GOAL_BUDGET_LIMIT_REASONS,
+  AGENT_GOAL_BUDGET_SELECTIONS,
   AGENT_GOAL_STATUSES,
+  AGENT_GOAL_TOKEN_TIERS,
   AGENT_PROPOSAL_STATUSES,
   AGENT_PROVIDER_TRANSPORTS,
   AGENT_TASK_KINDS,
@@ -19,6 +22,7 @@ import {
   type CreateAgentGoalRequest,
   type CreateAgentSessionRequest,
   type PauseAgentGoalRequest,
+  type RenewAgentGoalBudgetRequest,
   type ResumeAgentGoalRequest,
   type SubmitAgentMessageRequest,
   type UpdateAgentSessionFolderRequest,
@@ -136,6 +140,13 @@ const Goal = z.object({
   maxTokens: z.number().int().positive(),
   consumedToolCalls: z.number().int().nonnegative(),
   maxToolCalls: z.number().int().positive(),
+  budgetPolicyVersion: z.number().int().positive().nullable(),
+  budgetSelection: z.enum(AGENT_GOAL_BUDGET_SELECTIONS),
+  tokenTier: z.enum(AGENT_GOAL_TOKEN_TIERS).nullable(),
+  tokenAllowance: z.number().int().positive().nullable(),
+  budgetCycle: z.number().int().nonnegative(),
+  budgetLimitReason: z.enum(AGENT_GOAL_BUDGET_LIMIT_REASONS).nullable(),
+  canRenewTokenBudget: z.boolean(),
   startedAt: Iso,
   deadlineAt: Iso,
   completedAt: Iso.nullable(),
@@ -591,6 +602,21 @@ export const resumeAgentGoal = async (fetcher: typeof fetch, csrfToken: string, 
     z.object({ goal: Goal, run: Run.nullable(), replayed: z.boolean() }),
     { method: 'POST', body: JSON.stringify(input) }
   )
+
+export const renewAgentGoalBudget = async (fetcher: typeof fetch, csrfToken: string, goalId: string, input: RenewAgentGoalBudgetRequest) => {
+  assertUuid(goalId, 'Goal ID')
+  assertPositiveVersion(input.expectedVersion)
+  assertUuid(input.runId, 'Run ID')
+  assertUuid(input.clientRequestId, 'Client request ID')
+  if (input.confirmed !== true) throw invalidRequest('Goal token budget renewal requires explicit confirmation.')
+  return requestJson(
+    fetcher,
+    csrfToken,
+    `/_api/agents/goals/${encodeURIComponent(goalId)}/renew-budget`,
+    z.object({ goal: Goal, run: Run.nullable(), replayed: z.boolean() }),
+    { method: 'POST', body: JSON.stringify(input) }
+  )
+}
 
 export const cancelAgentGoal = async (fetcher: typeof fetch, csrfToken: string, goalId: string, input: CancelAgentGoalRequest) =>
   (

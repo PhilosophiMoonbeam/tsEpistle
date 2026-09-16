@@ -15,20 +15,15 @@ async function openFixtureAgentFromSearch(page: Page): Promise<Locator> {
   await openAuthenticatedPage(page, '/', '.page-header-section')
   const viewport = page.viewportSize()
   const searchDialog = page.getByRole('dialog', { name: 'Wiki search', exact: true })
-  if (viewport && viewport.width >= 960) {
-    await page.keyboard.press('ControlOrMeta+K')
-    await expect(searchDialog).toBeVisible()
-    const entry = searchDialog.getByRole('button', { name: 'Open Wiki Agent', exact: true })
-    await expect(entry).toBeVisible()
-    await entry.click()
-  } else {
-    const search = await openSearch(page)
-    await expect(search).toBeFocused()
-    await expect(searchDialog).toBeVisible()
-    const entry = searchDialog.getByRole('button', { name: 'Open Wiki Agent', exact: true })
-    await expect(entry).toBeVisible()
-    await entry.click()
-  }
+  if (viewport && viewport.width >= 960) await page.keyboard.press('ControlOrMeta+K')
+  else await openSearch(page)
+  await expect(searchDialog).toBeVisible()
+  const search = page.locator('.nav-header-search-control input:visible').first()
+  await expect(search).toBeVisible()
+  await search.fill('home')
+  const askAgent = searchDialog.getByRole('button', { name: 'Ask about this', exact: true })
+  await expect(askAgent).toBeVisible()
+  await askAgent.click()
   const agent = page.getByRole('region', { name: 'Wiki Agent' })
   await expect(agent).toBeVisible()
   return agent
@@ -1548,16 +1543,19 @@ test.describe('responsive UI quality matrix', () => {
     else await openSearch(page)
     const wikiSearchDialog = page.getByRole('dialog', { name: 'Wiki search', exact: true })
     await expect(wikiSearchDialog).toBeVisible()
-    const openWikiAgentButton = wikiSearchDialog.getByRole('button', { name: 'Open Wiki Agent', exact: true })
-    await expect(openWikiAgentButton).toBeVisible()
-    await openWikiAgentButton.click()
+    const searchInput = page.locator('.nav-header-search-control input:visible').first()
+    await expect(searchInput).toBeVisible()
+    await searchInput.fill('home')
+    const askAgentButton = wikiSearchDialog.getByRole('button', { name: 'Ask about this', exact: true })
+    await expect(askAgentButton).toBeVisible()
+    await askAgentButton.click()
 
     const agent = page.getByRole('region', { name: 'Wiki Agent' })
     await expect(agent).toBeVisible()
     await expect(page.getByText(/Agent inference is currently disabled/)).toBeVisible()
     const newConversationButton = agent.getByRole('button', { name: 'New conversation', exact: true })
     const temporaryConversationButton = agent.getByRole('button', { name: 'Temporary conversation', exact: true })
-    const chatPinButton = agent.locator('.agent-composer__chat-pin')
+    const chatPinButton = agent.locator('header').getByRole('button', { name: /^(?:Pin|Unpin) conversation$/ })
     await expect(newConversationButton).toBeVisible()
     await expect(temporaryConversationButton).toBeVisible()
     await expect(chatPinButton).toHaveAttribute('aria-pressed', 'false')
@@ -1663,7 +1661,6 @@ test.describe('responsive UI quality matrix', () => {
     }
 
     if (viewport.width <= 639.98) {
-      await expect(page.locator('.search-results-agent-nav')).toBeHidden()
       await expect(agent.getByRole('button', { name: 'Return to Wiki Search' })).toBeVisible()
       await expect(agent.getByRole('button', { name: 'Close Wiki Agent' })).toBeVisible()
     }
@@ -1672,7 +1669,9 @@ test.describe('responsive UI quality matrix', () => {
     await expect(agent.getByRole('button', { name: 'Close Wiki Agent' })).toBeVisible()
     await agent.getByRole('button', { name: 'Return to Wiki Search' }).click()
     await expect(page.locator('.search-results-search')).toBeVisible()
-    await page.locator('.search-results-agent-entry').click()
+    const reopenAskAgentButton = wikiSearchDialog.getByRole('button', { name: 'Ask about this', exact: true })
+    await expect(reopenAskAgentButton).toBeVisible()
+    await reopenAskAgentButton.click()
     await expect(agent).toBeVisible()
     await expectLocatorWithinViewport(agent, 'Wiki Agent panel')
     await expectResponsiveLayout(page, 'Wiki Agent panel')
@@ -1998,12 +1997,12 @@ test.describe('responsive UI quality matrix', () => {
       if (typeof sessionA !== 'string') throw new Error('The fixture did not return the first created session ID.')
       const agent = page.getByRole('region', { name: 'Wiki Agent' })
       await expect(agent).toBeVisible()
-      const pin = agent.locator('.agent-composer__chat-pin')
+      const pin = agent.locator('header').getByRole('button', { name: /^(?:Pin|Unpin) conversation$/ })
       const composerInput = agent.getByRole('textbox', { name: /^(?:Message|Follow up with) Wiki Agent$/ })
       await expect(pin).toHaveAttribute('aria-pressed', 'false')
       await pin.click()
       await expect(pin).toHaveAttribute('aria-pressed', 'true')
-      await expect(pin).toHaveAttribute('title', 'Unpin chat')
+      await expect(pin).toHaveAttribute('title', 'Unpin conversation')
 
       const promptA = 'Remember the first page context.'
       const messageARequestPromise = page.waitForRequest(messagePath)
@@ -2039,7 +2038,7 @@ test.describe('responsive UI quality matrix', () => {
       expect(fixture.requests.filter(request => request === 'POST /_api/agents/sessions')).toHaveLength(createsBeforeReopen)
       await expect(agent.getByText('Current page · en/home', { exact: true })).toBeVisible()
       await expect(pin).toHaveAttribute('aria-pressed', 'true')
-      await expect(pin).toHaveAttribute('title', 'Unpin chat')
+      await expect(pin).toHaveAttribute('title', 'Unpin conversation')
 
       await page.reload({ waitUntil: 'networkidle' })
       await expect(page.locator('.page-header-section')).toBeVisible()
@@ -2056,7 +2055,7 @@ test.describe('responsive UI quality matrix', () => {
       expect(fixture.requests.filter(request => request === 'POST /_api/agents/sessions')).toHaveLength(createsBeforeReload)
       await expect(agent.getByText('Current page · en/home', { exact: true })).toBeVisible()
       await expect(pin).toHaveAttribute('aria-pressed', 'true')
-      await expect(pin).toHaveAttribute('title', 'Unpin chat')
+      await expect(pin).toHaveAttribute('title', 'Unpin conversation')
 
       const promptB = 'Remember the newly visited page context.'
       const messageBRequestPromise = page.waitForRequest(messagePath)

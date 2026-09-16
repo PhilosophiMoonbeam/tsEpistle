@@ -404,6 +404,19 @@ describe('provider usage accounting', () => {
     })
   })
 })
+it('normalizes root token budget failures as safe 409 execution errors', () => {
+  const failure = classifyAgentExecutionFailure(
+    new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Agent token budget was exhausted', 409),
+    'dispatch_admission'
+  )
+  expect(failure).toMatchObject({
+    code: 'AGENT_TOKEN_BUDGET_LIMITED',
+    stage: 'dispatch_admission',
+    status: 409,
+    message: 'Agent inference failed'
+  })
+})
+
 
 describe('provider continuation wire', () => {
   it('round-trips supported Responses continuation state and rejects a dialect mix-up', () => {

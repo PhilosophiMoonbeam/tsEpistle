@@ -121,6 +121,7 @@
 
     <div class="agent-composer__actions">
       <div class="agent-composer__context-controls" role="group" aria-label="Conversation context controls">
+        <slot name="context-controls" />
         <v-menu content-class="agent-owned-overlay agent-composer__skill-menu-content" v-if="skillsEnabled" v-model="skillMenuOpen" :close-on-content-click="false">
           <template #activator="{ props: activatorProps }">
             <v-btn
@@ -233,25 +234,6 @@
         >
           <span>Goal</span>
         </v-btn>
-        <v-btn
-          class="agent-composer__chat-pin wiki-purpose-control"
-          :class="{
-            'wiki-purpose-control--active': chatPinned,
-            'agent-composer__chat-pin--active': chatPinned
-          }"
-          data-purpose="warning"
-          :data-state="chatPinned ? 'active' : undefined"
-          :color="chatPinned ? 'primary' : undefined"
-          :variant="chatPinned ? 'tonal' : 'text'"
-          :prepend-icon="chatPinned ? 'mdi-pin' : 'mdi-pin-outline'"
-          :aria-label="chatPinned ? 'Unpin conversation' : 'Pin conversation'"
-          :aria-pressed="chatPinned"
-          :title="chatPinned ? 'Unpin conversation' : 'Pin conversation'"
-          :disabled="chatPinDisabled"
-          @click="toggleChatPinned"
-        >
-          <span>Pin</span>
-        </v-btn>
       </div>
 
       <div class="agent-composer__primary-actions" role="group" aria-label="Message actions">
@@ -308,12 +290,10 @@ const props = defineProps<{
   initialMode?: 'message' | 'goal'
   initialSkillVersionIds?: readonly string[]
   hasMessages?: boolean
-  chatPinned?: boolean
-  chatPinDisabled: boolean
   externalDescriptionId?: string
   networkBlocked?: boolean
 }>()
-const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void]; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]]; 'update:chatPinned': [pinned: boolean] }>()
+const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void]; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
 const draft = ref(props.initialDraft ?? '')
 watch(draft, text => {
   if (props.sessionId) emit('draftChange', props.sessionId, text)
@@ -570,10 +550,6 @@ const togglePreference = (versionId: string): void => {
   }
   emit('updateSkillPreferences', skillIds)
 }
-const toggleChatPinned = (): void => {
-  if (props.chatPinDisabled) return
-  emit('update:chatPinned', !Boolean(props.chatPinned))
-}
 interface SkillCommandMatch {
   readonly query: string
   readonly start: number
@@ -795,20 +771,21 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .agent-composer {
-  --agent-composer-control-face-height: max(30.6px, calc(var(--wiki-control-height) * .697));
+  --agent-composer-control-face-height: max(36px, calc(var(--wiki-control-height) * .9));
   --agent-composer-control-hit-height: max(44px, var(--wiki-control-height));
   --agent-composer-control-hit-inset: calc((var(--agent-composer-control-hit-height) - var(--agent-composer-control-face-height)) / -2);
-  --agent-composer-control-gap: calc(var(--wiki-space-1) * .95);
-  --agent-composer-control-padding-inline: calc(var(--wiki-space-3) * .95);
-  --agent-composer-control-font-size: calc(var(--v-btn-size, .875rem) * .95);
-  --agent-composer-control-min-width: calc(var(--wiki-control-height) * .95);
+  --agent-composer-control-gap: calc(var(--wiki-space-1) * .9);
+  --agent-composer-control-padding-inline: calc(var(--wiki-space-3) * .9);
+  --agent-composer-control-font-size: var(--v-btn-size, .875rem);
+  --agent-composer-control-min-width: calc(var(--wiki-control-height) * .9);
+  --agent-composer-padding: calc(var(--wiki-space-2) * .9);
   position: relative;
   display: flex;
   max-height: min(calc(var(--wiki-space-12) * 7), 44dvh);
   flex-direction: column;
   overflow: visible;
   min-width: 0;
-  padding: var(--wiki-space-2);
+  padding: var(--agent-composer-padding);
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
@@ -862,14 +839,14 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__input :deep(.v-field__input) {
-  min-height: calc(var(--wiki-space-12) * 1.5);
-  padding: var(--wiki-space-2) var(--wiki-space-1);
+  min-height: calc(var(--wiki-space-12) * 1.35);
+  padding: calc(var(--wiki-space-2) * .9) var(--wiki-space-1);
 }
 
 .agent-composer__input :deep(textarea) {
   box-sizing: border-box;
-  min-height: calc(var(--wiki-space-12) * 1.5);
-  max-height: min(calc(var(--wiki-space-12) * 3), 30dvh);
+  min-height: calc(var(--wiki-space-12) * 1.35);
+  max-height: min(calc(var(--wiki-space-12) * 2.7), 30dvh);
   overflow-y: hidden;
   overscroll-behavior: contain;
   color: rgb(var(--v-theme-on-surface));
@@ -877,6 +854,7 @@ onBeforeUnmount(() => {
   line-height: var(--wiki-leading-body);
   resize: none;
 }
+
 
 .agent-composer__input :deep(textarea::placeholder) {
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, transparent);
@@ -943,6 +921,12 @@ onBeforeUnmount(() => {
   gap: var(--agent-composer-control-gap);
 }
 
+.agent-composer__context-controls {
+  flex-wrap: wrap;
+  align-content: center;
+  overflow: visible;
+}
+
 
 .agent-composer__primary-actions {
   min-width: calc(var(--wiki-space-12) * 1.9);
@@ -959,7 +943,6 @@ onBeforeUnmount(() => {
 /* Compact action faces retain a 44px effective pointer target through an invisible before-pseudo-element. */
 .agent-composer__skill-button,
 .agent-composer__goal-button,
-.agent-composer__chat-pin,
 .agent-composer__submit,
 .agent-composer__stop {
   position: relative;
@@ -973,7 +956,6 @@ onBeforeUnmount(() => {
 
 .agent-composer__skill-button::before,
 .agent-composer__goal-button::before,
-.agent-composer__chat-pin::before,
 .agent-composer__submit::before,
 .agent-composer__stop::before {
   position: absolute;
@@ -989,8 +971,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__skill-button,
-.agent-composer__goal-button,
-.agent-composer__chat-pin {
+.agent-composer__goal-button {
   padding-inline: var(--agent-composer-control-padding-inline);
   font-weight: 500;
   letter-spacing: .01em;
@@ -1002,7 +983,7 @@ onBeforeUnmount(() => {
 }
 .agent-composer__actions :deep(.v-btn__prepend),
 .agent-composer__actions :deep(.v-btn__append) {
-  margin-inline: calc(var(--wiki-space-1) * -.95) calc(var(--wiki-space-2) * .95);
+  margin-inline: calc(var(--wiki-space-1) * -.9) calc(var(--wiki-space-2) * .9);
 }
 
 
@@ -1034,7 +1015,6 @@ onBeforeUnmount(() => {
 
 .agent-composer__skill-load-state > div {
   display: grid;
-  min-width: 0;
   gap: 2px;
 }
 
@@ -1156,7 +1136,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 740px) {
   .agent-composer {
-    padding: var(--wiki-space-2);
+    padding: var(--agent-composer-padding);
     border-radius: var(--wiki-control-radius);
   }
 
@@ -1169,9 +1149,7 @@ onBeforeUnmount(() => {
 
   .agent-composer__context-controls {
     grid-area: context;
-    overflow-x: auto;
-    overscroll-behavior-inline: contain;
-    scrollbar-width: none;
+    overflow: visible;
     padding-block: var(--agent-composer-control-gap);
     margin-block: calc(var(--agent-composer-control-gap) * -1);
   }
@@ -1180,16 +1158,10 @@ onBeforeUnmount(() => {
     grid-area: primary;
   }
 
-
-  .agent-composer__context-controls::-webkit-scrollbar {
-    display: none;
-  }
-
   .agent-composer__attachments {
     flex-direction: column;
     max-height: min(calc(var(--wiki-space-12) * 2), 24dvh);
   }
-
 }
 
 @media (max-width: 740px) and (max-height: 500px) {
@@ -1217,7 +1189,7 @@ onBeforeUnmount(() => {
   .agent-composer__skill-button,
   .agent-composer__goal-button {
     min-width: var(--agent-composer-control-min-width);
-    padding-inline: calc(var(--wiki-space-2) * .95);
+    padding-inline: calc(var(--wiki-space-2) * .9);
   }
 
   .agent-composer__skill-button :deep(.v-btn__prepend),
@@ -1227,14 +1199,13 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 430px) {
-
   .agent-composer__primary-actions,
   .agent-composer__submit {
     min-width: calc(var(--wiki-space-12) * 1.425);
   }
 
   .agent-composer__submit {
-    padding-inline: calc(var(--wiki-space-3) * .95);
+    padding-inline: calc(var(--wiki-space-3) * .9);
   }
 
   .agent-composer__submit :deep(.v-btn__prepend) {
@@ -1245,11 +1216,10 @@ onBeforeUnmount(() => {
 @media (max-height: 500px) {
   .agent-composer__input :deep(.v-field__input),
   .agent-composer__input :deep(textarea) {
-    min-height: calc(var(--wiki-space-12) * 1.5);
-    max-height: calc(var(--wiki-space-12) * 1.5);
+    min-height: calc(var(--wiki-space-12) * 1.35);
+    max-height: calc(var(--wiki-space-12) * 1.35);
   }
 }
-
 @media (forced-colors: active) {
   .agent-composer,
   .agent-composer__command-menu {

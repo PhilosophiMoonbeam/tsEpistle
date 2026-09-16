@@ -194,7 +194,9 @@ const mountPicker = (
     props: {
       draft: { type: Object, required: true },
       currentPage: { type: Object, default: null },
-      disabled: { type: Boolean, default: false }
+      disabled: { type: Boolean, default: false },
+      connectionBlocked: { type: Boolean, default: false },
+      connectionRetrying: { type: Boolean, default: false }
     },
     setup(componentProps) {
       return evaluatePicker(
@@ -216,7 +218,7 @@ const mountPicker = (
     },
     render: renderPicker
   })
-  const app = Vue.createApp(picker, { draft, currentPage: null, disabled: false })
+  const app = Vue.createApp(picker, { draft, currentPage: null, disabled: false, connectionBlocked: false, connectionRetrying: false })
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.component('WikiSourcePreview', Vue.defineComponent({ render: () => Vue.h('div') }))
   app.mount(host)

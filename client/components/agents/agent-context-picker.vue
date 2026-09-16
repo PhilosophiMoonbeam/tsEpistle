@@ -1,8 +1,8 @@
 <template>
   <div class="agent-context" aria-label="Sources and search scope">
-    <div class="agent-context__scope">
+    <div class="agent-context__scope" role="group" aria-label="Conversation source controls">
       <v-menu content-class="agent-owned-overlay" location="top start">
-        <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" :disabled="disabled || connectionBlocked" variant="text" size="small" prepend-icon="mdi-text-search" append-icon="mdi-chevron-down" aria-label="Choose Agent search scope">{{ scopeLabel }}</v-btn></template>
+        <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" class="agent-context__control agent-context__scope-control" :disabled="disabled || connectionBlocked" variant="text" rounded="pill" size="small" prepend-icon="mdi-text-search" append-icon="mdi-chevron-down" aria-label="Choose Agent search scope" type="button">{{ scopeLabel }}</v-btn></template>
         <v-list density="compact" aria-label="Agent search scope">
           <v-list-item title="All Wiki" subtitle="Search every page you can access" prepend-icon="mdi-earth" :active="draft.scope.kind === 'all'" :disabled="disabled || connectionBlocked" @click="setScope({ kind: 'all' })" />
           <v-list-item v-if="currentPage" title="This page tree" :subtitle="currentPage.path" prepend-icon="mdi-file-tree-outline" :active="draft.scope.kind === 'section'" :disabled="disabled || connectionBlocked" @click="setScope({ kind: 'section', locale: currentPage.locale, path: currentPage.path })" />
@@ -11,17 +11,44 @@
       </v-menu>
       <v-btn
         ref="sourcesActivator"
+        class="agent-context__control agent-context__sources-control"
         size="small"
         variant="text"
+        rounded="pill"
         prepend-icon="mdi-plus"
         :disabled="disabled || connectionBlocked"
+        type="button"
         @click="openSources"
       >Add sources</v-btn>
     </div>
-    <div v-if="currentPage || draft.sources.length" class="agent-context__sources" aria-label="Pages attached to the next message">
-      <v-chip v-if="currentPage && draft.includeCurrentPage" closable :disabled="disabled || connectionBlocked" :close-label="`Remove current page ${currentPage.path}`" size="small" variant="tonal" prepend-icon="mdi-file-link-outline" @click:close="emit('change', { includeCurrentPage: false })"><span class="agent-context__source-label">Current page · {{ currentPage.locale }}/{{ currentPage.path }}</span></v-chip>
-      <v-btn v-else-if="currentPage" size="small" variant="text" prepend-icon="mdi-file-link-outline" :disabled="disabled || connectionBlocked" @click="emit('change', { includeCurrentPage: true })">Include current page</v-btn>
-      <v-chip v-for="source in draft.sources" :key="source.id" size="small" closable :disabled="disabled || connectionBlocked" :close-label="`Remove source ${source.title}`" :aria-label="`Preview attached source ${source.title}`" variant="outlined" prepend-icon="mdi-file-document-outline" @click="previewSelector = { id: source.id }" @click:close="removeSource(source.id)"><span class="agent-context__source-label">{{ source.title }}</span></v-chip>
+    <div
+      v-if="currentPage"
+      class="agent-context__page-control"
+      role="group"
+      :aria-label="`Current page context: ${currentPage.locale}/${currentPage.path}`"
+    >
+      <v-icon icon="mdi-file-link-outline" size="16" aria-hidden="true" />
+      <span class="agent-context__page-copy" :title="`${currentPage.locale}/${currentPage.path}`">
+        <strong>{{ currentPage.locale.toUpperCase() }}</strong>
+        <span aria-hidden="true"> · </span>
+        {{ currentPage.path }}
+      </span>
+      <v-btn
+        class="agent-context__control agent-context__page-toggle"
+        size="small"
+        :variant="draft.includeCurrentPage ? 'tonal' : 'text'"
+        :color="draft.includeCurrentPage ? 'primary' : undefined"
+        rounded="pill"
+        :disabled="disabled || connectionBlocked"
+        :aria-label="draft.includeCurrentPage ? 'Exclude current page' : 'Include current page'"
+        :aria-pressed="draft.includeCurrentPage"
+        :title="draft.includeCurrentPage ? 'Exclude current page from the next message' : 'Include current page in the next message'"
+        type="button"
+        @click="emit('change', { includeCurrentPage: !draft.includeCurrentPage })"
+      >{{ draft.includeCurrentPage ? 'Included' : 'Include' }}</v-btn>
+    </div>
+    <div v-if="draft.sources.length" class="agent-context__sources" aria-label="Pages attached to the next message">
+      <v-chip v-for="source in draft.sources" :key="source.id" size="small" closable :disabled="disabled || connectionBlocked" :close-label="`Remove source ${source.title}`" :aria-label="`Preview attached source ${source.title}`" variant="outlined" prepend-icon="mdi-file-document-outline" @click.stop="previewSelector = { id: source.id }" @click:close.stop="removeSource(source.id)"><span class="agent-context__source-label">{{ source.title }}</span></v-chip>
     </div>
     <p v-if="draft.sources.length === 8" class="agent-context__limit" role="status">Eight sources attached. Remove one to add another.</p>
     <WikiSourcePreview v-if="previewSelector" :selector="previewSelector" @close="previewSelector = null" />
@@ -44,13 +71,13 @@
             <h2 :id="`${sourceDialogId}-title`">Add sources</h2>
             <p :id="`${sourceDialogId}-description`">Search All Wiki to attach pages. This does not change the Agent search scope.</p>
           </div>
-          <v-btn icon="mdi-close" variant="text" aria-label="Cancel adding sources" @click="cancelSources" />
+          <v-btn icon="mdi-close" variant="text" aria-label="Cancel adding sources" type="button" @click="cancelSources" />
         </header>
         <v-card-text class="agent-context__dialog-body">
           <p class="agent-context__dialog-guidance">Select up to eight pages to attach to this conversation. Your pending selections stay here while you search or load more results.</p>
           <v-alert v-if="connectionBlocked" class="agent-context__connection-alert" type="warning" variant="tonal" density="compact" role="status">
             <span>Connection required to search or attach sources.</span>
-            <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" @click="emit('retry-connection')">Retry connection</v-btn>
+            <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" type="button" @click="emit('retry-connection')">Retry connection</v-btn>
           </v-alert>
           <v-text-field
             ref="sourceSearchInput"
@@ -118,13 +145,14 @@
             variant="text"
             :loading="loadingMore"
             :disabled="loadingMore || addingSources || disabled || connectionBlocked"
+            type="button"
             @click="loadMoreSources"
           >More results</v-btn>
         </v-card-text>
         <v-card-actions class="agent-context__dialog-actions">
-          <v-btn variant="text" @click="cancelSources">Cancel</v-btn>
+          <v-btn variant="text" type="button" @click="cancelSources">Cancel</v-btn>
           <v-spacer />
-          <v-btn color="primary" variant="flat" :loading="addingSources" :disabled="!selectedRows.length || addingSources || disabled || connectionBlocked" @click="addSources">
+          <v-btn color="primary" variant="flat" :loading="addingSources" :disabled="!selectedRows.length || addingSources || disabled || connectionBlocked" type="button" @click="addSources">
             {{ selectedRows.length ? `Add ${selectedRows.length} source${selectedRows.length === 1 ? '' : 's'} and return` : 'Add sources and return' }}
           </v-btn>
         </v-card-actions>
@@ -489,13 +517,99 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.agent-context { padding: .2rem 0 .65rem; min-width: 0; }
-.agent-context__scope { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .25rem; }
+.agent-context {
+  --agent-context-control-face-height: var(--agent-composer-control-face-height, max(36px, calc(var(--wiki-control-height, 44px) * .9)));
+  --agent-context-control-hit-height: var(--agent-composer-control-hit-height, max(44px, var(--wiki-control-height, 44px)));
+  --agent-context-control-hit-inset: calc((var(--agent-context-control-hit-height) - var(--agent-context-control-face-height)) / -2);
+  display: contents;
+}
+.agent-context__scope {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--wiki-space-1);
+}
 .agent-context__scope :deep(.v-btn__content) { max-width: min(28rem, 65vw); overflow: hidden; text-overflow: ellipsis; }
-.agent-context__sources { max-height: 8rem; overflow-y: auto; display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; margin-top: .4rem; }
-.agent-context__sources .v-chip { max-width: 100%; }
+.agent-context__control {
+  position: relative;
+  box-sizing: border-box;
+  min-width: max(44px, var(--agent-context-control-face-height));
+  height: var(--agent-context-control-face-height);
+  min-height: var(--agent-context-control-face-height);
+  padding-inline: calc(var(--wiki-space-3) * .9);
+  border-radius: var(--wiki-radius-pill) !important;
+  font-size: var(--v-btn-size, .875rem);
+  font-weight: 500;
+  letter-spacing: .01em;
+}
+.agent-context__control::before {
+  position: absolute;
+  inset-block: var(--agent-context-control-hit-inset);
+  inset-inline-start: 50%;
+  width: 100%;
+  min-width: var(--agent-context-control-hit-height);
+  min-height: var(--agent-context-control-hit-height);
+  border-radius: inherit;
+  content: '';
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+.agent-context__page-control {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--wiki-space-1);
+  min-height: var(--agent-context-control-face-height);
+  padding: 0 var(--wiki-space-1) 0 var(--wiki-space-2);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-radius-pill);
+  background: color-mix(in srgb, var(--wiki-surface-raised) 72%, transparent);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  font-size: var(--wiki-label-size);
+  line-height: 1.25;
+}
+.agent-context__page-control > .v-icon { flex: 0 0 auto; color: var(--wiki-accent-warm); }
+.agent-context__page-copy {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-context__page-copy strong {
+  color: rgb(var(--v-theme-on-surface));
+  font-weight: var(--wiki-label-weight);
+}
+.agent-context__page-toggle {
+  flex: 0 0 auto;
+  padding-inline: var(--wiki-space-2);
+}
+.agent-context__sources {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  max-height: 4rem;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wiki-space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.agent-context__sources .v-chip { max-width: 100%; border-radius: var(--wiki-radius-pill); }
 .agent-context__source-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-context__limit { font-size: .72rem; opacity: .7; margin: .4rem 0 0; }
+.agent-context__limit {
+  flex: 1 1 100%;
+  margin: var(--wiki-space-1) 0 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  font-size: .72rem;
+  line-height: 1.3;
+}
 .agent-context__dialog { overflow: hidden; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius) !important; background: var(--wiki-surface-raised); }
 .agent-context__dialog-header { display: flex; align-items: flex-start; gap: var(--wiki-space-3); padding: var(--wiki-space-5) var(--wiki-space-5) var(--wiki-space-3); border-bottom: 1px solid var(--wiki-surface-border); }
 .agent-context__dialog-mark { display: grid; flex: 0 0 auto; width: 2.25rem; height: 2.25rem; place-items: center; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); }

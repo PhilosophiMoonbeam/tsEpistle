@@ -20,6 +20,7 @@ type Outcome =
 
 type SnapshotDump = {
   meta: Record<string, unknown> | undefined
+  policy: Array<Record<string, unknown>>
   snapshots: Array<Record<string, unknown>>
   searchDocuments: Array<Record<string, unknown>>
   drafts: Array<Record<string, unknown>>
@@ -28,8 +29,10 @@ type SnapshotDump = {
 type StorageEstimate = {
   managedBytes: number
   snapshotCount: number
+  policyPageCount: number
   lockedDraftCount: number
   sessionGeneration: number
+  policyRevision: number
 }
 
 const makeSnapshot = (locale = 'en', pageId = 42, overrides: Partial<OfflinePageSnapshotV1> = {}): OfflinePageSnapshotV1 => ({
@@ -53,6 +56,20 @@ const makeSnapshot = (locale = 'en', pageId = 42, overrides: Partial<OfflinePage
   integrity: `sha256:${locale}-${pageId}`,
   ...overrides
 })
+
+const makeLegacySnapshotRecord = (siteId: string, snapshot: OfflinePageSnapshotV1): Record<string, unknown> => {
+  const withoutSize = {
+    siteId,
+    pageId: snapshot.pageId,
+    locale: snapshot.locale,
+    snapshot,
+    lastOpenedAt: capturedAt
+  }
+  return {
+    ...withoutSize,
+    byteSize: new TextEncoder().encode(JSON.stringify(withoutSize)).byteLength
+  }
+}
 
 const makeEnvelope = (recordId: string, options: {
   generation?: number
@@ -92,6 +109,15 @@ const draftLogicalBytes = (envelope: OfflineDraftEnvelopeV1): number => {
   return new TextEncoder().encode(JSON.stringify(metadata)).byteLength + envelope.nonce.byteLength + envelope.ciphertext.byteLength
 }
 
+const policyLogicalBytes = (record: Record<string, unknown>): number => {
+  const { byteSize: _byteSize, ...withoutSize } = record
+  return new TextEncoder().encode(JSON.stringify(withoutSize)).byteLength
+}
+
+const policyManagedBytes = (dump: SnapshotDump): number =>
+  dump.policy.reduce((total, record) => total + policyLogicalBytes(record), 0)
+
+
 const bytes = (value: unknown): number[] => Array.isArray(value) ? value.map(item => Number(item)) : []
 const driverSource = (absoluteStoragePath: string, absoluteSessionPath: string): string => `
 import { openOfflineStorage, type OfflineStorage } from ${JSON.stringify(absoluteStoragePath)};
@@ -104,7 +130,8 @@ import {
 type RawHandle = IDBDatabase;
 const handles = new Map<string, OfflineStorage>();
 const rawHolds = new Map<string, RawHandle>();
-const stores = ['meta', 'snapshots', 'drafts', 'searchDocuments'];
+const stores = ['meta', 'snapshots', 'drafts', 'searchDocuments', 'policy'];
+const legacyStores = ['meta', 'snapshots', 'drafts', 'searchDocuments'];
 let boundaryDatabaseName: string | undefined;
 registerOfflineIdentityBoundaryOwner(async request => {
   if (
@@ -175,13 +202,19 @@ const normalizeEnvelope = (value: Record<string, unknown>): Record<string, unkno
   nonce: new Uint8Array(byteValues(value.nonce)),
   ciphertext: new Uint8Array(byteValues(value.ciphertext))
 });
-const seedLegacy = async (name: string, value: Record<string, unknown>, corrupt: boolean): Promise<void> => {
+const seedLegacy = async (
+  name: string,
+  value: Record<string, unknown>,
+  corrupt: boolean,
+  snapshot?: Record<string, unknown>
+): Promise<void> => {
   const database = await openDatabase(name, 1, (db, transaction) => {
     createStores(db);
     transaction.objectStore('meta').put(legacyMeta());
   });
-  const transaction = database.transaction(stores, 'readwrite');
+  const transaction = database.transaction(legacyStores, 'readwrite');
   transaction.objectStore('drafts').put(normalizeEnvelope(value));
+  if (snapshot !== undefined) transaction.objectStore('snapshots').put(snapshot);
   if (corrupt) transaction.objectStore('drafts').put({ recordId: 'opaque-row', accountId: 1, ciphertext: new Uint8Array([4, 5, 6]) });
   await transactionDone(transaction);
   database.close();
@@ -228,15 +261,16 @@ const serialise = (value: unknown): unknown => {
 const dump = async (name: string): Promise<unknown> => {
   const database = await openDatabase(name);
   const transaction = database.transaction(stores, 'readonly');
-  const [meta, snapshots, searchDocuments, drafts] = await Promise.all([
+  const [meta, policy, snapshots, searchDocuments, drafts] = await Promise.all([
     requestValue(transaction.objectStore('meta').get('state')),
+    requestValue(transaction.objectStore('policy').getAll()),
     requestValue(transaction.objectStore('snapshots').getAll()),
     requestValue(transaction.objectStore('searchDocuments').getAll()),
     requestValue(transaction.objectStore('drafts').getAll())
   ]);
   await transactionDone(transaction);
   database.close();
-  return serialise({ meta, snapshots, searchDocuments, drafts });
+  return serialise({ meta, policy, snapshots, searchDocuments, drafts });
 };
 const deleteDatabase = (name: string): Promise<void> => new Promise((resolve, reject) => {
   const request = indexedDB.deleteDatabase(name);
@@ -268,7 +302,7 @@ const errorResult = (error: unknown): { ok: false; error: { name: string; code?:
 };
 export async function run(operation: string, payload: Record<string, unknown> = {}): Promise<unknown> {
   try {
-    if (operation === 'seedLegacy') { await seedLegacy(String(payload.name), payload.draft as Record<string, unknown>, payload.corrupt === true); return { ok: true, value: { seeded: true } }; }
+    if (operation === 'seedLegacy') { await seedLegacy(String(payload.name), payload.draft as Record<string, unknown>, payload.corrupt === true, payload.snapshot as Record<string, unknown> | undefined); return { ok: true, value: { seeded: true } }; }
     if (operation === 'putOpaque') { await putOpaque(String(payload.name)); return { ok: true, value: { seeded: true } }; }
     if (operation === 'seedUnknownMeta') { await seedUnknownMeta(String(payload.name)); return { ok: true, value: { seeded: true } }; }
     if (operation === 'holdLegacy') { await holdLegacy(String(payload.name)); return { ok: true, value: { held: true } }; }
@@ -295,9 +329,11 @@ export async function run(operation: string, payload: Record<string, unknown> = 
     }
     if (operation === 'isClosed') return { ok: true, value: storageFor(payload.id).isClosed };
     if (operation === 'bump') return { ok: true, value: await storageFor(payload.id).bumpSessionGeneration(undefined, payload.options as never) };
-    if (operation === 'putSnapshot') return { ok: true, value: await storageFor(payload.id).putSnapshot(String(payload.siteId), payload.snapshot as never) };
+    if (operation === 'putSnapshot') return { ok: true, value: await storageFor(payload.id).putSnapshot(String(payload.siteId), payload.snapshot as never, payload.options as never) };
+    if (operation === 'setManual') return { ok: true, value: await storageFor(payload.id).setManualOfflineIntent(payload.selector as never, payload.selected as boolean, payload.options as never) };
+    if (operation === 'removeOffline') return { ok: true, value: await storageFor(payload.id).removeOfflinePage(payload.selector as never, payload.options as never) };
     if (operation === 'delete') return { ok: true, value: await storageFor(payload.id).deleteDraft(String(payload.recordId), payload.options as never) };
-    if (operation === 'removeSnapshot') { await storageFor(payload.id).removeSnapshot(String(payload.siteId), Number(payload.pageId), typeof payload.locale === 'string' ? payload.locale : undefined); return { ok: true, value: true }; }
+    if (operation === 'removeSnapshot') { await storageFor(payload.id).removeSnapshot(String(payload.siteId), Number(payload.pageId), typeof payload.locale === 'string' ? payload.locale : undefined, payload.options as never); return { ok: true, value: true }; }
     if (operation === 'listSnapshots') return { ok: true, value: await storageFor(payload.id).listSnapshots(String(payload.siteId)) };
     if (operation === 'search') return { ok: true, value: await storageFor(payload.id).searchDocuments(String(payload.siteId)) };
     if (operation === 'estimate') return { ok: true, value: await storageFor(payload.id).storageEstimate() };
@@ -416,10 +452,12 @@ afterAll(async () => {
 })
 
 describe('real IndexedDB offline storage adapter', () => {
-  test('upgrades physical v1 to v2 without changing encrypted envelope bytes', async () => {
+  test('upgrades physical v1 to v2 without changing encrypted envelope bytes and marks migrated snapshots manual', async () => {
     const name = freshDatabase('upgrade')
     const envelope = makeEnvelope('legacy-draft', { seed: 19 })
-    await succeeded('seedLegacy', { name, draft: envelope })
+    const snapshot = makeSnapshot('legacy', 7)
+    const legacySnapshot = makeLegacySnapshotRecord('legacy-site', snapshot)
+    await succeeded('seedLegacy', { name, draft: envelope, snapshot: legacySnapshot })
     await succeeded('open', { id: 'legacy', name })
     const dump = await readDump(name)
     expect(dump.meta?.schemaVersion).toBe(1)
@@ -427,6 +465,18 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(dump.drafts).toHaveLength(1)
     expect(bytes(dump.drafts[0]?.nonce)).toEqual(Array.from(envelope.nonce))
     expect(bytes(dump.drafts[0]?.ciphertext)).toEqual(Array.from(envelope.ciphertext))
+    expect(dump.snapshots).toHaveLength(1)
+    expect(dump.snapshots[0]?.snapshot).toEqual(snapshot)
+    expect(dump.policy.filter(record => record.recordType === 'page')).toHaveLength(1)
+    expect(dump.policy.find(record => record.recordType === 'page')).toMatchObject({
+      siteId: 'legacy-site',
+      pageId: 7,
+      locale: 'legacy',
+      manual: true,
+      automatic: false,
+      tag: false,
+      availability: 'available'
+    })
   })
 
   test('serializes generation changes across two real connections and fences stale writers after clear', async () => {
@@ -640,6 +690,41 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(rewrapAfter.drafts).toEqual(rewrapBefore.drafts)
   })
 
+  test('fences equal-byte manual policy flips after re-enabling an excluded page', async () => {
+    const name = freshDatabase('manual-policy-revision')
+    const selector = { siteId: 'manual-site', pageId: 42, locale: 'en' }
+    await succeeded('open', { id: 'storage', name })
+    await succeeded('setManual', {
+      id: 'storage',
+      selector,
+      selected: true,
+      options: { expectedPolicyRevision: 0 }
+    })
+    expect((await succeeded<StorageEstimate>('estimate', { id: 'storage' })).policyRevision).toBe(1)
+
+    await succeeded('removeOffline', {
+      id: 'storage',
+      selector,
+      options: { expectedPolicyRevision: 1 }
+    })
+    expect((await succeeded<StorageEstimate>('estimate', { id: 'storage' })).policyRevision).toBe(2)
+
+    const reenabled = await succeeded<Record<string, unknown>>('setManual', {
+      id: 'storage',
+      selector,
+      selected: true,
+      options: { expectedPolicyRevision: 2 }
+    })
+    expect(reenabled).toMatchObject({ manual: true, excluded: false })
+    expect((await succeeded<StorageEstimate>('estimate', { id: 'storage' })).policyRevision).toBe(3)
+    await failedWith('setManual', {
+      id: 'storage',
+      selector,
+      selected: false,
+      options: { expectedPolicyRevision: 2 }
+    }, 'policy-revision-fenced')
+  })
+
   test('keeps exact metadata deltas and one locale variant for each immutable page', async () => {
     const name = freshDatabase('accounting')
     await succeeded('open', { id: 'storage', name })
@@ -652,17 +737,27 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(dump.snapshots[0]?.locale).toBe('fr')
     expect(dump.searchDocuments).toHaveLength(1)
     expect(dump.searchDocuments[0]?.locale).toBe('fr')
+    expect(dump.policy.filter(record => record.recordType === 'page')).toHaveLength(2)
     const estimate = await succeeded<StorageEstimate>('estimate', { id: 'storage' })
     expect(estimate.snapshotCount).toBe(1)
+    expect(estimate.policyPageCount).toBe(2)
     expect(estimate.lockedDraftCount).toBe(1)
     expect(estimate.sessionGeneration).toBe(0)
-    expect(estimate.managedBytes).toBe(Number(french.byteSize) + Number(dump.searchDocuments[0]?.byteSize) + draftLogicalBytes(draft))
+    expect(estimate.policyRevision).toBe(0)
+    expect(estimate.managedBytes).toBe(
+      Number(french.byteSize) +
+      Number(dump.searchDocuments[0]?.byteSize) +
+      draftLogicalBytes(draft) +
+      policyManagedBytes(dump)
+    )
     expect(dump.meta?.corpusRevision).toBe(2)
     await succeeded('removeSnapshot', { id: 'storage', siteId: 'stable-site', pageId: 42 })
     const afterRemove = await succeeded<StorageEstimate>('estimate', { id: 'storage' })
+    const afterRemoveDump = await readDump(name)
     expect(afterRemove.snapshotCount).toBe(0)
-    expect(afterRemove.managedBytes).toBe(draftLogicalBytes(draft))
-    expect((await readDump(name)).meta?.corpusRevision).toBe(3)
+    expect(afterRemove.policyPageCount).toBe(2)
+    expect(afterRemove.managedBytes).toBe(draftLogicalBytes(draft) + policyManagedBytes(afterRemoveDump))
+    expect(afterRemoveDump.meta?.corpusRevision).toBe(3)
   })
 
   test('requires an exact stored selector and increasing revision for mutable drafts', async () => {
@@ -722,12 +817,18 @@ describe('real IndexedDB offline storage adapter', () => {
     await succeeded('open', { id: 'storage', name })
     const dump = await readDump(name)
     expect(dump.drafts.map(draft => draft.recordId).sort()).toEqual(['opaque-row', 'valid'])
+    expect(bytes(dump.drafts.find(draft => draft.recordId === 'opaque-row')?.ciphertext)).toEqual([4, 5, 6])
+    expect(dump.meta?.accountingComplete).toBe(false)
+    expect(dump.policy.filter(record => record.recordType === 'page')).toHaveLength(0)
     const estimate = await succeeded<StorageEstimate>('estimate', { id: 'storage' })
-    expect(estimate.managedBytes).toBe(draftLogicalBytes(valid))
+    expect(estimate.policyPageCount).toBe(0)
+    expect(estimate.policyRevision).toBe(0)
+    expect(estimate.managedBytes).toBe(draftLogicalBytes(valid) + policyManagedBytes(dump))
     await failedWith('putDraft', { id: 'storage', envelope: makeEnvelope('growth', { seed: 22 }) }, 'quota')
     await succeeded('deleteRaw', { id: 'storage', recordId: 'opaque-row' })
     const afterDelete = await readDump(name)
     expect(afterDelete.drafts.map(draft => draft.recordId)).toEqual(['valid'])
+    expect(afterDelete.meta?.accountingComplete).toBe(false)
     await succeeded('close', { id: 'storage' })
     await succeeded('open', { id: 'recovered', name })
     await succeeded('putDraft', { id: 'recovered', envelope: makeEnvelope('growth', { seed: 22 }) })

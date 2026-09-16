@@ -8,13 +8,21 @@ import createKnex, { type Knex } from 'knex'
 import { z } from 'zod'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
 import createAgentsHostController from '../../controllers/agents-host.ts'
-import { AgentProductRuntime, type AgentEngine, type AgentEngineRequest, type AgentEngineResult } from '../../agents/runtime.ts'
+import {
+  AgentProductRuntime,
+  type AgentEngine,
+  type AgentEngineRequest,
+  type AgentEngineResult,
+  type AgentProductRuntimeOptions
+} from '../../agents/runtime.ts'
 import { AgentExecutionFailure, classifyAgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import { AgentProviderAttemptError } from '../../agents/providers/factory.ts'
-import { AgentRunCoordinator, admitAgentRun, requestAgentRunCancellation, terminalizeAgentRun, transitionAgentRun } from '../../agents/coordinator.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
+import { selectAgentGoalTokenBudget } from '../../agents/goals.ts'
+import { AgentRunCoordinator, admitAgentRun, requestAgentRunCancellation, terminalizeAgentRun, transitionAgentRun } from '../../agents/coordinator.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 import { up as addAgentGoals } from '../../db/migrations/2.5.157.ts'
+import { up as addAgentGoalBudgetTiers } from '../../db/migrations/tsepistle-000042-agent-goal-budget-tiers.ts'
 const preflightAgentRequest = async (request: Parameters<AgentEngine['preflight']>[0]) => {
   const inputExposureTokens = 1
   const outputExposureTokens = Math.max(1, Math.min(request.limits?.maxOutputTokens ?? 1, request.limits?.maxTokens ?? Number.MAX_SAFE_INTEGER))
@@ -132,6 +140,7 @@ const createTables = async (db: Knex): Promise<void> => {
   })
   await addAgentTaskLedger(db)
   await addAgentGoals(db)
+  await addAgentGoalBudgetTiers(db)
   await db.schema.createTable('agentEvents', table => {
     table.uuid('id').primary()
     table.uuid('runId').notNullable()
@@ -291,6 +300,10 @@ const createTables = async (db: Knex): Promise<void> => {
     table.dateTime('heartbeatAt')
     table.dateTime('reconciledAt').nullable()
   })
+  await db.schema.createTable('agentProviderProfileVersions', table => {
+    table.uuid('id').primary()
+    table.text('policies').notNullable()
+  })
 }
 
 describe('ordinary-origin agent session API', () => {
@@ -321,7 +334,11 @@ describe('ordinary-origin agent session API', () => {
     auxiliaryCoordinators.add(candidate)
     return candidate
   }
-  const makeAccountingRuntime = (engine: AgentEngine, maxTokens: number): AgentProductRuntime => {
+  const makeAccountingRuntime = (
+    engine: AgentEngine,
+    maxTokens: number,
+    utilityModel?: AgentProductRuntimeOptions['utilityModel']
+  ): AgentProductRuntime => {
     const resolved = {
       profileResolutionSha256: 'a'.repeat(64),
       providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
@@ -353,6 +370,7 @@ describe('ordinary-origin agent session API', () => {
           workerId: `goal-accounting-${maxTokens}`,
           globalConcurrency: 1,
           perUserConcurrency: 1,
+          utilityModel,
           goals: { enabled: true, maxContinuations: 3, maxTokens, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 }
         }
       )
@@ -391,6 +409,80 @@ describe('ordinary-origin agent session API', () => {
       | { ownerId: number; day: string; reservedTokens: number | string; reservedCostMicros: number | string }
       | undefined
     if (!quotaReservation) throw new Error('accounting fixture reservation is missing')
+    const run = (await db('agentRuns').where({ id: runId }).first('goalId')) as { goalId: string | null } | undefined
+    if (run?.goalId) {
+      const goal = (await db('agentGoals').where({ id: run.goalId, ownerId: quotaReservation.ownerId }).first('budgetSelection')) as
+        | { budgetSelection: string }
+        | undefined
+      if (goal?.budgetSelection === 'pending') {
+        await db.transaction(transaction =>
+          selectAgentGoalTokenBudget(transaction, {
+            ownerId: quotaReservation.ownerId,
+            goalId: run.goalId as string,
+            tier: 'extended',
+            selection: 'fallback'
+          })
+        )
+      }
+      const selectedGoal = (await db('agentGoals').where({ id: run.goalId, ownerId: quotaReservation.ownerId }).first(
+        'budgetSelection',
+        'tokenTier',
+        'tokenAllowance',
+        'budgetCycle'
+      )) as
+        | { budgetSelection: string; tokenTier: string | null; tokenAllowance: number | string | null; budgetCycle: number | string }
+        | undefined
+      const existingCheckpoint = await db('agentEvents')
+        .where({ runId, type: 'usage.updated' })
+        .whereRaw("json_extract(data, '$.utility.purpose') = ?", ['goal_budget'])
+        .first('id')
+      if (selectedGoal && selectedGoal.budgetSelection !== 'pending' && !existingCheckpoint) {
+        if (selectedGoal.tokenTier === null || selectedGoal.tokenAllowance === null) throw new Error('accounting fixture budget selection is incomplete')
+        const runRow = (await db('agentRuns').where({ id: runId }).first('eventSequence', 'attempts')) as
+          | { eventSequence: number | string; attempts: number | string }
+          | undefined
+        if (!runRow) throw new Error('accounting fixture run is missing')
+        const data = JSON.stringify({
+          usageVersion: 2,
+          runId,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          costMicros: 0,
+          utility: {
+            purpose: 'goal_budget',
+            inputTokens: 0,
+            outputTokens: 0,
+            totalTokens: 0,
+            costMicros: 0,
+            goalBudget: {
+              goalId: run.goalId,
+              tier: selectedGoal.tokenTier,
+              selection: selectedGoal.budgetSelection,
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              costMicros: 0,
+              budgetCycle: Number(selectedGoal.budgetCycle),
+              tokenAllowance: Number(selectedGoal.tokenAllowance)
+            }
+          }
+        })
+        const sequence = Number(runRow.eventSequence) + 1
+        await db('agentEvents').insert({
+          id: randomUUID(),
+          runId,
+          sequence,
+          type: 'usage.updated',
+          attempt: Number(runRow.attempts),
+          schemaVersion: 1,
+          dataSha256: createHash('sha256').update(data).digest('hex'),
+          data,
+          createdAt: new Date()
+        })
+        await db('agentRuns').where({ id: runId, eventSequence: Number(runRow.eventSequence) }).update({ eventSequence: sequence })
+      }
+    }
     const daily = (await db('agentQuotaDaily')
       .where({ ownerId: quotaReservation.ownerId, day: quotaReservation.day })
       .first('reservedTokens', 'consumedTokens', 'reservedCostMicros', 'consumedCostMicros')) as
@@ -460,6 +552,19 @@ describe('ordinary-origin agent session API', () => {
     runtimeLogs.length = 0
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
     await createTables(db)
+    await db('agentProviderProfileVersions').insert({
+      id: '00000000-0000-4000-8000-000000000070',
+      policies: JSON.stringify({
+        allowedModes: ['agent'],
+        dailyTokens: 1_000,
+        dailyCostMicros: 1_000,
+        reservationTokens: 100,
+        reservationCostMicros: 100,
+        reservationMilliseconds: 60_000,
+        promptVersion: 1,
+        maxAttempts: 3
+      })
+    })
     const fakeEngine: AgentEngine = {
       preflight: preflightAgentRequest,
       async execute(request, sink) {
@@ -1152,7 +1257,7 @@ describe('ordinary-origin agent session API', () => {
     expect(replay).toContain('"totalTokens":8')
     expect(replay).toContain('"model":{"costMicros":8,"inputTokens":3,"outputTokens":5,"totalTokens":8}')
     expect(replay).toContain('"orchestration":{"costMicros":0,"inputTokens":0,"outputTokens":0,"taskCount":0,"totalTokens":0}')
-    expect(replay).toContain('"utility":{"costMicros":0,"inputTokens":0,"outputTokens":0,"purpose":"conversation_title","totalTokens":0}')
+    expect(replay).toContain('"utility":{"costMicros":0,"goalBudget":null,"inputTokens":0,"outputTokens":0,"purpose":"conversation_title","totalTokens":0}')
   })
   it('forwards retained provider state only across an exact origin at the engine boundary', async () => {
     type Origin = Readonly<{
@@ -1730,6 +1835,312 @@ describe('ordinary-origin agent session API', () => {
     expect(Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(1)
     await recreatedRuntime.shutdown()
   })
+  it('records a token fence for a partial pre-dispatch continuation and renews from the old ceiling', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000321'
+    const goalId = '00000000-0000-4000-8000-000000000322'
+    await insertAccountingSession(sessionId)
+    const firstRuntime = makeAccountingRuntime(
+      {
+        preflight: preflightAgentRequest,
+        async execute() {
+          throw new Error('the first runtime only seeds partial reconciled usage')
+        }
+      },
+      4
+    )
+    const admitted = await firstRuntime.createGoal({
+      goalId,
+      ownerId: 7,
+      sessionId,
+      profileResolutionToken: 'accounting-test',
+      clientRequestId: '00000000-0000-4000-8000-000000000323',
+      expectedSessionVersion: 1,
+      objective: 'Renew after a partial token fence.'
+    })
+    await settleAccountingRun(admitted.run.id, 3, 0, 'consumed', 3)
+    const expectedVersion = await pauseAccountingGoal(goalId)
+    await firstRuntime.shutdown()
+
+    let dispatchedMaxTokens: number | undefined
+    const recreatedRuntime = makeAccountingRuntime(
+      {
+        preflight: preflightAgentRequest,
+        async execute(request) {
+          dispatchedMaxTokens = request.limits?.maxTokens
+          throw Object.assign(new Error('the provider confirms the partial token fence'), { code: 'AGENT_TOKEN_BUDGET_LIMITED' })
+        }
+      },
+      4
+    )
+    const resumed = await recreatedRuntime.resumeGoal({
+      goalId,
+      ownerId: 7,
+      expectedVersion,
+      runId: '00000000-0000-4000-8000-000000000324',
+      clientRequestId: '00000000-0000-4000-8000-000000000325'
+    })
+    expect(resumed).toMatchObject({ goal: { status: 'active', version: 3 }, run: { goalContinuation: 1 }, replayed: false })
+    await expect(recreatedRuntime.runOnce()).resolves.toBe(true)
+    expect(dispatchedMaxTokens).toBe(1)
+    const fencedRun = await db('agentRuns').where({ id: resumed.run?.id }).first('status', 'errorCode', 'totalTokens')
+    expect(fencedRun).toEqual({ status: 'failed', errorCode: 'AGENT_TOKEN_BUDGET_LIMITED', totalTokens: 0 })
+
+    const limited = await db('agentGoals').where({ id: goalId }).first('version', 'status', 'consumedTokens', 'budgetLimitReason')
+    expect(limited).toEqual({ version: 4, status: 'budget_limited', consumedTokens: 3, budgetLimitReason: 'tokens' })
+    const renewed = await recreatedRuntime.renewGoalBudget({
+      goalId,
+      ownerId: 7,
+      expectedVersion: 4,
+      runId: '00000000-0000-4000-8000-000000000326',
+      clientRequestId: '00000000-0000-4000-8000-000000000327',
+      confirmed: true
+    })
+    expect(renewed).toMatchObject({
+      goal: { status: 'active', maxTokens: 8, consumedTokens: 3, budgetCycle: 2 },
+      run: { goalContinuation: 2 },
+      replayed: false
+    })
+    await recreatedRuntime.shutdown()
+  })
+  it('persists classifier checkpoint usage once across runtime recreation and settlement', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000331'
+    const goalId = '00000000-0000-4000-8000-000000000332'
+    await insertAccountingSession(sessionId)
+    let classifierCalls = 0
+    const utilityModel: NonNullable<AgentProductRuntimeOptions['utilityModel']> = {
+      async classifyGoalBudget(request) {
+        classifierCalls += 1
+        if (!request.dispatchBudget) throw new Error('classifier dispatch budget is missing')
+        const reservation = await request.dispatchBudget.reserve({ tokens: 4, costMicros: 3 })
+        await request.dispatchBudget.reconcile(reservation, { inputTokens: 2, outputTokens: 1, totalTokens: 4, costMicros: 3 })
+        return { tier: 'extended', selection: 'utility', inputTokens: 2, outputTokens: 1, totalTokens: 4, costMicros: 3 }
+      },
+      async generateConversationTitle() {
+        return { title: 'Classifier checkpoint', source: 'fallback', inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
+      }
+    }
+    const firstRuntime = makeAccountingRuntime(
+      {
+        preflight: preflightAgentRequest,
+        async execute() {
+          throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'the first runtime fails after classifier selection', 409)
+        }
+      },
+      8,
+      utilityModel
+    )
+    const admitted = await firstRuntime.createGoal({
+      goalId,
+      ownerId: 7,
+      sessionId,
+      profileResolutionToken: 'accounting-test',
+      clientRequestId: '00000000-0000-4000-8000-000000000333',
+      expectedSessionVersion: 1,
+      objective: 'Preserve classifier accounting across runtime recreation.'
+    })
+    await expect(firstRuntime.runOnce()).resolves.toBe(true)
+    expect(classifierCalls).toBe(1)
+    expect(await db('agentRuns').where({ id: admitted.run.id }).first('status', 'errorCode', 'totalTokens')).toEqual({
+      status: 'failed',
+      errorCode: 'AGENT_TOKEN_BUDGET_LIMITED',
+      totalTokens: 4
+    })
+    await firstRuntime.shutdown()
+
+    const limited = await db('agentGoals').where({ id: goalId }).first('version', 'status', 'consumedTokens')
+    expect(limited).toMatchObject({ status: 'budget_limited', consumedTokens: 4 })
+    const recreatedRuntime = makeAccountingRuntime(
+      {
+        preflight: preflightAgentRequest,
+        async execute(_request, sink) {
+          await sink.text('continued after recreation')
+          return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 1 }
+        }
+      },
+      8,
+      utilityModel
+    )
+    const renewed = await recreatedRuntime.renewGoalBudget({
+      goalId,
+      ownerId: 7,
+      expectedVersion: Number(limited?.version),
+      runId: '00000000-0000-4000-8000-000000000334',
+      clientRequestId: '00000000-0000-4000-8000-000000000335',
+      confirmed: true
+    })
+    expect(renewed).toMatchObject({ goal: { maxTokens: 16, consumedTokens: 4, budgetCycle: 2 }, replayed: false })
+    await expect(recreatedRuntime.runOnce()).resolves.toBe(true)
+    expect(classifierCalls).toBe(1)
+
+    const checkpoints = await db('agentEvents')
+      .where({ runId: admitted.run.id, type: 'usage.updated' })
+      .whereRaw("json_extract(data, '$.utility.purpose') = ?", ['goal_budget'])
+      .select('data')
+    expect(checkpoints).toHaveLength(1)
+    expect(JSON.parse(String(checkpoints[0]?.data))).toMatchObject({
+      utility: {
+        purpose: 'goal_budget',
+        totalTokens: 4,
+        goalBudget: { goalId, tier: 'extended', selection: 'utility', budgetCycle: 1, tokenAllowance: 8, totalTokens: 4 }
+      }
+    })
+    expect(await db('agentRuns').where({ goalId }).orderBy('goalContinuation').select('goalContinuation', 'totalTokens')).toEqual([
+      { goalContinuation: 0, totalTokens: 4 },
+      { goalContinuation: 1, totalTokens: 2 }
+    ])
+    expect(await db('agentGoals').where({ id: goalId }).first('status', 'consumedTokens')).toEqual({ status: 'completed', consumedTokens: 6 })
+    await recreatedRuntime.shutdown()
+  })
+  it('renews one token budget cycle and replays it without a second grant', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000361'
+    const goalId = '00000000-0000-4000-8000-000000000362'
+    await insertAccountingSession(sessionId)
+    const accountingRuntime = makeAccountingRuntime(
+      {
+        preflight: preflightAgentRequest,
+        async execute() {
+          throw new Error('the renewal fixture does not dispatch the exhausted run')
+        }
+      },
+      4
+    )
+    const admitted = await accountingRuntime.createGoal({
+      goalId,
+      ownerId: 7,
+      sessionId,
+      profileResolutionToken: 'accounting-test',
+      clientRequestId: '00000000-0000-4000-8000-000000000363',
+      expectedSessionVersion: 1,
+      objective: 'Renew exactly one exhausted token budget cycle.'
+    })
+    await db.transaction(transaction =>
+      selectAgentGoalTokenBudget(transaction, {
+        ownerId: 7,
+        goalId,
+        tier: 'extended',
+        selection: 'fallback'
+      })
+    )
+    await settleAccountingRun(admitted.run.id, 0, 0, 'consumed', 4)
+    const expectedVersion = await pauseAccountingGoal(goalId)
+    const limited = await accountingRuntime.resumeGoal({
+      goalId,
+      ownerId: 7,
+      expectedVersion,
+      runId: '00000000-0000-4000-8000-000000000364',
+      clientRequestId: '00000000-0000-4000-8000-000000000365'
+    })
+    expect(limited).toMatchObject({
+      goal: {
+        status: 'budget_limited',
+        version: 3,
+        maxTokens: 4,
+        tokenAllowance: 4,
+        budgetCycle: 1,
+        budgetLimitReason: 'tokens',
+        canRenewTokenBudget: true
+      },
+      run: null,
+      replayed: false
+    })
+
+    const renewal = {
+      goalId,
+      ownerId: 7,
+      expectedVersion: limited.goal.version,
+      runId: '00000000-0000-4000-8000-000000000366',
+      clientRequestId: '00000000-0000-4000-8000-000000000367',
+      confirmed: true as const
+    }
+    await db('agentGoals').where({ id: goalId }).update({ budgetLimitReason: 'tool_calls' })
+    await expect(accountingRuntime.renewGoalBudget(renewal)).rejects.toMatchObject({ code: 'GOAL_TOKEN_RENEWAL_UNAVAILABLE' })
+    expect(Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(1)
+    await db('agentGoals').where({ id: goalId }).update({ budgetLimitReason: 'tokens' })
+
+    const unconfirmed = await fetch(`${baseUrl}/_api/agents/goals/${goalId}/renew-budget`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/json',
+        origin: 'https://wiki.example.test',
+        'sec-fetch-site': 'same-origin',
+        'x-wiki-csrf': csrf
+      },
+      body: JSON.stringify({
+        expectedVersion: limited.goal.version,
+        runId: renewal.runId,
+        clientRequestId: renewal.clientRequestId,
+        confirmed: false
+      })
+    })
+    expect(unconfirmed.status).toBe(400)
+    expect(Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(1)
+
+    const renewed = await accountingRuntime.renewGoalBudget(renewal)
+    expect(renewed).toMatchObject({
+      goal: {
+        status: 'active',
+        version: 4,
+        maxTokens: 8,
+        consumedTokens: 4,
+        tokenAllowance: 4,
+        budgetCycle: 2,
+        canRenewTokenBudget: false
+      },
+      run: { id: renewal.runId, goalContinuation: 1 },
+      replayed: false
+    })
+    const renewalEvent = await db('agentEvents').where({ runId: renewal.runId, type: 'run.resumed' }).first('data', 'dataSha256')
+    expect(renewalEvent).toBeDefined()
+    expect(renewalEvent?.dataSha256).toBe(createHash('sha256').update(String(renewalEvent?.data)).digest('hex'))
+    expect(JSON.parse(String(renewalEvent?.data))).toMatchObject({
+      operation: 'renew_goal_budget',
+      goalId,
+      clientRequestId: renewal.clientRequestId,
+      expectedVersion: renewal.expectedVersion,
+      confirmed: true,
+      status: 'active',
+      budgetCycle: 2,
+      maxTokens: 8,
+      continuationCount: 1
+    })
+
+    const runCount = Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)
+    const replayed = await accountingRuntime.renewGoalBudget(renewal)
+    expect(replayed).toMatchObject({
+      goal: { version: 4, maxTokens: 8, budgetCycle: 2 },
+      run: { id: renewal.runId },
+      replayed: true
+    })
+    await expect(
+      accountingRuntime.renewGoalBudget({
+        ...renewal,
+        expectedVersion: renewal.expectedVersion + 1
+      })
+    ).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
+    await expect(
+      accountingRuntime.resumeGoal({
+        goalId,
+        ownerId: 7,
+        expectedVersion: renewed.goal.version,
+        runId: renewal.runId,
+        clientRequestId: renewal.clientRequestId
+      })
+    ).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
+    expect(await db('agentEvents').where({ runId: renewal.runId, type: 'run.resumed' }).count<{ count: number | string }[]>({ count: '*' }).first()).toEqual({ count: 1 })
+    expect(Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(runCount)
+
+    await expect(
+      accountingRuntime.renewGoalBudget({
+        ...renewal,
+        runId: '00000000-0000-4000-8000-000000000368',
+        clientRequestId: '00000000-0000-4000-8000-000000000369'
+      })
+    ).rejects.toMatchObject({ code: 'GOAL_VERSION_CHANGED' })
+    expect(Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(runCount)
+    await accountingRuntime.shutdown()
+  })
+
   it('counts measured directional and reconciled reservation usage once', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000311'
     const goalId = '00000000-0000-4000-8000-000000000312'
@@ -1851,7 +2262,7 @@ describe('ordinary-origin agent session API', () => {
         async execute(request) {
           executionRunId = request.run.id
           executionMaxTokens = request.limits?.maxTokens
-          throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
+          throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
         }
       },
       5
@@ -1880,7 +2291,7 @@ describe('ordinary-origin agent session API', () => {
     expect(executionMaxTokens).toBe(1)
     expect(await db('agentRuns').where({ id: resumed.run?.id }).first('status', 'errorCode')).toEqual({
       status: 'failed',
-      errorCode: 'AGENT_BUDGET_LIMITED'
+      errorCode: 'AGENT_TOKEN_BUDGET_LIMITED'
     })
     expect(await db('agentGoals').where({ id: goalId }).first('status', 'consumedTokens')).toEqual({ status: 'budget_limited', consumedTokens: 4 })
     await accountingRuntime.shutdown()

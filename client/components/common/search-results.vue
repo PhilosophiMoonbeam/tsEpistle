@@ -86,18 +86,18 @@
               :title='offlineSearchActive ? `Wiki scope filters require a live server.` : undefined'
               @click='searchRestrictPath = !searchRestrictPath'
             ) This page tree
-        .search-results-capability-note(v-if='offlineSearchActive || serverUnavailable' role='status' aria-live='polite')
-          .search-results-capability-note-title {{ serverUnavailable ? `Server unavailable · Downloaded pages only` : `Downloaded pages` }}
-          p {{ serverUnavailable ? `Wiki search, Ask/Agent, and server preview need a live server. This bounded local search uses only public pages saved on this device.` : `This search is bounded to public pages saved on this device; it does not include server suggestions, graph matches, or private metadata.` }}
-          v-btn(
-            v-if='serverUnavailable'
-            size='small'
-            variant='tonal'
-            prepend-icon='mdi-refresh'
-            :loading='serverRetryPending'
-            @click='retrySearch'
-          ) Retry connection
         .search-results-content
+          .search-results-capability-note(v-if='offlineSearchActive || serverUnavailable' role='status' aria-live='polite')
+            .search-results-capability-note-title {{ serverUnavailable ? `Server unavailable · Downloaded pages only` : `Downloaded pages` }}
+            p {{ serverUnavailable ? `Wiki search, Ask/Agent, and server preview need a live server. This bounded local search uses only public pages saved on this device.` : `This search is bounded to public pages saved on this device; it does not include server suggestions, graph matches, or private metadata.` }}
+            v-btn(
+              v-if='serverUnavailable'
+              size='small'
+              variant='tonal'
+              prepend-icon='mdi-refresh'
+              :loading='serverRetryPending'
+              @click='retrySearch'
+            ) Retry connection
           .search-results-help(v-if='normalizedSearch.length < 2')
             .search-results-help-mark
               v-icon(icon='mdi-text-search' size='34')
@@ -724,7 +724,7 @@ export default defineComponent({
         : null
     },
     isSearchControl(target: EventTarget | null): target is HTMLElement {
-      return target instanceof HTMLElement && target.matches('.nav-header-search-control input')
+      return target instanceof HTMLElement && Boolean(target.closest('.nav-header-search-control'))
     },
     activeModalOpener(): HTMLElement | null {
       const active = document.activeElement
@@ -787,7 +787,11 @@ export default defineComponent({
     },
     searchModalAdditionalRoots(): HTMLElement[] {
       this.syncSearchInputA11y()
-      return [...Array.from(document.querySelectorAll<HTMLElement>('.nav-header-search-control input, [data-search-modal-action]')).filter(element => !element.matches(':disabled')), ...activeOwnedOverlayRoots('.agent-owned-overlay')]
+      return [
+        ...Array.from(document.querySelectorAll<HTMLElement>('.nav-header-search-control, [data-search-modal-action]'))
+          .filter(element => !element.matches(':disabled') && !element.closest('.v-input--disabled')),
+        ...activeOwnedOverlayRoots('.agent-owned-overlay')
+      ]
     },
     setSearchMode(mode: 'search' | 'ask'): void {
       if (mode === 'ask') this.openAsk()
@@ -967,7 +971,7 @@ export default defineComponent({
       if (!this.serverCapabilitiesAvailable || !this.hasFreshResponse) return
       this.previewSelector = { id: Number(item.id) }
     },
-    handleResultClick(event: MouseEvent, item: SearchResultRow): void {
+    handleResultClick(event: Event, item: SearchResultRow): void {
       if (!isDownloadedSearchRow(item) && (!this.serverCapabilitiesAvailable || !this.hasFreshResponse)) {
         event.preventDefault()
         return
@@ -1242,20 +1246,23 @@ export default defineComponent({
 }
 .search-results {
   --search-overlay-ink: rgb(var(--v-theme-on-background));
-  --search-overlay-top-offset: var(--v-layout-top, 72px);
-  --search-results-reclaimed-space: calc(var(--wiki-control-height) + var(--wiki-space-5));
+  --search-overlay-top-offset: var(--v-layout-top, 64px);
   animation: searchResultsReveal var(--wiki-motion-normal) var(--wiki-motion-ease-out);
-  background:
-    radial-gradient(ellipse 52rem 28rem at 50% -10rem, color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent), transparent),
-    color-mix(in srgb, rgb(var(--v-theme-background)) 78%, transparent);
-  backdrop-filter: blur(8px) saturate(115%);
-  -webkit-backdrop-filter: blur(8px) saturate(115%);
+  background-color: var(--wiki-chrome-surface);
+  background-image:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent),
+      transparent 42%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent)
+    );
+  backdrop-filter: var(--wiki-chrome-blur);
+  -webkit-backdrop-filter: var(--wiki-chrome-blur);
   box-sizing: border-box;
-  height: 100dvh;
-  inset: 0;
-  &:not(.search-results--ask) {
-    padding-top: var(--search-overlay-top-offset);
-  }
+  inset-inline: 0;
+  inset-block-start: var(--search-overlay-top-offset);
+  bottom: 0;
+  min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   position: fixed;
@@ -1263,10 +1270,13 @@ export default defineComponent({
   width: 100%;
   z-index: 1006;
 
-
   &--ask {
     animation: none;
     background: rgb(var(--v-theme-background));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    height: 100dvh;
+    inset: 0;
     overflow: hidden;
     isolation: isolate;
     z-index: 1009;
@@ -1293,7 +1303,7 @@ export default defineComponent({
   &-close {
     position: absolute !important;
     inset-inline-end: var(--wiki-space-2);
-    top: calc(var(--search-overlay-top-offset) + var(--wiki-space-1));
+    top: var(--wiki-space-1);
     border-radius: var(--wiki-radius-pill);
     color: color-mix(in srgb, var(--search-overlay-ink) 78%, transparent);
     transition:
@@ -1327,12 +1337,12 @@ export default defineComponent({
   }
 
   &-search {
+    display: flex;
+    flex-direction: column;
     margin-inline: auto;
     max-height: calc(100dvh - var(--search-overlay-top-offset) - max(var(--wiki-space-4), env(safe-area-inset-bottom, 0px)));
-    overflow-x: hidden;
-    overflow-y: auto;
-    padding-bottom: var(--search-results-reclaimed-space);
-    scrollbar-gutter: stable;
+    min-height: 0;
+    overflow: hidden;
     border: 1px solid var(--wiki-surface-border-strong);
     border-radius: var(--wiki-hero-radius);
     background: var(--wiki-surface-raised);
@@ -1343,11 +1353,13 @@ export default defineComponent({
 
   &-scope {
     display: flex;
+    flex: 0 0 auto;
     align-items: center;
     justify-content: space-between;
     gap: var(--wiki-space-5);
     padding: var(--wiki-space-4) var(--wiki-space-5);
     border-bottom: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-hero-radius) var(--wiki-hero-radius) 0 0;
     background:
       radial-gradient(circle at 100% 0, color-mix(in srgb, var(--wiki-ambient-accent) 14%, transparent), transparent 42%),
       var(--wiki-surface-sunken);
@@ -1389,10 +1401,14 @@ export default defineComponent({
   }
 
   &-content {
+    flex: 1 1 auto;
     min-width: 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: var(--wiki-space-4);
   }
-
   &-summary {
     display: flex;
     min-width: 0;
@@ -1622,11 +1638,6 @@ export default defineComponent({
   }
 
   @media #{map-get($display-breakpoints, 'sm-and-down')} {
-    &:not(.search-results--ask) {
-      --search-mobile-app-bar-extension-height: 48px;
-      --search-overlay-top-offset: calc(var(--v-layout-top, 72px) + var(--search-mobile-app-bar-extension-height));
-      padding-top: var(--search-overlay-top-offset);
-    }
     &-container { padding-inline: var(--wiki-space-2); }
     &-container--ask { padding: 0; }
     &-scope { align-items: flex-start; flex-direction: column; gap: var(--wiki-space-3); }
@@ -1637,6 +1648,7 @@ export default defineComponent({
 
   @media (max-width: 599.98px) {
     &-search { border-radius: var(--wiki-panel-radius); }
+    &-scope { border-radius: var(--wiki-panel-radius) var(--wiki-panel-radius) 0 0; }
     &-scope-actions .v-btn { max-width: 100%; padding-inline: var(--wiki-space-3); }
     &-summary { align-items: flex-start; flex-wrap: wrap; }
     &-ask .v-btn__content { font-size: .78rem; }

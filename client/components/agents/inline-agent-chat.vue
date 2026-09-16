@@ -128,6 +128,23 @@
             <ControlBorderBeam :enabled="!loading && !sending && !sessionMutationBusy && !creatingRetention && !connectionBlocked" :phase-offset-ms="3000" />
           </v-btn>
           <v-btn
+            class="inline-agent__session-action inline-agent__chat-pin"
+            :class="{ 'inline-agent__chat-pin--active': Boolean(thread && pinnedSessionId === thread.session.id) }"
+            :color="thread && pinnedSessionId === thread.session.id ? 'primary' : undefined"
+            :variant="thread && pinnedSessionId === thread.session.id ? 'tonal' : 'text'"
+            :prepend-icon="thread && pinnedSessionId === thread.session.id ? 'mdi-pin' : 'mdi-pin-outline'"
+            size="small"
+            rounded="pill"
+            :aria-label="thread && pinnedSessionId === thread.session.id ? 'Unpin conversation' : 'Pin conversation'"
+            :aria-pressed="Boolean(thread && pinnedSessionId === thread.session.id)"
+            :title="thread && pinnedSessionId === thread.session.id ? 'Unpin conversation' : 'Pin conversation'"
+            :disabled="!canPinCurrentChat"
+            type="button"
+            @click="setCurrentChatPinned(!Boolean(thread && pinnedSessionId === thread.session.id))"
+          >
+            Pin
+          </v-btn>
+          <v-btn
             class="inline-agent__session-action inline-agent__temporary-session"
             :class="{ 'inline-agent__temporary-session--active': isTemporary }"
             icon="mdi-timer-sand-complete"
@@ -229,7 +246,10 @@
               </div>
 
               <section v-if="thread && !hasConversation" class="inline-agent__welcome" aria-labelledby="inline-agent-welcome-title">
-                <h2 id="inline-agent-welcome-title">A little curiosity, <em>a clearer picture</em></h2>
+                <h2 id="inline-agent-welcome-title">
+                  <span class="inline-agent__welcome-line">{{ welcomeGreeting.first }}</span>
+                  <em class="inline-agent__welcome-line">{{ welcomeGreeting.second }}</em>
+                </h2>
                 <div class="inline-agent__starters" role="group" aria-label="Conversation starters">
                   <v-btn
                     v-for="starter in starters"
@@ -277,6 +297,7 @@
                     @pause="pauseGoal"
                     @resume="resumeGoal"
                     @cancel="cancelGoal"
+                    @renew-budget="renewGoalBudget"
                     @update:expanded="handleGoalExpanded"
                   />
                 </div>
@@ -319,18 +340,6 @@
                   @focusout="handleComposerFocusOut"
                 >
                   <div class="inline-agent__composer-inner">
-                    <AgentContextPicker
-                      v-if="thread"
-                      :key="thread.session.id"
-                      :draft="activeDraft"
-                      :current-page="currentPage"
-                      :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || !workspaceReady"
-                      :connection-blocked="connectionBlocked"
-                      :connection-retrying="connectionRetrying"
-                      @change="patchDraft"
-                      @sources-added="focusComposer"
-                      @retry-connection="retryAgentConnection"
-                    />
                     <p
                       v-if="openGoal || sessionMutationBusy"
                       id="agent-composer-lock-reason"
@@ -352,10 +361,7 @@
                       :initial-draft="thread ? agents.drafts[thread.session.id]?.text ?? offlineComposerDraft : offlineComposerDraft"
                       :initial-mode="thread ? agents.drafts[thread.session.id]?.mode : 'message'"
                       :initial-skill-version-ids="thread ? agents.drafts[thread.session.id]?.skillVersionIds : []"
-                      :chat-pinned="Boolean(thread && pinnedSessionId === thread.session.id)"
-                      :chat-pin-disabled="!canPinCurrentChat"
                       :has-messages="hasConversation"
-                      @update:chat-pinned="setCurrentChatPinned"
                       @draft-change="handleDraftChange"
                       @composition-change="agents.updateDraft"
                       :sending="sending"
@@ -378,7 +384,22 @@
                       @manage-skills="openSkillManager"
                       @retry-skills="reloadSkillCatalog"
                       @update-skill-preferences="updateSkillPreferences"
-                    />
+                    >
+                      <template #context-controls>
+                        <AgentContextPicker
+                          v-if="thread"
+                          :key="thread.session.id"
+                          :draft="activeDraft"
+                          :current-page="currentPage"
+                          :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || !workspaceReady"
+                          :connection-blocked="connectionBlocked"
+                          :connection-retrying="connectionRetrying"
+                          @change="patchDraft"
+                          @sources-added="focusComposer"
+                          @retry-connection="retryAgentConnection"
+                        />
+                      </template>
+                    </AgentComposer>
                   </div>
                 </footer>
               </div>
@@ -504,6 +525,19 @@ import type { WikiSource } from '../../../shared/wiki-source.ts'
 import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './agent-thread-presentation.ts'
 import { activeOwnedOverlayRoots, createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 
+const welcomeGreetings = [
+  { first: 'Stacks of possibilities.', second: 'Zero overdue fees.' },
+  { first: 'Curiosity checked in.', second: 'Confusion checked out.' },
+  { first: 'Your friendly librarian.', second: 'Minus the shushing.' },
+  { first: 'A little digging.', second: 'No shovel required.' },
+  { first: 'Fresh questions welcome.', second: 'Dust jackets optional.' },
+  { first: 'Knowledge needs company.', second: 'Pull up curiosity.' },
+  { first: "Let's browse together.", second: 'Bookmarks bring snacks.' },
+  { first: 'Shelves of ideas.', second: 'No ladder needed.' },
+  { first: 'A curious chapter.', second: 'Plot twists welcome.' },
+  { first: 'Questions find homes.', second: 'Alphabetizing is optional.' }
+] as const
+
 const props = defineProps<{
   csrfToken: string
   ownerId: number
@@ -521,6 +555,7 @@ const emit = defineEmits<{
   (event: 'return-search'): void
   (event: 'close'): void
 }>()
+const welcomeGreeting = welcomeGreetings[Math.floor(Math.random() * welcomeGreetings.length)] ?? welcomeGreetings[0]
 
 const agents = useAgentsStore()
 const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
@@ -922,6 +957,9 @@ const pauseGoal = (): void => {
 }
 const resumeGoal = (): void => {
   if (networkActionAllowed()) void agents.resumeGoal()
+}
+const renewGoalBudget = (): void => {
+  if (networkActionAllowed()) void agents.renewGoalBudget()
 }
 const cancelGoal = (): void => {
   if (networkActionAllowed()) void agents.cancelGoal()
@@ -1584,6 +1622,31 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   color: rgb(var(--v-theme-on-surface)) !important;
   opacity: .38;
 }
+.inline-agent__chat-pin {
+  height: calc(var(--wiki-control-height) - var(--wiki-space-2)) !important;
+  min-height: max(44px, calc(var(--wiki-control-height) - var(--wiki-space-2)));
+  padding-inline: var(--wiki-space-3);
+  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 24%, var(--wiki-surface-border)) !important;
+  border-radius: var(--wiki-radius-pill) !important;
+  background: color-mix(in srgb, var(--wiki-surface-raised) 74%, transparent) !important;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 82%, rgb(var(--v-theme-surface)) 18%) !important;
+  transition:
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    color var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+
+.inline-agent__chat-pin:hover,
+.inline-agent__chat-pin:focus-visible,
+.inline-agent__chat-pin--active {
+  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 38%, var(--wiki-surface-border)) !important;
+  background: color-mix(in srgb, var(--wiki-ambient-accent) 11%, var(--wiki-surface-raised)) !important;
+  color: var(--wiki-accent-ink) !important;
+}
+
+.inline-agent__chat-pin--active {
+  box-shadow: var(--wiki-shadow-inset);
+}
 
 .inline-agent__temporary-session {
   width: var(--wiki-control-height);
@@ -1859,15 +1922,15 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__welcome {
   position: relative;
   width: min(100%, var(--agent-conversation-width));
-  margin: auto;
-  padding: clamp(1.5rem, 4vh, 4rem) 0;
+  margin: 0 auto auto;
+  padding: clamp(1rem, 3vh, 3rem) 0 var(--wiki-space-5);
   text-align: center;
 }
 
 /* The welcome treatment stays typographic and compact; the old decorative mark is intentionally omitted. */
 
 .inline-agent__welcome h2 {
-  margin: 0;
+  margin: 0 0 var(--wiki-space-5);
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-display);
   font-size: clamp(2.4rem, 4vw, 4.25rem);
@@ -1877,8 +1940,12 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   text-wrap: balance;
 }
 
+.inline-agent__welcome-line {
+  display: block;
+}
+
 .inline-agent__welcome h2 em {
-  display: inline;
+  font-style: italic;
   font-weight: inherit;
   color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
 }

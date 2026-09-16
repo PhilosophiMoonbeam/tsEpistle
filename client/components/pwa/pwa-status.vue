@@ -1,139 +1,125 @@
-<template lang='pug'>
-v-menu.nav-header-pwa-status-menu(
-  location='bottom end'
-  transition='slide-y-transition'
-  :close-on-content-click='false'
+section.pwa-status-panel(
+  role='region'
+  :aria-label='panelLabel'
 )
-  template(v-slot:activator='{ props: menuProps }')
-    v-tooltip(location='bottom')
-      template(v-slot:activator='{ props: tooltipProps }')
-        v-btn.nav-header-pwa-status-trigger(
-          v-bind='mergeProps(menuProps, tooltipProps)'
-          icon
-          rounded='lg'
-          :aria-label='triggerLabel'
-          :title='triggerLabel'
-        )
-          span.pwa-status-trigger__dot(:class='`pwa-status-trigger__dot--${statusTone}`', aria-hidden='true')
-          v-icon(:icon='triggerIcon', size='18', aria-hidden='true')
-      span {{ triggerLabel }}
-  v-card.pwa-status-panel(:aria-label='panelLabel')
-    v-card-text.pwa-status-panel__body
-      .pwa-status-panel__heading
-        div
-          p.pwa-status-panel__eyebrow Connection & app
-          h2 App status
-        v-icon(:icon='triggerIcon', size='22', aria-hidden='true')
+  .pwa-status-panel__body
+    .pwa-status-panel__heading
+      div
+        p.pwa-status-panel__eyebrow App & offline
+        h2 App status
+      v-icon(:icon='triggerIcon', size='22', aria-hidden='true')
 
-      .pwa-status-panel__summary(role='status', aria-live='polite', aria-atomic='true')
-        span.pwa-status-panel__summary-dot(:class='`pwa-status-panel__summary-dot--${statusTone}`', aria-hidden='true')
-        div
-          strong {{ summaryLabel }}
-          p {{ summaryDescription }}
+    .pwa-status-panel__summary(role='status', aria-live='polite', aria-atomic='true')
+      span.pwa-status-panel__summary-dot(:class='`pwa-status-panel__summary-dot--${statusTone}`', aria-hidden='true')
+      div
+        strong {{ summaryLabel }}
+        p {{ summaryDescription }}
 
-      dl.pwa-status-panel__facts
-        div
-          dt Network
-          dd(:class='`pwa-status-panel__value--${pwaState.onlineHint === true ? `positive` : pwaState.onlineHint === false ? `negative` : `neutral`}`') {{ networkHintLabel }}
-        div
-          dt Server
-          dd(:class='`pwa-status-panel__value--${pwaState.serverHealthy === true ? `positive` : pwaState.serverReachable === false || pwaState.serverHealthy === false ? `negative` : `neutral`}`') {{ serverStatusLabel }}
-        div
-          dt Saved app
-          dd {{ offlineShellLabel }}
+    dl.pwa-status-panel__facts
+      div
+        dt Network
+        dd(:class='`pwa-status-panel__value--${pwaState.onlineHint === true ? `positive` : pwaState.onlineHint === false ? `negative` : `neutral`}`') {{ networkHintLabel }}
+      div
+        dt Server
+        dd(:class='`pwa-status-panel__value--${serverStatusTone}`') {{ serverStatusLabel }}
+      div
+        dt Saved app
+        dd {{ offlineShellLabel }}
 
-      v-alert.pwa-status-panel__alert(
-        v-if='pwaState.error && pwaState.error !== pwaState.updateError'
-        type='error'
+    v-alert.pwa-status-panel__alert(
+      v-if='pwaState.error && pwaState.error !== pwaState.updateError'
+      type='error'
+      variant='tonal'
+      density='compact'
+      role='alert'
+    ) {{ pwaState.error }}
+    v-alert.pwa-status-panel__alert(
+      v-if='pwaState.updateError'
+      type='error'
+      variant='tonal'
+      density='compact'
+      role='alert'
+    )
+      strong Update error.
+      |  {{ pwaState.updateError }}
+    v-alert.pwa-status-panel__alert(
+      v-if='pwaState.installError'
+      type='error'
+      variant='tonal'
+      density='compact'
+      role='alert'
+    )
+      strong Install error.
+      |  {{ pwaState.installError }}
+
+    .pwa-status-panel__actions
+      v-btn(
+        variant='outlined'
+        prepend-icon='mdi-refresh'
+        :loading='isRetrying'
+        :disabled='isRetrying'
+        @click='retryConnection'
+      ) {{ isRetrying ? `Checking…` : `Check the server` }}
+      v-btn(
+        v-if='pwaState.updateReady'
+        color='primary'
         variant='tonal'
-        density='compact'
-        role='alert'
-      ) {{ pwaState.error }}
-      v-alert.pwa-status-panel__alert(
-        v-if='pwaState.updateError'
-        type='error'
-        variant='tonal'
-        density='compact'
-        role='alert'
-      )
-        strong Update error.
-        |  {{ pwaState.updateError }}
-      v-alert.pwa-status-panel__alert(
-        v-if='pwaState.installError'
-        type='error'
-        variant='tonal'
-        density='compact'
-        role='alert'
-      )
-        strong Install error.
-        |  {{ pwaState.installError }}
+        prepend-icon='mdi-update'
+        :loading='isUpdating'
+        :disabled='isUpdating || pwaState.reloadSafe === false'
+        @click='applyUpdate'
+      ) {{ isUpdating ? `Applying…` : `Apply app update` }}
 
-      .pwa-status-panel__actions
+    p.pwa-status-panel__note(v-if='pwaState.updateReady && pwaState.reloadSafe === false', role='status')
+      | Update ready. It will wait until the app reports a safe reload point.
+    p.pwa-status-panel__note(v-else-if='pwaState.updateReady', role='status')
+      | Update ready. The app checks reload safety before activation; no changes are replayed automatically.
+    p.pwa-status-panel__note(v-else-if='pwaState.reloadNeeded', role='status')
+      | A newer app shell is active. Reload is deferred until it is safe for this page.
+    p.pwa-status-panel__note(v-else-if='pwaState.updateState === `checking` || pwaState.updateState === `activating`', role='status')
+      | Checking the app update without interrupting this page.
+
+    section.pwa-status-panel__install(
+      v-if='showInstallSection'
+      aria-labelledby='pwa-status-install-title'
+    )
+      h3#pwa-status-install-title Installation
+      p(v-if='pwaState.isStandalone') This page is running in a standalone window. It may be an installed app or a manually added shortcut.
+      p(v-else-if='installCompleted') Installation completed. Open tsEpistle from your app launcher to use its standalone window.
+      template(v-else-if='canInstall')
+        p Your browser exposed an optional install action.
         v-btn(
-          variant='outlined'
-          prepend-icon='mdi-refresh'
-          :loading='isRetrying'
-          :disabled='isRetrying'
-          @click='retryConnection'
-        ) {{ isRetrying ? `Checking…` : `Check the server` }}
-        v-btn(
-          v-if='pwaState.updateReady'
           color='primary'
           variant='tonal'
-          prepend-icon='mdi-update'
-          :loading='isUpdating'
-          :disabled='isUpdating || pwaState.reloadSafe === false'
-          @click='applyUpdate'
-        ) {{ isUpdating ? `Applying…` : `Apply app update` }}
+          prepend-icon='mdi-download-outline'
+          :loading='isInstalling'
+          :disabled='isInstalling'
+          @click='installApplication'
+        ) {{ isInstalling ? `Opening…` : `Install tsEpistle` }}
+      p(v-else-if='manualInstallGuidance')
+        | No native prompt was exposed. If this browser offers it, use Share or its browser menu and choose Add to Home Screen.
 
-      p.pwa-status-panel__note(v-if='pwaState.updateReady && pwaState.reloadSafe === false', role='status')
-        | Update ready. It will wait until the app reports a safe reload point.
-      p.pwa-status-panel__note(v-else-if='pwaState.updateReady', role='status')
-        | Update ready. The app checks reload safety before activation; no changes are replayed automatically.
-      p.pwa-status-panel__note(v-else-if='pwaState.reloadNeeded', role='status')
-        | A newer app shell is active. Reload is deferred until it is safe for this page.
-      p.pwa-status-panel__note(v-else-if='pwaState.updateState === `checking` || pwaState.updateState === `activating`', role='status')
-        | Checking the app update without interrupting this page.
-
-      section.pwa-status-panel__install(
-        v-if='showInstallSection'
-        aria-labelledby='pwa-status-install-title'
-      )
-        h3#pwa-status-install-title Installation
-        p(v-if='pwaState.isStandalone || pwaState.installed') This app is running in its installed window.
-        template(v-else-if='canInstall')
-          p Your browser exposed an optional install action.
-          v-btn(
-            color='primary'
-            variant='tonal'
-            prepend-icon='mdi-download-outline'
-            :loading='isInstalling'
-            :disabled='isInstalling'
-            @click='installApplication'
-          ) {{ isInstalling ? `Opening…` : `Install tsEpistle` }}
-        p(v-else-if='manualInstallGuidance')
-          | This browser did not expose a native prompt. Use its Share or browser menu and choose Add to Home Screen if available.
-
-      a.pwa-status-panel__library(href='/_offline')
-        v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
-        span Saved pages
-        v-icon(icon='mdi-arrow-top-right', size='16', aria-hidden='true')
-</template>
+    a.pwa-status-panel__library(href='/_offline')
+      v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
+      span Saved pages
+      v-icon(icon='mdi-arrow-top-right', size='16', aria-hidden='true')
 
 <script setup lang='ts'>
-import { computed, mergeProps, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { pwaState, promptPwaInstall, requestPwaUpdate, retryServerConnection } from '../../helpers/pwa'
 
 const isRetrying = ref(false)
 const isInstalling = ref(false)
 const isUpdating = ref(false)
 
+const installCompleted = computed(() => pwaState.appInstalled === true || pwaState.installed === true || pwaState.installAvailability === 'installed')
+
 const canInstall = computed(() => {
-  return pwaState.installPromptAvailable && pwaState.installAvailability === 'available' && !pwaState.installed && !pwaState.isStandalone
+  return pwaState.installPromptAvailable && pwaState.installAvailability === 'available' && !installCompleted.value && !pwaState.isStandalone
 })
 
 const manualInstallGuidance = computed(() => {
-  if (canInstall.value || pwaState.installed || pwaState.isStandalone) return false
+  if (canInstall.value || installCompleted.value || pwaState.isStandalone) return false
   if (typeof navigator === 'undefined') return false
   // Safari's standalone property is the only browser-specific install signal
   // we use. No user-agent guess is needed for generic manual guidance.
@@ -141,15 +127,15 @@ const manualInstallGuidance = computed(() => {
 })
 
 const showInstallSection = computed(() => {
-  return canInstall.value || manualInstallGuidance.value || pwaState.installed || pwaState.isStandalone || Boolean(pwaState.installError)
+  return canInstall.value || manualInstallGuidance.value || installCompleted.value || pwaState.isStandalone || Boolean(pwaState.installError)
 })
 
 const statusTone = computed<'online' | 'offline' | 'server-unavailable' | 'checking' | 'update' | 'neutral'>(() => {
   if (pwaState.updateReady) return 'update'
+  if (pwaState.connection === 'checking') return 'checking'
   if (pwaState.serverHealthy === true) return 'online'
   if (pwaState.serverReachable !== null || pwaState.serverHealthy === false) return 'server-unavailable'
   if (pwaState.onlineHint === false || pwaState.connection === 'offline') return 'offline'
-  if (pwaState.connection === 'checking') return 'checking'
   return 'neutral'
 })
 
@@ -171,11 +157,18 @@ const networkHintLabel = computed(() => {
 })
 
 const serverStatusLabel = computed(() => {
+  if (pwaState.connection === 'checking') return 'Checking directly'
   if (pwaState.serverHealthy === true) return 'Verified available'
   if (pwaState.serverReachable === true) return 'Responded, but unavailable'
   if (pwaState.serverReachable === false) return 'Unavailable'
-  if (pwaState.connection === 'checking') return 'Checking directly'
   return 'Not verified'
+})
+
+const serverStatusTone = computed<'positive' | 'negative' | 'neutral'>(() => {
+  if (pwaState.connection === 'checking') return 'neutral'
+  if (pwaState.serverHealthy === true) return 'positive'
+  if (pwaState.serverReachable === false || pwaState.serverHealthy === false) return 'negative'
+  return 'neutral'
 })
 
 const offlineShellLabel = computed(() => {
@@ -186,30 +179,23 @@ const offlineShellLabel = computed(() => {
 })
 
 const summaryLabel = computed(() => {
+  if (pwaState.connection === 'checking') return 'Checking server'
   if (pwaState.serverHealthy === true) return 'Server verified'
   if (pwaState.serverReachable !== null || pwaState.serverHealthy === false) return 'Server unavailable'
   if (pwaState.onlineHint === false || pwaState.connection === 'offline') return 'Waiting for connection'
-  if (pwaState.connection === 'checking') return 'Checking server'
   return 'Server status not verified'
 })
 
 const summaryDescription = computed(() => {
+  if (pwaState.connection === 'checking') return 'Checking the server directly; a network hint alone is not proof.'
   if (pwaState.serverHealthy === true) return 'A direct request verified the server. The browser network hint is shown separately.'
   if (pwaState.serverReachable === true) return 'The server responded, but its health check was not successful.'
   if (pwaState.serverReachable === false && pwaState.onlineHint === true) return 'The browser reports a network path, but a direct server request failed.'
   if (pwaState.onlineHint === false) return 'The browser reports no network path. Server availability is not inferred from that hint.'
-  if (pwaState.connection === 'checking') return 'Checking the server directly; a network hint alone is not proof.'
   return 'The server has not been verified yet.'
 })
 
 const panelLabel = computed(() => `App status: ${summaryLabel.value}`)
-
-const triggerLabel = computed(() => {
-  if (pwaState.updateReady) return `App update ready · ${summaryLabel.value}`
-  if (canInstall.value) return `Install available · ${summaryLabel.value}`
-  if (pwaState.installed || pwaState.isStandalone) return `Installed app · ${summaryLabel.value}`
-  return summaryLabel.value
-})
 
 const retryConnection = async (): Promise<void> => {
   if (isRetrying.value) return
@@ -243,52 +229,27 @@ const applyUpdate = async (): Promise<void> => {
 </script>
 
 <style scoped lang='scss'>
-.nav-header-pwa-status-trigger {
-  position: relative;
-  flex: 0 0 auto;
-}
-
-.pwa-status-trigger__dot,
 .pwa-status-panel__summary-dot {
   display: block;
   border-radius: 50%;
   background: rgb(var(--v-theme-on-surface-variant));
 }
 
-.pwa-status-trigger__dot {
-  position: absolute;
-  inset-block-start: .48rem;
-  inset-inline-end: .48rem;
-  width: .42rem;
-  height: .42rem;
-  border: 1px solid rgb(var(--v-theme-surface));
-}
-
-.pwa-status-trigger__dot--online,
 .pwa-status-panel__summary-dot--online { background: rgb(var(--v-theme-success)); }
-.pwa-status-trigger__dot--offline,
 .pwa-status-panel__summary-dot--offline { background: rgb(var(--v-theme-warning)); }
-.pwa-status-trigger__dot--server-unavailable,
 .pwa-status-panel__summary-dot--server-unavailable { background: rgb(var(--v-theme-error)); }
-.pwa-status-trigger__dot--checking,
 .pwa-status-panel__summary-dot--checking { background: rgb(var(--v-theme-info)); }
-.pwa-status-trigger__dot--update,
 .pwa-status-panel__summary-dot--update { background: rgb(var(--v-theme-primary)); }
 
 .pwa-status-panel {
-  width: min(23rem, calc(100vw - (var(--wiki-space-4) * 2)));
-  max-width: calc(100vw - (var(--wiki-space-4) * 2));
+  width: 100%;
+  max-width: 100%;
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-panel-radius) !important;
   background: var(--wiki-surface-raised) !important;
   color: rgb(var(--v-theme-on-surface));
   box-shadow: var(--wiki-shadow-md) !important;
 }
-
-.pwa-status-panel__body {
-  padding: var(--wiki-space-4) !important;
-}
-
 .pwa-status-panel__heading {
   display: flex;
   align-items: flex-start;
@@ -442,23 +403,16 @@ const applyUpdate = async (): Promise<void> => {
 }
 
 @media (max-width: 599px) {
-  .pwa-status-panel {
-    width: min(22rem, calc(100vw - (var(--wiki-space-3) * 2)));
-    max-width: calc(100vw - (var(--wiki-space-3) * 2));
-  }
-
   .pwa-status-panel__body { padding: var(--wiki-space-3) !important; }
 }
 
 @media (forced-colors: active) {
-  .pwa-status-trigger__dot,
   .pwa-status-panel,
   .pwa-status-panel__summary,
   .pwa-status-panel__library {
     border-color: CanvasText;
   }
 
-  .pwa-status-trigger__dot,
   .pwa-status-panel__summary-dot { background: CanvasText; }
 }
 

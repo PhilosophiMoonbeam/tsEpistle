@@ -3,7 +3,6 @@ import path from 'node:path'
 
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { JSDOM } from 'jsdom'
-import type { Component } from 'vue'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
@@ -15,24 +14,97 @@ const browserGlobals: Record<string, unknown> = {
   document: browserWindow.document,
   window: browserWindow,
   navigator: browserWindow.navigator,
-  Element: browserWindow.Element,
-  Event: browserWindow.Event,
-  HTMLButtonElement: browserWindow.HTMLButtonElement,
-  HTMLElement: browserWindow.HTMLElement,
-  MutationObserver: browserWindow.MutationObserver,
-  Node: browserWindow.Node,
-  SVGElement: browserWindow.SVGElement,
-  Text: browserWindow.Text
+  HTMLElement: browserWindow.HTMLElement
 }
-for (const [name, value] of Object.entries(browserGlobals)) {
-  Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
+const browserGlobalRestorations: Array<() => void> = []
+const installBrowserGlobals = (): void => {
+  const previousDescriptors: Record<string, PropertyDescriptor | undefined> = {}
+  for (const [name, value] of Object.entries(browserGlobals)) {
+    previousDescriptors[name] = Object.getOwnPropertyDescriptor(globalThis, name)
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
+  }
+  browserGlobalRestorations.push(() => {
+    for (const name of Object.keys(browserGlobals)) {
+      const descriptor = previousDescriptors[name]
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+      else Reflect.deleteProperty(globalThis, name)
+    }
+  })
 }
 if (!browserWindow.requestAnimationFrame) {
   browserWindow.requestAnimationFrame = callback => browserWindow.setTimeout(callback, 0)
   browserWindow.cancelAnimationFrame = handle => browserWindow.clearTimeout(handle)
 }
 
+// The custom renderer below is bound to browserWindow, so Vue can load without
+// installing this test's JSDOM on process globals.
 const VueRuntime = await import('vue')
+
+// Use a renderer bound to this JSDOM instead of runtime-dom's module-global nodeOps.
+// Other Bun test files can replace global document while their tests are running.
+const staticTemplate = browserWindow.document.createElement('template')
+const testRenderer = VueRuntime.createRenderer<Node, Element>({
+  patchProp: VueRuntime.patchProp,
+  insert: (node, parent, anchor = null) => {
+    parent.insertBefore(node, anchor)
+  },
+  remove: node => {
+    node.parentNode?.removeChild(node)
+  },
+  createElement: (type, namespace, isCustomizedBuiltIn) => {
+    if (namespace === 'svg') return browserWindow.document.createElementNS('http://www.w3.org/2000/svg', type)
+    if (namespace === 'mathml') return browserWindow.document.createElementNS('http://www.w3.org/1998/Math/MathML', type)
+    return isCustomizedBuiltIn
+      ? browserWindow.document.createElement(type, { is: isCustomizedBuiltIn })
+      : browserWindow.document.createElement(type)
+  },
+  createText: text => browserWindow.document.createTextNode(text),
+  createComment: text => browserWindow.document.createComment(text),
+  setText: (node, text) => {
+    node.nodeValue = text
+  },
+  setElementText: (element, text) => {
+    element.textContent = text
+  },
+  parentNode: node => node.parentNode as Element | null,
+  nextSibling: node => node.nextSibling,
+  querySelector: selector => browserWindow.document.querySelector(selector),
+  setScopeId: (element, id) => {
+    element.setAttribute(id, '')
+  },
+  cloneNode: node => node.cloneNode(true),
+  insertStaticContent: (content, parent, anchor, namespace, start, end) => {
+    const before = anchor ? anchor.previousSibling : parent.lastChild
+    if (start && (start === end || start.nextSibling)) {
+      let current = start
+      while (true) {
+        parent.insertBefore(current.cloneNode(true), anchor)
+        if (current === end || !current.nextSibling) break
+        current = current.nextSibling
+      }
+    } else {
+      staticTemplate.innerHTML = namespace === 'svg'
+        ? `<svg>${content}</svg>`
+        : namespace === 'mathml'
+          ? `<math>${content}</math>`
+          : content
+      const fragment = staticTemplate.content
+      if (namespace === 'svg' || namespace === 'mathml') {
+        const wrapper = fragment.firstChild
+        if (wrapper) {
+          while (wrapper.firstChild) fragment.appendChild(wrapper.firstChild)
+          fragment.removeChild(wrapper)
+        }
+      }
+      parent.insertBefore(fragment, anchor)
+    }
+    return [
+      (before ? before.nextSibling : parent.firstChild) as Node,
+      (anchor ? anchor.previousSibling : parent.lastChild) as Node
+    ]
+  }
+})
+
 const componentPath = path.join(process.cwd(), 'client/components/common/nav-header.vue')
 const componentSource = fs.readFileSync(componentPath, 'utf8')
 const parsed = parse(componentSource, { filename: componentPath })
@@ -286,7 +358,7 @@ const bundleCode = await bundle.outputs[0]!.text()
 const moduleStart = bundleCode.indexOf('(function(')
 if (moduleStart < 0) throw new Error('Compiled nav-header.vue did not produce a CommonJS module')
 interface CompiledModule {
-  exports: { default?: Component }
+  exports: { default?: VueRuntime.Component }
 }
 const moduleFactory = new Function(`return ${bundleCode.slice(moduleStart)}`)() as (
   exports: CompiledModule['exports'],
@@ -342,9 +414,10 @@ interface HeaderMountOptions {
 }
 
 const mountHeader = async ({ hideSearch = true, smAndDown = false }: HeaderMountOptions = {}) => {
+  installBrowserGlobals()
   const host = browserWindow.document.createElement('div')
   browserWindow.document.body.append(host)
-  const app = VueRuntime.createApp(NavHeader, { dense: true, hideSearch })
+  const app = testRenderer.createApp(NavHeader, { dense: true, hideSearch })
   app.component('v-menu', menuSlotForwardingStub)
   app.component('v-tooltip', slotForwardingStub)
   app.config.globalProperties.$t = translate
@@ -366,6 +439,7 @@ const mountHeader = async ({ hideSearch = true, smAndDown = false }: HeaderMount
 afterEach(() => {
   for (const unmount of mountedApps.splice(0)) unmount()
   browserWindow.document.body.replaceChildren()
+  for (const restore of browserGlobalRestorations.splice(0).reverse()) restore()
   calls.splice(0)
   translationCalls.splice(0)
   wikiStore.user = user(1)

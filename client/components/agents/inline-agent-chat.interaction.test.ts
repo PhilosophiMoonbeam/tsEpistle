@@ -123,6 +123,7 @@ interface LockState {
   invocationLimit: ValueRef<number>
   connectionLabel: ValueRef<string>
   connectionTone: ValueRef<string>
+  welcomeGreeting: { readonly first: string; readonly second: string }
   handleComposerFocusIn: () => void
   handleComposerFocusOut: (event: FocusEvent) => void
   handleTranscriptEngagement: (event: FocusEvent | PointerEvent) => void
@@ -222,7 +223,6 @@ const setupScript = removeSetupMacro(descriptor.scriptSetup.content, 'defineExpo
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(setupScript.replace(/^import .*$/gm, ''))
 const composerScript = composerDescriptor.scriptSetup.content
 const executableComposerScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(composerScript.replace(/^import .*$/gm, ''))
-const composerBindingNames = Array.from(composerScript.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
 const evaluateComposer = new Function(
   'computed',
   'nextTick',
@@ -241,7 +241,80 @@ const evaluateComposer = new Function(
   'caretBoundsFromMirror',
   'calculateComposerSizing',
   'scrollTopForCaret',
-  `${executableComposerScript}\nreturn { ${composerBindingNames.join(', ')} }`
+  `${executableComposerScript}
+return {
+  props,
+  emit,
+  draft,
+  goalMode,
+  skillMenuOpen,
+  selectedSkillIds,
+  syncingComposition,
+  composerRoot,
+  messageInput,
+  skillsTrigger,
+  dismissedCommandToken,
+  activeCommandIndex,
+  sendFailed,
+  submissionPending,
+  sendInProgress,
+  restoreInputWhenReady,
+  mounted,
+  composerId,
+  composerIds,
+  commandOptionId,
+  preferredSkillIds,
+  preferredSkillIdByVersionId,
+  selectedSkillIdSet,
+  visibleSkillIds,
+  visibleSkillByVersionId,
+  selectedSkills,
+  skillMenuItems,
+  skillIdForVersion,
+  isPreferred,
+  composerInputLabel,
+  composerInputDescriptionIds,
+  composerInputPlaceholder,
+  liveStatusLabel,
+  submitLabel,
+  submitIcon,
+  isSelected,
+  getTextarea,
+  caretMirror,
+  caretMirrorPrefix,
+  caretMirrorMarker,
+  caretMirrorSuffix,
+  mountCaretMirror,
+  unmountCaretMirror,
+  measureCaretBounds,
+  keepCaretVisible,
+  resizeInput,
+  handleSelectionChange,
+  focusInput,
+  togglePreference,
+  skillCommandCandidate,
+  skillCommandMatch,
+  skillCommandQuery,
+  skillCommandOpen,
+  skillCommandResults,
+  skillLoadTitle,
+  skillLoadMessage,
+  skillCommandStatus,
+  isCommandSkillDisabled,
+  usableSkillCommandResults,
+  activeCommandSkill,
+  activeCommandOptionId,
+  setActiveCommandSkill,
+  invokeCommandSkill,
+  handleKeydown,
+  toggleSkill,
+  manageSkills,
+  retrySkills,
+  focusSkillsTrigger,
+  resetInput,
+  submit,
+  setDraft
+}`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 
 const loadGoalLockState = (
@@ -311,7 +384,7 @@ const loadGoalLockState = (
   }
   const evaluate = new Function(
     '{ computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection }',
-    `${executableScript}\nreturn { activeRun, canPinCurrentChat, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleTranscriptEngagement, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, submitUnavailableReason, thread }`
+    `${executableScript}\nreturn { activeRun, canPinCurrentChat, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleTranscriptEngagement, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, submitUnavailableReason, thread, welcomeGreeting }`
   ) as (dependencies: Record<string, unknown>) => LockState
 
   const state = evaluate({
@@ -467,6 +540,7 @@ const mountInlineAgent = (
     sessionTitle: 'Release planning',
     connectionLabel: lockState?.connectionLabel.value ?? 'Ready',
     connectionTone: lockState?.connectionTone.value ?? 'ready',
+    welcomeGreeting: lockState?.welcomeGreeting ?? { first: 'Stacks of possibilities.', second: 'Zero overdue fees.' },
     starters: [
       {
         label: 'Explore the Wiki',
@@ -523,6 +597,7 @@ const mountInlineAgent = (
     'pauseGoal',
     'resumeGoal',
     'cancelGoal',
+    'renewGoalBudget',
     'patchDraft',
     'focusComposer',
     'retryAgentConnection',
@@ -554,6 +629,8 @@ const mountInlineAgent = (
     props: {
       sessionId: String,
       initialDraft: String,
+      initialMode: String,
+      initialSkillVersionIds: Array,
       disabled: Boolean,
       sending: Boolean,
       canStop: Boolean,
@@ -567,12 +644,10 @@ const mountInlineAgent = (
       statusLabel: String,
       statusTone: String,
       hasMessages: Boolean,
-      chatPinned: Boolean,
-      chatPinDisabled: Boolean,
       externalDescriptionId: String,
       networkBlocked: Boolean
     },
-    emits: ['send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'update:chatPinned', 'draftChange'],
+    emits: ['send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'draftChange'],
     setup(props, { emit, expose }) {
       const bindings = evaluateComposer(
         Vue.computed,
@@ -605,7 +680,6 @@ const mountInlineAgent = (
   const app = Vue.createApp(inlineHarness)
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   for (const name of [
-    'AgentContextPicker',
     'AgentGoalStatus',
     'AgentHistoryPanel',
     'AgentMcpApproval',
@@ -615,6 +689,12 @@ const mountInlineAgent = (
     'ControlBorderBeam'
   ])
     app.component(name, componentStub)
+  app.component('AgentContextPicker', Vue.defineComponent({
+    inheritAttrs: false,
+    setup(_props, { attrs }) {
+      return () => Vue.h('div', { ...attrs, class: 'agent-context' })
+    }
+  }))
   app.component('AgentComposer', composerComponent)
   app.mount(host)
 
@@ -714,38 +794,19 @@ describe('Inline Agent mobile panel controls', () => {
 })
 
 describe('Inline Agent workspace actions', () => {
-  it('keeps History and Memory available and exposes direct New and Temporary controls', async () => {
-    const mounted = mountInlineAgent()
+  it('keeps History and Memory available and exposes direct New, Pin, and Temporary controls', async () => {
+    const mounted = mountInlineAgent(undefined, { isTemporary: true })
     const actions = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__desktop-panel-btn, .inline-agent__session-action'))
 
     expect(actions.map(action => action.getAttribute('aria-label'))).toEqual([
       'Open agent conversation history',
       'Manage agent memory',
       'New conversation',
+      'Pin conversation',
       'Temporary conversation'
     ])
-    expect(mounted.activator.textContent?.trim()).toContain('Panels')
-    const newConversation = mounted.root.querySelector<HTMLElement>('.inline-agent__new-session')
-    const temporaryConversation = mounted.root.querySelector<HTMLElement>('.inline-agent__temporary-session')
-    const close = mounted.root.querySelector<HTMLElement>('.inline-agent__mobile-close')
-    if (!newConversation || !temporaryConversation || !close) throw new Error('Session action controls did not render')
-    expect(newConversation.textContent?.trim()).toBe('New')
-    expect(newConversation.classList.contains('rounded-pill')).toBe(true)
-    expect(newConversation.hasAttribute('aria-haspopup')).toBe(false)
-    expect(newConversation.hasAttribute('aria-expanded')).toBe(false)
-    expect(newConversation.classList.contains('v-btn--variant-tonal')).toBe(true)
-    expect(temporaryConversation.classList.contains('v-btn--variant-text')).toBe(true)
-    expect(temporaryConversation.classList.contains('v-btn--variant-tonal')).toBe(false)
-    expect(temporaryConversation.getAttribute('title')).toBe('Start a temporary conversation')
-    expect(temporaryConversation.classList.contains('inline-agent__temporary-session--active')).toBe(false)
-    expect(temporaryConversation.getAttribute('aria-pressed')).toBe('false')
-    expect(temporaryConversation.getAttribute('data-state')).toBeNull()
-    expect(temporaryConversation.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-
-    const active = mountInlineAgent(undefined, { isTemporary: true })
-    const activeTemporary = active.root.querySelector<HTMLElement>('.inline-agent__temporary-session')
-    if (!activeTemporary) throw new Error('Active temporary conversation control did not render')
-    expect(activeTemporary.classList.contains('inline-agent__temporary-session--active')).toBe(true)
+    const activeTemporary = mounted.root.querySelector<HTMLElement>('.inline-agent__temporary-session')
+    if (!activeTemporary) throw new Error('Temporary conversation control did not render')
     expect(activeTemporary.getAttribute('aria-pressed')).toBe('true')
     expect(activeTemporary.getAttribute('data-state')).toBe('active')
     expect(activeTemporary.classList.contains('v-btn--variant-text')).toBe(true)
@@ -784,36 +845,88 @@ describe('Inline Agent workspace actions', () => {
     expect(reopened.agentCalls.initialize).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps the workspace composer mounted beneath the labelled session controls', () => {
-    const mounted = mountInlineAgent()
-    expect(mounted.root.querySelector('.inline-agent__composer')).not.toBeNull()
+  it('keeps the workspace composer mounted beneath the labelled session controls with one context picker slot', () => {
+    const mounted = mountInlineAgent(loadGoalLockState(null))
+    const composer = mounted.root.querySelector<HTMLElement>('.inline-agent__composer')
+    const picker = composer?.querySelectorAll('.agent-context')
+    expect(composer).not.toBeNull()
+    expect(picker).toHaveLength(1)
+    expect(picker?.[0]?.closest('.agent-composer__context-controls')).not.toBeNull()
     expect(mounted.root.querySelector('.inline-agent__session-action')?.textContent?.trim()).toBe('New')
     expect(mounted.root.querySelector('.agent-composer__input textarea')).not.toBeNull()
   })
 
-  it('centers the welcome heading above exactly three starter cards without supporting copy', () => {
-    const mounted = mountInlineAgent(loadGoalLockState(null))
-    const heading = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome h2')
-    const copy = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome-copy')
-    const starterGroup = mounted.root.querySelector<HTMLElement>('.inline-agent__starters')
-    const starters = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__starter'))
-    if (!heading || !starterGroup) throw new Error('Welcome starter cards did not render')
+  it('renders a stable two-line welcome greeting above exactly three starter cards', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+    try {
+      const mounted = mountInlineAgent(loadGoalLockState(null))
+      const heading = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome h2')
+      const lines = heading ? Array.from(heading.querySelectorAll<HTMLElement>(':scope > .inline-agent__welcome-line')) : []
+      const starterGroup = mounted.root.querySelector<HTMLElement>('.inline-agent__starters')
+      const starters = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__starter'))
+      if (!heading || !starterGroup) throw new Error('Welcome starter cards did not render')
+      expect(lines.map(line => line.textContent?.trim())).toEqual(['Stacks of possibilities.', 'Zero overdue fees.'])
+      expect(lines.map(line => line.tagName)).toEqual(['SPAN', 'EM'])
+      const wordCounts = lines.map(line => (line.textContent?.trim() ?? '').split(/\s+/).filter(Boolean).length)
+      expect(wordCounts.every(count => count >= 2 && count <= 3)).toBe(true)
+      expect(starterGroup.getAttribute('role')).toBe('group')
+      expect(starterGroup.getAttribute('aria-label')).toBe('Conversation starters')
+      expect(heading.nextElementSibling).toBe(starterGroup)
+      expect(starters).toHaveLength(3)
+      expect(starters.map(starter => starter.querySelector<HTMLElement>('.inline-agent__starter-heading strong')?.textContent?.trim())).toEqual([
+        'Explore the Wiki',
+        'Connect the Dots',
+        'Catch Up'
+      ])
+      expect(mounted.root.querySelector('.inline-agent__welcome-mark')).toBeNull()
+      expect(mounted.root.querySelector('.inline-agent__welcome-index')).toBeNull()
+      expect(mounted.root.querySelector('.inline-agent__avatar .mdi-creation-outline')).not.toBeNull()
+    } finally {
+      random.mockRestore()
+    }
+  })
 
-    expect(heading.textContent?.trim()).toBe('A little curiosity, a clearer picture')
-    expect(copy).toBeNull()
-    expect(mounted.root.textContent).not.toContain('Explore an idea, connect the dots, or work on your wiki.')
-    expect(starterGroup.getAttribute('role')).toBe('group')
-    expect(starterGroup.getAttribute('aria-label')).toBe('Conversation starters')
-    expect(heading.nextElementSibling).toBe(starterGroup)
-    expect(starters).toHaveLength(3)
-    expect(starters.map(starter => starter.querySelector<HTMLElement>('.inline-agent__starter-heading strong')?.textContent?.trim())).toEqual([
-      'Explore the Wiki',
-      'Connect the Dots',
-      'Catch Up'
-    ])
-    expect(mounted.root.querySelector('.inline-agent__welcome-mark')).toBeNull()
-    expect(mounted.root.querySelector('.inline-agent__welcome-index')).toBeNull()
-    expect(mounted.root.querySelector('.inline-agent__avatar .mdi-creation-outline')).not.toBeNull()
+  it('samples ten compliant greeting pairs and keeps the selected pair stable for the mount', async () => {
+    const random = vi.spyOn(Math, 'random')
+    const greetingPool: Record<string, true> = {
+      'Stacks of possibilities. / Zero overdue fees.': true,
+      'Curiosity checked in. / Confusion checked out.': true,
+      'Your friendly librarian. / Minus the shushing.': true,
+      'A little digging. / No shovel required.': true,
+      'Fresh questions welcome. / Dust jackets optional.': true,
+      'Knowledge needs company. / Pull up curiosity.': true,
+      "Let's browse together. / Bookmarks bring snacks.": true,
+      'Shelves of ideas. / No ladder needed.': true,
+      'A curious chapter. / Plot twists welcome.': true,
+      'Questions find homes. / Alphabetizing is optional.': true
+    }
+    const sampled: string[] = []
+    try {
+      for (let index = 0; index < 10; index += 1) {
+        random.mockReturnValue((index + 0.5) / 10)
+        const mounted = mountInlineAgent(loadGoalLockState(null))
+        const heading = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome h2')
+        const lines = heading ? Array.from(heading.querySelectorAll<HTMLElement>(':scope > .inline-agent__welcome-line')) : []
+        if (!heading || lines.length !== 2) throw new Error('Welcome greeting lines did not render')
+        const rendered = lines.map(line => line.textContent?.trim() ?? '')
+        const counts = rendered.map(line => line.split(/\s+/).filter(Boolean).length)
+        expect(counts.every(count => count >= 2 && count <= 3)).toBe(true)
+        expect(lines[0]?.tagName).toBe('SPAN')
+        expect(lines[1]?.tagName).toBe('EM')
+        const greeting = rendered.join(' / ')
+        expect(greetingPool[greeting]).toBe(true)
+        sampled.push(greeting)
+        const initial = heading.textContent
+        mounted.transcriptFollowing.value = false
+        await settle()
+        expect(mounted.root.querySelector<HTMLElement>('.inline-agent__welcome h2')?.textContent).toBe(initial)
+        mounted.unmount()
+        mountedApps.pop()
+      }
+    } finally {
+      random.mockRestore()
+    }
+    expect(new Set(sampled)).toHaveLength(10)
   })
 
   it('keeps the composer glassy while scrolled until real editing focus, then clears on transcript engagement', async () => {
@@ -984,12 +1097,15 @@ describe('Inline Agent latest response dock', () => {
   })
 })
 
-describe('Agent composer action semantics', () => {
-  it('keeps the accessible live status before the Send action and exposes Pin', () => {
+describe('Agent workspace action semantics', () => {
+  it('keeps the accessible live status before Send and places Pin beside New in the header', () => {
     const mounted = mountInlineAgent()
     const { primary, status } = expectComposerActionStructure(mounted)
     const submit = primary.querySelector<HTMLButtonElement>('.agent-composer__submit')
-    const pin = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__chat-pin')
+    const composer = mounted.root.querySelector<HTMLElement>('.inline-agent__composer')
+    const headerActions = mounted.root.querySelector<HTMLElement>('.inline-agent__panel-actions')
+    const newConversation = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__new-session')
+    const pin = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
 
     expect(status.textContent?.trim()).toBe('Ready')
     expect(primary.children).toHaveLength(1)
@@ -998,15 +1114,19 @@ describe('Agent composer action semantics', () => {
     expect(primary.querySelector('.agent-composer__stop')).toBeNull()
     expect(pin?.textContent?.trim()).toBe('Pin')
     expect(pin?.getAttribute('aria-label')).toBe('Pin conversation')
+    expect(pin?.getAttribute('aria-pressed')).toBe('false')
     expect(pin?.hasAttribute('disabled')).toBe(false)
+    expect(pin?.parentElement).toBe(headerActions)
+    expect(pin?.previousElementSibling).toBe(newConversation)
+    expect(composer?.querySelector('.inline-agent__chat-pin')).toBeNull()
     expect(mounted.root.querySelector('.agent-composer__hint')).toBeNull()
   })
 
-  it('keeps the accessible Working status before the Stop action while Pin stays enabled', () => {
+  it('keeps the accessible Working status before Stop while Pin stays enabled in the header', () => {
     const mounted = mountInlineAgent(loadGoalLockState('active'))
     const { primary, status } = expectComposerActionStructure(mounted)
     const stop = primary.querySelector<HTMLButtonElement>('.agent-composer__stop')
-    const pin = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__chat-pin')
+    const pin = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
 
     expect(status.textContent?.trim()).toBe('Working')
     expect(primary.children).toHaveLength(1)
@@ -1015,18 +1135,20 @@ describe('Agent composer action semantics', () => {
     expect(primary.querySelector('.agent-composer__submit')).toBeNull()
     expect(pin?.getAttribute('aria-pressed')).toBe('false')
     expect(pin?.hasAttribute('disabled')).toBe(false)
+    expect(pin?.closest('.inline-agent__panel-actions')).not.toBeNull()
   })
+
   it('disables Pin only while workspace selection is unsettled', () => {
     const unsettled = mountInlineAgent(loadGoalLockState(null, false, null, false))
-    const unsettledPin = unsettled.root.querySelector<HTMLButtonElement>('.agent-composer__chat-pin')
+    const unsettledPin = unsettled.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
     expect(unsettledPin?.disabled).toBe(true)
 
     const activeRun = mountInlineAgent(loadGoalLockState(null, false, 'running', true))
-    const activeRunPin = activeRun.root.querySelector<HTMLButtonElement>('.agent-composer__chat-pin')
+    const activeRunPin = activeRun.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
     expect(activeRunPin?.disabled).toBe(false)
 
     const activeGoal = mountInlineAgent(loadGoalLockState('active', false, 'running', true))
-    const activeGoalPin = activeGoal.root.querySelector<HTMLButtonElement>('.agent-composer__chat-pin')
+    const activeGoalPin = activeGoal.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
     expect(activeGoalPin?.disabled).toBe(false)
   })
 
