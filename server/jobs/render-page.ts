@@ -15,17 +15,16 @@ interface PipelineCore {
   children: unknown
 }
 interface PageQuery extends PromiseLike<number> {
-  patch(data: Record<string, unknown>): PageQuery
+  update(data: Record<string, unknown>): PageQuery
   where(column: string, value: unknown): PageQuery
 }
 interface Models {
   renderers: { fetchDefinitions(): Promise<void>; getRenderingPipeline(contentType: string): Promise<PipelineCore[]> }
   pages: {
     getPageFromDb(pageId: number): Promise<PageRecord | null>
-    query(): PageQuery
     savePageToCache(page: PageRecord): Promise<void>
   }
-  knex: { destroy(): Promise<void> }
+  knex: { (table: string): PageQuery; destroy(): Promise<void> }
 }
 interface WikiContext {
   models: Models
@@ -69,9 +68,10 @@ export default async function renderPage(pageId: number | string): Promise<void>
       })
     }
     const toc = buildTocFromHtml(output)
-    const updatedRows = await wiki.models.pages
-      .query()
-      .patch({ render: output, toc: JSON.stringify(toc), renderedSourceRevision: page.sourceRevision })
+    // Derived render writes must not invoke the page model's editorial timestamp hook.
+    const updatedRows = await wiki.models
+      .knex('pages')
+      .update({ render: output, toc: JSON.stringify(toc), renderedSourceRevision: page.sourceRevision })
       .where('id', normalizedPageId)
       .where('sourceRevision', page.sourceRevision)
     if (updatedRows !== 1) {
