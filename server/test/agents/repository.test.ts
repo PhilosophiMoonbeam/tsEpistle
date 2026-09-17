@@ -287,6 +287,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.text('policies').notNullable()
   })
   await knex.schema.createTable('agentQuotaDaily', table => {
+    table.bigInteger('tokenResetCredit').notNullable().defaultTo(0)
     table.integer('ownerId').notNullable()
     table.date('day').notNullable()
     table.integer('reservedTokens').notNullable()

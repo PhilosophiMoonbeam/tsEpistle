@@ -261,6 +261,56 @@ const storedQuotaDifference = (left: number, right: number, name: string): numbe
 
 const dayKey = (date: Date): string => date.toISOString().slice(0, 10)
 
+interface AgentQuotaDailyRow {
+  readonly ownerId: number
+  readonly day: Date | string
+  readonly reservedTokens: number | string
+  readonly consumedTokens: number | string
+  readonly reservedCostMicros: number | string
+  readonly consumedCostMicros: number | string
+  readonly tokenResetCredit: number | string
+}
+
+export interface AgentDailyTokenResetResult {
+  readonly ownerId: number
+  readonly day: string
+  readonly previousCredit: number
+  readonly tokenResetCredit: number
+  readonly consumedTokens: number
+  readonly reservedTokens: number
+  readonly consumedCostMicros: number
+  readonly reservedCostMicros: number
+}
+
+// Operator-only: restore today's token allowance without rewriting actual usage.
+// Existing holds and positive pending settlements remain fully charged.
+export const resetAgentDailyTokenQuota = async (knex: Knex, ownerId: number, now = new Date()): Promise<AgentDailyTokenResetResult> => {
+  if (!Number.isSafeInteger(ownerId) || ownerId < 1) throw new AgentRepositoryError('INVALID_AGENT_QUOTA', 'Owner ID must be a positive safe integer', 400)
+  const day = dayKey(now)
+  return knex.transaction(async transaction => {
+    await acquireAgentCoordinatorAdvisoryLocks(transaction, [ownerId])
+    if (!(await transaction('users').where({ id: ownerId }).first('id'))) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Quota owner was not found', 404)
+    const daily = await transaction<AgentQuotaDailyRow>('agentQuotaDaily').where({ ownerId, day }).forUpdate().first()
+    const previousCredit = daily === undefined ? 0 : storedQuotaInteger(daily.tokenResetCredit, 'Stored token reset credit')
+    const consumedTokens = daily === undefined ? 0 : storedQuotaInteger(daily.consumedTokens, 'Stored consumed tokens')
+    const result = {
+      ownerId,
+      day,
+      previousCredit,
+      tokenResetCredit: consumedTokens,
+      consumedTokens,
+      reservedTokens: daily === undefined ? 0 : storedQuotaInteger(daily.reservedTokens, 'Stored reserved tokens'),
+      consumedCostMicros: daily === undefined ? 0 : storedQuotaInteger(daily.consumedCostMicros, 'Stored consumed cost'),
+      reservedCostMicros: daily === undefined ? 0 : storedQuotaInteger(daily.reservedCostMicros, 'Stored reserved cost')
+    }
+    if (daily !== undefined && previousCredit !== consumedTokens) {
+      const changed = await transaction('agentQuotaDaily').where({ ownerId, day }).update({ tokenResetCredit: consumedTokens, updatedAt: now })
+      if (changed !== 1) return quotaCorruption('Daily quota changed while resetting its token allowance')
+    }
+    return result
+  })
+}
+
 const reserveQuotaInTransaction = async (
   transaction: Knex.Transaction,
   runId: string,
@@ -290,9 +340,7 @@ const reserveQuotaInTransaction = async (
   }
 
   const day = dayKey(now)
-  let daily = (await transaction('agentQuotaDaily').where({ ownerId, day }).forUpdate().first()) as
-    | { reservedTokens: number | string; consumedTokens: number | string; reservedCostMicros: number | string; consumedCostMicros: number | string }
-    | undefined
+  let daily = await transaction<AgentQuotaDailyRow>('agentQuotaDaily').where({ ownerId, day }).forUpdate().first()
   if (!daily) {
     await transaction('agentQuotaDaily')
       .insert({ ownerId, day, reservedTokens: 0, consumedTokens: 0, reservedCostMicros: 0, consumedCostMicros: 0, updatedAt: now })
@@ -305,7 +353,8 @@ const reserveQuotaInTransaction = async (
   const consumedTokens = Number(daily.consumedTokens)
   const reservedCost = Number(daily.reservedCostMicros)
   const consumedCost = Number(daily.consumedCostMicros)
-  if (reservedTokens + consumedTokens + tokens > tokenLimit || reservedCost + consumedCost + costMicros > costLimit)
+  const effectiveTokenLimit = storedQuotaSum(tokenLimit, storedQuotaInteger(daily.tokenResetCredit, 'Stored token reset credit'), 'Effective daily token limit')
+  if (reservedTokens + consumedTokens + tokens > effectiveTokenLimit || reservedCost + consumedCost + costMicros > costLimit)
     throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'Agent daily quota is exhausted', 429)
 
   await transaction('agentQuotaDaily')
@@ -374,15 +423,14 @@ export const ensureAgentRunQuota = async (
     const additionalTokens = Math.max(0, targetTokens - reservedTokens)
     const additionalCost = Math.max(0, targetCost - reservedCost)
     if (additionalTokens === 0 && additionalCost === 0) return
-    const daily = (await transaction('agentQuotaDaily').where({ ownerId, day: reservation.day }).forUpdate().first()) as
-      | { reservedTokens: number | string; consumedTokens: number | string; reservedCostMicros: number | string; consumedCostMicros: number | string }
-      | undefined
+    const daily = await transaction<AgentQuotaDailyRow>('agentQuotaDaily').where({ ownerId, day: reservation.day }).forUpdate().first()
     if (!daily) throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota row is missing', 500)
     const dailyReservedTokens = Number(daily.reservedTokens)
     const dailyConsumedTokens = Number(daily.consumedTokens)
     const dailyReservedCost = Number(daily.reservedCostMicros)
     const dailyConsumedCost = Number(daily.consumedCostMicros)
-    if (dailyReservedTokens + dailyConsumedTokens + additionalTokens > tokenLimit || dailyReservedCost + dailyConsumedCost + additionalCost > costLimit) {
+    const effectiveTokenLimit = storedQuotaSum(tokenLimit, storedQuotaInteger(daily.tokenResetCredit, 'Stored token reset credit'), 'Effective daily token limit')
+    if (dailyReservedTokens + dailyConsumedTokens + additionalTokens > effectiveTokenLimit || dailyReservedCost + dailyConsumedCost + additionalCost > costLimit) {
       throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'Agent daily quota is exhausted', 429)
     }
     await transaction('agentQuotaDaily')

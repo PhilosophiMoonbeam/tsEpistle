@@ -291,6 +291,7 @@ const createAdmissionTables = async (db: Knex): Promise<void> => {
     table.primary(['runId', 'skillVersionId'])
   })
   await db.schema.createTable('agentQuotaDaily', table => {
+    table.bigInteger('tokenResetCredit').notNullable().defaultTo(0)
     table.integer('ownerId').notNullable()
     table.date('day').notNullable()
     table.bigInteger('reservedTokens').notNullable()
