@@ -48,7 +48,7 @@
               <v-icon icon="mdi-creation-outline" size="20" aria-hidden="true" />
             </v-avatar>
             <div class="inline-agent__heading">
-              <h2 :id="workspaceTitleId">
+              <h2 :id="workspaceTitleId" aria-label="Wiki Agent">
                 <span class="inline-agent__workspace-title--wide">Wiki Agent</span>
                 <span class="inline-agent__workspace-title--compact">Agent</span>
               </h2>

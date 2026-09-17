@@ -34,7 +34,7 @@ async function openEnabledAgent(page: Page) {
   await openAuthenticatedPage(page, '/', '.page-header-section')
   const search = await openSearch(page)
   await search.fill('home')
-  const searchDialog = page.getByRole('dialog', { name: 'Wiki search', exact: true })
+  const searchDialog = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
   await expect(searchDialog).toBeVisible()
   const askAgent = searchDialog.getByRole('button', { name: 'Ask about this', exact: true })
   await expect(askAgent).toBeVisible()
@@ -166,8 +166,10 @@ test.describe('release accessibility profiles', () => {
   test('uses header glass around search results at desktop and mobile widths', async ({ page }, testInfo) => {
     requireAnyProject(testInfo, ['accessibility-keyboard', 'accessibility-mobile'])
     await openAuthenticatedPage(page, '/', '.page-header-section')
-    await openSearch(page)
-    const search = page.getByRole('dialog', { name: 'Wiki search', exact: true })
+    const input = await openSearch(page)
+    // A physical click catches overlays covering the mobile header extension.
+    await input.click()
+    const search = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
     await expect(search).toBeVisible()
     const headerGlass = await page.locator('.nav-header').evaluate(element => {
       const styles = getComputedStyle(element)
@@ -209,7 +211,7 @@ test.describe('release accessibility profiles', () => {
   test('keeps contextual Agent glass isolated from opaque surfaces', async ({ page }, testInfo) => {
     requireAnyProject(testInfo, ['accessibility-keyboard', 'accessibility-mobile'])
     test.setTimeout(60_000)
-    const fixture = await installEnabledAgentFixture(page, { mode: 'focus' })
+    const fixture = await installEnabledAgentFixture(page, { mode: 'success' })
     const cdp = await page.context().newCDPSession(page)
     try {
       const agent = await openEnabledAgent(page)
@@ -267,7 +269,11 @@ test.describe('release accessibility profiles', () => {
         await expectOpaque(agent.locator('.agent-composer'), 'Agent composer')
 
         const historyTrigger = agent.getByRole('button', { name: 'Open agent conversation history' })
-        await historyTrigger.click()
+        if (await historyTrigger.isVisible()) await historyTrigger.click()
+        else {
+          await agent.getByRole('button', { name: 'Open Agent panels: conversation history and memory' }).click()
+          await agent.getByText('Conversation history', { exact: true }).click()
+        }
         const history = agent.locator('.inline-agent__side--history')
         await expect(history).toBeVisible()
         await expectOpaque(history, 'Agent history')
@@ -275,7 +281,11 @@ test.describe('release accessibility profiles', () => {
         await expect(history).toBeHidden()
 
         const memoryTrigger = agent.getByRole('button', { name: 'Manage agent memory' })
-        await memoryTrigger.click()
+        if (await memoryTrigger.isVisible()) await memoryTrigger.click()
+        else {
+          await agent.getByRole('button', { name: 'Open Agent panels: conversation history and memory' }).click()
+          await agent.getByText('Agent memory', { exact: true }).click()
+        }
         const memory = agent.locator('.inline-agent__side--memory')
         await expect(memory).toBeVisible()
         await expectOpaque(memory, 'Agent memory')
@@ -289,18 +299,29 @@ test.describe('release accessibility profiles', () => {
       expect(await readSurfaceStyle(body)).toEqual(headerGlass)
       const card = agent.locator('.inline-agent__card')
       const included = agent.getByRole('button', { name: 'Exclude current page', exact: true })
-      await included.evaluate(async element => {
-        (element as HTMLElement).click()
-        await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
-        const body = document.querySelector('.inline-agent__body')
-        const fade = body?.getAnimations().find(animation => animation instanceof CSSTransition && animation.transitionProperty === 'background-color')
-        if (!fade) throw new Error('Excluding the current page must animate the workspace background')
-        await fade.ready
-        fade.currentTime = Number(fade.effect?.getComputedTiming().duration) / 2
+      await expect(included).toBeEnabled()
+      const fadingColor = await included.evaluate(async element => {
+        const body = document.querySelector('.inline-agent__body')!
+        // Capture the transition as it starts: slow rendering must not let the
+        // whole animation finish before the test can inspect it.
+        const started = new Promise<string>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Excluding the current page must animate the workspace background')), 3000)
+          body.addEventListener('transitionrun', event => {
+            if ((event as TransitionEvent).propertyName !== 'background-color') return
+            const fade = body.getAnimations().find(animation => animation instanceof CSSTransition && animation.transitionProperty === 'background-color')!
+            fade.pause()
+            fade.currentTime = Number(fade.effect?.getComputedTiming().duration) / 2
+            clearTimeout(timeout)
+            resolve(getComputedStyle(body).backgroundColor)
+          }, { once: true })
+        })
+        ;(element as HTMLElement).click()
+        return await started
       })
-      const fading = await readSurfaceStyle(body)
-      expect(fading.backgroundAlpha, 'Excluding the page fades the glass towards opaque').toBeGreaterThan(headerGlass.backgroundAlpha)
-      expect(fading.backgroundAlpha, 'Excluding the page does not snap to opaque').toBeLessThan(1)
+      const fadingAlpha = Number(fadingColor.match(/rgba\([^,]+,[^,]+,[^,]+,\s*([^)]+)\)/u)?.[1] ?? 1)
+      expect(fadingAlpha, 'Excluding the page fades the glass towards opaque').toBeGreaterThan(headerGlass.backgroundAlpha)
+      expect(fadingAlpha, 'Excluding the page does not snap to opaque').toBeLessThan(1)
+      await body.evaluate(element => element.getAnimations().forEach(animation => { animation.play() }))
       await expect.poll(async () => (await readSurfaceStyle(body)).backgroundAlpha).toBe(1)
       await expect.poll(async () => (await readSurfaceStyle(card)).backgroundAlpha).toBe(1)
       await agent.getByRole('button', { name: 'Include current page', exact: true }).click()
@@ -308,7 +329,11 @@ test.describe('release accessibility profiles', () => {
       await expect.poll(async () => (await readSurfaceStyle(card)).backgroundAlpha).toBe(0)
 
       await page.emulateMedia({ reducedMotion: 'reduce' })
-      for (const surface of [card, toolbar, body]) await expect(surface).toHaveCSS('transition-duration', '0s')
+      for (const surface of [card, toolbar, body]) {
+        // The global accessibility reset retains a 1µs transition for events.
+        const duration = await surface.evaluate(element => Number.parseFloat(getComputedStyle(element).transitionDuration))
+        expect(duration, 'Reduced motion removes any perceptible background fade').toBeLessThanOrEqual(0.000001)
+      }
       await included.click()
       expect((await readSurfaceStyle(body)).backgroundAlpha).toBe(1)
       await agent.getByRole('button', { name: 'Include current page', exact: true }).click()

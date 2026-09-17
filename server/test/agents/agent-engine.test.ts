@@ -580,6 +580,82 @@ describe('Ax agent engine', () => {
     ])
   })
 
+  it('preserves a substantive multi-section summary through evidence correction without rereading the page', async () => {
+    const correctedSummary = [
+      'Contract pricing lists discount schedules and freight surcharges.[[cite:page:42:revision:1:section:1]]',
+      'Quotes require project details and remain valid for 30 days.[[cite:page:42:revision:1:section:2]]',
+      'The manufacturer directory lists product categories and contact details.[[cite:page:42:revision:1:section:3]]'
+    ].join('\n\n')
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const responses: AxChatResponse[] = [
+      { results: [{ index: 0, functionCalls: [{ id: 'get-summary', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }] }] },
+      { results: [{ index: 0, content: correctedSummary.replace('section:1', 'section:3') }] },
+      { results: [{ index: 0, content: correctedSummary }] }
+    ]
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return responses.shift()!
+    })
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => ({
+      id: 42,
+      title: 'Operations handbook',
+      contentType: 'markdown',
+      content: '# Contract pricing\nDiscount schedules and freight surcharges.\n\n# Quotes\nQuotes require project details and remain valid for 30 days.\n\n# Manufacturers\nThe manufacturer directory lists product categories and contact details.',
+      citation: { evidenceId: 'page:42:revision:1', label: 'Operations handbook', href: '/en/operations' },
+      citationSections: ['Contract pricing', 'Quotes', 'Manufacturers'].map((title, index) => ({
+        evidenceId: `page:42:revision:1:section:${index + 1}`,
+        label: `Operations handbook › ${title}`,
+        href: `/en/operations#section-${index + 1}`
+      }))
+    }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn()
+      })
+    }
+    const text = vi.fn(async (_delta: string) => {})
+    const event = vi.fn(async (...args: [string, unknown]) => { void args })
+    const result = await new AxAgentEngine(factory, actions).execute({
+      ...request(new AbortController().signal),
+      messages: [{ role: 'user', content: 'Summarize the current Wiki page and cite the key sections.' }]
+    }, { text, event })
+
+    expect(chat).toHaveBeenCalledTimes(3)
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(calls[0]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('summarize the substantive key sections') }))
+    expect(calls[2]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'user', content: expect.stringContaining('Preserve the requested topic coverage when revising') }))
+    expect(calls[2]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'user', content: expect.stringContaining('Never replace a requested summary with only a title, heading, or isolated quotation') }))
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(correctedSummary)
+    expect(result.citations).toHaveLength(3)
+    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false, claims: [expect.objectContaining({ supported: false }), expect.objectContaining({ supported: true }), expect.objectContaining({ supported: true })] }),
+      expect.objectContaining({ accepted: true, claims: [expect.objectContaining({ supported: true }), expect.objectContaining({ supported: true }), expect.objectContaining({ supported: true })] })
+    ])
+  })
+
   it('reuses identical page reads while preserving every model-requested action in diagnostics', async () => {
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },

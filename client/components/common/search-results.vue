@@ -1279,7 +1279,7 @@ export default defineComponent({
 }
 .search-results {
   --search-overlay-ink: rgb(var(--v-theme-on-background));
-  --search-overlay-top-offset: var(--v-layout-top, 64px);
+  --search-overlay-top-offset: var(--search-header-height, 64px);
   animation: searchResultsReveal var(--wiki-motion-normal) var(--wiki-motion-ease-out);
   background: var(--wiki-chrome-surface);
   -webkit-backdrop-filter: var(--wiki-chrome-blur);
@@ -1674,6 +1674,8 @@ export default defineComponent({
   }
 
   @media #{map-get($display-breakpoints, 'sm-and-down')} {
+    // The mobile search field occupies the app bar's 48px extension.
+    --search-overlay-top-offset: calc(var(--search-header-height, 64px) + 48px);
     &-container { padding-inline: var(--wiki-space-2); }
     &-container--ask { padding: 0; }
     &-scope { align-items: flex-start; flex-direction: column; gap: var(--wiki-space-3); }
@@ -1692,6 +1694,10 @@ export default defineComponent({
     &-item-chevron { display: none; }
     &-item-mark { height: var(--wiki-control-height); width: var(--wiki-control-height); }
   }
+}
+
+.nav-header--dense ~ .search-results {
+  --search-header-height: 56px;
 }
 
 @keyframes agentWorkspaceReveal {
