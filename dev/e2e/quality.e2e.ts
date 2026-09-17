@@ -228,6 +228,10 @@ test.describe('release accessibility profiles', () => {
       expect(greetingBackdrop.pointerEvents).toBe('none')
       const greetingOpacity = () => agent.locator('.inline-agent__welcome h2').evaluate(element => getComputedStyle(element, '::before').opacity)
       await expect.poll(greetingOpacity).toBe('1')
+      const transcriptWidth = await agent
+        .locator('.inline-agent__transcript')
+        .evaluate(element => ({ content: element.scrollWidth, viewport: element.clientWidth }))
+      expect(transcriptWidth.content, 'The oval does not add horizontal scrolling').toBeLessThanOrEqual(transcriptWidth.viewport)
       await expect(agent.getByRole('button', { name: 'Understand This Page' })).toBeVisible()
       await agent.getByRole('button', { name: 'Exclude current page', exact: true }).click()
       await expect.poll(greetingOpacity).toBe('0')

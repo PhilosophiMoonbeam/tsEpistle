@@ -1963,6 +1963,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__welcome {
   position: relative;
   display: flex;
+  overflow-x: clip;
   width: min(100%, var(--agent-conversation-width));
   min-height: 0;
   box-sizing: border-box;
@@ -2554,6 +2555,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 
   .inline-agent__welcome h2 { font-size: clamp(2rem, 8vw, 3rem); }
+  .inline-agent__welcome h2::before { inset-inline: 0; }
 
 
   .inline-agent__composer {
