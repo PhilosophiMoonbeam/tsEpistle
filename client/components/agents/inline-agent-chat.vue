@@ -1993,19 +1993,31 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__welcome h2::before {
   content: '';
   position: absolute;
-  z-index: -1;
-  inset: -.8em 0;
+  z-index: 0;
+  inset: -.9em -1em;
   border-radius: 50%;
   background: radial-gradient(ellipse closest-side,
-    rgba(var(--v-theme-background), .96) 0%,
-    rgba(var(--v-theme-background), .90) 42%,
-    rgba(var(--v-theme-background), .48) 72%,
+    rgb(var(--v-theme-background)) 0% 64%,
+    rgba(var(--v-theme-background), .92) 72%,
+    rgba(var(--v-theme-background), .45) 86%,
     rgba(var(--v-theme-background), 0) 100%);
-  filter: blur(10px);
+  filter: blur(12px);
+  opacity: 0;
+  transition: opacity var(--wiki-motion-slow) var(--wiki-motion-ease);
   pointer-events: none;
 }
 
+@supports ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
+  @media (prefers-reduced-transparency: no-preference) and (forced-colors: none) {
+    .inline-agent--contextual .inline-agent__welcome h2::before {
+      opacity: 1;
+    }
+  }
+}
+
 .inline-agent__welcome-line {
+  position: relative;
+  z-index: 1;
   display: block;
 }
 

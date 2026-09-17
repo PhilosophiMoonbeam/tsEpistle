@@ -1,8 +1,8 @@
 import AxeBuilder from '@axe-core/playwright'
-import { expect, test } from '@playwright/test'
 import type { Locator, Page, TestInfo } from '@playwright/test'
-import { authenticateAsAdmin, expectResponsiveLayout, openAuthenticatedPage, openSearch } from './helpers.ts'
+import { expect, test } from '@playwright/test'
 import { installEnabledAgentFixture } from './agent-fixture.ts'
+import { authenticateAsAdmin, expectResponsiveLayout, openAuthenticatedPage, openSearch } from './helpers.ts'
 
 async function expectNoBlockingAccessibilityViolations(page: Page, surface: string) {
   await page.locator('.animated').evaluateAll(elements => {
@@ -226,12 +226,22 @@ test.describe('release accessibility profiles', () => {
       expect(greetingBackdrop.background).toContain('radial-gradient')
       expect(greetingBackdrop.filter).toContain('blur')
       expect(greetingBackdrop.pointerEvents).toBe('none')
+      const greetingOpacity = () => agent.locator('.inline-agent__welcome h2').evaluate(element => getComputedStyle(element, '::before').opacity)
+      await expect.poll(greetingOpacity).toBe('1')
       await expect(agent.getByRole('button', { name: 'Understand This Page' })).toBeVisible()
       await agent.getByRole('button', { name: 'Exclude current page', exact: true }).click()
+      await expect.poll(greetingOpacity).toBe('0')
       await expect(agent.getByRole('button', { name: 'Understand This Page' })).toHaveCount(0)
       await expect(agent.getByRole('button', { name: 'Explore the Wiki' })).toBeVisible()
       await agent.getByRole('button', { name: 'Include current page', exact: true }).click()
       await expect(agent.getByRole('button', { name: 'Understand This Page' })).toBeVisible()
+      await expect.poll(greetingOpacity).toBe('1')
+      await cdp.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }]
+      })
+      await expect.poll(greetingOpacity).toBe('0')
+      await cdp.send('Emulation.setEmulatedMedia', { features: [] })
+      await expect.poll(greetingOpacity).toBe('1')
       const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
       await composer.fill('Inspect the contextual Agent surface hierarchy.')
       await agent.getByRole('button', { name: 'Send', exact: true }).click()
@@ -318,14 +328,18 @@ test.describe('release accessibility profiles', () => {
         // whole animation finish before the test can inspect it.
         const started = new Promise<string>((resolve, reject) => {
           const timeout = setTimeout(() => reject(new Error('Excluding the current page must animate the workspace background')), 3000)
-          body.addEventListener('transitionrun', event => {
-            if ((event as TransitionEvent).propertyName !== 'background-color') return
-            const fade = body.getAnimations().find(animation => animation instanceof CSSTransition && animation.transitionProperty === 'background-color')!
-            fade.pause()
-            fade.currentTime = Number(fade.effect?.getComputedTiming().duration) / 2
-            clearTimeout(timeout)
-            resolve(getComputedStyle(body).backgroundColor)
-          }, { once: true })
+          body.addEventListener(
+            'transitionrun',
+            event => {
+              if ((event as TransitionEvent).propertyName !== 'background-color') return
+              const fade = body.getAnimations().find(animation => animation instanceof CSSTransition && animation.transitionProperty === 'background-color')!
+              fade.pause()
+              fade.currentTime = Number(fade.effect?.getComputedTiming().duration) / 2
+              clearTimeout(timeout)
+              resolve(getComputedStyle(body).backgroundColor)
+            },
+            { once: true }
+          )
         })
         ;(element as HTMLElement).click()
         return await started
@@ -333,7 +347,11 @@ test.describe('release accessibility profiles', () => {
       const fadingAlpha = Number(fadingColor.match(/rgba\([^,]+,[^,]+,[^,]+,\s*([^)]+)\)/u)?.[1] ?? 1)
       expect(fadingAlpha, 'Excluding the page fades the glass towards opaque').toBeGreaterThan(headerGlass.backgroundAlpha)
       expect(fadingAlpha, 'Excluding the page does not snap to opaque').toBeLessThan(1)
-      await body.evaluate(element => element.getAnimations().forEach(animation => { animation.play() }))
+      await body.evaluate(element =>
+        element.getAnimations().forEach(animation => {
+          animation.play()
+        })
+      )
       await expect.poll(async () => (await readSurfaceStyle(body)).backgroundAlpha).toBe(1)
       await expect.poll(async () => (await readSurfaceStyle(card)).backgroundAlpha).toBe(1)
       await agent.getByRole('button', { name: 'Include current page', exact: true }).click()
