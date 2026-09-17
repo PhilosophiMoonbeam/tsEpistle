@@ -24,7 +24,7 @@
       "drain": "graceful",
       "rehearsal": "required",
       "recovery": "paired",
-      "rollback": "image-only",
+      "rollback": "fix-forward-or-restore",
       "rehearsalPostconditions": [
         "agent-goal-budget-columns"
       ],

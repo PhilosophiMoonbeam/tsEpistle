@@ -235,10 +235,20 @@ make_plan() {
       (.runtimePostconditions | type == "array") and
       ((.rehearsalPostconditions | length) + (.runtimePostconditions | length) > 0)
     ' <<< "$contract" >/dev/null || die "Incomplete deployment contract: $migration_name"
+    local probe
+    while IFS= read -r probe; do
+      case "$probe" in
+        site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection) ;;
+        *) die "Unsupported named migration postcondition: $probe" ;;
+      esac
+    done < <(jq -r '.rehearsalPostconditions[],.runtimePostconditions[]' <<< "$contract")
     if [[ "$(jq -r '.rehearsal' <<< "$contract")" == required ]]; then rehearsal=true; fi
     if [[ "$(jq -r '.recovery' <<< "$contract")" == paired ]]; then recovery=true; fi
     if [[ "$(jq -r '.rollback' <<< "$contract")" == fix-forward-or-restore ]]; then rollback='fix-forward-or-restore'; fi
   done < <(jq -r '.[]' <<< "$pending")
+  if [[ "$(jq 'length' <<< "$pending")" -gt 0 && "$rollback" == image-only ]]; then
+    die 'A committed migration cannot be rolled back by image alone; require fix-forward-or-restore'
+  fi
 
   if jq -e 'any(.[]; test("^(deploy/compose/compose\\.yml|dev/build/Dockerfile|server/(agents/(crypto|provider-secrets|profile-resolution)|modules/storage|repositories/storage|core/durable-jobs)|shared/agent-provider)"))' <<< "$changed_files" >/dev/null; then
     [[ "$(jq 'length' <<< "$pending")" -gt 0 ]] || die 'Delta touches a persistent/key/storage/topology risk path without a migration deployment contract'
@@ -405,6 +415,16 @@ verify_postconditions() {
       site-logo-pipeline-v7)
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT r."pipelineVersion"||'\''|'\''||r.status||'\''|'\''||(s."activeRevisionId"=s."desiredRevisionId") FROM "siteLogoState" s JOIN "siteLogoRevisions" r ON r.id=s."activeRevisionId";')"
         [[ "$result" == '7|ready|t' ]] || die "Postcondition failed: $probe ($result)"
+        ;;
+      agent-goal-budget-columns)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='agentGoals' AND column_name IN ('budgetPolicyVersion','budgetSelection','tokenTier','tokenAllowance','budgetCycle','budgetLimitReason');")"
+        [[ "$result" == 6 ]] || die "Postcondition failed: $probe ($result/6 columns)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM pg_constraint WHERE conname IN ('agent_goals_budget_selection_check','agent_goals_budget_tier_check','agent_goals_budget_limit_reason_check');")"
+        [[ "$result" == 3 ]] || die "Postcondition failed: $probe ($result/3 constraints)"
+        ;;
+      agent-goal-budget-tier-selection)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentGoals\" WHERE (\"budgetSelection\"='legacy' AND (\"budgetPolicyVersion\" IS NOT NULL OR \"tokenTier\" IS NOT NULL OR \"tokenAllowance\" IS NOT NULL OR \"budgetCycle\" IS DISTINCT FROM 0)) OR (\"budgetSelection\"='pending' AND (\"budgetPolicyVersion\" IS DISTINCT FROM 1 OR \"tokenTier\" IS NOT NULL OR \"tokenAllowance\" IS NOT NULL OR \"budgetCycle\" IS DISTINCT FROM 0)) OR (\"budgetSelection\" IN ('utility','fallback') AND (\"budgetPolicyVersion\" IS DISTINCT FROM 1 OR \"tokenTier\" IS NULL OR \"tokenAllowance\" IS NULL OR \"budgetCycle\" IS NULL OR \"budgetCycle\"<1));")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result inconsistent goals)"
         ;;
       *) die "Unsupported named migration postcondition: $probe" ;;
     esac

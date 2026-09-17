@@ -27,6 +27,9 @@ describe('Compose upgrade command', () => {
     expect(script).toContain('up -d --no-deps --no-build --force-recreate')
     expect(script).toContain('--volumes-from "$APP_CONTAINER":ro')
     expect(script).toContain('apk add --no-cache docker-cli docker-cli-buildx git')
+    expect(script).toContain("A committed migration cannot be rolled back by image alone")
+    expect(script).toContain('agent-goal-budget-columns)')
+    expect(script).toContain('agent-goal-budget-tier-selection)')
   })
 
   it('ships a secret-free operator profile template', async () => {

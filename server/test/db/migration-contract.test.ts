@@ -128,6 +128,7 @@ describe('database migration namespace contract', () => {
     }
     expect(registry.migrations['tsepistle-000041-site-logo-transparent-icons.js']).toBeDefined()
     expect(registry.migrations['tsepistle-000042-agent-goal-budget-tiers.js']).toBeDefined()
+    expect(registry.migrations['tsepistle-000042-agent-goal-budget-tiers.js']?.rollback).toBe('fix-forward-or-restore')
     expect(migrationLedgerName('tsepistle-000042-agent-goal-budget-tiers')).toBe('tsepistle-000042-agent-goal-budget-tiers.js')
     const files = (await readdir(path.resolve('server/db/migrations'))).filter(file => /^tsepistle-\d{6}-.+\.ts$/u.test(file))
     expect(files).toContain('tsepistle-000042-agent-goal-budget-tiers.ts')
