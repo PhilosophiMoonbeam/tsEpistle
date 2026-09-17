@@ -446,6 +446,9 @@ export type PageTagRow = {
 
 const responseStatus = (response: JsonResponse): number | undefined =>
   typeof response.status === 'number' && Number.isSafeInteger(response.status) && response.status > 0 ? response.status : undefined
+const isPositiveSafeInteger = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+
+const isNonNegativeSafeInteger = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 
 const errorWithResponseStatus = (error: unknown, response: JsonResponse, fallbackMessage: string): Error => {
   const result = error instanceof Error ? error : new Error(fallbackMessage)
@@ -504,12 +507,7 @@ const normalizeResponse = async <T>(
   }
 }
 
-
-const normalizeArray = <T>(
-  payload: unknown,
-  fallbackMessage: string,
-  normalize: (row: unknown, fallbackMessage: string) => T
-): T[] => {
+const normalizeArray = <T>(payload: unknown, fallbackMessage: string, normalize: (row: unknown, fallbackMessage: string) => T): T[] => {
   if (!Array.isArray(payload)) throw new Error(fallbackMessage)
   return payload.map(row => normalize(row, fallbackMessage))
 }
@@ -1053,7 +1051,7 @@ async function sendJson<T = unknown>(
     body: JSON.stringify(body)
   })
   if (normalize) return normalizeResponse(response, fallbackMessage, normalize)
-  return await parseJsonResponse(response, fallbackMessage) as T
+  return (await parseJsonResponse(response, fallbackMessage)) as T
 }
 
 type WrittenPage = {
@@ -1076,9 +1074,7 @@ function isNullableNumber(value: unknown): value is number | null {
 
 export async function createPage(fetchImpl: FetchImpl, input: PageWriteInput, fallbackMessage = 'Page creation failed'): Promise<WrittenPage> {
   const normalizedInput = normalizePageWriteInput(input, fallbackMessage)
-  return sendJson(fetchImpl, '/_api/pages', 'POST', normalizedInput, fallbackMessage, payload =>
-    normalizeWrittenPage(payload, fallbackMessage, true)
-  )
+  return sendJson(fetchImpl, '/_api/pages', 'POST', normalizedInput, fallbackMessage, payload => normalizeWrittenPage(payload, fallbackMessage, true))
 }
 
 export async function updatePage(
@@ -1172,13 +1168,8 @@ export async function linkPageLocaleRelation(
   relatedPageId: number,
   fallbackMessage = 'Page translation link failed'
 ): Promise<PageLocaleRelation[]> {
-  return sendJson(
-    fetchImpl,
-    `/_api/pages/${encodeURIComponent(pageId)}/locale-relations`,
-    'POST',
-    { relatedPageId },
-    fallbackMessage,
-    payload => normalizeArray(payload, fallbackMessage, normalizePageLocaleRelation)
+  return sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(pageId)}/locale-relations`, 'POST', { relatedPageId }, fallbackMessage, payload =>
+    normalizeArray(payload, fallbackMessage, normalizePageLocaleRelation)
   )
 }
 
@@ -1321,12 +1312,7 @@ export async function searchPages(
     headers: { Accept: 'application/json' }
   })
   return normalizeResponse(response, fallbackMessage, payload => {
-    if (
-      !isRecord(payload) ||
-      !Array.isArray(payload.results) ||
-      !Array.isArray(payload.suggestions) ||
-      typeof payload.totalHits !== 'number'
-    )
+    if (!isRecord(payload) || !Array.isArray(payload.results) || !Array.isArray(payload.suggestions) || typeof payload.totalHits !== 'number')
       throw new Error(fallbackMessage)
     const results = payload.results.map(row => {
       if (
@@ -1445,6 +1431,9 @@ export async function fetchPageHistory(
   offsetSize: number,
   fallbackMessage = 'Page history fetch failed'
 ): Promise<{ trail: PageHistoryTrailItem[]; total: number }> {
+  if (!Number.isSafeInteger(id) || id < 1 || !Number.isSafeInteger(offsetPage) || offsetPage < 0 || !Number.isSafeInteger(offsetSize) || offsetSize < 1) {
+    throw new Error(fallbackMessage)
+  }
   const response = await sameOriginJsonFetch(
     fetchImpl,
     `/_api/pages/${encodeURIComponent(id)}/history?offsetPage=${encodeURIComponent(offsetPage)}&offsetSize=${encodeURIComponent(offsetSize)}`,
@@ -1454,12 +1443,12 @@ export async function fetchPageHistory(
     }
   )
   return normalizeResponse(response, fallbackMessage, payload => {
-    if (!isRecord(payload) || !Array.isArray(payload.trail) || typeof payload.total !== 'number') throw new Error(fallbackMessage)
+    if (!isRecord(payload) || !Array.isArray(payload.trail) || !isNonNegativeSafeInteger(payload.total)) throw new Error(fallbackMessage)
     const trail = payload.trail.map(row => {
       if (
         !isRecord(row) ||
-        !Number.isInteger(row.versionId) ||
-        !Number.isInteger(row.authorId) ||
+        !isPositiveSafeInteger(row.versionId) ||
+        !isPositiveSafeInteger(row.authorId) ||
         typeof row.authorName !== 'string' ||
         typeof row.actionType !== 'string' ||
         (row.valueBefore !== null && typeof row.valueBefore !== 'string') ||
@@ -1479,6 +1468,9 @@ export async function fetchPageVersion(
   versionId: number,
   fallbackMessage = 'Page version fetch failed'
 ): Promise<PageVersion> {
+  if (!isPositiveSafeInteger(pageId) || !isPositiveSafeInteger(versionId)) {
+    throw new Error(fallbackMessage)
+  }
   const response = await sameOriginJsonFetch(fetchImpl, `/_api/pages/${encodeURIComponent(pageId)}/history/${encodeURIComponent(versionId)}`, {
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
@@ -1486,7 +1478,7 @@ export async function fetchPageVersion(
   return normalizeResponse(response, fallbackMessage, payload => {
     if (
       !isRecord(payload) ||
-      !Number.isInteger(payload.versionId) ||
+      !isPositiveSafeInteger(payload.versionId) ||
       typeof payload.content !== 'string' ||
       typeof payload.contentType !== 'string' ||
       typeof payload.title !== 'string' ||

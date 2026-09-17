@@ -106,7 +106,10 @@ const textEditorTheme = EditorView.theme({
     borderRight: '1px solid rgba(var(--v-theme-on-surface), .12)'
   },
   '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'rgba(var(--v-theme-on-surface), .06)' },
-  '&.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: 'rgba(var(--v-theme-primary), .24)' },
+  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, & > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
+    backgroundColor: 'rgba(var(--v-theme-primary), .24)'
+  },
+  '::selection': { backgroundColor: 'rgba(var(--v-theme-primary), .24)' },
   '.cm-buttonmarker': {
     backgroundColor: 'rgba(var(--v-theme-primary), .18)',
     border: '1px solid rgba(var(--v-theme-primary), .7)',

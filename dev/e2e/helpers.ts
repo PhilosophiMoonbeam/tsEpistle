@@ -47,7 +47,7 @@ export async function openAuthenticatedPage(page: Page, path: string, readySelec
 
 export async function openSearch(page: Page) {
   const search = page.locator('.nav-header-search-control input:visible').first()
-  if (!(await search.isVisible())) {
+  if ((page.viewportSize()?.width ?? 1280) < 960) {
     await page.getByRole('button', { name: /open search/i }).click()
   }
   await expect(search).toBeVisible()

@@ -283,8 +283,15 @@ describe('Ax orchestration stages', () => {
       { results: [{ index: 0, functionCalls: calls }] },
       { results: [{ index: 0, content: 'The available evidence is incomplete.' }] }
     ]
-    const chat = vi.fn(async () => responses.shift()!)
-    const invoke = vi.fn(async () => ({ content: 'x'.repeat(3_000) }))
+    const emittedResponses: AxChatResponse[] = []
+    const chat = vi.fn(async (_request: AxChatRequest<unknown>) => {
+      const response = responses.shift()!
+      emittedResponses.push(response)
+      return response
+    })
+    const invoke = vi.fn(async (_name: string, _input: unknown, _signal: AbortSignal, actionCallId: string) => ({
+      content: actionCallId === calls[0]!.id ? 'x'.repeat(120_000) : 'x'.repeat(3_000)
+    }))
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
@@ -305,7 +312,7 @@ describe('Ax orchestration stages', () => {
             structuredOutput: 'native-json-schema',
             usage: 'estimated',
             cancellation: true,
-            maxContextTokens: 25_000,
+            maxContextTokens: 100_000,
             maxOutputTokens: 1_000
           },
           transportKind: 'openai-responses',
@@ -332,15 +339,14 @@ describe('Ax orchestration stages', () => {
     const synthesisRequest = chat.mock.calls[2]?.[0] as AxChatRequest<unknown> | undefined
     expect(synthesisRequest).toBeDefined()
     expect(synthesisRequest).not.toHaveProperty('functions')
-    const closedProviderCallIds = new Set(
-      (synthesisRequest?.chatPrompt ?? []).filter(message => message.role === 'function').map(message => message.functionId)
-    )
-    for (const callId of ['first', ...calls.map(call => call.id)]) expect(closedProviderCallIds.has(callId)).toBe(true)
+    expect(emittedResponses[2]?.results.every(result => result.functionCalls === undefined)).toBe(true)
+    const closedProviderCallIds = (synthesisRequest?.chatPrompt ?? []).filter(message => message.role === 'function').map(message => message.functionId)
+    expect(closedProviderCallIds).toEqual(['first', ...calls.map(call => call.id)])
     const synthesisResults = (synthesisRequest?.chatPrompt ?? []).filter(message => message.role === 'function').map(message => message.result)
     expect(synthesisResults.some(result => result.includes('"status":"omitted"'))).toBe(true)
     expect(synthesisResults.some(result => result.includes('"status":"not_executed"'))).toBe(true)
-    expect(invoke.mock.calls.length).toBeGreaterThan(0)
-    expect(invoke.mock.calls.length).toBeLessThan(11)
+    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(invoke.mock.calls.map(call => call[3])).toEqual(['first', calls[0]!.id])
   })
   it('runs the planner without actions, retries, or unbounded output', async () => {
     const chat = vi.fn(

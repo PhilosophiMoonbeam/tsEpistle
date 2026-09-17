@@ -106,11 +106,16 @@ export type OfflineDraftDeleteOptions = OfflineStorageGenerationOptions & {
 export type OfflineSnapshotWriteOptions = OfflineStorageGenerationOptions & {
   onEvictionWarning?: (candidateCount: number) => void
   provenance?: OfflineSnapshotProvenance
+  signal?: AbortSignal
 }
 
 export type OfflineSnapshotOpenOptions = OfflineStorageGenerationOptions
 
 export type OfflinePolicyMutationOptions = OfflineStorageGenerationOptions
+
+export type OfflineSuccessfulPageEditOptions = OfflinePolicyMutationOptions & {
+  editedAt?: string
+}
 
 export type OfflinePurgeResult = {
   deletedRecordIds: string[]
@@ -141,13 +146,23 @@ export type OfflineStorageNoticeListener = (notice: OfflineCorpusNotice) => void
 const listeners = new Set<OfflineStorageNoticeListener>()
 let corpusChannel: BroadcastChannel | null = null
 
+const notifyListeners = (notice: OfflineCorpusNotice): void => {
+  for (const listener of listeners) {
+    try {
+      listener(notice)
+    } catch {
+      // Observers are notification-only; one listener cannot invalidate a committed mutation.
+    }
+  }
+}
+
 const ensureCorpusChannel = (): BroadcastChannel | null => {
   if (corpusChannel || typeof BroadcastChannel === 'undefined') return corpusChannel
   corpusChannel = new BroadcastChannel(CORPUS_CHANNEL)
   corpusChannel.onmessage = event => {
     const parsed = OfflineCorpusNoticeSchema.safeParse(event.data)
     if (!parsed.success) return
-    for (const listener of listeners) listener(parsed.data)
+    notifyListeners(parsed.data)
   }
   return corpusChannel
 }
@@ -159,7 +174,7 @@ export const subscribeOfflineStorageChanges = (listener: OfflineStorageNoticeLis
 }
 
 const notifyPostCommit = (notice: OfflineCorpusNotice): void => {
-  for (const listener of listeners) listener(notice)
+  notifyListeners(notice)
   try {
     ensureCorpusChannel()?.postMessage(notice)
   } catch {
@@ -275,6 +290,7 @@ const makePolicyPage = (
     tagNames: [] as string[],
     visitCount: 0,
     lastVisitedAt: null,
+    lastEditedAt: null,
     automaticSelectedAt: null,
     excluded: false,
     availability: 'unknown' as const,
@@ -306,6 +322,7 @@ const policyPageFieldsChanged = (left: OfflinePagePolicyRecord, right: OfflinePa
   left.tagNames.some((tag: string, index: number) => tag !== right.tagNames[index]) ||
   left.visitCount !== right.visitCount ||
   left.lastVisitedAt !== right.lastVisitedAt ||
+  left.lastEditedAt !== right.lastEditedAt ||
   left.automaticSelectedAt !== right.automaticSelectedAt ||
   left.excluded !== right.excluded ||
   left.availability !== right.availability
@@ -329,6 +346,12 @@ const validatePolicyRevision = (value: number): number => {
     throw new OfflineStorageError('policy-revision-fenced', 'Offline policy revision must be a non-negative safe integer.')
   return value
 }
+const validateEditedAt = (value: string): string => {
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) throw new OfflineStorageError('invalid-record', 'Offline edit time is invalid.')
+  return value
+}
+
+const pageIdentityKey = (selector: OfflineSnapshotSelector): string => `${selector.siteId}\u0000${selector.pageId}`
 
 const selectorForPage = (page: OfflinePagePolicyRecord): OfflineSnapshotSelector => ({
   siteId: page.siteId,
@@ -344,7 +367,10 @@ const compareSelectors = (left: OfflineSnapshotSelector, right: OfflineSnapshotS
 
 const parsePolicyPage = (value: unknown): OfflinePagePolicyRecord | null => {
   const parsed = OfflinePagePolicyRecordSchema.safeParse(value)
-  return parsed.success ? parsed.data : null
+  if (parsed.success) return parsed.data
+  if (!isObject(value) || Object.hasOwn(value, 'lastEditedAt')) return null
+  const migrated = OfflinePagePolicyRecordSchema.safeParse({ ...value, lastEditedAt: null })
+  return migrated.success ? migrated.data : null
 }
 
 export const offlinePolicyPageKey = (selector: OfflineSnapshotSelector): string => {
@@ -847,6 +873,18 @@ export class OfflineStorage {
     for (const key of searchKeys) await searchStore.delete(key)
     return { bytes, snapshotCount, changed: snapshotKeys.length > 0 || searchKeys.length > 0, accountingComplete }
   }
+  private async policyPagesForPageInTransaction(tx: OfflineWriteTransaction, selector: OfflineSnapshotSelector): Promise<OfflinePagePolicyRecord[]> {
+    const values = await tx.objectStore('policy').index('by-page').getAll(selector.pageId)
+    const pages: OfflinePagePolicyRecord[] = []
+    for (const value of values) {
+      if (!isObject(value) || value.recordType !== 'page') continue
+      const parsed = parsePolicyPage(value)
+      if (!parsed) throw new OfflineStorageError('invalid-record', 'The offline page policy is opaque.')
+      if (parsed.siteId !== selector.siteId) continue
+      pages.push(parsed)
+    }
+    return pages
+  }
 
   async currentSessionGeneration(): Promise<number> {
     return (await this.readMeta()).sessionGeneration
@@ -886,14 +924,28 @@ export class OfflineStorage {
     const parsedProvenance = options.provenance === undefined ? undefined : OfflineSnapshotProvenanceSchema.parse(options.provenance)
     const expected = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
+    if (options.signal?.aborted) throw new OfflineStorageError('transaction', 'The offline snapshot write was cancelled.')
     const candidate = makeSnapshotRecord(validatedSiteId, parsedSnapshot, now())
     const search = makeSearchDocument(validatedSiteId, parsedSnapshot)
     const candidateBytes = snapshotLogicalBytes(candidate) + searchLogicalBytes(search)
     if (candidate.byteSize > OFFLINE_RECORD_BYTES_LIMIT || search.byteSize > OFFLINE_RECORD_BYTES_LIMIT)
       throw new OfflineStorageError('quota', 'The offline snapshot exceeds the per-record limit.')
     let tx: OfflineWriteTransaction | undefined
+    let removeAbortListener: (() => void) | undefined
     try {
+      const abortTransaction = (): void => {
+        try {
+          tx?.abort()
+        } catch {
+          // The transaction may have settled before the signal callback ran.
+        }
+      }
       tx = this.db.transaction(['meta', 'snapshots', 'searchDocuments', 'policy'], 'readwrite')
+      if (options.signal) {
+        options.signal.addEventListener('abort', abortTransaction, { once: true })
+        removeAbortListener = () => options.signal?.removeEventListener('abort', abortTransaction)
+        if (options.signal.aborted) abortTransaction()
+      }
       const { meta, policy } = await this.assertGenerationAndPolicyInTransaction(tx, expected, expectedPolicy)
       const snapshotsStore = tx.objectStore('snapshots')
       const searchStore = tx.objectStore('searchDocuments')
@@ -925,6 +977,15 @@ export class OfflineStorage {
         }
         oldBytes = checkedAccountingValue(oldBytes, searchLogicalBytes(parsed.data), 'Offline search replacement bytes')
       }
+      const policyValues = await policyStore.index('by-page').getAll(candidate.pageId)
+      const policyPages = new Map<string, OfflinePagePolicyRecord>()
+      for (const value of policyValues) {
+        if (!isObject(value) || value.recordType !== 'page') continue
+        const parsed = parsePolicyPage(value)
+        if (!parsed) throw new OfflineStorageError('invalid-record', 'The offline page policy is opaque.')
+        if (parsed.siteId !== validatedSiteId) continue
+        policyPages.set(parsed.key, parsed)
+      }
       const existingPolicyValue = await policyStore.get(
         offlinePolicyPageKey({
           siteId: validatedSiteId,
@@ -934,7 +995,9 @@ export class OfflineStorage {
       )
       const existingPolicy = existingPolicyValue === undefined ? null : parsePolicyPage(existingPolicyValue)
       if (existingPolicyValue !== undefined && !existingPolicy) throw new OfflineStorageError('invalid-record', 'The offline page policy is opaque.')
-      if (existingPolicy?.excluded && parsedProvenance?.manual !== true)
+      if (policyPages.size > 0 && [...policyPages.values()].some(page => page.availability === 'ineligible'))
+        throw new OfflinePolicyRevisionFencedError(policy.policyRevision, policy.policyRevision)
+      if ([...policyPages.values()].some(page => page.excluded) && parsedProvenance?.manual !== true)
         throw new OfflinePolicyRevisionFencedError(policy.policyRevision, policy.policyRevision)
       const previous =
         existingPolicy ??
@@ -970,7 +1033,7 @@ export class OfflineStorage {
         throw new OfflineStorageError('quota', 'Offline accounting is incomplete; clean up opaque records before adding data.')
       const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
       const projectedCount = checkedAccountingValue(meta.snapshotCount, snapshotCountDelta, 'Offline snapshot count')
-      if (projectedCount > OFFLINE_SNAPSHOT_LIMIT || projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT) {
+      if ((snapshotCountDelta > 0 && projectedCount > OFFLINE_SNAPSHOT_LIMIT) || (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)) {
         options.onEvictionWarning?.(meta.snapshotCount)
         throw new OfflineStorageError('quota', 'Offline snapshot limits would be exceeded; no records were evicted.')
       }
@@ -986,6 +1049,8 @@ export class OfflineStorage {
     } catch (error) {
       await this.abort(tx)
       throw toFailure(error, 'transaction', 'The offline snapshot could not be committed.')
+    } finally {
+      removeAbortListener?.()
     }
   }
   async removeSnapshot(siteId: string, pageId: number, locale?: string, options: OfflineStorageGenerationOptions = {}): Promise<void> {
@@ -1041,9 +1106,13 @@ export class OfflineStorage {
   async readSnapshotCorpus(options: OfflineStorageGenerationOptions = {}): Promise<OfflineSnapshotCorpus> {
     this.assertOpen(false)
     const expected = await this.expectedGeneration(options.expectedSessionGeneration)
+    const expectedPolicy = options.expectedPolicyRevision === undefined ? undefined : validatePolicyRevision(options.expectedPolicyRevision)
     try {
-      const tx = this.db.transaction(['meta', 'snapshots'], 'readonly')
+      const tx = this.db.transaction(['meta', 'snapshots', 'policy'], 'readonly')
       const meta = await this.assertGenerationInTransaction(tx, expected)
+      const policy = await this.readPolicyStateInTransaction(tx)
+      if (expectedPolicy !== undefined && policy.policyRevision !== expectedPolicy)
+        throw new OfflinePolicyRevisionFencedError(expectedPolicy, policy.policyRevision)
       const values = await tx.objectStore('snapshots').getAll()
       const snapshots: OfflineSnapshotRecord[] = []
       for (const value of values) {
@@ -1155,7 +1224,8 @@ export class OfflineStorage {
       if (!meta.accountingComplete && managedBytesDelta > 0)
         throw new OfflineStorageError('quota', 'Offline accounting is incomplete; clean up opaque records before changing policy.')
       const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
-      if (projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT) throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
+      if (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
       await tx.objectStore('policy').put(nextPolicy)
       await this.putAccountingDelta(tx, meta, managedBytesDelta, 0, false)
       await this.finish(tx, undefined)
@@ -1202,6 +1272,8 @@ export class OfflineStorage {
       if (!meta.accountingComplete && managedBytesDelta > 0)
         throw new OfflineStorageError('quota', 'Offline accounting is incomplete; clean up opaque records before changing policy.')
       const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
+      if (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
       for (const page of changedPages) await tx.objectStore('policy').put(page)
       if (tagsChanged) await tx.objectStore('policy').put(nextPolicy)
       await this.putAccountingDelta(tx, meta, managedBytesDelta, 0, false)
@@ -1259,6 +1331,8 @@ export class OfflineStorage {
       if (!meta.accountingComplete && managedBytesDelta > 0)
         throw new OfflineStorageError('quota', 'Offline accounting is incomplete; clean up opaque records before changing policy.')
       const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
+      if (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
       await store.put(nextPage)
       if (changed) await store.put(nextState)
       await this.putAccountingDelta(tx, meta, managedBytesDelta, 0, false)
@@ -1300,6 +1374,9 @@ export class OfflineStorage {
         throw new OfflineStorageError('quota', 'Offline policy metadata limits would be exceeded.')
       if (!meta.accountingComplete && managedBytesDelta > 0)
         throw new OfflineStorageError('quota', 'Offline accounting is incomplete; clean up opaque records before recording a visit.')
+      const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
+      if (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
       await store.put(nextPage)
       await store.put(nextState)
       await this.putAccountingDelta(tx, meta, managedBytesDelta, 0, false)
@@ -1309,6 +1386,59 @@ export class OfflineStorage {
     } catch (error) {
       await this.abort(tx)
       throw toFailure(error, 'transaction', 'The eligible reader visit could not be recorded.')
+    }
+  }
+
+  async recordSuccessfulPageEdit(selector: OfflineSnapshotSelector, options: OfflineSuccessfulPageEditOptions = {}): Promise<OfflinePagePolicyRecord> {
+    this.assertOpen(true)
+    const parsedSelector = OfflineSnapshotSelectorSchema.parse(selector)
+    const editedAt = validateEditedAt(options.editedAt ?? now())
+    const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
+    const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
+    let tx: OfflineWriteTransaction | undefined
+    try {
+      tx = this.db.transaction(['meta', 'policy'], 'readwrite')
+      const { meta, policy } = await this.assertGenerationAndPolicyInTransaction(tx, expectedGeneration, expectedPolicy)
+      const store = tx.objectStore('policy')
+      const key = offlinePolicyPageKey(parsedSelector)
+      const raw = await store.get(key)
+      const existing = raw === undefined ? null : parsePolicyPage(raw)
+      if (raw !== undefined && !existing) throw new OfflineStorageError('invalid-record', 'The offline page policy is opaque.')
+      const variants = await this.policyPagesForPageInTransaction(tx, parsedSelector)
+      if (variants.some(page => page.excluded || page.availability === 'ineligible'))
+        throw new OfflinePolicyRevisionFencedError(expectedPolicy, policy.policyRevision)
+      if (existing?.excluded || existing?.availability === 'ineligible') throw new OfflinePolicyRevisionFencedError(expectedPolicy, policy.policyRevision)
+      const previous = existing ?? makePolicyPage(parsedSelector, { availability: 'available' })
+      const previousMs = previous.lastEditedAt === null ? Number.NEGATIVE_INFINITY : Date.parse(previous.lastEditedAt)
+      const nextEditedAt = previousMs >= Date.parse(editedAt) ? previous.lastEditedAt : editedAt
+      if (nextEditedAt === previous.lastEditedAt) {
+        await this.finish(tx, undefined)
+        return clonePolicyPage(previous)
+      }
+      const nextPage = storePolicyPage({ ...previous, lastEditedAt: nextEditedAt })
+      const nextRevision = checkedAccountingValue(policy.policyRevision, 1, 'Offline policy revision')
+      const nextState = makePolicyState({ ...policy, policyRevision: nextRevision })
+      const managedBytesDelta =
+        policyRecordLogicalBytes(nextPage) -
+        (existing ? policyRecordLogicalBytes(existing) : 0) +
+        policyRecordLogicalBytes(nextState) -
+        policyRecordLogicalBytes(policy)
+      if (!existing && (await store.index('by-type').getAll('page')).length >= OFFLINE_POLICY_PAGE_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline policy metadata limits would be exceeded.')
+      if (!meta.accountingComplete && managedBytesDelta > 0)
+        throw new OfflineStorageError('quota', 'Offline accounting is incomplete; clean up opaque records before recording an edit.')
+      const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
+      if (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
+      await store.put(nextPage)
+      await store.put(nextState)
+      await this.putAccountingDelta(tx, meta, managedBytesDelta, 0, false)
+      await this.finish(tx, undefined)
+      notifyPostCommit({ kind: 'policy', sessionGeneration: meta.sessionGeneration, corpusRevision: meta.corpusRevision })
+      return clonePolicyPage(nextPage)
+    } catch (error) {
+      await this.abort(tx)
+      throw toFailure(error, 'transaction', 'The successful offline page edit could not be recorded.')
     }
   }
 
@@ -1322,15 +1452,12 @@ export class OfflineStorage {
     const policy = await this.readOfflinePolicy(options)
     const limit = options.limit === undefined ? OFFLINE_AUTOMATIC_PAGE_LIMIT : options.limit
     if (!Number.isSafeInteger(limit) || limit < 0) throw new OfflineStorageError('invalid-record', 'Automatic page limit is invalid.')
-    const candidates = policy.pages
+    const eligible = (page: OfflinePagePolicyRecord): boolean =>
+      (validatedSiteId === undefined || page.siteId === validatedSiteId) && !page.excluded && page.availability !== 'ineligible'
+    const visitCandidates = policy.pages
       .filter(
         (page: OfflinePagePolicyRecord) =>
-          (validatedSiteId === undefined || page.siteId === validatedSiteId) &&
-          !page.excluded &&
-          page.availability !== 'ineligible' &&
-          page.visitCount > 0 &&
-          page.lastVisitedAt !== null &&
-          asOfMs - Date.parse(page.lastVisitedAt) < OFFLINE_AUTOMATIC_INACTIVITY_MS
+          eligible(page) && page.visitCount > 0 && page.lastVisitedAt !== null && asOfMs - Date.parse(page.lastVisitedAt) < OFFLINE_AUTOMATIC_INACTIVITY_MS
       )
       .sort((left: OfflinePagePolicyRecord, right: OfflinePagePolicyRecord) => {
         if (left.visitCount !== right.visitCount) return right.visitCount - left.visitCount
@@ -1338,7 +1465,28 @@ export class OfflineStorage {
           return left.lastVisitedAt === null ? 1 : right.lastVisitedAt === null ? -1 : right.lastVisitedAt.localeCompare(left.lastVisitedAt)
         return compareSelectors(selectorForPage(left), selectorForPage(right))
       })
-    return candidates.slice(0, Math.min(limit, OFFLINE_AUTOMATIC_PAGE_LIMIT)).map(clonePolicyPage)
+    const editedCandidates = policy.pages
+      .filter((page: OfflinePagePolicyRecord) => eligible(page) && page.lastEditedAt !== null)
+      .sort((left: OfflinePagePolicyRecord, right: OfflinePagePolicyRecord) => {
+        const leftEditedAt = left.lastEditedAt === null ? Number.NEGATIVE_INFINITY : Date.parse(left.lastEditedAt)
+        const rightEditedAt = right.lastEditedAt === null ? Number.NEGATIVE_INFINITY : Date.parse(right.lastEditedAt)
+        if (leftEditedAt !== rightEditedAt) return rightEditedAt - leftEditedAt
+        return compareSelectors(selectorForPage(left), selectorForPage(right))
+      })
+    const latestEdited = editedCandidates[0]
+    const candidates = latestEdited === undefined ? visitCandidates : [latestEdited, ...visitCandidates]
+    const cap = Math.min(limit, OFFLINE_AUTOMATIC_PAGE_LIMIT)
+    if (cap === 0) return []
+    const selected: OfflinePagePolicyRecord[] = []
+    const seenPages = new Set<string>()
+    for (const candidate of candidates) {
+      const key = pageIdentityKey(selectorForPage(candidate))
+      if (seenPages.has(key)) continue
+      seenPages.add(key)
+      selected.push(candidate)
+      if (selected.length >= cap) break
+    }
+    return selected.map(clonePolicyPage)
   }
   async updateAutomaticSelections(
     selectors: readonly OfflineSnapshotSelector[],
@@ -1425,7 +1573,7 @@ export class OfflineStorage {
         throw new OfflineStorageError('quota', 'Offline accounting is incomplete; clean up opaque records before adding policy metadata.')
       const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
       const projectedCount = checkedAccountingValue(meta.snapshotCount, bodySnapshotCountDelta, 'Offline snapshot count')
-      if (projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT || projectedCount > OFFLINE_SNAPSHOT_LIMIT)
+      if ((bodySnapshotCountDelta > 0 && projectedCount > OFFLINE_SNAPSHOT_LIMIT) || (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT))
         throw new OfflineStorageError('quota', 'Offline snapshot limits would be exceeded; no manual records were evicted.')
       for (const page of changedPages.values()) await policyStore.put(page)
       const nextMeta = await this.putAccountingDelta(tx, meta, managedBytesDelta, bodySnapshotCountDelta, corpusChanged, accountingComplete)
@@ -1494,7 +1642,8 @@ export class OfflineStorage {
       if (!meta.accountingComplete && managedBytesDelta > 0)
         throw new OfflineStorageError('quota', 'Offline accounting is incomplete; clean up opaque records before adding tag metadata.')
       const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
-      if (projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT) throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
+      if (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
       for (const page of changed.values()) await store.put(page)
       await this.putAccountingDelta(tx, meta, managedBytesDelta, 0, false)
       await this.finish(tx, undefined)
@@ -1513,7 +1662,9 @@ export class OfflineStorage {
     availability: OfflinePagePolicyRecord['availability'],
     options: OfflineStorageGenerationOptions = {}
   ): Promise<OfflinePagePolicyRecord> {
+    this.assertOpen(true)
     const parsedSelector = OfflineSnapshotSelectorSchema.parse(selector)
+    if (availability === 'ineligible') return await this.markPageIneligible(parsedSelector, options)
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
     let tx: OfflineWriteTransaction | undefined
@@ -1534,7 +1685,8 @@ export class OfflineStorage {
       if (!meta.accountingComplete && managedBytesDelta > 0)
         throw new OfflineStorageError('quota', 'Offline accounting is incomplete; clean up opaque records before adding policy metadata.')
       const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
-      if (projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT) throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
+      if (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
       await store.put(next)
       await this.putAccountingDelta(tx, meta, managedBytesDelta, 0, false)
       await this.finish(tx, undefined)
@@ -1546,52 +1698,7 @@ export class OfflineStorage {
     }
   }
 
-  async markPageIneligible(selector: OfflineSnapshotSelector, options: OfflineStorageGenerationOptions = {}): Promise<OfflinePagePolicyRecord> {
-    this.assertOpen(true)
-    const parsedSelector = OfflineSnapshotSelectorSchema.parse(selector)
-    const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
-    const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
-    let tx: OfflineWriteTransaction | undefined
-    try {
-      tx = this.db.transaction(['meta', 'policy', 'snapshots', 'searchDocuments'], 'readwrite')
-      const { meta } = await this.assertGenerationAndPolicyInTransaction(tx, expectedGeneration, expectedPolicy)
-      const store = tx.objectStore('policy')
-      const key = offlinePolicyPageKey(parsedSelector)
-      const raw = await store.get(key)
-      const previous = raw === undefined ? makePolicyPage(parsedSelector) : parsePolicyPage(raw)
-      if (!previous) throw new OfflineStorageError('invalid-record', 'The offline page policy is opaque.')
-      const withoutSize = {
-        ...previous,
-        automatic: false,
-        automaticSelectedAt: null,
-        availability: 'ineligible' as const
-      }
-      const next = storePolicyPage(withoutSize)
-      const policyChanged = policyPageFieldsChanged(previous, next)
-      const removed = await this.removeBodyInTransaction(tx, parsedSelector.siteId, parsedSelector.pageId, parsedSelector.locale)
-      const accountingComplete = meta.accountingComplete && removed.accountingComplete
-      const managedBytesDelta = policyRecordLogicalBytes(next) - (raw === undefined ? 0 : policyRecordLogicalBytes(previous)) - removed.bytes
-      if (raw === undefined && (await store.index('by-type').getAll('page')).length >= OFFLINE_POLICY_PAGE_LIMIT)
-        throw new OfflineStorageError('quota', 'Offline policy metadata limits would be exceeded.')
-      if (!meta.accountingComplete && managedBytesDelta > 0)
-        throw new OfflineStorageError('quota', 'Offline accounting is incomplete; clean up opaque records before adding policy metadata.')
-      const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
-      const projectedCount = checkedAccountingValue(meta.snapshotCount, -removed.snapshotCount, 'Offline snapshot count')
-      if (projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT || projectedCount < 0)
-        throw new OfflineStorageError('quota', 'Offline managed storage limits could not be maintained.')
-      await store.put(next)
-      const nextMeta = await this.putAccountingDelta(tx, meta, managedBytesDelta, -removed.snapshotCount, removed.changed, accountingComplete)
-      await this.finish(tx, undefined)
-      if (removed.changed) notifyPostCommit({ kind: 'corpus', sessionGeneration: nextMeta.sessionGeneration, corpusRevision: nextMeta.corpusRevision })
-      else if (policyChanged) notifyPostCommit({ kind: 'policy', sessionGeneration: nextMeta.sessionGeneration, corpusRevision: nextMeta.corpusRevision })
-      return clonePolicyPage(next)
-    } catch (error) {
-      await this.abort(tx)
-      throw toFailure(error, 'transaction', 'The ineligible offline page could not be removed.')
-    }
-  }
-
-  async removeOfflinePage(selector: OfflineSnapshotSelector, options: OfflineStorageGenerationOptions = {}): Promise<OfflinePagePolicyRecord> {
+  async markPageIneligible(selector: OfflineSnapshotSelector, options: OfflinePolicyMutationOptions = {}): Promise<OfflinePagePolicyRecord> {
     this.assertOpen(true)
     const parsedSelector = OfflineSnapshotSelectorSchema.parse(selector)
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
@@ -1601,46 +1708,122 @@ export class OfflineStorage {
       tx = this.db.transaction(['meta', 'policy', 'snapshots', 'searchDocuments'], 'readwrite')
       const { meta, policy } = await this.assertGenerationAndPolicyInTransaction(tx, expectedGeneration, expectedPolicy)
       const store = tx.objectStore('policy')
-      const key = offlinePolicyPageKey(parsedSelector)
-      const raw = await store.get(key)
-      const previous = raw === undefined ? makePolicyPage(parsedSelector) : parsePolicyPage(raw)
-      if (!previous) throw new OfflineStorageError('invalid-record', 'The offline page policy is opaque.')
-      const withoutSize = {
-        ...previous,
-        manual: false,
-        automatic: false,
-        tag: false,
-        tagNames: [],
-        automaticSelectedAt: null,
-        excluded: true,
-        availability: 'unknown' as const
+      const variants = await this.policyPagesForPageInTransaction(tx, parsedSelector)
+      const previousByKey = new Map(variants.map(page => [page.key, page]))
+      const storedKeys = new Set(variants.map(page => page.key))
+      const requestedKey = offlinePolicyPageKey(parsedSelector)
+      if (!previousByKey.has(requestedKey)) previousByKey.set(requestedKey, makePolicyPage(parsedSelector))
+      const changedPages: OfflinePagePolicyRecord[] = []
+      let managedBytesDelta = 0
+      for (const previous of previousByKey.values()) {
+        const next = storePolicyPage({
+          ...previous,
+          automatic: false,
+          automaticSelectedAt: null,
+          lastEditedAt: null,
+          availability: 'ineligible' as const
+        })
+        if (!storedKeys.has(previous.key) || policyPageFieldsChanged(previous, next)) {
+          changedPages.push(next)
+          managedBytesDelta += policyRecordLogicalBytes(next) - (storedKeys.has(previous.key) ? policyRecordLogicalBytes(previous) : 0)
+        }
       }
-      const next = storePolicyPage(withoutSize)
-      const removed = await this.removeBodyInTransaction(tx, parsedSelector.siteId, parsedSelector.pageId, parsedSelector.locale)
+      const removed = await this.removeBodyInTransaction(tx, parsedSelector.siteId, parsedSelector.pageId)
       const accountingComplete = meta.accountingComplete && removed.accountingComplete
-      const nextRevision = checkedAccountingValue(policy.policyRevision, 1, 'Offline policy revision')
-      const nextState = makePolicyState({ ...policy, policyRevision: nextRevision })
-      const managedBytesDelta =
-        policyRecordLogicalBytes(next) -
-        (raw === undefined ? 0 : policyRecordLogicalBytes(previous)) -
-        removed.bytes +
-        policyRecordLogicalBytes(nextState) -
-        policyRecordLogicalBytes(policy)
-      if (raw === undefined && (await store.index('by-type').getAll('page')).length >= OFFLINE_POLICY_PAGE_LIMIT)
+      const pageCountDelta = variants.some(page => page.key === requestedKey) ? 0 : 1
+      if (pageCountDelta > 0 && (await store.index('by-type').getAll('page')).length >= OFFLINE_POLICY_PAGE_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline policy metadata limits would be exceeded.')
+      const policyChanged = changedPages.length > 0
+      const nextPolicy = policyChanged
+        ? makePolicyState({ ...policy, policyRevision: checkedAccountingValue(policy.policyRevision, 1, 'Offline policy revision') })
+        : policy
+      managedBytesDelta += policyRecordLogicalBytes(nextPolicy) - policyRecordLogicalBytes(policy)
+      managedBytesDelta -= removed.bytes
+      if (!meta.accountingComplete && managedBytesDelta > 0)
+        throw new OfflineStorageError('quota', 'Offline accounting is incomplete; clean up opaque records before adding policy metadata.')
+      const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
+      if (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
+      for (const page of changedPages) await store.put(page)
+      if (pageCountDelta > 0) {
+        const requested = previousByKey.get(requestedKey)
+        if (requested && !changedPages.some(page => page.key === requestedKey)) await store.put(requested)
+      }
+      if (policyChanged) await store.put(nextPolicy)
+      const nextMeta = await this.putAccountingDelta(tx, meta, managedBytesDelta, -removed.snapshotCount, removed.changed, accountingComplete)
+      await this.finish(tx, undefined)
+      if (removed.changed) notifyPostCommit({ kind: 'corpus', sessionGeneration: nextMeta.sessionGeneration, corpusRevision: nextMeta.corpusRevision })
+      else if (policyChanged) notifyPostCommit({ kind: 'policy', sessionGeneration: nextMeta.sessionGeneration, corpusRevision: nextMeta.corpusRevision })
+      const result = changedPages.find(page => page.key === requestedKey)
+      if (result) return clonePolicyPage(result)
+      const retained = previousByKey.get(requestedKey)
+      if (!retained) throw new OfflineStorageError('transaction', 'The ineligible offline page policy was not retained.')
+      return clonePolicyPage(retained)
+    } catch (error) {
+      await this.abort(tx)
+      throw toFailure(error, 'transaction', 'The ineligible offline page could not be removed.')
+    }
+  }
+
+  async removeOfflinePage(selector: OfflineSnapshotSelector, options: OfflinePolicyMutationOptions = {}): Promise<OfflinePagePolicyRecord> {
+    this.assertOpen(true)
+    const parsedSelector = OfflineSnapshotSelectorSchema.parse(selector)
+    const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
+    const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
+    let tx: OfflineWriteTransaction | undefined
+    try {
+      tx = this.db.transaction(['meta', 'policy', 'snapshots', 'searchDocuments'], 'readwrite')
+      const { meta, policy } = await this.assertGenerationAndPolicyInTransaction(tx, expectedGeneration, expectedPolicy)
+      const store = tx.objectStore('policy')
+      const variants = await this.policyPagesForPageInTransaction(tx, parsedSelector)
+      const storedKeys = new Set(variants.map(page => page.key))
+      const requestedKey = offlinePolicyPageKey(parsedSelector)
+      const pages = new Map(variants.map(page => [page.key, page]))
+      if (!pages.has(requestedKey)) pages.set(requestedKey, makePolicyPage(parsedSelector))
+      const nextPages: OfflinePagePolicyRecord[] = []
+      let policyChanged = false
+      let managedBytesDelta = 0
+      for (const previous of pages.values()) {
+        const next = storePolicyPage({
+          ...previous,
+          manual: false,
+          automatic: false,
+          tag: false,
+          tagNames: [],
+          automaticSelectedAt: null,
+          lastEditedAt: null,
+          excluded: true,
+          availability: 'unknown' as const
+        })
+        nextPages.push(next)
+        if (!storedKeys.has(previous.key) || policyPageFieldsChanged(previous, next)) {
+          policyChanged = true
+          managedBytesDelta += policyRecordLogicalBytes(next) - (storedKeys.has(previous.key) ? policyRecordLogicalBytes(previous) : 0)
+        }
+      }
+      const removed = await this.removeBodyInTransaction(tx, parsedSelector.siteId, parsedSelector.pageId)
+      const accountingComplete = meta.accountingComplete && removed.accountingComplete
+      const nextRevision = policyChanged ? checkedAccountingValue(policy.policyRevision, 1, 'Offline policy revision') : policy.policyRevision
+      const nextState = policyChanged ? makePolicyState({ ...policy, policyRevision: nextRevision }) : policy
+      managedBytesDelta += policyRecordLogicalBytes(nextState) - policyRecordLogicalBytes(policy) - removed.bytes
+      if (!storedKeys.has(requestedKey) && (await store.index('by-type').getAll('page')).length >= OFFLINE_POLICY_PAGE_LIMIT)
         throw new OfflineStorageError('quota', 'Offline policy metadata limits would be exceeded.')
       if (!meta.accountingComplete && managedBytesDelta > 0)
         throw new OfflineStorageError('quota', 'Offline accounting is incomplete; clean up opaque records before adding policy metadata.')
       const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
-      const projectedCount = checkedAccountingValue(meta.snapshotCount, -removed.snapshotCount, 'Offline snapshot count')
-      if (projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT || projectedCount < 0)
-        throw new OfflineStorageError('quota', 'Offline managed storage limits could not be maintained.')
-      await store.put(next)
-      await store.put(nextState)
+      if (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
+      if (policyChanged) {
+        for (const next of nextPages) await store.put(next)
+        await store.put(nextState)
+      }
       const nextMeta = await this.putAccountingDelta(tx, meta, managedBytesDelta, -removed.snapshotCount, removed.changed, accountingComplete)
       await this.finish(tx, undefined)
       if (removed.changed) notifyPostCommit({ kind: 'corpus', sessionGeneration: nextMeta.sessionGeneration, corpusRevision: nextMeta.corpusRevision })
-      else notifyPostCommit({ kind: 'policy', sessionGeneration: nextMeta.sessionGeneration, corpusRevision: nextMeta.corpusRevision })
-      return clonePolicyPage(next)
+      else if (policyChanged) notifyPostCommit({ kind: 'policy', sessionGeneration: nextMeta.sessionGeneration, corpusRevision: nextMeta.corpusRevision })
+      const result = nextPages.find(page => page.key === requestedKey)
+      if (!result) throw new OfflineStorageError('transaction', 'The excluded offline page policy was not retained.')
+      return clonePolicyPage(result)
     } catch (error) {
       await this.abort(tx)
       throw toFailure(error, 'transaction', 'The offline page could not be removed.')
@@ -1695,7 +1878,8 @@ export class OfflineStorage {
       if (!meta.accountingComplete && managedBytesDelta > 0)
         throw new OfflineStorageError('quota', 'Offline accounting is incomplete; diagnostics cannot grow managed storage.')
       const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
-      if (projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT) throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
+      if (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
       await tx.objectStore('policy').put(nextPolicy)
       await this.putAccountingDelta(tx, meta, managedBytesDelta, 0, false)
       await this.finish(tx, undefined)
@@ -1773,7 +1957,7 @@ export class OfflineStorage {
       if (!meta.accountingComplete && managedBytesDelta > 0)
         throw new OfflineStorageError('quota', 'Offline accounting is incomplete; clean up opaque records before adding data.')
       const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
-      if (projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
+      if (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
         throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded; no draft was evicted.')
       await store.put(cloneEnvelope(parsed))
       await this.putAccountingDelta(tx, meta, managedBytesDelta, 0, false)
@@ -1852,7 +2036,8 @@ export class OfflineStorage {
       if (!meta.accountingComplete && managedBytesDelta > 0)
         throw new OfflineStorageError('quota', 'Offline accounting is incomplete; recovery cannot increase managed storage.')
       const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
-      if (projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT) throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
+      if (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
       await store.put(cloneEnvelope(replacementEnvelope))
       await this.putAccountingDelta(tx, meta, managedBytesDelta, 0, false)
       await this.finish(tx, undefined)
@@ -2162,7 +2347,8 @@ export class OfflineStorage {
       if (!meta.accountingComplete && managedBytesDelta > 0)
         throw new OfflineStorageError('quota', 'Offline accounting is incomplete; finalization cannot add a fork.')
       const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
-      if (projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT) throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
+      if (managedBytesDelta > 0 && projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
       await store.delete(expectedReceipt.recordId)
       if (source) await store.delete(source.recordId)
       if (oldFork) await store.delete(oldFork.recordId)
@@ -2326,13 +2512,14 @@ const migratePolicyRecords = async (tx: OfflineWriteTransaction, storage: Offlin
   const existingValues = await policyStore.index('by-type').getAll('page')
   const existingKeys = new Set<string>()
   for (const value of existingValues) {
-    const parsed = OfflinePagePolicyRecordSchema.safeParse(value)
-    if (!parsed.success) {
+    const parsed = parsePolicyPage(value)
+    if (!parsed) {
       if (isObject(value) && typeof value.schemaVersion === 'number' && value.schemaVersion > OFFLINE_POLICY_SCHEMA_VERSION) storage.markUnsupportedSchema()
       else storage.markMetadataRecovery('invalid')
       continue
     }
-    existingKeys.add(parsed.data.key)
+    existingKeys.add(parsed.key)
+    if (!isObject(value) || !Object.hasOwn(value, 'lastEditedAt')) await policyStore.put(storePolicyPage(parsed))
   }
   if (storage.hasUnsupportedSchema || storage.requiresMetadataRecovery) return
   for (const value of snapshots) {

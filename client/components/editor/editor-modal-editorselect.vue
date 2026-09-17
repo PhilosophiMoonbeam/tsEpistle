@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="isShown" max-width="780" scrollable :persistent="templateLoading" :fullscreen="$vuetify.display.smAndDown" aria-labelledby="editor-select-title" no-click-animation>
+  <v-dialog v-model="isShown" max-width="780" scrollable persistent content-class="editorselect-dialog" aria-labelledby="editor-select-title">
     <v-card class="editor-select">
       <header class="editor-select__heading"><div><span>New page</span><h2 id="editor-select-title">How would you like to write?</h2></div><v-btn icon="mdi-arrow-left" variant="text" aria-label="Go back" :disabled="templateLoading" @click="goBack" /></header>
       <v-card-text class="editor-select__content">

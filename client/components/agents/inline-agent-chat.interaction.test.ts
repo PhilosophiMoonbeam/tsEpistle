@@ -114,6 +114,12 @@ const renderAgentComposer = new Function('Vue', compiledComposerTemplate.code)(V
 interface ValueRef<T> {
   value: T
 }
+interface TestPageHint {
+  readonly id: number
+  readonly locale: string
+  readonly path: string
+  readonly observedUpdatedAt: string
+}
 
 interface LockState {
   activeRun: ValueRef<{ canCancel: boolean; status: string } | null>
@@ -152,6 +158,8 @@ interface LockState {
   recoverClearUnfiledHistory: () => Promise<void>
   thread: ValueRef<Record<string, unknown> | null>
   sendPrompt: (content: string) => Promise<boolean>
+  currentPage: ValueRef<TestPageHint | null>
+  componentProps: { pageId: number; pageLocale: string; pagePath: string; pageUpdatedAt: string }
 }
 
 const removeSetupMacro = (content: string, macroName: string): string => {
@@ -322,7 +330,8 @@ const loadGoalLockState = (
   mutationBusy = false,
   runStatus: 'running' | 'awaiting_approval' | null = status === 'active' ? 'running' : null,
   canPinCurrentChat = true,
-  workspaceClosed = false
+  workspaceClosed = false,
+  page: TestPageHint | null = null
 ): LockState => {
   const ref = <T>(value: T): ValueRef<T> => Vue.ref(value) as ValueRef<T>
   const thread = ref({
@@ -367,10 +376,10 @@ const loadGoalLockState = (
     providerEnabled: true,
     skillsEnabled: true,
     goalsEnabled: true,
-    pageId: 0,
-    pageLocale: '',
-    pagePath: '',
-    pageUpdatedAt: ''
+    pageId: page?.id ?? 0,
+    pageLocale: page?.locale ?? '',
+    pagePath: page?.path ?? '',
+    pageUpdatedAt: page?.observedUpdatedAt ?? ''
   }
   const agentCalls = {
     clearUnfiledHistory: vi.fn(() => Promise.resolve()),
@@ -384,7 +393,7 @@ const loadGoalLockState = (
   }
   const evaluate = new Function(
     '{ computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection }',
-    `${executableScript}\nreturn { activeRun, canPinCurrentChat, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleTranscriptEngagement, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, submitUnavailableReason, thread, welcomeGreeting }`
+    `${executableScript}\nreturn { activeRun, canPinCurrentChat, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleTranscriptEngagement, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, submitUnavailableReason, thread, welcomeGreeting }`
   ) as (dependencies: Record<string, unknown>) => LockState
 
   const state = evaluate({
@@ -411,7 +420,7 @@ const loadGoalLockState = (
     pwaState: testPwaState,
     retryServerConnection: async () => true
   }) as LockState
-  return { ...state, agentCalls }
+  return { ...state, agentCalls, componentProps: props }
 }
 
 interface MountedInlineAgent {
@@ -432,7 +441,12 @@ const settle = async (): Promise<void> => {
 
 const mountInlineAgent = (
   lockState?: LockState,
-  options: { readonly approvalJumpVisible?: boolean; readonly followJumpVisible?: boolean; readonly isTemporary?: boolean } = {}
+  options: {
+    readonly approvalJumpVisible?: boolean
+    readonly followJumpVisible?: boolean
+    readonly isTemporary?: boolean
+    readonly page?: TestPageHint | null
+  } = {}
 ): MountedInlineAgent => {
   const host = document.createElement('div')
   document.body.append(host)
@@ -465,6 +479,7 @@ const mountInlineAgent = (
   const transcriptFollowing = Vue.ref(true)
   const goal = lockState?.openGoal.value ?? null
   const thread = lockState?.thread.value ?? null
+  const page = options.page ?? lockState?.currentPage.value ?? null
   const context: Record<string, unknown> = {
     csrfToken: 'csrf',
     ownerId: 2,
@@ -473,10 +488,10 @@ const mountInlineAgent = (
     providerEnabled: true,
     skillsEnabled: false,
     goalsEnabled: true,
-    pageId: 0,
-    pageLocale: '',
-    pagePath: '',
-    pageUpdatedAt: '',
+    pageId: page?.id ?? 0,
+    pageLocale: page?.locale ?? '',
+    pagePath: page?.path ?? '',
+    pageUpdatedAt: page?.observedUpdatedAt ?? '',
     loading: false,
     connectionRetrying: false,
     connectionBlocked: false,
@@ -485,6 +500,7 @@ const mountInlineAgent = (
     offlineComposerDraft: '',
     composerDisabled: !(lockState?.canSubmit.value ?? true),
     sending: false,
+    promptSubmissionPending: false,
     sessionMutationBusy: lockState?.sessionMutationBusy.value ?? false,
     connection: 'connected',
     error: '',
@@ -518,7 +534,8 @@ const mountInlineAgent = (
     approvalJumpVisible: options.approvalJumpVisible ?? false,
     followJumpVisible: options.followJumpVisible ?? false,
     skillManagerOpen: false,
-    currentPage: null,
+    currentPage: page,
+    contextualGlass: Boolean(page),
     activeRun: lockState?.activeRun.value ?? null,
     openGoal: goal,
     hasConversation: Boolean(goal),
@@ -561,6 +578,7 @@ const mountInlineAgent = (
         icon: 'mdi-history'
       }
     ],
+    sendPrompt: lockState?.sendPrompt ?? (async () => false),
     emit: () => undefined,
     agents: { drafts: {}, setDraft: () => undefined },
     setCurrentChatPinned: () => undefined,
@@ -613,7 +631,6 @@ const mountInlineAgent = (
     'recoverClearUnfiledHistory',
     'retryInitialization',
     'scrollToLatest',
-    'sendPrompt',
     'updateMemoryOpen'
   ])
     context[method] = () => undefined
@@ -900,8 +917,46 @@ describe('Inline Agent workspace actions', () => {
       random.mockRestore()
     }
   })
+  it('latches the opening page for the component lifetime instead of following prop changes', () => {
+    const firstPage: TestPageHint = {
+      id: 41,
+      locale: 'en',
+      path: 'handbook/first',
+      observedUpdatedAt: '2026-09-15T10:00:00.000Z'
+    }
+    const secondPage: TestPageHint = {
+      id: 42,
+      locale: 'en',
+      path: 'handbook/second',
+      observedUpdatedAt: '2026-09-16T10:00:00.000Z'
+    }
+    const first = loadGoalLockState(null, false, null, true, false, firstPage)
+    expect(first.currentPage.value).toEqual(firstPage)
 
-  it('keeps the composer glassy while scrolled until real editing focus, then clears on transcript engagement', async () => {
+    first.componentProps.pageId = secondPage.id
+    first.componentProps.pageLocale = secondPage.locale
+    first.componentProps.pagePath = secondPage.path
+    first.componentProps.pageUpdatedAt = secondPage.observedUpdatedAt
+    expect(first.currentPage.value).toEqual(firstPage)
+
+    const reopened = loadGoalLockState(null, false, null, true, false, secondPage)
+    expect(reopened.currentPage.value).toEqual(secondPage)
+  })
+
+  it('allows a starter to submit only once while its first request is in flight', async () => {
+    const lockState = loadGoalLockState(null)
+    const mounted = mountInlineAgent(lockState)
+    const starter = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__starter')
+    if (!starter) throw new Error('Conversation starter did not render')
+
+    starter.click()
+    starter.click()
+    await settle()
+
+    expect(lockState.agentCalls.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps composer dock focus state independent from transcript scrolling and engagement', async () => {
     const lockState = loadGoalLockState(null)
     const mounted = mountInlineAgent(lockState)
     const getComposerDock = (): HTMLElement => {

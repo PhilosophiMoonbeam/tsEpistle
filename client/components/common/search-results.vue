@@ -27,10 +27,10 @@
         :provider-enabled='agentProviderEnabled'
         :skills-enabled='agentSkillsEnabled'
         :goals-enabled='agentGoalsEnabled'
-        :page-id='currentPageId'
-        :page-locale='currentPageLocale'
-        :page-path='currentPagePath'
-        :page-updated-at='currentPageUpdatedAt'
+        :page-id='agentPageId'
+        :page-locale='agentPageLocale'
+        :page-path='agentPagePath'
+        :page-updated-at='agentPageUpdatedAt'
         @return-search='returnToSearch'
         @close='closeSearch'
       )
@@ -272,11 +272,12 @@ import { defineComponent } from 'vue'
 import AsyncState from '@/components/common/async-state.vue'
 import InlineAgentChat from '../agents/inline-agent-chat.vue'
 import WikiSourcePreview from './wiki-source-preview.vue'
+import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import type { AgentSearchScope } from '../../helpers/agent-draft.ts'
 import type { WikiSource, WikiSourceSelector } from '../../../shared/wiki-source.ts'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
-import { onSearchEnter, onSearchExit, onSearchMove, offSearchEnter, offSearchExit, offSearchMove } from '../../helpers/search-navigation-events'
+import { emitSearchFocus, onSearchEnter, onSearchExit, onSearchMove, offSearchEnter, offSearchExit, offSearchMove } from '../../helpers/search-navigation-events'
 import { useAgentsStore } from '../../store/agents.ts'
 import { isAgentSessionId } from '../../helpers/agent-chat-pin.ts'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
@@ -411,6 +412,8 @@ export default defineComponent({
       directPromptHandoffId: 0,
       directPromptHandoffPending: false,
       agentResumeSessionId: null as string | null,
+      agentOpeningPage: null as AgentCurrentPageHint | null,
+      agentOpeningPageCaptured: false,
       searchAbortController: null as AbortController | null
     }
   },
@@ -505,6 +508,10 @@ export default defineComponent({
     agentProviderEnabled(): boolean { return siteConfig.agentProviderEnabled },
     agentSkillsEnabled(): boolean { return siteConfig.agentSkillsEnabled },
     agentGoalsEnabled(): boolean { return siteConfig.agentGoalsEnabled },
+    agentPageId(): number { return this.agentOpeningPage?.id ?? 0 },
+    agentPageLocale(): string { return this.agentOpeningPage?.locale ?? '' },
+    agentPagePath(): string { return this.agentOpeningPage?.path ?? '' },
+    agentPageUpdatedAt(): string { return this.agentOpeningPage?.observedUpdatedAt ?? '' },
     currentPageId(): number { return wikiStore.page.id },
     currentPageLocale(): string { return wikiStore.page.locale },
     currentPagePath(): string { return wikiStore.page.path },
@@ -564,6 +571,7 @@ export default defineComponent({
     },
     isAgentOpen(open: boolean) {
       if (open) {
+        this.latchAgentOpeningPage()
         void this.activateAgentModal()
         return
       }
@@ -610,6 +618,7 @@ export default defineComponent({
       this.searchMode = 'ask'
       this.searchIsFocused = true
     }
+    if (this.isAgentOpen) this.latchAgentOpeningPage()
     if (this.searchMode === 'search' && this.normalizedSearch.length >= 2) {
       this.searchIsFocused = true
       this.queueSearch(this.search)
@@ -643,6 +652,16 @@ export default defineComponent({
       const labels = { title: 'title', tag: 'tags', path: 'page path', description: 'description', content: 'page text', graph: 'related links', knowledge: 'knowledge hints' }
       const fields = [...new Set(item.matchedFields ?? [])].map(field => labels[field]).filter(Boolean)
       return fields.length ? `Matches ${fields.slice(0, 3).join(' · ')}` : ''
+    },
+    currentPageHint(): AgentCurrentPageHint | null {
+      const id = this.currentPageId
+      if (id < 1 || !this.currentPageLocale || !this.currentPagePath || !this.currentPageUpdatedAt) return null
+      return { id, locale: this.currentPageLocale, path: this.currentPagePath, observedUpdatedAt: this.currentPageUpdatedAt }
+    },
+    latchAgentOpeningPage(): void {
+      if (this.agentOpeningPageCaptured) return
+      this.agentOpeningPageCaptured = true
+      this.agentOpeningPage = this.currentPageHint()
     },
     async activateAgentModal(): Promise<void> {
       const activeOpener = this.activeModalOpener()
@@ -683,7 +702,7 @@ export default defineComponent({
     async reactivateSearchModal(): Promise<void> {
       await this.$nextTick()
       if (this.isAgentOpen || !this.searchIsFocused) return
-      this.deactivateAgentModal(true)
+      this.deactivateAgentModal(false)
       this.activateSearchModal(this.searchRestoreTarget ?? this.findSearchTrigger())
       if (this.searchModalFocusScope && !this.searchModalFocusScope.containsFocus()) this.searchModalFocusScope.focusFirst()
     },
@@ -805,17 +824,25 @@ export default defineComponent({
     },
     openAsk(): void {
       if (!this.canAsk) return
+      this.latchAgentOpeningPage()
       this.directPromptHandoffId += 1
       this.pendingAskRestoreTarget = this.activeModalOpener()
       this.searchIsFocused = true
       this.searchMode = 'ask'
     },
-    returnToSearch(): void {
+    async returnToSearch(): Promise<void> {
       this.captureAgentExcursion()
       this.pendingAskRestoreTarget = null
-      this.directPromptHandoffId += 1
+      const returnId = ++this.directPromptHandoffId
+      this.deactivateAgentModal(false)
       this.searchMode = 'search'
       this.searchIsFocused = true
+      await this.$nextTick()
+      if (returnId !== this.directPromptHandoffId || this.isAgentOpen || !this.searchIsFocused) return
+      this.deactivateAgentModal(false)
+      await this.$nextTick()
+      if (returnId !== this.directPromptHandoffId || this.isAgentOpen || !this.searchIsFocused) return
+      emitSearchFocus()
     },
     selectSearchScope(scope: SearchScope): void {
       this.searchScope = scope
@@ -888,6 +915,7 @@ export default defineComponent({
     async askCurrentQuery(): Promise<void> {
       if (!this.canAsk || this.normalizedSearch.length < 2 || this.directPromptHandoffPending) return
       const prompt = this.normalizedSearch
+      this.latchAgentOpeningPage()
       this.pendingAskRestoreTarget = this.activeModalOpener()
       this.searchMode = 'ask'
       await this.$nextTick()
@@ -900,6 +928,7 @@ export default defineComponent({
     },
     async askSource(source: WikiSource): Promise<void> {
       this.captureAgentExcursion()
+      this.latchAgentOpeningPage()
       this.previewSelector = null
       this.searchMode = 'ask'
       await this.$nextTick()
@@ -932,6 +961,8 @@ export default defineComponent({
       this.search = ''
       this.approvalId = ''
       this.agentResumeSessionId = null
+      this.agentOpeningPage = null
+      this.agentOpeningPageCaptured = false
       if (shouldCloseAgentWorkspace) useAgentsStore().closeWorkspace()
       const url = new URL(window.location.href)
       url.searchParams.delete('agentApproval')
@@ -1251,7 +1282,6 @@ export default defineComponent({
   animation: searchResultsReveal var(--wiki-motion-normal) var(--wiki-motion-ease-out);
   background: rgba(var(--v-theme-surface), .18);
   backdrop-filter: blur(6px) saturate(110%);
-  -webkit-backdrop-filter: blur(6px) saturate(110%);
   box-sizing: border-box;
   inset-inline: 0;
   inset-block-start: var(--search-overlay-top-offset);
@@ -1267,19 +1297,21 @@ export default defineComponent({
   @supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
     background: var(--wiki-surface-raised);
     backdrop-filter: none;
-    -webkit-backdrop-filter: none;
   }
 
   &--ask {
     animation: none;
-    background: rgb(var(--v-theme-background));
+    background: transparent;
     backdrop-filter: none;
-    -webkit-backdrop-filter: none;
     height: 100dvh;
     inset: 0;
     overflow: hidden;
     isolation: isolate;
     z-index: 1009;
+  }
+
+  &--ask &-container--ask {
+    background: transparent;
   }
 
   &-container {
@@ -1680,7 +1712,6 @@ export default defineComponent({
   .search-results:not(.search-results--ask) {
     background: var(--wiki-surface-raised);
     backdrop-filter: none;
-    -webkit-backdrop-filter: none;
   }
 }
 
@@ -1689,7 +1720,6 @@ export default defineComponent({
     background: Canvas;
     color: CanvasText;
     backdrop-filter: none;
-    -webkit-backdrop-filter: none;
   }
   .search-results-search { border: 1px solid CanvasText; }
 }

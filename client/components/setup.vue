@@ -152,8 +152,8 @@
               v-icon(start) mdi-check
               span Install {{ product.name }}
 
-    v-dialog(v-model='loading', width='420', persistent, aria-labelledby='setup-progress-title')
-      v-card.setup-progress(variant='flat' :aria-busy='!success')
+    v-dialog(:model-value='loading || success', width='420', persistent, aria-labelledby='setup-progress-title')
+      v-card.setup-progress(variant='flat' :aria-busy='loading')
         v-progress-linear(v-if='!success' indeterminate color='primary' aria-hidden='true')
         v-card-text.text-center
           .setup-progress-spinner(v-if='!success')
@@ -168,16 +168,21 @@
             .setup-progress-copy Just a moment
           template(v-else)
             .setup-progress-title#setup-progress-title(role='status' aria-live='polite') Installation complete!
-            .setup-progress-copy Taking you to sign in...
+            .setup-progress-copy(v-if='readinessChecking') Waiting for the server to be ready...
+            .setup-progress-copy(v-else-if='readinessTimedOut') The server is still starting. Click Continue to sign in to retry.
+            .setup-progress-copy(v-else) Taking you to sign in...
             v-btn.mt-4(
               color='primary'
               variant='flat'
               autofocus
+              :loading='readinessChecking'
+              :disabled='readinessChecking'
               @click='continueToLogin'
             ) Continue to sign in
 </template>
 
 <script lang='ts'>
+import { markRaw } from 'vue'
 import validateValues from '../../shared/validation'
 import { newPasswordIssue } from '../../shared/security-policy.ts'
 import { BreedingRhombusSpinner } from 'epic-spinners'
@@ -197,13 +202,16 @@ type SetupConfig = {
   telemetry: boolean
 }
 
+const SETUP_FIELD_NAMES = ['adminEmail', 'adminPassword', 'adminPasswordConfirm', 'siteUrl'] as const
+
 type FinalizeResponse = {
   ok: boolean
   error: string
 }
 
 const SUCCESS_REDIRECT_DELAY_MS = 1000
-const SETUP_FIELD_NAMES = ['adminEmail', 'adminPassword', 'adminPasswordConfirm', 'siteUrl'] as const
+const READINESS_POLL_INTERVAL_MS = 1000
+const READINESS_TIMEOUT_MS = 60_000
 
 function focusComponent (ref: unknown): void {
   if (!ref || typeof ref !== 'object') return
@@ -255,6 +263,15 @@ export default {
       pwdConfirmMode: true,
       focusTimer: null as number | null,
       redirectTimer: null as number | null,
+      readinessTimer: null as number | null,
+      readinessTimeoutTimer: null as number | null,
+      readinessWaitResolve: null as (() => void) | null,
+      readinessController: null as AbortController | null,
+      readinessGeneration: 0,
+      readinessDeadlineReached: false,
+      readinessChecking: false,
+      readinessTimedOut: false,
+      navigationStarted: false,
       isDisposed: false
     }
   },
@@ -265,13 +282,37 @@ export default {
     }, 500)
   },
   beforeUnmount() {
+    this.readinessGeneration += 1
     this.isDisposed = true
-    if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
-    if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)
+    if (this.focusTimer !== null) {
+      window.clearTimeout(this.focusTimer)
+      this.focusTimer = null
+    }
+    if (this.redirectTimer !== null) {
+      window.clearTimeout(this.redirectTimer)
+      this.redirectTimer = null
+    }
+    if (this.readinessTimer !== null) {
+      window.clearTimeout(this.readinessTimer)
+      this.readinessTimer = null
+    }
+    if (this.readinessWaitResolve !== null) {
+      const resolveReadinessWait = this.readinessWaitResolve
+      this.readinessWaitResolve = null
+      resolveReadinessWait()
+    }
+    if (this.readinessTimeoutTimer !== null) {
+      window.clearTimeout(this.readinessTimeoutTimer)
+      this.readinessTimeoutTimer = null
+    }
+    if (this.readinessController !== null) {
+      this.readinessController.abort()
+      this.readinessController = null
+    }
   },
   methods: {
     async install () {
-      if (this.loading) return
+      if (this.loading || this.success) return
       this.fieldErrors = {
         adminEmail: '',
         adminPassword: '',
@@ -386,13 +427,155 @@ export default {
       }
     },
     continueToLogin () {
-      if (this.isDisposed) return
+      if (this.isDisposed || !this.success || this.navigationStarted) return
       if (this.redirectTimer !== null) {
         window.clearTimeout(this.redirectTimer)
         this.redirectTimer = null
       }
-      window.location.assign('/login')
-    }
+      if (this.readinessChecking) return
+      this.startReadinessCheck()
+    },
+    startReadinessCheck () {
+      if (this.isDisposed || !this.success || this.navigationStarted || this.readinessChecking) return
+
+      this.readinessTimedOut = false
+      this.readinessDeadlineReached = false
+      this.readinessChecking = true
+      this.loading = true
+      const controller = markRaw(new AbortController())
+      this.readinessController = controller
+      const deadline = Date.now() + READINESS_TIMEOUT_MS
+      const generation = ++this.readinessGeneration
+      this.readinessTimeoutTimer = window.setTimeout(() => {
+        if (this.isDisposed || this.readinessGeneration !== generation) return
+        this.readinessDeadlineReached = true
+        controller.abort()
+        if (this.readinessTimer !== null) {
+          window.clearTimeout(this.readinessTimer)
+          this.readinessTimer = null
+          const releaseReadinessWait = this.readinessWaitResolve
+          this.readinessWaitResolve = null
+          releaseReadinessWait?.()
+        }
+      }, READINESS_TIMEOUT_MS)
+      void this.pollReadiness(controller, deadline, generation).catch(error => {
+        if (this.isDisposed) return
+        console.error(error)
+        this.finishReadinessTimeout()
+      })
+    },
+    async pollReadiness (controller: AbortController, deadline: number, generation: number): Promise<void> {
+      let timedOut = false
+      let waitTimer: number | null = null
+      let waitRelease: (() => void) | null = null
+      let consecutiveHealthyResponses = 0
+
+      try {
+        while (!this.isDisposed && !this.navigationStarted) {
+          if (this.readinessDeadlineReached || Date.now() >= deadline) {
+            timedOut = true
+            break
+          }
+
+          try {
+            const response = await sameOriginJsonFetch(window.fetch.bind(window), '/healthz', {
+              method: 'GET',
+              credentials: 'same-origin',
+              cache: 'no-store',
+              headers: {
+                Accept: 'application/json'
+              },
+              signal: controller.signal
+            })
+            if (this.isDisposed) return
+            if (controller.signal.aborted) {
+              timedOut = this.readinessDeadlineReached
+              break
+            }
+
+            if (response.status === 200) {
+              let payload: unknown = null
+              try {
+                payload = await response.json()
+              } catch {
+                payload = null
+              }
+              const healthy =
+                !this.isDisposed &&
+                !this.navigationStarted &&
+                !controller.signal.aborted &&
+                Date.now() < deadline &&
+                isRecord(payload) &&
+                payload.ok === true
+              consecutiveHealthyResponses = healthy ? consecutiveHealthyResponses + 1 : 0
+              if (consecutiveHealthyResponses >= 2) {
+                this.readinessChecking = false
+                this.loading = false
+                this.navigationStarted = true
+                window.location.assign('/login')
+                return
+              }
+            }
+            else {
+              consecutiveHealthyResponses = 0
+            }
+          } catch {
+            consecutiveHealthyResponses = 0
+            if (this.isDisposed) return
+            if (controller.signal.aborted) {
+              timedOut = this.readinessDeadlineReached
+              break
+            }
+          }
+
+          if (this.isDisposed) return
+          const remaining = deadline - Date.now()
+          if (remaining <= 0) {
+            timedOut = true
+            break
+          }
+          await new Promise<void>(resolve => {
+            const release = () => {
+              if (this.readinessTimer === waitTimer) this.readinessTimer = null
+              if (this.readinessWaitResolve === release) this.readinessWaitResolve = null
+              resolve()
+            }
+            waitRelease = release
+            waitTimer = window.setTimeout(release, Math.min(READINESS_POLL_INTERVAL_MS, remaining))
+            this.readinessTimer = waitTimer
+            this.readinessWaitResolve = release
+          })
+          waitTimer = null
+          waitRelease = null
+        }
+      } finally {
+        if (waitTimer !== null) {
+          window.clearTimeout(waitTimer)
+          if (this.readinessTimer === waitTimer) this.readinessTimer = null
+          if (this.readinessWaitResolve === waitRelease) this.readinessWaitResolve = null
+          waitTimer = null
+          waitRelease = null
+        }
+        if (this.readinessGeneration === generation) {
+          if (this.readinessTimeoutTimer !== null) {
+            window.clearTimeout(this.readinessTimeoutTimer)
+            this.readinessTimeoutTimer = null
+          }
+          if (!controller.signal.aborted) controller.abort()
+          this.readinessController = null
+          this.readinessDeadlineReached = false
+        }
+      }
+
+      if (timedOut && !this.isDisposed && !this.navigationStarted) this.finishReadinessTimeout()
+    },
+    finishReadinessTimeout () {
+      if (this.isDisposed || this.navigationStarted) return
+      this.readinessChecking = false
+      this.loading = false
+      this.readinessTimedOut = true
+    },
+
   }
 }
 

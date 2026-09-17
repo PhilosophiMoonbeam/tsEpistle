@@ -1,3 +1,4 @@
+<template lang='pug'>
 section.pwa-status-panel(
   role='region'
   :aria-label='panelLabel'
@@ -5,8 +6,8 @@ section.pwa-status-panel(
   .pwa-status-panel__body
     .pwa-status-panel__heading
       div
-        p.pwa-status-panel__eyebrow App & offline
-        h2 App status
+        p.pwa-status-panel__eyebrow Connection · shell · install
+        h2 Offline app status
       v-icon(:icon='connectionPresentation.icon', :color='connectionPresentation.tone', size='22', aria-hidden='true')
 
     .pwa-status-panel__summary(role='status', aria-live='polite', aria-atomic='true')
@@ -17,13 +18,13 @@ section.pwa-status-panel(
 
     dl.pwa-status-panel__facts
       div
-        dt Network
+        dt Network hint
         dd(:class='`pwa-status-panel__value--${networkHintTone}`') {{ networkHintLabel }}
       div
         dt Server
         dd(:class='`pwa-status-panel__value--${serverStatusTone}`') {{ serverStatusLabel }}
       div
-        dt Saved app
+        dt Offline app shell
         dd {{ offlineShellLabel }}
 
     v-alert.pwa-status-panel__alert(
@@ -83,7 +84,7 @@ section.pwa-status-panel(
       v-if='showInstallSection'
       aria-labelledby='pwa-status-install-title'
     )
-      h3#pwa-status-install-title Installation
+      h3#pwa-status-install-title Install availability
       p(v-if='pwaState.isStandalone') This page is running in a standalone window. It may be an installed app or a manually added shortcut.
       p(v-else-if='installCompleted') Installation completed. Open tsEpistle from your app launcher to use its standalone window.
       template(v-else-if='canInstall')
@@ -98,11 +99,18 @@ section.pwa-status-panel(
         ) {{ isInstalling ? `Opening…` : `Install tsEpistle` }}
       p(v-else-if='manualInstallGuidance')
         | No native prompt was exposed. If this browser offers it, use Share or its browser menu and choose Add to Home Screen.
+      p(v-else) Installation is not available in this browser right now. Availability depends on browser and platform support.
 
-    a.pwa-status-panel__library(href='/_offline')
-      v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
-      span Saved pages
-      v-icon(icon='mdi-arrow-top-right', size='16', aria-hidden='true')
+    .pwa-status-panel__links
+      a.pwa-status-panel__library(href='/_offline#offline-policy-title')
+        v-icon(icon='mdi-tune-variant', size='18', aria-hidden='true')
+        span Manage automatic saving
+        v-icon(icon='mdi-arrow-top-right', size='16', aria-hidden='true')
+      a.pwa-status-panel__library(href='/_offline')
+        v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
+        span Saved pages
+        v-icon(icon='mdi-arrow-top-right', size='16', aria-hidden='true')
+</template>
 
 <script setup lang='ts'>
 import { computed, ref } from 'vue'
@@ -126,9 +134,7 @@ const manualInstallGuidance = computed(() => {
   return 'standalone' in navigator
 })
 
-const showInstallSection = computed(() => {
-  return canInstall.value || manualInstallGuidance.value || installCompleted.value || pwaState.isStandalone || Boolean(pwaState.installError)
-})
+const showInstallSection = true
 
 const connectionPresentation = computed(() => pwaConnectionPresentation(pwaState))
 
@@ -169,8 +175,7 @@ const summaryDescription = computed(() => {
   return 'The server has not been verified yet.'
 })
 
-const panelLabel = computed(() => `App status: ${connectionPresentation.value.label}`)
-
+const panelLabel = computed(() => `Offline app and connection status: ${connectionPresentation.value.label}`)
 const networkHintLabel = computed(() => {
   if (pwaState.onlineHint === true) return 'Network path reported'
   if (pwaState.onlineHint === false) return 'No network path reported'
@@ -230,6 +235,10 @@ const applyUpdate = async (): Promise<void> => {
   color: rgb(var(--v-theme-on-surface));
   box-shadow: var(--wiki-shadow-md) !important;
 }
+.pwa-status-panel__body {
+  padding: var(--wiki-space-4);
+}
+
 .pwa-status-panel__heading {
   display: flex;
   align-items: flex-start;
@@ -352,12 +361,18 @@ const applyUpdate = async (): Promise<void> => {
   margin-block-start: var(--wiki-space-2);
 }
 
+.pwa-status-panel__links {
+  display: grid;
+  gap: var(--wiki-space-2);
+  margin-block-start: var(--wiki-space-3);
+}
+
 .pwa-status-panel__library {
   display: flex;
   min-height: max(44px, var(--wiki-control-height, 44px));
   align-items: center;
   gap: var(--wiki-space-2);
-  margin-block-start: var(--wiki-space-3);
+  margin-block-start: 0;
   padding: var(--wiki-space-2) var(--wiki-space-3);
   border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 22%, var(--wiki-surface-border));
   border-radius: var(--wiki-control-radius);

@@ -311,6 +311,46 @@ test('applies formatting from the toolbar or its mobile overflow', async ({ page
   await openEditor(page)
   const editorRoot = page.locator('.editor-markdown')
   await selectText(page, 2, 0, 11)
+  const selectionBackground = editorRoot.locator('.cm-selectionLayer .cm-selectionBackground').first()
+  await editorRoot.evaluate(root => {
+    const editor = (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor
+    editor.requestMeasure()
+  })
+  await page.evaluate(
+    () =>
+      new Promise<void>(resolve => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      })
+  )
+  await expect(selectionBackground).toBeVisible()
+  await expect
+    .poll(() => selectionBackground.evaluate(element => element.getBoundingClientRect().width), 'The selected Markdown range must have visible width')
+    .toBeGreaterThan(0)
+  await expect
+    .poll(() => selectionBackground.evaluate(element => element.getBoundingClientRect().height), 'The selected Markdown range must have visible height')
+    .toBeGreaterThan(0)
+  const selectionPaint = await selectionBackground.evaluate(element => {
+    const style = getComputedStyle(element)
+    const rect = element.getBoundingClientRect()
+    const primary = getComputedStyle(element.closest('.editor-markdown') ?? document.documentElement)
+      .getPropertyValue('--v-theme-primary')
+      .trim()
+    const backgroundChannels = style.backgroundColor.match(/[\d.]+/gu)?.map(Number) ?? []
+    return {
+      width: rect.width,
+      height: rect.height,
+      backgroundColor: style.backgroundColor,
+      backgroundChannels: backgroundChannels.slice(0, 3),
+      backgroundAlpha: backgroundChannels[3] ?? (style.backgroundColor === 'transparent' ? 0 : 1),
+      primaryChannels: (primary.match(/[\d.]+/gu)?.map(Number) ?? []).slice(0, 3)
+    }
+  })
+  expect(selectionPaint.width).toBeGreaterThan(0)
+  expect(selectionPaint.height).toBeGreaterThan(0)
+  expect(selectionPaint.backgroundColor).not.toBe('transparent')
+  expect(selectionPaint.backgroundAlpha).toBeGreaterThan(0)
+  expect(selectionPaint.primaryChannels).toHaveLength(3)
+  expect(selectionPaint.backgroundChannels).toEqual(selectionPaint.primaryChannels)
 
   const bold = page.getByRole('button', { name: 'Bold', exact: true })
   if (await bold.isVisible()) {

@@ -221,6 +221,35 @@ const putOpaque = async (name: string): Promise<void> => {
   await transactionDone(transaction);
   database.close();
 };
+const putRawSnapshot = async (name: string, siteId: string, snapshot: Record<string, unknown>): Promise<void> => {
+  const database = await openDatabase(name);
+  const transaction = database.transaction('snapshots', 'readwrite');
+  const withoutSize = {
+    siteId,
+    pageId: Number(snapshot.pageId),
+    locale: String(snapshot.locale),
+    snapshot,
+    lastOpenedAt: '2026-09-01T00:00:00.000Z'
+  };
+  transaction.objectStore('snapshots').put({
+    ...withoutSize,
+    byteSize: new TextEncoder().encode(JSON.stringify(withoutSize)).byteLength
+  });
+  await transactionDone(transaction);
+  database.close();
+};
+const policyKey = (selector: { siteId: string; pageId: number; locale: string }): string =>
+  selector.siteId + '\\u0000' + selector.pageId + '\\u0000' + selector.locale;
+const patchPolicy = async (name: string, selector: { siteId: string; pageId: number; locale: string }, patch: Record<string, unknown>): Promise<void> => {
+  const database = await openDatabase(name);
+  const transaction = database.transaction('policy', 'readwrite');
+  const store = transaction.objectStore('policy');
+  const current = await requestValue(store.get(policyKey(selector))) as Record<string, unknown> | undefined;
+  if (current === undefined) throw new Error('Policy page to patch was not found.');
+  store.put({ ...current, ...patch });
+  await transactionDone(transaction);
+  database.close();
+};
 const seedUnknownMeta = async (name: string): Promise<void> => {
   const database = await openDatabase(name, 2, (db) => createStores(db));
   const transaction = database.transaction('meta', 'readwrite');
@@ -232,6 +261,15 @@ const seedUnknownMeta = async (name: string): Promise<void> => {
   await transactionDone(transaction);
   database.close();
 };
+const inflateManagedBytes = async (name: string): Promise<void> => {
+  const database = await openDatabase(name);
+  const transaction = database.transaction('meta', 'readwrite');
+  const current = await requestValue(transaction.objectStore('meta').get('state')) as Record<string, unknown>;
+  transaction.objectStore('meta').put({ ...current, managedBytes: 20 * 1024 * 1024 + 1024 });
+  await transactionDone(transaction);
+  database.close();
+};
+
 const holdLegacy = async (name: string): Promise<void> => {
   const database = await openDatabase(name, 1, (db, transaction) => {
     createStores(db);
@@ -298,8 +336,21 @@ const errorResult = (error: unknown): { ok: false; error: { name: string; code?:
 export async function run(operation: string, payload: Record<string, unknown> = {}): Promise<unknown> {
   try {
     if (operation === 'seedLegacy') { await seedLegacy(String(payload.name), payload.draft as Record<string, unknown>, payload.corrupt === true, payload.snapshot as Record<string, unknown> | undefined); return { ok: true, value: { seeded: true } }; }
-    if (operation === 'putOpaque') { await putOpaque(String(payload.name)); return { ok: true, value: { seeded: true } }; }
     if (operation === 'seedUnknownMeta') { await seedUnknownMeta(String(payload.name)); return { ok: true, value: { seeded: true } }; }
+    if (operation === 'putOpaque') { await putOpaque(String(payload.name)); return { ok: true, value: { seeded: true } }; }
+    if (operation === 'putRawSnapshot') {
+      await putRawSnapshot(String(payload.name), String(payload.siteId), payload.snapshot as Record<string, unknown>);
+      return { ok: true, value: { seeded: true } };
+    }
+    if (operation === 'patchPolicy') {
+      await patchPolicy(
+        String(payload.name),
+        payload.selector as { siteId: string; pageId: number; locale: string },
+        payload.patch as Record<string, unknown>
+      );
+      return { ok: true, value: { patched: true } };
+    }
+    if (operation === 'inflateManagedBytes') { await inflateManagedBytes(String(payload.name)); return { ok: true, value: { inflated: true } }; }
     if (operation === 'holdLegacy') { await holdLegacy(String(payload.name)); return { ok: true, value: { held: true } }; }
     if (operation === 'release') { closeRawHold(String(payload.name)); return { ok: true, value: { released: true } }; }
     if (operation === 'deleteDatabase') { await deleteDatabase(String(payload.name)); return { ok: true, value: { deleted: true } }; }
@@ -338,6 +389,26 @@ export async function run(operation: string, payload: Record<string, unknown> = 
       ok: true,
       value: await storageFor(payload.id).updateAutomaticSelections(payload.selectors as never, payload.options as never)
     };
+    if (operation === 'visit') return {
+      ok: true,
+      value: await storageFor(payload.id).recordEligibleReaderVisit(payload.selector as never, payload.options as never)
+    };
+    if (operation === 'edit') return {
+      ok: true,
+      value: await storageFor(payload.id).recordSuccessfulPageEdit(payload.selector as never, payload.options as never)
+    };
+    if (operation === 'selectTop') return {
+      ok: true,
+      value: await storageFor(payload.id).selectTopAutomaticPages(payload.options as never)
+    };
+    if (operation === 'readCorpus') return {
+      ok: true,
+      value: await storageFor(payload.id).readSnapshotCorpus(payload.options as never)
+    };
+    if (operation === 'setAvailability') return {
+      ok: true,
+      value: await storageFor(payload.id).setPageAvailability(payload.selector as never, payload.availability as never, payload.options as never)
+    };
     if (operation === 'removeOffline') return {
       ok: true,
       value: await storageFor(payload.id).removeOfflinePage(payload.selector as never, payload.options as never)
@@ -358,7 +429,57 @@ export async function run(operation: string, payload: Record<string, unknown> = 
         remoteChannel.close();
       }
     }
+    if (operation === 'observerIsolation') {
+      let laterListenerCalls = 0;
+      const throwingUnsubscribe = subscribeOfflineStorageChanges(() => {
+        throw new Error('observer failure');
+      });
+      const laterUnsubscribe = subscribeOfflineStorageChanges(() => {
+        laterListenerCalls += 1;
+      });
+      try {
+        const value = await storageFor(payload.id).setManualOfflineIntent(payload.selector as never, true, payload.options as never);
+        return { ok: true, value: { page: value, laterListenerCalls } };
+      } finally {
+        throwingUnsubscribe();
+        laterUnsubscribe();
+      }
+    }
     if (operation === 'putSnapshot') return { ok: true, value: await storageFor(payload.id).putSnapshot(String(payload.siteId), payload.snapshot as never, payload.options as never) };
+    if (operation === 'abortPutSnapshot') {
+      const storage = storageFor(payload.id);
+      const controller = new AbortController();
+      const originalPut = IDBObjectStore.prototype.put;
+      let abortScheduled = false;
+      IDBObjectStore.prototype.put = function (...args) {
+        const request = originalPut.apply(this, args);
+        const value = args[0];
+        if (!abortScheduled && this.name === 'meta' && value && typeof value === 'object' && Number(value.corpusRevision) > 0) {
+          abortScheduled = true;
+          queueMicrotask(() => controller.abort());
+        }
+        return request;
+      };
+      let outcome;
+      try {
+        try {
+          const options = payload.options && typeof payload.options === 'object' ? payload.options : {};
+          outcome = {
+            ok: true,
+            value: await storage.putSnapshot(
+              String(payload.siteId),
+              payload.snapshot as never,
+              { ...options, signal: controller.signal } as never
+            )
+          };
+        } catch (error) {
+          outcome = errorResult(error);
+        }
+      } finally {
+        IDBObjectStore.prototype.put = originalPut;
+      }
+      return { ok: true, value: { outcome, dump: await dump(String(payload.name)) } };
+    }
     if (operation === 'delete') return { ok: true, value: await storageFor(payload.id).deleteDraft(String(payload.recordId), payload.options as never) };
     if (operation === 'removeSnapshot') { await storageFor(payload.id).removeSnapshot(String(payload.siteId), Number(payload.pageId), typeof payload.locale === 'string' ? payload.locale : undefined, payload.options as never); return { ok: true, value: true }; }
     if (operation === 'listSnapshots') return { ok: true, value: await storageFor(payload.id).listSnapshots(String(payload.siteId)) };
@@ -483,7 +604,7 @@ afterAll(async () => {
 })
 
 describe('real IndexedDB offline storage adapter', () => {
-  test('upgrades physical v1 to v2 without changing encrypted envelope bytes and marks migrated snapshots manual', async () => {
+  test('upgrades physical v1 through the current schema without changing encrypted envelope bytes and marks migrated snapshots manual', async () => {
     const name = freshDatabase('upgrade')
     const envelope = makeEnvelope('legacy-draft', { seed: 19 })
     const snapshot = makeSnapshot('legacy', 7)
@@ -506,8 +627,59 @@ describe('real IndexedDB offline storage adapter', () => {
       manual: true,
       automatic: false,
       tag: false,
+      lastEditedAt: null,
       availability: 'available'
     })
+  })
+  test('preserves existing policy metadata across reopen migration while backfilling a missing snapshot policy', async () => {
+    const name = freshDatabase('policy-migration-reopen')
+    const siteId = 'policy-migration-site'
+    const retainedSelector = { siteId, pageId: 42, locale: 'en' }
+    const editedAt = '2026-09-10T12:34:56.000Z'
+    await succeeded('open', { id: 'storage', name })
+    await succeeded('putSnapshot', {
+      id: 'storage',
+      siteId,
+      snapshot: makeSnapshot(retainedSelector.locale, retainedSelector.pageId),
+      options: { provenance: { automatic: true, tagNames: ['migration-tag'] } }
+    })
+    await succeeded('visit', { id: 'storage', selector: retainedSelector })
+    await succeeded('edit', { id: 'storage', selector: retainedSelector, options: { editedAt } })
+    await succeeded('close', { id: 'storage' })
+
+    await succeeded('patchPolicy', { name, selector: retainedSelector, patch: { excluded: true } })
+    await succeeded('putRawSnapshot', { name, siteId, snapshot: makeSnapshot('fr', 43) })
+    const expectedBeforeMigration = await readDump(name)
+    const expectedRetained = expectedBeforeMigration.policy.find(record => record.recordType === 'page' && record.pageId === retainedSelector.pageId)
+    expect(expectedRetained).toMatchObject({
+      siteId,
+      pageId: retainedSelector.pageId,
+      locale: retainedSelector.locale,
+      automatic: true,
+      tag: true,
+      tagNames: ['migration-tag'],
+      visitCount: 1,
+      lastVisitedAt: expect.any(String),
+      lastEditedAt: editedAt,
+      excluded: true
+    })
+
+    await succeeded('open', { id: 'reopened', name })
+    const afterMigration = await readDump(name)
+    expect(afterMigration.policy.find(record => record.recordType === 'page' && record.pageId === retainedSelector.pageId)).toEqual(expectedRetained)
+    expect(afterMigration.policy.find(record => record.recordType === 'page' && record.pageId === 43)).toMatchObject({
+      siteId,
+      pageId: 43,
+      locale: 'fr',
+      manual: true,
+      availability: 'available'
+    })
+    expect(afterMigration.policy.filter(record => record.recordType === 'page')).toHaveLength(2)
+
+    await succeeded('close', { id: 'reopened' })
+    await succeeded('open', { id: 'reopened-again', name })
+    const afterSecondReopen = await readDump(name)
+    expect(afterSecondReopen.policy).toEqual(afterMigration.policy)
   })
 
   test('serializes generation changes across two real connections and fences stale writers after clear', async () => {
@@ -801,6 +973,60 @@ describe('real IndexedDB offline storage adapter', () => {
       'policy-revision-fenced'
     )
   })
+  test('excludes every locale variant and rejects late snapshot commits after reopen', async () => {
+    const name = freshDatabase('locale-exclusion')
+    const siteId = 'locale-exclusion-site'
+    await succeeded('open', { id: 'storage', name })
+    await succeeded('putSnapshot', { id: 'storage', siteId, snapshot: makeSnapshot('en', 42) })
+    await succeeded('putSnapshot', { id: 'storage', siteId, snapshot: makeSnapshot('fr', 42) })
+    await succeeded('removeOffline', {
+      id: 'storage',
+      selector: { siteId, pageId: 42, locale: 'en' }
+    })
+    await failedWith(
+      'putSnapshot',
+      {
+        id: 'storage',
+        siteId,
+        snapshot: makeSnapshot('fr', 42, { sourceRevision: 'late' }),
+        options: { provenance: { automatic: true } }
+      },
+      'policy-revision-fenced'
+    )
+    await succeeded('close', { id: 'storage' })
+    await succeeded('open', { id: 'reopened', name })
+    const dump = await readDump(name)
+    expect(dump.snapshots).toHaveLength(0)
+    expect(dump.policy.filter(record => record.recordType === 'page')).toHaveLength(2)
+    expect(dump.policy.filter(record => record.recordType === 'page').every(record => record.excluded === true)).toBe(true)
+  })
+
+  test('fences snapshot corpus reads against policy revision changes', async () => {
+    const name = freshDatabase('corpus-policy-fence')
+    const selector = { siteId: 'corpus-policy-site', pageId: 9, locale: 'en' }
+    await succeeded('open', { id: 'storage', name })
+    await succeeded('putSnapshot', { id: 'storage', siteId: selector.siteId, snapshot: makeSnapshot(selector.locale, selector.pageId) })
+    const corpus = await succeeded<Record<string, unknown>>('readCorpus', {
+      id: 'storage',
+      options: { expectedSessionGeneration: 0, expectedPolicyRevision: 0 }
+    })
+    expect(corpus.corpusRevision).toBe(1)
+    expect((corpus.snapshots as unknown[]).length).toBe(1)
+    await succeeded('setManual', {
+      id: 'storage',
+      selector,
+      selected: false,
+      options: { expectedPolicyRevision: 0 }
+    })
+    await failedWith(
+      'readCorpus',
+      {
+        id: 'storage',
+        options: { expectedSessionGeneration: 0, expectedPolicyRevision: 0 }
+      },
+      'policy-revision-fenced'
+    )
+  })
 
   test('rotates automatic membership to exactly ten records and prunes only the displaced copy', async () => {
     const name = freshDatabase('automatic-rotation')
@@ -850,6 +1076,28 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(pages.find(record => record.pageId === 2)).toMatchObject({ automatic: true, manual: true })
     expect(pages.find(record => record.pageId === 3)).toMatchObject({ automatic: true, tag: true, tagNames: ['keep'] })
     expect(dump.snapshots.map(record => Number(record.pageId)).sort((left, right) => left - right)).toEqual([2, 3])
+  })
+  test('ranks the newest successful edit once and fills the ten-page cap with distinct visit candidates', async () => {
+    const name = freshDatabase('latest-edit')
+    const siteId = 'latest-edit-site'
+    const selectors = Array.from({ length: 11 }, (_value, index) => ({ siteId, pageId: index + 1, locale: 'en' }))
+    await succeeded('open', { id: 'storage', name })
+    for (const selector of selectors) await succeeded('visit', { id: 'storage', selector })
+    await succeeded('visit', { id: 'storage', selector: { siteId, pageId: 1, locale: 'fr' } })
+    await succeeded('edit', {
+      id: 'storage',
+      selector: { siteId, pageId: 1, locale: 'fr' },
+      options: { editedAt: '2026-09-16T23:00:00.000Z' }
+    })
+    const selected = await succeeded<Array<Record<string, unknown>>>('selectTop', {
+      id: 'storage',
+      options: { siteId, limit: 10, asOf: capturedAt }
+    })
+    const pageIds = selected.map(page => Number(page.pageId))
+    expect(selected).toHaveLength(10)
+    expect(pageIds[0]).toBe(1)
+    expect(new Set(pageIds).size).toBe(10)
+    expect(pageIds.filter(pageId => pageId === 1)).toHaveLength(1)
   })
 
   test('disabling automatic saving clears automatic-only policy and body while retaining manual and tag sources', async () => {
@@ -913,6 +1161,18 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(notices.localNotice).toEqual({ kind: 'policy', sessionGeneration: 0, corpusRevision: 0 })
     expect(notices.remoteNotice).toEqual({ kind: 'policy', sessionGeneration: 0, corpusRevision: 0 })
   })
+  test('isolates throwing observers while later listeners still receive committed mutations', async () => {
+    const name = freshDatabase('observer-isolation')
+    const selector = { siteId: 'observer-site', pageId: 5, locale: 'en' }
+    await succeeded('open', { id: 'storage', name })
+    const result = await succeeded<{ page: Record<string, unknown>; laterListenerCalls: number }>('observerIsolation', {
+      id: 'storage',
+      selector
+    })
+    expect(result.page).toMatchObject({ manual: true, excluded: false })
+    expect(result.laterListenerCalls).toBe(1)
+    expect((await readDump(name)).policy.find(record => record.recordType === 'page')).toMatchObject({ manual: true })
+  })
 
   test('keeps exact metadata deltas and one locale variant for each immutable page', async () => {
     const name = freshDatabase('accounting')
@@ -922,6 +1182,7 @@ describe('real IndexedDB offline storage adapter', () => {
     const draft = makeEnvelope('accounted-draft', { seed: 7 })
     await succeeded('putDraft', { id: 'storage', envelope: draft })
     const dump = await readDump(name)
+
     expect(dump.snapshots).toHaveLength(1)
     expect(dump.snapshots[0]?.locale).toBe('fr')
     expect(dump.searchDocuments).toHaveLength(1)
@@ -944,6 +1205,38 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(afterRemove.policyPageCount).toBe(2)
     expect(afterRemove.managedBytes).toBe(draftLogicalBytes(draft) + policyManagedBytes(afterRemoveDump))
     expect(afterRemoveDump.meta?.corpusRevision).toBe(3)
+  })
+  test('aborting an in-flight snapshot transaction leaves corpus accounting unchanged', async () => {
+    const name = freshDatabase('snapshot-abort')
+    await succeeded('open', { id: 'storage', name })
+    const before = await readDump(name)
+    const cancelled = await succeeded<{ outcome: Outcome; dump: SnapshotDump }>('abortPutSnapshot', {
+      id: 'storage',
+      name,
+      siteId: 'snapshot-abort-site',
+      snapshot: makeSnapshot('en', 17),
+      options: { provenance: { manual: true } }
+    })
+    expect(cancelled.outcome.ok).toBe(false)
+    if (cancelled.outcome.ok) return
+    expect(cancelled.outcome.error.code).toBe('transaction')
+    expect(cancelled.dump).toEqual(before)
+    await succeeded('putSnapshot', {
+      id: 'storage',
+      siteId: 'snapshot-abort-site',
+      snapshot: makeSnapshot('en', 17)
+    })
+    expect((await readDump(name)).snapshots).toHaveLength(1)
+  })
+  test('permits valid body shrink while accounting is already over the managed limit', async () => {
+    const name = freshDatabase('over-limit-shrink')
+    await succeeded('open', { id: 'storage', name })
+    await succeeded('putSnapshot', { id: 'storage', siteId: 'over-limit-site', snapshot: makeSnapshot('en', 1) })
+    await succeeded('inflateManagedBytes', { name })
+    await succeeded('removeSnapshot', { id: 'storage', siteId: 'over-limit-site', pageId: 1 })
+    const estimate = await succeeded<StorageEstimate>('estimate', { id: 'storage' })
+    expect(estimate.snapshotCount).toBe(0)
+    expect(estimate.managedBytes).toBeLessThan(20 * 1024 * 1024 + 1024)
   })
 
   test('requires an exact stored selector and increasing revision for mutable drafts', async () => {

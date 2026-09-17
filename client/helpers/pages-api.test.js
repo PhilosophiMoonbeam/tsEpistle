@@ -834,7 +834,7 @@ describe('pages api helper', () => {
     })
   })
 
-  test('fetches paginated revision metadata for the history timeline', async () => {
+  test('fetches paginated revision metadata', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       createJsonResponse({
         total: 1,
@@ -854,6 +854,80 @@ describe('pages api helper', () => {
 
     expect(await fetchPageHistory(fetchImpl, 42, 0, 25)).toMatchObject({ total: 1 })
     expect(fetchImpl.mock.calls[0][0]).toBe('/_api/pages/42/history?offsetPage=0&offsetSize=25')
+  })
+  test('rejects history rows with non-positive or unsafe revision and author IDs', async () => {
+    const row = {
+      versionId: 9,
+      authorId: 7,
+      authorName: 'Owner',
+      actionType: 'edit',
+      valueBefore: null,
+      valueAfter: null,
+      versionDate: '2026-08-15T00:00:00.000Z'
+    }
+    for (const [field, value] of [
+      ['versionId', 0],
+      ['versionId', -1],
+      ['versionId', Number.MAX_SAFE_INTEGER + 1],
+      ['versionId', 1.5],
+      ['authorId', 0],
+      ['authorId', -1],
+      ['authorId', Number.MAX_SAFE_INTEGER + 1],
+      ['authorId', 1.5]
+    ]) {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        createJsonResponse({
+          total: 1,
+          trail: [{ ...row, [field]: value }]
+        })
+      )
+      await expect(Promise.resolve(fetchPageHistory(fetchImpl, 42, 0, 25, `Invalid history ${field}`))).rejects.toThrow(`Invalid history ${field}`)
+    }
+  })
+
+  test('rejects history totals that are not finite non-negative integers', async () => {
+    const row = {
+      versionId: 9,
+      authorId: 7,
+      authorName: 'Owner',
+      actionType: 'edit',
+      valueBefore: null,
+      valueAfter: null,
+      versionDate: '2026-08-15T00:00:00.000Z'
+    }
+    for (const total of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+      const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ total, trail: [row] }))
+      await expect(Promise.resolve(fetchPageHistory(fetchImpl, 42, 0, 25, 'Invalid history total'))).rejects.toThrow('Invalid history total')
+    }
+  })
+
+  test('rejects version payloads that collide with the live revision ID', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        versionId: 0,
+        content: '',
+        contentType: 'markdown',
+        title: 'Live',
+        description: '',
+        editor: 'markdown',
+        locale: 'en',
+        path: 'docs/live',
+        tags: [],
+        versionDate: '2026-08-15T00:00:00.000Z',
+        visibility: 'public'
+      })
+    )
+
+    await expect(Promise.resolve(fetchPageVersion(fetchImpl, 42, 1, 'Invalid revision ID'))).rejects.toThrow('Invalid revision ID')
+  })
+  test('rejects invalid history request identifiers before issuing a request', async () => {
+    const fetchImpl = vi.fn()
+
+    await expect(Promise.resolve(fetchPageHistory(fetchImpl, 0, 0, 25, 'Invalid history request'))).rejects.toThrow('Invalid history request')
+    await expect(Promise.resolve(fetchPageHistory(fetchImpl, 42, -1, 25, 'Invalid history request'))).rejects.toThrow('Invalid history request')
+    await expect(Promise.resolve(fetchPageHistory(fetchImpl, 42, 0, 0, 'Invalid history request'))).rejects.toThrow('Invalid history request')
+    await expect(Promise.resolve(fetchPageVersion(fetchImpl, 42, 0, 'Invalid revision request'))).rejects.toThrow('Invalid revision request')
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   test('preserves per-resource edit capability on page tree rows', async () => {

@@ -548,12 +548,12 @@ watch(
 }
 
 .agent-message--assistant .agent-message__surface {
-  background: transparent;
-  border: 0;
+  background: var(--wiki-surface-raised);
+  border: 1px solid var(--wiki-surface-border);
   border-inline-start: 2px solid transparent;
-  border-radius: 0;
-  box-shadow: none;
-  padding: var(--wiki-space-2) 0 var(--wiki-space-4) var(--wiki-space-3);
+  border-radius: var(--wiki-control-radius);
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+  padding: var(--wiki-space-3) var(--wiki-space-4);
 }
 
 .agent-message--assistant.agent-message--pending .agent-message__surface,

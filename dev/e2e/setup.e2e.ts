@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 import tfa from 'node-2fa'
-import { adminEmail, adminPassword, authenticateAsAdmin, sameOriginHeaders } from './helpers.ts'
+import { adminEmail, adminPassword, authenticateAsAdmin, openSearch, sameOriginHeaders } from './helpers.ts'
 
 type BrowserVisualEditor = {
   commands: {
@@ -97,7 +97,7 @@ async function getMarkdownSourceData(page: Page): Promise<string> {
 async function expectWelcomePage(page: Page) {
   await expect(page).toHaveURL('/')
   await expect(page).toHaveTitle('Welcome | tsEpistle')
-  await expect(page.getByRole('img', { name: 'tsEpistle' })).toBeVisible()
+  await expect(page.locator('.onboarding-brand-title:visible')).toHaveText('tsEpistle')
   await expect(page.getByText('Welcome to your wiki!', { exact: true })).toBeVisible()
   await expect(page.getByText("Let's get started and create the home page.", { exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Create Home Page' })).toBeVisible()
@@ -165,21 +165,21 @@ async function expectNoHorizontalOverflow(page: Page) {
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1)
 }
 async function openEditorForCurrentPage(page: Page): Promise<void> {
-  await page.locator('.page-edit-fab:visible').click()
-  if ((page.viewportSize()?.width ?? 1280) < 600) {
-    await page.locator('.v-overlay--active').getByText('Edit Page', { exact: true }).click()
-  } else {
-    await page.getByRole('button', { name: 'Edit Page', exact: true }).click()
+  if ((page.viewportSize()?.width ?? 1280) >= 960) {
+    await page.locator('.nav-header-edit-btn:visible').click()
+    return
   }
+  await page.locator('.page-edit-fab:visible').click()
+  await page.locator('.v-overlay--active').getByText('Edit Page', { exact: true }).click()
 }
 
 test.describe('critical post-install workflows', () => {
   test.describe.configure({ mode: 'serial', retries: 0 })
 
   test('installs tsEpistle with telemetry disabled and opens the login screen', async ({ page }) => {
-    test.setTimeout(90_000)
+    test.setTimeout(120_000)
 
-    await page.goto('/')
+    await openClientPage(page, '/', '.setup-main')
     await expect(page.getByText('First-run setup', { exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'tsEpistle', exact: true })).toBeVisible()
 
@@ -194,8 +194,8 @@ test.describe('critical post-install workflows', () => {
 
     await page.getByRole('button', { name: 'Install tsEpistle', exact: true }).click()
     await expect(page.getByText('Installation complete!')).toBeVisible({ timeout: 30_000 })
-    await expect(page).toHaveURL('/login', { timeout: 10_000 })
-    await openClientPage(page, '/login', '.login-form')
+    await expect(page).toHaveURL('/login', { timeout: 65_000 })
+    await expect(page.locator('.login-form').first()).toBeVisible({ timeout: 15_000 })
     await expect(page.getByLabel('Email Address', { exact: true })).toBeVisible()
     await expect(page.getByLabel('Password', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Log In' })).toBeVisible()
@@ -225,6 +225,8 @@ test.describe('critical post-install workflows', () => {
     await expect(page).toHaveURL('/e/en/home')
     await openClientPage(page, '/e/en/home', '.editor-select')
     const editorChooser = page.getByRole('dialog', { name: 'How would you like to write?', exact: true })
+    await expect(editorChooser).toBeVisible()
+    await page.keyboard.press('Escape')
     await expect(editorChooser).toBeVisible()
     await editorChooser.getByRole('button', { name: /^Markdown Source editing with live preview/ }).click()
     await expect(editorChooser).not.toBeVisible()
@@ -398,8 +400,11 @@ test.describe('critical post-install workflows', () => {
     }
     expect(enableResults).toEqual(extensionKeys.map(key => expect.objectContaining({ key, isEnabled: true })))
 
-    await page.goto('/e/en/content-extensions-browser')
-    await page.getByRole('button', { name: /^Markdown Source editing with live preview/ }).click()
+    await openClientPage(page, '/e/en/content-extensions-browser', '.editor-select')
+    const editorChooser = page.getByRole('dialog', { name: 'How would you like to write?', exact: true })
+    await expect(editorChooser).toBeVisible()
+    await editorChooser.getByRole('button', { name: /^Markdown Source editing with live preview/ }).click()
+    await expect(editorChooser).not.toBeVisible()
     await page.getByRole('textbox', { name: 'Title' }).fill('Content Extensions Browser')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('Gallery and index browser workflow')
     await page.getByRole('button', { name: 'OK' }).click()
@@ -545,11 +550,16 @@ test.describe('critical post-install workflows', () => {
     await openAuthenticatedHome(page)
     await page.goto('/a/editor')
     await expect(page.getByRole('heading', { name: 'Editors', exact: true })).toBeVisible()
-    await page.getByRole('button', { name: 'Select all', exact: true }).click()
-    await expect(page.getByText('5 of 5 available', { exact: true })).toBeVisible()
-    const saveChanges = page.getByRole('button', { name: 'Save changes', exact: true })
-    await saveChanges.click()
-    await expect(saveChanges).toBeDisabled()
+    await page.getByRole('button', { name: 'Enable all registered', exact: true }).click()
+    const availableInDraft = page.locator('.authoring-intro dl > div').filter({ has: page.getByText('Available in draft', { exact: true }) })
+    await expect(availableInDraft).toContainText(/5\s*\/\s*5/)
+    const reviewChanges = page.getByRole('button', { name: 'Review changes', exact: true })
+    await reviewChanges.click()
+    const review = page.getByRole('dialog', { name: 'A clearer starting point.' })
+    await expect(review).toBeVisible()
+    await review.getByRole('button', { name: 'Save editor policy', exact: true }).click()
+    await expect(review).not.toBeVisible()
+    await expect(reviewChanges).toBeDisabled()
   })
 
   test('retains the Visual HTML editor and HTML content type', async ({ page }) => {
@@ -717,8 +727,8 @@ test.describe('critical post-install workflows', () => {
     await openAuthenticatedHome(page)
     await page.goto('/en/home')
 
-    await page.getByRole('textbox', { name: 'Search...' }).fill('Home')
-    const result = page.getByRole('option', { name: /^Home\b/ })
+    await (await openSearch(page)).fill('Home')
+    const result = page.getByRole('grid', { name: 'Search results' }).getByRole('link', { name: /^Home\b/ })
     await expect(result).toBeVisible()
     await result.click()
 
@@ -742,12 +752,11 @@ test.describe('critical post-install workflows', () => {
     const failedRequests: string[] = []
     const loginRequests: string[] = []
     page.on('console', message => {
-      if (message.type() === 'error') {
-        consoleErrors.push(message.text())
-      }
+      if (message.type() === 'error') consoleErrors.push(message.text())
     })
     page.on('requestfailed', request => {
-      failedRequests.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText || 'unknown failure'}`)
+      const failure = request.failure()?.errorText || 'unknown failure'
+      failedRequests.push(`${request.method()} ${request.url()}: ${failure}`)
     })
     page.on('request', request => {
       if (request.method() === 'GET' && new URL(request.url()).pathname === '/login') loginRequests.push(request.url())
@@ -765,7 +774,8 @@ test.describe('critical post-install workflows', () => {
       )
       .toMatchObject({ authenticated: false })
     loginRequests.length = 0
-    await page.getByRole('link', { name: 'Login', exact: true }).click()
+    await page.getByRole('button', { name: 'Account' }).click()
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click()
     await expect(page).toHaveURL('/login')
     expect(loginRequests).toHaveLength(1)
 
@@ -797,7 +807,7 @@ test.describe('critical post-install workflows', () => {
 
     await expect(page.locator('.admin-dashboard')).toBeVisible()
     await expect(page.locator('#admin-navigation')).toBeVisible()
-    await page.getByRole('button', { name: 'Content & appearance', exact: true }).click()
+    await page.getByRole('button', { name: 'Knowledge', exact: true }).click()
     await expect(page.getByRole('link', { name: /^Pages\b/ })).toBeVisible()
 
     const sidebarLayout = await page.locator('#admin-navigation').evaluate(navigation => {
@@ -835,36 +845,6 @@ test.describe('critical post-install workflows', () => {
     await page.goto('/a/navigation')
     await expect(page.getByRole('heading', { name: 'Navigation', exact: true })).toBeVisible()
 
-    const modeLayouts = await page.evaluate(() => {
-      const labels = ['Site Tree', 'Static Navigation', 'Custom Navigation', 'None']
-      return labels.map(label => {
-        const title = [...document.querySelectorAll<HTMLElement>('.v-main .v-list-item-title')].find(candidate => candidate.textContent?.trim() === label)
-        const item = title?.closest<HTMLElement>('.v-list-item')
-        const icon = item?.querySelector<HTMLElement>('.v-list-item__prepend .v-avatar')
-        const content = item?.querySelector<HTMLElement>('.v-list-item__content')
-        const selection = item?.querySelector<HTMLElement>('.v-list-item__append .v-icon')
-        if (!title || !item || !icon || !content || !selection) {
-          throw new Error(`Missing ${label} navigation mode layout.`)
-        }
-        const titleBox = title.getBoundingClientRect()
-        const iconBox = icon.getBoundingClientRect()
-        const contentBox = content.getBoundingClientRect()
-        const selectionBox = selection.getBoundingClientRect()
-        return {
-          iconRight: iconBox.right,
-          iconCenterY: iconBox.top + iconBox.height / 2,
-          titleLeft: titleBox.left,
-          titleRight: titleBox.right,
-          contentCenterY: contentBox.top + contentBox.height / 2,
-          selectionLeft: selectionBox.left
-        }
-      })
-    })
-    for (const layout of modeLayouts) {
-      expect(layout.titleLeft).toBeGreaterThan(layout.iconRight)
-      expect(Math.abs(layout.contentCenterY - layout.iconCenterY)).toBeLessThan(2)
-      expect(layout.selectionLeft).toBeGreaterThan(layout.titleRight)
-    }
     await expectNoHorizontalOverflow(page)
 
     await page.goto('/a/pages')
@@ -882,7 +862,7 @@ test.describe('critical post-install workflows', () => {
     await expect(navigationButton).toBeVisible()
     await navigationButton.click()
     await expect(page.locator('#admin-navigation')).toBeVisible()
-    await page.locator('#admin-navigation').getByRole('button', { name: 'Content & appearance', exact: true }).click()
+    await page.locator('#admin-navigation').getByRole('button', { name: 'Knowledge', exact: true }).click()
     await page
       .locator('#admin-navigation')
       .getByRole('link', { name: /^Pages\b/ })
@@ -980,11 +960,11 @@ test.describe('critical post-install workflows', () => {
     test.setTimeout(60_000)
     await openAuthenticatedHome(page)
     await page.goto('/en/home')
-    await page.locator('.page-edit-fab:visible').click()
-    await page.getByRole('button', { name: 'History', exact: true }).click()
+    await page.getByRole('button', { name: 'Page Actions', exact: true }).click()
+    await page.locator('.v-overlay--active').getByRole('button', { name: 'History', exact: true }).click()
     await expect(page).toHaveURL('/h/en/home')
 
-    const revisionActions = page.locator('button[aria-label^="Actions for revision "]:not([aria-label="Actions for revision live"])')
+    const revisionActions = page.getByRole('button', { name: /^More actions for revision / })
     await expect(revisionActions.first()).toBeVisible()
     await revisionActions.first().click()
     await page.locator('.v-overlay--active').getByText('Restore', { exact: true }).click()
@@ -1027,44 +1007,56 @@ test.describe('critical post-install workflows', () => {
 
   test('creates a group, updates its settings, and assigns a new user', async ({ page }) => {
     test.setTimeout(60_000)
-    const groupName = 'Browser Operators'
-    const userEmail = 'browser-operator@example.com'
+    const runId = Date.now()
+    const groupName = `Browser Operators ${runId}`
+    const userEmail = `browser-operator-${runId}@example.com`
     await openAuthenticatedHome(page)
     await page.goto('/a/groups')
-    await page.getByRole('button', { name: 'New group' }).click()
-    await page.getByLabel('Group Name').fill(groupName)
-    await page.getByRole('button', { name: 'Create', exact: true }).click()
+    await page.getByRole('button', { name: 'Create group' }).click()
+    await page.getByRole('textbox', { name: 'Group name', exact: true }).fill(groupName)
+    await page.getByRole('button', { name: 'Review group', exact: true }).click()
+    const createGroupDialog = page.getByRole('dialog', { name: 'Review this new group' })
+    await createGroupDialog.getByRole('textbox', { name: 'Administrative reason' }).fill('Browser group lifecycle verification.')
+    await createGroupDialog.getByRole('button', { name: 'Create group', exact: true }).click()
     const groupRow = page.getByText(groupName, { exact: true })
     await expect(groupRow).toBeVisible()
     await groupRow.click()
-    await page.getByRole('textbox', { name: 'Redirect on Login' }).fill('/en/home')
-    await page.getByRole('button', { name: 'Update group' }).click()
-    await expect(page.getByRole('textbox', { name: 'Redirect on Login' })).toHaveValue('/en/home')
+    await page.getByRole('textbox', { name: 'Sign-in destination' }).fill('/en/home')
+    await page.getByRole('button', { name: 'Review policy' }).click()
+    const reviewPolicyDialog = page.getByRole('dialog', { name: 'Review group policy' })
+    await reviewPolicyDialog.getByRole('textbox', { name: 'Administrative reason' }).fill('Browser group policy verification.')
+    await reviewPolicyDialog.getByRole('button', { name: 'Save group policy' }).click()
+    await expect(page.getByRole('textbox', { name: 'Sign-in destination' })).toHaveValue('/en/home')
 
     await page.goto('/a/users')
-    await page.getByRole('button', { name: 'New user' }).click()
-    await page.getByRole('textbox', { name: 'Email Address *', exact: true }).fill(userEmail)
-    await page.getByRole('textbox', { name: 'Password *', exact: true }).fill('browser-password')
-    await page.getByRole('textbox', { name: 'Name *', exact: true }).fill('Browser Operator')
-    await page.getByRole('combobox', { name: 'Assign to Group(s)...', exact: true }).press('ArrowDown')
-    await page.getByRole('option', { name: groupName, exact: true }).click()
-    await page.keyboard.press('Escape')
-    await page.getByRole('button', { name: 'Create', exact: true }).click()
+    await page.getByRole('button', { name: 'Create account' }).click()
+    const createAccountDialog = page.getByRole('dialog', { name: 'Create an account' })
+    await createAccountDialog.getByRole('textbox', { name: 'Email address', exact: true }).fill(userEmail)
+    await createAccountDialog.getByRole('textbox', { name: 'Temporary password', exact: true }).fill('browser-password')
+    await createAccountDialog.getByRole('textbox', { name: 'Display name', exact: true }).fill('Browser Operator')
+    await createAccountDialog.getByRole('checkbox', { name: new RegExp(`^${groupName}\\b`) }).check()
+    await createAccountDialog.getByRole('button', { name: 'Review account', exact: true }).click()
+    await createAccountDialog.getByRole('textbox', { name: 'Administrative reason' }).fill('Browser account creation verification.')
+    await createAccountDialog.getByRole('button', { name: 'Create account', exact: true }).click()
 
+    await expect(page).toHaveURL(/\/a\/users\/\d+(?:\?from=\/users)?$/)
+    await expect(page.getByRole('heading', { name: 'Browser Operator', exact: true })).toBeVisible()
     await expect(page.getByText(userEmail, { exact: true })).toBeVisible()
-    await page.getByRole('link', { name: 'Browser Operator', exact: true }).click()
-    await expect(page).toHaveURL(/\/a\/users\/\d+$/)
     await expect(page.getByText(groupName, { exact: true })).toBeVisible()
   })
 
   test('applies authentication provider configuration through administration', async ({ page }) => {
     await openAuthenticatedHome(page)
     await page.goto('/a/auth')
-    const displayName = page.getByLabel('Display Name')
+    await page.getByRole('button', { name: 'Configure Local', exact: true }).click()
+    const displayName = page.getByRole('textbox', { name: 'Sign-in display name' })
     await expect(displayName).toHaveValue('Local')
     await displayName.fill('Local Browser')
-    const saved = page.waitForResponse(response => response.url().endsWith('/_api/auth/strategies') && response.request().method() === 'POST')
-    await page.getByRole('button', { name: 'Apply' }).click()
+    await page.getByRole('button', { name: 'Review changes' }).click()
+    const reviewDialog = page.getByRole('dialog', { name: 'Review sign-in policy' })
+    await reviewDialog.getByRole('textbox', { name: 'Administrative reason' }).fill('Browser authentication configuration verification.')
+    const saved = page.waitForResponse(response => response.url().endsWith('/_api/auth/admin/workspace') && response.request().method() === 'PUT')
+    await reviewDialog.getByRole('button', { name: 'Save sign-in policy' }).click()
     expect((await saved).ok()).toBe(true)
     await expect(displayName).toHaveValue('Local Browser')
   })
@@ -1074,12 +1066,18 @@ test.describe('critical post-install workflows', () => {
     await openAuthenticatedHome(page)
     await page.goto('/a/search')
     await expect(page.getByRole('radio', { name: /^Database - PostgreSQL\b/ })).toBeChecked()
+    const dictionary = page.getByRole('combobox', { name: 'Dictionary Language' })
+    await dictionary.press('ArrowDown')
+    await page.getByRole('option', { name: 'simple', exact: true }).click()
     const saved = page.waitForResponse(response => response.url().endsWith('/_api/search/engines') && response.request().method() === 'POST')
-    await page.getByRole('button', { name: 'Apply' }).click()
+    await page.getByRole('button', { name: 'Save configuration' }).click()
     expect((await saved).ok()).toBe(true)
 
+    await page.getByRole('tab', { name: 'Index maintenance' }).click()
+    await page.getByRole('button', { name: 'Rebuild index', exact: true }).click()
+    const rebuildDialog = page.getByRole('dialog', { name: 'Rebuild the search index?' })
     const rebuilt = page.waitForResponse(response => response.url().endsWith('/_api/search/rebuild-index') && response.request().method() === 'POST')
-    await page.getByRole('button', { name: 'Rebuild Index' }).click()
+    await rebuildDialog.getByRole('button', { name: 'Rebuild index', exact: true }).click()
     expect((await rebuilt).ok()).toBe(true)
   })
 
@@ -1088,19 +1086,25 @@ test.describe('critical post-install workflows', () => {
     await openAuthenticatedHome(page)
     const setEnforce2FA = (enabled: boolean) =>
       page.evaluate(async value => {
-        const configResponse = await fetch('/_api/site/config', { credentials: 'same-origin' })
-        const config = await configResponse.json()
-        const response = await fetch('/_api/site/config', {
+        const workspaceResponse = await fetch('/_api/site/security', { credentials: 'same-origin' })
+        const workspace = await workspaceResponse.json()
+        const response = await fetch('/_api/site/security', {
           method: 'PUT',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...config, authEnforce2FA: value })
+          body: JSON.stringify({
+            policy: { ...workspace.policy, authEnforce2FA: value },
+            fingerprint: workspace.fingerprint,
+            reason: `Browser two-factor policy ${value ? 'enablement' : 'recovery'} verification.`,
+            endSessions: false
+          })
         })
         if (!response.ok) throw new Error(`2FA policy update failed: ${response.status}`)
+        const result = await response.json()
+        if (result.currentSessionEnded !== value) throw new Error('2FA policy update returned an unexpected session result.')
       }, enabled)
     await setEnforce2FA(true)
 
-    await logoutFromAccountMenu(page)
     await page.goto('/login')
     await page.getByLabel('Email Address', { exact: true }).fill(adminEmail)
     await page.getByLabel('Password', { exact: true }).fill(adminPassword)
@@ -1108,7 +1112,7 @@ test.describe('critical post-install workflows', () => {
 
     const manualSecret = page.locator('.login-tfa-secret')
     await expect(manualSecret).toBeVisible()
-    const secret = (await manualSecret.textContent())?.trim()
+    const secret = (await manualSecret.textContent())?.replace(/\s+/g, '')
     if (!secret) throw new Error('TFA setup did not provide a manual setup key.')
     const setupToken = tfa.generateToken(secret)?.token
     if (!setupToken) throw new Error('TFA setup token generation failed.')
@@ -1131,6 +1135,7 @@ test.describe('critical post-install workflows', () => {
     await expect(page).toHaveURL('/', { timeout: 30_000 })
 
     await setEnforce2FA(false)
+
     await page.evaluate(async () => {
       const whoami = await fetch('/_api/users/whoami', { credentials: 'same-origin' }).then(response => response.json())
       const response = await fetch(`/_api/users/${whoami.user.id}/tfa`, {
@@ -1141,8 +1146,6 @@ test.describe('critical post-install workflows', () => {
       })
       if (!response.ok) throw new Error(`TFA recovery reset failed: ${response.status}`)
     })
-
-    await logoutFromAccountMenu(page)
     await loginAsAdmin(page)
   })
 

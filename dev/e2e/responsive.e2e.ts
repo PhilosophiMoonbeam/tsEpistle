@@ -207,20 +207,48 @@ test.describe('responsive UI quality matrix', () => {
         }
       }
 
-      if (path === '/en/visual-markdown-browser' && viewport.width < 1280) {
-        const article = page.locator('.page-col-content:not(.is-page-header) > .contents').first()
-        const sidebar = page.locator('.page-col-sd').first()
-        await expect(article).toBeVisible()
-        await expect(sidebar).toBeVisible()
-        await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toBeVisible()
+      if (path === '/en/visual-markdown-browser' && viewport.width >= 600 && viewport.width < 1280) {
+        const tabletTools = page.locator('#page-tablet-tools')
+        const tabletShortcuts = tabletTools.locator(':scope > .page-shortcuts-card')
+        const tabletMetadata = tabletTools.locator(':scope > .page-provenance-card')
+        const tabletToc = tabletTools.locator(':scope > .page-toc-card')
+        await expect(tabletTools, 'Tablet reader utilities are rendered in their own stack').toBeVisible()
+        await expect(tabletShortcuts).toBeVisible()
+        await expect(tabletMetadata, 'Tablet reader metadata is rendered between utilities and Page Contents').toBeVisible()
+        await expect(tabletToc).toBeVisible()
 
-        const articleBounds = await article.boundingBox()
-        const sidebarBounds = await sidebar.boundingBox()
-        expect(articleBounds).not.toBeNull()
-        expect(sidebarBounds).not.toBeNull()
-        if (articleBounds && sidebarBounds) {
-          expect(articleBounds.y, 'Article content must precede the reader sidebar').toBeLessThan(sidebarBounds.y)
+        const tabletStack = await tabletTools
+          .locator(':scope > .v-card')
+          .evaluateAll(cards =>
+            cards
+              .map(
+                card =>
+                  ['page-shortcuts-card', 'page-provenance-card', 'page-toc-card', 'page-tags-card', 'page-comments-card'].find(className =>
+                    card.classList.contains(className)
+                  ) ?? null
+              )
+              .filter((className): className is string => className !== null)
+          )
+        expect(tabletStack.slice(0, 3), 'Tablet reader stack keeps utilities, centered metadata, then Page Contents').toEqual([
+          'page-shortcuts-card',
+          'page-provenance-card',
+          'page-toc-card'
+        ])
+
+        const [shortcutBounds, metadataBounds, tocBounds] = await Promise.all([
+          tabletShortcuts.boundingBox(),
+          tabletMetadata.boundingBox(),
+          tabletToc.boundingBox()
+        ])
+        expect(shortcutBounds).not.toBeNull()
+        expect(metadataBounds).not.toBeNull()
+        expect(tocBounds).not.toBeNull()
+        if (shortcutBounds && metadataBounds && tocBounds) {
+          expect(metadataBounds.y, 'Tablet metadata follows reader utilities').toBeGreaterThanOrEqual(shortcutBounds.y + shortcutBounds.height)
+          expect(tocBounds.y, 'Tablet Page Contents follows centered metadata').toBeGreaterThanOrEqual(metadataBounds.y + metadataBounds.height)
         }
+        await expect(tabletMetadata.locator('.page-provenance-card__content')).toHaveCSS('justify-content', 'center')
+        await expect(tabletMetadata.locator('.page-document-provenance')).toHaveCSS('text-align', 'center')
       }
     }
 
@@ -1452,6 +1480,12 @@ test.describe('responsive UI quality matrix', () => {
 
   test('keeps Agent Chat readable and operable', async ({ page }) => {
     await openAuthenticatedPage(page, '/', '.page-header-section')
+    const originalPageUrl = page.url()
+    const originalPageTitle = (await page.locator('.page-title').first().innerText()).trim()
+    const originalArticleId = await page.locator('article.contents').first().getAttribute('id')
+    expect(originalPageTitle, 'The invoking page exposes a stable reader identity').not.toBe('')
+    expect(originalArticleId, 'The invoking page exposes a stable article identity').toEqual(expect.stringMatching(/^wiki-page-shell-\d+-article$/))
+
     const entrance = page.locator('.nav-header-agent')
     await expectLocatorWithinViewport(entrance, 'Wiki Agent entrance')
     await expect(entrance.locator('.v-icon')).toBeVisible()
@@ -1546,6 +1580,10 @@ test.describe('responsive UI quality matrix', () => {
     const searchInput = page.locator('.nav-header-search-control input:visible').first()
     await expect(searchInput).toBeVisible()
     await searchInput.fill('home')
+    await expect(searchInput).toHaveValue('home')
+    const searchResultTitles = (await wikiSearchDialog.locator('.search-results-item .v-list-item-title').allTextContents()).map(title => title.trim())
+    expect(searchResultTitles, 'The invoking search keeps at least one result to restore').not.toHaveLength(0)
+
     const askAgentButton = wikiSearchDialog.getByRole('button', { name: 'Ask about this', exact: true })
     await expect(askAgentButton).toBeVisible()
     await askAgentButton.click()
@@ -1669,6 +1707,16 @@ test.describe('responsive UI quality matrix', () => {
     await expect(agent.getByRole('button', { name: 'Close Wiki Agent' })).toBeVisible()
     await agent.getByRole('button', { name: 'Return to Wiki Search' }).click()
     await expect(page.locator('.search-results-search')).toBeVisible()
+    expect(page.url(), 'Returning from the magnifier keeps the invoking page URL').toBe(originalPageUrl)
+    await expect(page.locator('.page-title').first()).toHaveText(originalPageTitle)
+    expect(await page.locator('article.contents').first().getAttribute('id'), 'Returning from the magnifier keeps the invoking article identity').toBe(
+      originalArticleId
+    )
+    const restoredSearchInput = page.locator('.nav-header-search-control input:visible').first()
+    await expect(restoredSearchInput).toBeVisible()
+    await expect(restoredSearchInput).toHaveValue('home')
+    await expect(restoredSearchInput, 'Returning from the magnifier focuses the visible search field').toBeFocused()
+    await expect(wikiSearchDialog.locator('.search-results-item .v-list-item-title')).toHaveText(searchResultTitles)
     const reopenAskAgentButton = wikiSearchDialog.getByRole('button', { name: 'Ask about this', exact: true })
     await expect(reopenAskAgentButton).toBeVisible()
     await reopenAskAgentButton.click()
@@ -2003,6 +2051,11 @@ test.describe('responsive UI quality matrix', () => {
       await pin.click()
       await expect(pin).toHaveAttribute('aria-pressed', 'true')
       await expect(pin).toHaveAttribute('title', 'Unpin conversation')
+      const pageContext = agent.getByRole('group', { name: 'Current page context: en/visual-markdown-browser', exact: true })
+      const contextToggle = pageContext.getByRole('button', { name: /^(?:Exclude|Include) current page$/ })
+      await expect(pageContext, 'An open workspace exposes the page context it was opened with').toBeVisible()
+      await expect(contextToggle).toHaveAttribute('aria-label', 'Exclude current page')
+      await expect(contextToggle).toHaveAttribute('aria-pressed', 'true')
 
       const promptA = 'Remember the first page context.'
       const messageARequestPromise = page.waitForRequest(messagePath)
@@ -2016,6 +2069,50 @@ test.describe('responsive UI quality matrix', () => {
       expect(bodyA.content).toBe(promptA)
       expect(bodyA.currentPage).toEqual(expect.objectContaining({ locale: 'en', path: 'visual-markdown-browser' }))
       await expect(agent.locator('.agent-message--assistant').last()).toContainText('The release is ready for a deliberate review.')
+      await page.evaluate(() => {
+        window.history.pushState(null, '', '/en/home')
+        window.dispatchEvent(new PopStateEvent('popstate'))
+      })
+      await expect(page).toHaveURL('/en/home')
+      await expect(page.locator('.page-title').first()).toHaveText('Home')
+      await expect(pageContext, 'Changing the reader page does not relatch an open Agent workspace').toBeVisible()
+      await expect(contextToggle).toHaveAttribute('aria-label', 'Exclude current page')
+      await expect(contextToggle).toHaveAttribute('aria-pressed', 'true')
+
+      await contextToggle.click()
+      await expect(contextToggle).toHaveAttribute('aria-label', 'Include current page')
+      await expect(contextToggle).toHaveAttribute('aria-pressed', 'false')
+      const promptExcluded = 'Exclude the current page from this request.'
+      const messageExcludedRequestPromise = page.waitForRequest(messagePath)
+      await composerInput.fill(promptExcluded)
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      const messageExcludedRequest = await messageExcludedRequestPromise
+      const bodyExcluded = messageExcludedRequest.postDataJSON() as {
+        content?: unknown
+        currentPage?: { id?: unknown; locale?: unknown; path?: unknown; observedUpdatedAt?: unknown }
+      }
+      expect(bodyExcluded.content).toBe(promptExcluded)
+      expect(bodyExcluded).not.toHaveProperty('currentPage')
+      await expect(agent.locator('.agent-message--assistant').last()).toContainText('The release is ready for a deliberate review.')
+
+      await contextToggle.click()
+      await expect(contextToggle).toHaveAttribute('aria-label', 'Exclude current page')
+      await expect(contextToggle).toHaveAttribute('aria-pressed', 'true')
+      const promptReincluded = 'Reinclude the latched page context for this request.'
+      const messageReincludedRequestPromise = page.waitForRequest(messagePath)
+      await composerInput.fill(promptReincluded)
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      const messageReincludedRequest = await messageReincludedRequestPromise
+      const bodyReincluded = messageReincludedRequest.postDataJSON() as {
+        content?: unknown
+        currentPage?: { id?: unknown; locale?: unknown; path?: unknown; observedUpdatedAt?: unknown }
+      }
+      expect(bodyReincluded.content).toBe(promptReincluded)
+      expect(bodyReincluded.currentPage).toEqual(expect.objectContaining({ locale: 'en', path: 'visual-markdown-browser' }))
+      await expect(agent.locator('.agent-message--assistant').last()).toContainText('The release is ready for a deliberate review.')
+      await expect(agent.locator('.agent-message--user')).toHaveCount(3)
+      await expect(agent.locator('.agent-message--user').filter({ hasText: promptExcluded })).toBeVisible()
+      await expect(agent.locator('.agent-message--user').filter({ hasText: promptReincluded })).toBeVisible()
 
       await page.keyboard.press('Escape')
       const firstSearchDialog = page.getByRole('dialog', { name: 'Wiki search', exact: true })
@@ -2036,7 +2133,9 @@ test.describe('responsive UI quality matrix', () => {
       const reopenedA = (await reopenAResponse.json()) as { session?: { id?: unknown } }
       expect(reopenedA.session?.id).toBe(sessionA)
       expect(fixture.requests.filter(request => request === 'POST /_api/agents/sessions')).toHaveLength(createsBeforeReopen)
-      await expect(agent.getByText('Current page · en/home', { exact: true })).toBeVisible()
+      const reopenedPageContext = agent.getByRole('group', { name: 'Current page context: en/home', exact: true })
+      await expect(reopenedPageContext, 'Reopening the pinned workspace on another page captures that page').toBeVisible()
+
       await expect(pin).toHaveAttribute('aria-pressed', 'true')
       await expect(pin).toHaveAttribute('title', 'Unpin conversation')
 
@@ -2053,7 +2152,8 @@ test.describe('responsive UI quality matrix', () => {
       const reloadedA = (await reloadAResponse.json()) as { session?: { id?: unknown } }
       expect(reloadedA.session?.id).toBe(sessionA)
       expect(fixture.requests.filter(request => request === 'POST /_api/agents/sessions')).toHaveLength(createsBeforeReload)
-      await expect(agent.getByText('Current page · en/home', { exact: true })).toBeVisible()
+      await expect(reopenedPageContext).toBeVisible()
+
       await expect(pin).toHaveAttribute('aria-pressed', 'true')
       await expect(pin).toHaveAttribute('title', 'Unpin conversation')
 
@@ -2069,8 +2169,10 @@ test.describe('responsive UI quality matrix', () => {
       expect(bodyB.content).toBe(promptB)
       expect(bodyB.currentPage).toEqual(expect.objectContaining({ locale: 'en', path: 'home' }))
       expect(bodyA.currentPage).toEqual(expect.objectContaining({ locale: 'en', path: 'visual-markdown-browser' }))
-      await expect(agent.locator('.agent-message--user')).toHaveCount(2)
+      await expect(agent.locator('.agent-message--user')).toHaveCount(4)
       await expect(agent.locator('.agent-message--user').filter({ hasText: promptA })).toBeVisible()
+      await expect(agent.locator('.agent-message--user').filter({ hasText: promptExcluded })).toBeVisible()
+      await expect(agent.locator('.agent-message--user').filter({ hasText: promptReincluded })).toBeVisible()
       await expect(agent.locator('.agent-message--user').filter({ hasText: promptB })).toBeVisible()
 
       await pin.click()
@@ -2092,7 +2194,7 @@ test.describe('responsive UI quality matrix', () => {
       expect(freshCreated.session?.retention).toBe('saved')
       expect(fixture.requests.filter(request => request === 'POST /_api/agents/sessions')).toHaveLength(createsBeforeFresh + 1)
       await expect(agent.locator('.agent-message--user')).toHaveCount(0)
-      await expect(agent.getByText('Current page · en/home', { exact: true })).toBeVisible()
+      await expect(reopenedPageContext).toBeVisible()
       fixture.assertNoUnexpectedRequests()
     } finally {
       await fixture.dispose()

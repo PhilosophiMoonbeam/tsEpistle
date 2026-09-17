@@ -109,10 +109,7 @@ const advanceOfflineIdentityEpoch = (): void => {
   syncOfflineIdentityEpoch?.(nextEpoch)
 }
 
-const runOfflineIdentityBoundary = async (
-  accountId: number | undefined,
-  mode: OfflineIdentityBoundaryMode
-): Promise<boolean> => {
+const runOfflineIdentityBoundary = async (accountId: number | undefined, mode: OfflineIdentityBoundaryMode): Promise<boolean> => {
   let storage: OfflineStorage | null = null
   try {
     storage = await openOfflineStorage()
@@ -134,10 +131,7 @@ const runOfflineIdentityBoundary = async (
   }
 }
 
-export const invalidateOfflineIdentity = (
-  accountId?: number,
-  reason?: OfflineIdentityBoundaryReason
-): Promise<boolean> => {
+export const invalidateOfflineIdentity = (accountId?: number, reason?: OfflineIdentityBoundaryReason): Promise<boolean> => {
   const normalizedAccountId = accountId !== undefined && isPositiveAccountId(accountId) ? accountId : undefined
   const mode: OfflineIdentityBoundaryMode =
     reason === 'draft-key-denied' || reason === 'unauthorized' || normalizedAccountId === undefined ? 'advance' : 'purge'
@@ -188,6 +182,7 @@ export const invalidateOfflineIdentity = (
   }
 }
 let authRefresh: Promise<AuthRefreshOutcome> | undefined
+let authRefreshLifetime = 0
 export const useWikiStore = defineStore('wiki', {
   state: () => ({
     loadingCounts: {} as Record<string, number>,
@@ -331,6 +326,19 @@ export const useWikiStore = defineStore('wiki', {
     },
     refreshAuth(): Promise<AuthRefreshOutcome> {
       if (authRefresh) return authRefresh
+      const nextAuthRefreshLifetime = authRefreshLifetime + 1
+      if (!Number.isSafeInteger(nextAuthRefreshLifetime)) throw new Error('Auth refresh lifetime overflowed.')
+      authRefreshLifetime = nextAuthRefreshLifetime
+      const refreshLifetime = nextAuthRefreshLifetime
+      let capturedOfflineIdentityEpoch = this.offlineIdentityEpoch
+      const isCurrentRefresh = (): boolean => authRefreshLifetime === refreshLifetime && this.offlineIdentityEpoch === capturedOfflineIdentityEpoch
+      const settleStale = (): AuthRefreshOutcome => {
+        if (authRefreshLifetime === refreshLifetime) {
+          this.authRefreshPending = false
+          this.authRefreshSettled = true
+        }
+        return 'unavailable'
+      }
       const authWasSettled = this.authRefreshSettled
       const previousAccountIdAtStart = this.user.authenticated && isPositiveAccountId(this.user.id) ? this.user.id : undefined
       const warmIdentityAtStart = previousAccountIdAtStart !== undefined && this.offlineIdentityReady
@@ -341,29 +349,48 @@ export const useWikiStore = defineStore('wiki', {
       // previously verified actor/key boundary available for local capture.
       this.offlineIdentityReady = warmIdentityAtStart
 
-      const publishOutcome = (outcome: AuthRefreshOutcome, accountChanged: boolean): void => {
+      const publishOutcome = (outcome: AuthRefreshOutcome, accountChanged: boolean): boolean => {
+        if (!isCurrentRefresh()) return false
         this.authRefreshPending = false
         this.authRefreshSettled = true
         this.authRefreshOutcome = outcome
         dispatchAuthOutcome(outcome, accountChanged)
+        return true
       }
 
-      const settleAnonymous = async (outcome: Exclude<AuthRefreshOutcome, 'authenticated'>): Promise<AuthRefreshOutcome> => {
+      const beginBoundary = (accountId: number | undefined, reason?: OfflineIdentityBoundaryReason): Promise<boolean> | null => {
+        if (!isCurrentRefresh()) return null
+        const boundary = invalidateOfflineIdentity(accountId, reason)
+        // A boundary started by this refresh is authoritative for its own
+        // response. Any later external boundary changes the epoch again and
+        // therefore still fences this refresh.
+        capturedOfflineIdentityEpoch = this.offlineIdentityEpoch
+        return boundary
+      }
+
+      const settleAnonymous = async (
+        outcome: Exclude<AuthRefreshOutcome, 'authenticated'>,
+        reason?: OfflineIdentityBoundaryReason
+      ): Promise<AuthRefreshOutcome> => {
+        if (!isCurrentRefresh()) return settleStale()
         const previousAccountId = this.user.authenticated && isPositiveAccountId(this.user.id) ? this.user.id : undefined
-        if (outcome === 'unavailable' && previousAccountId !== undefined) {
+        if (outcome === 'unavailable') {
           // Transport, server, and malformed verification results are not
           // proof of logout. Keep the verified actor and warm local boundary;
           // every protected online consumer still sees the unavailable
           // outcome and must wait for a fresh verification.
-          publishOutcome(outcome, false)
-          return outcome
+          return publishOutcome(outcome, false) ? outcome : settleStale()
         }
-        const boundary = previousAccountId === undefined ? Promise.resolve(true) : invalidateOfflineIdentity(previousAccountId)
+        const boundary = previousAccountId === undefined ? null : beginBoundary(previousAccountId, reason)
+        if (previousAccountId !== undefined && boundary === null) return settleStale()
+        if (!isCurrentRefresh()) return settleStale()
         this.user = defaultUser()
         this.offlineIdentityReady = false
-        await boundary
-        publishOutcome(outcome, previousAccountId !== undefined)
-        return outcome
+        if (boundary !== null) {
+          await boundary
+          if (!isCurrentRefresh()) return settleStale()
+        }
+        return publishOutcome(outcome, previousAccountId !== undefined) ? outcome : settleStale()
       }
 
       const refresh = (async (): Promise<AuthRefreshOutcome> => {
@@ -372,17 +399,22 @@ export const useWikiStore = defineStore('wiki', {
             credentials: 'same-origin',
             cache: 'no-store'
           })) as WhoAmIResponse
-          if (!response.ok) return await settleAnonymous(response.status === 401 ? 'anonymous' : 'unavailable')
+          if (!isCurrentRefresh()) return settleStale()
+          if (!response.ok) {
+            return await settleAnonymous(response.status === 401 ? 'anonymous' : 'unavailable', response.status === 401 ? 'unauthorized' : undefined)
+          }
           const payload = await response.json()
+          if (!isCurrentRefresh()) return settleStale()
           if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return await settleAnonymous('unavailable')
           const record = payload as Record<string, unknown>
-          if (record.authenticated === false) return await settleAnonymous('anonymous')
+          if (record.authenticated === false) return await settleAnonymous('anonymous', 'unauthorized')
           if (record.authenticated !== true) return await settleAnonymous('unavailable')
           const user = record.user
           if (!user || typeof user !== 'object' || Array.isArray(user)) return await settleAnonymous('unavailable')
           const profile = user as Record<string, unknown>
           const id = profile.id
           if (!isPositiveAccountId(id)) return await settleAnonymous('unavailable')
+          if (!isCurrentRefresh()) return settleStale()
           const previousAuthenticatedId = this.user.authenticated && isPositiveAccountId(this.user.id) ? this.user.id : null
           const accountChanged = previousAuthenticatedId !== null && previousAuthenticatedId !== id
           const passiveLogin = authWasSettled && previousAuthenticatedId === null
@@ -390,7 +422,14 @@ export const useWikiStore = defineStore('wiki', {
             this.user = defaultUser()
             this.offlineIdentityReady = false
           }
-          const boundaryReady = accountChanged || passiveLogin ? await invalidateOfflineIdentity(accountChanged ? previousAuthenticatedId : undefined) : true
+          let boundaryReady = true
+          if (accountChanged || passiveLogin) {
+            const boundary = beginBoundary(accountChanged ? (previousAuthenticatedId ?? undefined) : undefined)
+            if (boundary === null) return settleStale()
+            boundaryReady = await boundary
+            if (!isCurrentRefresh()) return settleStale()
+          }
+          if (!isCurrentRefresh()) return settleStale()
           this.user = {
             ...defaultUser(),
             id,
@@ -410,9 +449,9 @@ export const useWikiStore = defineStore('wiki', {
             authenticated: true
           }
           this.offlineIdentityReady = boundaryReady
-          publishOutcome('authenticated', accountChanged)
-          return 'authenticated'
+          return publishOutcome('authenticated', accountChanged) ? 'authenticated' : settleStale()
         } catch {
+          if (!isCurrentRefresh()) return settleStale()
           return await settleAnonymous('unavailable')
         }
       })()
@@ -420,9 +459,10 @@ export const useWikiStore = defineStore('wiki', {
       const settled = refresh.then(
         outcome => outcome,
         error => {
-          this.authRefreshPending = false
-          this.authRefreshSettled = true
-          this.authRefreshOutcome = 'unavailable'
+          if (authRefreshLifetime === refreshLifetime) {
+            this.authRefreshPending = false
+            this.authRefreshSettled = true
+          }
           throw error
         }
       )
@@ -447,6 +487,7 @@ export const useWikiStore = defineStore('wiki', {
 export const wikiStore = useWikiStore(pinia)
 syncOfflineIdentityEpoch = epoch => {
   wikiStore.offlineIdentityEpoch = epoch
+  wikiStore.offlineIdentityReady = false
 }
 registerOfflineSessionInvalidationOwner(() => {
   advanceOfflineIdentityEpoch()

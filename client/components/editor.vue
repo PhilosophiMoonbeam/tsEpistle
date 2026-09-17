@@ -184,6 +184,7 @@
           @editor-adapter-clear='handleEditorAdapterClear'
         )
       editor-modal-properties(v-if='dialogProps', v-model='dialogProps')
+      editor-modal-editorselect(v-if='dialogEditorSelector', v-model='dialogEditorSelector')
       editor-modal-unsaved(
         v-if='dialogUnsaved'
         v-model='dialogUnsaved'
@@ -240,11 +241,12 @@
 </template>
 
 <script lang='ts'>
-import { defineAsyncComponent, defineComponent, type PropType } from 'vue'
+import { defineAsyncComponent, defineComponent, shallowRef, type PropType } from 'vue'
 import { useHotkey } from 'vuetify'
 import { createAsyncComponent } from './common/async-component-state.vue'
 import _ from 'lodash'
 import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, updatePage, type PageDetails, type PageWriteInput } from '../helpers/pages-api'
+import { openOfflineStorage, type OfflineStorage } from '../helpers/offline-storage.ts'
 import { wikiStore } from '@/store/index.ts'
 import { notifyReloadSafetyChanged, pwaState, setReloadSafetyProvider } from '../helpers/pwa.ts'
 import { Base64 } from 'js-base64'
@@ -266,6 +268,7 @@ import {
 import { OFFLINE_SESSION_INVALIDATED_EVENT, requestOfflineIdentityBoundary } from '../helpers/offline-session.ts'
 import { bindEditorFlushSignals, type EditorAdapter, type EditorAdapterCapture, type EditorAdapterSafety } from './editor/common/editor-adapter'
 import type { OfflineDraftPayloadV1, OfflineDraftState } from '../../shared/offline.ts'
+import { OfflineSnapshotSelectorSchema, type OfflineSnapshotSelector } from '../../shared/offline.ts'
 import {
   PageBrandingAssignmentSchema,
   PageBrandingViewSchema,
@@ -523,6 +526,8 @@ export default defineComponent({
       saveHandler?.()
     })
     return {
+      offlineStorage: shallowRef<OfflineStorage | null>(null),
+      offlineStoragePromise: shallowRef<Promise<OfflineStorage> | null>(null),
       setSaveHotkeyHandler (handler: (() => void) | null) {
         saveHandler = handler
       }
@@ -572,6 +577,7 @@ export default defineComponent({
       dialogProgress: false,
       dialogEditorSelector: false,
       offlineDraftCoordinator: null as OfflineEditorDraftCoordinator | null,
+      offlineMetadataOperation: 0,
       offlineCreateIdentity: null as string | null,
       offlineDraftStatus: null as OfflineDraftState | null,
       offlineDraftCandidate: null as OfflineDraftPayloadV1 | null,
@@ -835,6 +841,9 @@ export default defineComponent({
 
   beforeUnmount() {
     this.lifecycleGeneration += 1
+    this.offlineMetadataOperation += 1
+    this.offlineStorage?.close()
+    this.offlineStorage = null
     this.setSaveHotkeyHandler(null)
     offEditorConflictReset(this.handleEditorConflictReset)
     if (this.conflictTimer !== null) window.clearInterval(this.conflictTimer)
@@ -923,6 +932,126 @@ export default defineComponent({
     notifySafetyChanged() {
       this.safetyRevision += 1
       notifyReloadSafetyChanged()
+    },
+    async getOfflineStorageForMetadata(expectedLifecycleGeneration: number): Promise<OfflineStorage | null> {
+      if (this.lifecycleGeneration !== expectedLifecycleGeneration) return null
+      const existing = this.offlineStorage
+      if (existing && !existing.isClosed) return existing
+      const pending = this.offlineStoragePromise
+      if (pending) {
+        const storage = await pending
+        if (this.lifecycleGeneration !== expectedLifecycleGeneration || storage.isClosed) return null
+        return storage
+      }
+      const opening = openOfflineStorage()
+      this.offlineStoragePromise = opening
+      try {
+        const storage = await opening
+        if (this.lifecycleGeneration !== expectedLifecycleGeneration) {
+          storage.close()
+          return null
+        }
+        this.offlineStorage = storage
+        return storage
+      } finally {
+        if (this.offlineStoragePromise === opening) this.offlineStoragePromise = null
+      }
+    },
+    async offlineAdmissionSelector(capture: EditorSaveCapture, pageId: number): Promise<OfflineSnapshotSelector | null> {
+      if (capture.visibility !== 'public' || capture.isPublished !== true || typeof capture.content !== 'string') return null
+      if (typeof siteConfig === 'undefined') return null
+      if (typeof capture.pageInput.editor !== 'string' || !normalizeAvailableEditors(siteConfig.availableEditors).includes(capture.pageInput.editor as PageEditorKey)) return null
+      const protectionResponse = await window.fetch(`/_api/pages/${pageId}/protection`, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' }
+      })
+      if (!protectionResponse.ok) return null
+      const protection: unknown = await protectionResponse.json()
+      if (!protection || typeof protection !== 'object' || Reflect.get(protection, 'protected') !== false) return null
+      const parsedSelector = OfflineSnapshotSelectorSchema.safeParse({
+        siteId: typeof window.location.origin === 'string' ? window.location.origin : '',
+        pageId,
+        locale: capture.locale
+      })
+      return parsedSelector.success ? Object.freeze(parsedSelector.data) : null
+    },
+    isCurrentOfflineMetadataOperation(
+      operation: number,
+      capture: EditorSaveCapture,
+      pageId: number,
+      expectedAuthenticated: boolean,
+      expectedAccountId: number,
+      expectedOfflineIdentityEpoch: number,
+      expectedLifecycleGeneration: number
+    ): boolean {
+      if (
+        this.offlineMetadataOperation !== operation ||
+        !this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, expectedLifecycleGeneration)
+      )
+        return false
+      try {
+        const currentIdentity = this.getOfflineDraftIdentity()
+        const pageIdentityMatches = capture.identity.pageId === null
+          ? wikiStore.page.id === pageId
+          : capture.identity.pageId === pageId && currentIdentity.pageId === pageId
+        return (
+          pageIdentityMatches &&
+          currentIdentity.editorKey === capture.identity.editorKey &&
+          currentIdentity.locale === capture.identity.locale &&
+          currentIdentity.path === capture.identity.path &&
+          (this.currentEditor === getEditorComponentName(capture.identity.editorKey) || wikiStore.editor.editorKey === capture.identity.editorKey)
+        )
+      } catch {
+        return false
+      }
+    },
+    async recordSuccessfulOfflinePageEdit(
+      capture: EditorSaveCapture,
+      pageId: number,
+      editedAt: string | undefined,
+      expectedAuthenticated: boolean,
+      expectedAccountId: number,
+      expectedOfflineIdentityEpoch: number,
+      expectedLifecycleGeneration: number
+    ): Promise<void> {
+      const operation = ++this.offlineMetadataOperation
+      const isCurrent = (): boolean =>
+        this.isCurrentOfflineMetadataOperation(
+          operation,
+          capture,
+          pageId,
+          expectedAuthenticated,
+          expectedAccountId,
+          expectedOfflineIdentityEpoch,
+          expectedLifecycleGeneration
+        )
+      if (!isCurrent()) return
+      try {
+        const selector = await this.offlineAdmissionSelector(capture, pageId)
+        if (!selector || !isCurrent()) return
+        const storage = await this.getOfflineStorageForMetadata(expectedLifecycleGeneration)
+        if (!storage || !isCurrent()) return
+        const policy = await storage.readOfflinePolicy()
+        if (!isCurrent() || policy.state.automaticSavingEnabled !== true) return
+        const pagePolicy = policy.pages.find(page => page.siteId === selector.siteId && page.pageId === selector.pageId && page.locale === selector.locale)
+        if (pagePolicy?.excluded || pagePolicy?.availability === 'ineligible') return
+        await storage.recordSuccessfulPageEdit(selector, {
+          expectedSessionGeneration: policy.sessionGeneration,
+          expectedPolicyRevision: policy.state.policyRevision,
+          ...(typeof editedAt === 'string' && editedAt.trim() ? { editedAt } : {})
+        })
+      } catch (error) {
+        if (!isCurrent()) return
+        const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined
+        if (code === 'generation-fenced' || code === 'policy-revision-fenced') return
+        const detail = getErrorMessage(error)
+        wikiStore.showNotification({
+          message: detail ? `Offline page metadata could not be recorded: ${detail}` : 'Offline page metadata could not be recorded.',
+          style: 'warning',
+          icon: 'warning'
+        })
+      }
     },
     offlineMutationBlockMessage(): string {
       if (this.offlineDraftStatus === 'locked') {
@@ -1215,6 +1344,7 @@ export default defineComponent({
     },
     handleOfflineSessionInvalidated() {
       this.lifecycleGeneration += 1
+      this.offlineMetadataOperation += 1
       if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
       if (this.customCssTimer !== null) window.clearTimeout(this.customCssTimer)
       if (this.modalTimer !== null) window.clearTimeout(this.modalTimer)
@@ -1464,6 +1594,7 @@ export default defineComponent({
       emitEditorSaveConflict()
     },
     async save({ rethrow = false, overwrite = false }: { rethrow?: boolean, overwrite?: boolean } = {}): Promise<boolean> {
+      ++this.offlineMetadataOperation
       if (this.discardPending) return false
       if (this.collaborationDiscarded) {
         const error = new Error('This collaboration draft was discarded. Reload the page before saving.')
@@ -1509,6 +1640,8 @@ export default defineComponent({
       let completionAttempted = false
       let postWriteError: string | null = null
       let receiptPreparationWarning: string | null = null
+      let authoritativePageId: number | null = null
+      let authoritativeUpdatedAt: string | undefined
       const routeChanged = saveMode === 'update' && (
         capture.locale !== this.savedState.locale ||
         capture.path !== this.savedState.path ||
@@ -1627,11 +1760,12 @@ export default defineComponent({
         if (capturedAuthenticated && this.serverSaveDisabled) {
           throw new Error('Server publishing is unavailable while disconnected.')
         }
-
         if (saveMode === 'create') {
           this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
           const page = await createPage(window.fetch.bind(window), capture.pageInput)
           this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+          authoritativePageId = page.id
+          authoritativeUpdatedAt = page.updatedAt
           this.checkoutDateActive = page.updatedAt || capture.identity.baseUpdatedAt || this.checkoutDateActive
           this.isConflict = false
           wikiStore.editor.id = page.id
@@ -1648,6 +1782,8 @@ export default defineComponent({
             collaborationGenerationAtSave
           )
           this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+          authoritativePageId = capture.identity.pageId ?? wikiStore.page.id
+          authoritativeUpdatedAt = page.updatedAt
           wikiStore.page.sourceRevision = page.sourceRevision
           if (capture.visibility !== this.savedState.visibility) {
             try {
@@ -1693,6 +1829,17 @@ export default defineComponent({
           if (!completion) {
             throw new Error('The page was saved, but local submission finalization needs attention.')
           }
+        }
+        if (authoritativePageId !== null && postWriteError === null) {
+          await this.recordSuccessfulOfflinePageEdit(
+            capture,
+            authoritativePageId,
+            authoritativeUpdatedAt,
+            capturedAuthenticated,
+            capturedAccountId,
+            capturedOfflineIdentityEpoch,
+            capturedLifecycleGeneration
+          )
         }
 
         this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)

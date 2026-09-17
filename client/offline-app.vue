@@ -6,7 +6,13 @@ import {
   openOfflineStorage,
   type OfflineStorage
 } from './helpers/offline-storage.ts'
-import { createOfflineSyncCoordinator, type OfflineSyncCoordinator } from './helpers/offline-sync.ts'
+import {
+  createOfflineSyncCoordinator,
+  createOfflineSyncUnavailableResult,
+  type OfflineSyncCoordinator,
+  type OfflineSyncResult,
+  type OfflineSyncService
+} from './helpers/offline-sync.ts'
 import type { OfflineStorageEstimate } from '../shared/offline.ts'
 import {
   promptPwaInstall,
@@ -80,18 +86,15 @@ const isRetrying = ref(false)
 const isInstalling = ref(false)
 const isUpdating = ref(false)
 const libraryRefreshToken = ref(0)
-type OfflineSyncService = {
-  reconcile: (reason?: string) => Promise<unknown>
-}
 const OFFLINE_SYNC_COORDINATOR_KEY = 'offline-sync-coordinator'
 let offlineSyncCoordinator: OfflineSyncCoordinator | null = null
 let stopOfflinePwaWatch: (() => void) | null = null
 let pendingOfflineSyncReason: string | null = null
 const offlineSyncService: OfflineSyncService = {
-  reconcile (reason = 'manual'): Promise<unknown> {
-    if (offlineSyncCoordinator) return offlineSyncCoordinator.reconcile(reason)
+  async reconcile(reason = 'manual'): Promise<OfflineSyncResult> {
+    if (offlineSyncCoordinator) return await offlineSyncCoordinator.reconcile(reason)
     pendingOfflineSyncReason = reason
-    return Promise.resolve(null)
+    return createOfflineSyncUnavailableResult('Offline storage is not open yet.')
   }
 }
 provide(OFFLINE_SYNC_COORDINATOR_KEY, offlineSyncService)
@@ -194,7 +197,8 @@ function stopOfflineSync(): void {
   offlineSyncCoordinator = null
 }
 
-function startOfflineSync(storage: OfflineStorage): void {
+function startOfflineSync(storage: OfflineStorage, token = storageOpenToken): void {
+  if (token !== storageOpenToken || offlineStorage.value !== storage) return
   stopOfflineSync()
   const coordinator = createOfflineSyncCoordinator({
     storage,
@@ -203,18 +207,16 @@ function startOfflineSync(storage: OfflineStorage): void {
     isOnline: () => pwaState.connectionState === 'online',
     isForeground: () => typeof document === 'undefined' || document.visibilityState === 'visible',
     isRetired: () => pwaState.mode === 'retirement',
-    onDiagnostics: () => {
-      libraryRefreshToken.value += 1
-    }
   })
   offlineSyncCoordinator = coordinator
   stopOfflinePwaWatch = watch(() => pwaState.connectionState, state => {
-    if (state === 'online') void coordinator.reconcile('online')
+    if (state === 'online') coordinator.observe('online')
+    else coordinator.invalidateIdentity()
   })
   coordinator.start()
   const pendingReason = pendingOfflineSyncReason
   pendingOfflineSyncReason = null
-  if (pendingReason) void coordinator.reconcile(pendingReason)
+  if (pendingReason) coordinator.observe(pendingReason)
 }
 
 async function refreshStorageStatus(): Promise<boolean> {
@@ -257,8 +259,8 @@ async function openStorage(): Promise<void> {
     }
     offlineStorage.value = opened
     const storageAvailable = await refreshStorageStatus()
-    if (offlineStorage.value && storageAvailable) {
-      startOfflineSync(offlineStorage.value)
+    if (token === storageOpenToken && offlineStorage.value === opened && storageAvailable) {
+      startOfflineSync(opened, token)
       libraryRefreshToken.value += 1
     }
   } catch (error) {
@@ -312,11 +314,19 @@ async function removeDownloadedPages(): Promise<void> {
           expectedPolicyRevision: currentPolicy.state.policyRevision
         }
       )
-      await offlineSyncService?.reconcile('manual')
+    }
+    const syncResult = await offlineSyncService.reconcile('manual')
+    if (syncResult.outcome === 'error') {
+      removeNotice.value = syncResult.diagnostics?.lastError ?? 'Saved pages were removed, but local synchronization reported an error.'
+    } else if (syncResult.outcome === 'unavailable') {
+      removeNotice.value = `Saved pages were removed, but local synchronization is unavailable: ${syncResult.error}`
+    } else if (syncResult.outcome === 'offline') {
+      removeNotice.value = 'Saved pages were removed. Local synchronization will resume when the server is reachable.'
+    } else {
+      removeNotice.value = 'Saved pages were removed. Locked drafts and submission recovery were not changed.'
     }
     libraryRefreshToken.value += 1
     await refreshStorageStatus()
-    removeNotice.value = 'Saved pages were removed. Locked drafts and submission recovery were not changed.'
   } catch (error) {
     const failure = storageFailure(error)
     storageState.value = failure.state
@@ -943,6 +953,7 @@ button:disabled {
 
 .library-surface {
   min-block-size: 0;
+  min-inline-size: 0;
   padding: clamp(1rem, 2.4vw, 1.7rem);
 }
 

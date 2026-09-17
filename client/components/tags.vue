@@ -294,11 +294,20 @@ import { pathFromTagSelection, tagSelectionFromPath } from '../helpers/tag-navig
 import { tagColorBucket } from '../../shared/tag-colors.ts'
 import { wikiStore } from '@/store/index.ts'
 import { openOfflineStorage, subscribeOfflineStorageChanges, type OfflineStorage } from '../helpers/offline-storage.ts'
+import {
+  createOfflineSyncUnavailableResult,
+  OFFLINE_SYNC_COORDINATOR_KEY,
+  type OfflineSyncResult,
+  type OfflineSyncService
+} from '../helpers/offline-sync.ts'
 
-type OfflineSyncService = {
-  reconcile: (reason?: string) => Promise<unknown>
+const offlineSyncResultDetail = (result: OfflineSyncResult, fallback: string): string => {
+  const detail = result.outcome === 'unavailable'
+    ? result.error
+    : result.error ?? result.diagnostics?.lastError
+  const normalized = typeof detail === 'string' ? detail.trim() : ''
+  return (normalized || fallback).slice(0, 512)
 }
-const OFFLINE_SYNC_COORDINATOR_KEY = 'offline-sync-coordinator'
 
 /* global siteLangs */
 
@@ -339,7 +348,7 @@ export default {
   setup () {
     return {
       offlineStorage: shallowRef<OfflineStorage | null>(null),
-      offlineSyncService: inject<OfflineSyncService | null>(OFFLINE_SYNC_COORDINATOR_KEY, null)
+      offlineSyncService: inject<OfflineSyncService>(OFFLINE_SYNC_COORDINATOR_KEY)
     }
   },
   data() {
@@ -611,10 +620,12 @@ export default {
       this.offlinePolicyError = ''
       const known = this.tags.find((entry: PageTagRow) => entry.tag === tag)
       const label = known ? this.tagButtonLabel(known) : canonical
+      let followed = false
+      let policyMutationCommitted = false
       try {
         const policy = await storage.readOfflinePolicy()
         if (this.disposed) return
-        const followed = policy.state.selectedTags.includes(canonical)
+        followed = policy.state.selectedTags.includes(canonical)
         const nextTags = followed
           ? policy.state.selectedTags.filter((candidate: string) => candidate !== canonical)
           : [...new Set([...policy.state.selectedTags, canonical])].sort()
@@ -622,26 +633,44 @@ export default {
           expectedSessionGeneration: policy.sessionGeneration,
           expectedPolicyRevision: policy.state.policyRevision
         })
+        policyMutationCommitted = true
         if (!this.disposed) this.offlineTags = [...next.selectedTags]
-        const result = await this.offlineSyncService?.reconcile('tags')
-        const resultRecord = result && typeof result === 'object' ? result as Record<string, unknown> : null
-        const status = resultRecord?.status
-        const diagnostics = resultRecord?.diagnostics
-        const syncError = diagnostics && typeof diagnostics === 'object'
-          ? Reflect.get(diagnostics, 'lastError')
-          : null
-        if ((status === 'partial' || status === 'error') && typeof syncError === 'string' && syncError.trim())
-          throw new Error(syncError)
+        const syncResult: OfflineSyncResult = this.offlineSyncService
+          ? await this.offlineSyncService.reconcile('tags')
+          : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
         if (!this.disposed) {
-          this.selectionAnnouncement = followed
-            ? `${label} is no longer followed.`
-            : `${label} is now followed. Following uses a union (OR).`
+          const localAnnouncement = followed
+            ? `${label} is no longer followed locally.`
+            : `${label} is now followed locally. Following uses a union (OR).`
+          if (syncResult.outcome === 'error') {
+            const detail = offlineSyncResultDetail(syncResult, 'Offline synchronization reported an error.')
+            this.offlinePolicyError = `The followed-tag setting was saved locally, but offline sync failed: ${detail}`
+            this.selectionAnnouncement = `${localAnnouncement} Offline sync reported an error; the saved setting remains on this device.`
+          } else if (syncResult.outcome === 'unavailable') {
+            const detail = offlineSyncResultDetail(syncResult, 'Offline synchronization is unavailable.')
+            this.offlinePolicyError = `The followed-tag setting was saved locally, but offline sync is unavailable: ${detail}`
+            this.selectionAnnouncement = `${localAnnouncement} Offline sync is unavailable; the saved setting remains on this device.`
+          } else if (syncResult.outcome === 'offline') {
+            this.selectionAnnouncement = `${localAnnouncement} Offline sync will resume when a connection is available.`
+          } else {
+            this.selectionAnnouncement = localAnnouncement
+          }
         }
+        if (syncResult.outcome === 'error' || syncResult.outcome === 'unavailable')
+          await this.loadOfflinePolicy({ preserveError: true })
       } catch (error) {
         if (this.disposed) return
-        this.offlinePolicyError = error instanceof Error && error.message.trim()
-          ? error.message
+        const detail = error instanceof Error && error.message.trim()
+          ? error.message.trim().slice(0, 512)
           : 'The followed-tag setting could not be changed.'
+        if (policyMutationCommitted) {
+          this.offlinePolicyError = `The followed-tag setting was saved locally, but offline sync failed: ${detail}`
+          this.selectionAnnouncement = followed
+            ? `${label} is no longer followed locally. Offline sync failed; the saved setting remains on this device.`
+            : `${label} is now followed locally. Offline sync failed; the saved setting remains on this device.`
+        } else {
+          this.offlinePolicyError = detail
+        }
         await this.loadOfflinePolicy({ preserveError: true })
       } finally {
         if (!this.disposed) this.offlineActionLoading = false

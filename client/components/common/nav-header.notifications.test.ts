@@ -304,6 +304,13 @@ const bundle = await Bun.build({
           if (args.path === '../../store/site-notifications.ts') {
             return { contents: 'export const useSiteNotificationsStore = () => globalThis.__headerSiteNotifications', loader: 'js' }
           }
+          if (args.path.endsWith('/pwa-status.vue')) {
+            return {
+              contents:
+                "import { defineComponent, h } from 'vue'; export default defineComponent({ name: 'PwaStatusStub', setup: () => () => h('section', { class: 'pwa-status-panel', role: 'region', 'aria-label': 'Offline app and connection status: Connected' }, 'offline app status') })",
+              loader: 'js'
+            }
+          }
           if (args.path.endsWith('/account-notifications.vue')) {
             return {
               contents:
@@ -331,7 +338,11 @@ const bundle = await Bun.build({
             }
           }
           if (args.path.endsWith('/search-navigation-events')) {
-            return { contents: 'export const emitSearchEnter=()=>{}; export const emitSearchExit=()=>{}; export const emitSearchMove=()=>{}', loader: 'js' }
+            return {
+              contents:
+                'export const emitSearchEnter=()=>{}; export const emitSearchExit=()=>{}; export const emitSearchMove=()=>{}; export const onSearchFocus=()=>{}; export const offSearchFocus=()=>{}',
+              loader: 'js'
+            }
           }
           return {
             contents: "import { defineComponent } from 'vue'; export default defineComponent({ name: 'HeaderAsyncStub', setup: () => () => null })",
@@ -551,15 +562,62 @@ describe('notification header identity recovery', () => {
 })
 
 describe('account menu containment', () => {
-  it('keeps profile and session controls inside the account menu surface', async () => {
+  it('keeps authenticated profile, offline app, and session controls inside the account menu surface', async () => {
     const mounted = await mountHeader()
-    const accountMenu = mounted.host.querySelector('.nav-header-menu.account-menu')
+    const accountMenus = mounted.host.querySelectorAll('.nav-header-menu.account-menu')
+    const accountMenu = accountMenus[0]
     const profileLink = mounted.host.querySelector('[aria-label="Open profile for User 1"]')
+    const offlinePanels = mounted.host.querySelectorAll('.pwa-status-panel')
+    const offlinePanel = offlinePanels[0]
+    const notifications = mounted.host.querySelector('.account-menu__notifications')
+    const preferences = mounted.host.querySelector('.account-menu__preferences')
     const logoutForm = mounted.host.querySelector('form[action="/logout"][method="post"]')
 
-    expect(accountMenu).not.toBeNull()
+    expect(accountMenus).toHaveLength(1)
+    expect(offlinePanels).toHaveLength(1)
+    expect(accountMenu?.getAttribute('aria-label')).toBe('Account menu')
     expect(profileLink?.closest('.account-menu')).toBe(accountMenu)
+    expect(offlinePanel?.closest('.account-menu')).toBe(accountMenu)
+    expect(offlinePanel?.getAttribute('role')).toBe('region')
+    expect(offlinePanel?.getAttribute('aria-label')).toBe('Offline app and connection status: Connected')
+    expect(notifications?.closest('.account-menu')).toBe(accountMenu)
+    expect(preferences?.closest('.account-menu')).toBe(accountMenu)
     expect(logoutForm?.closest('.account-menu')).toBe(accountMenu)
+    expect(mounted.host.querySelector('[aria-label="Sign in"]')).toBeNull()
+    expect(mounted.host.querySelector('.nav-header-app-status-menu')).toBeNull()
+    expect(mounted.host.querySelector('.nav-header-app-status-trigger')).toBeNull()
+    expect(accountMenu?.closest('.menu-stub__content')).not.toBeNull()
+    expect(accountMenu?.closest('.menu-stub__activator')).toBeNull()
+  })
+
+  it('keeps guest sign-in and offline app controls inside the account menu without authenticated actions', async () => {
+    wikiStore.user = user(0, false)
+    siteNotifications.ownerId = null
+    const mounted = await mountHeader()
+    const accountMenus = mounted.host.querySelectorAll('.nav-header-menu.account-menu')
+    const accountMenu = accountMenus[0]
+    const offlinePanels = mounted.host.querySelectorAll('.pwa-status-panel')
+    const offlinePanel = offlinePanels[0]
+    const signIn = mounted.host.querySelector('[aria-label="Sign in"]')
+    const button = mounted.host.querySelector<HTMLElement>('.account-menu__trigger')
+    const connectivityIndicator = mounted.host.querySelector<HTMLElement>('[data-connectivity-indicator]')
+
+    expect(accountMenus).toHaveLength(1)
+    expect(offlinePanels).toHaveLength(1)
+    expect(accountMenu?.getAttribute('aria-label')).toBe('Account menu')
+    expect(offlinePanel?.closest('.account-menu')).toBe(accountMenu)
+    expect(offlinePanel?.getAttribute('role')).toBe('region')
+    expect(offlinePanel?.getAttribute('aria-label')).toBe('Offline app and connection status: Connected')
+    expect(signIn?.closest('.account-menu')).toBe(accountMenu)
+    expect(mounted.host.querySelector('[aria-label^="Open profile for "]')).toBeNull()
+    expect(mounted.host.querySelector('.account-menu__notifications')).toBeNull()
+    expect(mounted.host.querySelector('.account-menu__preferences')).toBeNull()
+    expect(mounted.host.querySelector('form[action="/logout"][method="post"]')).toBeNull()
+    expect(button?.getAttribute('aria-label')).toBe('Localized account')
+    expect(connectivityIndicator?.classList.contains('account-menu__connectivity-indicator--success')).toBe(true)
+    expect(connectivityIndicator?.getAttribute('title')).toBe('Connected')
+    expect(mounted.host.querySelector('.nav-header-app-status-menu')).toBeNull()
+    expect(mounted.host.querySelector('.nav-header-app-status-trigger')).toBeNull()
     expect(accountMenu?.closest('.menu-stub__content')).not.toBeNull()
     expect(accountMenu?.closest('.menu-stub__activator')).toBeNull()
   })
@@ -570,6 +628,7 @@ describe('notification header tri-state indicator', () => {
     const mounted = await mountHeader()
     const button = () => mounted.host.querySelector<HTMLElement>('.account-menu__trigger')
     const indicator = () => mounted.host.querySelector<HTMLElement>('.account-menu__notification-indicator')
+    const connectivityIndicator = () => mounted.host.querySelector<HTMLElement>('[data-connectivity-indicator]')
 
     expect(englishLocale.common.header.accountNotificationsAvailable).toBe('{{account}}, Notifications available')
     expect(englishLocale.common.header.accountNotificationsUnknown).toBe('{{account}}, Notification status not fully checked')
@@ -582,6 +641,8 @@ describe('notification header tri-state indicator', () => {
     expect(button()?.getAttribute('aria-label')).toBe('Localized account, Localized notifications available')
     expect(translationCalls.some(call => call.key === 'common:header.accountNotificationsAvailable' && call.params?.account === 'Localized account')).toBe(true)
     expect(indicator()?.classList.contains('account-menu__notification-indicator--available')).toBe(true)
+    expect(connectivityIndicator()?.classList.contains('account-menu__connectivity-indicator--success')).toBe(true)
+    expect(connectivityIndicator()?.getAttribute('title')).toBe('Connected')
 
     translationCalls.splice(0)
     siteNotifications.notificationState = 'unknown'

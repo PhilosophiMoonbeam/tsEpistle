@@ -3,7 +3,7 @@ import { evaluateGroupAccess, type AccessPage, type PageRuleAuthority } from '..
 
 const assertPageUnlocked = vi.fn(async () => {})
 const protectedAssetRequiresUnlock = vi.fn(async () => false)
-vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({ assertPageUnlocked, protectedAssetRequiresUnlock }))
+vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({ assertPageUnlocked, pageRequiresUnlock: vi.fn(async () => false), protectedAssetRequiresUnlock }))
 
 type SnapshotOperations = {
   getOfflineSnapshot(input: { id: number; requester?: unknown }): Promise<Record<string, unknown> & { content: { html: string } }>

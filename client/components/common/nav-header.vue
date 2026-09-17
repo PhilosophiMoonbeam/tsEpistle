@@ -457,28 +457,6 @@
                 )
                   v-list-item-title {{lc.name}}
 
-          //- ACCOUNT & APP
-
-          v-menu.nav-header-app-status-menu(
-            location="bottom end"
-            transition='slide-y-transition'
-            :close-on-content-click='false'
-          )
-            template(v-slot:activator='{ props: menuProps }')
-              v-tooltip(location="bottom")
-                template(v-slot:activator='{ props: tooltipProps }')
-                  v-btn.nav-header-app-status-trigger(
-                    icon
-                    v-bind='mergeProps(menuProps, tooltipProps)'
-                    rounded='lg'
-                    :class='`nav-header-app-status-trigger--${connectionPresentation.tone}`'
-                    :aria-label='connectionPresentation.label'
-                    :title='connectionPresentation.label'
-                  )
-                    v-icon(:icon='connectionPresentation.icon', aria-hidden='true')
-                span {{connectionPresentation.label}}
-            .nav-header-app-status-content
-              PwaStatus
 
           v-menu(location="bottom end", transition='slide-y-transition', :close-on-content-click='false', @update:model-value='accountMenuVisibilityChanged')
             template(v-slot:activator='{ props: menuProps }')
@@ -490,6 +468,8 @@
                     :class='$vuetify.locale.isRtl ? `ml-0` : ``'
                     rounded='lg'
                     :aria-label='accountButtonLabel'
+                    :aria-description='connectionPresentation.label'
+                    :title='connectionPresentation.label'
                   )
                     template(v-if='isAuthenticated')
                       v-avatar(v-if='picture.kind === `initials`', :size='32', color='primary')
@@ -503,6 +483,13 @@
                       :class='`account-menu__notification-indicator--${notificationState}`'
                       aria-hidden='true'
                     )
+                    span.account-menu__connectivity-indicator(
+                      :class='`account-menu__connectivity-indicator--${connectionPresentation.tone}`'
+                      :title='connectionPresentation.label'
+                      data-connectivity-indicator
+                      aria-hidden='true'
+                    )
+                      v-icon(:icon='connectionPresentation.icon', size='13')
                 span {{accountButtonLabel}}
             v-list.nav-header-menu.account-menu(:aria-label='accountMenuLabel')
               template(v-if='isAuthenticated')
@@ -524,6 +511,9 @@
                 v-divider
                 AccountNotifications.account-menu__notifications(v-if='!siteNotifications.identityStale')
                 v-divider
+              PwaStatus.account-menu__pwa
+              v-divider
+              template(v-if='isAuthenticated')
                 section.account-menu__preferences(role='region' aria-label='Appearance settings')
                   appearance-selector
                 v-divider
@@ -580,7 +570,7 @@ import {
   onPageMove,
   onPageSource
 } from '../../helpers/page-action-events'
-import { emitSearchEnter, emitSearchExit, emitSearchMove } from '../../helpers/search-navigation-events'
+import { emitSearchEnter, emitSearchExit, emitSearchMove, onSearchFocus, offSearchFocus } from '../../helpers/search-navigation-events'
 import * as pwa from '../../helpers/pwa.ts'
 
 type PageLocation = { path: string, locale: string }
@@ -645,6 +635,7 @@ export default defineComponent({
       notificationIdentityRecovery: null as Promise<void> | null,
       notificationIdentityRecoveryGeneration: 0,
       headerActionGeneration: 1,
+      searchFocusGeneration: 0,
       logoutPending: false,
       duplicateOpts: {
         locale: 'en',
@@ -837,6 +828,7 @@ export default defineComponent({
     onPageMove(this.pageMove)
     onPageConvert(this.pageConvert)
     onPageDuplicate(this.pageDuplicate)
+    onSearchFocus(this.handleSearchFocusCommand)
     onPageDelete(this.pageDelete)
     this.isDevMode = siteConfig.devMode === true
     window.addEventListener('keydown', this.handleSearchShortcut)
@@ -845,6 +837,7 @@ export default defineComponent({
     this.syncSiteNotifications()
   },
   beforeUnmount () {
+    this.searchFocusGeneration += 1
     this.notificationIdentityRecoveryGeneration += 1
     this.headerActionGeneration += 1
     offPageEdit(this.pageEdit)
@@ -856,6 +849,7 @@ export default defineComponent({
     offPageDelete(this.pageDelete)
     window.removeEventListener('keydown', this.handleSearchShortcut)
     document.removeEventListener('visibilitychange', this.handleNotificationVisibility)
+    offSearchFocus(this.handleSearchFocusCommand)
     window.removeEventListener('focus', this.handleNotificationFocus)
     this.pageActionsAreOpen = false
     if (this.pageActionsFocusFrame !== null) {
@@ -1026,17 +1020,38 @@ export default defineComponent({
       target?.focus({ preventScroll: true })
     },
     searchClose () {
+      this.searchFocusGeneration += 1
       this.searchIsFocused = false
       this.searchMode = 'search'
       this.search = ''
     },
-    async focusSearchField(): Promise<void> {
-      if (this.hideSearch) return
+    handleSearchFocusCommand (): void {
+      if (this.hideSearch || (this.dense && this.$vuetify.display.mdAndUp)) return
+      void this.focusSearchField()
+    },
+    async focusSearchField (): Promise<void> {
+      if (this.hideSearch || (this.dense && this.$vuetify.display.mdAndUp)) return
+      const focusGeneration = ++this.searchFocusGeneration
       this.searchIsShown = true
       this.searchIsFocused = true
       await this.$nextTick()
+      if (
+        focusGeneration !== this.searchFocusGeneration ||
+        this.hideSearch ||
+        !this.searchIsShown ||
+        !this.searchIsFocused ||
+        (this.dense && this.$vuetify.display.mdAndUp)
+      ) return
       const field = this.$vuetify.display.smAndDown ? this.$refs.searchFieldMobile : this.$refs.searchField
-      ;(field as { focus?: () => void } | undefined)?.focus?.()
+      const focusable = field as { focus?: (options?: FocusOptions) => void, $el?: unknown } | undefined
+      if (typeof focusable?.focus === 'function') {
+        focusable.focus({ preventScroll: true })
+        return
+      }
+      const root = focusable?.$el
+      if (root instanceof HTMLElement) {
+        root.querySelector<HTMLInputElement>('input')?.focus({ preventScroll: true })
+      }
     },
     async searchEscape(): Promise<void> {
       this.searchClose()
@@ -1539,6 +1554,26 @@ export default defineComponent({
     background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent) !important;
     color: var(--wiki-accent-ink) !important;
   }
+  .nav-header-inner .nav-header-agent:hover,
+  .nav-header-inner .nav-header-agent:focus-visible,
+  .nav-header-inner .nav-header-edit-btn:hover,
+  .nav-header-inner .nav-header-edit-btn:focus-visible {
+    border-color: color-mix(in srgb, var(--wiki-ambient-accent) 48%, transparent);
+    background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent) !important;
+    color: color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 88%, var(--wiki-accent-warm) 12%) !important;
+  }
+
+  .nav-header-inner .nav-header-agent .v-icon,
+  .nav-header-inner .nav-header-edit-btn .v-icon {
+    transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
+  }
+
+  .nav-header-inner .nav-header-agent:hover .v-icon,
+  .nav-header-inner .nav-header-agent:focus-visible .v-icon,
+  .nav-header-inner .nav-header-edit-btn:hover .v-icon,
+  .nav-header-inner .nav-header-edit-btn:focus-visible .v-icon {
+    transform: translateY(-1px);
+  }
   .nav-header-command .nav-header-browse:hover {
     transform: none;
   }
@@ -1681,29 +1716,30 @@ export default defineComponent({
 .account-menu__trigger {
   position: relative;
 }
-.nav-header-app-status-content {
-  width: min(24rem, calc(100vw - (var(--wiki-space-4) * 2)));
-  max-width: calc(100vw - (var(--wiki-space-4) * 2));
+.account-menu__pwa {
+  display: block;
+  width: 100%;
+  min-width: 0;
 }
 
-.nav-header .nav-header-inner .nav-header-app-status-trigger {
-  flex: 0 0 auto;
-  min-width: max(44px, var(--wiki-control-height, 44px)) !important;
-  min-height: max(44px, var(--wiki-control-height, 44px)) !important;
-  height: max(44px, var(--wiki-control-height, 44px)) !important;
+.account-menu__connectivity-indicator {
+  position: absolute;
+  inset-inline-start: .2rem;
+  bottom: .2rem;
+  display: grid;
+  width: 1rem;
+  height: 1rem;
+  place-items: center;
+  border: 2px solid rgb(var(--v-theme-surface));
+  border-radius: 50%;
+  background: rgb(var(--v-theme-surface));
+  color: rgb(var(--v-theme-on-surface-variant));
+  line-height: 1;
 }
 
-.nav-header-app-status-trigger--success {
-  color: rgb(var(--v-theme-success)) !important;
-}
-
-.nav-header-app-status-trigger--warning {
-  color: rgb(var(--v-theme-warning)) !important;
-}
-
-.nav-header-app-status-trigger--error {
-  color: rgb(var(--v-theme-error)) !important;
-}
+.account-menu__connectivity-indicator--success { color: rgb(var(--v-theme-success)); }
+.account-menu__connectivity-indicator--warning { color: rgb(var(--v-theme-warning)); }
+.account-menu__connectivity-indicator--error { color: rgb(var(--v-theme-error)); }
 
 
 .account-menu__initials {
@@ -2011,6 +2047,27 @@ export default defineComponent({
   .nav-header-menu .v-list-item {
     border-color: CanvasText !important;
   }
+  .nav-header .nav-header-inner .nav-header-agent,
+  .nav-header .nav-header-inner .nav-header-edit-btn {
+    border-color: ButtonText !important;
+    background: ButtonFace !important;
+    color: ButtonText !important;
+    transform: none !important;
+    transition: none !important;
+  }
+
+  .nav-header .nav-header-inner .nav-header-agent .v-icon,
+  .nav-header .nav-header-inner .nav-header-edit-btn .v-icon {
+    color: ButtonText !important;
+    transform: none !important;
+    transition: none !important;
+  }
+
+  .account-menu__connectivity-indicator {
+    border-color: ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
 
   .nav-header::after {
     display: none;
@@ -2023,6 +2080,12 @@ export default defineComponent({
   .navHeaderSearch-leave-active,
   .nav-header-menu .v-list-item {
     transition-duration: .01ms !important;
+  }
+  .nav-header .nav-header-inner .nav-header-agent:hover .v-icon,
+  .nav-header .nav-header-inner .nav-header-agent:focus-visible .v-icon,
+  .nav-header .nav-header-inner .nav-header-edit-btn:hover .v-icon,
+  .nav-header .nav-header-inner .nav-header-edit-btn:focus-visible .v-icon {
+    transform: none !important;
   }
 }
 </style>

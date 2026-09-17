@@ -15,21 +15,28 @@ import { createWikiThemes, installThemeSwitchGuard, resolveThemeName, WIKI_THEME
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
 import { createAsyncComponent } from './components/common/async-component-state.vue'
 import { openOfflineStorage, type OfflineStorage } from './helpers/offline-storage.ts'
-import { createOfflineSyncCoordinator, type OfflineSyncCoordinator } from './helpers/offline-sync.ts'
+import {
+  createOfflineSyncCoordinator,
+  createOfflineSyncUnavailableResult,
+  type OfflineSyncCoordinator,
+  type OfflineSyncResult,
+  type OfflineSyncService
+} from './helpers/offline-sync.ts'
 
-type OfflineSyncService = {
-  reconcile: (reason?: string) => Promise<unknown>
-}
 const OFFLINE_SYNC_COORDINATOR_KEY = 'offline-sync-coordinator'
 const offlineSyncCoordinator = shallowRef<OfflineSyncCoordinator | null>(null)
 let offlineSyncStorage: OfflineStorage | null = null
 let offlineSyncStartToken = 0
 let offlineSyncStartPromise: Promise<OfflineSyncCoordinator | null> | null = null
-let offlineSyncPendingReconcile: Promise<unknown> | null = null
+let offlineSyncPendingReconcile: Promise<OfflineSyncResult> | null = null
 let stopOfflinePwaWatch: (() => void) | null = null
 let pendingOfflineSyncReason: string | null = null
+let offlineSyncStartError: string | null = null
 let offlineSyncLifecycleAttached = false
 
+const observeOfflineSync = (coordinator: OfflineSyncCoordinator | null, reason: string): void => {
+  coordinator?.observe(reason)
+}
 const handleOfflinePageHide = (event: PageTransitionEvent): void => {
   if (event.persisted) return
   stopOfflineSync()
@@ -37,7 +44,7 @@ const handleOfflinePageHide = (event: PageTransitionEvent): void => {
 
 const handleOfflinePageShow = (event: PageTransitionEvent): void => {
   if (!event.persisted) return
-  void offlineSyncCoordinator.value?.reconcile('pageshow')
+  observeOfflineSync(offlineSyncCoordinator.value, 'pageshow')
 }
 
 const attachOfflineSyncLifecycle = (): void => {
@@ -76,14 +83,13 @@ const startOfflineSync = (): Promise<OfflineSyncCoordinator | null> => {
   const token = ++offlineSyncStartToken
   const started = (async (): Promise<OfflineSyncCoordinator | null> => {
     let storage: OfflineStorage | null = null
-    let coordinator: OfflineSyncCoordinator | null = null
     try {
       storage = await openOfflineStorage()
       if (token !== offlineSyncStartToken) {
         storage.close()
         return null
       }
-      coordinator = createOfflineSyncCoordinator({
+      const coordinator = createOfflineSyncCoordinator({
         storage,
         siteId: window.location.origin,
         fetchImpl: window.fetch.bind(window),
@@ -91,25 +97,27 @@ const startOfflineSync = (): Promise<OfflineSyncCoordinator | null> => {
         isForeground: () => typeof document === 'undefined' || document.visibilityState === 'visible',
         isRetired: () => pwaState.mode === 'retirement'
       })
+      offlineSyncStartError = null
       offlineSyncStorage = storage
       offlineSyncCoordinator.value = coordinator
       stopOfflinePwaWatch = watch(
         () => pwaState.connectionState,
         state => {
-          if (state === 'online') void coordinator?.reconcile('online')
+          if (state === 'online') observeOfflineSync(coordinator, 'online')
+          else coordinator.invalidateIdentity()
         }
       )
       coordinator.start()
       return coordinator
-    } catch {
+    } catch (error) {
+      offlineSyncStartError = error instanceof Error && error.message.trim() ? error.message : 'Offline storage is unavailable.'
       stopOfflinePwaWatch?.()
       stopOfflinePwaWatch = null
-      if (offlineSyncCoordinator.value === coordinator) {
-        coordinator?.dispose()
-        offlineSyncCoordinator.value = null
-        offlineSyncStorage = null
-      }
+      offlineSyncCoordinator.value?.dispose()
+      offlineSyncCoordinator.value = null
+      offlineSyncStorage = null
       storage?.close()
+      detachOfflineSyncLifecycle()
       return null
     }
   })()
@@ -121,29 +129,28 @@ const startOfflineSync = (): Promise<OfflineSyncCoordinator | null> => {
   return sharedPromise
 }
 
-const reconcileAfterOfflineSyncStartup = (reason: string): Promise<unknown> => {
+const reconcileAfterOfflineSyncStartup = (reason: string): Promise<OfflineSyncResult> => {
   pendingOfflineSyncReason = reason
   if (offlineSyncPendingReconcile) return offlineSyncPendingReconcile
-  let sharedPromise: Promise<unknown>
-  sharedPromise = startOfflineSync()
-    .then(coordinator => {
-      if (!coordinator) return null
-      const pendingReason = pendingOfflineSyncReason
-      pendingOfflineSyncReason = null
-      return pendingReason ? coordinator.reconcile(pendingReason) : null
-    })
-    .finally(() => {
-      if (offlineSyncPendingReconcile === sharedPromise) offlineSyncPendingReconcile = null
-    })
+  const started: Promise<OfflineSyncResult> = startOfflineSync().then<OfflineSyncResult>(async (coordinator): Promise<OfflineSyncResult> => {
+    if (!coordinator) return createOfflineSyncUnavailableResult(offlineSyncStartError ?? 'Offline storage is unavailable.')
+    const pendingReason = pendingOfflineSyncReason
+    pendingOfflineSyncReason = null
+    return await (pendingReason ? coordinator.reconcile(pendingReason) : coordinator.reconcile(reason))
+  })
+  let sharedPromise: Promise<OfflineSyncResult>
+  sharedPromise = started.finally(() => {
+    if (offlineSyncPendingReconcile === sharedPromise) offlineSyncPendingReconcile = null
+  })
   offlineSyncPendingReconcile = sharedPromise
   return sharedPromise
 }
 
 const offlineSyncService: OfflineSyncService = {
-  reconcile(reason = 'manual'): Promise<unknown> {
+  async reconcile(reason = 'manual'): Promise<OfflineSyncResult> {
     const coordinator = offlineSyncCoordinator.value
-    if (coordinator) return coordinator.reconcile(reason)
-    return reconcileAfterOfflineSyncStartup(reason)
+    if (coordinator) return await coordinator.reconcile(reason)
+    return await reconcileAfterOfflineSyncStartup(reason)
   }
 }
 

@@ -401,6 +401,7 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
         const [created] = await tx('users')
           .insert({
             providerKey: provider.key,
+            email: next.email,
             name: next.name,
             location: next.location,
             jobTitle: next.jobTitle,

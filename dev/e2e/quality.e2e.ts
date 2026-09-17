@@ -191,6 +191,92 @@ test.describe('release accessibility profiles', () => {
       await fixture.dispose()
     }
   })
+  test('keeps contextual Agent glass isolated from opaque surfaces', async ({ page }, testInfo) => {
+    requireProject(testInfo, 'accessibility-keyboard')
+    test.setTimeout(60_000)
+    const fixture = await installEnabledAgentFixture(page, { mode: 'focus' })
+    const cdp = await page.context().newCDPSession(page)
+    try {
+      const agent = await openEnabledAgent(page)
+      await expect(agent).toHaveClass(/inline-agent--contextual/)
+      const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
+      await composer.fill('Inspect the contextual Agent surface hierarchy.')
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(agent.getByText('The release is ready for a deliberate review.', { exact: true })).toBeVisible()
+
+      const toolbar = agent.locator('.inline-agent__toolbar')
+      const body = agent.locator('.inline-agent__body')
+      const readSurfaceStyle = async (locator: Locator) =>
+        locator.evaluate(element => {
+          const styles = getComputedStyle(element)
+          const color = styles.backgroundColor
+          const alphaMatch = color.match(/rgba\([^,]+,[^,]+,[^,]+,\s*([^)]+)\)/u)
+          return {
+            backgroundAlpha: alphaMatch ? Number(alphaMatch[1]) : color === 'transparent' ? 0 : 1,
+            opacity: Number(styles.opacity),
+            backdropFilter: styles.backdropFilter
+          }
+        })
+      const expectOpaque = async (locator: Locator, surface: string): Promise<void> => {
+        const styles = await readSurfaceStyle(locator)
+        expect(styles.backgroundAlpha, `${surface} keeps an opaque background`).toBe(1)
+        expect(styles.opacity, `${surface} keeps full element opacity`).toBe(1)
+        expect(styles.backdropFilter, `${surface} does not become a glass layer`).toBe('none')
+      }
+      const expectContextualGlass = async (reduced: boolean): Promise<void> => {
+        const [toolbarStyles, bodyStyles] = await Promise.all([readSurfaceStyle(toolbar), readSurfaceStyle(body)])
+        if (reduced) {
+          expect(toolbarStyles.backgroundAlpha, 'Reduced transparency makes the Agent toolbar opaque').toBe(1)
+          expect(bodyStyles.backgroundAlpha, 'Reduced transparency makes the Agent body opaque').toBe(1)
+          expect(toolbarStyles.backdropFilter, 'Reduced transparency removes toolbar blur').toBe('none')
+          expect(bodyStyles.backdropFilter, 'Reduced transparency removes body blur').toBe('none')
+        } else {
+          expect(toolbarStyles.backgroundAlpha, 'Normal transparency keeps the Agent toolbar translucent').toBeLessThan(1)
+          expect(bodyStyles.backgroundAlpha, 'Normal transparency keeps the Agent body translucent').toBeLessThan(1)
+          expect(toolbarStyles.backdropFilter, 'Normal transparency blurs the Agent toolbar').toContain('blur')
+          expect(bodyStyles.backdropFilter, 'Normal transparency blurs the Agent body').toContain('blur')
+        }
+        expect(toolbarStyles.opacity).toBe(1)
+        expect(bodyStyles.opacity).toBe(1)
+      }
+      const expectOpaqueWorkspaceSurfaces = async (): Promise<void> => {
+        const messageSurfaces = agent.locator('.agent-message__surface')
+        await expect(messageSurfaces).toHaveCount(2)
+        for (const surface of await messageSurfaces.all()) await expectOpaque(surface, 'Agent message surface')
+        await expectOpaque(agent.locator('.agent-composer'), 'Agent composer')
+
+        const historyTrigger = agent.getByRole('button', { name: 'Open agent conversation history' })
+        await historyTrigger.click()
+        const history = agent.locator('.inline-agent__side--history')
+        await expect(history).toBeVisible()
+        await expectOpaque(history, 'Agent history')
+        await history.getByRole('button', { name: 'Close chat history' }).click()
+        await expect(history).toBeHidden()
+
+        const memoryTrigger = agent.getByRole('button', { name: 'Manage agent memory' })
+        await memoryTrigger.click()
+        const memory = agent.locator('.inline-agent__side--memory')
+        await expect(memory).toBeVisible()
+        await expectOpaque(memory, 'Agent memory')
+        await memory.getByRole('button', { name: 'Close agent memory' }).click()
+        await expect(memory).toBeHidden()
+      }
+
+      await expectContextualGlass(false)
+      await expectOpaqueWorkspaceSurfaces()
+
+      await cdp.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }]
+      })
+      await expect.poll(() => page.evaluate(() => window.matchMedia('(prefers-reduced-transparency: reduce)').matches)).toBe(true)
+      await expectContextualGlass(true)
+      await expectOpaqueWorkspaceSurfaces()
+      fixture.assertNoUnexpectedRequests()
+    } finally {
+      await cdp.send('Emulation.setEmulatedMedia', { features: [] }).catch(() => undefined)
+      await fixture.dispose()
+    }
+  })
 
   test('exposes Stop response while an enabled Agent stream is active', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')

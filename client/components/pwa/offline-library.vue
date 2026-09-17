@@ -19,6 +19,12 @@ import {
   type OfflineStorage
 } from '../../helpers/offline-storage.ts'
 import { renderOfflineHtmlFragment } from '../../helpers/offline-renderer.ts'
+import {
+  createOfflineSyncUnavailableResult,
+  OFFLINE_SYNC_COORDINATOR_KEY,
+  type OfflineSyncResult,
+  type OfflineSyncService
+} from '../../helpers/offline-sync.ts'
 
 type OfflinePageSelector = {
   readonly siteId: string
@@ -43,18 +49,21 @@ const props = defineProps<{
   clearDeviceToken?: number
   requestedSelector?: OfflinePageSelector | null
 }>()
-
 const emit = defineEmits<{
   changed: []
   error: [message: string]
   'retry-storage': []
 }>()
 
-type OfflineSyncService = {
-  reconcile: (reason?: string) => Promise<unknown>
+const offlineSyncResultDetail = (result: OfflineSyncResult, fallback: string): string => {
+  const detail = result.outcome === 'unavailable'
+    ? result.error
+    : result.error ?? result.diagnostics?.lastError
+  const normalized = typeof detail === 'string' ? detail.trim() : ''
+  return (normalized || fallback).slice(0, 512)
 }
-const OFFLINE_SYNC_COORDINATOR_KEY = 'offline-sync-coordinator'
-const offlineSyncService = inject<OfflineSyncService | null>(OFFLINE_SYNC_COORDINATOR_KEY, null)
+
+const offlineSyncService = inject<OfflineSyncService>(OFFLINE_SYNC_COORDINATOR_KEY)
 const OFFLINE_DOCUMENT_PATH = '/_offline'
 const OFFLINE_LOCALE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{1,34}$/u
 
@@ -82,6 +91,7 @@ const requestedSelectorConsumed = ref<string | null>(null)
 const loading = ref(false)
 const searching = ref(false)
 const removingKey = ref<string | null>(null)
+const refreshing = ref(false)
 const loadError = ref('')
 const searchError = ref('')
 const readerState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -107,6 +117,11 @@ const isOfflineLocale = (value: string): boolean => OFFLINE_LOCALE_PATTERN.test(
 
 const recordKey = (record: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId' | 'locale'>): string =>
   `${record.siteId}\u0000${record.pageId}\u0000${record.locale}`
+
+const isSameOfflinePage = (
+  left: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId'>,
+  right: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId'>
+): boolean => left.siteId === right.siteId && left.pageId === right.pageId
 
 const recordDomKey = (record: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId' | 'locale'>): string =>
   encodeURIComponent(recordKey(record))
@@ -210,8 +225,7 @@ const syncDiagnosticsDetail = computed(() => {
   const error = diagnostics.lastError ? ` ${diagnostics.lastError}` : ''
   return `Sync ${diagnostics.status}: ${pending}, ${retained}, ${removed}.${timing}${error}`
 })
-const provenanceLabel = (record: OfflineSnapshotRecord): string => {
-  const entry = policyForRecord(record)
+const provenanceLabelForPolicy = (entry: OfflinePagePolicyRecord | null): string => {
   if (!entry) return 'Policy details unavailable'
   const sources: string[] = []
   if (entry.manual) sources.push('Manual')
@@ -219,6 +233,7 @@ const provenanceLabel = (record: OfflineSnapshotRecord): string => {
   if (entry.tag) sources.push(entry.tagNames.length ? `Tag: ${entry.tagNames.join(', ')}` : 'Tag subscription')
   return sources.length ? sources.join(' + ') : 'No active intent'
 }
+const provenanceLabel = (record: OfflineSnapshotRecord): string => provenanceLabelForPolicy(policyForRecord(record))
 const availabilityLabel = (record: OfflineSnapshotRecord): string =>
   policyForRecord(record)?.availability ?? 'unknown'
 const storageChecking = computed(() => props.storageState === 'uninspected' || props.storageState === 'checking')
@@ -229,6 +244,32 @@ const resultRecords = computed(() => {
     .map((result: OfflineSearchResult) => byKey.get(recordKey(result.document)))
     .filter((record): record is OfflineSnapshotRecord => record !== undefined && !isExpired(record))
 })
+type MissingPolicyPageStatus = 'pending' | 'denied' | 'stale'
+type MissingPolicyPage = {
+  readonly page: OfflinePagePolicyRecord
+  readonly status: MissingPolicyPageStatus
+}
+
+const hasEffectivePolicyIntent = (page: OfflinePagePolicyRecord): boolean =>
+  page.siteId === currentOrigin() &&
+  !page.excluded &&
+  (page.manual || page.tag || (automaticSavingEnabled.value && page.automatic))
+
+const missingPolicyPageStatus = (page: OfflinePagePolicyRecord): MissingPolicyPageStatus => {
+  if (page.availability === 'ineligible') return 'denied'
+  if (page.availability === 'unknown') return 'pending'
+  return 'stale'
+}
+
+const missingPolicyPages = computed<MissingPolicyPage[]>(() => {
+  if (!policy.value || !hasCorpus.value) return []
+  const bodyKeys = new Set(activeRecords.value.map(recordKey))
+  return policy.value.pages
+    .filter((page: OfflinePagePolicyRecord) => hasEffectivePolicyIntent(page) && !bodyKeys.has(recordKey(page)))
+    .map((page: OfflinePagePolicyRecord) => ({ page, status: missingPolicyPageStatus(page) }))
+})
+const missingPolicyStatusLabel = (status: MissingPolicyPageStatus): string =>
+  status === 'pending' ? 'Pending snapshot' : status === 'denied' ? 'Download denied' : 'Snapshot stale'
 
 const searchDetail = computed(() => {
   if (storageChecking.value || loading.value || !hasCorpus.value) return 'Checking saved pages on this device.'
@@ -450,8 +491,20 @@ const setSelectionUrl = (record: OfflineSnapshotRecord, mode: ReaderHistoryMode)
 const activeRecordForKey = (key: string | null): OfflineSnapshotRecord | null =>
   key ? activeRecords.value.find((record: OfflineSnapshotRecord) => recordKey(record) === key) ?? null : null
 
-const isReaderCurrent = (operation: number, key: string, generation: number, revision: number): boolean =>
-  operation === readerToken && selectedKey.value === key && sessionGeneration.value === generation && corpusRevision.value === revision && Boolean(activeRecordForKey(key))
+const isReaderCurrent = (
+  operation: number,
+  key: string,
+  generation: number,
+  revision: number,
+  expectedPolicyRevision: number
+): boolean =>
+  operation === readerToken &&
+  selectedKey.value === key &&
+  sessionGeneration.value === generation &&
+  corpusRevision.value === revision &&
+  policy.value?.sessionGeneration === generation &&
+  policy.value?.state.policyRevision === expectedPolicyRevision &&
+  Boolean(activeRecordForKey(key))
 
 const decorateReaderTree = (target: HTMLElement): void => {
   target.setAttribute('dir', 'auto')
@@ -490,6 +543,7 @@ const openRecord = async (record: OfflineSnapshotRecord, event?: MouseEvent, opt
   const origin = currentOrigin()
   const storage = props.storage
   const view = corpus.value
+  const currentPolicy = policy.value
   const mode = options.history ?? 'pushed'
   if (event) {
     rememberReaderOpener(record, event)
@@ -503,7 +557,14 @@ const openRecord = async (record: OfflineSnapshotRecord, event?: MouseEvent, opt
     emit('error', 'This saved page has expired and cannot be opened.')
     return
   }
-  if (!storage || !view || view.sessionGeneration !== sessionGeneration.value || view.corpusRevision !== corpusRevision.value) {
+  if (
+    !storage ||
+    !view ||
+    !currentPolicy ||
+    view.sessionGeneration !== sessionGeneration.value ||
+    view.corpusRevision !== corpusRevision.value ||
+    currentPolicy.sessionGeneration !== view.sessionGeneration
+  ) {
     emit('error', 'Saved pages changed before this page could open. Try again.')
     return
   }
@@ -517,15 +578,19 @@ const openRecord = async (record: OfflineSnapshotRecord, event?: MouseEvent, opt
   renderTarget.value?.replaceChildren()
   const generation = view.sessionGeneration
   const revision = view.corpusRevision
+  const expectedPolicyRevision = currentPolicy.state.policyRevision
   await nextTick()
-  if (!isReaderCurrent(operation, key, generation, revision)) return
+  if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
   const staging = document.createElement('div')
   staging.setAttribute('dir', 'auto')
   try {
     await renderOfflineHtmlFragment(staging, record.snapshot)
-    if (!isReaderCurrent(operation, key, generation, revision)) return
-    const verifiedView = await storage.readSnapshotCorpus({ expectedSessionGeneration: generation })
-    if (!isReaderCurrent(operation, key, generation, revision)) return
+    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
+    const verifiedView = await storage.readSnapshotCorpus({
+      expectedSessionGeneration: generation,
+      expectedPolicyRevision
+    })
+    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
     const verifiedRecord = verifiedView.snapshots.find((candidate: OfflineSnapshotRecord) => recordKey(candidate) === key)
     if (verifiedView.corpusRevision !== revision || !verifiedRecord || isExpired(verifiedRecord)) {
       finishReaderError(operation, key, 'This saved page changed or expired before it finished opening.')
@@ -533,14 +598,20 @@ const openRecord = async (record: OfflineSnapshotRecord, event?: MouseEvent, opt
     }
     const opened = await storage.markSnapshotOpened(
       { siteId: verifiedRecord.siteId, pageId: verifiedRecord.pageId, locale: verifiedRecord.locale },
-      { expectedSessionGeneration: generation }
+      {
+        expectedSessionGeneration: generation,
+        expectedPolicyRevision
+      }
     )
-    if (!isReaderCurrent(operation, key, generation, revision) || !opened) {
+    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision) || !opened) {
       finishReaderError(operation, key, 'This saved page is no longer available on this device.')
       return
     }
-    const committedView = await storage.readSnapshotCorpus({ expectedSessionGeneration: generation })
-    if (!isReaderCurrent(operation, key, generation, revision)) return
+    const committedView = await storage.readSnapshotCorpus({
+      expectedSessionGeneration: generation,
+      expectedPolicyRevision
+    })
+    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
     const committedRecord = committedView.snapshots.find((candidate: OfflineSnapshotRecord) => recordKey(candidate) === key)
     if (committedView.corpusRevision !== revision || !committedRecord || isExpired(committedRecord)) {
       finishReaderError(operation, key, 'This saved page changed before it could be committed for reading.')
@@ -548,16 +619,16 @@ const openRecord = async (record: OfflineSnapshotRecord, event?: MouseEvent, opt
     }
     decorateReaderTree(staging)
     const target = renderTarget.value
-    if (!target || !isReaderCurrent(operation, key, generation, revision)) return
+    if (!target || !isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
     target.replaceChildren(...Array.from(staging.childNodes))
     target.setAttribute('dir', 'auto')
     readerState.value = 'ready'
     readerMessage.value = 'Saved page ready to read.'
     await nextTick()
-    if (!isReaderCurrent(operation, key, generation, revision)) return
+    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
     selectedHeading.value?.focus({ preventScroll: true })
   } catch (error) {
-    if (operation !== readerToken || selectedKey.value !== key) return
+    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
     finishReaderError(operation, key, normalizeError(error, 'This saved page failed its integrity or safety checks.'))
     emit('error', readerMessage.value)
   }
@@ -593,11 +664,14 @@ const retryReader = (): void => {
   const mode: ReaderHistoryMode = historyMode.value === 'initial' ? 'initial' : 'history'
   void openRecord(record, undefined, { history: mode })
 }
-const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Promise<void> => {
+const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Promise<boolean> => {
   const storage = props.storage
   const preservePolicyError = options.preservePolicyError === true
   if (!preservePolicyError) policyError.value = ''
   const token = ++loadToken
+  const readerOperationAtStart = readerToken
+  const selectedKeyAtStart = selectedKey.value
+  const previousPolicyRevision = policy.value?.state.policyRevision ?? null
   preparationController?.abort()
   preparationController = null
   searchController?.abort()
@@ -608,7 +682,7 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     policyLoading.value = false
     loading.value = false
     loadError.value = ''
-    return
+    return false
   }
   const origin = currentOrigin()
   if (!origin) {
@@ -616,9 +690,11 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     policyLoading.value = false
     hasCorpus.value = false
     records.value = []
+    corpus.value = null
+    preparedCorpus.value = null
     loadError.value = 'The current site identity is unavailable; saved pages cannot be opened safely.'
     loading.value = false
-    return
+    return false
   }
   const selector = props.requestedSelector
   if (selector && !isValidSelector(selector, origin)) {
@@ -626,17 +702,24 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     policyLoading.value = false
     hasCorpus.value = false
     records.value = []
+    corpus.value = null
+    preparedCorpus.value = null
     loadError.value = 'The requested saved-page link is invalid or belongs to another site.'
     emit('error', loadError.value)
     loading.value = false
-    return
+    return false
   }
   loading.value = true
   policyLoading.value = true
   loadError.value = ''
   try {
     const loadedPolicy = await storage.readOfflinePolicy()
-    const loaded = await storage.readSnapshotCorpus({ expectedSessionGeneration: loadedPolicy.sessionGeneration })
+    if (token !== loadToken) return false
+    const loaded = await storage.readSnapshotCorpus({
+      expectedSessionGeneration: loadedPolicy.sessionGeneration,
+      expectedPolicyRevision: loadedPolicy.state.policyRevision
+    })
+    if (token !== loadToken) return false
     const loadedAt = Date.now()
     const previousRevision = corpusRevision.value
     const previousGeneration = sessionGeneration.value
@@ -660,10 +743,20 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
       corpusRevision: loaded.corpusRevision
     }) as OfflineSnapshotCorpus
     if (
-      selectedKey.value &&
-      previousRevision !== null &&
-      (previousRevision !== loaded.corpusRevision || previousGeneration !== loaded.sessionGeneration)
+      token !== loadToken ||
+      (
+        selectedKey.value &&
+        selectedKey.value === selectedKeyAtStart &&
+        readerToken === readerOperationAtStart &&
+        previousRevision !== null &&
+        (
+          previousRevision !== loaded.corpusRevision ||
+          previousGeneration !== loaded.sessionGeneration ||
+          previousPolicyRevision !== loadedPolicy.state.policyRevision
+        )
+      )
     ) {
+      if (token !== loadToken) return false
       ++readerToken
       renderTarget.value?.replaceChildren()
       readerState.value = 'error'
@@ -675,12 +768,12 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
       preparationController = controller
       try {
         prepared = await prepareOfflineSearchCorpus(validRecords.map(toSearchDocument), { signal: controller.signal })
-        if (token !== loadToken || preparationController !== controller) return
+        if (token !== loadToken || preparationController !== controller) return false
       } finally {
         if (preparationController === controller) preparationController = null
       }
     }
-    if (token !== loadToken || !prepared) return
+    if (token !== loadToken || !prepared) return false
     records.value = validRecords
     corpus.value = nextCorpus
     preparedCorpus.value = prepared
@@ -689,26 +782,34 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     hasCorpus.value = true
     policy.value = loadedPolicy
     if (!preservePolicyError) policyError.value = ''
-    if (selectedKey.value && !activeRecordForKey(selectedKey.value)) {
+    if (
+      selectedKey.value &&
+      !activeRecordForKey(selectedKey.value) &&
+      selectedKey.value === selectedKeyAtStart &&
+      readerToken === readerOperationAtStart
+    ) {
       closeRecord({ fromHistory: true })
       clearOfflineSelector()
     }
     await runSearch()
-    if (token !== loadToken) return
+    if (token !== loadToken) return false
     const selectorKey = requestedSelectorKey.value
     if (selector && selectorKey && requestedSelectorConsumed.value !== selectorKey) {
       requestedSelectorConsumed.value = selectorKey
       const selected = activeRecords.value.find((record: OfflineSnapshotRecord) => recordKey(record) === selectorKey)
       if (!selected) {
         emit('error', 'The requested saved page is no longer available on this device.')
-        return
+        return true
       }
       await openRecord(selected, undefined, { history: 'initial' })
+      if (token !== loadToken) return false
     }
+    return true
   } catch (error) {
-    if (token !== loadToken || isAbortError(error)) return
+    if (token !== loadToken || isAbortError(error)) return false
     loadError.value = normalizeError(error, 'Saved pages could not be read from this device.')
     emit('error', loadError.value)
+    return false
   } finally {
     if (token === loadToken) {
       loading.value = false
@@ -729,64 +830,148 @@ const focusAfterRemoval = async (): Promise<void> => {
   target?.focus({ preventScroll: true })
 }
 
+const removeLocalPageProjection = (selector: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId' | 'locale'>): void => {
+  const selectedWasRemoved =
+    selectedKey.value !== null &&
+    (selectedKey.value === recordKey(selector) ||
+      records.value.some(record => recordKey(record) === selectedKey.value && isSameOfflinePage(record, selector)))
+  records.value = records.value.filter(record => !isSameOfflinePage(record, selector))
+  searchResults.value = searchResults.value.filter(result => !isSameOfflinePage(result.document, selector))
+  if (corpus.value) {
+    corpus.value = Object.freeze({
+      ...corpus.value,
+      snapshots: Object.freeze(corpus.value.snapshots.filter(record => !isSameOfflinePage(record, selector)))
+    }) as OfflineSnapshotCorpus
+  }
+  preparedCorpus.value = null
+  searchHasMore.value = false
+  if (policy.value) {
+    policy.value = {
+      ...policy.value,
+      pages: policy.value.pages.filter(page => !isSameOfflinePage(page, selector))
+    }
+  }
+  if (selectedWasRemoved) {
+    closeRecord({ fromHistory: true, restoreFocus: false })
+    clearOfflineSelector()
+  }
+}
+
+const reconcileAfterCommittedRemoval = async (): Promise<void> => {
+  let syncFailure = ''
+  try {
+    const syncResult: OfflineSyncResult = offlineSyncService
+      ? await offlineSyncService.reconcile('manual')
+      : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+    if (syncResult.outcome === 'error' || syncResult.outcome === 'unavailable') {
+      const detail = offlineSyncResultDetail(syncResult, 'Offline synchronization could not be completed.')
+      syncFailure = syncResult.outcome === 'unavailable'
+        ? `Saved page removed locally, but offline sync is unavailable: ${detail}`
+        : `Saved page removed locally, but offline sync failed: ${detail}`
+      policyError.value = syncFailure
+      emit('error', policyError.value)
+    }
+  } catch (error) {
+    syncFailure = `Saved page removed locally, but offline sync failed: ${normalizeError(error, 'Offline synchronization could not be completed.').slice(0, 512)}`
+    policyError.value = syncFailure
+    emit('error', policyError.value)
+  }
+
+  let refreshed = false
+  let refillDetail = ''
+  try {
+    refreshed = await loadRecords({ preservePolicyError: Boolean(syncFailure) })
+  } catch (error) {
+    refillDetail = normalizeError(error, 'Saved pages could not be refreshed.').slice(0, 512)
+  }
+  if (!refreshed && !refillDetail) refillDetail = loadError.value || (storageUnavailable.value ? libraryMessage.value : '')
+  if (refillDetail) {
+    policyError.value = syncFailure
+      ? `${syncFailure} Saved-page list could not be refreshed: ${refillDetail}`
+      : `Saved page removed locally, but the saved-page list could not be refreshed: ${refillDetail}`
+    emit('error', policyError.value)
+  }
+}
+
 const removeRecord = async (record: OfflineSnapshotRecord): Promise<void> => {
   const storage = props.storage
-  if (!storage || removingKey.value) return
+  if (!storage || removingKey.value || refreshing.value || policyMutationLoading.value) return
   const key = recordKey(record)
   const visible = resultRecords.value
   const index = visible.findIndex((candidate: OfflineSnapshotRecord) => recordKey(candidate) === key)
   const focusedRow = document.activeElement instanceof HTMLElement && document.activeElement.closest(`[data-offline-record-key="${recordDomKey(record)}"]`)
   if (focusedRow && index >= 0) {
+    const next = visible.slice(index + 1).find(candidate => !isSameOfflinePage(candidate, record))
+    const previous = visible.slice(0, index).reverse().find(candidate => !isSameOfflinePage(candidate, record))
     focusAfterRemove.value = {
-      nextKey: visible[index + 1] ? recordKey(visible[index + 1]) : null,
-      previousKey: visible[index - 1] ? recordKey(visible[index - 1]) : null
+      nextKey: next ? recordKey(next) : null,
+      previousKey: previous ? recordKey(previous) : null
     }
   }
   removingKey.value = key
+  policyMutationLoading.value = true
+  let removalCommitted = false
   try {
-    const generation = sessionGeneration.value ?? await storage.currentSessionGeneration()
-    const currentPolicy = await storage.readOfflinePolicy({ expectedSessionGeneration: generation })
-    await storage.removeOfflinePage(
-      { siteId: record.siteId, pageId: record.pageId, locale: record.locale },
-      {
-        expectedSessionGeneration: generation,
-        expectedPolicyRevision: currentPolicy.state.policyRevision
-      }
-    )
-    await offlineSyncService?.reconcile('manual')
-    records.value = records.value.filter((candidate: OfflineSnapshotRecord) => recordKey(candidate) !== key)
-    searchResults.value = searchResults.value.filter((result: OfflineSearchResult) => recordKey(result.document) !== key)
-    if (selectedKey.value === key) {
-      closeRecord({ fromHistory: true })
-      clearOfflineSelector()
+    try {
+      const generation = sessionGeneration.value ?? await storage.currentSessionGeneration()
+      const currentPolicy = await storage.readOfflinePolicy({ expectedSessionGeneration: generation })
+      await storage.removeOfflinePage(
+        { siteId: record.siteId, pageId: record.pageId, locale: record.locale },
+        {
+          expectedSessionGeneration: generation,
+          expectedPolicyRevision: currentPolicy.state.policyRevision
+        }
+      )
+      removalCommitted = true
+    } catch (error) {
+      emit('error', normalizeError(error, 'The saved page could not be removed.'))
     }
+    if (!removalCommitted) return
+    removeLocalPageProjection(record)
     emit('changed')
-    await focusAfterRemoval()
-    void loadRecords()
-  } catch (error) {
-    emit('error', normalizeError(error, 'The saved page could not be removed.'))
+    await reconcileAfterCommittedRemoval()
   } finally {
+    policyMutationLoading.value = false
     if (removingKey.value === key) removingKey.value = null
+    if (removalCommitted) await focusAfterRemoval()
   }
 }
 
 const toggleAutomaticSaving = async (): Promise<void> => {
   const storage = props.storage
-  if (!storage || policyMutationLoading.value) return
+  if (!storage || policyMutationLoading.value || refreshing.value) return
   policyMutationLoading.value = true
   policyError.value = ''
+  let policyMutationCommitted = false
   try {
     const current = await storage.readOfflinePolicy()
     const state = await storage.setAutomaticSavingEnabled(!current.state.automaticSavingEnabled, {
       expectedSessionGeneration: current.sessionGeneration,
       expectedPolicyRevision: current.state.policyRevision
     })
+    policyMutationCommitted = true
     policy.value = { ...current, state }
     emit('changed')
-    await offlineSyncService?.reconcile('policy')
+    const syncResult: OfflineSyncResult = offlineSyncService
+      ? await offlineSyncService.reconcile('policy')
+      : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+    if (syncResult.outcome === 'error' || syncResult.outcome === 'unavailable') {
+      const detail = offlineSyncResultDetail(syncResult, 'Offline synchronization could not be completed.')
+      policyError.value = syncResult.outcome === 'unavailable'
+        ? `Automatic offline saving was changed locally, but offline sync is unavailable: ${detail}`
+        : `Automatic offline saving was changed locally, but offline sync failed: ${detail}`
+      emit('error', policyError.value)
+      await loadRecords({ preservePolicyError: true })
+      return
+    }
     await loadRecords()
   } catch (error) {
-    policyError.value = normalizeError(error, 'Automatic offline saving could not be changed.')
+    const detail = normalizeError(error, 'Automatic offline saving could not be changed.').slice(0, 512)
+    if (policyMutationCommitted) {
+      policyError.value = `Automatic offline saving was changed locally, but offline sync failed: ${detail}`
+    } else {
+      policyError.value = detail
+    }
     emit('error', policyError.value)
     await loadRecords({ preservePolicyError: true })
   } finally {
@@ -796,9 +981,10 @@ const toggleAutomaticSaving = async (): Promise<void> => {
 
 const removeSelectedTag = async (tag: string): Promise<void> => {
   const storage = props.storage
-  if (!storage || policyMutationLoading.value) return
+  if (!storage || policyMutationLoading.value || refreshing.value) return
   policyMutationLoading.value = true
   policyError.value = ''
+  let policyMutationCommitted = false
   try {
     const current = await storage.readOfflinePolicy()
     const nextTags = current.state.selectedTags.filter((candidate: string) => candidate !== tag)
@@ -806,12 +992,29 @@ const removeSelectedTag = async (tag: string): Promise<void> => {
       expectedSessionGeneration: current.sessionGeneration,
       expectedPolicyRevision: current.state.policyRevision
     })
+    policyMutationCommitted = true
     policy.value = { ...current, state }
     emit('changed')
-    await offlineSyncService?.reconcile('tags')
+    const syncResult: OfflineSyncResult = offlineSyncService
+      ? await offlineSyncService.reconcile('tags')
+      : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+    if (syncResult.outcome === 'error' || syncResult.outcome === 'unavailable') {
+      const detail = offlineSyncResultDetail(syncResult, 'Offline synchronization could not be completed.')
+      policyError.value = syncResult.outcome === 'unavailable'
+        ? `The offline tag subscription was removed locally, but offline sync is unavailable: ${detail}`
+        : `The offline tag subscription was removed locally, but offline sync failed: ${detail}`
+      emit('error', policyError.value)
+      await loadRecords({ preservePolicyError: true })
+      return
+    }
     await loadRecords()
   } catch (error) {
-    policyError.value = normalizeError(error, 'The offline tag subscription could not be removed.')
+    const detail = normalizeError(error, 'The offline tag subscription could not be removed.').slice(0, 512)
+    if (policyMutationCommitted) {
+      policyError.value = `The offline tag subscription was removed locally, but offline sync failed: ${detail}`
+    } else {
+      policyError.value = detail
+    }
     emit('error', policyError.value)
     await loadRecords({ preservePolicyError: true })
   } finally {
@@ -820,25 +1023,128 @@ const removeSelectedTag = async (tag: string): Promise<void> => {
 }
 
 const refreshOfflineSync = async (): Promise<void> => {
-  if (policyMutationLoading.value) return
+  if (policyMutationLoading.value || refreshing.value) return
+  refreshing.value = true
   policyError.value = ''
   try {
-    await offlineSyncService?.reconcile('manual')
+    const syncResult: OfflineSyncResult = offlineSyncService
+      ? await offlineSyncService.reconcile('manual')
+      : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+    if (syncResult.outcome === 'error' || syncResult.outcome === 'unavailable') {
+      const detail = offlineSyncResultDetail(syncResult, 'Offline synchronization could not be refreshed.')
+      policyError.value = syncResult.outcome === 'unavailable'
+        ? `Offline sync is unavailable: ${detail}`
+        : `Offline sync could not be refreshed: ${detail}`
+      emit('error', policyError.value)
+      await loadRecords({ preservePolicyError: true })
+      return
+    }
     await loadRecords()
   } catch (error) {
-    policyError.value = normalizeError(error, 'Offline sync could not be refreshed.')
+    policyError.value = normalizeError(error, 'Offline sync could not be refreshed.').slice(0, 512)
     emit('error', policyError.value)
     await loadRecords({ preservePolicyError: true })
+  } finally {
+    refreshing.value = false
+  }
+}
+const retryMissingPage = async (page: OfflinePagePolicyRecord): Promise<void> => {
+  if (refreshing.value || policyMutationLoading.value || removingKey.value) return
+  if (page.availability !== 'ineligible') {
+    await refreshOfflineSync()
+    return
+  }
+  const storage = props.storage
+  if (!storage || storageUnavailable.value) {
+    policyError.value = storageUnavailable.value
+      ? props.storageMessage ?? 'Saved pages are unavailable on this device right now.'
+      : 'Offline storage is unavailable.'
+    emit('error', policyError.value)
+    return
+  }
+  policyMutationLoading.value = true
+  policyError.value = ''
+  let resetCommitted = false
+  try {
+    const generation = sessionGeneration.value ?? await storage.currentSessionGeneration()
+    const current = await storage.readOfflinePolicy({ expectedSessionGeneration: generation })
+    const currentPage = current.pages.find(candidate => recordKey(candidate) === recordKey(page))
+    if (!currentPage || currentPage.excluded) return
+    await storage.setPageAvailability(
+      { siteId: currentPage.siteId, pageId: currentPage.pageId, locale: currentPage.locale },
+      'unknown',
+      {
+        expectedSessionGeneration: generation,
+        expectedPolicyRevision: current.state.policyRevision
+      }
+    )
+    resetCommitted = true
+    emit('changed')
+  } catch (error) {
+    policyError.value = normalizeError(error, 'The denied page could not be queued for another attempt.').slice(0, 512)
+    emit('error', policyError.value)
+    await loadRecords({ preservePolicyError: true })
+  } finally {
+    policyMutationLoading.value = false
+  }
+  if (resetCommitted) await refreshOfflineSync()
+}
+
+const removeMissingPage = async (page: OfflinePagePolicyRecord): Promise<void> => {
+  const storage = props.storage
+  if (!storage || removingKey.value || refreshing.value || policyMutationLoading.value) return
+  const key = recordKey(page)
+  const visible = missingPolicyPages.value.map(item => item.page)
+  const index = visible.findIndex(candidate => recordKey(candidate) === key)
+  const focusedRow = document.activeElement instanceof HTMLElement && document.activeElement.closest(`[data-offline-record-key="${recordDomKey(page)}"]`)
+  if (focusedRow && index >= 0) {
+    const next = visible.slice(index + 1).find(candidate => !isSameOfflinePage(candidate, page))
+    const previous = visible.slice(0, index).reverse().find(candidate => !isSameOfflinePage(candidate, page))
+    focusAfterRemove.value = {
+      nextKey: next ? recordKey(next) : null,
+      previousKey: previous ? recordKey(previous) : null
+    }
+  }
+  removingKey.value = key
+  policyMutationLoading.value = true
+  let removalCommitted = false
+  try {
+    try {
+      const generation = sessionGeneration.value ?? await storage.currentSessionGeneration()
+      const currentPolicy = await storage.readOfflinePolicy({ expectedSessionGeneration: generation })
+      await storage.removeOfflinePage(
+        { siteId: page.siteId, pageId: page.pageId, locale: page.locale },
+        {
+          expectedSessionGeneration: generation,
+          expectedPolicyRevision: currentPolicy.state.policyRevision
+        }
+      )
+      removalCommitted = true
+    } catch (error) {
+      emit('error', normalizeError(error, 'The selected page could not be removed.'))
+    }
+    if (!removalCommitted) return
+    removeLocalPageProjection(page)
+    emit('changed')
+    await reconcileAfterCommittedRemoval()
+  } finally {
+    policyMutationLoading.value = false
+    if (removingKey.value === key) removingKey.value = null
+    if (removalCommitted) await focusAfterRemoval()
   }
 }
 
 const invalidateLocalProjection = (): void => {
+  const key = readerOpenerKey.value ?? selectedKey.value
+  const opener = readerOpener.value
   ++loadToken
+  ++searchRequestId
   ++readerToken
   preparationController?.abort()
   preparationController = null
   searchController?.abort()
   searchController = null
+  records.value = []
   searchResults.value = []
   searchHasMore.value = false
   corpus.value = null
@@ -850,11 +1156,22 @@ const invalidateLocalProjection = (): void => {
   hasCorpus.value = false
   loading.value = false
   searching.value = false
+  loadError.value = ''
+  searchError.value = ''
   renderTarget.value?.replaceChildren()
   selectedKey.value = null
+  selectedHeading.value = null
   readerState.value = 'idle'
+  readerMessage.value = ''
+  shareStatus.value = ''
   copyFallbackText.value = ''
+  requestedSelectorConsumed.value = null
+  readerOpener.value = null
+  readerOpenerKey.value = null
+  historyMode.value = 'none'
+  focusAfterRemove.value = null
   clearOfflineSelector()
+  if (key || opener) void restoreReaderFocus(key, opener)
 }
 
 const retryStorage = (): void => emit('retry-storage')
@@ -933,6 +1250,11 @@ onMounted(() => {
   clockTimer = window.setInterval(() => { clock.value = Date.now() }, 60_000)
   window.addEventListener('popstate', handlePopState)
   unsubscribeStorageChanges = subscribeOfflineStorageChanges(notice => {
+    if (notice.kind === 'generation') {
+      invalidateLocalProjection()
+      void loadRecords()
+      return
+    }
     if (notice.kind !== 'policy' && notice.kind !== 'corpus') return
     void loadRecords({ preservePolicyError: Boolean(policyError.value) })
   })
@@ -941,6 +1263,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   ++loadToken
+  ++searchRequestId
   ++readerToken
   preparationController?.abort()
   preparationController = null
@@ -963,21 +1286,35 @@ onBeforeUnmount(() => {
     </div>
 
     <p class="scope-note">Public pages saved by an explicit download or an enabled offline policy on this device. Search stays local and never includes an account or private content.</p>
+    <div class="search-field">
+      <label for="downloaded-pages-search">Search saved pages</label>
+      <input
+        id="downloaded-pages-search"
+        ref="searchInput"
+        v-model="searchQuery"
+        type="search"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="Search this device"
+        aria-describedby="downloaded-pages-search-detail"
+      />
+      <p id="downloaded-pages-search-detail" class="field-hint" role="status" aria-live="polite" aria-atomic="true">{{ searchDetail }}</p>
+    </div>
     <section class="offline-policy" aria-labelledby="offline-policy-title">
       <div class="policy-heading">
         <div>
           <p class="section-kicker">Policy <span aria-hidden="true">03</span></p>
           <h3 id="offline-policy-title">Offline sync controls</h3>
         </div>
-        <button class="text-button" type="button" :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading" @click="refreshOfflineSync">
-          {{ policyLoading ? 'Refreshing…' : 'Refresh sync' }}
+        <button class="text-button" type="button" :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing" @click="refreshOfflineSync">
+          {{ policyLoading || refreshing ? 'Refreshing…' : 'Refresh sync' }}
         </button>
       </div>
       <label class="policy-toggle">
         <input
           type="checkbox"
           :checked="automaticSavingEnabled"
-          :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading"
+          :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing"
           @change="toggleAutomaticSaving"
         />
         <span>
@@ -997,7 +1334,7 @@ onBeforeUnmount(() => {
           class="policy-tag"
           type="button"
           :aria-label="`Unfollow ${tag}`"
-          :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading"
+          :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing"
           @click="removeSelectedTag(tag)"
         >
           #{{ tag }} <span aria-hidden="true">×</span>
@@ -1006,21 +1343,44 @@ onBeforeUnmount(() => {
       <p class="policy-diagnostics" role="status" aria-live="polite">{{ syncDiagnosticsDetail }}</p>
       <p v-if="policyError" class="library-inline-error" role="alert">{{ policyError }}</p>
     </section>
-
-    <div class="search-field">
-      <label for="downloaded-pages-search">Search saved pages</label>
-      <input
-        id="downloaded-pages-search"
-        ref="searchInput"
-        v-model="searchQuery"
-        type="search"
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="Search this device"
-        aria-describedby="downloaded-pages-search-detail"
-      />
-      <p id="downloaded-pages-search-detail" class="field-hint" role="status" aria-live="polite" aria-atomic="true">{{ searchDetail }}</p>
-    </div>
+    <section v-if="missingPolicyPages.length" class="offline-policy missing-pages" aria-labelledby="missing-pages-title">
+      <div class="policy-heading">
+        <div>
+          <p class="section-kicker">Needs attention <span aria-hidden="true">04</span></p>
+          <h3 id="missing-pages-title">Selected pages without a saved copy</h3>
+        </div>
+        <span class="policy-muted">{{ missingPolicyPages.length }} waiting</span>
+      </div>
+      <p class="policy-muted">These public pages are selected by an offline policy, but this device has no usable snapshot yet. Only the page identifier, locale, and saved policy sources are shown here.</p>
+      <ul class="missing-page-list">
+        <li v-for="entry in missingPolicyPages" :key="entry.page.key" class="missing-page-item">
+          <div class="missing-page-main">
+            <strong>Page #{{ entry.page.pageId }} · {{ entry.page.locale }}</strong>
+            <span class="missing-page-status" :data-state="entry.status">{{ missingPolicyStatusLabel(entry.status) }}</span>
+            <small>Sources: {{ provenanceLabelForPolicy(entry.page) }}</small>
+          </div>
+          <div class="missing-page-actions">
+            <button
+              class="secondary-button"
+              type="button"
+              :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing || Boolean(removingKey)"
+              @click="retryMissingPage(entry.page)"
+            >
+              {{ refreshing || policyLoading ? 'Refreshing…' : 'Retry sync' }}
+            </button>
+            <button
+              class="text-button"
+              type="button"
+              :data-offline-record-key="recordDomKey(entry.page)"
+              :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing || Boolean(removingKey)"
+              @click="removeMissingPage(entry.page)"
+            >
+              {{ removingKey === recordKey(entry.page) ? 'Removing…' : 'Remove / exclude' }}
+            </button>
+          </div>
+        </li>
+      </ul>
+    </section>
 
     <div v-if="storageChecking && !activeRecords.length && !selectedRecord" class="library-message" role="status" aria-live="polite">
       <span class="loading-mark" aria-hidden="true">…</span>
@@ -1131,7 +1491,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="page-card-actions">
             <button class="secondary-button" type="button" :data-offline-record-key="recordDomKey(record)" :aria-label="`Open saved page ${record.snapshot.title || 'Untitled page'}`" @click="openRecord(record, $event)">Open page</button>
-            <button class="text-button" type="button" :disabled="removingKey === recordKey(record)" @click="removeRecord(record)">
+            <button class="text-button" type="button" :disabled="removingKey === recordKey(record) || policyMutationLoading || refreshing" @click="removeRecord(record)">
               {{ removingKey === recordKey(record) ? 'Removing…' : 'Remove page' }}
             </button>
           </div>
@@ -1199,6 +1559,76 @@ onBeforeUnmount(() => {
   border: 1px solid var(--offline-border-strong);
   border-radius: .7rem;
   background: var(--offline-paper-sunken);
+}
+.missing-pages {
+  gap: .65rem;
+  margin-block-start: .65rem;
+  padding: .8rem;
+}
+
+.missing-pages > .policy-muted {
+  margin: 0;
+}
+
+.missing-page-list {
+  display: grid;
+  gap: .45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.missing-page-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: .65rem 1rem;
+  align-items: center;
+  padding: .65rem .7rem;
+  border: 1px solid var(--offline-border);
+  border-radius: .55rem;
+  background: var(--offline-paper);
+}
+
+.missing-page-main {
+  display: grid;
+  gap: .2rem;
+  min-inline-size: 0;
+}
+
+.missing-page-main strong {
+  color: var(--offline-ink);
+  font-family: var(--offline-mono);
+  font-size: .78rem;
+  letter-spacing: .02em;
+}
+
+.missing-page-main small {
+  color: var(--offline-faint);
+  font-size: .74rem;
+  line-height: 1.4;
+}
+
+.missing-page-status {
+  color: var(--offline-accent-strong);
+  font-family: var(--offline-mono);
+  font-size: .72rem;
+  line-height: 1.35;
+}
+
+.missing-page-status[data-state='denied'],
+.missing-page-status[data-state='stale'] { color: var(--offline-warm); }
+
+.missing-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem .6rem;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.missing-page-actions .secondary-button,
+.missing-page-actions .text-button {
+  min-block-size: 2.35rem;
 }
 
 .policy-heading {
@@ -1633,6 +2063,8 @@ onBeforeUnmount(() => {
   .library-heading,
   .reader-heading,
   .policy-heading { flex-direction: column; gap: .55rem; }
+  .missing-page-item { grid-template-columns: 1fr; }
+  .missing-page-actions { justify-content: flex-start; }
   .count-note { padding-block-start: 0; }
   .reader-actions { align-items: stretch; inline-size: 100%; }
   .reader-actions .text-button { flex: 1 1 auto; }
@@ -1644,6 +2076,7 @@ onBeforeUnmount(() => {
 @media (forced-colors: active) {
   .page-card,
   .offline-reader,
+  .missing-page-item,
   .search-field input,
   .library-message,
   .library-inline-error,

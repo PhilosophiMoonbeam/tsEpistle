@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { chromium, type Browser, type Page } from 'playwright-core'
 import type { OfflinePagePolicyRecord, OfflineSnapshotRecord } from '../../shared/offline.ts'
-import type { OfflineSyncPassResult } from '../helpers/offline-sync.ts'
+import { createOfflineSyncUnavailableResult, type OfflineSyncPassResult } from '../helpers/offline-sync.ts'
 
 const storagePath = fileURLToPath(new URL('../helpers/offline-storage.ts', import.meta.url))
 const syncPath = fileURLToPath(new URL('../helpers/offline-sync.ts', import.meta.url))
@@ -32,13 +32,13 @@ const SITE_ID = ${JSON.stringify(siteId)};
 const CURRENT_TIME = ${JSON.stringify(currentTime)};
 const OLD_TIME = ${JSON.stringify(oldTime)};
 
-const selector = (pageId) => ({ siteId: SITE_ID, pageId, locale: 'en' });
-const makeSnapshot = (pageId, capturedAt = CURRENT_TIME) => ({
+const selector = (pageId, locale = 'en') => ({ siteId: SITE_ID, pageId, locale });
+const makeSnapshot = (pageId, capturedAt = CURRENT_TIME, locale = 'en') => ({
   schemaVersion: 1,
   pageId,
-  locale: 'en',
-  path: 'docs/' + pageId,
-  canonicalPath: 'docs/' + pageId,
+  locale,
+  path: 'docs/' + locale + '/' + pageId,
+  canonicalPath: 'docs/' + locale + '/' + pageId,
   title: 'Page ' + pageId,
   description: 'Description ' + pageId,
   sourceRevision: 'revision-' + pageId,
@@ -94,11 +94,19 @@ export async function run(operation, payload = {}) {
   const storage = await openOfflineStorage({ databaseName });
   const requests = [];
   let fenceMutationDone = false;
+  const disposeFetchStartedGate = Promise.withResolvers();
+  const disposeFetchStarted = disposeFetchStartedGate.promise;
+  let releaseDisposeFetch = () => {};
+  const disposePutStartedGate = Promise.withResolvers();
+  const disposePutStarted = disposePutStartedGate.promise;
+  let releaseDisposePut = () => {};
+  let restorePut = () => {};
   const fetchImpl = async (input) => {
     const requestURL = new URL(input, SITE_ID);
     requests.push(requestURL.pathname + requestURL.search);
     if (requestURL.pathname === '/_api/pages' && requestURL.searchParams.has('tags')) {
       const tag = requestURL.searchParams.get('tags');
+      if (kind === 'tag-error' && tag === 'broken') return json({ message: 'Tag discovery failed.' }, 503);
       const ids = tag === 'alpha' ? [200, 201] : tag === 'beta' ? [200, 202] : tag === 'keep' ? (kind === 'rotation' || kind === 'disable' ? [3] : [92]) : [];
       return json(ids.map(pageId => makePageRow(pageId, [tag])));
     }
@@ -109,17 +117,32 @@ export async function run(operation, payload = {}) {
         await storage.recordEligibleReaderVisit(selector(pageId));
         await storage.bumpSessionGeneration();
       }
-      const allowed = kind === 'manual' || kind === 'fence'
+      if (kind === 'dispose') {
+        disposeFetchStartedGate.resolve();
+        const releaseGate = Promise.withResolvers();
+        releaseDisposeFetch = releaseGate.resolve;
+        await releaseGate.promise;
+      }
+      if ((kind === 'refill' || kind === 'refill-locales') && pageId === 1) return json({ message: 'Snapshot not found.' }, 404);
+      if (kind === 'refill-locales' && pageId === 2) return json({ message: 'Snapshot not found.' }, 404);
+      if (kind === 'transient' && pageId === 1) return json({ message: 'Temporary failure.' }, 503);
+      const allowed = kind === 'manual' || kind === 'fence' || kind === 'dispose' || kind === 'dispose-commit'
         ? [1]
         : kind === 'automatic'
           ? Array.from({ length: 10 }, (_value, index) => index + 1)
-          : kind === 'rotation'
+          : kind === 'refill'
             ? Array.from({ length: 11 }, (_value, index) => index + 1)
-            : kind === 'disable'
-              ? [2, 3]
-              : kind === 'tags'
-                ? [200, 201, 202]
-                : [91, 92];
+            : kind === 'refill-locales'
+              ? Array.from({ length: 12 }, (_value, index) => index + 1)
+              : kind === 'transient'
+                ? Array.from({ length: 10 }, (_value, index) => index + 1)
+                : kind === 'rotation'
+                  ? Array.from({ length: 11 }, (_value, index) => index + 1)
+                  : kind === 'disable'
+                    ? [2, 3]
+                    : kind === 'tags'
+                      ? [200, 201, 202]
+                      : [91, 92];
       if (!allowed.includes(pageId)) return json({ message: 'Snapshot not found.' }, 404);
       return json(makeSnapshot(pageId));
     }
@@ -142,6 +165,58 @@ export async function run(operation, payload = {}) {
       } finally {
         Date.prototype.toISOString = originalToISOString;
       }
+    } else if (kind === 'refill' || kind === 'transient' || kind === 'refill-locales') {
+      await storage.setAutomaticSavingEnabled(true);
+      const originalToISOString = Date.prototype.toISOString;
+      try {
+        Date.prototype.toISOString = () => CURRENT_TIME;
+        const maximumPageId = kind === 'refill-locales' ? 12 : 11;
+        for (let pageId = 1; pageId <= maximumPageId; pageId += 1) {
+          for (let visit = 0; visit < 24 - pageId; visit += 1) await storage.recordEligibleReaderVisit(selector(pageId));
+        }
+        if (kind === 'refill-locales') {
+          for (let visit = 0; visit < 12; visit += 1) await storage.recordEligibleReaderVisit(selector(11, 'fr'));
+        }
+      } finally {
+        Date.prototype.toISOString = originalToISOString;
+      }
+      if (kind === 'transient') await storage.putSnapshot(SITE_ID, makeSnapshot(1), { provenance: { automatic: true } });
+    } else if (kind === 'offline' || kind === 'offline-remove' || kind === 'dispose' || kind === 'dispose-commit' || kind === 'closed') {
+      if (kind === 'offline-remove') {
+        const initialPolicy = await storage.readOfflinePolicy();
+        const expectedSessionGeneration = initialPolicy.sessionGeneration;
+        const readPolicyRevision = async () =>
+          (await storage.readOfflinePolicy({ expectedSessionGeneration })).state.policyRevision;
+        let expectedPolicyRevision = initialPolicy.state.policyRevision;
+        expectedPolicyRevision = (
+          await storage.setAutomaticSavingEnabled(true, { expectedSessionGeneration, expectedPolicyRevision })
+        ).policyRevision;
+        await storage.updateAutomaticSelections([selector(1)], {
+          expectedSessionGeneration,
+          expectedPolicyRevision,
+          asOf: CURRENT_TIME
+        });
+        expectedPolicyRevision = await readPolicyRevision();
+        await storage.setManualOfflineIntent(selector(1), true, { expectedSessionGeneration, expectedPolicyRevision });
+        expectedPolicyRevision = await readPolicyRevision();
+        expectedPolicyRevision = (
+          await storage.setOfflineTagSubscriptions(['keep'], { expectedSessionGeneration, expectedPolicyRevision })
+        ).policyRevision;
+        await storage.synchronizeTagProvenance('keep', [selector(1)], { expectedSessionGeneration, expectedPolicyRevision });
+        expectedPolicyRevision = await readPolicyRevision();
+        await storage.putSnapshot(SITE_ID, makeSnapshot(1), {
+          expectedSessionGeneration,
+          expectedPolicyRevision,
+          provenance: { manual: true, automatic: true, tagNames: ['keep'] }
+        });
+        expectedPolicyRevision = await readPolicyRevision();
+        await storage.setPageAvailability(selector(1), 'ineligible', { expectedSessionGeneration, expectedPolicyRevision });
+        expectedPolicyRevision = await readPolicyRevision();
+        await storage.removeOfflinePage(selector(1), { expectedSessionGeneration, expectedPolicyRevision });
+      } else {
+        await storage.setManualOfflineIntent(selector(1), true);
+      }
+      if (kind === 'closed') storage.close();
     } else if (kind === 'rotation') {
       await storage.setAutomaticSavingEnabled(true);
       const originalToISOString = Date.prototype.toISOString;
@@ -172,6 +247,8 @@ export async function run(operation, payload = {}) {
       await storage.setAutomaticSavingEnabled(false);
     } else if (kind === 'tags') {
       await storage.setOfflineTagSubscriptions(['alpha', 'beta']);
+    } else if (kind === 'tag-error') {
+      await storage.setOfflineTagSubscriptions(['broken']);
     } else if (kind === 'expiry') {
       const automaticOnly = selector(90);
       const manualPage = selector(91);
@@ -190,16 +267,84 @@ export async function run(operation, payload = {}) {
       throw new Error('Unknown coordinator scenario.');
     }
 
+    if (kind === 'dispose-commit') {
+      const originalPut = IDBObjectStore.prototype.put;
+      let held = false;
+      let released = false;
+      releaseDisposePut = () => { released = true };
+      const keepTransactionAlive = (transaction) => {
+        const continueHolding = () => {
+          if (released) return;
+          try {
+            const request = transaction.objectStore('meta').get('state');
+            request.onsuccess = continueHolding;
+            request.onerror = () => {};
+          } catch {
+            released = true;
+          }
+        };
+        transaction.addEventListener('abort', () => { released = true; }, { once: true });
+        continueHolding();
+      };
+      IDBObjectStore.prototype.put = function (...args) {
+        const request = originalPut.apply(this, args);
+        const value = args[0];
+        if (!held && this.name === 'meta' && value && typeof value === 'object' && Number(value.corpusRevision) > 0) {
+          held = true;
+          disposePutStartedGate.resolve();
+          keepTransactionAlive(this.transaction);
+        }
+        return request;
+      };
+      restorePut = () => {
+        released = true;
+        IDBObjectStore.prototype.put = originalPut;
+      };
+    }
+
     const coordinator = createOfflineSyncCoordinator({
       storage,
       siteId: SITE_ID,
       fetchImpl,
       now: () => CURRENT_TIME,
-      isOnline: () => true,
+      isOnline: () => kind !== 'offline' && kind !== 'offline-remove',
       isForeground: () => true,
       maxConcurrentFetches: 2
     });
-    const result = await coordinator.reconcile('manual');
+    let result;
+    if (kind === 'offline-remove') {
+      await storage.removeOfflinePage(selector(1));
+      result = await coordinator.reconcile('manual');
+    } else if (kind === 'dispose') {
+      const pending = coordinator.reconcile('manual');
+      await disposeFetchStarted;
+      coordinator.dispose();
+      releaseDisposeFetch();
+      result = await pending;
+    } else if (kind === 'dispose-commit') {
+      const pending = coordinator.reconcile('manual');
+      await disposePutStarted;
+      coordinator.dispose();
+      releaseDisposePut();
+      result = await pending;
+      restorePut();
+      restorePut = () => {};
+    } else {
+      result = await coordinator.reconcile('manual');
+    }
+    if (kind === 'closed') {
+      return {
+        ok: true,
+        value: {
+          result,
+          pages: [],
+          snapshots: [],
+          policyRevision: 0,
+          sessionGeneration: 0,
+          requests
+        }
+      };
+    }
     const policy = await storage.readOfflinePolicy();
     return {
       ok: true,
@@ -215,6 +360,8 @@ export async function run(operation, payload = {}) {
   } catch (error) {
     return { ok: false, error: errorValue(error) };
   } finally {
+    restorePut();
+    releaseDisposePut();
     storage.close();
   }
 }
@@ -297,14 +444,32 @@ afterAll(async () => {
   }
 })
 
+test('exposes an explicit unavailable service result', () => {
+  expect(createOfflineSyncUnavailableResult('storage is opening')).toMatchObject({
+    status: 'unavailable',
+    outcome: 'unavailable',
+    kind: 'unavailable',
+    error: 'storage is opening',
+    attempted: 0,
+    saved: 0,
+    retained: 0,
+    removed: 0,
+    failed: 0,
+    pending: 0,
+    diagnostics: null
+  })
+})
+
 describe('foreground offline sync coordinator', () => {
-  test('reconciles a manual offline intent immediately', async () => {
+  test('reconciles a manual offline intent immediately with a typed success outcome', async () => {
     const run = await runScenario('manual')
     expect(run.result.status).toBe('complete')
+    expect(run.result.outcome).toBe('success')
+    expect(run.result.kind).toBe('success')
     expect(run.result.saved).toBe(1)
     expect(pageIds(run)).toEqual([1])
     expect(snapshotRequests(run)).toEqual([1])
-    expect(policyFor(run, 1)).toMatchObject({ manual: true, automatic: false, tag: false })
+    expect(policyFor(run, 1)).toMatchObject({ manual: true, automatic: false, tag: false, excluded: false })
   })
 
   test('excludes a stale high-ranked automatic page before selecting the top ten', async () => {
@@ -313,8 +478,114 @@ describe('foreground offline sync coordinator', () => {
     expect(run.result.saved).toBe(10)
     expect(pageIds(run)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     expect(snapshotRequests(run)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-    expect(policyFor(run, 10)).toMatchObject({ automatic: true })
+    expect(policyFor(run, 10)).toMatchObject({ automatic: true, manual: false, tag: false, excluded: false })
     expect(policyFor(run, 11)).toMatchObject({ automatic: false, manual: false, tag: false, lastVisitedAt: oldTime })
+  })
+
+  test('refills one denied automatic slot from the eleventh ranked candidate without duplicate attempts', async () => {
+    const run = await runScenario('refill')
+    expect(run.result.outcome).toBe('success')
+    expect(run.result).toMatchObject({
+      attempted: 11,
+      saved: 10,
+      retained: 0,
+      removed: 0,
+      failed: 0,
+      pending: 0
+    })
+    expect(pageIds(run)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    expect(snapshotRequests(run)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    expect(new Set(snapshotRequests(run)).size).toBe(11)
+    expect(policyFor(run, 1)).toMatchObject({ automatic: false, manual: false, tag: false, excluded: false, availability: 'ineligible' })
+    expect(policyFor(run, 11)).toMatchObject({ automatic: true })
+  })
+  test('refills denied slots with distinct immutable pages when ranked locales overlap', async () => {
+    const run = await runScenario('refill-locales')
+    expect(run.result.outcome).toBe('success')
+    expect(run.result).toMatchObject({
+      attempted: 12,
+      saved: 10,
+      retained: 0,
+      removed: 0,
+      failed: 0,
+      pending: 0
+    })
+    expect(pageIds(run)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+    expect(snapshotRequests(run)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+    expect(new Set(snapshotRequests(run)).size).toBe(12)
+    expect(run.snapshots.find(snapshot => snapshot.snapshot.pageId === 11)?.snapshot.locale).toBe('en')
+    expect(policyFor(run, 11)).toMatchObject({ automatic: true })
+    expect(policyFor(run, 12)).toMatchObject({ automatic: true })
+  })
+
+  test('retains an existing body on transient automatic failure without losing its slot', async () => {
+    const run = await runScenario('transient')
+    expect(run.result.status).toBe('partial')
+    expect(run.result.outcome).toBe('error')
+    expect(run.result).toMatchObject({
+      attempted: 10,
+      saved: 9,
+      retained: 1,
+      removed: 0,
+      failed: 1,
+      pending: 0
+    })
+    expect(run.result.error).toBe(run.result.diagnostics.lastError)
+    expect(run.result.error).not.toBeNull()
+    expect(pageIds(run)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    expect(snapshotRequests(run)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    expect(new Set(snapshotRequests(run)).size).toBe(10)
+    expect(snapshotRequests(run)).not.toContain(11)
+    expect(policyFor(run, 1)).toMatchObject({ automatic: true, availability: 'transient-failure' })
+    expect(policyFor(run, 11)).toMatchObject({ automatic: false, manual: false, tag: false })
+  })
+
+  test('reports selected work as pending while offline without dispatching requests', async () => {
+    const run = await runScenario('offline')
+    expect(run.result.status).toBe('offline')
+    expect(run.result.outcome).toBe('offline')
+    expect(run.result.pending).toBe(1)
+    expect(run.result.diagnostics.pendingCount).toBe(1)
+    expect(policyFor(run, 1)).toMatchObject({ manual: true, automatic: false, tag: false, excluded: false })
+  })
+
+  test('removes every local source and body while offline after admission is denied', async () => {
+    const run = await runScenario('offline-remove')
+    expect(run.result.pending).toBe(0)
+    expect(run.result.saved).toBe(0)
+    expect(snapshotRequests(run)).toEqual([])
+    expect(pageIds(run)).toEqual([])
+    expect(policyFor(run, 1)).toMatchObject({
+      manual: false,
+      automatic: false,
+      tag: false,
+      tagNames: [],
+      excluded: true,
+      availability: 'unknown'
+    })
+  })
+
+  test('returns an explicit error outcome when storage closes before a pass', async () => {
+    const run = await runScenario('closed')
+    expect(run.result.status).toBe('error')
+    expect(run.result.error).toBe(run.result.diagnostics.lastError)
+    expect(run.result.error).toContain('closed')
+    expect(run.result.diagnostics.lastError).toContain('closed')
+  })
+
+  test('aborting and disposing a pass prevents its late snapshot commit', async () => {
+    const run = await runScenario('dispose')
+    expect(run.result.status).toBe('offline')
+    expect(run.result.outcome).toBe('offline')
+    expect(run.result.saved).toBe(0)
+    expect(run.snapshots).toEqual([])
+  })
+  test('invalidating while snapshot transaction completion is held prevents its commit', async () => {
+    const run = await runScenario('dispose-commit')
+    expect(run.result.status).toBe('offline')
+    expect(run.result.outcome).toBe('offline')
+    expect(run.result.saved).toBe(0)
+    expect(run.snapshots).toEqual([])
   })
 
   test('rotates automatic membership without retaining an eleventh automatic page', async () => {
@@ -346,9 +617,17 @@ describe('foreground offline sync coordinator', () => {
     expect(run.result.saved).toBe(3)
     expect(pageIds(run)).toEqual([200, 201, 202])
     expect(snapshotRequests(run)).toEqual([200, 201, 202])
-    expect(policyFor(run, 200)).toMatchObject({ tag: true, tagNames: ['alpha', 'beta'] })
-    expect(policyFor(run, 201)).toMatchObject({ tag: true, tagNames: ['alpha'] })
-    expect(policyFor(run, 202)).toMatchObject({ tag: true, tagNames: ['beta'] })
+    expect(policyFor(run, 200)).toMatchObject({ manual: false, automatic: false, tag: true, tagNames: ['alpha', 'beta'], excluded: false })
+    expect(policyFor(run, 201)).toMatchObject({ manual: false, automatic: false, tag: true, tagNames: ['alpha'], excluded: false })
+    expect(policyFor(run, 202)).toMatchObject({ manual: false, automatic: false, tag: true, tagNames: ['beta'], excluded: false })
+  })
+  test('reports tag discovery errors in both the typed outcome and diagnostics', async () => {
+    const run = await runScenario('tag-error')
+    expect(run.result.status).toBe('partial')
+    expect(run.result.outcome).toBe('error')
+    expect(run.result.failed).toBe(1)
+    expect(run.result.error).toBe(run.result.diagnostics.lastError)
+    expect(run.result.error).not.toBeNull()
   })
 
   test('expires only stale automatic-only bodies after sixty days', async () => {

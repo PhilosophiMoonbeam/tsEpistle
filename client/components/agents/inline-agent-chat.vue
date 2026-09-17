@@ -2,7 +2,7 @@
   <section
     ref="inlineAgentRoot"
     class="inline-agent"
-    :class="{ 'inline-agent--history': historyOpen, 'inline-agent--memory': memoryOpen }"
+    :class="{ 'inline-agent--history': historyOpen, 'inline-agent--memory': memoryOpen, 'inline-agent--contextual': contextualGlass }"
     :data-panel-mode="panelMode"
     :aria-labelledby="workspaceTitleId"
     :aria-busy="loading || Boolean(creatingRetention) || connectionRetrying || sessionMutationBusy"
@@ -257,7 +257,7 @@
                     class="inline-agent__starter"
                     color="primary"
                     variant="text"
-                    :disabled="!canSubmit"
+                    :disabled="!canSubmit || promptSubmissionPending"
                     :title="!canSubmit ? submitUnavailableReason : undefined"
                     @click="sendPrompt(starter.prompt)"
                   >
@@ -640,10 +640,11 @@ const panelMode = ref<'wide' | 'docked' | 'modal'>('wide')
 let panelModeMedia: MediaQueryList[] = []
 const mobilePanelQuery = '(max-width: 639.98px)'
 
-const currentPage = computed<AgentCurrentPageHint | null>(() => {
+const pageHintFromProps = (): AgentCurrentPageHint | null => {
   if (props.pageId < 1 || !props.pageLocale || !props.pagePath || !props.pageUpdatedAt) return null
   return { id: props.pageId, locale: props.pageLocale, path: props.pagePath, observedUpdatedAt: props.pageUpdatedAt }
-})
+}
+const currentPage = ref<AgentCurrentPageHint | null>(pageHintFromProps())
 const activeRun = computed(() => {
   const run = thread.value?.session.currentRun
   return run && (run.status === 'queued' || run.status === 'running' || run.status === 'awaiting_approval') ? run : null
@@ -757,6 +758,7 @@ const starters = computed(() => [
 ])
 
 const activeDraft = computed(() => thread.value ? agents.drafts[thread.value.session.id] ?? emptyAgentDraft() : emptyAgentDraft())
+const contextualGlass = computed(() => Boolean(currentPage.value && activeDraft.value.includeCurrentPage))
 const patchDraft = (patch: Partial<AgentDraft>): void => { if (thread.value) agents.updateDraft(thread.value.session.id, patch) }
 const setCurrentChatPinned = (pinned: boolean): void => {
   agents.setCurrentChatPinned(pinned)
@@ -1481,6 +1483,12 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   box-shadow: none;
   text-align: start;
 }
+.inline-agent--contextual {
+  background: transparent;
+}
+.inline-agent--contextual .inline-agent__card {
+  background: transparent;
+}
 
 .inline-agent__toolbar {
   display: flex;
@@ -1495,6 +1503,11 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   border-bottom: 1px solid var(--wiki-surface-border);
   background: rgb(var(--v-theme-background)) !important;
   box-shadow: none;
+}
+.inline-agent--contextual .inline-agent__toolbar {
+  background: rgba(var(--v-theme-surface), .72) !important;
+  backdrop-filter: blur(20px) saturate(115%);
+  -webkit-backdrop-filter: blur(20px) saturate(115%);
 }
 .inline-agent__toolbar :deep(.v-toolbar__content) {
   flex-wrap: inherit;
@@ -1730,6 +1743,21 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   padding: var(--wiki-space-4) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)) var(--wiki-space-2);
   background: rgb(var(--v-theme-background));
 }
+
+.inline-agent--contextual .inline-agent__body {
+  background: rgba(var(--v-theme-surface), .32);
+  backdrop-filter: blur(6px) saturate(110%);
+  -webkit-backdrop-filter: blur(6px) saturate(110%);
+}
+
+@supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
+  .inline-agent--contextual .inline-agent__toolbar,
+  .inline-agent--contextual .inline-agent__body {
+    background: rgb(var(--v-theme-background)) !important;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
 .inline-agent__transcript-wrap {
   position: relative;
   display: flex;
@@ -1931,16 +1959,23 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__welcome {
   position: relative;
+  display: flex;
   width: min(100%, var(--agent-conversation-width));
-  margin: 0 auto auto;
-  padding: clamp(1.5rem, 4vh, 3.5rem) 0 var(--wiki-space-5);
+  min-height: 0;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: space-evenly;
+  margin: 0 auto;
+  padding: clamp(1.5rem, 4vh, 3.5rem) 0 clamp(2rem, 8vh, 5rem);
   text-align: center;
+  transform: translateY(-2vh);
 }
 
 /* The welcome treatment stays typographic and compact; the old decorative mark is intentionally omitted. */
 
 .inline-agent__welcome h2 {
-  margin: 0 0 calc(1.04em + var(--wiki-space-2));
+  margin: 0;
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-display);
   font-size: clamp(2.4rem, 4vw, 4.25rem);
@@ -1960,11 +1995,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
 }
 
-
 .inline-agent__starters {
   display: grid;
-  width: 90%;
-  margin-inline: auto;
+  width: min(90%, calc(var(--agent-conversation-width) - var(--wiki-space-8)));
+  margin: clamp(1.25rem, 5vh, 3rem) auto 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: .65rem;
 }
@@ -1977,16 +2011,18 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-raised);
   color: rgb(var(--v-theme-on-surface)) !important;
-  text-align: start;
+  text-align: center;
   letter-spacing: 0;
   text-transform: none;
   white-space: normal;
   transition: border-color .18s, background .18s;
 }
+
 .inline-agent__starter:hover {
   border-color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
   background: var(--wiki-surface-sunken);
 }
+
 .inline-agent__starter :deep(.v-btn__content) {
   display: grid;
   width: 100%;
@@ -1996,41 +2032,55 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   justify-items: stretch;
   gap: .25rem;
 }
+
 .inline-agent__starter-heading {
+  position: relative;
   display: flex;
   min-width: 0;
   align-items: center;
+  justify-content: center;
   gap: .5rem;
   width: 100%;
+  box-sizing: border-box;
+  padding-inline: 1.5rem;
 }
+
 .inline-agent__starter-heading > :deep(.v-icon:first-child) {
   flex: 0 0 auto;
   font-size: 1.25rem;
 }
+
 .inline-agent__starter-heading strong {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: center;
   font-size: .83rem;
   font-weight: 700;
 }
+
 .inline-agent__starter-copy {
   display: block;
   min-width: 0;
   grid-column: 1;
   grid-row: 2;
+  padding-inline: 1.5rem;
+  text-align: center;
 }
+
 .inline-agent__starter-copy small {
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   font-size: .73rem;
   font-weight: 400;
   opacity: .7;
 }
+
 .inline-agent__starter-arrow {
+  position: absolute;
+  inset-inline-end: .25rem;
   flex: 0 0 auto;
-  margin-inline-start: auto;
+  margin: 0;
   opacity: .5;
 }
 
@@ -2046,17 +2096,17 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   transition: background .2s var(--wiki-motion-ease), box-shadow .2s var(--wiki-motion-ease), backdrop-filter .2s var(--wiki-motion-ease);
 }
 .inline-agent__composer--scrolled:not(.inline-agent__composer--focused) {
-  background: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, transparent);
+  background: rgb(var(--v-theme-background));
   box-shadow: 0 -0.75rem 1.5rem color-mix(in srgb, rgb(var(--v-theme-background)) 35%, transparent);
-  backdrop-filter: blur(12px) saturate(115%);
-  -webkit-backdrop-filter: blur(12px) saturate(115%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
-  border-color: color-mix(in srgb, var(--wiki-surface-border-strong) 62%, transparent);
-  background: color-mix(in srgb, var(--wiki-surface-raised) 46%, transparent);
-  box-shadow: 0 .45rem 1.35rem color-mix(in srgb, var(--wiki-shadow-color) 28%, transparent);
-  backdrop-filter: blur(5px) saturate(120%);
-  -webkit-backdrop-filter: blur(5px) saturate(120%);
+  border-color: var(--wiki-surface-border-strong);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .inline-agent__composer--focused {
   background: rgb(var(--v-theme-background));
@@ -2110,7 +2160,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   padding: var(--wiki-space-1) var(--wiki-space-3);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-radius-pill);
-  background: color-mix(in srgb, var(--wiki-surface-raised) 60%, transparent);
+  background: var(--wiki-surface-raised);
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
   font-size: var(--wiki-label-size);
   line-height: 1.4;
@@ -2140,7 +2190,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   padding: var(--wiki-space-1) var(--wiki-space-3);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-radius-pill);
-  background: color-mix(in srgb, var(--wiki-surface-raised) 60%, transparent);
+  background: var(--wiki-surface-raised);
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
   font-size: var(--wiki-label-size);
   line-height: 1.4;
@@ -2157,14 +2207,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   overflow: hidden;
   border-radius: var(--wiki-panel-radius);
   outline: none;
-  background: transparent;
+  background: var(--wiki-surface-raised);
 }
 
 .inline-agent__side:focus-visible {
   border-radius: var(--wiki-panel-radius);
   box-shadow: var(--wiki-focus-ring);
 }
-
 
 .inline-agent__side--history {
   width: min(19rem, 100%);
@@ -2539,7 +2588,14 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__welcome {
+    min-height: auto;
+    justify-content: flex-start;
     padding-block: var(--wiki-space-5);
+    transform: none;
+  }
+
+  .inline-agent__starters {
+    margin-top: var(--wiki-space-5);
   }
 }
 
@@ -2553,10 +2609,26 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 }
 
+@media (prefers-reduced-transparency: reduce) {
+  .inline-agent--contextual .inline-agent__toolbar,
+  .inline-agent--contextual .inline-agent__body {
+    background: rgb(var(--v-theme-background)) !important;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 @media (forced-colors: active) {
   .inline-agent__card,
   .inline-agent__side {
     border: 1px solid CanvasText;
+  }
+  .inline-agent--contextual .inline-agent__toolbar,
+  .inline-agent--contextual .inline-agent__body {
+    background: Canvas !important;
+    color: CanvasText;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .inline-agent__scrim {

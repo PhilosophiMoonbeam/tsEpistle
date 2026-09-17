@@ -206,23 +206,25 @@ async function savePageFromReader(page: Page, path: string, options: SavePageOpt
     }
   }
   const control = page.locator('.page-offline-control')
+  await expect(control).toHaveCount(1)
   await expect(control).toBeVisible({ timeout: 30_000 })
   await expect(control).toBeEnabled({ timeout: 30_000 })
-  await expect.poll(() => control.getAttribute('aria-label'), { timeout: 30_000 }).toMatch(/^(?:Pin for offline|Update offline copy|Unpin from offline)$/u)
+  await expect.poll(() => control.getAttribute('aria-label'), { timeout: 30_000 }).toMatch(/^(?:Save offline copy|Remove offline copy)$/u)
+  await expect(control).toHaveAttribute('aria-describedby', /offline-status$/u)
 
   let currentLabel = await control.getAttribute('aria-label')
-  if (currentLabel === 'Unpin from offline' && !options.expiresAt) {
+  if (currentLabel === 'Remove offline copy' && !options.expiresAt) {
+    await expect(control).toHaveAttribute('aria-pressed', 'true')
     const current = (await inspectOfflineDatabase(page)).snapshots.find(record => record.pageId === pageId)
     if (!current) throw new Error(`The saved snapshot for ${path} was not found.`)
     return current
   }
 
-  if (currentLabel === 'Unpin from offline' && options.expiresAt) {
-    const removeControl = page.locator('.page-offline-remove-control')
-    await expect(removeControl).toBeVisible({ timeout: 30_000 })
-    await removeControl.click()
-    await expect(control).toHaveAttribute('aria-label', 'Pin for offline', { timeout: 30_000 })
-    currentLabel = 'Pin for offline'
+  if (currentLabel === 'Remove offline copy' && options.expiresAt) {
+    await control.click()
+    await expect(control).toHaveAttribute('aria-label', 'Save offline copy', { timeout: 30_000 })
+    await expect(control).toHaveAttribute('aria-pressed', 'false', { timeout: 30_000 })
+    currentLabel = 'Save offline copy'
   }
 
   let restoreSnapshotFetch = false
@@ -267,7 +269,8 @@ async function savePageFromReader(page: Page, path: string, options: SavePageOpt
 
   try {
     await control.click()
-    await expect(control).toHaveAttribute('aria-label', 'Unpin from offline', { timeout: 30_000 })
+    await expect(control).toHaveAttribute('aria-label', 'Remove offline copy', { timeout: 30_000 })
+    await expect(control).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 })
     await expect(page.locator('.page-offline-status')).toContainText('readable offline copy is saved on this device', { timeout: 30_000 })
   } finally {
     if (restoreSnapshotFetch) {
@@ -483,7 +486,7 @@ test.describe('neutral offline saved-page surface', () => {
     await expect(fallback).toHaveValue(new RegExp(titles[1].replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')))
   })
 
-  test('expires a downloaded page offline, requests revalidation after reconnecting, and commits the refreshed copy', async ({ page, browserName }) => {
+  test('treats an expired offline selection as removable rather than a refresh action', async ({ page, browserName }) => {
     test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
     await warmFeatureWorker(page)
     await authenticateAsAdmin(page)
@@ -503,24 +506,17 @@ test.describe('neutral offline saved-page surface', () => {
     expect(expiredDatabase.snapshots[0]?.snapshot.expiresAt).toBe(expiresAt)
 
     await page.context().setOffline(false)
-    const revalidationRequest = page.waitForRequest(request => {
-      try {
-        return new URL(request.url()).pathname === `/_api/pages/${saved.pageId}/offline-snapshot`
-      } catch {
-        return false
-      }
-    })
     await page.goto(`/en/${SEEDED_PAGE_PATHS[0]}`, { waitUntil: 'domcontentloaded' })
-    await revalidationRequest
     const control = page.locator('.page-offline-control')
     await expect(control).toBeVisible()
-    await expect(control).toHaveAttribute('aria-label', 'Update offline copy', { timeout: 30_000 })
+    await expect(control).toHaveAttribute('aria-label', 'Remove offline copy', { timeout: 30_000 })
+    await expect(control).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 })
     await control.click()
-    await expect(control).toHaveAttribute('aria-label', 'Unpin from offline', { timeout: 30_000 })
-    const refreshedDatabase = await inspectOfflineDatabase(page)
-    expect(refreshedDatabase.snapshots).toHaveLength(1)
-    expect(refreshedDatabase.searchDocuments).toHaveLength(1)
-    expect(refreshedDatabase.snapshots[0]?.snapshot.expiresAt).toBeNull()
+    await expect(control).toHaveAttribute('aria-label', 'Save offline copy', { timeout: 30_000 })
+    await expect(control).toHaveAttribute('aria-pressed', 'false', { timeout: 30_000 })
+    const removedDatabase = await inspectOfflineDatabase(page)
+    expect(removedDatabase.snapshots).toHaveLength(0)
+    expect(removedDatabase.searchDocuments).toHaveLength(0)
   })
 
   test('invalidates a second offline tab after a committed product removal', async ({ page, context }) => {

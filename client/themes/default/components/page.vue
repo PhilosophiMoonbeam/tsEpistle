@@ -106,14 +106,55 @@
               )
             .page-header-summary
               p.page-description(v-if='description') {{description}}
-              .page-header-control-pair(
-                v-if='!printView || (editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn))'
-              )
-                v-btn.page-focus-control(v-if='!printView && !readerFocus && !talkActive', variant='text', size='small', prepend-icon='mdi-book-open-page-variant-outline', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t('common:page.focusReading') }}
-                .page-edit-shortcuts(
-                  v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
-                  :class='tocPosition === `right` ? `is-right` : ``'
-                  )
+            .page-header-control-pair(
+              v-if='!printView || (editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn))'
+            )
+              .page-header-offline(v-if='!printView')
+                v-tooltip(location="bottom")
+                  template(v-slot:activator='{ props }')
+                    v-btn.page-offline-control(
+                      v-bind='props'
+                      icon
+                      rounded='lg'
+                      :class='`page-offline-control--${offlineControlState}`'
+                      :color='offlineControlColor'
+                      :loading='offlineActionLoading'
+                      :disabled='offlineControlDisabled'
+                      :aria-label='offlineControlLabel'
+                      :aria-pressed='offlineSelected ? `true` : `false`'
+                      :aria-describedby='offlineStatusId'
+                      :title='offlineControlTitle'
+                      :data-offline-state='offlineControlState'
+                      @click='toggleOfflinePage'
+                    )
+                      v-icon(aria-hidden='true') {{ offlineControlIcon }}
+                  span.page-offline-tooltip {{ offlineControlLabel }}
+                v-tooltip(location="bottom", v-if='offlineCanRetry')
+                  template(v-slot:activator='{ props }')
+                    v-btn.page-offline-retry-control(
+                      v-bind='props'
+                      icon
+                      rounded='lg'
+                      :loading='offlineActionLoading'
+                      :disabled='offlineActionLoading || offlineOwnedOperationId !== null'
+                      :aria-label='offlineRetryLabel'
+                      :title='offlineRetryLabel'
+                      @click='retryOfflinePage'
+                    )
+                      v-icon(aria-hidden='true') mdi-refresh
+                  span.page-offline-tooltip {{ offlineRetryLabel }}
+                span.page-offline-status.page-header-offline-status(
+                  :id='offlineStatusId'
+                  role='status'
+                  aria-live='polite'
+                  aria-atomic='true'
+                  :class='`page-header-offline-status--${offlineControlState}`'
+                ) {{ offlineStatusLabel }}
+              v-btn.page-focus-control(v-if='!printView && !readerFocus && !talkActive', variant='text', size='small', prepend-icon='mdi-book-open-page-variant-outline', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t('common:page.focusReading') }}
+              .page-edit-shortcuts(
+                v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
+                :class='tocPosition === `right` ? `is-right` : ``'
+                )
                   v-btn(
                     v-if='editShortcutsObj.editMenuBtn && (!hasWritePagesPermission || $vuetify.display.smAndDown)'
                     @click='pageEdit'
@@ -135,6 +176,7 @@
       v-container.page-body(fluid)
         v-row
           #page-mobile-tools.page-mobile-tools
+          #page-tablet-tools.page-tablet-tools
 
           v-col.page-col-sd(
             ref='desktopRailCol'
@@ -224,8 +266,8 @@
           Teleport(
             defer
             :key='isTocMobile ? `mobile-tools` : winWidth < 1280 ? `tablet-tools` : `desktop-tools`'
-            :to='isTocMobile ? `#page-mobile-tools` : `#page-desktop-rail`'
-            :disabled='printView || (winWidth >= 600 && winWidth < 1280)'
+            :to='isTocMobile ? `#page-mobile-tools` : winWidth < 1280 ? `#page-tablet-tools` : `#page-desktop-rail`'
+            :disabled='printView'
           )
             v-card.page-shortcuts-card.mb-4(flat)
               v-toolbar(color='surface', flat, density="compact")
@@ -245,44 +287,6 @@
                     :title='title'
                     :description='description'
                   )
-                v-tooltip(location="bottom", v-if='!printView')
-                  template(v-slot:activator='{ props }')
-                    v-btn.page-offline-control(
-                      v-bind='props'
-                      variant='text'
-                      size='small'
-                      rounded='lg'
-                      :class='{ "page-offline-control--selected": offlineSelected }'
-                      :color='offlineSelected ? `primary` : undefined'
-                      :loading='offlineActionLoading'
-                      :disabled='offlineControlDisabled'
-                      :aria-label='offlineControlLabel'
-                      :aria-pressed='offlineManualSelected ? `true` : `false`'
-                      :aria-describedby='offlineStatusId'
-                      :title='offlineControlTitle'
-                      @click='toggleOfflinePage'
-                    )
-                      v-icon(start, size='small', aria-hidden='true') {{ offlineControlIcon }}
-                      span.page-offline-control__label {{ offlineControlLabel }}
-                  span.page-offline-tooltip {{ offlineControlLabel }}
-                v-tooltip(location="bottom", v-if='offlineCanExplicitlyRemove')
-                  template(v-slot:activator='{ props }')
-                    v-btn.page-offline-remove-control(
-                      v-bind='props'
-                      variant='text'
-                      size='small'
-                      rounded='lg'
-                      color='error'
-                      :loading='offlineState === `removing`'
-                      :disabled='offlineRemoveControlDisabled'
-                      :aria-label='offlineRemoveControlLabel'
-                      :aria-describedby='offlineStatusId'
-                      :title='offlineRemoveControlLabel'
-                      @click='removeOfflinePage'
-                    )
-                      v-icon(start, size='small', aria-hidden='true') mdi-delete-outline
-                      span.page-offline-control__label {{ offlineRemoveControlLabel }}
-                  span.page-offline-tooltip {{ offlineRemoveControlLabel }}
                 v-tooltip(location="bottom", v-if='isAuthenticated')
                   template(v-slot:activator='{ props }')
                     v-btn(
@@ -364,20 +368,6 @@
                       v-icon(:color='printView ? `primary` : `grey`') mdi-printer
                   span {{$t('common:page.printFormat')}}
                 v-spacer
-              .page-shortcuts-status(
-                role='group'
-                aria-label='Offline copy selection and status'
-              )
-                .page-shortcuts-status__item.page-offline-copy-status(
-                  :class='`page-offline-copy-status--${offlineState}`'
-                )
-                  span.page-shortcuts-status__label Offline copy
-                  span.page-offline-status(
-                    :id='offlineStatusId'
-                    role='status'
-                    aria-live='polite'
-                    aria-atomic='true'
-                  ) {{ offlineStatusLabel }}
             v-card.page-provenance-card.mb-4(
               v-if='updatedAt || hasAuthor'
               flat
@@ -451,8 +441,8 @@
           Teleport(
             defer
             :key='isTocMobile ? `mobile-metadata` : winWidth < 1280 ? `tablet-metadata` : `desktop-metadata`'
-            :to='isTocMobile ? `#page-mobile-metadata` : `#page-desktop-rail`'
-            :disabled='winWidth >= 600 && winWidth < 1280'
+            :to='isTocMobile ? `#page-mobile-metadata` : winWidth < 1280 ? `#page-tablet-tools` : `#page-desktop-rail`'
+            :disabled='printView'
           )
             v-card.page-tags-card.mb-5(v-if='tags.length > 0')
               .pa-5
@@ -756,6 +746,12 @@ import {
   subscribeOfflineStorageChanges,
   type OfflineStorage
 } from '../../../helpers/offline-storage.ts'
+import {
+  createOfflineSyncUnavailableResult,
+  OFFLINE_SYNC_COORDINATOR_KEY,
+  type OfflineSyncResult,
+  type OfflineSyncService
+} from '../../../helpers/offline-sync.ts'
 import type { OfflinePagePolicyRecord, OfflineSnapshotRecord, OfflineSnapshotSelector } from '../../../../shared/offline.ts'
 import {
   normalizeTableOfContents,
@@ -770,11 +766,22 @@ type Breadcrumb = {
   title: string
 }
 
-type OfflineSyncService = {
-  reconcile: (reason?: string) => Promise<unknown>
+const offlineSyncResultDetail = (result: OfflineSyncResult, fallback: string): string => {
+  const detail = result.outcome === 'unavailable'
+    ? result.error
+    : result.error ?? result.diagnostics?.lastError
+  const normalized = typeof detail === 'string' ? detail.trim() : ''
+  return (normalized || fallback).slice(0, 512)
 }
 
-const OFFLINE_SYNC_COORDINATOR_KEY = 'offline-sync-coordinator'
+const offlineSyncAggregateNotice = (result: OfflineSyncResult): string | null => {
+  if (result.outcome !== 'error' && result.outcome !== 'unavailable') return null
+  const detail = offlineSyncResultDetail(result, 'Offline synchronization reported an issue.')
+  return `Background offline synchronization reported an issue: ${detail}`.slice(0, 512)
+}
+
+const offlineSyncFailureNotice = (detail: string): string =>
+  `Background offline synchronization reported an issue: ${(detail.trim() || 'The current page state was refreshed.').slice(0, 512)}`.slice(0, 512)
 
 type PageTag = {
   tag: string
@@ -815,8 +822,6 @@ type PageProtection = {
   updatedAt: string | null
 }
 
-type OfflinePageState = 'checking' | 'eligible' | 'downloading' | 'saved' | 'expiring' | 'stale' | 'removing' | 'ineligible' | 'error'
-const widenOfflinePageState = (state: OfflinePageState): OfflinePageState => state
 
 const OFFLINE_EXPIRING_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000
 const offlineSnapshotExpiringSoon = (expiresAt: string | null): boolean => {
@@ -825,7 +830,8 @@ const offlineSnapshotExpiringSoon = (expiresAt: string | null): boolean => {
   const now = Date.now()
   return Number.isFinite(expiry) && expiry > now && expiry - now <= OFFLINE_EXPIRING_WINDOW_MS
 }
-
+type OfflinePageState = 'checking' | 'eligible' | 'downloading' | 'saved' | 'expiring' | 'stale' | 'removing' | 'ineligible' | 'error' | 'unavailable'
+const widenOfflinePageState = (state: OfflinePageState): OfflinePageState => state
 function decodePageAnchor (anchor: string): string {
   try {
     return decodeURIComponent(anchor)
@@ -1092,7 +1098,7 @@ export default defineComponent({
     return {
       goTo: useGoTo(),
       offlineStorage: shallowRef<OfflineStorage | null>(null),
-      offlineSyncService: inject<OfflineSyncService | null>(OFFLINE_SYNC_COORDINATOR_KEY, null)
+      offlineSyncService: inject<OfflineSyncService>(OFFLINE_SYNC_COORDINATOR_KEY)
     }
   },
   props: {
@@ -1448,115 +1454,126 @@ export default defineComponent({
       const policy = this.offlinePolicy
       return Boolean(policy && !policy.excluded && (policy.manual || policy.automatic || policy.tag))
     },
-    offlineManualSelected (): boolean {
-      const policy = this.offlinePolicy
-      return Boolean(policy && !policy.excluded && policy.manual)
+    offlineHasValidBody (): boolean {
+      return this.offlineHasSnapshot && ['saved', 'expiring', 'stale'].includes(this.offlineState)
     },
     offlineSelectionSources (): string {
       const policy = this.offlinePolicy
       if (!policy || policy.excluded) return ''
       const sources: string[] = []
-      if (policy.manual) sources.push('Manual pin')
-      if (policy.automatic) sources.push('Automatic saving')
+      if (policy.manual) sources.push('Manual')
+      if (policy.automatic) sources.push('Automatic')
       if (policy.tag) {
         sources.push(policy.tagNames.length > 0 ? `Followed tag${policy.tagNames.length > 1 ? 's' : ''} #${policy.tagNames.join(', #')}` : 'Followed tag')
       }
       return sources.join(' + ')
     },
+    offlineLocalIneligibilityReason (): string {
+      if (!this.offlineSelector()) return 'This page cannot be saved offline.'
+      if (this.visibility !== 'public') return 'Private pages cannot be saved offline.'
+      if (!this.isPublished) return 'Unpublished pages cannot be saved offline.'
+      if (this.pageProtection.protected) return 'Password-protected pages cannot be saved offline.'
+      return ''
+    },
+    offlineControlState (): string {
+      if (this.offlineState === 'checking') return 'checking'
+      if (this.offlineState === 'downloading' || this.offlineState === 'removing') return this.offlineState
+      if (this.offlineState === 'stale') return 'stale'
+      if (this.offlineState === 'error') return 'error'
+      if (this.offlineState === 'unavailable') return 'unavailable'
+      if (this.offlineState === 'ineligible' && this.offlinePolicy?.excluded && !this.offlineLocalIneligibilityReason) return 'off'
+      if (this.offlineState === 'ineligible') return 'ineligible'
+      if (this.offlineSelected) return this.offlineHasValidBody ? (this.offlineState === 'expiring' ? 'expiring' : 'saved') : 'pending'
+      return 'off'
+    },
+    offlineControlColor (): string | undefined {
+      if (['saved', 'expiring'].includes(this.offlineControlState)) return 'primary'
+      if (['error', 'unavailable'].includes(this.offlineControlState)) return 'error'
+      if (['stale', 'ineligible'].includes(this.offlineControlState)) return 'warning'
+      return undefined
+    },
+    offlineCanRetry (): boolean {
+      return (this.offlineSelected || this.offlineHasSnapshot) &&
+        ['stale', 'error', 'unavailable'].includes(this.offlineState) &&
+        !this.offlineActionLoading &&
+        this.offlineOwnedOperationId === null
+    },
+    offlineRetryLabel (): string {
+      return 'Retry offline sync'
+    },
     offlineControlTitle (): string {
-      if (!this.offlineVisitEligible()) return 'This page cannot be selected for offline use.'
-      if (this.offlineState === 'expiring' || this.offlineState === 'stale') return 'Refresh the readable offline copy.'
-      if (this.offlineManualSelected) return 'Unpin this page. Other automatic or followed-tag selections remain active.'
-      if (this.offlineSelected) return `Pin this page manually. It is already selected by ${this.offlineSelectionSources}.`
-      return 'Pin this page for offline use.'
-    },
-    offlineCanExplicitlyRemove (): boolean {
-      return !this.offlinePolicy?.excluded && (this.offlineHasSnapshot || this.offlineSelected)
-    },
-    offlineRemoveControlDisabled (): boolean {
-      return !this.offlineVisitEligible() || !this.offlineCanExplicitlyRemove || this.offlineActionLoading ||
-        this.offlineOwnedOperationId !== null || this.offlineState === 'checking' || this.offlineState === 'ineligible'
-    },
-    offlineRemoveControlLabel (): string {
-      return this.offlineState === 'removing' ? 'Removing and excluding…' : 'Remove and exclude offline copy'
+      if (this.offlineSelected) return this.offlineControlLabel
+      const localReason = this.offlineLocalIneligibilityReason
+      if (localReason) return localReason
+      if (this.offlineState === 'checking') return 'Checking offline availability.'
+      if (this.offlineState === 'downloading' || this.offlineState === 'removing') return 'Offline copy change in progress.'
+      if (this.offlineState === 'error' || this.offlineState === 'unavailable') return 'Offline sync is unavailable. Retry offline sync.'
+      return this.offlineControlLabel
     },
     offlineControlDisabled (): boolean {
-      return !Number.isSafeInteger(this.pageId) || this.pageId < 1 ||
-        !this.offlineVisitEligible() ||
-        this.offlineOwnedOperationId !== null ||
-        ['checking', 'downloading', 'removing'].includes(this.offlineState) ||
-        (this.offlineState === 'ineligible' && !this.offlinePolicy?.excluded)
+      if (!Number.isSafeInteger(this.pageId) || this.pageId < 1 || !this.offlineSelector()) return true
+      if (this.offlineOwnedOperationId !== null || this.offlineActionLoading || this.offlineState === 'checking') return true
+      if (this.offlineState === 'ineligible' && !this.offlineSelected && !this.offlinePolicy?.excluded) return true
+      return Boolean(this.offlineLocalIneligibilityReason && !this.offlineSelected)
     },
     offlineControlLabel (): string {
-      switch (this.offlineState) {
-        case 'checking':
-          return 'Checking offline selection…'
-        case 'downloading':
-          return 'Updating offline selection…'
-        case 'removing':
-          return 'Unpinning from offline…'
-        case 'expiring':
-        case 'stale':
-          return 'Update offline copy'
-        case 'saved':
-          return this.offlineManualSelected ? 'Unpin from offline' : 'Pin for offline'
-        case 'ineligible':
-          return this.offlinePolicy?.excluded ? 'Pin for offline' : 'Unavailable offline'
-        case 'error':
-          return this.offlineManualSelected ? 'Unpin from offline' : 'Pin for offline'
-        default:
-          return this.offlineManualSelected ? 'Unpin from offline' : 'Pin for offline'
-      }
+      if (this.offlineState === 'checking') return 'Checking offline'
+      if (this.offlineState === 'downloading') return 'Saving offline copy'
+      if (this.offlineState === 'removing') return 'Removing offline copy'
+      return this.offlineSelected ? 'Remove offline copy' : 'Save offline copy'
     },
     offlineControlIcon (): string {
       if (this.offlineState === 'checking') return 'mdi-cloud-search-outline'
       if (this.offlineState === 'downloading' || this.offlineState === 'removing') return 'mdi-cloud-sync-outline'
-      if (this.offlineSelected) return 'mdi-cloud-check-outline'
-      if (this.offlineState === 'ineligible' && !this.offlinePolicy?.excluded) return 'mdi-cloud-off-outline'
+      if (this.offlineState === 'stale' || this.offlineState === 'error' || this.offlineState === 'unavailable') return 'mdi-cloud-alert-outline'
+      if (this.offlineState === 'ineligible') return 'mdi-cloud-off-outline'
+      if (this.offlineSelected && this.offlineHasValidBody) return 'mdi-cloud-check-outline'
+      if (this.offlineSelected) return 'mdi-cloud-download-outline'
       return 'mdi-cloud-outline'
     },
     offlineStatusLabel (): string {
       const sources = this.offlineSelectionSources
-      const selected = sources.length > 0
-      const selectedDetail = selected ? `Selected via ${sources}.` : 'Not selected for offline sync.'
+      const selected = this.offlineSelected
+      const selectedDetail = selected ? `Included via ${sources}.` : 'Not included in offline sync.'
       const actionFailure = this.offlineError
       const availabilityFailure = this.offlineAvailabilityError
-      if (actionFailure && !['checking', 'downloading', 'removing'].includes(this.offlineState)) {
+      const serverDenied = this.offlinePolicy?.availability === 'ineligible'
+      if (actionFailure && !serverDenied && !['checking', 'downloading', 'removing'].includes(this.offlineState)) {
         return this.offlineHasSnapshot
           ? `${selectedDetail} The saved readable copy remains available, but this action failed. ${actionFailure}`
           : actionFailure
       }
       switch (this.offlineState) {
         case 'checking':
-          return 'Checking offline selection and readable copy.'
+          return 'Checking offline availability.'
         case 'eligible':
-          return this.offlinePolicy?.excluded
-            ? 'Excluded from offline sync. Pin this page to include it again.'
-            : selected
-              ? `${selectedDetail} Waiting for a readable offline copy.`
-              : 'Not selected. Pin this page to keep a readable offline copy.'
+          return selected
+            ? `${selectedDetail} A readable offline copy is pending.`
+            : 'Not included. Save a readable offline copy on this device.'
         case 'downloading':
           return `${selectedDetail} Saving the readable offline copy; it is not committed yet.`
         case 'expiring':
           return `${selectedDetail} A readable offline copy is saved on this device, but expires soon.`
         case 'stale':
-          return availabilityFailure
-            ? `${selectedDetail} The readable offline copy could not be refreshed. ${availabilityFailure}`
-            : `${selectedDetail} The readable offline copy could not be refreshed.`
+          return `${selectedDetail} A readable offline copy is saved, but its latest sync is stale. Use Retry offline sync.`
         case 'saved':
           return selected
             ? `${selectedDetail} A readable offline copy is saved on this device.`
-            : 'A readable offline copy is saved on this device, but this page is not selected for continued sync.'
+            : 'A readable offline copy is saved on this device, but this page is not included for continued sync.'
         case 'removing':
           return 'Removing the readable offline copy and excluding this page; the change is not committed yet.'
-        case 'ineligible':
-          return this.offlinePolicy?.excluded
-            ? 'Excluded from offline sync. Pin this page to include it again.'
-            : 'This page is not eligible for offline sync.'
+        case 'ineligible': {
+          const localReason = this.offlineLocalIneligibilityReason
+          if (localReason) return localReason
+          if (this.offlinePolicy?.excluded) return 'Excluded from offline sync.'
+          return 'This page is not available for offline use.'
+        }
         case 'error':
-          return this.offlineHasSnapshot
-            ? `${selectedDetail} The saved readable copy remains available, but the latest sync attempt failed. ${availabilityFailure || 'Try again.'}`
-            : availabilityFailure || `${selectedDetail} The readable offline copy is not committed.`
+          return availabilityFailure
+            ? `${selectedDetail} Offline sync failed. ${availabilityFailure}`
+            : `${selectedDetail} The readable offline copy is not committed.`
+        case 'unavailable':
+          return `${selectedDetail} Offline synchronization is unavailable. Use Retry offline sync when it is available.`
         default:
           return 'Offline selection is unknown.'
       }
@@ -1965,7 +1982,7 @@ export default defineComponent({
       return { siteId, pageId: this.pageId, locale: this.locale }
     },
     offlineVisitEligible (): boolean {
-      return this.offlineSelector() !== null && this.visibility === 'public' && this.isPublished === true
+      return this.offlineSelector() !== null && this.offlineLocalIneligibilityReason === ''
     },
     isCurrentOfflineOperation (operationId: number, pageId: number): boolean {
       return operationId === this.offlineOperationId && pageId === this.pageId
@@ -1993,7 +2010,7 @@ export default defineComponent({
       this.offlineExpiresAt = null
       this.offlineGeneration = null
       this.offlinePolicyRevision = null
-      if (!Number.isSafeInteger(pageId) || pageId < 1 || !this.offlineVisitEligible()) {
+      if (!Number.isSafeInteger(pageId) || pageId < 1 || !this.offlineSelector()) {
         this.offlineState = 'ineligible'
         return
       }
@@ -2022,7 +2039,9 @@ export default defineComponent({
         this.offlineHasSnapshot = existing !== undefined
         this.offlineSnapshotRevision = existing?.snapshot.sourceRevision ?? ''
         this.offlineExpiresAt = existing?.snapshot.expiresAt ?? null
-        if (pagePolicy?.excluded || pagePolicy?.availability === 'ineligible') {
+        if (this.offlineLocalIneligibilityReason) {
+          this.offlineState = 'ineligible'
+        } else if (pagePolicy?.excluded || pagePolicy?.availability === 'ineligible') {
           this.offlineState = 'ineligible'
         } else if (existing && pagePolicy?.availability === 'transient-failure') {
           this.offlineState = 'stale'
@@ -2040,7 +2059,8 @@ export default defineComponent({
         this.offlineAvailabilityError = typeof navigator !== 'undefined' && navigator.onLine === false
           ? 'Waiting for a connection to check offline availability.'
           : getErrorMessage(error) || 'Offline availability could not be checked.'
-        this.offlineState = this.offlineHasSnapshot ? 'stale' : 'error'
+        const unavailable = /unavailable|opening|closed/iu.test(this.offlineAvailabilityError)
+        this.offlineState = unavailable ? 'unavailable' : this.offlineHasSnapshot ? 'stale' : 'error'
       }
     },
     async recordOfflineReaderVisit (): Promise<void> {
@@ -2063,7 +2083,9 @@ export default defineComponent({
         this.offlineGeneration = policy.sessionGeneration
         this.offlinePolicyRevision = policy.state.policyRevision + 1
         if (policy.state.automaticSavingEnabled) {
-          await this.offlineSyncService?.reconcile('visit')
+          await (this.offlineSyncService
+            ? this.offlineSyncService.reconcile('visit')
+            : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.'))
           if (!this.isCurrentOfflineOperation(operationId, pageId)) return
         }
       } catch {
@@ -2072,14 +2094,88 @@ export default defineComponent({
         if (this.offlineOwnedOperationId === operationId) this.offlineOwnedOperationId = null
       }
     },
+    async updateOfflineAdmission (availability: 'ineligible' | 'unknown'): Promise<void> {
+      const selector = this.offlineSelector()
+      if (!selector || this.offlineDisposed) return
+      const generation = this.pageActionGeneration
+      const pageId = selector.pageId
+      const locale = selector.locale
+      const siteId = selector.siteId
+      const isCurrentAdmission = (): boolean =>
+        !this.offlineDisposed &&
+        generation === this.pageActionGeneration &&
+        this.pageId === pageId &&
+        this.locale === locale
+      let storage: OfflineStorage | null = null
+      let closeStorage = false
+      try {
+        if (this.offlineStorage && !this.offlineStorage.isClosed) {
+          storage = this.offlineStorage
+        } else {
+          storage = await openOfflineStorage()
+          closeStorage = true
+        }
+        if (!storage) return
+        const policy = await storage.readOfflinePolicy()
+        const variants = policy.pages.filter((record: OfflinePagePolicyRecord) =>
+          record.siteId === siteId && record.pageId === pageId
+        )
+        if (availability === 'unknown') {
+          if (variants.length === 0) return
+          for (const variant of variants) {
+            await storage.setPageAvailability({
+              siteId: variant.siteId,
+              pageId: variant.pageId,
+              locale: variant.locale
+            }, 'unknown')
+          }
+        } else {
+          await storage.markPageIneligible(selector)
+        }
+        const nextPolicy = await storage.readOfflinePolicy()
+        if (!isCurrentAdmission()) return
+        const nextPage = nextPolicy.pages.find((record: OfflinePagePolicyRecord) =>
+          record.siteId === siteId && record.pageId === pageId && record.locale === locale
+        )
+        this.offlinePolicy = nextPage ?? null
+        this.offlineGeneration = nextPolicy.sessionGeneration
+        this.offlinePolicyRevision = nextPolicy.state.policyRevision
+        if (availability === 'ineligible') {
+          this.offlineHasSnapshot = false
+          this.offlineSnapshotRevision = ''
+          this.offlineExpiresAt = null
+          this.offlineState = 'ineligible'
+          this.offlineAvailabilityError = ''
+        } else {
+          this.offlineState = nextPage?.excluded ? 'ineligible' : 'eligible'
+        }
+      } catch {
+        if (!isCurrentAdmission()) return
+        showNotification(wikiStore, {
+          style: 'red',
+          message: 'Offline admission could not be updated after the page protection change.',
+          icon: 'alert'
+        })
+      } finally {
+        if (closeStorage) storage?.close()
+      }
+    },
     async updateOfflinePage (manualSelection: boolean): Promise<void> {
       const selector = this.offlineSelector()
       const pageId = selector?.pageId ?? this.pageId
-      if (this.offlineDisposed || !selector || !this.offlineVisitEligible()) {
+      if (this.offlineDisposed || !selector || !Number.isSafeInteger(pageId) || pageId < 1 || (manualSelection && !this.offlineVisitEligible())) {
         this.offlineState = 'ineligible'
         return
       }
+      const generation = this.pageActionGeneration
+      const isCurrentPage = (): boolean =>
+        !this.offlineDisposed &&
+        generation === this.pageActionGeneration &&
+        this.pageId === selector.pageId &&
+        this.locale === selector.locale
       const operationId = ++this.offlineOperationId
+      const isCurrentOperation = (): boolean =>
+        isCurrentPage() && this.isCurrentOfflineOperation(operationId, pageId)
       this.offlineOwnedOperationId = operationId
       this.offlineState = manualSelection ? 'downloading' : 'removing'
       this.offlineError = ''
@@ -2088,8 +2184,9 @@ export default defineComponent({
       let authoritativeRefreshOperationId: number | null = null
       try {
         const storage = await this.offlineStorageForOperation(operationId)
-        if (!storage || !this.isCurrentOfflineOperation(operationId, pageId)) return
+        if (!storage || !isCurrentOperation()) return
         const policy = await storage.readOfflinePolicy()
+        if (!isCurrentOperation()) return
         const previousPolicy = policy.pages.find((record: OfflinePagePolicyRecord) =>
           record.siteId === selector.siteId && record.pageId === selector.pageId && record.locale === selector.locale
         )
@@ -2098,67 +2195,110 @@ export default defineComponent({
           expectedPolicyRevision: policy.state.policyRevision
         })
         policyMutationCommitted = true
-        if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+        if (!isCurrentOperation()) return
         this.offlinePolicy = updatedPolicy
         this.offlineGeneration = policy.sessionGeneration
         const policyChanged = previousPolicy
           ? previousPolicy.manual !== manualSelection || previousPolicy.excluded
           : manualSelection
         this.offlinePolicyRevision = policy.state.policyRevision + (policyChanged ? 1 : 0)
-        await this.offlineSyncService?.reconcile('manual')
-        if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+        const syncResult: OfflineSyncResult = this.offlineSyncService
+          ? await this.offlineSyncService.reconcile('manual')
+          : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+        if (!isCurrentOperation()) return
         authoritativeRefreshOperationId = this.offlineOperationId + 1
         this.offlinePassiveRefreshPending = false
         await this.refreshOfflinePageState()
-        if (this.pageId !== pageId || this.locale !== selector.locale) return
+        if (!isCurrentPage() || this.offlineOperationId !== authoritativeRefreshOperationId) return
 
         const refreshedOfflineState = widenOfflinePageState(this.offlineState)
-        const pageFailed = refreshedOfflineState === 'stale' || refreshedOfflineState === 'error'
+        const pageFailed = ['stale', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
         if (pageFailed) {
-          this.offlineAvailabilityError = this.offlineAvailabilityError || 'The readable offline copy could not be committed.'
+          this.offlineAvailabilityError = refreshedOfflineState === 'ineligible'
+            ? 'This page is not available for offline use.'
+            : this.offlineAvailabilityError || 'The readable offline copy could not be committed.'
           showNotification(wikiStore, {
             style: 'red',
             message: this.offlineAvailabilityError,
             icon: 'alert'
           })
+          this.offlinePassiveRefreshPending = false
           return
         }
 
-        const saved = this.offlineHasSnapshot && ['saved', 'expiring'].includes(refreshedOfflineState)
-        let message: string
-        if (!manualSelection) {
-          message = this.offlineSelected
-            ? 'Page unpinned. Its automatic or followed-tag offline selection remains active.'
-            : 'Page unpinned from offline sync.'
-        } else {
-          message = saved
-            ? 'Page pinned for offline sync; a readable copy is saved on this device.'
-            : 'Page selected for offline sync; a readable copy will be saved when available.'
-        }
+        const saved = this.offlineHasValidBody
+        const message = saved
+          ? 'Page selected for offline sync; a readable copy is saved on this device.'
+          : 'Page selected for offline sync; a readable copy will be saved when available.'
+        let notification = message
+        if (syncResult.outcome === 'offline')
+          notification += ' Local synchronization will resume when a connection is available.'
         showNotification(wikiStore, {
           style: 'success',
-          message
+          message: notification
         })
+        const aggregateNotice = offlineSyncAggregateNotice(syncResult)
+        if (aggregateNotice) {
+          showNotification(wikiStore, {
+            style: 'warning',
+            message: aggregateNotice,
+            icon: 'warning'
+          })
+        }
       } catch (error) {
-        if (!this.isCurrentOfflineOperation(operationId, pageId)) return
-        const message = getErrorMessage(error) || (
+        if (!isCurrentOperation()) return
+        const detail = getErrorMessage(error).trim().slice(0, 512) || (
           policyMutationCommitted
-            ? 'The latest offline sync attempt could not be completed.'
+            ? 'Offline synchronization could not be completed.'
             : 'The offline selection could not be committed.'
         )
-        this.offlineState = this.offlineHasSnapshot ? 'stale' : 'error'
-        if (policyMutationCommitted) this.offlineAvailabilityError = message
-        else this.offlineError = message
+        if (!policyMutationCommitted) {
+          this.offlineState = this.offlineHasSnapshot ? 'stale' : 'error'
+          this.offlineError = detail
+          showNotification(wikiStore, {
+            style: 'red',
+            message: this.offlineError,
+            icon: 'alert'
+          })
+          this.offlinePassiveRefreshPending = false
+          return
+        }
+
+        authoritativeRefreshOperationId = this.offlineOperationId + 1
+        this.offlinePassiveRefreshPending = false
+        await this.refreshOfflinePageState()
+        if (!isCurrentPage() || this.offlineOperationId !== authoritativeRefreshOperationId) return
+        const refreshedOfflineState = widenOfflinePageState(this.offlineState)
+        const pageFailed = ['stale', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
+        if (pageFailed) {
+          this.offlineAvailabilityError = refreshedOfflineState === 'ineligible'
+            ? 'This page is not available for offline use.'
+            : this.offlineAvailabilityError || 'The readable offline copy could not be committed.'
+          showNotification(wikiStore, {
+            style: 'red',
+            message: this.offlineAvailabilityError,
+            icon: 'alert'
+          })
+          this.offlinePassiveRefreshPending = false
+          return
+        }
+
+        const saved = this.offlineHasValidBody
         showNotification(wikiStore, {
-          style: 'red',
-          message: this.offlineError || this.offlineAvailabilityError,
-          icon: 'alert'
+          style: 'success',
+          message: saved
+            ? 'Page selected for offline sync; a readable copy is saved on this device.'
+            : 'Page selected for offline sync; a readable copy will be saved when available.'
+        })
+        showNotification(wikiStore, {
+          style: 'warning',
+          message: offlineSyncFailureNotice(detail),
+          icon: 'warning'
         })
       } finally {
         if (this.offlineOwnedOperationId === operationId) {
           const shouldRefresh = this.offlinePassiveRefreshPending &&
-            !this.offlineDisposed &&
-            this.pageId === pageId &&
+            isCurrentPage() &&
             (authoritativeRefreshOperationId === null
               ? this.offlineOperationId === operationId
               : this.offlineOperationId === authoritativeRefreshOperationId)
@@ -2171,61 +2311,130 @@ export default defineComponent({
     async removeOfflinePage (): Promise<void> {
       const selector = this.offlineSelector()
       const pageId = selector?.pageId ?? this.pageId
-      if (this.offlineDisposed || !selector || !Number.isSafeInteger(pageId) || pageId < 1 || !this.offlineVisitEligible()) {
+      if (this.offlineDisposed || !selector || !Number.isSafeInteger(pageId) || pageId < 1) {
         this.offlineState = 'ineligible'
         return
       }
+      const generation = this.pageActionGeneration
+      const isCurrentPage = (): boolean =>
+        !this.offlineDisposed &&
+        generation === this.pageActionGeneration &&
+        this.pageId === selector.pageId &&
+        this.locale === selector.locale
       const operationId = ++this.offlineOperationId
+      const isCurrentOperation = (): boolean =>
+        isCurrentPage() && this.isCurrentOfflineOperation(operationId, pageId)
       this.offlineOwnedOperationId = operationId
       this.offlineState = 'removing'
       this.offlineError = ''
       this.offlineAvailabilityError = ''
       let policyMutationCommitted = false
+      let authoritativeRefreshOperationId: number | null = null
       try {
         const storage = await this.offlineStorageForOperation(operationId)
-        if (!storage || !this.isCurrentOfflineOperation(operationId, pageId)) return
+        if (!storage || !isCurrentOperation()) return
         const policy = await storage.readOfflinePolicy()
-        if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+        if (!isCurrentOperation()) return
         const excludedPolicy = await storage.removeOfflinePage(selector, {
           expectedSessionGeneration: policy.sessionGeneration,
           expectedPolicyRevision: policy.state.policyRevision
         })
         policyMutationCommitted = true
-        if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+        if (!isCurrentOperation()) return
         this.offlinePolicy = excludedPolicy
         this.offlineGeneration = policy.sessionGeneration
         this.offlinePolicyRevision = policy.state.policyRevision + 1
         this.offlineHasSnapshot = false
         this.offlineSnapshotRevision = ''
         this.offlineExpiresAt = null
-        await this.offlineSyncService?.reconcile('manual')
-        if (!this.isCurrentOfflineOperation(operationId, pageId)) return
         this.offlineState = 'ineligible'
+        const syncResult: OfflineSyncResult = this.offlineSyncService
+          ? await this.offlineSyncService.reconcile('manual')
+          : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+        if (!isCurrentOperation()) return
+        authoritativeRefreshOperationId = this.offlineOperationId + 1
+        this.offlinePassiveRefreshPending = false
+        await this.refreshOfflinePageState()
+        if (!isCurrentPage() || this.offlineOperationId !== authoritativeRefreshOperationId) return
+
+        const refreshedOfflineState = widenOfflinePageState(this.offlineState)
+        const pageFailed = ['stale', 'error', 'unavailable'].includes(refreshedOfflineState)
+        const message = syncResult.outcome === 'offline'
+          ? 'Offline copy removed and page excluded from offline sync. Local synchronization will resume when a connection is available.'
+          : 'Offline copy removed and page excluded from offline sync.'
+        showNotification(wikiStore, {
+          style: 'success',
+          message
+        })
+        if (pageFailed) {
+          this.offlineAvailabilityError = this.offlineAvailabilityError || 'The current offline removal state could not be refreshed.'
+          showNotification(wikiStore, {
+            style: 'red',
+            message: this.offlineAvailabilityError,
+            icon: 'alert'
+          })
+          this.offlinePassiveRefreshPending = false
+          return
+        }
+        const aggregateNotice = offlineSyncAggregateNotice(syncResult)
+        if (aggregateNotice) {
+          showNotification(wikiStore, {
+            style: 'warning',
+            message: aggregateNotice,
+            icon: 'warning'
+          })
+        }
+      } catch (error) {
+        if (!isCurrentOperation()) return
+        const detail = getErrorMessage(error).trim().slice(0, 512) || (
+          policyMutationCommitted
+            ? 'Offline synchronization could not be completed.'
+            : 'The offline copy could not be removed.'
+        )
+        if (!policyMutationCommitted) {
+          this.offlineState = 'error'
+          this.offlineError = detail
+          showNotification(wikiStore, {
+            style: 'red',
+            message: this.offlineError,
+            icon: 'alert'
+          })
+          this.offlinePassiveRefreshPending = false
+          return
+        }
+
+        authoritativeRefreshOperationId = this.offlineOperationId + 1
+        this.offlinePassiveRefreshPending = false
+        await this.refreshOfflinePageState()
+        if (!isCurrentPage() || this.offlineOperationId !== authoritativeRefreshOperationId) return
+        const refreshedOfflineState = widenOfflinePageState(this.offlineState)
+        const pageFailed = ['stale', 'error', 'unavailable'].includes(refreshedOfflineState)
         showNotification(wikiStore, {
           style: 'success',
           message: 'Offline copy removed and page excluded from offline sync.'
         })
-      } catch (error) {
-        if (!this.isCurrentOfflineOperation(operationId, pageId)) return
-        const message = getErrorMessage(error) || (
-          policyMutationCommitted
-            ? 'The latest offline sync attempt could not be completed.'
-            : 'The offline copy could not be removed.'
-        )
-        this.offlineState = 'error'
-        if (policyMutationCommitted) this.offlineAvailabilityError = message
-        else this.offlineError = message
-        showNotification(wikiStore, {
-          style: 'red',
-          message: this.offlineError || this.offlineAvailabilityError,
-          icon: 'alert'
-        })
+        if (pageFailed) {
+          this.offlineAvailabilityError = this.offlineAvailabilityError || 'The current offline removal state could not be refreshed.'
+          showNotification(wikiStore, {
+            style: 'red',
+            message: this.offlineAvailabilityError,
+            icon: 'alert'
+          })
+        } else {
+          showNotification(wikiStore, {
+            style: 'warning',
+            message: offlineSyncFailureNotice(detail),
+            icon: 'warning'
+          })
+        }
+        this.offlinePassiveRefreshPending = false
       } finally {
         if (this.offlineOwnedOperationId === operationId) {
           const shouldRefresh = this.offlinePassiveRefreshPending &&
-            !this.offlineDisposed &&
-            this.pageId === pageId &&
-            this.offlineOperationId === operationId
+            isCurrentPage() &&
+            (authoritativeRefreshOperationId === null
+              ? this.offlineOperationId === operationId
+              : this.offlineOperationId === authoritativeRefreshOperationId)
           this.offlinePassiveRefreshPending = false
           this.offlineOwnedOperationId = null
           if (shouldRefresh) await this.refreshOfflinePageState()
@@ -2234,8 +2443,131 @@ export default defineComponent({
     },
     async toggleOfflinePage (): Promise<void> {
       if (this.offlineControlDisabled) return
-      const refreshing = ['expiring', 'stale'].includes(this.offlineState) && this.offlineSelected
-      await this.updateOfflinePage(refreshing ? this.offlineManualSelected : !this.offlineManualSelected)
+      if (this.offlineSelected || this.offlineHasSnapshot) {
+        await this.removeOfflinePage()
+      } else {
+        await this.updateOfflinePage(true)
+      }
+    },
+    async retryOfflinePage (): Promise<void> {
+      if (!this.offlineCanRetry || this.offlineDisposed) return
+      const selector = this.offlineSelector()
+      if (!selector) return
+      const pageId = selector.pageId
+      const generation = this.pageActionGeneration
+      const isCurrentPage = (): boolean =>
+        !this.offlineDisposed &&
+        generation === this.pageActionGeneration &&
+        this.pageId === selector.pageId &&
+        this.locale === selector.locale
+      const operationId = ++this.offlineOperationId
+      const isCurrentOperation = (): boolean =>
+        isCurrentPage() && this.isCurrentOfflineOperation(operationId, pageId)
+      this.offlineOwnedOperationId = operationId
+      this.offlineState = 'checking'
+      this.offlineError = ''
+      this.offlineAvailabilityError = ''
+      let authoritativeRefreshOperationId: number | null = null
+      let reconcileStarted = false
+      try {
+        const storage = await this.offlineStorageForOperation(operationId)
+        if (!storage || !isCurrentOperation()) return
+        reconcileStarted = true
+        const syncResult: OfflineSyncResult = this.offlineSyncService
+          ? await this.offlineSyncService.reconcile('manual')
+          : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
+        if (!isCurrentOperation()) return
+        authoritativeRefreshOperationId = this.offlineOperationId + 1
+        this.offlinePassiveRefreshPending = false
+        await this.refreshOfflinePageState()
+        if (!isCurrentPage() || this.offlineOperationId !== authoritativeRefreshOperationId) return
+
+        const refreshedOfflineState = widenOfflinePageState(this.offlineState)
+        const pageFailed = ['stale', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
+        if (pageFailed) {
+          this.offlineAvailabilityError = refreshedOfflineState === 'ineligible'
+            ? 'This page is not available for offline use.'
+            : this.offlineAvailabilityError || 'The readable offline copy could not be updated.'
+          showNotification(wikiStore, {
+            style: 'red',
+            message: this.offlineAvailabilityError,
+            icon: 'alert'
+          })
+          this.offlinePassiveRefreshPending = false
+          return
+        }
+        showNotification(wikiStore, {
+          style: 'success',
+          message: this.offlineHasValidBody
+            ? 'Offline copy updated on this device.'
+            : 'Offline sync retry completed.'
+        })
+        const aggregateNotice = offlineSyncAggregateNotice(syncResult)
+        if (aggregateNotice) {
+          showNotification(wikiStore, {
+            style: 'warning',
+            message: aggregateNotice,
+            icon: 'warning'
+          })
+        }
+      } catch (error) {
+        if (!isCurrentOperation()) return
+        const detail = getErrorMessage(error).trim().slice(0, 512) || 'Offline synchronization could not be completed.'
+        if (!reconcileStarted) {
+          this.offlineState = /unavailable|opening|closed/iu.test(detail)
+            ? 'unavailable'
+            : this.offlineHasSnapshot ? 'stale' : 'error'
+          this.offlineAvailabilityError = `Offline sync failed: ${detail}`
+          showNotification(wikiStore, {
+            style: 'red',
+            message: this.offlineAvailabilityError,
+            icon: 'alert'
+          })
+          this.offlinePassiveRefreshPending = false
+          return
+        }
+
+        authoritativeRefreshOperationId = this.offlineOperationId + 1
+        this.offlinePassiveRefreshPending = false
+        await this.refreshOfflinePageState()
+        if (!isCurrentPage() || this.offlineOperationId !== authoritativeRefreshOperationId) return
+        const refreshedOfflineState = widenOfflinePageState(this.offlineState)
+        const pageFailed = ['stale', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
+        if (pageFailed) {
+          this.offlineAvailabilityError = refreshedOfflineState === 'ineligible'
+            ? 'This page is not available for offline use.'
+            : this.offlineAvailabilityError || 'The readable offline copy could not be updated.'
+          showNotification(wikiStore, {
+            style: 'red',
+            message: this.offlineAvailabilityError,
+            icon: 'alert'
+          })
+          this.offlinePassiveRefreshPending = false
+          return
+        }
+        showNotification(wikiStore, {
+          style: 'success',
+          message: this.offlineHasValidBody
+            ? 'Offline copy updated on this device.'
+            : 'Offline sync retry completed.'
+        })
+        showNotification(wikiStore, {
+          style: 'warning',
+          message: offlineSyncFailureNotice(detail),
+          icon: 'warning'
+        })
+      } finally {
+        if (this.offlineOwnedOperationId === operationId) {
+          const shouldRefresh = this.offlinePassiveRefreshPending &&
+            isCurrentPage() &&
+            (authoritativeRefreshOperationId === null
+              ? this.offlineOperationId === operationId
+              : this.offlineOperationId === authoritativeRefreshOperationId)
+          this.offlinePassiveRefreshPending = false
+          this.offlineOwnedOperationId = null
+          if (shouldRefresh) await this.refreshOfflinePageState()
+        }
+      }
     },
     resetPageRouteState(): void {
       this.pageActionGeneration += 1
@@ -2591,9 +2923,13 @@ export default defineComponent({
     async savePageProtection (): Promise<void> {
       if (this.protectionLoading || !this.pageProtectionActionReady) return
       const pageId = this.pageId
+      const locale = this.locale
       const generation = this.pageActionGeneration
       const requestId = ++this.protectionRequestId
       const password = this.pageProtectionPassword
+      const isCurrentProtection = (): boolean =>
+        this.isCurrentPageAction(pageId, generation, requestId, this.protectionRequestId) &&
+        this.locale === locale
       this.protectionLoading = true
       this.protectionAuthorityReady = false
       try {
@@ -2605,29 +2941,34 @@ export default defineComponent({
         })
         if (!response.ok) throw await this.approvalResponseError(response, this.$t('common:page.pageProtectionUpdateError'))
         const protection = await response.json() as PageProtection
-        if (!this.isCurrentPageAction(pageId, generation, requestId, this.protectionRequestId)) return
+        if (!isCurrentProtection()) return
         this.pageProtection = protection
         this.protectionAuthorityReady = true
         this.pageProtectionPassword = ''
+        await this.updateOfflineAdmission('ineligible')
+        if (!isCurrentProtection()) return
         showNotification(wikiStore, {
           style: 'success',
           message: protection.version > 1 ? this.$t('common:page.passwordRotatedSuccess') : this.$t('common:page.passwordProtectionEnabledSuccess')
         })
       } catch (error) {
-        if (pageId !== this.pageId || generation !== this.pageActionGeneration || requestId !== this.protectionRequestId) return
+        if (!isCurrentProtection()) return
         this.protectionAuthorityReady = false
         this.protectionError = getErrorMessage(error)
         pushGraphError(wikiStore, error)
       } finally {
-        if (pageId === this.pageId && generation === this.pageActionGeneration && requestId === this.protectionRequestId)
-          this.protectionLoading = false
+        if (isCurrentProtection()) this.protectionLoading = false
       }
     },
     async removePageProtection (): Promise<void> {
       if (this.protectionLoading || !this.pageProtectionActionReady) return
       const pageId = this.pageId
+      const locale = this.locale
       const generation = this.pageActionGeneration
       const requestId = ++this.protectionRequestId
+      const isCurrentProtection = (): boolean =>
+        this.isCurrentPageAction(pageId, generation, requestId, this.protectionRequestId) &&
+        this.locale === locale
       this.protectionLoading = true
       this.protectionAuthorityReady = false
       try {
@@ -2637,19 +2978,20 @@ export default defineComponent({
           headers: { Accept: 'application/json' }
         })
         if (!response.ok) throw await this.approvalResponseError(response, this.$t('common:page.pageProtectionRemovalError'))
-        if (!this.isCurrentPageAction(pageId, generation, requestId, this.protectionRequestId)) return
+        if (!isCurrentProtection()) return
         this.pageProtection = { protected: false, version: 0, updatedBy: null, updatedAt: null }
         this.protectionAuthorityReady = true
         this.pageProtectionPassword = ''
+        await this.updateOfflineAdmission('unknown')
+        if (!isCurrentProtection()) return
         showNotification(wikiStore, { style: 'success', message: this.$t('common:page.passwordProtectionRemovedSuccess') })
       } catch (error) {
-        if (pageId !== this.pageId || generation !== this.pageActionGeneration || requestId !== this.protectionRequestId) return
+        if (!isCurrentProtection()) return
         this.protectionAuthorityReady = false
         this.protectionError = getErrorMessage(error)
         pushGraphError(wikiStore, error)
       } finally {
-        if (pageId === this.pageId && generation === this.pageActionGeneration && requestId === this.protectionRequestId)
-          this.protectionLoading = false
+        if (isCurrentProtection()) this.protectionLoading = false
       }
     },
     approvalStatusLabel (status: string) {
@@ -3382,13 +3724,95 @@ export default defineComponent({
 
 .page-header-control-pair {
   display: flex;
-  min-width: max-content;
-  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: var(--wiki-space-2);
   margin-inline-start: auto;
-  white-space: nowrap;
+}
+
+.page-header-offline {
+  display: flex;
+  min-width: 0;
+  max-width: min(100%, 34rem);
+  flex: 1 1 18rem;
+  align-items: center;
+  gap: var(--wiki-space-2);
+}
+
+.page-header-offline-status {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  font-size: .75rem;
+  line-height: 1.35;
+}
+
+.page-header-offline-status--saved,
+.page-header-offline-status--expiring {
+  color: var(--wiki-accent-warm);
+}
+
+.page-header-offline-status--stale,
+.page-header-offline-status--ineligible {
+  color: rgb(var(--v-theme-warning));
+}
+
+.page-header-offline-status--error,
+.page-header-offline-status--unavailable {
+  color: rgb(var(--v-theme-error));
+}
+
+.page-offline-control,
+.page-offline-retry-control {
+  flex: 0 0 auto;
+}
+
+.page-offline-control {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
+  padding: 0 !important;
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-ink) 24%, var(--wiki-surface-border)) !important;
+  background: color-mix(in srgb, var(--wiki-accent-ink) 8%, transparent) !important;
+  color: var(--wiki-accent-ink) !important;
+  transition:
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    background var(--wiki-motion-fast) var(--wiki-motion-ease),
+    color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+  &:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--wiki-accent-ink) 44%, var(--wiki-surface-border)) !important;
+    background: color-mix(in srgb, var(--wiki-accent-ink) 14%, transparent) !important;
+  }
+
+  &--saved,
+  &--expiring {
+    border-color: color-mix(in srgb, var(--wiki-accent-warm) 44%, var(--wiki-surface-border)) !important;
+    background: color-mix(in srgb, var(--wiki-accent-warm) 13%, transparent) !important;
+    color: var(--wiki-accent-warm) !important;
+  }
+
+  &--stale,
+  &--error,
+  &--unavailable,
+  &--ineligible {
+    border-color: color-mix(in srgb, var(--wiki-accent-warm) 46%, var(--wiki-surface-border)) !important;
+    background: color-mix(in srgb, var(--wiki-accent-warm) 9%, transparent) !important;
+    color: var(--wiki-accent-warm) !important;
+  }
+}
+
+.page-offline-retry-control {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
+  padding: 0 !important;
 }
 
 .page-document-row {
@@ -3407,16 +3831,27 @@ export default defineComponent({
 }
 
 .page-history-btn {
-  width: 20px !important;
-  height: 20px !important;
-  min-width: 20px !important;
-  min-height: 20px !important;
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
   padding: 0 !important;
   color: var(--wiki-accent-ink) !important;
   margin-inline-end: 2px;
 
   .v-icon {
-    font-size: 15px !important;
+    font-size: 18px !important;
+  }
+}
+
+@media (pointer: coarse) {
+  .page-history-btn,
+  .page-offline-control,
+  .page-offline-retry-control {
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
   }
 }
 
@@ -3948,6 +4383,7 @@ export default defineComponent({
 }
 
 .page-mobile-tools,
+.page-tablet-tools,
 .page-mobile-metadata {
   display: none;
 }
@@ -4276,15 +4712,18 @@ export default defineComponent({
     min-width: 0;
     min-height: 32px;
     align-items: center;
+    justify-content: center;
     padding: 3px var(--wiki-space-3);
   }
 
   .page-document-provenance {
     flex: 1 1 auto;
     align-items: center;
+    justify-content: center;
     column-gap: var(--wiki-space-3);
     font-size: .75rem;
     line-height: 1.35;
+    text-align: center;
   }
 
 }
@@ -4360,90 +4799,6 @@ export default defineComponent({
       background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
     }
   }
-}
-.page-shortcuts-status {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--wiki-space-1) var(--wiki-space-3);
-  padding: var(--wiki-space-2) var(--wiki-space-3) var(--wiki-space-3);
-  border-block-start: 1px solid var(--wiki-surface-border);
-  background: color-mix(in srgb, var(--wiki-accent-spectral) 5%, var(--wiki-surface-raised));
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 76%, transparent);
-  font-size: .75rem;
-  line-height: 1.35;
-}
-
-.page-shortcuts-status__item {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: var(--wiki-space-1);
-}
-
-.page-shortcuts-status__label {
-  flex: 0 0 auto;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  letter-spacing: .06em;
-  text-transform: uppercase;
-}
-
-.page-offline-status {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.page-offline-copy-status {
-  flex: 1 1 12rem;
-}
-
-.page-offline-status {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 82%, transparent);
-}
-
-.page-offline-copy-status--eligible .page-offline-status {
-  color: var(--wiki-accent-ink);
-}
-
-.page-offline-copy-status--saved .page-offline-status {
-  color: color-mix(in srgb, var(--wiki-ambient-accent) 72%, rgb(var(--v-theme-on-surface)));
-}
-
-.page-offline-copy-status--expiring .page-offline-status,
-.page-offline-copy-status--stale .page-offline-status {
-  color: rgb(var(--v-theme-warning));
-}
-
-.page-offline-copy-status--error .page-offline-status {
-  color: rgb(var(--v-theme-error));
-}
-
-.page-shortcuts-card .page-offline-control,
-.page-shortcuts-card .page-offline-remove-control {
-  width: auto !important;
-  min-width: 44px !important;
-  max-width: none !important;
-  height: 44px !important;
-  min-height: 44px !important;
-  max-height: 44px !important;
-  padding-inline: 10px !important;
-  flex: 0 1 auto !important;
-}
-
-.page-shortcuts-card .page-offline-control--selected {
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, transparent);
-  color: rgb(var(--v-theme-primary));
-}
-
-.page-shortcuts-card .page-offline-remove-control {
-  color: rgb(var(--v-theme-error));
-}
-
-.page-offline-control__label {
-  white-space: nowrap;
 }
 
 .page-col-content:not(.is-page-header) {
@@ -4705,30 +5060,29 @@ export default defineComponent({
 
 }
 @media (min-width: 600px) and (max-width: 1279px) {
-  .page-body > .v-row > .page-shortcuts-card,
-  .page-body > .v-row > .page-provenance-card,
-  .page-body > .v-row > .page-toc-card {
-    order: 0 !important;
-    align-self: flex-start;
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-control-radius);
+  .page-tablet-tools {
+    display: flex;
+    width: 100%;
+    flex: 0 0 100%;
+    flex-direction: column;
+    gap: var(--wiki-space-4);
+  }
+
+  .page-tablet-tools > .page-shortcuts-card,
+  .page-tablet-tools > .page-provenance-card,
+  .page-tablet-tools > .page-toc-card,
+  .page-tablet-tools > .page-tags-card,
+  .page-tablet-tools > .page-comments-card {
+    order: initial;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    flex: 0 0 auto;
+    margin-bottom: 0 !important;
   }
 
   .page-body > .v-row {
     gap: var(--wiki-space-4);
-  }
-
-  .page-body > .v-row > .page-shortcuts-card,
-  .page-body > .v-row > .page-provenance-card,
-  .page-body > .v-row > .page-toc-card,
-  .page-body > .v-row > .page-tags-card,
-  .page-body > .v-row > .page-comments-card {
-    order: 2;
-    width: calc(50% - var(--wiki-space-4) / 2);
-    max-width: calc(50% - var(--wiki-space-4) / 2);
-    min-width: 0;
-    flex: 0 0 calc(50% - var(--wiki-space-4) / 2);
-    margin-bottom: 0 !important;
   }
 }
 
@@ -4817,6 +5171,16 @@ export default defineComponent({
       display: none;
     }
   }
+  .page-header-control-pair {
+    justify-content: flex-start;
+    margin-inline-start: 0;
+  }
+
+  .page-header-offline {
+    max-width: 100%;
+    flex-basis: 100%;
+  }
+
 
   .page-body {
     padding:
@@ -4963,7 +5327,9 @@ export default defineComponent({
   .page-edit-shortcuts,
   .page-edit-fab,
   .page-return-top,
+  .page-header-offline,
   .page-mobile-tools,
+  .page-tablet-tools,
   .page-mobile-metadata,
   .page-col-sd,
   .page-shortcuts-card,
@@ -5221,6 +5587,7 @@ export default defineComponent({
 
   .page-col-sd,
   .page-mobile-tools,
+  .page-tablet-tools,
   .page-mobile-metadata,
   .page-body > .v-row > .v-card,
   .page-provenance-card,

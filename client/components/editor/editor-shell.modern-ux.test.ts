@@ -4,6 +4,9 @@ import { parse } from '@vue/compiler-sfc'
 import _ from 'lodash'
 import * as ts from 'typescript'
 import { describe, expect, test } from '../../../server/test/bun-test.mts'
+import { OfflineSnapshotSelectorSchema } from '../../../shared/offline.ts'
+import { normalizeAvailableEditors } from '../../../shared/page-editors.ts'
+import { getEditorComponentName } from '../../helpers/editor-key.ts'
 import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
 
 const shellPath = join(process.cwd(), 'client/components/editor.vue')
@@ -65,6 +68,25 @@ type OfflineCoordinatorHarness = {
   readonly hasUnresolvedSubmission: boolean
   readonly reloadSafetySnapshot: { safe: boolean; revision: string; actorEpoch?: string | number }
 }
+type OfflineStorageHarness = {
+  isClosed: boolean
+  readOfflinePolicy: () => Promise<{
+    sessionGeneration: number
+    state: {
+      automaticSavingEnabled: boolean
+      policyRevision: number
+    }
+    pages: Array<{
+      siteId: string
+      pageId: number
+      locale: string
+      excluded: boolean
+      availability: string
+    }>
+  }>
+  recordSuccessfulPageEdit: (selector: unknown, options: Record<string, unknown>) => Promise<unknown>
+  close: () => void
+}
 
 type AuthOutcome = 'authenticated' | 'unavailable'
 
@@ -82,6 +104,8 @@ type EditorStore = {
     description: string
     isSearchable: boolean
     visibility: 'public' | 'private'
+    protected?: boolean
+    isProtected?: boolean
     locale: string
     path: string
     publishEndDate: string
@@ -184,6 +208,9 @@ type ShellContext = {
   editorAdapter: EditorAdapterHarness
   editorAdapterSafety: EditorAdapterSafety
   offlineDraftCoordinator: OfflineCoordinatorHarness | null
+  offlineStorage: OfflineStorageHarness | null
+  offlineStoragePromise: Promise<OfflineStorageHarness> | null
+  offlineMetadataOperation: number
   applyOfflineDraft: (payload: { content: string; title: string; description: string }) => void
   restoreOfflineDraft: (recordId?: string) => Promise<void>
   submissionCaptureValues: unknown
@@ -235,12 +262,15 @@ type ApiDependencies = {
     sourceRevision: string,
     expectedCollaborationGeneration?: number
   ) => Promise<{ sourceRevision: string; updatedAt: string }>
+  openOfflineStorage: () => Promise<OfflineStorageHarness>
+  siteConfig: { availableEditors: unknown }
   notifyReloadSafetyChanged: () => void
   requestOfflineIdentityBoundary: (request: { accountId: number; reason: 'unauthorized' }) => Promise<boolean>
 }
 
 type TestWindow = {
   location: {
+    origin: string
     assigned: string[]
     replaced: string[]
     assign: (url: string) => void
@@ -296,6 +326,7 @@ const createStore = (mode: 'create' | 'update' = 'update'): EditorStore => {
       isPublished: true,
       isSearchable: true,
       visibility: 'public',
+      protected: false,
       locale: 'en',
       path: 'persisted-path',
       publishEndDate: '2030-01-02',
@@ -346,6 +377,7 @@ const createStore = (mode: 'create' | 'update' = 'update'): EditorStore => {
 const createTestWindow = (): TestWindow => {
   let nextTimer = 100
   const location = {
+    origin: 'https://wiki.example.test',
     assigned: [] as string[],
     replaced: [] as string[],
     assign(url: string) {
@@ -367,9 +399,31 @@ const createTestWindow = (): TestWindow => {
       this.scheduledTimers.push({ id, delay })
       return id
     },
-    fetch: (() => Promise.resolve(new Response())) as unknown as typeof fetch
+    fetch: (() => Promise.resolve(new Response(JSON.stringify({ protected: false }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    }))) as unknown as typeof fetch
   }
 }
+const createOfflineStorage = (
+  automaticSavingEnabled = false,
+  onRecord: OfflineStorageHarness['recordSuccessfulPageEdit'] = async () => undefined,
+  pages: Array<{ siteId: string; pageId: number; locale: string; excluded: boolean; availability: string }> = []
+): OfflineStorageHarness => ({
+  isClosed: false,
+  readOfflinePolicy: async () => ({
+    sessionGeneration: 4,
+    state: {
+      automaticSavingEnabled,
+      policyRevision: 7
+    },
+    pages
+  }),
+  recordSuccessfulPageEdit: onRecord,
+  close() {
+    this.isClosed = true
+  }
+})
 
 const defaultDependencies = (store: EditorStore): ApiDependencies => ({
   buildOkfMetadataPayload: metadata => metadata ?? undefined,
@@ -383,6 +437,10 @@ const defaultDependencies = (store: EditorStore): ApiDependencies => ({
   checkPageConflict: async () => false,
   createPage: async () => ({ id: 91, updatedAt: '2026-09-03T12:00:00.000Z' }),
   discardCollaborationDraft: async () => undefined,
+  openOfflineStorage: async () => createOfflineStorage(),
+  siteConfig: {
+    availableEditors: ['markdown', 'visual-markdown', 'ckeditor', 'asciidoc', 'code']
+  },
   requestOfflineIdentityBoundary: async () => true,
   fetchPage: async () => ({ okf: _.cloneDeep(store.page.okf), sourceRevision: 'revision-4', isSearchable: store.page.isSearchable }),
   updatePage: async () => ({ sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }),
@@ -406,6 +464,11 @@ const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides
     'updatePage',
     'notifyReloadSafetyChanged',
     'requestOfflineIdentityBoundary',
+    'openOfflineStorage',
+    'OfflineSnapshotSelectorSchema',
+    'normalizeAvailableEditors',
+    'getEditorComponentName',
+    'siteConfig',
     'emitEditorSaveConflict',
     'getErrorMessage',
     'removeEditorPageCss',
@@ -428,6 +491,11 @@ const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides
     dependencies.updatePage,
     dependencies.notifyReloadSafetyChanged,
     dependencies.requestOfflineIdentityBoundary,
+    dependencies.openOfflineStorage,
+    OfflineSnapshotSelectorSchema,
+    normalizeAvailableEditors,
+    getEditorComponentName,
+    dependencies.siteConfig,
     () => undefined,
     (error: unknown) => (error instanceof Error ? error.message : String(error)),
     () => undefined,
@@ -467,6 +535,9 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     isAuthenticated: store.user.authenticated,
     accountId: store.user.id,
     offlineConnectionState: 'online',
+    offlineStorage: null,
+    offlineStoragePromise: null,
+    offlineMetadataOperation: 0,
     activeModal: '',
     offlineDraftBusy: false,
     offlineDraftStatus: null,
@@ -1020,6 +1091,158 @@ describe('modern editor shell interaction contract', () => {
       }
     ])
     expect(shellSfc.descriptor.template?.content ?? '').toMatch(/editor-modal-unsaved\([\s\S]*:error='discardError'/)
+  })
+
+  test('records one eligible automatic edit after a successful update', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    const records: Array<{ selector: unknown; options: Record<string, unknown> }> = []
+    const storage = createOfflineStorage(true, async (selector, options) => {
+      records.push({ selector, options })
+    })
+    const context = createShellHarness(store, testWindow, {
+      openOfflineStorage: async () => storage
+    })
+    store.editor.content = 'edited content'
+
+    expect(await context.save()).toBe(true)
+
+    expect(records).toHaveLength(1)
+    expect(records[0]?.selector).toEqual({
+      siteId: 'https://wiki.example.test',
+      pageId: 12,
+      locale: 'en'
+    })
+    expect(Object.isFrozen(records[0]?.selector)).toBe(true)
+    expect(records[0]?.options).toMatchObject({
+      expectedSessionGeneration: 4,
+      expectedPolicyRevision: 7,
+      editedAt: '2026-09-03T12:00:00.000Z'
+    })
+    expect(context.isDirty).toBe(false)
+    expect(testWindow.location.assigned).toEqual([])
+  })
+
+  test('records a successful create before Save and close navigates', async () => {
+    const store = createStore('create')
+    const testWindow = createTestWindow()
+    const records: unknown[] = []
+    let assignedAtRecord = -1
+    const storage = createOfflineStorage(true, async selector => {
+      assignedAtRecord = testWindow.location.assigned.length
+      records.push(selector)
+    })
+    const context = createShellHarness(store, testWindow, {
+      openOfflineStorage: async () => storage
+    })
+    store.editor.content = 'new page content'
+    context.dialogUnsaved = true
+
+    await context.saveUnsavedAndClose()
+
+    expect(records).toHaveLength(1)
+    expect(records[0]).toEqual({
+      siteId: 'https://wiki.example.test',
+      pageId: 91,
+      locale: 'en'
+    })
+    expect(assignedAtRecord).toBe(0)
+    expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
+  })
+
+  test('does not record metadata for failed, excluded, or ineligible saves', async () => {
+    const ineligibleCases: Array<(store: EditorStore, testWindow: TestWindow) => void> = [
+      store => {
+        store.page.visibility = 'private'
+      },
+      store => {
+        store.page.isPublished = false
+      },
+      (_store, testWindow) => {
+        testWindow.fetch = (() => Promise.resolve(new Response(JSON.stringify({ protected: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        }))) as unknown as typeof fetch
+      },
+      (_store, testWindow) => {
+        testWindow.fetch = (() => Promise.resolve(new Response(JSON.stringify({})))) as unknown as typeof fetch
+      },
+      store => {
+        store.editor.editorKey = 'unsupported'
+        store.editor.editor = 'unsupported'
+      }
+    ]
+
+    for (const configure of ineligibleCases) {
+      const store = createStore()
+      const testWindow = createTestWindow()
+      configure(store, testWindow)
+      let recordCalls = 0
+      const storage = createOfflineStorage(true, async () => {
+        recordCalls++
+      })
+      const context = createShellHarness(store, testWindow, {
+        openOfflineStorage: async () => storage
+      })
+      store.editor.content = 'edited content'
+
+      expect(await context.save()).toBe(true)
+      expect(recordCalls).toBe(0)
+    }
+
+    const excludedStore = createStore()
+    let excludedRecordCalls = 0
+    const excludedStorage = createOfflineStorage(true, async () => {
+      excludedRecordCalls++
+    }, [{ siteId: 'https://wiki.example.test', pageId: 12, locale: 'en', excluded: true, availability: 'available' }])
+    const excludedContext = createShellHarness(excludedStore, createTestWindow(), {
+      openOfflineStorage: async () => excludedStorage
+    })
+    excludedStore.editor.content = 'edited content'
+
+    expect(await excludedContext.save()).toBe(true)
+    expect(excludedRecordCalls).toBe(0)
+
+    const failedStore = createStore()
+    let failedRecordCalls = 0
+    const failedStorage = createOfflineStorage(true, async () => {
+      failedRecordCalls++
+    })
+    const failedContext = createShellHarness(failedStore, createTestWindow(), {
+      openOfflineStorage: async () => failedStorage,
+      updatePage: async () => {
+        throw new Error('save rejected')
+      }
+    })
+    failedStore.editor.content = 'edited content'
+
+    expect(await failedContext.save()).toBe(false)
+    expect(failedRecordCalls).toBe(0)
+  })
+
+  test('keeps a successful save nonfatal when automatic metadata recording fails', async () => {
+    const store = createStore('create')
+    const testWindow = createTestWindow()
+    let recordCalls = 0
+    const storage = createOfflineStorage(true, async () => {
+      recordCalls++
+      throw new Error('quota exhausted')
+    })
+    const context = createShellHarness(store, testWindow, {
+      openOfflineStorage: async () => storage
+    })
+    store.editor.content = 'new page content'
+    context.dialogUnsaved = true
+
+    await context.saveUnsavedAndClose()
+
+    expect(recordCalls).toBe(1)
+    expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
+    expect(store.notifications).toContainEqual({
+      message: 'Offline page metadata could not be recorded: quota exhausted',
+      style: 'warning',
+      icon: 'warning'
+    })
   })
 
   test('successful update Save and close persists edits and cancels the stale edit redirect', async () => {

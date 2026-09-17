@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 const unlock = vi.fn(async () => {})
 const protectedAssetRequiresUnlock = vi.fn(async () => false)
-vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({ assertPageUnlocked: unlock, protectedAssetRequiresUnlock }))
+vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({ assertPageUnlocked: unlock, pageRequiresUnlock: vi.fn(async () => false), protectedAssetRequiresUnlock }))
 let operations: typeof import('../../operations/pages.ts').default
 const updatePage = vi.fn(async (input: unknown) => input)
 const requester = { id: 8, permissions: ['write:pages'] }

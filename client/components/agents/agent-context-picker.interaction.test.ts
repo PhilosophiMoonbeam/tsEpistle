@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
 import type { AgentDraft } from '../../helpers/agent-draft.ts'
+import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import type { PageSearchResult, PageSearchRow } from '../../helpers/pages-api.ts'
 import type { WikiSource } from '../../../shared/wiki-source.ts'
 
@@ -123,13 +124,13 @@ const settle = async (): Promise<void> => {
   }
 }
 
-const emptyDraft = (sources: WikiSource[] = []): AgentDraft => ({
+const emptyDraft = (sources: WikiSource[] = [], includeCurrentPage = true): AgentDraft => ({
   text: 'Keep this unsent draft',
   mode: 'goal',
   skillVersionIds: ['skill-1'],
   sources,
   scope: { kind: 'section', locale: 'en', path: 'handbook' },
-  includeCurrentPage: true
+  includeCurrentPage
 })
 const source = (id: number): WikiSource => ({
   id,
@@ -183,7 +184,8 @@ const waitForSourcesAdded = async (mounted: MountedPicker, expected = 1): Promis
 const mountPicker = (
   searchPagesImpl: (fetchImpl: unknown, query: string, options: Record<string, unknown>) => Promise<PageSearchResult>,
   fetchWikiSourceImpl: (selector: { id: number }, query: string, signal: AbortSignal) => Promise<WikiSource>,
-  draft = emptyDraft()
+  draft = emptyDraft(),
+  currentPage: AgentCurrentPageHint | null = null
 ): MountedPicker => {
   const host = document.createElement('div')
   document.body.append(host)
@@ -218,7 +220,7 @@ const mountPicker = (
     },
     render: renderPicker
   })
-  const app = Vue.createApp(picker, { draft, currentPage: null, disabled: false, connectionBlocked: false, connectionRetrying: false })
+  const app = Vue.createApp(picker, { draft, currentPage, disabled: false, connectionBlocked: false, connectionRetrying: false })
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.component('WikiSourcePreview', Vue.defineComponent({ render: () => Vue.h('div') }))
   app.mount(host)
@@ -252,7 +254,9 @@ const selectResult = async (index = 0): Promise<void> => {
   await settle()
 }
 const addButton = (): HTMLButtonElement => {
-  const button = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.agent-context__dialog-actions button')).find(candidate => candidate.textContent?.includes('and return'))
+  const button = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.agent-context__dialog-actions button')).find(candidate =>
+    candidate.textContent?.includes('and return')
+  )
   if (!button) throw new Error('Add sources primary action did not render')
   return button
 }
@@ -270,7 +274,7 @@ afterEach(() => {
 
 describe('Agent context source transaction', () => {
   it('keeps selections across queries and commits both hydrated pages in one change', async () => {
-    const searchPagesImpl = vi.fn(async (_fetchImpl: unknown, query: string) => query === 'alpha' ? result([row('11')]) : result([row(12)]))
+    const searchPagesImpl = vi.fn(async (_fetchImpl: unknown, query: string) => (query === 'alpha' ? result([row('11')]) : result([row(12)])))
     const fetchWikiSourceImpl = vi.fn(async (selector: { id: number }) => source(selector.id))
     const mounted = mountPicker(searchPagesImpl, fetchWikiSourceImpl)
     await openPicker(mounted)
@@ -331,7 +335,9 @@ describe('Agent context source transaction', () => {
     await settle()
     addButton().click()
     await settle()
-    const cancel = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.agent-context__dialog-actions button')).find(button => button.textContent?.trim() === 'Cancel')
+    const cancel = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.agent-context__dialog-actions button')).find(
+      button => button.textContent?.trim() === 'Cancel'
+    )
     if (!cancel) throw new Error('Cancel action did not render')
     cancel.click()
     hydration.resolve(source(31))
@@ -345,7 +351,9 @@ describe('Agent context source transaction', () => {
 
   it('deduplicates identity across representations and enforces the eight-source boundary', async () => {
     const existing = Array.from({ length: 7 }, (_, index) => source(index + 1))
-    const searchPagesImpl = vi.fn(async (_fetchImpl: unknown, query: string) => query === 'eight' ? result([row('8')]) : query === 'same' ? result([row(8)]) : result([row(9)]))
+    const searchPagesImpl = vi.fn(async (_fetchImpl: unknown, query: string) =>
+      query === 'eight' ? result([row('8')]) : query === 'same' ? result([row(8)]) : result([row(9)])
+    )
     const fetchWikiSourceImpl = vi.fn(async (selector: { id: number }) => source(selector.id))
     const mounted = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft(existing))
     await openPicker(mounted)
@@ -367,11 +375,43 @@ describe('Agent context source transaction', () => {
   })
 })
 
+describe('Agent context current-page inclusion', () => {
+  it('emits an inclusion toggle for the next message without changing the opening page', async () => {
+    const page: AgentCurrentPageHint = {
+      id: 77,
+      locale: 'en',
+      path: 'handbook/context',
+      observedUpdatedAt: '2026-09-16T00:00:00.000Z'
+    }
+    const searchPagesImpl = vi.fn(async () => result([]))
+    const fetchWikiSourceImpl = vi.fn(async (selector: { id: number }) => source(selector.id))
+    const included = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft(), page)
+    const includeControl = included.host.querySelector<HTMLButtonElement>('.agent-context__page-toggle')
+    if (!includeControl) throw new Error('Current-page inclusion control did not render')
+
+    expect(includeControl.getAttribute('aria-pressed')).toBe('true')
+    includeControl.click()
+    await settle()
+    expect(included.changes).toEqual([{ includeCurrentPage: false }])
+
+    const excluded = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft([], false), page)
+    const excludeControl = excluded.host.querySelector<HTMLButtonElement>('.agent-context__page-toggle')
+    if (!excludeControl) throw new Error('Current-page inclusion control did not render')
+    expect(excludeControl.getAttribute('aria-pressed')).toBe('false')
+    excludeControl.click()
+    await settle()
+    expect(excluded.changes).toEqual([{ includeCurrentPage: true }])
+  })
+})
+
 describe('Agent context source debounce', () => {
   it('shows loading while a valid query is debounced, then renders its results without Enter', async () => {
     const pending = deferred<PageSearchResult>()
     const searchPagesImpl = vi.fn(() => pending.promise)
-    const mounted = mountPicker(searchPagesImpl, vi.fn(async (selector: { id: number }) => source(selector.id)))
+    const mounted = mountPicker(
+      searchPagesImpl,
+      vi.fn(async (selector: { id: number }) => source(selector.id))
+    )
     await openPicker(mounted)
     vi.useFakeTimers()
     try {
@@ -409,7 +449,10 @@ describe('Agent context source cancellation', () => {
   it('ignores a stale search completion after the dialog is cancelled', async () => {
     const pending = deferred<PageSearchResult>()
     const searchPagesImpl = vi.fn(() => pending.promise)
-    const mounted = mountPicker(searchPagesImpl, vi.fn(async (selector: { id: number }) => source(selector.id)))
+    const mounted = mountPicker(
+      searchPagesImpl,
+      vi.fn(async (selector: { id: number }) => source(selector.id))
+    )
     await openPicker(mounted)
     await search(mounted, 'stale')
     const cancel = document.body.querySelector<HTMLButtonElement>('.agent-context__dialog-actions button')
