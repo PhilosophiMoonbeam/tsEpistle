@@ -258,6 +258,31 @@ const ownedPriorCacheName = `${PRECACHE_CACHE_PREFIX}abcdef0123456789`
 
 
 describe('service worker lifecycle', () => {
+  it('opens the cached offline library directly without allowing protected or non-navigation fallbacks', async () => {
+    let online = true
+    const harness = await createHarness({
+      fetch: async url => {
+        if (!online) throw new Error('Network is offline')
+        return new Response(url === SHELL_URL ? shell() : 'asset')
+      }
+    })
+    try {
+      await harness.dispatchInstall()
+      online = false
+      for (const path of ['/_offline', '/_offline?pageId=1&locale=en']) {
+        const response = await harness.dispatchFetch(requestLike(`${ORIGIN}${path}`, 'navigate'))
+        expect(await response.text()).toContain('offline')
+      }
+      for (const path of ['/_offline/nested', '/_api/users/whoami', '/login', '/logout', '/_private/en/notes']) {
+        await expect(harness.dispatchFetch(requestLike(`${ORIGIN}${path}`, 'navigate'))).rejects.toThrow('Network is offline')
+      }
+      await expect(harness.dispatchFetch(requestLike(SHELL_URL, 'cors'))).rejects.toThrow('Network is offline')
+      await expect(harness.dispatchFetch(requestLike(SHELL_URL, 'navigate', 'application/json'))).rejects.toThrow('Network is offline')
+    } finally {
+      harness.restore()
+    }
+  })
+
   it.each(['fetch', 'put'] as const)('preserves the prior complete cache and removes a failed %s candidate', async failure => {
     const harness = await createHarness({
       fetch: failure === 'fetch'

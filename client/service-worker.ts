@@ -369,13 +369,13 @@ async function handleFetch(request: Request): Promise<Response> {
   if (request.method !== 'GET') return fetch(request)
   const url = sameOriginURL(request.url, worker.location.origin)
   if (!url) return fetch(request)
-  if (isNetworkOnlyPath(url.pathname) && !url.pathname.toLowerCase().startsWith(OFFLINE_ASSET_PREFIX)) return fetch(request)
-
   if (url.pathname === OFFLINE_DOCUMENT_PATH && request.mode === 'navigate' && acceptsHTML(request)) {
     const fallback = await cachedShell()
     if (fallback) return fallback
     return fetch(request)
   }
+
+  if (isNetworkOnlyPath(url.pathname) && !url.pathname.toLowerCase().startsWith(OFFLINE_ASSET_PREFIX)) return fetch(request)
 
   if (PRECACHE_URLS.has(url.href)) {
     try {
