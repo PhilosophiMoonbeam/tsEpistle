@@ -2189,26 +2189,63 @@ describe('durable agent repositories', () => {
           if (!request.task || !request.subagentRunId) throw new Error('missing child envelope')
           const alpha = request.task.title.includes('alpha')
           const pageId = alpha ? 1 : 2
-          const evidenceId = `page:${pageId}`
           const revision = `rev-${pageId}`
+          const evidenceId = `page:${pageId}:revision:${revision}`
           const claim = alpha ? 'Alpha requires review.' : 'Beta requires audit.'
+          if (alpha) {
+            await sink.event('tool.started', {
+              actionCallId: `old-recent-${pageId}`,
+              actionName: 'pages.listRecent',
+              title: 'List recent pages',
+              risk: 'read',
+              turn: 1,
+              input: JSON.stringify({ limit: 10 })
+            })
+            await sink.event('tool.completed', {
+              actionCallId: `old-recent-${pageId}`,
+              actionName: 'pages.listRecent',
+              result: JSON.stringify({
+                pages: [
+                  {
+                    id: pageId,
+                    title: alpha ? 'Alpha' : 'Beta',
+                    sourceRevision: revision,
+                    citation: { evidenceId, label: alpha ? 'Alpha' : 'Beta', href: alpha ? '/en/alpha' : '/en/beta' }
+                  }
+                ]
+              })
+            })
+          }
           await sink.event('tool.started', {
             actionCallId: `read-${pageId}`,
-            actionName: 'pages.get',
-            title: 'Read page',
+            actionName: 'pages.listRecent',
+            title: 'List recent pages',
             risk: 'read',
             turn: 1,
-            input: JSON.stringify({ id: pageId })
+            input: JSON.stringify({ limit: 10 })
           })
           await sink.event('tool.completed', {
             actionCallId: `read-${pageId}`,
-            actionName: 'pages.get',
+            actionName: 'pages.listRecent',
             result: JSON.stringify({
-              id: pageId,
-              sourceRevision: revision,
-              content: claim,
-              citation: { evidenceId, label: alpha ? 'Alpha' : 'Beta', href: alpha ? '/en/alpha' : '/en/beta' },
-              citationSections: []
+              kind: 'recent-page-evidence',
+              requestedLimit: 10,
+              exhausted: true,
+              pages: [
+                {
+                  id: pageId,
+                  locale: 'en',
+                  path: alpha ? 'alpha' : 'beta',
+                  title: alpha ? 'Alpha' : 'Beta',
+                  contentType: 'markdown',
+                  sourceRevision: revision,
+                  updatedAt: '2026-08-17T00:00:00.000Z',
+                  content: claim,
+                  sourceContentCharacters: claim.length,
+                  contentTruncated: false,
+                  citation: { evidenceId, label: alpha ? 'Alpha' : 'Beta', href: alpha ? '/en/alpha' : '/en/beta' }
+                }
+              ]
             })
           })
           await sink.event('model.turn', {
@@ -2234,6 +2271,38 @@ describe('durable agent repositories', () => {
         }
         expect(request.research).toMatchObject({ packets: [{ packet: { outcome: 'completed' } }, { packet: { outcome: 'completed' } }] })
         expect(request.research?.evidenceSeeds).toHaveLength(2)
+        expect(request.research?.evidenceSeeds).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              actionName: 'pages.listRecent',
+              output: expect.objectContaining({
+                kind: 'recent-page-evidence',
+                pages: [
+                  expect.objectContaining({
+                    id: 1,
+                    sourceRevision: 'rev-1',
+                    content: 'Alpha requires review.',
+                    citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' }
+                  })
+                ]
+              })
+            }),
+            expect.objectContaining({
+              actionName: 'pages.listRecent',
+              output: expect.objectContaining({
+                kind: 'recent-page-evidence',
+                pages: [
+                  expect.objectContaining({
+                    id: 2,
+                    sourceRevision: 'rev-2',
+                    content: 'Beta requires audit.',
+                    citation: { evidenceId: 'page:2:revision:rev-2', label: 'Beta', href: '/en/beta' }
+                  })
+                ]
+              })
+            })
+          ])
+        )
         await sink.event('model.turn', {
           turn: 1,
           outcome: 'answer_accepted',
@@ -2243,15 +2312,17 @@ describe('durable agent repositories', () => {
           contentTruncated: false,
           actionCallIds: []
         })
-        await sink.text('Alpha requires review. [[cite:page:1]] Beta requires audit. [[cite:page:2]]')
+        await sink.text(
+          'Alpha requires review. [[cite:page:1:revision:rev-1]] Beta requires audit. [[cite:page:2:revision:rev-2]]'
+        )
         return {
           inputTokens: 10,
           outputTokens: 5,
           totalTokens: 15,
           costMicros: 0,
           citations: [
-            { evidenceId: 'page:1', kind: 'page', label: 'Alpha', href: '/en/alpha' },
-            { evidenceId: 'page:2', kind: 'page', label: 'Beta', href: '/en/beta' }
+            { evidenceId: 'page:1:revision:rev-1', kind: 'page', label: 'Alpha', href: '/en/alpha' },
+            { evidenceId: 'page:2:revision:rev-2', kind: 'page', label: 'Beta', href: '/en/beta' }
           ]
         }
       }

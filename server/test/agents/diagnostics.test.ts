@@ -477,6 +477,65 @@ describe('agent conversation diagnostics', () => {
     ).toBe(true)
   })
 
+  it('counts only new-format recent evidence rows as completed page evidence', async () => {
+    db = await createUsageDatabase()
+    await insertUsageRun(db, runId, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostMicros: null })
+    await appendEvent(db, 1, 'tool.started', { actionCallId: 'old-recent', actionName: 'pages.listRecent', title: 'List recent pages' })
+    await appendEvent(db, 2, 'tool.completed', {
+      actionCallId: 'old-recent',
+      actionName: 'pages.listRecent',
+      result: JSON.stringify({ pages: [{ id: 1, title: 'Old metadata', citation: { evidenceId: 'page:1' } }] })
+    })
+    await appendEvent(db, 3, 'evidence.provenance', { accepted: true, issues: [], finalCitationIds: [] })
+    const recentResult = {
+      kind: 'recent-page-evidence',
+      requestedLimit: 2,
+      exhausted: true,
+      pages: [
+        {
+          id: 1,
+          locale: 'en',
+          path: 'recent/1',
+          title: 'Recent one',
+          contentType: 'markdown',
+          sourceRevision: 'rev-1',
+          updatedAt: now,
+          content: 'Recent one is current.',
+          sourceContentCharacters: 22,
+          contentTruncated: false,
+          citation: { evidenceId: 'page:1:revision:rev-1', label: 'Recent one', href: '/en/recent/1' }
+        },
+        {
+          id: 2,
+          locale: 'en',
+          path: 'recent/2',
+          title: 'Recent two',
+          contentType: 'markdown',
+          sourceRevision: 'rev-2',
+          updatedAt: now,
+          content: 'Recent two is current.',
+          sourceContentCharacters: 22,
+          contentTruncated: false,
+          citation: { evidenceId: 'page:2:revision:rev-2', label: 'Recent two', href: '/en/recent/2' }
+        }
+      ]
+    }
+    await appendEvent(db, 4, 'tool.started', { actionCallId: 'new-recent', actionName: 'pages.listRecent', title: 'List recent pages' })
+    await appendEvent(db, 5, 'tool.completed', {
+      actionCallId: 'new-recent',
+      actionName: 'pages.listRecent',
+      result: JSON.stringify(recentResult)
+    })
+    await appendEvent(db, 6, 'evidence.provenance', { accepted: true, issues: [], finalCitationIds: [] })
+
+    const exported = (await exportAgentSessionDiagnostics(db, sessionId)) as unknown as DiagnosticExportView
+    expect(exported.runs[0]!.diagnostics.findings).toEqual([{ kind: 'page_answer_accepted_without_citations' }])
+    expect(exported.runs[0]!.diagnostics.toolCalls).toEqual([
+      expect.objectContaining({ actionCallId: 'old-recent', state: 'complete', output: { pages: [expect.any(Object)] } }),
+      expect.objectContaining({ actionCallId: 'new-recent', state: 'complete', output: recentResult })
+    ])
+  })
+
   it('rejects a capacity terminal event without a matching tool start', async () => {
     db = await createUsageDatabase()
     await insertUsageRun(db, runId, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostMicros: null })

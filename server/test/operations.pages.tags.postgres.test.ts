@@ -34,9 +34,24 @@ interface ListedPage {
   path: string
   tags: string[]
 }
-interface RecentPage {
+interface RecentPageEvidence {
+  id: number
+  locale: string
   path: string
-  visibility: string
+  title: string
+  contentType: string
+  sourceRevision: string
+  updatedAt: string
+  content: string
+  sourceContentCharacters: number
+  contentTruncated: boolean
+  citation: { evidenceId: string; label: string; href: string }
+}
+interface RecentPageEvidenceResult {
+  kind: 'recent-page-evidence'
+  requestedLimit: number
+  exhausted: boolean
+  pages: RecentPageEvidence[]
 }
 interface PageTagOperations {
   list(input: {
@@ -48,13 +63,14 @@ interface PageTagOperations {
     limit?: number
     offset?: number
   }): Promise<ListedPage[]>
-  listRecent(requester?: Express.User): Promise<RecentPage[]>
+  listRecent(input: { requester?: Express.User; locale?: string; limit?: number }): Promise<RecentPageEvidenceResult>
   searchTags(input: { requester?: Express.User; query: string; limit?: number }): Promise<string[]>
 }
 
 suite('PostgreSQL page tag authorization candidates', () => {
   let db: Knex
   let operations: PageTagOperations
+  let boundedRecentContentPrefix: (source: string, maximumBytes?: number) => string
   const originalWiki = globalThis.WIKI
   const requester = { id: 7 } as Express.User
   const tagIds: Record<string, number> = {
@@ -88,7 +104,10 @@ suite('PostgreSQL page tag authorization candidates', () => {
       localeCode: page.localeCode ?? 'en',
       title: page.path,
       description: `${page.path} description`,
+      content: `# ${page.path}\n\nSynthetic source for recent evidence.`,
+      sourceRevision: 1,
       isPublished: true,
+      isSearchable: true,
       publishStartDate: null,
       publishEndDate: null,
       visibility: page.visibility ?? 'public',
@@ -101,10 +120,9 @@ suite('PostgreSQL page tag authorization candidates', () => {
     })
     await db('pageTags').insert(tags.map(tag => ({ pageId: page.id, tagId: tagIds[tag] })))
   }
-
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection, pool: { min: 0, max: 8 } })
-    await db.raw('DROP TABLE IF EXISTS "pageTags", tags, pages CASCADE')
+    await db.raw('DROP TABLE IF EXISTS "pageUnlockGrants", "pageAccessPasswords", "pageTags", tags, pages CASCADE')
     await db.raw(`
       CREATE TABLE pages (
         id integer PRIMARY KEY,
@@ -112,7 +130,10 @@ suite('PostgreSQL page tag authorization candidates', () => {
         "localeCode" text NOT NULL,
         title text NOT NULL,
         description text,
+        content text NOT NULL,
+        "sourceRevision" integer NOT NULL,
         "isPublished" boolean NOT NULL,
+        "isSearchable" boolean NOT NULL,
         "publishStartDate" timestamptz,
         "publishEndDate" timestamptz,
         visibility text NOT NULL,
@@ -134,6 +155,17 @@ suite('PostgreSQL page tag authorization candidates', () => {
         "pageId" integer NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
         "tagId" integer NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
         PRIMARY KEY ("pageId", "tagId")
+      );
+      CREATE TABLE "pageAccessPasswords" (
+        "pageId" integer PRIMARY KEY,
+        version integer NOT NULL
+      );
+      CREATE TABLE "pageUnlockGrants" (
+        "pageId" integer NOT NULL,
+        "sessionId" text NOT NULL,
+        "userId" integer NOT NULL,
+        "passwordVersion" integer NOT NULL,
+        "expiresAt" timestamptz NOT NULL
       );
     `)
 
@@ -181,7 +213,12 @@ suite('PostgreSQL page tag authorization candidates', () => {
     Page.knex(db)
     Tag.knex(db)
     wiki.models.pages = Page
-    operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default as unknown as PageTagOperations
+    const pageOperationsModule = (await vi.importFresh('../operations/pages.ts', import.meta.url)) as {
+      default: PageTagOperations
+      boundedRecentContentPrefix: (source: string, maximumBytes?: number) => string
+    }
+    operations = pageOperationsModule.default
+    boundedRecentContentPrefix = pageOperationsModule.boundedRecentContentPrefix
   })
 
   beforeEach(async () => {
@@ -229,7 +266,7 @@ suite('PostgreSQL page tag authorization candidates', () => {
   afterAll(async () => {
     globalThis.WIKI = originalWiki as never
     if (db) {
-      await db.raw('DROP TABLE IF EXISTS "pageTags", tags, pages CASCADE')
+      await db.raw('DROP TABLE IF EXISTS "pageUnlockGrants", "pageAccessPasswords", "pageTags", tags, pages CASCADE')
       await db.destroy()
     }
   })
@@ -276,17 +313,49 @@ suite('PostgreSQL page tag authorization candidates', () => {
   })
 
   it('filters denied recent pages after fetching their complete tag relation', async () => {
-    const recent = await operations.listRecent(requester)
-    const paths = recent.map(row => row.path)
+    const recent = await operations.listRecent({ requester, limit: 10 })
+    const paths = recent.pages.map(row => row.path)
 
     expect(paths).not.toContain('docs/topic-denied')
     expect(paths).toContain('scope/foreign-no-tag')
     expect(paths).toContain('scope/recent-last')
+    expect(recent.kind).toBe('recent-page-evidence')
+    expect(recent.requestedLimit).toBe(10)
+    expect(recent.exhausted).toBe(true)
     expect(accessCalls.find(call => call.path === 'docs/topic-denied')).toMatchObject({
       path: 'docs/topic-denied',
       allowed: false,
       tags: expect.arrayContaining(['topic', 'deny-access'])
     })
+  })
+  it('bounds exact Unicode and escaped recent prefixes without normalizing source text', () => {
+    const source = `${'😀<'.repeat(2_000)}tail`
+    const content = boundedRecentContentPrefix(source)
+    const encoded = JSON.stringify(JSON.stringify(content)).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e')
+    expect(Buffer.byteLength(encoded, 'utf8')).toBeLessThanOrEqual(2_048)
+    expect(content).toBe(source.slice(0, content.length))
+    expect(content).toContain('😀<')
+    expect(content).not.toContain('…')
+    expect(content.length).toBeLessThan(source.length)
+    expect(content.at(-1)).not.toBe('\ud83d')
+  })
+  it('orders by stable updatedAt/id keys, backfills denied candidates, and reports continuation', async () => {
+    const recent = await operations.listRecent({ requester, locale: 'en', limit: 2 })
+    expect(recent.pages.map(page => page.path)).toEqual(['docs/topic-allow-needed', 'docs/topic-other'])
+    expect(recent.requestedLimit).toBe(2)
+    expect(recent.exhausted).toBe(false)
+    expect(recent.pages[0]).toMatchObject({
+      sourceRevision: '1',
+      content: '# docs/topic-allow-needed\n\nSynthetic source for recent evidence.',
+      citation: { evidenceId: 'page:2:revision:1', href: '/en/docs/topic-allow-needed' }
+    })
+    expect(recent.pages.some(page => page.path.startsWith('private/'))).toBe(false)
+  })
+
+  it('filters locale before satisfying the recent limit and marks a short traversal exhausted', async () => {
+    const recent = await operations.listRecent({ requester, locale: 'fr', limit: 2 })
+    expect(recent.pages.map(page => page.path)).toEqual(['scope/foreign-locale'])
+    expect(recent.exhausted).toBe(true)
   })
 
   it('authorizes tag suggestions against full assignments, returns only matches, and preserves ordering and limits', async () => {

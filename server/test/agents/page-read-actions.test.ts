@@ -100,7 +100,7 @@ const setup = (
     discover: (input: Record<string, unknown>) => Promise<unknown>
     get: (input: Record<string, unknown>) => Promise<unknown>
     getByPath: (input: Record<string, unknown>) => Promise<unknown>
-    listRecent: (requester?: Express.User) => Promise<unknown>
+    listRecent: (input: Record<string, unknown>) => Promise<unknown>
     getHistory: (input: Record<string, unknown>) => Promise<unknown>
     getVersion: (input: Record<string, unknown>) => Promise<unknown>
     listLinks: (input: Record<string, unknown>) => Promise<unknown>
@@ -115,7 +115,7 @@ const setup = (
     discover: vi.fn(async () => ({ pages: [], totalInWindow: 0, windowLimit: 5_000, nextOffset: null })),
     get: vi.fn(async () => page()),
     getByPath: vi.fn(async () => page()),
-    listRecent: vi.fn(async () => []),
+    listRecent: vi.fn(async () => ({ kind: 'recent-page-evidence', requestedLimit: 10, exhausted: true, pages: [] })),
     getHistory: vi.fn(async () => ({ trail: [], total: 0 })),
     getVersion: vi.fn(async () => null),
     listLinks: vi.fn(async () => []),
@@ -401,7 +401,26 @@ describe('permission-safe page read actions', () => {
         windowLimit: 100,
         nextOffset: null
       }),
-      listRecent: async () => [{ id: 42 }, { id: 43 }],
+      listRecent: async () => ({
+        kind: 'recent-page-evidence',
+        requestedLimit: 10,
+        exhausted: true,
+        pages: [
+          {
+            id: 43,
+            locale: 'en',
+            path: 'docs/visible',
+            title: 'Visible',
+            contentType: 'markdown',
+            sourceRevision: '8',
+            updatedAt: '2026-08-17T00:00:00.000Z',
+            content: '# Visible',
+            sourceContentCharacters: 9,
+            contentTruncated: false,
+            citation: { evidenceId: 'page:43:revision:8', label: 'Visible', href: '/en/docs/visible' }
+          }
+        ]
+      }),
       get: async input => {
         if (input.id === 42) throw locked
         return page({ id: 43, path: 'docs/visible' })
@@ -599,7 +618,7 @@ describe('permission-safe page read actions', () => {
         getByPath: async () => {
           throw denied
         },
-        listRecent: async () => [],
+        listRecent: async () => ({ kind: 'recent-page-evidence', requestedLimit: 10, exhausted: true, pages: [] }),
         getHistory: async () => ({ trail: [], total: 0 }),
         getVersion: async () => null,
         listLinks: async () => [],
@@ -660,29 +679,54 @@ describe('permission-safe page read actions', () => {
     const { execute } = setup({ get: async () => page({ contentType: 'html' }) })
     await expect(Promise.resolve(execute('pages.readForPatch', { pageId: 42 }))).rejects.toMatchObject({ code: 'UNSUPPORTED_CONTENT_TYPE' })
   })
-  it('hydrates recent pages, applies locale and caller bounds, and preserves authorization requester', async () => {
+  it('returns bounded current recent evidence for the requested locale and caller limit', async () => {
     const { execute, operations } = setup({
-      listRecent: vi.fn(async () => [{ id: 42 }, { id: 43 }]),
-      get: async input => (input.id === 42 ? page() : page({ id: 43, localeCode: 'fr', path: 'fr/start' }))
+      listRecent: vi.fn(async () => ({
+        kind: 'recent-page-evidence',
+        requestedLimit: 2,
+        exhausted: true,
+        pages: [
+          {
+            id: 42,
+            locale: 'en',
+            path: 'docs/start',
+            title: 'Start',
+            contentType: 'markdown',
+            sourceRevision: '8',
+            updatedAt: '2026-08-17T00:00:00.000Z',
+            content: '# Start',
+            sourceContentCharacters: 7,
+            contentTruncated: false,
+            citation: { evidenceId: 'page:42:revision:8', label: 'Start', href: '/en/docs/start' }
+          }
+        ]
+      }))
     })
     expect(await execute('pages.listRecent', { locale: 'en', limit: 2 })).toEqual({
+      kind: 'recent-page-evidence',
+      requestedLimit: 2,
+      exhausted: true,
       pages: [
         {
           id: 42,
           locale: 'en',
           path: 'docs/start',
           title: 'Start',
-          description: '',
           contentType: 'markdown',
           sourceRevision: '8',
-          authority: { state: 'missing', metadata: null, trust: null },
-          okfResourceUri: 'wiki://pages/42/versions/current/revisions/8/okf',
-          citation: { evidenceId: 'page:42:revision:8', label: 'Start', href: '/en/docs/start' },
-          knowledge: null
+          updatedAt: '2026-08-17T00:00:00.000Z',
+          content: '# Start',
+          sourceContentCharacters: 7,
+          contentTruncated: false,
+          citation: { evidenceId: 'page:42:revision:8', label: 'Start', href: '/en/docs/start' }
         }
       ]
     })
-    expect(operations.listRecent).toHaveBeenCalledWith(principal)
+    expect(operations.listRecent).toHaveBeenCalledWith({ locale: 'en', limit: 2, requester: principal })
+  })
+  it('rejects legacy metadata-only recent results instead of treating them as evidence', async () => {
+    const { execute } = setup({ listRecent: async () => [{ id: 42 }] })
+    await expect(Promise.resolve(execute('pages.listRecent', { limit: 1 }))).rejects.toMatchObject({ code: 'INVALID_PAGE_RESULT' })
   })
 
   it('maps source-revision history and exact historical page content', async () => {

@@ -5,6 +5,7 @@ import {
   DEFAULT_AGENT_ORCHESTRATION_LIMITS,
   parseAgentTaskPlan,
   parseChildEvidencePacket,
+  parseRecentPageEvidenceBatch,
   shouldPlanAgentResearch,
   validateChildEvidencePacket,
   type AgentResearchTask
@@ -101,6 +102,44 @@ describe('agent orchestration contracts', () => {
     })
     expect(() => parseChildEvidencePacket(packet({ extra: 'not allowed' }))).toThrow('schema validation')
   })
+  it('accepts only bounded new-format recent page evidence batches', () => {
+    const content = '## Deployment Alpha 😀\nThe rollout requires review.'
+    const row = {
+      id: 42,
+      locale: 'en',
+      path: 'operations/deployments/alpha',
+      title: 'Deployment Alpha',
+      contentType: 'markdown',
+      sourceRevision: 'rev-7',
+      updatedAt: '2026-08-17T00:00:00.000Z',
+      content,
+      sourceContentCharacters: content.length,
+      contentTruncated: false,
+      citation: {
+        evidenceId: 'page:42:revision:rev-7',
+        label: 'Deployment Alpha',
+        href: '/en/operations/deployments/alpha'
+      }
+    }
+    const batch = {
+      kind: 'recent-page-evidence' as const,
+      requestedLimit: 10,
+      exhausted: true,
+      pages: [row]
+    }
+    expect(parseRecentPageEvidenceBatch(batch)).toEqual(batch)
+    expect(parseRecentPageEvidenceBatch({ pages: [row] })).toBeNull()
+    expect(
+      parseRecentPageEvidenceBatch({
+        ...batch,
+        pages: [{ ...row, citation: { ...row.citation, evidenceId: 'page:43:revision:rev-7' } }]
+      })
+    ).toBeNull()
+    expect(parseRecentPageEvidenceBatch({ ...batch, pages: [{ ...row, contentTruncated: true }] })).toBeNull()
+    expect(parseRecentPageEvidenceBatch({ ...batch, pages: [{ ...row, content: String.fromCharCode(0xd800), sourceContentCharacters: 1 }] })).toBeNull()
+    expect(parseRecentPageEvidenceBatch({ ...batch, pages: [{ ...row, obsolete: true }] })).toBeNull()
+  })
+
 
   it('accepts only evidence read by the owning child at the exact source revision', () => {
     const validated = validateChildEvidencePacket(packet(), task, new Map([['page:42:section:1', 'rev-7']]))

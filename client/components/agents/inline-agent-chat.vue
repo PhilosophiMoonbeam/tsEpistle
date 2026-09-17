@@ -753,7 +753,7 @@ const starters = computed(() => [
     ? [{ label: 'Understand This Page', description: 'Key ideas, with sources', prompt: 'Summarize the current Wiki page and cite the key sections.', icon: 'mdi-text-box-search-outline' }]
     : [{ label: 'Explore the Wiki', description: 'Find a place to begin', prompt: 'Give me an overview of the main topics in the Wiki, with links to useful starting pages.', icon: 'mdi-compass-outline' }]),
   { label: 'Connect the Dots', description: 'Discover related knowledge', prompt: currentPage.value ? 'Find Wiki pages related to the current page and explain how they connect.' : 'Help me explore connections between topics in the Wiki. Ask me which topic I want to start with.', icon: 'mdi-vector-link' },
-  { label: 'Catch Up', description: 'See what changed recently', prompt: 'Summarize the most recently updated Wiki pages I can access.', icon: 'mdi-history' }
+  { label: 'Catch Up', description: 'See what changed recently', prompt: 'Summarize the 10 most recently updated Wiki pages I can access. Give each page a brief summary with a source.', icon: 'mdi-history' }
 ])
 
 const activeDraft = computed(() => thread.value ? agents.drafts[thread.value.session.id] ?? emptyAgentDraft() : emptyAgentDraft())

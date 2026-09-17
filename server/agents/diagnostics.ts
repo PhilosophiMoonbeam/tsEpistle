@@ -145,6 +145,38 @@ const readIdentity = (actionName: string, input: unknown, output: unknown): stri
   return null
 }
 
+const recentEvidenceRowCount = (actionName: string, output: unknown): number => {
+  if (actionName !== 'pages.listRecent' || typeof output !== 'object' || output === null || Array.isArray(output)) return 0
+  const result = output as Record<string, unknown>
+  if (result.kind !== 'recent-page-evidence' || !Array.isArray(result.pages)) return 0
+  return result.pages.filter(value => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+    const row = value as Record<string, unknown>
+    const citation = row.citation
+    if (
+      typeof row.id !== 'number' ||
+      !Number.isSafeInteger(row.id) ||
+      row.id < 1 ||
+      typeof row.locale !== 'string' ||
+      typeof row.path !== 'string' ||
+      typeof row.title !== 'string' ||
+      typeof row.contentType !== 'string' ||
+      typeof row.sourceRevision !== 'string' ||
+      typeof row.updatedAt !== 'string' ||
+      typeof row.content !== 'string' ||
+      typeof row.sourceContentCharacters !== 'number' ||
+      !Number.isSafeInteger(row.sourceContentCharacters) ||
+      row.sourceContentCharacters < 0 ||
+      typeof row.contentTruncated !== 'boolean' ||
+      typeof citation !== 'object' ||
+      citation === null ||
+      Array.isArray(citation)
+    )
+      return false
+    const citationRecord = citation as Record<string, unknown>
+    return typeof citationRecord.evidenceId === 'string' && typeof citationRecord.label === 'string' && typeof citationRecord.href === 'string'
+  }).length
+}
 const analyzeTools = (
   events: readonly { readonly type: string; readonly data: Record<string, unknown> }[]
 ): {
@@ -264,6 +296,8 @@ const analyzeTools = (
         else firstReadByIdentity.set(identity, tool.actionCallId)
       }
       if (tool.state === 'complete') completedPageReads += 1
+    } else if (tool.state === 'complete') {
+      completedPageReads += recentEvidenceRowCount(tool.actionName, tool.output)
     }
   }
 

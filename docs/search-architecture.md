@@ -139,13 +139,13 @@ The action descriptions instruct the model to use search evidence to select seed
 
 ### Citation evidence gate
 
-Search, recent-page, discovery, and related-page outputs are candidate metadata. Their evidence IDs cannot enter a final answer until the same page has been read by `pages.get` or `pages.getVersion` during the active run. Evidence from prior conversation turns is intentionally ineligible because the page may have changed.
+Search, discovery, and related-page outputs are candidate metadata. Their evidence IDs cannot enter a final answer until the same page has been read by `pages.get` or `pages.getVersion` during the active run. Historical `pages.listRecent` metadata has the same restriction. A delivered current `kind: "recent-page-evidence"` result is different: each row contains an exact, revision-bound opening source excerpt and may enter the evidence gate directly. Evidence from prior conversation turns remains ineligible because the page may have changed.
 
 Final drafts are buffered before publication and checked as follows:
 
-1. Every `[[cite:...]]` marker must resolve to a successful active-run page read.
+1. Every `[[cite:...]]` marker must resolve to successful active-run source evidence.
 2. The immediately preceding clause is retained as the claim associated with that marker.
-3. Page-level claims are compared with the complete read content. Markdown section claims are compared only with the corresponding heading scope and its citation label.
+3. Complete page reads are compared with their complete content. Recent-page evidence is compared only with its supplied bounded excerpt and page-level citation; it cannot support claims about an unread suffix or a revision diff. Markdown section claims remain scoped to the corresponding heading and section citation.
 4. Each conjunction- or colon-delimited subclause must have at least 60 percent significant normalized term overlap with the evidence, with a one- or two-term minimum for short subclauses. Claim negation must also occur in the evidence.
 5. Verification language such as “I verified,” “I checked,” or “the page says” requires both a completed page read and an associated citation.
 6. A final answer may contain at most 20 citation markers.

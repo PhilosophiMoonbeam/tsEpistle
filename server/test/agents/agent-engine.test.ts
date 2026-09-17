@@ -1713,7 +1713,7 @@ describe('Ax agent engine', () => {
           structuredOutput: 'tool-result',
           usage: 'estimated',
           cancellation: true,
-          maxContextTokens: 10_000,
+          maxContextTokens: 20_000,
           maxOutputTokens: 1_000
         },
         transportKind: 'openai-chat',
@@ -1769,7 +1769,7 @@ describe('Ax agent engine', () => {
           structuredOutput: 'tool-result',
           usage: 'estimated',
           cancellation: true,
-          maxContextTokens: 10_000,
+          maxContextTokens: 20_000,
           maxOutputTokens: 1_000
         },
         transportKind: 'openai-chat',
@@ -2500,54 +2500,55 @@ describe('Ax agent engine', () => {
       expect(calls[0]?.chatPrompt[0]).toEqual(expect.objectContaining({ content: expect.not.stringContaining('wiki_prepare_page_create') }))
     }
   })
-  it('keeps a recent-page window and ten page reads available for one grounded completion', async () => {
-    const readCalls = Array.from({ length: 10 }, (_, index) => ({
-      id: `read-${index + 1}`,
-      type: 'function' as const,
-      function: { name: 'wiki_get_page', params: JSON.stringify({ id: index + 1 }) }
-    }))
-    const answer = Array.from({ length: 10 }, (_, index) => `Recent page ${index + 1} is documented.[[cite:page:${index + 1}]]`).join(' ')
+  it.each(['native', 'prompt'] as const)('grounds a ten-page recent recap with one bounded listRecent call on the %s protocol', async mode => {
+    const rows = Array.from({ length: 10 }, (_, index) => {
+      const id = index + 1
+      const content = `Recent page ${id} records release delta ${id}.`
+      return {
+        id,
+        locale: 'en',
+        path: `recent/${id}`,
+        title: `Recent page ${id}`,
+        contentType: 'markdown',
+        sourceRevision: `rev-${id}`,
+        updatedAt: `2026-09-${String(id).padStart(2, '0')}T00:00:00.000Z`,
+        content,
+        sourceContentCharacters: index === 9 ? 4_096 : content.length,
+        contentTruncated: index === 9,
+        citation: { evidenceId: `page:${id}:revision:rev-${id}`, label: `Recent page ${id}`, href: `/en/recent/${id}` }
+      }
+    })
+    const answer = rows.map(row => `${row.content}[[cite:${row.citation.evidenceId}]]`).join(' ')
+    const incompleteAnswer = `${rows[0]!.content}[[cite:${rows[0]!.citation.evidenceId}]]`
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [
-      {
-        results: [
-          {
-            index: 0,
-            functionCalls: [{ id: 'recent', type: 'function', function: { name: 'wiki_list_recent_pages', params: '{"locale":"en","limit":10}' } }]
+      mode === 'native'
+        ? {
+            results: [
+              {
+                index: 0,
+                functionCalls: [{ id: 'recent', type: 'function', function: { name: 'wiki_list_recent_pages', params: '{"locale":"en","limit":10}' } }]
+              }
+            ]
           }
-        ]
-      },
-      { results: [{ index: 0, functionCalls: readCalls }] },
+        : {
+            results: [
+              {
+                index: 0,
+                content: '<wiki-tool-call>{"name":"wiki_list_recent_pages","arguments":{"locale":"en","limit":10}}</wiki-tool-call>'
+              }
+            ]
+          },
+      { results: [{ index: 0, content: incompleteAnswer }] },
       { results: [{ index: 0, content: answer }] }
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
       calls.push(input)
       return responses.shift()!
     })
-    const invoke = vi.fn(async (name: string, input: unknown) => {
-      if (name === 'pages.listRecent') {
-        return {
-          pages: Array.from({ length: 10 }, (_, index) => ({
-            id: index + 1,
-            locale: 'en',
-            path: `recent/${index + 1}`,
-            title: `Recent page ${index + 1}`,
-            description: '',
-            contentType: 'markdown',
-            sourceRevision: `rev-${index + 1}`,
-            citation: { evidenceId: `page:${index + 1}`, label: `Recent page ${index + 1}`, href: `/en/recent/${index + 1}` }
-          }))
-        }
-      }
-      const id = typeof input === 'object' && input !== null && typeof Reflect.get(input, 'id') === 'number' ? Number(Reflect.get(input, 'id')) : 0
-      return {
-        id,
-        title: `Recent page ${id}`,
-        contentType: 'markdown',
-        content: `Recent page ${id} is documented.`,
-        citation: { evidenceId: `page:${id}`, label: `Recent page ${id}`, href: `/en/recent/${id}` },
-        citationSections: []
-      }
+    const invoke = vi.fn(async (name: string) => {
+      if (name !== 'pages.listRecent') throw new Error(`unexpected action ${name}`)
+      return { kind: 'recent-page-evidence', requestedLimit: 10, exhausted: true, pages: rows }
     })
     const actions: AgentActionSessionProvider = {
       open: async () => ({
@@ -2580,15 +2581,15 @@ describe('Ax agent engine', () => {
         service: { chat },
         capabilities: {
           streaming: false,
-          toolCalling: 'native',
-          parallelToolCalls: true,
-          structuredOutput: 'native-json-schema',
+          toolCalling: mode,
+          parallelToolCalls: mode === 'native',
+          structuredOutput: mode === 'native' ? 'native-json-schema' : 'prompt-only',
           usage: 'estimated',
           cancellation: true,
-          maxContextTokens: 100_000,
-          maxOutputTokens: 4_000
+          maxContextTokens: 128_000,
+          maxOutputTokens: 8_192
         },
-        transportKind: 'openai-responses',
+        transportKind: mode === 'native' ? 'openai-responses' : 'legacy-completions',
         model: 'gpt-test',
         capabilityRevision: 'cap-1',
         pricingRevision: 'price-1',
@@ -2596,31 +2597,50 @@ describe('Ax agent engine', () => {
       })
     } as unknown as AgentProviderFactory
     const text = vi.fn(async () => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
     const result = await new AxAgentEngine(factory, actions).execute(
       {
         ...request(new AbortController().signal),
-        limits: { maxTurns: 3, maxToolCalls: 11, maxOutputTokens: 1_024 }
+        purpose: 'root',
+        limits: { maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 8_192 }
       },
-      { text, event: async () => {} }
+      { text, event }
     )
 
     expect(chat).toHaveBeenCalledTimes(3)
-    expect(invoke).toHaveBeenCalledTimes(11)
-    expect(invoke.mock.calls.slice(1).map(([name, input]) => ({ name, input }))).toEqual(
-      Array.from({ length: 10 }, (_, index) => ({ name: 'pages.get', input: { id: index + 1 } }))
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(invoke).toHaveBeenCalledWith('pages.listRecent', { locale: 'en', limit: 10 }, expect.anything(), expect.any(String))
+    const providerResultMessage = calls[1]?.chatPrompt.find(message =>
+      mode === 'native'
+        ? message.role === 'function'
+        : message.role === 'user' && typeof message.content === 'string' && message.content.includes('<wiki-tool-result>')
     )
-    const recentTool = calls[0]?.functions?.find(functionCall => functionCall.name === 'wiki_list_recent_pages')
-    const getTool = calls[0]?.functions?.find(functionCall => functionCall.name === 'wiki_get_page')
-    expect(recentTool).toEqual(expect.objectContaining({ description: expect.stringContaining('wiki_get_page({id: result.id})') }))
-    expect(recentTool).toEqual(expect.objectContaining({ description: expect.stringContaining('positive numeric ID exactly') }))
-    expect(recentTool).toEqual(
-      expect.objectContaining({ description: expect.stringContaining('path/locale copied from recent metadata are not identity-preserving') })
-    )
-    expect(recentTool).toEqual(expect.objectContaining({ description: expect.stringContaining('Recent rows are candidate metadata only') }))
-    expect(recentTool).toEqual(expect.objectContaining({ description: expect.stringContaining('do not retry automatically') }))
+    const providerResult =
+      providerResultMessage?.role === 'function'
+        ? providerResultMessage.result
+        : providerResultMessage?.role === 'user'
+          ? providerResultMessage.content
+          : ''
+    expect(providerResult).toContain('"kind":"recent-page-evidence"')
+    expect(providerResult).toContain('"sourceContentCharacters":4096')
+    expect(providerResult).not.toContain('"locale":"en"')
+    expect(providerResult).not.toContain('"path":"recent/')
     expect(result.contextLimit).toBeUndefined()
-    expect(result.citations).toHaveLength(10)
-    expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
+    expect(result.citations).toEqual(
+      rows.map(row => ({ evidenceId: row.citation.evidenceId, kind: 'page', label: row.citation.label, href: row.citation.href }))
+    )
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(
+      `${answer}\n\nRecent page content is shown as bounded opening excerpts; one or more excerpts were truncated.`
+    )
+    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({
+        accepted: false,
+        issues: [expect.stringContaining('does not cite every page returned by pages.listRecent')]
+      }),
+      expect.objectContaining({ accepted: true, finalCitationIds: rows.map(row => row.citation.evidenceId) })
+    ])
   })
   it('keeps an oversized omitted source out of citations and corrects the capacity-limited synthesis', async () => {
     const largePayload = 'Large source payload '.repeat(2_000)
@@ -2686,7 +2706,7 @@ describe('Ax agent engine', () => {
           structuredOutput: 'native-json-schema',
           usage: 'estimated',
           cancellation: true,
-          maxContextTokens: 24_000,
+          maxContextTokens: 32_000,
           maxOutputTokens: 1_000
         },
         transportKind: 'openai-responses',

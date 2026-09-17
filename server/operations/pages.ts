@@ -33,7 +33,7 @@ import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT } from '../reposito
 import { pageTreeAccess, treeAncestorIds } from '../repositories/page-tree-access.ts'
 import { isPageEditorKey, normalizeAvailableEditors } from '../../shared/page-editors.ts'
 import { OKF_PRODUCER_CONTEXT } from '../okf/mutation-context.ts'
-import { assertPageUnlocked } from './page-protection.ts'
+import { assertPageUnlocked, pageRequiresUnlock } from './page-protection.ts'
 import errors from './errors.ts'
 import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBrandingView } from '../../shared/page-branding.ts'
 import { resolveAssetBrandingView } from '../helpers/asset-branding.ts'
@@ -65,8 +65,33 @@ interface PageRecord extends Record<string, unknown> {
   isSearchable: boolean
   tags: TagRecord[]
 }
+export interface RecentPageEvidenceCitation {
+  readonly evidenceId: string
+  readonly label: string
+  readonly href: string
+}
+export interface RecentPageEvidence {
+  readonly id: number
+  readonly locale: string
+  readonly path: string
+  readonly title: string
+  readonly contentType: string
+  readonly sourceRevision: string
+  readonly updatedAt: string
+  readonly content: string
+  readonly sourceContentCharacters: number
+  readonly contentTruncated: boolean
+  readonly citation: RecentPageEvidenceCitation
+}
+export interface RecentPageEvidenceResult {
+  readonly kind: 'recent-page-evidence'
+  readonly requestedLimit: number
+  readonly exhausted: boolean
+  readonly pages: readonly RecentPageEvidence[]
+}
 interface PageSourceRecord extends PageRecord {
   content: string
+  contentType: string
 }
 interface PageVersionRecord extends Record<string, unknown> {
   pageId: number
@@ -152,6 +177,7 @@ interface QueryBuilder {
   from(table: string): QueryBuilder
   join(table: string, first: string, second: string): QueryBuilder
   orWhere(column: string, operatorOrValue: unknown, value?: unknown): QueryBuilder
+  orWhere(callback: (builder: QueryBuilder) => void): QueryBuilder
   orWhere(criteria: Record<string, unknown>): QueryBuilder
   orWhereIn(column: string, values: readonly unknown[]): QueryBuilder
   andWhere(column: string, operatorOrValue: unknown, value?: unknown): QueryBuilder
@@ -712,27 +738,171 @@ const listTags = async (requester?: Express.User, suppliedAuthority?: PageRuleAu
   return _.orderBy(_.uniqBy(tags, 'id'), ['tag'], ['asc'])
 }
 
-const listRecent = async (requester?: Express.User, suppliedAuthority?: PageRuleAuthority) => {
-  const authorityInput: OperationInput = {
-    ...(requester === undefined ? {} : { requester }),
-    ...(suppliedAuthority === undefined ? {} : { authority: suppliedAuthority })
+const RECENT_CONTENT_PROMPT_BYTES = 2_048
+const RECENT_CANDIDATE_BATCH_LIMIT = 50
+
+const recentPromptEscapedJson = (value: string): string =>
+  JSON.stringify(JSON.stringify(value)).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e')
+
+const recentPromptEmptyBytes = Buffer.byteLength(recentPromptEscapedJson(''), 'utf8')
+
+const recentPromptCharacterBytes = (character: string): number =>
+  Buffer.byteLength(recentPromptEscapedJson(character), 'utf8') - recentPromptEmptyBytes
+
+/**
+ * Keep an exact opening source prefix while measuring the representation that
+ * reaches prompt providers: JSON encoding of the source string, encoded again
+ * for the prompt envelope, with reserved angle brackets escaped.
+ */
+export const boundedRecentContentPrefix = (source: string, maximumBytes = RECENT_CONTENT_PROMPT_BYTES): string => {
+  if (recentPromptEmptyBytes > maximumBytes) return ''
+  let bytes = recentPromptEmptyBytes
+  let codeUnits = 0
+  for (const character of source) {
+    const characterBytes = recentPromptCharacterBytes(character)
+    if (bytes + characterBytes > maximumBytes) break
+    bytes += characterBytes
+    codeUnits += character.length
   }
-  const authority = await authorityFor(authorityInput)
-  const pages = await wiki.models.pages
-    .query()
-    .column(['pages.id', 'path', { locale: 'localeCode' }, 'title', 'updatedAt', 'visibility', 'ownerId'])
-    .modify(queryBuilder => {
-      scopePageQuery(queryBuilder, requester, { table: 'pages' })
-      queryBuilder.where('pages.isSearchable', true)
-    })
-    .withGraphFetched('tags')
-    .modifyGraph('tags', builder => {
-      builder.select('tag')
-    })
-    .orderBy('pages.updatedAt', 'desc')
-    .orderBy('pages.id', 'asc')
-    .limit(10)
-  return pages.filter(page => canReadPage(requester, page, authority)).map(page => _.pick(page, ['id', 'locale', 'path', 'title', 'updatedAt', 'visibility']))
+  return codeUnits === source.length ? source : source.slice(0, codeUnits)
+}
+
+const recentPageEvidence = (page: PageSourceRecord): RecentPageEvidence | null => {
+  const id = Number(page.id)
+  const locale = typeof page.localeCode === 'string' ? page.localeCode : typeof page.locale === 'string' ? page.locale : ''
+  const sourceRevision = currentSourceRevision(page.sourceRevision)
+  if (
+    !Number.isSafeInteger(id) ||
+    id < 1 ||
+    locale.length < 2 ||
+    typeof page.path !== 'string' ||
+    page.path.length < 1 ||
+    typeof page.title !== 'string' ||
+    typeof page.contentType !== 'string' ||
+    sourceRevision === undefined ||
+    typeof page.content !== 'string'
+  )
+    return null
+  const updatedAt = new Date(page.updatedAt)
+  if (!Number.isFinite(updatedAt.valueOf())) return null
+  const href = `${page.visibility === 'private' ? '/_private' : ''}/${locale}/${page.path}`
+  const content = boundedRecentContentPrefix(page.content)
+  return {
+    id,
+    locale,
+    path: page.path,
+    title: page.title,
+    contentType: page.contentType,
+    sourceRevision,
+    updatedAt: updatedAt.toISOString(),
+    content,
+    sourceContentCharacters: page.content.length,
+    contentTruncated: content !== page.content,
+    citation: {
+      evidenceId: `page:${id}:revision:${sourceRevision}`,
+      label: page.title.trim() || page.path,
+      href
+    }
+  }
+}
+
+
+interface RecentCursor {
+  readonly updatedAt: Date | string
+  readonly id: number
+}
+
+const listRecent = async (input: OperationInput): Promise<RecentPageEvidenceResult> => {
+  const requester = input.requester
+  const authority = await authorityFor(input)
+  const requestedLimit = input.limit === undefined ? 10 : positiveInteger(input.limit, 'limit')
+  if (requestedLimit > 20) throw new ApplicationError('limit must not exceed 20', { code: 'INVALID_INPUT', status: 400 })
+  const locale = input.locale === undefined ? undefined : stringValue(input.locale, 'locale')
+  const fetchCandidates = async (cursor: RecentCursor | null, batchLimit: number): Promise<PageRecord[]> => {
+    const query = wiki.models.pages
+      .query()
+      .column([
+        'pages.id',
+        { locale: 'localeCode' },
+        'pages.path',
+        'pages.title',
+        'pages.contentType',
+        'pages.sourceRevision',
+        'pages.content',
+        'pages.updatedAt',
+        'pages.visibility',
+        'pages.ownerId',
+        'pages.isPublished',
+        'pages.publishStartDate',
+        'pages.publishEndDate',
+        'pages.isSearchable'
+      ])
+      .modify(queryBuilder => {
+        scopePageQuery(queryBuilder, requester, { table: 'pages' })
+        queryBuilder.where('pages.isSearchable', true)
+        if (locale !== undefined) queryBuilder.where('pages.localeCode', locale)
+        if (cursor !== null) {
+          queryBuilder.where(builder => {
+            builder.where('pages.updatedAt', '<', cursor.updatedAt)
+            builder.orWhere(nested => {
+              nested.where('pages.updatedAt', cursor.updatedAt)
+              nested.andWhere('pages.id', '>', cursor.id)
+            })
+          })
+        }
+      })
+      .withGraphFetched('tags')
+      .modifyGraph('tags', builder => {
+        builder.select('tag')
+      })
+      .orderBy('pages.updatedAt', 'desc')
+      .orderBy('pages.id', 'asc')
+      .limit(batchLimit)
+    return await query
+  }
+
+  const pages: RecentPageEvidence[] = []
+  let cursor: RecentCursor | null = null
+  let exhausted = false
+  while (true) {
+    const candidates = await fetchCandidates(cursor, RECENT_CANDIDATE_BATCH_LIMIT)
+    if (candidates.length === 0) {
+      exhausted = true
+      break
+    }
+    let additionalEligible = false
+    for (const candidate of candidates) {
+      const candidateId = Number(candidate.id)
+      if (!Number.isSafeInteger(candidateId) || candidateId < 1 || !candidate.updatedAt) continue
+      cursor = { updatedAt: candidate.updatedAt, id: candidateId }
+      if (!canReadPage(requester, candidate, authority) || !canAccessCurrentPageSource(requester, candidate, authority)) continue
+      if (
+        await pageRequiresUnlock({
+          requester,
+          pageId: candidateId,
+          sessionId: typeof input.sessionId === 'string' ? input.sessionId : '',
+        })
+      )
+        continue
+      const evidence = recentPageEvidence(candidate as PageSourceRecord)
+      if (evidence === null) continue
+      if (pages.length < requestedLimit) {
+        pages.push(evidence)
+      } else {
+        additionalEligible = true
+        break
+      }
+    }
+    if (additionalEligible) {
+      exhausted = false
+      break
+    }
+    if (candidates.length < RECENT_CANDIDATE_BATCH_LIMIT) {
+      exhausted = true
+      break
+    }
+  }
+  return { kind: 'recent-page-evidence', requestedLimit, exhausted, pages }
 }
 
 const searchTags = async (input: OperationInput) => {

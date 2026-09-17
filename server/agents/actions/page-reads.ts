@@ -64,7 +64,30 @@ const DiscoveryResponseSchema = z.strictObject({
   windowLimit: z.coerce.number().int().positive(),
   nextOffset: z.coerce.number().int().nonnegative().nullable()
 })
-const RecentRowSchema = z.looseObject({ id: z.coerce.number().int().positive() })
+const RecentPageCitationSchema = z.strictObject({
+  evidenceId: z.string().min(1).max(128),
+  label: z.string().min(1).max(512),
+  href: z.string().min(1).max(2_048)
+})
+const RecentPageEvidenceSchema = z.strictObject({
+  id: z.number().int().positive(),
+  locale: z.string().min(2).max(35),
+  path: z.string().min(1).max(1_024),
+  title: z.string().max(255),
+  contentType: z.string().max(128),
+  sourceRevision: z.string().max(64),
+  updatedAt: z.string().max(32),
+  content: z.string().max(2_048),
+  sourceContentCharacters: z.number().int().nonnegative().max(1_048_576),
+  contentTruncated: z.boolean(),
+  citation: RecentPageCitationSchema
+})
+const RecentResponseSchema = z.strictObject({
+  kind: z.literal('recent-page-evidence'),
+  requestedLimit: z.number().int().min(1).max(20),
+  exhausted: z.boolean(),
+  pages: z.array(RecentPageEvidenceSchema).max(20)
+})
 const HistorySchema = z.looseObject({
   trail: z.array(
     z.looseObject({
@@ -104,7 +127,7 @@ interface PageOperations {
   discover(input: Record<string, unknown>): Promise<unknown>
   get(input: Record<string, unknown>): Promise<unknown>
   getByPath(input: Record<string, unknown>): Promise<unknown>
-  listRecent(requester?: Express.User): Promise<unknown>
+  listRecent(input: Record<string, unknown>): Promise<unknown>
   getHistory(input: Record<string, unknown>): Promise<unknown>
   getVersion(input: Record<string, unknown>): Promise<unknown>
   listLinks(input: Record<string, unknown>): Promise<unknown>
@@ -568,30 +591,29 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
   kernel.register('pages.listRecent', async (rawInput, context) => {
     const input = rawInput as RecentInput
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
-    const recent = z.array(RecentRowSchema).safeParse(await operations.listRecent(requester))
-    if (!recent.success) throw operationFailure('Recent page operation returned an invalid result')
-    const hydrated = (
-      await Promise.all(
-        recent.data.slice(0, input.limit).map(async item => {
-          try {
-            const page = parsePage(await operations.get({ id: item.id, requester }), false)
-            return !input.locale || page.locale === input.locale ? page : null
-          } catch (error: unknown) {
-            if (pageUnavailable(error)) return null
-            throw error
-          }
-        })
-      )
-    ).filter(result => result !== null)
-    const knowledge = dependencies.knowledge
-      ? await dependencies.knowledge.getCurrentMany(hydrated.map(page => page.id))
-      : new Map<number, KnowledgeProjectionView>()
-    return {
-      pages: hydrated.map(page => {
-        const projection = knowledge.get(page.id)
-        return { ...page, knowledge: projection?.sourceRevision === page.sourceRevision ? projection : null }
+    const recent = RecentResponseSchema.safeParse(
+      await operations.listRecent({
+        ...(input.locale === undefined ? {} : { locale: input.locale }),
+        limit: input.limit,
+        requester
       })
+    )
+    if (
+      !recent.success ||
+      recent.data.requestedLimit !== input.limit ||
+      recent.data.pages.length > input.limit ||
+      recent.data.pages.some(page => {
+        const expectedEvidenceId = `page:${page.id}:revision:${page.sourceRevision}`
+        const characterCountMatches = page.contentTruncated ? page.sourceContentCharacters > page.content.length : page.sourceContentCharacters === page.content.length
+        return page.citation.evidenceId !== expectedEvidenceId || !characterCountMatches
+      })
+    ) {
+      throw operationFailure('Recent page operation returned an invalid result')
     }
+    if (input.locale !== undefined && recent.data.pages.some(page => page.locale !== input.locale)) {
+      throw operationFailure('Recent page operation returned an invalid locale result')
+    }
+    return recent.data
   })
 
   kernel.register('pages.listHistory', async (rawInput, context) => {

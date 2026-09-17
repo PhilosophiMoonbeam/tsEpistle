@@ -557,7 +557,7 @@ const mountInlineAgent = (
       {
         label: 'Catch Up',
         description: 'See what changed recently',
-        prompt: 'Summarize the most recently updated Wiki pages I can access.',
+        prompt: 'Summarize the 10 most recently updated Wiki pages I can access. Give each page a brief summary with a source.',
         icon: 'mdi-history'
       }
     ],

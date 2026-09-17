@@ -282,22 +282,34 @@ describe('controllers/api pages endpoints', () => {
                 locale: 'en',
                 path: 'docs/alpha',
                 title: 'Alpha',
+                contentType: 'markdown',
+                sourceRevision: '8',
+                content: '# Alpha',
                 updatedAt: '2026-01-03T00:00:00.000Z',
                 tags: [{ tag: 'alpha' }],
                 visibility: 'public',
-                isSearchable: 1,
-                ownerId: null
+                ownerId: null,
+                isPublished: true,
+                publishStartDate: null,
+                publishEndDate: null,
+                isSearchable: true
               },
               {
                 id: 11,
                 locale: 'fr',
                 path: 'docs/beta',
                 title: 'Beta',
+                contentType: 'markdown',
+                sourceRevision: '7',
+                content: '# Beta',
                 updatedAt: '2026-01-02T00:00:00.000Z',
                 tags: [{ tag: 'beta' }],
                 visibility: 'public',
-                isSearchable: 1,
-                ownerId: null
+                ownerId: null,
+                isPublished: true,
+                publishStartDate: null,
+                publishEndDate: null,
+                isSearchable: true
               }
             ]
             const queryBuilder = {

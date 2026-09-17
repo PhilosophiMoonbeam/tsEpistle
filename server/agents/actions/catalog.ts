@@ -92,6 +92,24 @@ const AppliedPageSummary = strict({
   knowledge: KnowledgeProjectionViewSchema.nullable()
 })
 const PageSummary = BasePageSummary.extend({ citation: PageCitation })
+const RecentPageEvidenceCitation = strict({
+  evidenceId: z.string().min(1).max(128),
+  label: z.string().min(1).max(512),
+  href: z.string().min(1).max(2_048)
+})
+const RecentPageEvidence = strict({
+  id: PositiveId,
+  locale: Locale,
+  path: Path,
+  title: BoundedTitle,
+  contentType: z.string().max(128),
+  sourceRevision: z.string().max(64),
+  updatedAt: z.string().max(32),
+  content: z.string().max(2_048),
+  sourceContentCharacters: z.number().int().nonnegative().max(1_048_576),
+  contentTruncated: z.boolean(),
+  citation: RecentPageEvidenceCitation
+})
 const SearchPageSummary = PageSummary.extend({
   tags: z.array(z.string().min(1).max(255)).max(50),
   score: z.number().finite().nonnegative(),
@@ -320,8 +338,8 @@ export const ACTION_CATALOG = {
   'pages.listRecent': {
     descriptor: descriptor(
       'pages.listRecent',
-      'List recent pages',
-      `List recently changed pages visible to the current principal. Recent rows are candidate metadata only, not read evidence or a durable authorization grant. For every returned result, immediately follow it with ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}), copying that positive numeric ID exactly. Never guess or stringify an ID, or substitute a result's path/locale, href, citation/evidenceId, okfResourceUri, sourceRevision, title, or history versionId. Use a path/locale selector only for a user-supplied raw stored path and separate locale; path/locale copied from recent metadata are not identity-preserving. The direct read reauthorizes current content. If provider context capacity reports a read as omitted or not_executed, treat it as truthful partial coverage: disclose the omission, do not retry automatically or infer access, and synthesize only from delivered reads.`,
+      'List recent page evidence',
+      'Return a bounded, current-source evidence excerpt for each recently changed page visible to the current principal. Each returned citation is page-level evidence for the exact source revision and excerpt included in that row; contentTruncated is explicit when the source exceeds the bounded prefix. Rows are still subject to provider capacity and may be omitted from context without changing their authorization or revision semantics.',
       'read',
       ['read:pages'],
       both,
@@ -329,7 +347,12 @@ export const ACTION_CATALOG = {
     ),
     group: 'core',
     input: strict({ locale: Locale.optional(), limit: z.number().int().min(1).max(20).default(10) }),
-    output: strict({ pages: z.array(PageSummary).max(20) }),
+    output: strict({
+      kind: z.literal('recent-page-evidence'),
+      requestedLimit: z.number().int().min(1).max(20),
+      exhausted: z.boolean(),
+      pages: z.array(RecentPageEvidence).max(20)
+    }),
     requiredFlags: baseFlags
   },
   'pages.listHistory': {

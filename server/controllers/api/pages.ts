@@ -490,7 +490,17 @@ router.get('/recent', async (req, res, next) => {
   }
 
   try {
-    return res.json(await pageOperations.listRecent(req.user))
+    const recent = await pageOperations.listRecent({ ...pageOperationContext(req), limit: 10 })
+    return res.json(
+      recent.pages.map(page => ({
+        id: page.id,
+        locale: page.locale,
+        path: page.path,
+        title: page.title,
+        updatedAt: page.updatedAt,
+        visibility: page.citation.href.startsWith('/_private/') ? 'private' : 'public'
+      }))
+    )
   } catch (err) {
     return next(err)
   }

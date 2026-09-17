@@ -67,6 +67,7 @@ import {
   SUBAGENT_READ_ACTIONS,
   DEFAULT_AGENT_ORCHESTRATION_LIMITS,
   parseAgentTaskPlan,
+  parseRecentPageEvidenceBatch,
   plannerPrompt,
   shouldPlanAgentResearch,
   subagentPrompt,
@@ -359,14 +360,37 @@ const parsedContextExclusion = (data: Readonly<Record<string, unknown>>, code: s
 const persistedResearchEvidence = (data: Readonly<Record<string, unknown>>, task: AgentTaskRecord): PersistedResearchEvidence | null => {
   const exclusion = parsedContextExclusion(data, 'AGENT_EVENT_CORRUPT')
   if (exclusion !== undefined) return null
-  if (task.subagentRunId === null || data.taskId !== task.id || data.subagentRunId !== task.subagentRunId || typeof data.actionCallId !== 'string') return null
-  if (data.actionName !== 'pages.get' && data.actionName !== 'pages.getVersion') return null
+  if (
+    task.subagentRunId === null ||
+    data.taskId !== task.id ||
+    data.subagentRunId !== task.subagentRunId ||
+    (data.rootRunId !== undefined && data.rootRunId !== task.runId) ||
+    typeof data.actionCallId !== 'string' ||
+    data.actionCallId.length === 0
+  )
+    return null
+  const actionName = data.actionName
+  if (actionName !== 'pages.get' && actionName !== 'pages.getVersion' && actionName !== 'pages.listRecent') return null
   if (typeof data.result !== 'string') return null
   let output: unknown
   try {
     output = JSON.parse(data.result)
   } catch {
     return null
+  }
+  if (actionName === 'pages.listRecent') {
+    const batch = parseRecentPageEvidenceBatch(output)
+    if (batch === null || batch.pages.length === 0) return null
+    return {
+      seed: {
+        taskId: task.id,
+        subagentRunId: task.subagentRunId,
+        actionCallId: data.actionCallId,
+        actionName,
+        output: batch as unknown as Readonly<Record<string, unknown>>
+      },
+      revisions: new Map(batch.pages.map(page => [page.citation.evidenceId, page.sourceRevision]))
+    }
   }
   if (typeof output !== 'object' || output === null || Array.isArray(output)) return null
   const page = output as Record<string, unknown>
@@ -386,7 +410,7 @@ const persistedResearchEvidence = (data: Readonly<Record<string, unknown>>, task
       taskId: task.id,
       subagentRunId: task.subagentRunId,
       actionCallId: data.actionCallId,
-      actionName: data.actionName,
+      actionName,
       output: page
     },
     revisions
