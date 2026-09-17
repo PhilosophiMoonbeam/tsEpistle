@@ -1754,8 +1754,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 @supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
-  .inline-agent__toolbar,
-  .inline-agent__body {
+  .inline-agent .inline-agent__toolbar,
+  .inline-agent .inline-agent__body {
     background: rgb(var(--v-theme-background)) !important;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -2616,8 +2616,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .inline-agent__toolbar,
-  .inline-agent__body {
+  .inline-agent .inline-agent__toolbar,
+  .inline-agent .inline-agent__body {
     background: rgb(var(--v-theme-background)) !important;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -2630,8 +2630,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__side {
     border: 1px solid CanvasText;
   }
-  .inline-agent__toolbar,
-  .inline-agent__body {
+  .inline-agent .inline-agent__toolbar,
+  .inline-agent .inline-agent__body {
     background: Canvas !important;
     color: CanvasText;
     -webkit-backdrop-filter: none;
