@@ -6,8 +6,8 @@ section.pwa-status-panel(
   .pwa-status-panel__body
     .pwa-status-panel__heading
       div
-        p.pwa-status-panel__eyebrow Connection · shell · install
-        h2 Offline app status
+        p.pwa-status-panel__eyebrow This device
+        h2 Connection and offline access
       v-icon(:icon='connectionPresentation.icon', :color='connectionPresentation.tone', size='22', aria-hidden='true')
 
     .pwa-status-panel__summary(role='status', aria-live='polite', aria-atomic='true')
@@ -18,13 +18,13 @@ section.pwa-status-panel(
 
     dl.pwa-status-panel__facts
       div
-        dt Network hint
+        dt Browser connection
         dd(:class='`pwa-status-panel__value--${networkHintTone}`') {{ networkHintLabel }}
       div
         dt Server
         dd(:class='`pwa-status-panel__value--${serverStatusTone}`') {{ serverStatusLabel }}
       div
-        dt Offline app shell
+        dt Offline access
         dd {{ offlineShellLabel }}
 
     v-alert.pwa-status-panel__alert(
@@ -60,7 +60,7 @@ section.pwa-status-panel(
         :loading='isRetrying'
         :disabled='isRetrying'
         @click='retryConnection'
-      ) {{ isRetrying ? `Checking…` : `Check the server` }}
+      ) {{ isRetrying ? `Checking…` : `Check connection` }}
       v-btn(
         v-if='pwaState.updateReady'
         color='primary'
@@ -72,11 +72,11 @@ section.pwa-status-panel(
       ) {{ isUpdating ? `Applying…` : `Apply app update` }}
 
     p.pwa-status-panel__note(v-if='pwaState.updateReady && pwaState.reloadSafe === false', role='status')
-      | Update ready. It will wait until the app reports a safe reload point.
+      | Update ready. Finish your current work before updating.
     p.pwa-status-panel__note(v-else-if='pwaState.updateReady', role='status')
-      | Update ready. The app checks reload safety before activation; no changes are replayed automatically.
+      | An app update is ready. Applying it may reload this page.
     p.pwa-status-panel__note(v-else-if='pwaState.reloadNeeded', role='status')
-      | A newer app shell is active. Reload is deferred until it is safe for this page.
+      | The app has updated. This page will reload when your current work is safe.
     p.pwa-status-panel__note(v-else-if='pwaState.updateState === `checking` || pwaState.updateState === `activating`', role='status')
       | Checking the app update without interrupting this page.
 
@@ -84,11 +84,11 @@ section.pwa-status-panel(
       v-if='showInstallSection'
       aria-labelledby='pwa-status-install-title'
     )
-      h3#pwa-status-install-title Install availability
-      p(v-if='pwaState.isStandalone') This page is running in a standalone window. It may be an installed app or a manually added shortcut.
-      p(v-else-if='installCompleted') Installation completed. Open tsEpistle from your app launcher to use its standalone window.
+      h3#pwa-status-install-title Install tsEpistle
+      p(v-if='pwaState.isStandalone') You’re using tsEpistle in its own window.
+      p(v-else-if='installCompleted') Installed. Open tsEpistle from your apps or home screen.
       template(v-else-if='canInstall')
-        p Your browser exposed an optional install action.
+        p Add tsEpistle to your apps or home screen for easy access.
         v-btn(
           color='primary'
           variant='tonal'
@@ -98,8 +98,8 @@ section.pwa-status-panel(
           @click='installApplication'
         ) {{ isInstalling ? `Opening…` : `Install tsEpistle` }}
       p(v-else-if='manualInstallGuidance')
-        | No native prompt was exposed. If this browser offers it, use Share or its browser menu and choose Add to Home Screen.
-      p(v-else) Installation is not available in this browser right now. Availability depends on browser and platform support.
+        | Open Share or your browser menu and choose Add to Home Screen, if available.
+      p(v-else) Your browser does not offer installation right now. You can keep using tsEpistle here.
 
     .pwa-status-panel__links
       a.pwa-status-panel__library(href='/_offline#offline-policy-title')
@@ -145,11 +145,11 @@ const networkHintTone = computed<'success' | 'warning' | 'error'>(() => {
 })
 
 const serverStatusLabel = computed(() => {
-  if (pwaState.connection === 'checking') return 'Checking directly'
-  if (pwaState.serverHealthy === true) return 'Verified available'
+  if (pwaState.connection === 'checking') return 'Checking…'
+  if (pwaState.serverHealthy === true) return 'Available'
   if (pwaState.serverReachable === true) return 'Responded, but unavailable'
   if (pwaState.serverReachable === false) return 'Unavailable'
-  return 'Not verified'
+  return 'Not checked'
 })
 
 const serverStatusTone = computed<'success' | 'warning' | 'error'>(() => {
@@ -159,27 +159,27 @@ const serverStatusTone = computed<'success' | 'warning' | 'error'>(() => {
 })
 
 const offlineShellLabel = computed(() => {
-  if (pwaState.offlineReady) return pwaState.controlled ? 'Ready and active' : 'Ready after warm-up'
+  if (pwaState.offlineReady) return pwaState.controlled ? 'Ready' : 'Ready for your next visit'
   if (pwaState.registrationState === 'unsupported') return 'Not supported by this browser'
-  if (pwaState.registrationState === 'error') return 'Registration failed'
+  if (pwaState.registrationState === 'error') return 'Could not set up offline access'
   return 'Not ready yet'
 })
 
 const summaryDescription = computed(() => {
-  if (pwaState.connection === 'checking') return 'Checking the server directly; a network hint alone is not proof.'
-  if (pwaState.connection === 'offline') return 'The browser reports no network path. Server availability is not inferred from that hint.'
-  if (pwaState.connection === 'server-unavailable') return 'The server could not be reached or did not pass its health check.'
+  if (pwaState.connection === 'checking') return 'Checking whether tsEpistle is available.'
+  if (pwaState.connection === 'offline') return 'Your browser reports no connection. Check offline access below to use your saved pages.'
+  if (pwaState.connection === 'server-unavailable') return 'The server is unavailable right now. Check offline access below to use your saved pages.'
   if (pwaState.connection === 'online' && pwaState.serverReachable === true && pwaState.serverHealthy === true) {
-    return 'A direct request verified the server. The browser network hint is shown separately.'
+    return 'The server is available. You can browse and sync saved pages.'
   }
-  return 'The server has not been verified yet.'
+  return 'Check the connection to see whether the server is available.'
 })
 
 const panelLabel = computed(() => `Offline app and connection status: ${connectionPresentation.value.label}`)
 const networkHintLabel = computed(() => {
-  if (pwaState.onlineHint === true) return 'Network path reported'
-  if (pwaState.onlineHint === false) return 'No network path reported'
-  return 'Network status unavailable'
+  if (pwaState.onlineHint === true) return 'Reports a connection'
+  if (pwaState.onlineHint === false) return 'Reports no connection'
+  return 'Unknown'
 })
 
 const summaryLabel = computed(() => connectionPresentation.value.label)

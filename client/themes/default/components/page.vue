@@ -4137,6 +4137,12 @@ export default defineComponent({
     grid-row: 2;
   }
 
+  > .is-page-header > .page-header-control-pair {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    margin-block-start: var(--wiki-space-2);
+  }
+
   .page-header-summary {
     display: flex;
     align-items: flex-end;
@@ -4337,12 +4343,14 @@ export default defineComponent({
     }
 
 
-    > .page-header--toc-left > .page-header-summary {
+    > .page-header--toc-left > .page-header-summary,
+    > .page-header--toc-left > .page-header-control-pair {
       padding-inline-start: var(--wiki-space-4);
       grid-column: 2 / -1;
     }
 
-    > .page-header--toc-right > .page-header-summary {
+    > .page-header--toc-right > .page-header-summary,
+    > .page-header--toc-right > .page-header-control-pair {
       grid-column: 1 / -2;
     }
   }
@@ -5200,7 +5208,7 @@ export default defineComponent({
 
   .page-header-offline {
     max-width: 100%;
-    flex-basis: 100%;
+    flex-basis: auto;
   }
 
 
@@ -5655,7 +5663,8 @@ export default defineComponent({
     > div { margin-inline: auto; }
   }
 
-  .page-header-section > .is-page-header > .page-header-summary {
+  .page-header-section > .is-page-header > .page-header-summary,
+  .page-header-section > .is-page-header > .page-header-control-pair {
     grid-column: 1;
     padding-inline-start: 0;
   }
