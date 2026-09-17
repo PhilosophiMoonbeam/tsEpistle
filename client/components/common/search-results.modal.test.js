@@ -82,13 +82,17 @@ describe('Ask modal accessibility contract', () => {
     const searchChild = fixtureDocument.createElement('button')
     const preview = fixtureDocument.createElement('div')
     const previewChild = fixtureDocument.createElement('button')
+    const agent = fixtureDocument.createElement('section')
+    const returnToSearch = fixtureDocument.createElement('button')
     let closeCalls = 0
 
     searchSurface.className = 'search-results-search'
     preview.className = 'wiki-source-preview'
+    agent.className = 'inline-agent'
+    agent.append(returnToSearch)
     searchSurface.append(searchChild)
     preview.append(previewChild)
-    backdrop.append(searchSurface, preview)
+    backdrop.append(searchSurface, preview, agent)
 
     Object.defineProperty(globalThis, 'Element', {
       configurable: true,
@@ -109,6 +113,8 @@ describe('Ask modal accessibility contract', () => {
 
       methods.handleBackdropClick.call(state, { target: searchChild })
       methods.handleBackdropClick.call(state, { target: previewChild })
+      // Agent's return button has already changed the mode when its click bubbles.
+      methods.handleBackdropClick.call(state, { target: returnToSearch })
       expect(closeCalls).toBe(1)
 
       state.isAgentOpen = true

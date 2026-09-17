@@ -1,6 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { onWatcherCleanup, reactive, watch } from 'vue'
+import { createPatch as createRealPatch } from 'diff'
+import * as RealDiff2Html from 'diff2html'
 const source = fs.readFileSync(path.join(process.cwd(), 'client/components/history.vue'), 'utf8')
 
 describe('history revision list and comparison behavior', () => {
@@ -320,6 +322,23 @@ describe('history revision list and comparison behavior', () => {
     expect(setLoading).toHaveBeenNthCalledWith(4, wikiStore, 'history-trail-refresh', false)
   })
 
+  test('allows consecutive history pages after a successful load', async () => {
+    const fetchPageHistory = vi.fn()
+      .mockResolvedValueOnce({ total: 3, trail: [trailItem(2)] })
+      .mockResolvedValueOnce({ total: 3, trail: [trailItem(1, 'initial')] })
+    const { instance } = createHistoryInstance({
+      trailLoaded: true, trailLoading: false, total: 3, trail: [trailItem(3)], offsetPage: 0
+    }, { fetchPageHistory })
+
+    expect(await instance.loadMore()).toBe(true)
+    expect(instance.loadingMore).toBe(false)
+    expect(instance.historyMoreController).toBeNull()
+    expect(await instance.loadMore()).toBe(true)
+    expect(instance.loadingMore).toBe(false)
+    expect(instance.trail.map(item => item.versionId)).toEqual([3, 2, 1])
+    expect(instance.offsetPage).toBe(2)
+  })
+
   test('balances pagination and refresh loading when refresh supersedes pagination', async () => {
     const pending = []
     const fetchPageHistory = vi.fn(
@@ -505,5 +524,64 @@ describe('history revision list and comparison behavior', () => {
     expect(component.computed.comparisonError.call(instance)).toContain('too large')
     expect(component.computed.diffHTML.call(instance)).toBe('')
     expect(createPatch).not.toHaveBeenCalled()
+  })
+
+  test('bounds wholly changed revisions below the input size limits', () => {
+    const Diff2Html = { html: vi.fn() }
+    const { instance } = createHistoryInstance({
+      source: { ...page(1), content: Array.from({ length: 18_000 }, (_, index) => `old${index}\n`).join('') },
+      target: { ...page(2), content: Array.from({ length: 18_000 }, (_, index) => `new${index}\n`).join('') },
+      sourceReady: true,
+      targetReady: true,
+      diffSource: 1,
+      diffTarget: 2
+    }, { createPatch: createRealPatch, Diff2Html })
+
+    const started = performance.now()
+    const result = instance.diffResult
+    expect(performance.now() - started).toBeLessThan(1_000)
+    expect(result.error).toContain('View Source or Download Version')
+    expect(result.html).toBe('')
+    expect(Diff2Html.html).not.toHaveBeenCalled()
+  })
+
+  test('caps rendered patch rows before building a large DOM', () => {
+    const Diff2Html = { html: vi.fn() }
+    const { instance } = createHistoryInstance({
+      source: page(1), target: page(2), sourceReady: true, targetReady: true, diffSource: 1, diffTarget: 2
+    }, { createPatch: () => '+changed\n'.repeat(4_001), Diff2Html })
+
+    expect(instance.diffResult.error).toContain('too large')
+    expect(Diff2Html.html).not.toHaveBeenCalled()
+  })
+
+  test('renders ordinary revisions and limits expensive line matching for larger patches', () => {
+    const html = vi.fn(RealDiff2Html.html)
+    const { instance } = createHistoryInstance({
+      source: { ...page(1), content: 'Original paragraph\n' },
+      target: { ...page(2), content: 'Updated paragraph\n' },
+      sourceReady: true, targetReady: true, diffSource: 1, diffTarget: 2
+    }, { createPatch: createRealPatch, Diff2Html: { html } })
+
+    expect(instance.diffResult.html).toContain('d2h-ins')
+    expect(html.mock.calls[0][1].matching).toBe('lines')
+    instance.target.content = 'Updated paragraph\n'.repeat(250)
+    expect(instance.diffResult.html).toContain('d2h-ins')
+    expect(html.mock.calls[1][1].matching).toBe('none')
+    expect(html.mock.calls[1][1].maxLineLengthHighlight).toBe(0)
+  })
+
+  test('avoids unbounded word comparisons within long changed lines', () => {
+    const { instance } = createHistoryInstance({
+      source: { ...page(1), content: 'old '.repeat(2_000) },
+      target: { ...page(2), content: 'new '.repeat(2_000) },
+      sourceReady: true, targetReady: true, diffSource: 1, diffTarget: 2
+    }, { createPatch: createRealPatch, Diff2Html: RealDiff2Html })
+
+    const started = performance.now()
+    const result = instance.diffResult
+    expect(performance.now() - started).toBeLessThan(1_000)
+    expect(result.error).toBe('')
+    expect(result.html).toContain('d2h-ins')
   })
 })

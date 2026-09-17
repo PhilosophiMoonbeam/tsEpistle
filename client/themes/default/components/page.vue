@@ -128,7 +128,7 @@
                       @click='toggleOfflinePage'
                     )
                       v-icon(aria-hidden='true') {{ offlineControlIcon }}
-                  span.page-offline-tooltip {{ offlineControlLabel }}
+                  span.page-offline-tooltip {{ offlineControlTitle }}
                 v-tooltip(location="bottom", v-if='offlineCanRetry')
                   template(v-slot:activator='{ props }')
                     v-btn.page-offline-retry-control(
@@ -148,7 +148,7 @@
                   role='status'
                   aria-live='polite'
                   aria-atomic='true'
-                  :class='`page-header-offline-status--${offlineControlState}`'
+                  :class='[`page-header-offline-status--${offlineControlState}`, { "page-header-offline-status--quiet": !["stale", "error", "unavailable", "ineligible"].includes(offlineControlState) }]'
                 ) {{ offlineStatusLabel }}
               v-btn.page-focus-control(v-if='!printView && !readerFocus && !talkActive', variant='text', size='small', prepend-icon='mdi-book-open-page-variant-outline', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t('common:page.focusReading') }}
               .page-edit-shortcuts(
@@ -1494,7 +1494,8 @@ export default defineComponent({
     },
     offlineCanRetry (): boolean {
       return (this.offlineSelected || this.offlineHasSnapshot) &&
-        ['stale', 'error', 'unavailable'].includes(this.offlineState) &&
+        ['stale', 'error', 'unavailable', 'ineligible'].includes(this.offlineState) &&
+        !this.offlineLocalIneligibilityReason &&
         !this.offlineActionLoading &&
         this.offlineOwnedOperationId === null
     },
@@ -1502,7 +1503,7 @@ export default defineComponent({
       return 'Retry offline sync'
     },
     offlineControlTitle (): string {
-      if (this.offlineSelected) return this.offlineControlLabel
+      if (this.offlineSelected) return `${this.offlineControlLabel} · ${this.offlineHasValidBody ? this.offlineSelectionSources : 'Copy not saved'}`
       const localReason = this.offlineLocalIneligibilityReason
       if (localReason) return localReason
       if (this.offlineState === 'checking') return 'Checking offline availability.'
@@ -1566,7 +1567,7 @@ export default defineComponent({
           const localReason = this.offlineLocalIneligibilityReason
           if (localReason) return localReason
           if (this.offlinePolicy?.excluded) return 'Excluded from offline sync.'
-          return 'This page is not available for offline use.'
+          return 'The server could not create a safe offline copy. Retry, or manage saved pages from your account menu.'
         }
         case 'error':
           return availabilityFailure
@@ -2472,6 +2473,16 @@ export default defineComponent({
       try {
         const storage = await this.offlineStorageForOperation(operationId)
         if (!storage || !isCurrentOperation()) return
+        const policy = await storage.readOfflinePolicy()
+        if (!isCurrentOperation()) return
+        const pagePolicy = policy.pages.find(page => page.siteId === selector.siteId && page.pageId === selector.pageId && page.locale === selector.locale)
+        if (pagePolicy?.availability === 'ineligible' && !pagePolicy.excluded) {
+          await storage.setPageAvailability(selector, 'unknown', {
+            expectedSessionGeneration: policy.sessionGeneration,
+            expectedPolicyRevision: policy.state.policyRevision
+          })
+          if (!isCurrentOperation()) return
+        }
         reconcileStarted = true
         const syncResult: OfflineSyncResult = this.offlineSyncService
           ? await this.offlineSyncService.reconcile('manual')
@@ -3738,7 +3749,7 @@ export default defineComponent({
   display: flex;
   min-width: 0;
   max-width: min(100%, 34rem);
-  flex: 1 1 18rem;
+  flex: 0 1 auto;
   align-items: center;
   gap: var(--wiki-space-2);
 }
@@ -3754,6 +3765,17 @@ export default defineComponent({
 .page-header-offline-status--saved,
 .page-header-offline-status--expiring {
   color: var(--wiki-accent-warm);
+}
+
+.page-header-offline-status--quiet {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .page-header-offline-status--stale,

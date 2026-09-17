@@ -1250,8 +1250,8 @@ export default defineComponent({
   background-image: var(--nav-header-tint) !important;
   color: rgb(var(--v-theme-on-surface));
   box-shadow: 0 3px 10px color-mix(in srgb, var(--wiki-shadow-color) 35%, transparent) !important;
-  backdrop-filter: var(--wiki-chrome-blur) !important;
   -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
+  backdrop-filter: var(--wiki-chrome-blur) !important;
 
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     border-bottom-color: var(--wiki-glass-border) !important;
@@ -1267,8 +1267,8 @@ export default defineComponent({
     padding-inline: var(--wiki-space-4);
     background-color: var(--nav-header-surface) !important;
     background-image: var(--nav-header-tint) !important;
-    backdrop-filter: var(--wiki-chrome-blur) !important;
     -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
+    backdrop-filter: var(--wiki-chrome-blur) !important;
 
     .v-toolbar__content {
       height: auto !important;
@@ -1403,8 +1403,8 @@ export default defineComponent({
       background-color: rgba(var(--v-theme-surface), .42) !important;
       background-image: none !important;
       color: rgb(var(--v-theme-on-surface)) !important;
-      backdrop-filter: blur(12px) saturate(150%) !important;
       -webkit-backdrop-filter: blur(12px) saturate(150%) !important;
+      backdrop-filter: blur(12px) saturate(150%) !important;
       box-shadow: var(--wiki-shadow-inset);
       transition:
         border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
@@ -1466,8 +1466,8 @@ export default defineComponent({
     width: 100%;
     background-color: var(--nav-header-surface) !important;
     background-image: var(--nav-header-tint) !important;
-    backdrop-filter: var(--wiki-chrome-blur) !important;
     -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
+    backdrop-filter: var(--wiki-chrome-blur) !important;
 
     .nav-header-search-control {
       max-width: none;

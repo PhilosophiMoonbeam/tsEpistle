@@ -20,12 +20,15 @@ type SyncRun = {
   policyRevision: number
   sessionGeneration: number
   requests: string[]
+  pendingFetchAborted?: boolean
+  recoveryStatus?: string
+  recoveryFetchAborted?: boolean
 }
 
 type Outcome = { ok: true; value: SyncRun } | { ok: false; error: { message: string } }
 
 const driverSource = (absoluteStoragePath: string, absoluteSyncPath: string): string => `
-import { openOfflineStorage } from ${JSON.stringify(absoluteStoragePath)};
+import { openOfflineStorage, OfflineStorageError } from ${JSON.stringify(absoluteStoragePath)};
 import { createOfflineSyncCoordinator } from ${JSON.stringify(absoluteSyncPath)};
 
 const SITE_ID = ${JSON.stringify(siteId)};
@@ -93,6 +96,7 @@ export async function run(operation, payload = {}) {
   const kind = String(payload.kind);
   const storage = await openOfflineStorage({ databaseName });
   const requests = [];
+  let denyReselectedPage = kind === 'reselect-denied' || kind === 'denied-manual';
   let fenceMutationDone = false;
   const disposeFetchStartedGate = Promise.withResolvers();
   const disposeFetchStarted = disposeFetchStartedGate.promise;
@@ -101,7 +105,18 @@ export async function run(operation, payload = {}) {
   const disposePutStarted = disposePutStartedGate.promise;
   let releaseDisposePut = () => {};
   let restorePut = () => {};
-  const fetchImpl = async (input) => {
+  const siblingFetchStarted = Promise.withResolvers();
+  const siblingFetchRelease = Promise.withResolvers();
+  let siblingFetchSignal = null;
+  let pendingFetchAborted;
+  let recoveryStatus;
+  let recoveryFetchAborted;
+  let firstStorageFailure = true;
+  const recoveryFetchStarted = Promise.withResolvers();
+  const recoveryFetchRelease = Promise.withResolvers();
+  let recoverySignal = null;
+  const fatalSibling = kind === 'fatal-sibling' || kind === 'fatal-sibling-new-pass';
+  const fetchImpl = async (input, init) => {
     const requestURL = new URL(input, SITE_ID);
     requests.push(requestURL.pathname + requestURL.search);
     if (requestURL.pathname === '/_api/pages' && requestURL.searchParams.has('tags')) {
@@ -112,6 +127,17 @@ export async function run(operation, payload = {}) {
     }
     if (requestURL.pathname.endsWith('/offline-snapshot')) {
       const pageId = Number(requestURL.pathname.split('/').at(-2));
+      if (fatalSibling && pageId === 2 && siblingFetchSignal === null) {
+        siblingFetchSignal = init.signal;
+        siblingFetchStarted.resolve();
+        await siblingFetchRelease.promise;
+      }
+      if (kind === 'fatal-sibling-new-pass' && pageId === 1 && !firstStorageFailure) {
+        recoverySignal = init.signal;
+        recoveryFetchStarted.resolve();
+        await recoveryFetchRelease.promise;
+      }
+      if (denyReselectedPage) return json({ message: 'Snapshot not found.' }, 404);
       if (kind === 'fence' && !fenceMutationDone) {
         fenceMutationDone = true;
         await storage.recordEligibleReaderVisit(selector(pageId));
@@ -126,7 +152,7 @@ export async function run(operation, payload = {}) {
       if ((kind === 'refill' || kind === 'refill-locales') && pageId === 1) return json({ message: 'Snapshot not found.' }, 404);
       if (kind === 'refill-locales' && pageId === 2) return json({ message: 'Snapshot not found.' }, 404);
       if (kind === 'transient' && pageId === 1) return json({ message: 'Temporary failure.' }, 503);
-      const allowed = kind === 'manual' || kind === 'fence' || kind === 'dispose' || kind === 'dispose-commit'
+      const allowed = fatalSibling ? [1, 2] : kind === 'manual' || kind === 'reselect-denied' || kind === 'fence' || kind === 'dispose' || kind === 'dispose-commit'
         ? [1]
         : kind === 'automatic'
           ? Array.from({ length: 10 }, (_value, index) => index + 1)
@@ -150,7 +176,19 @@ export async function run(operation, payload = {}) {
   };
 
   try {
-    if (kind === 'manual') {
+    if (fatalSibling) {
+      await storage.setManualOfflineIntent(selector(1), true);
+      await storage.setManualOfflineIntent(selector(2), true);
+      const originalPutSnapshot = storage.putSnapshot.bind(storage);
+      storage.putSnapshot = async (siteId, snapshot, options) => {
+        if (snapshot.pageId === 1 && firstStorageFailure) {
+          await siblingFetchStarted.promise;
+          firstStorageFailure = false;
+          throw new OfflineStorageError('quota', 'The device is full.');
+        }
+        return await originalPutSnapshot(siteId, snapshot, options);
+      };
+    } else if (kind === 'manual' || kind === 'reselect-denied' || kind === 'denied-manual') {
       await storage.setManualOfflineIntent(selector(1), true);
     } else if (kind === 'automatic') {
       await storage.setAutomaticSavingEnabled(true);
@@ -312,7 +350,16 @@ export async function run(operation, payload = {}) {
       maxConcurrentFetches: 2
     });
     let result;
-    if (kind === 'offline-remove') {
+    if (kind === 'denied-manual') {
+      await coordinator.reconcile('manual');
+      result = await coordinator.reconcile('manual');
+    } else if (kind === 'reselect-denied') {
+      await coordinator.reconcile('manual');
+      await storage.removeOfflinePage(selector(1));
+      denyReselectedPage = false;
+      await storage.setManualOfflineIntent(selector(1), true);
+      result = await coordinator.reconcile('manual');
+    } else if (kind === 'offline-remove') {
       await storage.removeOfflinePage(selector(1));
       result = await coordinator.reconcile('manual');
     } else if (kind === 'dispose') {
@@ -331,6 +378,18 @@ export async function run(operation, payload = {}) {
       restorePut = () => {};
     } else {
       result = await coordinator.reconcile('manual');
+    }
+    if (fatalSibling) {
+      pendingFetchAborted = siblingFetchSignal?.aborted === true;
+      const recovery = kind === 'fatal-sibling-new-pass' ? coordinator.reconcile('manual') : null;
+      if (recovery) await recoveryFetchStarted.promise;
+      siblingFetchRelease.resolve();
+      await new Promise(resolve => setTimeout(resolve, 30));
+      if (recovery) {
+        recoveryFetchAborted = recoverySignal?.aborted === true;
+        recoveryFetchRelease.resolve();
+        recoveryStatus = (await recovery).status;
+      }
     }
     if (kind === 'closed') {
       return {
@@ -354,7 +413,10 @@ export async function run(operation, payload = {}) {
         snapshots: await storage.listSnapshots(SITE_ID),
         policyRevision: policy.state.policyRevision,
         sessionGeneration: policy.sessionGeneration,
-        requests
+        requests,
+        pendingFetchAborted,
+        recoveryStatus,
+        recoveryFetchAborted
       }
     };
   } catch (error) {
@@ -461,6 +523,42 @@ test('exposes an explicit unavailable service result', () => {
 })
 
 describe('foreground offline sync coordinator', () => {
+  test('a late worker from a failed pass cannot cancel the next synchronization pass', async () => {
+    const run = await runScenario('fatal-sibling-new-pass')
+    expect(run.result.status).toBe('error')
+    expect(run.recoveryFetchAborted).toBe(false)
+    expect(run.recoveryStatus).toBe('complete')
+    expect(pageIds(run)).toEqual([1, 2])
+  })
+
+  test('aborts pending sibling work when a fatal storage error ends a concurrent pass', async () => {
+    const run = await runScenario('fatal-sibling')
+    expect(run.result.status).toBe('error')
+    expect(run.result.error).toBe('The device is full.')
+    expect(run.pendingFetchAborted).toBe(true)
+    expect(pageIds(run)).toEqual([])
+  })
+
+  test('does not report a completed sync while a manually selected page remains denied', async () => {
+    const run = await runScenario('denied-manual')
+    expect(run.result.status).toBe('partial')
+    expect(run.result.outcome).toBe('error')
+    expect(run.result.failed).toBe(1)
+    expect(run.result.error).toContain('not available for offline use')
+    expect(pageIds(run)).toEqual([])
+    expect(snapshotRequests(run)).toEqual([1])
+    expect(policyFor(run, 1)).toMatchObject({ manual: true, availability: 'ineligible' })
+  })
+
+  test('checks server eligibility again when a denied page is removed and manually reselected', async () => {
+    const run = await runScenario('reselect-denied')
+    expect(run.result.status).toBe('complete')
+    expect(run.result.saved).toBe(1)
+    expect(pageIds(run)).toEqual([1])
+    expect(snapshotRequests(run)).toEqual([1, 1])
+    expect(policyFor(run, 1)).toMatchObject({ manual: true, excluded: false, availability: 'available' })
+  })
+
   test('reconciles a manual offline intent immediately with a typed success outcome', async () => {
     const run = await runScenario('manual')
     expect(run.result.status).toBe('complete')

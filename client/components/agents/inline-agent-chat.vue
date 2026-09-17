@@ -1506,8 +1506,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 .inline-agent--contextual .inline-agent__toolbar {
   background: rgba(var(--v-theme-surface), .72) !important;
-  backdrop-filter: blur(20px) saturate(115%);
   -webkit-backdrop-filter: blur(20px) saturate(115%);
+  backdrop-filter: blur(20px) saturate(115%);
 }
 .inline-agent__toolbar :deep(.v-toolbar__content) {
   flex-wrap: inherit;
@@ -1746,16 +1746,16 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent--contextual .inline-agent__body {
   background: rgba(var(--v-theme-surface), .32);
-  backdrop-filter: blur(6px) saturate(110%);
   -webkit-backdrop-filter: blur(6px) saturate(110%);
+  backdrop-filter: blur(6px) saturate(110%);
 }
 
 @supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
   .inline-agent--contextual .inline-agent__toolbar,
   .inline-agent--contextual .inline-agent__body {
     background: rgb(var(--v-theme-background)) !important;
-    backdrop-filter: none;
     -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 .inline-agent__transcript-wrap {
@@ -2054,6 +2054,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   min-width: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
+  white-space: normal;
   text-align: center;
   font-size: .83rem;
   font-weight: 700;
@@ -2098,21 +2099,21 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__composer--scrolled:not(.inline-agent__composer--focused) {
   background: rgb(var(--v-theme-background));
   box-shadow: 0 -0.75rem 1.5rem color-mix(in srgb, rgb(var(--v-theme-background)) 35%, transparent);
-  backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 .inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
   border-color: var(--wiki-surface-border-strong);
   background: var(--wiki-surface-raised);
   box-shadow: var(--wiki-shadow-xs);
-  backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 .inline-agent__composer--focused {
   background: rgb(var(--v-theme-background));
   box-shadow: none;
-  backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 .inline-agent__composer-inner {
   width: min(100%, var(--agent-conversation-width));
@@ -2613,8 +2614,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent--contextual .inline-agent__toolbar,
   .inline-agent--contextual .inline-agent__body {
     background: rgb(var(--v-theme-background)) !important;
-    backdrop-filter: none;
     -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 
@@ -2627,8 +2628,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent--contextual .inline-agent__body {
     background: Canvas !important;
     color: CanvasText;
-    backdrop-filter: none;
     -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 
   .inline-agent__scrim {
@@ -2652,8 +2653,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     background: Canvas;
     box-shadow: none;
     color: ButtonText;
-    backdrop-filter: none;
     -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 
   .inline-agent__temporary-session--active {

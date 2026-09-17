@@ -49,6 +49,7 @@ const ALLOWED_TAGS = [
 ] as const
 const ALLOWED_TAG_SET = new Set<string>(ALLOWED_TAGS)
 const PASSIVE_WRAPPER_TAGS = new Set(['html', 'body', 'div', 'span', 'section', 'article', 'main', 'header', 'footer', 'figure', 'figcaption', 'aside'])
+const TEXT_PROJECTED_TAGS = new Set(['img', 'details', 'summary'])
 const ACTIVE_TAGS = new Set([
   'script',
   'style',
@@ -307,20 +308,22 @@ const canonicalAnchorUrl = (value: string, projection: ResolvedOfflinePageLinkPr
   return url.href
 }
 
+const textOnlyAnchorHref = (value: string): boolean => value === '' || /^tel:/iu.test(value)
+
 const hasUnsafeProjectionMarkup = (fragment: string, projection: ResolvedOfflinePageLinkProjection): boolean => {
   const template = createTemplate()
   template.innerHTML = fragment
   for (const element of template.content.querySelectorAll('*')) {
     const tagName = element.tagName.toLowerCase()
-    if (ACTIVE_TAGS.has(tagName)) return true
-    if (!ALLOWED_TAG_SET.has(tagName) && !PASSIVE_WRAPPER_TAGS.has(tagName)) return true
+    if (ACTIVE_TAGS.has(tagName) && !TEXT_PROJECTED_TAGS.has(tagName)) return true
+    if (!ALLOWED_TAG_SET.has(tagName) && !PASSIVE_WRAPPER_TAGS.has(tagName) && !TEXT_PROJECTED_TAGS.has(tagName)) return true
     if (tagName === 'a') {
       const href = element.getAttribute('href')
-      if (href !== null && canonicalAnchorUrl(href, projection) === null) return true
+      if (href !== null && !textOnlyAnchorHref(href) && canonicalAnchorUrl(href, projection) === null) return true
     }
     for (const attribute of element.attributes) {
       const name = attribute.name.toLowerCase()
-      if (name.startsWith('on') || name.startsWith('data-') || ACTIVE_ATTRIBUTES.has(name)) return true
+      if (name.startsWith('on') || name.startsWith('data-') || (ACTIVE_ATTRIBUTES.has(name) && !(tagName === 'img' && name === 'src'))) return true
       if (name === 'aria-hidden' || name === 'hidden') return true
       if (
         name === 'class' &&
@@ -342,9 +345,23 @@ export const sanitizeOfflineHtmlFragment = (fragment: string, projection: Offlin
   if (hasUnsafeProjectionMarkup(fragment, resolvedProjection)) invalid('The page contains unsupported active content')
   const sourceTemplate = createTemplate()
   sourceTemplate.innerHTML = fragment
+  // Preserve passive document text without retaining image requests or interactive
+  // disclosure behavior. Validate the original subtree above before flattening it.
+  for (const element of sourceTemplate.content.querySelectorAll('img')) {
+    element.replaceWith(sourceTemplate.ownerDocument.createTextNode(element.getAttribute('alt') ?? ''))
+  }
+  for (const element of sourceTemplate.content.querySelectorAll('details, summary')) {
+    const replacement = sourceTemplate.ownerDocument.createElement(element.tagName.toLowerCase() === 'summary' ? 'p' : 'div')
+    replacement.append(...element.childNodes)
+    element.replaceWith(replacement)
+  }
   for (const element of sourceTemplate.content.querySelectorAll('a')) {
     const href = element.getAttribute('href')
     if (href === null) continue
+    if (textOnlyAnchorHref(href)) {
+      element.removeAttribute('href')
+      continue
+    }
     const canonical = canonicalAnchorUrl(href, resolvedProjection) ?? invalid('The page contains an unsafe link')
     element.setAttribute('href', canonical)
   }

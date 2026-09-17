@@ -1278,9 +1278,13 @@ export default defineComponent({
     }
 
     .cm-editor,
-    .cm-scroller,
-    .cm-content {
+    .cm-scroller {
       background: rgb(var(--v-theme-background)) !important;
+    }
+
+    .cm-content {
+      // CodeMirror paints selections behind the editable content.
+      background: transparent !important;
     }
 
     .cm-editor {

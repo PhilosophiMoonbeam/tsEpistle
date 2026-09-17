@@ -729,7 +729,8 @@ export default defineComponent({
     handleBackdropClick(event: MouseEvent): void {
       if (this.isAgentOpen) return
       const target = event.target
-      if (target instanceof Element && target.closest('.search-results-search, .wiki-source-preview')) return
+      // Returning from Agent changes the mode before this same click bubbles here.
+      if (target instanceof Element && target.closest('.search-results-search, .wiki-source-preview, .inline-agent')) return
       this.closeSearch()
     },
     captureSearchRestoreTarget(event: FocusEvent): void {

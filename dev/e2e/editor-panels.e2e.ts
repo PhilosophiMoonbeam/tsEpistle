@@ -329,6 +329,15 @@ test('applies formatting from the toolbar or its mobile overflow', async ({ page
   await expect
     .poll(() => selectionBackground.evaluate(element => element.getBoundingClientRect().height), 'The selected Markdown range must have visible height')
     .toBeGreaterThan(0)
+  // Geometry and a background color alone pass even when opaque editor content
+  // covers CodeMirror's selection layer. Compare the actual painted region.
+  const selectionClip = await selectionBackground.boundingBox()
+  expect(selectionClip).not.toBeNull()
+  const selectedPixels = await page.screenshot({ clip: selectionClip!, caret: 'hide', animations: 'disabled' })
+  const hiddenSelectionStyle = await page.addStyleTag({ content: '.cm-selectionBackground { visibility: hidden !important; }' })
+  const unselectedPixels = await page.screenshot({ clip: selectionClip!, caret: 'hide', animations: 'disabled' })
+  await hiddenSelectionStyle.evaluate(element => element.remove())
+  expect(selectedPixels.equals(unselectedPixels), 'Selection must visibly paint over the editor background').toBe(false)
   const selectionPaint = await selectionBackground.evaluate(element => {
     const style = getComputedStyle(element)
     const rect = element.getBoundingClientRect()

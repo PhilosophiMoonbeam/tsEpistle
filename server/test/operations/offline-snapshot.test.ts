@@ -235,6 +235,47 @@ describe('offline snapshot admission operations', () => {
     expect(error).toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
   })
 
+  it('projects renderer emoji and collapsed details into passive offline text', async () => {
+    page.render = [
+      '<h1>Guide <img class="emoji" draggable="false" alt="📚" src="https://cdn.example.test/book.svg"></h1>',
+      '<details><summary>More information</summary><p>Always readable offline.</p>',
+      '<details open><summary>Nested section</summary><p>Nested content.</p></details></details>',
+      '<p><img alt="&lt;script&gt;literal text&lt;/script&gt;" src="/private/image.png"></p>',
+      '<p><a href="tel:+15551234567">Call the office</a> <a href="">Unlinked label</a></p>'
+    ].join('')
+
+    const snapshot = await operations.getOfflineSnapshot({ id: 7 })
+
+    expect(snapshot.content.html).toContain('<h1>Guide 📚</h1>')
+    expect(snapshot.content.html).toContain('<p>More information</p><p>Always readable offline.</p>')
+    expect(snapshot.content.html).toContain('<p>Nested section</p><p>Nested content.</p>')
+    expect(snapshot.content.html).toContain('&lt;script&gt;literal text&lt;/script&gt;')
+    expect(snapshot.content.html).not.toMatch(/<(?:img|details|summary|script)\b|\bsrc=/iu)
+    expect(snapshot.content.html).not.toContain('private/image')
+    expect(snapshot.content.html).not.toContain('cdn.example')
+    expect(snapshot.content.html).toContain('<a>Call the office</a> <a>Unlinked label</a>')
+    expect(snapshot.content.html).not.toContain('tel:')
+    expect(snapshot.searchText).toContain('Always readable offline.')
+    expect(snapshot.searchText).toContain('Nested content.')
+  })
+
+  it.each([
+    '<img alt="Unsafe" src="/image.png" onerror="alert(1)">',
+    '<img alt="Hidden" src="/image.png" hidden>',
+    '<img alt="Extension" src="/image.png" data-private="true">',
+    '<a href="tel:+15551234567" onclick="alert(1)">Call</a>',
+    '<a href="javascript:alert(1)">Unsafe</a>',
+    '<details><summary>Unsafe</summary><script>alert(1)</script></details>',
+    '<details ontoggle="alert(1)"><summary>Unsafe</summary><p>Content</p></details>',
+    '<details><summary>Unsafe</summary><iframe src="/private"></iframe></details>',
+    '<details><summary>Unsafe</summary><a href="/api/secret">Reserved</a></details>',
+    '<details><summary>Unsafe</summary><p aria-hidden="true">Hidden</p></details>'
+  ])('still rejects active or hidden markup before text projection: %s', async render => {
+    page.render = render
+
+    await expect(operations.getOfflineSnapshot({ id: 7 })).rejects.toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
+  })
+
   it.each([
     [
       'private pages',

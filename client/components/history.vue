@@ -260,6 +260,11 @@ import { decodeBase64Json } from '../helpers/base64'
 const HISTORY_PAGE_SIZE = 25
 const MAX_COMPARISON_CHARACTERS = 1_000_000
 const MAX_COMPARISON_LINES = 100_000
+const COMPARISON_TIMEOUT_MS = 150
+const MAX_COMPARISON_EDITS = 2_000
+const MAX_RENDERED_PATCH_LINES = 4_000
+const MAX_MATCHED_PATCH_LINES = 200
+const COMPARISON_LIMIT_MESSAGE = 'This comparison is too large to render safely. Choose closer revisions, or use View Source or Download Version from the revision menu.'
 
 type HistorySide = 'source' | 'target'
 
@@ -465,7 +470,7 @@ export default {
         return {
           patch: '',
           html: '',
-          error: 'This comparison is too large to render safely. Choose a smaller revision range.',
+          error: COMPARISON_LIMIT_MESSAGE,
           empty: false
         }
       }
@@ -475,17 +480,26 @@ export default {
         return {
           patch: '',
           html: '',
-          error: 'This comparison is too large to render safely. Choose a smaller revision range.',
+          error: COMPARISON_LIMIT_MESSAGE,
           empty: false
         }
       }
       try {
-        const patch = createPatch(`/${this.path}`, sourceContent, targetContent)
+        const patch = createPatch(`/${this.path}`, sourceContent, targetContent, undefined, undefined, {
+          timeout: COMPARISON_TIMEOUT_MS,
+          maxEditLength: MAX_COMPARISON_EDITS
+        })
+        const patchLines = patch?.split('\n').length ?? 0
+        if (patch === undefined || patchLines > MAX_RENDERED_PATCH_LINES) {
+          return { patch: '', html: '', error: COMPARISON_LIMIT_MESSAGE, empty: false }
+        }
         return {
           patch,
           html: Diff2Html.html(patch, {
             drawFileList: false,
-            matching: 'lines',
+            matching: patchLines <= MAX_MATCHED_PATCH_LINES ? 'lines' : 'none',
+            matchingMaxComparisons: 100,
+            maxLineLengthHighlight: patchLines <= MAX_MATCHED_PATCH_LINES ? 500 : 0,
             outputFormat: this.viewMode
           }),
           error: '',
@@ -940,8 +954,7 @@ export default {
         this.historyMoreRequestId === requestId &&
         this.historyRefreshRequestId === refreshRequestId &&
         this.historyMoreController === controller &&
-        !controller.signal.aborted &&
-        this.offsetPage + 1 === offsetPage
+        !controller.signal.aborted
       )
       try {
         const result = await this.fetchHistoryPage(offsetPage, controller.signal)
@@ -1208,6 +1221,7 @@ export default {
 .history-revision-row {
   position: relative;
   display: flex;
+  flex-direction: column;
   min-width: 0;
   border-bottom: 1px solid var(--wiki-surface-border);
   background: var(--wiki-surface-raised);
@@ -1235,7 +1249,8 @@ export default {
 }
 
 .history-revision-main {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-width: 0;
   flex: 1 1 auto;
   align-items: flex-start;
@@ -1256,7 +1271,7 @@ export default {
 }
 
 .history-revision-date {
-  flex: 0 0 5.5rem;
+  grid-column: 1;
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
   font-family: var(--wiki-font-mono);
   font-size: .7rem;
@@ -1264,6 +1279,8 @@ export default {
 }
 
 .history-revision-copy {
+  grid-column: 1 / -1;
+  grid-row: 2;
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -1276,6 +1293,8 @@ export default {
 }
 
 .history-revision-selection {
+  grid-column: 2;
+  grid-row: 1;
   flex: 0 0 auto;
   align-self: flex-start;
   padding: .125rem .375rem;
@@ -1292,8 +1311,9 @@ export default {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
+  justify-content: flex-end;
   gap: 0;
-  padding: var(--wiki-space-2);
+  padding: 0 var(--wiki-space-2) var(--wiki-space-2);
 
   .v-btn {
     min-width: 0;

@@ -427,7 +427,7 @@ export class OfflineSyncCoordinator {
 
   private assertCurrent(context: OperationContext, requireContext: boolean): void {
     if (this.operationIsCurrent(context, requireContext)) return
-    this.invalidateActiveOperation()
+    context.controller.abort()
     throw new OfflineSyncInvalidatedError()
   }
 
@@ -439,7 +439,7 @@ export class OfflineSyncCoordinator {
     } catch (error) {
       if (error instanceof OfflineSyncInvalidatedError) throw error
       if (!this.operationIsCurrent(context, requireContext)) {
-        this.invalidateActiveOperation()
+        context.controller.abort()
         throw new OfflineSyncInvalidatedError()
       }
       throw error
@@ -478,6 +478,8 @@ export class OfflineSyncCoordinator {
       if (error instanceof OfflineSyncInvalidatedError) return this.cancelledResult(policy, result)
       return await this.errorResult(context, policy, result, error)
     } finally {
+      // A failed concurrent worker can finish the pass while another request is still pending.
+      controller.abort()
       if (this.activeAbortController === controller) this.activeAbortController = null
     }
   }
@@ -852,6 +854,13 @@ export class OfflineSyncCoordinator {
       )
       result.removed += countRemovedBodyKeys(corpusBeforePrune, corpusAfterPrune, this.options.siteId)
       bodyKeys = corpusAfterPrune
+      const deniedSelections = [...pagesByKey.values()].filter(page =>
+        page.siteId === this.options.siteId && !page.excluded && (page.manual || page.tag) && page.availability === 'ineligible'
+      ).length
+      if (deniedSelections > 0) {
+        result.failed += deniedSelections
+        firstError ??= `${deniedSelections === 1 ? 'A selected page is' : `${deniedSelections} selected pages are`} not available for offline use. Retry or remove the selection in Saved pages.`
+      }
       return await this.finishResult(policy, generation, revision, result, firstError, discoveryFailures > 0, context)
     } catch (error) {
       if (error instanceof OfflineSyncInvalidatedError) return this.cancelledResult(policy, result)
