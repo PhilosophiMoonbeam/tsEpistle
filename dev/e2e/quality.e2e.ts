@@ -272,7 +272,7 @@ test.describe('release accessibility profiles', () => {
         if (await historyTrigger.isVisible()) await historyTrigger.click()
         else {
           await agent.getByRole('button', { name: 'Open Agent panels: conversation history and memory' }).click()
-          await agent.getByText('Conversation history', { exact: true }).click()
+          await agent.locator('.v-menu.v-overlay--active').getByText('Conversation history', { exact: true }).click()
         }
         const history = agent.locator('.inline-agent__side--history')
         await expect(history).toBeVisible()
@@ -284,7 +284,7 @@ test.describe('release accessibility profiles', () => {
         if (await memoryTrigger.isVisible()) await memoryTrigger.click()
         else {
           await agent.getByRole('button', { name: 'Open Agent panels: conversation history and memory' }).click()
-          await agent.getByText('Agent memory', { exact: true }).click()
+          await agent.locator('.v-menu.v-overlay--active').getByText('Agent memory', { exact: true }).click()
         }
         const memory = agent.locator('.inline-agent__side--memory')
         await expect(memory).toBeVisible()

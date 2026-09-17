@@ -580,16 +580,16 @@ describe('Ax agent engine', () => {
     ])
   })
 
-  it('preserves a substantive multi-section summary through evidence correction without rereading the page', async () => {
+  it.each(['wrong section', 'generic terminology'] as const)('preserves a substantive multi-section summary when correcting %s without rereading the page', async fault => {
     const correctedSummary = [
       'Contract pricing lists discount schedules and freight surcharges.[[cite:page:42:revision:1:section:1]]',
       'Quotes require project details and remain valid for 30 days.[[cite:page:42:revision:1:section:2]]',
-      'The manufacturer directory lists product categories and contact details.[[cite:page:42:revision:1:section:3]]'
+      'MFG directory lists product categories and contact details.[[cite:page:42:revision:1:section:3]]'
     ].join('\n\n')
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'get-summary', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }] }] },
-      { results: [{ index: 0, content: correctedSummary.replace('section:1', 'section:3') }] },
+      { results: [{ index: 0, content: fault === 'wrong section' ? correctedSummary.replace('section:1', 'section:3') : correctedSummary.replace('MFG directory lists', 'Manufacturer directory:') }] },
       { results: [{ index: 0, content: correctedSummary }] }
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
@@ -620,9 +620,9 @@ describe('Ax agent engine', () => {
       id: 42,
       title: 'Operations handbook',
       contentType: 'markdown',
-      content: '# Contract pricing\nDiscount schedules and freight surcharges.\n\n# Quotes\nQuotes require project details and remain valid for 30 days.\n\n# Manufacturers\nThe manufacturer directory lists product categories and contact details.',
+      content: '# Contract pricing\nDiscount schedules and freight surcharges.\n\n# Quotes\nQuotes require project details and remain valid for 30 days.\n\n# MFG\nMFG directory lists product categories and contact details.',
       citation: { evidenceId: 'page:42:revision:1', label: 'Operations handbook', href: '/en/operations' },
-      citationSections: ['Contract pricing', 'Quotes', 'Manufacturers'].map((title, index) => ({
+      citationSections: ['Contract pricing', 'Quotes', 'MFG'].map((title, index) => ({
         evidenceId: `page:42:revision:1:section:${index + 1}`,
         label: `Operations handbook › ${title}`,
         href: `/en/operations#section-${index + 1}`
@@ -648,10 +648,25 @@ describe('Ax agent engine', () => {
     expect(calls[0]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('summarize the substantive key sections') }))
     expect(calls[2]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'user', content: expect.stringContaining('Preserve the requested topic coverage when revising') }))
     expect(calls[2]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'user', content: expect.stringContaining('Never replace a requested summary with only a title, heading, or isolated quotation') }))
+    const correction = calls[2]?.chatPrompt.at(-1)
+    expect(correction?.role).toBe('user')
+    const correctionText = String(correction && 'content' in correction ? correction.content : '')
+    const feedbackJson = correctionText.split('\n').at(-1)!
+    const feedback = JSON.parse(feedbackJson) as Array<{ evidenceId: string; draftFragment: string; absentTerms: string[] }>
+    expect(feedbackJson.length).toBeLessThanOrEqual(1_200)
+    expect(feedback.length).toBeGreaterThan(0)
+    expect(feedback.length).toBeLessThanOrEqual(4)
+    expect(feedback.every(item => item.draftFragment.length <= 160 && item.absentTerms.length <= 4 && item.absentTerms.every(term => term.length <= 40))).toBe(true)
+    expect(feedback).toContainEqual(expect.objectContaining(fault === 'generic terminology'
+      ? { evidenceId: 'page:42:revision:1:section:3', draftFragment: 'Manufacturer directory', absentTerms: ['manufacturer'] }
+      : { evidenceId: 'page:42:revision:1:section:3', draftFragment: 'Contract pricing lists discount schedules' }))
+    expect(correctionText).toContain('not proof that a claim is false')
+    expect(JSON.stringify(event.mock.calls)).not.toContain('draftFragment')
+    expect(JSON.stringify(event.mock.calls)).not.toContain('absentTerms')
     expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(correctedSummary)
     expect(result.citations).toHaveLength(3)
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
-      expect.objectContaining({ accepted: false, claims: [expect.objectContaining({ supported: false }), expect.objectContaining({ supported: true }), expect.objectContaining({ supported: true })] }),
+      expect.objectContaining({ accepted: false, claims: [expect.objectContaining({ supported: fault !== 'wrong section' }), expect.objectContaining({ supported: true }), expect.objectContaining({ supported: fault !== 'generic terminology' })] }),
       expect.objectContaining({ accepted: true, claims: [expect.objectContaining({ supported: true }), expect.objectContaining({ supported: true }), expect.objectContaining({ supported: true })] })
     ])
   })
