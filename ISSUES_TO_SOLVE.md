@@ -1,286 +1,109 @@
-# Wiki: Required Fixes and Design Refinements
+Wiki: Remaining Issues and Refinement Targets
 
-## 1. Progressive Web App (PWA): Offline Access
+1. Offline Reliability
 
-### Status indicators and placement
+The progressive web app’s offline features remain unstable. Browser crashes occasionally occur when opening a page’s history. A similar crash previously occurred when signing out and then signing back in; that issue may be resolved.
 
-Connection status and offline-copy information currently appear in the utility-icons column. The cloud icon appears to indicate that offline access is unavailable, possibly incorrectly.
+Audit offline functionality, including interactions with authentication and page history. The experience should be stable, predictable, and seamless.
 
-The text below the icons also needs improvement:
+2. Offline Page Controls
 
-- **Connection: Server verified** has no color to indicate connection health.
-- **Offline copy: This page is not available for offline use. No local copy was kept.** is too verbose.
-- The interface does not explain how to save a page for offline use.
+The offline controls above the table of contents behave inconsistently:
 
-Use clear visual indicators for connection health:
+* A page initially offers a cloud button to save it for offline use.
+* After activation, the page does not appear to synchronize, or the interface reports that synchronization is unavailable.
+* The cloud button becomes disabled and partially transparent.
+* A red trash button labeled “Remove and exclude offline copy” appears but is also disabled.
+* An additional message states, “This page is not eligible for an offline sync,” without explaining why.
 
-- **Green:** Connected and working.
-- **Yellow:** Pending, warning, or degraded connection.
-- **Red:** Connection failure.
+This behavior affects the home page and other pages tested. Investigate both synchronization failures and incorrect eligibility or status reporting.
 
-Consider moving general connection and server information to the header. It should not compete with page utilities, edit-history metadata, or the table of contents.
+Replace the verbose button labels with concise tooltips. Prefer a single cloud toggle over separate cloud and trash buttons. Its appearance should indicate whether the page is saved offline.
 
-Use planner, architect, and designer subagents to determine how these controls and indicators should fit into the existing interface. Connection health and page-sync selection must remain distinguishable, whether presented together or separately.
+Pages may be saved through several mechanisms:
 
-### Offline page selection
+* Automatic selection of frequently visited pages.
+* Automatic selection of the most recently edited page.
+* Manual selection by the user.
 
-Support and verify three methods of selecting pages for offline access:
+The toggle should work consistently regardless of how a page was added. Removing an automatically selected page should persist an exclusion preference so that it is not automatically added again. Where applicable, removal should free an automatic selection slot for another page.
 
-| Method | Expected behavior |
-|---|---|
-| Automatic selection | Include the user’s 10 most visited pages. Consider including recently edited pages as an additional automatic rule. |
-| Individual page selection | Let users pin a page for ongoing synchronization through a utility icon. |
-| Tag-based selection | Let users follow a tag and automatically synchronize all pages with that tag. |
+Keep offline management separate from the page utility controls. Prefer placing it in the header or account menu; the exact location remains flexible.
 
-Some of this functionality may already exist. Review the implementation and verify that all three methods work as expected.
+3. Offline Status and PWA Installation
 
-### Page-sync control
+The status button immediately left of the account button appears to indicate connectivity through color. Clicking it adds a persistent green background, but its function is unclear.
 
-Provide a cloud icon or equivalent control that lets users pin an individual page for ongoing synchronization.
+If the button does not open a useful menu or management view, consider incorporating its status indicator into the account button. Distinguish connectivity from whether offline functionality is enabled.
 
-- Use the normal utility-icon style when the page is not selected for synchronization.
-- Apply a persistent, theme-compatible highlight when the page is included in the offline set.
-- A circular selected-state background is optional. Highlighting the icon itself may be sufficient.
-- Apply the same inclusion indicator when a page is selected automatically or through a followed tag. Users should be able to identify synchronized pages without having selected each page manually.
+Add offline information and controls to the account menu alongside notifications, approvals, appearance, and sign-out options. Include a PWA installation action when available so that users can discover installation without relying on browser-specific address-bar controls.
 
-### Tag-sync controls
+4. Search Overlay Appearance
 
-Consider placing tag-sync controls on the **Browse by Tags** page, accessible through the button beside the search box.
+Opening search currently makes the surrounding page background fully opaque. Dismissing search restores the underlying page.
 
-The existing searchable tag list should let users mark tags for synchronization. All pages associated with a selected tag should enter the user’s offline set, including pages with overlapping tags.
+Apply a translucent glass effect outside the search results panel so that the page remains visible beneath it. Use a lighter blur and less visual obstruction than the header, while retaining a clear glass effect.
 
-## 2. Wiki Agent: Failed Page Retrievals
+5. WikiAgent Suggested Prompts
 
-The default **Catch up** prompt reproduces a retrieval problem:
+The two rotating lines of Buddhist text are well positioned and formatted. Preserve their current appearance.
 
-> Summarize the most recently updated Wiki pages I can access.
+Refine the three suggested prompt buttons beneath them:
 
-The agent returns an answer with sources, but its activity log shows **11 actions, including seven failures**.
+* Move the group slightly lower, toward the center of the space between the introductory text and the bottom input field.
+* Retain a slight upward bias toward the introductory text.
+* Center each button’s title, Material Design icon, and description.
+* Keep the right-edge arrow in its existing position.
 
-The reported sequence is:
+Apply these changes to prompts such as “Understand this page,” “Connect the dots,” and “Catch up.”
 
-- One successful `pages.list` action for recent pages.
-- Three successful `pages.get` actions.
-- Seven failed `pages.get` actions.
+6. WikiAgent Page Context and Transparency
 
-The agent appears to retrieve a list of recent pages but can fetch only three of them. Investigate why those three requests succeed while the other seven fail.
+Preserve the default inclusion of the current page as agent context. This should be the page visible immediately before WikiAgent opens. Users should remain able to toggle its inclusion.
 
-## 3. Wiki Agent: Welcome Text and Default Prompts
+When the page is included, visually connect WikiAgent to it through a translucent glass background:
 
-### Layout
+* Show the underlying page through the main conversation area.
+* Apply a stronger blur to the WikiAgent header so that underlying navigation and text are not readable.
+* Keep user messages and agent responses opaque for readability.
+* Keep the History and Memory panels opaque, retaining their existing backgrounds and colors.
 
-The initial agent page displays a rotating or randomly selected two-line message:
+The main background should provide an obvious visual connection to the included page without compromising conversation readability.
 
-- The first line uses regular text.
-- The second line uses italic, colored text as the punchline.
+7. Search Navigation from WikiAgent
 
-Keep this treatment, but adjust the spacing:
+Clicking the magnifying-glass button in WikiAgent should immediately:
 
-- Move the message slightly farther below the header.
-- Increase the gap between the message and the three default prompts.
-- Use at least one full line of the message’s text height as the gap, preferably slightly more.
+* Return to the page the user was viewing.
+* Open the search interface and results panel.
+* Focus the search field so that the user can begin typing.
 
-### Writing guidelines
+8. Markdown Editor Selection Visibility
 
-Expand the message set with sharper, more playful humor.
+Text selection in the Markdown editor’s left pane works but is not visibly highlighted. Dragging across text selects it internally, and subsequent deletion or replacement affects that selection, but users cannot see what they have selected.
 
-- Use light jokes about sales, office culture, and related subjects.
-- Keep the tone tongue-in-cheek without becoming too edgy.
-- Favor original or unexpected second-line punchlines.
-- Target two to three words per line.
-- Allow one long word to occupy a line.
-- Allow up to four words when short words such as “a” or “the” make that appropriate.
-- Keep both lines approximately equal in displayed width, ideally within a few percentage points.
+The blinking caret is visible. Fix the selection highlight so that users can reliably identify the text they are editing.
 
-## 4. Light and Dark Mode: Transition Performance
+9. Page Utilities and Metadata
 
-Switching between light and dark mode appears slow and visually uneven.
+Keep page-specific utility controls—such as sharing, notification subscriptions, and printing—at the top of the table-of-contents column. Separate them from offline management.
 
-Observed behavior:
+Place the page metadata below the utility controls and above the table of contents. Center the last-updated information and author attribution rather than aligning them to the left. Review the small clock icon’s size and placement for clarity.
 
-- The transition feels as though it takes one to two seconds.
-- Most of the interface changes first.
-- Other elements change shortly afterward.
+10. Page History
 
-The final theme is applied, but the staggered transition creates a visible distraction.
+The page-history interface remains largely inherited from the upstream implementation, with some modifications.
 
-Investigate rendering, theme application, and any relevant caching behavior. Apply the theme consistently across elements without unnecessary delay.
+Have the planning, design, and architecture agents review a more modern approach. Prioritize clarity and minimalism. Address the reported history-related crashes as part of the reliability audit.
 
-Use planner, architect, and designer subagents to review the implementation. Preserve visual fidelity while removing avoidable performance costs.
+11. Optional Agent and Edit Button Effects
 
-## 5. Search: Backdrop, Dismissal, and Filters
+Consider subtle hover transitions for the Agent and Edit buttons in the page header, affecting both their text and Material Design icons but not their button inside background color.
 
-### Backdrop styling
+Possible treatments include:
 
-Opening search results applies a color tint to the page below the header. Replace or refine this treatment with a subtle translucent-glass effect, if feasible.
+* Blue or purple accents for Agent.
+* A scholastic yellow accent for Edit.
+* Subtle movement or other restrained animation.
 
-- Keep the existing header and search-box styling unchanged.
-- Use less blur or diffusion than the header.
-- Keep the underlying page more visible than it is through the header.
-- Make the effect consistent with the existing visual design.
-
-### Dismissal controls
-
-Consider removing the close button beneath the header at the upper right.
-
-Search results already close when the user:
-
-- Clicks the page outside the search area.
-- Presses **Escape**.
-
-The additional close button appears redundant and may imply that users must click it to dismiss search.
-
-### Search filters
-
-Verify that both search scopes work correctly:
-
-- **All Wiki**
-- **Downloaded Pages**
-
-Confirm actual filtering behavior, not just the presence of the controls.
-
-## 6. Table of Contents: Bottom-of-Page Behavior
-
-The table of contents generally tracks the reader’s position correctly. At the bottom of a page, however, scrolling and selection become inconsistent.
-
-Observed issues:
-
-- Reaching the bottom correctly selects the final applicable heading.
-- The table-of-contents panel does not scroll far enough to show the full selected item.
-- The selected item’s text and highlight appear slightly clipped.
-- Selection can jump from an earlier heading directly to the final heading, skipping intermediate headings near the bottom.
-- Clicking those intermediate headings can move the reader to the same bottom position.
-- Further scrolling changes the selection again.
-
-Improve coordination between reader position, heading selection, and table-of-contents scrolling. Keep the active item fully visible and handle headings near the bottom more smoothly.
-
-Use planner, architect, and designer subagents to review the interaction.
-
-## 7. Reading Progress Indicator
-
-Keep the reading-progress line beneath the header. It is particularly useful on mobile, where the scrollbar may not remain visible.
-
-Its current visual intensity appears uniform. Adjust it so that intensity increases with reading progress:
-
-- Start slightly softer than the current appearance.
-- Increase intensity gradually.
-- End slightly stronger than the current appearance.
-
-Apply this behavior in both light and dark mode using the appropriate theme colors.
-
-## 8. View Source: Formatting and Layout
-
-### Markdown display
-
-**Page Actions → View Source** currently displays the entire Markdown source as one long, horizontally scrollable line.
-
-Preserve the source’s original line breaks and structure. Users should see correctly formatted, unrendered Markdown.
-
-### Source controls
-
-Keep the existing **Download** button and add a **Copy** button that copies the complete raw Markdown to the clipboard.
-
-### Page layout
-
-Review the entire View Source page with planner, architect, and designer subagents.
-
-Observed concerns:
-
-- The footer or footer-like blank area occupies roughly one-third of the page.
-- The source-code link uses normal footer-sized text but sits within this unusually large area.
-- The excess space may indicate a rendering or layout problem.
-- If the page scrolls, the header should retain the same glass treatment used on standard Wiki pages.
-
-## 9. Editor: Closing, Layout, and Theme Consistency
-
-### Closing without changes
-
-The editor can become impossible to close normally, even when the user has made no changes.
-
-Observed sequence:
-
-1. Open a page in the editor.
-2. Make no changes.
-3. Select **Close**.
-4. The **Discard unsaved changes** dialog appears.
-5. Select **Discard changes**.
-6. Nothing happens.
-7. Select **Save and Close**.
-8. The page renders and saves as though it had changed.
-
-In the observed case, normal closing did not work until **Save and Close** had been used at least once.
-
-Investigate incorrect change detection and the failed discard action. Determine whether older pages require a migration or resave.
-
-If maintenance is required:
-
-- Explain the requirement when user action is necessary.
-- Consider handling maintenance automatically when no user edits exist, rather than presenting an inaccurate unsaved-changes dialog.
-
-The need for maintenance or resaving is a hypothesis, not a confirmed cause.
-
-### Clipped interface elements
-
-Correct horizontal layout problems in the editor:
-
-- The administration button in the main header is partially clipped on the right.
-- Other controls farther to the right may also be affected.
-- The line and column information in the editor footer is either clipped or too close to the right edge.
-
-### Theme consistency
-
-The editor appears visually out of step with the rest of the application.
-
-Observed issues:
-
-- In light mode, both the Markdown pane and rendered preview use white backgrounds.
-- The actual reader page uses the user-configured theme background.
-- The rendered preview therefore does not accurately represent the page appearance.
-- Editor toolbar areas use a parchment-like color that does not appear to match the configured theme.
-
-Required review:
-
-- Make the rendered preview respect the reader’s background and theme settings in both light and dark mode.
-- Consider applying the same background to the Markdown pane for consistency.
-- Verify toolbar colors against the application’s theme system.
-- Remove unexplained visual differences between the editor and reader.
-
-## 10. Navigation: Home Button
-
-Refine the Home button’s active state and dimensions.
-
-### Active state
-
-The selected state mainly illuminates the background, while the house icon remains a dark silhouette.
-
-- Keep a subtle background highlight.
-- Give the house icon a stronger active-state highlight.
-
-### Dimensions
-
-Set the Home button’s height to match the outer container that holds **Main Menu** and **Browse**.
-
-This will make the Home button slightly taller than the individual buttons inside that container while aligning it with the overall navigation group.
-
-## 11. Browse Dialog: Visual Refinement
-
-The Browse dialog works but looks plain, especially when no item is selected.
-
-Ask planner, architect, and designer subagents to review the folder hierarchy and list presentation.
-
-- Preserve the current-page highlight, which is visually effective.
-- Add subtle visual structure where useful.
-- Keep changes restrained and consistent with the rest of the application.
-- Avoid unnecessary decoration.
-
-## 12. Review and Verification
-
-Use planner, architect, and designer subagents throughout these changes, not only for isolated redesigns.
-
-For each affected area:
-
-- Confirm the reported behavior.
-- Distinguish existing functionality from missing or incomplete functionality.
-- Review architectural, interaction, and visual implications.
-- Verify the implemented behavior directly.
-- Preserve visual fidelity while improving consistency and performance.
+Ensure that the effects work with user-configurable theme palettes. These refinements are optional and may be deferred if implementation proves disproportionately difficult, particularly given previous unsuccessful attempts.
