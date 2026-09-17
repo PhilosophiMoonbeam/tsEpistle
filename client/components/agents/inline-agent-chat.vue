@@ -2035,11 +2035,11 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__starter-heading {
   position: relative;
-  display: flex;
+  display: grid;
   min-width: 0;
   align-items: center;
-  justify-content: center;
-  gap: .5rem;
+  justify-items: center;
+  gap: .3rem;
   width: 100%;
   box-sizing: border-box;
   padding-inline: 1.5rem;
@@ -2080,6 +2080,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__starter-arrow {
   position: absolute;
   inset-inline-end: .25rem;
+  top: 50%;
+  transform: translateY(-50%);
   flex: 0 0 auto;
   margin: 0;
   opacity: .5;
