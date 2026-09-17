@@ -3,7 +3,7 @@
     a.page-skip-link(:href='talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='talkActive ? goToComments() : focusArticle()') Skip to content
     nav-header(v-if='!printView', reserve-actions)
     .page-position(v-if='!printView', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100')
-      .page-position-fill(:style='{ transform: `scaleX(${readingProgress / 100})` }')
+      .page-position-fill(:style='{ transform: `scaleX(${readingProgress / 100})`, opacity: readingProgressOpacity }')
     .page-reading-dock(v-if='readerFocus && !printView && !talkActive', role='region', :aria-label='$t(`common:page.focusReading`)', style='backdrop-filter: var(--wiki-chrome-blur);')
       v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
       span.page-reading-dock-title {{ title }}
@@ -252,15 +252,37 @@
                       variant='text'
                       size='small'
                       rounded='lg'
+                      :class='{ "page-offline-control--selected": offlineSelected }'
+                      :color='offlineSelected ? `primary` : undefined'
                       :loading='offlineActionLoading'
                       :disabled='offlineControlDisabled'
                       :aria-label='offlineControlLabel'
+                      :aria-pressed='offlineManualSelected ? `true` : `false`'
                       :aria-describedby='offlineStatusId'
+                      :title='offlineControlTitle'
                       @click='toggleOfflinePage'
                     )
                       v-icon(start, size='small', aria-hidden='true') {{ offlineControlIcon }}
                       span.page-offline-control__label {{ offlineControlLabel }}
                   span.page-offline-tooltip {{ offlineControlLabel }}
+                v-tooltip(location="bottom", v-if='offlineCanExplicitlyRemove')
+                  template(v-slot:activator='{ props }')
+                    v-btn.page-offline-remove-control(
+                      v-bind='props'
+                      variant='text'
+                      size='small'
+                      rounded='lg'
+                      color='error'
+                      :loading='offlineState === `removing`'
+                      :disabled='offlineRemoveControlDisabled'
+                      :aria-label='offlineRemoveControlLabel'
+                      :aria-describedby='offlineStatusId'
+                      :title='offlineRemoveControlLabel'
+                      @click='removeOfflinePage'
+                    )
+                      v-icon(start, size='small', aria-hidden='true') mdi-delete-outline
+                      span.page-offline-control__label {{ offlineRemoveControlLabel }}
+                  span.page-offline-tooltip {{ offlineRemoveControlLabel }}
                 v-tooltip(location="bottom", v-if='isAuthenticated')
                   template(v-slot:activator='{ props }')
                     v-btn(
@@ -344,20 +366,8 @@
                 v-spacer
               .page-shortcuts-status(
                 role='group'
-                aria-label='Page connection and offline copy status'
+                aria-label='Offline copy selection and status'
               )
-                .page-shortcuts-status__item.page-connection-status(
-                  :class='`page-connection-status--${connectionStatusTone}`'
-                  role='status'
-                  aria-live='polite'
-                  aria-atomic='true'
-                )
-                  span.page-shortcuts-status__label Connection
-                  v-icon.page-shortcuts-status__icon(
-                    size='small'
-                    aria-hidden='true'
-                  ) {{ connectionStatusIcon }}
-                  span.page-connection-status__value {{ connectionStatusLabel }}
                 .page-shortcuts-status__item.page-offline-copy-status(
                   :class='`page-offline-copy-status--${offlineState}`'
                 )
@@ -722,7 +732,8 @@ import {
   getSearchExpandedAnchors,
   isBranchEffectivelyExpanded,
   outlineSublistId,
-  trackPageOutline
+  trackPageOutline,
+  type PageOutlineTracker
 } from '@/helpers/page-outline'
 import ClipboardJS from 'clipboard'
 import boot from '../../../modules/boot.ts'
@@ -763,22 +774,6 @@ type OfflineSyncService = {
   reconcile: (reason?: string) => Promise<unknown>
 }
 
-type OfflineReconcileResult = {
-  status?: string
-  saved?: number
-  failed?: number
-  pending?: number
-  diagnostics?: {
-    lastError?: string | null
-  }
-}
-
-const asOfflineReconcileResult = (value: unknown): OfflineReconcileResult => {
-  if (value === null || typeof value !== 'object') return {}
-  return value as OfflineReconcileResult
-}
-const normalizeOfflineSyncCount = (value: unknown): number =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
 const OFFLINE_SYNC_COORDINATOR_KEY = 'offline-sync-coordinator'
 
 type PageTag = {
@@ -1226,7 +1221,9 @@ export default defineComponent({
       readerFocus: false,
       readingProgress: 0,
       activeAnchor: '',
-      outlineCleanup: null as (() => void) | null,
+      outlineCleanup: null as PageOutlineTracker | null,
+      tocRevealRafId: null as number | null,
+      tocResizeObserver: null as ResizeObserver | null,
       upBtnShown: false,
       pageWatched: false,
       pageWatchLoading: false,
@@ -1236,11 +1233,16 @@ export default defineComponent({
       pageWatchInAppEnabled: true,
       offlineState: 'checking' as OfflinePageState,
       offlineError: '',
+      offlineAvailabilityError: '',
+      offlinePolicy: null as OfflinePagePolicyRecord | null,
       offlineHasSnapshot: false,
       offlineSnapshotRevision: '',
       offlineExpiresAt: null as string | null,
       offlineGeneration: null as number | null,
       offlineOperationId: 0,
+      offlineOwnedOperationId: null as number | null,
+      offlinePassiveRefreshPending: false,
+      offlineDisposed: false,
       pageActionGeneration: 1,
       offlinePolicyRevision: null as number | null,
       offlineStorageChangesUnsubscribe: null as (() => void) | null,
@@ -1287,6 +1289,7 @@ export default defineComponent({
       scrollAnimationFrame: null as number | null,
       railScrollHandler: null as (() => void) | null,
       railRafId: 0,
+      scrollAnimationToken: 0,
       railSettleRafId: 0,
       railSettleFrameCount: 0,
       railSettleStableFrames: 0,
@@ -1308,6 +1311,10 @@ export default defineComponent({
     navigationOpen: {
       get (): boolean { return (this.talkActive || !this.readerFocus) && this.navShown },
       set (value: boolean) { if (!this.readerFocus || this.talkActive) this.navShown = value }
+    },
+    readingProgressOpacity (): number {
+      const progress = Math.max(0, Math.min(100, Number(this.readingProgress) || 0)) / 100
+      return .60 + .24 * progress
     },
     pageArticleId (): string {
       return `wiki-page-shell-${this.pageId}-article`
@@ -1331,7 +1338,7 @@ export default defineComponent({
       return this.pageBrandingStyle['--page-branding-rgb'] !== undefined
     },
     pageTransportVerified (): boolean {
-      return this.pwaConnectionState === 'online' &&
+      return pwaState.connectionState === 'online' &&
         pwaState.serverReachable === true &&
         pwaState.serverHealthy === true
     },
@@ -1347,7 +1354,7 @@ export default defineComponent({
     },
     pageOnlineActionUnavailableReason (): string {
       if (!this.pageTransportVerified) {
-        if (this.pwaConnectionState === 'checking') return 'Waiting for a verified server connection.'
+        if (pwaState.connectionState === 'checking') return 'Waiting for a verified server connection.'
         return 'This action requires a verified server connection.'
       }
       if (!this.pageAuthorizationFresh) return 'This action requires a freshly verified signed-in session.'
@@ -1407,48 +1414,6 @@ export default defineComponent({
     isAuthenticated (): boolean {
       return wikiStore.user.authenticated
     },
-    pwaConnectionState (): string {
-      return pwaState.connectionState
-    },
-    connectionStatusTone (): 'checking' | 'online' | 'offline' | 'server-unavailable' | 'neutral' {
-      if (pwaState.serverHealthy === true) return 'online'
-      if (
-        pwaState.serverReachable !== null ||
-        pwaState.serverHealthy === false ||
-        this.pwaConnectionState === 'server-unavailable'
-      ) return 'server-unavailable'
-      if (pwaState.onlineHint === false || this.pwaConnectionState === 'offline') return 'offline'
-      if (this.pwaConnectionState === 'checking') return 'checking'
-      return 'neutral'
-    },
-    connectionStatusLabel (): string {
-      switch (this.connectionStatusTone) {
-        case 'online':
-          return 'Server verified'
-        case 'server-unavailable':
-          return 'Server unavailable'
-        case 'offline':
-          return 'Waiting for connection'
-        case 'checking':
-          return 'Checking server'
-        default:
-          return 'Server status not verified'
-      }
-    },
-    connectionStatusIcon (): string {
-      switch (this.connectionStatusTone) {
-        case 'online':
-          return 'mdi-cloud-check-outline'
-        case 'server-unavailable':
-          return 'mdi-cloud-alert-outline'
-        case 'offline':
-          return 'mdi-wifi-off'
-        case 'checking':
-          return 'mdi-cloud-sync-outline'
-        default:
-          return 'mdi-cloud-question-outline'
-      }
-    },
     commentsPerms () {
       return wikiStore.page.effectivePermissions.comments
     },
@@ -1479,77 +1444,121 @@ export default defineComponent({
     offlineActionLoading (): boolean {
       return this.offlineState === 'downloading' || this.offlineState === 'removing'
     },
+    offlineSelected (): boolean {
+      const policy = this.offlinePolicy
+      return Boolean(policy && !policy.excluded && (policy.manual || policy.automatic || policy.tag))
+    },
+    offlineManualSelected (): boolean {
+      const policy = this.offlinePolicy
+      return Boolean(policy && !policy.excluded && policy.manual)
+    },
+    offlineSelectionSources (): string {
+      const policy = this.offlinePolicy
+      if (!policy || policy.excluded) return ''
+      const sources: string[] = []
+      if (policy.manual) sources.push('Manual pin')
+      if (policy.automatic) sources.push('Automatic saving')
+      if (policy.tag) {
+        sources.push(policy.tagNames.length > 0 ? `Followed tag${policy.tagNames.length > 1 ? 's' : ''} #${policy.tagNames.join(', #')}` : 'Followed tag')
+      }
+      return sources.join(' + ')
+    },
+    offlineControlTitle (): string {
+      if (!this.offlineVisitEligible()) return 'This page cannot be selected for offline use.'
+      if (this.offlineState === 'expiring' || this.offlineState === 'stale') return 'Refresh the readable offline copy.'
+      if (this.offlineManualSelected) return 'Unpin this page. Other automatic or followed-tag selections remain active.'
+      if (this.offlineSelected) return `Pin this page manually. It is already selected by ${this.offlineSelectionSources}.`
+      return 'Pin this page for offline use.'
+    },
+    offlineCanExplicitlyRemove (): boolean {
+      return !this.offlinePolicy?.excluded && (this.offlineHasSnapshot || this.offlineSelected)
+    },
+    offlineRemoveControlDisabled (): boolean {
+      return !this.offlineVisitEligible() || !this.offlineCanExplicitlyRemove || this.offlineActionLoading ||
+        this.offlineOwnedOperationId !== null || this.offlineState === 'checking' || this.offlineState === 'ineligible'
+    },
+    offlineRemoveControlLabel (): string {
+      return this.offlineState === 'removing' ? 'Removing and excluding…' : 'Remove and exclude offline copy'
+    },
     offlineControlDisabled (): boolean {
       return !Number.isSafeInteger(this.pageId) || this.pageId < 1 ||
         !this.offlineVisitEligible() ||
-        ['checking', 'downloading', 'removing', 'ineligible'].includes(this.offlineState)
+        this.offlineOwnedOperationId !== null ||
+        ['checking', 'downloading', 'removing'].includes(this.offlineState) ||
+        (this.offlineState === 'ineligible' && !this.offlinePolicy?.excluded)
     },
     offlineControlLabel (): string {
       switch (this.offlineState) {
         case 'checking':
-          return 'Checking offline availability…'
+          return 'Checking offline selection…'
         case 'downloading':
-          return 'Saving for offline…'
+          return 'Updating offline selection…'
         case 'removing':
-          return 'Removing offline copy…'
+          return 'Unpinning from offline…'
         case 'expiring':
         case 'stale':
           return 'Update offline copy'
         case 'saved':
-          return 'Remove offline copy'
+          return this.offlineManualSelected ? 'Unpin from offline' : 'Pin for offline'
         case 'ineligible':
-          return 'Unavailable offline'
+          return this.offlinePolicy?.excluded ? 'Pin for offline' : 'Unavailable offline'
         case 'error':
-          return this.offlineHasSnapshot ? 'Remove offline copy' : 'Try saving offline'
+          return this.offlineManualSelected ? 'Unpin from offline' : 'Pin for offline'
         default:
-          return 'Save for offline'
+          return this.offlineManualSelected ? 'Unpin from offline' : 'Pin for offline'
       }
     },
     offlineControlIcon (): string {
-      switch (this.offlineState) {
-        case 'expiring':
-        case 'stale':
-          return 'mdi-download-outline'
-        case 'saved':
-        case 'removing':
-        case 'error':
-          return this.offlineHasSnapshot ? 'mdi-delete-outline' : 'mdi-download-outline'
-        case 'downloading':
-          return 'mdi-download'
-        case 'ineligible':
-          return 'mdi-cloud-off-outline'
-        case 'checking':
-          return 'mdi-cloud-search-outline'
-        default:
-          return 'mdi-download-outline'
-      }
+      if (this.offlineState === 'checking') return 'mdi-cloud-search-outline'
+      if (this.offlineState === 'downloading' || this.offlineState === 'removing') return 'mdi-cloud-sync-outline'
+      if (this.offlineSelected) return 'mdi-cloud-check-outline'
+      if (this.offlineState === 'ineligible' && !this.offlinePolicy?.excluded) return 'mdi-cloud-off-outline'
+      return 'mdi-cloud-outline'
     },
     offlineStatusLabel (): string {
+      const sources = this.offlineSelectionSources
+      const selected = sources.length > 0
+      const selectedDetail = selected ? `Selected via ${sources}.` : 'Not selected for offline sync.'
+      const actionFailure = this.offlineError
+      const availabilityFailure = this.offlineAvailabilityError
+      if (actionFailure && !['checking', 'downloading', 'removing'].includes(this.offlineState)) {
+        return this.offlineHasSnapshot
+          ? `${selectedDetail} The saved readable copy remains available, but this action failed. ${actionFailure}`
+          : actionFailure
+      }
       switch (this.offlineState) {
         case 'checking':
-          return 'Checking whether this page can be saved for offline use.'
+          return 'Checking offline selection and readable copy.'
         case 'eligible':
-          return 'Available to save for offline use. Save a local copy on this device.'
+          return this.offlinePolicy?.excluded
+            ? 'Excluded from offline sync. Pin this page to include it again.'
+            : selected
+              ? `${selectedDetail} Waiting for a readable offline copy.`
+              : 'Not selected. Pin this page to keep a readable offline copy.'
         case 'downloading':
-          return 'Saving this page for offline use. The copy is not committed yet.'
+          return `${selectedDetail} Saving the readable offline copy; it is not committed yet.`
         case 'expiring':
-          return 'Saved on this device, but the local copy expires soon. Update it to keep it available.'
+          return `${selectedDetail} A readable offline copy is saved on this device, but expires soon.`
         case 'stale':
-          return this.offlineError
-            ? `Saved on this device, but the latest version could not be committed. ${this.offlineError}`
-            : 'Saved on this device, but the latest version could not be verified.'
+          return availabilityFailure
+            ? `${selectedDetail} The readable offline copy could not be refreshed. ${availabilityFailure}`
+            : `${selectedDetail} The readable offline copy could not be refreshed.`
         case 'saved':
-          return 'Saved on this device. This local copy is available offline until it expires or is removed.'
+          return selected
+            ? `${selectedDetail} A readable offline copy is saved on this device.`
+            : 'A readable offline copy is saved on this device, but this page is not selected for continued sync.'
         case 'removing':
-          return 'Removing this page from offline storage. The deletion is not committed yet.'
+          return 'Removing the readable offline copy and excluding this page; the change is not committed yet.'
         case 'ineligible':
-          return 'This page is not available for offline use. No local copy was kept.'
+          return this.offlinePolicy?.excluded
+            ? 'Excluded from offline sync. Pin this page to include it again.'
+            : 'This page is not eligible for offline sync.'
         case 'error':
           return this.offlineHasSnapshot
-            ? `The saved offline copy remains available, but this action failed. ${this.offlineError || 'Try again.'}`
-            : this.offlineError || 'The offline copy could not be saved or removed.'
+            ? `${selectedDetail} The saved readable copy remains available, but the latest sync attempt failed. ${availabilityFailure || 'Try again.'}`
+            : availabilityFailure || `${selectedDetail} The readable offline copy is not committed.`
         default:
-          return 'Offline availability is unknown.'
+          return 'Offline selection is unknown.'
       }
     },
     sidebarDecoded (): SidebarItem[] {
@@ -1691,6 +1700,7 @@ export default defineComponent({
       } else if (hasQuery && hadQuery && newQuery !== oldQuery) {
         this.searchOverrides.clear()
       }
+      this.$nextTick(() => this.ensureActiveTocVisible())
     },
     tocFlattened: {
       immediate: true,
@@ -1700,14 +1710,20 @@ export default defineComponent({
         this.preSearchExpanded = null
         this.preSearchCollapsedByUser = null
         this.searchOverrides.clear()
+        this.$nextTick(() => {
+          this.setupTocResizeObserver()
+          this.ensureActiveTocVisible()
+        })
       }
     },
     tocPosition () {
       this.resetDesktopRailMeasurementState()
       this.$nextTick(() => {
         this.setupDesktopRailObserver()
+        this.setupTocResizeObserver()
         this.updateDesktopRailMeasurements(true)
         this.startDesktopRailSettling()
+        this.ensureActiveTocVisible()
       })
     },
     navigationKey: {
@@ -1720,7 +1736,13 @@ export default defineComponent({
         this.setupDesktopRailObserver()
         this.refreshPageContent()
         this.updateDesktopRailMeasurements(true)
-        void this.recordOfflineReaderVisit().then(() => this.refreshOfflinePageState())
+        const offlinePageId = this.pageId
+        const offlineLocale = this.locale
+        void this.recordOfflineReaderVisit().then(() => {
+          if (this.offlineDisposed || this.pageId !== offlinePageId || this.locale !== offlineLocale) return
+          this.offlinePassiveRefreshPending = false
+          void this.refreshOfflinePageState()
+        })
         this.startDesktopRailSettling()
         this.animatePageRoute()
         this.focusPageTitle()
@@ -1750,8 +1772,16 @@ export default defineComponent({
     if (this.hasWritePagesPermission || this.hasManagePagesPermission || this.hasAdminPermission) {
       void this.loadPageProtection()
     }
-    this.offlineStorageChangesUnsubscribe = subscribeOfflineStorageChanges(() => {
-      if (!this.offlineActionLoading) void this.refreshOfflinePageState()
+    this.offlineStorageChangesUnsubscribe = subscribeOfflineStorageChanges(notice => {
+      if (this.offlineDisposed) return
+      if (notice.kind === 'policy' || notice.kind === 'corpus' || notice.kind === 'generation') {
+        if (this.offlineOwnedOperationId !== null || this.offlineActionLoading) {
+          this.offlinePassiveRefreshPending = true
+          return
+        }
+        this.offlinePassiveRefreshPending = false
+        void this.refreshOfflinePageState()
+      }
     })
 
     // -> Check side navigation visibility
@@ -1761,6 +1791,7 @@ export default defineComponent({
       this.handleSideNavVisibility()
       this.updateDesktopRailMeasurements(true)
       this.startDesktopRailSettling()
+      this.ensureActiveTocVisible()
     }
     window.addEventListener('resize', this.resizeHandler)
 
@@ -1768,13 +1799,23 @@ export default defineComponent({
     window.addEventListener('scroll', this.railScrollHandler, { passive: true })
 
     this.setupDesktopRailObserver()
+    this.setupTocResizeObserver()
 
     this.refreshPageContent()
-    void this.recordOfflineReaderVisit().then(() => this.refreshOfflinePageState())
+    this.setupTocResizeObserver()
+    const offlinePageId = this.pageId
+    const offlineLocale = this.locale
+    void this.recordOfflineReaderVisit().then(() => {
+      if (this.offlineDisposed || this.pageId !== offlinePageId || this.locale !== offlineLocale) return
+      this.offlinePassiveRefreshPending = false
+      void this.refreshOfflinePageState()
+    })
     this.$nextTick(() => {
       this.setupDesktopRailObserver()
+      this.setupTocResizeObserver()
       this.updateDesktopRailMeasurements(true)
       this.startDesktopRailSettling()
+      this.ensureActiveTocVisible()
     })
 
     if (typeof document !== 'undefined' && 'fonts' in document && document.fonts?.ready) {
@@ -1805,6 +1846,7 @@ export default defineComponent({
     }
   },
   beforeUnmount () {
+    this.offlineDisposed = true
     this.pageActionGeneration += 1
     this.pageWatchRequestId += 1
     this.protectionRequestId += 1
@@ -1815,6 +1857,8 @@ export default defineComponent({
     this.approvalAuthorityReady = false
     this.approvalAuthorityReadyKey = null
     this.offlineOperationId += 1
+    this.offlineOwnedOperationId = null
+    this.offlinePassiveRefreshPending = false
     this.offlineStorageChangesUnsubscribe?.()
     this.offlineStorageChangesUnsubscribe = null
     this.offlineStorage?.close()
@@ -1845,7 +1889,14 @@ export default defineComponent({
     if (this.loadHandler) window.removeEventListener('load', this.loadHandler)
     if (this.beforePrintHandler) window.removeEventListener('beforeprint', this.beforePrintHandler)
     if (this.afterPrintHandler) window.removeEventListener('afterprint', this.afterPrintHandler)
-    this.outlineCleanup?.()
+    this.outlineCleanup?.dispose()
+    this.outlineCleanup = null
+    this.tocResizeObserver?.disconnect()
+    this.tocResizeObserver = null
+    if (this.tocRevealRafId !== null) {
+      window.cancelAnimationFrame(this.tocRevealRafId)
+      this.tocRevealRafId = null
+    }
     this.restorePrintView()
     this.routeAnimationAbortController?.abort()
     this.routeAnimationAbortController = null
@@ -1930,11 +1981,13 @@ export default defineComponent({
       return storage
     },
     async refreshOfflinePageState (): Promise<void> {
+      if (this.offlineDisposed) return
       const pageId = this.pageId
       const locale = this.locale
       const operationId = ++this.offlineOperationId
       this.offlineState = 'checking'
-      this.offlineError = ''
+      this.offlineAvailabilityError = ''
+      this.offlinePolicy = null
       this.offlineHasSnapshot = false
       this.offlineSnapshotRevision = ''
       this.offlineExpiresAt = null
@@ -1963,38 +2016,40 @@ export default defineComponent({
         const pagePolicy = policy.pages.find((record: OfflinePagePolicyRecord) =>
           record.siteId === origin && record.pageId === pageId && record.locale === locale
         )
+        this.offlinePolicy = pagePolicy ?? null
         this.offlineGeneration = corpus.sessionGeneration
         this.offlinePolicyRevision = policy.state.policyRevision
         this.offlineHasSnapshot = existing !== undefined
         this.offlineSnapshotRevision = existing?.snapshot.sourceRevision ?? ''
         this.offlineExpiresAt = existing?.snapshot.expiresAt ?? null
-        if (pagePolicy?.availability === 'ineligible') {
+        if (pagePolicy?.excluded || pagePolicy?.availability === 'ineligible') {
           this.offlineState = 'ineligible'
         } else if (existing && pagePolicy?.availability === 'transient-failure') {
           this.offlineState = 'stale'
-          this.offlineError = 'The latest offline sync attempt could not be completed.'
+          this.offlineAvailabilityError = 'The latest offline sync attempt could not be completed.'
         } else if (existing) {
           this.offlineState = offlineSnapshotExpiringSoon(this.offlineExpiresAt) ? 'expiring' : 'saved'
         } else if (pagePolicy?.availability === 'transient-failure') {
           this.offlineState = 'error'
-          this.offlineError = 'The latest offline sync attempt could not be completed.'
+          this.offlineAvailabilityError = 'The latest offline sync attempt could not be completed.'
         } else {
           this.offlineState = 'eligible'
         }
       } catch (error) {
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
-        this.offlineError = typeof navigator !== 'undefined' && navigator.onLine === false
+        this.offlineAvailabilityError = typeof navigator !== 'undefined' && navigator.onLine === false
           ? 'Waiting for a connection to check offline availability.'
           : getErrorMessage(error) || 'Offline availability could not be checked.'
         this.offlineState = this.offlineHasSnapshot ? 'stale' : 'error'
       }
     },
     async recordOfflineReaderVisit (): Promise<void> {
-      if (!this.offlineVisitEligible()) return
+      if (this.offlineDisposed || !this.offlineVisitEligible()) return
       const selector = this.offlineSelector()
       if (!selector) return
       const pageId = selector.pageId
       const operationId = ++this.offlineOperationId
+      this.offlineOwnedOperationId = operationId
       try {
         const storage = await this.offlineStorageForOperation(operationId)
         if (!storage || !this.isCurrentOfflineOperation(operationId, pageId)) return
@@ -2013,98 +2068,131 @@ export default defineComponent({
         }
       } catch {
         // Visit recording is opportunistic and must never block page reading.
+      } finally {
+        if (this.offlineOwnedOperationId === operationId) this.offlineOwnedOperationId = null
       }
     },
-    async saveOfflinePage (): Promise<void> {
+    async updateOfflinePage (manualSelection: boolean): Promise<void> {
       const selector = this.offlineSelector()
       const pageId = selector?.pageId ?? this.pageId
-      if (!selector || !this.offlineVisitEligible()) {
+      if (this.offlineDisposed || !selector || !this.offlineVisitEligible()) {
         this.offlineState = 'ineligible'
         return
       }
       const operationId = ++this.offlineOperationId
-      this.offlineState = 'downloading'
+      this.offlineOwnedOperationId = operationId
+      this.offlineState = manualSelection ? 'downloading' : 'removing'
       this.offlineError = ''
+      this.offlineAvailabilityError = ''
+      let policyMutationCommitted = false
+      let authoritativeRefreshOperationId: number | null = null
       try {
         const storage = await this.offlineStorageForOperation(operationId)
         if (!storage || !this.isCurrentOfflineOperation(operationId, pageId)) return
         const policy = await storage.readOfflinePolicy()
-        if (!this.isCurrentOfflineOperation(operationId, pageId)) return
-        await storage.setManualOfflineIntent(selector, true, {
+        const previousPolicy = policy.pages.find((record: OfflinePagePolicyRecord) =>
+          record.siteId === selector.siteId && record.pageId === selector.pageId && record.locale === selector.locale
+        )
+        const updatedPolicy = await storage.setManualOfflineIntent(selector, manualSelection, {
           expectedSessionGeneration: policy.sessionGeneration,
           expectedPolicyRevision: policy.state.policyRevision
         })
+        policyMutationCommitted = true
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+        this.offlinePolicy = updatedPolicy
         this.offlineGeneration = policy.sessionGeneration
-        this.offlinePolicyRevision = policy.state.policyRevision + 1
-        const reconcileResult = await this.offlineSyncService?.reconcile('manual')
+        const policyChanged = previousPolicy
+          ? previousPolicy.manual !== manualSelection || previousPolicy.excluded
+          : manualSelection
+        this.offlinePolicyRevision = policy.state.policyRevision + (policyChanged ? 1 : 0)
+        await this.offlineSyncService?.reconcile('manual')
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+        authoritativeRefreshOperationId = this.offlineOperationId + 1
+        this.offlinePassiveRefreshPending = false
         await this.refreshOfflinePageState()
         if (this.pageId !== pageId || this.locale !== selector.locale) return
 
-        const syncResult = asOfflineReconcileResult(reconcileResult)
-        const savedCount = normalizeOfflineSyncCount(syncResult.saved)
-        const failedCount = normalizeOfflineSyncCount(syncResult.failed)
-        const pendingCount = normalizeOfflineSyncCount(syncResult.pending)
-        const syncFailure = typeof syncResult.diagnostics?.lastError === 'string' ? syncResult.diagnostics.lastError : ''
-        const syncStatus = typeof syncResult.status === 'string' ? syncResult.status : ''
-        const stateAfterRefresh = widenOfflinePageState(this.offlineState)
-        const reconcileFailed = failedCount > 0 || syncStatus === 'error'
-        if (reconcileFailed && !['stale', 'error', 'ineligible'].includes(stateAfterRefresh)) {
-          this.offlineState = this.offlineHasSnapshot ? 'stale' : 'error'
-        }
-        const stateFailure = stateAfterRefresh === 'error' || stateAfterRefresh === 'ineligible' ||
-          (stateAfterRefresh === 'stale' && reconcileFailed)
-        if (reconcileFailed || stateFailure) {
-          this.offlineError = this.offlineError || syncFailure || 'The offline copy could not be committed.'
+        const refreshedOfflineState = widenOfflinePageState(this.offlineState)
+        const pageFailed = refreshedOfflineState === 'stale' || refreshedOfflineState === 'error'
+        if (pageFailed) {
+          this.offlineAvailabilityError = this.offlineAvailabilityError || 'The readable offline copy could not be committed.'
           showNotification(wikiStore, {
             style: 'red',
-            message: this.offlineError,
+            message: this.offlineAvailabilityError,
             icon: 'alert'
           })
           return
         }
 
-        const saved = (savedCount > 0 || this.offlineHasSnapshot) &&
-          ['saved', 'expiring'].includes(stateAfterRefresh) &&
-          syncStatus !== 'offline' && syncStatus !== 'partial' && pendingCount === 0
+        const saved = this.offlineHasSnapshot && ['saved', 'expiring'].includes(refreshedOfflineState)
+        let message: string
+        if (!manualSelection) {
+          message = this.offlineSelected
+            ? 'Page unpinned. Its automatic or followed-tag offline selection remains active.'
+            : 'Page unpinned from offline sync.'
+        } else {
+          message = saved
+            ? 'Page pinned for offline sync; a readable copy is saved on this device.'
+            : 'Page selected for offline sync; a readable copy will be saved when available.'
+        }
         showNotification(wikiStore, {
           style: 'success',
-          message: saved
-            ? 'Page saved for offline use on this device.'
-            : 'Page queued for offline use on this device.'
+          message
         })
       } catch (error) {
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+        const message = getErrorMessage(error) || (
+          policyMutationCommitted
+            ? 'The latest offline sync attempt could not be completed.'
+            : 'The offline selection could not be committed.'
+        )
         this.offlineState = this.offlineHasSnapshot ? 'stale' : 'error'
-        this.offlineError = getErrorMessage(error) || 'The offline copy could not be committed.'
+        if (policyMutationCommitted) this.offlineAvailabilityError = message
+        else this.offlineError = message
         showNotification(wikiStore, {
           style: 'red',
-          message: this.offlineError,
+          message: this.offlineError || this.offlineAvailabilityError,
           icon: 'alert'
         })
+      } finally {
+        if (this.offlineOwnedOperationId === operationId) {
+          const shouldRefresh = this.offlinePassiveRefreshPending &&
+            !this.offlineDisposed &&
+            this.pageId === pageId &&
+            (authoritativeRefreshOperationId === null
+              ? this.offlineOperationId === operationId
+              : this.offlineOperationId === authoritativeRefreshOperationId)
+          this.offlinePassiveRefreshPending = false
+          this.offlineOwnedOperationId = null
+          if (shouldRefresh) await this.refreshOfflinePageState()
+        }
       }
     },
     async removeOfflinePage (): Promise<void> {
       const selector = this.offlineSelector()
       const pageId = selector?.pageId ?? this.pageId
-      if (!selector || !Number.isSafeInteger(pageId) || pageId < 1 || !this.offlineVisitEligible()) {
+      if (this.offlineDisposed || !selector || !Number.isSafeInteger(pageId) || pageId < 1 || !this.offlineVisitEligible()) {
         this.offlineState = 'ineligible'
         return
       }
       const operationId = ++this.offlineOperationId
+      this.offlineOwnedOperationId = operationId
       this.offlineState = 'removing'
       this.offlineError = ''
+      this.offlineAvailabilityError = ''
+      let policyMutationCommitted = false
       try {
         const storage = await this.offlineStorageForOperation(operationId)
         if (!storage || !this.isCurrentOfflineOperation(operationId, pageId)) return
         const policy = await storage.readOfflinePolicy()
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
-        await storage.removeOfflinePage(selector, {
+        const excludedPolicy = await storage.removeOfflinePage(selector, {
           expectedSessionGeneration: policy.sessionGeneration,
           expectedPolicyRevision: policy.state.policyRevision
         })
+        policyMutationCommitted = true
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+        this.offlinePolicy = excludedPolicy
         this.offlineGeneration = policy.sessionGeneration
         this.offlinePolicyRevision = policy.state.policyRevision + 1
         this.offlineHasSnapshot = false
@@ -2112,29 +2200,42 @@ export default defineComponent({
         this.offlineExpiresAt = null
         await this.offlineSyncService?.reconcile('manual')
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
-        this.offlineState = 'eligible'
+        this.offlineState = 'ineligible'
         showNotification(wikiStore, {
           style: 'success',
-          message: 'Offline copy removed from this device.'
+          message: 'Offline copy removed and page excluded from offline sync.'
         })
       } catch (error) {
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+        const message = getErrorMessage(error) || (
+          policyMutationCommitted
+            ? 'The latest offline sync attempt could not be completed.'
+            : 'The offline copy could not be removed.'
+        )
         this.offlineState = 'error'
-        this.offlineError = getErrorMessage(error) || 'The offline copy could not be removed.'
+        if (policyMutationCommitted) this.offlineAvailabilityError = message
+        else this.offlineError = message
         showNotification(wikiStore, {
           style: 'red',
-          message: this.offlineError,
+          message: this.offlineError || this.offlineAvailabilityError,
           icon: 'alert'
         })
+      } finally {
+        if (this.offlineOwnedOperationId === operationId) {
+          const shouldRefresh = this.offlinePassiveRefreshPending &&
+            !this.offlineDisposed &&
+            this.pageId === pageId &&
+            this.offlineOperationId === operationId
+          this.offlinePassiveRefreshPending = false
+          this.offlineOwnedOperationId = null
+          if (shouldRefresh) await this.refreshOfflinePageState()
+        }
       }
     },
     async toggleOfflinePage (): Promise<void> {
       if (this.offlineControlDisabled) return
-      if (this.offlineHasSnapshot && !['expiring', 'stale'].includes(this.offlineState)) {
-        await this.removeOfflinePage()
-      } else {
-        await this.saveOfflinePage()
-      }
+      const refreshing = ['expiring', 'stale'].includes(this.offlineState) && this.offlineSelected
+      await this.updateOfflinePage(refreshing ? this.offlineManualSelected : !this.offlineManualSelected)
     },
     resetPageRouteState(): void {
       this.pageActionGeneration += 1
@@ -2146,6 +2247,13 @@ export default defineComponent({
       this.protectionAuthorityReady = false
       this.approvalAuthorityReady = false
       this.approvalAuthorityReadyKey = null
+      this.offlineOperationId += 1
+      this.offlineOwnedOperationId = null
+      this.offlinePassiveRefreshPending = false
+      this.offlineError = ''
+      this.offlineAvailabilityError = ''
+      this.outlineCleanup?.dispose()
+      this.outlineCleanup = null
       this.cancelScheduledScroll()
       this.resetDesktopRailMeasurementState()
       this.tocQuery = ''
@@ -2175,6 +2283,55 @@ export default defineComponent({
       this.protectionError = ''
       this.pageProtection = { protected: false, version: 0, updatedBy: null, updatedAt: null }
       this.pageProtectionPassword = ''
+    },
+    setupTocResizeObserver(): void {
+      this.tocResizeObserver?.disconnect()
+      this.tocResizeObserver = null
+      const list = this.$el?.querySelector('.page-toc-content .page-toc-list') as HTMLElement | null
+      if (!list) return
+      const observer = new ResizeObserver(() => this.ensureActiveTocVisible())
+      observer.observe(list)
+      const content = list.closest('.page-toc-content')
+      if (content && content !== list) observer.observe(content)
+      this.tocResizeObserver = observer
+    },
+    ensureActiveTocVisible(): void {
+      if (this.tocRevealRafId !== null || !this.$el) return
+      this.tocRevealRafId = requestAnimationFrame(() => {
+        this.tocRevealRafId = null
+        const root = this.$el as HTMLElement
+        const links = [...root.querySelectorAll<HTMLElement>('.page-toc-item')]
+        const visible = (item: HTMLElement): boolean => item.getClientRects().length > 0
+        let active = links.find(item => item.getAttribute('aria-current') === 'location' && visible(item))
+        if (!active) active = links.find(item => item.classList.contains('page-toc-item--descendant-active') && visible(item))
+        if (!active) return
+        const row = active.closest('.page-toc-row') as HTMLElement | null
+        if (!row) return
+        const lists = [...root.querySelectorAll<HTMLElement>('.page-toc-list')].filter(list => list.contains(row))
+        const list = lists.find(candidate => candidate.scrollHeight > candidate.clientHeight + 1) ?? lists[0]
+        if (!list) return
+        const focused = document.activeElement
+        const focusedTocControl = focused instanceof Element ? focused.closest('.page-toc-item, .page-toc-filter') : null
+        if (focusedTocControl && focusedTocControl !== active) return
+        const rowBounds = row.getBoundingClientRect()
+        const listBounds = list.getBoundingClientRect()
+        const computed = window.getComputedStyle(list)
+        const parsedGutter = parseFloat(computed.paddingInlineStart)
+        const gutter = Number.isFinite(parsedGutter) ? Math.max(8, parsedGutter) : 8
+        const viewportTop = listBounds.top + list.clientTop + gutter
+        const viewportBottom = listBounds.top + list.clientTop + list.clientHeight - gutter
+        const viewportSize = viewportBottom - viewportTop
+        if (viewportSize <= 0) return
+        let delta = 0
+        if (rowBounds.height >= viewportSize) {
+          delta = rowBounds.top - viewportTop
+        } else if (rowBounds.top < viewportTop) {
+          delta = rowBounds.top - viewportTop
+        } else if (rowBounds.bottom > viewportBottom) {
+          delta = rowBounds.bottom - viewportBottom
+        }
+        if (delta !== 0) list.scrollTop += delta
+      })
     },
     refreshPageContent(): void {
       const container = this.$refs.container as HTMLElement
@@ -2210,19 +2367,12 @@ export default defineComponent({
       })
       this.contentExtensionCleanup?.()
       this.contentExtensionCleanup = hydrateContentExtensions(container, undefined, { mermaidHosts })
-      this.outlineCleanup?.()
+      this.outlineCleanup?.dispose()
       this.outlineCleanup = trackPageOutline(container, this.tocFlattened, anchor => {
         this.activeAnchor = anchor
-        void this.$nextTick(() => {
-          const active = this.$el.querySelector('.page-toc-item[aria-current="location"]') as HTMLElement | null
-          const list = (active?.closest('.page-toc-list') || active?.closest('.page-toc-content')) as HTMLElement | null
-          if (!active || !list || list.contains(document.activeElement)) return
-          const row = active.getBoundingClientRect()
-          const viewport = list.getBoundingClientRect()
-          if (row.top < viewport.top) list.scrollTop -= viewport.top - row.top
-          else if (row.bottom > viewport.bottom) list.scrollTop += row.bottom - viewport.bottom
-        })
+        this.ensureActiveTocVisible()
       }, progress => { this.readingProgress = progress })
+      this.setupTocResizeObserver()
       boot.notify('page-ready')
     },
     animatePageRoute(): void {
@@ -2250,6 +2400,7 @@ export default defineComponent({
     },
     toggleToc () {
       this.tocExpanded = !this.tocExpanded
+      this.$nextTick(() => this.ensureActiveTocVisible())
     },
     isBranchExpanded (anchor: string): boolean {
       const searchExpanded = this.tocQuery?.trim()
@@ -2272,15 +2423,14 @@ export default defineComponent({
       const nextExpanded = !currentlyExpanded
       if (this.tocQuery?.trim()) {
         this.searchOverrides.set(anchor, nextExpanded)
+      } else if (currentlyExpanded) {
+        this.expandedAnchors.delete(anchor)
+        this.collapsedByUser.add(anchor)
       } else {
-        if (currentlyExpanded) {
-          this.expandedAnchors.delete(anchor)
-          this.collapsedByUser.add(anchor)
-        } else {
-          this.expandedAnchors.add(anchor)
-          this.collapsedByUser.delete(anchor)
+        this.expandedAnchors.add(anchor)
+        this.collapsedByUser.delete(anchor)
       }
-      }
+      this.$nextTick(() => this.ensureActiveTocVisible())
     },
     tocLinkClicked (event: MouseEvent, anchor: string): void {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
@@ -2289,33 +2439,91 @@ export default defineComponent({
       this.activeAnchor = anchor
       this.scrollToPageAnchor(anchor)
     },
-    scrollToPageAnchor(anchor: string, focusDestination = true) {
-      const container = this.$refs.container as HTMLElement
-      const decodedAnchor = decodePageAnchor(anchor)
-      const activeEntry = this.tocFlattened.find(entry => decodePageAnchor(entry.anchor) === decodedAnchor)
-      if (activeEntry) this.activeAnchor = activeEntry.anchor
-      revealContentExtensionTarget(container, decodedAnchor)
-      const id = decodedAnchor.replace(/^#/, '')
-      const destination = container.id === id
-        ? container
-        : [...container.querySelectorAll<HTMLElement>('[id]')].find(element => element.id === id) ?? null
-      this.cancelScheduledScroll()
-      const view = container.ownerDocument.defaultView
-      const reveal = (): void => {
+    pageScrollTarget (destination: HTMLElement | null): number {
+      if (!destination) return 0
+      const styles = window.getComputedStyle(destination)
+      const rawLayoutOffset = this.scrollOpts.layout ? parseFloat(styles.getPropertyValue('--v-layout-top')) : 0
+      const layoutOffset = Number.isFinite(rawLayoutOffset) ? rawLayoutOffset : 0
+      const rawOffset = Number(this.scrollOpts.offset)
+      const offset = Number.isFinite(rawOffset) ? rawOffset : 0
+      const target = destination.getBoundingClientRect().top + window.scrollY - layoutOffset + offset
+      const scrollingElement = document.scrollingElement ?? document.documentElement
+      const maximum = Math.max(0, scrollingElement.scrollHeight - window.innerHeight)
+      return Math.min(maximum, Math.max(0, target))
+    },
+    animatePageScroll (target: number, destination: HTMLElement | null, focusDestination: boolean, token: number): void {
+      const scrollingElement = document.scrollingElement ?? document.documentElement
+      const setScrollTop = (value: number): void => {
+        scrollingElement.scrollTop = value
+        if (Math.abs(window.scrollY - value) > 0 && typeof window.scrollTo === 'function') window.scrollTo(0, value)
+      }
+      const finish = (): void => {
+        if (token !== this.scrollAnimationToken) return
         this.scrollAnimationFrame = null
-        void this.goTo(destination ?? 0, this.scrollOpts)
         if (focusDestination) {
           destination?.setAttribute('tabindex', '-1')
           destination?.focus({ preventScroll: true })
         }
       }
+      const start = window.scrollY
+      const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true
+      const duration = reducedMotion ? 0 : Math.max(0, Number(this.scrollOpts.duration) || 0)
+      if (duration === 0 || Math.abs(target - start) < 1) {
+        setScrollTop(target)
+        finish()
+        return
+      }
+      const startedAt = performance.now()
+      let lastAnimatedPosition = start
+      const step = (now: number): void => {
+        if (token !== this.scrollAnimationToken) return
+        if (Math.abs(window.scrollY - lastAnimatedPosition) > 2) {
+          this.cancelScheduledScroll()
+          return
+        }
+        const progress = Math.min(1, Math.max(0, (now - startedAt) / duration))
+        const eased = progress < .5
+          ? 4 * progress * progress * progress
+          : 1 - (-2 * progress + 2) ** 3 / 2
+        const location = Math.round(start + (target - start) * eased)
+        lastAnimatedPosition = location
+        setScrollTop(location)
+        if (progress >= 1) finish()
+        else this.scrollAnimationFrame = requestAnimationFrame(step)
+      }
+      this.scrollAnimationFrame = requestAnimationFrame(step)
+    },
+    scrollToPageAnchor(anchor: string, focusDestination = true) {
+      const container = this.$refs.container as HTMLElement
+      const decodedAnchor = decodePageAnchor(anchor)
+      const activeEntry = this.tocFlattened.find(entry => decodePageAnchor(entry.anchor) === decodedAnchor)
+      this.cancelScheduledScroll()
+      if (activeEntry) {
+        this.activeAnchor = activeEntry.anchor
+        this.outlineCleanup?.setNavigationAnchor(activeEntry.anchor)
+      }
+      revealContentExtensionTarget(container, decodedAnchor)
+      const id = decodedAnchor.replace(/^#/, '')
+      const destination = container.id === id
+        ? container
+        : [...container.querySelectorAll<HTMLElement>('[id]')].find(element => element.id === id) ?? null
+      const view = container.ownerDocument.defaultView
+      const token = this.scrollAnimationToken
+      const reveal = (): void => {
+        if (token !== this.scrollAnimationToken) return
+        this.scrollAnimationFrame = null
+        this.animatePageScroll(this.pageScrollTarget(destination), destination, focusDestination, token)
+      }
       if (view) this.scrollAnimationFrame = view.requestAnimationFrame(reveal)
       else reveal()
     },
     cancelScheduledScroll () {
-      if (this.scrollAnimationFrame === null) return
-      cancelAnimationFrame(this.scrollAnimationFrame)
-      this.scrollAnimationFrame = null
+      this.scrollAnimationToken += 1
+      if (this.scrollAnimationFrame !== null) {
+        cancelAnimationFrame(this.scrollAnimationFrame)
+        this.scrollAnimationFrame = null
+      }
+      this.outlineCleanup?.setNavigationAnchor(null)
     },
     isCurrentPageAction (pageId: number, generation: number, requestId: number, currentRequestId: number): boolean {
       return (
@@ -2785,6 +2993,7 @@ export default defineComponent({
       heading?.focus({ preventScroll: true })
     },
     returnToTop () {
+      this.cancelScheduledScroll()
       void this.goTo(0, this.scrollOpts)
       this.$nextTick(() => this.focusPageTitle())
     },
@@ -2895,6 +3104,7 @@ export default defineComponent({
       if (value === 'article' || value === 'talk') this.$emit('update:activeView', value)
     },
     goToComments (focusNewComment = false) {
+      this.cancelScheduledScroll()
       if (!this.commentsExternal) this.$emit('update:activeView', 'talk')
       this.$nextTick(() => {
         void this.goTo('#discussion', this.scrollOpts)
@@ -4181,39 +4391,9 @@ export default defineComponent({
   text-transform: uppercase;
 }
 
-.page-connection-status {
-  flex: 0 1 auto;
-}
-
-.page-connection-status__value,
 .page-offline-status {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.page-connection-status__value {
-  color: rgb(var(--v-theme-on-surface));
-}
-
-.page-connection-status__icon {
-  flex: 0 0 auto;
-}
-
-.page-connection-status--online .page-connection-status__icon {
-  color: var(--wiki-ambient-accent);
-}
-
-.page-connection-status--server-unavailable .page-connection-status__icon {
-  color: rgb(var(--v-theme-error));
-}
-
-.page-connection-status--offline .page-connection-status__icon {
-  color: var(--wiki-accent-warm);
-}
-
-.page-connection-status--checking .page-connection-status__icon,
-.page-connection-status--neutral .page-connection-status__icon {
-  color: var(--wiki-accent-spectral);
 }
 
 .page-offline-copy-status {
@@ -4241,7 +4421,8 @@ export default defineComponent({
   color: rgb(var(--v-theme-error));
 }
 
-.page-shortcuts-card .page-offline-control {
+.page-shortcuts-card .page-offline-control,
+.page-shortcuts-card .page-offline-remove-control {
   width: auto !important;
   min-width: 44px !important;
   max-width: none !important;
@@ -4250,6 +4431,15 @@ export default defineComponent({
   max-height: 44px !important;
   padding-inline: 10px !important;
   flex: 0 1 auto !important;
+}
+
+.page-shortcuts-card .page-offline-control--selected {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, transparent);
+  color: rgb(var(--v-theme-primary));
+}
+
+.page-shortcuts-card .page-offline-remove-control {
+  color: rgb(var(--v-theme-error));
 }
 
 .page-offline-control__label {
@@ -4964,7 +5154,6 @@ export default defineComponent({
   width: 100%;
   height: 100%;
   background: color-mix(in srgb, var(--wiki-accent-ink) 52%, transparent);
-  opacity: .72;
   transform-origin: left;
 }
 

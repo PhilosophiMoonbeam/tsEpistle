@@ -20,7 +20,12 @@ interface DiagnosticExportView {
       readonly toolCalls: readonly Readonly<Record<string, unknown>>[]
       readonly findings: readonly Readonly<Record<string, unknown>>[]
     }
-    readonly timeline: readonly { readonly dataSha256: string }[]
+    readonly timeline: readonly {
+      readonly type: string
+      readonly data: Readonly<Record<string, unknown>>
+      readonly createdAt: string
+      readonly dataSha256: string
+    }[]
   }[]
   readonly limitations: { readonly modelRationale: string }
 }
@@ -375,6 +380,131 @@ describe('agent conversation diagnostics', () => {
     expect(JSON.stringify(exported)).not.toContain('providerStateCiphertext')
     expect(exported.limitations.modelRationale).toContain('neither retained nor exported')
     expect(exported.runs[0]?.timeline.every(event => typeof event.dataSha256 === 'string')).toBe(true)
+  })
+  it('distinguishes delivered, omitted, not-executed, and failed tool dispositions', async () => {
+    db = await createUsageDatabase()
+    await insertUsageRun(db, runId, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostMicros: null })
+    const omittedResult = JSON.stringify({ id: 7, sourceRevision: '3', title: 'Omitted page', content: 'Durable result retained.' })
+    await appendEvent(db, 1, 'tool.started', {
+      actionCallId: 'omitted-call',
+      actionName: 'pages.get',
+      title: 'Read omitted page',
+      input: JSON.stringify({ id: 7 })
+    })
+    await appendEvent(db, 2, 'tool.completed', {
+      actionCallId: 'omitted-call',
+      actionName: 'pages.get',
+      result: omittedResult,
+      contextExclusion: { status: 'omitted', reason: 'tool_result_capacity' }
+    })
+    await appendEvent(db, 3, 'tool.started', {
+      actionCallId: 'not-executed-call',
+      actionName: 'pages.get',
+      title: 'Read capacity-skipped page'
+    })
+    await appendEvent(db, 4, 'tool.notExecuted', {
+      actionCallId: 'not-executed-call',
+      actionName: 'pages.get',
+      contextExclusion: { status: 'not_executed', reason: 'tool_result_capacity' }
+    })
+    await appendEvent(db, 5, 'tool.started', {
+      actionCallId: 'failed-call',
+      actionName: 'pages.getVersion',
+      title: 'Read failed version'
+    })
+    await appendEvent(db, 6, 'tool.failed', {
+      actionCallId: 'failed-call',
+      actionName: 'pages.getVersion',
+      errorCode: 'AGENT_CONTEXT_TOO_LARGE'
+    })
+    await appendEvent(db, 7, 'tool.started', {
+      actionCallId: 'delivered-call',
+      actionName: 'skills.list',
+      title: 'List skills'
+    })
+    await appendEvent(db, 8, 'tool.completed', {
+      actionCallId: 'delivered-call',
+      actionName: 'skills.list',
+      result: JSON.stringify({ skills: ['diagnostics'] })
+    })
+    await appendEvent(db, 9, 'evidence.provenance', { accepted: true, issues: [], finalCitationIds: [] })
+
+    const exported = (await exportAgentSessionDiagnostics(db, sessionId)) as unknown as DiagnosticExportView
+    const toolCalls = exported.runs[0]!.diagnostics.toolCalls
+    expect(toolCalls).toEqual([
+      expect.objectContaining({
+        actionCallId: 'omitted-call',
+        actionName: 'pages.get',
+        title: 'Read omitted page',
+        state: 'omitted',
+        output: JSON.parse(omittedResult),
+        errorCode: null,
+        contextExclusion: { status: 'omitted', reason: 'tool_result_capacity' }
+      }),
+      expect.objectContaining({
+        actionCallId: 'not-executed-call',
+        actionName: 'pages.get',
+        title: 'Read capacity-skipped page',
+        state: 'not_executed',
+        output: null,
+        errorCode: null,
+        contextExclusion: { status: 'not_executed', reason: 'tool_result_capacity' }
+      }),
+      expect.objectContaining({
+        actionCallId: 'failed-call',
+        actionName: 'pages.getVersion',
+        title: 'Read failed version',
+        state: 'failed',
+        output: null,
+        errorCode: 'AGENT_CONTEXT_TOO_LARGE',
+        contextExclusion: null
+      }),
+      expect.objectContaining({
+        actionCallId: 'delivered-call',
+        actionName: 'skills.list',
+        title: 'List skills',
+        state: 'complete',
+        output: { skills: ['diagnostics'] },
+        errorCode: null,
+        contextExclusion: null
+      })
+    ])
+    expect(exported.runs[0]!.diagnostics.findings).toEqual([])
+    expect(
+      exported.runs[0]!.timeline.filter(
+        event => event.type === 'tool.started' || event.type === 'tool.completed' || event.type === 'tool.notExecuted' || event.type === 'tool.failed'
+      ).every(event => event.createdAt === now)
+    ).toBe(true)
+  })
+
+  it('rejects a capacity terminal event without a matching tool start', async () => {
+    db = await createUsageDatabase()
+    await insertUsageRun(db, runId, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostMicros: null })
+    await appendEvent(db, 1, 'tool.notExecuted', {
+      actionCallId: 'orphan-not-executed',
+      actionName: 'pages.get',
+      contextExclusion: { status: 'not_executed', reason: 'tool_result_capacity' }
+    })
+
+    await expectDiagnosticFailure(db, 'AGENT_EVENT_CORRUPT', 'Agent tool event has no start boundary')
+  })
+
+  it('rejects a second terminal event for the same tool call', async () => {
+    db = await createUsageDatabase()
+    await insertUsageRun(db, runId, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostMicros: null })
+    await appendEvent(db, 1, 'tool.started', { actionCallId: 'terminal-twice', actionName: 'pages.get', title: 'Read page' })
+    await appendEvent(db, 2, 'tool.notExecuted', {
+      actionCallId: 'terminal-twice',
+      actionName: 'pages.get',
+      contextExclusion: { status: 'not_executed', reason: 'tool_result_capacity' }
+    })
+    await appendEvent(db, 3, 'tool.completed', {
+      actionCallId: 'terminal-twice',
+      actionName: 'pages.get',
+      result: JSON.stringify({ id: 9, sourceRevision: '1' })
+    })
+
+    await expectDiagnosticFailure(db, 'AGENT_EVENT_CORRUPT', 'Agent tool activity has multiple terminal events')
   })
   it('preserves nullable estimated cost semantics for valid zero usage', async () => {
     db = await createUsageDatabase()

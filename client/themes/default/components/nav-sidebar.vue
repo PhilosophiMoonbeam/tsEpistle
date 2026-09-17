@@ -101,11 +101,14 @@
         :title='$t(`common:sidebar.noPagesInDirectory`)'
       )
       template(v-if='currentParent.id > 0')
-        v-list-item.nav-sidebar-ancestor(v-for='(item, idx) of parents', :key='`parent-` + item.id', @click='fetchBrowseItems(item)')
-          template(v-slot:prepend)
-            v-avatar.nav-sidebar-ancestor-icon(size='20', variant='text', :style='{ "--nav-depth": idx }')
-              v-icon(size="small") mdi-folder-open
-          v-list-item-title {{ item.title }}
+        .nav-sidebar-ancestor-trail
+          v-list-item.nav-sidebar-ancestor(v-for='(item, idx) of parents', :key='`parent-` + item.id', @click='fetchBrowseItems(item)')
+            template(v-slot:prepend)
+              v-avatar.nav-sidebar-ancestor-icon(size='20', variant='text', :style='{ "--nav-depth": idx }')
+                v-icon(size="small") mdi-folder-open
+            v-list-item-title(:title='item.title') {{ item.title }}
+            template(v-slot:append)
+              v-icon.nav-sidebar-folder-chevron(size='16', aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
         v-divider.nav-sidebar-section-divider.mt-2
         .nav-sidebar-current.d-flex.align-center.mt-2(v-if='currentParent.pageId > 0')
           v-list-item.nav-sidebar-current-page(
@@ -118,7 +121,7 @@
             template(v-slot:prepend)
               v-avatar(size='24', variant='text')
                 v-icon mdi-text-box
-            v-list-item-title {{ currentParent.title }}
+            v-list-item-title(:title='currentParent.title') {{ currentParent.title }}
           v-btn.nav-sidebar-edit-parent.me-2(
             v-if='canEditCurrentParent'
             icon
@@ -133,12 +136,14 @@
           template(v-slot:prepend)
             v-avatar(size='24', variant='text')
               v-icon mdi-folder
-          v-list-item-title {{ item.title }}
+          v-list-item-title(:title='item.title') {{ item.title }}
+          template(v-slot:append)
+            v-icon.nav-sidebar-folder-chevron(size='16', aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
         v-list-item.nav-sidebar-page(v-else, :href='(item.visibility === `private` ? `/_private` : ``) + `/` + item.locale + `/` + item.path', :active='path === item.path', :aria-current='path === item.path ? `page` : undefined', @click='sidebarLinkClicked')
           template(v-slot:prepend)
             v-avatar(size='24', variant='text')
               v-icon mdi-text-box
-          v-list-item-title {{ item.title }}
+          v-list-item-title(:title='item.title') {{ item.title }}
 </template>
 
 <script lang='ts'>
@@ -589,6 +594,30 @@ export default defineComponent({
     }
   }
 
+  .nav-sidebar-ancestor-trail {
+    max-height: min(12rem, 32vh);
+    min-width: 0;
+    overflow-y: auto;
+    border-inline-start: 1px solid var(--wiki-surface-border);
+    padding-inline-start: var(--wiki-space-1);
+    scrollbar-width: thin;
+  }
+
+  .nav-sidebar-folder .v-list-item-title {
+    font-weight: 600;
+  }
+
+  .nav-sidebar-folder-chevron {
+    flex: 0 0 auto;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+    opacity: .72;
+  }
+
+  .nav-sidebar-home[aria-current='page'] .v-icon {
+    color: var(--wiki-accent-ink);
+    opacity: 1;
+  }
+
   .nav-sidebar-ancestor-icon {
     width: auto !important;
     margin-inline: 0 var(--wiki-space-1) !important;
@@ -679,6 +708,8 @@ export default defineComponent({
     padding: 0;
   }
   .nav-sidebar-home:not(.nav-sidebar-home--static) {
+    height: calc(var(--wiki-control-height) + var(--wiki-space-2));
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
     position: relative;
     border-color: transparent !important;
     background: transparent !important;
@@ -752,7 +783,7 @@ export default defineComponent({
     display: flex;
     flex: 1 1 auto;
     min-width: 0;
-    min-height: var(--wiki-control-height);
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
     gap: var(--wiki-space-1);
     margin-inline-start: var(--wiki-space-2);
     align-items: stretch;

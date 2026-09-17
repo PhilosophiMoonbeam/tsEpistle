@@ -231,17 +231,17 @@ Before service-worker update reload, every active client reports whether it has 
 
 The visual direction is a **resilient field notebook**: a quiet, editorial extension of the current reader chrome, not a dashboard replacement. Reuse theme surface, glass, typography, focus, and motion tokens.
 
-The page tools surface gains **Save for offline** only when the server snapshot endpoint admits the page. States: downloading, available offline, update available, expiring, unavailable, remove. The control includes text and accessible status, not icon-only color semantics.
+The page tools surface gains **Pin for offline** only when the server snapshot endpoint admits the page. States include checking, updating, available offline, expiring, stale/error, unavailable, remove, and explicit exclusion. The control uses **Pin for offline**/**Unpin from offline** wording and accessible status; icon-only color semantics are insufficient. The reader status is source-aware: it reports whether the page is selected or excluded and names every active source—**Manual pin**, **Automatic saving**, and each followed tag—alongside whether a readable offline copy is present, pending, stale, or unavailable.
 
 ### 8.1 Foreground snapshot synchronization
 
 An app-owned foreground coordinator owns offline snapshot reconciliation. It coalesces startup, online, foreground, manual-download, automatic-policy, and tag-subscription triggers, and runs only while the page is visible and the network is reachable. Each pass captures the session generation and policy revision; generation/revision fences reject stale writes and request a fresh pass. The service worker remains shell/cache-only and never replays snapshot mutations in the background.
 
-An admitted page's **Save for offline** action records manual intent and immediately calls the foreground coordinator; it does not wait for a background queue. If the request cannot complete while offline or unavailable, the policy retains its pending and diagnostic state for a later foreground retry.
+An admitted page's **Pin for offline** action records manual intent and immediately calls the foreground coordinator; it does not wait for a background queue. If the request cannot complete while offline or unavailable, the policy retains its pending and diagnostic state for a later foreground retry.
 
-Automatic saving is opt-in. Eligible reader visits update visit count and recency; each sync selects at most the top 10 eligible pages by visit count, recency, and stable identity tie-break, then captures them. Automatic-only pages with no activity for 60 days are expired and pruned; manual or tag provenance prevents that automatic-only expiry.
+Automatic selection is opt-in. Eligible reader visits update visit count and recency; each sync sets the automatic set to exactly the current top 10 eligible pages ranked by visit count, recency, and stable identity tie-break—not a historical accumulation. A page deselected from that set leaves the offline set when it has no manual-pin or followed-tag provenance; those sources remain preserved. Automatic-only pages with no activity for 60 days are expired and pruned; manual or tag provenance prevents that automatic-only expiry.
 
-Tag subscriptions use union (OR) semantics: each subscribed tag contributes pages to one deduplicated candidate set rather than intersecting tags. Snapshot provenance retains manual, automatic, and tag-name sources; removing one tag removes only that tag's provenance, and the page remains while another source still includes it.
+Tag subscriptions have per-row **Follow**/**Unfollow** controls on the Browse by Tags page and use union (OR) semantics: each followed tag contributes pages to one deduplicated candidate set, including pages with overlapping tags, rather than intersecting tags. Unfollowing one tag removes only that tag's provenance; the page remains selected while another followed tag, a manual pin, or automatic selection still includes it.
 
 The neutral shell includes:
 

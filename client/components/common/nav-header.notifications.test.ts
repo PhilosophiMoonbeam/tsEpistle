@@ -54,9 +54,7 @@ const testRenderer = VueRuntime.createRenderer<Node, Element>({
   createElement: (type, namespace, isCustomizedBuiltIn) => {
     if (namespace === 'svg') return browserWindow.document.createElementNS('http://www.w3.org/2000/svg', type)
     if (namespace === 'mathml') return browserWindow.document.createElementNS('http://www.w3.org/1998/Math/MathML', type)
-    return isCustomizedBuiltIn
-      ? browserWindow.document.createElement(type, { is: isCustomizedBuiltIn })
-      : browserWindow.document.createElement(type)
+    return isCustomizedBuiltIn ? browserWindow.document.createElement(type, { is: isCustomizedBuiltIn }) : browserWindow.document.createElement(type)
   },
   createText: text => browserWindow.document.createTextNode(text),
   createComment: text => browserWindow.document.createComment(text),
@@ -83,11 +81,7 @@ const testRenderer = VueRuntime.createRenderer<Node, Element>({
         current = current.nextSibling
       }
     } else {
-      staticTemplate.innerHTML = namespace === 'svg'
-        ? `<svg>${content}</svg>`
-        : namespace === 'mathml'
-          ? `<math>${content}</math>`
-          : content
+      staticTemplate.innerHTML = namespace === 'svg' ? `<svg>${content}</svg>` : namespace === 'mathml' ? `<math>${content}</math>` : content
       const fragment = staticTemplate.content
       if (namespace === 'svg' || namespace === 'mathml') {
         const wrapper = fragment.firstChild
@@ -98,10 +92,7 @@ const testRenderer = VueRuntime.createRenderer<Node, Element>({
       }
       parent.insertBefore(fragment, anchor)
     }
-    return [
-      (before ? before.nextSibling : parent.firstChild) as Node,
-      (anchor ? anchor.previousSibling : parent.lastChild) as Node
-    ]
+    return [(before ? before.nextSibling : parent.firstChild) as Node, (anchor ? anchor.previousSibling : parent.lastChild) as Node]
   }
 })
 
@@ -305,7 +296,8 @@ const bundle = await Bun.build({
           }
           if (args.path.endsWith('/helpers/pwa.ts')) {
             return {
-              contents: 'export const pwaState = { connectionState: "online", serverReachable: true, serverHealthy: true }',
+              contents:
+                'export const pwaState = { connection: "online", connectionState: "online", serverReachable: true, serverHealthy: true }; export const pwaConnectionPresentation = () => ({ label: "Connected", tone: "success", icon: "mdi-check-network-outline" })',
               loader: 'js'
             }
           }
@@ -401,10 +393,11 @@ const slotForwardingStub = VueRuntime.defineComponent({
 })
 const menuSlotForwardingStub = VueRuntime.defineComponent({
   setup(_, { slots }) {
-    return () => VueRuntime.h('div', { class: 'menu-stub' }, [
-      VueRuntime.h('div', { class: 'menu-stub__activator' }, slots.activator?.({ props: {} })),
-      VueRuntime.h('div', { class: 'menu-stub__content' }, slots.default?.())
-    ])
+    return () =>
+      VueRuntime.h('div', { class: 'menu-stub' }, [
+        VueRuntime.h('div', { class: 'menu-stub__activator' }, slots.activator?.({ props: {} })),
+        VueRuntime.h('div', { class: 'menu-stub__content' }, slots.default?.())
+      ])
   }
 })
 

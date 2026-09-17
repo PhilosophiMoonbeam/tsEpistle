@@ -202,20 +202,48 @@ export function activeOutlineIndex(positions: number[], scrollTop: number): numb
 }
 
 /**
- * Resolve the active outline entry for a viewport position, including the
- * article-end boundary where the final heading may sit below the scroll
- * threshold.
+ * Resolve the active outline entry for a viewport position.
+ *
+ * A heading whose normal activation point is below the reachable reading end
+ * gets a progressively compressed terminal activation point. This keeps the
+ * final heading reachable at the end of the article without replacing all
+ * preceding headings at one discontinuous boundary.
  */
-export function activeOutlineIndexAtScroll (
+export function activeOutlineIndexAtScroll(
   positions: number[],
   scrollY: number,
   viewportHeight: number,
   articleBottom: number,
-  thresholdOffset: number
+  thresholdOffset: number,
+  documentScrollHeight = articleBottom
 ): number {
   if (positions.length === 0) return -1
-  if (scrollY + viewportHeight >= articleBottom - 1) return positions.length - 1
-  return activeOutlineIndex(positions, scrollY + thresholdOffset)
+
+  const activationPositions = positions.map(position => position - thresholdOffset)
+  const maxScroll = Math.max(0, documentScrollHeight - viewportHeight)
+  const terminalEnd = Math.max(0, Math.min(maxScroll, articleBottom - viewportHeight))
+  const lastActivation = activationPositions[activationPositions.length - 1]!
+  if (terminalEnd > 0 && lastActivation > terminalEnd) {
+    const terminalStart = Math.max(0, terminalEnd - Math.max(1, viewportHeight - thresholdOffset))
+    const naturalTerminalSpan = lastActivation - terminalStart
+    const reachableTerminalSpan = terminalEnd - terminalStart
+    if (naturalTerminalSpan > 0 && reachableTerminalSpan > 0) {
+      for (let index = 0; index < activationPositions.length; index++) {
+        const natural = activationPositions[index]!
+        if (natural > terminalStart) {
+          activationPositions[index] = terminalStart + ((natural - terminalStart) * reachableTerminalSpan) / naturalTerminalSpan
+        }
+      }
+    }
+  }
+
+  return activeOutlineIndex(activationPositions, scrollY)
+}
+
+export type PageOutlineTracker = {
+  dispose: () => void
+  refresh: () => void
+  setNavigationAnchor: (anchor: string | null) => void
 }
 
 /** Cache geometry on layout changes; scrolling only performs a binary search. */
@@ -224,9 +252,9 @@ export function trackPageOutline(
   entries: OutlineEntry[],
   onActive: (anchor: string) => void,
   onProgress?: (progress: number) => void
-): () => void {
+): PageOutlineTracker {
   let headings: { anchor: string; element: HTMLElement }[] = []
-  let positions: number[] = []
+  let activationPositions: number[] = []
   let frame: number | null = null
   let dirty = true
   let disposed = false
@@ -236,7 +264,53 @@ export function trackPageOutline(
   let articleBottom = 0
   let viewportHeight = window.innerHeight
   let headerBottom = 64
-  const update = () => {
+  let documentScrollHeight = 0
+  let navigationAnchor: string | null = null
+  let navigationSettled = false
+  let navigationScrollY = window.scrollY
+  let navigationSettleTimer: number | null = null
+  let scrollbarPointerDown = false
+
+  const clearNavigationSettleTimer = (): void => {
+    if (navigationSettleTimer === null) return
+    window.clearTimeout(navigationSettleTimer)
+    navigationSettleTimer = null
+  }
+
+  const armNavigationSettleTimer = (): void => {
+    clearNavigationSettleTimer()
+    navigationSettleTimer = window.setTimeout(() => {
+      navigationSettleTimer = null
+      if (disposed || navigationAnchor === null) return
+      navigationSettled = true
+      navigationScrollY = window.scrollY
+    }, 120)
+  }
+
+  const clearNavigationAnchor = (): boolean => {
+    if (navigationAnchor === null) return false
+    navigationAnchor = null
+    navigationSettled = false
+    clearNavigationSettleTimer()
+    return true
+  }
+
+  const schedule = (): void => {
+    if (frame === null) frame = requestAnimationFrame(update)
+  }
+
+  const isTocTarget = (target: EventTarget | null): boolean => {
+    return target instanceof Element && Boolean(target.closest('.page-toc-content, .page-toc-list, .page-toc-filter'))
+  }
+
+  const isDocumentScrollKey = (event: KeyboardEvent): boolean => {
+    if (!['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '].includes(event.key)) return false
+    const target = event.target instanceof HTMLElement ? event.target : null
+    if (target?.isContentEditable || target?.closest('input, textarea, select, button, [contenteditable="true"]')) return false
+    return !isTocTarget(event.target)
+  }
+
+  const update = (): void => {
     frame = null
     if (disposed) return
     if (dirty) {
@@ -252,65 +326,141 @@ export function trackPageOutline(
         // offscreen headings as hidden, permanently dropping them from the
         // cached outline on long documents. A rendered client rect keeps
         // genuinely collapsed headings out while retaining the full outline.
-        return element && container.contains(element) && element.getClientRects().length > 0
-          ? [{ anchor: entry.anchor, element }]
-          : []
+        return element && container.contains(element) && element.getClientRects().length > 0 ? [{ anchor: entry.anchor, element }] : []
       })
-      positions = headings.map(({ element }) => element.getBoundingClientRect().top + window.scrollY)
+      const positions = headings.map(({ element }) => element.getBoundingClientRect().top + window.scrollY)
       const article = container.getBoundingClientRect()
       articleTop = article.top + window.scrollY
       articleBottom = article.bottom + window.scrollY
       viewportHeight = window.innerHeight
       headerBottom = document.querySelector('.nav-header')?.getBoundingClientRect().bottom ?? 64
+      documentScrollHeight = document.scrollingElement?.scrollHeight ?? document.documentElement.scrollHeight
+      activationPositions = positions.map(position => position - (headerBottom + 40))
+      const maxScroll = Math.max(0, documentScrollHeight - viewportHeight)
+      const terminalEnd = Math.max(0, Math.min(maxScroll, articleBottom - viewportHeight))
+      const lastActivation = activationPositions[activationPositions.length - 1]
+      if (terminalEnd > 0 && lastActivation !== undefined && lastActivation > terminalEnd) {
+        const terminalStart = Math.max(0, terminalEnd - Math.max(1, viewportHeight - (headerBottom + 40)))
+        const naturalTerminalSpan = lastActivation - terminalStart
+        const reachableTerminalSpan = terminalEnd - terminalStart
+        if (naturalTerminalSpan > 0 && reachableTerminalSpan > 0) {
+          activationPositions = activationPositions.map(natural =>
+            natural > terminalStart ? terminalStart + ((natural - terminalStart) * reachableTerminalSpan) / naturalTerminalSpan : natural
+          )
+        }
+      }
       dirty = false
     }
+
     const distance = articleBottom - articleTop - viewportHeight + headerBottom
     const progress = distance > 0 ? Math.round(Math.max(0, Math.min(1, (window.scrollY + headerBottom - articleTop) / distance)) * 100) : 100
     if (progress !== lastProgress) {
       lastProgress = progress
       onProgress?.(progress)
     }
-    const index = activeOutlineIndexAtScroll(
-      positions,
-      window.scrollY,
-      viewportHeight,
-      articleBottom,
-      headerBottom + 40
-    )
-    const anchor = headings[index]?.anchor ?? ''
+
+    let anchor = navigationAnchor ?? ''
+    if (anchor === '') {
+      const index = activeOutlineIndex(activationPositions, window.scrollY)
+      anchor = headings[index]?.anchor ?? ''
+    }
     if (anchor !== lastAnchor) {
       lastAnchor = anchor
       onActive(anchor)
     }
   }
-  const schedule = () => {
-    if (frame === null) frame = requestAnimationFrame(update)
+
+  const onScroll = (): void => {
+    const currentScrollY = window.scrollY
+    if (navigationAnchor !== null && (scrollbarPointerDown || (navigationSettled && currentScrollY !== navigationScrollY))) {
+      clearNavigationAnchor()
+    }
+    if (navigationAnchor !== null) {
+      navigationScrollY = currentScrollY
+      navigationSettled = false
+      armNavigationSettleTimer()
+    }
+    schedule()
   }
-  const measure = () => {
+
+  const onWheel = (event: WheelEvent): void => {
+    if (!isTocTarget(event.target) && clearNavigationAnchor()) schedule()
+  }
+
+  const onTouchStart = (event: TouchEvent): void => {
+    if (!isTocTarget(event.target) && clearNavigationAnchor()) schedule()
+  }
+
+  const onKeydown = (event: KeyboardEvent): void => {
+    if (isDocumentScrollKey(event) && clearNavigationAnchor()) schedule()
+  }
+
+  const onPointerDown = (event: PointerEvent): void => {
+    if (isTocTarget(event.target)) return
+    const root = document.documentElement
+    scrollbarPointerDown = event.clientX >= root.clientWidth || event.clientY >= root.clientHeight
+  }
+
+  const onPointerUp = (): void => {
+    scrollbarPointerDown = false
+  }
+
+  const measure = (): void => {
     dirty = true
     schedule()
   }
+
   const resize = new ResizeObserver(measure)
   resize.observe(container)
   const main = container.closest('main')
   if (main) resize.observe(main)
   const header = document.querySelector('.nav-header')
   if (header) resize.observe(header)
-  window.addEventListener('scroll', schedule, { passive: true })
+  window.addEventListener('scroll', onScroll, { passive: true })
   window.addEventListener('resize', measure)
+  window.addEventListener('wheel', onWheel, { passive: true })
+  window.addEventListener('touchstart', onTouchStart, { passive: true })
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('pointerdown', onPointerDown, { passive: true })
+  window.addEventListener('pointerup', onPointerUp, { passive: true })
+  window.addEventListener('pointercancel', onPointerUp, { passive: true })
+  window.addEventListener('blur', onPointerUp)
   container.addEventListener('toggle', measure, true)
   container.addEventListener('load', measure, true)
   void document.fonts?.ready.then(() => {
     if (!disposed) measure()
   })
   schedule()
-  return () => {
-    disposed = true
-    resize.disconnect()
-    if (frame !== null) cancelAnimationFrame(frame)
-    window.removeEventListener('scroll', schedule)
-    window.removeEventListener('resize', measure)
-    container.removeEventListener('toggle', measure, true)
-    container.removeEventListener('load', measure, true)
+
+  return {
+    refresh: measure,
+    setNavigationAnchor(anchor: string | null): void {
+      if (!anchor) {
+        clearNavigationAnchor()
+      } else {
+        navigationAnchor = anchor
+        navigationSettled = false
+        navigationScrollY = window.scrollY
+        armNavigationSettleTimer()
+      }
+      schedule()
+    },
+    dispose(): void {
+      disposed = true
+      clearNavigationSettleTimer()
+      resize.disconnect()
+      if (frame !== null) cancelAnimationFrame(frame)
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', measure)
+      window.removeEventListener('wheel', onWheel)
+      window.removeEventListener('touchstart', onTouchStart)
+      window.removeEventListener('keydown', onKeydown)
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('pointerup', onPointerUp)
+      window.removeEventListener('pointercancel', onPointerUp)
+      window.removeEventListener('blur', onPointerUp)
+      container.removeEventListener('toggle', measure, true)
+      container.removeEventListener('load', measure, true)
+    }
   }
 }

@@ -99,12 +99,18 @@ const Tool = z.object({
   runId: Uuid,
   actionName: z.enum(AGENT_TOOL_CALL_NAMES),
   title: z.string(),
-  state: z.enum(['preparing', 'running', 'awaitingApproval', 'complete', 'failed', 'denied', 'cancelled']),
+  state: z.enum(['preparing', 'running', 'awaitingApproval', 'complete', 'failed', 'denied', 'cancelled', 'omitted', 'not_executed']),
   risk: z.enum(['read', 'open-world-read', 'proposal', 'reversible-write', 'destructive-write']),
   summary: z.string().nullable(),
   proposalId: Uuid.nullable(),
   startedAt: Iso,
-  completedAt: Iso.nullable()
+  completedAt: Iso.nullable(),
+  contextExclusion: z
+    .object({
+      status: z.enum(['omitted', 'not_executed']),
+      reason: z.literal('tool_result_capacity')
+    })
+    .optional()
 })
 const Task = z.object({
   id: Uuid,

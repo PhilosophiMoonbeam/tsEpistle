@@ -6,6 +6,13 @@
         span#unsaved-dialog-title {{$t('editor:unsaved.title')}}
       v-card-text.pt-4#unsaved-dialog-description
         .text-body-medium {{$t('editor:unsaved.body')}}
+      v-alert.mt-4(
+        v-if='error'
+        type='error'
+        variant='tonal'
+        role='alert'
+        aria-live='polite'
+      ) {{error}}
       v-card-chin
         v-spacer
         v-btn(variant="text", :disabled='busy || discarding', @click='isShown = false') {{$t('common:actions.cancel')}}
@@ -31,6 +38,10 @@ export default defineComponent({
     busy: {
       type: Boolean,
       default: false
+    },
+    error: {
+      type: String,
+      default: ''
     },
     discarding: {
       type: Boolean,

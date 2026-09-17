@@ -6,6 +6,7 @@ import { registerMemoryAction } from '../../agents/actions/memory.ts'
 import type { ActionHandler, ActionHandlerContext, ActionKernel } from '../../agents/actions/kernel.ts'
 import type { AgentMemoryRepository } from '../../agents/memory.ts'
 import { AxAgentEngine, type AgentActionSessionProvider } from '../../agents/providers/engine.ts'
+import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
 import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/providers/factory.ts'
 import { invokingAgentRunLease, type AgentApprovalContinuationCheckpoint, type AgentRunLeaseIdentity } from '../../agents/coordinator.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
@@ -299,13 +300,9 @@ describe('Ax agent engine', () => {
       inputTokens: 13,
       outputTokens: 6,
       totalTokens: 19,
-      citations: [{ evidenceId: 'page:42:revision:1:section:1', kind: 'page', label: 'Guide › Install', href: '/en/guide#install' }],
-      providerState: {
-        schemaVersion: 1,
-        continuationDialect: 'openai-responses-reasoning-v1',
-        thoughtBlocks: [{ data: 'wiki.openai.reasoning.v1:["rs_1","encrypted-state"]', encrypted: true }]
-      }
+      citations: [{ evidenceId: 'page:42:revision:1:section:1', kind: 'page', label: 'Guide › Install', href: '/en/guide#install' }]
     })
+    expect(result.providerState).toBeUndefined()
     expect(JSON.stringify(result)).not.toContain('hidden thought')
     expect(close).toHaveBeenCalledOnce()
     expect(publicationOrder).toEqual(['close', 'text'])
@@ -1232,7 +1229,6 @@ describe('Ax agent engine', () => {
     expect(sectionCitation.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
   })
 
-
   it('regenerates a cross-section attribution that does not support the associated claim', async () => {
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
@@ -1489,7 +1485,9 @@ describe('Ax agent engine', () => {
     expect(providerCalls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'user', content: expect.stringContaining('<wiki-tool-result>') }))
     expect(providerCalls[1]?.chatPrompt.some(message => message.role === 'function')).toBe(false)
     expect(text).toHaveBeenCalledOnce()
-    expect(text).toHaveBeenCalledWith('The page is ready.')
+    expect(text).toHaveBeenCalledWith(
+      'The page is ready.\n\nPartial context coverage: 1 executed result omitted; 0 action calls not executed because provider context capacity was exhausted. The available evidence may be incomplete.'
+    )
   })
 
   it('resumes one reclaimed pre-fence approval action identity and feeds its durable result back into synthesis', async () => {
@@ -2199,11 +2197,12 @@ describe('Ax agent engine', () => {
           pricing
         })
       } as unknown as AgentProviderFactory
+      const text = vi.fn(async () => {})
 
       const result = await new AxAgentEngine(factory, actions).execute(
         { ...request(new AbortController().signal), limits: { maxTurns: 4, maxToolCalls: 2, maxOutputTokens: 256 } },
         {
-          text: async () => {},
+          text,
           event: async (type: string, data: unknown) => {
             events.push([type, data])
           }
@@ -2212,17 +2211,33 @@ describe('Ax agent engine', () => {
 
       expect(invoke).not.toHaveBeenCalled()
       expect(calls).toHaveLength(2)
-      const failedData = events.find(([type]) => type === 'tool.failed')?.[1]
-      let failedActionCallId: string | undefined
-      if (typeof failedData === 'object' && failedData !== null && 'actionCallId' in failedData && typeof failedData.actionCallId === 'string')
-        failedActionCallId = failedData.actionCallId
-      if (failedActionCallId === undefined) throw new Error('capacity failure did not retain the started action call identity')
-      expect(result.contextLimit).toEqual({ reason: 'tool_result_capacity', omittedActionCallIds: [failedActionCallId] })
+      const notExecutedData = events.find(([type]) => type === 'tool.notExecuted')?.[1]
+      let notExecutedActionCallId: string | undefined
+      if (
+        typeof notExecutedData === 'object' &&
+        notExecutedData !== null &&
+        'actionCallId' in notExecutedData &&
+        typeof notExecutedData.actionCallId === 'string'
+      )
+        notExecutedActionCallId = notExecutedData.actionCallId
+      if (notExecutedActionCallId === undefined) throw new Error('capacity-skipped action did not retain the started action call identity')
+      expect(result.contextLimit).toEqual({ reason: 'tool_result_capacity', omittedActionCallIds: [notExecutedActionCallId] })
       expect(events.filter(([type]) => type === 'tool.completed')).toHaveLength(0)
-      expect(events.filter(([type]) => type === 'tool.failed').map(([, data]) => data)).toEqual([
-        expect.objectContaining({ actionCallId: failedActionCallId, errorCode: 'AGENT_CONTEXT_TOO_LARGE' })
+      expect(events.filter(([type]) => type === 'tool.notExecuted').map(([, data]) => data)).toEqual([
+        expect.objectContaining({
+          actionCallId: notExecutedActionCallId,
+          contextExclusion: { status: 'not_executed', reason: 'tool_result_capacity' }
+        })
       ])
-      if (mode === 'native') expect(failedActionCallId).toBe('enable-large')
+      expect(text).toHaveBeenCalledWith(
+        'Core tools remain available.\n\nPartial context coverage: 0 executed results omitted; 1 action call not executed because provider context capacity was exhausted. The available evidence may be incomplete.'
+      )
+      if (mode === 'native') expect(notExecutedActionCallId).toBe('enable-large')
+      expect(calls[1]?.chatPrompt).toContainEqual(
+        mode === 'native'
+          ? expect.objectContaining({ role: 'function', functionId: notExecutedActionCallId, result: expect.stringContaining('"status":"not_executed"') })
+          : expect.objectContaining({ role: 'user', content: expect.stringContaining('"status":"not_executed"') })
+      )
       if (mode === 'native') {
         expect(calls[0]?.functions?.map(functionCall => functionCall.name)).toEqual(['wiki_get_page', 'wiki_enable_tools'])
         expect(calls[1]).not.toHaveProperty('functions')
@@ -2336,9 +2351,16 @@ describe('Ax agent engine', () => {
     expect(calls).toHaveLength(2)
     expect(calls[1]).not.toHaveProperty('functions')
     expect(result.contextLimit).toEqual({ reason: 'tool_result_capacity', omittedActionCallIds: ['large-search'] })
-    expect(events.filter(([type]) => type === 'tool.completed').map(([, data]) => data)).toEqual([
+    const completed = events.filter(([type]) => type === 'tool.completed').map(([, data]) => data)
+    expect(completed).toEqual([
       expect.objectContaining({ actionCallId: 'enable-explore', summary: 'Enabled explore tools for the next turn' }),
-      expect.objectContaining({ actionCallId: 'large-search' })
+      expect.objectContaining({
+        actionCallId: 'large-search',
+        result: JSON.stringify({
+          results: [{ id: 1, locale: 'en', path: 'large', title: 'Large result', description: largeDescription, contentType: 'markdown' }]
+        }),
+        contextExclusion: { status: 'omitted', reason: 'tool_result_capacity' }
+      })
     ])
   })
   it.each(['native', 'prompt'] as const)('keeps depth-one child authority read-only on the %s protocol', async mode => {
@@ -2485,6 +2507,7 @@ describe('Ax agent engine', () => {
       function: { name: 'wiki_get_page', params: JSON.stringify({ id: index + 1 }) }
     }))
     const answer = Array.from({ length: 10 }, (_, index) => `Recent page ${index + 1} is documented.[[cite:page:${index + 1}]]`).join(' ')
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [
       {
         results: [
@@ -2497,7 +2520,10 @@ describe('Ax agent engine', () => {
       { results: [{ index: 0, functionCalls: readCalls }] },
       { results: [{ index: 0, content: answer }] }
     ]
-    const chat = vi.fn(async () => responses.shift()!)
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return responses.shift()!
+    })
     const invoke = vi.fn(async (name: string, input: unknown) => {
       if (name === 'pages.listRecent') {
         return {
@@ -2528,16 +2554,16 @@ describe('Ax agent engine', () => {
         functions: [
           {
             name: 'pages.listRecent',
-            title: 'List recent pages',
-            description: 'List recently changed pages',
+            title: ACTION_CATALOG['pages.listRecent'].descriptor.title,
+            description: ACTION_CATALOG['pages.listRecent'].descriptor.description,
             parameters: { type: 'object', properties: { locale: { type: 'string' }, limit: { type: 'number' } } },
             risk: 'read',
             group: 'core'
           },
           {
             name: 'pages.get',
-            title: 'Read page',
-            description: 'Read one page',
+            title: ACTION_CATALOG['pages.get'].descriptor.title,
+            description: ACTION_CATALOG['pages.get'].descriptor.description,
             parameters: { type: 'object', properties: { id: { type: 'number' } } },
             risk: 'read',
             group: 'core'
@@ -2580,6 +2606,18 @@ describe('Ax agent engine', () => {
 
     expect(chat).toHaveBeenCalledTimes(3)
     expect(invoke).toHaveBeenCalledTimes(11)
+    expect(invoke.mock.calls.slice(1).map(([name, input]) => ({ name, input }))).toEqual(
+      Array.from({ length: 10 }, (_, index) => ({ name: 'pages.get', input: { id: index + 1 } }))
+    )
+    const recentTool = calls[0]?.functions?.find(functionCall => functionCall.name === 'wiki_list_recent_pages')
+    const getTool = calls[0]?.functions?.find(functionCall => functionCall.name === 'wiki_get_page')
+    expect(recentTool).toEqual(expect.objectContaining({ description: expect.stringContaining('wiki_get_page({id: result.id})') }))
+    expect(recentTool).toEqual(expect.objectContaining({ description: expect.stringContaining('positive numeric ID exactly') }))
+    expect(recentTool).toEqual(
+      expect.objectContaining({ description: expect.stringContaining('path/locale copied from recent metadata are not identity-preserving') })
+    )
+    expect(recentTool).toEqual(expect.objectContaining({ description: expect.stringContaining('Recent rows are candidate metadata only') }))
+    expect(recentTool).toEqual(expect.objectContaining({ description: expect.stringContaining('do not retry automatically') }))
     expect(result.contextLimit).toBeUndefined()
     expect(result.citations).toHaveLength(10)
     expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
@@ -2666,16 +2704,19 @@ describe('Ax agent engine', () => {
       },
       { text, event }
     )
-
-    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(text).toHaveBeenCalledOnce()
+    expect(text).toHaveBeenCalledWith(
+      'Small source is available.[[cite:page:1]]\n\nPartial context coverage: 1 executed result omitted; 0 action calls not executed because provider context capacity was exhausted. The available evidence may be incomplete.'
+    )
     expect(chat).toHaveBeenCalledTimes(3)
+    expect(calls[1]?.chatPrompt).toContainEqual(
+      expect.objectContaining({ role: 'function', functionId: 'large', result: expect.stringContaining('"status":"omitted"') })
+    )
     expect(calls[2]?.chatPrompt).not.toContainEqual(expect.objectContaining({ content: expect.stringContaining('Large source payload') }))
     expect(result).toMatchObject({
       contextLimit: { reason: 'tool_result_capacity', omittedActionCallIds: ['large'] },
       citations: [{ evidenceId: 'page:1', kind: 'page', label: 'Small source', href: '/en/source/1' }]
     })
-    expect(text).toHaveBeenCalledOnce()
-    expect(text).toHaveBeenCalledWith('Small source is available.[[cite:page:1]]')
     const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
     expect(provenance).toEqual([
       expect.objectContaining({

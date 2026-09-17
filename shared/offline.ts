@@ -212,7 +212,6 @@ export const OfflineSnapshotProvenanceSchema = z
   .strict()
 export type OfflineSnapshotProvenance = z.infer<typeof OfflineSnapshotProvenanceSchema>
 
-
 export const OfflinePagePolicyRecordSchema = z
   .object({
     key: policyRecordKey,
@@ -311,7 +310,7 @@ export type OfflinePolicyPageSelector = OfflineSnapshotSelector
 
 export const OfflineCorpusNoticeSchema = z
   .object({
-    kind: z.enum(['corpus', 'generation']),
+    kind: z.enum(['corpus', 'generation', 'policy']),
     sessionGeneration: nonnegativeSafeInteger,
     corpusRevision: nonnegativeSafeInteger
   })

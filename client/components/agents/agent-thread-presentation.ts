@@ -100,7 +100,33 @@ export const agentAppliedPageLinks = (entries: readonly AgentProposalTool[]): re
   return links
 }
 
-const actionCount = (count: number): string => `${count} ${count === 1 ? 'action' : 'actions'}`
+const activityCount = (count: number): string => `${count} ${count === 1 ? 'activity' : 'activities'}`
+
+interface AgentActivityDispositionCounts {
+  readonly failures: number
+  readonly omitted: number
+  readonly notExecuted: number
+}
+
+const activityDispositionCounts = (tools: readonly AgentToolCallView[]): AgentActivityDispositionCounts => {
+  let failures = 0
+  let omitted = 0
+  let notExecuted = 0
+  for (const tool of tools) {
+    if (tool.state === 'failed') failures += 1
+    else if (tool.state === 'omitted') omitted += 1
+    else if (tool.state === 'not_executed') notExecuted += 1
+  }
+  return { failures, omitted, notExecuted }
+}
+
+const dispositionSuffix = (counts: AgentActivityDispositionCounts): string => {
+  const parts: string[] = []
+  if (counts.omitted > 0) parts.push(`${counts.omitted} omitted`)
+  if (counts.notExecuted > 0) parts.push(`${counts.notExecuted} not executed`)
+  if (counts.failures > 0) parts.push(`${counts.failures} failed`)
+  return parts.length > 0 ? ` · ${parts.join(' · ')}` : ''
+}
 
 export const agentActivityLabel = (tools: readonly AgentToolCallView[]): string => {
   let active: AgentToolCallView | undefined
@@ -111,13 +137,17 @@ export const agentActivityLabel = (tools: readonly AgentToolCallView[]): string 
       break
     }
   }
-  if (active) return `${active.title} · ${actionCount(tools.length)}`
-  const failures = tools.filter(tool => tool.state === 'failed').length
-  if (failures > 0) return `Activity · ${actionCount(tools.length)} · ${failures} failed`
-  if (tools.some(tool => tool.state === 'cancelled' || tool.state === 'denied')) {
-    return `Activity · ${actionCount(tools.length)} · Stopped`
+  const { failures, omitted, notExecuted } = activityDispositionCounts(tools)
+  const exceptional = failures > 0 || omitted > 0 || notExecuted > 0
+  if (active && !exceptional) return `${active.title} · ${activityCount(tools.length)}`
+  if (exceptional) {
+    return `Activity · ${activityCount(tools.length)}${dispositionSuffix({ failures, omitted, notExecuted })}`
   }
-  return `Activity · ${actionCount(tools.length)} · Complete`
+  if (active) return `${active.title} · ${activityCount(tools.length)}`
+  if (tools.some(tool => tool.state === 'cancelled' || tool.state === 'denied')) {
+    return `Activity · ${activityCount(tools.length)} · Stopped`
+  }
+  return `Activity · ${activityCount(tools.length)} · Complete`
 }
 export interface AgentRunPresentation extends AgentRunTools {
   readonly tasks: readonly AgentTaskView[]

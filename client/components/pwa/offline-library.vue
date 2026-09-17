@@ -593,8 +593,10 @@ const retryReader = (): void => {
   const mode: ReaderHistoryMode = historyMode.value === 'initial' ? 'initial' : 'history'
   void openRecord(record, undefined, { history: mode })
 }
-const loadRecords = async (): Promise<void> => {
+const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Promise<void> => {
   const storage = props.storage
+  const preservePolicyError = options.preservePolicyError === true
+  if (!preservePolicyError) policyError.value = ''
   const token = ++loadToken
   preparationController?.abort()
   preparationController = null
@@ -686,7 +688,7 @@ const loadRecords = async (): Promise<void> => {
     sessionGeneration.value = loaded.sessionGeneration
     hasCorpus.value = true
     policy.value = loadedPolicy
-    policyError.value = ''
+    if (!preservePolicyError) policyError.value = ''
     if (selectedKey.value && !activeRecordForKey(selectedKey.value)) {
       closeRecord({ fromHistory: true })
       clearOfflineSelector()
@@ -786,7 +788,7 @@ const toggleAutomaticSaving = async (): Promise<void> => {
   } catch (error) {
     policyError.value = normalizeError(error, 'Automatic offline saving could not be changed.')
     emit('error', policyError.value)
-    await loadRecords()
+    await loadRecords({ preservePolicyError: true })
   } finally {
     policyMutationLoading.value = false
   }
@@ -811,7 +813,7 @@ const removeSelectedTag = async (tag: string): Promise<void> => {
   } catch (error) {
     policyError.value = normalizeError(error, 'The offline tag subscription could not be removed.')
     emit('error', policyError.value)
-    await loadRecords()
+    await loadRecords({ preservePolicyError: true })
   } finally {
     policyMutationLoading.value = false
   }
@@ -820,8 +822,14 @@ const removeSelectedTag = async (tag: string): Promise<void> => {
 const refreshOfflineSync = async (): Promise<void> => {
   if (policyMutationLoading.value) return
   policyError.value = ''
-  await offlineSyncService?.reconcile('manual')
-  await loadRecords()
+  try {
+    await offlineSyncService?.reconcile('manual')
+    await loadRecords()
+  } catch (error) {
+    policyError.value = normalizeError(error, 'Offline sync could not be refreshed.')
+    emit('error', policyError.value)
+    await loadRecords({ preservePolicyError: true })
+  }
 }
 
 const invalidateLocalProjection = (): void => {
@@ -924,7 +932,10 @@ watch(clock, () => {
 onMounted(() => {
   clockTimer = window.setInterval(() => { clock.value = Date.now() }, 60_000)
   window.addEventListener('popstate', handlePopState)
-  unsubscribeStorageChanges = subscribeOfflineStorageChanges(() => { void loadRecords() })
+  unsubscribeStorageChanges = subscribeOfflineStorageChanges(notice => {
+    if (notice.kind !== 'policy' && notice.kind !== 'corpus') return
+    void loadRecords({ preservePolicyError: Boolean(policyError.value) })
+  })
   void loadRecords()
 })
 
@@ -970,18 +981,22 @@ onBeforeUnmount(() => {
           @change="toggleAutomaticSaving"
         />
         <span>
-          <strong>Automatically save my ten most-visited public pages</strong>
-          <small>Automatic saving is off by default. Eligible reader visits choose the top ten; manual saves and tag subscriptions remain explicit.</small>
+          <strong>Save my 10 most-visited pages</strong>
+          <small>Off by default. When enabled, this device saves the exact current top ten eligible public pages by reader visits; only pages visited within the last 60 days are eligible. Manual saves and followed tags remain explicit.</small>
         </span>
       </label>
       <div class="policy-tags">
-        <strong>Offline tag subscriptions (union)</strong>
-        <span v-if="!selectedTags.length" class="policy-muted">None selected</span>
+        <div class="policy-tags-heading">
+          <strong>Followed tags</strong>
+          <a class="text-button" href="/tags">Browse tags</a>
+        </div>
+        <span v-if="!selectedTags.length" class="policy-muted">None yet</span>
         <button
           v-for="tag in selectedTags"
           :key="`offline-tag-${tag}`"
           class="policy-tag"
           type="button"
+          :aria-label="`Unfollow ${tag}`"
           :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading"
           @click="removeSelectedTag(tag)"
         >
@@ -1242,8 +1257,15 @@ onBeforeUnmount(() => {
   border-block-start: 1px solid var(--offline-border);
 }
 
-.policy-tags strong {
-  flex-basis: 100%;
+.policy-tags-heading {
+  display: flex;
+  flex: 1 1 100%;
+  gap: .75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.policy-tags-heading strong {
   color: var(--offline-muted);
   font-family: var(--offline-mono);
   font-size: .72rem;

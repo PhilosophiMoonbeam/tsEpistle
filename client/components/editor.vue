@@ -174,21 +174,22 @@
               :disabled='offlineDraftBusy'
               @click='resolveOfflineSubmission(`continue`)'
             ) Keep as new draft
-      component(
-        :is='currentEditor'
-        v-if='currentEditor'
-        :key='editorInstanceKey'
-        :save='save'
-        @collaboration-state='handleCollaborationState'
-        @editor-adapter='handleEditorAdapter'
-        @editor-adapter-clear='handleEditorAdapterClear'
-      )
+        component.editor-active-editor(
+          :is='currentEditor'
+          v-if='currentEditor'
+          :key='editorInstanceKey'
+          :save='save'
+          @collaboration-state='handleCollaborationState'
+          @editor-adapter='handleEditorAdapter'
+          @editor-adapter-clear='handleEditorAdapterClear'
+        )
       editor-modal-properties(v-if='dialogProps', v-model='dialogProps')
       editor-modal-unsaved(
         v-if='dialogUnsaved'
         v-model='dialogUnsaved'
         :busy='isSaving'
         :discarding='discardPending'
+        :error='discardError'
         @discard='discardAndExit'
         @save='saveUnsavedAndClose'
       )
@@ -358,6 +359,42 @@ type EditorSaveCapture = {
   readonly brandingAssignment: PageBrandingAssignment | null
   readonly okf: unknown
 }
+type EditorEditableState = {
+  readonly content: unknown
+  readonly description: unknown
+  readonly isPublished: unknown
+  readonly isSearchable: unknown
+  readonly visibility: unknown
+  readonly locale: unknown
+  readonly path: unknown
+  readonly publishEndDate: unknown
+  readonly publishStartDate: unknown
+  readonly tags: unknown
+  readonly title: unknown
+  readonly scriptCss: unknown
+  readonly scriptJs: unknown
+  readonly brandingAssignment: unknown
+  readonly okf: unknown
+}
+
+type EditableStateValue = {
+  readonly content?: unknown
+  readonly description?: unknown
+  readonly isPublished?: unknown
+  readonly isSearchable?: unknown
+  readonly visibility?: unknown
+  readonly locale?: unknown
+  readonly path?: unknown
+  readonly publishEndDate?: unknown
+  readonly publishStartDate?: unknown
+  readonly tags?: unknown
+  readonly title?: unknown
+  readonly scriptCss?: unknown
+  readonly scriptJs?: unknown
+  readonly brandingAssignment?: unknown
+  readonly okf?: unknown
+}
+
 
 const freezePageInput = (input: PageWriteInput): PageWriteInput => {
   Object.freeze(input.tags)
@@ -519,6 +556,7 @@ export default defineComponent({
       lifecycleGeneration: 0,
       editorInstanceKey: 0,
       discardPending: false,
+      discardError: '',
       collaborationActive: false,
       collaborationGeneration: null as number | null,
       collaborationDiscarded: false,
@@ -641,23 +679,7 @@ export default defineComponent({
       ]
     },
     isDirty () {
-      return (
-        this.savedState.content !== wikiStore.editor.content ||
-        this.savedState.locale !== wikiStore.page.locale ||
-        this.savedState.path !== wikiStore.page.path ||
-        this.savedState.title !== wikiStore.page.title ||
-        this.savedState.description !== wikiStore.page.description ||
-        !_.isEqual(this.savedState.tags, wikiStore.page.tags) ||
-        this.savedState.isPublished !== wikiStore.page.isPublished ||
-        this.savedState.isSearchable !== wikiStore.page.isSearchable ||
-        this.savedState.visibility !== wikiStore.page.visibility ||
-        this.savedState.publishStartDate !== wikiStore.page.publishStartDate ||
-        this.savedState.publishEndDate !== wikiStore.page.publishEndDate ||
-        this.savedState.scriptCss !== wikiStore.page.scriptCss ||
-        this.savedState.scriptJs !== wikiStore.page.scriptJs ||
-        !_.isEqual(this.savedState.brandingAssignment, wikiStore.page.brandingAssignment) ||
-        !_.isEqual(this.savedState.okf, wikiStore.page.okf)
-      )
+      return !this.sameEditableState(this.savedState, this.currentEditableState(), true)
     },
     reloadSafetyInputs(): readonly unknown[] {
       return [
@@ -688,6 +710,7 @@ export default defineComponent({
         this.offlineDraftBusy,
         this.offlineDraftStatus,
         this.offlineDraftError,
+        this.discardError,
         this.collaborationActive,
         this.collaborationGeneration,
         this.collaborationDiscarded,
@@ -830,24 +853,72 @@ export default defineComponent({
     removeEditorPageCss()
   },
   methods: {
+    currentEditableState(): EditableStateValue {
+      return {
+        content: wikiStore.editor.content,
+        description: wikiStore.page.description,
+        isPublished: wikiStore.page.isPublished,
+        isSearchable: wikiStore.page.isSearchable,
+        visibility: wikiStore.page.visibility,
+        locale: wikiStore.page.locale,
+        path: wikiStore.page.path,
+        publishEndDate: wikiStore.page.publishEndDate,
+        publishStartDate: wikiStore.page.publishStartDate,
+        tags: wikiStore.page.tags,
+        title: wikiStore.page.title,
+        scriptCss: wikiStore.page.scriptCss,
+        scriptJs: wikiStore.page.scriptJs,
+        brandingAssignment: wikiStore.page.brandingAssignment,
+        okf: wikiStore.page.okf
+      }
+    },
+    normalizeEditableDate(value: unknown): string {
+      if (value === null || value === undefined || value === '') return ''
+      return typeof value === 'string' ? value : `__invalid_date:${typeof value}`
+    },
+    canonicalEditableState(value: EditableStateValue, includeContent = true): EditorEditableState {
+      let okfMetadata: unknown = null
+      try {
+        const authority = value.okf !== null && typeof value.okf === 'object' ? Reflect.get(value.okf, 'authority') : null
+        const metadata = authority !== null && typeof authority === 'object' ? Reflect.get(authority, 'metadata') : null
+        try {
+          okfMetadata = buildOkfMetadataPayload(metadata) ?? null
+        } catch {
+          okfMetadata = { invalid: true, value: _.cloneDeep(metadata) }
+        }
+      } catch {
+        okfMetadata = { invalid: true }
+      }
+      return {
+        content: includeContent ? value.content : undefined,
+        description: value.description,
+        isPublished: value.isPublished,
+        isSearchable: value.isSearchable,
+        visibility: value.visibility,
+        locale: value.locale,
+        path: value.path,
+        publishEndDate: this.normalizeEditableDate(value.publishEndDate),
+        publishStartDate: this.normalizeEditableDate(value.publishStartDate),
+        tags: value.tags,
+        title: value.title,
+        scriptCss: value.scriptCss,
+        scriptJs: value.scriptJs,
+        brandingAssignment: value.brandingAssignment,
+        okf: okfMetadata
+      }
+    },
+    sameEditableState(left: EditableStateValue, right: EditableStateValue, includeContent = true): boolean {
+      try {
+        return _.isEqual(
+          this.canonicalEditableState(left, includeContent),
+          this.canonicalEditableState(right, includeContent)
+        )
+      } catch {
+        return false
+      }
+    },
     isMetadataDirty(): boolean {
-      return (
-        this.savedState.locale !== wikiStore.page.locale ||
-        this.savedState.path !== wikiStore.page.path ||
-        this.savedState.title !== wikiStore.page.title ||
-        this.savedState.description !== wikiStore.page.description ||
-        !_.isEqual(this.savedState.tags, wikiStore.page.tags) ||
-        this.savedState.isPublished !== wikiStore.page.isPublished ||
-        this.savedState.isSearchable !== wikiStore.page.isSearchable ||
-        this.savedState.visibility !== wikiStore.page.visibility ||
-        this.savedState.publishStartDate !== wikiStore.page.publishStartDate ||
-        this.savedState.publishEndDate !== wikiStore.page.publishEndDate ||
-        this.savedState.scriptCss !== wikiStore.page.scriptCss ||
-        this.savedState.scriptJs !== wikiStore.page.scriptJs ||
-        !_.isEqual(this.savedState.brandingAssignment, wikiStore.page.brandingAssignment) ||
-        !_.isEqual(this.savedState.brandingView, wikiStore.page.brandingView) ||
-        !_.isEqual(this.savedState.okf, wikiStore.page.okf)
-      )
+      return !this.sameEditableState(this.savedState, this.currentEditableState(), false)
     },
     notifySafetyChanged() {
       this.safetyRevision += 1
@@ -1230,6 +1301,7 @@ export default defineComponent({
       this.offlineDraftError = 'Your offline editor session was locked. Unsaved plaintext was cleared.'
       this.offlineDraftBusy = false
       this.dialogUnsaved = false
+      this.discardError = ''
       this.dialogProgress = false
       this.dialogProps = false
       this.dialogEditorSelector = false
@@ -1392,6 +1464,7 @@ export default defineComponent({
       emitEditorSaveConflict()
     },
     async save({ rethrow = false, overwrite = false }: { rethrow?: boolean, overwrite?: boolean } = {}): Promise<boolean> {
+      if (this.discardPending) return false
       if (this.collaborationDiscarded) {
         const error = new Error('This collaboration draft was discarded. Reload the page before saving.')
         wikiStore.showNotification({
@@ -1747,6 +1820,7 @@ export default defineComponent({
       }
     },
     async saveAndClose(): Promise<boolean> {
+      if (this.discardPending) return false
       if (this.isSaving) return false
       const capturedAuthenticated = this.isAuthenticated
       const capturedAccountId = this.accountId
@@ -1777,41 +1851,71 @@ export default defineComponent({
       }
     },
     async exit() {
+      if (this.discardPending) return
+      try {
+        if (this.editorAdapterSafety.ready) this.captureEditorState()
+      } catch (error) {
+        this.dialogUnsaved = true
+        this.discardError = getErrorMessage(error)
+        return
+      }
       if (this.isDirty) {
+        this.discardError = ''
         this.dialogUnsaved = true
       } else {
+        this.discardError = ''
         this.exitGo()
       }
     },
     async discardAndExit() {
       if (this.discardPending) return
+      const capturedAuthenticated = this.isAuthenticated
+      const capturedAccountId = this.accountId
+      const capturedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
+      const capturedLifecycleGeneration = this.lifecycleGeneration
+      const coordinator = this.offlineDraftCoordinator
+      const discardCollaboration = wikiStore.editor.mode === 'update' && wikiStore.editor.editorKey === 'markdown' && this.collaborationActive
+      const collaborationPageId = wikiStore.page.id
+      const collaborationCheckoutDate = this.checkoutDateActive
+      const collaborationSourceRevision = wikiStore.page.sourceRevision
       this.discardPending = true
+      this.discardError = ''
+      this.notifySafetyChanged()
       try {
-        if (wikiStore.editor.mode === 'update' && wikiStore.editor.editorKey === 'markdown' && this.collaborationActive) {
+        this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+        if (discardCollaboration) {
           await discardCollaborationDraft(
             window.fetch.bind(window),
-            wikiStore.page.id,
-            this.checkoutDateActive,
-            wikiStore.page.sourceRevision
+            collaborationPageId,
+            collaborationCheckoutDate,
+            collaborationSourceRevision
           )
+          this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
         }
-        if (this.offlineDraftCoordinator?.isAuthenticatedUser() === true) {
-          if (!(await this.offlineDraftCoordinator.discardCurrentDraft())) {
-            throw new Error('The local draft could not be discarded.')
+        if (coordinator?.isAuthenticatedUser() === true) {
+          if (!(await coordinator.discardCurrentDraft())) {
+            throw new Error(this.offlineDraftError || 'The local draft could not be discarded.')
           }
+          this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
         }
+        this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
         this.restoreCurrentSavedState()
         this.dialogUnsaved = false
+        this.discardError = ''
         this.exitGo()
       } catch (error) {
-        this.dialogUnsaved = true
-        wikiStore.showNotification({
-          message: getErrorMessage(error),
-          style: 'error',
-          icon: 'warning'
-        })
+        if (this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)) {
+          this.dialogUnsaved = true
+          this.discardError = getErrorMessage(error)
+          wikiStore.showNotification({
+            message: this.discardError,
+            style: 'error',
+            icon: 'warning'
+          })
+        }
       } finally {
         this.discardPending = false
+        this.notifySafetyChanged()
       }
     },
     exitGo() {
@@ -2008,14 +2112,18 @@ export default defineComponent({
     min-height: 0;
   }
 
+  .editor-active-editor {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    width: 100%;
+  }
+
   .editor-bootstrap-notice {
     flex: none;
     margin: var(--wiki-space-4) clamp(var(--wiki-space-4), 4vw, var(--wiki-space-8)) 0;
-  }
-
-  .editor-main-surface > :last-child {
-    min-width: 0;
-    flex: 1 1 auto;
   }
 
   &-title-input {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from '../../server/test/bun-test.mts'
+import { afterEach, describe, expect, test, vi } from '../../server/test/bun-test.mts'
 import {
   activeOutlineIndex,
   activeOutlineIndexAtScroll,
@@ -9,8 +9,27 @@ import {
   getInitialExpandedAnchors,
   getSearchExpandedAnchors,
   isBranchEffectivelyExpanded,
-  outlineSublistId
+  outlineSublistId,
+  trackPageOutline
 } from './page-outline'
+
+const originalScrollY = Object.getOwnPropertyDescriptor(window, 'scrollY')
+const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight')
+const originalDocumentScrollHeight = Object.getOwnPropertyDescriptor(document.documentElement, 'scrollHeight')
+const originalBodyScrollHeight = Object.getOwnPropertyDescriptor(document.body, 'scrollHeight')
+
+afterEach(() => {
+  document.body.replaceChildren()
+  vi.unstubAllGlobals()
+  if (originalScrollY) Object.defineProperty(window, 'scrollY', originalScrollY)
+  else Reflect.deleteProperty(window, 'scrollY')
+  if (originalInnerHeight) Object.defineProperty(window, 'innerHeight', originalInnerHeight)
+  else Reflect.deleteProperty(window, 'innerHeight')
+  if (originalDocumentScrollHeight) Object.defineProperty(document.documentElement, 'scrollHeight', originalDocumentScrollHeight)
+  else Reflect.deleteProperty(document.documentElement, 'scrollHeight')
+  if (originalBodyScrollHeight) Object.defineProperty(document.body, 'scrollHeight', originalBodyScrollHeight)
+  else Reflect.deleteProperty(document.body, 'scrollHeight')
+})
 
 const outline = [
   { anchor: '#guide', title: 'Guide', depth: 0 },
@@ -109,11 +128,17 @@ describe('document outline', () => {
     expect(activeOutlineIndex([], 100)).toBe(-1)
   })
 
-  test('promotes the final heading when the viewport reaches the article bottom', () => {
-    const positions = [100, 1_000]
+  test('compresses trailing heading activations into an ordered terminal window', () => {
+    const positions = [100, 1_000, 1_100, 1_200]
 
-    expect(activeOutlineIndexAtScroll(positions, 500, 800, 1_300, 104)).toBe(1)
-    expect(activeOutlineIndexAtScroll(positions, 400, 800, 1_300, 104)).toBe(0)
+    expect(activeOutlineIndexAtScroll(positions, 100, 800, 1_300, 104, 1_400)).toBe(0)
+    expect(activeOutlineIndexAtScroll(positions, 410, 800, 1_300, 104, 1_400)).toBe(1)
+    expect(activeOutlineIndexAtScroll(positions, 460, 800, 1_300, 104, 1_400)).toBe(2)
+    expect(activeOutlineIndexAtScroll(positions, 500, 800, 1_300, 104, 1_400)).toBe(3)
+  })
+
+  test('does not force a final heading when the article has no scrollable end', () => {
+    expect(activeOutlineIndexAtScroll([500, 600], 0, 800, 700, 104, 700)).toBe(-1)
   })
 
   test('generates deterministic collision-free DOM IDs from anchors for sublists', () => {
@@ -159,5 +184,102 @@ describe('document outline', () => {
     // 5. Clearing search/overrides restores baseline
     expect(isBranchEffectivelyExpanded('#setup', baseline, null, null)).toBe(false)
     expect(isBranchEffectivelyExpanded('#guide', baseline, null, null)).toBe(true)
+  })
+
+  test('reconciles a clicked intermediate heading after scroll intent at the clamped document end', () => {
+    let nextFrame = 0
+    const frames = new Map<number, FrameRequestCallback>()
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {
+      const id = ++nextFrame
+      frames.set(id, callback)
+      return id
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number): void => {
+      frames.delete(id)
+    })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(_target: Element): void {}
+        disconnect(): void {}
+      }
+    )
+
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 600 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+    Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: 1_400 })
+    Object.defineProperty(document.body, 'scrollHeight', { configurable: true, value: 1_400 })
+
+    const entries = [
+      { anchor: '#start', title: 'Start', depth: 0 },
+      { anchor: '#middle', title: 'Middle', depth: 0 },
+      { anchor: '#terminal', title: 'Terminal', depth: 0 }
+    ]
+    const article = document.createElement('main')
+    const rect = (top: number, bottom: number): DOMRect =>
+      ({
+        top,
+        bottom,
+        left: 0,
+        right: 0,
+        width: 0,
+        height: bottom - top,
+        x: 0,
+        y: top,
+        toJSON: () => ({})
+      }) as DOMRect
+    Object.defineProperty(article, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(-window.scrollY, 1_400 - window.scrollY)
+    })
+    for (const [index, entry] of entries.entries()) {
+      const heading = document.createElement('h2')
+      heading.id = entry.anchor.slice(1)
+      const documentTop = [100, 500, 1_300][index]!
+      Object.defineProperty(heading, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => rect(documentTop - window.scrollY, documentTop + 40 - window.scrollY)
+      })
+      Object.defineProperty(heading, 'getClientRects', {
+        configurable: true,
+        value: () => [rect(documentTop - window.scrollY, documentTop + 40 - window.scrollY)]
+      })
+      article.append(heading)
+    }
+    document.body.append(article)
+
+    const active: string[] = []
+    const tracker = trackPageOutline(article, entries, anchor => active.push(anchor))
+    const flushFrames = (): void => {
+      while (frames.size > 0) {
+        const callbacks = [...frames.values()]
+        frames.clear()
+        for (const callback of callbacks) callback(0)
+      }
+    }
+
+    try {
+      tracker.setNavigationAnchor('#middle')
+      flushFrames()
+      expect(active[active.length - 1]).toBe('#middle')
+
+      const intents: Event[] = [
+        new WheelEvent('wheel', { bubbles: true, deltaY: 120 }),
+        new Event('touchstart', { bubbles: true }),
+        new KeyboardEvent('keydown', { bubbles: true, key: 'PageDown' })
+      ]
+      for (const intent of intents) {
+        tracker.setNavigationAnchor('#middle')
+        flushFrames()
+        const callbackCount = active.length
+        document.body.dispatchEvent(intent)
+        expect(frames.size).toBe(1)
+        expect(active).toHaveLength(callbackCount)
+        flushFrames()
+        expect(active[active.length - 1]).toBe('#terminal')
+      }
+    } finally {
+      tracker.dispose()
+    }
   })
 })

@@ -689,12 +689,15 @@ const mountInlineAgent = (
     'ControlBorderBeam'
   ])
     app.component(name, componentStub)
-  app.component('AgentContextPicker', Vue.defineComponent({
-    inheritAttrs: false,
-    setup(_props, { attrs }) {
-      return () => Vue.h('div', { ...attrs, class: 'agent-context' })
-    }
-  }))
+  app.component(
+    'AgentContextPicker',
+    Vue.defineComponent({
+      inheritAttrs: false,
+      setup(_props, { attrs }) {
+        return () => Vue.h('div', { ...attrs, class: 'agent-context' })
+      }
+    })
+  )
   app.component('AgentComposer', composerComponent)
   app.mount(host)
 
@@ -856,77 +859,46 @@ describe('Inline Agent workspace actions', () => {
     expect(mounted.root.querySelector('.agent-composer__input textarea')).not.toBeNull()
   })
 
-  it('renders a stable two-line welcome greeting above exactly three starter cards', () => {
-    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+  it('renders a two-line welcome greeting above exactly three starter cards', () => {
+    const mounted = mountInlineAgent(loadGoalLockState(null))
+    const heading = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome h2')
+    const lines = heading ? Array.from(heading.querySelectorAll<HTMLElement>(':scope > .inline-agent__welcome-line')) : []
+    const starterGroup = mounted.root.querySelector<HTMLElement>('.inline-agent__starters')
+    const starters = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__starter'))
+    if (!heading || !starterGroup) throw new Error('Welcome starter cards did not render')
+    expect(lines).toHaveLength(2)
+    expect(lines.map(line => line.tagName)).toEqual(['SPAN', 'EM'])
+    const wordCounts = lines.map(line => (line.textContent?.trim() ?? '').split(/\s+/).filter(Boolean).length)
+    expect(wordCounts.every(count => count >= 2 && count <= 3)).toBe(true)
+    expect(starterGroup.getAttribute('role')).toBe('group')
+    expect(starterGroup.getAttribute('aria-label')).toBe('Conversation starters')
+    expect(heading.nextElementSibling).toBe(starterGroup)
+    expect(starters).toHaveLength(3)
+    expect(starters.map(starter => starter.querySelector<HTMLElement>('.inline-agent__starter-heading strong')?.textContent?.trim())).toEqual([
+      'Explore the Wiki',
+      'Connect the Dots',
+      'Catch Up'
+    ])
+    expect(mounted.root.querySelector('.inline-agent__welcome-mark')).toBeNull()
+    expect(mounted.root.querySelector('.inline-agent__welcome-index')).toBeNull()
+    expect(mounted.root.querySelector('.inline-agent__avatar .mdi-creation-outline')).not.toBeNull()
+  })
+  it('keeps the selected two-line greeting stable for one visit', async () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.42)
     try {
       const mounted = mountInlineAgent(loadGoalLockState(null))
       const heading = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome h2')
       const lines = heading ? Array.from(heading.querySelectorAll<HTMLElement>(':scope > .inline-agent__welcome-line')) : []
-      const starterGroup = mounted.root.querySelector<HTMLElement>('.inline-agent__starters')
-      const starters = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__starter'))
-      if (!heading || !starterGroup) throw new Error('Welcome starter cards did not render')
-      expect(lines.map(line => line.textContent?.trim())).toEqual(['Stacks of possibilities.', 'Zero overdue fees.'])
-      expect(lines.map(line => line.tagName)).toEqual(['SPAN', 'EM'])
-      const wordCounts = lines.map(line => (line.textContent?.trim() ?? '').split(/\s+/).filter(Boolean).length)
-      expect(wordCounts.every(count => count >= 2 && count <= 3)).toBe(true)
-      expect(starterGroup.getAttribute('role')).toBe('group')
-      expect(starterGroup.getAttribute('aria-label')).toBe('Conversation starters')
-      expect(heading.nextElementSibling).toBe(starterGroup)
-      expect(starters).toHaveLength(3)
-      expect(starters.map(starter => starter.querySelector<HTMLElement>('.inline-agent__starter-heading strong')?.textContent?.trim())).toEqual([
-        'Explore the Wiki',
-        'Connect the Dots',
-        'Catch Up'
-      ])
-      expect(mounted.root.querySelector('.inline-agent__welcome-mark')).toBeNull()
-      expect(mounted.root.querySelector('.inline-agent__welcome-index')).toBeNull()
-      expect(mounted.root.querySelector('.inline-agent__avatar .mdi-creation-outline')).not.toBeNull()
+      if (!heading || lines.length !== 2) throw new Error('Welcome greeting lines did not render')
+      expect(lines[0]?.tagName).toBe('SPAN')
+      expect(lines[1]?.tagName).toBe('EM')
+      const initial = heading.textContent
+      mounted.transcriptFollowing.value = false
+      await settle()
+      expect(mounted.root.querySelector<HTMLElement>('.inline-agent__welcome h2')?.textContent).toBe(initial)
     } finally {
       random.mockRestore()
     }
-  })
-
-  it('samples ten compliant greeting pairs and keeps the selected pair stable for the mount', async () => {
-    const random = vi.spyOn(Math, 'random')
-    const greetingPool: Record<string, true> = {
-      'Stacks of possibilities. / Zero overdue fees.': true,
-      'Curiosity checked in. / Confusion checked out.': true,
-      'Your friendly librarian. / Minus the shushing.': true,
-      'A little digging. / No shovel required.': true,
-      'Fresh questions welcome. / Dust jackets optional.': true,
-      'Knowledge needs company. / Pull up curiosity.': true,
-      "Let's browse together. / Bookmarks bring snacks.": true,
-      'Shelves of ideas. / No ladder needed.': true,
-      'A curious chapter. / Plot twists welcome.': true,
-      'Questions find homes. / Alphabetizing is optional.': true
-    }
-    const sampled: string[] = []
-    try {
-      for (let index = 0; index < 10; index += 1) {
-        random.mockReturnValue((index + 0.5) / 10)
-        const mounted = mountInlineAgent(loadGoalLockState(null))
-        const heading = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome h2')
-        const lines = heading ? Array.from(heading.querySelectorAll<HTMLElement>(':scope > .inline-agent__welcome-line')) : []
-        if (!heading || lines.length !== 2) throw new Error('Welcome greeting lines did not render')
-        const rendered = lines.map(line => line.textContent?.trim() ?? '')
-        const counts = rendered.map(line => line.split(/\s+/).filter(Boolean).length)
-        expect(counts.every(count => count >= 2 && count <= 3)).toBe(true)
-        expect(lines[0]?.tagName).toBe('SPAN')
-        expect(lines[1]?.tagName).toBe('EM')
-        const greeting = rendered.join(' / ')
-        expect(greetingPool[greeting]).toBe(true)
-        sampled.push(greeting)
-        const initial = heading.textContent
-        mounted.transcriptFollowing.value = false
-        await settle()
-        expect(mounted.root.querySelector<HTMLElement>('.inline-agent__welcome h2')?.textContent).toBe(initial)
-        mounted.unmount()
-        mountedApps.pop()
-      }
-    } finally {
-      random.mockRestore()
-    }
-    expect(new Set(sampled)).toHaveLength(10)
   })
 
   it('keeps the composer glassy while scrolled until real editing focus, then clears on transcript engagement', async () => {

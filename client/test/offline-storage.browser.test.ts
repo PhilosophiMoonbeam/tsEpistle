@@ -3,20 +3,14 @@ import { fileURLToPath } from 'node:url'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { chromium, type Browser, type Page } from 'playwright-core'
-import {
-  OFFLINE_KEY_VERSION,
-  type OfflineDraftEnvelopeV1,
-  type OfflinePageSnapshotV1
-} from '../../shared/offline.ts'
+import { OFFLINE_KEY_VERSION, type OfflineDraftEnvelopeV1, type OfflinePageSnapshotV1 } from '../../shared/offline.ts'
 
 const storagePath = fileURLToPath(new URL('../helpers/offline-storage.ts', import.meta.url))
 const sessionPath = fileURLToPath(new URL('../helpers/offline-session.ts', import.meta.url))
 const executablePath = process.env.CHROME_BIN ?? '/usr/bin/google-chrome'
 const capturedAt = '2026-09-01T00:00:00.000Z'
 
-type Outcome =
-  | { ok: true; value: unknown }
-  | { ok: false; error: { name: string; code?: string; message: string } }
+type Outcome = { ok: true; value: unknown } | { ok: false; error: { name: string; code?: string; message: string } }
 
 type SnapshotDump = {
   meta: Record<string, unknown> | undefined
@@ -71,13 +65,16 @@ const makeLegacySnapshotRecord = (siteId: string, snapshot: OfflinePageSnapshotV
   }
 }
 
-const makeEnvelope = (recordId: string, options: {
-  generation?: number
-  revision?: number
-  submissionId?: string | null
-  seed?: number
-  accountId?: number
-} = {}): OfflineDraftEnvelopeV1 => {
+const makeEnvelope = (
+  recordId: string,
+  options: {
+    generation?: number
+    revision?: number
+    submissionId?: string | null
+    seed?: number
+    accountId?: number
+  } = {}
+): OfflineDraftEnvelopeV1 => {
   const seed = options.seed ?? recordId.length
   return {
     schemaVersion: 1,
@@ -114,13 +111,11 @@ const policyLogicalBytes = (record: Record<string, unknown>): number => {
   return new TextEncoder().encode(JSON.stringify(withoutSize)).byteLength
 }
 
-const policyManagedBytes = (dump: SnapshotDump): number =>
-  dump.policy.reduce((total, record) => total + policyLogicalBytes(record), 0)
+const policyManagedBytes = (dump: SnapshotDump): number => dump.policy.reduce((total, record) => total + policyLogicalBytes(record), 0)
 
-
-const bytes = (value: unknown): number[] => Array.isArray(value) ? value.map(item => Number(item)) : []
+const bytes = (value: unknown): number[] => (Array.isArray(value) ? value.map(item => Number(item)) : [])
 const driverSource = (absoluteStoragePath: string, absoluteSessionPath: string): string => `
-import { openOfflineStorage, type OfflineStorage } from ${JSON.stringify(absoluteStoragePath)};
+import { openOfflineStorage, subscribeOfflineStorageChanges, type OfflineStorage } from ${JSON.stringify(absoluteStoragePath)};
 import {
   invalidateOfflineSession,
   registerOfflineIdentityBoundaryOwner,
@@ -329,9 +324,41 @@ export async function run(operation: string, payload: Record<string, unknown> = 
     }
     if (operation === 'isClosed') return { ok: true, value: storageFor(payload.id).isClosed };
     if (operation === 'bump') return { ok: true, value: await storageFor(payload.id).bumpSessionGeneration(undefined, payload.options as never) };
+    if (operation === 'setAutomatic') return { ok: true, value: await storageFor(payload.id).setAutomaticSavingEnabled(payload.enabled as boolean, payload.options as never) };
+    if (operation === 'setManual') return {
+      ok: true,
+      value: await storageFor(payload.id).setManualOfflineIntent(payload.selector as never, payload.selected as boolean, payload.options as never)
+    };
+    if (operation === 'setTags') return { ok: true, value: await storageFor(payload.id).setOfflineTagSubscriptions(payload.tags as never, payload.options as never) };
+    if (operation === 'syncTag') return {
+      ok: true,
+      value: await storageFor(payload.id).synchronizeTagProvenance(String(payload.tag), payload.selectors as never, payload.options as never)
+    };
+    if (operation === 'updateAutomatic') return {
+      ok: true,
+      value: await storageFor(payload.id).updateAutomaticSelections(payload.selectors as never, payload.options as never)
+    };
+    if (operation === 'removeOffline') return {
+      ok: true,
+      value: await storageFor(payload.id).removeOfflinePage(payload.selector as never, payload.options as never)
+    };
+    if (operation === 'policyNotice') {
+      let localNotice: unknown = null;
+      const unsubscribe = subscribeOfflineStorageChanges(notice => { localNotice = notice });
+      const remoteChannel = new BroadcastChannel('tsepistle-offline:changes');
+      const remoteNotice = new Promise<unknown>(resolve => {
+        remoteChannel.onmessage = event => resolve(event.data);
+      });
+      try {
+        await storageFor(payload.id).updateAutomaticSelections(payload.selectors as never, payload.options as never);
+        const broadcast = await remoteNotice;
+        return { ok: true, value: { localNotice, remoteNotice: broadcast } };
+      } finally {
+        unsubscribe();
+        remoteChannel.close();
+      }
+    }
     if (operation === 'putSnapshot') return { ok: true, value: await storageFor(payload.id).putSnapshot(String(payload.siteId), payload.snapshot as never, payload.options as never) };
-    if (operation === 'setManual') return { ok: true, value: await storageFor(payload.id).setManualOfflineIntent(payload.selector as never, payload.selected as boolean, payload.options as never) };
-    if (operation === 'removeOffline') return { ok: true, value: await storageFor(payload.id).removeOfflinePage(payload.selector as never, payload.options as never) };
     if (operation === 'delete') return { ok: true, value: await storageFor(payload.id).deleteDraft(String(payload.recordId), payload.options as never) };
     if (operation === 'removeSnapshot') { await storageFor(payload.id).removeSnapshot(String(payload.siteId), Number(payload.pageId), typeof payload.locale === 'string' ? payload.locale : undefined, payload.options as never); return { ok: true, value: true }; }
     if (operation === 'listSnapshots') return { ok: true, value: await storageFor(payload.id).listSnapshots(String(payload.siteId)) };
@@ -381,14 +408,17 @@ let driverURL: string
 const databaseNames = new Set<string>()
 
 const invoke = async (operation: string, payload: Record<string, unknown> = {}): Promise<Outcome> => {
-  return await page.evaluate(async ({ moduleURL, operationName, operationPayload }) => {
-    // The test server URL is runtime-selected so the production adapter executes in a real browser origin.
-    const driver = await import(moduleURL) as { run: (name: string, value: Record<string, unknown>) => Promise<unknown> }
-    return await driver.run(operationName, operationPayload) as Outcome
-  }, { moduleURL: driverURL, operationName: operation, operationPayload: payload })
+  return await page.evaluate(
+    async ({ moduleURL, operationName, operationPayload }) => {
+      // The test server URL is runtime-selected so the production adapter executes in a real browser origin.
+      const driver = (await import(moduleURL)) as { run: (name: string, value: Record<string, unknown>) => Promise<unknown> }
+      return (await driver.run(operationName, operationPayload)) as Outcome
+    },
+    { moduleURL: driverURL, operationName: operation, operationPayload: payload }
+  )
 }
 
-const succeeded = async <Value,>(operation: string, payload: Record<string, unknown> = {}): Promise<Value> => {
+const succeeded = async <Value>(operation: string, payload: Record<string, unknown> = {}): Promise<Value> => {
   const outcome = await invoke(operation, payload)
   expect(outcome.ok, outcome.ok ? '' : JSON.stringify(outcome)).toBe(true)
   if (!outcome.ok) throw new Error(outcome.error.message)
@@ -420,7 +450,8 @@ beforeAll(async () => {
   const server = Bun.serve({
     port: 0,
     fetch(request) {
-      if (new URL(request.url).pathname === '/adapter.js') return new Response(output, { headers: { 'content-type': 'text/javascript', 'access-control-allow-origin': '*' } })
+      if (new URL(request.url).pathname === '/adapter.js')
+        return new Response(output, { headers: { 'content-type': 'text/javascript', 'access-control-allow-origin': '*' } })
       return new Response('<!doctype html><title>offline adapter test</title>', { headers: { 'content-type': 'text/html' } })
     }
   })
@@ -483,12 +514,9 @@ describe('real IndexedDB offline storage adapter', () => {
     const name = freshDatabase('generation')
     await succeeded('open', { id: 'first', name })
     await succeeded('open', { id: 'second', name })
-    const results = await Promise.all([
-      invoke('bump', { id: 'first' }),
-      invoke('bump', { id: 'second' })
-    ])
+    const results = await Promise.all([invoke('bump', { id: 'first' }), invoke('bump', { id: 'second' })])
     expect(results.every(result => result.ok)).toBe(true)
-    expect(results.map(result => result.ok ? result.value : null).sort()).toEqual([1, 2])
+    expect(results.map(result => (result.ok ? result.value : null)).sort()).toEqual([1, 2])
     const draft = makeEnvelope('stale-draft', { generation: 0 })
     await succeeded('open', { id: 'stale', name })
     await failedWith('putDraft', { id: 'stale', envelope: draft }, 'generation-fenced')
@@ -517,10 +545,14 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(bytes(afterKeyDenial.drafts.find(draft => draft.recordId === 'ordinary')?.ciphertext)).toEqual(Array.from(ordinary.ciphertext))
     expect(bytes(afterKeyDenial.drafts.find(draft => draft.recordId === 'receipt')?.ciphertext)).toEqual(Array.from(receipt.ciphertext))
 
-    await failedWith('putDraft', {
-      id: 'storage',
-      envelope: makeEnvelope('stale-write', { generation: 0, seed: 43 })
-    }, 'generation-fenced')
+    await failedWith(
+      'putDraft',
+      {
+        id: 'storage',
+        envelope: makeEnvelope('stale-write', { generation: 0, seed: 43 })
+      },
+      'generation-fenced'
+    )
     const logout = await succeeded<{
       sessionGeneration: number
       deletedCount: number
@@ -566,10 +598,14 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(afterDenial.drafts.map(draft => draft.recordId).sort()).toEqual(['denied-ordinary', 'denied-receipt'])
     expect(bytes(afterDenial.drafts.find(draft => draft.recordId === ordinary.recordId)?.ciphertext)).toEqual(Array.from(ordinary.ciphertext))
     expect(bytes(afterDenial.drafts.find(draft => draft.recordId === receipt.recordId)?.ciphertext)).toEqual(Array.from(receipt.ciphertext))
-    await failedWith('putDraft', {
-      id: 'storage',
-      envelope: makeEnvelope('denied-stale-write', { generation: 0, seed: 47 })
-    }, 'generation-fenced')
+    await failedWith(
+      'putDraft',
+      {
+        id: 'storage',
+        envelope: makeEnvelope('denied-stale-write', { generation: 0, seed: 47 })
+      },
+      'generation-fenced'
+    )
   })
 
   test('recovers ordinary drafts through the browser adapter with CAS and generation fencing', async () => {
@@ -581,24 +617,36 @@ describe('real IndexedDB offline storage adapter', () => {
     await succeeded('bump', { id: 'storage', options: { expectedSessionGeneration: 0 } })
 
     const changedEnvelope = { ...original, ciphertext: Uint8Array.from(original.ciphertext).map(value => value ^ 0xff) }
-    await failedWith('recover', {
-      id: 'storage',
-      expectedEnvelope: changedEnvelope,
-      replacementEnvelope: replacement,
-      options: { expectedSessionGeneration: 1 }
-    }, 'draft-conflict')
-    await failedWith('recover', {
-      id: 'storage',
-      expectedEnvelope: original,
-      replacementEnvelope: makeEnvelope('different-record', { generation: 1, revision: 2, seed: 53 }),
-      options: { expectedSessionGeneration: 1 }
-    }, 'invalid-record')
-    await failedWith('recover', {
-      id: 'storage',
-      expectedEnvelope: original,
-      replacementEnvelope: replacement,
-      options: { expectedSessionGeneration: 0 }
-    }, 'generation-fenced')
+    await failedWith(
+      'recover',
+      {
+        id: 'storage',
+        expectedEnvelope: changedEnvelope,
+        replacementEnvelope: replacement,
+        options: { expectedSessionGeneration: 1 }
+      },
+      'draft-conflict'
+    )
+    await failedWith(
+      'recover',
+      {
+        id: 'storage',
+        expectedEnvelope: original,
+        replacementEnvelope: makeEnvelope('different-record', { generation: 1, revision: 2, seed: 53 }),
+        options: { expectedSessionGeneration: 1 }
+      },
+      'invalid-record'
+    )
+    await failedWith(
+      'recover',
+      {
+        id: 'storage',
+        expectedEnvelope: original,
+        replacementEnvelope: replacement,
+        options: { expectedSessionGeneration: 0 }
+      },
+      'generation-fenced'
+    )
 
     const recovered = await succeeded<OfflineDraftEnvelopeV1>('recover', {
       id: 'storage',
@@ -622,24 +670,36 @@ describe('real IndexedDB offline storage adapter', () => {
     await succeeded('bump', { id: 'storage', options: { expectedSessionGeneration: 0 } })
 
     const changedEnvelope = { ...original, ciphertext: Uint8Array.from(original.ciphertext).map(value => value ^ 0xff) }
-    await failedWith('rewrap', {
-      id: 'storage',
-      expectedEnvelope: changedEnvelope,
-      replacementEnvelope: replacement,
-      options: { expectedSessionGeneration: 1 }
-    }, 'draft-conflict')
-    await failedWith('rewrap', {
-      id: 'storage',
-      expectedEnvelope: original,
-      replacementEnvelope: makeEnvelope('rewrap-receipt', { generation: 1, revision: 5, submissionId: 'submission-4', seed: 63 }),
-      options: { expectedSessionGeneration: 1 }
-    }, 'invalid-record')
-    await failedWith('rewrap', {
-      id: 'storage',
-      expectedEnvelope: original,
-      replacementEnvelope: replacement,
-      options: { expectedSessionGeneration: 0 }
-    }, 'generation-fenced')
+    await failedWith(
+      'rewrap',
+      {
+        id: 'storage',
+        expectedEnvelope: changedEnvelope,
+        replacementEnvelope: replacement,
+        options: { expectedSessionGeneration: 1 }
+      },
+      'draft-conflict'
+    )
+    await failedWith(
+      'rewrap',
+      {
+        id: 'storage',
+        expectedEnvelope: original,
+        replacementEnvelope: makeEnvelope('rewrap-receipt', { generation: 1, revision: 5, submissionId: 'submission-4', seed: 63 }),
+        options: { expectedSessionGeneration: 1 }
+      },
+      'invalid-record'
+    )
+    await failedWith(
+      'rewrap',
+      {
+        id: 'storage',
+        expectedEnvelope: original,
+        replacementEnvelope: replacement,
+        options: { expectedSessionGeneration: 0 }
+      },
+      'generation-fenced'
+    )
 
     const rewrapped = await succeeded<OfflineDraftEnvelopeV1>('rewrap', {
       id: 'storage',
@@ -647,7 +707,12 @@ describe('real IndexedDB offline storage adapter', () => {
       replacementEnvelope: replacement,
       options: { expectedSessionGeneration: 1 }
     })
-    expect(rewrapped).toMatchObject({ recordId: replacement.recordId, sessionGeneration: 1, draftRevision: replacement.draftRevision, submissionId: replacement.submissionId })
+    expect(rewrapped).toMatchObject({
+      recordId: replacement.recordId,
+      sessionGeneration: 1,
+      draftRevision: replacement.draftRevision,
+      submissionId: replacement.submissionId
+    })
     const afterRewrap = await readDump(name)
     expect(afterRewrap.meta?.sessionGeneration).toBe(1)
     expect(afterRewrap.drafts).toHaveLength(1)
@@ -662,12 +727,16 @@ describe('real IndexedDB offline storage adapter', () => {
     await succeeded('putDraft', { id: 'recover', envelope: recoverOriginal })
     await succeeded('bump', { id: 'recover', options: { expectedSessionGeneration: 0 } })
     const recoverBefore = await readDump(recoverName)
-    await failedWith('recoverAbort', {
-      id: 'recover',
-      expectedEnvelope: recoverOriginal,
-      replacementEnvelope: recoverReplacement,
-      options: { expectedSessionGeneration: 1 }
-    }, 'transaction')
+    await failedWith(
+      'recoverAbort',
+      {
+        id: 'recover',
+        expectedEnvelope: recoverOriginal,
+        replacementEnvelope: recoverReplacement,
+        options: { expectedSessionGeneration: 1 }
+      },
+      'transaction'
+    )
     const recoverAfter = await readDump(recoverName)
     expect(recoverAfter.meta).toEqual(recoverBefore.meta)
     expect(recoverAfter.drafts).toEqual(recoverBefore.drafts)
@@ -679,12 +748,16 @@ describe('real IndexedDB offline storage adapter', () => {
     await succeeded('putDraft', { id: 'rewrap', envelope: rewrapOriginal })
     await succeeded('bump', { id: 'rewrap', options: { expectedSessionGeneration: 0 } })
     const rewrapBefore = await readDump(rewrapName)
-    await failedWith('rewrapAbort', {
-      id: 'rewrap',
-      expectedEnvelope: rewrapOriginal,
-      replacementEnvelope: rewrapReplacement,
-      options: { expectedSessionGeneration: 1 }
-    }, 'transaction')
+    await failedWith(
+      'rewrapAbort',
+      {
+        id: 'rewrap',
+        expectedEnvelope: rewrapOriginal,
+        replacementEnvelope: rewrapReplacement,
+        options: { expectedSessionGeneration: 1 }
+      },
+      'transaction'
+    )
     const rewrapAfter = await readDump(rewrapName)
     expect(rewrapAfter.meta).toEqual(rewrapBefore.meta)
     expect(rewrapAfter.drafts).toEqual(rewrapBefore.drafts)
@@ -717,12 +790,128 @@ describe('real IndexedDB offline storage adapter', () => {
     })
     expect(reenabled).toMatchObject({ manual: true, excluded: false })
     expect((await succeeded<StorageEstimate>('estimate', { id: 'storage' })).policyRevision).toBe(3)
-    await failedWith('setManual', {
+    await failedWith(
+      'setManual',
+      {
+        id: 'storage',
+        selector,
+        selected: false,
+        options: { expectedPolicyRevision: 2 }
+      },
+      'policy-revision-fenced'
+    )
+  })
+
+  test('rotates automatic membership to exactly ten records and prunes only the displaced copy', async () => {
+    const name = freshDatabase('automatic-rotation')
+    const siteId = 'rotation-site'
+    const selectors = Array.from({ length: 11 }, (_value, index) => ({ siteId, pageId: index + 1, locale: 'en' }))
+    await succeeded('open', { id: 'storage', name })
+    await succeeded('updateAutomatic', {
       id: 'storage',
-      selector,
-      selected: false,
-      options: { expectedPolicyRevision: 2 }
-    }, 'policy-revision-fenced')
+      selectors: selectors.slice(0, 10),
+      options: { asOf: capturedAt }
+    })
+    await succeeded('setManual', { id: 'storage', selector: selectors[1], selected: true })
+    await succeeded('setTags', { id: 'storage', tags: ['keep'] })
+    await succeeded('syncTag', { id: 'storage', tag: 'keep', selectors: [selectors[2]] })
+    await succeeded('putSnapshot', {
+      id: 'storage',
+      siteId,
+      snapshot: makeSnapshot('en', 1),
+      options: { provenance: { automatic: true } }
+    })
+    await succeeded('putSnapshot', {
+      id: 'storage',
+      siteId,
+      snapshot: makeSnapshot('en', 2),
+      options: { provenance: { manual: true, automatic: true } }
+    })
+    await succeeded('putSnapshot', {
+      id: 'storage',
+      siteId,
+      snapshot: makeSnapshot('en', 3),
+      options: { provenance: { automatic: true, tagNames: ['keep'] } }
+    })
+    await succeeded('updateAutomatic', {
+      id: 'storage',
+      selectors: selectors.slice(1),
+      options: { asOf: capturedAt }
+    })
+    const dump = await readDump(name)
+    const pages = dump.policy.filter(record => record.recordType === 'page')
+    expect(pages.filter(record => record.automatic === true)).toHaveLength(10)
+    expect(pages.find(record => record.pageId === 1)).toMatchObject({
+      automatic: false,
+      automaticSelectedAt: null,
+      manual: false,
+      tag: false
+    })
+    expect(pages.find(record => record.pageId === 2)).toMatchObject({ automatic: true, manual: true })
+    expect(pages.find(record => record.pageId === 3)).toMatchObject({ automatic: true, tag: true, tagNames: ['keep'] })
+    expect(dump.snapshots.map(record => Number(record.pageId)).sort((left, right) => left - right)).toEqual([2, 3])
+  })
+
+  test('disabling automatic saving clears automatic-only policy and body while retaining manual and tag sources', async () => {
+    const name = freshDatabase('automatic-disable')
+    const siteId = 'disable-site'
+    const automaticOnly = { siteId, pageId: 1, locale: 'en' }
+    const manualOverlap = { siteId, pageId: 2, locale: 'en' }
+    const tagOverlap = { siteId, pageId: 3, locale: 'en' }
+    await succeeded('open', { id: 'storage', name })
+    await succeeded('setAutomatic', { id: 'storage', enabled: true })
+    await succeeded('updateAutomatic', {
+      id: 'storage',
+      selectors: [automaticOnly, manualOverlap, tagOverlap],
+      options: { asOf: capturedAt }
+    })
+    await succeeded('setManual', { id: 'storage', selector: manualOverlap, selected: true })
+    await succeeded('setTags', { id: 'storage', tags: ['keep'] })
+    await succeeded('syncTag', { id: 'storage', tag: 'keep', selectors: [tagOverlap] })
+    await succeeded('putSnapshot', {
+      id: 'storage',
+      siteId,
+      snapshot: makeSnapshot('en', 1),
+      options: { provenance: { automatic: true } }
+    })
+    await succeeded('putSnapshot', {
+      id: 'storage',
+      siteId,
+      snapshot: makeSnapshot('en', 2),
+      options: { provenance: { manual: true, automatic: true } }
+    })
+    await succeeded('putSnapshot', {
+      id: 'storage',
+      siteId,
+      snapshot: makeSnapshot('en', 3),
+      options: { provenance: { automatic: true, tagNames: ['keep'] } }
+    })
+    await succeeded('setAutomatic', { id: 'storage', enabled: false })
+    await succeeded('updateAutomatic', { id: 'storage', selectors: [], options: { asOf: capturedAt } })
+    const dump = await readDump(name)
+    const pages = dump.policy.filter(record => record.recordType === 'page')
+    expect(pages.find(record => record.pageId === 1)).toMatchObject({
+      automatic: false,
+      automaticSelectedAt: null,
+      manual: false,
+      tag: false
+    })
+    expect(pages.find(record => record.pageId === 2)).toMatchObject({ automatic: false, manual: true })
+    expect(pages.find(record => record.pageId === 3)).toMatchObject({ automatic: false, tag: true, tagNames: ['keep'] })
+    expect(dump.snapshots.map(record => Number(record.pageId)).sort((left, right) => left - right)).toEqual([2, 3])
+  })
+
+  test('broadcasts committed policy-only automatic changes to another tab', async () => {
+    const name = freshDatabase('policy-notice')
+    const selector = { siteId: 'notice-site', pageId: 7, locale: 'en' }
+    await succeeded('open', { id: 'storage', name })
+    const notices = await succeeded<{ localNotice: Record<string, unknown>; remoteNotice: Record<string, unknown> }>('policyNotice', {
+      id: 'storage',
+      selectors: [selector],
+      options: { asOf: capturedAt }
+    })
+    expect(notices.localNotice).toEqual({ kind: 'policy', sessionGeneration: 0, corpusRevision: 0 })
+    expect(notices.remoteNotice).toEqual({ kind: 'policy', sessionGeneration: 0, corpusRevision: 0 })
   })
 
   test('keeps exact metadata deltas and one locale variant for each immutable page', async () => {
@@ -745,10 +934,7 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(estimate.sessionGeneration).toBe(0)
     expect(estimate.policyRevision).toBe(0)
     expect(estimate.managedBytes).toBe(
-      Number(french.byteSize) +
-      Number(dump.searchDocuments[0]?.byteSize) +
-      draftLogicalBytes(draft) +
-      policyManagedBytes(dump)
+      Number(french.byteSize) + Number(dump.searchDocuments[0]?.byteSize) + draftLogicalBytes(draft) + policyManagedBytes(dump)
     )
     expect(dump.meta?.corpusRevision).toBe(2)
     await succeeded('removeSnapshot', { id: 'storage', siteId: 'stable-site', pageId: 42 })
@@ -771,11 +957,15 @@ describe('real IndexedDB offline storage adapter', () => {
       envelope: second,
       options: { expectedDraftRevision: first.draftRevision, expectedSubmissionId: first.submissionId }
     })
-    await failedWith('putDraft', {
-      id: 'storage',
-      envelope: makeEnvelope('mutable', { revision: 2, seed: 33 }),
-      options: { expectedDraftRevision: first.draftRevision, expectedSubmissionId: first.submissionId }
-    }, 'draft-conflict')
+    await failedWith(
+      'putDraft',
+      {
+        id: 'storage',
+        envelope: makeEnvelope('mutable', { revision: 2, seed: 33 }),
+        options: { expectedDraftRevision: first.draftRevision, expectedSubmissionId: first.submissionId }
+      },
+      'draft-conflict'
+    )
     const dump = await readDump(name)
     expect(bytes(dump.drafts[0]?.ciphertext)).toEqual(Array.from(second.ciphertext))
   })
@@ -795,15 +985,19 @@ describe('real IndexedDB offline storage adapter', () => {
     await failedWith('delete', { id: 'storage', recordId: 'receipt' }, 'immutable-submission')
     const staleSource = { ...source, nonce: Uint8Array.from(source.nonce).map(value => value ^ 0xff) }
     const replacementFork = makeEnvelope('fork', { revision: 3, seed: 11 })
-    await failedWith('finalize', {
-      id: 'storage',
-      options: {
-        expectedReceipt: receipt,
-        expectedSource: staleSource,
-        expectedSurvivingFork: fork,
-        survivingFork: replacementFork
-      }
-    }, 'draft-conflict')
+    await failedWith(
+      'finalize',
+      {
+        id: 'storage',
+        options: {
+          expectedReceipt: receipt,
+          expectedSource: staleSource,
+          expectedSurvivingFork: fork,
+          survivingFork: replacementFork
+        }
+      },
+      'draft-conflict'
+    )
     const dump = await readDump(name)
     expect(dump.drafts.map(draft => draft.recordId).sort()).toEqual(['fork', 'receipt', 'source'])
     expect(bytes(dump.drafts.find(draft => draft.recordId === 'receipt')?.ciphertext)).toEqual(Array.from(receipt.ciphertext))
@@ -875,4 +1069,3 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(dump.meta?.sessionGeneration).toBe(4)
   })
 })
-

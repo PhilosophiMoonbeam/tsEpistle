@@ -112,6 +112,20 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
     expect(source).toContain("      template(v-else)\n        template(v-for='(item, idx) of customItems'")
     expect(script).toContain("return this.items.filter(item => item.k !== 'link' || item.y !== 'home')")
   })
+  test('aligns Home with the mode group and gives Browse quiet hierarchy cues', () => {
+    expect(source).toContain('height: calc(var(--wiki-control-height) + var(--wiki-space-2));')
+    expect(source).toContain('min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));')
+    expect(source).toMatch(/\.nav-sidebar-home\[aria-current='page'\] \.v-icon\s*\{[\s\S]*?color:\s*var\(--wiki-accent-ink\);[\s\S]*?opacity:\s*1;/)
+    expect(source).toContain('.nav-sidebar-ancestor-trail')
+    expect(source).toContain('max-height: min(12rem, 32vh);')
+    expect(source).toContain('overflow-y: auto;')
+    expect(source).toContain('.nav-sidebar-folder .v-list-item-title')
+    expect(source).toContain('font-weight: 600;')
+    expect(source.match(/v-icon\.nav-sidebar-folder-chevron/g)).toHaveLength(2)
+    expect(source).toContain("$vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right'")
+    expect(source).toContain("v-list-item-title(:title='item.title')")
+    expect(source).toContain(":active='path === item.path'")
+  })
 
   test('keeps both MIXED view controls available and exposes the selected state', () => {
     expect(source).toContain(".nav-sidebar-modes(v-if='navMode === `MIXED`', role='group'")

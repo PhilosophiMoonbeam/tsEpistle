@@ -26,7 +26,7 @@
         )
       v-row.page-selector__panes(gap='0')
         v-col.page-selector__pane.page-selector__tree-pane(cols='12' md='5')
-          v-toolbar(color='surface-variant' density='compact' flat)
+          v-toolbar.page-selector__pane-toolbar(color='surface-variant' density='compact' flat)
             h3.page-selector__folders-label.text-body-medium(:id='foldersId') {{$t('common:pageSelector.virtualFolders')}}
             v-spacer
             v-tooltip(location='top')
@@ -59,7 +59,7 @@
                       :loading='isFolderRetrying(failure)'
                       @click='retryFolderLoad(failure)'
                     ) Try again
-              v-treeview(
+              v-treeview.page-selector__tree(
                 :key='`pageTree-` + treeViewCacheId'
                 v-model:activated='currentNode'
                 v-model:opened='openNodes'
@@ -77,16 +77,27 @@
                 template(v-slot:prepend='{ isOpen }')
                   v-icon(aria-hidden='true') mdi-{{ isOpen ? 'folder-open' : 'folder' }}
         v-col.page-selector__pane.page-selector__pages-pane(cols='12' md='7')
-          v-toolbar(color='surface-variant' density='compact' flat)
+          v-toolbar.page-selector__pane-toolbar(color='surface-variant' density='compact' flat)
             h3.text-body-medium(:id='pagesId') {{$t('common:pageSelector.pages')}}
           div.page-selector__scroller(role='region' :aria-labelledby='pagesId' :aria-busy='currentFolderLoading && currentPages.length > 0 ? `true` : undefined')
-            async-state(
+            .page-selector__selection-note(
+              v-if='currentPages.length > 0'
+              :class="{ 'page-selector__selection-note--selected': currentPage }"
+              :data-selection-state='currentPage ? `selected` : `none`'
+              role='status'
+              aria-live='polite'
+              aria-atomic='true'
+            )
+              v-icon(:color='currentPage ? `primary` : `on-surface-variant`' size='16' aria-hidden='true') mdi-{{ currentPage ? 'check-circle-outline' : 'cursor-default-click-outline' }}
+              span(v-if='currentPage') Page selected
+              span(v-else) Select a page to continue.
+            async-state.page-selector__state(
               v-if='currentFolderLoading && currentPages.length === 0'
               state='loading'
               title='Loading pages'
               message='Loading pages in the selected folder.'
             )
-            v-list.py-0(
+            v-list.page-selector__pages-list.py-0(
               v-else-if='currentPages.length > 0'
               v-model:activated='currentPageIds'
               density='compact'
@@ -94,12 +105,15 @@
               :aria-labelledby='pagesId'
               mandatory
             )
-              template(v-for='(page, idx) of currentPages' :key='`page-` + page.id')
-                v-list-item(:value='page.id')
+              template(v-for='page of currentPages' :key='`page-` + page.id')
+                v-list-item(
+                  :value='page.id'
+                  :class="{ 'page-selector__page--selected': currentPage?.id === page.id, 'page-selector__page--current': page.path === path && currentLocale === locale }"
+                  :aria-current='page.path === path && currentLocale === locale ? `page` : undefined'
+                )
                   template(v-slot:prepend): v-icon aria-hidden='true' mdi-text-box-outline
                   v-list-item-title {{page.title}}
-                v-divider(v-if='idx < currentPages.length - 1')
-            async-state(
+            async-state.page-selector__state(
               v-else-if='currentFolderFailure'
               state='error'
               :title='`Could not load ${currentFolderFailure.item.title}`'
@@ -108,7 +122,7 @@
               :announce='false'
               @retry='retryCurrentFolderLoad'
             )
-            async-state(
+            async-state.page-selector__state(
               v-else-if='!currentFolderFailure'
               state='empty'
               :title='$t(`common:pageSelector.folderEmptyWarning`)'
@@ -448,6 +462,12 @@ export default defineComponent({
 
 <style lang='scss'>
 .page-selector {
+  --page-selector-row-height: 2.75rem;
+
+  overflow: hidden;
+  background: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
+  color: rgb(var(--v-theme-on-surface));
+
   .v-treeview .v-list-item-title {
     font-size: 13px;
   }
@@ -458,10 +478,31 @@ export default defineComponent({
 
   &__panes {
     min-width: 0;
+    border-block-end: 1px solid var(--wiki-surface-border);
   }
 
   &__pane {
     min-width: 0;
+    padding: 0 !important;
+    background: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
+  }
+
+  &__tree-pane {
+    background: color-mix(
+      in srgb,
+      var(--wiki-surface-sunken, rgb(var(--v-theme-background))) 34%,
+      var(--wiki-surface-raised, rgb(var(--v-theme-surface)))
+    );
+  }
+
+  &__pages-pane {
+    border-inline-start: 1px solid var(--wiki-surface-border);
+  }
+
+  &__pane-toolbar {
+    min-height: var(--page-selector-row-height);
+    border-block-end: 1px solid var(--wiki-surface-border);
+    color: rgb(var(--v-theme-on-surface));
   }
 
   &__folders-label {
@@ -470,18 +511,132 @@ export default defineComponent({
 
   &__folder-errors {
     display: grid;
-    gap: .5rem;
-    padding: .5rem;
+    gap: var(--wiki-space-2);
+    padding: var(--wiki-space-2) var(--wiki-space-3);
+  }
+
+  &__folder-error {
+    border-radius: var(--wiki-control-radius);
   }
 
   &__scroller {
     min-height: 12rem;
     max-height: min(400px, 52dvh);
     overflow: hidden;
+    padding-block: var(--wiki-space-2);
+  }
+
+  &__tree,
+  &__pages-list {
+    padding-block: 0 var(--wiki-space-2);
+    padding-inline: var(--wiki-space-2);
+  }
+
+  &__tree .v-list-item,
+  &__pages-list .v-list-item {
+    min-height: var(--page-selector-row-height);
+    border: 1px solid transparent;
+    border-radius: var(--wiki-control-radius);
+    color: rgb(var(--v-theme-on-surface));
+    transition:
+      background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
+  }
+
+  &__tree .v-list-item {
+    margin-block: 1px;
+  }
+
+  &__tree .v-list-item--active {
+    border-color: color-mix(in srgb, var(--wiki-accent-ink) 34%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--wiki-accent-ink) 9%,
+      var(--wiki-surface-raised, rgb(var(--v-theme-surface)))
+    );
+    color: var(--wiki-accent-ink);
+  }
+
+  &__pages-list .v-list-item {
+    margin-block: var(--wiki-space-1);
+    padding-inline: var(--wiki-space-3);
+  }
+
+  &__selection-note {
+    display: flex;
+    min-height: 2.25rem;
+    align-items: center;
+    gap: var(--wiki-space-2);
+    margin: var(--wiki-space-2) var(--wiki-space-3) var(--wiki-space-1);
+    padding: var(--wiki-space-1) var(--wiki-space-2);
+    border: 1px dashed var(--wiki-surface-border);
+    border-radius: var(--wiki-control-radius);
+    background: var(--wiki-surface-sunken, rgb(var(--v-theme-background)));
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
+    font-size: var(--wiki-type-body-sm, .875rem);
+  }
+
+  &__selection-note--selected {
+    border-style: solid;
+    border-color: color-mix(in srgb, var(--wiki-accent-ink) 44%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--wiki-accent-ink) 7%,
+      var(--wiki-surface-raised, rgb(var(--v-theme-surface)))
+    );
+    color: var(--wiki-accent-ink);
+  }
+
+  &__page--current {
+    border-style: dashed;
+    border-color: color-mix(in srgb, var(--wiki-accent-ink) 52%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--wiki-accent-ink) 5%,
+      var(--wiki-surface-raised, rgb(var(--v-theme-surface)))
+    );
+  }
+
+  &__page--selected {
+    border-style: solid;
+    border-color: color-mix(in srgb, var(--wiki-accent-ink) 62%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--wiki-accent-ink) 13%,
+      var(--wiki-surface-raised, rgb(var(--v-theme-surface)))
+    );
+    box-shadow: inset .2rem 0 var(--wiki-accent-ink);
+    color: var(--wiki-accent-ink);
+  }
+
+  &__page--selected.page-selector__page--current {
+    border-style: solid;
+    box-shadow:
+      inset .2rem 0 var(--wiki-accent-ink),
+      0 0 0 1px color-mix(in srgb, var(--wiki-accent-ink) 24%, transparent);
+  }
+
+  &__state {
+    min-height: 7.5rem;
+    margin: var(--wiki-space-3);
+  }
+
+  &__state.async-state--loading {
+    border-style: solid;
+    border-color: color-mix(in srgb, var(--wiki-accent-ink) 24%, transparent);
+  }
+
+  &__state.async-state--empty {
+    background: var(--wiki-surface-sunken, rgb(var(--v-theme-background)));
+  }
+
+  &__state.async-state--error {
+    border-style: solid;
   }
 
   &__options {
-    gap: .5rem;
+    gap: var(--wiki-space-2);
   }
 
   &__options .v-select {
@@ -500,13 +655,14 @@ export default defineComponent({
     z-index: 1;
     display: flex;
     align-items: center;
-    gap: .5rem;
+    gap: var(--wiki-space-2);
     flex-wrap: wrap;
   }
 
   &__submission-error {
     flex: 1 1 100%;
     min-width: 0;
+    border-radius: var(--wiki-control-radius);
   }
 }
 
@@ -514,6 +670,12 @@ export default defineComponent({
   .page-selector__panes {
     display: block;
     overflow-y: auto;
+    border-block-end: 0;
+  }
+
+  .page-selector__pages-pane {
+    border-block-start: 1px solid var(--wiki-surface-border);
+    border-inline-start: 0;
   }
 
   .page-selector__scroller {

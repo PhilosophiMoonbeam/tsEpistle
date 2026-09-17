@@ -22,6 +22,7 @@ import {
   type AgentThreadState,
   type AgentToolCallName,
   type AgentToolCallView,
+  type AgentToolContextExclusion,
   type AgentToolState
 } from '../../shared/agents/contracts.ts'
 
@@ -69,7 +70,6 @@ const citations = (value: string | null): readonly AgentCitation[] => {
   if (!result.success) throw new AgentRepositoryError('AGENT_MESSAGE_CORRUPT', 'Agent message citations are invalid', 500)
   return result.data
 }
-
 interface ToolAccumulator {
   id: string
   runId: string
@@ -79,6 +79,7 @@ interface ToolAccumulator {
   risk: AgentActionRisk
   summary: string | null
   proposalId: string | null
+  contextExclusion?: AgentToolContextExclusion
   startedAt: string
   completedAt: string | null
 }
@@ -100,6 +101,18 @@ const completedToolState = (data: AgentEvent['data']): AgentToolState => {
     return 'complete'
   }
   return 'complete'
+}
+
+const contextExclusionSchema = z.strictObject({
+  status: z.enum(['omitted', 'not_executed']),
+  reason: z.literal('tool_result_capacity')
+})
+
+const contextExclusionFor = (data: AgentEvent['data']): AgentToolContextExclusion | undefined => {
+  if (!Object.hasOwn(data, 'contextExclusion')) return undefined
+  const parsed = contextExclusionSchema.safeParse(data.contextExclusion)
+  if (!parsed.success) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool context exclusion is invalid', 500)
+  return parsed.data
 }
 
 export interface ReducedAgentEvents {
@@ -137,6 +150,8 @@ export const reduceAgentEvents = (events: readonly AgentEvent[], latestRunId: st
     const actionCallId = stringValue(event.data.actionCallId, 128)
     if (actionCallId === null) continue
     if (event.type === 'tool.started') {
+      if (Object.hasOwn(event.data, 'contextExclusion'))
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool start cannot have a context exclusion', 500)
       const actionName = stringValue(event.data.actionName, 128)
       const risk = riskSchema.safeParse(event.data.risk)
       const title = stringValue(event.data.title, 255)
@@ -174,6 +189,7 @@ export const reduceAgentEvents = (events: readonly AgentEvent[], latestRunId: st
 
     const tool = toolsByRun.get(event.runId)?.get(actionCallId)
     if (!tool) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool event has no start boundary', 500)
+    if (tool.completedAt !== null) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool activity has multiple terminal events', 500)
     const eventActionName = event.data.actionName
     if (eventActionName !== undefined && (typeof eventActionName !== 'string' || !toolCallNames.has(eventActionName) || eventActionName !== tool.actionName))
       throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool event action is invalid', 500)
@@ -187,10 +203,24 @@ export const reduceAgentEvents = (events: readonly AgentEvent[], latestRunId: st
       tool.state = 'awaitingApproval'
       tool.proposalId = stringValue(event.data.proposalId, 64)
     } else if (event.type === 'tool.completed') {
-      tool.state = completedToolState(event.data)
+      const exclusion = contextExclusionFor(event.data)
+      if (exclusion?.status === 'not_executed')
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Completed tool activity cannot be marked not executed', 500)
+      tool.state = exclusion?.status ?? completedToolState(event.data)
+      if (exclusion !== undefined) tool.contextExclusion = exclusion
+      tool.summary = stringValue(event.data.summary) ?? tool.summary
+      tool.completedAt = event.createdAt
+    } else if (event.type === 'tool.notExecuted') {
+      const exclusion = contextExclusionFor(event.data)
+      if (exclusion?.status !== 'not_executed' || Object.hasOwn(event.data, 'result'))
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Not-executed tool activity has an invalid exclusion', 500)
+      tool.state = 'not_executed'
+      tool.contextExclusion = exclusion
       tool.summary = stringValue(event.data.summary) ?? tool.summary
       tool.completedAt = event.createdAt
     } else if (event.type === 'tool.failed') {
+      if (contextExclusionFor(event.data) !== undefined)
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Failed tool activity cannot have a context exclusion', 500)
       tool.state = toolStateForFailure(event.data)
       tool.summary = stringValue(event.data.summary) ?? tool.summary
       tool.completedAt = event.createdAt

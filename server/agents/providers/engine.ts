@@ -505,8 +505,14 @@ interface DraftCoverage {
     readonly evidenceIds: readonly string[]
   }[]
   readonly currentPage?: AgentCurrentPageHint
+  readonly partialCoverage?: {
+    readonly omittedCount: number
+    readonly notExecutedCount: number
+  }
 }
 
+const contradictoryCompletenessLanguage =
+  /\b(?:(?:all|every|each)\s+(?:requested|relevant|available|identified|retrieved|searched|pages?|sources?|results?|evidence|items?|tasks?|questions?)\s+(?:(?:are|were|is|was)\s+)?(?:covered|included|checked|read|reviewed|verified|complete)|(?:complete|full|entire|exhaustive)\s+(?:coverage|answer|review|research|set)|(?:(?:the|this|my|our)\s+)?(?:answer|review|research|coverage|evidence)\s+(?:is|was)\s+(?:complete|full|exhaustive)|(?:no|nothing)\s+(?:was|is|remains?)\s+(?:omitted|missing|left|unanswered))\b/iu
 
 const hasConflictDisclosure = (content: string, evidenceIds: readonly string[]): boolean =>
   content
@@ -558,10 +564,9 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
         const negationSupported = terms.filter(term => negativeTerms.has(term)).every(term => evidenceTerms.has(term))
         return negationSupported && matches.length >= Math.min(minimumMatches, terms.length) && matches.length / terms.length >= 0.6
       })
-    const supported =
-      !titleAssertionRecognized
-        ? lexicalSupported
-        : titleAssertion !== null && supportsTitleAssertion(titleAssertion, evidence, coverage?.currentPage)
+    const supported = !titleAssertionRecognized
+      ? lexicalSupported
+      : titleAssertion !== null && supportsTitleAssertion(titleAssertion, evidence, coverage?.currentPage)
     claims.push({
       claim,
       evidenceId,
@@ -590,6 +595,13 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
   if (verificationLanguage.test(content) && !claims.some(claim => claim.supported && verificationLanguage.test(claim.claim))) {
     issues.push('Source-verification language requires a successful page read and an associated citation.')
   }
+  if (
+    coverage?.partialCoverage !== undefined &&
+    (coverage.partialCoverage.omittedCount > 0 || coverage.partialCoverage.notExecutedCount > 0) &&
+    contradictoryCompletenessLanguage.test(content)
+  ) {
+    issues.push('The final answer claims complete coverage despite capacity-limited action results.')
+  }
   if (coverage) {
     for (const group of coverage.taskGroups) {
       if (!group.evidenceIds.some(evidenceId => seenCitationIds.has(evidenceId)))
@@ -609,11 +621,7 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
   return { valid: issues.length === 0, issues, claims, citationIds }
 }
 
-const assessSubagentDraft = (
-  content: string,
-  registry: ReadonlyMap<string, CitationEvidence>,
-  currentPage?: AgentCurrentPageHint
-): DraftAssessment => {
+const assessSubagentDraft = (content: string, registry: ReadonlyMap<string, CitationEvidence>, currentPage?: AgentCurrentPageHint): DraftAssessment => {
   let value: unknown
   try {
     const trimmed = content.trim()
@@ -629,14 +637,15 @@ const assessSubagentDraft = (
     return { valid: false, issues: ['The evidence packet does not contain a conflicts array.'], claims: [], citationIds: [] }
   const rawClaims: readonly unknown[] = Array.isArray(rawClaimsValue) ? rawClaimsValue : []
   const rawConflicts: readonly unknown[] = rawConflictsValue
-  const assessments: DraftAssessment[] = rawClaims.map((raw: unknown): DraftAssessment =>
-    typeof raw === 'object' && raw !== null && typeof Reflect.get(raw, 'text') === 'string'
-      ? assessDraft(String(Reflect.get(raw, 'text')), registry, {
-          taskGroups: [],
-          conflictGroups: [],
-          ...(currentPage === undefined ? {} : { currentPage })
-        })
-      : ({ valid: false, issues: ['An evidence packet claim is invalid.'], claims: [], citationIds: [] } satisfies DraftAssessment)
+  const assessments: DraftAssessment[] = rawClaims.map(
+    (raw: unknown): DraftAssessment =>
+      typeof raw === 'object' && raw !== null && typeof Reflect.get(raw, 'text') === 'string'
+        ? assessDraft(String(Reflect.get(raw, 'text')), registry, {
+            taskGroups: [],
+            conflictGroups: [],
+            ...(currentPage === undefined ? {} : { currentPage })
+          })
+        : ({ valid: false, issues: ['An evidence packet claim is invalid.'], claims: [], citationIds: [] } satisfies DraftAssessment)
   )
   const issues = assessments.flatMap(assessment => assessment.issues)
   const claims = assessments.flatMap(assessment => assessment.claims)
@@ -1161,7 +1170,6 @@ const boundedAttemptWithinBudget = (
   return current
 }
 
-
 const mandatoryChatPrompt = (
   systemMessage: ChatPromptMessage,
   conversation: readonly ChatPromptMessage[],
@@ -1287,9 +1295,7 @@ const systemMessageForRequest = (request: AgentEngineRequest, skillCatalog: unkn
   }
 }
 
-const conversationFor = (
-  request: AgentEngineRequest
-): { readonly conversation: readonly ChatPromptMessage[]; readonly latestUserIndex: number } => {
+const conversationFor = (request: AgentEngineRequest): { readonly conversation: readonly ChatPromptMessage[]; readonly latestUserIndex: number } => {
   const conversation: ChatPromptMessage[] = request.messages
     .filter(message => message.content.length > 0)
     .map(message =>
@@ -1421,37 +1427,40 @@ const toolCompletionSummary = (actionName: string, output: unknown, reused: bool
   const summary = candidate.trim().slice(0, MAX_TOOL_SUMMARY_CHARACTERS)
   return reused ? `${summary} · Reused earlier read`.slice(0, MAX_TOOL_SUMMARY_CHARACTERS) : summary
 }
-const capacityResult = (actionCallId: string, actionName: string): Readonly<Record<string, unknown>> => ({
-  status: 'omitted',
-  reason: 'tool_result_capacity',
-  actionCallId,
-  actionName,
-  message: 'The action completed, but its result was omitted from provider context capacity.'
-})
 
-const notExecutedCapacityResult = (actionCallId: string, actionName: string): Readonly<Record<string, unknown>> => ({
-  status: 'not_executed',
-  reason: 'tool_result_capacity',
-  actionCallId,
-  actionName,
-  message: 'The action was not executed because provider context capacity was exhausted.'
-})
+const capacityContextExclusion = (status: 'omitted' | 'not_executed'): Readonly<Record<string, string>> =>
+  Object.freeze({ status, reason: 'tool_result_capacity' })
+
+const capacityResult = (actionCallId: string, actionName: string): Readonly<Record<string, unknown>> =>
+  Object.freeze({
+    status: 'omitted',
+    reason: 'tool_result_capacity',
+    contextExclusion: capacityContextExclusion('omitted'),
+    actionCallId,
+    actionName,
+    message: 'The action completed, but its result was omitted from provider context capacity.'
+  })
+
+const notExecutedCapacityResult = (actionCallId: string, actionName: string): Readonly<Record<string, unknown>> =>
+  Object.freeze({
+    status: 'not_executed',
+    reason: 'tool_result_capacity',
+    contextExclusion: capacityContextExclusion('not_executed'),
+    actionCallId,
+    actionName,
+    message: 'The action was not executed because provider context capacity was exhausted.'
+  })
 
 const isContextLimitFailure = (error: unknown): boolean => error instanceof AgentRepositoryError && error.code === 'AGENT_CONTEXT_TOO_LARGE'
 
-const coverageNotice = (omittedActionCallIds: readonly string[], registry: ReadonlyMap<string, CitationEvidence>): string => {
-  const references = [...registry.values()]
-    .slice(0, MAX_ANSWER_CITATIONS)
-    .map(entry => `${entry.citation.evidenceId} (${entry.citation.label})`)
-    .join(', ')
-  const omitted = omittedActionCallIds.slice(0, MAX_TOOL_CALLS).join(', ')
-  const notice = [
-    'Provider context capacity limited evidence delivery.',
-    omitted.length === 0 ? 'No additional action results were delivered.' : `Omitted action call IDs: ${omitted}.`,
-    references.length === 0 ? 'No authorized page references remain available.' : `Authorized page references remain available: ${references}.`,
-    'Disclose incomplete or omitted research in the answer; do not invent findings for omitted actions.'
-  ].join(' ')
-  return notice.slice(0, MAX_COVERAGE_NOTICE_CHARACTERS)
+const partialCoverageDisclosure = (omittedCount: number, notExecutedCount: number): string => {
+  if (omittedCount < 1 && notExecutedCount < 1) return ''
+  const omitted = `${omittedCount} executed result${omittedCount === 1 ? '' : 's'} omitted`
+  const notExecuted = `${notExecutedCount} action call${notExecutedCount === 1 ? '' : 's'} not executed`
+  return `\n\nPartial context coverage: ${omitted}; ${notExecuted} because provider context capacity was exhausted. The available evidence may be incomplete.`.slice(
+    0,
+    MAX_COVERAGE_NOTICE_CHARACTERS
+  )
 }
 const providerResultChatMessage = (mode: 'native' | 'prompt', callId: string, providerName: string, result: unknown, isError = false): ChatPromptMessage =>
   mode === 'native'
@@ -1655,7 +1664,8 @@ export class AxAgentEngine implements AgentEngine {
         contextFits = false
         bounded = { chatPrompt: mandatoryChatPrompt(systemMessage, conversation, latestUserIndex, activePrompt), maxOutputTokens: requestedMaxOutputTokens }
       }
-      if (contextFits) bounded = boundedAttemptWithinBudget(provider, tools, systemMessage, conversation, latestUserIndex, activePrompt, bounded, limits.maxTokens)
+      if (contextFits)
+        bounded = boundedAttemptWithinBudget(provider, tools, systemMessage, conversation, latestUserIndex, activePrompt, bounded, limits.maxTokens)
       const exposure = providerExposureFor(provider, tools, bounded.chatPrompt, bounded.maxOutputTokens)
       result = {
         admissible: contextFits && (limits.maxTokens === undefined || exposure.totalExposureTokens <= limits.maxTokens),
@@ -1671,7 +1681,6 @@ export class AxAgentEngine implements AgentEngine {
     if (closeFailure) throw closeFailure
     return result!
   }
-
 
   async resumeAction(request: AgentEngineRequest, checkpoint: AgentApprovalContinuationCheckpoint, sink: AgentEngineSink): Promise<AgentEngineResult> {
     if (
@@ -2065,11 +2074,11 @@ export class AxAgentEngine implements AgentEngine {
       let totalToolCalls = 0
       let phase: 'collecting' | 'synthesizing' = 'collecting'
       const omittedActionCallIds = new Set<string>()
-      let coverageNoticeAdded = false
-      let providerState: AgentEngineResult['providerState']
+      const notExecutedActionCallIds = new Set<string>()
+      const executedOmittedCount = (): number => omittedActionCallIds.size - notExecutedActionCallIds.size
       const citationRegistry = new Map<string, CitationEvidence>()
       const retrievals: RetrievalTrace[] = []
-      const pageReadCache = new Map<string, { readonly actionCallId: string; readonly output: unknown }>()
+      const pageReadCache = new Map<string, { readonly actionCallId: string; readonly output: unknown; readonly delivered: boolean }>()
       for (const seed of request.research?.evidenceSeeds ?? [])
         collectPageEvidence(seed.actionName, seed.actionCallId, seed.output, citationRegistry, retrievals)
       if (request.recoveredAction !== undefined)
@@ -2136,17 +2145,19 @@ export class AxAgentEngine implements AgentEngine {
             'Agent token budget was exhausted',
             409
           )
-        if (request.purpose !== 'planner' && request.purpose !== 'subagent' && result.thoughtBlocks.length > 0) {
-          const encoded = encodeAgentProviderContinuation(provider.continuationDialect, result.thoughtBlocks)
-          if (encoded !== undefined) providerState = encoded
-        }
         if (result.calls.length === 0) {
           const assessment =
             request.purpose === 'planner'
               ? ({ valid: true, issues: [], claims: [], citationIds: [] } satisfies DraftAssessment)
               : request.purpose === 'subagent'
                 ? assessSubagentDraft(result.content, citationRegistry, request.currentPage)
-                : assessDraft(result.content, citationRegistry, coverage)
+                : assessDraft(result.content, citationRegistry, {
+                    ...coverage,
+                    partialCoverage: {
+                      omittedCount: executedOmittedCount(),
+                      notExecutedCount: notExecutedActionCallIds.size
+                    }
+                  })
           await sink.event('model.turn', modelTurnData(turn + 1, result, assessment.valid ? 'answer_accepted' : 'answer_rejected'))
           if (request.purpose !== 'planner') await sink.event('evidence.provenance', provenanceData(assessment.valid, assessment, retrievals))
           if (!assessment.valid) {
@@ -2180,10 +2191,6 @@ export class AxAgentEngine implements AgentEngine {
               phase = 'synthesizing'
               discoveryTurn = null
               tools = null
-              if (!coverageNoticeAdded && omittedActionCallIds.size > 0) {
-                activePrompt.push({ role: 'user', content: coverageNotice([...omittedActionCallIds], citationRegistry) })
-                coverageNoticeAdded = true
-              }
             }
             continue
           }
@@ -2193,12 +2200,17 @@ export class AxAgentEngine implements AgentEngine {
               'The approved action completed, but its assistant response could not be recovered',
               409
             )
+          const acceptedProviderState =
+            request.purpose !== 'planner' && request.purpose !== 'subagent' && result.thoughtBlocks.length > 0
+              ? encodeAgentProviderContinuation(provider.continuationDialect, result.thoughtBlocks)
+              : undefined
           const authoritySha256 = actionSession?.authoritySha256
           if (request.purpose !== 'subagent' && actionSession && this.#actions?.saveSnapshot)
             await this.#actions.saveSnapshot(request, await actionSession.snapshot(request.signal))
           const closeFailure = finalizeActionSession()
           if (closeFailure) throw closeFailure
-          await presentAcceptedContent(result.content, sink)
+          const acceptedContent = `${result.content}${partialCoverageDisclosure(executedOmittedCount(), notExecutedActionCallIds.size)}`
+          await presentAcceptedContent(acceptedContent, sink)
           const citations = answerCitations(assessment.citationIds, citationRegistry)
           return {
             inputTokens,
@@ -2206,7 +2218,7 @@ export class AxAgentEngine implements AgentEngine {
             totalTokens,
             costMicros,
             ...(citations.length === 0 ? {} : { citations }),
-            ...(providerState === undefined ? {} : { providerState }),
+            ...(acceptedProviderState === undefined ? {} : { providerState: acceptedProviderState }),
             ...(authoritySha256 === null || authoritySha256 === undefined ? {} : { authoritySha256 }),
             ...(omittedActionCallIds.size === 0
               ? {}
@@ -2218,12 +2230,15 @@ export class AxAgentEngine implements AgentEngine {
                 })
           }
         }
-        if (phase !== 'collecting' || !actionSession || !discovery || !discoveryTurn || !tools)
-          throw new AgentRepositoryError('UNEXPECTED_PROVIDER_TOOL_CALL', 'Provider requested an action during synthesis or without an action session', 502)
-        await sink.event('model.turn', modelTurnData(turn + 1, result, 'tool_calls'))
         if (turn + 1 >= maxTurns) throw new AgentRepositoryError('AGENT_TURN_LIMIT', 'Agent turn limit was exceeded', 409)
         const activeTools = tools
+        const activeDiscovery = discovery
+        const activeActionSession = actionSession
+        const activeDiscoveryTurn = discoveryTurn
+        if (activeTools === null || activeDiscovery === null || activeActionSession === null || activeDiscoveryTurn === null)
+          throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider emitted action calls while provider tools were unavailable', 502)
         const mode = activeTools.mode
+        await sink.event('model.turn', modelTurnData(turn + 1, result, 'tool_calls'))
         if (mode === 'native') {
           activePrompt.push({
             role: 'assistant',
@@ -2306,9 +2321,14 @@ export class AxAgentEngine implements AgentEngine {
             ...(inputJson === undefined ? {} : { input: inputJson })
           })
           if (contextLimitedThisTurn) {
+            notExecutedActionCallIds.add(actionCallId)
             omittedActionCallIds.add(actionCallId)
-            providerResultMessage(activePrompt, mode, call.id, call.providerName, notExecutedCapacityResult(actionCallId, logicalName), true)
-            await sink.event('tool.failed', { actionCallId, actionName: logicalName, errorCode: 'AGENT_CONTEXT_TOO_LARGE' })
+            providerResultMessage(activePrompt, mode, call.id, call.providerName, notExecutedCapacityResult(actionCallId, logicalName))
+            await sink.event('tool.notExecuted', {
+              actionCallId,
+              actionName: logicalName,
+              contextExclusion: capacityContextExclusion('not_executed')
+            })
             continue
           }
           if (totalToolCalls >= maxToolCalls) {
@@ -2336,7 +2356,7 @@ export class AxAgentEngine implements AgentEngine {
             await sink.event('tool.failed', { actionCallId, actionName: logicalName, errorCode: inputErrorCode })
             continue
           }
-          const resolved = resolveToolDiscoveryCall(discoveryTurn, logicalName, input)
+          const resolved = resolveToolDiscoveryCall(activeDiscoveryTurn, logicalName, input)
           if (resolved === null) {
             providerResultMessage(
               activePrompt,
@@ -2363,7 +2383,7 @@ export class AxAgentEngine implements AgentEngine {
           }
           if (resolved.kind === 'control') {
             try {
-              const categoryEntry = discovery.categoryIndex.find(entry => entry.category === resolved.category)
+              const categoryEntry = activeDiscovery.categoryIndex.find(entry => entry.category === resolved.category)
               if (categoryEntry === undefined) throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Provider requested an unavailable action category', 403)
               const providerEnabled = {
                 category: resolved.category,
@@ -2371,8 +2391,8 @@ export class AxAgentEngine implements AgentEngine {
                 tools: categoryEntry.tools.map(tool => ({ name: providerFunctionName(tool.name), description: tool.description }))
               }
               const candidate = providerResultChatMessage(mode, call.id, call.providerName, providerEnabled)
-              const prospectiveTurn = discovery.previewNextTurn(resolved.category)
-              const prospectiveTools = providerTools(actionSession, mode, prospectiveTurn)
+              const prospectiveTurn = activeDiscovery.previewNextTurn(resolved.category)
+              const prospectiveTools = providerTools(activeActionSession, mode, prospectiveTurn)
               if (prospectiveTools === null) throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Provider tools are unavailable', 403)
               const prospectiveSystem = systemMessageFor(prospectiveTools)
               const delivered =
@@ -2388,20 +2408,18 @@ export class AxAgentEngine implements AgentEngine {
                   requestedMaxOutputTokens
                 )
               if (!delivered) {
+                notExecutedActionCallIds.add(actionCallId)
                 omittedActionCallIds.add(actionCallId)
                 contextLimitedThisTurn = true
-                providerResultMessage(
-                  activePrompt,
-                  mode,
-                  call.id,
-                  call.providerName,
-                  notExecutedCapacityResult(actionCallId, TOOL_DISCOVERY_CONTROL_NAME),
-                  true
-                )
-                await sink.event('tool.failed', { actionCallId, actionName: TOOL_DISCOVERY_CONTROL_NAME, errorCode: 'AGENT_CONTEXT_TOO_LARGE' })
+                providerResultMessage(activePrompt, mode, call.id, call.providerName, notExecutedCapacityResult(actionCallId, TOOL_DISCOVERY_CONTROL_NAME))
+                await sink.event('tool.notExecuted', {
+                  actionCallId,
+                  actionName: TOOL_DISCOVERY_CONTROL_NAME,
+                  contextExclusion: capacityContextExclusion('not_executed')
+                })
                 continue
               }
-              const enabled = discovery.enable(resolved.category)
+              const enabled = activeDiscovery.enable(resolved.category)
               if (enabled === null) throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Provider requested an unavailable action category', 403)
               const committedProviderEnabled = providerDiscoveryEnableResult(enabled)
               const committedEncoded = JSON.stringify(committedProviderEnabled)
@@ -2424,7 +2442,7 @@ export class AxAgentEngine implements AgentEngine {
             }
             continue
           }
-          const resolvedDescriptor = actionSession.functions.find(fn => fn.name === resolved.name)
+          const resolvedDescriptor = activeActionSession.functions.find(fn => fn.name === resolved.name)
           if (!resolvedDescriptor) {
             providerResultMessage(
               activePrompt,
@@ -2444,30 +2462,34 @@ export class AxAgentEngine implements AgentEngine {
             const output =
               cached?.output ??
               (await withInvokingAgentRunLease(request.signal, request.run, () => actionSession!.invoke(resolved.name, input, request.signal, actionCallId)))
-            if (pageReadKey !== null && cached === undefined) pageReadCache.set(pageReadKey, { actionCallId, output })
             const encoded = JSON.stringify(output)
             const summary = toolCompletionSummary(resolved.name, output, cached !== undefined)
             const providerOutput =
               cached === undefined
                 ? providerActionOutput(resolved.name, output)
-                : { status: 'reused', reusedActionCallId: cached.actionCallId, summary: summary ?? 'Reused earlier result.' }
+                : cached.delivered
+                  ? { status: 'reused', reusedActionCallId: cached.actionCallId, summary: summary ?? 'Reused earlier result.' }
+                  : capacityResult(actionCallId, resolved.name)
             const candidate = providerResultChatMessage(mode, call.id, call.providerName, providerOutput)
-            const prospectiveTurn = discovery.previewNextTurn()
-            const prospectiveTools = providerTools(actionSession, mode, prospectiveTurn)
+            const prospectiveTurn = activeDiscovery.previewNextTurn()
+            const prospectiveTools = providerTools(activeActionSession, mode, prospectiveTurn)
             if (prospectiveTools === null) throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Provider tools are unavailable', 403)
             const prospectiveSystem = systemMessageFor(prospectiveTools)
             const delivered =
-              fitsSynthesisWithCandidate(candidate, callIndex + 1, prospectiveTools, prospectiveSystem) &&
-              fitsProviderResult(
-                provider,
-                prospectiveTools,
-                prospectiveSystem,
-                conversation,
-                latestUserIndex,
-                activePrompt,
-                candidate,
-                requestedMaxOutputTokens
-              )
+              cached?.delivered === false
+                ? false
+                : fitsSynthesisWithCandidate(candidate, callIndex + 1, prospectiveTools, prospectiveSystem) &&
+                  fitsProviderResult(
+                    provider,
+                    prospectiveTools,
+                    prospectiveSystem,
+                    conversation,
+                    latestUserIndex,
+                    activePrompt,
+                    candidate,
+                    requestedMaxOutputTokens
+                  )
+            if (pageReadKey !== null && cached === undefined) pageReadCache.set(pageReadKey, { actionCallId, output, delivered })
             if (delivered && cached === undefined) collectPageEvidence(resolved.name, actionCallId, output, citationRegistry, retrievals)
             const deliveredOutput = delivered ? providerOutput : capacityResult(actionCallId, resolved.name)
             if (!delivered) {
@@ -2481,7 +2503,8 @@ export class AxAgentEngine implements AgentEngine {
               result: encoded,
               cacheHit: cached !== undefined,
               reusedActionCallId: cached?.actionCallId ?? null,
-              ...(summary === null ? {} : { summary })
+              ...(summary === null ? {} : { summary }),
+              ...(delivered ? {} : { contextExclusion: capacityContextExclusion('omitted') })
             })
           } catch (error) {
             const code =
@@ -2494,8 +2517,8 @@ export class AxAgentEngine implements AgentEngine {
         }
         if (!contextLimitedThisTurn && !toolBudgetExhausted && turn + 1 < maxTurns) {
           let nextTurnFits = true
-          const nextTurn = discovery.previewNextTurn()
-          const nextTools = providerTools(actionSession, mode, nextTurn)
+          const nextTurn = activeDiscovery.previewNextTurn()
+          const nextTools = providerTools(activeActionSession, mode, nextTurn)
           if (nextTools === null) nextTurnFits = false
           else {
             const nextSystem = systemMessageFor(nextTools)
@@ -2518,10 +2541,6 @@ export class AxAgentEngine implements AgentEngine {
           phase = 'synthesizing'
           discoveryTurn = null
           tools = null
-          if (!coverageNoticeAdded) {
-            activePrompt.push({ role: 'user', content: coverageNotice([...omittedActionCallIds], citationRegistry) })
-            coverageNoticeAdded = true
-          }
         } else if (
           !fitsSynthesisReserve(
             provider,
@@ -2536,10 +2555,6 @@ export class AxAgentEngine implements AgentEngine {
           phase = 'synthesizing'
           discoveryTurn = null
           tools = null
-          if (!coverageNoticeAdded && omittedActionCallIds.size > 0) {
-            activePrompt.push({ role: 'user', content: coverageNotice([...omittedActionCallIds], citationRegistry) })
-            coverageNoticeAdded = true
-          }
         } else if (turn + 1 >= maxTurns) {
           throw new AgentRepositoryError('AGENT_TURN_LIMIT', 'Agent turn limit was exceeded', 409)
         }

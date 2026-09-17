@@ -814,7 +814,11 @@ describe('durable agent repositories', () => {
           risk: 'read',
           input: '{"id":42,"version":3}'
         }),
-        terminal: event('tool.failed', { actionCallId: 'capacity-skipped', actionName: 'pages.getVersion', errorCode: 'AGENT_CONTEXT_TOO_LARGE' })
+        terminal: event('tool.notExecuted', {
+          actionCallId: 'capacity-skipped',
+          actionName: 'pages.getVersion',
+          contextExclusion: { status: 'not_executed', reason: 'tool_result_capacity' }
+        })
       },
       {
         id: 'live-denied',
@@ -844,7 +848,8 @@ describe('durable agent repositories', () => {
           actionCallId: 'completed-provider-omitted',
           actionName: 'pages.get',
           result: JSON.stringify({ id: 99, title: 'Release notes', content: 'The provider result was omitted from synthesis capacity.' }),
-          summary: 'Release notes'
+          summary: 'Release notes',
+          contextExclusion: { status: 'omitted', reason: 'tool_result_capacity' }
         })
       }
     ]
@@ -852,9 +857,15 @@ describe('durable agent repositories', () => {
     const reduced = reduceAgentEvents(events, projectionRunId)
 
     expect(events.filter(event => event.type === 'tool.started')).toHaveLength(calls.length)
-    expect(events.filter(event => event.type === 'tool.completed' || event.type === 'tool.failed')).toHaveLength(calls.length)
+    expect(events.filter(event => event.type === 'tool.completed' || event.type === 'tool.notExecuted' || event.type === 'tool.failed')).toHaveLength(
+      calls.length
+    )
     expect(reduced.tools).toHaveLength(calls.length)
-    expect(reduced.tools.every(tool => tool.startedAt !== null && tool.completedAt !== null && ['complete', 'failed'].includes(tool.state))).toBe(true)
+    expect(
+      reduced.tools.every(
+        tool => tool.startedAt !== null && tool.completedAt !== null && ['complete', 'omitted', 'not_executed', 'failed'].includes(tool.state)
+      )
+    ).toBe(true)
     expect(reduced.tools.map(tool => ({ id: tool.id, actionName: tool.actionName, title: tool.title, state: tool.state, summary: tool.summary }))).toEqual([
       {
         id: 'enable-explore',
@@ -865,10 +876,18 @@ describe('durable agent repositories', () => {
       },
       { id: 'malformed-input', actionName: 'pages.searchTags', title: 'Search tags', state: 'failed', summary: null },
       { id: 'budget-skipped', actionName: 'pages.get', title: 'Read page', state: 'failed', summary: null },
-      { id: 'capacity-skipped', actionName: 'pages.getVersion', title: 'Read page version', state: 'failed', summary: null },
+      { id: 'capacity-skipped', actionName: 'pages.getVersion', title: 'Read page version', state: 'not_executed', summary: null },
       { id: 'live-denied', actionName: 'pages.search', title: 'Search pages', state: 'failed', summary: null },
-      { id: 'completed-provider-omitted', actionName: 'pages.get', title: 'Read page', state: 'complete', summary: 'Release notes' }
+      { id: 'completed-provider-omitted', actionName: 'pages.get', title: 'Read page', state: 'omitted', summary: 'Release notes' }
     ])
+    expect(reduced.tools.find(tool => tool.id === 'completed-provider-omitted')?.contextExclusion).toEqual({
+      status: 'omitted',
+      reason: 'tool_result_capacity'
+    })
+    expect(reduced.tools.find(tool => tool.id === 'capacity-skipped')?.contextExclusion).toEqual({
+      status: 'not_executed',
+      reason: 'tool_result_capacity'
+    })
   })
 
   it('fails closed for unknown or malformed tool activity at the projection boundary', () => {
@@ -924,6 +943,45 @@ describe('durable agent repositories', () => {
             actionName: 'wiki_enable_tools',
             proposalId: '00000000-0000-4000-8000-000000000077',
             result: '{}'
+          })
+        ],
+        projectionRunId
+      )
+    ).toThrow(expect.objectContaining({ code: 'AGENT_EVENT_CORRUPT', status: 500 }))
+    expect(() =>
+      reduceAgentEvents(
+        [
+          event('tool.notExecuted', {
+            actionCallId: 'orphan-not-executed',
+            actionName: 'pages.get',
+            contextExclusion: { status: 'not_executed', reason: 'tool_result_capacity' }
+          })
+        ],
+        projectionRunId
+      )
+    ).toThrow(expect.objectContaining({ code: 'AGENT_EVENT_CORRUPT', status: 500 }))
+    expect(() =>
+      reduceAgentEvents(
+        [
+          start('malformed-exclusion', 'pages.get'),
+          event('tool.notExecuted', {
+            actionCallId: 'malformed-exclusion',
+            actionName: 'pages.get',
+            contextExclusion: { status: 'omitted', reason: 'tool_result_capacity' }
+          })
+        ],
+        projectionRunId
+      )
+    ).toThrow(expect.objectContaining({ code: 'AGENT_EVENT_CORRUPT', status: 500 }))
+    expect(() =>
+      reduceAgentEvents(
+        [
+          start('duplicate-terminal', 'pages.get'),
+          event('tool.completed', { actionCallId: 'duplicate-terminal', actionName: 'pages.get', result: '{}' }),
+          event('tool.notExecuted', {
+            actionCallId: 'duplicate-terminal',
+            actionName: 'pages.get',
+            contextExclusion: { status: 'not_executed', reason: 'tool_result_capacity' }
           })
         ],
         projectionRunId

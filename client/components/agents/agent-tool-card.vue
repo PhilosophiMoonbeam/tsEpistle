@@ -248,9 +248,14 @@ const denyButton = useTemplateRef<{ $el?: HTMLElement } | HTMLElement>('denyButt
 let expiryTimer: number | null = null
 let expiryDeadlineTimer: number | null = null
 
-type OperationStatus = 'pending' | 'running' | 'success' | 'failed' | 'denied' | 'cancelled' | 'expired'
+type OperationStatus = 'pending' | 'running' | 'success' | 'failed' | 'denied' | 'cancelled' | 'expired' | 'omitted' | 'not_executed'
 
-const approvalPending = computed(() => props.proposal.status === 'pending' && props.proposal.approval?.status === 'pending')
+const approvalPending = computed(() =>
+  props.tool.state !== 'omitted' &&
+  props.tool.state !== 'not_executed' &&
+  props.proposal.status === 'pending' &&
+  props.proposal.approval?.status === 'pending'
+)
 const hasExpired = (): boolean => new Date(props.proposal.expiresAt).valueOf() <= Date.now()
 const locallyExpired = computed(() => {
   void expiryTick.value
@@ -274,6 +279,8 @@ const receiptLabel = computed(() => {
   if (props.proposal.approval?.status === 'denied') return 'Change denied'
   if (props.proposal.approval?.status === 'expired') return 'Approval expired'
   if (props.proposal.approval?.status === 'cancelled' || props.proposal.status === 'cancelled' || props.tool.state === 'cancelled') return 'Change cancelled'
+  if (props.tool.state === 'omitted') return 'Result omitted'
+  if (props.tool.state === 'not_executed') return 'Not executed'
   return agentProposalReceiptLabel(props.proposal.status)
 })
 const statusKey = computed<OperationStatus>(() => {
@@ -285,6 +292,8 @@ const statusKey = computed<OperationStatus>(() => {
   if (props.proposal.status === 'cancelled') return 'cancelled'
   if (props.proposal.status === 'expired') return 'expired'
   if (props.proposal.status === 'failed' || props.proposal.status === 'recovery_required') return 'failed'
+  if (props.tool.state === 'omitted') return 'omitted'
+  if (props.tool.state === 'not_executed') return 'not_executed'
   if (props.proposal.status === 'applied') return 'success'
   if (props.proposal.status === 'approved' || props.proposal.status === 'applying') return 'running'
   if (props.tool.state === 'denied') return 'denied'
@@ -301,7 +310,9 @@ const statusIcon = computed(() => ({
   failed: 'mdi-alert-octagon-outline',
   denied: 'mdi-cancel',
   cancelled: 'mdi-stop-circle-outline',
-  expired: 'mdi-timer-alert-outline'
+  expired: 'mdi-timer-alert-outline',
+  omitted: 'mdi-eye-off-outline',
+  not_executed: 'mdi-minus-circle-outline'
 })[statusKey.value])
 const toolStateLabels: Readonly<Record<AgentToolState, string>> = {
   preparing: 'Preparing',
@@ -310,11 +321,15 @@ const toolStateLabels: Readonly<Record<AgentToolState, string>> = {
   complete: 'Completed successfully',
   failed: 'Failed',
   denied: 'Denied',
-  cancelled: 'Cancelled'
+  cancelled: 'Cancelled',
+  omitted: 'Result omitted',
+  not_executed: 'Not executed'
 }
 const toolStateLabel = computed(() => toolStateLabels[props.tool.state])
 const receiptNote = computed(() => {
   if (statusKey.value === 'success') return 'The approved operation completed. The verification record remains available below.'
+  if (statusKey.value === 'omitted') return 'The operation completed, but its result was omitted from the response context.'
+  if (statusKey.value === 'not_executed') return 'The operation was not executed because response context capacity was reached.'
   if (statusKey.value === 'running') return 'Approval was recorded and the reviewed operation is now being applied.'
   if (statusKey.value === 'failed') return props.proposal.status === 'recovery_required'
     ? 'The operation could not finish cleanly and requires recovery by an administrator.'
@@ -754,6 +769,13 @@ const decide = (decision: 'approved' | 'denied'): void => {
 
 .agent-operation-receipt--success {
   --operation-accent: rgb(var(--v-theme-success));
+}
+.agent-operation-receipt--omitted {
+  --operation-accent: rgb(var(--v-theme-info));
+}
+
+.agent-operation-receipt--not_executed {
+  --operation-accent: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
 }
 
 .agent-operation-receipt--failed,

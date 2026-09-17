@@ -526,16 +526,26 @@ import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './age
 import { activeOwnedOverlayRoots, createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 
 const welcomeGreetings = [
-  { first: 'Stacks of possibilities.', second: 'Zero overdue fees.' },
-  { first: 'Curiosity checked in.', second: 'Confusion checked out.' },
-  { first: 'Your friendly librarian.', second: 'Minus the shushing.' },
-  { first: 'A little digging.', second: 'No shovel required.' },
-  { first: 'Fresh questions welcome.', second: 'Dust jackets optional.' },
-  { first: 'Knowledge needs company.', second: 'Pull up curiosity.' },
-  { first: "Let's browse together.", second: 'Bookmarks bring snacks.' },
-  { first: 'Shelves of ideas.', second: 'No ladder needed.' },
-  { first: 'A curious chapter.', second: 'Plot twists welcome.' },
-  { first: 'Questions find homes.', second: 'Alphabetizing is optional.' }
+  { first: 'Pipeline looks healthy.', second: 'Budget feels nervous.' },
+  { first: 'Calendar looks spacious.', second: 'Meetings feel endless.' },
+  { first: 'Forecast brings sunshine.', second: 'Spreadsheet brings rain.' },
+  { first: 'Sales notes align.', second: 'Calendars disagree.' },
+  { first: 'Clients seem charmed.', second: 'Contracts seem haunted.' },
+  { first: 'Reports look cheerful.', second: 'Footnotes know better.' },
+  { first: 'Targets wear ties.', second: 'Budgets wear frowns.' },
+  { first: 'Inbox feels lighter.', second: 'That feels suspicious.' },
+  { first: 'Strategy feels solid.', second: 'Tactics need coffee.' },
+  { first: 'Good news pending.', second: 'Legal wants edits.' },
+  { first: 'Sales keeps momentum.', second: 'Finance has concerns.' },
+  { first: 'Revenue stays social.', second: 'Expenses stay bashful.' },
+  { first: 'Paperwork feels brave.', second: 'Signatures feel shy.' },
+  { first: 'Meeting notes bloom.', second: 'Action items migrate.' },
+  { first: 'Fresh leads arrived.', second: 'Old tabs celebrated.' },
+  { first: 'Roadmap looks brave.', second: 'Deadline looks braver.' },
+  { first: 'Client call pending.', second: 'Small talk loading.' },
+  { first: 'Briefing starts soon.', second: 'Coffee starts sooner.' },
+  { first: 'Pipeline nearly sings.', second: 'Budget nearly agrees.' },
+  { first: 'Revenue seems cheerful.', second: 'Expense reports giggle.' }
 ] as const
 
 const props = defineProps<{
@@ -1923,14 +1933,14 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   position: relative;
   width: min(100%, var(--agent-conversation-width));
   margin: 0 auto auto;
-  padding: clamp(1rem, 3vh, 3rem) 0 var(--wiki-space-5);
+  padding: clamp(1.5rem, 4vh, 3.5rem) 0 var(--wiki-space-5);
   text-align: center;
 }
 
 /* The welcome treatment stays typographic and compact; the old decorative mark is intentionally omitted. */
 
 .inline-agent__welcome h2 {
-  margin: 0 0 var(--wiki-space-5);
+  margin: 0 0 calc(1.04em + var(--wiki-space-2));
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-display);
   font-size: clamp(2.4rem, 4vw, 4.25rem);
@@ -2468,7 +2478,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__welcome {
-    padding: var(--wiki-space-5) var(--wiki-space-2);
+    padding: var(--wiki-space-6) var(--wiki-space-2) var(--wiki-space-5);
   }
 
 
@@ -2529,7 +2539,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__welcome {
-    padding-block: var(--wiki-space-4);
+    padding-block: var(--wiki-space-5);
   }
 }
 

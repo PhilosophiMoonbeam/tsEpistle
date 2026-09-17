@@ -186,12 +186,12 @@
               class="agent-activity mt-3"
             >
               <summary>
-                <v-icon icon="mdi-format-list-checks" size="18" />
+                <v-icon icon="mdi-format-list-checks" size="18" aria-hidden="true" />
                 <span>{{ entry.run?.activityLabel }}</span>
               </summary>
               <ul class="agent-activity__list">
                 <li v-for="tool in entry.run?.activity" :key="tool.id">
-                  <v-icon :icon="toolStateIcon(tool.state)" :color="toolStateColor(tool.state)" size="18" />
+                  <v-icon :icon="toolStateIcon(tool.state)" :color="toolStateColor(tool.state)" size="18" aria-hidden="true" />
                   <span>
                     <strong>{{ tool.summary ? tool.summary : tool.title }}</strong>
                     <small>{{ tool.summary ? `${tool.title} · ` : '' }}{{ tool.actionName }} · {{ toolStateLabel(tool.state) }}</small>
@@ -395,14 +395,34 @@ const threadProjection = computed<ThreadProjection>(() => {
     }))
   }
 })
-const stateLabels: Record<AgentToolState, string> = { preparing: 'Preparing', running: 'Running', awaitingApproval: 'Awaiting approval', complete: 'Complete', failed: 'Failed', denied: 'Denied', cancelled: 'Cancelled' }
-const stateIcons: Record<AgentToolState, string> = { preparing: 'mdi-dots-horizontal', running: 'mdi-progress-clock', awaitingApproval: 'mdi-shield-alert-outline', complete: 'mdi-check-circle-outline', failed: 'mdi-alert-circle-outline', denied: 'mdi-cancel', cancelled: 'mdi-stop-circle-outline' }
+const stateLabels: Record<AgentToolState, string> = {
+  preparing: 'Preparing',
+  running: 'Running',
+  awaitingApproval: 'Awaiting approval',
+  complete: 'Complete',
+  failed: 'Failed',
+  denied: 'Denied',
+  cancelled: 'Cancelled',
+  omitted: 'Result omitted',
+  not_executed: 'Not executed'
+}
+const stateIcons: Record<AgentToolState, string> = {
+  preparing: 'mdi-dots-horizontal',
+  running: 'mdi-progress-clock',
+  awaitingApproval: 'mdi-shield-alert-outline',
+  complete: 'mdi-check-circle-outline',
+  failed: 'mdi-alert-circle-outline',
+  denied: 'mdi-cancel',
+  cancelled: 'mdi-stop-circle-outline',
+  omitted: 'mdi-eye-off-outline',
+  not_executed: 'mdi-minus-circle-outline'
+}
 const toolStateLabel = (state: AgentToolState): string => stateLabels[state]
 const toolStateIcon = (state: AgentToolState): string => stateIcons[state]
 const toolStateColor = (state: AgentToolState): string | undefined => {
   if (state === 'complete') return 'success'
   if (state === 'failed' || state === 'denied') return 'error'
-  if (state === 'cancelled') return undefined
+  if (state === 'cancelled' || state === 'omitted' || state === 'not_executed') return undefined
   return 'primary'
 }
 const currentLiveAnnouncement = computed(() => {

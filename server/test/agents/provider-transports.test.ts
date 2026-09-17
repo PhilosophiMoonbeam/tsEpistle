@@ -108,8 +108,33 @@ describe('additional provider transports', () => {
       tools: [{ type: 'function', name: 'wiki_get_page', strict: false }]
     })
     expect(payload.include).toContain('reasoning.encrypted_content')
+    const firstContinuation = provider.preserveThoughtBlock('rs_1', { data: 'encrypted-reasoning', encrypted: true })
+    const secondContinuation = provider.preserveThoughtBlock('rs_2', { data: 'encrypted-reasoning-2', encrypted: true })
+    await provider.service.chat(
+      {
+        chatPrompt: [
+          { role: 'assistant', content: 'draft', thoughtBlocks: [firstContinuation, secondContinuation] },
+          { role: 'user', content: 'correct' }
+        ]
+      },
+      { stream: false }
+    )
+    const continuationInput = payload.input
+    expect(continuationInput).toContainEqual({
+      type: 'reasoning',
+      id: 'rs_1',
+      summary: [],
+      content: [],
+      encrypted_content: 'encrypted-reasoning'
+    })
+    expect(continuationInput).toContainEqual({
+      type: 'reasoning',
+      id: 'rs_2',
+      summary: [],
+      content: [],
+      encrypted_content: 'encrypted-reasoning-2'
+    })
   })
-
   it('maps Anthropic native tools, tool use, and tool results', async () => {
     const id = '00000000-0000-4000-8000-000000000012'
     await insert({ id, transportKind: 'anthropic-messages', baseUrl: 'https://api.anthropic.com/v1', authMode: 'anthropic-api-key' })

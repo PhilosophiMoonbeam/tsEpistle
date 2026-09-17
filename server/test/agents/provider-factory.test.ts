@@ -417,7 +417,6 @@ it('normalizes root token budget failures as safe 409 execution errors', () => {
   })
 })
 
-
 describe('provider continuation wire', () => {
   it('round-trips supported Responses continuation state and rejects a dialect mix-up', () => {
     const block = {
@@ -546,10 +545,11 @@ describe('Ax provider factory', () => {
     await utilityProvider.service.chat({ chatPrompt: [{ role: 'user', content: 'title' }], model: utilityProvider.model }, { stream: false })
     expect(JSON.parse(String(request?.init?.body))).toMatchObject({ model: 'gpt-test-mini', store: false, reasoning: { effort: 'low' } })
     const continuation = provider.preserveThoughtBlock('rs_1', { data: 'encrypted-reasoning', encrypted: true })
+    const continuation2 = provider.preserveThoughtBlock('rs_2', { data: 'encrypted-reasoning-2', encrypted: true })
     await provider.service.chat(
       {
         chatPrompt: [
-          { role: 'assistant', content: 'Prior answer', thoughtBlocks: [continuation] },
+          { role: 'assistant', content: 'Prior answer', thoughtBlocks: [continuation, continuation2] },
           { role: 'user', content: 'Continue' }
         ],
         model: 'gpt-test'
@@ -564,6 +564,27 @@ describe('Ax provider factory', () => {
       content: [],
       encrypted_content: 'encrypted-reasoning'
     })
+    expect(continuationPayload.input).toContainEqual({
+      type: 'reasoning',
+      id: 'rs_2',
+      summary: [],
+      content: [],
+      encrypted_content: 'encrypted-reasoning-2'
+    })
+    await expect(
+      Promise.resolve(
+        provider.service.chat(
+          {
+            chatPrompt: [
+              { role: 'assistant', content: 'Corrupt draft', thoughtBlocks: [{ data: 'wiki.openai.reasoning.v1:not-json', encrypted: true }] },
+              { role: 'user', content: 'Correct' }
+            ],
+            model: 'gpt-test'
+          },
+          { stream: false }
+        )
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_PROVIDER_STATE_CORRUPT' })
     await db('agentProviderProfileVersions').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ pricingRevision: 'price-2|0|2000000' })
     await expect(Promise.resolve(factory.create('00000000-0000-4000-8000-000000000001'))).rejects.toMatchObject({ code: 'PROVIDER_PRICING_INVALID' })
   })

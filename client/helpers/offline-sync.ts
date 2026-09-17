@@ -1,10 +1,5 @@
 import { fetchOfflinePageSnapshot, fetchPagesByTag, type PageListRow } from './pages-api.ts'
-import {
-  OfflineGenerationFencedError,
-  OfflinePolicyRevisionFencedError,
-  OfflineStorageError,
-  type OfflineStorage
-} from './offline-storage.ts'
+import { OfflineGenerationFencedError, OfflinePolicyRevisionFencedError, OfflineStorageError, type OfflineStorage } from './offline-storage.ts'
 import {
   OfflineSnapshotSelectorSchema,
   OFFLINE_AUTOMATIC_PAGE_LIMIT,
@@ -78,7 +73,6 @@ const errorMessage = (error: unknown): string => {
 }
 
 const selectorKey = (selector: OfflineSnapshotSelector): string => `${selector.siteId}\u0000${selector.pageId}\u0000${selector.locale}`
-
 
 const diagnostic = (state: OfflinePolicyState['syncDiagnostics'], patch: Partial<OfflineSyncDiagnostics>): OfflineSyncDiagnostics =>
   OfflineSyncDiagnosticsSchema.parse({ ...state, ...patch })
@@ -274,18 +268,17 @@ export class OfflineSyncCoordinator {
     let topAutomatic: OfflinePagePolicyRecord[] = []
     try {
       topAutomatic = policy.state.automaticSavingEnabled
-        ? (
-            await this.options.storage.selectTopAutomaticPages({
-              expectedSessionGeneration: generation,
-              expectedPolicyRevision: revision,
-              limit: OFFLINE_AUTOMATIC_PAGE_LIMIT,
-              asOf: attemptAt
-            })
-          ).filter(page => page.siteId === this.options.siteId)
+        ? await this.options.storage.selectTopAutomaticPages({
+            expectedSessionGeneration: generation,
+            expectedPolicyRevision: revision,
+            siteId: this.options.siteId,
+            limit: OFFLINE_AUTOMATIC_PAGE_LIMIT,
+            asOf: attemptAt
+          })
         : []
       await this.options.storage.updateAutomaticSelections(
         topAutomatic.map(page => ({ siteId: page.siteId, pageId: page.pageId, locale: page.locale })),
-        { expectedSessionGeneration: generation, expectedPolicyRevision: revision, asOf: attemptAt }
+        { expectedSessionGeneration: generation, expectedPolicyRevision: revision, siteId: this.options.siteId, asOf: attemptAt }
       )
     } catch (error) {
       if (this.isFence(error)) return this.fencedResult(policy, result)
@@ -466,11 +459,7 @@ export class OfflineSyncCoordinator {
     return this.makeResult(status, generation, revision, persisted, result)
   }
 
-  private async persistDiagnostics(
-    diagnostics: OfflineSyncDiagnostics,
-    generation: number,
-    revision: number
-  ): Promise<OfflineSyncDiagnostics> {
+  private async persistDiagnostics(diagnostics: OfflineSyncDiagnostics, generation: number, revision: number): Promise<OfflineSyncDiagnostics> {
     try {
       const persisted = await this.options.storage.updateSyncDiagnostics(diagnostics, {
         expectedSessionGeneration: generation,
@@ -489,7 +478,6 @@ export class OfflineSyncCoordinator {
       }
       return diagnostics
     }
-
   }
   private makeResult(
     status: OfflineSyncDiagnosticStatus,
@@ -531,10 +519,12 @@ export class OfflineSyncCoordinator {
   }
 
   private isFence(error: unknown): boolean {
-    return error instanceof OfflineGenerationFencedError || error instanceof OfflinePolicyRevisionFencedError ||
+    return (
+      error instanceof OfflineGenerationFencedError ||
+      error instanceof OfflinePolicyRevisionFencedError ||
       (error instanceof OfflineStorageError && (error.code === 'generation-fenced' || error.code === 'policy-revision-fenced'))
+    )
   }
 }
 
-export const createOfflineSyncCoordinator = (options: OfflineSyncCoordinatorOptions): OfflineSyncCoordinator =>
-  new OfflineSyncCoordinator(options)
+export const createOfflineSyncCoordinator = (options: OfflineSyncCoordinatorOptions): OfflineSyncCoordinator => new OfflineSyncCoordinator(options)

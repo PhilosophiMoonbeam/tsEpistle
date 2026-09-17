@@ -96,6 +96,13 @@
   --wiki-shadow-inset: inset 0 1px 0 color-mix(in srgb, rgb(var(--v-theme-on-surface)) 9%, transparent);
 }
 
+html.wiki-theme-switching,
+html.wiki-theme-switching *,
+html.wiki-theme-switching *::before,
+html.wiki-theme-switching *::after {
+  transition: none !important;
+}
+
 html {
   box-sizing: border-box;
   height: 100%;

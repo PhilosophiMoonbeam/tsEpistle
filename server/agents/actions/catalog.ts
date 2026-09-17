@@ -173,7 +173,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'pages.search',
       'Search pages',
-      `Rank visible pages using authoritative source, deterministic knowledge projections, utility-enriched declared gaps, and the Wiki link graph. Natural-language queries are supported; use lifecycle filters to constrain trust and maintenance state. Results include match evidence and spelling suggestions; read promising pages with ${AGENT_TOOL_NAMES['pages.get']} before answering.`,
+      `Rank visible pages using authoritative source, deterministic knowledge projections, utility-enriched declared gaps, and the Wiki link graph. Natural-language queries are supported; use lifecycle filters to constrain trust and maintenance state. Results include match evidence and spelling suggestions, but every result is candidate metadata only, not read evidence or a durable authorization grant. For every returned result, immediately follow it with ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}), copying that positive numeric ID exactly. Never guess or stringify an ID, or substitute a result's path/locale, href, citation/evidenceId, okfResourceUri, sourceRevision, title, or history versionId. Use a path/locale selector only for a user-supplied raw stored path and separate locale; path/locale copied from a listed result are not identity-preserving. The direct read reauthorizes current content. If provider context capacity reports a read as omitted or not_executed, treat it as truthful partial coverage: disclose the omission, do not retry automatically or infer access, and synthesize only from delivered reads.`,
       'read',
       ['read:pages'],
       both,
@@ -232,7 +232,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'pages.discover',
       'Discover pages',
-      `Browse visible pages structurally by locale, descendant path depth, exact tags, stable ordering, and projected lifecycle or trust state. Knowledge filters operate over a bounded 100-page candidate window. Narrow the path if the window is too broad, then read promising pages with ${AGENT_TOOL_NAMES['pages.get']}.`,
+      `Browse visible pages structurally by locale, descendant path depth, exact tags, stable ordering, and projected lifecycle or trust state. Knowledge filters operate over a bounded 100-page candidate window. Narrow the path if the window is too broad, then treat every returned page as candidate metadata only, not read evidence or a durable authorization grant. For every returned result, immediately follow it with ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}), copying that positive numeric ID exactly. Never guess or stringify an ID, or substitute a result's path/locale, href, citation/evidenceId, okfResourceUri, sourceRevision, title, or history versionId. Use a path/locale selector only for a user-supplied raw stored path and separate locale; path/locale copied from a listed result are not identity-preserving. The direct read reauthorizes current content. If provider context capacity reports a read as omitted or not_executed, treat it as truthful partial coverage: disclose the omission, do not retry automatically or infer access, and synthesize only from delivered reads.`,
       'read',
       ['read:pages'],
       both,
@@ -261,7 +261,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'pages.get',
       'Get page',
-      'Read one visible Wiki page by ID or locale and path, including the current deterministic and utility-enriched knowledge projection when ready.',
+      `Read one visible Wiki page by an exact positive numeric ID or by a user-supplied raw stored path and separate locale. When following a search, discovery, recent, or related result, invoke ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}) with the returned positive numeric result.id copied exactly. Never guess or stringify an ID, or substitute the result's path/locale, href, citation/evidenceId, okfResourceUri, sourceRevision, title, or history versionId. Path/locale is only for user-supplied path lookup and is not identity-preserving when copied from listed metadata. This direct read reauthorizes current content; candidate visibility and metadata do not grant durable access or constitute evidence. If provider context capacity reports a read as omitted or not_executed, treat it as truthful partial coverage: disclose the omission, do not retry automatically or infer access, and synthesize only from delivered reads.`,
       'read',
       ['read:pages'],
       both,
@@ -321,7 +321,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'pages.listRecent',
       'List recent pages',
-      'List recently changed pages visible to the current principal.',
+      `List recently changed pages visible to the current principal. Recent rows are candidate metadata only, not read evidence or a durable authorization grant. For every returned result, immediately follow it with ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}), copying that positive numeric ID exactly. Never guess or stringify an ID, or substitute a result's path/locale, href, citation/evidenceId, okfResourceUri, sourceRevision, title, or history versionId. Use a path/locale selector only for a user-supplied raw stored path and separate locale; path/locale copied from recent metadata are not identity-preserving. The direct read reauthorizes current content. If provider context capacity reports a read as omitted or not_executed, treat it as truthful partial coverage: disclose the omission, do not retry automatically or infer access, and synthesize only from delivered reads.`,
       'read',
       ['read:pages'],
       both,
@@ -394,7 +394,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'pages.related',
       'Get related pages',
-      `Traverse visible published pages connected by explicit internal Wiki links and backlinks. Start with cursor null, then pass each returned nextCursor unchanged until it is null. Read promising pages with ${AGENT_TOOL_NAMES['pages.get']} before relying on their content.`,
+      `Traverse visible published pages connected by explicit internal Wiki links and backlinks. Start with cursor null, then pass each returned nextCursor unchanged until it is null. Related rows are candidate metadata only, not read evidence or a durable authorization grant. For every returned result, immediately follow it with ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}), copying that positive numeric ID exactly. Never guess or stringify an ID, or substitute a result's path/locale, href, citation/evidenceId, okfResourceUri, sourceRevision, title, or history versionId. Use a path/locale selector only for a user-supplied raw stored path and separate locale; path/locale copied from related metadata are not identity-preserving. The direct read reauthorizes current content. If provider context capacity reports a read as omitted or not_executed, treat it as truthful partial coverage: disclose the omission, do not retry automatically or infer access, and synthesize only from delivered reads.`,
       'read',
       ['read:pages'],
       both,

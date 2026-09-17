@@ -13,6 +13,12 @@ const shellSource = readFileSync(shellPath, 'utf8')
 const shellSfc = parse(shellSource, { filename: shellPath })
 
 const shellScript = shellSfc.descriptor.script?.content ?? ''
+const markdownPath = join(process.cwd(), 'client/components/editor/editor-markdown.vue')
+const shellStyle = shellSfc.descriptor.styles.map(style => style.content).join('\n')
+const markdownSource = readFileSync(markdownPath, 'utf8')
+const markdownSfc = parse(markdownSource, { filename: markdownPath })
+const markdownTemplate = markdownSfc.descriptor.template?.content ?? ''
+const markdownStyle = markdownSfc.descriptor.styles.map(style => style.content).join('\n')
 
 type OkfState = {
   authority: {
@@ -61,7 +67,6 @@ type OfflineCoordinatorHarness = {
 }
 
 type AuthOutcome = 'authenticated' | 'unavailable'
-
 
 type EditorStore = {
   editor: {
@@ -154,6 +159,7 @@ type ShellContext = {
   offlineConnectionState: string
   isSaving: boolean
   discardPending: boolean
+  discardError: string
   collaborationActive: boolean
   collaborationGeneration: number | null
   collaborationDiscarded: boolean
@@ -182,6 +188,7 @@ type ShellContext = {
   restoreOfflineDraft: (recordId?: string) => Promise<void>
   submissionCaptureValues: unknown
   submissionCaptureIdentity: unknown
+  isMetadataDirty: () => boolean
   isDirty: boolean
   mode: string
   progressShown: number
@@ -448,6 +455,7 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     lifecycleGeneration: 0,
     editorInstanceKey: 0,
     isSaving: false,
+    discardError: '',
     discardPending: false,
     collaborationActive: store.editor.mode === 'update' && store.editor.editorKey === 'markdown',
     collaborationGeneration: store.editor.mode === 'update' && store.editor.editorKey === 'markdown' ? 1 : null,
@@ -577,10 +585,7 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
       return coordinatorState.hasUnresolvedSubmission
     },
     get reloadSafetySnapshot() {
-      const safe = !context.isDirty &&
-        !context.dialogUnsaved &&
-        !coordinatorState.hasInFlightWork &&
-        !coordinatorState.hasUnresolvedSubmission
+      const safe = !context.isDirty && !context.dialogUnsaved && !coordinatorState.hasInFlightWork && !coordinatorState.hasUnresolvedSubmission
       return {
         safe,
         revision: `test-coordinator:${safe ? 'safe' : 'unsafe'}`,
@@ -670,6 +675,40 @@ const applyEveryEdit = (store: EditorStore) => {
 }
 
 describe('modern editor shell interaction contract', () => {
+  test('keeps the active editor in the bounded shell surface after notices', () => {
+    const template = shellSfc.descriptor.template?.content ?? ''
+    const surfaceStart = template.indexOf('.editor-main-surface')
+    const activeEditorStart = template.indexOf('component.editor-active-editor')
+
+    expect(shellSfc.errors).toEqual([])
+    expect(surfaceStart).toBeGreaterThanOrEqual(0)
+    expect(activeEditorStart).toBeGreaterThan(surfaceStart)
+    expect(template.slice(surfaceStart, activeEditorStart)).toContain('Keep as new draft')
+    expect(shellStyle).toMatch(/\.editor-active-editor\s*\{[\s\S]*display:\s*flex;[\s\S]*flex:\s*1 1 auto;[\s\S]*min-width:\s*0;[\s\S]*min-height:\s*0;/)
+  })
+
+  test('keeps Markdown panes bounded, locally scrollable, and reader-themed', () => {
+    expect(markdownSfc.errors).toEqual([])
+    expect(markdownTemplate).toContain('editor-markdown-preview-content.editor-page-canvas.contents')
+    expect(markdownTemplate).toContain('editor-markdown-sysbar-position')
+    expect(markdownStyle).not.toContain('50vw')
+    expect(markdownStyle).toMatch(
+      /&-editor\s*\{[\s\S]*background:\s*rgb\(var\(--v-theme-background\)\);[\s\S]*flex:\s*1 1 0;[\s\S]*min-width:\s*0;[\s\S]*overflow:\s*hidden;/
+    )
+    expect(markdownStyle).toMatch(/&-preview\s*\{[\s\S]*background:\s*rgb\(var\(--v-theme-background\)\);[\s\S]*flex:\s*1 1 0;[\s\S]*min-width:\s*0;/)
+    expect(markdownStyle).toContain('background: rgb(var(--v-theme-background)) !important;')
+    expect(markdownStyle).toMatch(/&-preview-enter-active,[\s\S]*max-width:\s*50%;[\s\S]*width:\s*100%;/)
+    expect(markdownStyle).toMatch(
+      /&-sysbar\s*\{[\s\S]*position:\s*static !important;[\s\S]*background:\s*var\(--wiki-surface-raised\) !important;[\s\S]*border-top:\s*1px solid var\(--wiki-surface-border\);/
+    )
+    expect(markdownStyle).toMatch(/&-path\s*\{[\s\S]*flex:\s*0 1 auto;[\s\S]*text-overflow:\s*ellipsis;/)
+    expect(markdownStyle).toMatch(
+      /&-position\s*\{[\s\S]*flex:\s*0 0 auto;[\s\S]*padding-inline-end:\s*calc\(var\(--wiki-space-3\) \+ env\(safe-area-inset-right\)\);/
+    )
+    expect(markdownStyle).toMatch(/&-toolbar\s*\{[\s\S]*background:\s*var\(--wiki-surface-raised\) !important;/)
+    expect(markdownStyle).toMatch(/&-sidebar\s*\{[\s\S]*background:\s*var\(--wiki-surface-sunken\);/)
+  })
+
   test('resets the durable Markdown draft before restoring a public page and exiting', async () => {
     const store = createStore()
     const testWindow = createTestWindow()
@@ -915,6 +954,73 @@ describe('modern editor shell interaction contract', () => {
     expect(dirtyWindow.location.assigned).toEqual([])
     expect(dirtyWindow.scheduledTimers).toEqual([])
   })
+  test('ignores generated state, normalizes optional dates, and tracks editable changes', () => {
+    const store = createStore()
+    store.page.publishStartDate = ''
+    store.page.publishEndDate = null as unknown as string
+    const testWindow = createTestWindow()
+    const context = createShellHarness(store, testWindow)
+
+    store.page.okf.authority.trust = { score: 0 }
+    store.page.okf.projection = { state: 'stale', value: { summary: 'generated only' } }
+    store.page.brandingView = {} as PageBrandingView
+    store.page.publishStartDate = null as unknown as string
+    store.page.publishEndDate = ''
+
+    expect(context.isDirty).toBe(false)
+    expect(context.isMetadataDirty()).toBe(false)
+
+    store.page.okf.authority.metadata = { type: 'Reference', status: 'draft' }
+    expect(context.isDirty).toBe(true)
+    expect(context.isMetadataDirty()).toBe(true)
+    store.page.okf.authority.metadata = { type: 'Reference', status: 'stable' }
+    store.editor.content = 'content changed'
+    expect(context.isDirty).toBe(true)
+    expect(context.isMetadataDirty()).toBe(false)
+    store.editor.content = 'persisted content'
+    expect(context.isDirty).toBe(false)
+  })
+
+  test('captures ready editor text before deciding whether close is dirty', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    const context = createShellHarness(store, testWindow)
+    context.editorAdapter.capture = () => ({ text: 'adapter-only content', editVersion: 1 })
+
+    await context.exit()
+
+    expect(store.editor.content).toBe('adapter-only content')
+    expect(context.isDirty).toBe(true)
+    expect(context.dialogUnsaved).toBe(true)
+    expect(testWindow.location.assigned).toEqual([])
+  })
+
+  test('keeps the unsaved dialog open with the real discard failure', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    const context = createShellHarness(store, testWindow)
+    const coordinator = context.offlineDraftCoordinator
+    if (!coordinator) throw new Error('Expected an offline draft coordinator')
+    coordinator.discardCurrentDraft = async () => false
+    context.offlineDraftError = 'The local draft could not be discarded.'
+    applyEveryEdit(store)
+    context.dialogUnsaved = true
+
+    await context.discardAndExit()
+
+    expect(context.dialogUnsaved).toBe(true)
+    expect(context.discardError).toBe('The local draft could not be discarded.')
+    expect(context.isDirty).toBe(true)
+    expect(testWindow.location.assigned).toEqual([])
+    expect(store.notifications).toEqual([
+      {
+        message: 'The local draft could not be discarded.',
+        style: 'error',
+        icon: 'warning'
+      }
+    ])
+    expect(shellSfc.descriptor.template?.content ?? '').toMatch(/editor-modal-unsaved\([\s\S]*:error='discardError'/)
+  })
 
   test('successful update Save and close persists edits and cancels the stale edit redirect', async () => {
     const store = createStore()
@@ -925,7 +1031,8 @@ describe('modern editor shell interaction contract', () => {
     let visibilityCalls = 0
     const context = createShellHarness(store, testWindow, {
       updatePage: async (_fetcher, _id, input, sourceRevision, generation) => {
-        updateInputFrozen = Object.isFrozen(input) &&
+        updateInputFrozen =
+          Object.isFrozen(input) &&
           Object.isFrozen(input.tags) &&
           (input.okfMetadata === undefined || Object.isFrozen(input.okfMetadata)) &&
           (input.branding === undefined || input.branding === null || Object.isFrozen(input.branding))
@@ -1019,7 +1126,8 @@ describe('modern editor shell interaction contract', () => {
     let createdInputFrozen = false
     const context = createShellHarness(store, testWindow, {
       createPage: async (_fetcher, input) => {
-        createdInputFrozen = Object.isFrozen(input) &&
+        createdInputFrozen =
+          Object.isFrozen(input) &&
           Object.isFrozen(input.tags) &&
           (input.okfMetadata === undefined || Object.isFrozen(input.okfMetadata)) &&
           (input.branding === undefined || input.branding === null || Object.isFrozen(input.branding))
@@ -1130,7 +1238,9 @@ describe('modern editor shell interaction contract', () => {
     })
     applyEveryEdit(lockedStore)
     lockedContext.offlineDraftStatus = 'locked'
-    expect(lockedContext.offlineDraftStatusText).toBe('Local draft recovery is locked. Verify this account online, then reload the editor to recover encrypted drafts.')
+    expect(lockedContext.offlineDraftStatusText).toBe(
+      'Local draft recovery is locked. Verify this account online, then reload the editor to recover encrypted drafts.'
+    )
     expect(lockedContext.offlineDraftMutationBlocked).toBe(true)
     expect(lockedContext.offlineMutationBlocked).toBe(true)
     expect(await lockedContext.save()).toBe(false)
@@ -1186,14 +1296,17 @@ describe('modern editor shell interaction contract', () => {
     applyEveryEdit(store)
     context.offlineDraftStatus = 'unavailable'
 
-    expect(context.offlineDraftStatusText).toBe('The page may have been deleted or access may have been denied. Publishing and replay are blocked; local recovery and deletion remain available.')
+    expect(context.offlineDraftStatusText).toBe(
+      'The page may have been deleted or access may have been denied. Publishing and replay are blocked; local recovery and deletion remain available.'
+    )
     expect(context.offlineDraftMutationBlocked).toBe(true)
     expect(context.offlineMutationBlocked).toBe(true)
     expect(await context.save()).toBe(false)
     expect(updateCalls).toBe(0)
     expect(store.notifications).toEqual([
       {
-        message: 'Publishing is unavailable because the page may have been deleted or access may have been denied. Local recovery and deletion remain available.',
+        message:
+          'Publishing is unavailable because the page may have been deleted or access may have been denied. Local recovery and deletion remain available.',
         style: 'warning',
         icon: 'warning'
       }
@@ -1297,7 +1410,8 @@ describe('modern editor shell interaction contract', () => {
     expect(context.offlineDraftMutationBlocked).toBe(true)
     expect(store.notifications).toEqual([
       {
-        message: 'Publishing is unavailable because the page may have been deleted or access may have been denied. Local recovery and deletion remain available.',
+        message:
+          'Publishing is unavailable because the page may have been deleted or access may have been denied. Local recovery and deletion remain available.',
         style: 'error',
         icon: 'warning'
       }
@@ -1426,8 +1540,7 @@ describe('modern editor shell interaction contract', () => {
     applyEveryEdit(store)
     const coordinator = context.offlineDraftCoordinator
     if (!coordinator) throw new Error('Expected an offline draft coordinator')
-    coordinator.prepareSubmission = async () => {
-    }
+    coordinator.prepareSubmission = async () => {}
     expect(await context.save()).toBe(true)
     expect(updateCalls).toBe(1)
     expect(context.isDirty).toBe(false)

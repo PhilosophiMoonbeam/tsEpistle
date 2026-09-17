@@ -1,6 +1,6 @@
 <template lang='pug'>
   .editor-markdown(ref='root')
-    v-toolbar.editor-markdown-toolbar(density="compact", color='primary', flat, role='toolbar', aria-label='Formatting tools')
+    v-toolbar.editor-markdown-toolbar(density="compact", flat, role='toolbar', aria-label='Formatting tools')
       template(v-if='isModalShown')
         v-spacer
         v-btn.animated.fadeInRight.wiki-purpose-control(variant="text", data-purpose='info', @click='closeAllModal')
@@ -254,7 +254,7 @@
               :spellcheck='false'
               )
 
-    .v-system-bar.editor-status-bar.editor-markdown-sysbar.bg-grey-darken-3
+    .v-system-bar.editor-status-bar.editor-markdown-sysbar
       .text-body-small.editor-markdown-sysbar-locale {{locale.toUpperCase()}}
       .text-body-small.editor-markdown-sysbar-path.px-3(:title='`/${path}`') /{{path}}
       template(v-if='collaborationStatus')
@@ -268,9 +268,9 @@
           span {{collaborationLabel}}
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
-        .text-body-small Markdown
+        .text-body-small.editor-markdown-sysbar-mode Markdown
         v-spacer
-        .text-body-small Ln {{cursorPos.line + 1}}, Col {{cursorPos.ch + 1}}
+        .text-body-small.editor-markdown-sysbar-position Ln {{cursorPos.line + 1}}, Col {{cursorPos.ch + 1}}
 
     markdown-help(v-if='helpShown')
     page-selector(mode='select', v-model='insertLinkDialog', :open-handler='insertLinkHandler', :path='path', :locale='locale')
@@ -1235,27 +1235,29 @@ export default defineComponent({
   display: flex;
   flex: 1 1 auto;
   flex-flow: column nowrap;
-  height: calc(100vh - var(--v-layout-top, 0px) - var(--v-layout-bottom, 0px));
-  height: calc(100dvh - var(--v-layout-top, 0px) - var(--v-layout-bottom, 0px));
-  max-height: calc(100vh - var(--v-layout-top, 0px) - var(--v-layout-bottom, 0px));
-  max-height: calc(100dvh - var(--v-layout-top, 0px) - var(--v-layout-bottom, 0px));
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 
   &-main {
     display: flex;
-    flex: 1 1 auto;
+    flex: 1 1 0;
+    min-width: 0;
     min-height: 0;
     overflow: hidden;
     width: 100%;
   }
 
   &-editor {
-    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%);
-    display: block;
-    flex: 1 1 50%;
+    background: rgb(var(--v-theme-background));
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
     min-height: 0;
-    overflow: auto;
+    overflow: hidden;
     position: relative;
 
     &.is-mobile-hidden {
@@ -1263,29 +1265,58 @@ export default defineComponent({
     }
 
     @include until($tablet) {
-      flex-basis: 100%;
+      flex: 1 1 0;
       width: 100%;
+    }
+
+    > div {
+      display: flex;
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .cm-editor,
+    .cm-scroller,
+    .cm-content {
+      background: rgb(var(--v-theme-background)) !important;
+    }
+
+    .cm-editor {
+      flex: 1 1 auto;
+      height: 100%;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .cm-scroller {
+      overflow: auto;
     }
   }
 
   &-preview {
-    background: rgb(var(--v-theme-surface));
+    background: rgb(var(--v-theme-background));
     display: flex;
-    flex: 1 1 50%;
+    flex: 1 1 0;
     flex-flow: column nowrap;
+    min-width: 0;
     min-height: 0;
     overflow: hidden;
     padding: 1rem;
     position: relative;
 
     @include until($tablet) {
-      flex: 1 1 100%;
+      flex: 1 1 0;
       max-width: 100%;
       padding: 12px;
       width: 100%;
     }
+
     &-content {
+      background: rgb(var(--v-theme-background));
       flex: 1 1 auto;
+      min-width: 0;
       min-height: 0;
       overflow-y: auto;
       padding: 0;
@@ -1336,14 +1367,15 @@ export default defineComponent({
     }
   }
 
+
   &-preview-enter-active,
   &-preview-leave-active {
-    max-width: 50vw;
+    max-width: 50%;
     transition: max-width .5s ease;
 
     .editor-markdown-preview-content {
       overflow: hidden;
-      width: 50vw;
+      width: 100%;
     }
   }
 
@@ -1353,10 +1385,11 @@ export default defineComponent({
   }
 
   &-toolbar {
-    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%) !important;
-    border-bottom: 1px solid rgba(var(--v-theme-on-surface), .12);
+    background: var(--wiki-surface-raised) !important;
+    border-bottom: 1px solid var(--wiki-surface-border);
     color: rgb(var(--v-theme-on-surface));
     flex: 0 0 auto;
+    min-width: 0;
     overflow-x: auto !important;
     scrollbar-width: thin;
 
@@ -1379,8 +1412,8 @@ export default defineComponent({
 
 
   &-sidebar {
-    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 92%, rgb(var(--v-theme-primary)) 8%);
-    border-inline-end: 1px solid rgba(var(--v-theme-on-surface), .12);
+    background: var(--wiki-surface-sunken);
+    border-inline-end: 1px solid var(--wiki-surface-border);
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
@@ -1414,11 +1447,19 @@ export default defineComponent({
     align-items: center;
     display: flex;
     justify-content: flex-end;
-    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 90%, rgb(var(--v-theme-on-surface)) 10%) !important;
-    border-top: 1px solid rgba(var(--v-theme-on-surface), .12);
-    color: rgba(var(--v-theme-on-surface), .62);
+    position: static !important;
+    inset: auto !important;
+    width: auto !important;
+    transform: none !important;
+    z-index: auto !important;
+    background: var(--wiki-surface-raised) !important;
+    border-top: 1px solid var(--wiki-surface-border);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
     flex: 0 0 calc(24px + env(safe-area-inset-bottom));
+    min-width: 0;
     min-height: calc(24px + env(safe-area-inset-bottom));
+    max-width: 100%;
+    overflow: hidden;
     padding-bottom: env(safe-area-inset-bottom);
     padding-left: 0;
 
@@ -1427,6 +1468,7 @@ export default defineComponent({
       background: rgba(var(--v-theme-primary), .14);
       color: var(--wiki-accent-ink);
       display: inline-flex;
+      flex: 0 0 63px;
       font-weight: 700;
       height: 24px;
       justify-content: center;
@@ -1435,7 +1477,7 @@ export default defineComponent({
     }
 
     &-path {
-      flex: 1 1 auto;
+      flex: 0 1 auto;
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1445,6 +1487,17 @@ export default defineComponent({
     &-collaboration {
       flex: 0 1 auto;
       min-width: 0;
+      white-space: nowrap;
+    }
+
+    &-mode {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
+    &-position {
+      flex: 0 0 auto;
+      padding-inline-end: calc(var(--wiki-space-3) + env(safe-area-inset-right));
       white-space: nowrap;
     }
   }

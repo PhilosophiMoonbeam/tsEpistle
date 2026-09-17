@@ -1,11 +1,6 @@
 import { createHash } from 'node:crypto'
 import { expect, type Page } from '@playwright/test'
-import {
-  authenticateAsAdmin,
-  expectLocatorWithinViewport,
-  expectResponsiveLayout,
-  responsiveTest as test
-} from './helpers.ts'
+import { authenticateAsAdmin, expectLocatorWithinViewport, expectResponsiveLayout, responsiveTest as test } from './helpers.ts'
 import { OFFLINE_DB_NAME, type OfflinePageSnapshotV1 } from '../../shared/offline.ts'
 
 type PageRow = {
@@ -213,19 +208,21 @@ async function savePageFromReader(page: Page, path: string, options: SavePageOpt
   const control = page.locator('.page-offline-control')
   await expect(control).toBeVisible({ timeout: 30_000 })
   await expect(control).toBeEnabled({ timeout: 30_000 })
-  await expect
-    .poll(() => control.getAttribute('aria-label'), { timeout: 30_000 })
-    .toMatch(/^(?:Save for offline|Update offline copy|Remove offline copy)$/u)
+  await expect.poll(() => control.getAttribute('aria-label'), { timeout: 30_000 }).toMatch(/^(?:Pin for offline|Update offline copy|Unpin from offline)$/u)
 
-  if ((await control.getAttribute('aria-label')) === 'Remove offline copy' && !options.expiresAt) {
+  let currentLabel = await control.getAttribute('aria-label')
+  if (currentLabel === 'Unpin from offline' && !options.expiresAt) {
     const current = (await inspectOfflineDatabase(page)).snapshots.find(record => record.pageId === pageId)
     if (!current) throw new Error(`The saved snapshot for ${path} was not found.`)
     return current
   }
 
-  if ((await control.getAttribute('aria-label')) === 'Remove offline copy') {
-    await control.click()
-    await expect(control).toHaveAttribute('aria-label', 'Save for offline', { timeout: 30_000 })
+  if (currentLabel === 'Unpin from offline' && options.expiresAt) {
+    const removeControl = page.locator('.page-offline-remove-control')
+    await expect(removeControl).toBeVisible({ timeout: 30_000 })
+    await removeControl.click()
+    await expect(control).toHaveAttribute('aria-label', 'Pin for offline', { timeout: 30_000 })
+    currentLabel = 'Pin for offline'
   }
 
   let restoreSnapshotFetch = false
@@ -270,8 +267,8 @@ async function savePageFromReader(page: Page, path: string, options: SavePageOpt
 
   try {
     await control.click()
-    await expect(control).toHaveAttribute('aria-label', 'Remove offline copy', { timeout: 30_000 })
-    await expect(page.locator('.page-offline-status')).toContainText('Saved on this device', { timeout: 30_000 })
+    await expect(control).toHaveAttribute('aria-label', 'Unpin from offline', { timeout: 30_000 })
+    await expect(page.locator('.page-offline-status')).toContainText('readable offline copy is saved on this device', { timeout: 30_000 })
   } finally {
     if (restoreSnapshotFetch) {
       await page.evaluate(() => (window as OfflineWindow).__restoreOfflineSnapshotFetch?.())
@@ -320,9 +317,7 @@ async function installClipboardRejection(page: Page): Promise<boolean> {
 }
 
 async function rejectClipboard(page: Page): Promise<void> {
-  await expect
-    .poll(() => page.evaluate(() => typeof (window as OfflineWindow).__rejectOfflineClipboard === 'function'))
-    .toBe(true)
+  await expect.poll(() => page.evaluate(() => typeof (window as OfflineWindow).__rejectOfflineClipboard === 'function')).toBe(true)
   await page.evaluate(() => (window as OfflineWindow).__rejectOfflineClipboard?.())
 }
 
@@ -383,19 +378,25 @@ test.describe('neutral offline saved-page surface', () => {
     }
 
     await page.context().setOffline(true)
-    const sensitiveResults = await page.evaluate(async paths => {
-      const results: Array<{ path: string; fulfilled: boolean; status?: number; body?: string }> = []
-      for (const path of paths) {
-        try {
-          const response = await fetch(path, { headers: { Accept: 'text/html' } })
-          results.push({ path, fulfilled: true, status: response.status, body: (await response.text()).slice(0, 128) })
-        } catch {
-          results.push({ path, fulfilled: false })
+    const sensitiveResults = await page.evaluate(
+      async paths => {
+        const results: Array<{ path: string; fulfilled: boolean; status?: number; body?: string }> = []
+        for (const path of paths) {
+          try {
+            const response = await fetch(path, { headers: { Accept: 'text/html' } })
+            results.push({ path, fulfilled: true, status: response.status, body: (await response.text()).slice(0, 128) })
+          } catch {
+            results.push({ path, fulfilled: false })
+          }
         }
-      }
-      return results
-    }, ['/verify/token', '/login-reset/token', '/_unlock', '/u', '/_api/users/whoami'])
-    expect(sensitiveResults.every(result => !result.fulfilled), JSON.stringify(sensitiveResults)).toBe(true)
+        return results
+      },
+      ['/verify/token', '/login-reset/token', '/_unlock', '/u', '/_api/users/whoami']
+    )
+    expect(
+      sensitiveResults.every(result => !result.fulfilled),
+      JSON.stringify(sensitiveResults)
+    ).toBe(true)
 
     await page.evaluate(path => window.location.assign(path), `/en/${SEEDED_PAGE_PATHS[0]}`)
     await waitForOfflineShell(page)
@@ -465,9 +466,7 @@ test.describe('neutral offline saved-page surface', () => {
 
     const copyText = reader.getByRole('button', { name: 'Copy full page text', exact: true })
     await copyText.click()
-    await expect
-      .poll(() => page.evaluate(() => typeof (window as OfflineWindow).__rejectOfflineClipboard === 'function'))
-      .toBe(true)
+    await expect.poll(() => page.evaluate(() => typeof (window as OfflineWindow).__rejectOfflineClipboard === 'function')).toBe(true)
 
     await reader.getByRole('button', { name: 'Back to saved pages', exact: true }).click()
     await expect(reader).not.toBeVisible()
@@ -515,9 +514,9 @@ test.describe('neutral offline saved-page surface', () => {
     await revalidationRequest
     const control = page.locator('.page-offline-control')
     await expect(control).toBeVisible()
-    await expect(control).toHaveAttribute('aria-label', 'Save for offline', { timeout: 30_000 })
+    await expect(control).toHaveAttribute('aria-label', 'Update offline copy', { timeout: 30_000 })
     await control.click()
-    await expect(control).toHaveAttribute('aria-label', 'Remove offline copy', { timeout: 30_000 })
+    await expect(control).toHaveAttribute('aria-label', 'Unpin from offline', { timeout: 30_000 })
     const refreshedDatabase = await inspectOfflineDatabase(page)
     expect(refreshedDatabase.snapshots).toHaveLength(1)
     expect(refreshedDatabase.searchDocuments).toHaveLength(1)
@@ -604,5 +603,4 @@ test.describe('neutral offline saved-page surface', () => {
     const pages = (await pagesResponse.json()) as PageRow[]
     expect(pages.some(candidate => candidate.path === SEEDED_PAGE_PATHS[0])).toBe(true)
   })
-
 })

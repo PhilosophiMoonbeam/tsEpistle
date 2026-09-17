@@ -71,4 +71,53 @@ describe('Ask modal accessibility contract', () => {
       dom.window.close()
     }
   })
+
+  test('dismisses only outside the search surface and never through an active Agent layer', () => {
+    const methods = compileSearchMethods(search, ['handleBackdropClick'])
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true })
+    const originalElement = Object.getOwnPropertyDescriptor(globalThis, 'Element')
+    const fixtureDocument = dom.window.document
+    const backdrop = fixtureDocument.createElement('div')
+    const searchSurface = fixtureDocument.createElement('div')
+    const searchChild = fixtureDocument.createElement('button')
+    const preview = fixtureDocument.createElement('div')
+    const previewChild = fixtureDocument.createElement('button')
+    let closeCalls = 0
+
+    searchSurface.className = 'search-results-search'
+    preview.className = 'wiki-source-preview'
+    searchSurface.append(searchChild)
+    preview.append(previewChild)
+    backdrop.append(searchSurface, preview)
+
+    Object.defineProperty(globalThis, 'Element', {
+      configurable: true,
+      writable: true,
+      value: dom.window.Element
+    })
+
+    try {
+      const state = {
+        isAgentOpen: false,
+        closeSearch: () => {
+          closeCalls += 1
+        }
+      }
+
+      methods.handleBackdropClick.call(state, { target: backdrop })
+      expect(closeCalls).toBe(1)
+
+      methods.handleBackdropClick.call(state, { target: searchChild })
+      methods.handleBackdropClick.call(state, { target: previewChild })
+      expect(closeCalls).toBe(1)
+
+      state.isAgentOpen = true
+      methods.handleBackdropClick.call(state, { target: backdrop })
+      expect(closeCalls).toBe(1)
+    } finally {
+      if (originalElement) Object.defineProperty(globalThis, 'Element', originalElement)
+      else delete globalThis.Element
+      dom.window.close()
+    }
+  })
 })

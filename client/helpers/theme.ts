@@ -1,7 +1,66 @@
+import { nextTick, watch } from 'vue'
 import type { ThemeDefinition, ThemeInstance } from 'vuetify'
 import { THEME_COLOR_KEYS, type ThemeColors, type ThemeModeColors } from '../../shared/theme-colors.ts'
 
 export type WikiThemeName = 'light' | 'dark' | 'system'
+
+export const installThemeSwitchGuard = (theme: Pick<ThemeInstance, 'name'>): (() => void) => {
+  if (typeof document === 'undefined') return () => {}
+
+  const root = document.documentElement
+  let disposed = false
+  let sequence = 0
+  let firstFrame: number | null = null
+  let secondFrame: number | null = null
+
+  const cancelPendingCleanup = (): void => {
+    if (firstFrame !== null) {
+      window.cancelAnimationFrame(firstFrame)
+      firstFrame = null
+    }
+    if (secondFrame !== null) {
+      window.cancelAnimationFrame(secondFrame)
+      secondFrame = null
+    }
+  }
+
+  const scheduleCleanup = (): void => {
+    const currentSequence = ++sequence
+    cancelPendingCleanup()
+
+    void nextTick().then(() => {
+      if (disposed || currentSequence !== sequence) return
+      firstFrame = window.requestAnimationFrame(() => {
+        firstFrame = null
+        if (disposed || currentSequence !== sequence) return
+        secondFrame = window.requestAnimationFrame(() => {
+          secondFrame = null
+          if (disposed || currentSequence !== sequence) return
+          root.classList.remove('wiki-theme-switching')
+        })
+      })
+    })
+  }
+
+  const stop = watch(
+    () => theme.name.value,
+    () => {
+      if (disposed) return
+      root.classList.add('wiki-theme-switching')
+      scheduleCleanup()
+    },
+    { flush: 'sync' }
+  )
+
+  return () => {
+    if (disposed) return
+    disposed = true
+    sequence++
+    cancelPendingCleanup()
+    root.classList.remove('wiki-theme-switching')
+    stop()
+  }
+}
 
 export const resolveThemeName = (appearance: string | null | undefined, _siteDarkMode: boolean): WikiThemeName => {
   if (appearance === 'dark' || appearance === 'light' || appearance === 'system') return appearance

@@ -45,31 +45,6 @@
                 v-icon(size='18' aria-hidden='true') mdi-close
 
         p.tags-selection-status(v-if='selectionAnnouncement' role='status' aria-live='polite') {{selectionAnnouncement}}
-        section.tags-offline-panel(
-          v-if='hasSelection'
-          aria-labelledby='tags-offline-title'
-        )
-          .tags-offline-copy
-            .tags-eyebrow
-              v-icon(size='16' aria-hidden='true') mdi-wifi-off
-              span Offline subscriptions
-            h2#tags-offline-title Save this selection for offline sync
-            p Browse results above still require every selected tag. Offline subscriptions use a union, so pages matching any subscribed tag may be saved.
-          .tags-offline-actions
-            v-btn(
-              color='primary'
-              variant='tonal'
-              :loading='offlineActionLoading'
-              :disabled='offlineTagActionDisabled'
-              @click='toggleOfflineSubscriptions'
-            ) {{offlineTagActionLabel}}
-            v-btn(
-              variant='text'
-              :loading='offlinePolicyLoading'
-              :disabled='offlineActionLoading'
-              @click='loadOfflinePolicy'
-            ) Refresh
-          p.tags-offline-status(role='status' aria-live='polite') {{offlinePolicyDetail}}
         .tags-workspace(:class='{ "tags-workspace--selected": hasSelection }')
           section.tags-index(
             id='tags-index-region'
@@ -102,6 +77,7 @@
             )
               span {{indexExpanded ? $t('tags:hideTags', { defaultValue: 'Hide tags' }) : $t('tags:showTags', { defaultValue: 'Show tags' })}}
               v-icon(size='20' aria-hidden='true') {{indexExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'}}
+            p.tags-follow-status(role='status' aria-live='polite' aria-atomic='true') {{offlinePolicyDetail}}
             .tags-index-panel#tags-index-panel(v-show='indexIsVisible')
               p.tags-index-status(role='status') {{tagIndexStatus}}
               async-state(
@@ -146,7 +122,7 @@
                 section.tags-index-group(v-for='group of tagsGrouped' :key='`tag-group-` + group.name')
                   h3 {{group.name}}
                   ul.tags-index-list
-                    li(v-for='tag of group.tags' :key='`tag-` + tag.tag')
+                    li.tags-index-row(v-for='tag of group.tags' :key='`tag-` + tag.tag')
                       button.tags-index-item.wiki-tag-color(
                         type='button'
                         :aria-pressed='isSelected(tag.tag)'
@@ -165,6 +141,21 @@
                             bdi {{tagLabel(tag)}}
                           span.tags-index-item-canonical(v-if='tag.tag && tag.tag !== tagLabel(tag)')
                             bdi(dir='ltr') {{tag.tag}}
+                      button.tags-follow-item.wiki-tag-color(
+                        type='button'
+                        :aria-pressed='isFollowed(tag.tag)'
+                        :aria-label='followTagButtonLabel(tag)'
+                        :data-tag-color='tagColor(tag.tag)'
+                        :class='{ "tags-follow-item--followed": isFollowed(tag.tag) }'
+                        :disabled='offlineFollowDisabled(tag.tag)'
+                        @click='toggleFollowedTag(tag.tag)'
+                      )
+                        v-icon.tags-follow-item-icon.wiki-tag-color(
+                          size='17'
+                          aria-hidden='true'
+                          :data-tag-color='tagColor(tag.tag)'
+                        ) {{isFollowed(tag.tag) ? 'mdi-bell-check-outline' : 'mdi-bell-outline'}}
+                        span {{isFollowed(tag.tag) ? 'Unfollow' : 'Follow'}}
 
           section.tags-results(
             v-if='hasSelection'
@@ -302,7 +293,7 @@ import AsyncState from '@/components/common/async-state.vue'
 import { pathFromTagSelection, tagSelectionFromPath } from '../helpers/tag-navigation'
 import { tagColorBucket } from '../../shared/tag-colors.ts'
 import { wikiStore } from '@/store/index.ts'
-import { openOfflineStorage, type OfflineStorage } from '../helpers/offline-storage.ts'
+import { openOfflineStorage, subscribeOfflineStorageChanges, type OfflineStorage } from '../helpers/offline-storage.ts'
 
 type OfflineSyncService = {
   reconcile: (reason?: string) => Promise<unknown>
@@ -381,6 +372,7 @@ export default {
       offlineActionLoading: false,
       offlineTags: [] as string[],
       offlinePolicySequence: 0,
+      offlineStorageChangesUnsubscribe: null as (() => void) | null,
       disposed: false,
       selectionAnnouncement: ''
     }
@@ -389,27 +381,12 @@ export default {
     hasSelection (): boolean {
       return this.selection.length > 0
     },
-    offlineSelectedTags (): string[] {
-      return [...new Set(this.selection
-        .map((tag: string) => this.offlineTagCanonical(tag))
-        .filter(Boolean))]
-    },
-    offlineSelectionSubscribed (): boolean {
-      return this.offlineSelectedTags.length > 0 &&
-        this.offlineSelectedTags.every((tag: string) => this.offlineTags.includes(tag))
-    },
-    offlineTagActionDisabled (): boolean {
-      return !this.hasSelection || this.offlinePolicyLoading || this.offlineActionLoading || !this.offlineStorage
-    },
-    offlineTagActionLabel (): string {
-      return this.offlineSelectionSubscribed ? 'Stop syncing selected tags offline' : 'Save selected tags offline'
-    },
     offlinePolicyDetail (): string {
-      if (this.offlinePolicyLoading) return 'Loading canonical tag subscriptions on this device…'
+      if (this.offlinePolicyLoading) return 'Loading followed tags on this device…'
       if (this.offlinePolicyError) return this.offlinePolicyError
-      if (!this.offlineStorage) return 'Offline tag subscriptions are unavailable on this device.'
-      if (!this.offlineTags.length) return 'No tag subscriptions are active. Browse selection remains AND-only.'
-      return `Offline sync uses a union of ${this.offlineTags.length} subscribed tag${this.offlineTags.length === 1 ? '' : 's'}.`
+      if (!this.offlineStorage) return 'Followed tags are unavailable on this device.'
+      if (!this.offlineTags.length) return 'No followed tags. Following uses a union (OR); browse selection remains AND-only.'
+      return `Following uses a union (OR) of ${this.offlineTags.length} followed tag${this.offlineTags.length === 1 ? '' : 's'}.`
     },
     indexIsVisible (): boolean {
       return !this.hasSelection || this.indexExpanded || this.$vuetify.display.mdAndUp
@@ -550,6 +527,10 @@ export default {
     this.syncRouteState()
     this.loadTags()
     this.loadPages()
+    this.offlineStorageChangesUnsubscribe = subscribeOfflineStorageChanges(notice => {
+      if (this.disposed || (notice.kind !== 'policy' && notice.kind !== 'corpus')) return
+      void this.loadOfflinePolicy({ preserveError: Boolean(this.offlinePolicyError) })
+    })
     void this.loadOfflinePolicy()
     this.$nextTick(() => {
       if (!this.disposed) this.routeSyncReady = true
@@ -560,6 +541,8 @@ export default {
     this.tagsLoadSequence += 1
     this.pagesLoadSequence += 1
     this.offlinePolicySequence += 1
+    this.offlineStorageChangesUnsubscribe?.()
+    this.offlineStorageChangesUnsubscribe = null
     this.offlineStorage?.close()
     this.offlineStorage = null
   },
@@ -578,10 +561,11 @@ export default {
     offlineTagCanonical (tag: string): string {
       return typeof tag === 'string' ? tag.normalize('NFKC').trim().toLowerCase() : ''
     },
-    async loadOfflinePolicy (): Promise<void> {
+    async loadOfflinePolicy (options: { preserveError?: boolean } = {}): Promise<void> {
+      const preserveError = options.preserveError === true
       const sequence = ++this.offlinePolicySequence
       this.offlinePolicyLoading = true
-      this.offlinePolicyError = ''
+      if (!preserveError) this.offlinePolicyError = ''
       try {
         let storage = this.offlineStorage
         if (!storage || storage.isClosed) {
@@ -595,43 +579,70 @@ export default {
         const policy = await storage.readOfflinePolicy()
         if (this.disposed || sequence !== this.offlinePolicySequence) return
         this.offlineTags = [...policy.state.selectedTags]
+        if (!preserveError) this.offlinePolicyError = ''
       } catch (error) {
         if (this.disposed || sequence !== this.offlinePolicySequence) return
-        this.offlinePolicyError = error instanceof Error && error.message.trim()
+        const nextError = error instanceof Error && error.message.trim()
           ? error.message
-          : 'Offline tag subscriptions could not be read.'
+          : 'Followed tags could not be read from this device.'
+        if (!preserveError || !this.offlinePolicyError) this.offlinePolicyError = nextError
       } finally {
         if (sequence === this.offlinePolicySequence && !this.disposed) this.offlinePolicyLoading = false
       }
     },
-    async toggleOfflineSubscriptions (): Promise<void> {
+    isFollowed (tag: string): boolean {
+      const canonical = this.offlineTagCanonical(tag)
+      return Boolean(canonical && this.offlineTags.includes(canonical))
+    },
+    offlineFollowDisabled (tag: string): boolean {
+      return !this.offlineStorage ||
+        !this.offlineTagCanonical(tag) ||
+        this.offlinePolicyLoading ||
+        this.offlineActionLoading
+    },
+    followTagButtonLabel (tag: PageTagRow): string {
+      return `${this.isFollowed(tag.tag) ? 'Unfollow' : 'Follow'} ${this.tagButtonLabel(tag)}`
+    },
+    async toggleFollowedTag (tag: string): Promise<void> {
       const storage = this.offlineStorage
-      const selected = this.offlineSelectedTags
-      if (!storage || !selected.length || this.offlineActionLoading) return
-      const stopSyncing = this.offlineSelectionSubscribed
+      const canonical = this.offlineTagCanonical(tag)
+      if (!storage || !canonical || this.offlinePolicyLoading || this.offlineActionLoading) return
       this.offlineActionLoading = true
       this.offlinePolicyError = ''
+      const known = this.tags.find((entry: PageTagRow) => entry.tag === tag)
+      const label = known ? this.tagButtonLabel(known) : canonical
       try {
         const policy = await storage.readOfflinePolicy()
-        const nextTags = stopSyncing
-          ? policy.state.selectedTags.filter((tag: string) => !selected.includes(tag))
-          : [...new Set([...policy.state.selectedTags, ...selected])].sort()
+        if (this.disposed) return
+        const followed = policy.state.selectedTags.includes(canonical)
+        const nextTags = followed
+          ? policy.state.selectedTags.filter((candidate: string) => candidate !== canonical)
+          : [...new Set([...policy.state.selectedTags, canonical])].sort()
         const next = await storage.setOfflineTagSubscriptions(nextTags, {
           expectedSessionGeneration: policy.sessionGeneration,
           expectedPolicyRevision: policy.state.policyRevision
         })
-        if (this.disposed) return
-        this.offlineTags = [...next.selectedTags]
-        this.selectionAnnouncement = stopSyncing
-          ? 'Selected tags are no longer synced offline.'
-          : 'Selected tags are now synced offline as a union.'
-        await this.offlineSyncService?.reconcile('tags')
+        if (!this.disposed) this.offlineTags = [...next.selectedTags]
+        const result = await this.offlineSyncService?.reconcile('tags')
+        const resultRecord = result && typeof result === 'object' ? result as Record<string, unknown> : null
+        const status = resultRecord?.status
+        const diagnostics = resultRecord?.diagnostics
+        const syncError = diagnostics && typeof diagnostics === 'object'
+          ? Reflect.get(diagnostics, 'lastError')
+          : null
+        if ((status === 'partial' || status === 'error') && typeof syncError === 'string' && syncError.trim())
+          throw new Error(syncError)
+        if (!this.disposed) {
+          this.selectionAnnouncement = followed
+            ? `${label} is no longer followed.`
+            : `${label} is now followed. Following uses a union (OR).`
+        }
       } catch (error) {
         if (this.disposed) return
         this.offlinePolicyError = error instanceof Error && error.message.trim()
           ? error.message
-          : 'Offline tag subscriptions could not be changed.'
-        await this.loadOfflinePolicy()
+          : 'The followed-tag setting could not be changed.'
+        await this.loadOfflinePolicy({ preserveError: true })
       } finally {
         if (!this.disposed) this.offlineActionLoading = false
       }
@@ -955,53 +966,6 @@ export default {
   white-space: nowrap;
 }
 
-.tags-offline-panel {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--wiki-space-5);
-  margin-top: var(--wiki-space-4);
-  padding: var(--wiki-space-4) var(--wiki-space-5);
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 32%, var(--wiki-surface-border));
-  border-radius: var(--wiki-panel-radius);
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, var(--wiki-surface-raised));
-}
-
-.tags-offline-copy {
-  min-width: 0;
-}
-
-.tags-offline-copy h2 {
-  margin: var(--wiki-space-1) 0 0;
-  color: rgb(var(--v-theme-on-surface));
-  font-family: var(--wiki-font-heading);
-  font-size: 1.05rem;
-  font-weight: 720;
-  line-height: 1.35;
-}
-
-.tags-offline-copy p,
-.tags-offline-status {
-  margin: var(--wiki-space-2) 0 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, rgb(var(--v-theme-background)));
-  font-size: .875rem;
-  line-height: 1.5;
-}
-
-.tags-offline-actions {
-  display: flex;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--wiki-space-2);
-}
-
-.tags-offline-status {
-  grid-column: 1 / -1;
-  margin-top: calc(var(--wiki-space-2) * -1);
-}
 
 .tags-workspace {
   display: block;
@@ -1027,6 +991,13 @@ export default {
   padding: var(--wiki-space-5);
   border-bottom: 1px solid var(--wiki-surface-border);
 }
+  .tags-follow-status {
+    min-height: 1.25rem;
+    margin: var(--wiki-space-3) var(--wiki-space-5) 0;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, var(--wiki-surface-raised));
+    font-size: .8125rem;
+    line-height: 1.5;
+  }
 
 .tags-index-heading-copy {
   min-width: 0;
@@ -1106,6 +1077,63 @@ export default {
   padding: 0;
   margin: 0;
   list-style: none;
+}
+
+.tags-index-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--wiki-space-1);
+}
+
+.tags-follow-item {
+  display: inline-flex;
+  min-width: 5.5rem;
+  min-height: var(--wiki-control-height);
+  align-items: center;
+  justify-content: center;
+  gap: var(--wiki-space-1);
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--wiki-control-radius);
+  background: transparent;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, var(--wiki-surface-raised));
+  cursor: pointer;
+  font-size: .8125rem;
+  font-weight: 650;
+  line-height: 1.2;
+  transition:
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    color var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+
+.tags-follow-item.wiki-tag-color[data-tag-color] {
+  color: var(--wiki-tag-color-ink);
+}
+
+.tags-follow-item.wiki-tag-color[data-tag-color]:hover {
+  border-color: color-mix(in srgb, var(--wiki-accent-ink) 24%, var(--wiki-surface-border));
+  background: color-mix(in srgb, var(--wiki-accent-ink) 7%, var(--wiki-surface-raised));
+}
+
+.tags-follow-item.wiki-tag-color.tags-follow-item--followed {
+  border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 45%, var(--wiki-surface-border));
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 13%, var(--wiki-surface-raised));
+  color: rgb(var(--v-theme-primary));
+}
+
+.tags-follow-item--followed .tags-follow-item-icon.wiki-tag-color {
+  color: var(--wiki-tag-color-ink);
+}
+
+.tags-follow-item:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+.tags-follow-item-icon {
+  flex: 0 0 auto;
 }
 
 .tags-index-item {
@@ -1433,17 +1461,9 @@ export default {
     font-size: clamp(2rem, 11vw, 2.5rem);
   }
   .tags-selection,
-  .tags-offline-panel,
   .tags-index-heading,
   .tags-index-panel {
     padding-inline: var(--wiki-space-3);
-  }
-  .tags-offline-panel {
-    grid-template-columns: 1fr;
-    gap: var(--wiki-space-3);
-  }
-  .tags-offline-actions {
-    justify-content: flex-start;
   }
 
   .tags-selection-heading,
@@ -1497,11 +1517,13 @@ export default {
   .tags-result,
   .tags-selected-token,
   .tags-index-item,
+  .tags-follow-item,
   .tags-selected-remove {
     border-color: CanvasText !important;
   }
 
-  .tags-index-item--selected {
+  .tags-index-item--selected,
+  .tags-follow-item--followed {
     outline: 1px solid Highlight;
   }
 }

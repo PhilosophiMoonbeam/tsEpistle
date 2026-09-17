@@ -459,6 +459,27 @@
 
           //- ACCOUNT & APP
 
+          v-menu.nav-header-app-status-menu(
+            location="bottom end"
+            transition='slide-y-transition'
+            :close-on-content-click='false'
+          )
+            template(v-slot:activator='{ props: menuProps }')
+              v-tooltip(location="bottom")
+                template(v-slot:activator='{ props: tooltipProps }')
+                  v-btn.nav-header-app-status-trigger(
+                    icon
+                    v-bind='mergeProps(menuProps, tooltipProps)'
+                    rounded='lg'
+                    :class='`nav-header-app-status-trigger--${connectionPresentation.tone}`'
+                    :aria-label='connectionPresentation.label'
+                    :title='connectionPresentation.label'
+                  )
+                    v-icon(:icon='connectionPresentation.icon', aria-hidden='true')
+                span {{connectionPresentation.label}}
+            .nav-header-app-status-content
+              PwaStatus
+
           v-menu(location="bottom end", transition='slide-y-transition', :close-on-content-click='false', @update:model-value='accountMenuVisibilityChanged')
             template(v-slot:activator='{ props: menuProps }')
               v-tooltip(location="bottom")
@@ -521,9 +542,6 @@
                 )
                   template(v-slot:prepend): v-icon(color='primary') mdi-login
                   v-list-item-title Sign in
-                v-divider
-              PwaStatus
-
     page-selector(mode='create', v-model='newPageModal', :open-handler='pageNewCreate', :locale='locale')
     page-selector(mode='move', v-model='movePageModal', :open-handler='pageMoveRename', :path='path', :locale='locale')
     page-selector(mode='create', v-model='duplicateOpts.modal', :open-handler='pageDuplicateHandle', :path='duplicateOpts.path', :locale='duplicateOpts.locale')
@@ -648,8 +666,9 @@ export default defineComponent({
       get(): boolean { return wikiStore.site.searchIsFocused },
       set(value: boolean) { wikiStore.site.searchIsFocused = value }
     },
-    searchIsLoading(): boolean { return wikiStore.site.searchIsLoading },
-    isLoading(): boolean { return wikiStore.isLoading },
+    connectionPresentation(): pwa.PwaConnectionPresentation {
+      return pwa.pwaConnectionPresentation(pwa.pwaState)
+    },
     title(): string { return wikiStore.site.title },
     logoUrl(): string { return wikiStore.site.logoUrl },
     logoImageFailed (): boolean { return this.failedLogoUrl === this.logoUrl },
@@ -704,7 +723,7 @@ export default defineComponent({
     hasNotifications(): boolean { return this.notificationState === 'available' },
     accountButtonLabel(): string {
       const account = this.$t('common:header.account')
-      if (!this.isAuthenticated) return `${account} & app`
+      if (!this.isAuthenticated) return account
       if (this.notificationState === 'available') {
         return this.$t('common:header.accountNotificationsAvailable', { account })
       }
@@ -714,7 +733,7 @@ export default defineComponent({
       return account
     },
     accountMenuLabel(): string {
-      return this.isAuthenticated ? 'Account menu' : 'Account & app menu'
+      return 'Account menu'
     },
     permissions(): string[] { return wikiStore.user.permissions },
     searchInputLabel(): string { return this.searchMode === 'ask' ? this.$t('common:header.askPlaceholder') : this.$t('common:header.search') },
@@ -1662,6 +1681,30 @@ export default defineComponent({
 .account-menu__trigger {
   position: relative;
 }
+.nav-header-app-status-content {
+  width: min(24rem, calc(100vw - (var(--wiki-space-4) * 2)));
+  max-width: calc(100vw - (var(--wiki-space-4) * 2));
+}
+
+.nav-header .nav-header-inner .nav-header-app-status-trigger {
+  flex: 0 0 auto;
+  min-width: max(44px, var(--wiki-control-height, 44px)) !important;
+  min-height: max(44px, var(--wiki-control-height, 44px)) !important;
+  height: max(44px, var(--wiki-control-height, 44px)) !important;
+}
+
+.nav-header-app-status-trigger--success {
+  color: rgb(var(--v-theme-success)) !important;
+}
+
+.nav-header-app-status-trigger--warning {
+  color: rgb(var(--v-theme-warning)) !important;
+}
+
+.nav-header-app-status-trigger--error {
+  color: rgb(var(--v-theme-error)) !important;
+}
+
 
 .account-menu__initials {
   font-size: .8125rem;
@@ -1779,6 +1822,15 @@ export default defineComponent({
       grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1fr);
     }
 
+    &.nav-header--dense.nav-header--reserved-actions {
+      .nav-header-layout {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content;
+      }
+
+      .nav-header-actions-col {
+        min-width: max-content;
+      }
+    }
     .nav-header-brand-col,
     .nav-header-search-col,
     .nav-header-actions-col {

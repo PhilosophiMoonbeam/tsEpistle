@@ -213,7 +213,7 @@ describe('Agent thread presentation', () => {
     )
 
     expect(presentation.runs.get('run')).toMatchObject({
-      activityLabel: 'Activity · 1 action · Complete',
+      activityLabel: 'Activity · 1 activity · Complete',
       tasks: [runTask]
     })
     expect(presentation.messages.get('assistant-1')).toMatchObject({
@@ -235,7 +235,7 @@ describe('Agent thread presentation', () => {
         description: 'You can retry the same request or revise it in the composer.'
       },
       run: {
-        activityLabel: 'Activity · 1 action · Complete',
+        activityLabel: 'Activity · 1 activity · Complete',
         tasks: [runTask]
       }
     })
@@ -276,11 +276,50 @@ describe('Agent thread presentation', () => {
         tool({ id: 'read', runId: 'run', title: 'Read page' }),
         tool({ id: 'search', runId: 'run', title: 'Search pages', state: 'running', completedAt: null })
       ])
-    ).toBe('Search pages · 2 actions')
+    ).toBe('Search pages · 2 activities')
     expect(agentActivityLabel([tool({ id: 'read', runId: 'run' }), tool({ id: 'search', runId: 'run', state: 'failed' })])).toBe(
-      'Activity · 2 actions · 1 failed'
+      'Activity · 2 activities · 1 failed'
     )
-    expect(agentActivityLabel([tool({ id: 'read', runId: 'run' })])).toBe('Activity · 1 action · Complete')
+    expect(agentActivityLabel([tool({ id: 'read', runId: 'run' })])).toBe('Activity · 1 activity · Complete')
+  })
+
+  it('keeps capacity-limited activity calm and separate from genuine failures', () => {
+    const activities = [
+      ...Array.from({ length: 3 }, (_, index) => tool({ id: `complete-${index}`, runId: 'run' })),
+      tool({
+        id: 'omitted',
+        runId: 'run',
+        state: 'omitted',
+        contextExclusion: { status: 'omitted', reason: 'tool_result_capacity' }
+      }),
+      ...Array.from({ length: 7 }, (_, index) =>
+        tool({
+          id: `not-executed-${index}`,
+          runId: 'run',
+          state: 'not_executed',
+          contextExclusion: { status: 'not_executed', reason: 'tool_result_capacity' }
+        })
+      )
+    ]
+
+    expect(activities).toHaveLength(11)
+    expect(agentActivityLabel(activities)).toBe('Activity · 11 activities · 1 omitted · 7 not executed')
+    expect(agentActivityLabel(activities)).not.toContain('failed')
+  })
+
+  it('keeps genuine failures prominent when capacity dispositions are mixed in', () => {
+    const capacityLimited = [
+      tool({ id: 'complete', runId: 'run' }),
+      tool({ id: 'omitted', runId: 'run', state: 'omitted', contextExclusion: { status: 'omitted', reason: 'tool_result_capacity' } }),
+      tool({
+        id: 'not-executed',
+        runId: 'run',
+        state: 'not_executed',
+        contextExclusion: { status: 'not_executed', reason: 'tool_result_capacity' }
+      }),
+      tool({ id: 'failed', runId: 'run', state: 'failed' })
+    ]
+    expect(agentActivityLabel(capacityLimited)).toBe('Activity · 4 activities · 1 omitted · 1 not executed · 1 failed')
   })
 
   it('uses conversational approval titles and durable receipt labels', () => {

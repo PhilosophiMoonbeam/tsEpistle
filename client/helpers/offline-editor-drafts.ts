@@ -1,9 +1,4 @@
-import {
-  OfflineDraftPayloadV1Schema,
-  type OfflineDraftEnvelopeV1,
-  type OfflineDraftPayloadV1,
-  type OfflineDraftState
-} from '../../shared/offline.ts'
+import { OfflineDraftPayloadV1Schema, type OfflineDraftEnvelopeV1, type OfflineDraftPayloadV1, type OfflineDraftState } from '../../shared/offline.ts'
 import { isPageEditorKey, type PageEditorKey } from '../../shared/page-editors.ts'
 import { OfflineDraftConflictError, openOfflineStorage, type OfflineStorage } from './offline-storage.ts'
 import {
@@ -22,7 +17,6 @@ type ActorEpoch = OfflineActorEpoch
 const POSITIVE_SAFE_INTEGER = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 const NONNEGATIVE_SAFE_INTEGER = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 const DEFAULT_CAPTURE_DEBOUNCE_MS = 750
-
 
 export type OfflineEditorDraftIdentity = {
   readonly editorKey: PageEditorKey
@@ -248,8 +242,7 @@ const sameFullIdentity = (left: OfflineEditorDraftIdentity, right: OfflineEditor
 const sameText = (payload: OfflineDraftPayloadV1, values: OfflineEditorDraftValues): boolean =>
   payload.title === values.title && payload.description === values.description && payload.content === values.content
 
-const sameBytes = (left: Uint8Array, right: Uint8Array): boolean =>
-  left.byteLength === right.byteLength && left.every((value, index) => value === right[index])
+const sameBytes = (left: Uint8Array, right: Uint8Array): boolean => left.byteLength === right.byteLength && left.every((value, index) => value === right[index])
 
 const sameEnvelope = (left: OfflineDraftEnvelopeV1, right: OfflineDraftEnvelopeV1): boolean =>
   left.schemaVersion === right.schemaVersion &&
@@ -354,6 +347,8 @@ export class OfflineEditorDraftCoordinator {
   private captureTimer: ReturnType<typeof setTimeout> | null = null
   private capturePromise: Promise<boolean> | null = null
   private capturePromiseVersion = 0
+  private discardPromise: Promise<boolean> | null = null
+  private discarding = false
   private transitionTail: Promise<unknown> = Promise.resolve()
   private transitionPending = 0
   private destroyed = false
@@ -379,9 +374,10 @@ export class OfflineEditorDraftCoordinator {
 
   constructor(options: OfflineEditorDraftCoordinatorOptions) {
     this.options = options
-    this.debounceMs = Number.isFinite(options.debounceMs) && (options.debounceMs ?? 0) >= 0
-      ? Math.floor(options.debounceMs ?? DEFAULT_CAPTURE_DEBOUNCE_MS)
-      : DEFAULT_CAPTURE_DEBOUNCE_MS
+    this.debounceMs =
+      Number.isFinite(options.debounceMs) && (options.debounceMs ?? 0) >= 0
+        ? Math.floor(options.debounceMs ?? DEFAULT_CAPTURE_DEBOUNCE_MS)
+        : DEFAULT_CAPTURE_DEBOUNCE_MS
     this.storage = options.storage ?? null
     this.ownsStorage = options.storage === undefined
   }
@@ -415,7 +411,8 @@ export class OfflineEditorDraftCoordinator {
     const metadataDirty = facts.dirtyMetadata === true
     const mergeState = facts.mergeState === true
     const collaborationBacklog = facts.collaborationBacklog === true || (typeof facts.collaborationBacklog === 'number' && facts.collaborationBacklog > 0)
-    const safe = !this.destroyed &&
+    const safe =
+      !this.destroyed &&
       valuesCommitted &&
       !metadataDirty &&
       !mergeState &&
@@ -501,9 +498,8 @@ export class OfflineEditorDraftCoordinator {
   private setState(patch: Partial<DraftState>): void {
     if (this.destroyed) return
     if (patch.state === 'unavailable') this.unavailableLatched = true
-    const effectivePatch = this.unavailableLatched && patch.state !== undefined && patch.state !== 'unavailable'
-      ? { ...patch, state: 'unavailable' as const }
-      : patch
+    const effectivePatch =
+      this.unavailableLatched && patch.state !== undefined && patch.state !== 'unavailable' ? { ...patch, state: 'unavailable' as const } : patch
     this.draftState = { ...this.draftState, ...effectivePatch }
     this.emit()
   }
@@ -512,9 +508,7 @@ export class OfflineEditorDraftCoordinator {
     this.transitionPending += 1
     if (!this.destroyed) this.setState({ inFlight: true })
     const previous = this.transitionTail
-    const run = previous
-      .catch(() => undefined)
-      .then(() => operation())
+    const run = previous.catch(() => undefined).then(() => operation())
     const settled = run.then(
       value => {
         this.transitionPending = Math.max(0, this.transitionPending - 1)
@@ -527,7 +521,10 @@ export class OfflineEditorDraftCoordinator {
         throw error
       }
     )
-    this.transitionTail = settled.then(() => undefined, () => undefined)
+    this.transitionTail = settled.then(
+      () => undefined,
+      () => undefined
+    )
     return settled
   }
 
@@ -640,7 +637,8 @@ export class OfflineEditorDraftCoordinator {
         envelope.keyVersion !== handle.context.keyVersion ||
         (!currentGeneration && !olderGeneration) ||
         isSubmission(envelope)
-      ) continue
+      )
+        continue
       try {
         let payload: OfflineDraftPayloadV1
         let retained = cloneEnvelope(envelope)
@@ -655,9 +653,11 @@ export class OfflineEditorDraftCoordinator {
             draftRevision: envelope.draftRevision,
             submissionId: null
           })
-          retained = cloneEnvelope(await storage.recoverOrdinaryDraft(envelope, replacement, {
-            expectedSessionGeneration: handle.sessionGeneration
-          }))
+          retained = cloneEnvelope(
+            await storage.recoverOrdinaryDraft(envelope, replacement, {
+              expectedSessionGeneration: handle.sessionGeneration
+            })
+          )
         }
         if (!this.fenceCurrent(actorEpoch, handle)) return []
         if (!sameEditorIdentity(payload, identity) || payload.locale !== identity.locale) continue
@@ -685,7 +685,8 @@ export class OfflineEditorDraftCoordinator {
         envelope.authVersion !== handle.context.authVersion ||
         envelope.keyVersion !== handle.context.keyVersion ||
         !isSubmission(envelope)
-      ) continue
+      )
+        continue
       let payload: OfflineDraftPayloadV1
       let retained = cloneEnvelope(envelope)
       try {
@@ -700,9 +701,11 @@ export class OfflineEditorDraftCoordinator {
           })
           if (typeof storage.rewrapSubmission === 'function') {
             try {
-              retained = cloneEnvelope(await storage.rewrapSubmission(envelope, replacement, {
-                expectedSessionGeneration: handle.sessionGeneration
-              }))
+              retained = cloneEnvelope(
+                await storage.rewrapSubmission(envelope, replacement, {
+                  expectedSessionGeneration: handle.sessionGeneration
+                })
+              )
             } catch {
               retained = cloneEnvelope(envelope)
             }
@@ -736,22 +739,32 @@ export class OfflineEditorDraftCoordinator {
     if (!this.fenceCurrent(session.actorEpoch, session.handle)) return this.view
     const newest = matches[matches.length - 1]
     const isNewer = newest !== undefined && !sameText(newest.payload, values)
-    this.currentDraft = newest !== undefined && !isNewer
-      ? { recordId: newest.recordId, draftRevision: newest.draftRevision, payload: clonePayload(newest.payload), envelope: cloneEnvelope(this.envelopes.get(newest.recordId)!) }
-      : null
+    this.currentDraft =
+      newest !== undefined && !isNewer
+        ? {
+            recordId: newest.recordId,
+            draftRevision: newest.draftRevision,
+            payload: clonePayload(newest.payload),
+            envelope: cloneEnvelope(this.envelopes.get(newest.recordId)!)
+          }
+        : null
     const onlineReview = this.options.isOnline?.() === true
     this.reviewRequired = onlineReview || newest?.payload.state === 'needs-review'
     const candidateChoices = isNewer ? matches : []
-    const candidate = candidateChoices.length === 1
-      ? {
-          ...candidateChoices[0]!,
-          payload: this.reviewRequired && candidateChoices[0]!.payload.state === 'local'
-            ? { ...candidateChoices[0]!.payload, state: 'needs-review' as const }
-            : candidateChoices[0]!.payload
-        }
-      : null
+    const candidate =
+      candidateChoices.length === 1
+        ? {
+            ...candidateChoices[0]!,
+            payload:
+              this.reviewRequired && candidateChoices[0]!.payload.state === 'local'
+                ? { ...candidateChoices[0]!.payload, state: 'needs-review' as const }
+                : candidateChoices[0]!.payload
+          }
+        : null
     const newestSubmission = submissions[submissions.length - 1]
-    const state = newestSubmission?.payload.state ?? candidate?.payload.state ??
+    const state =
+      newestSubmission?.payload.state ??
+      candidate?.payload.state ??
       (this.currentDraft ? (this.reviewRequired ? 'needs-review' : this.currentDraft.payload.state) : null)
     this.unavailableLatched = state === 'unavailable'
     this.draftState = {
@@ -786,19 +799,16 @@ export class OfflineEditorDraftCoordinator {
 
   /** Queue a capture and resolve only after this edit version or a newer one is durable. */
   captureThrough(editVersion: number, stateOverride?: OfflineDraftState): Promise<boolean> {
+    if (this.destroyed || this.discarding) return Promise.resolve(false)
     const version = this.captureVersion(editVersion)
     const unavailableOverride = stateOverride === 'unavailable'
-    if (
-      stateOverride === undefined &&
-      version <= this.committedEditVersion &&
-      this.hasCommittedCurrentValues
-    ) {
+    if (stateOverride === undefined && version <= this.committedEditVersion && this.hasCommittedCurrentValues) {
       if (this.unavailableLatched && this.draftState.state !== 'unavailable') this.setState({ state: 'unavailable' })
       return Promise.resolve(true)
     }
     if (!unavailableOverride && this.capturePromise && version <= this.capturePromiseVersion) return this.capturePromise
     const operation = this.enqueue(async () => {
-      if (this.destroyed || !this.isAuthenticatedUser()) {
+      if (this.destroyed || this.discarding || !this.isAuthenticatedUser()) {
         if (unavailableOverride && !this.destroyed) {
           this.unavailableLatched = true
           this.setState({ state: 'unavailable' })
@@ -853,7 +863,7 @@ export class OfflineEditorDraftCoordinator {
 
   /** Queue an encrypted local capture while the editor remains dirty. */
   scheduleCapture(editVersion?: number): void {
-    if (this.destroyed || !this.isAuthenticatedUser() || this.options.isDirty?.() === false) return
+    if (this.destroyed || this.discarding || !this.isAuthenticatedUser() || this.options.isDirty?.() === false) return
     const version = this.captureVersion(editVersion, true)
     if (this.captureTimer !== null) clearTimeout(this.captureTimer)
     this.captureTimer = setTimeout(() => {
@@ -869,21 +879,20 @@ export class OfflineEditorDraftCoordinator {
       clearTimeout(this.captureTimer)
       this.captureTimer = null
     }
+    if (this.discarding) return Promise.resolve(false)
     const version = this.captureVersion(options.editVersion, options.force === true)
     return this.captureThrough(version, options.state)
   }
 
   private async captureInternal(snapshot: CaptureSnapshot, force: boolean): Promise<boolean> {
-    if (this.destroyed || !this.isAuthenticatedUser()) return false
+    if (this.destroyed || this.discarding || !this.isAuthenticatedUser()) return false
     if (!force && this.options.isDirty?.() === false) return false
     const session = await this.ensureSession()
     if (!session || !this.fenceCurrent(session.actorEpoch, session.handle)) return false
     const previous = this.currentDraft
     const frozenSource = this.activePrepared?.sourceEnvelope ?? null
-    const previousIsFrozenSource = frozenSource !== null &&
-      previous !== null &&
-      previous.recordId === frozenSource.recordId &&
-      previous.draftRevision === frozenSource.draftRevision
+    const previousIsFrozenSource =
+      frozenSource !== null && previous !== null && previous.recordId === frozenSource.recordId && previous.draftRevision === frozenSource.draftRevision
     const captureIdentity = previous
       ? {
           ...snapshot.identity,
@@ -891,12 +900,12 @@ export class OfflineEditorDraftCoordinator {
           baseUpdatedAt: previous.payload.baseUpdatedAt
         }
       : snapshot.identity
-    const nextState = snapshot.stateOverride ?? (this.unavailableLatched
-      ? 'unavailable'
-      : stateForCapture(previous?.payload.state ?? this.draftState.state, this.reviewRequired))
+    const nextState =
+      snapshot.stateOverride ??
+      (this.unavailableLatched ? 'unavailable' : stateForCapture(previous?.payload.state ?? this.draftState.state, this.reviewRequired))
     const payload = makePayload(nextState, captureIdentity, snapshot.values)
-    const recordId = previousIsFrozenSource ? randomIdentifier() : previous?.recordId ?? randomIdentifier()
-    const previousRevision = previousIsFrozenSource ? frozenSource.draftRevision : previous?.draftRevision ?? 0
+    const recordId = previousIsFrozenSource ? randomIdentifier() : (previous?.recordId ?? randomIdentifier())
+    const previousRevision = previousIsFrozenSource ? frozenSource.draftRevision : (previous?.draftRevision ?? 0)
     const draftRevision = Math.max(1, previousRevision + 1)
     const envelope = await encryptOfflineDraft(session.handle, payload, {
       recordId,
@@ -930,8 +939,10 @@ export class OfflineEditorDraftCoordinator {
   }
 
   private selectedCandidate(recordId?: string): OfflineDraftRecovery | null {
-    return (recordId === undefined ? this.draftState.candidate : this.draftState.candidates.find(item => item.recordId === recordId)) ??
+    return (
+      (recordId === undefined ? this.draftState.candidate : this.draftState.candidates.find(item => item.recordId === recordId)) ??
       (this.draftState.candidates.length === 1 ? this.draftState.candidates[0]! : null)
+    )
   }
 
   private selectedSubmission(recordId: string): OfflineDraftSubmissionRecovery | null {
@@ -961,12 +972,13 @@ export class OfflineEditorDraftCoordinator {
         if (!sameEditorIdentity(candidate.payload, this.currentIdentity())) return null
         this.applyDetachedPayload(candidate.payload, false)
         const envelope = this.envelopes.get(candidate.recordId)
-        if (envelope) this.currentDraft = {
-          recordId: candidate.recordId,
-          draftRevision: candidate.draftRevision,
-          payload: clonePayload(candidate.payload),
-          envelope: cloneEnvelope(envelope)
-        }
+        if (envelope)
+          this.currentDraft = {
+            recordId: candidate.recordId,
+            draftRevision: candidate.draftRevision,
+            payload: clonePayload(candidate.payload),
+            envelope: cloneEnvelope(envelope)
+          }
         this.reviewRequired = true
         const candidates = this.draftState.candidates.filter(item => item.recordId !== candidate.recordId)
         this.setState({ state: 'needs-review', candidate: null, candidates, committed: true, error: null })
@@ -993,9 +1005,7 @@ export class OfflineEditorDraftCoordinator {
       if (submissionCandidate) {
         const session = await this.ensureSession()
         if (!session || !this.fenceCurrent(session.actorEpoch, session.handle)) return false
-        const expectedSource = this.currentDraft && this.currentDraft.envelope.submissionId === null
-          ? cloneEnvelope(this.currentDraft.envelope)
-          : null
+        const expectedSource = this.currentDraft && this.currentDraft.envelope.submissionId === null ? cloneEnvelope(this.currentDraft.envelope) : null
         if (!expectedSource) {
           this.setState({ error: 'The unresolved submission has no mutable source draft to replace.' })
           return false
@@ -1033,7 +1043,12 @@ export class OfflineEditorDraftCoordinator {
           applied = false
         }
         const submissionCandidates = this.draftState.submissionCandidates.filter(item => item.submission.recordId !== receiptRecordId)
-        this.setState({ state: 'needs-review', submissionCandidates, committed: true, error: applied ? null : 'The local review fork was saved, but the editor could not be replaced.' })
+        this.setState({
+          state: 'needs-review',
+          submissionCandidates,
+          committed: true,
+          error: applied ? null : 'The local review fork was saved, but the editor could not be replaced.'
+        })
         return applied
       }
       try {
@@ -1085,7 +1100,14 @@ export class OfflineEditorDraftCoordinator {
         candidate: null,
         candidates,
         submissionCandidates,
-        state: submissionCandidates.length > 0 ? 'outcome-unknown' : candidates.length > 0 ? 'needs-review' : this.currentDraft ? this.currentDraft.payload.state : null,
+        state:
+          submissionCandidates.length > 0
+            ? 'outcome-unknown'
+            : candidates.length > 0
+              ? 'needs-review'
+              : this.currentDraft
+                ? this.currentDraft.payload.state
+                : null,
         committed: this.currentDraft !== null || candidates.length > 0 || submissionCandidates.length > 0,
         error: null
       })
@@ -1094,31 +1116,68 @@ export class OfflineEditorDraftCoordinator {
   }
 
   async discardCurrentDraft(): Promise<boolean> {
-    return this.enqueue(async () => {
+    if (this.discardPromise) return this.discardPromise
+    this.discarding = true
+    if (this.captureTimer !== null) {
+      clearTimeout(this.captureTimer)
+      this.captureTimer = null
+    }
+    const operation = this.enqueue(async () => {
       if (this.destroyed || !this.isAuthenticatedUser()) return true
       const current = this.currentDraft
-      if (!current) return this.draftState.candidate === null && this.draftState.candidates.length === 0
+      if (!current) return true
       const session = await this.ensureSession()
-      if (!session || !this.fenceCurrent(session.actorEpoch, session.handle)) return false
+      if (!session || !this.fenceCurrent(session.actorEpoch, session.handle)) {
+        this.setState({ error: 'The local draft could not be discarded.' })
+        return false
+      }
       try {
         const deleted = await session.storage.deleteDraft(current.recordId, {
           expectedSessionGeneration: session.handle.sessionGeneration,
           expectedDraftRevision: current.draftRevision,
           expectedSubmissionId: null
         })
-        if (!deleted) return false
+        if (!deleted) {
+          this.setState({ error: 'The local draft could not be discarded.' })
+          return false
+        }
         this.envelopes.delete(current.recordId)
         this.currentDraft = null
-        this.setState({ state: this.draftState.submissionCandidates.length > 0 ? 'outcome-unknown' : null, committed: this.draftState.submissionCandidates.length > 0, error: null })
+        this.setState({
+          state: this.draftState.submissionCandidates.length > 0 ? 'outcome-unknown' : this.draftState.candidates.length > 0 ? 'needs-review' : null,
+          committed: this.draftState.candidates.length > 0 || this.draftState.submissionCandidates.length > 0,
+          error: null
+        })
         return true
       } catch {
         this.setState({ error: 'The local draft could not be discarded.' })
         return false
       }
     })
+    const shared = operation.then(
+      result => {
+        if (this.discardPromise === shared) {
+          this.discardPromise = null
+          this.discarding = false
+        }
+        return result
+      },
+      error => {
+        if (this.discardPromise === shared) {
+          this.discardPromise = null
+          this.discarding = false
+        }
+        throw error
+      }
+    )
+    this.discardPromise = shared
+    return shared
   }
 
-  private async findStoredSubmission(session: { storage: OfflineStorage; handle: OfflineDraftKeyHandle }, prepared: InternalPrepared): Promise<OfflineDraftEnvelopeV1 | null> {
+  private async findStoredSubmission(
+    session: { storage: OfflineStorage; handle: OfflineDraftKeyHandle },
+    prepared: InternalPrepared
+  ): Promise<OfflineDraftEnvelopeV1 | null> {
     const records = await session.storage.listDraftEnvelopes(session.handle.context.accountId, {
       expectedSessionGeneration: session.handle.sessionGeneration
     })
@@ -1134,21 +1193,26 @@ export class OfflineEditorDraftCoordinator {
       this.draftState.submissionCandidates.length > 0 ||
       this.draftState.candidate ||
       this.draftState.candidates.length > 0
-    ) return null
+    )
+      return null
     const session = await this.ensureSession()
     if (!session || !this.fenceCurrent(session.actorEpoch, session.handle)) return null
     const sourceState = stateForCapture(this.currentDraft?.payload.state ?? this.draftState.state, this.reviewRequired)
-    const sourceMatches = this.currentDraft !== null &&
+    const sourceMatches =
+      this.currentDraft !== null &&
       sameText(this.currentDraft.payload, snapshot.values) &&
-      sameFullIdentity({
-        editorKey: this.currentDraft.payload.editorKey,
-        pageId: this.currentDraft.payload.pageId,
-        createIdentity: this.currentDraft.payload.createIdentity,
-        locale: this.currentDraft.payload.locale,
-        path: this.currentDraft.payload.path,
-        baseSourceRevision: this.currentDraft.payload.baseSourceRevision,
-        baseUpdatedAt: this.currentDraft.payload.baseUpdatedAt
-      }, snapshot.identity)
+      sameFullIdentity(
+        {
+          editorKey: this.currentDraft.payload.editorKey,
+          pageId: this.currentDraft.payload.pageId,
+          createIdentity: this.currentDraft.payload.createIdentity,
+          locale: this.currentDraft.payload.locale,
+          path: this.currentDraft.payload.path,
+          baseSourceRevision: this.currentDraft.payload.baseSourceRevision,
+          baseUpdatedAt: this.currentDraft.payload.baseUpdatedAt
+        },
+        snapshot.identity
+      )
     let sourceEnvelope: OfflineDraftEnvelopeV1
     let sourcePayload: OfflineDraftPayloadV1
     if (sourceMatches && this.currentDraft) {
@@ -1243,7 +1307,6 @@ export class OfflineEditorDraftCoordinator {
     })
   }
 
-
   private async captureNewerDuringCompletion(prepared: InternalPrepared): Promise<boolean> {
     let values: OfflineEditorDraftValues
     let identity: OfflineEditorDraftIdentity
@@ -1274,21 +1337,20 @@ export class OfflineEditorDraftCoordinator {
     if (!receipt) return false
     const current = this.currentDraft
     const expectedSource = prepared.sourceEnvelope ? cloneEnvelope(prepared.sourceEnvelope) : null
-    const expectedSurvivingFork = current && expectedSource && current.recordId !== expectedSource.recordId
-      ? cloneEnvelope(current.envelope)
-      : null
+    const expectedSurvivingFork = current && expectedSource && current.recordId !== expectedSource.recordId ? cloneEnvelope(current.envelope) : null
     const preparedSourceRevision = prepared.sourceEnvelope?.draftRevision ?? 0
     let survivingFork: OfflineDraftEnvelopeV1 | null = null
     let survivingForkPayload: OfflineDraftPayloadV1 | null = null
     if (outcome.kind !== 'rejected') {
       if (current && expectedSource && current.draftRevision > preparedSourceRevision) {
-        const identity = outcome.kind === 'success' && outcome.identity
-          ? {
-              ...outcome.identity,
-              baseSourceRevision: outcome.baseSourceRevision ?? outcome.identity.baseSourceRevision,
-              baseUpdatedAt: outcome.baseUpdatedAt ?? outcome.identity.baseUpdatedAt
-            }
-          : this.currentIdentity()
+        const identity =
+          outcome.kind === 'success' && outcome.identity
+            ? {
+                ...outcome.identity,
+                baseSourceRevision: outcome.baseSourceRevision ?? outcome.identity.baseSourceRevision,
+                baseUpdatedAt: outcome.baseUpdatedAt ?? outcome.identity.baseUpdatedAt
+              }
+            : this.currentIdentity()
         const values = { title: current.payload.title, description: current.payload.description, content: current.payload.content }
         survivingForkPayload = makePayload(stateForCapture(current.payload.state, this.reviewRequired), identity, values)
         survivingFork = await encryptOfflineDraft(session.handle, survivingForkPayload, {
@@ -1303,9 +1365,9 @@ export class OfflineEditorDraftCoordinator {
       const values = { title: sourcePayload.title, description: sourcePayload.description, content: sourcePayload.content }
       survivingForkPayload = makePayload(state ?? 'needs-review', identity, values)
       survivingFork = await encryptOfflineDraft(session.handle, survivingForkPayload, {
-        recordId: expectedSurvivingFork?.recordId ?? (
-          current && expectedSource && current.recordId !== expectedSource.recordId ? current.recordId : randomIdentifier()
-        ),
+        recordId:
+          expectedSurvivingFork?.recordId ??
+          (current && expectedSource && current.recordId !== expectedSource.recordId ? current.recordId : randomIdentifier()),
         draftRevision: Math.max(1, (current?.draftRevision ?? prepared.sourceEnvelope?.draftRevision ?? 0) + 1),
         submissionId: null
       })
@@ -1379,34 +1441,50 @@ export class OfflineEditorDraftCoordinator {
       if (outcome.kind === 'post-write') {
         const newerCaptured = await this.captureNewerDuringCompletion(active)
         if (!newerCaptured) {
-          this.setState({ state: 'publishing', committed: true, inFlight: false, error: outcome.reason ?? 'The page write succeeded, but newer local changes could not be committed.' })
+          this.setState({
+            state: 'publishing',
+            committed: true,
+            inFlight: false,
+            error: outcome.reason ?? 'The page write succeeded, but newer local changes could not be committed.'
+          })
           return false
         }
         const finalized = await this.finalizeKnownOutcome(active, outcome, this.currentDraft?.payload.state ?? 'needs-review')
         if (!finalized) {
-          this.setState({ state: 'publishing', committed: true, inFlight: false, error: outcome.reason ?? 'The page write succeeded, but local finalization needs attention.' })
+          this.setState({
+            state: 'publishing',
+            committed: true,
+            inFlight: false,
+            error: outcome.reason ?? 'The page write succeeded, but local finalization needs attention.'
+          })
           return false
         }
         return true
       }
       const newerCaptured = await this.captureNewerDuringCompletion(active)
       if (!newerCaptured) {
-        this.setState({ state: outcome.kind === 'success' ? 'publishing' : 'needs-review', committed: true, inFlight: false, error: 'The server result is known, but newer local changes could not be committed.' })
+        this.setState({
+          state: outcome.kind === 'success' ? 'publishing' : 'needs-review',
+          committed: true,
+          inFlight: false,
+          error: 'The server result is known, but newer local changes could not be committed.'
+        })
         return false
       }
       if (outcome.kind === 'success') {
         const finalized = await this.finalizeKnownOutcome(active, outcome, null)
         if (!finalized) {
-          this.setState({ state: 'publishing', committed: true, inFlight: false, error: 'The page was saved, but the local submission receipt could not be finalized.' })
+          this.setState({
+            state: 'publishing',
+            committed: true,
+            inFlight: false,
+            error: 'The page was saved, but the local submission receipt could not be finalized.'
+          })
           return false
         }
         return true
       }
-      const nextState: OfflineDraftState = outcome.status === 409
-        ? 'conflict'
-        : outcome.status === 403 || outcome.status === 404
-          ? 'unavailable'
-          : 'locked'
+      const nextState: OfflineDraftState = outcome.status === 409 ? 'conflict' : outcome.status === 403 || outcome.status === 404 ? 'unavailable' : 'locked'
       const finalized = await this.finalizeKnownOutcome(active, outcome, nextState)
       if (!finalized) {
         this.setState({ state: 'publishing', committed: true, inFlight: false, error: 'The immutable submission receipt remains retained for review.' })
@@ -1434,19 +1512,23 @@ export class OfflineEditorDraftCoordinator {
       try {
         const session = await this.ensureSession()
         if (!session || !this.fenceCurrent(session.actorEpoch, session.handle)) return false
-        const payload = makePayload('needs-review', {
-          editorKey: current.payload.editorKey,
-          pageId: current.payload.pageId,
-          createIdentity: current.payload.createIdentity,
-          locale: current.payload.locale,
-          path: current.payload.path,
-          baseSourceRevision: current.payload.baseSourceRevision,
-          baseUpdatedAt: current.payload.baseUpdatedAt
-        }, {
-          title: current.payload.title,
-          description: current.payload.description,
-          content: current.payload.content
-        })
+        const payload = makePayload(
+          'needs-review',
+          {
+            editorKey: current.payload.editorKey,
+            pageId: current.payload.pageId,
+            createIdentity: current.payload.createIdentity,
+            locale: current.payload.locale,
+            path: current.payload.path,
+            baseSourceRevision: current.payload.baseSourceRevision,
+            baseUpdatedAt: current.payload.baseUpdatedAt
+          },
+          {
+            title: current.payload.title,
+            description: current.payload.description,
+            content: current.payload.content
+          }
+        )
         const envelope = await encryptOfflineDraft(session.handle, payload, {
           recordId: current.recordId,
           draftRevision: current.draftRevision + 1,
@@ -1457,7 +1539,12 @@ export class OfflineEditorDraftCoordinator {
           expectedDraftRevision: current.draftRevision,
           expectedSubmissionId: null
         })
-        this.currentDraft = { recordId: current.recordId, draftRevision: envelope.draftRevision, payload: clonePayload(payload), envelope: cloneEnvelope(envelope) }
+        this.currentDraft = {
+          recordId: current.recordId,
+          draftRevision: envelope.draftRevision,
+          payload: clonePayload(payload),
+          envelope: cloneEnvelope(envelope)
+        }
         this.envelopes.set(envelope.recordId, cloneEnvelope(envelope))
         this.setState({ state: 'needs-review', committed: true, error: null })
         return true

@@ -156,37 +156,62 @@ const openAIReasoningState = (resultId: string, block: ProviderThoughtBlock): Pr
   ) {
     throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider returned invalid reasoning continuation state', 502)
   }
-  return {
-    data: `${OPENAI_REASONING_STATE_PREFIX}${JSON.stringify([resultId, block.data])}`,
-    encrypted: true
-  }
+  const data = `${OPENAI_REASONING_STATE_PREFIX}${JSON.stringify([resultId, block.data])}`
+  return { data, encrypted: true }
+}
+
+const restoredOpenAIReasoningItem = (encoded: string): Record<string, unknown> => {
+  if (Buffer.byteLength(encoded, 'utf8') > MAX_PROVIDER_STATE_ITEM_BYTES + MAX_PROVIDER_IDENTIFIER_BYTES + 64) throw new Error('too large')
+  const value: unknown = JSON.parse(encoded)
+  if (
+    !Array.isArray(value) ||
+    value.length !== 2 ||
+    typeof value[0] !== 'string' ||
+    !/^rs_[A-Za-z0-9_-]{1,256}$/u.test(value[0]) ||
+    Buffer.byteLength(value[0], 'utf8') > MAX_PROVIDER_IDENTIFIER_BYTES ||
+    typeof value[1] !== 'string' ||
+    Buffer.byteLength(value[1], 'utf8') > MAX_PROVIDER_STATE_ITEM_BYTES
+  )
+    throw new Error('invalid')
+  return { type: 'reasoning', id: value[0], content: [], summary: [], encrypted_content: value[1] }
 }
 
 const restoreOpenAIReasoningItem = (item: unknown): unknown => {
   if (typeof item !== 'object' || item === null || Reflect.get(item, 'type') !== 'reasoning') return item
   const content = Reflect.get(item, 'content')
-  if (typeof content !== 'string' || !content.startsWith(OPENAI_REASONING_STATE_PREFIX)) return item
+  const encryptedContent = Reflect.get(item, 'encrypted_content')
+  const prefixedState =
+    typeof content === 'string' && content.startsWith(OPENAI_REASONING_STATE_PREFIX)
+      ? content
+      : typeof encryptedContent === 'string' && encryptedContent.startsWith(OPENAI_REASONING_STATE_PREFIX)
+        ? encryptedContent
+        : null
+  if (prefixedState === null) return item
   try {
-    const encoded = content.slice(OPENAI_REASONING_STATE_PREFIX.length)
-    if (Buffer.byteLength(encoded, 'utf8') > MAX_PROVIDER_STATE_ITEM_BYTES) throw new Error('too large')
-    const value: unknown = JSON.parse(encoded)
-    if (
-      !Array.isArray(value) ||
-      value.length !== 2 ||
-      typeof value[0] !== 'string' ||
-      !/^rs_[A-Za-z0-9_-]{1,256}$/u.test(value[0]) ||
-      Buffer.byteLength(value[0], 'utf8') > MAX_PROVIDER_IDENTIFIER_BYTES ||
-      typeof value[1] !== 'string'
-    )
-      throw new Error('invalid')
-    return { type: 'reasoning', id: value[0], content: [], summary: [], encrypted_content: value[1] }
+    const encoded = prefixedState.slice(OPENAI_REASONING_STATE_PREFIX.length)
+    try {
+      return restoredOpenAIReasoningItem(encoded)
+    } catch {
+      const segments = prefixedState
+        .slice(OPENAI_REASONING_STATE_PREFIX.length)
+        .split(OPENAI_REASONING_STATE_PREFIX)
+        .map(segment => restoredOpenAIReasoningItem(segment))
+      if (segments.length === 0) throw new Error('invalid')
+      return segments
+    }
   } catch {
     throw new AgentRepositoryError('AGENT_PROVIDER_STATE_CORRUPT', 'Stored provider continuation is invalid', 500)
   }
 }
 
 const restoreOpenAIReasoningInput = (input: AxAIOpenAIResponsesRequest<string>['input']): AxAIOpenAIResponsesRequest<string>['input'] =>
-  Array.isArray(input) ? (input.map(restoreOpenAIReasoningItem) as AxAIOpenAIResponsesRequest<string>['input']) : input
+  Array.isArray(input)
+    ? (input.flatMap(item => {
+        const restored = restoreOpenAIReasoningItem(item)
+        return Array.isArray(restored) ? restored : [restored]
+      }) as AxAIOpenAIResponsesRequest<string>['input'])
+    : input
+
 const continuationBlockBytes = (block: ProviderThoughtBlock): number => {
   if (typeof block.data !== 'string' || block.encrypted !== true || Buffer.byteLength(block.data, 'utf8') > MAX_PROVIDER_STATE_ITEM_BYTES)
     throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider returned invalid continuation state', 502)
@@ -878,7 +903,7 @@ export class AgentProviderFactory {
                 store: false,
                 previous_response_id: null,
                 include: [...new Set([...(request.include ?? []), 'reasoning.encrypted_content' as const])],
-                tools: request.tools == null ? null : request.tools.map(tool => (tool.type === 'function' ? { ...tool, strict: false } : tool))
+                ...(request.tools == null ? {} : { tools: request.tools.map(tool => (tool.type === 'function' ? { ...tool, strict: false } : tool)) })
               }
               delete updated.temperature
               delete updated.top_p

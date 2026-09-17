@@ -11,6 +11,7 @@
     .search-results-container(:class='{ "search-results-container--ask": isAgentOpen }')
       h1#wiki-agent-title.sr-only(v-if='isAgentOpen') Wiki Agent workspace
       v-btn.search-results-close(
+          v-if='isAgentOpen'
           icon='mdi-close'
           variant='text'
           :aria-label='$t(`common:header.searchClose`)'
@@ -1248,16 +1249,9 @@ export default defineComponent({
   --search-overlay-ink: rgb(var(--v-theme-on-background));
   --search-overlay-top-offset: var(--v-layout-top, 64px);
   animation: searchResultsReveal var(--wiki-motion-normal) var(--wiki-motion-ease-out);
-  background-color: var(--wiki-chrome-surface);
-  background-image:
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent),
-      transparent 42%,
-      color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent)
-    );
-  backdrop-filter: var(--wiki-chrome-blur);
-  -webkit-backdrop-filter: var(--wiki-chrome-blur);
+  background: rgba(var(--v-theme-surface), .18);
+  backdrop-filter: blur(6px) saturate(110%);
+  -webkit-backdrop-filter: blur(6px) saturate(110%);
   box-sizing: border-box;
   inset-inline: 0;
   inset-block-start: var(--search-overlay-top-offset);
@@ -1269,6 +1263,12 @@ export default defineComponent({
   text-align: center;
   width: 100%;
   z-index: 1006;
+
+  @supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
+    background: var(--wiki-surface-raised);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 
   &--ask {
     animation: none;
@@ -1676,7 +1676,21 @@ export default defineComponent({
   }
 }
 
+@media (prefers-reduced-transparency: reduce) {
+  .search-results:not(.search-results--ask) {
+    background: var(--wiki-surface-raised);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 @media (forced-colors: active) {
+  .search-results {
+    background: Canvas;
+    color: CanvasText;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
   .search-results-search { border: 1px solid CanvasText; }
 }
 

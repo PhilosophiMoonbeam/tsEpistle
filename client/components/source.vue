@@ -25,6 +25,9 @@
           )
             v-icon(:start='$vuetify.display.mdAndUp') mdi-history
             span(v-if='$vuetify.display.mdAndUp') {{$t('common:header.history')}}
+          v-btn(variant='tonal', color='primary', size='small', @click='copySource', :aria-label='$t(`common:actions.copy`)')
+            v-icon(:start='$vuetify.display.mdAndUp') mdi-content-copy
+            span(v-if='$vuetify.display.mdAndUp') {{$t('common:actions.copy')}}
           v-btn(variant='tonal', color='primary', size='small', @click='goDownload', :aria-label='$t(`common:actions.download`)')
             v-icon(:start='$vuetify.display.mdAndUp') mdi-download
             span(v-if='$vuetify.display.mdAndUp') {{$t('common:actions.download')}}
@@ -34,7 +37,7 @@
       v-container.source-shell(fluid)
         article.source-code-card
           pre(tabindex='0' aria-labelledby='source-title')
-            slot
+            code(v-text='sourceContent')
     nav-footer
     notify
     search-results
@@ -44,7 +47,7 @@
 import { defineComponent } from 'vue'
 import { getPageDownloadPath } from '../helpers/page-actions'
 import { wikiStore } from '@/store/index.ts'
-import { decodeBase64Json } from '../helpers/base64'
+import { decodeBase64Json, decodeBase64Text } from '../helpers/base64'
 
 export default defineComponent({
   props: {
@@ -75,6 +78,15 @@ export default defineComponent({
     effectivePermissions: {
       type: String,
       default: ''
+    },
+    contentBase64: {
+      type: String,
+      required: true
+    }
+  },
+  data () {
+    return {
+      sourceContent: decodeBase64Text(this.contentBase64)
     }
   },
   created () {
@@ -90,6 +102,22 @@ export default defineComponent({
     }
   },
   methods: {
+    async copySource () {
+      try {
+        await navigator.clipboard.writeText(this.sourceContent)
+        wikiStore.showNotification({
+          style: 'success',
+          message: 'Source copied to clipboard.',
+          icon: 'content-copy'
+        })
+      } catch {
+        wikiStore.showNotification({
+          style: 'red',
+          message: 'Copy failed. Select the source text and copy it manually.',
+          icon: 'alert'
+        })
+      }
+    },
     goLive() {
       const scope = this.visibility === 'private' ? '/_private' : ''
       window.location.assign(`${scope}/${this.locale}/${this.path}`)
@@ -106,17 +134,42 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
+.source {
+  .v-application__wrap {
+    min-height: 100dvh;
+  }
+
+  .nav-footer {
+    flex: 0 0 auto;
+  }
+}
+
 .source-main {
+  min-height: 0;
   background:
     radial-gradient(circle at 88% 0%, rgba(var(--v-theme-primary), .07), transparent 30rem),
     rgb(var(--v-theme-background));
 }
 
+/* Shared with the standard navigation header: keep source controls legible over a scrolling page. */
 .source-toolbar {
+  --source-toolbar-tint: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent));
   min-height: 86px !important;
   padding-inline: var(--wiki-page-gutter);
-  border-bottom: 1px solid rgba(var(--v-border-color), .11) !important;
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-background))) !important;
+  border-bottom: 1px solid var(--wiki-surface-border) !important;
+  background-color: var(--wiki-chrome-surface) !important;
+  background-image: var(--source-toolbar-tint) !important;
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--wiki-shadow-color) 35%, transparent) !important;
+  backdrop-filter: var(--wiki-chrome-blur) !important;
+  -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
+
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    border-bottom-color: var(--wiki-glass-border) !important;
+  }
+}
+
+.source-toolbar .v-toolbar__content {
+  background: transparent !important;
 }
 
 .source-toolbar-copy {
@@ -154,7 +207,9 @@ export default defineComponent({
 .source-toolbar-actions {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   gap: var(--wiki-space-2);
+  min-width: 0;
 
   .v-btn {
     border-radius: var(--wiki-control-radius);
@@ -175,13 +230,16 @@ export default defineComponent({
   box-shadow: var(--wiki-shadow-md);
 
   pre {
-    overflow: auto;
-    max-height: calc(100dvh - 230px);
+    overflow-x: auto;
+    overflow-y: visible;
     margin: 0;
     padding: clamp(18px, 3vw, 30px);
+    white-space: pre;
   }
 
   pre > code {
+    display: block;
+    min-width: max-content;
     background: transparent;
     box-shadow: none;
     color: rgb(var(--v-theme-on-surface));
@@ -189,6 +247,7 @@ export default defineComponent({
     font-size: .875rem;
     font-weight: 400;
     line-height: 1.65;
+    white-space: inherit;
 
     &::before {
       display: none;
@@ -223,9 +282,36 @@ export default defineComponent({
     border-radius: var(--wiki-panel-radius);
 
     pre {
-      max-height: calc(100dvh - 190px);
       padding: 16px;
     }
+  }
+}
+
+@media (max-width: 360px) {
+  .source-toolbar {
+    min-height: 0 !important;
+    padding-block: 8px;
+  }
+
+  .source-toolbar .v-toolbar__content {
+    height: auto !important;
+    min-height: 0;
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .source-toolbar .v-spacer {
+    display: none;
+  }
+
+  .source-toolbar-copy,
+  .source-toolbar-actions {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .source-toolbar-actions {
+    justify-content: flex-end;
   }
 }
 </style>

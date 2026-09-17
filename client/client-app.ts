@@ -11,7 +11,7 @@ import localization from './modules/localization.ts'
 import { pinia, wikiStore } from './store/index.ts'
 import { router } from './router'
 import { registerPwa, setReloadSafetyProvider, pwaState } from './helpers/pwa.ts'
-import { createWikiThemes, resolveThemeName, WIKI_THEME_VARIATIONS } from './helpers/theme.ts'
+import { createWikiThemes, installThemeSwitchGuard, resolveThemeName, WIKI_THEME_VARIATIONS } from './helpers/theme.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
 import { createAsyncComponent } from './components/common/async-component-state.vue'
 import { openOfflineStorage, type OfflineStorage } from './helpers/offline-storage.ts'
@@ -93,9 +93,12 @@ const startOfflineSync = (): Promise<OfflineSyncCoordinator | null> => {
       })
       offlineSyncStorage = storage
       offlineSyncCoordinator.value = coordinator
-      stopOfflinePwaWatch = watch(() => pwaState.connectionState, state => {
-        if (state === 'online') void coordinator?.reconcile('online')
-      })
+      stopOfflinePwaWatch = watch(
+        () => pwaState.connectionState,
+        state => {
+          if (state === 'online') void coordinator?.reconcile('online')
+        }
+      )
       coordinator.start()
       return coordinator
     } catch {
@@ -122,20 +125,22 @@ const reconcileAfterOfflineSyncStartup = (reason: string): Promise<unknown> => {
   pendingOfflineSyncReason = reason
   if (offlineSyncPendingReconcile) return offlineSyncPendingReconcile
   let sharedPromise: Promise<unknown>
-  sharedPromise = startOfflineSync().then(coordinator => {
-    if (!coordinator) return null
-    const pendingReason = pendingOfflineSyncReason
-    pendingOfflineSyncReason = null
-    return pendingReason ? coordinator.reconcile(pendingReason) : null
-  }).finally(() => {
-    if (offlineSyncPendingReconcile === sharedPromise) offlineSyncPendingReconcile = null
-  })
+  sharedPromise = startOfflineSync()
+    .then(coordinator => {
+      if (!coordinator) return null
+      const pendingReason = pendingOfflineSyncReason
+      pendingOfflineSyncReason = null
+      return pendingReason ? coordinator.reconcile(pendingReason) : null
+    })
+    .finally(() => {
+      if (offlineSyncPendingReconcile === sharedPromise) offlineSyncPendingReconcile = null
+    })
   offlineSyncPendingReconcile = sharedPromise
   return sharedPromise
 }
 
 const offlineSyncService: OfflineSyncService = {
-  reconcile (reason = 'manual'): Promise<unknown> {
+  reconcile(reason = 'manual'): Promise<unknown> {
     const coordinator = offlineSyncCoordinator.value
     if (coordinator) return coordinator.reconcile(reason)
     return reconcileAfterOfflineSyncStartup(reason)
@@ -277,7 +282,7 @@ const vuetify = createVuetify({
     defaultTheme: resolveThemeName(wikiStore.user.appearance, siteConfig.darkMode),
     variations: WIKI_THEME_VARIATIONS,
     themes: createWikiThemes(normalizeThemeColors(siteConfig.themeColors)),
-    transition: { duration: '180ms' }
+    transition: false
   }
 })
 
@@ -293,6 +298,9 @@ app.use(i18n)
 app.use(helpersPlugin)
 app.provide(OFFLINE_SYNC_COORDINATOR_KEY, offlineSyncService)
 
+const removeThemeSwitchGuard = installThemeSwitchGuard(vuetify.theme)
+app.onUnmount(removeThemeSwitchGuard)
+
 window.Hammer = Hammer
 window.WIKI = app
 window.boot = boot
@@ -305,7 +313,7 @@ void startOfflineSync()
 void authRefresh.then(outcome => {
   if (outcome === 'authenticated') {
     applyUserPresentation(wikiStore.user)
-    vuetify.theme.global.name.value = resolveThemeName(wikiStore.user.appearance, siteConfig.darkMode)
+    void vuetify.theme.change(resolveThemeName(wikiStore.user.appearance, siteConfig.darkMode), false)
   }
 })
 

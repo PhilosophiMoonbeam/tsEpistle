@@ -3,10 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { chromium, type Browser, type Page } from 'playwright-core'
-import type {
-  OfflinePagePolicyRecord,
-  OfflineSnapshotRecord
-} from '../../shared/offline.ts'
+import type { OfflinePagePolicyRecord, OfflineSnapshotRecord } from '../../shared/offline.ts'
 import type { OfflineSyncPassResult } from '../helpers/offline-sync.ts'
 
 const storagePath = fileURLToPath(new URL('../helpers/offline-storage.ts', import.meta.url))
@@ -25,9 +22,7 @@ type SyncRun = {
   requests: string[]
 }
 
-type Outcome =
-  | { ok: true; value: SyncRun }
-  | { ok: false; error: { message: string } }
+type Outcome = { ok: true; value: SyncRun } | { ok: false; error: { message: string } }
 
 const driverSource = (absoluteStoragePath: string, absoluteSyncPath: string): string => `
 import { openOfflineStorage } from ${JSON.stringify(absoluteStoragePath)};
@@ -104,7 +99,7 @@ export async function run(operation, payload = {}) {
     requests.push(requestURL.pathname + requestURL.search);
     if (requestURL.pathname === '/_api/pages' && requestURL.searchParams.has('tags')) {
       const tag = requestURL.searchParams.get('tags');
-      const ids = tag === 'alpha' ? [200, 201] : tag === 'beta' ? [200, 202] : tag === 'keep' ? [92] : [];
+      const ids = tag === 'alpha' ? [200, 201] : tag === 'beta' ? [200, 202] : tag === 'keep' ? (kind === 'rotation' || kind === 'disable' ? [3] : [92]) : [];
       return json(ids.map(pageId => makePageRow(pageId, [tag])));
     }
     if (requestURL.pathname.endsWith('/offline-snapshot')) {
@@ -118,9 +113,13 @@ export async function run(operation, payload = {}) {
         ? [1]
         : kind === 'automatic'
           ? Array.from({ length: 10 }, (_value, index) => index + 1)
-          : kind === 'tags'
-            ? [200, 201, 202]
-            : [91, 92];
+          : kind === 'rotation'
+            ? Array.from({ length: 11 }, (_value, index) => index + 1)
+            : kind === 'disable'
+              ? [2, 3]
+              : kind === 'tags'
+                ? [200, 201, 202]
+                : [91, 92];
       if (!allowed.includes(pageId)) return json({ message: 'Snapshot not found.' }, 404);
       return json(makeSnapshot(pageId));
     }
@@ -143,6 +142,34 @@ export async function run(operation, payload = {}) {
       } finally {
         Date.prototype.toISOString = originalToISOString;
       }
+    } else if (kind === 'rotation') {
+      await storage.setAutomaticSavingEnabled(true);
+      const originalToISOString = Date.prototype.toISOString;
+      try {
+        Date.prototype.toISOString = () => CURRENT_TIME;
+        for (let pageId = 2; pageId <= 10; pageId += 1) await storage.recordEligibleReaderVisit(selector(pageId));
+        for (let visit = 0; visit < 40; visit += 1) await storage.recordEligibleReaderVisit(selector(11));
+      } finally {
+        Date.prototype.toISOString = originalToISOString;
+      }
+      const initial = Array.from({ length: 10 }, (_value, index) => selector(index + 1));
+      await storage.updateAutomaticSelections(initial, { asOf: CURRENT_TIME });
+      await storage.setManualOfflineIntent(selector(2), true);
+      await storage.setOfflineTagSubscriptions(['keep']);
+      await storage.synchronizeTagProvenance('keep', [selector(3)]);
+      await storage.putSnapshot(SITE_ID, makeSnapshot(1), { provenance: { automatic: true } });
+      await storage.putSnapshot(SITE_ID, makeSnapshot(2), { provenance: { manual: true, automatic: true } });
+      await storage.putSnapshot(SITE_ID, makeSnapshot(3), { provenance: { automatic: true, tagNames: ['keep'] } });
+    } else if (kind === 'disable') {
+      await storage.setAutomaticSavingEnabled(true);
+      await storage.updateAutomaticSelections([selector(1), selector(2), selector(3)], { asOf: CURRENT_TIME });
+      await storage.setManualOfflineIntent(selector(2), true);
+      await storage.setOfflineTagSubscriptions(['keep']);
+      await storage.synchronizeTagProvenance('keep', [selector(3)]);
+      await storage.putSnapshot(SITE_ID, makeSnapshot(1), { provenance: { automatic: true } });
+      await storage.putSnapshot(SITE_ID, makeSnapshot(2), { provenance: { manual: true, automatic: true } });
+      await storage.putSnapshot(SITE_ID, makeSnapshot(3), { provenance: { automatic: true, tagNames: ['keep'] } });
+      await storage.setAutomaticSavingEnabled(false);
     } else if (kind === 'tags') {
       await storage.setOfflineTagSubscriptions(['alpha', 'beta']);
     } else if (kind === 'expiry') {
@@ -201,10 +228,13 @@ let testServer: { url: URL; stop: (closeActiveConnections?: boolean) => void }
 const databaseNames = new Set<string>()
 
 const invoke = async (operation: string, payload: Record<string, unknown> = {}): Promise<unknown> => {
-  return await page.evaluate(async ({ moduleURL, operationName, operationPayload }) => {
-    const driver = await import(moduleURL) as { run: (name: string, value: Record<string, unknown>) => Promise<unknown> }
-    return await driver.run(operationName, operationPayload)
-  }, { moduleURL: driverURL, operationName: operation, operationPayload: payload })
+  return await page.evaluate(
+    async ({ moduleURL, operationName, operationPayload }) => {
+      const driver = (await import(moduleURL)) as { run: (name: string, value: Record<string, unknown>) => Promise<unknown> }
+      return await driver.run(operationName, operationPayload)
+    },
+    { moduleURL: driverURL, operationName: operation, operationPayload: payload }
+  )
 }
 
 const freshDatabase = (kind: string): string => {
@@ -214,7 +244,7 @@ const freshDatabase = (kind: string): string => {
 }
 
 const runScenario = async (kind: string): Promise<SyncRun> => {
-  const outcome = await invoke('scenario', { name: freshDatabase(kind), kind }) as Outcome
+  const outcome = (await invoke('scenario', { name: freshDatabase(kind), kind })) as Outcome
   expect(outcome.ok, outcome.ok ? '' : outcome.error.message).toBe(true)
   if (!outcome.ok) throw new Error(outcome.error.message)
   return outcome.value
@@ -222,10 +252,11 @@ const runScenario = async (kind: string): Promise<SyncRun> => {
 
 const pageIds = (run: SyncRun): number[] => run.snapshots.map(snapshot => snapshot.snapshot.pageId).sort((left, right) => left - right)
 const policyFor = (run: SyncRun, pageId: number): OfflinePagePolicyRecord | undefined => run.pages.find(page => page.pageId === pageId)
-const snapshotRequests = (run: SyncRun): number[] => run.requests
-  .filter(request => request.endsWith('/offline-snapshot'))
-  .map(request => Number(request.split('/').at(-2)))
-  .sort((left, right) => left - right)
+const snapshotRequests = (run: SyncRun): number[] =>
+  run.requests
+    .filter(request => request.endsWith('/offline-snapshot'))
+    .map(request => Number(request.split('/').at(-2)))
+    .sort((left, right) => left - right)
 
 beforeAll(async () => {
   tempDirectory = await mkdtemp(`${tmpdir()}/tsepistle-offline-sync-`)
@@ -286,6 +317,29 @@ describe('foreground offline sync coordinator', () => {
     expect(policyFor(run, 11)).toMatchObject({ automatic: false, manual: false, tag: false, lastVisitedAt: oldTime })
   })
 
+  test('rotates automatic membership without retaining an eleventh automatic page', async () => {
+    const run = await runScenario('rotation')
+    expect(run.result.status).toBe('complete')
+    expect(run.result.saved).toBe(10)
+    expect(pageIds(run)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    expect(snapshotRequests(run)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    expect(run.pages.filter(page => page.automatic)).toHaveLength(10)
+    expect(policyFor(run, 1)).toMatchObject({ automatic: false, automaticSelectedAt: null, manual: false, tag: false })
+    expect(policyFor(run, 2)).toMatchObject({ automatic: true, manual: true })
+    expect(policyFor(run, 3)).toMatchObject({ automatic: true, tag: true, tagNames: ['keep'] })
+  })
+
+  test('disables automatic copies without removing manual or tag-backed pages', async () => {
+    const run = await runScenario('disable')
+    expect(run.result.status).toBe('complete')
+    expect(run.result.saved).toBe(2)
+    expect(pageIds(run)).toEqual([2, 3])
+    expect(snapshotRequests(run)).toEqual([2, 3])
+    expect(policyFor(run, 1)).toMatchObject({ automatic: false, automaticSelectedAt: null, manual: false, tag: false })
+    expect(policyFor(run, 2)).toMatchObject({ automatic: false, manual: true })
+    expect(policyFor(run, 3)).toMatchObject({ automatic: false, tag: true, tagNames: ['keep'] })
+  })
+
   test('unions selected tag subscriptions and stores each discovered page once', async () => {
     const run = await runScenario('tags')
     expect(run.result.status).toBe('complete')
@@ -303,8 +357,8 @@ describe('foreground offline sync coordinator', () => {
     expect(pageIds(run)).toEqual([91, 92])
     expect(snapshotRequests(run)).toEqual([91, 92])
     expect(policyFor(run, 90)).toMatchObject({ automatic: false, manual: false, tag: false, automaticSelectedAt: null })
-    expect(policyFor(run, 91)).toMatchObject({ automatic: true, manual: true })
-    expect(policyFor(run, 92)).toMatchObject({ automatic: true, tag: true, tagNames: ['keep'] })
+    expect(policyFor(run, 91)).toMatchObject({ automatic: false, automaticSelectedAt: null, manual: true })
+    expect(policyFor(run, 92)).toMatchObject({ automatic: false, automaticSelectedAt: null, tag: true, tagNames: ['keep'] })
   })
 
   test('fences stale generation and policy writes before retrying in the current session', async () => {

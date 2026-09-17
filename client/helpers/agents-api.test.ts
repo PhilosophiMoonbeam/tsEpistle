@@ -92,12 +92,13 @@ describe('agents client boundary', () => {
         runId,
         actionName: 'pages.getVersion',
         title: 'Read page version',
-        state: 'failed',
+        state: 'not_executed',
         risk: 'read',
         summary: null,
         proposalId: null,
         startedAt,
-        completedAt
+        completedAt,
+        contextExclusion: { status: 'not_executed', reason: 'tool_result_capacity' }
       },
       {
         id: 'live-denied',
@@ -116,12 +117,13 @@ describe('agents client boundary', () => {
         runId,
         actionName: 'pages.get',
         title: 'Read page',
-        state: 'complete',
+        state: 'omitted',
         risk: 'read',
         summary: 'Release notes',
         proposalId: null,
         startedAt,
-        completedAt
+        completedAt,
+        contextExclusion: { status: 'omitted', reason: 'tool_result_capacity' }
       }
     ]
     const thread = {
@@ -161,9 +163,22 @@ describe('agents client boundary', () => {
         { id: 'enable-explore', actionName: TOOL_DISCOVERY_CONTROL_NAME, state: 'complete', title: 'Enable Wiki tool category' },
         { id: 'malformed-input', actionName: 'pages.searchTags', state: 'failed', title: 'Search tags' },
         { id: 'budget-skipped', actionName: 'pages.get', state: 'failed', title: 'Read page' },
-        { id: 'capacity-skipped', actionName: 'pages.getVersion', state: 'failed', title: 'Read page version' },
+        {
+          id: 'capacity-skipped',
+          actionName: 'pages.getVersion',
+          state: 'not_executed',
+          title: 'Read page version',
+          contextExclusion: { status: 'not_executed' }
+        },
         { id: 'live-denied', actionName: 'pages.search', state: 'failed', title: 'Search pages' },
-        { id: 'completed-provider-omitted', actionName: 'pages.get', state: 'complete', title: 'Read page', summary: 'Release notes' }
+        {
+          id: 'completed-provider-omitted',
+          actionName: 'pages.get',
+          state: 'omitted',
+          title: 'Read page',
+          summary: 'Release notes',
+          contextExclusion: { status: 'omitted' }
+        }
       ]
     })
   })

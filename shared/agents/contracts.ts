@@ -106,7 +106,11 @@ export type AgentMessageStatus = 'pending' | 'streaming' | 'complete' | 'failed'
 export const AGENT_PROPOSAL_STATUSES = ['pending', 'approved', 'denied', 'expired', 'applying', 'applied', 'failed', 'cancelled', 'recovery_required'] as const
 export type AgentProposalStatus = (typeof AGENT_PROPOSAL_STATUSES)[number]
 export type AgentApprovalStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled'
-export type AgentToolState = 'preparing' | 'running' | 'awaitingApproval' | 'complete' | 'failed' | 'denied' | 'cancelled'
+export type AgentToolState = 'preparing' | 'running' | 'awaitingApproval' | 'complete' | 'omitted' | 'not_executed' | 'failed' | 'denied' | 'cancelled'
+export interface AgentToolContextExclusion {
+  readonly status: 'omitted' | 'not_executed'
+  readonly reason: 'tool_result_capacity'
+}
 export const AGENT_TASK_KINDS = ['source_scout', 'fact_check', 'conflict_check'] as const
 export type AgentTaskKind = (typeof AGENT_TASK_KINDS)[number]
 export type AgentTaskStatus = 'pending' | 'running' | 'blocked' | 'completed' | 'failed' | 'cancelled'
@@ -121,7 +125,6 @@ export const AGENT_GOAL_BUDGET_SELECTIONS = ['pending', 'utility', 'fallback', '
 export type AgentGoalBudgetSelection = (typeof AGENT_GOAL_BUDGET_SELECTIONS)[number]
 export const AGENT_GOAL_BUDGET_LIMIT_REASONS = ['tokens', 'tool_calls', 'duration', 'continuations', 'quota', 'accounting', 'authority'] as const
 export type AgentGoalBudgetLimitReason = (typeof AGENT_GOAL_BUDGET_LIMIT_REASONS)[number]
-
 
 export interface AgentCompletionIssue {
   readonly code: string
@@ -340,6 +343,7 @@ export interface AgentToolCallView {
   readonly risk: AgentActionRisk
   readonly summary: string | null
   readonly proposalId: string | null
+  readonly contextExclusion?: AgentToolContextExclusion
   readonly startedAt: string
   readonly completedAt: string | null
 }
@@ -464,6 +468,7 @@ export const AGENT_EVENT_TYPES = [
   'goal.status',
   'tool.progress',
   'tool.completed',
+  'tool.notExecuted',
   'tool.failed',
   'skill.selected',
   'skill.loaded',
@@ -570,7 +575,6 @@ export interface RenewAgentGoalBudgetRequest {
   readonly clientRequestId: string
   readonly confirmed: true
 }
-
 
 export interface PauseAgentGoalRequest {
   readonly expectedVersion: number

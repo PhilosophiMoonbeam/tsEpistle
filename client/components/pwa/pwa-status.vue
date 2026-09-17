@@ -7,10 +7,10 @@ section.pwa-status-panel(
       div
         p.pwa-status-panel__eyebrow App & offline
         h2 App status
-      v-icon(:icon='triggerIcon', size='22', aria-hidden='true')
+      v-icon(:icon='connectionPresentation.icon', :color='connectionPresentation.tone', size='22', aria-hidden='true')
 
     .pwa-status-panel__summary(role='status', aria-live='polite', aria-atomic='true')
-      span.pwa-status-panel__summary-dot(:class='`pwa-status-panel__summary-dot--${statusTone}`', aria-hidden='true')
+      span.pwa-status-panel__summary-dot(:class='`pwa-status-panel__summary-dot--${connectionPresentation.tone}`', aria-hidden='true')
       div
         strong {{ summaryLabel }}
         p {{ summaryDescription }}
@@ -18,7 +18,7 @@ section.pwa-status-panel(
     dl.pwa-status-panel__facts
       div
         dt Network
-        dd(:class='`pwa-status-panel__value--${pwaState.onlineHint === true ? `positive` : pwaState.onlineHint === false ? `negative` : `neutral`}`') {{ networkHintLabel }}
+        dd(:class='`pwa-status-panel__value--${networkHintTone}`') {{ networkHintLabel }}
       div
         dt Server
         dd(:class='`pwa-status-panel__value--${serverStatusTone}`') {{ serverStatusLabel }}
@@ -106,7 +106,7 @@ section.pwa-status-panel(
 
 <script setup lang='ts'>
 import { computed, ref } from 'vue'
-import { pwaState, promptPwaInstall, requestPwaUpdate, retryServerConnection } from '../../helpers/pwa'
+import { pwaConnectionPresentation, pwaState, promptPwaInstall, requestPwaUpdate, retryServerConnection } from '../../helpers/pwa'
 
 const isRetrying = ref(false)
 const isInstalling = ref(false)
@@ -130,30 +130,12 @@ const showInstallSection = computed(() => {
   return canInstall.value || manualInstallGuidance.value || installCompleted.value || pwaState.isStandalone || Boolean(pwaState.installError)
 })
 
-const statusTone = computed<'online' | 'offline' | 'server-unavailable' | 'checking' | 'update' | 'neutral'>(() => {
-  if (pwaState.updateReady) return 'update'
-  if (pwaState.connection === 'checking') return 'checking'
-  if (pwaState.serverHealthy === true) return 'online'
-  if (pwaState.serverReachable !== null || pwaState.serverHealthy === false) return 'server-unavailable'
-  if (pwaState.onlineHint === false || pwaState.connection === 'offline') return 'offline'
-  return 'neutral'
-})
+const connectionPresentation = computed(() => pwaConnectionPresentation(pwaState))
 
-const triggerIcon = computed(() => {
-  switch (statusTone.value) {
-    case 'update': return 'mdi-update'
-    case 'online': return 'mdi-cloud-check-outline'
-    case 'server-unavailable': return 'mdi-cloud-alert-outline'
-    case 'offline': return 'mdi-wifi-off'
-    case 'checking': return 'mdi-cloud-sync-outline'
-    default: return 'mdi-cloud-question-outline'
-  }
-})
-
-const networkHintLabel = computed(() => {
-  if (pwaState.onlineHint === true) return 'Network path reported'
-  if (pwaState.onlineHint === false) return 'No network path reported'
-  return 'Network status unavailable'
+const networkHintTone = computed<'success' | 'warning' | 'error'>(() => {
+  if (pwaState.onlineHint === true) return 'warning'
+  if (pwaState.onlineHint === false) return 'error'
+  return 'warning'
 })
 
 const serverStatusLabel = computed(() => {
@@ -164,11 +146,10 @@ const serverStatusLabel = computed(() => {
   return 'Not verified'
 })
 
-const serverStatusTone = computed<'positive' | 'negative' | 'neutral'>(() => {
-  if (pwaState.connection === 'checking') return 'neutral'
-  if (pwaState.serverHealthy === true) return 'positive'
-  if (pwaState.serverReachable === false || pwaState.serverHealthy === false) return 'negative'
-  return 'neutral'
+const serverStatusTone = computed<'success' | 'warning' | 'error'>(() => {
+  if (pwaState.connection === 'online' && pwaState.serverHealthy === true) return 'success'
+  if (pwaState.connection === 'server-unavailable' || pwaState.serverReachable === false || pwaState.serverHealthy === false) return 'error'
+  return 'warning'
 })
 
 const offlineShellLabel = computed(() => {
@@ -178,24 +159,25 @@ const offlineShellLabel = computed(() => {
   return 'Not ready yet'
 })
 
-const summaryLabel = computed(() => {
-  if (pwaState.connection === 'checking') return 'Checking server'
-  if (pwaState.serverHealthy === true) return 'Server verified'
-  if (pwaState.serverReachable !== null || pwaState.serverHealthy === false) return 'Server unavailable'
-  if (pwaState.onlineHint === false || pwaState.connection === 'offline') return 'Waiting for connection'
-  return 'Server status not verified'
-})
-
 const summaryDescription = computed(() => {
   if (pwaState.connection === 'checking') return 'Checking the server directly; a network hint alone is not proof.'
-  if (pwaState.serverHealthy === true) return 'A direct request verified the server. The browser network hint is shown separately.'
-  if (pwaState.serverReachable === true) return 'The server responded, but its health check was not successful.'
-  if (pwaState.serverReachable === false && pwaState.onlineHint === true) return 'The browser reports a network path, but a direct server request failed.'
-  if (pwaState.onlineHint === false) return 'The browser reports no network path. Server availability is not inferred from that hint.'
+  if (pwaState.connection === 'offline') return 'The browser reports no network path. Server availability is not inferred from that hint.'
+  if (pwaState.connection === 'server-unavailable') return 'The server could not be reached or did not pass its health check.'
+  if (pwaState.connection === 'online' && pwaState.serverReachable === true && pwaState.serverHealthy === true) {
+    return 'A direct request verified the server. The browser network hint is shown separately.'
+  }
   return 'The server has not been verified yet.'
 })
 
-const panelLabel = computed(() => `App status: ${summaryLabel.value}`)
+const panelLabel = computed(() => `App status: ${connectionPresentation.value.label}`)
+
+const networkHintLabel = computed(() => {
+  if (pwaState.onlineHint === true) return 'Network path reported'
+  if (pwaState.onlineHint === false) return 'No network path reported'
+  return 'Network status unavailable'
+})
+
+const summaryLabel = computed(() => connectionPresentation.value.label)
 
 const retryConnection = async (): Promise<void> => {
   if (isRetrying.value) return
@@ -234,12 +216,10 @@ const applyUpdate = async (): Promise<void> => {
   border-radius: 50%;
   background: rgb(var(--v-theme-on-surface-variant));
 }
+.pwa-status-panel__summary-dot--success { background: rgb(var(--v-theme-success)); }
+.pwa-status-panel__summary-dot--warning { background: rgb(var(--v-theme-warning)); }
+.pwa-status-panel__summary-dot--error { background: rgb(var(--v-theme-error)); }
 
-.pwa-status-panel__summary-dot--online { background: rgb(var(--v-theme-success)); }
-.pwa-status-panel__summary-dot--offline { background: rgb(var(--v-theme-warning)); }
-.pwa-status-panel__summary-dot--server-unavailable { background: rgb(var(--v-theme-error)); }
-.pwa-status-panel__summary-dot--checking { background: rgb(var(--v-theme-info)); }
-.pwa-status-panel__summary-dot--update { background: rgb(var(--v-theme-primary)); }
 
 .pwa-status-panel {
   width: 100%;
@@ -257,7 +237,6 @@ const applyUpdate = async (): Promise<void> => {
   gap: var(--wiki-space-3);
   margin-block-end: var(--wiki-space-3);
 }
-
 .pwa-status-panel__eyebrow {
   margin: 0 0 var(--wiki-space-1);
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent);
@@ -337,9 +316,9 @@ const applyUpdate = async (): Promise<void> => {
   text-align: end;
 }
 
-.pwa-status-panel__value--positive { color: rgb(var(--v-theme-success)) !important; }
-.pwa-status-panel__value--negative { color: rgb(var(--v-theme-error)) !important; }
-.pwa-status-panel__value--neutral { color: rgb(var(--v-theme-on-surface)) !important; }
+.pwa-status-panel__value--success { color: rgb(var(--v-theme-success)) !important; }
+.pwa-status-panel__value--warning { color: rgb(var(--v-theme-warning)) !important; }
+.pwa-status-panel__value--error { color: rgb(var(--v-theme-error)) !important; }
 
 .pwa-status-panel__alert {
   margin-block: var(--wiki-space-2);

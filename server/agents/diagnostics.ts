@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 
+import type { AgentToolContextExclusion } from '../../shared/agents/contracts.ts'
 import { decodeAgentMemorySnapshot } from './memory.ts'
 import { AgentRepositoryError } from './repository.ts'
 
@@ -23,14 +24,40 @@ interface DiagnosticToolCall {
   turn: number | null
   input: unknown
   inputRecorded: boolean
-  state: 'running' | 'complete' | 'failed'
+  state: 'running' | 'complete' | 'omitted' | 'not_executed' | 'failed'
   output: unknown
   errorCode: string | null
+  contextExclusion: AgentToolContextExclusion | null
   cacheHit: boolean
   duplicateOfActionCallId: string | null
   requestedAfterRejectedEvidenceDrafts: number
   requestReason: 'model_requested' | 'model_requested_after_evidence_rejection'
   rationale: null
+}
+
+const invalidDiagnosticEvent = (message: string): never => {
+  throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', message, 500)
+}
+
+const contextExclusionFor = (data: Record<string, unknown>): AgentToolContextExclusion | undefined => {
+  if (!Object.hasOwn(data, 'contextExclusion')) return undefined
+  const value = data.contextExclusion
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return invalidDiagnosticEvent('Agent tool context exclusion is invalid')
+  const record = value as Record<string, unknown>
+  const keys = Object.keys(record)
+  if (keys.length !== 2 || keys.some(key => key !== 'status' && key !== 'reason')) return invalidDiagnosticEvent('Agent tool context exclusion is invalid')
+  const status = record.status
+  const reason = record.reason
+  if ((status !== 'omitted' && status !== 'not_executed') || reason !== 'tool_result_capacity')
+    return invalidDiagnosticEvent('Agent tool context exclusion is invalid')
+  return { status: status as AgentToolContextExclusion['status'], reason: 'tool_result_capacity' }
+}
+
+const validateToolAction = (tool: DiagnosticToolCall, data: Record<string, unknown>): void => {
+  const actionName = data.actionName
+  if (actionName !== undefined && (typeof actionName !== 'string' || actionName !== tool.actionName))
+    invalidDiagnosticEvent('Agent tool event action is invalid')
 }
 
 const iso = (value: Date | string): string => (value instanceof Date ? value.toISOString() : new Date(value).toISOString())
@@ -151,9 +178,12 @@ const analyzeTools = (
       }
       continue
     }
+    const isToolEvent = event.type === 'tool.started' || event.type === 'tool.completed' || event.type === 'tool.notExecuted' || event.type === 'tool.failed'
+    if (!isToolEvent) continue
     const actionCallId = typeof event.data.actionCallId === 'string' ? event.data.actionCallId : ''
     if (!actionCallId) continue
     if (event.type === 'tool.started') {
+      if (Object.hasOwn(event.data, 'contextExclusion')) invalidDiagnosticEvent('Agent tool start cannot have a context exclusion')
       const inputRecorded = typeof event.data.input === 'string'
       const tool: DiagnosticToolCall = {
         actionCallId,
@@ -165,6 +195,7 @@ const analyzeTools = (
         state: 'running',
         output: null,
         errorCode: null,
+        contextExclusion: null,
         cacheHit: false,
         duplicateOfActionCallId: null,
         requestedAfterRejectedEvidenceDrafts: rejectedSinceLastTool,
@@ -176,24 +207,63 @@ const analyzeTools = (
       toolsById.set(actionCallId, tool)
       continue
     }
-    const tool = toolsById.get(actionCallId)
-    if (!tool) continue
     if (event.type === 'tool.failed') {
+      if (contextExclusionFor(event.data) !== undefined) invalidDiagnosticEvent('Failed tool activity cannot have a context exclusion')
+      const tool = toolsById.get(actionCallId)
+      if (!tool) continue
+      if (tool.state === 'omitted' || tool.state === 'not_executed') invalidDiagnosticEvent('Agent tool activity has multiple terminal events')
       tool.state = 'failed'
       tool.errorCode = typeof event.data.errorCode === 'string' ? event.data.errorCode : 'ACTION_FAILED'
       continue
     }
-    if (event.type !== 'tool.completed') continue
-    tool.state = 'complete'
+    if (event.type === 'tool.notExecuted') {
+      const exclusion = contextExclusionFor(event.data)
+      const tool = toolsById.get(actionCallId)
+      if (exclusion === undefined || exclusion.status !== 'not_executed' || Object.hasOwn(event.data, 'result')) {
+        invalidDiagnosticEvent('Not-executed tool activity has an invalid exclusion')
+        continue
+      }
+      if (tool === undefined) {
+        invalidDiagnosticEvent('Agent tool event has no start boundary')
+        continue
+      }
+      if (tool.state !== 'running') {
+        invalidDiagnosticEvent('Agent tool activity has multiple terminal events')
+        continue
+      }
+      validateToolAction(tool, event.data)
+      tool.contextExclusion = exclusion
+      tool.state = 'not_executed'
+      continue
+    }
+    const exclusion = contextExclusionFor(event.data)
+    if (exclusion?.status === 'not_executed') invalidDiagnosticEvent('Completed tool activity cannot be marked not executed')
+    const tool = toolsById.get(actionCallId)
+    if (tool === undefined) {
+      if (exclusion !== undefined) {
+        invalidDiagnosticEvent('Agent tool event has no start boundary')
+      }
+      continue
+    }
+    if (exclusion !== undefined) {
+      if (tool.state !== 'running') invalidDiagnosticEvent('Agent tool activity has multiple terminal events')
+      validateToolAction(tool, event.data)
+    } else if (tool.state === 'omitted' || tool.state === 'not_executed') {
+      invalidDiagnosticEvent('Agent tool activity has multiple terminal events')
+    }
+    tool.contextExclusion = exclusion ?? null
+    tool.state = exclusion?.status ?? 'complete'
     tool.output = parseOptionalJson(event.data.result)
     tool.cacheHit = event.data.cacheHit === true
     tool.duplicateOfActionCallId = typeof event.data.reusedActionCallId === 'string' ? event.data.reusedActionCallId : null
-    if (tool.actionName === 'pages.get' || tool.actionName === 'pages.getVersion') completedPageReads += 1
-    const identity = readIdentity(tool.actionName, tool.input, tool.output)
-    if (identity !== null && tool.duplicateOfActionCallId === null) {
-      const first = firstReadByIdentity.get(identity)
-      if (first) tool.duplicateOfActionCallId = first
-      else firstReadByIdentity.set(identity, tool.actionCallId)
+    if (tool.actionName === 'pages.get' || tool.actionName === 'pages.getVersion') {
+      const identity = readIdentity(tool.actionName, tool.input, tool.output)
+      if (identity !== null && tool.duplicateOfActionCallId === null) {
+        const first = firstReadByIdentity.get(identity)
+        if (first) tool.duplicateOfActionCallId = first
+        else firstReadByIdentity.set(identity, tool.actionCallId)
+      }
+      if (tool.state === 'complete') completedPageReads += 1
     }
   }
 

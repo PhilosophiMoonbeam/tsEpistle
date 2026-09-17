@@ -152,6 +152,29 @@ const state = reactive<MutablePwaState>({
 
 // `readonly(reactive(...))` gives consumers one stable, reactive, mutation-safe view.
 export const pwaState: Readonly<PwaState> = readonly(state)
+export type PwaConnectionPresentation = {
+  readonly label: string
+  readonly tone: 'success' | 'warning' | 'error'
+  readonly icon: string
+}
+
+type PwaConnectionPresentationState = Pick<PwaState, 'connection' | 'serverReachable' | 'serverHealthy'>
+
+export const pwaConnectionPresentation = (currentState: PwaConnectionPresentationState): PwaConnectionPresentation => {
+  if (currentState.connection === 'checking') {
+    return { label: 'Checking connection…', tone: 'warning', icon: 'mdi-sync' }
+  }
+  if (currentState.connection === 'offline') {
+    return { label: 'Offline', tone: 'error', icon: 'mdi-wifi-off' }
+  }
+  if (currentState.connection === 'server-unavailable') {
+    return { label: 'Server unavailable', tone: 'error', icon: 'mdi-server-network-off' }
+  }
+  if (currentState.connection === 'online' && currentState.serverReachable === true && currentState.serverHealthy === true) {
+    return { label: 'Connected', tone: 'success', icon: 'mdi-check-network-outline' }
+  }
+  return { label: 'Connection not verified', tone: 'warning', icon: 'mdi-help-network-outline' }
+}
 
 type PromptOffer = {
   event: BeforeInstallPromptEvent
@@ -331,12 +354,7 @@ const noteAcceptedActivation = (
 
 const maybeReloadAcceptedWorker = async (worker: ServiceWorker): Promise<void> => {
   const activation = acceptedActivation
-  if (
-    !activation ||
-    (activation.worker !== worker && activation.activatedWorker !== worker) ||
-    reloadRequestedActivations.has(activation.nonce)
-  )
-    return
+  if (!activation || (activation.worker !== worker && activation.activatedWorker !== worker) || reloadRequestedActivations.has(activation.nonce)) return
   deferredReloadWorker = worker
   const sequence = ++safetySequence
   const snapshot = await readSafetySnapshot()
@@ -363,10 +381,7 @@ const retryDeferredReload = (): void => {
   if (deferredReloadWorker) void maybeReloadAcceptedWorker(deferredReloadWorker)
 }
 
-const reportReloadSafety = async (
-  context: SafetyRequestContext = {},
-  target: ServiceWorkerMessageTarget | null = null
-): Promise<boolean> => {
+const reportReloadSafety = async (context: SafetyRequestContext = {}, target: ServiceWorkerMessageTarget | null = null): Promise<boolean> => {
   if (target) activeSafetyRequest = { target, context }
   const sequence = ++safetySequence
   const snapshot = await readSafetySnapshot()
@@ -388,12 +403,7 @@ const reportReloadSafety = async (
   return snapshot.safe
 }
 
-const handleActivatedUpdate = (
-  nonce: string,
-  workerId: string,
-  release: string,
-  source: ServiceWorkerMessageTarget | null
-): void => {
+const handleActivatedUpdate = (nonce: string, workerId: string, release: string, source: ServiceWorkerMessageTarget | null): void => {
   const sourceWorker = source as ServiceWorker | null
   let activation = acceptedActivation
   if (!activation || activation.nonce !== nonce) {
@@ -451,12 +461,7 @@ const extractMetaContent = (html: string, name: string): string | null => {
   return null
 }
 
-const verifyOfflineCache = async (
-  cacheName: string,
-  release: string,
-  manifestDigest: string,
-  markerURL: string
-): Promise<boolean> => {
+const verifyOfflineCache = async (cacheName: string, release: string, manifestDigest: string, markerURL: string): Promise<boolean> => {
   if (!isOwnedPrecacheCacheName(cacheName) || /-candidate-/u.test(cacheName) || typeof caches === 'undefined') return false
   let marker: URL
   try {
@@ -464,7 +469,8 @@ const verifyOfflineCache = async (
   } catch {
     return false
   }
-  if (marker.origin !== window.location.origin || marker.pathname !== OFFLINE_DOCUMENT_PATH || !marker.searchParams.has('__tsepistle_pwa_complete')) return false
+  if (marker.origin !== window.location.origin || marker.pathname !== OFFLINE_DOCUMENT_PATH || !marker.searchParams.has('__tsepistle_pwa_complete'))
+    return false
   try {
     const cache = await caches.open(cacheName)
     const shell = await cache.match(new URL(OFFLINE_DOCUMENT_PATH, window.location.origin).href)
@@ -697,9 +703,7 @@ const attachServiceWorkerListeners = (): void => {
       }
       const sourceCandidate = messageEvent.source
       const source =
-        sourceCandidate && typeof (sourceCandidate as ServiceWorker).postMessage === 'function'
-          ? (sourceCandidate as ServiceWorkerMessageTarget)
-          : null
+        sourceCandidate && typeof (sourceCandidate as ServiceWorker).postMessage === 'function' ? (sourceCandidate as ServiceWorkerMessageTarget) : null
       if (message.type === RETIREMENT_NOTICE_MESSAGE) {
         state.retirementNotice = true
         markOfflineUnavailable()
