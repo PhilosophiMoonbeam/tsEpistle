@@ -323,6 +323,10 @@ const hasUnsafeProjectionMarkup = (fragment: string, projection: ResolvedOffline
     }
     for (const attribute of element.attributes) {
       const name = attribute.name.toLowerCase()
+      // Markdown table alignment is presentation only; the sanitizer drops it.
+      const passiveTableAlignment =
+        name === 'style' && (tagName === 'th' || tagName === 'td') && /^\s*text-align\s*:\s*(?:left|center|right)\s*;?\s*$/iu.test(attribute.value)
+      if (passiveTableAlignment) continue
       if (name.startsWith('on') || name.startsWith('data-') || (ACTIVE_ATTRIBUTES.has(name) && !(tagName === 'img' && name === 'src'))) return true
       if (name === 'aria-hidden' || name === 'hidden') return true
       if (

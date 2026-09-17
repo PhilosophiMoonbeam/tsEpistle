@@ -276,6 +276,26 @@ describe('offline snapshot admission operations', () => {
     await expect(operations.getOfflineSnapshot({ id: 7 })).rejects.toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
   })
 
+  it('keeps Markdown tables readable while removing passive cell alignment', async () => {
+    page.render = '<table><thead><tr><th style="text-align:right">Count</th></tr></thead><tbody><tr><td style="text-align: center;">12</td></tr></tbody></table>'
+
+    const snapshot = await operations.getOfflineSnapshot({ id: 7 })
+
+    expect(snapshot.content.html).toBe('<table><thead><tr><th>Count</th></tr></thead><tbody><tr><td>12</td></tr></tbody></table>')
+  })
+
+  it.each([
+    '<table><tr><td style="text-align:right;display:none">Hidden</td></tr></table>',
+    '<table><tr><th style="background:url(/private/image.png)">Active</th></tr></table>',
+    '<table><tr><td style="text-align:var(--private)">Variable</td></tr></table>',
+    '<table><tr><td style="text-align:right" onclick="alert(1)">Active</td></tr></table>',
+    '<p style="text-align:right">Other styled content</p>'
+  ])('rejects other inline styles and active table attributes: %s', async render => {
+    page.render = render
+
+    await expect(operations.getOfflineSnapshot({ id: 7 })).rejects.toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
+  })
+
   it.each([
     [
       'private pages',
