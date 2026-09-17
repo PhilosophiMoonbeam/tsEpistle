@@ -749,16 +749,16 @@ const connectionTone = computed<'ready' | 'error' | 'busy'>(() => connectionBloc
   : loading.value || connection.value === 'reconnecting' || sending.value || Boolean(activeRun.value)
     ? 'busy'
     : 'ready')
+const activeDraft = computed(() => thread.value ? agents.drafts[thread.value.session.id] ?? emptyAgentDraft() : emptyAgentDraft())
+const contextualGlass = computed(() => Boolean(currentPage.value && activeDraft.value.includeCurrentPage))
 const starters = computed(() => [
-  ...(currentPage.value
+  ...(contextualGlass.value
     ? [{ label: 'Understand This Page', description: 'Key ideas, with sources', prompt: 'Summarize the current Wiki page and cite the key sections.', icon: 'mdi-text-box-search-outline' }]
     : [{ label: 'Explore the Wiki', description: 'Find a place to begin', prompt: 'Give me an overview of the main topics in the Wiki, with links to useful starting pages.', icon: 'mdi-compass-outline' }]),
-  { label: 'Connect the Dots', description: 'Discover related knowledge', prompt: currentPage.value ? 'Find Wiki pages related to the current page and explain how they connect.' : 'Help me explore connections between topics in the Wiki. Ask me which topic I want to start with.', icon: 'mdi-vector-link' },
+  { label: 'Connect the Dots', description: 'Discover related knowledge', prompt: contextualGlass.value ? 'Find Wiki pages related to the current page and explain how they connect.' : 'Help me explore connections between topics in the Wiki. Ask me which topic I want to start with.', icon: 'mdi-vector-link' },
   { label: 'Catch Up', description: 'See what changed recently', prompt: 'Summarize the 10 most recently updated Wiki pages I can access. Give each page a brief summary with a source.', icon: 'mdi-history' }
 ])
 
-const activeDraft = computed(() => thread.value ? agents.drafts[thread.value.session.id] ?? emptyAgentDraft() : emptyAgentDraft())
-const contextualGlass = computed(() => Boolean(currentPage.value && activeDraft.value.includeCurrentPage))
 const patchDraft = (patch: Partial<AgentDraft>): void => { if (thread.value) agents.updateDraft(thread.value.session.id, patch) }
 const setCurrentChatPinned = (pinned: boolean): void => {
   agents.setCurrentChatPinned(pinned)
@@ -1482,6 +1482,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   background: rgb(var(--v-theme-background));
   box-shadow: none;
   text-align: start;
+  transition: background-color var(--wiki-motion-slow) var(--wiki-motion-ease);
 }
 .inline-agent--contextual {
   background: transparent;
@@ -1503,11 +1504,12 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   border-bottom: 1px solid var(--wiki-surface-border);
   background: rgb(var(--v-theme-background)) !important;
   box-shadow: none;
+  -webkit-backdrop-filter: var(--wiki-chrome-blur);
+  backdrop-filter: var(--wiki-chrome-blur);
+  transition: background-color var(--wiki-motion-slow) var(--wiki-motion-ease);
 }
 .inline-agent--contextual .inline-agent__toolbar {
-  background: rgba(var(--v-theme-surface), .72) !important;
-  -webkit-backdrop-filter: blur(20px) saturate(115%);
-  backdrop-filter: blur(20px) saturate(115%);
+  background: var(--wiki-chrome-surface) !important;
 }
 .inline-agent__toolbar :deep(.v-toolbar__content) {
   flex-wrap: inherit;
@@ -1742,17 +1744,18 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   overflow: hidden;
   padding: var(--wiki-space-4) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)) var(--wiki-space-2);
   background: rgb(var(--v-theme-background));
+  -webkit-backdrop-filter: var(--wiki-chrome-blur);
+  backdrop-filter: var(--wiki-chrome-blur);
+  transition: background-color var(--wiki-motion-slow) var(--wiki-motion-ease);
 }
 
 .inline-agent--contextual .inline-agent__body {
-  background: rgba(var(--v-theme-surface), .32);
-  -webkit-backdrop-filter: blur(6px) saturate(110%);
-  backdrop-filter: blur(6px) saturate(110%);
+  background: var(--wiki-chrome-surface);
 }
 
 @supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
-  .inline-agent--contextual .inline-agent__toolbar,
-  .inline-agent--contextual .inline-agent__body {
+  .inline-agent__toolbar,
+  .inline-agent__body {
     background: rgb(var(--v-theme-background)) !important;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -2613,11 +2616,12 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .inline-agent--contextual .inline-agent__toolbar,
-  .inline-agent--contextual .inline-agent__body {
+  .inline-agent__toolbar,
+  .inline-agent__body {
     background: rgb(var(--v-theme-background)) !important;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
+    transition: none;
   }
 }
 
@@ -2626,8 +2630,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__side {
     border: 1px solid CanvasText;
   }
-  .inline-agent--contextual .inline-agent__toolbar,
-  .inline-agent--contextual .inline-agent__body {
+  .inline-agent__toolbar,
+  .inline-agent__body {
     background: Canvas !important;
     color: CanvasText;
     -webkit-backdrop-filter: none;
@@ -2681,7 +2685,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__loading-mark {
     animation: none;
   }
-  .inline-agent__starter {
+  .inline-agent__starter,
+  .inline-agent__card,
+  .inline-agent__toolbar,
+  .inline-agent__body {
     transition: none;
   }
 }

@@ -425,12 +425,14 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     if (agentWorkerFailureLogged) return
     agentWorkerFailureLogged = true
     try {
-      wiki.logger.error({
-        event: 'agent.worker.failed',
-        errorCode: 'AGENT_WORKER_FAILED',
-        failureStage: 'worker',
-        status: 500
-      })
+      wiki.logger.error(
+        JSON.stringify({
+          event: 'agent.worker.failed',
+          errorCode: 'AGENT_WORKER_FAILED',
+          failureStage: 'worker',
+          status: 500
+        })
+      )
     } catch {
       /* worker diagnostics must not escape through the logger */
     }

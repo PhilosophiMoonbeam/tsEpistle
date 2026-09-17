@@ -1643,7 +1643,10 @@ describe('ordinary-origin agent session API', () => {
       await accountingRuntime.shutdown()
     }
   })
-  it('persists normalized failures as a durable safe projection without provider details', async () => {
+  it.each([
+    [401, 'PROVIDER_AUTH_REJECTED'],
+    [429, 'PROVIDER_RATE_LIMITED']
+  ] as const)('persists and logs provider status %s as readable safe diagnostics without provider details', async (providerStatus, errorCode) => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
     const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
       method: 'POST',
@@ -1664,7 +1667,7 @@ describe('ordinary-origin agent session API', () => {
     const admission = (await admitted.json()) as { run: { id: string } }
     runtimeLogs.length = 0
     const wrapped = Object.assign(new Error('provider response body secret'), {
-      cause: new AgentProviderAttemptError('provider-secret-code', 429, null, 'secret-parameter'),
+      cause: new AgentProviderAttemptError('provider-secret-code', providerStatus, null, 'secret-parameter'),
       body: 'secret body',
       headers: 'authorization secret'
     })
@@ -1677,29 +1680,30 @@ describe('ordinary-origin agent session API', () => {
       engineFailure = null
     }
     const runRow = await db('agentRuns').where({ id: admission.run.id }).first('status', 'errorCode', 'errorMessage')
-    expect(runRow).toEqual({ status: 'failed', errorCode: 'PROVIDER_RATE_LIMITED', errorMessage: 'Agent inference failed' })
+    expect(runRow).toEqual({ status: 'failed', errorCode, errorMessage: 'Agent inference failed' })
     expect(runtimeLogs).toHaveLength(1)
-    expect(runtimeLogs[0]).toEqual({
+    expect(typeof runtimeLogs[0]).toBe('string')
+    expect(JSON.parse(String(runtimeLogs[0]))).toEqual({
       event: 'agent.run.failed',
       runId: admission.run.id,
       attempt: 1,
       providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
-      errorCode: 'PROVIDER_RATE_LIMITED',
+      errorCode,
       failureStage: 'provider_request',
       status: 502,
-      providerStatus: 429,
+      providerStatus,
       unsettledExposure: { tokens: 0, costMicros: 0 }
     })
     const eventRow = await db('agentEvents').where({ runId: admission.run.id, type: 'run.failed' }).first('data')
     const failureEvent = JSON.parse(String(eventRow?.data)) as Record<string, unknown>
     expect(failureEvent).toMatchObject({
       status: 'failed',
-      errorCode: 'PROVIDER_RATE_LIMITED',
+      errorCode,
       errorMessage: 'Agent inference failed',
       failureStage: 'provider_request',
-      providerStatus: 429
+      providerStatus
     })
-    const persisted = JSON.stringify({ runRow, failureEvent })
+    const persisted = JSON.stringify({ runRow, failureEvent, runtimeLogs })
     expect(persisted).not.toContain('provider-secret-code')
     expect(persisted).not.toContain('secret-parameter')
     expect(persisted).not.toContain('secret body')

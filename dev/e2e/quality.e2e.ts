@@ -163,6 +163,21 @@ test.describe('release accessibility profiles', () => {
       expect(await tabToControl(page, history), 'Agent history must be reachable in the tab order').toBe(true)
     }
   })
+  test('uses header glass around search results at desktop and mobile widths', async ({ page }, testInfo) => {
+    requireAnyProject(testInfo, ['accessibility-keyboard', 'accessibility-mobile'])
+    await openAuthenticatedPage(page, '/', '.page-header-section')
+    await openSearch(page)
+    const search = page.getByRole('dialog', { name: 'Wiki search', exact: true })
+    await expect(search).toBeVisible()
+    const headerGlass = await page.locator('.nav-header').evaluate(element => {
+      const styles = getComputedStyle(element)
+      return { background: styles.backgroundColor, blur: styles.backdropFilter }
+    })
+    await expect(search).toHaveCSS('background-color', headerGlass.background)
+    await expect(search).toHaveCSS('backdrop-filter', headerGlass.blur)
+    expect(headerGlass.blur).toContain('blur(')
+    await expectResponsiveLayout(page, 'search glass')
+  })
   test('runs enabled Agent failure, retry, and header activation through a real workspace', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')
     const fixture = await installEnabledAgentFixture(page, { mode: 'retry' })
@@ -192,13 +207,19 @@ test.describe('release accessibility profiles', () => {
     }
   })
   test('keeps contextual Agent glass isolated from opaque surfaces', async ({ page }, testInfo) => {
-    requireProject(testInfo, 'accessibility-keyboard')
+    requireAnyProject(testInfo, ['accessibility-keyboard', 'accessibility-mobile'])
     test.setTimeout(60_000)
     const fixture = await installEnabledAgentFixture(page, { mode: 'focus' })
     const cdp = await page.context().newCDPSession(page)
     try {
       const agent = await openEnabledAgent(page)
       await expect(agent).toHaveClass(/inline-agent--contextual/)
+      await expect(agent.getByRole('button', { name: 'Understand This Page' })).toBeVisible()
+      await agent.getByRole('button', { name: 'Exclude current page', exact: true }).click()
+      await expect(agent.getByRole('button', { name: 'Understand This Page' })).toHaveCount(0)
+      await expect(agent.getByRole('button', { name: 'Explore the Wiki' })).toBeVisible()
+      await agent.getByRole('button', { name: 'Include current page', exact: true }).click()
+      await expect(agent.getByRole('button', { name: 'Understand This Page' })).toBeVisible()
       const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
       await composer.fill('Inspect the contextual Agent surface hierarchy.')
       await agent.getByRole('button', { name: 'Send', exact: true }).click()
@@ -263,6 +284,36 @@ test.describe('release accessibility profiles', () => {
       }
 
       await expectContextualGlass(false)
+      const headerGlass = await readSurfaceStyle(page.locator('.nav-header'))
+      expect(await readSurfaceStyle(toolbar)).toEqual(headerGlass)
+      expect(await readSurfaceStyle(body)).toEqual(headerGlass)
+      const card = agent.locator('.inline-agent__card')
+      const included = agent.getByRole('button', { name: 'Exclude current page', exact: true })
+      await included.evaluate(async element => {
+        (element as HTMLElement).click()
+        await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+        const body = document.querySelector('.inline-agent__body')
+        const fade = body?.getAnimations().find(animation => animation instanceof CSSTransition && animation.transitionProperty === 'background-color')
+        if (!fade) throw new Error('Excluding the current page must animate the workspace background')
+        await fade.ready
+        fade.currentTime = Number(fade.effect?.getComputedTiming().duration) / 2
+      })
+      const fading = await readSurfaceStyle(body)
+      expect(fading.backgroundAlpha, 'Excluding the page fades the glass towards opaque').toBeGreaterThan(headerGlass.backgroundAlpha)
+      expect(fading.backgroundAlpha, 'Excluding the page does not snap to opaque').toBeLessThan(1)
+      await expect.poll(async () => (await readSurfaceStyle(body)).backgroundAlpha).toBe(1)
+      await expect.poll(async () => (await readSurfaceStyle(card)).backgroundAlpha).toBe(1)
+      await agent.getByRole('button', { name: 'Include current page', exact: true }).click()
+      await expect.poll(async () => (await readSurfaceStyle(body)).backgroundAlpha).toBe(headerGlass.backgroundAlpha)
+      await expect.poll(async () => (await readSurfaceStyle(card)).backgroundAlpha).toBe(0)
+
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      for (const surface of [card, toolbar, body]) await expect(surface).toHaveCSS('transition-duration', '0s')
+      await included.click()
+      expect((await readSurfaceStyle(body)).backgroundAlpha).toBe(1)
+      await agent.getByRole('button', { name: 'Include current page', exact: true }).click()
+      await expectContextualGlass(false)
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
       await expectOpaqueWorkspaceSurfaces()
 
       await cdp.send('Emulation.setEmulatedMedia', {

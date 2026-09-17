@@ -1281,8 +1281,9 @@ export default defineComponent({
   --search-overlay-ink: rgb(var(--v-theme-on-background));
   --search-overlay-top-offset: var(--v-layout-top, 64px);
   animation: searchResultsReveal var(--wiki-motion-normal) var(--wiki-motion-ease-out);
-  background: rgba(var(--v-theme-surface), .18);
-  backdrop-filter: blur(6px) saturate(110%);
+  background: var(--wiki-chrome-surface);
+  -webkit-backdrop-filter: var(--wiki-chrome-blur);
+  backdrop-filter: var(--wiki-chrome-blur);
   box-sizing: border-box;
   inset-inline: 0;
   inset-block-start: var(--search-overlay-top-offset);
@@ -1297,12 +1298,14 @@ export default defineComponent({
 
   @supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
     background: var(--wiki-surface-raised);
+    -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
 
   &--ask {
     animation: none;
     background: transparent;
+    -webkit-backdrop-filter: none;
     backdrop-filter: none;
     height: 100dvh;
     inset: 0;
@@ -1712,6 +1715,7 @@ export default defineComponent({
 @media (prefers-reduced-transparency: reduce) {
   .search-results:not(.search-results--ask) {
     background: var(--wiki-surface-raised);
+    -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
 }
@@ -1720,6 +1724,7 @@ export default defineComponent({
   .search-results {
     background: Canvas;
     color: CanvasText;
+    -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
   .search-results-search { border: 1px solid CanvasText; }

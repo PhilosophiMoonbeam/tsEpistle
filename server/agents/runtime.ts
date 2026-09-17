@@ -1030,7 +1030,9 @@ export class AgentProductRuntime {
     const diagnostics = normalizedFailure === null ? undefined : normalizeAgentExecutionFailureDiagnostics(normalizedFailure.diagnostics)
     if (diagnostics !== undefined) record.diagnostics = diagnostics
     try {
-      logger.error(record)
+      // The text console formatter interpolates message values; objects otherwise
+      // become "[object Object]" and hide these already-sanitized diagnostics.
+      logger.error(JSON.stringify(record))
     } catch {
       /* logger failures must not change durable settlement */
     }
