@@ -216,6 +216,16 @@ test.describe('release accessibility profiles', () => {
     try {
       const agent = await openEnabledAgent(page)
       await expect(agent).toHaveClass(/inline-agent--contextual/)
+      const composerSurround = agent.locator('.inline-agent__composer')
+      await expect(composerSurround).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(composerSurround).toHaveCSS('box-shadow', 'none')
+      const greetingBackdrop = await agent.locator('.inline-agent__welcome h2').evaluate(element => {
+        const styles = getComputedStyle(element, '::before')
+        return { background: styles.backgroundImage, filter: styles.filter, pointerEvents: styles.pointerEvents }
+      })
+      expect(greetingBackdrop.background).toContain('radial-gradient')
+      expect(greetingBackdrop.filter).toContain('blur')
+      expect(greetingBackdrop.pointerEvents).toBe('none')
       await expect(agent.getByRole('button', { name: 'Understand This Page' })).toBeVisible()
       await agent.getByRole('button', { name: 'Exclude current page', exact: true }).click()
       await expect(agent.getByRole('button', { name: 'Understand This Page' })).toHaveCount(0)
@@ -267,6 +277,8 @@ test.describe('release accessibility profiles', () => {
         await expect(messageSurfaces).toHaveCount(2)
         for (const surface of await messageSurfaces.all()) await expectOpaque(surface, 'Agent message surface')
         await expectOpaque(agent.locator('.agent-composer'), 'Agent composer')
+        await expect(composerSurround).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+        await expect(composerSurround).toHaveCSS('box-shadow', 'none')
 
         const historyTrigger = agent.getByRole('button', { name: 'Open agent conversation history' })
         if (await historyTrigger.isVisible()) await historyTrigger.click()

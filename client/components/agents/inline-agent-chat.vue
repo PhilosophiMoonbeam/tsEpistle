@@ -1978,6 +1978,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 /* The welcome treatment stays typographic and compact; the old decorative mark is intentionally omitted. */
 
 .inline-agent__welcome h2 {
+  position: relative;
+  isolation: isolate;
   margin: 0;
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-display);
@@ -1986,6 +1988,21 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   letter-spacing: -.045em;
   line-height: 1.04;
   text-wrap: balance;
+}
+
+.inline-agent__welcome h2::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -.8em 0;
+  border-radius: 50%;
+  background: radial-gradient(ellipse closest-side,
+    rgba(var(--v-theme-background), .96) 0%,
+    rgba(var(--v-theme-background), .90) 42%,
+    rgba(var(--v-theme-background), .48) 72%,
+    rgba(var(--v-theme-background), 0) 100%);
+  filter: blur(10px);
+  pointer-events: none;
 }
 
 .inline-agent__welcome-line {
@@ -2097,26 +2114,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   flex: 0 0 auto;
   padding: var(--wiki-space-4) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)) max(var(--wiki-space-4), env(safe-area-inset-bottom));
   border-top: 0;
-  background: rgb(var(--v-theme-background));
+  background: transparent;
   box-shadow: none;
-  transition: background .2s var(--wiki-motion-ease), box-shadow .2s var(--wiki-motion-ease), backdrop-filter .2s var(--wiki-motion-ease);
-}
-.inline-agent__composer--scrolled:not(.inline-agent__composer--focused) {
-  background: rgb(var(--v-theme-background));
-  box-shadow: 0 -0.75rem 1.5rem color-mix(in srgb, rgb(var(--v-theme-background)) 35%, transparent);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
 }
 .inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
   border-color: var(--wiki-surface-border-strong);
   background: var(--wiki-surface-raised);
   box-shadow: var(--wiki-shadow-xs);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-.inline-agent__composer--focused {
-  background: rgb(var(--v-theme-background));
-  box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
@@ -2626,6 +2630,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 @media (forced-colors: active) {
+  .inline-agent__welcome h2::before {
+    display: none;
+  }
   .inline-agent__card,
   .inline-agent__side {
     border: 1px solid CanvasText;
