@@ -96,6 +96,7 @@ function selectRecord(record: OfflineSnapshotRecord | null): void {
 }
 onMounted(() => {
   wikiStore.page.mode = settingsView ? 'profile' : 'view'
+  document.title = `${settingsView ? 'Offline access' : 'Saved pages'} | ${siteTitle}`
   void openStorage()
 })
 onBeforeUnmount(() => { disposed = true; coordinator?.dispose(); storage.value?.close() })
@@ -114,7 +115,7 @@ onBeforeUnmount(() => { disposed = true; coordinator?.dispose(); storage.value?.
       <div class="offline-nav-title">{{ settingsView ? 'Your workspace' : 'Browse' }}</div>
       <v-list nav aria-label="Main Menu">
         <v-list-item href="/" prepend-icon="mdi-home-outline" title="Home" />
-        <v-list-item href="/?saved=1" prepend-icon="mdi-book-open-page-variant-outline" title="Saved pages" />
+        <v-list-item href="/p/offline#downloaded-pages-title" prepend-icon="mdi-book-open-page-variant-outline" title="Saved pages" />
         <v-list-item href="/p/offline" prepend-icon="mdi-cloud-sync-outline" title="Offline access" :active="settingsView" />
       </v-list>
       <p class="offline-nav-note">Your saved public pages are available on this device. Reconnect to access other pages and account features.</p>

@@ -197,7 +197,7 @@ const offlineContentSecurityPolicy = (request: Request, html: string, host: unkn
     `style-src ${styles.length > 0 ? styles.join(' ') : "'none'"}`,
     "connect-src 'self'",
     "img-src 'none'",
-    `font-src ${cspSource(origin, '/_assets/assets/')}`,
+    `font-src ${cspSource(origin, '/_assets/assets/')} data:`,
     "media-src 'none'",
     "object-src 'none'",
     "base-uri 'none'",

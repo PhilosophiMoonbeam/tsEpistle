@@ -161,7 +161,8 @@ const offlineSelectorUrl = (selector: OfflinePageSelector): string | null => {
   const origin = currentOrigin()
   if (!origin || !isValidSelector(selector, origin)) return null
   const record = records.value.find(record => recordKey(record) === recordKey(selector))
-  return record ? offlinePageHref(record, origin) : null
+  const path = record ? offlinePageHref(record, origin) : null
+  return path ? new URL(path, origin).href : null
 }
 
 const selectorFromUrl = (): OfflinePageSelector | null => {
@@ -390,7 +391,7 @@ const copySelectedLink = async (): Promise<void> => {
   if (!readerReady.value || !url) return
   try {
     await copyToClipboard(url)
-    if (operation === readerToken && selectedKey.value === key && readerReady.value) shareStatus.value = 'Local link copied.'
+    if (operation === readerToken && selectedKey.value === key && readerReady.value) shareStatus.value = 'Page link copied.'
   } catch {
     if (operation === readerToken && selectedKey.value === key) shareStatus.value = 'The page link could not be copied.'
   }
@@ -669,7 +670,8 @@ const closeRecord = (options: ReaderCloseOptions = {}): void => {
   if (shouldGoBack && typeof window !== 'undefined') {
     window.history.back()
   } else if (!options.fromHistory && mode !== 'none') {
-    clearOfflineSelector()
+    window.location.assign('/p/offline#downloaded-pages-title')
+    return
   }
   if (shouldRestore) void restoreReaderFocus(key, opener)
 }
@@ -2003,7 +2005,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
 }
 
 .reader-heading { padding-block-end: .75rem; }
-.reader-heading h3 { max-inline-size: 34ch; overflow-wrap: anywhere; }
+.reader-heading h1 { max-inline-size: 34ch; overflow-wrap: anywhere; }
 
 .reader-meta {
   display: flex;
@@ -2033,24 +2035,6 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
   overflow-wrap: anywhere;
 }
 
-.offline-page-body :deep(:where(p, ul, ol, blockquote, dl, figure)) { margin-block: 0 1rem; }
-.offline-page-body :deep(:where(h1, h2, h3, h4, h5, h6)) {
-  margin-block: 1.45rem .6rem;
-  font-family: var(--offline-heading);
-  font-weight: 650;
-  letter-spacing: -.025em;
-  line-height: 1.15;
-  overflow-wrap: anywhere;
-}
-.offline-page-body :deep(:where(h1)) { font-size: 1.75rem; }
-.offline-page-body :deep(:where(h2)) { font-size: 1.45rem; }
-.offline-page-body :deep(:where(h3, h4, h5, h6)) { font-size: 1.18rem; }
-.offline-page-body :deep(:where(a)) {
-  color: var(--offline-accent-strong);
-  text-decoration-thickness: .08em;
-  text-underline-offset: .15em;
-}
-.offline-page-body :deep(:where(pre, code)) { font-family: var(--offline-mono); font-size: .9em; }
 .offline-page-body :deep(:where(.offline-code-region, .offline-table-region)) {
   max-inline-size: 100%;
   margin-block: 0 1rem;

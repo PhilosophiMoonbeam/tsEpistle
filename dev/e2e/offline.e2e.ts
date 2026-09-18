@@ -50,12 +50,15 @@ type SavePageOptions = {
   expiresAt?: string
 }
 
-const OFFLINE_PATH = '/_offline'
+const OFFLINE_PATH = '/_offline' // Immutable cached bootstrap, not an application destination.
+const OFFLINE_SETTINGS_PATH = '/p/offline'
 const SEEDED_PAGE_PATHS = ['visual-markdown-browser', 'visual-html-browser'] as const
 const OWNED_CACHE_NAME_PATTERN = /^tsepistle-pwa-precache-v1-[0-9a-f]{16}(?:-candidate-[0-9a-z-]+)?$/u
 
-async function waitForOfflineShell(page: Page): Promise<void> {
-  await expect(page.locator('main.offline-shell')).toBeVisible({ timeout: 30_000 })
+async function waitForOfflineSettings(page: Page): Promise<void> {
+  await expect(page.locator('.nav-header')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.offline-settings')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByRole('heading', { name: 'Offline access', level: 1, exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Saved pages', exact: true })).toBeVisible()
   await expect(page.getByRole('searchbox', { name: 'Search saved pages', exact: true })).toBeVisible()
 }
@@ -156,8 +159,8 @@ async function waitForFeatureWorker(page: Page): Promise<void> {
 }
 
 async function warmFeatureWorker(page: Page): Promise<void> {
-  await page.goto(OFFLINE_PATH, { waitUntil: 'networkidle' })
-  await waitForOfflineShell(page)
+  await page.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'networkidle' })
+  await waitForOfflineSettings(page)
   await waitForFeatureWorker(page)
 }
 
@@ -287,8 +290,8 @@ async function saveOfflinePages(page: Page, paths: readonly string[] = SEEDED_PA
   await warmFeatureWorker(page)
   await authenticateAsAdmin(page)
   for (const path of paths) await savePageFromReader(page, path)
-  await page.goto(OFFLINE_PATH, { waitUntil: 'networkidle' })
-  await waitForOfflineShell(page)
+  await page.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'networkidle' })
+  await waitForOfflineSettings(page)
   await expect(page.locator('.page-card')).toHaveCount(paths.length, { timeout: 30_000 })
 }
 
@@ -324,19 +327,19 @@ async function rejectClipboard(page: Page): Promise<void> {
   await page.evaluate(() => (window as OfflineWindow).__rejectOfflineClipboard?.())
 }
 
-test.describe('neutral offline saved-page surface', () => {
+test.describe('integrated offline access', () => {
   test.describe.configure({ timeout: 90_000 })
   test('keeps search in the first narrow viewport and reports empty actions truthfully', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
-    await page.goto(OFFLINE_PATH, { waitUntil: 'networkidle' })
-    await waitForOfflineShell(page)
+    await page.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'networkidle' })
+    await waitForOfflineSettings(page)
 
     const search = page.getByRole('searchbox', { name: 'Search saved pages', exact: true })
     await expectLocatorWithinViewport(search, 'Saved-page search at 390px')
-    await expectResponsiveLayout(page, 'Neutral offline shell at 390px')
+    await expectResponsiveLayout(page, 'Offline profile settings at 390px')
     await expect(page.getByText('No saved pages yet.', { exact: true })).toBeVisible()
 
-    const removeDownloadedPages = page.getByRole('button', { name: 'Remove downloaded pages', exact: true })
+    const removeDownloadedPages = page.getByRole('button', { name: 'Remove saved pages', exact: true })
     const clearOfflineData = page.getByRole('button', { name: 'Clear offline data on this device', exact: true })
     await expect(removeDownloadedPages).toBeDisabled()
     await expect(clearOfflineData).toBeEnabled()
@@ -401,16 +404,24 @@ test.describe('neutral offline saved-page surface', () => {
       JSON.stringify(sensitiveResults)
     ).toBe(true)
 
-    await page.evaluate(path => window.location.assign(path), `/en/${SEEDED_PAGE_PATHS[0]}`)
-    await waitForOfflineShell(page)
+    const saved = database.snapshots.find(row => row.snapshot.path === SEEDED_PAGE_PATHS[0])!
+    await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
+    await expect(page.locator('.nav-header')).toBeVisible()
+    const reader = page.locator('.offline-reader')
+    await expect(reader).toBeVisible()
+    await expect(reader.getByRole('heading', { name: saved.snapshot.title, level: 1, exact: true })).toBeFocused()
+    await expect(reader.locator('.offline-page-body')).toContainText('Visual Markdown browser')
+    expect(new URL(page.url()).pathname).toBe(saved.snapshot.canonicalPath)
+
+    await reader.getByRole('button', { name: 'Back to saved pages', exact: true }).click()
+    await expect(page).toHaveURL(new URL(`${OFFLINE_SETTINGS_PATH}#downloaded-pages-title`, origin).href)
+    await waitForOfflineSettings(page)
     const search = page.getByRole('searchbox', { name: 'Search saved pages', exact: true })
     await search.fill('Visual Markdown')
     await expect(page.locator('.page-card')).toHaveCount(1)
     await page.getByRole('button', { name: 'Open saved page Visual Markdown Browser', exact: true }).click()
-    const reader = page.locator('.offline-reader')
-    await expect(reader).toBeVisible()
-    await expect(reader.getByRole('heading', { name: 'Visual Markdown Browser', exact: true })).toBeFocused()
-    await expect(reader.locator('.offline-page-body')).toContainText('Visual Markdown browser')
+    await expect(page.locator('#offline-reader-title')).toHaveText(saved.snapshot.title)
+    expect(new URL(page.url()).pathname).toBe(saved.snapshot.canonicalPath)
 
     const offlineCache = await inspectOwnedCaches(page)
     for (const url of Object.values(offlineCache.entries).flat()) {
@@ -420,82 +431,106 @@ test.describe('neutral offline saved-page surface', () => {
     await page.context().setOffline(false)
   })
 
-  test('opens an actual saved snapshot, focuses its heading, and restores query and opener on Back', async ({ page }) => {
+  test('opens saved pages at their normal URLs and returns to profile settings', async ({ page, browserName }) => {
+    test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
     await saveOfflinePages(page)
+    const savedPages = (await inspectOfflineDatabase(page)).snapshots
+    await page.context().setOffline(true)
+    await page.goto(`${OFFLINE_SETTINGS_PATH}#downloaded-pages-title`, { waitUntil: 'domcontentloaded' })
+    await waitForOfflineSettings(page)
     const search = page.getByRole('searchbox', { name: 'Search saved pages', exact: true })
     await search.fill('Visual')
     await expect(page.locator('.page-card')).toHaveCount(2)
 
     const firstCard = page.locator('.page-card').first()
-    const firstOpen = firstCard.getByRole('button', { name: /^Open saved page / })
-    await firstOpen.click()
+    const title = (await firstCard.locator('.page-card-title').textContent())!.trim()
+    const saved = savedPages.find(row => row.snapshot.title === title)!
+    await firstCard.getByRole('button', { name: /^Open saved page / }).click()
+    await expect(page.locator('.nav-header')).toBeVisible()
+    await expect(page.locator('#offline-reader-title')).toHaveText(title)
+    await expect(page.getByRole('heading', { name: title, level: 1, exact: true })).toBeFocused()
+    expect(new URL(page.url()).pathname).toBe(saved.snapshot.canonicalPath)
+    expect(new URL(page.url()).search).toBe('')
 
-    const reader = page.locator('.offline-reader')
-    await expect(reader).toBeVisible()
-    const heading = reader.getByRole('heading', { level: 3 })
-    await expect(heading).toBeVisible()
-    await expect(heading).toBeFocused()
-    await expect(search).toHaveValue('Visual')
-
-    const selectedUrl = new URL(page.url())
-    expect(selectedUrl.pathname).toBe(OFFLINE_PATH)
-    expect([...selectedUrl.searchParams.keys()].sort()).toEqual(['locale', 'pageId', 'site'])
-
-    await reader.getByRole('button', { name: 'Back to saved pages', exact: true }).click()
-    await expect(reader).not.toBeVisible()
-    await expect(search).toHaveValue('Visual')
-    await expect(firstOpen).toBeFocused()
-    const restoredUrl = new URL(page.url())
-    expect(restoredUrl.pathname).toBe(OFFLINE_PATH)
-    expect(restoredUrl.search).toBe('')
+    // Full document navigation preserves the canonical page in browser history.
+    await page.goBack({ waitUntil: 'domcontentloaded' })
+    await waitForOfflineSettings(page)
+    expect(new URL(page.url()).pathname).toBe(OFFLINE_SETTINGS_PATH)
+    await page.goForward({ waitUntil: 'domcontentloaded' })
+    await expect(page.locator('#offline-reader-title')).toHaveText(title)
+    await page.getByRole('button', { name: 'Back to saved pages', exact: true }).click()
+    await waitForOfflineSettings(page)
+    expect(new URL(page.url()).pathname).toBe(OFFLINE_SETTINGS_PATH)
+    expect(new URL(page.url()).hash).toBe('#downloaded-pages-title')
+    await page.context().setOffline(false)
   })
 
-  test('fences denied full-text fallback to the current saved-page selection', async ({ page, browserName }) => {
+  test('offers the current saved page text when clipboard access is denied', async ({ page, browserName }) => {
     test.skip(browserName !== 'chromium', 'Clipboard rejection control is covered only where Chromium exposes a controllable clipboard surface.')
     await saveOfflinePages(page)
-    const cards = page.locator('.page-card')
-    const titles = await cards.locator('.page-card-title').allTextContents()
-    expect(titles).toHaveLength(2)
-
-    const firstCard = cards.filter({ hasText: titles[0] })
-    const secondCard = cards.filter({ hasText: titles[1] })
-    await firstCard.getByRole('button', { name: /^Open saved page / }).click()
+    const saved = (await inspectOfflineDatabase(page)).snapshots[0]!
+    await page.context().setOffline(true)
+    await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
     const reader = page.locator('.offline-reader')
-    await expect(reader).toBeVisible()
-    await expect(reader.getByRole('heading', { name: titles[0], exact: true })).toBeFocused()
-
+    await expect(reader.getByRole('heading', { name: saved.snapshot.title, level: 1, exact: true })).toBeFocused()
     const clipboardControlled = await installClipboardRejection(page)
     test.skip(!clipboardControlled, 'This Chromium channel does not allow a deterministic clipboard rejection control.')
-
-    const copyText = reader.getByRole('button', { name: 'Copy full page text', exact: true })
-    await copyText.click()
-    await expect.poll(() => page.evaluate(() => typeof (window as OfflineWindow).__rejectOfflineClipboard === 'function')).toBe(true)
-
-    await reader.getByRole('button', { name: 'Back to saved pages', exact: true }).click()
-    await expect(reader).not.toBeVisible()
-    await secondCard.getByRole('button', { name: /^Open saved page / }).click()
-    await expect(reader.getByRole('heading', { name: titles[1], exact: true })).toBeFocused()
-    await rejectClipboard(page)
-    await expect(page.getByRole('textbox', { name: 'Full saved page text for manual copying', exact: true })).toHaveCount(0)
-    await expect(page.getByText('Clipboard access was denied. The full page text is selected below.', { exact: true })).not.toBeVisible()
-
-    await copyText.click()
+    await reader.getByRole('button', { name: 'Copy full page text', exact: true }).click()
     await rejectClipboard(page)
     const fallback = page.getByRole('textbox', { name: 'Full saved page text for manual copying', exact: true })
     await expect(fallback).toBeVisible()
-    await expect(fallback).toHaveValue(new RegExp(titles[1].replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')))
+    expect(await fallback.inputValue()).toContain(saved.snapshot.title)
+    await expect(page.getByText('Clipboard access was denied. The full page text is selected below.', { exact: true })).toBeVisible()
+    await expect(fallback).toBeFocused()
+    const copiedText = await fallback.inputValue()
+    expect(await fallback.evaluate((element: HTMLTextAreaElement) => element.selectionEnd - element.selectionStart)).toBe(copiedText.length)
+
+    // Leaving the document cannot carry its clipboard fallback into another page.
+    await reader.getByRole('button', { name: 'Back to saved pages', exact: true }).click()
+    await waitForOfflineSettings(page)
+    await expect(fallback).toHaveCount(0)
+    const other = (await inspectOfflineDatabase(page)).snapshots.find(row => row.pageId !== saved.pageId)!
+    await page.goto(other.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
+    await expect(page.locator('#offline-reader-title')).toHaveText(other.snapshot.title)
+    await expect(fallback).toHaveCount(0)
+    await page.context().setOffline(false)
+  })
+
+  test('keeps the canonical page on reconnect and offers offline preferences in the account menu', async ({ page, browserName }) => {
+    test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
+    await saveOfflinePages(page, [SEEDED_PAGE_PATHS[0]])
+    const saved = (await inspectOfflineDatabase(page)).snapshots[0]!
+    await page.context().setOffline(true)
+    await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
+    await expect(page.locator('#offline-reader-title')).toHaveText(saved.snapshot.title)
+    await page.locator('.account-menu__trigger').click()
+    const settingsLink = page.locator('.account-menu').getByRole('link', { name: 'Offline preferences', exact: true })
+    await expect(settingsLink).toHaveAttribute('href', OFFLINE_SETTINGS_PATH)
+    await settingsLink.click()
+    await waitForOfflineSettings(page)
+    expect(new URL(page.url()).pathname).toBe(OFFLINE_SETTINGS_PATH)
+
+    await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
+    await expect(page.locator('#offline-reader-title')).toHaveText(saved.snapshot.title)
+    await page.context().setOffline(false)
+    await expect(page.locator('.page-header-section')).toBeVisible({ timeout: 30_000 })
+    expect(new URL(page.url()).pathname).toBe(saved.snapshot.canonicalPath)
+    await expect(page.locator('.offline-application')).toHaveCount(0)
+    await expect(page.locator('.nav-header')).toBeVisible()
+    await page.locator('.account-menu__trigger').click()
+    await expect(settingsLink).toHaveAttribute('href', OFFLINE_SETTINGS_PATH)
   })
 
   test('treats an expired offline selection as removable rather than a refresh action', async ({ page, browserName }) => {
     test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
     await warmFeatureWorker(page)
     await authenticateAsAdmin(page)
-    const expiresAt = new Date(Date.now() + 15_000).toISOString()
+    const expiresAt = new Date(Date.now() + 30_000).toISOString()
     const saved = await savePageFromReader(page, SEEDED_PAGE_PATHS[0], { expiresAt })
     expect(saved.snapshot.expiresAt).toBe(expiresAt)
 
-    await page.goto(OFFLINE_PATH, { waitUntil: 'networkidle' })
-    await waitForOfflineShell(page)
+    await page.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'networkidle' })
+    await waitForOfflineSettings(page)
     await expect(page.locator('.page-card')).toHaveCount(1)
     await page.context().setOffline(true)
     await page.waitForTimeout(Math.max(0, Date.parse(expiresAt) - Date.now() + 250))
@@ -523,8 +558,8 @@ test.describe('neutral offline saved-page surface', () => {
     await saveOfflinePages(page, [SEEDED_PAGE_PATHS[0]])
     const secondPage = await context.newPage()
     try {
-      await secondPage.goto(OFFLINE_PATH, { waitUntil: 'networkidle' })
-      await waitForOfflineShell(secondPage)
+      await secondPage.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'networkidle' })
+      await waitForOfflineSettings(secondPage)
       await expect(secondPage.locator('.page-card')).toHaveCount(1)
 
       await page.getByRole('button', { name: 'Remove page', exact: true }).click()
@@ -566,7 +601,7 @@ test.describe('neutral offline saved-page surface', () => {
     const cards = page.locator('.page-card')
     await expect(cards).toHaveCount(2)
     const clearOfflineData = page.getByRole('button', { name: 'Clear offline data on this device', exact: true })
-    const removeDownloadedPages = page.getByRole('button', { name: 'Remove downloaded pages', exact: true })
+    const removeDownloadedPages = page.getByRole('button', { name: 'Remove saved pages', exact: true })
     await expect(removeDownloadedPages).toBeEnabled()
     const beforeClear = await inspectOfflineDatabase(page)
     const previousGeneration = beforeClear.meta?.sessionGeneration
@@ -582,7 +617,7 @@ test.describe('neutral offline saved-page surface', () => {
     await clearOfflineData.click()
     await dialog.getByRole('button', { name: 'Clear offline data', exact: true }).click()
     await expect(dialog).not.toBeVisible()
-    await expect(page.getByText(/Offline data was cleared on this device\. Local generation \d+ is active; server data was not deleted\./u)).toBeVisible()
+    await expect(page.getByText('Offline data was cleared on this device. Your server data was not deleted.', { exact: true })).toBeVisible()
     await expect(cards).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'No saved pages yet', exact: true })).toBeVisible()
     await expect(removeDownloadedPages).toBeDisabled()
