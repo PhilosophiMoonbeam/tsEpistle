@@ -53,6 +53,10 @@ services:
     volumes:
       - ./config.yml:/wiki/config.yml:ro
       - ${TSEPISTLE_STATE_DIR:-/opt/tsepistle}/data:/wiki/data
+      # The image declares these paths as VOLUMEs; mount them explicitly so
+      # Docker does not hide the copied data behind anonymous volumes.
+      - ${TSEPISTLE_STATE_DIR:-/opt/tsepistle}/data/content:/wiki/data/content
+      - ${TSEPISTLE_STATE_DIR:-/opt/tsepistle}/data/repo:/wiki/data/repo
     expose:
       - "3000"
     networks:
