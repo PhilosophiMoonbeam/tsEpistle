@@ -1771,9 +1771,12 @@ test.describe('responsive UI quality matrix', () => {
     const coarseProject = testInfo.project.name === 'responsive-chromium-mobile'
     if (!desktopProject && !coarseProject) return
     if (coarseProject) await page.setViewportSize({ width: 320, height: 640 })
-    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.emulateMedia({ colorScheme: 'light', reducedMotion: desktopProject ? 'no-preference' : 'reduce' })
     await page.route('**/_api/users/whoami', route => route.fulfill({ json: { authenticated: true, user: { id: 900001, name: 'Agent layout fixture', email: 'layout@example.invalid', permissions: ['use:agents'], localeCode: 'en' } } }))
     await page.route(/\/_api\/pages\/\d+\/watch$/, route => route.fulfill({ json: { watched: false, emailEnabled: false, inAppEnabled: false } }))
+    await page.route(/\/_api\/pages\/\d+\/approval$/, route => route.fulfill({ json: { approval: null } }))
+    await page.route('**/_api/pages/watches/notifications', route => route.fulfill({ json: { ownerId: 900001, items: [], unreadCount: 0, nextCursor: null, unreadComplete: true } }))
+    await page.route('**/_api/pages/approvals/inbox', route => route.fulfill({ json: { ownerId: 900001, items: [], nextCursor: null } }))
     const sources = Array.from({ length: 3 }, (_, index) => ({ id: 701 + index, locale: 'en', path: `release-source-${index + 1}`, title: `Release evidence source ${index + 1} with a long descriptive title`, description: 'A deterministic source for layout checks.', visibility: 'public' as const, updatedAt: '2026-09-01T12:00:00.000Z', sourceRevision: '1', excerpt: 'Release evidence', excerptTruncated: false }))
     await page.route('**/_api/pages/search?**', route => route.fulfill({ json: { results: sources.map(source => ({ ...source, tags: [], score: 10, matchedFields: ['title'] })), suggestions: [], totalHits: sources.length, nextCursor: null } }))
     await page.route('**/_api/pages/preview?**', route => {
@@ -1785,7 +1788,7 @@ test.describe('responsive UI quality matrix', () => {
     let releaseResponse: (() => void) | null = null
     try {
       await page.goto('/', { waitUntil: 'domcontentloaded' })
-      await expect(page.locator('.nav-header')).toBeVisible()
+      await expect(page.locator('.nav-header')).toBeVisible({ timeout: 15_000 })
       const search = await openSearch(page)
       await search.fill('release')
       const searchDialog = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
@@ -1811,7 +1814,11 @@ test.describe('responsive UI quality matrix', () => {
       const sourceDialog = page.getByRole('dialog', { name: 'Add sources', exact: true })
       await sourceDialog.getByRole('textbox', { name: 'Search pages', exact: true }).fill('release')
       await expect(sourceDialog.getByRole('checkbox')).toHaveCount(sources.length)
-      for (const checkbox of await sourceDialog.getByRole('checkbox').all()) await checkbox.check()
+      for (const source of sources) {
+        const row = sourceDialog.locator('.agent-context__result-label').filter({ hasText: source.title })
+        await row.click()
+        await expect(row.getByRole('checkbox')).toBeChecked()
+      }
       await sourceDialog.getByRole('button', { name: 'Add 3 sources and return', exact: true }).click()
       await expect(sourceDialog).toBeHidden()
       await expect(agent.locator('.agent-context__sources .v-chip')).toHaveCount(3)
@@ -1838,6 +1845,12 @@ test.describe('responsive UI quality matrix', () => {
       const face = latest.locator('.inline-agent__follow-jump-face')
       const distanceFromBottom = () => transcript.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)
       const opacity = (locator: Locator) => locator.evaluate(element => Number(getComputedStyle(element).opacity))
+      const captureLayout = async (name: string) => {
+        await page.mouse.move(1, 1)
+        const path = testInfo.outputPath(`${name}.png`)
+        await page.screenshot({ path })
+        await testInfo.attach(name, { path, contentType: 'image/png' })
+      }
       const readAtDistance = async (distance: number) => {
         await page.mouse.move(1, 1)
         await transcript.focus()
@@ -1851,6 +1864,11 @@ test.describe('responsive UI quality matrix', () => {
       await expect(face).toHaveText('Latest')
       await expect.poll(() => opacity(footer)).toBeCloseTo(0.2, 2)
       await expect.poll(() => opacity(latest)).toBeCloseTo(0.8, 2)
+      await captureLayout('agent-reading-earlier-light')
+      await page.emulateMedia({ colorScheme: 'dark' })
+      await expect.poll(() => opacity(footer)).toBeCloseTo(0.2, 2)
+      await captureLayout('agent-reading-earlier-dark')
+      await page.emulateMedia({ colorScheme: 'light' })
       const [latestBounds, faceBounds, footerBounds] = await Promise.all([latest.boundingBox(), face.boundingBox(), footer.boundingBox()])
       expect(latestBounds).not.toBeNull()
       expect(faceBounds).not.toBeNull()
@@ -1896,6 +1914,12 @@ test.describe('responsive UI quality matrix', () => {
       await expect.poll(distanceFromBottom).toBeLessThanOrEqual(25)
       await expect(latest).toBeHidden()
       await expect(transcript).toBeFocused()
+      await readAtDistance(400)
+      await latest.click()
+      await expect.poll(distanceFromBottom).toBeLessThanOrEqual(25)
+      await expect(transcript).toBeFocused()
+      await expect.poll(() => opacity(footer)).toBeCloseTo(1, 2)
+      await captureLayout('agent-latest-at-bottom')
       // A held provider response distinguishes submission scrolling from response-arrival scrolling.
       releaseResponse = fixture.pauseNextResponse()
       await composer.fill('Show another complete review while preserving readable earlier messages.')
