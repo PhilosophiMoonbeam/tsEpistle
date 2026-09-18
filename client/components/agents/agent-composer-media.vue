@@ -1,9 +1,9 @@
 <template>
   <div v-if="capabilities?.attachments || capabilities?.imageGeneration || capabilities?.transcription" class="agent-media-composer">
-    <div class="agent-media-composer__controls" role="group" aria-label="Message media">
+    <div ref="mediaControls" class="agent-media-composer__controls" role="group" aria-label="Message media">
       <input ref="fileInput" class="agent-media-composer__file" type="file" :accept="capabilities?.attachments ? 'image/png,image/jpeg,image/webp,application/pdf' : 'image/png,image/jpeg,image/webp'" multiple :aria-label="capabilities?.attachments ? 'Choose images or PDFs' : 'Choose images'" @change="chooseFiles" />
       <v-menu v-if="capabilities.attachments || capabilities.imageGeneration" v-model="attachmentMenu" content-class="agent-owned-overlay" location="top start">
-        <template #activator="{ props: menuProps }"><v-btn ref="attachButton" v-bind="menuProps" variant="text" size="small" prepend-icon="mdi-paperclip" :disabled="locked || !session || attachments.length >= 4" :aria-label="capabilities.attachments ? 'Attach images or PDFs' : 'Attach images'">Attach</v-btn></template>
+        <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" class="agent-media-composer__attach" variant="text" size="small" prepend-icon="mdi-paperclip" :disabled="locked || !session || attachments.length >= 4" :aria-label="capabilities.attachments ? 'Attach images or PDFs' : 'Attach images'">Attach</v-btn></template>
         <v-list density="compact" aria-label="Attachment source"><v-list-item prepend-icon="mdi-upload" title="Upload files" @click="chooseUpload" /><v-list-item prepend-icon="mdi-folder-outline" title="Browse Wiki assets" @click="browseAssets" /></v-list>
       </v-menu>
       <v-btn v-if="capabilities.imageGeneration" :variant="imageMode ? 'tonal' : 'text'" :color="imageMode ? 'primary' : undefined" size="small" prepend-icon="mdi-image-outline" :aria-pressed="imageMode" aria-label="Generate or edit an image" :disabled="locked" @click="toggleImageMode">{{ imageMode ? 'Image mode on' : 'Image' }}</v-btn>
@@ -45,7 +45,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ change: [value: AgentMediaSubmission]; busy: [value: boolean]; dictation: [text: string]; settled: [] }>()
 const fileInput = useTemplateRef<HTMLInputElement>('fileInput')
-const attachButton = useTemplateRef<{ $el: HTMLButtonElement }>('attachButton')
+const mediaControls = useTemplateRef<HTMLDivElement>('mediaControls')
 const attachmentMenu = ref(false)
 const assetPickerOpen = ref(false)
 const attachments = ref<AgentMediaView[]>([])
@@ -158,7 +158,13 @@ const closeAssetPicker = () => {
   if (!assetPickerOpen.value) return
   assetPickerOpen.value = false
   uploadController?.abort()
-  void nextTick(() => attachButton.value?.$el?.focus())
+  void nextTick(() => {
+    const trigger = mediaControls.value?.querySelector<HTMLButtonElement>('.agent-media-composer__attach')
+    if (!trigger || disposed || assetPickerOpen.value) return
+    // Menu activator props own the button ref. Restore through the stable controls
+    // after the dialog's focus trap and inert background have been released.
+    window.requestAnimationFrame(() => { if (!disposed && !assetPickerOpen.value && trigger.isConnected && !trigger.disabled) trigger.focus({ preventScroll: true }) })
+  })
 }
 const attachAsset = async (asset: Asset) => {
   if (!assetPickerOpen.value || locked.value || !props.session || attachments.value.length >= 4 || !(props.capabilities?.attachments || props.capabilities?.imageGeneration)) return

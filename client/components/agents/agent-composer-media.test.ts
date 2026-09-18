@@ -24,14 +24,14 @@ class Recorder {
   start() { this.state = 'recording' }
   stop() { this.state = 'inactive'; this.ondataavailable?.({ data: new Blob(['voice'], { type: this.mimeType }) }); this.onstop?.() }
 }
-const mount = (options: { media?: { attachments: boolean; imageGeneration: boolean; transcription: boolean }; fetch?: typeof fetch; microphone?: () => Promise<unknown> } = {}) => {
+const mount = (options: { media?: { attachments: boolean; imageGeneration: boolean; transcription: boolean }; fetch?: typeof fetch; microphone?: () => Promise<unknown>; focus?: () => void } = {}) => {
   const props = reactive({ csrfToken: 'csrf', session: { id: sessionId, version: 3, profileResolutionToken: 'resolved' }, capabilities: options.media, disabled: false, networkBlocked: false })
   const events: Array<[string, unknown]> = []
   const cleanup: Array<() => void> = []
   let stopped = 0
   let microphoneCalls = 0
   const scope = effectScope()
-  const api = scope.run(() => evaluate({ computed, nextTick, ref, watch, useTemplateRef: () => ref(null), onBeforeUnmount: (fn: () => void) => cleanup.push(fn), defineProps: () => props, defineEmits: () => (event: string, value: unknown) => events.push([event, value]), defineExpose: () => {}, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator: { mediaDevices: { getUserMedia: async () => { microphoneCalls++; return options.microphone ? options.microphone() : { getTracks: () => [{ stop: () => { stopped++ } }] } } } }, MediaRecorder: Recorder, window: { fetch: options.fetch ?? (async () => response({ media })) } }))
+  const api = scope.run(() => evaluate({ computed, nextTick, ref, watch, useTemplateRef: (key: string) => ref(key === 'mediaControls' && options.focus ? { querySelector: () => ({ focus: options.focus, isConnected: true, disabled: false }) } : null), onBeforeUnmount: (fn: () => void) => cleanup.push(fn), defineProps: () => props, defineEmits: () => (event: string, value: unknown) => events.push([event, value]), defineExpose: () => {}, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator: { mediaDevices: { getUserMedia: async () => { microphoneCalls++; return options.microphone ? options.microphone() : { getTracks: () => [{ stop: () => { stopped++ } }] } } } }, MediaRecorder: Recorder, window: { requestAnimationFrame: (callback: () => void) => callback(), fetch: options.fetch ?? (async () => response({ media })) } }))
   return { api, props, events, stopped: () => stopped, microphoneCalls: () => microphoneCalls, unmount: () => { cleanup.forEach(fn => { fn() }); scope.stop() } }
 }
 describe('Agent media composer lifecycle', () => {
@@ -134,6 +134,15 @@ describe('Agent Wiki asset attachments', () => {
     expect(harness.api.assetPickerOpen.value).toBe(false)
     expect(harness.api.uploading.value).toBe(false)
     harness.api.clear(); harness.unmount()
+  })
+  it('restores keyboard focus through the stable controls when the picker closes', async () => {
+    let focused = 0
+    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, focus: () => { focused++ } })
+    harness.api.browseAssets()
+    harness.api.closeAssetPicker()
+    await nextTick()
+    expect(focused).toBe(1)
+    harness.unmount()
   })
   for (const reason of ['close', 'session', 'disabled', 'offline'] as const) it(`cancels an asset copy on ${reason} and deletes a late private copy`, async () => {
     let finish!: (value: Response) => void
