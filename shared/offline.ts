@@ -5,7 +5,7 @@ import { PAGE_EDITOR_KEYS } from './page-editors.ts'
 export const OFFLINE_SCHEMA_VERSION = 1 as const
 export const OFFLINE_DB_NAME = 'tsepistle-offline' as const
 /** The physical IndexedDB version. The payload/schema version remains v1. */
-export const OFFLINE_DB_VERSION = 4 as const
+export const OFFLINE_DB_VERSION = 5 as const
 export const OFFLINE_KEY_VERSION = 'session-secret-v1' as const
 export const OFFLINE_DRAFT_KEY_MAGIC = 'TSODK1' as const
 export const OFFLINE_HTML_SANITIZER_VERSION = 'offline-html-allowlist-v1' as const
@@ -196,6 +196,7 @@ export const OfflinePolicyStateSchema = z
     recordType: z.literal('state'),
     schemaVersion: z.literal(OFFLINE_POLICY_SCHEMA_VERSION),
     automaticSavingEnabled: z.boolean(),
+    automaticSavingDefaultApplied: z.literal(true).optional(),
     selectedTags: z.array(boundedTag).max(OFFLINE_POLICY_TAG_LIMIT),
     policyRevision: nonnegativeSafeInteger,
     syncDiagnostics: OfflineSyncDiagnosticsSchema,

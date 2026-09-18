@@ -1344,7 +1344,7 @@ onBeforeUnmount(() => {
         />
         <span>
           <strong>Save frequently visited and recently edited pages</strong>
-          <small>Off by default. Save up to 10 eligible public pages, including your most recently edited page and the pages you visit most within 60 days. Removing a page excludes it from automatic saving and makes room for another. Manual saves and followed tags are managed separately.</small>
+          <small>On by default. Save up to 10 eligible public pages, including your most recently edited page and the pages you visit most within 60 days. Removing a page excludes it from automatic saving and makes room for another. Manual saves and followed tags are managed separately.</small>
         </span>
       </label>
       <div class="policy-tags">
@@ -1492,7 +1492,7 @@ onBeforeUnmount(() => {
         <span>{{ storageUnavailable ? libraryMessage : loadError }}</span>
         <button class="text-button" type="button" @click="retryStorage">Retry saved pages</button>
       </p>
-      <small>Automatic saving is opt-in and includes frequently visited pages and your most recently edited eligible page. Manual downloads and followed tags are listed with their sources above.</small>
+      <small>Automatic saving is on by default and includes frequently visited pages and your most recently edited eligible page. Manual downloads and followed tags are listed with their sources above.</small>
     </div>
 
     <ol v-else class="page-list" aria-label="Saved public pages">

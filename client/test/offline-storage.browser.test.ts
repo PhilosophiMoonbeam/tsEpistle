@@ -250,6 +250,19 @@ const patchPolicy = async (name: string, selector: { siteId: string; pageId: num
   await transactionDone(transaction);
   database.close();
 };
+const seedLegacyAutomaticOff = async (name: string): Promise<void> => {
+  const database = await openDatabase(name);
+  const transaction = database.transaction('policy', 'readwrite');
+  const store = transaction.objectStore('policy');
+  const current = await requestValue(store.get('state')) as Record<string, unknown> | undefined;
+  if (current === undefined) throw new Error('Policy state to migrate was not found.');
+  const legacy = { ...current, automaticSavingEnabled: false };
+  delete legacy.automaticSavingDefaultApplied;
+  delete legacy.byteSize;
+  store.put({ ...legacy, byteSize: new TextEncoder().encode(JSON.stringify(legacy)).byteLength });
+  await transactionDone(transaction);
+  database.close();
+};
 const seedUnknownMeta = async (name: string): Promise<void> => {
   const database = await openDatabase(name, 2, (db) => createStores(db));
   const transaction = database.transaction('meta', 'readwrite');
@@ -350,6 +363,7 @@ export async function run(operation: string, payload: Record<string, unknown> = 
       );
       return { ok: true, value: { patched: true } };
     }
+    if (operation === 'seedLegacyAutomaticOff') { await seedLegacyAutomaticOff(String(payload.name)); return { ok: true, value: { seeded: true } }; }
     if (operation === 'inflateManagedBytes') { await inflateManagedBytes(String(payload.name)); return { ok: true, value: { inflated: true } }; }
     if (operation === 'holdLegacy') { await holdLegacy(String(payload.name)); return { ok: true, value: { held: true } }; }
     if (operation === 'release') { closeRawHold(String(payload.name)); return { ok: true, value: { released: true } }; }
@@ -614,6 +628,42 @@ afterAll(async () => {
 })
 
 describe('real IndexedDB offline storage adapter', () => {
+  test('enables automatic saving in a new database and preserves a later explicit opt-out', async () => {
+    const name = freshDatabase('automatic-default')
+    await succeeded('open', { id: 'storage', name })
+    const initial = await readDump(name)
+    expect(initial.policy.find(record => record.recordType === 'state')).toMatchObject({ automaticSavingEnabled: true })
+
+    await succeeded('setAutomatic', { id: 'storage', enabled: false })
+    await succeeded('close', { id: 'storage' })
+    await succeeded('open', { id: 'reopened', name })
+    const reopened = await readDump(name)
+    expect(reopened.policy.find(record => record.recordType === 'state')).toMatchObject({ automaticSavingEnabled: false })
+  })
+
+  test('switches a legacy Off policy On once while preserving later opt-outs', async () => {
+    const name = freshDatabase('automatic-rollout')
+    await succeeded('open', { id: 'storage', name })
+    await succeeded('setTags', { id: 'storage', tags: ['keep'] })
+    await succeeded('close', { id: 'storage' })
+    await succeeded('seedLegacyAutomaticOff', { name })
+    const legacy = await readDump(name)
+    const legacyState = legacy.policy.find(record => record.recordType === 'state')!
+
+    await succeeded('open', { id: 'upgraded', name })
+    const upgraded = await readDump(name)
+    const upgradedState = upgraded.policy.find(record => record.recordType === 'state')!
+    expect(upgradedState).toMatchObject({ automaticSavingEnabled: true, automaticSavingDefaultApplied: true, selectedTags: ['keep'] })
+    expect(upgradedState.policyRevision).toBe(Number(legacyState.policyRevision) + 1)
+    expect(upgraded.meta?.managedBytes).toBe(upgradedState.byteSize)
+
+    await succeeded('setAutomatic', { id: 'upgraded', enabled: false })
+    await succeeded('close', { id: 'upgraded' })
+    await succeeded('open', { id: 'reopened', name })
+    const reopened = await readDump(name)
+    expect(reopened.policy.find(record => record.recordType === 'state')).toMatchObject({ automaticSavingEnabled: false, automaticSavingDefaultApplied: true })
+  })
+
   test('upgrades physical v1 through the current schema without changing encrypted envelope bytes and marks migrated snapshots manual', async () => {
     const name = freshDatabase('upgrade')
     const envelope = makeEnvelope('legacy-draft', { seed: 19 })

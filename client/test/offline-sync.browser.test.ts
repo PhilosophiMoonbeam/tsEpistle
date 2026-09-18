@@ -179,6 +179,7 @@ export async function run(operation, payload = {}) {
   };
 
   try {
+    if (retryScenario) await storage.setAutomaticSavingEnabled(false);
     if (fatalSibling) {
       await storage.setManualOfflineIntent(selector(1), true);
       await storage.setManualOfflineIntent(selector(2), true);

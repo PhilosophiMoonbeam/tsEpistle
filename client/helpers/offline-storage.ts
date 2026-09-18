@@ -264,7 +264,8 @@ const makePolicyState = (overrides: Partial<Omit<OfflinePolicyState, 'byteSize'>
     key: OFFLINE_POLICY_STATE_KEY,
     recordType: 'state' as const,
     schemaVersion: OFFLINE_POLICY_SCHEMA_VERSION,
-    automaticSavingEnabled: false,
+    automaticSavingEnabled: true,
+    automaticSavingDefaultApplied: true as const,
     selectedTags: [] as string[],
     policyRevision: 0,
     syncDiagnostics: defaultSyncDiagnostics(),
@@ -2512,6 +2513,14 @@ const migratePolicyRecords = async (tx: OfflineWriteTransaction, storage: Offlin
         storage.markUnsupportedSchema()
       else storage.markMetadataRecovery('invalid')
       return
+    }
+    if (parsedState.data.automaticSavingDefaultApplied !== true) {
+      await policyStore.put(makePolicyState({
+        ...parsedState.data,
+        automaticSavingEnabled: true,
+        automaticSavingDefaultApplied: true,
+        policyRevision: checkedAccountingValue(parsedState.data.policyRevision, 1, 'Offline policy revision')
+      }))
     }
   }
   const existingValues = await policyStore.index('by-type').getAll('page')
