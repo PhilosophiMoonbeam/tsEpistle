@@ -37,6 +37,12 @@ async function main() {
   const response = await page.goto(`${baseURL}/login`, { waitUntil: 'domcontentloaded', timeout: 30_000 })
   if (!response || response.status() !== 200) throw new Error(`Login returned ${response?.status() ?? 'no response'}`)
   await page.locator('#login-site-title').waitFor({ state: 'visible' })
+  const providerPicker = page.getByText('Select Authentication Provider', { exact: true })
+  if (await providerPicker.isVisible()) {
+    const localProvider = process.env.TSEPISTLE_SMOKE_LOCAL_PROVIDER ||
+      ((await page.getByRole('option', { name: 'Backend', exact: true }).count()) ? 'Backend' : 'Local')
+    await page.getByRole('option', { name: localProvider, exact: true }).click()
+  }
   const email = page.getByLabel('Email Address', { exact: true })
   await email.waitFor({ state: 'visible' })
   await page.getByLabel('Password', { exact: true }).waitFor({ state: 'visible' })
