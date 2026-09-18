@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { sweepAgentPdfCache } from './pdf-cache.ts'
 import type { Knex } from 'knex'
 import { AGENT_TERMINAL_RUN_STATUSES } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
@@ -102,10 +103,11 @@ export const requestAgentSessionDeletion = async (knex: Knex, ownerId: number, s
     const changed = await tombstoneOwnedSessions(transaction, ownerId, [sessionId], now)
     if (changed !== 1) throw new AgentRepositoryError('SESSION_VERSION_CHANGED', 'Agent session changed concurrently', 409)
   })
+  await sweepAgentPdfCache(knex, { sessionId })
 }
 
-export const requestUnfiledAgentHistoryClear = async (knex: Knex, ownerId: number, now = new Date()): Promise<number> =>
-  knex.transaction(async transaction => {
+export const requestUnfiledAgentHistoryClear = async (knex: Knex, ownerId: number, now = new Date()): Promise<number> => {
+  const count = await knex.transaction(async transaction => {
     await acquireAgentCoordinatorAdvisoryLocks(transaction, [ownerId])
     const sessionIds = await transaction('agentSessions')
       .where({ ownerId })
@@ -116,6 +118,9 @@ export const requestUnfiledAgentHistoryClear = async (knex: Knex, ownerId: numbe
       .pluck<string>('id')
     return tombstoneOwnedSessions(transaction, ownerId, sessionIds, now)
   })
+  await sweepAgentPdfCache(knex)
+  return count
+}
 
 const recoverRuns = async (knex: Knex, now: Date, batchSize: number): Promise<{ cancelled: number; recovered: number; requeued: number }> =>
   knex.transaction(async transaction => {
@@ -253,6 +258,12 @@ const tombstoneExpiredSessions = async (knex: Knex, now: Date, savedCutoff: Date
   return knex('agentSessions')
     .whereIn('id', ids)
     .whereNull('deletedAt')
+    .whereNull('folderId')
+    .where(expired => {
+      expired
+        .where(temporary => temporary.where({ retention: 'temporary' }).andWhere('expiresAt', '<=', now))
+        .orWhere(saved => saved.where({ retention: 'saved' }).andWhere('lastActivityAt', '<=', savedCutoff))
+    })
     .whereNotExists(function activeRun() {
       this.select(knex.raw('1'))
         .from('agentRuns')
@@ -416,6 +427,7 @@ export const runAgentMaintenance = async (
   const purgedSkillUses = await purgeSkillUses(knex, before(now, policy.auditDays), policy.batchSize)
   const purgedUsageRows = await deleteExpiredRows(knex, 'agentUsageLedger', 'createdAt', before(now, policy.auditDays), policy.batchSize)
   const purgedSessions = await purgeTombstonedSessions(knex, policy.batchSize)
+  await sweepAgentPdfCache(knex)
   return {
     cancelledRuns: recovered.cancelled,
     recoveredProposalExecutions,

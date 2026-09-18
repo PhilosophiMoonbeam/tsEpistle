@@ -404,7 +404,15 @@
               <div v-if="profileDraft.transportKind === 'gemini-api'" class="subsection-card">
                 <div class="subsection-card__heading"><div><h4>Images, files &amp; voice</h4><p>Choose what this provider makes available in chat. Each capability stays hidden until enabled here.</p></div><v-icon size="20">mdi-image-outline</v-icon></div>
                 <v-switch v-model="profileDraft.mediaAttachments" label="PDF and image attachments" color="primary" hide-details />
-                <p class="text-body-2 mb-3">Up to four files per message: PDFs up to 100 MB, images up to 10 MB. Large PDFs are prepared automatically, preserving page content and numbering. Google allows 1,000 PDF pages across a request; the model’s context limit also applies. Files stay private to the conversation and are sent to Google when used.</p>
+                <p class="text-body-2 mb-2">Attach up to four files: PDFs up to 250 MB, images up to 10 MB. Large PDFs are prepared automatically, preserving page content and numbering.</p>
+                <details class="media-storage-help mb-3">
+                  <summary>Privacy, retention and storage</summary>
+                  <dl>
+                    <dt>Privacy and limits</dt><dd>Files stay private to the conversation and are sent to Google when used. A request can include up to 1,000 PDF pages, within the model’s context limit.</dd>
+                    <dt>Conversation retention</dt><dd>Originals and generated images follow the configured conversation policy. By default, unfiled saved conversations are removed after 90 days without activity. Conversations kept in folders remain until deleted.</dd>
+                    <dt>Storage</dt><dd>Saved originals are limited to 1 GB per user and 10 GB overall. Prepared PDFs are cached privately for up to six hours, with limits of 1 GB per user and 2 GB overall.</dd>
+                  </dl>
+                </details>
                 <v-switch v-model="profileDraft.mediaImages" label="Image creation and editing" color="primary" hide-details />
                 <div v-if="profileDraft.mediaImages" class="form-grid mt-3">
                   <v-text-field model-value="gemini-3.1-flash-image" label="Image model" readonly hide-details />
@@ -2771,6 +2779,12 @@ code {
 .provider-inventory-count { font-size: .8rem; margin-bottom: 1rem; }
 @media (max-width: 1100px) { .agent-memory-sources, .agent-pathways { grid-template-columns: 1fr; } .agent-pathways button + button { border-top: 1px solid var(--wiki-surface-border); } }
 @media (max-width: 760px) { .agent-overview__grid, .provider-inventory-toolbar { grid-template-columns: 1fr; } .agent-retention > div { grid-template-columns: 1fr; gap: .35rem; } }
+.media-storage-help { font-size: .8rem; line-height: 1.6; }
+.media-storage-help summary { width: fit-content; cursor: pointer; color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); }
+.media-storage-help summary:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 3px; border-radius: 2px; }
+.media-storage-help dl { margin-block: .65rem 0; }
+.media-storage-help dt { font-weight: 600; margin-top: .65rem; }
+.media-storage-help dd { margin: .1rem 0 0; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 75%, transparent); }
 .connection-history details { padding-block: 1rem; border-bottom: 1px solid var(--wiki-surface-border); }
 .connection-history summary { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; cursor: pointer; font-size: .85rem; }
 .connection-history summary:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 3px; }

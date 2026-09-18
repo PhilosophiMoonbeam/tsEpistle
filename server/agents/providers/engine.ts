@@ -16,6 +16,7 @@ import { ACTION_CATALOG } from '../actions/catalog.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { prepareAgentPdf } from '../pdf-preparation.ts'
+import { loadAgentMediaPayload } from '../media.ts'
 import { WIKI_AGENT_SOUL } from '../soul.ts'
 import {
   agentProviderCostMicros,
@@ -1786,7 +1787,8 @@ export class AxAgentEngine implements AgentEngine {
       dispatched = true
     }
     const beforeUpload = () => this.#authorizeMedia(request)
-    const inputs = files.map(file => ({ bytes: file.payload, mimeType: file.mimeType, displayName: file.filename.slice(0, 128) }))
+    const inputs = []
+    for (const file of files) inputs.push({ bytes: await loadAgentMediaPayload(file, request.signal), mimeType: file.mimeType, displayName: file.filename.slice(0, 128) })
     let result: { text: string; usage: AgentTokenUsage; images?: { bytes: Buffer; mimeType: string }[] }
     try {
       request.signal.throwIfAborted()
@@ -1859,7 +1861,11 @@ export class AxAgentEngine implements AgentEngine {
         let source = sources.get(reference.fileUri)
         if (!source) {
           request.signal.throwIfAborted()
-          source = file.mimeType === 'application/pdf' ? { file, pdf: await this.#preparePdf(file.payload, request.signal) } : { file }
+          if (file.mimeType === 'application/pdf') {
+            if (file.preparePdf) source = { file, pdf: await file.preparePdf(request.signal) }
+            else if (file.payload) source = { file, pdf: await this.#preparePdf(file.payload, request.signal) }
+            else throw new AgentRepositoryError('INVALID_MEDIA_INPUT', 'The PDF is unavailable. Attach it again.', 400)
+          } else source = { file }
           sources.set(reference.fileUri, source)
         }
         totalPages += source.pdf?.pageCount ?? 0
@@ -1889,7 +1895,7 @@ export class AxAgentEngine implements AgentEngine {
         } else {
           await this.#authorizeMedia(request)
           const remote = await provider.transport.upload(
-            { bytes: source.file.payload, mimeType: source.file.mimeType, displayName: source.file.filename.slice(0, 128) },
+            { bytes: await loadAgentMediaPayload(source.file, request.signal), mimeType: source.file.mimeType, displayName: source.file.filename.slice(0, 128) },
             request.signal
           )
           uploaded.push(remote)

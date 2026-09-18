@@ -1,4 +1,5 @@
 import sharp from 'sharp'
+import { readFile, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { createAgentMediaTestDatabase } from './media-database.ts'
@@ -6,6 +7,11 @@ import { beforeEach, afterEach, describe, expect, it } from '../bun-test.mts'
 import { up, down } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import {
   AGENT_MEDIA_MAX_BYTES,
+  AGENT_MEDIA_OWNER_MAX_BYTES,
+  AGENT_MEDIA_GLOBAL_MAX_BYTES,
+  getOwnedAgentMediaMetadata,
+  ownedAgentMediaSource,
+  stageOwnedAgentMedia,
   assertAgentMediaCapability,
   bindAgentMedia,
   getOwnedAgentMedia,
@@ -97,6 +103,14 @@ describe('private Agent media', () => {
     expect(() => validateAgentMedia(large, 'image/png')).toThrow()
     expect(mediaFilename('a/\nb.png')).toBe('a__b.png')
   })
+  ;(process.env.WIKI_AGENT_LARGE_PDF_PROOF === '1' ? it : it.skip)('stores a full 250 MiB original in PostgreSQL for the isolated memory admission proof', async () => {
+    expect(db.client.config.client).toBe('pg')
+    const payload = Buffer.alloc(AGENT_MEDIA_MAX_BYTES, 32)
+    payload.write('%PDF-1.7')
+    const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload, mimeType: 'application/pdf', filename: '250mb.pdf' })
+    expect(Number((await getOwnedAgentMediaMetadata(db, 7, media.id)).byteLength)).toBe(250 * 1024 * 1024)
+    expect(media.sha256).toHaveLength(64)
+  }, 120_000)
   it('keeps bytes private to the session owner and omits payload/provider handles from projections', async () => {
     const media = await upload()
     expect((await getOwnedAgentMedia(db, 7, media.id)).payload).toEqual(png)
@@ -132,13 +146,69 @@ describe('private Agent media', () => {
     const media = await upload()
     await db('agentMedia')
       .where({ id: media.id })
-      .update({ byteLength: 100 * 1024 * 1024 })
+      .update({ byteLength: AGENT_MEDIA_OWNER_MAX_BYTES })
     await expect(upload()).rejects.toMatchObject({ code: 'AGENT_MEDIA_QUOTA' })
     await db('agentMedia')
       .where({ id: media.id })
       .update({ expiresAt: new Date(Date.now() - 1) })
     await upload()
     expect(await db('agentMedia').where({ id: media.id }).first()).toBeUndefined()
+  })
+  it('enforces global storage across owners while retaining the per-owner file-count bound', async () => {
+    const media = await upload()
+    await db('agentMedia').where({ id: media.id }).delete()
+    for (let index = 0; index < 10; index++) await db('agentMedia').insert({ ...media, id: randomUUID(), ownerId: 8, byteLength: AGENT_MEDIA_GLOBAL_MAX_BYTES / 10, createdAt: new Date(), metadata: '{}' })
+    await expect(upload()).rejects.toMatchObject({ code: 'AGENT_MEDIA_QUOTA' })
+    await db('agentMedia').delete()
+    const row = await upload()
+    for (let index = 1; index < 200; index++) await db('agentMedia').insert({ ...row, id: randomUUID(), createdAt: new Date(), metadata: '{}' })
+    await expect(upload()).rejects.toMatchObject({ code: 'AGENT_MEDIA_QUOTA' })
+  })
+  it('admits only one of two owners competing for the final global storage bytes', async () => {
+    const seed = await upload()
+    await db('agentMedia').delete()
+    await db('users').insert({ id: 9 })
+    await db('agentSessions').where({ id: secondSessionId }).update({ ownerId: 9 })
+    for (let index = 0; index < 10; index++) await db('agentMedia').insert({ ...seed, id: randomUUID(), ownerId: 8, byteLength: AGENT_MEDIA_GLOBAL_MAX_BYTES / 10 - (index === 0 ? png.length : 0), createdAt: new Date(), metadata: '{}' })
+    const results = await Promise.allSettled([
+      upload(),
+      storeAgentMedia(db, { ownerId: 9, sessionId: secondSessionId, payload: png, mimeType: 'image/png', filename: 'other.png' })
+    ])
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter(result => result.status === 'rejected').map(result => result.reason.code)).toEqual(['AGENT_MEDIA_QUOTA'])
+    const usage = await db('agentMedia').sum('byteLength as bytes').first()
+    expect(Number(usage?.bytes)).toBe(AGENT_MEDIA_GLOBAL_MAX_BYTES)
+  })
+  it('keeps a PDF larger than the former 40 MiB window lazy and stages it in integrity-checked bounded chunks', async () => {
+    const payload = Buffer.alloc(41 * 1024 * 1024, 32)
+    payload.write('%PDF-1.7')
+    const row = await storeAgentMedia(db, { ownerId: 7, sessionId, payload, mimeType: 'application/pdf', filename: 'large.pdf' })
+    const metadata = await getOwnedAgentMediaMetadata(db, 7, row.id)
+    expect('payload' in metadata).toBe(false)
+    const lazy = ownedAgentMediaSource(db, 7, sessionId, metadata)
+    expect(lazy.payload).toBeUndefined()
+    expect(lazy.preparePdf).toBeTypeOf('function')
+    const queries: string[] = []
+    const record = (query: { sql: string }) => queries.push(query.sql)
+    db.on('query', record)
+    const staged = await stageOwnedAgentMedia(db, 7, row.id, new AbortController().signal)
+    db.off('query', record)
+    try {
+      expect(await readFile(staged.path)).toEqual(payload)
+      expect(queries.filter(sql => /substr(?:ing)?\(/.test(sql))).toHaveLength(41)
+      expect(queries.some(sql => /select \*/.test(sql) && sql.includes('agentMedia'))).toBe(false)
+      expect((await stat(staged.path)).mode & 0o777).toBe(0o600)
+    } finally { await staged.cleanup() }
+    await expect(stageOwnedAgentMedia(db, 8, row.id, new AbortController().signal)).rejects.toMatchObject({ status: 404 })
+    await db('agentMedia').where({ id: row.id }).update({ sha256: '0'.repeat(64) })
+    await expect(stageOwnedAgentMedia(db, 7, row.id, new AbortController().signal)).rejects.toMatchObject({ code: 'AGENT_MEDIA_CORRUPT' })
+  })
+  it('reauthorizes lazy small-file reads and refuses altered content after descriptor creation', async () => {
+    const row = await upload()
+    const source = ownedAgentMediaSource(db, 7, sessionId, await getOwnedAgentMediaMetadata(db, 7, row.id))
+    expect(await source.loadPayload!(new AbortController().signal)).toEqual(png)
+    await db('agentSessions').where({ id: sessionId }).update({ deletedAt: new Date() })
+    await expect(source.loadPayload!(new AbortController().signal)).rejects.toMatchObject({ status: 404 })
   })
   it('rejects stale generated-output leases and cancellation', async () => {
     const input = {

@@ -3371,6 +3371,21 @@ const preparedPdfFixture = async (pageCount: number, partCount: number) => {
 const pdfAttachment = (id: string, filename = 'source.pdf') => ({ id, filename, mimeType: 'application/pdf', payload: minimalPdf() })
 
 describe('Agent PDF preparation', () => {
+  it('uploads a 250 MiB logical PDF through lazy preparation without loading its original into memory', async () => {
+    const prepared = await preparedPdfFixture(12, 2)
+    const fallback = vi.fn(prepareAgentPdf)
+    const lazy = vi.fn(async () => prepared)
+    const fixture = pdfDispatchFixture(fallback)
+    fixture.engineRequest.messages = [{ role: 'user', content: 'Read the full attachment', attachments: [{ id: '00000000-0000-4000-8000-000000000090', filename: 'large.pdf', mimeType: 'application/pdf', byteLength: 250 * 1024 * 1024, preparePdf: lazy }] }]
+    try {
+      await fixture.engine.execute(fixture.engineRequest, { text: async () => {}, event: async () => {} })
+      expect(lazy).toHaveBeenCalledTimes(1)
+      expect(fallback).not.toHaveBeenCalled()
+      expect(fixture.upload).toHaveBeenCalledTimes(2)
+      expect(fixture.chat).toHaveBeenCalledTimes(1)
+    } finally { await prepared.cleanup() }
+  })
+
   it('rejects an unreadable PDF before uploading or reserving inference budget', async () => {
     const fixture = pdfDispatchFixture(prepareAgentPdf)
     fixture.engineRequest.messages = [

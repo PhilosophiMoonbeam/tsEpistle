@@ -2,7 +2,10 @@
   <div v-if="capabilities?.attachments || capabilities?.imageGeneration || capabilities?.transcription" class="agent-media-composer">
     <div class="agent-media-composer__controls" role="group" aria-label="Message media">
       <input ref="fileInput" class="agent-media-composer__file" type="file" :accept="capabilities?.attachments ? 'image/png,image/jpeg,image/webp,application/pdf' : 'image/png,image/jpeg,image/webp'" multiple :aria-label="capabilities?.attachments ? 'Choose images or PDFs' : 'Choose images'" @change="chooseFiles" />
-      <v-btn v-if="capabilities.attachments || capabilities.imageGeneration" variant="text" size="small" prepend-icon="mdi-paperclip" :disabled="locked || attachments.length >= 4" :aria-label="capabilities.attachments ? 'Attach images or PDFs' : 'Attach images'" @click="fileInput?.click()">Attach</v-btn>
+      <v-menu v-if="capabilities.attachments || capabilities.imageGeneration" v-model="attachmentMenu" content-class="agent-owned-overlay" location="top start">
+        <template #activator="{ props: menuProps }"><v-btn ref="attachButton" v-bind="menuProps" variant="text" size="small" prepend-icon="mdi-paperclip" :disabled="locked || !session || attachments.length >= 4" :aria-label="capabilities.attachments ? 'Attach images or PDFs' : 'Attach images'">Attach</v-btn></template>
+        <v-list density="compact" aria-label="Attachment source"><v-list-item prepend-icon="mdi-upload" title="Upload files" @click="chooseUpload" /><v-list-item prepend-icon="mdi-folder-outline" title="Browse Wiki assets" @click="browseAssets" /></v-list>
+      </v-menu>
       <v-btn v-if="capabilities.imageGeneration" :variant="imageMode ? 'tonal' : 'text'" :color="imageMode ? 'primary' : undefined" size="small" prepend-icon="mdi-image-outline" :aria-pressed="imageMode" aria-label="Generate or edit an image" :disabled="locked" @click="toggleImageMode">{{ imageMode ? 'Image mode on' : 'Image' }}</v-btn>
       <v-btn v-if="capabilities.transcription && !recording && !transcribing" variant="text" size="small" prepend-icon="mdi-microphone-outline" :disabled="locked" aria-label="Dictate a message" @click="startRecording">Dictate</v-btn>
       <template v-if="recording">
@@ -22,13 +25,16 @@
         <v-btn icon="mdi-close" size="x-small" variant="text" :aria-label="`Remove ${item.filename}`" :disabled="locked" @click="removeAttachment(item)" />
       </li>
     </ul>
-    <p v-if="error" class="agent-media-composer__error" role="alert">{{ error }}</p>
+    <AgentAssetPicker v-if="assetPickerOpen" :image-only="imageMode || !capabilities.attachments" :busy="uploading" :disabled="disabled || networkBlocked" :attachment-error="error" @close="closeAssetPicker" @select="attachAsset" />
+    <p v-if="error && !assetPickerOpen" class="agent-media-composer__error" role="alert">{{ error }}</p>
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import type { AgentMediaView, AgentProviderProfileView, AgentThreadState } from '../../../shared/agents/contracts.ts'
-import { agentMediaContentUrl, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia } from '../../helpers/agents-api.ts'
+import { AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia } from '../../helpers/agents-api.ts'
+import AgentAssetPicker from './agent-asset-picker.vue'
+import type { Asset } from '../../helpers/assets-api.ts'
 import { validateAgentAttachment, type AgentMediaSubmission } from '../../helpers/agent-media.ts'
 const props = defineProps<{
   csrfToken: string
@@ -39,6 +45,9 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ change: [value: AgentMediaSubmission]; busy: [value: boolean]; dictation: [text: string]; settled: [] }>()
 const fileInput = useTemplateRef<HTMLInputElement>('fileInput')
+const attachButton = useTemplateRef<{ $el: HTMLButtonElement }>('attachButton')
+const attachmentMenu = ref(false)
+const assetPickerOpen = ref(false)
 const attachments = ref<AgentMediaView[]>([])
 const imageMode = ref(false)
 const error = ref('')
@@ -131,6 +140,50 @@ const addFiles = async (files: readonly File[]) => {
     return true
   } catch (value) {
     if (!disposed && !controller.signal.aborted) error.value = value instanceof Error ? value.message : 'The attachment could not be uploaded.'
+  } finally {
+    if (uploadController === controller) { uploadController = null; uploading.value = false }
+  }
+}
+const chooseUpload = () => {
+  attachmentMenu.value = false
+  if (!locked.value && props.session && attachments.value.length < 4) fileInput.value?.click()
+}
+const browseAssets = () => {
+  attachmentMenu.value = false
+  if (locked.value || !props.session || attachments.value.length >= 4 || !(props.capabilities?.attachments || props.capabilities?.imageGeneration)) return
+  error.value = ''
+  assetPickerOpen.value = true
+}
+const closeAssetPicker = () => {
+  if (!assetPickerOpen.value) return
+  assetPickerOpen.value = false
+  uploadController?.abort()
+  void nextTick(() => attachButton.value?.$el?.focus())
+}
+const attachAsset = async (asset: Asset) => {
+  if (!assetPickerOpen.value || locked.value || !props.session || attachments.value.length >= 4 || !(props.capabilities?.attachments || props.capabilities?.imageGeneration)) return
+  const mimeTypes: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', pdf: 'application/pdf' }
+  const type = mimeTypes[asset.ext.replace(/^\./, '').toLowerCase()] ?? ''
+  const problem = validateAgentAttachment({ type, size: asset.fileSize })
+  if (problem) { error.value = problem; return }
+  if (type === 'application/pdf' && (imageMode.value || !props.capabilities?.attachments)) { error.value = 'Attach images only when creating or editing an image.'; return }
+  const sessionId = props.session.id
+  const csrfToken = props.csrfToken
+  const controller = new AbortController()
+  uploadController = controller
+  uploading.value = true
+  error.value = ''
+  try {
+    const media = await attachAgentAsset(fetcher, csrfToken, sessionId, asset.id, controller.signal)
+    if (disposed || controller.signal.aborted || props.session?.id !== sessionId || !assetPickerOpen.value) {
+      void deleteAgentMedia(fetcher, csrfToken, media.id).catch(() => {})
+      return
+    }
+    attachments.value = [...attachments.value, media]
+    if (!props.capabilities?.attachments && props.capabilities?.imageGeneration) imageMode.value = true
+    closeAssetPicker()
+  } catch (value) {
+    if (!disposed && !controller.signal.aborted) error.value = value instanceof AgentApiError && value.status === 403 ? 'You no longer have access to this Wiki asset. Choose another file or upload a copy.' : value instanceof Error ? value.message : 'The Wiki asset could not be attached.'
   } finally {
     if (uploadController === controller) { uploadController = null; uploading.value = false }
   }
@@ -259,7 +312,17 @@ const transcribe = async (file: File, session: AgentThreadState['session'], csrf
     }
   }
 }
-watch(() => props.networkBlocked, blocked => { if (blocked) { cancelDictation(); uploadController?.abort() } })
+watch(() => [props.disabled, props.networkBlocked] as const, ([disabled, blocked]) => { if (disabled || blocked) { attachmentMenu.value = false; closeAssetPicker(); uploadController?.abort(); if (blocked) cancelDictation() } }, { flush: 'sync' })
+watch(() => props.session?.id, (id, previous) => {
+  if (id === previous) return
+  attachmentMenu.value = false
+  closeAssetPicker()
+  uploadController?.abort()
+  cancelDictation()
+  for (const item of attachments.value) void deleteAgentMedia(fetcher, props.csrfToken, item.id).catch(() => {})
+  clear()
+}, { flush: 'sync' })
+watch(() => props.capabilities, () => { attachmentMenu.value = false; closeAssetPicker() })
 onBeforeUnmount(() => {
   disposed = true
   cancelDictation()

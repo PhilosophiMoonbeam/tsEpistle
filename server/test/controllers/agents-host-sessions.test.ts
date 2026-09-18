@@ -1,4 +1,5 @@
 import sharp from 'sharp'
+import assetHelper from '../../helpers/asset.ts'
 import { createAgentMediaTestDatabase } from '../agents/media-database.ts'
 import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { storeAgentMedia } from '../../agents/media.ts'
@@ -10,7 +11,7 @@ import express from 'express'
 import session from 'express-session'
 import createKnex, { type Knex } from 'knex'
 import { z } from 'zod'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import createAgentsHostController from '../../controllers/agents-host.ts'
 import {
   AgentProductRuntime,
@@ -327,13 +328,15 @@ describe('ordinary-origin agent session API', () => {
   let agentsEnabled = true
   let mediaAuthorized = true
   let mediaUploadEnabled = false
+  let assetAccessAllowed = true
+  const assetAccessPaths: string[] = []
   let revokeMediaInEngine: 'permission' | 'profile' | 'grant' | null = null
   let mediaAuthorizationChecks = 0
   let currentMediaProfileChanged = false
   let currentMediaGrantRevoked = false
   const csrf = 'csrf-token'
   let engineCurrentPage: unknown
-  let engineMessages: readonly { readonly role: string; readonly content: string; readonly providerState?: unknown }[] = []
+  let engineMessages: AgentEngineRequest['messages'] = []
   let engineSkills: readonly { readonly id: string; readonly name: string }[] = []
   let engineMemory: AgentEngineRequest['memory'] | undefined
   let engineRunId: string | undefined
@@ -556,6 +559,8 @@ describe('ordinary-origin agent session API', () => {
     agentsEnabled = true
     mediaAuthorized = true
     mediaUploadEnabled = false
+    assetAccessAllowed = true
+    assetAccessPaths.length = 0
     revokeMediaInEngine = null
     mediaAuthorizationChecks = 0
     currentMediaProfileChanged = false
@@ -665,6 +670,14 @@ describe('ordinary-origin agent session API', () => {
     app.use(
       createAgentsHostController({
         auth: {
+          async loadPageRuleAuthority(requester) {
+            return { requester, permissions: ['read:assets'], groups: [], tagAliases: {} }
+          },
+          checkPageAccess(_requester, permissions, context) {
+            expect(permissions).toEqual(['manage:system', 'read:assets'])
+            assetAccessPaths.push(context.path)
+            return assetAccessAllowed
+          },
           authenticate(req, _res, next) {
             const authenticatedOwnerId = authContextOwnerId ?? ownerId
             req.authContext = {
@@ -723,6 +736,7 @@ describe('ordinary-origin agent session API', () => {
   })
 
   afterEach(async () => {
+    vi.unstubAllGlobals()
     try {
       const closed = Promise.withResolvers<void>()
       server.close(error => (error ? closed.reject(error) : closed.resolve()))
@@ -798,6 +812,63 @@ describe('ordinary-origin agent session API', () => {
         })
       })
   }
+  const seedAttachmentAsset = async () => {
+    await enableTestMedia()
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const payload = Buffer.from('%PDF-1.7\nexisting Wiki document')
+    await db.schema.createTable('assets', table => { table.integer('id').primary(); table.string('filename'); table.integer('folderId'); table.string('hash'); table.string('ext'); table.integer('fileSize') })
+    await db.schema.createTable('assetFolders', table => { table.integer('id').primary(); table.integer('parentId'); table.string('slug') })
+    await db.schema.createTable('assetData', table => { table.integer('id').primary(); table.binary('data') })
+    await db('assetFolders').insert({ id: 12, parentId: null, slug: 'documents' })
+    await db('assets').insert({ id: 34, filename: 'brief.pdf', folderId: 12, hash: assetHelper.generateHash('documents/brief.pdf'), ext: 'pdf', fileSize: payload.length })
+    await db('assetData').insert({ id: 34, data: payload })
+    return { sessionId, payload }
+  }
+  const importWikiAsset = (sessionId: string, token = csrf) => fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/media/assets`, {
+    method: 'POST',
+    headers: { cookie, origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': token, 'content-type': 'application/json' },
+    body: JSON.stringify({ assetId: 34 })
+  })
+  it('imports an authorized Wiki asset as a private immutable chat attachment with authoritative folder access checks', async () => {
+    const { sessionId, payload } = await seedAttachmentAsset()
+    administrator = true
+    vi.stubGlobal('WIKI', { auth: { checkAccess: () => true } })
+    const response = await importWikiAsset(sessionId)
+    expect(response.status).toBe(201)
+    const result = await response.json() as { media: { id: string; mimeType: string; filename: string; byteLength: number } }
+    expect(result.media).toMatchObject({ mimeType: 'application/pdf', filename: 'brief.pdf', byteLength: payload.length })
+    expect(assetAccessPaths).toEqual(['documents/brief.pdf', 'documents/brief.pdf'])
+    const stored = await db('agentMedia').where({ id: result.media.id }).first()
+    expect(stored).toMatchObject({ ownerId: 7, sessionId, messageId: null, kind: 'attachment' })
+    expect(Buffer.from(stored.payload)).toEqual(payload)
+    expect(result.media).not.toHaveProperty('payload')
+    await db('assetData').where({ id: 34 }).update({ data: Buffer.from('replacement asset') })
+    expect(Buffer.from((await db('agentMedia').where({ id: result.media.id }).first('payload')).payload)).toEqual(payload)
+  })
+  it('denies asset import before reading bytes when the caller lacks access to the authoritative asset path', async () => {
+    const { sessionId } = await seedAttachmentAsset()
+    assetAccessAllowed = false
+    const queries: string[] = []
+    const record = (query: { sql: string }) => queries.push(query.sql)
+    db.on('query', record)
+    const response = await importWikiAsset(sessionId)
+    db.off('query', record)
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchObject({ error: 'AGENT_ASSET_UNAVAILABLE' })
+    expect(assetAccessPaths).toEqual(['documents/brief.pdf'])
+    expect(queries.some(query => /select/.test(query) && query.includes('assetData'))).toBe(false)
+    expect(await db('agentMedia').where({ sessionId }).first()).toBeUndefined()
+  })
+  it('requires same-session ownership and a valid CSRF token before importing a Wiki asset', async () => {
+    const { sessionId } = await seedAttachmentAsset()
+    expect((await importWikiAsset(sessionId, 'invalid-csrf')).status).toBe(403)
+    expect(assetAccessPaths).toEqual([])
+    ownerId = 8
+    expect((await importWikiAsset(sessionId)).status).toBe(404)
+    expect(assetAccessPaths).toEqual([])
+    expect(await db('agentMedia').where({ sessionId }).first()).toBeUndefined()
+  })
   const uploadForm = (sessionId: string, body: FormData) =>
     fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/media`, {
       method: 'POST',
@@ -908,6 +979,26 @@ describe('ordinary-origin agent session API', () => {
     expect(await response.json()).toMatchObject({ messages: [{ media: [{ id: media.id }] }, {}] })
     ownerId = 8
     expect((await fetch(`${baseUrl}/_api/agents/media/${media.id}/content`, { headers: { cookie } })).status).toBe(404)
+  })
+  it('includes a PDF above 40 MiB in the admitted runtime prompt as a lazy source without loading its payload', async () => {
+    await enableTestMedia()
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const payload = Buffer.alloc(41 * 1024 * 1024, 32)
+    payload.write('%PDF-1.7')
+    const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload, mimeType: 'application/pdf', filename: 'large.pdf' })
+    await runtime.submit({ ownerId: 7, sessionId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), content: 'Read the complete PDF.', attachmentIds: [media.id] })
+    const queries: string[] = []
+    const record = (query: { sql: string }) => queries.push(query.sql)
+    db.on('query', record)
+    await runtime.runOnce()
+    db.off('query', record)
+    const attachment = engineMessages.flatMap(message => message.attachments ?? []).find(file => file.id === media.id)
+    expect(attachment?.byteLength).toBe(payload.length)
+    expect(attachment?.payload).toBeUndefined()
+    expect(attachment?.preparePdf).toBeTypeOf('function')
+    expect(queries.some(sql => /select \*/.test(sql) && sql.includes('agentMedia'))).toBe(false)
+    expect(engineMessages.some(message => message.content.includes('Attachment content is unavailable'))).toBe(false)
   })
   it('keeps transcription turns hidden, exposes only completed text to the owner, and purges recording bytes', async () => {
     await enableTestMedia()

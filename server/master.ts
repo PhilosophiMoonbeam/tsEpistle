@@ -1,4 +1,5 @@
 import { normalizeEditorPolicy } from '../shared/editor-policy.ts'
+import { runAgentMaintenance } from './agents/maintenance.ts'
 import compression from 'compression'
 import cookieParser from 'cookie-parser'
 import cors from 'cors'
@@ -416,9 +417,11 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   let agentTimer: NodeJS.Timeout | undefined
   let knowledgeTimer: NodeJS.Timeout | undefined
   let projectionTimer: NodeJS.Timeout | undefined
+  let maintenanceTimer: NodeJS.Timeout | undefined
   let agentRun: Promise<unknown> | undefined
   let knowledgeRun: Promise<unknown> | undefined
   let projectionRun: Promise<unknown> | undefined
+  let maintenanceRun: Promise<unknown> | undefined
   let agentWorkerFailureLogged = false
   let workersStarted = false
   let workersStopped = false
@@ -475,10 +478,27 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
         projectionRun = undefined
       })
   }
+  const maintenanceTick = (): void => {
+    if (workersStopped || maintenanceRun) return
+    maintenanceRun = runAgentMaintenance(wiki.models.knex, {
+      batchSize: agentLimits.retention.maintenanceBatchSize,
+      savedSessionDays: agentLimits.retention.savedSessionDays,
+      mcpContentDays: agentLimits.retention.mcpContentDays,
+      auditDays: agentLimits.retention.auditDays,
+      compactDeltaDays: 1
+    }).catch(() => {
+      try {
+        wiki.logger.warn(JSON.stringify({ event: 'agent.maintenance.failed', errorCode: 'AGENT_MAINTENANCE_FAILED' }))
+      } catch { /* maintenance diagnostics must not escape through the logger */ }
+    }).finally(() => { maintenanceRun = undefined })
+  }
   wiki.backgroundWorkers = {
     start(): void {
       if (workersStarted || workersStopped) return
       workersStarted = true
+      maintenanceTick()
+      maintenanceTimer = setInterval(maintenanceTick, 10 * 60_000)
+      maintenanceTimer.unref()
       if (agentRuntime) {
         agentTick()
         agentTimer = setInterval(agentTick, agentLimits.provider.pollingMilliseconds)
@@ -497,8 +517,9 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
         clearInterval(agentTimer)
         clearInterval(knowledgeTimer)
         clearInterval(projectionTimer)
+        clearInterval(maintenanceTimer)
         const runtime = agentRuntime
-        const pending = [runtime ? Promise.resolve().then(() => runtime.shutdown()) : undefined, agentRun, knowledgeRun, projectionRun].filter(
+        const pending = [runtime ? Promise.resolve().then(() => runtime.shutdown()) : undefined, agentRun, knowledgeRun, projectionRun, maintenanceRun].filter(
           (promise): promise is Promise<unknown> => promise !== undefined
         )
         const results = await Promise.allSettled(pending)

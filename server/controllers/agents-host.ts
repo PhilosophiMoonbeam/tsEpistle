@@ -1,6 +1,12 @@
 import { AgentMediaUploadGate, parseAgentMediaUpload } from '../agents/media-upload.ts'
 import multer from 'multer'
-import { AGENT_MEDIA_MAX_BYTES, getOwnedAgentMedia, projectAgentMedia, storeAgentMedia } from '../agents/media.ts'
+import { createReadStream } from 'node:fs'
+import { pipeline } from 'node:stream/promises'
+import { readAgentWikiAsset } from '../agents/wiki-assets.ts'
+import { sweepAgentPdfCache } from '../agents/pdf-cache.ts'
+import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
+import type { PagePrincipal } from '../helpers/page-access.ts'
+import { AGENT_MEDIA_MAX_BYTES, getOwnedAgentMedia, getOwnedAgentMediaMetadata, stageOwnedAgentMedia, projectAgentMedia, storeAgentMedia } from '../agents/media.ts'
 import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { createHash, createHmac } from 'node:crypto'
 import express, { type NextFunction, type Request, type Response } from 'express'
@@ -51,6 +57,8 @@ import { streamOwnedAgentEvents } from '../agents/sse.ts'
 interface AgentHostWiki {
   readonly auth: {
     authenticate(req: Request, res: Response, next: NextFunction): void
+    loadPageRuleAuthority?(requester: PagePrincipal, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
+    checkPageAccess?(requester: PagePrincipal, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority): boolean
   }
   readonly config: {
     readonly host?: string
@@ -488,6 +496,32 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   // Busboy signals partsLimit when the count reaches it; leave headroom for one completed file.
   const parseMedia = multer({ storage: multer.memoryStorage(), limits: { fileSize: AGENT_MEDIA_MAX_BYTES, files: 1, fields: 0, parts: 2 } }).single('file')
   router.post(
+    `${apiPrefix}/sessions/:sessionId/media/assets`,
+    asyncRoute(async (req, res, signal) => {
+      if (!wiki.config.agents.enabled || !wiki.config.agents.provider.enabled || !wiki.providerRegistry) return disabledRoute(res)
+      const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
+      const { assetId } = z.strictObject({ assetId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).parse(req.body)
+      const ownerId = requestSkillPrincipal(req).userId
+      const session = await getOwnedAgentSession(wiki.models.knex, ownerId, sessionId)
+      const profiles = await wiki.providerRegistry.listVisible(ownerId)
+      const profile = session.providerProfileId ? profiles.find(item => item.id === session.providerProfileId) : (profiles.find(item => item.isGlobalDefault) ?? (profiles.length === 1 ? profiles[0] : undefined))
+      if (!profile?.media?.attachments && !profile?.media?.imageGeneration) return disabledRoute(res)
+      return mediaUploads.run(ownerId, async () => {
+        const source = await readAgentWikiAsset(wiki.models.knex, { assetId, signal, authorize: async (path, transaction) => {
+          if (!req.user || !wiki.auth.loadPageRuleAuthority || !wiki.auth.checkPageAccess) throw new AgentRepositoryError('AGENT_ASSET_UNAVAILABLE', 'Wiki assets are unavailable.', 403)
+          const authority = await wiki.auth.loadPageRuleAuthority(req.user, transaction)
+          if (!wiki.auth.checkPageAccess(req.user, ['manage:system', 'read:assets'], { path }, authority)) throw new AgentRepositoryError('AGENT_ASSET_UNAVAILABLE', 'This Wiki asset is unavailable or you no longer have access to it.', 404)
+          const { protectedAssetRequiresUnlock } = await import('../operations/page-protection.ts')
+          if (await protectedAssetRequiresUnlock({ requester: req.user, assetPath: path, sessionId: req.sessionID })) throw new AgentRepositoryError('AGENT_ASSET_LOCKED', 'Unlock the page that protects this asset before attaching it.', 403)
+        } })
+        if (source.mimeType === 'application/pdf' && !profile.media?.attachments) return disabledRoute(res)
+        signal.throwIfAborted()
+        const media = await storeAgentMedia(wiki.models.knex, { ownerId, sessionId, ...source })
+        return res.status(201).json({ media: projectAgentMedia(media) })
+      })
+    })
+  )
+  router.post(
     `${apiPrefix}/sessions/:sessionId/media`,
     asyncRoute(async (req, res, signal) => {
       if (!wiki.config.agents.enabled || !wiki.config.agents.provider.enabled || !wiki.providerRegistry) return disabledRoute(res)
@@ -524,8 +558,9 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   )
   router.get(
     `${apiPrefix}/media/:mediaId/content`,
-    asyncRoute(async (req, res) => {
-      const media = await getOwnedAgentMedia(wiki.models.knex, requestSkillPrincipal(req).userId, UUIDSchema.parse(routeParameter(req, 'mediaId')))
+    asyncRoute(async (req, res, signal) => {
+      const ownerId = requestSkillPrincipal(req).userId
+      const media = await getOwnedAgentMediaMetadata(wiki.models.knex, ownerId, UUIDSchema.parse(routeParameter(req, 'mediaId')))
       res.set({
         'Cache-Control': 'private, no-store',
         'X-Content-Type-Options': 'nosniff',
@@ -533,15 +568,22 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         'Content-Type': media.mimeType,
         'Content-Disposition': `${media.mimeType.startsWith('image/') ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(media.filename)}`
       })
-      return res.send(Buffer.from(media.payload))
+      if (media.mimeType === 'application/pdf') {
+        const staged = await stageOwnedAgentMedia(wiki.models.knex, ownerId, media.id, signal)
+        try { await pipeline(createReadStream(staged.path), res, { signal }) } finally { await staged.cleanup() }
+        return
+      }
+      const content = await getOwnedAgentMedia(wiki.models.knex, ownerId, media.id)
+      return res.send(Buffer.from(content.payload))
     })
   )
   router.delete(
     `${apiPrefix}/media/:mediaId`,
     asyncRoute(async (req, res) => {
       const ownerId = requestSkillPrincipal(req).userId
-      const media = await getOwnedAgentMedia(wiki.models.knex, ownerId, UUIDSchema.parse(routeParameter(req, 'mediaId')))
+      const media = await getOwnedAgentMediaMetadata(wiki.models.knex, ownerId, UUIDSchema.parse(routeParameter(req, 'mediaId')))
       const deleted = await wiki.models.knex('agentMedia').where({ id: media.id, ownerId }).whereNull('messageId').delete()
+      if (deleted) await sweepAgentPdfCache(wiki.models.knex, { mediaId: media.id })
       if (!deleted) throw new AgentRepositoryError('AGENT_MEDIA_BOUND', 'Delete the conversation to remove sent attachments.', 409)
       return res.sendStatus(204)
     })

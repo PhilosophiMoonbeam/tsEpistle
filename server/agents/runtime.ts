@@ -1,4 +1,4 @@
-import { assertAgentMediaIntegrity, assertAgentMediaCapability, storeAgentMedia, type AgentMediaPayload, type AgentMediaRow } from './media.ts'
+import { assertAgentMediaCapability, storeAgentMedia, ownedAgentMediaSource, AGENT_MEDIA_METADATA_COLUMNS, AGENT_MEDIA_PROMPT_MAX_BYTES, AGENT_MEDIA_PROMPT_MAX_FILES, type AgentMediaSource, type AgentMediaMetadata } from './media.ts'
 import { AgentKnowledgeContextSchema, type AgentKnowledgeContext } from '../../shared/agents/knowledge-context.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
@@ -442,7 +442,7 @@ export interface AgentAdmissionResolver {
   resolveCurrent(transaction: Knex.Transaction, input: { readonly ownerId: number; readonly sessionId: string }): Promise<AgentResolvedAdmission>
 }
 export interface AgentEngineMessage {
-  readonly attachments?: readonly AgentMediaPayload[]
+  readonly attachments?: readonly AgentMediaSource[]
   readonly role: 'user' | 'assistant'
   readonly content: string
   readonly providerState?: {
@@ -2059,14 +2059,14 @@ export class AgentProductRuntime {
       const memory = decodeAgentMemorySnapshot(sessionRow.memorySnapshot)
       const priorActivity = priorRunActivity([...priorEventRows].reverse())
       const mediaIndex = messageRows.length
-        ? await this.#knex<AgentMediaRow>('agentMedia')
+        ? await this.#knex<AgentMediaMetadata>('agentMedia')
             .where({ ownerId: claim.ownerId, sessionId: claim.sessionId })
             .whereIn(
               'messageId',
               messageRows.map(row => row.id)
             )
             .orderBy('createdAt', 'desc')
-            .select('id', 'messageId', 'byteLength')
+            .select(...AGENT_MEDIA_METADATA_COLUMNS)
         : []
       const mediaRequest = claim.mediaRequest ? (JSON.parse(claim.mediaRequest) as { kind: 'image' | 'transcription' }) : undefined
       if (mediaRequest && mediaRequest.kind !== 'image' && mediaRequest.kind !== 'transcription')
@@ -2082,17 +2082,12 @@ export class AgentProductRuntime {
           includeMediaBytes = false
         }
       }
-      let retainedBytes = 0
-      const retainedMediaIds: string[] = []
-      for (const item of mediaIndex) {
-        if (!includeMediaBytes || retainedMediaIds.length >= 16 || retainedBytes + Number(item.byteLength) > 40 * 1024 * 1024) continue
-        retainedBytes += Number(item.byteLength)
-        retainedMediaIds.push(item.id)
-      }
-      const attachedRows = retainedMediaIds.length
-        ? await this.#knex<AgentMediaRow>('agentMedia').where({ ownerId: claim.ownerId, sessionId: claim.sessionId }).whereIn('id', retainedMediaIds)
-        : []
-      attachedRows.forEach(assertAgentMediaIntegrity)
+      const attachedRows = includeMediaBytes ? mediaIndex : []
+      if (attachedRows.length > AGENT_MEDIA_PROMPT_MAX_FILES || attachedRows.reduce((total, row) => total + Number(row.byteLength), 0) > AGENT_MEDIA_PROMPT_MAX_BYTES)
+        throw new AgentRepositoryError('AGENT_MEDIA_WINDOW_LIMIT', 'This conversation exceeds the attachment window of 16 files or 1 GB. Start a new chat with the files needed for this request.', 413)
+      if (!includeMediaBytes && mediaIndex.some(row => row.messageId === claim.userMessageId && row.kind === 'attachment'))
+        throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Attachments are disabled for this provider. Select a provider with attachments enabled.', 403)
+      const retainedMediaIds = attachedRows.map(row => row.id)
       const messages: AgentEngineMessage[] = messageRows.map(message => {
         const stateOriginMatches =
           message.role === 'assistant' &&
@@ -2111,7 +2106,7 @@ export class AgentProductRuntime {
             throw classifyAgentExecutionFailure(error, 'setup')
           }
         }
-        const attachments = attachedRows.filter(row => row.messageId === message.id)
+        const attachments = attachedRows.filter(row => row.messageId === message.id).map(row => ownedAgentMediaSource(this.#knex, claim.ownerId, claim.sessionId, row))
         return {
           role: message.role,
           content:

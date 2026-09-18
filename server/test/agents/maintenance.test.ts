@@ -161,6 +161,30 @@ describe('agent retention maintenance', () => {
   })
   afterEach(async () => knex.destroy())
 
+  it('rechecks retention when a candidate is filed or refreshed before expiry is committed', async () => {
+    await knex('agentSessions').insert([
+      { id: 'filed-race', ownerId: 7, retention: 'saved', folderId: null, expiresAt: null, deletedAt: null, updatedAt: old, lastActivityAt: old, version: 1 },
+      { id: 'fresh-race', ownerId: 7, retention: 'saved', folderId: null, expiresAt: null, deletedAt: null, updatedAt: old, lastActivityAt: old, version: 1 }
+    ])
+    const connection = await knex.client.acquireConnection()
+    await knex.client.releaseConnection(connection)
+    let changed = false
+    const beforeUpdate = (query: { sql: string }): void => {
+      if (changed || !query.sql.startsWith('update `agentSessions` set `deletedAt`')) return
+      changed = true
+      connection.prepare('UPDATE agentSessions SET folderId = ? WHERE id = ?').run('kept-folder', 'filed-race')
+      connection.prepare('UPDATE agentSessions SET lastActivityAt = ? WHERE id = ?').run(now.valueOf(), 'fresh-race')
+    }
+    knex.on('query', beforeUpdate)
+    try {
+      const result = await runAgentMaintenance(knex, { batchSize: 100, savedSessionDays: 90, mcpContentDays: 7, auditDays: 90, compactDeltaDays: 1 }, now)
+      expect(changed).toBe(true)
+      expect(result.tombstonedSessions).toBe(0)
+      expect(result.purgedSessions).toBe(0)
+      expect(await knex('agentSessions').whereNull('deletedAt').count('id as count').first()).toEqual({ count: 2 })
+    } finally { knex.removeListener('query', beforeUpdate) }
+  })
+
   it('recovers leases and applies bounded content, artifact, audit, and quota retention', async () => {
     await knex('agentSessions').insert([
       { id: 'session-live', ownerId: 7, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: old, lastActivityAt: now, version: 1 },

@@ -6,9 +6,9 @@ import resource
 import sys
 
 # Apply bounds before loading the parser or untrusted document.
-resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024,) * 2)
+resource.setrlimit(resource.RLIMIT_AS, (1024 * 1024 * 1024,) * 2)
 resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
-resource.setrlimit(resource.RLIMIT_FSIZE, (128 * 1024 * 1024,) * 2)
+resource.setrlimit(resource.RLIMIT_FSIZE, (300 * 1024 * 1024,) * 2)
 resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 os.umask(0o077)
@@ -16,8 +16,8 @@ os.umask(0o077)
 import pikepdf  # noqa: E402
 
 PART_BYTES = 48_000_000
-INPUT_BYTES = 100 * 1024 * 1024
-OUTPUT_BYTES = 128 * 1024 * 1024
+INPUT_BYTES = 250 * 1024 * 1024
+OUTPUT_BYTES = 300 * 1024 * 1024
 MAX_PAGES = 1000
 MAX_PARTS = 8
 

@@ -8,6 +8,7 @@ import {
 } from '../../shared/agents/contracts.ts'
 import {
   AgentApiError,
+  attachAgentAsset,
   cancelAgentRun,
   clearUnfiledAgentHistory,
   createAgentConversationFolder,
@@ -838,5 +839,26 @@ describe('agents client boundary', () => {
     expect(rendered).toContain('https://wiki.example.test/page')
     expect(rendered).toContain('noopener noreferrer')
     expect(rendered).not.toMatch(/<img|href="javascript:|onerror="/i)
+  })
+})
+
+
+describe('Wiki asset attachment client boundary', () => {
+  it('posts an asset ID with session credentials, CSRF and cancellation, and validates the returned copy', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000081'
+    const media = { id: '00000000-0000-4000-8000-000000000082', kind: 'attachment', filename: 'report.pdf', mimeType: 'application/pdf', byteLength: 25, available: true }
+    const signal = new AbortController().signal
+    const fetcher = vi.fn(async (_input: unknown, _init?: RequestInit) => new Response(JSON.stringify({ media }), { headers: { 'content-type': 'application/json' } }))
+    expect(await attachAgentAsset(fetcher as typeof fetch, 'token', sessionId, 42, signal)).toEqual(media)
+    const [url, init] = fetcher.mock.calls[0]!
+    expect(url).toBe(`/_api/agents/sessions/${sessionId}/media/assets`)
+    expect(init).toMatchObject({ method: 'POST', credentials: 'same-origin', signal })
+    expect(new Headers(init?.headers).get('x-wiki-csrf')).toBe('token')
+    expect(JSON.parse(String(init?.body))).toEqual({ assetId: 42 })
+    await expect(attachAgentAsset(fetcher as typeof fetch, 'token', sessionId, -1)).rejects.toThrow('Asset ID')
+    await expect(attachAgentAsset(fetcher as typeof fetch, 'token', 'invalid', 42)).rejects.toThrow()
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    fetcher.mockImplementation(async () => new Response(JSON.stringify({ media: { ...media, id: 'not-valid' } }), { headers: { 'content-type': 'application/json' } }))
+    await expect(attachAgentAsset(fetcher as typeof fetch, 'token', sessionId, 42)).rejects.toThrow()
   })
 })

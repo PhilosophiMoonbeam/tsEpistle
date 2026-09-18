@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from '../bun-test.mts'
-import { AGENT_PDF_MAX_BYTES, AGENT_PDF_PART_MAX_BYTES, prepareAgentPdf } from '../../agents/pdf-preparation.ts'
+import { AGENT_PDF_MAX_BYTES, AGENT_PDF_PART_MAX_BYTES, prepareAgentPdf, prepareAgentPdfFromPath } from '../../agents/pdf-preparation.ts'
 
 const worker = fileURLToPath(new URL('../../agents/pdf-worker.py', import.meta.url))
 const directories: string[] = []
@@ -77,6 +77,33 @@ describe('Agent PDF preparation with the real parser', () => {
     await result.cleanup()
     expect(await stat(result.parts[0]!.path).catch(() => null)).toBeNull()
   })
+
+  it('prepares a real near-250 MiB original from disk within the bounded worker without an application payload buffer', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wiki-pdf-large-test-'))
+    directories.push(directory)
+    const path = join(directory, 'large.pdf')
+    python(`
+import pikepdf, sys
+with pikepdf.Pdf.new() as pdf:
+    page = pdf.add_blank_page()
+    image = pdf.make_stream(b'\\0' * (249 * 1024 * 1024))
+    image.Type = pikepdf.Name('/XObject')
+    image.Subtype = pikepdf.Name('/Image')
+    image.Width, image.Height = 1000, 87031
+    image.ColorSpace = pikepdf.Name('/DeviceRGB')
+    image.BitsPerComponent = 8
+    page.Resources = pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im=image))
+    page.Contents = pdf.make_stream(b'q 100 0 0 100 0 0 cm /Im Do Q\\n')
+    pdf.save(sys.argv[1], compress_streams=False)
+`, [path])
+    expect((await stat(path)).size).toBeGreaterThan(249 * 1024 * 1024)
+    expect((await stat(path)).size).toBeLessThanOrEqual(AGENT_PDF_MAX_BYTES)
+    const result = await prepareAgentPdfFromPath(path, new AbortController().signal)
+    prepared.push(result)
+    expect(result.pageCount).toBe(1)
+    expect(result.parts).toHaveLength(1)
+    expect(result.parts[0]!.byteLength).toBeLessThan(48_000_000)
+  }, 60_000)
 
   it('rejects malformed PDFs including plausible PDF headers', async () => {
     await expect(prepareAgentPdf(Buffer.from('%PDF-1.7\nnot a PDF\n%%EOF'), new AbortController().signal)).rejects.toMatchObject({ code: 'PDF_INVALID', status: 400 })

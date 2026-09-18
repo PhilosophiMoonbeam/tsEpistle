@@ -1,14 +1,14 @@
 import { spawn } from 'node:child_process'
-import { chmod, lstat, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, lstat, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 
 export const AGENT_PDF_PART_MAX_BYTES = 48_000_000
-export const AGENT_PDF_MAX_BYTES = 100 * 1024 * 1024
+export const AGENT_PDF_MAX_BYTES = 250 * 1024 * 1024
 export const AGENT_PDF_MAX_PAGES = 1000
-const MAX_OUTPUT_BYTES = 128 * 1024 * 1024
+const MAX_OUTPUT_BYTES = 300 * 1024 * 1024
 const WORKER_TIMEOUT_MS = 45_000
 const workerPath = fileURLToPath(new URL('./pdf-worker.py', import.meta.url))
 let workerBusy = false
@@ -18,7 +18,7 @@ export const AGENT_PDF_ERRORS = {
   PDF_EMPTY: { status: 400, message: 'This PDF has no pages. Attach a document with at least one page.' },
   PDF_ENCRYPTED: { status: 400, message: 'This PDF is encrypted. Attach an unencrypted copy.' },
   PDF_TOO_MANY_PAGES: { status: 400, message: 'Attach a PDF with no more than 1,000 pages.' },
-  PDF_TOO_LARGE: { status: 413, message: 'Attach a PDF no larger than 100 MB.' },
+  PDF_TOO_LARGE: { status: 413, message: 'Attach a PDF no larger than 250 MB.' },
   PDF_PAGE_TOO_LARGE: { status: 413, message: 'One PDF page is too large for the provider. Reduce that page’s image resolution and attach the PDF again.' },
   PDF_TOO_MANY_PARTS: { status: 413, message: 'This PDF needs too many parts. Attach a smaller page range.' },
   PDF_OUTPUT_TOO_LARGE: { status: 413, message: 'Preparing this PDF exceeds the document size limit. Attach a smaller page range.' },
@@ -95,10 +95,8 @@ const runWorker = (inputPath: string, signal: AbortSignal): Promise<unknown> => 
   })
 })
 
-export const prepareAgentPdf = async (payload: Buffer, signal: AbortSignal): Promise<PreparedAgentPdf> => {
+const preparePdfInput = async (writeInput: (path: string) => Promise<void>, signal: AbortSignal): Promise<PreparedAgentPdf> => {
   if (signal.aborted) throw abortError()
-  if (payload.byteLength === 0) throw new AgentPdfPreparationError('PDF_INVALID')
-  if (payload.byteLength > AGENT_PDF_MAX_BYTES) throw new AgentPdfPreparationError('PDF_TOO_LARGE')
   if (workerBusy) throw new AgentPdfPreparationError('PDF_PREPARATION_BUSY')
   workerBusy = true
   let directory: string | undefined
@@ -108,7 +106,8 @@ export const prepareAgentPdf = async (payload: Buffer, signal: AbortSignal): Pro
     directory = await mkdtemp(join(tmpdir(), 'wiki-agent-pdf-'))
     await chmod(directory, 0o700)
     const inputPath = join(directory, 'input.pdf')
-    await writeFile(inputPath, payload, { mode: 0o600, flag: 'wx' })
+    await writeInput(inputPath)
+    await chmod(inputPath, 0o600)
     const raw = await runWorker(inputPath, signal)
     if (signal.aborted) throw abortError()
     const parsed = manifestSchema.safeParse(raw)
@@ -145,4 +144,20 @@ export const prepareAgentPdf = async (payload: Buffer, signal: AbortSignal): Pro
   } finally {
     workerBusy = false
   }
+}
+
+export const prepareAgentPdf = async (payload: Buffer, signal: AbortSignal): Promise<PreparedAgentPdf> => {
+  if (signal.aborted) throw abortError()
+  if (!payload.byteLength) throw new AgentPdfPreparationError('PDF_INVALID')
+  if (payload.byteLength > AGENT_PDF_MAX_BYTES) throw new AgentPdfPreparationError('PDF_TOO_LARGE')
+  return preparePdfInput(path => writeFile(path, payload, { mode: 0o600, flag: 'wx' }), signal)
+}
+
+/** Accepts an integrity-checked private original; prepared copies are always ephemeral. */
+export const prepareAgentPdfFromPath = async (sourcePath: string, signal: AbortSignal): Promise<PreparedAgentPdf> => {
+  if (signal.aborted) throw abortError()
+  const info = await lstat(sourcePath)
+  if (!info.isFile() || info.isSymbolicLink() || !info.size) throw new AgentPdfPreparationError('PDF_INVALID')
+  if (info.size > AGENT_PDF_MAX_BYTES) throw new AgentPdfPreparationError('PDF_TOO_LARGE')
+  return preparePdfInput(path => copyFile(sourcePath, path), signal)
 }

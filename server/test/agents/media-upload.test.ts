@@ -22,9 +22,9 @@ describe('Agent media upload admission', () => {
     expect(invoked).toBe(true)
   })
 
-  it('bounds all owners to two uploads and releases failed operations', async () => {
+  it('bounds all owners to one upload and releases failed operations', async () => {
     const gate = new AgentMediaUploadGate()
-    const pending = Array.from({ length: 2 }, () => Promise.withResolvers<void>())
+    const pending = Array.from({ length: 1 }, () => Promise.withResolvers<void>())
     const running = pending.map((item, index) => gate.run(index, () => item.promise))
     await expect(gate.run(100, async () => undefined)).rejects.toMatchObject({ status: 429 })
     pending.forEach(item => {
@@ -53,16 +53,12 @@ describe('Agent media upload admission', () => {
     const parser: RequestHandler = (_req, _res, next) => {
       callback = next
     }
-    const other = Promise.withResolvers<void>()
-    const otherRun = gate.run(8, () => other.promise)
     const abortedRun = gate.run(7, () => parseAgentMediaUpload(parser, request, response, controller.signal))
     controller.abort()
     await expect(abortedRun).rejects.toMatchObject({ code: 'AGENT_MEDIA_UPLOAD_ABORTED' })
     expect(destroyed).toBe(1)
     await gate.run(7, async () => undefined)
     callback?.()
-    other.resolve()
-    await otherRun
   })
 
   it('normalizes parser errors and stops already-aborted uploads before parsing', async () => {

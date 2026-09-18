@@ -18,6 +18,7 @@ export const AGENT_EXECUTION_FAILURE_STAGES = [
 export type AgentExecutionFailureStage = (typeof AGENT_EXECUTION_FAILURE_STAGES)[number]
 
 export type AgentExecutionFailureCode =
+  | 'AGENT_MEDIA_WINDOW_LIMIT'
   | AgentPdfErrorCode
   | 'AGENT_PDF_PAGE_LIMIT'
   | 'AGENT_MEDIA_PART_LIMIT'
@@ -81,6 +82,7 @@ export interface AgentExecutionFailureDiagnostics {
   readonly transportKind?: AgentProviderTransportKind
 }
 const SAFE_REPOSITORY_CODES: Readonly<Record<string, true>> = {
+  AGENT_MEDIA_WINDOW_LIMIT: true,
   ...Object.fromEntries(Object.keys(AGENT_PDF_ERRORS).map(code => [code, true as const])),
   AGENT_PDF_PAGE_LIMIT: true,
   AGENT_MEDIA_PART_LIMIT: true,
@@ -131,12 +133,14 @@ const SAFE_STAGES: Readonly<Record<string, true>> = {
 
 const SAFE_MESSAGE = 'Agent inference failed'
 const MEDIA_MESSAGES: Readonly<Record<string, string>> = {
+  AGENT_MEDIA_WINDOW_LIMIT: 'This conversation exceeds the attachment window of 16 files or 1 GB. Start a new conversation with the files needed for this request.',
   ...Object.fromEntries(Object.entries(AGENT_PDF_ERRORS).map(([code, detail]) => [code, detail.message])),
   AGENT_PDF_PAGE_LIMIT: 'The PDFs in this conversation exceed Google’s 1,000-page request limit. Start a new conversation with fewer pages.',
   AGENT_MEDIA_PART_LIMIT: 'The attachments require too many document parts. Start a new conversation with fewer or smaller files.',
   AGENT_MEDIA_CONTEXT_LIMIT: 'The attached files exceed this model’s context limit. Start a new conversation with fewer pages or smaller files.'
 }
 const SAFE_STATUS_BY_CODE: Readonly<Record<string, number>> = {
+  AGENT_MEDIA_WINDOW_LIMIT: 413,
   ...Object.fromEntries(Object.entries(AGENT_PDF_ERRORS).map(([code, detail]) => [code, detail.status])),
   AGENT_PDF_PAGE_LIMIT: 413,
   AGENT_MEDIA_PART_LIMIT: 413,

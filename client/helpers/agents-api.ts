@@ -755,6 +755,11 @@ export const uploadAgentMedia = async (fetcher: typeof fetch, csrfToken: string,
   body.append('file', file)
   return (await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/media`, z.object({ media: Media }), { method: 'POST', body, signal })).media
 }
+export const attachAgentAsset = async (fetcher: typeof fetch, csrfToken: string, sessionId: string, assetId: number, signal?: AbortSignal): Promise<AgentMediaView> => {
+  assertUuid(sessionId, 'Session ID')
+  if (!Number.isSafeInteger(assetId) || assetId < 1) throw new Error('Asset ID must be a positive integer')
+  return (await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/media/assets`, z.object({ media: Media }), { method: 'POST', body: JSON.stringify({ assetId }), signal })).media
+}
 export const deleteAgentMedia = async (fetcher: typeof fetch, csrfToken: string, id: string): Promise<void> => {
   assertUuid(id, 'Media ID')
   const response = await fetcher(`/_api/agents/media/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', headers: { 'x-wiki-csrf': csrfToken, accept: 'application/json' } })
