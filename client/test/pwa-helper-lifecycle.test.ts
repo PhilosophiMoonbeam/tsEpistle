@@ -107,7 +107,9 @@ type PwaModule = {
   registerPwa(callbacks?: PwaLifecycleCallbacks): Promise<RegistrationLike | null>
   setReloadSafetyProvider(provider: ReloadSafetyProvider | null): void
   requestPwaUpdate(): Promise<boolean>
-  retryServerConnection(): Promise<boolean>
+  retryServerConnection(options?: { quiet?: boolean }): Promise<boolean>
+  observeBrowserConnection(): void
+  reportServerConnectionFailure(): void
 }
 
 type PwaHarness = {
@@ -152,7 +154,7 @@ const createWorker = (hub: EventHub): WorkerLike => {
   return worker
 }
 
-const createHarness = async (mode: 'feature' | 'retirement' = 'feature'): Promise<PwaHarness> => {
+const createHarness = async (mode: 'feature' | 'retirement' = 'feature', online = true): Promise<PwaHarness> => {
   const originals = new Map<string, PropertyDescriptor | undefined>()
   const windowHub = new EventHub()
   const workerHub = new EventHub()
@@ -199,7 +201,7 @@ const createHarness = async (mode: 'feature' | 'retirement' = 'feature'): Promis
     addEventListener: windowHub.addEventListener.bind(windowHub),
     removeEventListener: windowHub.removeEventListener.bind(windowHub)
   }
-  const navigator = { onLine: true, serviceWorker: container }
+  const navigator = { onLine: online, serviceWorker: container }
   defineGlobal('window', window, originals)
   defineGlobal('document', document, originals)
   defineGlobal('navigator', navigator, originals)
@@ -588,7 +590,7 @@ describe('foreground connection recovery', () => {
       expect(harness.fetchCalls).toHaveLength(2)
       expect(harness.module.pwaState.connectionState).toBe('online')
       await vi.advanceTimersByTimeAsync(60_000)
-      expect(harness.fetchCalls).toHaveLength(2)
+      expect(harness.fetchCalls).toHaveLength(3)
     } finally { harness.restore(); vi.useRealTimers() }
   })
 
@@ -611,7 +613,7 @@ describe('foreground connection recovery', () => {
       expect(harness.module.pwaState.onlineHint).toBe(false)
       expect(harness.module.pwaState.connectionState).toBe('online')
       await vi.advanceTimersByTimeAsync(60_000)
-      expect(harness.fetchCalls).toHaveLength(2)
+      expect(harness.fetchCalls).toHaveLength(3)
     } finally { harness.restore(); vi.useRealTimers() }
   })
 
@@ -655,7 +657,7 @@ describe('foreground connection recovery', () => {
       expect(await retry).toBe(true)
       expect(harness.module.pwaState.connectionState).toBe('online')
       await vi.advanceTimersByTimeAsync(60_000)
-      expect(harness.fetchCalls).toHaveLength(2)
+      expect(harness.fetchCalls).toHaveLength(3)
     } finally { harness.restore(); vi.useRealTimers() }
   })
 
@@ -706,5 +708,74 @@ describe('foreground connection recovery', () => {
       expect(harness.module.pwaState.connectionState).toBe('online')
       expect(harness.fetchCalls).toHaveLength(3)
     } finally { harness.restore(); vi.useRealTimers() }
+  })
+})
+
+
+describe('connection loss without a browser event', () => {
+  it('starts offline before registration or probing when the browser is already disconnected', async () => {
+    const harness = await createHarness('feature', false)
+    try {
+      expect(harness.module.pwaState.connectionState).toBe('offline')
+      expect(harness.fetchCalls).toHaveLength(0)
+    } finally { harness.restore() }
+  })
+
+  it('quietly detects a lost connection in a foreground online tab', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    try {
+      await harness.module.registerPwa()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(harness.module.pwaState.connectionState).toBe('online')
+      harness.setFetchImplementation(async () => {
+        expect(harness.module.pwaState.connectionState).toBe('online')
+        throw new TypeError('Failed to fetch')
+      })
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(harness.module.pwaState.connectionState).toBe('server-unavailable')
+    } finally { harness.restore(); vi.useRealTimers() }
+  })
+
+  for (const event of ['focus', 'pageshow', 'visibilitychange']) {
+    it(`rechecks an old online state on ${event}`, async () => {
+      vi.useFakeTimers()
+      const harness = await createHarness()
+      try {
+        await harness.module.registerPwa()
+        await vi.advanceTimersByTimeAsync(1)
+        harness.setFetchImplementation(async () => { throw new TypeError('Failed to fetch') })
+        harness.windowHub.emit(event)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(harness.fetchCalls).toHaveLength(2)
+        expect(harness.module.pwaState.connectionState).toBe('server-unavailable')
+      } finally { harness.restore(); vi.useRealTimers() }
+    })
+  }
+
+  it('uses a changed offline hint synchronously without requiring its event', async () => {
+    const harness = await createHarness()
+    try {
+      await harness.module.registerPwa()
+      await harness.module.retryServerConnection()
+      Object.defineProperty(navigator, 'onLine', { value: false, configurable: true })
+      harness.module.observeBrowserConnection()
+      expect(harness.module.pwaState.connectionState).toBe('offline')
+      // A successful live probe must still win over a stale false hint.
+      await harness.module.retryServerConnection()
+      harness.module.observeBrowserConnection()
+      expect(harness.module.pwaState.connectionState).toBe('online')
+    } finally { harness.restore() }
+  })
+
+  it('switches immediately to saved-page state when a navigation transport fails', async () => {
+    const harness = await createHarness()
+    try {
+      await harness.module.registerPwa()
+      await harness.module.retryServerConnection()
+      harness.module.reportServerConnectionFailure()
+      expect(harness.module.pwaState.connectionState).toBe('server-unavailable')
+      expect(harness.module.pwaState.serverReachable).toBe(false)
+    } finally { harness.restore() }
   })
 })

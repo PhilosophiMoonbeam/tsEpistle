@@ -48,7 +48,7 @@ type ViteManifestChunk = {
 
 type ViteBuildManifest = Record<string, ViteManifestChunk>
 
-const PWA_TOMBSTONE_CACHE_NAME_PATTERN = /^tsepistle-pwa-precache-v1-[0-9a-f]{16}$/u
+const PWA_TOMBSTONE_CACHE_NAME_PATTERN = /^tsepistle-pwa-(?:precache-v1-[0-9a-f]{16}|branding-v1)$/u
 
 const PWA_TOMBSTONE_SOURCE = `/*
  * Explicit rollback artifact. Deploy this file at /sw.js only during an
@@ -222,7 +222,7 @@ async function offlineManifestTransform(entries: OfflinePrecacheEntry[]) {
   if (offlinePath !== 'client/offline.html') throw new Error('The neutral offline source is not the expected document.')
 
   const visitedKeys = new Set<string>()
-  const closure = new Set<string>([offlinePath])
+  const closure = new Set<string>([offlinePath, 'svg/icon-tsepistle.svg'])
   const visit = (key: string): void => {
     if (visitedKeys.has(key)) return
     visitedKeys.add(key)
@@ -297,7 +297,7 @@ export default defineConfig(({ command }) => ({
       injectManifest: {
         rollupFormat: 'iife',
         swDest: resolve(root, 'assets/service-worker.js'),
-        globPatterns: ['client/offline.html', 'js/**/*.js', 'assets/**/*'],
+        globPatterns: ['client/offline.html', 'js/**/*.js', 'assets/**/*', 'svg/icon-tsepistle.svg'],
         globDirectory: resolve(root, 'assets'),
         buildPlugins: { vite: [pwaReleaseArtifactPlugin(pwaRelease)] },
         injectionPoint: 'globalThis.__WB_MANIFEST',

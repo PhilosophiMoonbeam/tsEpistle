@@ -16,12 +16,12 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
     expect(script.match(/this\.browseRequestController\?\.abort\(\)/g)).toHaveLength(4)
     expect(script.match(/const requestController = markRaw\(new AbortController\(\)\)/g)).toHaveLength(2)
     expect(script.match(/this\.browseRequestController = requestController/g)).toHaveLength(2)
-    expect(script.match(/\(url, init\) => window\.fetch\(url, \{ \.\.\.init, signal: requestController\.signal \}\)/g)).toHaveLength(2)
+    expect(script.match(/\(url, init\) => window\.fetch\(url, \{ \.\.\.init, signal: AbortSignal\.any\(\[requestController\.signal, AbortSignal\.timeout\(5_000\)\]\) \}\)/g)).toHaveLength(2)
     expect(script).toMatch(
-      /async fetchBrowseItems\s*\(\s*requestedItem\?\s*:\s*NavigationTreeItem\s*\)[\s\S]*?const locale\s*=\s*this\.locale[\s\S]*?const item\s*=\s*requestedItem\s*\|\|\s*this\.currentParent[\s\S]*?fetchPageTree\(\s*\(url, init\) => window\.fetch\(url, \{ \.\.\.init, signal: requestController\.signal \}\),\s*\{\s*parent: item\.id,\s*locale,\s*mode: 'ALL'/
+      /async fetchBrowseItems\s*\(\s*requestedItem\?\s*:\s*NavigationTreeItem\s*\)[\s\S]*?const locale\s*=\s*this\.locale[\s\S]*?const item\s*=\s*requestedItem\s*\|\|\s*this\.currentParent[\s\S]*?fetchPageTree\(\s*\(url, init\) => window\.fetch\(url, \{ \.\.\.init, signal: AbortSignal\.any\(\[requestController\.signal, AbortSignal\.timeout\(5_000\)\]\) \}\),\s*\{\s*parent: item\.id,\s*locale,\s*mode: 'ALL'/
     )
     expect(script).toMatch(
-      /async loadFromCurrentPath\s*\(\)[\s\S]*?const locale\s*=\s*this\.locale[\s\S]*?const path\s*=\s*this\.path[\s\S]*?const pageId\s*=\s*wikiStore\.page\.id[\s\S]*?fetchPageTree\(\s*\(url, init\) => window\.fetch\(url, \{ \.\.\.init, signal: requestController\.signal \}\),\s*\{\s*path,\s*locale,\s*mode: 'ALL',\s*includeAncestors: true/
+      /async loadFromCurrentPath\s*\(\)[\s\S]*?const locale\s*=\s*this\.locale[\s\S]*?const path\s*=\s*this\.path[\s\S]*?const pageId\s*=\s*wikiStore\.page\.id[\s\S]*?fetchPageTree\(\s*\(url, init\) => window\.fetch\(url, \{ \.\.\.init, signal: AbortSignal\.any\(\[requestController\.signal, AbortSignal\.timeout\(5_000\)\]\) \}\),\s*\{\s*path,\s*locale,\s*mode: 'ALL',\s*includeAncestors: true/
     )
     expect(script.match(/loadingStart\(wikiStore,\s*'browse-load'\)/g)).toHaveLength(2)
     expect(script.match(/loadingStop\(wikiStore,\s*'browse-load'\)/g)).toHaveLength(2)
@@ -55,10 +55,10 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
       )
     ).toHaveLength(2)
     expect(script).toMatch(
-      /async fetchBrowseItems[\s\S]*?const items = await fetchPageTree[\s\S]*?if \(requestSequence !== this\.browseRequestSequence\) return\s*this\.currentItems = items[\s\S]*?catch \(error\) \{\s*if \(!requestController\.signal\.aborted && requestSequence === this\.browseRequestSequence\) \{\s*this\.navError =/
+      /async fetchBrowseItems[\s\S]*?const items = await fetchPageTree[\s\S]*?if \(requestSequence !== this\.browseRequestSequence\) return\s*this\.currentItems = items[\s\S]*?catch \(error\) \{\s*if \(!requestController\.signal\.aborted && requestSequence === this\.browseRequestSequence\) \{\s*if \(error instanceof TypeError \|\| \(error instanceof DOMException && error.name === 'TimeoutError'\)\) reportServerConnectionFailure\(\)\s*else this\.navError =/
     )
     expect(script).toMatch(
-      /async loadFromCurrentPath[\s\S]*?const items = await fetchPageTree[\s\S]*?if \(requestSequence !== this\.browseRequestSequence\) return\s*const curPage[\s\S]*?this\.currentItems = _.filter\(items, \['parent', curPage\.parent\]\)[\s\S]*?catch \(error\) \{\s*if \(!requestController\.signal\.aborted && requestSequence === this\.browseRequestSequence\) \{\s*this\.navError =/
+      /async loadFromCurrentPath[\s\S]*?const items = await fetchPageTree[\s\S]*?if \(requestSequence !== this\.browseRequestSequence\) return\s*const curPage[\s\S]*?this\.currentItems = _.filter\(items, \['parent', curPage\.parent\]\)[\s\S]*?catch \(error\) \{\s*if \(!requestController\.signal\.aborted && requestSequence === this\.browseRequestSequence\) \{\s*if \(error instanceof TypeError \|\| \(error instanceof DOMException && error.name === 'TimeoutError'\)\) reportServerConnectionFailure\(\)\s*else this\.navError =/
     )
     expect(script).toMatch(
       /beforeUnmount\s*\(\)\s*\{\s*this\.browseRequestSequence \+= 1\s*this\.browseRequestController\?\.abort\(\)\s*this\.browseRequestController = null\s*\}/

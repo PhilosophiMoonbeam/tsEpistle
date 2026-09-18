@@ -14,7 +14,7 @@ const storage = preference => {
   }
 }
 const mountSidebar = ({ localStorage = storage(null), items = [], navMode = 'MIXED', expandParentByDefault = false, connectionState = 'online' } = {}) => {
-  const component = new Function('defineComponent', 'AsyncState', 'OfflineNavigation', 'pwaState', 'window', executable)(options => options, {}, {}, { connectionState, mode: 'feature' }, { localStorage })
+  const component = new Function('defineComponent', 'AsyncState', 'OfflineNavigation', 'pwaState', 'observeBrowserConnection', 'window', executable)(options => options, {}, {}, { connectionState, mode: 'feature' }, () => {}, { localStorage })
   const sidebar = { ...component.data(), items, navMode, expandParentByDefault, $t: key => key }
   for (const [name, method] of Object.entries(component.methods)) sidebar[name] = method.bind(sidebar)
   Object.defineProperty(sidebar, 'connectionState', { get: () => component.computed.connectionState.call(sidebar) })
@@ -120,7 +120,7 @@ describe('Custom Navigation preserves its two views', () => {
 
 
 describe('offline navigation continuity', () => {
-  const component = new Function('defineComponent', 'AsyncState', 'OfflineNavigation', 'pwaState', executable)(options => options, {}, {}, { connectionState: 'offline', mode: 'feature' })
+  const component = new Function('defineComponent', 'AsyncState', 'OfflineNavigation', 'pwaState', 'observeBrowserConnection', executable)(options => options, {}, {}, { connectionState: 'offline', mode: 'feature' }, () => {})
 
   it('does not attempt directory requests when the connection is known to be unavailable', async () => {
     const sidebar = { ...component.data(), connectionUnavailable: true }

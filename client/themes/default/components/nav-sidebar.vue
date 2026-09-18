@@ -150,7 +150,7 @@
 
 <script lang='ts'>
 import _ from 'lodash'
-import { pwaState } from '../../../helpers/pwa.ts'
+import { observeBrowserConnection, pwaState, reportServerConnectionFailure } from '../../../helpers/pwa.ts'
 import OfflineNavigation from '@/components/pwa/offline-navigation.vue'
 import AsyncState from '@/components/common/async-state.vue'
 import { defineComponent, markRaw, type PropType } from 'vue'
@@ -270,6 +270,7 @@ export default defineComponent({
       if (target instanceof HTMLAnchorElement && isWikiNavigationClick(event, target)) this.$emit('navigate')
     },
     switchMode (mode: NavigationMode) {
+      observeBrowserConnection()
       if (this.connectionUnavailable) return
       this.currentMode = mode
       try {
@@ -283,6 +284,7 @@ export default defineComponent({
       }
     },
     async fetchBrowseItems (requestedItem?: NavigationTreeItem) {
+      observeBrowserConnection()
       if (this.connectionUnavailable) return
       const requestSequence = ++this.browseRequestSequence
       this.browseRequestController?.abort()
@@ -307,7 +309,7 @@ export default defineComponent({
         }
         this.currentParent = item
         const items = await fetchPageTree(
-          (url, init) => window.fetch(url, { ...init, signal: requestController.signal }),
+          (url, init) => window.fetch(url, { ...init, signal: AbortSignal.any([requestController.signal, AbortSignal.timeout(5_000)]) }),
           {
             parent: item.id,
             locale,
@@ -319,7 +321,8 @@ export default defineComponent({
         this.loadedCache = _.union(this.loadedCache, [item.id])
       } catch (error) {
         if (!requestController.signal.aborted && requestSequence === this.browseRequestSequence) {
-          this.navError = error instanceof Error ? error.message : this.$t('common:sidebar.navigationLoadError')
+          if (error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError')) reportServerConnectionFailure()
+          else this.navError = error instanceof Error ? error.message : this.$t('common:sidebar.navigationLoadError')
         }
       } finally {
         if (this.browseRequestController === requestController) this.browseRequestController = null
@@ -328,6 +331,7 @@ export default defineComponent({
       }
     },
     async loadFromCurrentPath() {
+      observeBrowserConnection()
       if (this.connectionUnavailable) return
       const requestSequence = ++this.browseRequestSequence
       this.browseRequestController?.abort()
@@ -341,7 +345,7 @@ export default defineComponent({
       this.navError = ''
       try {
         const items = await fetchPageTree(
-          (url, init) => window.fetch(url, { ...init, signal: requestController.signal }),
+          (url, init) => window.fetch(url, { ...init, signal: AbortSignal.any([requestController.signal, AbortSignal.timeout(5_000)]) }),
           {
             path,
             locale,
@@ -367,7 +371,8 @@ export default defineComponent({
         this.currentItems = _.filter(items, ['parent', curPage.parent])
       } catch (error) {
         if (!requestController.signal.aborted && requestSequence === this.browseRequestSequence) {
-          this.navError = error instanceof Error ? error.message : this.$t('common:sidebar.navigationLoadError')
+          if (error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError')) reportServerConnectionFailure()
+          else this.navError = error instanceof Error ? error.message : this.$t('common:sidebar.navigationLoadError')
         }
       } finally {
         if (this.browseRequestController === requestController) this.browseRequestController = null
@@ -404,6 +409,7 @@ export default defineComponent({
     }
   },
   mounted () {
+    observeBrowserConnection()
     this.resetBrowseRoot()
     if (this.navMode === 'TREE') {
       this.currentMode = 'browse'

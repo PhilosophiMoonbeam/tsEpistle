@@ -2,17 +2,20 @@ import type { SiteConfig } from '../env.d.ts'
 import { normalizeThemeColors } from '../../shared/theme-colors.ts'
 import { normalizeReaderLayout } from '../../shared/theme-policy.ts'
 import product from '../../package.json'
+import { offlineLogoPath, rememberOfflineLogo } from './offline-branding.ts'
 
 const KEY = 'tsepistle.offline.presentation.v1'
 // This allowlist is presentation only. Never persist bootstrap/session objects.
 export function rememberOfflinePresentation(appearance = ''): void {
+  const logoUrl = offlineLogoPath(siteConfig.logoUrl, window.location.origin) ?? ''
   try {
     localStorage.setItem(KEY, JSON.stringify({
       title: siteConfig.title, themeColors: siteConfig.themeColors,
       readerLayout: siteConfig.readerLayout, lang: siteConfig.lang,
-      rtl: siteConfig.rtl, appearance
+      rtl: siteConfig.rtl, appearance, logoUrl
     }))
   } catch { /* Storage is optional. */ }
+  void rememberOfflineLogo(logoUrl, window.location.origin)
 }
 
 export function offlinePresentation(): { config: SiteConfig; appearance: string } {
@@ -30,7 +33,8 @@ export function offlinePresentation(): { config: SiteConfig; appearance: string 
       readerLayout: normalizeReaderLayout(saved.readerLayout), tocPosition: 'left',
       lang: typeof saved.lang === 'string' && /^[a-zA-Z0-9-]{2,35}$/.test(saved.lang) ? saved.lang : 'en',
       rtl: saved.rtl === true, company: '', contentLicense: '', footerOverride: '',
-      banner: { isEnabled: false, title: '', content: '' }, logoUrl: '', logoEffect: null,
+      banner: { isEnabled: false, title: '', content: '' },
+      logoUrl: offlineLogoPath(saved.logoUrl, window.location.origin) ?? '', logoEffect: null,
       product: { ...product.product, independentFork: true, description: product.description,
         revision, date: `${product.releaseDate}`, upstreamBase: 'Wiki.js 2.5.314',
         sourceUrl: `${product.product.sourceRepository}/tree/${revision}` },

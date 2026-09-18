@@ -115,8 +115,8 @@ const state = reactive<MutablePwaState>({
   mode: configuredMode,
   retirement: configuredMode === 'retirement',
   retirementNotice: configuredMode === 'retirement',
-  connection: configuredMode === 'retirement' ? 'server-unavailable' : 'checking',
-  connectionState: configuredMode === 'retirement' ? 'server-unavailable' : 'checking',
+  connection: configuredMode === 'retirement' ? 'server-unavailable' : typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'checking',
+  connectionState: configuredMode === 'retirement' ? 'server-unavailable' : typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'checking',
   onlineHint: typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean' ? navigator.onLine : null,
   serverReachable: null,
   serverHealthy: null,
@@ -254,13 +254,14 @@ const suspendConnectionProbe = (): void => {
 
 const scheduleConnectionRetry = (): void => {
   clearConnectionRetry()
-  if (!connectionProbeAllowed() || activeProbe || !['offline', 'server-unavailable'].includes(state.connectionState)) return
+  if (state.mode === 'retirement' || !connectionProbeAllowed() || activeProbe || state.connectionState === 'checking') return
+  const online = state.connectionState === 'online'
   connectionRetryTimer = setTimeout(() => {
     connectionRetryTimer = null
     if (!connectionProbeAllowed()) return
-    connectionRetryDelay = Math.min(connectionRetryDelay * 2, 30_000)
-    void retryServerConnection()
-  }, connectionRetryDelay)
+    if (!online) connectionRetryDelay = Math.min(connectionRetryDelay * 2, 30_000)
+    void retryServerConnection({ quiet: true })
+  }, online ? 30_000 : connectionRetryDelay)
 }
 
 const errorMessage = (error: unknown, fallback: string): string => {
@@ -939,6 +940,30 @@ const handleOfflineHint = (): void => {
   scheduleConnectionRetry()
 }
 
+/** Re-read the browser hint at interaction/resume boundaries, even if its event was missed. */
+export function observeBrowserConnection(): void {
+  if (state.mode !== 'retirement' && hasNavigator() && navigator.onLine === false && state.onlineHint !== false) handleOfflineHint()
+}
+
+/** A failed transport request invalidates an earlier successful health check. */
+export function reportServerConnectionFailure(): void {
+  if (state.mode === 'retirement') return
+  suspendConnectionProbe()
+  state.onlineHint = hasNavigator() && typeof navigator.onLine === 'boolean' ? navigator.onLine : null
+  state.serverReachable = false
+  state.serverHealthy = false
+  connectionRetryDelay = 3_000
+  setConnection(state.onlineHint === false ? 'offline' : 'server-unavailable')
+  scheduleConnectionRetry()
+}
+
+const resumeConnection = (): void => {
+  observeBrowserConnection()
+  if (state.mode === 'retirement' || !connectionProbeAllowed() || activeProbe) return
+  if (state.connectionState === 'online') void retryServerConnection({ quiet: true })
+  else scheduleConnectionRetry()
+}
+
 const attachWindowListeners = (): void => {
   if (!hasWindow() || installListenersAttached) return
   installListenersAttached = true
@@ -956,7 +981,7 @@ const attachWindowListeners = (): void => {
   })
   window.addEventListener('pageshow', () => {
     pageSuspended = false
-    scheduleConnectionRetry()
+    resumeConnection()
     attachUpdateWakeups()
     requestOfflineReadiness()
     const waiting = registrationReference?.waiting
@@ -967,10 +992,11 @@ const attachWindowListeners = (): void => {
   window.addEventListener(INSTALLED_EVENT, markInstalled as EventListener)
   window.addEventListener('online', handleOnlineHint)
   window.addEventListener('offline', handleOfflineHint)
+  window.addEventListener('focus', resumeConnection)
   window.addEventListener('visibilitychange', () => {
     updateStandaloneState()
     if (document.visibilityState === 'hidden') { suspendConnectionProbe(); return }
-    scheduleConnectionRetry()
+    resumeConnection()
     requestOfflineReadiness()
     retryDeferredReload()
   })
@@ -1030,6 +1056,7 @@ const scheduleRegistration = (): Promise<ServiceWorkerRegistration | null> => {
 export function registerPwa(callbacks: PwaLifecycleCallbacks = {}): Promise<ServiceWorkerRegistration | null> {
   callbackSet = { ...callbackSet, ...callbacks }
   attachWindowListeners()
+  observeBrowserConnection()
   if (state.mode === 'retirement') {
     state.registrationState = 'unsupported'
     markOfflineUnavailable()
@@ -1049,7 +1076,7 @@ export function registerPwa(callbacks: PwaLifecycleCallbacks = {}): Promise<Serv
   return registrationInFlight
 }
 
-export async function retryServerConnection(): Promise<boolean> {
+export async function retryServerConnection(options: { quiet?: boolean } = {}): Promise<boolean> {
   if (hasWindow() && (pageSuspended || document.visibilityState === 'hidden')) return false
   clearConnectionRetry()
   const epoch = ++connectionEpoch
@@ -1062,7 +1089,7 @@ export async function retryServerConnection(): Promise<boolean> {
   }
   state.onlineHint = typeof navigator.onLine === 'boolean' ? navigator.onLine : null
   // Keep the saved-page UI stable while quietly checking for a connection.
-  if (!['offline', 'server-unavailable'].includes(state.connectionState)) {
+  if (!options.quiet && !['offline', 'server-unavailable'].includes(state.connectionState)) {
     state.serverReachable = null
     state.serverHealthy = null
     setConnection('checking')

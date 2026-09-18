@@ -256,7 +256,7 @@ describe('mounted PWA delivery', () => {
     expect(csp).toContain(`${running.baseURL}/_assets/js/`)
     expect(csp).toContain(`font-src ${running.baseURL}/_assets/assets/`)
     expect(csp.split('; ').find(directive => directive.startsWith('script-src'))).not.toContain("'unsafe-inline'")
-    expect(csp).toContain("img-src 'none'")
+    expect(csp.split('; ').find(directive => directive.startsWith('img-src'))).toBe(`img-src ${running.baseURL}/_site-logo/ ${running.baseURL}/_assets/svg/icon-tsepistle.svg`)
     expect(await get.text()).toContain('offline fixture')
 
     const head = await fetch(`${running.baseURL}${OFFLINE_PATH}`, { method: 'HEAD' })

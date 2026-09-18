@@ -113,9 +113,8 @@ onBeforeUnmount(() => { disposed = true; coordinator?.dispose(); storage.value?.
   <v-app class="offline-application">
     <a class="offline-skip" href="#offline-main">Skip to content</a>
     <nav-header>
-      <template #mobileBrand>
+      <template #navigationToggle>
         <v-btn icon="mdi-menu" aria-label="Open navigation" @click="drawer = !drawer" />
-        <span>{{ settingsView ? 'Profile' : siteTitle }}</span>
       </template>
     </nav-header>
     <v-navigation-drawer v-model="drawer" :permanent="$vuetify.display.mdAndUp" :temporary="$vuetify.display.smAndDown" :width="256">

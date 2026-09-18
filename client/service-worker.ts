@@ -9,6 +9,7 @@ import {
   normalizedPath,
   sameOriginURL
 } from './helpers/pwa-route-policy.ts'
+import { cachedOfflineLogo, isOfflineManagedLogo, OFFLINE_DEFAULT_LOGO_PATH } from './helpers/offline-branding.ts'
 
 type PrecacheManifestEntry = {
   url: string
@@ -91,7 +92,8 @@ const worker = globalThis as ServiceWorkerGlobal
 const PWA_RELEASE_ID = '__TSEPISTLE_PWA_RELEASE__'
 
 // The Vite injectManifest build replaces this exact expression with the
-// generated, filtered shell closure. There is no runtime cache or API cache.
+// generated, filtered shell closure. Optional public branding is kept separately;
+// server documents and API responses are never runtime cached.
 const injectedManifest = (globalThis as ServiceWorkerGlobal).__WB_MANIFEST
 const PRECACHE_MANIFEST: readonly PrecacheManifestEntry[] = Array.isArray(injectedManifest) ? injectedManifest : []
 const MANIFEST_DIGEST = manifestDigest(PRECACHE_MANIFEST, PWA_RELEASE_ID)
@@ -138,7 +140,7 @@ function createToken(): string {
 function precacheURL(entry: PrecacheManifestEntry): string | null {
   const path = normalizedPath(entry.url, worker.location.origin)
   if (!path) return null
-  if (path === OFFLINE_DOCUMENT_PATH) return new URL(path, worker.location.origin).href
+  if (path === OFFLINE_DOCUMENT_PATH || path === OFFLINE_DEFAULT_LOGO_PATH) return new URL(path, worker.location.origin).href
   if (path.startsWith(`${OFFLINE_ASSET_PREFIX}js/`) || path.startsWith(`${OFFLINE_ASSET_PREFIX}assets/`)) {
     return new URL(path, worker.location.origin).href
   }
@@ -360,8 +362,11 @@ async function cachedShell(): Promise<Response | undefined> {
 async function handleNavigation(request: Request): Promise<Response> {
   try {
     // A non-error server response, including 401/403/404, remains authoritative.
-    return await fetch(request)
+    // Bypass the browser HTTP cache: cached online HTML is not an offline shell.
+    return await fetch(request, { cache: 'no-store',
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(5_000)]) })
   } catch (error) {
+    if (request.signal.aborted) throw error
     const fallback = await cachedShell()
     if (fallback) return fallback
     throw error
@@ -374,6 +379,10 @@ function handleFetch(request: Request): Promise<Response> | undefined {
   if (request.method !== 'GET') return undefined
   const url = sameOriginURL(request.url, worker.location.origin)
   if (!url) return undefined
+  if (request.destination === 'image' && isOfflineManagedLogo(request.url, worker.location.origin)) {
+    return cachedOfflineLogo(request.url, worker.location.origin).then(cached => cached ??
+      fetch(url.href, { credentials: 'omit', redirect: 'error' }))
+  }
   if (url.pathname === OFFLINE_DOCUMENT_PATH && request.mode === 'navigate' && acceptsHTML(request)) {
     return cachedShell().then(fallback => fallback ?? fetch(request))
   }

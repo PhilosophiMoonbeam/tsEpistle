@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { PRECACHE_CACHE_PREFIX } from '../helpers/pwa-route-policy.ts'
+import { OFFLINE_BRANDING_CACHE_NAME, OFFLINE_DEFAULT_LOGO_PATH, rememberOfflineLogo } from '../helpers/offline-branding.ts'
 
 const ORIGIN = 'https://wiki.example.test'
 const RELEASE_PLACEHOLDER = '__TSEPISTLE_PWA_RELEASE__'
@@ -144,7 +145,8 @@ const shell = (release = RELEASE_PLACEHOLDER): string => `<!doctype html>
 const manifest = [
   { url: '/_offline', revision: 'shell-revision' },
   { url: '/_assets/js/offline-entry.js', revision: 'js-revision' },
-  { url: '/_assets/assets/offline.css', revision: 'css-revision' }
+  { url: '/_assets/assets/offline.css', revision: 'css-revision' },
+  { url: OFFLINE_DEFAULT_LOGO_PATH, revision: 'default-logo-revision' }
 ] as const
 
 const client = (id: string): TestClient => ({
@@ -161,6 +163,7 @@ const requestLike = (url: string, mode: string, accept = 'text/html'): Request =
     method: 'GET',
     mode,
     url,
+    signal: new AbortController().signal,
     headers: new Headers({ Accept: accept })
   }) as unknown as Request
 
@@ -171,7 +174,7 @@ const defineGlobal = (name: string, value: unknown, originals: Map<string, Prope
 
 const createHarness = async (options: {
   shell?: string
-  fetch?: (url: string) => Response | Promise<Response>
+  fetch?: (url: string, init?: RequestInit) => Response | Promise<Response>
   onSkipWaiting?: () => void | Promise<void>
 } = {}): Promise<WorkerHarness> => {
   const originals = new Map<string, PropertyDescriptor | undefined>()
@@ -190,7 +193,7 @@ const createHarness = async (options: {
   let skipWaitingCalls = 0
   const networkFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-    if (options.fetch) return await options.fetch(url)
+    if (options.fetch) return await options.fetch(url, init)
     if (url === SHELL_URL) return new Response(options.shell ?? shell())
     if (url === JS_URL) return new Response('export default 1')
     if (url === CSS_URL) return new Response('body { color: black; }')
@@ -410,6 +413,47 @@ describe('service worker lifecycle', () => {
     } finally { harness.restore() }
   })
 
+  it('bypasses HTTP-cached online documents and preserves every real server response', async () => {
+    let status = 200
+    const harness = await createHarness({ fetch: async (_url, init) => {
+      expect(init?.cache).toBe('no-store')
+      expect(init?.signal).toBeInstanceOf(AbortSignal)
+      return new Response('server document', { status })
+    } })
+    try {
+      for (status of [200, 401, 403, 404, 500, 503]) {
+        const response = await harness.dispatchFetch(requestLike(`${ORIGIN}/en/guide`, 'navigate'))
+        expect(response.status).toBe(status)
+        expect(await response.text()).toBe('server document')
+      }
+    } finally { harness.restore() }
+  })
+
+  it('opens the neutral shell when an allowlisted navigation stalls and cancels its network request', async () => {
+    vi.useFakeTimers()
+    const deadline = vi.spyOn(AbortSignal, 'timeout').mockImplementation(milliseconds => {
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(new DOMException('Deadline exceeded', 'TimeoutError')), milliseconds)
+      return controller.signal
+    })
+    let stalled = false
+    let cancelled = false
+    const harness = await createHarness({ fetch: async (url, init) => {
+      if (!stalled) return new Response(url === SHELL_URL ? shell() : 'asset')
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => { cancelled = true; reject(init.signal?.reason) }, { once: true })
+      })
+    } })
+    try {
+      await harness.dispatchInstall()
+      stalled = true
+      const navigation = harness.dispatchFetch(requestLike(`${ORIGIN}/en/guide`, 'navigate'))
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(await (await navigation).text()).toContain('<body>offline</body>')
+      expect(cancelled).toBe(true)
+    } finally { harness.restore(); deadline.mockRestore(); vi.useRealTimers() }
+  })
+
   it('opens the cached offline library directly without allowing protected or non-navigation fallbacks', async () => {
     let online = true
     const harness = await createHarness({
@@ -433,6 +477,47 @@ describe('service worker lifecycle', () => {
     } finally {
       harness.restore()
     }
+  })
+
+  it('serves only the configured verified managed PNG from the separate optional branding cache', async () => {
+    let online = true
+    const harness = await createHarness({ fetch: async url => {
+      if (!online) throw new Error('Network is offline')
+      return new Response(url === SHELL_URL ? shell() : 'asset')
+    } })
+    try {
+      const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])
+      const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('')
+      const path = `/_site-logo/${hash}/logo.png`
+      expect(await rememberOfflineLogo(path, ORIGIN, async () => new Response(bytes, { headers: { 'Content-Type': 'image/png' } }))).toBe(true)
+      await harness.dispatchInstall()
+      await harness.dispatchActivate()
+      expect(harness.caches.stores.has(OFFLINE_BRANDING_CACHE_NAME)).toBe(true)
+      online = false
+      const request = { ...requestLike(`${ORIGIN}${path}`, 'no-cors', 'image/png'), destination: 'image' } as Request
+      const response = await harness.dispatchFetch(request)
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
+      expect(await (await harness.dispatchFetch(requestLike(`${ORIGIN}${OFFLINE_DEFAULT_LOGO_PATH}`, 'no-cors', 'image/svg+xml'))).text()).toBe('asset')
+      for (const invalid of [`${ORIGIN}${path}?token=x`, `${ORIGIN}${path.replace('logo.png', 'effect.png')}`,
+        `${ORIGIN}/uploads/private.png`, `https://other.test${path}`, `${ORIGIN}/_assets/svg/other.svg`]) {
+        await expect(harness.dispatchFetch({ ...requestLike(invalid, 'no-cors', 'image/png'), destination: 'image' } as Request)).rejects.toThrow('Network is offline')
+      }
+      await expect(harness.dispatchFetch(requestLike(`${ORIGIN}${path}`, 'cors', 'image/png'))).rejects.toThrow('Network is offline')
+    } finally { harness.restore() }
+  })
+
+  it('uses credential-free network fallback for uncached managed logo images without caching the response', async () => {
+    const path = `/_site-logo/${'a'.repeat(64)}/logo.png`
+    const harness = await createHarness({ fetch: async (_url, init) => {
+      expect(init?.credentials).toBe('omit')
+      expect(init?.redirect).toBe('error')
+      return new Response('network image')
+    } })
+    try {
+      const request = { ...requestLike(`${ORIGIN}${path}`, 'no-cors', 'image/png'), destination: 'image' } as Request
+      expect(await (await harness.dispatchFetch(request)).text()).toBe('network image')
+      expect(harness.caches.stores.get(OFFLINE_BRANDING_CACHE_NAME)?.entries.size).toBe(0)
+    } finally { harness.restore() }
   })
 
   it.each(['fetch', 'put'] as const)('preserves the prior complete cache and removes a failed %s candidate', async failure => {

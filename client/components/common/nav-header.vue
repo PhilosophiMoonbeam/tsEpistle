@@ -26,6 +26,7 @@
     v-row.nav-header-layout(:gap='0')
       v-col.nav-header-brand-col(cols='5', md='4')
         .nav-header-inner.nav-header-brand
+          slot(name='navigationToggle', v-if='$vuetify.display.smAndDown')
           slot(name='mobileBrand', v-if='$slots.mobileBrand && $vuetify.display.smAndDown')
           a.nav-header-logo(
             v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp'

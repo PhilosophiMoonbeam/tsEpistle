@@ -196,7 +196,7 @@ const offlineContentSecurityPolicy = (request: Request, html: string, host: unkn
     `script-src ${scripts.length > 0 ? scripts.join(' ') : "'none'"}`,
     `style-src ${styles.length > 0 ? styles.join(' ') : "'none'"}`,
     "connect-src 'self'",
-    "img-src 'none'",
+    `img-src ${cspSource(origin, '/_site-logo/')} ${cspSource(origin, '/_assets/svg/icon-tsepistle.svg')}`,
     `font-src ${cspSource(origin, '/_assets/assets/')} data:`,
     "media-src 'none'",
     "object-src 'none'",

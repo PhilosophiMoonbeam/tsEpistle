@@ -222,11 +222,11 @@ describe('generated PWA tombstone lifecycle', () => {
     expect(harness.clients[0]?.navigations).toHaveLength(0)
     expect(harness.clients[1]?.navigations).toHaveLength(0)
   })
-  it('removes only owned precache caches during a successful retirement cleanup', async () => {
+  it('removes only owned precache and public branding caches during retirement cleanup', async () => {
     const source = await generatedTombstone()
     const ownedOne = 'tsepistle-pwa-precache-v1-0123456789abcdef'
     const ownedTwo = 'tsepistle-pwa-precache-v1-fedcba9876543210'
-    const harness = createRuntime(source, { cacheNames: [ownedOne, ownedTwo, 'unrelated-cache'] })
+    const harness = createRuntime(source, { cacheNames: [ownedOne, ownedTwo, 'tsepistle-pwa-branding-v1', 'tsepistle-pwa-branding-v2', 'unrelated-cache'] })
     const activation = harness.dispatch('activate')
     await vi.waitFor(() => expect(harness.clients[0]?.messages.length).toBeGreaterThan(1))
     const request = harness.clients[0]?.messages.find(message => (message as { type?: unknown }).type === 'PWA_RELOAD_SAFETY_REQUEST') as {
@@ -241,6 +241,8 @@ describe('generated PWA tombstone lifecycle', () => {
     await activation
     expect(harness.log).toContain(`cache-delete:${ownedOne}`)
     expect(harness.log).toContain(`cache-delete:${ownedTwo}`)
+    expect(harness.log).toContain('cache-delete:tsepistle-pwa-branding-v1')
+    expect(harness.log).not.toContain('cache-delete:tsepistle-pwa-branding-v2')
     expect(harness.log).not.toContain('cache-delete:unrelated-cache')
   })
 })
