@@ -135,6 +135,7 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
         },
         { req, res }
       )
+      clearFederatedLoginCookie(res, providerKey)
       res.set('Cache-Control', 'no-store')
       res.cookie('jwt', authResult.jwt, commonHelper.getCookieOpts())
 
@@ -158,9 +159,8 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
         }
       }
     } catch (err) {
+      if (!res.headersSent) clearFederatedLoginCookie(res, providerKey)
       next(err)
-    } finally {
-      clearFederatedLoginCookie(res, providerKey)
     }
   })
 

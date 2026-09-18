@@ -176,15 +176,39 @@ describe('HTML auth controller', () => {
   it('clears the federation cookie after a correlated callback terminal outcome', async () => {
     await loadController()
     const callbackRoute = express.__router.all.mock.calls.find(([path]) => path === '/login/:strategy/callback')
-    const request = { method: 'GET', params: { strategy: 'google' }, query: { state: 'state-a', code: 'code-a' }, cookies: {} }
-    const response = { set: vi.fn(), cookie: vi.fn(), clearCookie: vi.fn(), redirect: vi.fn() }
+    const request = { method: 'GET', params: { strategy: 'dropbox' }, query: { state: 'state-a', code: 'code-a' }, cookies: {} }
+    const response = {
+      headersSent: false,
+      set: vi.fn(),
+      cookie: vi.fn(),
+      clearCookie: vi.fn(() => {
+        if (response.headersSent) throw new Error('Cannot set headers after they are sent to the client')
+      }),
+      redirect: vi.fn(() => { response.headersSent = true })
+    }
     const next = vi.fn()
 
     await callbackRoute[1](request, response, next)
 
-    expect(global.WIKI.models.users.login).toHaveBeenCalledWith({ strategy: 'google' }, { req: request, res: response })
+    expect(global.WIKI.models.users.login).toHaveBeenCalledWith({ strategy: 'dropbox' }, { req: request, res: response })
     expect(response.clearCookie).toHaveBeenCalledTimes(1)
+    expect(response.clearCookie.mock.invocationCallOrder[0]).toBeLessThan(response.redirect.mock.invocationCallOrder[0])
     expect(next).not.toHaveBeenCalled()
+  })
+
+  it('clears the federation cookie before forwarding a failed correlated callback', async () => {
+    const loginError = new Error('provider rejected login')
+    global.WIKI.models.users.login.mockRejectedValueOnce(loginError)
+    await loadController()
+    const callbackRoute = express.__router.all.mock.calls.find(([path]) => path === '/login/:strategy/callback')
+    const request = { method: 'GET', params: { strategy: 'dropbox' }, query: { state: 'state-a', code: 'code-a' }, cookies: {} }
+    const response = { headersSent: false, clearCookie: vi.fn() }
+    const next = vi.fn()
+
+    await callbackRoute[1](request, response, next)
+
+    expect(response.clearCookie).toHaveBeenCalledTimes(1)
+    expect(next).toHaveBeenCalledWith(loginError)
   })
 
 
