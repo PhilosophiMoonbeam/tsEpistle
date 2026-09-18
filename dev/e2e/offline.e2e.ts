@@ -710,6 +710,8 @@ test('offline Browse immediately lists saved copies and recovers without an onli
   if ((page.viewportSize()?.width ?? 1280) < 960) await page.getByRole('button', { name: /open navigation/i }).click()
   await expect(navigation.locator('.offline-navigation__pages a')).toHaveCount(2)
   await expect(navigation.locator('a[aria-current="page"]')).toHaveAttribute('href', first.snapshot.canonicalPath)
+  // Visibility precedes the end of the mobile drawer's slide transition.
+  await expect.poll(async () => (await navigation.boundingBox())?.x ?? -1).toBeGreaterThanOrEqual(0)
   await expectResponsiveLayout(page, 'saved-only offline Browse')
 
   const settings = await page.context().newPage()
