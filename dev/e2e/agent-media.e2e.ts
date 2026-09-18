@@ -204,8 +204,10 @@ test('Agent attaches a Wiki asset through a keyboard-accessible private-copy pic
   denyAssets = false
   await picker.getByRole('button', { name: 'Try again', exact: true }).click()
   await expect(picker.getByRole('button', { name: 'Team', exact: true })).toBeVisible()
+  await picker.getByRole('button', { name: 'Team', exact: true }).click()
+  await expect(picker.getByRole('button', { name: 'Attach team-diagram.png', exact: true })).toBeVisible()
   const screenshot = test.info().outputPath('agent-wiki-asset-picker.png')
-  await page.screenshot({ path: screenshot })
+  await picker.locator('.agent-asset-picker').screenshot({ path: screenshot })
   await test.info().attach('agent-wiki-asset-picker', { path: screenshot, contentType: 'image/png' })
   await picker.getByRole('button', { name: 'Close asset picker', exact: true }).click()
   fixture.assertNoUnexpectedRequests()

@@ -18,7 +18,7 @@
             <li v-for="folder in folders" :key="`folder-${folder.id}`"><button class="agent-asset-picker__row" type="button" :disabled="busy" @click="openFolder(folder)"><v-icon icon="mdi-folder-outline" aria-hidden="true" /><span class="agent-asset-picker__name">{{ folder.name }}</span><v-icon icon="mdi-chevron-right" size="18" aria-hidden="true" /></button></li>
             <li v-for="asset in visibleAssets" :key="asset.id"><button class="agent-asset-picker__row" type="button" :disabled="busy || Boolean(unavailable(asset))" :aria-label="`Attach ${asset.filename}`" @click="select(asset)"><v-icon :icon="mimeType(asset) === 'application/pdf' ? 'mdi-file-pdf-box' : 'mdi-image-outline'" aria-hidden="true" /><span class="agent-asset-picker__name">{{ asset.filename }}<small v-if="unavailable(asset)">{{ unavailable(asset) }}</small></span><span class="agent-asset-picker__size">{{ formatSize(asset.fileSize) }}</span></button></li>
           </ul>
-          <p v-if="!visibleAssets.length" class="agent-asset-picker__state" role="status">{{ query.trim() ? 'No matching images or PDFs in this folder.' : 'No supported images or PDFs in this folder.' }}</p>
+          <p v-if="!visibleAssets.length" class="agent-asset-picker__state" role="status">{{ query.trim() ? 'No matching images or PDFs in this folder.' : folders.length ? 'Open a folder to find images and PDFs.' : 'No supported images or PDFs in this folder.' }}</p>
         </template>
       </div>
       <footer class="agent-asset-picker__footer"><span v-if="busy" role="status">Attaching a private copy…</span><span v-else>{{ imageOnly ? 'PNG, JPEG or WebP · up to 10 MB' : 'Images up to 10 MB · PDFs up to 250 MB' }}</span><v-btn variant="text" size="small" @click="close">Cancel</v-btn></footer>
@@ -105,7 +105,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort() })
 .agent-asset-picker__breadcrumbs button { white-space: nowrap; color: rgb(var(--v-theme-primary)); }
 .agent-asset-picker__breadcrumbs button:disabled { color: inherit; opacity: .65; }
 .agent-asset-picker__search { display: flex; align-items: center; gap: 8px; margin: 0 20px 12px; border: 1px solid var(--wiki-surface-border); border-radius: 10px; padding: 9px 12px; }
-.agent-asset-picker__search input { width: 100%; min-width: 0; outline: none; font-size: .875rem; }
+.agent-asset-picker__search input { appearance: none; border: 0; border-radius: 0; box-shadow: none; background: transparent; color: inherit; width: 100%; min-width: 0; outline: none; font-size: .875rem; }
 .agent-asset-picker__search:focus-within { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
 .agent-asset-picker__body { min-height: 170px; overflow-y: auto; padding: 0 12px; }
 .agent-asset-picker__items { list-style: none; padding: 0; margin: 0; }
@@ -118,6 +118,8 @@ onBeforeUnmount(() => { disposed = true; controller?.abort() })
 .agent-asset-picker__state { text-align: center; padding: 25px 12px; font-size: .85rem; opacity: .75; }
 .agent-asset-picker__footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-top: 1px solid var(--wiki-surface-border); padding: 12px 20px; font-size: .75rem; }
 .agent-asset-picker__error { color: rgb(var(--v-theme-error)); padding: 0 20px 16px; font-size: .8rem; margin: 0; }
+.agent-asset-picker button { appearance: none; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.agent-asset-picker button:disabled { cursor: default; }
 .agent-asset-picker button:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
 @media (prefers-reduced-transparency: reduce) { .agent-asset-picker { background: var(--wiki-surface-raised, rgb(var(--v-theme-surface))); backdrop-filter: none; } }
 @media (max-width: 480px) { .agent-asset-picker__header { padding: 16px 16px 12px; } .agent-asset-picker__footer { padding: 12px 16px; } }
