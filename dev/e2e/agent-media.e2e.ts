@@ -114,7 +114,7 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
   const fileInput = agent.locator('input[type=file]')
   const attach = agent.getByRole('button', { name: 'Attach images or PDFs', exact: true })
   await expectLocatorWithinViewport(attach, 'Agent attachment control')
-  await fileInput.setInputFiles({ name: 'reference.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.7\nfixture') })
+  await fileInput.setInputFiles({ name: 'reference.pdf', mimeType: 'application/pdf', buffer: Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(11 * 1024 * 1024)]) })
   await expect(agent.getByRole('button', { name: 'Remove reference.pdf', exact: true })).toBeVisible()
   await agent.getByRole('button', { name: 'Remove reference.pdf', exact: true }).click()
   await expect.poll(() => removed.length).toBe(1)

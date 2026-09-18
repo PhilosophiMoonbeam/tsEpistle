@@ -1,11 +1,12 @@
 import sharp from 'sharp'
+import { AGENT_ATTACHMENT_MAX_BYTES, AGENT_PDF_ATTACHMENT_MAX_BYTES } from '../../shared/agents/media-limits.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { AgentMediaView } from '../../shared/agents/contracts.ts'
 import { AgentRepositoryError, getOwnedAgentSession } from './repository.ts'
 import { AgentProviderAdapterConfigSchema } from './providers/registry.ts'
 
-export const AGENT_MEDIA_MAX_BYTES = 10 * 1024 * 1024
+export const AGENT_MEDIA_MAX_BYTES = AGENT_PDF_ATTACHMENT_MAX_BYTES
 export const AGENT_MEDIA_OWNER_MAX_BYTES = 100 * 1024 * 1024
 export const AGENT_MEDIA_MAX_ATTACHMENTS = 4
 export interface AgentMediaPayload {
@@ -33,11 +34,12 @@ export const projectAgentMedia = (row: Pick<AgentMediaRow, 'id' | 'kind' | 'file
   available: row.expiresAt === null || new Date(row.expiresAt).valueOf() > Date.now()
 })
 const invalid = (): never => {
-  throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Choose a supported image, PDF, or audio recording up to 10 MB.', 400)
+  throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Choose a PDF up to 100 MB, or a supported image or audio recording up to 10 MB.', 400)
 }
 export const validateAgentMedia = (payload: Buffer, declaredType: string): string => {
   if (payload.length === 0 || payload.length > AGENT_MEDIA_MAX_BYTES) return invalid()
   const type = declaredType.split(';')[0]!.toLowerCase().trim()
+  if (type !== 'application/pdf' && payload.length > AGENT_ATTACHMENT_MAX_BYTES) return invalid()
   const ascii = (start: number, end: number) => payload.subarray(start, end).toString('ascii')
   const matches =
     type === 'image/png'

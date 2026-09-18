@@ -28,7 +28,7 @@ import {
   isGeminiInteractionsModel,
   preserveGeminiInteractionState
 } from './gemini-interactions.ts'
-import { createGeminiMediaTransport, GEMINI_MEDIA_INPUT_LIMIT, GEMINI_MEDIA_OUTPUT_LIMIT } from './gemini-media.ts'
+import { createGeminiMediaTransport, GEMINI_MEDIA_INPUT_LIMIT, GEMINI_MEDIA_OUTPUT_LIMIT, GEMINI_PDF_INPUT_LIMIT } from './gemini-media.ts'
 import { createOpenResponsesFetch } from './openresponses.ts'
 import {
   AgentProviderAdapterConfigSchema,
@@ -698,7 +698,8 @@ const geminiMediaEndpointAllowed = (base: URL, url: URL, init?: RequestInit): bo
   const body = init?.body
   if (body !== undefined && body !== null && typeof body !== 'string' && !(body instanceof Uint8Array)) return false
   const length = typeof body === 'string' ? Buffer.byteLength(body) : body instanceof Uint8Array ? body.byteLength : 0
-  if (length > GEMINI_MEDIA_INPUT_LIMIT) return false
+  const pdfUpload = url.pathname === '/upload/v1beta/files' && new Headers(init?.headers).get('content-type') === 'application/pdf'
+  if (length > (pdfUpload ? GEMINI_PDF_INPUT_LIMIT : GEMINI_MEDIA_INPUT_LIMIT)) return false
   if (url.pathname === '/v1beta/interactions') return method === 'POST' && !url.search
   if (/^\/v1beta\/models\/gemini-3(?:\.[0-9]+)?(?:-[a-z0-9][a-z0-9._-]*)?:countTokens$/u.test(url.pathname)) return method === 'POST' && !url.search
   if (/^\/v1beta\/files\/[A-Za-z0-9_-]{1,128}$/u.test(url.pathname)) return ['GET', 'DELETE'].includes(method) && !url.search && length === 0

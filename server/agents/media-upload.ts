@@ -8,7 +8,7 @@ export class AgentMediaUploadGate {
 
   async run<T>(ownerId: number, operation: () => Promise<T>): Promise<T> {
     const ownerActive = this.#owners.get(ownerId) ?? 0
-    if (this.#active >= 8 || ownerActive >= 2)
+    if (this.#active >= 2 || ownerActive >= 1)
       throw new AgentRepositoryError('AGENT_MEDIA_UPLOAD_BUSY', 'Uploads are busy. Wait for an attachment to finish and try again.', 429)
     this.#active += 1
     this.#owners.set(ownerId, ownerActive + 1)
@@ -41,13 +41,13 @@ export const parseAgentMediaUpload = (parse: RequestHandler, req: Request, res: 
     const timeout = setTimeout(() => {
       complete(new AgentRepositoryError('AGENT_MEDIA_UPLOAD_TIMEOUT', 'Attachment upload timed out. Try again.', 408))
       req.destroy()
-    }, 30_000)
+    }, 120_000)
     timeout.unref()
     signal.addEventListener('abort', abort, { once: true })
     if (signal.aborted) return abort()
     try {
       parse(req, res, error =>
-        complete(error ? new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Choose one supported attachment up to 10 MB.', 400) : undefined)
+        complete(error ? new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Choose one PDF up to 100 MB, or an image or recording up to 10 MB.', 400) : undefined)
       )
     } catch (error) {
       complete(error)

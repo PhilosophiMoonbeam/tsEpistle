@@ -64,7 +64,7 @@ LABEL org.opencontainers.image.created="${WIKI_BUILD_DATE}" \
       io.tsepistle.upstream-base="${WIKI_UPSTREAM_BASE}"
 ENV NODE_ENV=production
 
-RUN apk add --no-cache 'musl>=1.2.5' libstdc++ bash curl git openssh gnupg && \
+RUN apk add --no-cache 'musl>=1.2.5' libstdc++ bash curl git openssh gnupg py3-pikepdf && \
     mkdir -p /wiki /logs /wiki/data/content /wiki/data/repo && \
     chown -R bun:bun /wiki /logs
 WORKDIR /wiki

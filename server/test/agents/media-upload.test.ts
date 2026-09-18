@@ -3,11 +3,10 @@ import { describe, expect, it } from '../bun-test.mts'
 import { AgentMediaUploadGate, parseAgentMediaUpload } from '../../agents/media-upload.ts'
 
 describe('Agent media upload admission', () => {
-  it('rejects a third concurrent owner upload before its parser can allocate memory, then releases capacity', async () => {
+  it('rejects a second concurrent owner upload before its parser can allocate memory, then releases capacity', async () => {
     const gate = new AgentMediaUploadGate()
     const first = Promise.withResolvers<void>()
-    const second = Promise.withResolvers<void>()
-    const running = [gate.run(7, () => first.promise), gate.run(7, () => second.promise)]
+    const running = gate.run(7, () => first.promise)
     let invoked = false
     await expect(
       gate.run(7, async () => {
@@ -16,18 +15,16 @@ describe('Agent media upload admission', () => {
     ).rejects.toMatchObject({ status: 429, code: 'AGENT_MEDIA_UPLOAD_BUSY' })
     expect(invoked).toBe(false)
     first.resolve()
-    await running[0]
+    await running
     await gate.run(7, async () => {
       invoked = true
     })
     expect(invoked).toBe(true)
-    second.resolve()
-    await running[1]
   })
 
-  it('bounds all owners to eight uploads and releases failed operations', async () => {
+  it('bounds all owners to two uploads and releases failed operations', async () => {
     const gate = new AgentMediaUploadGate()
-    const pending = Array.from({ length: 8 }, () => Promise.withResolvers<void>())
+    const pending = Array.from({ length: 2 }, () => Promise.withResolvers<void>())
     const running = pending.map((item, index) => gate.run(index, () => item.promise))
     await expect(gate.run(100, async () => undefined)).rejects.toMatchObject({ status: 429 })
     pending.forEach(item => {
@@ -57,7 +54,7 @@ describe('Agent media upload admission', () => {
       callback = next
     }
     const other = Promise.withResolvers<void>()
-    const otherRun = gate.run(7, () => other.promise)
+    const otherRun = gate.run(8, () => other.promise)
     const abortedRun = gate.run(7, () => parseAgentMediaUpload(parser, request, response, controller.signal))
     controller.abort()
     await expect(abortedRun).rejects.toMatchObject({ code: 'AGENT_MEDIA_UPLOAD_ABORTED' })

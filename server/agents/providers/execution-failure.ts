@@ -1,4 +1,5 @@
 import { AgentRepositoryError } from '../repository.ts'
+import { AgentPdfPreparationError, AGENT_PDF_ERRORS, type AgentPdfErrorCode } from '../pdf-preparation.ts'
 import { AgentProviderAttemptError } from './factory.ts'
 import type { AgentProviderTransportKind } from './registry.ts'
 
@@ -17,6 +18,10 @@ export const AGENT_EXECUTION_FAILURE_STAGES = [
 export type AgentExecutionFailureStage = (typeof AGENT_EXECUTION_FAILURE_STAGES)[number]
 
 export type AgentExecutionFailureCode =
+  | AgentPdfErrorCode
+  | 'AGENT_PDF_PAGE_LIMIT'
+  | 'AGENT_MEDIA_PART_LIMIT'
+  | 'AGENT_MEDIA_CONTEXT_LIMIT'
   | 'AGENT_CONTEXT_TOO_LARGE'
   | 'INVALID_PROVIDER_REQUEST'
   | 'INVALID_PROVIDER_RESPONSE'
@@ -76,6 +81,10 @@ export interface AgentExecutionFailureDiagnostics {
   readonly transportKind?: AgentProviderTransportKind
 }
 const SAFE_REPOSITORY_CODES: Readonly<Record<string, true>> = {
+  ...Object.fromEntries(Object.keys(AGENT_PDF_ERRORS).map(code => [code, true as const])),
+  AGENT_PDF_PAGE_LIMIT: true,
+  AGENT_MEDIA_PART_LIMIT: true,
+  AGENT_MEDIA_CONTEXT_LIMIT: true,
   AGENT_CONTEXT_TOO_LARGE: true,
   INVALID_PROVIDER_REQUEST: true,
   INVALID_PROVIDER_RESPONSE: true,
@@ -121,7 +130,17 @@ const SAFE_STAGES: Readonly<Record<string, true>> = {
 }
 
 const SAFE_MESSAGE = 'Agent inference failed'
+const MEDIA_MESSAGES: Readonly<Record<string, string>> = {
+  ...Object.fromEntries(Object.entries(AGENT_PDF_ERRORS).map(([code, detail]) => [code, detail.message])),
+  AGENT_PDF_PAGE_LIMIT: 'The PDFs in this conversation exceed Google’s 1,000-page request limit. Start a new conversation with fewer pages.',
+  AGENT_MEDIA_PART_LIMIT: 'The attachments require too many document parts. Start a new conversation with fewer or smaller files.',
+  AGENT_MEDIA_CONTEXT_LIMIT: 'The attached files exceed this model’s context limit. Start a new conversation with fewer pages or smaller files.'
+}
 const SAFE_STATUS_BY_CODE: Readonly<Record<string, number>> = {
+  ...Object.fromEntries(Object.entries(AGENT_PDF_ERRORS).map(([code, detail]) => [code, detail.status])),
+  AGENT_PDF_PAGE_LIMIT: 413,
+  AGENT_MEDIA_PART_LIMIT: 413,
+  AGENT_MEDIA_CONTEXT_LIMIT: 413,
   AGENT_CONTEXT_TOO_LARGE: 413,
   AGENT_TURN_LIMIT: 409,
   AGENT_EVIDENCE_INVALID: 409,
@@ -217,7 +236,7 @@ export class AgentExecutionFailure extends Error {
 
   constructor(code: AgentExecutionFailureCode, stage: AgentExecutionFailureStage, providerStatus?: number, diagnostics?: unknown) {
     const safeCode = SAFE_CODES[code] === true ? code : 'PROVIDER_REQUEST_FAILED'
-    super(SAFE_MESSAGE)
+    super(MEDIA_MESSAGES[safeCode] ?? SAFE_MESSAGE)
     this.name = 'AgentExecutionFailure'
     this.code = safeCode
     this.stage = safeStage(stage)
@@ -268,6 +287,7 @@ export const classifyAgentExecutionFailure = (error: unknown, stage: AgentExecut
   while (queue.length > 0) {
     const current = queue.shift()!
     if (current.value instanceof AgentExecutionFailure) return current.value
+    if (current.value instanceof AgentPdfPreparationError) return new AgentExecutionFailure(current.value.code, stage)
     if (current.value instanceof AgentRepositoryError) {
       const code = SAFE_REPOSITORY_CODES[current.value.code] === true ? (current.value.code as AgentExecutionFailureCode) : 'PROVIDER_REQUEST_FAILED'
       return new AgentExecutionFailure(code, stage, undefined, attachedDiagnostics(current.value))

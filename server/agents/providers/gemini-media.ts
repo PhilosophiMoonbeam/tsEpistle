@@ -5,6 +5,7 @@ import { AgentRepositoryError } from '../repository.ts'
 import type { AgentProviderFetch } from './factory.ts'
 
 export const GEMINI_MEDIA_INPUT_LIMIT = 10 * 1_024 * 1_024
+export const GEMINI_PDF_INPUT_LIMIT = 48_000_000
 export const GEMINI_MEDIA_OUTPUT_LIMIT = 16 * 1_024 * 1_024
 export const GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image'
 export const GEMINI_TRANSCRIPTION_MODEL = 'gemini-3.5-transcribe'
@@ -107,7 +108,7 @@ const validateInput = (input: GeminiMediaInput): void => {
   if (
     !(input.bytes instanceof Uint8Array) ||
     input.bytes.byteLength === 0 ||
-    input.bytes.byteLength > GEMINI_MEDIA_INPUT_LIMIT ||
+    input.bytes.byteLength > (input.mimeType === 'application/pdf' ? GEMINI_PDF_INPUT_LIMIT : GEMINI_MEDIA_INPUT_LIMIT) ||
     (!IMAGE_TYPES.has(input.mimeType) && !AUDIO_TYPES.has(input.mimeType) && input.mimeType !== 'application/pdf') ||
     (IMAGE_TYPES.has(input.mimeType) && !validRaster(input.bytes, input.mimeType)) ||
     (input.mimeType === 'application/pdf' && Buffer.from(input.bytes).toString('ascii', 0, 5) !== '%PDF-') ||

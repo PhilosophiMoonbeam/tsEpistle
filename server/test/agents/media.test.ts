@@ -91,7 +91,10 @@ describe('private Agent media', () => {
     expect(() => validateAgentMedia(Buffer.from('<svg/>'), 'image/svg+xml')).toThrow()
     expect(() => validateAgentMedia(Buffer.from('<html>'), 'image/png')).toThrow()
     expect(() => validateAgentMedia(Buffer.alloc(AGENT_MEDIA_MAX_BYTES + 1), 'application/pdf')).toThrow()
-    expect(validateAgentMedia(Buffer.from('%PDF-1.7'), 'application/pdf')).toBe('application/pdf')
+    const large = Buffer.alloc(11 * 1024 * 1024)
+    large.write('%PDF-1.7')
+    expect(validateAgentMedia(large, 'application/pdf')).toBe('application/pdf')
+    expect(() => validateAgentMedia(large, 'image/png')).toThrow()
     expect(mediaFilename('a/\nb.png')).toBe('a__b.png')
   })
   it('keeps bytes private to the session owner and omits payload/provider handles from projections', async () => {

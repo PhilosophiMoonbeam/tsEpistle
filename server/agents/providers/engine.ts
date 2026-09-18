@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 
 import type { AxChatRequest, AxChatResponse, AxChatResponseResult, AxFunctionJSONSchema } from '@ax-llm/ax'
 import {
@@ -14,6 +15,7 @@ import type { AgentEngine, AgentEngineRequest, AgentEngineResult, AgentEngineSin
 import { ACTION_CATALOG } from '../actions/catalog.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { AgentRepositoryError } from '../repository.ts'
+import { prepareAgentPdf } from '../pdf-preparation.ts'
 import { WIKI_AGENT_SOUL } from '../soul.ts'
 import {
   agentProviderCostMicros,
@@ -1716,10 +1718,12 @@ const safeUsageAddition = (left: number, right: number, label: string): number =
 export class AxAgentEngine implements AgentEngine {
   readonly #factory: AgentProviderFactory
   readonly #actions: AgentActionSessionProvider | undefined
+  readonly #preparePdf: typeof prepareAgentPdf
 
-  constructor(factory: AgentProviderFactory, actions?: AgentActionSessionProvider) {
+  constructor(factory: AgentProviderFactory, actions?: AgentActionSessionProvider, preparePdf: typeof prepareAgentPdf = prepareAgentPdf) {
     this.#factory = factory
     this.#actions = actions
+    this.#preparePdf = preparePdf
   }
 
   async #authorizeMedia(request: AgentEngineRequest): Promise<void> {
@@ -1831,33 +1835,80 @@ export class AxAgentEngine implements AgentEngine {
     await this.#authorizeMedia(request)
     const provider = await this.#factory.createMedia(request.run.providerProfileVersionId)
     if (!provider.config.attachments) throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Attachments are disabled', 403)
-    const uploaded = new Map<string, { name: string; uri: string }>()
+    type Attachment = NonNullable<(typeof request.messages)[number]['attachments']>[number]
+    type PreparedPdf = Awaited<ReturnType<typeof prepareAgentPdf>>
+    type ExpandedPart = { type: 'text'; text: string } | { type: 'file'; fileUri: string; mimeType: string; filename: string }
+    const sources = new Map<string, { file: Attachment; pdf?: PreparedPdf }>()
+    const expanded = new Map<string, ExpandedPart[]>()
+    const uploaded: { name: string; uri: string }[] = []
     const cleanup = async (): Promise<void> => {
-      await Promise.allSettled([...uploaded.values()].map(file => provider.transport.delete(file.name, AbortSignal.timeout(5_000))))
+      await Promise.allSettled(uploaded.map(file => provider.transport.delete(file.name, AbortSignal.timeout(5_000))))
     }
     try {
+      // Validate and prepare the complete prompt before sending any document to Google.
+      // Repeated references share preparation/uploads but count toward each request occurrence.
+      let totalPages = 0
+      let expandedBlocks = 0
       for (const reference of references) {
         if (reference.type !== 'file' || !('fileUri' in reference) || !reference.fileUri.startsWith('wiki-media:'))
           throw new AgentRepositoryError('INVALID_MEDIA_INPUT', 'Attachment reference is invalid', 400)
-        if (uploaded.has(reference.fileUri)) continue
         const id = reference.fileUri.slice('wiki-media:'.length)
         const file = request.messages.flatMap(message => message.attachments ?? []).find(item => item.id === id)
         if (!file || file.mimeType !== reference.mimeType || !['application/pdf', 'image/png', 'image/jpeg', 'image/webp'].includes(file.mimeType))
           throw new AgentRepositoryError('INVALID_MEDIA_INPUT', 'Attachment is unavailable', 400)
-        await this.#authorizeMedia(request)
-        uploaded.set(
-          reference.fileUri,
-          await provider.transport.upload({ bytes: file.payload, mimeType: file.mimeType, displayName: file.filename.slice(0, 128) }, request.signal)
-        )
+        let source = sources.get(reference.fileUri)
+        if (!source) {
+          request.signal.throwIfAborted()
+          source = file.mimeType === 'application/pdf' ? { file, pdf: await this.#preparePdf(file.payload, request.signal) } : { file }
+          sources.set(reference.fileUri, source)
+        }
+        totalPages += source.pdf?.pageCount ?? 0
+        expandedBlocks += source.pdf && source.pdf.parts.length > 1 ? source.pdf.parts.length * 2 : 1
+        if (totalPages > 1_000)
+          throw new AgentRepositoryError('AGENT_PDF_PAGE_LIMIT', 'The attached PDFs exceed 1,000 pages in this request. Use fewer documents or pages.', 413)
+        if (expandedBlocks > 32)
+          throw new AgentRepositoryError('AGENT_MEDIA_PART_LIMIT', 'The attachments require too many document parts. Use fewer files in this request.', 413)
       }
-      const contents = references.map(reference => {
+      for (const [reference, source] of sources) {
+        const parts: ExpandedPart[] = []
+        if (source.pdf) {
+          const split = source.pdf.parts.length > 1
+          for (const [index, part] of source.pdf.parts.entries()) {
+            const bytes = await readFile(part.path, { signal: request.signal })
+            await this.#authorizeMedia(request)
+            const filename = split ? `${source.file.filename} (part ${index + 1})` : source.file.filename
+            const remote = await provider.transport.upload({ bytes, mimeType: 'application/pdf', displayName: filename.slice(0, 128) }, request.signal)
+            uploaded.push(remote)
+            if (split)
+              parts.push({
+                type: 'text',
+                text: `Source document ${JSON.stringify(source.file.filename)}: part ${index + 1} of ${source.pdf.parts.length}, original pages ${part.startPage}–${part.endPage} of ${source.pdf.pageCount}. Read these consecutive parts as one document and cite original page numbers.`
+              })
+            parts.push({ type: 'file', fileUri: remote.uri, mimeType: 'application/pdf', filename })
+          }
+        } else {
+          await this.#authorizeMedia(request)
+          const remote = await provider.transport.upload(
+            { bytes: source.file.payload, mimeType: source.file.mimeType, displayName: source.file.filename.slice(0, 128) },
+            request.signal
+          )
+          uploaded.push(remote)
+          parts.push({ type: 'file', fileUri: remote.uri, mimeType: source.file.mimeType, filename: source.file.filename })
+        }
+        expanded.set(reference, parts)
+      }
+      const contents = references.flatMap(reference => {
         if (reference.type !== 'file' || !('fileUri' in reference))
           throw new AgentRepositoryError('INVALID_MEDIA_INPUT', 'Attachment reference is invalid', 400)
-        return {
-          type: reference.mimeType === 'application/pdf' ? ('document' as const) : ('image' as const),
-          uri: uploaded.get(reference.fileUri)!.uri,
-          mime_type: reference.mimeType
-        }
+        return expanded.get(reference.fileUri)!.map(part =>
+          part.type === 'text'
+            ? part
+            : {
+                type: part.mimeType === 'application/pdf' ? ('document' as const) : ('image' as const),
+                uri: part.fileUri,
+                mime_type: part.mimeType
+              }
+        )
       })
       const mediaTokens = await provider.transport.countTokens(model, contents, request.signal)
       if (mediaTokens + textBytes + maxOutputTokens > provider.capabilities.maxContextTokens)
@@ -1872,7 +1923,9 @@ export class AxAgentEngine implements AgentEngine {
             ? message
             : {
                 ...message,
-                content: message.content.map(part => (part.type === 'file' && 'fileUri' in part ? { ...part, fileUri: uploaded.get(part.fileUri)!.uri } : part))
+                content: message.content.flatMap<(typeof message.content)[number]>(part =>
+                  part.type === 'file' && 'fileUri' in part ? expanded.get(part.fileUri)! : [part]
+                )
               }
         ),
         mediaTokens,
@@ -1881,6 +1934,8 @@ export class AxAgentEngine implements AgentEngine {
     } catch (error) {
       await cleanup()
       throw error
+    } finally {
+      await Promise.allSettled([...sources.values()].flatMap(source => (source.pdf ? [source.pdf.cleanup()] : [])))
     }
   }
 

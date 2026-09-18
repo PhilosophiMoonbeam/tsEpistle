@@ -2516,7 +2516,7 @@ export class AgentProductRuntime {
           ? claim.goalId === null
             ? 'Agent request budget was exhausted'
             : 'Agent goal budget was exhausted'
-          : 'Agent inference failed'
+          : (normalizedFailure?.message ?? 'Agent inference failed')
       let ownsActiveRun = false
       let ownedStatus: string | undefined
       try {

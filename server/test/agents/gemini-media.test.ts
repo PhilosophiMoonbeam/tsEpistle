@@ -1,7 +1,7 @@
 import type { lookup } from 'node:dns/promises'
 import createKnex, { type Knex } from 'knex'
 import { AgentProviderFactory, type AgentProviderFetch, createGuardedProviderFetch } from '../../agents/providers/factory.ts'
-import { createGeminiMediaTransport, GEMINI_MEDIA_INPUT_LIMIT, GEMINI_MEDIA_OUTPUT_LIMIT } from '../../agents/providers/gemini-media.ts'
+import { createGeminiMediaTransport, GEMINI_MEDIA_INPUT_LIMIT, GEMINI_MEDIA_OUTPUT_LIMIT, GEMINI_PDF_INPUT_LIMIT } from '../../agents/providers/gemini-media.ts'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 const origin = 'https://generativelanguage.googleapis.com'
@@ -68,6 +68,22 @@ describe('Gemini media egress guard', () => {
     const ordinary = createGuardedProviderFetch(`${origin}/v1beta`, '/interactions', {}, implementation, resolve)
     await expect(ordinary(`${origin}/upload/v1beta/files`, { method: 'POST', body: png })).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
     expect(calls).toHaveLength(6)
+  })
+
+  it('allows larger prepared PDFs only on the Files upload path', async () => {
+    let calls = 0
+    const implementation = Object.assign(async () => { calls++; return Response.json({}) }, { preconnect: () => {} }) as AgentProviderFetch
+    const guard = createGuardedProviderFetch(`${origin}/v1beta`, 'gemini-media', {}, implementation, resolve)
+    const body = Buffer.alloc(GEMINI_MEDIA_INPUT_LIMIT + 1)
+    body.write('%PDF-1.7')
+    await guard(`${origin}/upload/v1beta/files?upload_id=abc`, { method: 'POST', headers: { 'content-type': 'application/pdf' }, body })
+    for (const [path, type, bytes] of [
+      ['/v1beta/interactions', 'application/pdf', body],
+      ['/upload/v1beta/files?upload_id=abc', 'image/png', body],
+      ['/upload/v1beta/files?upload_id=abc', 'application/pdf', Buffer.alloc(GEMINI_PDF_INPUT_LIMIT + 1)]
+    ] as const)
+      await expect(guard(`${origin}${path}`, { method: 'POST', headers: { 'content-type': type }, body: bytes })).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    expect(calls).toBe(1)
   })
 
   it('denies private DNS results before sending the API key or media', async () => {
@@ -449,17 +465,19 @@ describe('Gemini media transport', () => {
   })
 
   it('accepts PDF uploads for chat consumers', async () => {
+    const bytes = Buffer.alloc(GEMINI_MEDIA_INPUT_LIMIT + 1)
+    bytes.write('%PDF-1.7')
     const { transport } = setup(url =>
       url.includes('?')
         ? Response.json({
-            file: { ...file(), mimeType: 'application/pdf', sizeBytes: '8' }
+            file: { ...file(), mimeType: 'application/pdf', sizeBytes: String(bytes.length) }
           })
         : start()
     )
     expect(
       (
         await transport.upload({
-          bytes: Buffer.from('%PDF-1.7'),
+          bytes,
           mimeType: 'application/pdf'
         })
       ).mimeType

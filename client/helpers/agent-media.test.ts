@@ -11,7 +11,9 @@ describe('Agent private media boundary', () => {
     expect(validateAgentAttachment({ type: 'image/svg+xml', size: 200 })).toContain('PNG')
     expect(validateAgentAttachment({ type: 'text/html', size: 200 })).toContain('PNG')
     expect(validateAgentAttachment({ type: 'image/png', size: 0 })).toContain('Empty')
-    expect(validateAgentAttachment({ type: 'application/pdf', size: 10 * 1024 * 1024 + 1 })).toContain('10 MB')
+    expect(validateAgentAttachment({ type: 'application/pdf', size: 100 * 1024 * 1024 })).toBeNull()
+    expect(validateAgentAttachment({ type: 'application/pdf', size: 100 * 1024 * 1024 + 1 })).toContain('100 MB')
+    expect(validateAgentAttachment({ type: 'image/png', size: 10 * 1024 * 1024 + 1 })).toContain('10 MB')
   })
   it('uploads multipart bytes with CSRF and browser-generated boundaries, never a JSON content type', async () => {
     let seen = false

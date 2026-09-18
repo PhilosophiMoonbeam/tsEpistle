@@ -404,7 +404,7 @@
               <div v-if="profileDraft.transportKind === 'gemini-api'" class="subsection-card">
                 <div class="subsection-card__heading"><div><h4>Images, files &amp; voice</h4><p>Choose what this provider makes available in chat. Each capability stays hidden until enabled here.</p></div><v-icon size="20">mdi-image-outline</v-icon></div>
                 <v-switch v-model="profileDraft.mediaAttachments" label="PDF and image attachments" color="primary" hide-details />
-                <p class="text-body-2 mb-3">Up to four files per message, 10 MB each. Files stay private to the conversation and are sent to Google when used.</p>
+                <p class="text-body-2 mb-3">Up to four files per message: PDFs up to 100 MB, images up to 10 MB. Large PDFs are prepared automatically, preserving page content and numbering. Google allows 1,000 PDF pages across a request; the model’s context limit also applies. Files stay private to the conversation and are sent to Google when used.</p>
                 <v-switch v-model="profileDraft.mediaImages" label="Image creation and editing" color="primary" hide-details />
                 <div v-if="profileDraft.mediaImages" class="form-grid mt-3">
                   <v-text-field model-value="gemini-3.1-flash-image" label="Image model" readonly hide-details />
