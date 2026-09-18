@@ -2120,6 +2120,51 @@ describe('Ax agent engine', () => {
     ])
     expect(result).toMatchObject({ inputTokens: 13, outputTokens: 6, totalTokens: 19 })
   })
+  it('does not carry rejected-answer reasoning state into an evidence repair turn', async () => {
+    const chat = vi.fn()
+      .mockResolvedValueOnce({
+        results: [{ index: 0, content: 'Unsupported claim. [[cite:missing]]', thoughtBlocks: [{ data: 'x'.repeat(16_000), encrypted: true }] }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } }
+      } satisfies AxChatResponse)
+      .mockResolvedValueOnce({
+        results: [{ index: 0, content: 'The available context does not support that claim.' }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 20, completionTokens: 8, totalTokens: 28 } }
+      } satisfies AxChatResponse)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: false,
+          structuredOutput: 'tool-result',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 24_000,
+          maxOutputTokens: 3_000
+        },
+        transportKind: 'openai-chat',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing,
+        preserveThoughtBlock: (_resultId: string, block: ProviderThoughtBlock) => block
+      })
+    } as unknown as AgentProviderFactory
+    const input = request(new AbortController().signal)
+    const text = vi.fn(async (_delta: string) => {})
+
+    await new AxAgentEngine(factory).execute(
+      { ...input, run: { ...input.run, executionMode: 'generation-only' }, limits: { maxTurns: 2, maxToolCalls: 0, maxOutputTokens: 3_000 } },
+      { text, event: async () => {} }
+    )
+
+    expect(chat).toHaveBeenCalledTimes(2)
+    const retry = chat.mock.calls[1]?.[0] as AxChatRequest<unknown>
+    expect(retry.chatPrompt).toContainEqual(expect.objectContaining({ role: 'assistant', content: 'Unsupported claim. [[cite:missing]]' }))
+    expect(retry.chatPrompt.some(message => 'thoughtBlocks' in message)).toBe(false)
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toBe('The available context does not support that claim.')
+  })
   it.each(['native', 'prompt'] as const)('keeps core tools available and unlocks one frozen category on the next %s turn', async mode => {
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const events: Array<readonly [string, unknown]> = []

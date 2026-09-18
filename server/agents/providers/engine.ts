@@ -2619,8 +2619,7 @@ export class AxAgentEngine implements AgentEngine {
               )
             activePrompt.push({
               role: 'assistant',
-              content: result.content,
-              ...(result.thoughtBlocks.length === 0 ? {} : { thoughtBlocks: result.thoughtBlocks })
+              content: result.content
             })
             activePrompt.push({
               role: 'user',
