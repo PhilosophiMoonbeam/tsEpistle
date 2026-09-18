@@ -95,6 +95,9 @@ type OperationContext = {
   signal: AbortSignal
 }
 
+const LIFECYCLE_SYNC_REASONS = new Set(['startup', 'pageshow', 'foreground', 'online', 'lifecycle'])
+const LIFECYCLE_SYNC_INTERVAL_MS = 60_000
+
 class OfflineSyncInvalidatedError extends Error {
   constructor() {
     super('Offline synchronization was invalidated before it could finish.')
@@ -285,6 +288,7 @@ export class OfflineSyncCoordinator {
   private activeAbortController: AbortController | null = null
   private operationEpoch = 0
   private rerunRequested = false
+  private pendingReason: string | null = null
   private disposed = false
   private retired = false
   private started = false
@@ -365,13 +369,17 @@ export class OfflineSyncCoordinator {
     this.rerunRequested = false
   }
 
-  reconcile(_reason = 'manual'): Promise<OfflineSyncPassResult> {
+  reconcile(reason = 'manual'): Promise<OfflineSyncPassResult> {
     if (this.disposed || this.retired) return Promise.resolve(this.inactiveResult())
     if (this.activePass) {
+      // Preserve wakeups that arrive during an offline/cancelled pass. A recent
+      // successful pass makes lifecycle followups cheap; explicit work wins.
       this.rerunRequested = true
+      if (this.pendingReason === null || LIFECYCLE_SYNC_REASONS.has(this.pendingReason) || reason === 'manual')
+        this.pendingReason = reason
       return this.activePass
     }
-    const pass = this.runCoalescedPass()
+    const pass = this.runCoalescedPass(reason)
     this.activePass = pass
     void pass.then(
       () => {
@@ -454,17 +462,20 @@ export class OfflineSyncCoordinator {
     }
   }
 
-  private async runCoalescedPass(): Promise<OfflineSyncPassResult> {
-    let result = await this.runPass()
+  private async runCoalescedPass(reason: string): Promise<OfflineSyncPassResult> {
+    let result = await this.runPass(reason)
     while (this.rerunRequested && this.canRun()) {
       this.rerunRequested = false
-      result = await this.runPass()
+      const nextReason = this.pendingReason ?? 'policy-change'
+      this.pendingReason = null
+      result = await this.runPass(nextReason)
     }
     this.rerunRequested = false
+    this.pendingReason = null
     return result
   }
 
-  private async runPass(): Promise<OfflineSyncPassResult> {
+  private async runPass(reason: string): Promise<OfflineSyncPassResult> {
     const controller = new AbortController()
     const context: OperationContext = { epoch: this.operationEpoch, controller, signal: controller.signal }
     this.activeAbortController = controller
@@ -473,7 +484,13 @@ export class OfflineSyncCoordinator {
     try {
       policy = await this.awaitCurrent(this.options.storage.readOfflinePolicy(), context, false)
       this.assertCurrent(context, false)
-      return await this.runPassBody(context, policy, result)
+      const diagnostics = policy.state.syncDiagnostics
+      const successAge = Date.parse(this.currentTime()) - Date.parse(diagnostics.lastSuccessAt ?? '')
+      if (LIFECYCLE_SYNC_REASONS.has(reason) && this.canRun() && diagnostics.status === 'complete' &&
+        diagnostics.pendingCount === 0 && successAge >= 0 && successAge < LIFECYCLE_SYNC_INTERVAL_MS) {
+        return this.makeResult('complete', policy.sessionGeneration, policy.state.policyRevision, diagnostics, result)
+      }
+      return await this.runPassBody(context, policy, result, reason === 'manual')
     } catch (error) {
       if (error instanceof OfflineSyncInvalidatedError) return this.cancelledResult(policy, result)
       return await this.errorResult(context, policy, result, error)
@@ -484,7 +501,7 @@ export class OfflineSyncCoordinator {
     }
   }
 
-  private async runPassBody(context: OperationContext, policy: OfflinePolicySnapshot, result: MutablePassResult): Promise<OfflineSyncPassResult> {
+  private async runPassBody(context: OperationContext, policy: OfflinePolicySnapshot, result: MutablePassResult, retryDenied: boolean): Promise<OfflineSyncPassResult> {
     const generation = policy.sessionGeneration
     let revision = policy.state.policyRevision
     const attemptAt = this.currentTime()
@@ -616,6 +633,23 @@ export class OfflineSyncCoordinator {
         context,
         true
       )
+
+      if (retryDenied) {
+        const retryPageIds = new Set(currentPolicy.pages.filter(page =>
+          page.siteId === this.options.siteId && !page.excluded && (page.manual || page.tag) && page.availability === 'ineligible'
+        ).map(page => page.pageId))
+        // A denial covers every locale of a page. Clear the old observation, not
+        // the user's selection/exclusion flags; only the server can admit a body.
+        for (const page of currentPolicy.pages) {
+          if (page.siteId !== this.options.siteId || !retryPageIds.has(page.pageId) || page.availability !== 'ineligible') continue
+          await this.awaitCurrent(this.options.storage.setPageAvailability({ siteId: page.siteId, pageId: page.pageId, locale: page.locale }, 'unknown', {
+            expectedSessionGeneration: generation, expectedPolicyRevision: revision
+          }), context, true)
+        }
+        if (retryPageIds.size > 0) currentPolicy = await this.awaitCurrent(
+          this.options.storage.readOfflinePolicy({ expectedSessionGeneration: generation, expectedPolicyRevision: revision }), context, true
+        )
+      }
 
       const candidates = new Map<string, Candidate>()
       for (const page of currentPolicy.pages) {

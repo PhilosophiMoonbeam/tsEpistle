@@ -777,7 +777,7 @@ const offlineSyncResultDetail = (result: OfflineSyncResult, fallback: string): s
 const offlineSyncAggregateNotice = (result: OfflineSyncResult): string | null => {
   if (result.outcome !== 'error' && result.outcome !== 'unavailable') return null
   const detail = offlineSyncResultDetail(result, 'Offline synchronization reported an issue.')
-  return `Background offline synchronization reported an issue: ${detail}`.slice(0, 512)
+  return `Other saved pages need attention: ${detail}`.slice(0, 512)
 }
 
 const offlineSyncFailureNotice = (detail: string): string =>
@@ -2021,7 +2021,10 @@ export default defineComponent({
         if (!storage || !this.isCurrentOfflineOperation(operationId, pageId)) return
         const policy = await storage.readOfflinePolicy()
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
-        const corpus = await storage.readSnapshotCorpus({ expectedSessionGeneration: policy.sessionGeneration })
+        const corpus = await storage.readSnapshotCorpus({
+          expectedSessionGeneration: policy.sessionGeneration,
+          selector: { siteId: this.offlineSiteId(), pageId, locale }
+        })
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
         const origin = this.offlineSiteId()
         const now = Date.now()

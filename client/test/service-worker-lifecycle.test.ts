@@ -227,8 +227,7 @@ const createHarness = async (options: {
     },
     dispatchFetch: async request => {
       const event = hub.emit('fetch', { request })
-      if (!event.response) throw new Error('Fetch event did not call respondWith')
-      return await event.response
+      return await (event.response ?? networkFetch(request))
     },
     dispatchMessage: async (source, data) => {
       const event = hub.emit('message', { source, data })
@@ -258,6 +257,19 @@ const ownedPriorCacheName = `${PRECACHE_CACHE_PREFIX}abcdef0123456789`
 
 
 describe('service worker lifecycle', () => {
+  it('leaves protected navigation, APIs, streams, downloads, and third-party requests to the browser', async () => {
+    const harness = await createHarness({ fetch: () => { throw new Error('Worker must not fetch passthrough requests') } })
+    try {
+      for (const path of ['/a', '/a/general', '/h/en/home', '/e/en/home', '/_api/pages', '/graphql', '/login', '/files/report.pdf']) {
+        expect(harness.hub.emit('fetch', { request: requestLike(`${ORIGIN}${path}`, 'navigate') }).response).toBeUndefined()
+      }
+      expect(harness.hub.emit('fetch', { request: requestLike('https://other.example/asset.js', 'cors') }).response).toBeUndefined()
+      expect(harness.hub.emit('fetch', { request: new Request(`${ORIGIN}/_api/pages`, { method: 'POST' }) }).response).toBeUndefined()
+    } finally {
+      harness.restore()
+    }
+  })
+
   it('opens the cached offline library directly without allowing protected or non-navigation fallbacks', async () => {
     let online = true
     const harness = await createHarness({

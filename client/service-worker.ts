@@ -365,33 +365,35 @@ async function handleNavigation(request: Request): Promise<Response> {
   }
 }
 
-async function handleFetch(request: Request): Promise<Response> {
-  if (request.method !== 'GET') return fetch(request)
+function handleFetch(request: Request): Promise<Response> | undefined {
+  // Leaving the event unhandled uses the browser's native network path. In
+  // particular, do not proxy API streams, downloads, or protected navigation.
+  if (request.method !== 'GET') return undefined
   const url = sameOriginURL(request.url, worker.location.origin)
-  if (!url) return fetch(request)
+  if (!url) return undefined
   if (url.pathname === OFFLINE_DOCUMENT_PATH && request.mode === 'navigate' && acceptsHTML(request)) {
-    const fallback = await cachedShell()
-    if (fallback) return fallback
-    return fetch(request)
+    return cachedShell().then(fallback => fallback ?? fetch(request))
   }
 
-  if (isNetworkOnlyPath(url.pathname) && !url.pathname.toLowerCase().startsWith(OFFLINE_ASSET_PREFIX)) return fetch(request)
+  if (isNetworkOnlyPath(url.pathname) && !url.pathname.toLowerCase().startsWith(OFFLINE_ASSET_PREFIX)) return undefined
 
   if (PRECACHE_URLS.has(url.href)) {
-    try {
-      const cache = await caches.open(PRECACHE_CACHE_NAME)
-      if (await completeCache(cache)) {
-        const cached = await cache.match(url.href)
-        if (cached) return cached
+    return (async () => {
+      try {
+        const cache = await caches.open(PRECACHE_CACHE_NAME)
+        if (await completeCache(cache)) {
+          const cached = await cache.match(url.href)
+          if (cached) return cached
+        }
+      } catch {
+        // Cache Storage is optional. Healthy network assets must continue.
       }
-    } catch {
-      // Cache Storage is optional. Healthy network assets must continue.
-    }
-    return fetch(request)
+      return fetch(request)
+    })()
   }
 
   if (isAllowlistedNavigation(request, worker.location.origin)) return handleNavigation(request)
-  return fetch(request)
+  return undefined
 }
 
 function scopedClient(client: WorkerClient): boolean {
@@ -624,7 +626,8 @@ worker.addEventListener('activate', event => {
 
 worker.addEventListener('fetch', event => {
   const fetchEvent = event as FetchEvent
-  fetchEvent.respondWith(handleFetch(fetchEvent.request))
+  const response = handleFetch(fetchEvent.request)
+  if (response) fetchEvent.respondWith(response)
 })
 
 worker.addEventListener('message', event => {

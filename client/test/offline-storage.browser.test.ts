@@ -401,6 +401,16 @@ export async function run(operation: string, payload: Record<string, unknown> = 
       ok: true,
       value: await storageFor(payload.id).selectTopAutomaticPages(payload.options as never)
     };
+    if (operation === 'readScopedCorpus') {
+      const originalGetAll = IDBObjectStore.prototype.getAll;
+      IDBObjectStore.prototype.getAll = function (...args) {
+        if (this.name === 'snapshots') throw new Error('Single-page lookup read the whole library');
+        return originalGetAll.apply(this, args);
+      };
+      try {
+        return { ok: true, value: await storageFor(payload.id).readSnapshotCorpus(payload.options as never) };
+      } finally { IDBObjectStore.prototype.getAll = originalGetAll; }
+    }
     if (operation === 'readCorpus') return {
       ok: true,
       value: await storageFor(payload.id).readSnapshotCorpus(payload.options as never)
@@ -1361,4 +1371,17 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(dump.meta?.schemaVersion).toBe(99)
     expect(dump.meta?.sessionGeneration).toBe(4)
   })
+})
+
+test('reader status reads only the selected snapshot and retains generation/policy fences', async () => {
+  const name = freshDatabase('scoped-corpus')
+  await succeeded('open', { id: 'storage', name })
+  for (const pageId of [1, 2]) await succeeded('putSnapshot', { id: 'storage', siteId: 'site', snapshot: makeSnapshot('en', pageId) })
+  const options = { selector: { siteId: 'site', pageId: 1, locale: 'en' }, expectedSessionGeneration: 0, expectedPolicyRevision: 0 }
+  const corpus = await succeeded<{ snapshots: Array<{ pageId: number }> }>('readScopedCorpus', { id: 'storage', options })
+  expect(corpus.snapshots.map(record => record.pageId)).toEqual([1])
+  const missing = await succeeded<{ snapshots: unknown[] }>('readScopedCorpus', { id: 'storage', options: { ...options, selector: { ...options.selector, pageId: 3 } } })
+  expect(missing.snapshots).toEqual([])
+  const fenced = await invoke('readScopedCorpus', { id: 'storage', options: { ...options, expectedPolicyRevision: 999 } })
+  expect(fenced.ok).toBe(false)
 })

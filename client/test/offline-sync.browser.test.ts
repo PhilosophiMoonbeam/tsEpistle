@@ -96,7 +96,10 @@ export async function run(operation, payload = {}) {
   const kind = String(payload.kind);
   const storage = await openOfflineStorage({ databaseName });
   const requests = [];
-  let denyReselectedPage = kind === 'reselect-denied' || kind === 'denied-manual';
+  const retryScenario = kind.startsWith('retry-');
+  const lifecycleScenario = kind.startsWith('lifecycle-');
+  let clock = CURRENT_TIME;
+  let denyReselectedPage = kind === 'reselect-denied' || kind === 'denied-manual' || retryScenario;
   let fenceMutationDone = false;
   const disposeFetchStartedGate = Promise.withResolvers();
   const disposeFetchStarted = disposeFetchStartedGate.promise;
@@ -152,7 +155,7 @@ export async function run(operation, payload = {}) {
       if ((kind === 'refill' || kind === 'refill-locales') && pageId === 1) return json({ message: 'Snapshot not found.' }, 404);
       if (kind === 'refill-locales' && pageId === 2) return json({ message: 'Snapshot not found.' }, 404);
       if (kind === 'transient' && pageId === 1) return json({ message: 'Temporary failure.' }, 503);
-      const allowed = fatalSibling ? [1, 2] : kind === 'manual' || kind === 'reselect-denied' || kind === 'fence' || kind === 'dispose' || kind === 'dispose-commit'
+      const allowed = fatalSibling ? [1, 2] : retryScenario || lifecycleScenario || kind === 'manual' || kind === 'reselect-denied' || kind === 'fence' || kind === 'dispose' || kind === 'dispose-commit'
         ? [1]
         : kind === 'automatic'
           ? Array.from({ length: 10 }, (_value, index) => index + 1)
@@ -188,7 +191,7 @@ export async function run(operation, payload = {}) {
         }
         return await originalPutSnapshot(siteId, snapshot, options);
       };
-    } else if (kind === 'manual' || kind === 'reselect-denied' || kind === 'denied-manual') {
+    } else if (retryScenario || lifecycleScenario || kind === 'manual' || kind === 'reselect-denied' || kind === 'denied-manual') {
       await storage.setManualOfflineIntent(selector(1), true);
     } else if (kind === 'automatic') {
       await storage.setAutomaticSavingEnabled(true);
@@ -344,13 +347,40 @@ export async function run(operation, payload = {}) {
       storage,
       siteId: SITE_ID,
       fetchImpl,
-      now: () => CURRENT_TIME,
+      now: () => clock,
       isOnline: () => kind !== 'offline' && kind !== 'offline-remove',
       isForeground: () => true,
       maxConcurrentFetches: 2
     });
     let result;
-    if (kind === 'denied-manual') {
+    if (retryScenario) {
+      await storage.recordEligibleReaderVisit(selector(1, 'fr'));
+      await coordinator.reconcile('manual');
+      denyReselectedPage = false;
+      if (kind === 'retry-excluded') await storage.removeOfflinePage(selector(1));
+      if (kind === 'retry-concurrent-denial') {
+        const originalPut = storage.putSnapshot.bind(storage);
+        storage.putSnapshot = async (...args) => {
+          await storage.markPageIneligible(selector(1));
+          return originalPut(...args);
+        };
+      }
+      if (kind === 'retry-coalesced') {
+        const pending = coordinator.reconcile('startup');
+        result = await coordinator.reconcile('manual');
+        await pending;
+      } else result = await coordinator.reconcile('manual');
+    } else if (lifecycleScenario) {
+      await coordinator.reconcile('manual');
+      if (kind === 'lifecycle-expired') clock = '2026-09-16T00:01:01.000Z';
+      if (kind === 'lifecycle-future') clock = '2026-09-15T23:59:59.000Z';
+      if (kind === 'lifecycle-partial') {
+        const policy = await storage.readOfflinePolicy();
+        await storage.updateSyncDiagnostics({ ...policy.state.syncDiagnostics, status: 'partial', pendingCount: 1 });
+      }
+      result = await coordinator.reconcile('startup');
+      if (kind === 'lifecycle-explicit') result = await coordinator.reconcile('manual');
+    } else if (kind === 'denied-manual') {
       await coordinator.reconcile('manual');
       result = await coordinator.reconcile('manual');
     } else if (kind === 'reselect-denied') {
@@ -523,6 +553,39 @@ test('exposes an explicit unavailable service result', () => {
 })
 
 describe('foreground offline sync coordinator', () => {
+  test.each(['retry-recovered', 'retry-coalesced'])('manual synchronization rechecks old denials including locale variants: %s', async kind => {
+    const run = await runScenario(kind)
+    expect(run.result.status).toBe('complete')
+    expect(pageIds(run)).toEqual([1])
+    expect(snapshotRequests(run)).toEqual([1, 1])
+    expect(run.pages.find(page => page.locale === 'fr')).toMatchObject({ manual: false, availability: 'unknown' })
+  })
+
+  test('manual retry never reselects an excluded page', async () => {
+    const run = await runScenario('retry-excluded')
+    expect(pageIds(run)).toEqual([])
+    expect(snapshotRequests(run)).toEqual([1])
+    expect(policyFor(run, 1)).toMatchObject({ excluded: true })
+  })
+
+  test('a newer denial fences retry commits and is not cleared by the internal rerun', async () => {
+    const run = await runScenario('retry-concurrent-denial')
+    expect(pageIds(run)).toEqual([])
+    expect(snapshotRequests(run)).toEqual([1, 1])
+    expect(policyFor(run, 1)).toMatchObject({ availability: 'ineligible' })
+    expect(run.result.status).toBe('partial')
+  })
+
+  test.each(['lifecycle-recent', 'lifecycle-expired', 'lifecycle-future', 'lifecycle-explicit', 'lifecycle-partial'])('bounds navigation sync without suppressing expired or explicit work: %s', async kind => {
+    const run = await runScenario(kind)
+    expect(run.result.status).toBe('complete')
+    expect(snapshotRequests(run)).toEqual(kind === 'lifecycle-recent' ? [1] : [1, 1])
+    if (kind === 'lifecycle-recent') {
+      expect(run.result.attempted).toBe(0)
+      expect(run.result.diagnostics.lastSuccessAt).toBe(currentTime)
+    }
+  })
+
   test('a late worker from a failed pass cannot cancel the next synchronization pass', async () => {
     const run = await runScenario('fatal-sibling-new-pass')
     expect(run.result.status).toBe('error')
@@ -546,7 +609,7 @@ describe('foreground offline sync coordinator', () => {
     expect(run.result.failed).toBe(1)
     expect(run.result.error).toContain('not available for offline use')
     expect(pageIds(run)).toEqual([])
-    expect(snapshotRequests(run)).toEqual([1])
+    expect(snapshotRequests(run)).toEqual([1, 1])
     expect(policyFor(run, 1)).toMatchObject({ manual: true, availability: 'ineligible' })
   })
 

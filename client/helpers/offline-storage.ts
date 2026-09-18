@@ -1103,8 +1103,9 @@ export class OfflineStorage {
       throw toFailure(error, 'transaction', 'The offline snapshot could not be removed.')
     }
   }
-  async readSnapshotCorpus(options: OfflineStorageGenerationOptions = {}): Promise<OfflineSnapshotCorpus> {
+  async readSnapshotCorpus(options: OfflineStorageGenerationOptions & { selector?: OfflineSnapshotSelector } = {}): Promise<OfflineSnapshotCorpus> {
     this.assertOpen(false)
+    const selector = options.selector === undefined ? undefined : OfflineSnapshotSelectorSchema.parse(options.selector)
     const expected = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = options.expectedPolicyRevision === undefined ? undefined : validatePolicyRevision(options.expectedPolicyRevision)
     try {
@@ -1113,7 +1114,11 @@ export class OfflineStorage {
       const policy = await this.readPolicyStateInTransaction(tx)
       if (expectedPolicy !== undefined && policy.policyRevision !== expectedPolicy)
         throw new OfflinePolicyRevisionFencedError(expectedPolicy, policy.policyRevision)
-      const values = await tx.objectStore('snapshots').getAll()
+      const store = tx.objectStore('snapshots')
+      // A reader's status check needs only its own body, even for a large library.
+      const values = selector
+        ? [await store.get([selector.siteId, selector.pageId, selector.locale])]
+        : await store.getAll()
       const snapshots: OfflineSnapshotRecord[] = []
       for (const value of values) {
         const parsed = OfflineSnapshotRecordSchema.safeParse(value)
