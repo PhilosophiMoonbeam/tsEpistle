@@ -242,15 +242,25 @@ const clearConnectionRetry = (): void => {
   connectionRetryTimer = null
 }
 
+const connectionProbeAllowed = (): boolean => hasWindow() && hasNavigator() && !pageSuspended && document.visibilityState !== 'hidden'
+
+const suspendConnectionProbe = (): void => {
+  clearConnectionRetry()
+  connectionEpoch += 1
+  activeProbe?.controller.abort()
+  activeProbe = undefined
+  if (state.connectionState === 'checking') setConnection(state.onlineHint === false ? 'offline' : 'server-unavailable')
+}
+
 const scheduleConnectionRetry = (): void => {
   clearConnectionRetry()
-  if (!hasWindow() || !hasNavigator() || pageSuspended || document.visibilityState === 'hidden' ||
-    navigator.onLine === false || state.connectionState !== 'server-unavailable') return
+  if (!connectionProbeAllowed() || activeProbe || !['offline', 'server-unavailable'].includes(state.connectionState)) return
   connectionRetryTimer = setTimeout(() => {
     connectionRetryTimer = null
-    if (!pageSuspended && document.visibilityState !== 'hidden' && navigator.onLine !== false) void retryServerConnection()
+    if (!connectionProbeAllowed()) return
+    connectionRetryDelay = Math.min(connectionRetryDelay * 2, 30_000)
+    void retryServerConnection()
   }, connectionRetryDelay)
-  connectionRetryDelay = Math.min(connectionRetryDelay * 2, 30_000)
 }
 
 const errorMessage = (error: unknown, fallback: string): string => {
@@ -915,21 +925,18 @@ const markInstalled = (): void => {
 }
 
 const handleOnlineHint = (): void => {
-  connectionEpoch += 1
-  activeProbe?.controller.abort()
   state.onlineHint = true
-  void retryServerConnection()
+  if (connectionProbeAllowed()) void retryServerConnection()
 }
 
 const handleOfflineHint = (): void => {
-  clearConnectionRetry()
+  suspendConnectionProbe()
   connectionRetryDelay = 3_000
-  connectionEpoch += 1
-  activeProbe?.controller.abort()
   state.onlineHint = false
   state.serverReachable = null
   state.serverHealthy = null
   setConnection('offline')
+  scheduleConnectionRetry()
 }
 
 const attachWindowListeners = (): void => {
@@ -939,7 +946,7 @@ const attachWindowListeners = (): void => {
   attachUpdateWakeups()
   window.addEventListener('pagehide', () => {
     pageSuspended = true
-    clearConnectionRetry()
+    suspendConnectionProbe()
     safetySequence += 1
     offlineReadinessEpoch += 1
     clearPreparationTimer()
@@ -962,7 +969,7 @@ const attachWindowListeners = (): void => {
   window.addEventListener('offline', handleOfflineHint)
   window.addEventListener('visibilitychange', () => {
     updateStandaloneState()
-    if (document.visibilityState === 'hidden') { clearConnectionRetry(); return }
+    if (document.visibilityState === 'hidden') { suspendConnectionProbe(); return }
     scheduleConnectionRetry()
     requestOfflineReadiness()
     retryDeferredReload()
@@ -1030,7 +1037,8 @@ export function registerPwa(callbacks: PwaLifecycleCallbacks = {}): Promise<Serv
   }
   if (!initialConnectionProbeStarted) {
     initialConnectionProbeStarted = true
-    void retryServerConnection()
+    if (connectionProbeAllowed()) void retryServerConnection()
+    else setConnection(state.onlineHint === false ? 'offline' : 'server-unavailable')
   }
   if (registrationReference) return Promise.resolve(registrationReference)
   if (registrationInFlight) return registrationInFlight
@@ -1042,6 +1050,7 @@ export function registerPwa(callbacks: PwaLifecycleCallbacks = {}): Promise<Serv
 }
 
 export async function retryServerConnection(): Promise<boolean> {
+  if (hasWindow() && (pageSuspended || document.visibilityState === 'hidden')) return false
   clearConnectionRetry()
   const epoch = ++connectionEpoch
   activeProbe?.controller.abort()
@@ -1052,9 +1061,12 @@ export async function retryServerConnection(): Promise<boolean> {
     return false
   }
   state.onlineHint = typeof navigator.onLine === 'boolean' ? navigator.onLine : null
-  state.serverReachable = null
-  state.serverHealthy = null
-  setConnection('checking')
+  // Keep the saved-page UI stable while quietly checking for a connection.
+  if (!['offline', 'server-unavailable'].includes(state.connectionState)) {
+    state.serverReachable = null
+    state.serverHealthy = null
+    setConnection('checking')
+  }
   const controller = new AbortController()
   let rejectTimeout = (_reason?: unknown): void => {}
   const timeoutPromise = new Promise<never>((_resolve, reject) => {

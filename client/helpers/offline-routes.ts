@@ -24,3 +24,16 @@ export function offlineRecordAtUrl(records: readonly OfflineSnapshotRecord[], va
     return url.pathname === '/' && record.snapshot.path === 'home' && record.locale === locale
   })
 }
+
+
+export type OfflineNavigationEntry = { key: string; href: string; title: string; locale: string }
+
+// A sidebar entry promises a readable local copy, not merely an intent to save.
+export function offlineNavigationEntries(records: readonly OfflineSnapshotRecord[], origin: string, at = Date.now()): OfflineNavigationEntry[] {
+  return records.flatMap(record => {
+    const href = offlinePageHref(record, origin)
+    if (!href || record.pageId !== record.snapshot.pageId || record.locale !== record.snapshot.locale ||
+      (record.snapshot.expiresAt && Date.parse(record.snapshot.expiresAt) <= at)) return []
+    return [{ key: `${record.pageId}:${record.locale}`, href, title: record.snapshot.title || record.snapshot.path, locale: record.locale }]
+  }).sort((left, right) => left.title.localeCompare(right.title) || left.href.localeCompare(right.href))
+}

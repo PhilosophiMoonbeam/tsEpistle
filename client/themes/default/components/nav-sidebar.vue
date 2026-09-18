@@ -1,160 +1,157 @@
 <template lang="pug">
   .nav-sidebar
-    .nav-sidebar-switcher.d-flex(
-      v-if='navMode === `MIXED` || navMode === `STATIC`'
-      :class='{ "nav-sidebar-switcher--static": navMode === `STATIC` }'
-    )
-      v-btn.nav-sidebar-home(
-        :class='{ "nav-sidebar-home--static": navMode === `STATIC` }'
-        :variant='path === `home` ? `tonal` : `text`'
-        color='primary'
-        @click='goHome'
-        :aria-label='$t(`common:header.home`)'
-        :aria-current='path === `home` ? `page` : undefined'
+    offline-navigation(v-if='connectionUnavailable', :active-path='`/${locale}/${path}`', @navigate='$emit(`navigate`)')
+    template(v-else)
+      .nav-sidebar-switcher.d-flex(
+        v-if='navMode === `MIXED` || navMode === `STATIC`'
+        :class='{ "nav-sidebar-switcher--static": navMode === `STATIC` }'
+      )
+        v-btn.nav-sidebar-home(
+          :class='{ "nav-sidebar-home--static": navMode === `STATIC` }'
+          :variant='path === `home` ? `tonal` : `text`'
+          color='primary'
+          @click='goHome'
+          :aria-label='$t(`common:header.home`)'
+          :aria-current='path === `home` ? `page` : undefined'
+          )
+          v-icon(:start='navMode === `STATIC`', size='20') mdi-home
+          span.nav-sidebar-home-label.text-body-medium.text-none(v-if='navMode === `STATIC`') {{$t('common:header.home')}}
+        .nav-sidebar-modes(v-if='navMode === `MIXED`', role='group', :aria-label='$t(`common:sidebar.navigationMode`)')
+          v-btn.nav-sidebar-mode(
+            variant="text"
+            :aria-pressed='currentMode === `custom`'
+            @click='switchMode(`custom`)'
+            )
+            span {{$t('common:sidebar.mainMenu')}}
+          v-btn.nav-sidebar-mode(
+            variant="text"
+            :aria-pressed='currentMode === `browse`'
+            @click='switchMode(`browse`)'
+            )
+            span {{$t('common:sidebar.browse')}}
+      .nav-sidebar-directory-heading(v-if='navMode === `TREE`')
+        span {{$t('common:sidebar.browse')}}
+        v-icon(icon='mdi-file-tree-outline', size='16', aria-hidden='true')
+      v-divider.nav-sidebar-edge
+      //-> Custom Navigation
+      v-list.nav-sidebar-list.py-2(v-if='currentMode === `custom`', density="compact", :class='color', nav, role='group', tabindex='-1')
+        async-state(
+          v-if='customItems.length === 0 && !connectionUnavailable'
+          state='empty'
+          :title='$t(`common:sidebar.noNavigationItems`)'
+          :message='navMode === `MIXED` ? $t(`common:sidebar.emptyNavigationHint`) : undefined'
         )
-        v-icon(:start='navMode === `STATIC`', size='20') mdi-home
-        span.nav-sidebar-home-label.text-body-medium.text-none(v-if='navMode === `STATIC`') {{$t('common:header.home')}}
-      .nav-sidebar-modes(v-if='navMode === `MIXED`', role='group', :aria-label='$t(`common:sidebar.navigationMode`)')
-        v-btn.nav-sidebar-mode(
-          variant="text"
-          :aria-pressed='currentMode === `custom`'
-          @click='switchMode(`custom`)'
-          )
-          span {{$t('common:sidebar.mainMenu')}}
-        v-btn.nav-sidebar-mode(
-          variant="text"
-          :aria-pressed='currentMode === `browse`'
-          @click='switchMode(`browse`)'
-          )
-          span {{$t('common:sidebar.browse')}}
-    .nav-sidebar-directory-heading(v-if='navMode === `TREE`')
-      span {{$t('common:sidebar.browse')}}
-      v-icon(icon='mdi-file-tree-outline', size='16', aria-hidden='true')
-    v-divider.nav-sidebar-edge
-    .nav-sidebar-offline(v-if='connectionUnavailable', role='status')
-      v-icon(size='22', aria-hidden='true') mdi-cloud-off-outline
-      div
-        strong {{ connectionState === `offline` ? `You’re offline` : `Server unavailable` }}
-        p Navigation will update when you reconnect. Open your saved pages to keep reading.
-        a(href='/p/offline', @click='sidebarLinkClicked') Open offline access
-    //-> Custom Navigation
-    v-list.nav-sidebar-list.py-2(v-if='currentMode === `custom`', density="compact", :class='color', nav, role='group', tabindex='-1')
-      async-state(
-        v-if='customItems.length === 0 && !connectionUnavailable'
-        state='empty'
-        :title='$t(`common:sidebar.noNavigationItems`)'
-        :message='navMode === `MIXED` ? $t(`common:sidebar.emptyNavigationHint`) : undefined'
+        template(v-else)
+          template(v-for='(item, idx) of customItems', :key='item.k === `link` ? `link-${item.t}-${item.l}` : item.k === `header` ? `header-${item.l}-${idx}` : `divider-${idx}`')
+            v-list-item(
+              v-if='item.k === `link`'
+              :href='item.t'
+              :target='item.y === `externalblank` ? `_blank` : `_self`'
+              :rel='item.y === `externalblank` ? `noopener` : ``'
+              :active='isCurrentCustomLink(item)'
+              :aria-current='isCurrentCustomLink(item) ? `page` : undefined'
+              @click='sidebarLinkClicked'
+            )
+              template(v-slot:prepend)
+                v-avatar(size='24', rounded='0', variant='text')
+                  v-icon(v-if='item.c?.match(/fa[a-z] fa-/)', size='19') {{ item.c }}
+                  v-icon(v-else) {{ item.c }}
+              v-list-item-title {{ item.l }}
+            v-divider.nav-sidebar-section-divider.my-2(v-else-if='item.k === `divider`')
+            v-list-subheader.nav-sidebar-subheader(v-else-if='item.k === `header`') {{ item.l }}
+      //-> Browse
+      v-list.nav-sidebar-list.py-2(
+        v-else-if='currentMode === `browse`'
+        density="compact"
+        :class='color'
+        nav
+        :aria-busy='navLoading'
+        role='group'
+        tabindex='-1'
       )
-      template(v-else)
-        template(v-for='(item, idx) of customItems', :key='item.k === `link` ? `link-${item.t}-${item.l}` : item.k === `header` ? `header-${item.l}-${idx}` : `divider-${idx}`')
-          v-list-item(
-            v-if='item.k === `link`'
-            :href='item.t'
-            :target='item.y === `externalblank` ? `_blank` : `_self`'
-            :rel='item.y === `externalblank` ? `noopener` : ``'
-            :active='isCurrentCustomLink(item)'
-            :aria-current='isCurrentCustomLink(item) ? `page` : undefined'
-            @click='sidebarLinkClicked'
+        .nav-sidebar-loading-status(
+          v-if='navLoading'
+          role='status'
+          aria-live='polite'
+          aria-atomic='true'
+        ) {{$t('common:sidebar.loadingNavigation')}}
+        template(v-if='navLoading && currentItems.length === 0')
+          v-skeleton-loader.nav-sidebar-loading-row(
+            v-for='index in 4'
+            :key='`browse-skeleton-` + index'
+            type='list-item-avatar'
+            aria-hidden='true'
           )
-            template(v-slot:prepend)
-              v-avatar(size='24', rounded='0', variant='text')
-                v-icon(v-if='item.c?.match(/fa[a-z] fa-/)', size='19') {{ item.c }}
-                v-icon(v-else) {{ item.c }}
-            v-list-item-title {{ item.l }}
-          v-divider.nav-sidebar-section-divider.my-2(v-else-if='item.k === `divider`')
-          v-list-subheader.nav-sidebar-subheader(v-else-if='item.k === `header`') {{ item.l }}
-    //-> Browse
-    v-list.nav-sidebar-list.py-2(
-      v-else-if='currentMode === `browse`'
-      density="compact"
-      :class='color'
-      nav
-      :aria-busy='navLoading'
-      role='group'
-      tabindex='-1'
-    )
-      .nav-sidebar-loading-status(
-        v-if='navLoading'
-        role='status'
-        aria-live='polite'
-        aria-atomic='true'
-      ) {{$t('common:sidebar.loadingNavigation')}}
-      template(v-if='navLoading && currentItems.length === 0')
-        v-skeleton-loader.nav-sidebar-loading-row(
-          v-for='index in 4'
-          :key='`browse-skeleton-` + index'
-          type='list-item-avatar'
-          aria-hidden='true'
+        v-progress-linear.nav-sidebar-progress(
+          v-else-if='navLoading'
+          indeterminate
+          color='primary'
+          height='2'
+          :aria-label='$t(`common:sidebar.loadingNavigation`)'
         )
-      v-progress-linear.nav-sidebar-progress(
-        v-else-if='navLoading'
-        indeterminate
-        color='primary'
-        height='2'
-        :aria-label='$t(`common:sidebar.loadingNavigation`)'
-      )
-      async-state(
-        v-else-if='navError && !connectionUnavailable'
-        state='error'
-        :title='$t(`common:sidebar.navigationLoadError`)'
-        :message='navError'
-        :retry-label='$t(`common:page.tryAgain`)'
-        @retry='retryBrowse'
-      )
-      async-state(
-        v-else-if='currentItems.length === 0 && !connectionUnavailable'
-        state='empty'
-        :title='$t(`common:sidebar.noPagesInDirectory`)'
-      )
-      template(v-if='currentParent.id > 0')
-        .nav-sidebar-ancestor-trail
-          v-list-item.nav-sidebar-ancestor(v-for='(item, idx) of parents', :key='`parent-` + item.id', @click='fetchBrowseItems(item)')
+        async-state(
+          v-else-if='navError && !connectionUnavailable'
+          state='error'
+          :title='$t(`common:sidebar.navigationLoadError`)'
+          :message='navError'
+          :retry-label='$t(`common:page.tryAgain`)'
+          @retry='retryBrowse'
+        )
+        async-state(
+          v-else-if='currentItems.length === 0 && !connectionUnavailable'
+          state='empty'
+          :title='$t(`common:sidebar.noPagesInDirectory`)'
+        )
+        template(v-if='currentParent.id > 0')
+          .nav-sidebar-ancestor-trail
+            v-list-item.nav-sidebar-ancestor(v-for='(item, idx) of parents', :key='`parent-` + item.id', @click='fetchBrowseItems(item)')
+              template(v-slot:prepend)
+                v-avatar.nav-sidebar-ancestor-icon(size='20', variant='text', :style='{ "--nav-depth": idx }')
+                  v-icon(size="small") mdi-folder-open
+              v-list-item-title(:title='item.title') {{ item.title }}
+              template(v-slot:append)
+                v-icon.nav-sidebar-folder-chevron(size='16', aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
+          v-divider.nav-sidebar-section-divider.mt-2
+          .nav-sidebar-current.d-flex.align-center.mt-2(v-if='currentParent.pageId > 0')
+            v-list-item.nav-sidebar-current-page(
+              :href='pagePath(currentParent)'
+              :key='`directorypage-` + currentParent.id'
+              :active='path === currentParent.path'
+              :aria-current='path === currentParent.path ? `page` : undefined'
+              @click='sidebarLinkClicked'
+            )
+              template(v-slot:prepend)
+                v-avatar(size='24', variant='text')
+                  v-icon mdi-text-box
+              v-list-item-title(:title='currentParent.title') {{ currentParent.title }}
+            v-btn.nav-sidebar-edit-parent.me-2(
+              v-if='canEditCurrentParent'
+              icon
+              size="small"
+              :href='editPath(currentParent)'
+              :aria-label='$t(`common:sidebar.editParentPage`, { title: currentParent.title })'
+            )
+              v-icon(size="small") mdi-pencil
+          v-list-subheader.nav-sidebar-subheader.nav-sidebar-directory-label {{$t('common:sidebar.currentDirectory')}}
+        template(v-for='item of currentItems', :key='item.id')
+          v-list-item.nav-sidebar-folder(v-if='item.isFolder', @click='fetchBrowseItems(item)')
             template(v-slot:prepend)
-              v-avatar.nav-sidebar-ancestor-icon(size='20', variant='text', :style='{ "--nav-depth": idx }')
-                v-icon(size="small") mdi-folder-open
+              v-avatar(size='24', variant='text')
+                v-icon mdi-folder
             v-list-item-title(:title='item.title') {{ item.title }}
             template(v-slot:append)
               v-icon.nav-sidebar-folder-chevron(size='16', aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
-        v-divider.nav-sidebar-section-divider.mt-2
-        .nav-sidebar-current.d-flex.align-center.mt-2(v-if='currentParent.pageId > 0')
-          v-list-item.nav-sidebar-current-page(
-            :href='pagePath(currentParent)'
-            :key='`directorypage-` + currentParent.id'
-            :active='path === currentParent.path'
-            :aria-current='path === currentParent.path ? `page` : undefined'
-            @click='sidebarLinkClicked'
-          )
+          v-list-item.nav-sidebar-page(v-else, :href='(item.visibility === `private` ? `/_private` : ``) + `/` + item.locale + `/` + item.path', :active='path === item.path', :aria-current='path === item.path ? `page` : undefined', @click='sidebarLinkClicked')
             template(v-slot:prepend)
               v-avatar(size='24', variant='text')
                 v-icon mdi-text-box
-            v-list-item-title(:title='currentParent.title') {{ currentParent.title }}
-          v-btn.nav-sidebar-edit-parent.me-2(
-            v-if='canEditCurrentParent'
-            icon
-            size="small"
-            :href='editPath(currentParent)'
-            :aria-label='$t(`common:sidebar.editParentPage`, { title: currentParent.title })'
-          )
-            v-icon(size="small") mdi-pencil
-        v-list-subheader.nav-sidebar-subheader.nav-sidebar-directory-label {{$t('common:sidebar.currentDirectory')}}
-      template(v-for='item of currentItems', :key='item.id')
-        v-list-item.nav-sidebar-folder(v-if='item.isFolder', @click='fetchBrowseItems(item)')
-          template(v-slot:prepend)
-            v-avatar(size='24', variant='text')
-              v-icon mdi-folder
-          v-list-item-title(:title='item.title') {{ item.title }}
-          template(v-slot:append)
-            v-icon.nav-sidebar-folder-chevron(size='16', aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
-        v-list-item.nav-sidebar-page(v-else, :href='(item.visibility === `private` ? `/_private` : ``) + `/` + item.locale + `/` + item.path', :active='path === item.path', :aria-current='path === item.path ? `page` : undefined', @click='sidebarLinkClicked')
-          template(v-slot:prepend)
-            v-avatar(size='24', variant='text')
-              v-icon mdi-text-box
-          v-list-item-title(:title='item.title') {{ item.title }}
+            v-list-item-title(:title='item.title') {{ item.title }}
 </template>
 
 <script lang='ts'>
 import _ from 'lodash'
 import { pwaState } from '../../../helpers/pwa.ts'
+import OfflineNavigation from '@/components/pwa/offline-navigation.vue'
 import AsyncState from '@/components/common/async-state.vue'
 import { defineComponent, markRaw, type PropType } from 'vue'
 import { fetchPageTree, type PageTreeRow } from '../../../helpers/pages-api'
@@ -182,7 +179,7 @@ export type SidebarItem =
 
 
 export default defineComponent({
-  components: { AsyncState },
+  components: { AsyncState, OfflineNavigation },
   emits: ['navigate'],
   props: {
     color: {
@@ -224,7 +221,7 @@ export default defineComponent({
   },
   computed: {
     connectionState () { return pwaState.connectionState },
-    connectionUnavailable () { return this.connectionState === 'offline' || this.connectionState === 'server-unavailable' },
+    connectionUnavailable () { return this.connectionState !== 'online' && pwaState.mode !== 'retirement' },
     path () {
       return wikiStore.page.path
     },
@@ -273,6 +270,7 @@ export default defineComponent({
       if (target instanceof HTMLAnchorElement && isWikiNavigationClick(event, target)) this.$emit('navigate')
     },
     switchMode (mode: NavigationMode) {
+      if (this.connectionUnavailable) return
       this.currentMode = mode
       try {
         window.localStorage.setItem('navPref', mode)
@@ -421,7 +419,7 @@ export default defineComponent({
         this.currentMode = this.customItems.some(item => item.k === 'link') ? 'custom' : 'browse'
       }
     }
-    if (this.currentMode === 'browse') {
+    if (this.currentMode === 'browse' && !this.connectionUnavailable) {
       if (this.expandParentByDefault) this.loadFromCurrentPath()
       else this.fetchBrowseItems()
     }
@@ -435,17 +433,6 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
-.nav-sidebar-offline {
-  display: flex;
-  gap: .65rem;
-  padding: 1rem;
-  font-size: .8125rem;
-  line-height: 1.5;
-  color: rgb(var(--v-theme-on-surface));
-  p { margin: .35rem 0 .65rem; color: rgb(var(--v-theme-on-surface-variant)); }
-  a { color: rgb(var(--v-theme-primary)); font-weight: 600; text-underline-offset: .2em; }
-}
-
 .nav-sidebar-directory-heading {
   display: flex;
   align-items: center;

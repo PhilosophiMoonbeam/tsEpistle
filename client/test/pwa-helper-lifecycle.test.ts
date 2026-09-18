@@ -107,6 +107,7 @@ type PwaModule = {
   registerPwa(callbacks?: PwaLifecycleCallbacks): Promise<RegistrationLike | null>
   setReloadSafetyProvider(provider: ReloadSafetyProvider | null): void
   requestPwaUpdate(): Promise<boolean>
+  retryServerConnection(): Promise<boolean>
 }
 
 type PwaHarness = {
@@ -591,7 +592,74 @@ describe('foreground connection recovery', () => {
     } finally { harness.restore(); vi.useRealTimers() }
   })
 
-  it('suspends recovery while hidden, offline, or leaving the document', async () => {
+  it('recovers while the browser still reports offline and keeps the offline UI during the probe', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    try {
+      Object.defineProperty(navigator, 'onLine', { value: false, configurable: true })
+      harness.setFetchImplementation(async () => { throw new Error('Disconnected') })
+      await harness.module.registerPwa()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(harness.module.pwaState.connectionState).toBe('offline')
+      let finishProbe = (_response: Response): void => {}
+      harness.setFetchImplementation(() => new Promise(resolve => { finishProbe = resolve }))
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(harness.fetchCalls).toHaveLength(2)
+      expect(harness.module.pwaState.connectionState).toBe('offline')
+      finishProbe(new Response('{}', { status: 200 }))
+      await vi.advanceTimersByTimeAsync(1)
+      expect(harness.module.pwaState.onlineHint).toBe(false)
+      expect(harness.module.pwaState.connectionState).toBe('online')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(harness.fetchCalls).toHaveLength(2)
+    } finally { harness.restore(); vi.useRealTimers() }
+  })
+
+  it('backs off unsuccessful offline probes to a thirty-second cap without showing checking', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    try {
+      Object.defineProperty(navigator, 'onLine', { value: false, configurable: true })
+      const observedStates: string[] = []
+      harness.setFetchImplementation(async () => {
+        observedStates.push(harness.module.pwaState.connectionState)
+        throw new Error('Disconnected')
+      })
+      await harness.module.registerPwa()
+      await vi.advanceTimersByTimeAsync(0)
+      let attempts = 1
+      for (const delay of [3_000, 6_000, 12_000, 24_000, 30_000, 30_000]) {
+        await vi.advanceTimersByTimeAsync(delay - 100)
+        expect(harness.fetchCalls).toHaveLength(attempts)
+        await vi.advanceTimersByTimeAsync(100)
+        expect(harness.fetchCalls).toHaveLength(++attempts)
+        expect(harness.module.pwaState.connectionState).toBe('offline')
+      }
+      expect(observedStates.slice(1)).toEqual(Array(6).fill('offline'))
+    } finally { harness.restore(); vi.useRealTimers() }
+  })
+
+  it('allows immediate manual retry without switching the unavailable UI to checking', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    try {
+      harness.setFetchImplementation(async () => new Response('{}', { status: 503 }))
+      await harness.module.registerPwa()
+      await vi.advanceTimersByTimeAsync(1)
+      let finishProbe = (_response: Response): void => {}
+      harness.setFetchImplementation(() => new Promise(resolve => { finishProbe = resolve }))
+      const retry = harness.module.retryServerConnection()
+      expect(harness.fetchCalls).toHaveLength(2)
+      expect(harness.module.pwaState.connectionState).toBe('server-unavailable')
+      finishProbe(new Response('{}', { status: 200 }))
+      expect(await retry).toBe(true)
+      expect(harness.module.pwaState.connectionState).toBe('online')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(harness.fetchCalls).toHaveLength(2)
+    } finally { harness.restore(); vi.useRealTimers() }
+  })
+
+  it('suspends recovery while hidden or leaving the document and resumes when visible', async () => {
     vi.useFakeTimers()
     const harness = await createHarness()
     try {
@@ -600,20 +668,42 @@ describe('foreground connection recovery', () => {
       await vi.advanceTimersByTimeAsync(1)
       Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
       harness.windowHub.emit('visibilitychange')
+      harness.windowHub.emit('online')
       await vi.advanceTimersByTimeAsync(60_000)
       expect(harness.fetchCalls).toHaveLength(1)
       Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
       harness.windowHub.emit('visibilitychange')
-      await vi.advanceTimersByTimeAsync(6_000)
+      await vi.advanceTimersByTimeAsync(3_000)
       expect(harness.fetchCalls).toHaveLength(2)
-      harness.windowHub.emit('offline')
-      await vi.advanceTimersByTimeAsync(60_000)
-      expect(harness.fetchCalls).toHaveLength(2)
-      harness.windowHub.emit('online')
-      await vi.advanceTimersByTimeAsync(1)
-      expect(harness.fetchCalls).toHaveLength(3)
       harness.windowHub.emit('pagehide')
+      harness.windowHub.emit('online')
       await vi.advanceTimersByTimeAsync(60_000)
+      expect(harness.fetchCalls).toHaveLength(2)
+      harness.windowHub.emit('pageshow')
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(harness.fetchCalls).toHaveLength(3)
+    } finally { harness.restore(); vi.useRealTimers() }
+  })
+
+  it('fences a pending probe on suspension so its late success cannot restore a hidden app', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    try {
+      harness.setFetchImplementation(async () => { throw new Error('Disconnected') })
+      await harness.module.registerPwa()
+      await vi.advanceTimersByTimeAsync(1)
+      let finishProbe = (_response: Response): void => {}
+      harness.setFetchImplementation(() => new Promise(resolve => { finishProbe = resolve }))
+      await vi.advanceTimersByTimeAsync(3_000)
+      harness.windowHub.emit('pagehide')
+      finishProbe(new Response('{}', { status: 200 }))
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(harness.module.pwaState.connectionState).toBe('server-unavailable')
+      expect(harness.fetchCalls).toHaveLength(2)
+      harness.setFetchImplementation(async () => new Response('{}', { status: 200 }))
+      harness.windowHub.emit('pageshow')
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(harness.module.pwaState.connectionState).toBe('online')
       expect(harness.fetchCalls).toHaveLength(3)
     } finally { harness.restore(); vi.useRealTimers() }
   })

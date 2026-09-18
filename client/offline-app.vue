@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
 import OfflineLibrary from './components/pwa/offline-library.vue'
+import OfflineNavigation from './components/pwa/offline-navigation.vue'
 import OfflineSettings from './components/pwa/offline-settings.vue'
 import { openOfflineStorage, type OfflineStorage } from './helpers/offline-storage.ts'
 import { createOfflineSyncCoordinator, createOfflineSyncUnavailableResult, OFFLINE_SYNC_COORDINATOR_KEY, type OfflineSyncCoordinator, type OfflineSyncService } from './helpers/offline-sync.ts'
@@ -79,7 +80,9 @@ async function restoreServerPage(): Promise<void> {
     // fetch cannot receive a navigation fallback from the service worker.
     const response = await fetch(url, { credentials: 'same-origin',
       headers: { Accept: 'text/html', 'X-Wiki-Navigation': '1' }, signal: AbortSignal.timeout(8000) })
+    const readable = response.ok && /^text\/html(?:;|$)/i.test(response.headers.get('content-type') ?? '')
     await response.body?.cancel()
+    if (!readable) { restored = false; return }
     if (!disposed && new URL(window.location.href).pathname === new URL(response.url).pathname) window.location.replace(url.href)
     else if (!disposed && response.redirected) window.location.replace(url.href)
     else restored = false
@@ -116,13 +119,8 @@ onBeforeUnmount(() => { disposed = true; coordinator?.dispose(); storage.value?.
       </template>
     </nav-header>
     <v-navigation-drawer v-model="drawer" :permanent="$vuetify.display.mdAndUp" :temporary="$vuetify.display.smAndDown" :width="256">
-      <div class="offline-nav-title">{{ settingsView ? 'Your workspace' : 'Browse' }}</div>
-      <v-list nav aria-label="Main Menu">
-        <v-list-item href="/" prepend-icon="mdi-home-outline" title="Home" />
-        <v-list-item href="/p/offline#downloaded-pages-title" prepend-icon="mdi-book-open-page-variant-outline" title="Saved pages" />
-        <v-list-item href="/p/offline" prepend-icon="mdi-cloud-sync-outline" title="Offline access" :active="settingsView" />
-      </v-list>
-      <p class="offline-nav-note">Your saved public pages are available on this device. Reconnect to access other pages and account features.</p>
+      <OfflineNavigation :active-path="settingsView ? '/p/offline' : selected?.snapshot.canonicalPath"
+        @navigate="drawer = !$vuetify.display.smAndDown" />
     </v-navigation-drawer>
     <v-main id="offline-main" tabindex="-1">
       <div class="offline-connection" role="status">
@@ -146,8 +144,6 @@ onBeforeUnmount(() => { disposed = true; coordinator?.dispose(); storage.value?.
 .offline-application { font-family: var(--wiki-font-body); }
 .offline-skip { position: fixed; top: -10rem; z-index: 9999; background: var(--wiki-surface-raised); padding: 1rem; }
 .offline-skip:focus { top: .5rem; }
-.offline-nav-title { padding: 1.5rem 1rem .5rem; font: 600 1.2rem var(--wiki-font-display); }
-.offline-nav-note { padding: 1rem; color: var(--wiki-muted); font-size: .85rem; }
 .offline-connection { display: flex; align-items: center; gap: .75rem; padding: .6rem 1.5rem; border-bottom: 1px solid var(--wiki-surface-border); background: var(--wiki-surface-raised); font-size: .875rem; }
 .offline-connection span { flex: 1; }
 .offline-reading-surface { margin: clamp(1rem, 3vw, 2.5rem); padding: clamp(1rem, 3vw, 2.5rem); border: 1px solid var(--wiki-surface-border); border-radius: 12px; background: var(--wiki-surface-raised); box-shadow: var(--wiki-shadow-sm); }

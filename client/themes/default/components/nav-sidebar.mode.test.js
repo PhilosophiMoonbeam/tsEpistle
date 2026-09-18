@@ -13,10 +13,12 @@ const storage = preference => {
     setItem: vi.fn((key, value) => values.set(key, value))
   }
 }
-const mountSidebar = ({ localStorage = storage(null), items = [], navMode = 'MIXED', expandParentByDefault = false } = {}) => {
-  const component = new Function('defineComponent', 'AsyncState', 'window', executable)(options => options, {}, { localStorage })
+const mountSidebar = ({ localStorage = storage(null), items = [], navMode = 'MIXED', expandParentByDefault = false, connectionState = 'online' } = {}) => {
+  const component = new Function('defineComponent', 'AsyncState', 'OfflineNavigation', 'pwaState', 'window', executable)(options => options, {}, {}, { connectionState, mode: 'feature' }, { localStorage })
   const sidebar = { ...component.data(), items, navMode, expandParentByDefault, $t: key => key }
   for (const [name, method] of Object.entries(component.methods)) sidebar[name] = method.bind(sidebar)
+  Object.defineProperty(sidebar, 'connectionState', { get: () => component.computed.connectionState.call(sidebar) })
+  Object.defineProperty(sidebar, 'connectionUnavailable', { get: () => component.computed.connectionUnavailable.call(sidebar) })
   Object.defineProperty(sidebar, 'customItems', { get: () => component.computed.customItems.call(sidebar) })
   sidebar.fetchBrowseItems = vi.fn()
   sidebar.loadFromCurrentPath = vi.fn()
@@ -118,7 +120,7 @@ describe('Custom Navigation preserves its two views', () => {
 
 
 describe('offline navigation continuity', () => {
-  const component = new Function('defineComponent', 'AsyncState', 'pwaState', executable)(options => options, {}, { connectionState: 'offline' })
+  const component = new Function('defineComponent', 'AsyncState', 'OfflineNavigation', 'pwaState', executable)(options => options, {}, {}, { connectionState: 'offline', mode: 'feature' })
 
   it('does not attempt directory requests when the connection is known to be unavailable', async () => {
     const sidebar = { ...component.data(), connectionUnavailable: true }
@@ -147,4 +149,20 @@ describe('offline navigation continuity', () => {
     component.watch.connectionState.call(sidebar, 'online')
     expect(retryBrowse).toHaveBeenCalledTimes(1)
   })
+})
+
+
+describe('offline-only Browse mode', () => {
+  for (const connectionState of ['checking', 'offline', 'server-unavailable']) {
+    it(`opens local navigation immediately while ${connectionState} without changing the online preference`, () => {
+      const localStorage = storage('browse')
+      const sidebar = mountSidebar({ localStorage, connectionState })
+      expect(sidebar.connectionUnavailable).toBe(true)
+      expect(sidebar.fetchBrowseItems).not.toHaveBeenCalled()
+      expect(sidebar.loadFromCurrentPath).not.toHaveBeenCalled()
+      sidebar.switchMode('custom')
+      expect(sidebar.currentMode).toBe('browse')
+      expect(localStorage.setItem).not.toHaveBeenCalled()
+    })
+  }
 })

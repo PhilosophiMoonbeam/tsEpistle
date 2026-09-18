@@ -148,7 +148,7 @@
                   role='status'
                   aria-live='polite'
                   aria-atomic='true'
-                  :class='[`page-header-offline-status--${offlineControlState}`, { "page-header-offline-status--quiet": !["stale", "error", "unavailable", "ineligible"].includes(offlineControlState) }]'
+                  :class='[`page-header-offline-status--${offlineControlState}`, { "page-header-offline-status--quiet": !["stale", "sync-pending", "error", "unavailable", "ineligible"].includes(offlineControlState) }]'
                 ) {{ offlineStatusLabel }}
               v-btn.page-focus-control(v-if='!printView && !readerFocus && !talkActive', variant='text', size='small', prepend-icon='mdi-book-open-page-variant-outline', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t('common:page.focusReading') }}
               .page-edit-shortcuts(
@@ -741,6 +741,7 @@ import { hydrateContentExtensions, revealContentExtensionTarget } from '../../..
 import { getErrorMessage, pushGraphError, showNotification } from '../../../helpers/root-ui-store'
 import { tagColorBucket } from '../../../../shared/tag-colors.ts'
 import { pwaState } from '../../../helpers/pwa.ts'
+import { offlineSavedPageState, offlineSavedPageStatus } from '../../../helpers/offline-page-status.ts'
 import {
   openOfflineStorage,
   subscribeOfflineStorageChanges,
@@ -823,14 +824,7 @@ type PageProtection = {
 }
 
 
-const OFFLINE_EXPIRING_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000
-const offlineSnapshotExpiringSoon = (expiresAt: string | null): boolean => {
-  if (!expiresAt) return false
-  const expiry = Date.parse(expiresAt)
-  const now = Date.now()
-  return Number.isFinite(expiry) && expiry > now && expiry - now <= OFFLINE_EXPIRING_WINDOW_MS
-}
-type OfflinePageState = 'checking' | 'eligible' | 'downloading' | 'saved' | 'expiring' | 'stale' | 'removing' | 'ineligible' | 'error' | 'unavailable'
+type OfflinePageState = 'checking' | 'eligible' | 'downloading' | 'saved' | 'expiring' | 'stale' | 'sync-pending' | 'removing' | 'ineligible' | 'error' | 'unavailable'
 const widenOfflinePageState = (state: OfflinePageState): OfflinePageState => state
 function decodePageAnchor (anchor: string): string {
   try {
@@ -1455,7 +1449,7 @@ export default defineComponent({
       return Boolean(policy && !policy.excluded && (policy.manual || policy.automatic || policy.tag))
     },
     offlineHasValidBody (): boolean {
-      return this.offlineHasSnapshot && ['saved', 'expiring', 'stale'].includes(this.offlineState)
+      return this.offlineHasSnapshot && ['saved', 'expiring', 'stale', 'sync-pending'].includes(this.offlineState)
     },
     offlineSelectionSources (): string {
       const policy = this.offlinePolicy
@@ -1479,6 +1473,7 @@ export default defineComponent({
       if (this.offlineState === 'checking') return 'checking'
       if (this.offlineState === 'downloading' || this.offlineState === 'removing') return this.offlineState
       if (this.offlineState === 'stale') return 'stale'
+      if (this.offlineState === 'sync-pending') return this.pageTransportVerified ? 'sync-pending' : 'saved'
       if (this.offlineState === 'error') return 'error'
       if (this.offlineState === 'unavailable') return 'unavailable'
       if (this.offlineState === 'ineligible' && this.offlinePolicy?.excluded && !this.offlineLocalIneligibilityReason) return 'off'
@@ -1489,12 +1484,12 @@ export default defineComponent({
     offlineControlColor (): string | undefined {
       if (['saved', 'expiring'].includes(this.offlineControlState)) return 'primary'
       if (['error', 'unavailable'].includes(this.offlineControlState)) return 'error'
-      if (['stale', 'ineligible'].includes(this.offlineControlState)) return 'warning'
+      if (['stale', 'sync-pending', 'ineligible'].includes(this.offlineControlState)) return 'warning'
       return undefined
     },
     offlineCanRetry (): boolean {
       return (this.offlineSelected || this.offlineHasSnapshot) &&
-        ['stale', 'error', 'unavailable', 'ineligible'].includes(this.offlineState) &&
+        (Boolean(this.offlineAvailabilityError) || ['stale', 'sync-pending', 'error', 'unavailable', 'ineligible'].includes(this.offlineState)) &&
         !this.offlineLocalIneligibilityReason &&
         !this.offlineActionLoading &&
         this.offlineOwnedOperationId === null
@@ -1526,7 +1521,7 @@ export default defineComponent({
     offlineControlIcon (): string {
       if (this.offlineState === 'checking') return 'mdi-cloud-search-outline'
       if (this.offlineState === 'downloading' || this.offlineState === 'removing') return 'mdi-cloud-sync-outline'
-      if (this.offlineState === 'stale' || this.offlineState === 'error' || this.offlineState === 'unavailable') return 'mdi-cloud-alert-outline'
+      if (this.offlineState === 'stale' || (this.offlineState === 'sync-pending' && this.pageTransportVerified) || this.offlineState === 'error' || this.offlineState === 'unavailable') return 'mdi-cloud-alert-outline'
       if (this.offlineState === 'ineligible') return 'mdi-cloud-off-outline'
       if (this.offlineSelected && this.offlineHasValidBody) return 'mdi-cloud-check-outline'
       if (this.offlineSelected) return 'mdi-cloud-download-outline'
@@ -1554,13 +1549,10 @@ export default defineComponent({
         case 'downloading':
           return `${selectedDetail} Saving the readable offline copy; it is not committed yet.`
         case 'expiring':
-          return `${selectedDetail} A readable offline copy is saved on this device, but expires soon.`
         case 'stale':
-          return `${selectedDetail} A readable offline copy is saved, but its latest sync is stale. Use Retry offline sync.`
+        case 'sync-pending':
         case 'saved':
-          return selected
-            ? `${selectedDetail} A readable offline copy is saved on this device.`
-            : 'A readable offline copy is saved on this device, but this page is not included for continued sync.'
+          return `${selectedDetail} ${offlineSavedPageStatus(this.offlineState, this.pageTransportVerified, selected)}`
         case 'removing':
           return 'Removing the readable offline copy and excluding this page; the change is not committed yet.'
         case 'ineligible': {
@@ -2047,11 +2039,15 @@ export default defineComponent({
           this.offlineState = 'ineligible'
         } else if (pagePolicy?.excluded || pagePolicy?.availability === 'ineligible') {
           this.offlineState = 'ineligible'
-        } else if (existing && pagePolicy?.availability === 'transient-failure') {
-          this.offlineState = 'stale'
-          this.offlineAvailabilityError = 'The latest offline sync attempt could not be completed.'
         } else if (existing) {
-          this.offlineState = offlineSnapshotExpiringSoon(this.offlineExpiresAt) ? 'expiring' : 'saved'
+          const refreshFailed = pagePolicy?.availability === 'transient-failure'
+          this.offlineState = offlineSavedPageState({
+            savedRevision: this.offlineSnapshotRevision,
+            latestKnownRevision: this.sourceRevision,
+            expiresAt: this.offlineExpiresAt,
+            refreshFailed
+          })
+          if (refreshFailed) this.offlineAvailabilityError = 'The latest offline sync attempt could not be completed.'
         } else if (pagePolicy?.availability === 'transient-failure') {
           this.offlineState = 'error'
           this.offlineAvailabilityError = 'The latest offline sync attempt could not be completed.'
@@ -2064,7 +2060,7 @@ export default defineComponent({
           ? 'Waiting for a connection to check offline availability.'
           : getErrorMessage(error) || 'Offline availability could not be checked.'
         const unavailable = /unavailable|opening|closed/iu.test(this.offlineAvailabilityError)
-        this.offlineState = unavailable ? 'unavailable' : this.offlineHasSnapshot ? 'stale' : 'error'
+        this.offlineState = unavailable ? 'unavailable' : this.offlineHasSnapshot ? 'sync-pending' : 'error'
       }
     },
     async recordOfflineReaderVisit (): Promise<void> {
@@ -2216,7 +2212,7 @@ export default defineComponent({
         if (!isCurrentPage() || this.offlineOperationId !== authoritativeRefreshOperationId) return
 
         const refreshedOfflineState = widenOfflinePageState(this.offlineState)
-        const pageFailed = ['stale', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
+        const pageFailed = Boolean(this.offlineAvailabilityError) || ['stale', 'sync-pending', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
         if (pageFailed) {
           this.offlineAvailabilityError = refreshedOfflineState === 'ineligible'
             ? 'This page is not available for offline use.'
@@ -2257,7 +2253,7 @@ export default defineComponent({
             : 'The offline selection could not be committed.'
         )
         if (!policyMutationCommitted) {
-          this.offlineState = this.offlineHasSnapshot ? 'stale' : 'error'
+          this.offlineState = this.offlineHasSnapshot ? 'sync-pending' : 'error'
           this.offlineError = detail
           showNotification(wikiStore, {
             style: 'red',
@@ -2273,7 +2269,7 @@ export default defineComponent({
         await this.refreshOfflinePageState()
         if (!isCurrentPage() || this.offlineOperationId !== authoritativeRefreshOperationId) return
         const refreshedOfflineState = widenOfflinePageState(this.offlineState)
-        const pageFailed = ['stale', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
+        const pageFailed = Boolean(this.offlineAvailabilityError) || ['stale', 'sync-pending', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
         if (pageFailed) {
           this.offlineAvailabilityError = refreshedOfflineState === 'ineligible'
             ? 'This page is not available for offline use.'
@@ -2362,7 +2358,7 @@ export default defineComponent({
         if (!isCurrentPage() || this.offlineOperationId !== authoritativeRefreshOperationId) return
 
         const refreshedOfflineState = widenOfflinePageState(this.offlineState)
-        const pageFailed = ['stale', 'error', 'unavailable'].includes(refreshedOfflineState)
+        const pageFailed = ['stale', 'sync-pending', 'error', 'unavailable'].includes(refreshedOfflineState)
         const message = syncResult.outcome === 'offline'
           ? 'Offline copy removed and page excluded from offline sync. Local synchronization will resume when a connection is available.'
           : 'Offline copy removed and page excluded from offline sync.'
@@ -2412,7 +2408,7 @@ export default defineComponent({
         await this.refreshOfflinePageState()
         if (!isCurrentPage() || this.offlineOperationId !== authoritativeRefreshOperationId) return
         const refreshedOfflineState = widenOfflinePageState(this.offlineState)
-        const pageFailed = ['stale', 'error', 'unavailable'].includes(refreshedOfflineState)
+        const pageFailed = ['stale', 'sync-pending', 'error', 'unavailable'].includes(refreshedOfflineState)
         showNotification(wikiStore, {
           style: 'success',
           message: 'Offline copy removed and page excluded from offline sync.'
@@ -2497,7 +2493,7 @@ export default defineComponent({
         if (!isCurrentPage() || this.offlineOperationId !== authoritativeRefreshOperationId) return
 
         const refreshedOfflineState = widenOfflinePageState(this.offlineState)
-        const pageFailed = ['stale', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
+        const pageFailed = Boolean(this.offlineAvailabilityError) || ['stale', 'sync-pending', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
         if (pageFailed) {
           this.offlineAvailabilityError = refreshedOfflineState === 'ineligible'
             ? 'This page is not available for offline use.'
@@ -2530,7 +2526,7 @@ export default defineComponent({
         if (!reconcileStarted) {
           this.offlineState = /unavailable|opening|closed/iu.test(detail)
             ? 'unavailable'
-            : this.offlineHasSnapshot ? 'stale' : 'error'
+            : this.offlineHasSnapshot ? 'sync-pending' : 'error'
           this.offlineAvailabilityError = `Offline sync failed: ${detail}`
           showNotification(wikiStore, {
             style: 'red',
@@ -2546,7 +2542,7 @@ export default defineComponent({
         await this.refreshOfflinePageState()
         if (!isCurrentPage() || this.offlineOperationId !== authoritativeRefreshOperationId) return
         const refreshedOfflineState = widenOfflinePageState(this.offlineState)
-        const pageFailed = ['stale', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
+        const pageFailed = Boolean(this.offlineAvailabilityError) || ['stale', 'sync-pending', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
         if (pageFailed) {
           this.offlineAvailabilityError = refreshedOfflineState === 'ineligible'
             ? 'This page is not available for offline use.'
@@ -3782,6 +3778,7 @@ export default defineComponent({
 }
 
 .page-header-offline-status--stale,
+.page-header-offline-status--sync-pending,
 .page-header-offline-status--ineligible {
   color: rgb(var(--v-theme-warning));
 }
@@ -3823,6 +3820,7 @@ export default defineComponent({
   }
 
   &--stale,
+  &--sync-pending,
   &--error,
   &--unavailable,
   &--ineligible {

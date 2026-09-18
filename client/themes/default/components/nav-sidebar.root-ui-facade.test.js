@@ -74,7 +74,7 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
 
   test('announces every SPA sidebar destination before navigation', () => {
     expect(script).toContain("emits: ['navigate']")
-    expect(source.match(/@click='sidebarLinkClicked'/g)).toHaveLength(4)
+    expect(source.match(/@click='sidebarLinkClicked'/g)).toHaveLength(3)
     expect(source).toMatch(/v-if='item\.k === `link`'[\s\S]*?:href='item\.t'[\s\S]*?@click='sidebarLinkClicked'/)
     expect(source).toMatch(/v-list-item\.nav-sidebar-current-page\([\s\S]*?:href='pagePath\(currentParent\)'[\s\S]*?@click='sidebarLinkClicked'/)
     expect(source).toMatch(/v-list-item\.nav-sidebar-page\([^\n]+:href='[^']+item\.locale[^']+item\.path'[^\n]+@click='sidebarLinkClicked'/)
@@ -109,7 +109,7 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
     expect(structuralHomeIndex).toBeGreaterThan(-1)
     expect(optionsDividerIndex).toBeGreaterThan(structuralHomeIndex)
     expect(customOptionsIndex).toBeGreaterThan(optionsDividerIndex)
-    expect(source).toContain("      template(v-else)\n        template(v-for='(item, idx) of customItems'")
+    expect(source).toMatch(/template\(v-else\)\s+template\(v-for='\(item, idx\) of customItems'/)
     expect(script).toContain("return this.items.filter(item => item.k !== 'link' || item.y !== 'home')")
   })
   test('aligns Home with the mode group and gives Browse quiet hierarchy cues', () => {
