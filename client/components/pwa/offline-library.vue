@@ -1328,11 +1328,11 @@ onBeforeUnmount(() => {
     <section v-if="showSettings" class="offline-policy" aria-labelledby="offline-policy-title">
       <div class="policy-heading">
         <div>
-          <p class="section-kicker">Policy <span aria-hidden="true">03</span></p>
-          <h3 id="offline-policy-title">Offline sync controls</h3>
+          <p class="section-kicker">On this device</p>
+          <h3 id="offline-policy-title">What gets saved</h3>
         </div>
         <button class="text-button" type="button" :disabled="storageUnavailable || storageChecking || policyLoading || policyMutationLoading || refreshing" @click="refreshOfflineSync">
-          {{ policyLoading || refreshing ? 'Refreshing…' : 'Refresh sync' }}
+          {{ policyLoading || refreshing ? 'Refreshing…' : 'Sync now' }}
         </button>
       </div>
       <label class="policy-toggle">
@@ -1350,7 +1350,7 @@ onBeforeUnmount(() => {
       <div class="policy-tags">
         <div class="policy-tags-heading">
           <strong>Followed tags</strong>
-          <a class="text-button" href="/tags">Browse tags</a>
+          <a class="text-button" href="/t">Browse tags</a>
         </div>
         <span v-if="!selectedTags.length" class="policy-muted">None yet</span>
         <button
@@ -1371,18 +1371,18 @@ onBeforeUnmount(() => {
     <section v-if="showSettings && missingPolicyPages.length" class="offline-policy missing-pages" aria-labelledby="missing-pages-title">
       <div class="policy-heading">
         <div>
-          <p class="section-kicker">Needs attention <span aria-hidden="true">04</span></p>
+          <p class="section-kicker">Needs attention</p>
           <h3 id="missing-pages-title">Selected pages without a saved copy</h3>
         </div>
         <span class="policy-muted">{{ missingPolicyPages.length }} waiting</span>
       </div>
-      <p class="policy-muted">These public pages are selected by an offline policy, but this device has no usable snapshot yet. Only the page identifier, locale, and saved policy sources are shown here.</p>
+      <p class="policy-muted">These pages are selected for offline saving, but their copies are not ready on this device. Reconnect and sync to make them available.</p>
       <ul class="missing-page-list">
         <li v-for="entry in missingPolicyPages" :key="entry.page.key" class="missing-page-item">
           <div class="missing-page-main">
             <strong>Page #{{ entry.page.pageId }} · {{ entry.page.locale }}</strong>
             <span class="missing-page-status" :data-state="entry.status">{{ missingPolicyStatusLabel(entry.status) }}</span>
-            <small>Sources: {{ provenanceLabelForPolicy(entry.page) }}</small>
+            <small>Saved via: {{ provenanceLabelForPolicy(entry.page) }}</small>
           </div>
           <div class="missing-page-actions">
             <button
