@@ -550,7 +550,7 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
       const body = (request.postDataJSON() ?? {}) as { target?: 'agent' | 'user'; content?: string }
       const target = body.target === 'agent' ? 'agent' : 'user'
       const content = typeof body.content === 'string' ? body.content.trim() : ''
-      const entry = { id: uuidAt(MEMORY_ID, state.memoryEntries.length + 1), target, content, version: 1, createdAt: NOW, updatedAt: NOW }
+      const entry: FixtureMemory = { id: uuidAt(MEMORY_ID, state.memoryEntries.length + 1), target, content, version: 1, createdAt: NOW, updatedAt: NOW }
       state.memoryEntries.push(entry)
       const characters = state.memoryEntries.filter(item => item.target === target).reduce((sum, item) => sum + item.content.length, 0)
       return json(

@@ -576,10 +576,13 @@ test.describe('release accessibility profiles', () => {
         page
           .locator('main')
           .first()
-          .evaluate(element => ({
-            ariaHidden: element.getAttribute('aria-hidden'),
-            inert: element.inert
-          }))
+          .evaluate(element => {
+            if (!(element instanceof HTMLElement)) throw new Error('Expected an HTML main element')
+            return {
+              ariaHidden: element.getAttribute('aria-hidden'),
+              inert: element.inert
+            }
+          })
       )
       .toEqual({ ariaHidden: null, inert: false })
   })
