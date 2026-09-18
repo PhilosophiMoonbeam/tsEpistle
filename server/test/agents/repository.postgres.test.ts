@@ -1,3 +1,4 @@
+import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 
@@ -448,6 +449,7 @@ postgresAdmissionSuite('PostgreSQL agent admission authority', () => {
     db = knexModule({ client: 'pg', connection: connection ?? undefined, searchPath: [admissionSchema], pool: { min: 0, max: 8 } })
     secondDb = knexModule({ client: 'pg', connection: connection ?? undefined, searchPath: [admissionSchema], pool: { min: 0, max: 4 } })
     await createAdmissionTables(db)
+    await addAgentMedia(db)
   })
 
   beforeEach(async () => {

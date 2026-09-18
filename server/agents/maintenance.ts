@@ -402,6 +402,7 @@ export const runAgentMaintenance = async (
   now = new Date()
 ): Promise<AgentMaintenanceResult> => {
   const policy = boundedPolicy(inputPolicy)
+  await deleteExpiredRows(knex, 'agentMedia', 'expiresAt', now, policy.batchSize)
   const recovered = await recoverRuns(knex, now, policy.batchSize)
   const recoveredProposalExecutions = await recoverProposalExecutions(knex, now, policy.batchSize)
   const expiredApprovals = await expireApprovals(knex, now, policy.batchSize)

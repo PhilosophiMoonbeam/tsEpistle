@@ -1,8 +1,9 @@
 import type { Page, Route } from '@playwright/test'
-import type { AgentProposalView } from '../../shared/agents/contracts.ts'
+import type { AgentProviderProfileView, AgentProposalView } from '../../shared/agents/contracts.ts'
 export type AgentFixtureMode = 'success' | 'failure' | 'retry' | 'stop' | 'approval' | 'partial' | 'focus' | 'security' | 'cap' | 'latest' | 'pin'
 
 export interface AgentFixtureOptions {
+  readonly media?: AgentProviderProfileView['media']
   readonly mode?: AgentFixtureMode
   readonly archivePartialFailure?: boolean
   readonly seedMemory?: boolean
@@ -536,7 +537,7 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
       }
       return json(route, { deleted: true, movedSessions })
     }
-    if (path === '/_api/agents/profiles' && request.method() === 'GET') return json(route, { profiles: [profile()] })
+    if (path === '/_api/agents/profiles' && request.method() === 'GET') return json(route, { profiles: [{ ...profile(), ...(options.media ? { media: options.media } : {}) }] })
     if (path === '/_api/agents/skills' && request.method() === 'GET') return json(route, { skills: [] })
     if (path === '/_api/agents/memories' && request.method() === 'GET') {
       const userCharacters = state.memoryEntries.filter(entry => entry.target === 'user').reduce((sum, entry) => sum + entry.content.length, 0)

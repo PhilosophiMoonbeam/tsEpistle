@@ -1,3 +1,6 @@
+import { createAgentMediaTestDatabase } from '../agents/media-database.ts'
+import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
+import { storeAgentMedia } from '../../agents/media.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
@@ -304,11 +307,15 @@ const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('agentProviderProfileVersions', table => {
     table.uuid('id').primary()
     table.text('policies').notNullable()
+    table.string('transportKind').nullable()
+    table.string('baseUrl').nullable()
+    table.text('adapterConfig').nullable()
   })
 }
 
 describe('ordinary-origin agent session API', () => {
   let db: Knex
+  let destroyDatabase: () => Promise<void>
   let server: Server
   let runtime: AgentProductRuntime
   let baseUrl: string
@@ -316,6 +323,12 @@ describe('ordinary-origin agent session API', () => {
   let ownerId = 7
   let authContextOwnerId: number | null = null
   let administrator = false
+  let agentsEnabled = true
+  let mediaAuthorized = true
+  let revokeMediaInEngine: 'permission' | 'profile' | 'grant' | null = null
+  let mediaAuthorizationChecks = 0
+  let currentMediaProfileChanged = false
+  let currentMediaGrantRevoked = false
   const csrf = 'csrf-token'
   let engineCurrentPage: unknown
   let engineMessages: readonly { readonly role: string; readonly content: string; readonly providerState?: unknown }[] = []
@@ -335,11 +348,7 @@ describe('ordinary-origin agent session API', () => {
     auxiliaryCoordinators.add(candidate)
     return candidate
   }
-  const makeAccountingRuntime = (
-    engine: AgentEngine,
-    maxTokens: number,
-    utilityModel?: AgentProductRuntimeOptions['utilityModel']
-  ): AgentProductRuntime => {
+  const makeAccountingRuntime = (engine: AgentEngine, maxTokens: number, utilityModel?: AgentProductRuntimeOptions['utilityModel']): AgentProductRuntime => {
     const resolved = {
       profileResolutionSha256: 'a'.repeat(64),
       providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
@@ -425,12 +434,9 @@ describe('ordinary-origin agent session API', () => {
           })
         )
       }
-      const selectedGoal = (await db('agentGoals').where({ id: run.goalId, ownerId: quotaReservation.ownerId }).first(
-        'budgetSelection',
-        'tokenTier',
-        'tokenAllowance',
-        'budgetCycle'
-      )) as
+      const selectedGoal = (await db('agentGoals')
+        .where({ id: run.goalId, ownerId: quotaReservation.ownerId })
+        .first('budgetSelection', 'tokenTier', 'tokenAllowance', 'budgetCycle')) as
         | { budgetSelection: string; tokenTier: string | null; tokenAllowance: number | string | null; budgetCycle: number | string }
         | undefined
       const existingCheckpoint = await db('agentEvents')
@@ -481,7 +487,9 @@ describe('ordinary-origin agent session API', () => {
           data,
           createdAt: new Date()
         })
-        await db('agentRuns').where({ id: runId, eventSequence: Number(runRow.eventSequence) }).update({ eventSequence: sequence })
+        await db('agentRuns')
+          .where({ id: runId, eventSequence: Number(runRow.eventSequence) })
+          .update({ eventSequence: sequence })
       }
     }
     const daily = (await db('agentQuotaDaily')
@@ -543,6 +551,12 @@ describe('ordinary-origin agent session API', () => {
     ownerId = 7
     authContextOwnerId = null
     administrator = false
+    agentsEnabled = true
+    mediaAuthorized = true
+    revokeMediaInEngine = null
+    mediaAuthorizationChecks = 0
+    currentMediaProfileChanged = false
+    currentMediaGrantRevoked = false
     engineCurrentPage = undefined
     engineMessages = []
     engineSkills = []
@@ -551,8 +565,9 @@ describe('ordinary-origin agent session API', () => {
     engineFailure = null
     engineContextLimit = undefined
     runtimeLogs.length = 0
-    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
+    ;({ db, destroy: destroyDatabase } = await createAgentMediaTestDatabase())
     await createTables(db)
+    await addAgentMedia(db)
     await db('agentProviderProfileVersions').insert({
       id: '00000000-0000-4000-8000-000000000070',
       policies: JSON.stringify({
@@ -574,6 +589,12 @@ describe('ordinary-origin agent session API', () => {
         engineSkills = request.skills.map(skill => ({ id: skill.id, name: skill.name }))
         engineMemory = request.memory
         engineRunId = request.run.id
+        if (revokeMediaInEngine) {
+          if (revokeMediaInEngine === 'permission') mediaAuthorized = false
+          if (revokeMediaInEngine === 'profile') currentMediaProfileChanged = true
+          if (revokeMediaInEngine === 'grant') currentMediaGrantRevoked = true
+          await request.authorizeMedia!()
+        }
         if (engineFailure !== null) throw engineFailure
         await sink.text('Hello ')
         await sink.text('from the deterministic engine.')
@@ -609,11 +630,16 @@ describe('ordinary-origin agent session API', () => {
           return resolvedAdmission
         },
         async resolveCurrent() {
-          return resolvedAdmission
+          if (currentMediaGrantRevoked) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Provider grant was revoked.', 403)
+          return currentMediaProfileChanged ? { ...resolvedAdmission, providerProfileVersionId: randomUUID() } : resolvedAdmission
         }
       },
       fakeEngine,
       {
+        authorizeMedia: async () => {
+          mediaAuthorizationChecks += 1
+          if (!agentsEnabled || !mediaAuthorized) throw new AgentRepositoryError('AGENT_PERMISSION_REVOKED', 'Wiki Agent access was revoked.', 403)
+        },
         workerId: 'test-worker',
         globalConcurrency: 1,
         perUserConcurrency: 1,
@@ -652,7 +678,9 @@ describe('ordinary-origin agent session API', () => {
           host: 'https://wiki.example.test',
           sessionSecret: 'profile-resolution-secret',
           agents: {
-            enabled: true,
+            get enabled() {
+              return agentsEnabled
+            },
             provider: { enabled: true },
             goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 },
             retention: { temporarySessionHours: 24 },
@@ -694,7 +722,7 @@ describe('ordinary-origin agent session API', () => {
       auxiliaryRuntimes.clear()
       auxiliaryCoordinators.clear()
       try {
-        await db.destroy()
+        await destroyDatabase()
       } finally {
         ownerId = 7
         authContextOwnerId = null
@@ -709,6 +737,111 @@ describe('ordinary-origin agent session API', () => {
         runtimeLogs.length = 0
       }
     }
+  })
+
+  it.each(['permission', 'profile', 'grant'] as const)('rechecks current %s authority for a text run that later invokes the image tool', async revocation => {
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const admitted = await runtime.submit({
+      ownerId: 7,
+      sessionId,
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'test',
+      clientRequestId: randomUUID(),
+      content: 'Create an illustration.'
+    })
+    revokeMediaInEngine = revocation
+    await runtime.runOnce()
+    expect(await db('agentRuns').where({ id: admitted.run.id }).first('status', 'errorCode')).toEqual({
+      status: 'failed',
+      errorCode: 'AGENT_ENGINE_FAILED'
+    })
+    expect(mediaAuthorizationChecks).toBe(1)
+    expect((await db('agentMessages').where({ id: admitted.run.assistantMessageId }).first('content')).content).toBe('')
+  })
+  it('rejects new media uploads when Wiki Agent is globally disabled', async () => {
+    agentsEnabled = false
+    const response = await fetch(`${baseUrl}/_api/agents/sessions/${randomUUID()}/media`, {
+      method: 'POST',
+      headers: { cookie, origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    })
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchObject({ error: 'AGENT_ROUTE_DISABLED' })
+  })
+  const enableTestMedia = async () => {
+    await db('agentProviderProfileVersions')
+      .where({ id: '00000000-0000-4000-8000-000000000070' })
+      .update({
+        transportKind: 'gemini-api',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        adapterConfig: JSON.stringify({
+          timeoutMs: 30000,
+          maxRetries: 0,
+          media: {
+            attachments: true,
+            imageGeneration: { model: 'gemini-3.1-flash-image', pricingRevision: 'USD|1|1' },
+            transcription: { model: 'gemini-3.5-transcribe', pricingRevision: 'USD|1|1' }
+          }
+        })
+      })
+  }
+  it('binds attachments atomically and includes attachment IDs and image mode in replay identity', async () => {
+    await enableTestMedia()
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: Buffer.from('%PDF-1.7'), mimeType: 'application/pdf', filename: 'notes.pdf' })
+    const input = {
+      ownerId: 7,
+      sessionId,
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'test',
+      clientRequestId: randomUUID(),
+      content: 'Read this file.',
+      attachmentIds: [media.id]
+    }
+    const admitted = await runtime.submit(input)
+    expect((await runtime.submit(input)).replayed).toBe(true)
+    await expect(runtime.submit({ ...input, attachmentIds: [] })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
+    await expect(runtime.submit({ ...input, attachmentIds: [], responseMode: 'image' })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
+    await expect(runtime.submit({ ...input, responseMode: 'image' })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
+    expect((await db('agentMedia').where({ id: media.id }).first()).runId).toBe(admitted.run.id)
+    await runtime.runOnce()
+    expect(engineMessages.some(message => 'attachments' in message)).toBe(true)
+    const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
+    expect(await response.json()).toMatchObject({ messages: [{ media: [{ id: media.id }] }, {}] })
+    ownerId = 8
+    expect((await fetch(`${baseUrl}/_api/agents/media/${media.id}/content`, { headers: { cookie } })).status).toBe(404)
+  })
+  it('keeps transcription turns hidden, exposes only completed text to the owner, and purges recording bytes', async () => {
+    await enableTestMedia()
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const media = await storeAgentMedia(db, {
+      ownerId: 7,
+      sessionId,
+      payload: Buffer.from('RIFF0000WAVE0000'),
+      mimeType: 'audio/wav',
+      filename: 'recording.wav'
+    })
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/transcriptions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), attachmentId: media.id })
+    })
+    expect(response.status).toBe(202)
+    const { runId } = (await response.json()) as { runId: string }
+    const before = await fetch(`${baseUrl}/_api/agents/runs/${runId}/transcription`, { headers: { cookie } })
+    expect(await before.json()).toEqual({ status: 'queued' })
+    await runtime.runOnce()
+    const after = await fetch(`${baseUrl}/_api/agents/runs/${runId}/transcription`, { headers: { cookie } })
+    expect(after.headers.get('cache-control')).toBe('private, no-store')
+    expect(await after.json()).toEqual({ status: 'succeeded', text: 'Hello from the deterministic engine.' })
+    expect(await db('agentMedia').where({ id: media.id }).first()).toBeUndefined()
+    const thread = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
+    expect(await thread.json()).toMatchObject({ messages: [] })
+    ownerId = 8
+    expect((await fetch(`${baseUrl}/_api/agents/runs/${runId}/transcription`, { headers: { cookie } })).status).toBe(404)
   })
 
   it('requires same-origin metadata and CSRF for session mutations', async () => {
@@ -2132,7 +2265,9 @@ describe('ordinary-origin agent session API', () => {
         clientRequestId: renewal.clientRequestId
       })
     ).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
-    expect(await db('agentEvents').where({ runId: renewal.runId, type: 'run.resumed' }).count<{ count: number | string }[]>({ count: '*' }).first()).toEqual({ count: 1 })
+    expect(await db('agentEvents').where({ runId: renewal.runId, type: 'run.resumed' }).count<{ count: number | string }[]>({ count: '*' }).first()).toEqual({
+      count: 1
+    })
     expect(Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(runCount)
 
     await expect(
@@ -3086,6 +3221,7 @@ describe('ordinary-origin agent API routing', () => {
   beforeAll(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
     await createTables(db)
+    await addAgentMedia(db)
     const app = express()
     app.use(cookieParser())
     app.use(session({ secret: 'ordinary-agent-host-test-secret', resave: false, saveUninitialized: true }))

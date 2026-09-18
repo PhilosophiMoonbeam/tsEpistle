@@ -67,6 +67,13 @@ const permissionsFor = async (user: UserLike): Promise<readonly string[]> => {
   return [...new Set(permissions.filter((permission): permission is string => typeof permission === 'string'))].sort()
 }
 
+export const assertWikiAgentMediaAccess = async (ownerId: number, flags: { readonly enabled: boolean; readonly providerEnabled: boolean }): Promise<void> => {
+  if (!flags.enabled || !flags.providerEnabled) throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Wiki Agent media is disabled.', 403)
+  const permissions = await permissionsFor(await loadUser(ownerId))
+  if (!permissions.includes('use:agents') && !permissions.includes('manage:system'))
+    throw new AgentRepositoryError('AGENT_PERMISSION_REVOKED', 'Wiki Agent access is no longer permitted.', 403)
+}
+
 const groupIdsFor = (user: UserLike): readonly number[] => [...new Set((user.groups ?? []).map(group => group.id).filter((id): id is number => Number.isSafeInteger(id) && id! > 0))].sort((left, right) => left - right)
 
 const allowedActionsFor = async (knex: Knex, runId: string): Promise<readonly AgentActionName[] | undefined> => {

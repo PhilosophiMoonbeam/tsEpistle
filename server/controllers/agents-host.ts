@@ -1,3 +1,6 @@
+import { AgentMediaUploadGate, parseAgentMediaUpload } from '../agents/media-upload.ts'
+import multer from 'multer'
+import { AGENT_MEDIA_MAX_BYTES, getOwnedAgentMedia, projectAgentMedia, storeAgentMedia } from '../agents/media.ts'
 import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { createHash, createHmac } from 'node:crypto'
 import express, { type NextFunction, type Request, type Response } from 'express'
@@ -34,6 +37,7 @@ import {
   type AgentConversationFolderRecord,
   createAgentConversationFolder,
   createAgentSession,
+  getOwnedAgentSession,
   encodeAgentSessionCursor,
   deleteAgentConversationFolder,
   listOwnedAgentConversationFolders,
@@ -182,22 +186,26 @@ const ConversationFolderNameSchema = z.string().transform(cleanAgentConversation
 const CreateConversationFolderSchema = z.strictObject({ name: ConversationFolderNameSchema })
 const RenameConversationFolderSchema = z.strictObject({ expectedVersion: z.number().int().positive(), name: ConversationFolderNameSchema })
 const MoveSessionFolderSchema = z.strictObject({ expectedSessionVersion: z.number().int().positive(), folderId: z.uuid().nullable() })
-const SubmitMessageSchema = z.strictObject({
-  clientRequestId: z.uuid(),
-  expectedSessionVersion: z.number().int().positive(),
-  profileResolutionToken: z.string().min(1).max(4_096),
-  content: z.string().min(1).max(32_000),
-  invokedSkillVersionIds: z.array(z.uuid()).max(8).optional(),
-  knowledgeContext: AgentKnowledgeContextSchema.optional(),
-  currentPage: z
-    .strictObject({
-      id: z.number().int().positive(),
-      locale: z.string().min(1).max(16),
-      path: z.string().min(1).max(1_024),
-      observedUpdatedAt: z.iso.datetime()
-    })
-    .optional()
-})
+const SubmitMessageSchema = z
+  .strictObject({
+    clientRequestId: z.uuid(),
+    expectedSessionVersion: z.number().int().positive(),
+    profileResolutionToken: z.string().min(1).max(4_096),
+    content: z.string().max(32_000),
+    attachmentIds: z.array(z.uuid()).max(4).optional(),
+    responseMode: z.enum(['text', 'image']).optional(),
+    invokedSkillVersionIds: z.array(z.uuid()).max(8).optional(),
+    knowledgeContext: AgentKnowledgeContextSchema.optional(),
+    currentPage: z
+      .strictObject({
+        id: z.number().int().positive(),
+        locale: z.string().min(1).max(16),
+        path: z.string().min(1).max(1_024),
+        observedUpdatedAt: z.iso.datetime()
+      })
+      .optional()
+  })
+  .refine(value => value.content.trim().length > 0 || (value.attachmentIds?.length ?? 0) > 0, 'Write a message or attach a file.')
 const CreateGoalSchema = z.strictObject({
   goalId: z.uuid(),
   clientRequestId: z.uuid(),
@@ -476,10 +484,113 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       return res.json({ removed: await memoryRepository.clear(requestSkillPrincipal(req).userId) })
     })
   )
+  const mediaUploads = new AgentMediaUploadGate()
+  const parseMedia = multer({ storage: multer.memoryStorage(), limits: { fileSize: AGENT_MEDIA_MAX_BYTES, files: 1, fields: 0, parts: 1 } }).single('file')
+  router.post(
+    `${apiPrefix}/sessions/:sessionId/media`,
+    asyncRoute(async (req, res, signal) => {
+      if (!wiki.config.agents.enabled || !wiki.config.agents.provider.enabled || !wiki.providerRegistry) return disabledRoute(res)
+      const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
+      const ownerId = requestSkillPrincipal(req).userId
+      const session = await getOwnedAgentSession(wiki.models.knex, ownerId, sessionId)
+      const profiles = await wiki.providerRegistry.listVisible(ownerId)
+      const profile = session.providerProfileId
+        ? profiles.find(item => item.id === session.providerProfileId)
+        : (profiles.find(item => item.isGlobalDefault) ?? (profiles.length === 1 ? profiles[0] : undefined))
+      const mediaCapabilities = profile?.media
+      if (!mediaCapabilities || (!mediaCapabilities.attachments && !mediaCapabilities.transcription && !mediaCapabilities.imageGeneration))
+        return disabledRoute(res)
+      return mediaUploads.run(ownerId, async () => {
+        await parseAgentMediaUpload(parseMedia, req, res, signal)
+        signal.throwIfAborted()
+        if (
+          !req.file ||
+          (req.file.mimetype.startsWith('audio/')
+            ? !mediaCapabilities.transcription
+            : !mediaCapabilities.attachments && !(req.file.mimetype.startsWith('image/') && mediaCapabilities.imageGeneration))
+        )
+          return disabledRoute(res)
+        const media = await storeAgentMedia(wiki.models.knex, {
+          ownerId,
+          sessionId,
+          payload: req.file.buffer,
+          filename: req.file.originalname,
+          mimeType: req.file.mimetype
+        })
+        return res.status(201).json({ media: projectAgentMedia(media) })
+      })
+    })
+  )
+  router.get(
+    `${apiPrefix}/media/:mediaId/content`,
+    asyncRoute(async (req, res) => {
+      const media = await getOwnedAgentMedia(wiki.models.knex, requestSkillPrincipal(req).userId, UUIDSchema.parse(routeParameter(req, 'mediaId')))
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'; sandbox",
+        'Content-Type': media.mimeType,
+        'Content-Disposition': `${media.mimeType.startsWith('image/') ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(media.filename)}`
+      })
+      return res.send(Buffer.from(media.payload))
+    })
+  )
+  router.delete(
+    `${apiPrefix}/media/:mediaId`,
+    asyncRoute(async (req, res) => {
+      const ownerId = requestSkillPrincipal(req).userId
+      const media = await getOwnedAgentMedia(wiki.models.knex, ownerId, UUIDSchema.parse(routeParameter(req, 'mediaId')))
+      const deleted = await wiki.models.knex('agentMedia').where({ id: media.id, ownerId }).whereNull('messageId').delete()
+      if (!deleted) throw new AgentRepositoryError('AGENT_MEDIA_BOUND', 'Delete the conversation to remove sent attachments.', 409)
+      return res.sendStatus(204)
+    })
+  )
+  router.post(
+    `${apiPrefix}/sessions/:sessionId/transcriptions`,
+    asyncRoute(async (req, res) => {
+      if (!wiki.config.agents.enabled || !wiki.config.agents.provider.enabled || !wiki.agentRuntime) return disabledRoute(res)
+      const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
+      const input = z
+        .strictObject({
+          clientRequestId: z.uuid(),
+          expectedSessionVersion: z.number().int().positive(),
+          profileResolutionToken: z.string().min(1).max(4096),
+          attachmentId: z.uuid()
+        })
+        .parse(req.body)
+      const admitted = await wiki.agentRuntime.submit({
+        ownerId: requestSkillPrincipal(req).userId,
+        sessionId,
+        clientRequestId: input.clientRequestId,
+        expectedSessionVersion: input.expectedSessionVersion,
+        profileResolutionToken: input.profileResolutionToken,
+        content: 'Transcribe this audio recording.',
+        attachmentIds: [input.attachmentId],
+        transcription: true
+      })
+      return res.status(202).json({ runId: admitted.run.id })
+    })
+  )
+  router.get(
+    `${apiPrefix}/runs/:runId/transcription`,
+    asyncRoute(async (req, res) => {
+      res.set('Cache-Control', 'private, no-store')
+      const ownerId = requestSkillPrincipal(req).userId
+      const run = await wiki.models
+        .knex('agentRuns')
+        .where({ id: UUIDSchema.parse(routeParameter(req, 'runId')), ownerId })
+        .first('status', 'mediaRequest', 'assistantMessageId', 'sessionId')
+      if (!run || !run.mediaRequest || JSON.parse(run.mediaRequest).kind !== 'transcription')
+        throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Transcription was not found.', 404)
+      await getOwnedAgentSession(wiki.models.knex, ownerId, run.sessionId)
+      const message = run.status === 'succeeded' ? await wiki.models.knex('agentMessages').where({ id: run.assistantMessageId }).first('content') : undefined
+      return res.json({ status: run.status, ...(message ? { text: message.content } : {}) })
+    })
+  )
   router.post(
     `${apiPrefix}/sessions/:sessionId/messages`,
     asyncRoute(async (req, res) => {
-      if (!wiki.config.agents.provider.enabled || !wiki.agentRuntime) return disabledRoute(res)
+      if (!wiki.config.agents.enabled || !wiki.config.agents.provider.enabled || !wiki.agentRuntime) return disabledRoute(res)
       const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
       const input = SubmitMessageSchema.parse(req.body)
       const principal = requestSkillPrincipal(req)
@@ -649,7 +760,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   router.put(
     `${apiPrefix}/sessions/:sessionId/profile`,
     asyncRoute(async (req, res, signal) => {
-      if (!wiki.config.agents.provider.enabled || !wiki.providerRegistry) return disabledRoute(res)
+      if (!wiki.config.agents.enabled || !wiki.config.agents.provider.enabled || !wiki.providerRegistry) return disabledRoute(res)
       const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
       const input = z.strictObject({ expectedSessionVersion: z.number().int().positive(), profileId: z.uuid().nullable() }).parse(req.body)
       const ownerId = requestSkillPrincipal(req).userId

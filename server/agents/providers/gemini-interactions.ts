@@ -25,6 +25,12 @@ const IdentifierSchema = z
   .min(1)
   .max(256)
   .refine(value => !containsControlCharacter(value), 'identifier contains a control character')
+// Google intentionally leaves the interaction ID empty when store:false.
+// Tool call IDs still require the nonempty IdentifierSchema above.
+const InteractionIdentifierSchema = z
+  .string()
+  .max(256)
+  .refine(value => !containsControlCharacter(value), 'identifier contains a control character')
 const ToolNameSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u)
 const JsonObjectSchema = z.record(z.string(), z.unknown())
 const TextContentSchema = z.strictObject({
@@ -48,6 +54,16 @@ const ThoughtStepSchema = z.strictObject({
 })
 const OutputStepSchema = z.discriminatedUnion('type', [ModelOutputStepSchema, FunctionCallStepSchema, ThoughtStepSchema])
 const OutputStepsSchema = z.array(OutputStepSchema).max(MAX_STEPS)
+const ModalityTokenCountsSchema = z.array(z.object({ modality: z.string().min(1).max(32), tokens: z.number().int().nonnegative() })).max(16)
+const ModelInvocationTokenCountsSchema = z
+  .array(
+    z.object({
+      prompt_tokens_details: ModalityTokenCountsSchema.optional(),
+      candidates_tokens_details: ModalityTokenCountsSchema.optional(),
+      thoughts_tokens_details: ModalityTokenCountsSchema.optional()
+    })
+  )
+  .max(64)
 const UsageSchema = z
   .strictObject({
     total_input_tokens: z.number().int().nonnegative(),
@@ -60,12 +76,14 @@ const UsageSchema = z
     output_tokens_by_modality: z.array(z.unknown()).optional(),
     cached_tokens_by_modality: z.array(z.unknown()).optional(),
     tool_use_tokens_by_modality: z.array(z.unknown()).optional(),
-    grounding_tool_count: z.array(z.unknown()).optional()
+    grounding_tool_count: z.array(z.unknown()).optional(),
+    raw_prompt_token: z.number().int().nonnegative().optional(),
+    model_invocation_token_counts: ModelInvocationTokenCountsSchema.optional()
   })
   .refine(usage => usage.total_tokens >= usage.total_input_tokens + usage.total_output_tokens, 'total token count is inconsistent')
 const InteractionSchema = z
   .object({
-    id: IdentifierSchema,
+    id: InteractionIdentifierSchema.optional(),
     model: z.string().min(1).max(255),
     status: z.enum(['completed', 'requires_action', 'incomplete', 'failed', 'cancelled', 'budget_exceeded']),
     steps: OutputStepsSchema,
@@ -186,9 +204,21 @@ const requestParts = (request: Readonly<AxChatRequest<unknown>>): { systemInstru
       continue
     }
     if (message.role === 'user') {
-      if (typeof message.content !== 'string')
-        throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Gemini Interactions currently accepts text-only Wiki messages', 400)
-      input.push({ type: 'user_input', content: [{ type: 'text', text: message.content }] })
+      const content =
+        typeof message.content === 'string'
+          ? [{ type: 'text', text: message.content }]
+          : message.content.map(part => {
+              if (part.type === 'text') return { type: 'text', text: part.text }
+              if (
+                part.type !== 'file' ||
+                !('fileUri' in part) ||
+                !/^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/files\/[A-Za-z0-9_-]{1,128}$/u.test(part.fileUri) ||
+                !['image/png', 'image/jpeg', 'image/webp', 'application/pdf'].includes(part.mimeType)
+              )
+                throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Gemini attachments must be validated Files API references', 400)
+              return { type: part.mimeType === 'application/pdf' ? 'document' : 'image', uri: part.fileUri, mime_type: part.mimeType }
+            })
+      input.push({ type: 'user_input', content })
       continue
     }
     if (message.role === 'assistant') {
@@ -249,7 +279,7 @@ const responseResult = (id: string, status: z.infer<typeof InteractionSchema>['s
   const calls = stepCalls(steps)
   return {
     index: 0,
-    id,
+    ...(id.length === 0 ? {} : { id }),
     ...(content.length === 0 ? {} : { content }),
     ...(calls.length === 0
       ? {}
@@ -314,8 +344,8 @@ const bufferedResponse = async (response: Response, expectedModel: string): Prom
   if (!parsed.success || parsed.data.model !== expectedModel) throw invalidResponse('response does not match the pinned schema')
   if (parsed.data.status === 'failed' || parsed.data.status === 'cancelled') throw invalidResponse('interaction did not complete successfully')
   return {
-    remoteId: parsed.data.id,
-    results: [responseResult(parsed.data.id, parsed.data.status, parsed.data.steps)],
+    ...(!parsed.data.id ? {} : { remoteId: parsed.data.id }),
+    results: [responseResult(parsed.data.id ?? '', parsed.data.status, parsed.data.steps)],
     modelUsage: usageResponse(expectedModel, parsed.data.usage)
   }
 }
@@ -325,19 +355,19 @@ const StreamStartStepSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('function_call'), id: IdentifierSchema, name: ToolNameSchema, arguments: JsonObjectSchema.optional() }),
   z.strictObject({
     type: z.literal('thought'),
-    signature: z.string().min(1).max(MAX_STATE_BYTES).optional(),
+    signature: z.string().max(MAX_STATE_BYTES).optional(),
     summary: z.array(TextContentSchema).max(64).optional()
   })
 ])
 const CreatedEventSchema = z.strictObject({
   event_type: z.literal('interaction.created'),
   event_id: z.string().optional(),
-  interaction: z.object({ id: IdentifierSchema, model: z.string().min(1).max(255).optional(), status: z.literal('in_progress') }).passthrough()
+  interaction: z.object({ id: InteractionIdentifierSchema, model: z.string().min(1).max(255).optional(), status: z.literal('in_progress') }).passthrough()
 })
 const StatusEventSchema = z.strictObject({
   event_type: z.literal('interaction.status_update'),
   event_id: z.string().optional(),
-  interaction_id: IdentifierSchema,
+  interaction_id: InteractionIdentifierSchema,
   status: z.enum(['in_progress', 'requires_action', 'completed', 'incomplete', 'failed', 'cancelled', 'budget_exceeded'])
 })
 const StartEventSchema = z.strictObject({
@@ -379,7 +409,7 @@ const CompletedEventSchema = z.strictObject({
   event_id: z.string().optional(),
   interaction: z
     .object({
-      id: IdentifierSchema,
+      id: InteractionIdentifierSchema.optional(),
       model: z.string().min(1).max(255).optional(),
       status: z.enum(['completed', 'requires_action', 'incomplete', 'failed', 'cancelled', 'budget_exceeded']),
       steps: OutputStepsSchema.optional(),
@@ -411,7 +441,7 @@ interface StreamState {
 }
 
 const streamedChunk = (state: StreamState, result: AxChatResponseResult, usage?: Usage): AxChatResponse => ({
-  ...(state.interactionId === null ? {} : { remoteId: state.interactionId }),
+  ...(state.interactionId === null || state.interactionId.length === 0 ? {} : { remoteId: state.interactionId }),
   results: [result],
   ...(usage === undefined ? {} : { modelUsage: usageResponse(state.expectedModel, usage) })
 })
@@ -506,7 +536,7 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
     return [
       streamedChunk(state, {
         index: 0,
-        id: state.interactionId,
+        ...(state.interactionId.length === 0 ? {} : { id: state.interactionId }),
         functionCalls: [{ id: step.id, type: 'function', function: { name: step.name, params: step.arguments } }],
         finishReason: 'function_call'
       })
@@ -516,7 +546,7 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
     const parsed = CompletedEventSchema.safeParse(value)
     if (
       !parsed.success ||
-      parsed.data.interaction.id !== state.interactionId ||
+      (parsed.data.interaction.id ?? '') !== state.interactionId ||
       (parsed.data.interaction.model !== undefined && parsed.data.interaction.model !== state.expectedModel) ||
       parsed.data.interaction.status === 'failed' ||
       parsed.data.interaction.status === 'cancelled'
@@ -534,7 +564,7 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
         state,
         {
           index: 0,
-          id: state.interactionId,
+          ...(state.interactionId.length === 0 ? {} : { id: state.interactionId }),
           thoughtBlocks: [encodedState(steps)],
           finishReason:
             stepCalls(steps).length > 0
@@ -650,6 +680,7 @@ export const createGeminiInteractionsService = (config: GeminiInteractionsServic
       ...(request.modelConfig?.maxTokens === undefined ? {} : { max_output_tokens: request.modelConfig.maxTokens }),
       ...(request.modelConfig?.stopSequences === undefined ? {} : { stop_sequences: request.modelConfig.stopSequences }),
       ...(level === undefined ? {} : { thinking_level: level }),
+      ...(request.functions?.length ? { tool_choice: toolChoice(request.functionCall) } : {}),
       thinking_summaries: 'none' as const
     }
     const body = {
@@ -665,8 +696,7 @@ export const createGeminiInteractionsService = (config: GeminiInteractionsServic
               name: fn.name,
               description: fn.description,
               ...(fn.parameters === undefined ? {} : { parameters: fn.parameters })
-            })),
-            tool_choice: toolChoice(request.functionCall)
+            }))
           }
         : {}),
       ...(request.responseFormat === undefined ? {} : { response_format: responseFormat(request.responseFormat) }),

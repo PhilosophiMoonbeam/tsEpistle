@@ -507,6 +507,42 @@ describe('agent provider profile registry', () => {
     })
   })
 
+  it('keeps media opt-in, Google-only, and independently priced', async () => {
+    const media = {
+      attachments: true,
+      imageGeneration: { model: 'gemini-3.1-flash-image' as const, pricingRevision: 'image-v1|500000|60000000' },
+      transcription: { model: 'gemini-3.5-transcribe' as const, pricingRevision: 'speech-v1|1000000|2000000' }
+    }
+    const input = {
+      ...profileInput,
+      transportKind: 'gemini-api' as const,
+      model: 'gemini-3.7-flash',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      authMode: 'google-api-key' as const,
+      adapterConfig: { ...profileInput.adapterConfig, media },
+      displayName: 'Media Gemini',
+      exposureMode: 'all_agent_users' as const,
+      actorId: 1
+    }
+    const created = await registry.create(input)
+    expect((await registry.getAdmin(created.id)).adapterConfig.media).toEqual(media)
+    await expect(registry.create({ ...input, displayName: 'Wrong destination', baseUrl: 'https://api.example.test/v1' })).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_CONFIG'
+    })
+    await expect(registry.create({ ...input, displayName: 'Wrong protocol', transportKind: 'openai-responses', authMode: 'bearer' })).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_CONFIG'
+    })
+    await expect(
+      registry.create({
+        ...input,
+        displayName: 'Unpriced media',
+        adapterConfig: { ...input.adapterConfig, media: { imageGeneration: { model: 'gemini-3.1-flash-image', pricingRevision: 'image-v1|0|60000000' } } }
+      })
+    ).rejects.toThrow()
+    const textOnly = await registry.create({ ...profileInput, displayName: 'Text only', exposureMode: 'all_agent_users', actorId: 1 })
+    expect((await registry.getAdmin(textOnly.id)).adapterConfig.media).toBeUndefined()
+  })
+
   it('fails closed for private endpoints, forbidden headers, incompatible modes, and group visibility', async () => {
     await expect(
       Promise.resolve(

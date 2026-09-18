@@ -180,3 +180,26 @@ describe('Wiki action sessions', () => {
     expect(await createWikiActionSessionProvider(knex, { ...config, orchestrationEnabled: false }).open(childRequest)).toBeNull()
   })
 })
+
+describe('current Wiki Agent media authority', () => {
+  it('checks live global/provider switches and reloads user permission for every dispatch', async () => {
+    let permissions = ['use:agents']
+    let isActive = true
+    const modifyGraph = vi.fn(async () => ({ id: 7, isActive, groups: [], getGlobalPermissions: async () => permissions }))
+    Reflect.set(globalThis, 'WIKI', { models: { users: { query: () => ({ findById: () => ({ withGraphFetched: () => ({ modifyGraph }) }) }) } } })
+    const { assertWikiAgentMediaAccess } = await import('../../agents/providers/wiki-actions.ts')
+    await assertWikiAgentMediaAccess(7, { enabled: true, providerEnabled: true })
+    permissions = []
+    await expect(assertWikiAgentMediaAccess(7, { enabled: true, providerEnabled: true })).rejects.toMatchObject({
+      code: 'AGENT_PERMISSION_REVOKED',
+      status: 403
+    })
+    permissions = ['manage:system']
+    await assertWikiAgentMediaAccess(7, { enabled: true, providerEnabled: true })
+    await expect(assertWikiAgentMediaAccess(7, { enabled: false, providerEnabled: true })).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+    await expect(assertWikiAgentMediaAccess(7, { enabled: true, providerEnabled: false })).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+    isActive = false
+    await expect(assertWikiAgentMediaAccess(7, { enabled: true, providerEnabled: true })).rejects.toMatchObject({ code: 'AUTHENTICATION_REQUIRED' })
+    expect(modifyGraph).toHaveBeenCalledTimes(4)
+  })
+})

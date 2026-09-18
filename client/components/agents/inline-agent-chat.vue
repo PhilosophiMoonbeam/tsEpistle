@@ -274,11 +274,13 @@
               <AgentThread
                 v-else-if="thread"
                 :thread="thread"
+                :image-editing-enabled="providerEnabled && mediaProfile?.media?.imageGeneration === true"
                 :connection="connection"
                 :deciding-approval-id="decidingApprovalId"
                 :can-submit="canSubmit"
                 :network-blocked="connectionBlocked"
                 @suggest="preparePrompt"
+                @edit-image="composer?.editImage($event)"
                 @ask-source="source => preparePrompt(`Help me understand “${source.title}”.`, source)"
                 @decision="handleDecision"
               />
@@ -355,8 +357,12 @@
                       <span>Pinning is available for this tab, but browser storage is unavailable; it will not survive a reload.</span>
                     </p>
                     <AgentComposer
-                      :key="`${ownerId}:${thread?.session.id ?? 'opening'}`"
+                      :key="`${ownerId}:${thread?.session.id ?? 'opening'}:${mediaProfile?.id ?? 'none'}:${mediaProfile?.policyVersion ?? 0}`"
                       ref="composer"
+                      :csrf-token="csrfToken"
+                      :media-session="thread?.session"
+                      :media-capabilities="providerEnabled ? mediaProfile?.media : undefined"
+                      @media-settled="refreshAfterMedia"
                       :session-id="thread?.session.id ?? offlineSessionId"
                       :initial-draft="thread ? agents.drafts[thread.session.id]?.text ?? offlineComposerDraft : offlineComposerDraft"
                       :initial-mode="thread ? agents.drafts[thread.session.id]?.mode : 'message'"
@@ -367,7 +373,7 @@
                       :sending="sending"
                       :network-blocked="connectionBlocked"
                       :can-stop="Boolean(activeRun?.canCancel)"
-                      :disabled="composerDisabled"
+                      :disabled="composerDisabled || mediaRefreshing"
                       :external-description-id="openGoal || sessionMutationBusy ? 'agent-composer-lock-reason' : undefined"
                       :skills-enabled="skillsEnabled"
                       :goals-enabled="goalsEnabled"
@@ -508,7 +514,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
+import type { AgentMediaSubmission } from '../../helpers/agent-media.ts'
+import type { AgentMediaView, AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import { pwaState, retryServerConnection } from '../../helpers/pwa.ts'
 import { useAgentsStore } from '../../store/agents.ts'
 import ControlBorderBeam from '../common/control-border-beam.vue'
@@ -571,7 +578,7 @@ const agents = useAgentsStore()
 const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
-const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void> }>('composer')
+const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void> }>('composer')
 type ComponentRoot = { $el?: unknown }
 const historyTrigger = useTemplateRef<ComponentRoot | HTMLElement>('historyTrigger')
 const memoryTrigger = useTemplateRef<ComponentRoot | HTMLElement>('memoryTrigger')
@@ -656,6 +663,12 @@ const openGoal = computed(() => {
 const hasConversation = computed(() => Boolean(thread.value && (thread.value.messages.length || thread.value.tools.length || thread.value.artifacts.length || thread.value.goal)))
 const followJumpVisible = computed(() => Boolean(hasConversation.value && !transcriptFollowing.value && !approvalJumpVisible.value))
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
+const mediaProfile = computed(() => thread.value?.session.providerProfileId ? profiles.value.find(profile => profile.id === thread.value?.session.providerProfileId) : profiles.value.find(profile => profile.isGlobalDefault) ?? (profiles.value.length === 1 ? profiles.value[0] : undefined))
+const mediaRefreshing = ref(false)
+const refreshAfterMedia = async () => {
+  mediaRefreshing.value = true
+  try { await agents.refreshThread() } finally { mediaRefreshing.value = false }
+}
 const providerAvailable = computed(() => props.providerEnabled && profiles.value.length > 0)
 const workspaceReady = computed(() => agents.isWorkspaceReady())
 const serverConnectionUnavailable = computed(() =>
@@ -918,7 +931,8 @@ const sendPrompt = async (
   content: string,
   invokedSkillVersionIds: readonly string[] = [],
   mode: 'message' | 'goal' = 'message',
-  completion?: (success: boolean) => void
+  completion?: (success: boolean) => void,
+  media?: AgentMediaSubmission
 ): Promise<boolean> => {
   const prompt = content.trim()
   if (disposed) { completion?.(false); return false }
@@ -928,7 +942,7 @@ const sendPrompt = async (
     return false
   }
   if (sessionMutationBusy.value) { completion?.(false); return false }
-  if (!prompt) { completion?.(false); return false }
+  if (!prompt && !media?.attachmentIds.length) { completion?.(false); return false }
   if (promptSubmissionPending.value) { completion?.(false); return false }
   const generation = promptGeneration + 1
   promptGeneration = generation
@@ -938,7 +952,7 @@ const sendPrompt = async (
     const initialized = await ensureInitialized()
     if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
     if (!initialized || !canSubmit.value || (mode === 'goal' && !props.goalsEnabled)) { completion?.(false); return false }
-    const success = await agents.send(prompt, invokedSkillVersionIds, mode)
+    const success = await agents.send(prompt, invokedSkillVersionIds, mode, media)
     if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
     completion?.(success)
     return success

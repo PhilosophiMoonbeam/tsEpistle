@@ -1,3 +1,4 @@
+import type { AgentMediaSubmission } from '../helpers/agent-media.ts'
 import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { emptyAgentDraft, type AgentDraft } from '../helpers/agent-draft.ts'
 import { clearAgentChatPin, isAgentSessionId, readAgentChatPin, writeAgentChatPin } from '../helpers/agent-chat-pin.ts'
@@ -923,7 +924,7 @@ export const useAgentsStore = defineStore('agents', {
       }
       return false
     },
-    async send(content: string, invokedSkillVersionIds: readonly string[] = [], mode: 'message' | 'goal' = 'message'): Promise<boolean> {
+    async send(content: string, invokedSkillVersionIds: readonly string[] = [], mode: 'message' | 'goal' = 'message', media?: AgentMediaSubmission): Promise<boolean> {
       if (!this.isWorkspaceReady()) return false
       const thread = this.thread
       const trimmed = content.trim()
@@ -931,7 +932,7 @@ export const useAgentsStore = defineStore('agents', {
       const currentPage = draftSnapshot.includeCurrentPage ? (this.contextPage ?? this.launchPage) : null
       if (
         !thread ||
-        !trimmed ||
+        (!trimmed && !media?.attachmentIds.length) ||
         this.sending ||
         thread.session.currentRun?.canCancel ||
         (thread.goal && ['active', 'paused', 'blocked'].includes(thread.goal.status))
@@ -974,7 +975,8 @@ export const useAgentsStore = defineStore('agents', {
           } else {
             await submitAgentMessage(fetchFromWindow, this.csrfToken, sessionId, {
               ...request,
-              content: trimmed
+              content: trimmed,
+              ...(media ? { attachmentIds: media.attachmentIds, responseMode: media.responseMode } : {})
             })
           }
         } catch (error) {

@@ -483,6 +483,21 @@ export const ACTION_CATALOG = {
     output: MemoryResult,
     requiredFlags: baseFlags
   },
+  'media.generateImage': {
+    descriptor: descriptor(
+      'media.generateImage',
+      'Create an image',
+      'Generate an image or edit images attached to this conversation. Use only when the user requests an image. Supply a complete visual prompt and optional attachment IDs from the conversation. The resulting image is displayed directly in chat; do not invent a URL.',
+      'read',
+      [],
+      agentOnly,
+      readAnnotations
+    ),
+    group: 'core',
+    input: strict({ prompt: z.string().trim().min(1).max(16_000), attachmentIds: z.array(Uuid).max(4).optional() }),
+    output: strict({ generated: z.literal(true), count: z.number().int().min(1).max(4) }),
+    requiredFlags: baseFlags
+  },
   'browser.navigate': {
     descriptor: descriptor(
       'browser.navigate',

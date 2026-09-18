@@ -84,9 +84,21 @@
               </span>
               <span>{{ entry.message.role === 'user' ? 'Sending message' : 'Composing response' }}</span>
             </div>
-            <p v-else-if="entry.message.status === 'complete'" class="agent-message__terminal-copy">
+            <p v-else-if="entry.message.status === 'complete' && !entry.message.media?.length" class="agent-message__terminal-copy">
               No response content was returned.
             </p>
+            <div v-if="entry.message.media?.length" class="agent-message__media" aria-label="Message attachments">
+              <figure v-for="media in entry.message.media" :key="media.id">
+                <a v-if="media.available && media.mimeType.startsWith('image/')" :href="agentMediaContentUrl(media.id)" target="_blank" rel="noopener" :aria-label="`Open ${media.filename}`">
+                  <img :src="agentMediaContentUrl(media.id)" :alt="media.kind === 'generated-image' ? 'Image created by Wiki Agent' : media.filename" loading="lazy" />
+                </a>
+                <figcaption>
+                  <a v-if="media.available" :href="agentMediaContentUrl(media.id)" :download="media.filename">{{ media.filename }} <span>· Download</span></a>
+                  <span v-else>{{ media.filename }} · No longer available</span>
+                  <v-btn v-if="media.kind === 'generated-image' && media.available && imageEditingEnabled" variant="text" size="small" prepend-icon="mdi-image-edit-outline" :disabled="canSubmit === false || networkBlocked" @click="emit('editImage', media)">Edit image</v-btn>
+                </figcaption>
+              </figure>
+            </div>
             <aside
               v-if="entry.recovery"
               class="agent-message__recovery"
@@ -251,6 +263,8 @@
 </template>
 
 <script setup lang="ts">
+import type { AgentMediaView } from '../../../shared/agents/contracts.ts'
+import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import { computed, ref, watch } from 'vue'
 import StatusIndicator from '../common/status-indicator.vue'
 import type { AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
@@ -270,8 +284,9 @@ import {
   type AgentThreadPresentation
 } from './agent-thread-presentation.ts'
 
-const props = defineProps<{ thread: AgentThreadState; connection: string; decidingApprovalId?: string | null; canSubmit?: boolean; networkBlocked?: boolean }>()
+const props = defineProps<{ thread: AgentThreadState; connection: string; decidingApprovalId?: string | null; canSubmit?: boolean; imageEditingEnabled?: boolean; networkBlocked?: boolean }>()
 const emit = defineEmits<{
+  editImage: [media: AgentMediaView]
   askSource: [source: WikiSource]
   suggest: [prompt: string]
   decision: [proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string]
@@ -448,6 +463,12 @@ watch(
 </script>
 
 <style scoped>
+.agent-message__media { display: grid; gap: 12px; margin-top: 8px; }
+.agent-message__media figure { margin: 0; min-width: 0; }
+.agent-message__media img { display: block; max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 12px; }
+.agent-message__media figcaption { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; font-size: .8rem; overflow-wrap: anywhere; }
+.agent-message__media figcaption a { color: rgb(var(--v-theme-primary)); }
+
 .agent-thread {
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-body);

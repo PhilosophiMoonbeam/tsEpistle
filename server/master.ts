@@ -53,7 +53,7 @@ import { agentCsrfToken } from './agents/csrf.ts'
 import { BrowserWorkerClient } from './agents/browser/client.ts'
 import { createWikiMcpController } from './agents/mcp.ts'
 import { parseAgentOperationalLimits, type AgentOperationalLimits } from './agents/config.ts'
-import { loadWikiAgentUser } from './agents/providers/wiki-actions.ts'
+import { assertWikiAgentMediaAccess, loadWikiAgentUser } from './agents/providers/wiki-actions.ts'
 import { createApiPrincipal } from './helpers/api-principal.ts'
 import pageOperations from './operations/pages.ts'
 import { PageKnowledgeLifecycle } from './knowledge/lifecycle.ts'
@@ -371,6 +371,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     utilityModel = new AgentUtilityModel(providerFactory)
     providerConformance = new AgentProviderConformanceRunner(wiki.models.knex, providerFactory, providerRegistry)
     agentRuntime = new AgentProductRuntime(wiki.models.knex, providerRegistry, new AxAgentEngine(providerFactory, actionSessions), {
+      authorizeMedia: ownerId =>
+        assertWikiAgentMediaAccess(ownerId, { enabled: wiki.config.agents.enabled, providerEnabled: wiki.config.agents.provider.enabled }),
       workerId: `http-${process.pid}`,
       globalConcurrency: agentLimits.provider.globalConcurrency,
       perUserConcurrency: agentLimits.provider.perUserConcurrency,

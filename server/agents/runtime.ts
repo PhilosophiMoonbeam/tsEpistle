@@ -1,3 +1,4 @@
+import { assertAgentMediaIntegrity, assertAgentMediaCapability, storeAgentMedia, type AgentMediaPayload, type AgentMediaRow } from './media.ts'
 import { AgentKnowledgeContextSchema, type AgentKnowledgeContext } from '../../shared/agents/knowledge-context.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
@@ -441,6 +442,7 @@ export interface AgentAdmissionResolver {
   resolveCurrent(transaction: Knex.Transaction, input: { readonly ownerId: number; readonly sessionId: string }): Promise<AgentResolvedAdmission>
 }
 export interface AgentEngineMessage {
+  readonly attachments?: readonly AgentMediaPayload[]
   readonly role: 'user' | 'assistant'
   readonly content: string
   readonly providerState?: {
@@ -482,6 +484,8 @@ export interface AgentRecoveredAction {
 }
 
 export interface AgentEngineRequest {
+  readonly authorizeMedia?: () => Promise<void>
+  readonly mediaRequest?: { readonly kind: 'image' | 'transcription' }
   readonly run: AgentRunClaim
   readonly purpose?: 'root' | 'planner' | 'subagent'
   readonly actionAllowlist?: readonly AgentActionName[]
@@ -506,6 +510,7 @@ export interface AgentEngineRequest {
 }
 
 export interface AgentEngineSink {
+  media?(images: readonly { readonly payload: Buffer; readonly mimeType: string; readonly filename: string }[]): Promise<void>
   text(delta: string): Promise<void>
   event(type: AgentEventType, data: AgentEventData): Promise<void>
 }
@@ -539,6 +544,9 @@ export interface AgentEngine {
 }
 
 export interface SubmitAgentMessageInput {
+  readonly attachmentIds?: readonly string[]
+  readonly responseMode?: 'text' | 'image'
+  readonly transcription?: boolean
   readonly ownerId: number
   readonly sessionId: string
   readonly profileResolutionToken: string
@@ -583,6 +591,7 @@ export interface MutateAgentGoalInput {
 }
 
 export interface AgentProductRuntimeOptions {
+  readonly authorizeMedia?: (ownerId: number) => Promise<void>
   readonly workerId: string
   readonly globalConcurrency: number
   readonly perUserConcurrency: number
@@ -595,6 +604,7 @@ export interface AgentProductRuntimeOptions {
 }
 
 interface RuntimeMessageRow {
+  id: string
   role: 'user' | 'assistant'
   content: string
   runId: string | null
@@ -992,6 +1002,7 @@ export class AgentProductRuntime {
   readonly #orchestration: AgentOrchestrationLimits
   readonly #goals: AgentGoalLimits
   readonly #logger: AgentProductRuntimeOptions['logger']
+  readonly #authorizeMedia: AgentProductRuntimeOptions['authorizeMedia']
   constructor(knex: Knex, resolver: AgentAdmissionResolver, engine: AgentEngine, options: AgentProductRuntimeOptions) {
     this.#knex = knex
     this.#resolver = resolver
@@ -1001,6 +1012,7 @@ export class AgentProductRuntime {
     this.#orchestration = options.orchestration ?? DEFAULT_AGENT_ORCHESTRATION_LIMITS
     this.#goals = options.goals ?? DEFAULT_AGENT_GOAL_LIMITS
     this.#logger = options.logger
+    this.#authorizeMedia = options.authorizeMedia
   }
 
   #logTerminalFailure(
@@ -1197,6 +1209,8 @@ export class AgentProductRuntime {
   }
 
   async submit(input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }> {
+    if (!input.content.trim() && input.attachmentIds?.length)
+      input = { ...input, content: input.responseMode === 'image' ? 'Create an image using these attachments.' : 'Use the attached files.' }
     const now = new Date()
     return this.#knex.transaction(async transaction => {
       await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
@@ -1207,6 +1221,24 @@ export class AgentProductRuntime {
         profileResolutionToken: input.profileResolutionToken
       })
       this.#assertResolvedAdmission(resolved)
+      if (input.transcription) {
+        if (input.attachmentIds?.length !== 1) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Choose one audio recording.', 400)
+        await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'transcription')
+      } else {
+        if (input.attachmentIds?.length && input.responseMode !== 'image')
+          await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'attachments')
+        if (input.responseMode === 'image') {
+          await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'imageGeneration')
+          if (input.attachmentIds?.length) {
+            const files = (await transaction('agentMedia')
+              .where({ ownerId: input.ownerId, sessionId: input.sessionId })
+              .whereIn('id', input.attachmentIds)
+              .select('mimeType')) as { mimeType: string }[]
+            if (files.some(file => !file.mimeType.startsWith('image/')))
+              throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Image generation accepts image attachments only.', 400)
+          }
+        }
+      }
       const skillVersionIds = await this.#skillVersionIds(transaction, input.ownerId, context.groupIds, input.invokedSkillVersionIds ?? [])
       return admitAgentRunInTransaction(transaction, {
         ownerId: input.ownerId,
@@ -1214,6 +1246,12 @@ export class AgentProductRuntime {
         clientRequestId: input.clientRequestId,
         expectedSessionVersion: context.sessionVersion,
         content: input.content,
+        ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
+        ...(input.transcription
+          ? { mediaRequest: { kind: 'transcription' as const }, userMessageVisible: false, assistantMessageVisible: false }
+          : input.responseMode === 'image'
+            ? { mediaRequest: { kind: 'image' as const } }
+            : {}),
         ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
         ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
         ...resolved,
@@ -1966,8 +2004,10 @@ export class AgentProductRuntime {
           })
           .where('messages.sessionId', claim.sessionId)
           .andWhere('messages.id', '!=', claim.assistantMessageId)
+          .andWhere(visible => visible.where('messages.isVisible', true).orWhereNull('messages.isVisible').orWhere('messages.id', claim.userMessageId))
           .orderBy('messages.ordinal')
           .select({
+            id: 'messages.id',
             role: 'messages.role',
             content: 'messages.content',
             runId: 'messages.runId',
@@ -2018,6 +2058,41 @@ export class AgentProductRuntime {
       const knowledgeContext = knowledgeContextHint(contextRow?.data)
       const memory = decodeAgentMemorySnapshot(sessionRow.memorySnapshot)
       const priorActivity = priorRunActivity([...priorEventRows].reverse())
+      const mediaIndex = messageRows.length
+        ? await this.#knex<AgentMediaRow>('agentMedia')
+            .where({ ownerId: claim.ownerId, sessionId: claim.sessionId })
+            .whereIn(
+              'messageId',
+              messageRows.map(row => row.id)
+            )
+            .orderBy('createdAt', 'desc')
+            .select('id', 'messageId', 'byteLength')
+        : []
+      const mediaRequest = claim.mediaRequest ? (JSON.parse(claim.mediaRequest) as { kind: 'image' | 'transcription' }) : undefined
+      if (mediaRequest && mediaRequest.kind !== 'image' && mediaRequest.kind !== 'transcription')
+        throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Invalid media request.', 500)
+      if (mediaRequest)
+        await assertAgentMediaCapability(this.#knex, claim.providerProfileVersionId, mediaRequest.kind === 'image' ? 'imageGeneration' : 'transcription')
+      let includeMediaBytes = true
+      if (!mediaRequest && mediaIndex.length) {
+        try {
+          await assertAgentMediaCapability(this.#knex, claim.providerProfileVersionId, 'attachments')
+        } catch (error) {
+          if (!(error instanceof AgentRepositoryError) || error.code !== 'AGENT_MEDIA_DISABLED') throw error
+          includeMediaBytes = false
+        }
+      }
+      let retainedBytes = 0
+      const retainedMediaIds: string[] = []
+      for (const item of mediaIndex) {
+        if (!includeMediaBytes || retainedMediaIds.length >= 16 || retainedBytes + Number(item.byteLength) > 40 * 1024 * 1024) continue
+        retainedBytes += Number(item.byteLength)
+        retainedMediaIds.push(item.id)
+      }
+      const attachedRows = retainedMediaIds.length
+        ? await this.#knex<AgentMediaRow>('agentMedia').where({ ownerId: claim.ownerId, sessionId: claim.sessionId }).whereIn('id', retainedMediaIds)
+        : []
+      attachedRows.forEach(assertAgentMediaIntegrity)
       const messages: AgentEngineMessage[] = messageRows.map(message => {
         const stateOriginMatches =
           message.role === 'assistant' &&
@@ -2036,7 +2111,17 @@ export class AgentProductRuntime {
             throw classifyAgentExecutionFailure(error, 'setup')
           }
         }
-        return state === undefined ? { role: message.role, content: message.content } : { role: message.role, content: message.content, providerState: state }
+        const attachments = attachedRows.filter(row => row.messageId === message.id)
+        return {
+          role: message.role,
+          content:
+            message.content +
+            (mediaIndex.some(item => item.messageId === message.id && !retainedMediaIds.includes(item.id))
+              ? '\n[Attachment content is unavailable in this turn because of the media window or provider configuration. Do not infer its contents.]'
+              : ''),
+          ...(state ? { providerState: state } : {}),
+          ...(attachments.length ? { attachments } : {})
+        }
       })
       const continuation = await readAgentApprovalContinuation(this.#knex, claim)
       let orchestrationTelemetry = await this.#orchestrationTelemetry(claim)
@@ -2107,6 +2192,7 @@ export class AgentProductRuntime {
         }
         const latestUserMessage = [...messages].reverse().find(message => message.role === 'user')?.content ?? ''
         if (
+          !mediaRequest &&
           this.#orchestration.enabled &&
           claim.executionMode === 'agent' &&
           tasks.length === 0 &&
@@ -2162,7 +2248,26 @@ export class AgentProductRuntime {
         throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal action budget was exhausted', 409)
       if (remainingGoalTokens !== null && remainingGoalTokens < 1)
         throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
+      const authorizeMedia = async (): Promise<void> => {
+        executionSignal.throwIfAborted()
+        if (!this.#authorizeMedia) throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Media authorization is unavailable.', 403)
+        await this.#authorizeMedia(claim.ownerId)
+        await this.#knex.transaction(async transaction => {
+          const current = await this.#resolver.resolveCurrent(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
+          if (current.providerProfileVersionId !== claim.providerProfileVersionId || current.executionMode !== claim.executionMode)
+            throw new AgentRepositoryError('PROFILE_VERSION_CHANGED', 'Provider settings changed. Send the request again.', 409)
+          const active = await transaction('agentRuns')
+            .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
+            .whereIn('status', ['running', 'awaiting_approval'])
+            .whereNull('cancelRequestedAt')
+            .first('id')
+          if (!active) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost.', 409)
+        })
+        executionSignal.throwIfAborted()
+      }
       const engineRequest: AgentEngineRequest = {
+        authorizeMedia,
+        ...(mediaRequest ? { mediaRequest } : {}),
         run: claim,
         purpose: 'root',
         messages,
@@ -2186,6 +2291,27 @@ export class AgentProductRuntime {
         ...(knowledgeContext === undefined ? {} : { knowledgeContext })
       }
       const sink: AgentEngineSink = {
+        media: async images => {
+          if (images.length > 4) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Too many generated images.', 502)
+          for (const image of images) {
+            executionSignal.throwIfAborted()
+            const fenced = await this.#knex('agentRuns')
+              .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
+              .whereNull('cancelRequestedAt')
+              .first('id')
+            if (!fenced) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost.', 409)
+            await storeAgentMedia(this.#knex, {
+              ...image,
+              ownerId: claim.ownerId,
+              sessionId: claim.sessionId,
+              messageId: claim.assistantMessageId,
+              runId: claim.id,
+              leaseOwner: claim.leaseOwner,
+              leaseToken: claim.leaseToken,
+              kind: 'generated-image'
+            })
+          }
+        },
         text: async delta => {
           if (executionSignal.aborted) throw executionSignal.reason
           if (typeof delta !== 'string' || delta.length === 0 || delta.length > 16_000 || content.length + delta.length > 128_000)
@@ -2198,6 +2324,7 @@ export class AgentProductRuntime {
           await this.#appendPresentationEvent(claim, type, data)
         }
       }
+      if (mediaRequest || attachedRows.length) await authorizeMedia()
       const result =
         continuation === null
           ? await this.#engine.execute(engineRequest, sink)
@@ -2219,7 +2346,7 @@ export class AgentProductRuntime {
         costMicros: safeUsageSum(orchestrationTelemetry.modelUsage.costMicros, resultModelUsage.costMicros, 'Model cost')
       }
       const titleUsage =
-        continuation === null
+        continuation === null && mediaRequest?.kind !== 'transcription'
           ? await this.#generateConversationTitle(claim, sessionRow, messages, content, executionSignal, dispatchBudget)
           : { title: '', source: 'fallback' as const, inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
       assertAgentTokenUsage(titleUsage.inputTokens, titleUsage.outputTokens, titleUsage.totalTokens)

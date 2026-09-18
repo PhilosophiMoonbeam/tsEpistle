@@ -154,6 +154,10 @@ describe('agent retention maintenance', () => {
   beforeEach(async () => {
     knex = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await createTables(knex)
+    await knex.schema.createTable('agentMedia', table => {
+      table.string('id').primary()
+      table.dateTime('expiresAt').nullable()
+    })
   })
   afterEach(async () => knex.destroy())
 

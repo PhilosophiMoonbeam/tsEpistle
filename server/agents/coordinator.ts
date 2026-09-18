@@ -1,3 +1,4 @@
+import { bindAgentMedia } from './media.ts'
 import type { AgentKnowledgeContext } from '../../shared/agents/knowledge-context.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
@@ -146,6 +147,7 @@ export const acquireAgentCoordinatorAdvisoryLocks = async (transaction: Knex.Tra
 }
 
 export interface AgentRunRecord {
+  readonly mediaRequest?: string | null
   readonly id: string
   readonly sessionId: string
   readonly userMessageId: string
@@ -289,7 +291,8 @@ export const resetAgentDailyTokenQuota = async (knex: Knex, ownerId: number, now
   const day = dayKey(now)
   return knex.transaction(async transaction => {
     await acquireAgentCoordinatorAdvisoryLocks(transaction, [ownerId])
-    if (!(await transaction('users').where({ id: ownerId }).first('id'))) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Quota owner was not found', 404)
+    if (!(await transaction('users').where({ id: ownerId }).first('id')))
+      throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Quota owner was not found', 404)
     const daily = await transaction<AgentQuotaDailyRow>('agentQuotaDaily').where({ ownerId, day }).forUpdate().first()
     const previousCredit = daily === undefined ? 0 : storedQuotaInteger(daily.tokenResetCredit, 'Stored token reset credit')
     const consumedTokens = daily === undefined ? 0 : storedQuotaInteger(daily.consumedTokens, 'Stored consumed tokens')
@@ -429,8 +432,15 @@ export const ensureAgentRunQuota = async (
     const dailyConsumedTokens = Number(daily.consumedTokens)
     const dailyReservedCost = Number(daily.reservedCostMicros)
     const dailyConsumedCost = Number(daily.consumedCostMicros)
-    const effectiveTokenLimit = storedQuotaSum(tokenLimit, storedQuotaInteger(daily.tokenResetCredit, 'Stored token reset credit'), 'Effective daily token limit')
-    if (dailyReservedTokens + dailyConsumedTokens + additionalTokens > effectiveTokenLimit || dailyReservedCost + dailyConsumedCost + additionalCost > costLimit) {
+    const effectiveTokenLimit = storedQuotaSum(
+      tokenLimit,
+      storedQuotaInteger(daily.tokenResetCredit, 'Stored token reset credit'),
+      'Effective daily token limit'
+    )
+    if (
+      dailyReservedTokens + dailyConsumedTokens + additionalTokens > effectiveTokenLimit ||
+      dailyReservedCost + dailyConsumedCost + additionalCost > costLimit
+    ) {
       throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'Agent daily quota is exhausted', 429)
     }
     await transaction('agentQuotaDaily')
@@ -645,6 +655,9 @@ export interface AdmitAgentRunInput {
   readonly goalId?: string
   readonly goalContinuation?: number
   readonly userMessageVisible?: boolean
+  readonly assistantMessageVisible?: boolean
+  readonly attachmentIds?: readonly string[]
+  readonly mediaRequest?: { readonly kind: 'image' | 'transcription' }
   readonly ownerId: number
   readonly sessionId: string
   readonly clientRequestId: string
@@ -679,6 +692,8 @@ const admissionEnvelope = (input: AdmitAgentRunInput): string =>
     goalId: input.goalId ?? null,
     goalContinuation: input.goalContinuation ?? null,
     userMessageVisible: input.userMessageVisible ?? true,
+    ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
+    ...(input.mediaRequest ? { mediaRequest: input.mediaRequest } : {}),
     content: input.content,
     currentPage: input.currentPage ?? null,
     ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
@@ -775,7 +790,7 @@ export const admitAgentRunInTransaction = async (
       status: 'pending',
       content: '',
       citations: null,
-      isVisible: true,
+      isVisible: input.assistantMessageVisible ?? true,
       createdAt: now,
       updatedAt: now
     }
@@ -791,6 +806,7 @@ export const admitAgentRunInTransaction = async (
     profileResolutionSha256: input.profileResolutionSha256,
     goalId: input.goalId ?? null,
     goalContinuation: input.goalContinuation ?? null,
+    ...(input.mediaRequest ? { mediaRequest: JSON.stringify(input.mediaRequest) } : {}),
     status: 'queued',
     attempts: 0,
     maxAttempts: input.maxAttempts ?? 3,
@@ -826,6 +842,15 @@ export const admitAgentRunInTransaction = async (
   }
   await transaction('agentRuns').insert(row)
   await transaction('agentMessages').whereIn('id', [userMessageId, assistantMessageId]).update({ runId })
+  if (input.attachmentIds?.length)
+    await bindAgentMedia(transaction, {
+      ownerId: input.ownerId,
+      sessionId: input.sessionId,
+      attachmentIds: input.attachmentIds,
+      messageId: userMessageId,
+      runId,
+      transcription: input.mediaRequest?.kind === 'transcription'
+    })
   if (input.skillVersionIds.length > 0)
     await transaction('agentRunSkills').insert(input.skillVersionIds.map((skillVersionId, ordinal) => ({ runId, skillVersionId, ordinal })))
   await reserveQuotaInTransaction(transaction, runId, input.ownerId, input.quota, input.quotaLimits, now, input.reservationExpiresAt)
@@ -1106,6 +1131,8 @@ export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transac
     },
     { allowMissing: input.quota === undefined, acceptAnyReconciled: input.quota === undefined, advisoryLocksHeld: true }
   )
+  if (row.mediaRequest && JSON.parse(row.mediaRequest).kind === 'transcription')
+    await transaction('agentMedia').where({ runId: row.id, ownerId: row.ownerId }).delete()
   if (isPostgres(transaction)) await transaction.raw("SELECT pg_notify('wiki_agent_events', ?)", [row.id])
   return runRecord({ ...row, ...runPatch, status, eventSequence } as RunRow)
 }

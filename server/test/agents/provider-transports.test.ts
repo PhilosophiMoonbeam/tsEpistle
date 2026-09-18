@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
-import createKnex, { type Knex } from 'knex'
 import type { LookupAddress } from 'node:dns'
 import type { AxChatRequest } from '@ax-llm/ax'
-import { AgentProviderFactory, createGuardedProviderFetch, deriveAgentProviderResourceLimits } from '../../agents/providers/factory.ts'
-import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
+import createKnex, { type Knex } from 'knex'
+import { AgentProviderFactory, agentProviderCostMicros, createGuardedProviderFetch, deriveAgentProviderResourceLimits } from '../../agents/providers/factory.ts'
 import { createGeminiInteractionsService } from '../../agents/providers/gemini-interactions.ts'
+import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
 const capabilities = {
@@ -332,10 +332,10 @@ describe('additional provider transports', () => {
         { type: 'function', name: 'wiki_get_page' },
         { type: 'function', name: 'wiki_list_tags' }
       ],
-      tool_choice: 'auto',
       response_format: { type: 'text', mime_type: 'application/json', schema: { type: 'object' } },
-      generation_config: { thinking_level: 'medium', thinking_summaries: 'none' }
+      generation_config: { thinking_level: 'medium', thinking_summaries: 'none', tool_choice: 'auto' }
     })
+    expect(requests[0]?.body).not.toHaveProperty('tool_choice')
     expect(requests[1]?.body).toMatchObject({
       store: false,
       input: [
@@ -586,6 +586,59 @@ describe('Gemini Interactions protocol validation', () => {
       timeoutMs: 10_000
     })
 
+  it('accepts the documented initially empty thought signature and waits for terminal usage', async () => {
+    const events = [
+      {
+        event_type: 'interaction.created',
+        interaction: { id: 'interaction_thought', model: 'gemini-3.7-flash', status: 'in_progress', object: 'interaction' }
+      },
+      { event_type: 'step.start', index: 0, step: { type: 'thought', signature: '' } },
+      { event_type: 'step.delta', index: 0, delta: { type: 'thought_signature', signature: 'opaque-signature' } },
+      { event_type: 'step.stop', index: 0 },
+      { event_type: 'step.start', index: 1, step: { type: 'model_output', content: [{ type: 'text', text: 'Hello' }] } },
+      { event_type: 'step.stop', index: 1 },
+      {
+        event_type: 'interaction.completed',
+        interaction: {
+          id: 'interaction_thought',
+          status: 'completed',
+          usage: { total_input_tokens: 1, total_output_tokens: 1, total_thought_tokens: 1, total_tokens: 3 }
+        }
+      }
+    ]
+    const body = `${events.map(event => `event: ${event.event_type}\ndata: ${JSON.stringify(event)}`).join('\n\n')}\n\nevent: done\ndata: [DONE]\n\n`
+    const gemini = service((async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } })) as typeof fetch)
+    const response = await gemini.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected streaming response')
+    const chunks = []
+    for await (const chunk of response) chunks.push(chunk)
+    expect(chunks[0]?.results[0]?.content).toBe('Hello')
+    expect(chunks.at(-1)?.modelUsage?.tokens?.totalTokens).toBe(3)
+  })
+
+  it('places required native tool selection inside generation_config', async () => {
+    let body: Record<string, unknown> = {}
+    const gemini = service((async (_input: URL | RequestInfo, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return Response.json({
+        model: 'gemini-3.7-flash',
+        status: 'requires_action',
+        steps: [{ type: 'function_call', id: 'call', name: 'lookup', arguments: {} }],
+        usage: { total_input_tokens: 1, total_output_tokens: 1, total_tokens: 2 }
+      })
+    }) as typeof fetch)
+    await gemini.chat(
+      {
+        chatPrompt: [{ role: 'user', content: 'Look up the answer' }],
+        functions: [{ name: 'lookup', description: 'Look up the answer', parameters: { type: 'object', properties: {} } }],
+        functionCall: 'required'
+      },
+      { stream: false }
+    )
+    expect(body).not.toHaveProperty('tool_choice')
+    expect(body.generation_config).toMatchObject({ tool_choice: 'any', thinking_summaries: 'none' })
+  })
+
   it('maps buffered text, usage, and encrypted continuation state', async () => {
     let body: Record<string, unknown> = {}
     const gemini = service((async (_input: URL | RequestInfo, init?: RequestInit) => {
@@ -626,6 +679,95 @@ describe('Gemini Interactions protocol validation', () => {
         })()
       )
     ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+  })
+
+  it('accepts live stateless empty interaction IDs without manufacturing a remote ID', async () => {
+    const events = [
+      { event_type: 'interaction.created', interaction: { id: '', model: 'gemini-3.7-flash', status: 'in_progress', object: 'interaction' } },
+      { event_type: 'interaction.status_update', interaction_id: '', status: 'in_progress' },
+      { event_type: 'step.start', index: 0, step: { type: 'model_output' } },
+      { event_type: 'step.delta', index: 0, delta: { type: 'text', text: 'Hello' } },
+      { event_type: 'step.stop', index: 0 },
+      {
+        event_type: 'interaction.completed',
+        interaction: { id: '', model: 'gemini-3.7-flash', status: 'completed', usage: { total_input_tokens: 1, total_output_tokens: 1, total_tokens: 2 } }
+      }
+    ]
+    const body = `${events.map(event => `event: ${event.event_type}\ndata: ${JSON.stringify(event)}`).join('\n\n')}\n\nevent: done\ndata: [DONE]\n\n`
+    const gemini = service((async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } })) as typeof fetch)
+    const response = await gemini.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected streaming response')
+    const chunks = []
+    for await (const chunk of response) chunks.push(chunk)
+    expect(chunks[0]?.results[0]?.content).toBe('Hello')
+    expect(chunks.at(-1)?.modelUsage?.tokens?.totalTokens).toBe(2)
+    expect(chunks.every(chunk => chunk.remoteId === undefined && chunk.results.every(result => result.id === undefined))).toBe(true)
+  })
+
+  it('accepts omitted stateless buffered IDs', async () => {
+    const gemini = service((async () =>
+      Response.json({
+        model: 'gemini-3.7-flash',
+        status: 'completed',
+        steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Hello' }] }],
+        usage: { total_input_tokens: 1, total_output_tokens: 1, total_tokens: 2 }
+      })) as typeof fetch)
+    const response = await gemini.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: false })
+    if (response instanceof ReadableStream) throw new Error('Expected buffered response')
+    expect(response.remoteId).toBeUndefined()
+    expect(response.results[0]?.id).toBeUndefined()
+    expect(response.results[0]?.content).toBe('Hello')
+  })
+
+  it('accepts bounded live modality metadata while retaining billable thought tokens', async () => {
+    const usage = {
+      total_input_tokens: 5,
+      total_output_tokens: 2,
+      total_tokens: 77,
+      total_thought_tokens: 70,
+      raw_prompt_token: 36,
+      model_invocation_token_counts: [
+        {
+          prompt_tokens_details: [{ modality: 'text', tokens: 36 }],
+          candidates_tokens_details: [{ modality: 'text', tokens: 6 }],
+          thoughts_tokens_details: [{ modality: 'text', tokens: 70 }]
+        }
+      ]
+    }
+    const gemini = service((async () =>
+      Response.json({
+        model: 'gemini-3.7-flash',
+        status: 'completed',
+        steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Hello' }] }],
+        usage
+      })) as typeof fetch)
+    const response = await gemini.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: false })
+    if (response instanceof ReadableStream) throw new Error('Expected buffered response')
+    expect(response.modelUsage?.tokens).toEqual({ promptTokens: 5, completionTokens: 2, totalTokens: 77 })
+    expect(agentProviderCostMicros({ revision: 'test', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }, 5, 2, 77)).toBe(149)
+  })
+
+  it('accepts a stateless buffered empty ID while retaining nonempty tool call IDs', async () => {
+    for (const callId of ['valid-call', '']) {
+      const gemini = service((async () =>
+        Response.json({
+          id: '',
+          model: 'gemini-3.7-flash',
+          status: 'requires_action',
+          steps: [{ type: 'function_call', id: callId, name: 'lookup', arguments: {} }],
+          usage: { total_input_tokens: 1, total_output_tokens: 1, total_tokens: 2 }
+        })) as typeof fetch)
+      const response = gemini.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: false })
+      if (!callId) {
+        await expect(response).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+        continue
+      }
+      const result = await response
+      if (result instanceof ReadableStream) throw new Error('Expected buffered response')
+      expect(result.remoteId).toBeUndefined()
+      expect(result.results[0]?.id).toBeUndefined()
+      expect(result.results[0]?.functionCalls?.[0]?.id).toBe('valid-call')
+    }
   })
 
   it('rejects corrupted stored Interactions steps before egress', async () => {

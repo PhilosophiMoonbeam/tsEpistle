@@ -1,3 +1,4 @@
+import { up as upAgentMedia, down as downAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
@@ -86,6 +87,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await upAgentTasks(db)
     await upAgentGoals(db)
     await upAgentTotalTokens(db)
+    await upAgentMedia(db)
   })
 
   afterAll(async () => {
@@ -318,6 +320,7 @@ suite('PostgreSQL first-class agent migration', () => {
     await expect(Promise.resolve(downProviderProfileLifecycle(db))).rejects.toThrow('contains removed profiles')
     await expect(Promise.resolve(downAgentLedger(db))).rejects.toThrow('agentProviderProfiles contains data')
     await db('agentProviderProfiles').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ deletedAt: null })
+    await downAgentMedia(db)
     await downAgentGoals(db)
     await downAgentTasks(db)
     await downAgentMemory(db)

@@ -9,6 +9,9 @@
       'agent-composer--status-error': statusTone === 'error'
     }"
     @submit.prevent="submit"
+    @paste="handleMediaPaste"
+    @dragover="handleMediaDragOver"
+    @drop="handleMediaDrop"
   >
     <v-card
       v-if="skillCommandOpen"
@@ -96,6 +99,19 @@
         @keydown="handleKeydown"
       />
     </div>
+
+    <AgentComposerMedia
+      ref="mediaComposer"
+      :csrf-token="csrfToken ?? ''"
+      :session="mediaSession ?? null"
+      :capabilities="mediaCapabilities"
+      :disabled="disabled || sendInProgress || canStop || goalMode"
+      :network-blocked="Boolean(networkBlocked)"
+      @change="mediaSubmission = $event"
+      @busy="mediaBusy = $event"
+      @dictation="appendDictation"
+      @settled="emit('mediaSettled')"
+    />
 
     <div v-if="selectedSkills.length > 0" class="agent-composer__attachments" role="group" aria-label="Skills attached as context for the next message">
       <span class="agent-composer__attachments-label">
@@ -229,7 +245,7 @@
           aria-label="Toggle goal mode"
           :aria-pressed="goalMode"
           :title="goalMode ? 'Disable durable goal mode' : 'Enable durable goal mode for multi-step tasks'"
-          :disabled="disabled || sendInProgress"
+          :disabled="disabled || sendInProgress || mediaBusy || mediaSubmission.attachmentIds.length > 0 || mediaSubmission.responseMode === 'image'"
           @click="goalMode = !goalMode"
         >
           <span>Goal</span>
@@ -254,7 +270,7 @@
           color="primary"
           :prepend-icon="submitIcon"
           :loading="sendInProgress"
-          :disabled="disabled || sendInProgress || networkBlocked || !draft.trim()"
+          :disabled="disabled || sendInProgress || networkBlocked || mediaBusy || (!draft.trim() && !mediaSubmission.attachmentIds.length)"
           :aria-describedby="composerIds.status"
         >{{ submitLabel }}</v-btn>
       </div>
@@ -267,11 +283,16 @@
 </template>
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
-import type { AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
+import AgentComposerMedia from './agent-composer-media.vue'
+import type { AgentMediaSubmission } from '../../helpers/agent-media.ts'
+import type { AgentMediaView, AgentProviderProfileView, AgentThreadState, AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import type { VisibleAgentSkill } from '../../helpers/agents-api.ts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 const props = defineProps<{
+  csrfToken?: string
+  mediaSession?: AgentThreadState['session'] | null
+  mediaCapabilities?: AgentProviderProfileView['media']
   disabled: boolean
   sending: boolean
   canStop: boolean
@@ -293,7 +314,26 @@ const props = defineProps<{
   externalDescriptionId?: string
   networkBlocked?: boolean
 }>()
-const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void]; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
+const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void, media?: AgentMediaSubmission]; mediaSettled: []; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
+const mediaComposer = useTemplateRef<{ clear: () => void; addFiles: (files: readonly File[]) => Promise<unknown>; editImage: (media: AgentMediaView) => Promise<boolean> }>('mediaComposer')
+const mediaSubmission = ref<AgentMediaSubmission>({ attachmentIds: [], responseMode: 'text' })
+const mediaBusy = ref(false)
+const appendDictation = (text: string) => { draft.value = [draft.value.trimEnd(), text].filter(Boolean).join(' '); void focusInput() }
+const handleMediaPaste = (event: ClipboardEvent) => {
+  const files = Array.from(event.clipboardData?.files ?? [])
+  if (!(props.mediaCapabilities?.attachments || props.mediaCapabilities?.imageGeneration) || !files.length) return
+  event.preventDefault()
+  void mediaComposer.value?.addFiles(files)
+}
+const handleMediaDragOver = (event: DragEvent) => {
+  if ((props.mediaCapabilities?.attachments || props.mediaCapabilities?.imageGeneration) && event.dataTransfer?.types.includes('Files')) event.preventDefault()
+}
+const handleMediaDrop = (event: DragEvent) => {
+  const files = Array.from(event.dataTransfer?.files ?? [])
+  if (!files.length) return
+  event.preventDefault()
+  if (props.mediaCapabilities?.attachments || props.mediaCapabilities?.imageGeneration) void mediaComposer.value?.addFiles(files)
+}
 const draft = ref(props.initialDraft ?? '')
 watch(draft, text => {
   if (props.sessionId) emit('draftChange', props.sessionId, text)
@@ -375,6 +415,7 @@ const composerInputDescriptionIds = computed(() => [
   composerIds.status
 ].filter(Boolean).join(' '))
 const composerInputPlaceholder = computed(() => {
+  if (mediaSubmission.value.responseMode === 'image') return 'Describe an image or the changes to make'
   if (goalMode.value) return 'Describe a bounded outcome for Wiki Agent'
   if (props.skillsEnabled) {
     return props.hasMessages
@@ -394,7 +435,7 @@ const liveStatusLabel = computed(() => {
 })
 const submitLabel = computed(() => {
   if (sendFailed.value) return 'Retry'
-  return goalMode.value ? 'Start goal' : 'Send'
+  return goalMode.value ? 'Start goal' : mediaSubmission.value.responseMode === 'image' ? 'Create image' : 'Send'
 })
 const submitIcon = computed(() => {
   if (sendFailed.value) return 'mdi-refresh'
@@ -723,7 +764,7 @@ const resetInput = (): void => {
   if (textarea) textarea.scrollTop = 0
 }
 const submit = (): void => {
-  if (props.disabled || props.networkBlocked || sendInProgress.value || !draft.value.trim()) return
+  if (props.disabled || props.networkBlocked || sendInProgress.value || mediaBusy.value || (!draft.value.trim() && !mediaSubmission.value.attachmentIds.length)) return
   const content = draft.value
   const invokedSkillVersionIds = [...selectedSkillIds.value]
   const mode = goalMode.value ? 'goal' : 'message'
@@ -740,6 +781,7 @@ const submit = (): void => {
         draft.value = ''
         void nextTick(resetInput)
       }
+      mediaComposer.value?.clear()
       selectedSkillIds.value = []
       goalMode.value = false
     } else {
@@ -749,13 +791,19 @@ const submit = (): void => {
         resizeInput()
       })
     }
-  })
+  }, { attachmentIds: [...mediaSubmission.value.attachmentIds], responseMode: mediaSubmission.value.responseMode })
 }
 const setDraft = async (value: string): Promise<void> => {
   draft.value = value
   await focusInput()
 }
-defineExpose({ focusInput, focusSkillsTrigger, setDraft })
+const editImage = async (media: AgentMediaView) => {
+  if (await mediaComposer.value?.editImage(media)) {
+    if (!draft.value.trim()) draft.value = 'Edit this image: '
+    await focusInput()
+  }
+}
+defineExpose({ focusInput, focusSkillsTrigger, setDraft, editImage })
 onMounted(() => {
   mounted = true
   mountCaretMirror()

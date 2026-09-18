@@ -18,6 +18,7 @@ import type { AgentEvent } from '../../../shared/agents/contracts.ts'
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
 const request = (signal: AbortSignal): AgentEngineRequest => ({
+  authorizeMedia: async () => {},
   run: {
     id: '00000000-0000-4000-8000-000000000001',
     sessionId: '00000000-0000-4000-8000-000000000002',
@@ -580,96 +581,140 @@ describe('Ax agent engine', () => {
     ])
   })
 
-  it.each(['wrong section', 'generic terminology'] as const)('preserves a substantive multi-section summary when correcting %s without rereading the page', async fault => {
-    const correctedSummary = [
-      'Contract pricing lists discount schedules and freight surcharges.[[cite:page:42:revision:1:section:1]]',
-      'Quotes require project details and remain valid for 30 days.[[cite:page:42:revision:1:section:2]]',
-      'MFG directory lists product categories and contact details.[[cite:page:42:revision:1:section:3]]'
-    ].join('\n\n')
-    const calls: Readonly<AxChatRequest<unknown>>[] = []
-    const responses: AxChatResponse[] = [
-      { results: [{ index: 0, functionCalls: [{ id: 'get-summary', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }] }] },
-      { results: [{ index: 0, content: fault === 'wrong section' ? correctedSummary.replace('section:1', 'section:3') : correctedSummary.replace('MFG directory lists', 'Manufacturer directory:') }] },
-      { results: [{ index: 0, content: correctedSummary }] }
-    ]
-    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
-      calls.push(input)
-      return responses.shift()!
-    })
-    const factory = {
-      create: async () => ({
-        service: { chat },
-        capabilities: {
-          streaming: false,
-          toolCalling: 'native',
-          parallelToolCalls: true,
-          structuredOutput: 'native-json-schema',
-          usage: 'estimated',
-          cancellation: true,
-          maxContextTokens: 100_000,
-          maxOutputTokens: 4_000
+  it.each(['wrong section', 'generic terminology'] as const)(
+    'preserves a substantive multi-section summary when correcting %s without rereading the page',
+    async fault => {
+      const correctedSummary = [
+        'Contract pricing lists discount schedules and freight surcharges.[[cite:page:42:revision:1:section:1]]',
+        'Quotes require project details and remain valid for 30 days.[[cite:page:42:revision:1:section:2]]',
+        'MFG directory lists product categories and contact details.[[cite:page:42:revision:1:section:3]]'
+      ].join('\n\n')
+      const calls: Readonly<AxChatRequest<unknown>>[] = []
+      const responses: AxChatResponse[] = [
+        { results: [{ index: 0, functionCalls: [{ id: 'get-summary', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }] }] },
+        {
+          results: [
+            {
+              index: 0,
+              content:
+                fault === 'wrong section'
+                  ? correctedSummary.replace('section:1', 'section:3')
+                  : correctedSummary.replace('MFG directory lists', 'Manufacturer directory:')
+            }
+          ]
         },
-        transportKind: 'openai-responses',
-        model: 'gpt-test',
-        capabilityRevision: 'cap-1',
-        pricingRevision: 'price-1',
-        pricing
+        { results: [{ index: 0, content: correctedSummary }] }
+      ]
+      const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+        calls.push(input)
+        return responses.shift()!
       })
-    } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async () => ({
-      id: 42,
-      title: 'Operations handbook',
-      contentType: 'markdown',
-      content: '# Contract pricing\nDiscount schedules and freight surcharges.\n\n# Quotes\nQuotes require project details and remain valid for 30 days.\n\n# MFG\nMFG directory lists product categories and contact details.',
-      citation: { evidenceId: 'page:42:revision:1', label: 'Operations handbook', href: '/en/operations' },
-      citationSections: ['Contract pricing', 'Quotes', 'MFG'].map((title, index) => ({
-        evidenceId: `page:42:revision:1:section:${index + 1}`,
-        label: `Operations handbook › ${title}`,
-        href: `/en/operations#section-${index + 1}`
+      const factory = {
+        create: async () => ({
+          service: { chat },
+          capabilities: {
+            streaming: false,
+            toolCalling: 'native',
+            parallelToolCalls: true,
+            structuredOutput: 'native-json-schema',
+            usage: 'estimated',
+            cancellation: true,
+            maxContextTokens: 100_000,
+            maxOutputTokens: 4_000
+          },
+          transportKind: 'openai-responses',
+          model: 'gpt-test',
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          pricing
+        })
+      } as unknown as AgentProviderFactory
+      const invoke = vi.fn(async () => ({
+        id: 42,
+        title: 'Operations handbook',
+        contentType: 'markdown',
+        content:
+          '# Contract pricing\nDiscount schedules and freight surcharges.\n\n# Quotes\nQuotes require project details and remain valid for 30 days.\n\n# MFG\nMFG directory lists product categories and contact details.',
+        citation: { evidenceId: 'page:42:revision:1', label: 'Operations handbook', href: '/en/operations' },
+        citationSections: ['Contract pricing', 'Quotes', 'MFG'].map((title, index) => ({
+          evidenceId: `page:42:revision:1:section:${index + 1}`,
+          label: `Operations handbook › ${title}`,
+          href: `/en/operations#section-${index + 1}`
+        }))
       }))
-    }))
-    const actions: AgentActionSessionProvider = {
-      open: async () => ({
-        functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
-        invoke,
-        snapshot: async () => ({}),
-        close: vi.fn()
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+          invoke,
+          snapshot: async () => ({}),
+          close: vi.fn()
+        })
+      }
+      const text = vi.fn(async (_delta: string) => {})
+      const event = vi.fn(async (...args: [string, unknown]) => {
+        void args
       })
-    }
-    const text = vi.fn(async (_delta: string) => {})
-    const event = vi.fn(async (...args: [string, unknown]) => { void args })
-    const result = await new AxAgentEngine(factory, actions).execute({
-      ...request(new AbortController().signal),
-      messages: [{ role: 'user', content: 'Summarize the current Wiki page and cite the key sections.' }]
-    }, { text, event })
+      const result = await new AxAgentEngine(factory, actions).execute(
+        {
+          ...request(new AbortController().signal),
+          messages: [{ role: 'user', content: 'Summarize the current Wiki page and cite the key sections.' }]
+        },
+        { text, event }
+      )
 
-    expect(chat).toHaveBeenCalledTimes(3)
-    expect(invoke).toHaveBeenCalledOnce()
-    expect(calls[0]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('summarize the substantive key sections') }))
-    expect(calls[2]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'user', content: expect.stringContaining('Preserve the requested topic coverage when revising') }))
-    expect(calls[2]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'user', content: expect.stringContaining('Never replace a requested summary with only a title, heading, or isolated quotation') }))
-    const correction = calls[2]?.chatPrompt.at(-1)
-    expect(correction?.role).toBe('user')
-    const correctionText = String(correction && 'content' in correction ? correction.content : '')
-    const feedbackJson = correctionText.split('\n').at(-1)!
-    const feedback = JSON.parse(feedbackJson) as Array<{ evidenceId: string; draftFragment: string; absentTerms: string[] }>
-    expect(feedbackJson.length).toBeLessThanOrEqual(1_200)
-    expect(feedback.length).toBeGreaterThan(0)
-    expect(feedback.length).toBeLessThanOrEqual(4)
-    expect(feedback.every(item => item.draftFragment.length <= 160 && item.absentTerms.length <= 4 && item.absentTerms.every(term => term.length <= 40))).toBe(true)
-    expect(feedback).toContainEqual(expect.objectContaining(fault === 'generic terminology'
-      ? { evidenceId: 'page:42:revision:1:section:3', draftFragment: 'Manufacturer directory', absentTerms: ['manufacturer'] }
-      : { evidenceId: 'page:42:revision:1:section:3', draftFragment: 'Contract pricing lists discount schedules' }))
-    expect(correctionText).toContain('not proof that a claim is false')
-    expect(JSON.stringify(event.mock.calls)).not.toContain('draftFragment')
-    expect(JSON.stringify(event.mock.calls)).not.toContain('absentTerms')
-    expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(correctedSummary)
-    expect(result.citations).toHaveLength(3)
-    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
-      expect.objectContaining({ accepted: false, claims: [expect.objectContaining({ supported: fault !== 'wrong section' }), expect.objectContaining({ supported: true }), expect.objectContaining({ supported: fault !== 'generic terminology' })] }),
-      expect.objectContaining({ accepted: true, claims: [expect.objectContaining({ supported: true }), expect.objectContaining({ supported: true }), expect.objectContaining({ supported: true })] })
-    ])
-  })
+      expect(chat).toHaveBeenCalledTimes(3)
+      expect(invoke).toHaveBeenCalledOnce()
+      expect(calls[0]?.chatPrompt).toContainEqual(
+        expect.objectContaining({ role: 'system', content: expect.stringContaining('summarize the substantive key sections') })
+      )
+      expect(calls[2]?.chatPrompt).toContainEqual(
+        expect.objectContaining({ role: 'user', content: expect.stringContaining('Preserve the requested topic coverage when revising') })
+      )
+      expect(calls[2]?.chatPrompt).toContainEqual(
+        expect.objectContaining({
+          role: 'user',
+          content: expect.stringContaining('Never replace a requested summary with only a title, heading, or isolated quotation')
+        })
+      )
+      const correction = calls[2]?.chatPrompt.at(-1)
+      expect(correction?.role).toBe('user')
+      const correctionText = String(correction && 'content' in correction ? correction.content : '')
+      const feedbackJson = correctionText.split('\n').at(-1)!
+      const feedback = JSON.parse(feedbackJson) as Array<{ evidenceId: string; draftFragment: string; absentTerms: string[] }>
+      expect(feedbackJson.length).toBeLessThanOrEqual(1_200)
+      expect(feedback.length).toBeGreaterThan(0)
+      expect(feedback.length).toBeLessThanOrEqual(4)
+      expect(
+        feedback.every(item => item.draftFragment.length <= 160 && item.absentTerms.length <= 4 && item.absentTerms.every(term => term.length <= 40))
+      ).toBe(true)
+      expect(feedback).toContainEqual(
+        expect.objectContaining(
+          fault === 'generic terminology'
+            ? { evidenceId: 'page:42:revision:1:section:3', draftFragment: 'Manufacturer directory', absentTerms: ['manufacturer'] }
+            : { evidenceId: 'page:42:revision:1:section:3', draftFragment: 'Contract pricing lists discount schedules' }
+        )
+      )
+      expect(correctionText).toContain('not proof that a claim is false')
+      expect(JSON.stringify(event.mock.calls)).not.toContain('draftFragment')
+      expect(JSON.stringify(event.mock.calls)).not.toContain('absentTerms')
+      expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(correctedSummary)
+      expect(result.citations).toHaveLength(3)
+      expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+        expect.objectContaining({
+          accepted: false,
+          claims: [
+            expect.objectContaining({ supported: fault !== 'wrong section' }),
+            expect.objectContaining({ supported: true }),
+            expect.objectContaining({ supported: fault !== 'generic terminology' })
+          ]
+        }),
+        expect.objectContaining({
+          accepted: true,
+          claims: [expect.objectContaining({ supported: true }), expect.objectContaining({ supported: true }), expect.objectContaining({ supported: true })]
+        })
+      ])
+    }
+  )
 
   it('reuses identical page reads while preserving every model-requested action in diagnostics', async () => {
     const responses: AxChatResponse[] = [
@@ -2709,11 +2754,7 @@ describe('Ax agent engine', () => {
         : message.role === 'user' && typeof message.content === 'string' && message.content.includes('<wiki-tool-result>')
     )
     const providerResult =
-      providerResultMessage?.role === 'function'
-        ? providerResultMessage.result
-        : providerResultMessage?.role === 'user'
-          ? providerResultMessage.content
-          : ''
+      providerResultMessage?.role === 'function' ? providerResultMessage.result : providerResultMessage?.role === 'user' ? providerResultMessage.content : ''
     expect(providerResult).toContain('"kind":"recent-page-evidence"')
     expect(providerResult).toContain('"sourceContentCharacters":4096')
     expect(providerResult).not.toContain('"locale":"en"')
@@ -2920,4 +2961,314 @@ describe('Memory action side-effect fencing', () => {
     await expect(invoke(mutations[0], context(rejectedFence))).rejects.toBe(leaseLost)
     expect(manage).toHaveBeenCalledTimes(mutations.length)
   })
+})
+
+describe('Agent media execution', () => {
+  const capabilities = {
+    streaming: false,
+    toolCalling: 'native' as const,
+    parallelToolCalls: false,
+    structuredOutput: 'native-json-schema' as const,
+    usage: 'terminal' as const,
+    cancellation: true,
+    maxContextTokens: 100_000,
+    maxOutputTokens: 4_000
+  }
+  const mediaRequest = (): AgentEngineRequest => ({
+    ...request(new AbortController().signal),
+    mediaRequest: { kind: 'image' },
+    messages: [{ role: 'user', content: 'A copper observatory at dusk' }]
+  })
+  const budget = () => ({
+    reserve: vi.fn(async (input: { tokens: number; costMicros: number }) => ({ id: 1, ...input })),
+    reconcile: vi.fn(async () => {}),
+    release: vi.fn(async () => {}),
+    consumeTool: vi.fn(async () => {}),
+    unsettledExposure: { tokens: 0, costMicros: 0 }
+  })
+  const image = Buffer.from('generated raster')
+  const mediaResult = { text: '', images: [{ bytes: image, mimeType: 'image/png' }], usage: { inputTokens: 100, outputTokens: 500, totalTokens: 600 } }
+  it('fails closed when a media request lacks current authorization', async () => {
+    const createMedia = vi.fn(async () => {
+      throw new Error('must not load provider')
+    })
+    await expect(
+      new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
+        { ...mediaRequest(), authorizeMedia: undefined, dispatchBudget: budget() },
+        { media: async () => {}, text: async () => {}, event: async () => {} }
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+    expect(createMedia).not.toHaveBeenCalled()
+  })
+  for (const revokeAt of ['upload', 'dispatch'] as const)
+    it(`rechecks current authorization before media ${revokeAt}`, async () => {
+      let revoked = false
+      let uploads = 0
+      let paidDispatches = 0
+      const dispatchBudget = budget()
+      const authorizeMedia = vi.fn(async () => {
+        if (revoked) throw new Error('permission revoked')
+      })
+      const createMedia = async () => ({
+        config: {},
+        capabilities,
+        pricing: { imageGeneration: pricing },
+        transport: {
+          generateImage: async (input: {
+            beforeUpload: () => Promise<void>
+            beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>
+          }) => {
+            if (revokeAt === 'upload') revoked = true
+            await input.beforeUpload()
+            uploads += 1
+            revoked = true
+            await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
+            paidDispatches += 1
+            return mediaResult
+          }
+        }
+      })
+      await expect(
+        new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
+          { ...mediaRequest(), authorizeMedia, dispatchBudget },
+          { media: async () => {}, text: async () => {}, event: async () => {} }
+        )
+      ).rejects.toThrow('permission revoked')
+      expect(uploads).toBe(revokeAt === 'upload' ? 0 : 1)
+      expect(paidDispatches).toBe(0)
+      expect(dispatchBudget.release).toHaveBeenCalledTimes(revokeAt === 'upload' ? 0 : 1)
+    })
+  it('meters image generation and publishes private image bytes through the run sink', async () => {
+    const dispatchBudget = budget()
+    const generateImage = vi.fn(
+      async (input: {
+        beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>
+        onDispatch: () => void
+      }) => {
+        await input.beforeDispatch({ inputTokens: 100, outputTokens: 4_000, totalTokens: 4_100 })
+        input.onDispatch()
+        return mediaResult
+      }
+    )
+    const createMedia = vi.fn(async () => ({ config: {}, capabilities, pricing: { imageGeneration: pricing }, transport: { generateImage } }))
+    const media = vi.fn(async () => {})
+    const text = vi.fn(async () => {})
+    const result = await new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
+      { ...mediaRequest(), dispatchBudget },
+      { text, media, event: async () => {} }
+    )
+    expect(generateImage).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'A copper observatory at dusk', images: [] }), expect.any(AbortSignal))
+    expect(dispatchBudget.reserve).toHaveBeenCalledWith({ tokens: 4_100, costMicros: 8_100 })
+    expect(dispatchBudget.reconcile).toHaveBeenCalledWith(expect.anything(), { inputTokens: 100, outputTokens: 500, totalTokens: 600, costMicros: 1_100 })
+    expect(media).toHaveBeenCalledWith([{ payload: image, mimeType: 'image/png', filename: 'generated-image-1.png' }])
+    expect(text).toHaveBeenCalledWith('Your image is ready.')
+    expect(result.totalTokens).toBe(600)
+  })
+  it('does not dispatch when unconfigured or when there is no admitted budget', async () => {
+    const generateImage = vi.fn()
+    const createMedia = vi.fn(async () => ({ config: {}, capabilities, pricing: {}, transport: { generateImage } }))
+    const engine = new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory)
+    const sink = { media: async () => {}, text: async () => {}, event: async () => {} }
+    await expect(engine.execute(mediaRequest(), sink)).rejects.toMatchObject({ code: 'MEDIA_BUDGET_REQUIRED' })
+    expect(createMedia).not.toHaveBeenCalled()
+    await expect(engine.execute({ ...mediaRequest(), dispatchBudget: budget() }, sink)).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+    expect(generateImage).not.toHaveBeenCalled()
+  })
+  it('releases unused reservations before inference and retains ambiguous dispatched exposure', async () => {
+    for (const dispatched of [false, true]) {
+      const dispatchBudget = budget()
+      const generateImage = vi.fn(
+        async (input: {
+          beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>
+          onDispatch: () => void
+        }) => {
+          await input.beforeDispatch({ inputTokens: 100, outputTokens: 4_000, totalTokens: 4_100 })
+          if (dispatched) input.onDispatch()
+          throw new Error('bounded failure')
+        }
+      )
+      const createMedia = async () => ({ config: {}, capabilities, pricing: { imageGeneration: pricing }, transport: { generateImage } })
+      await expect(
+        new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
+          { ...mediaRequest(), dispatchBudget },
+          { media: async () => {}, text: async () => {}, event: async () => {} }
+        )
+      ).rejects.toThrow('bounded failure')
+      expect(dispatchBudget.release).toHaveBeenCalledTimes(dispatched ? 0 : 1)
+      expect(dispatchBudget.reconcile).not.toHaveBeenCalled()
+    }
+  })
+  it('does not reserve budget when upload or token counting fails before admission', async () => {
+    const dispatchBudget = budget()
+    const createMedia = async () => ({
+      config: {},
+      capabilities,
+      pricing: { imageGeneration: pricing },
+      transport: {
+        generateImage: async () => {
+          throw new Error('preparation failed')
+        }
+      }
+    })
+    await expect(
+      new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
+        { ...mediaRequest(), dispatchBudget },
+        { media: async () => {}, text: async () => {}, event: async () => {} }
+      )
+    ).rejects.toThrow('preparation failed')
+    expect(dispatchBudget.reserve).not.toHaveBeenCalled()
+    expect(dispatchBudget.release).not.toHaveBeenCalled()
+  })
+  it('keeps media unpublished when usage settlement fails', async () => {
+    const dispatchBudget = {
+      ...budget(),
+      reconcile: vi.fn(async () => {
+        throw new Error('settlement failed')
+      })
+    }
+    const createMedia = async () => ({
+      config: {},
+      capabilities,
+      pricing: { imageGeneration: pricing },
+      transport: {
+        generateImage: async (input: { beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void> }) => {
+          await input.beforeDispatch({ inputTokens: 100, outputTokens: 4_000, totalTokens: 4_100 })
+          return mediaResult
+        }
+      }
+    })
+    const media = vi.fn(async () => {})
+    await expect(
+      new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
+        { ...mediaRequest(), dispatchBudget },
+        { media, text: async () => {}, event: async () => {} }
+      )
+    ).rejects.toThrow('settlement failed')
+    expect(media).not.toHaveBeenCalled()
+  })
+  it('offers image tools only for configured root Agent conversations', async () => {
+    for (const enabled of [false, true]) {
+      let offered: readonly { name: string }[] = []
+      const factory = {
+        create: async () => ({
+          service: {
+            chat: async (input: AxChatRequest) => {
+              offered = input.functions ?? []
+              return {
+                results: [{ index: 0, content: 'Hello.' }],
+                modelUsage: { ai: 'gemini', model: 'test', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
+              }
+            }
+          },
+          capabilities,
+          model: 'test',
+          transportKind: 'gemini-api',
+          capabilityRevision: 'test',
+          pricingRevision: 'test',
+          pricing,
+          ...(enabled ? { mediaConfig: { imageGeneration: { model: 'gemini-3.1-flash-image', pricingRevision: 'v1|1|1' } } } : {})
+        })
+      } as unknown as AgentProviderFactory
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({ authoritySha256: null, functions: [], invoke: async () => null, snapshot: async () => ({}), close: () => {} })
+      }
+      await new AxAgentEngine(factory, actions).execute(
+        { ...request(new AbortController().signal), messages: [{ role: 'user', content: 'Hello' }] },
+        { text: async () => {}, event: async () => {} }
+      )
+      expect(offered.some(tool => tool.name === 'wiki_generate_image')).toBe(enabled)
+    }
+  })
+})
+
+describe('Agent chat attachment dispatch', () => {
+  for (const failure of ['none', 'stream', 'count', 'budget', 'authorization'] as const)
+    it(`maps owned PDFs through Files API and cleans up after ${failure}`, async () => {
+      const controller = new AbortController()
+      const base = request(controller.signal)
+      let authorizationChecks = 0
+      const authorizeMedia = async () => {
+        if (++authorizationChecks === 3 && failure === 'authorization') throw new Error('permission revoked')
+      }
+      const attachment = { id: '00000000-0000-4000-8000-000000000010', mimeType: 'application/pdf', filename: 'brief.pdf', payload: Buffer.from('%PDF-1.7') }
+      const uri = 'https://generativelanguage.googleapis.com/v1beta/files/brief'
+      const upload = vi.fn(async () => ({ name: 'files/brief', uri, mimeType: 'application/pdf' }))
+      const countTokens = vi.fn(async () => {
+        if (failure === 'count') throw new Error('token count failed')
+        return 250
+      })
+      const remove = vi.fn(async (_name: string, signal: AbortSignal) => {
+        expect(signal.aborted).toBe(false)
+      })
+      const capabilities = {
+        streaming: failure === 'stream',
+        toolCalling: 'native' as const,
+        parallelToolCalls: false,
+        structuredOutput: 'native-json-schema' as const,
+        usage: 'terminal' as const,
+        cancellation: true,
+        maxContextTokens: 100_000,
+        maxOutputTokens: 4_000
+      }
+      const chat = vi.fn(async (input: AxChatRequest) => {
+        const user = input.chatPrompt.find(message => message.role === 'user')
+        expect(user).toMatchObject({ content: expect.arrayContaining([expect.objectContaining({ type: 'file', fileUri: uri, mimeType: 'application/pdf' })]) })
+        expect(JSON.stringify(input)).not.toContain('wiki-media:')
+        if (failure === 'stream')
+          return new ReadableStream<AxChatResponse>({
+            start(stream) {
+              stream.error(new Error('provider stream interrupted'))
+            }
+          })
+        return {
+          results: [{ index: 0, content: 'The attached document describes the project.' }],
+          modelUsage: { ai: 'gemini', model: 'gemini-3.8-flash', tokens: { promptTokens: 500, completionTokens: 20, totalTokens: 520 } }
+        }
+      })
+      const factory = {
+        create: async () => ({
+          service: { chat },
+          capabilities,
+          model: 'gemini-3.8-flash',
+          transportKind: 'gemini-api',
+          capabilityRevision: 'test',
+          pricingRevision: 'test',
+          pricing
+        }),
+        createMedia: async () => ({ config: { attachments: true }, capabilities, transport: { upload, countTokens, delete: remove } })
+      } as unknown as AgentProviderFactory
+      const dispatchBudget = {
+        reserve: vi.fn(async (input: { tokens: number; costMicros: number }) => {
+          if (failure === 'budget') throw new Error('budget exceeded')
+          return { id: 1, ...input }
+        }),
+        reconcile: vi.fn(async () => {}),
+        release: vi.fn(async () => {}),
+        consumeTool: vi.fn(async () => {}),
+        unsettledExposure: { tokens: 0, costMicros: 0 }
+      }
+      const action = new AxAgentEngine(factory).execute(
+        {
+          ...base,
+          run: { ...base.run, executionMode: 'generation-only' },
+          currentPage: null,
+          skills: [],
+          priorActivity: [],
+          messages: [{ role: 'user', content: 'Summarize the attached brief.', attachments: [attachment] }],
+          authorizeMedia,
+          dispatchBudget
+        },
+        { text: async () => {}, event: async () => {} }
+      )
+      if (failure === 'none') await expect(action).resolves.toMatchObject({ totalTokens: 520 })
+      else await expect(action).rejects.toThrow()
+      expect(upload).toHaveBeenCalledWith({ bytes: attachment.payload, mimeType: 'application/pdf', displayName: 'brief.pdf' }, expect.any(AbortSignal))
+      expect(countTokens).toHaveBeenCalledWith('gemini-3.8-flash', [{ type: 'document', uri, mime_type: 'application/pdf' }], expect.any(AbortSignal))
+      expect(remove).toHaveBeenCalledTimes(1)
+      expect(remove).toHaveBeenCalledWith('files/brief', expect.any(AbortSignal))
+      expect(chat).toHaveBeenCalledTimes(failure === 'count' || failure === 'budget' || failure === 'authorization' ? 0 : 1)
+      expect(dispatchBudget.release).toHaveBeenCalledTimes(failure === 'authorization' ? 1 : 0)
+      expect(dispatchBudget.reserve).toHaveBeenCalledTimes(failure === 'count' ? 0 : 1)
+      if (failure !== 'count') expect(dispatchBudget.reserve.mock.calls[0]?.[0].tokens).toBeLessThan(32_000)
+    })
 })

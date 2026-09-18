@@ -1,42 +1,43 @@
 import { lookup } from 'node:dns/promises'
 import { BlockList, isIP } from 'node:net'
-import type { Knex } from 'knex'
-import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from 'undici'
 import {
   AxAIAnthropic,
   AxAIAnthropicModel,
-  AxAIOpenAIEmbedModel,
-  AxAIOpenAIBase,
-  AxAIOpenAIResponsesBase,
-  axAIOpenAIDefaultConfig,
-  axAIOpenAIResponsesDefaultConfig,
   type AxAIFeatures,
+  AxAIOpenAIBase,
+  type AxAIOpenAIChatRequest,
+  AxAIOpenAIEmbedModel,
+  AxAIOpenAIResponsesBase,
+  type AxAIOpenAIResponsesRequest,
   type AxAIService,
   type AxAIServiceOptions,
   type AxChatRequest,
   type AxChatResponse,
   type AxChatResponseResult,
-  type AxAIOpenAIChatRequest,
-  type AxAIOpenAIResponsesRequest
+  axAIOpenAIDefaultConfig,
+  axAIOpenAIResponsesDefaultConfig
 } from '@ax-llm/ax'
-import { agentProviderReasoningEfforts, type AgentReasoningEffort } from '../../../shared/agents/contracts.ts'
-import { assertAgentTokenUsage } from './usage.ts'
-import {
-  AgentProviderAdapterConfigSchema,
-  AgentProviderCapabilitiesSchema,
-  AgentProviderPricingRevisionSchema,
-  type AgentProviderCapabilities,
-  type AgentProviderTransportKind
-} from './registry.ts'
+import type { Knex } from 'knex'
+import { Agent, type RequestInit as UndiciRequestInit, fetch as undiciFetch } from 'undici'
+import { type AgentReasoningEffort, agentProviderReasoningEfforts } from '../../../shared/agents/contracts.ts'
 import { AgentRepositoryError } from '../repository.ts'
-import { createOpenResponsesFetch } from './openresponses.ts'
 import {
   createGeminiInteractionsService,
-  isGeminiInteractionsModel,
   isGeminiInteractionContinuation,
+  isGeminiInteractionsModel,
   preserveGeminiInteractionState
 } from './gemini-interactions.ts'
+import { createGeminiMediaTransport, GEMINI_MEDIA_INPUT_LIMIT, GEMINI_MEDIA_OUTPUT_LIMIT } from './gemini-media.ts'
+import { createOpenResponsesFetch } from './openresponses.ts'
+import {
+  AgentProviderAdapterConfigSchema,
+  type AgentProviderCapabilities,
+  AgentProviderCapabilitiesSchema,
+  AgentProviderPricingRevisionSchema,
+  type AgentProviderTransportKind
+} from './registry.ts'
 import type { AgentSecretRegistry } from './secrets.ts'
+import { assertAgentTokenUsage } from './usage.ts'
 
 const MAX_RETRY_AFTER_MS = 300_000
 const MAX_PROVIDER_ERROR_BYTES = 64 * 1_024
@@ -118,9 +119,16 @@ export interface AgentProviderContinuationEnvelope {
 }
 
 const PROVIDER_RESOURCE_LIMITS = Symbol('agent provider resource limits')
-type ProviderRequestWithLimits = object & { readonly [PROVIDER_RESOURCE_LIMITS]?: AgentProviderResourceLimits }
+type ProviderRequestWithLimits = object & {
+  readonly [PROVIDER_RESOURCE_LIMITS]?: AgentProviderResourceLimits
+}
 export const attachAgentProviderResourceLimits = <T extends object>(request: T, limits: AgentProviderResourceLimits): T => {
-  Object.defineProperty(request, PROVIDER_RESOURCE_LIMITS, { configurable: false, enumerable: false, value: limits, writable: false })
+  Object.defineProperty(request, PROVIDER_RESOURCE_LIMITS, {
+    configurable: false,
+    enumerable: false,
+    value: limits,
+    writable: false
+  })
   return request
 }
 export const readAgentProviderResourceLimits = (request: object): AgentProviderResourceLimits | undefined =>
@@ -138,6 +146,7 @@ const providerContinuationDialect = (transportKind: AgentProviderTransportKind):
           : transportKind === 'anthropic-messages'
             ? 'anthropic-messages-ax-encrypted-v1'
             : null
+
 export { providerContinuationDialect as agentProviderContinuationDialect }
 export type AgentProviderFetch = typeof fetch
 
@@ -173,7 +182,13 @@ const restoredOpenAIReasoningItem = (encoded: string): Record<string, unknown> =
     Buffer.byteLength(value[1], 'utf8') > MAX_PROVIDER_STATE_ITEM_BYTES
   )
     throw new Error('invalid')
-  return { type: 'reasoning', id: value[0], content: [], summary: [], encrypted_content: value[1] }
+  return {
+    type: 'reasoning',
+    id: value[0],
+    content: [],
+    summary: [],
+    encrypted_content: value[1]
+  }
 }
 
 const restoreOpenAIReasoningItem = (item: unknown): unknown => {
@@ -325,12 +340,16 @@ export const decodeAgentProviderContinuation = (
   if (schemaVersion !== undefined || dialect !== undefined) {
     if (dialect !== expectedDialect) return undefined
     if (schemaVersion !== 1) throw new AgentRepositoryError('AGENT_PROVIDER_STATE_CORRUPT', 'Stored provider continuation is invalid', 500)
-    return { thoughtBlocks: validateContinuationBlocks(expectedDialect, thoughtBlocks, 'stored') }
+    return {
+      thoughtBlocks: validateContinuationBlocks(expectedDialect, thoughtBlocks, 'stored')
+    }
   }
   if (!Array.isArray(thoughtBlocks)) return undefined
   if (expectedDialect !== 'openai-responses-reasoning-v1' && expectedDialect !== 'openresponses-reasoning-v1' && expectedDialect !== 'gemini-interactions-v1')
     return undefined
-  return { thoughtBlocks: validateContinuationBlocks(expectedDialect, thoughtBlocks, 'stored') }
+  return {
+    thoughtBlocks: validateContinuationBlocks(expectedDialect, thoughtBlocks, 'stored')
+  }
 }
 
 export class AgentProviderAttemptError extends Error {
@@ -412,6 +431,7 @@ export interface AgentProviderService {
   readonly capabilityRevision: string
   readonly pricingRevision: string
   readonly pricing: AgentProviderPricing
+  readonly mediaConfig?: NonNullable<ReturnType<typeof AgentProviderAdapterConfigSchema.parse>['media']>
   readonly preserveThoughtBlock: (resultId: string, block: ProviderThoughtBlock) => ProviderThoughtBlock | null
 }
 
@@ -632,9 +652,31 @@ const pinnedProviderDispatcher = (resolve: typeof lookup): Agent => {
   providerDispatchers.set(resolve, dispatcher)
   return dispatcher
 }
-type ProviderEndpoint = '/responses' | '/chat/completions' | '/messages' | '/completions' | '/interactions'
+type ProviderEndpoint = '/responses' | '/chat/completions' | '/messages' | '/completions' | '/interactions' | 'gemini-media'
 
-const providerEndpointAllowed = (base: URL, url: URL, endpoint: ProviderEndpoint): boolean => {
+const geminiMediaEndpointAllowed = (base: URL, url: URL, init?: RequestInit): boolean => {
+  if (base.origin !== 'https://generativelanguage.googleapis.com' || !['/v1beta', '/v1beta/'].includes(base.pathname)) return false
+  const method = init?.method?.toUpperCase() || 'GET'
+  const body = init?.body
+  if (body !== undefined && body !== null && typeof body !== 'string' && !(body instanceof Uint8Array)) return false
+  const length = typeof body === 'string' ? Buffer.byteLength(body) : body instanceof Uint8Array ? body.byteLength : 0
+  if (length > GEMINI_MEDIA_INPUT_LIMIT) return false
+  if (url.pathname === '/v1beta/interactions') return method === 'POST' && !url.search
+  if (/^\/v1beta\/models\/gemini-3(?:\.[0-9]+)?(?:-[a-z0-9][a-z0-9._-]*)?:countTokens$/u.test(url.pathname)) return method === 'POST' && !url.search
+  if (/^\/v1beta\/files\/[A-Za-z0-9_-]{1,128}$/u.test(url.pathname)) return ['GET', 'DELETE'].includes(method) && !url.search && length === 0
+  if (url.pathname !== '/upload/v1beta/files' || method !== 'POST') return false
+  if (!url.search) return true
+  return (
+    [...url.searchParams.keys()].every(key => ['upload_id', 'upload_protocol'].includes(key)) &&
+    url.searchParams.getAll('upload_id').length === 1 &&
+    /^[A-Za-z0-9_-]{1,1024}$/u.test(url.searchParams.get('upload_id') || '') &&
+    url.searchParams.getAll('upload_protocol').length <= 1 &&
+    (!url.searchParams.has('upload_protocol') || url.searchParams.get('upload_protocol') === 'resumable')
+  )
+}
+
+const providerEndpointAllowed = (base: URL, url: URL, endpoint: ProviderEndpoint, init?: RequestInit): boolean => {
+  if (endpoint === 'gemini-media') return geminiMediaEndpointAllowed(base, url, init)
   const basePath = base.pathname.replace(/\/$/, '')
   return url.pathname === `${basePath}${endpoint}` && url.search.length === 0
 }
@@ -653,7 +695,15 @@ export const createGuardedProviderFetch = (
   return Object.assign(
     async (input: Parameters<AgentProviderFetch>[0], init?: Parameters<AgentProviderFetch>[1]): Promise<Response> => {
       const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
-      if (url.protocol !== 'https:' || url.origin !== base.origin || !providerEndpointAllowed(base, url, endpoint) || url.hash || url.username || url.password)
+      if (
+        url.protocol !== 'https:' ||
+        url.origin !== base.origin ||
+        !providerEndpointAllowed(base, url, endpoint, init) ||
+        url.hash ||
+        url.username ||
+        url.password ||
+        (endpoint === 'gemini-media' && typeof input !== 'string' && !(input instanceof URL))
+      )
         throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Provider request destination is not allowlisted', 502)
       assertPublicProviderAddresses(await resolve(url.hostname, { all: true, verbatim: true }))
       const headers = new Headers(init?.headers)
@@ -670,7 +720,17 @@ export const createGuardedProviderFetch = (
         const failure = await providerFailure(response)
         throw new AgentProviderAttemptError(failure.code, response.status, retryAfter(response.headers.get('retry-after')), failure.parameter)
       }
-      return guardedSuccessfulResponse(response, limits, onLimit)
+      return guardedSuccessfulResponse(
+        response,
+        endpoint === 'gemini-media'
+          ? {
+              ...limits,
+              rawBodyBytes: Math.min(limits.rawBodyBytes, GEMINI_MEDIA_OUTPUT_LIMIT),
+              rawChunkBytes: GEMINI_MEDIA_OUTPUT_LIMIT
+            }
+          : limits,
+        onLimit
+      )
     },
     { preconnect: disabledProviderPreconnect }
   )
@@ -697,7 +757,10 @@ const createAnthropicEffortFetch = (implementation: AgentProviderFetch, effort: 
         ...init,
         body: JSON.stringify({
           ...body,
-          output_config: { ...(existing as Readonly<Record<string, unknown>> | undefined), effort }
+          output_config: {
+            ...(existing as Readonly<Record<string, unknown>> | undefined),
+            effort
+          }
         })
       })
     },
@@ -774,7 +837,15 @@ const createLegacyCompletionService = (
         : 0
     return {
       results: [{ index: 0, content: text, finishReason: 'stop' }],
-      modelUsage: { ai: 'legacy-completions', model: row.model, tokens: { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens } }
+      modelUsage: {
+        ai: 'legacy-completions',
+        model: row.model,
+        tokens: {
+          promptTokens,
+          completionTokens,
+          totalTokens: promptTokens + completionTokens
+        }
+      }
     }
   }
 })
@@ -821,9 +892,74 @@ export class AgentProviderFactory {
     this.#fetch = fetchImplementation
     this.#resolve = resolve
   }
+  async createMedia(profileVersionId: string) {
+    const row = (await this.#knex('agentProviderProfileVersions as versions')
+      .join('agentProviderProfiles as profiles', function () {
+        this.on('profiles.id', '=', 'versions.profileId').andOn('profiles.currentVersionId', '=', 'versions.id')
+      })
+      .where({
+        'versions.id': profileVersionId,
+        'versions.conformed': true,
+        'profiles.conformed': true,
+        'profiles.status': 'enabled'
+      })
+      .whereNull('profiles.deletedAt')
+      .select('versions.*')
+      .first()) as ProviderVersionRow | undefined
+    if (!row || row.transportKind !== 'gemini-api' || row.authMode !== 'google-api-key' || !row.secretReference)
+      throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Media is not enabled for this provider', 403)
+    let adapterConfig: ReturnType<typeof AgentProviderAdapterConfigSchema.parse>
+    let capabilities: AgentProviderCapabilities
+    try {
+      adapterConfig = AgentProviderAdapterConfigSchema.parse(JSON.parse(row.adapterConfig))
+      capabilities = AgentProviderCapabilitiesSchema.parse(JSON.parse(row.capabilities))
+    } catch {
+      throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider profile data is invalid', 500)
+    }
+    const config = adapterConfig.media
+    if (!config || (!config.attachments && !config.imageGeneration && !config.transcription))
+      throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Media is not enabled for this provider', 403)
+    const secret = await this.#secrets.get(row.secretReference)
+    if (!secret) throw new AgentRepositoryError('PROFILE_SECRET_UNAVAILABLE', 'Provider profile secret is unavailable', 503)
+    const limits = {
+      ...deriveAgentProviderResourceLimits(capabilities.maxOutputTokens),
+      rawBodyBytes: GEMINI_MEDIA_OUTPUT_LIMIT,
+      rawChunkBytes: GEMINI_MEDIA_OUTPUT_LIMIT
+    }
+    const maxOutputTokens = Math.min(capabilities.maxOutputTokens, 8_192)
+    const maxInputTokens = capabilities.maxContextTokens - maxOutputTokens
+    if (maxInputTokens < 1) throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'The provider context limit must exceed its output limit', 500)
+    return {
+      transport: createGeminiMediaTransport({
+        apiKey: secret,
+        baseUrl: row.baseUrl,
+        timeoutMs: adapterConfig.timeoutMs,
+        maxInputTokens,
+        maxOutputTokens,
+        fetch: createGuardedProviderFetch(row.baseUrl, 'gemini-media', adapterConfig.additionalHeaders, this.#fetch, this.#resolve, limits)
+      }),
+      config,
+      capabilities,
+      pricing: {
+        ...(config.imageGeneration
+          ? {
+              imageGeneration: parseAgentProviderPricing(config.imageGeneration.pricingRevision)
+            }
+          : {}),
+        ...(config.transcription
+          ? {
+              transcription: parseAgentProviderPricing(config.transcription.pricingRevision)
+            }
+          : {})
+      }
+    }
+  }
   async create(
     profileVersionId: string,
-    loadOptions: { readonly requireConformed?: boolean; readonly purpose?: 'agent' | 'utility' } = {}
+    loadOptions: {
+      readonly requireConformed?: boolean
+      readonly purpose?: 'agent' | 'utility'
+    } = {}
   ): Promise<AgentProviderService> {
     const query = this.#knex<ProviderVersionRow>('agentProviderProfileVersions').where({ id: profileVersionId })
     if (loadOptions.requireConformed !== false) query.andWhere({ conformed: true })
@@ -903,7 +1039,11 @@ export class AgentProviderFactory {
                 store: false,
                 previous_response_id: null,
                 include: [...new Set([...(request.include ?? []), 'reasoning.encrypted_content' as const])],
-                ...(request.tools == null ? {} : { tools: request.tools.map(tool => (tool.type === 'function' ? { ...tool, strict: false } : tool)) })
+                ...(request.tools == null
+                  ? {}
+                  : {
+                      tools: request.tools.map(tool => (tool.type === 'function' ? { ...tool, strict: false } : tool))
+                    })
               }
               delete updated.temperature
               delete updated.top_p
@@ -947,7 +1087,10 @@ export class AgentProviderFactory {
             model: model as AxAIAnthropicModel,
             ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature })
           },
-          options: { ...createOptions(transportFetch), fetch: anthropicFetch }
+          options: {
+            ...createOptions(transportFetch),
+            fetch: anthropicFetch
+          }
         })
       })
     } else if (row.transportKind === 'gemini-api') {
@@ -977,6 +1120,7 @@ export class AgentProviderFactory {
       capabilityRevision: row.capabilityRevision,
       pricingRevision: row.pricingRevision,
       pricing,
+      ...(row.transportKind === 'gemini-api' && adapterConfig.media ? { mediaConfig: adapterConfig.media } : {}),
       preserveThoughtBlock:
         row.transportKind === 'openai-responses' || row.transportKind === 'openresponses'
           ? (resultId, block) => (block.encrypted ? openAIReasoningState(resultId, block) : null)
@@ -991,7 +1135,11 @@ export class AgentProviderFactory {
                     (typeof block.signature !== 'string' || Buffer.byteLength(block.signature, 'utf8') > MAX_PROVIDER_STATE_ITEM_BYTES)
                   )
                     return null
-                  return { data: block.data, encrypted: true, ...(block.signature === undefined ? {} : { signature: block.signature }) }
+                  return {
+                    data: block.data,
+                    encrypted: true,
+                    ...(block.signature === undefined ? {} : { signature: block.signature })
+                  }
                 }
               : () => null
     }

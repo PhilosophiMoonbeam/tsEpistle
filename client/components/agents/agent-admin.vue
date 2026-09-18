@@ -401,6 +401,26 @@
                   <v-select v-model="profileDraft.utilityReasoningEffort" :items="reasoningEffortOptions" label="Utility reasoning" hint="Independent depth for bounded tasks." persistent-hint />
                 </div>
               </div>
+              <div v-if="profileDraft.transportKind === 'gemini-api'" class="subsection-card">
+                <div class="subsection-card__heading"><div><h4>Images, files &amp; voice</h4><p>Choose what this provider makes available in chat. Each capability stays hidden until enabled here.</p></div><v-icon size="20">mdi-image-outline</v-icon></div>
+                <v-switch v-model="profileDraft.mediaAttachments" label="PDF and image attachments" color="primary" hide-details />
+                <p class="text-body-2 mb-3">Up to four files per message, 10 MB each. Files stay private to the conversation and are sent to Google when used.</p>
+                <v-switch v-model="profileDraft.mediaImages" label="Image creation and editing" color="primary" hide-details />
+                <div v-if="profileDraft.mediaImages" class="form-grid mt-3">
+                  <v-text-field model-value="gemini-3.1-flash-image" label="Image model" readonly hide-details />
+                  <span class="text-body-2">Generate images in chat and edit uploaded images.</span>
+                  <v-text-field v-model="profileDraft.imageInputRate" :rules="[mediaRateRule]" label="Image input rate" hint="Microdollars per million tokens. Use the highest applicable input rate." persistent-hint inputmode="numeric" />
+                  <v-text-field v-model="profileDraft.imageOutputRate" :rules="[mediaRateRule]" label="Image output rate" hint="Microdollars per million tokens. Include image output pricing." persistent-hint inputmode="numeric" />
+                </div>
+                <v-switch v-model="profileDraft.mediaSpeech" label="Speech input" color="primary" hide-details />
+                <div v-if="profileDraft.mediaSpeech" class="form-grid mt-3">
+                  <v-text-field model-value="gemini-3.5-transcribe" label="Transcription model" readonly hide-details />
+                  <span class="text-body-2">Record a short message, then review the transcript before sending.</span>
+                  <v-text-field v-model="profileDraft.speechInputRate" :rules="[mediaRateRule]" label="Speech input rate" hint="Microdollars per million audio input tokens." persistent-hint inputmode="numeric" />
+                  <v-text-field v-model="profileDraft.speechOutputRate" :rules="[mediaRateRule]" label="Speech output rate" hint="Microdollars per million output tokens." persistent-hint inputmode="numeric" />
+                </div>
+                <p class="text-body-2 mt-3">Uses this profile’s Google credential and usage limits. Files are checked against the context limit before inference. Requires the official Google API endpoint. A rate of 1,000,000 microdollars equals $1 per million tokens.</p>
+              </div>
               <div class="subsection-card">
                 <div class="subsection-card__heading"><div><h4>Tool calling</h4><p>How this model invokes governed Wiki actions.</p></div><v-icon size="20">mdi-tools</v-icon></div>
                 <v-select v-model="profileDraft.toolCalling" :items="toolCallingOptions" label="Tool calling" :disabled="profileDraft.transportKind === 'legacy-completions'" hint="Native uses the API contract. Prompt-emulated supports models without native tools and is verified before enablement." persistent-hint @update:model-value="selectToolCalling" />
@@ -597,10 +617,10 @@ interface RuntimePolicy {
 }
 interface ConnectionCheck { status: 'passed' | 'failed'; errorCode: string | null; message: string | null; completedAt: string }
 interface ConnectionHistoryCheck extends ConnectionCheck { id: string; checks: { name: string; passed: boolean; detail?: string }[] }
-interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; conformed: boolean; connectionCheck: ConnectionCheck | null; transportKind: AgentProviderTransport; model: string; utilityModel: string | null; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string>; agentReasoningEffort?: AgentReasoningEffort; utilityReasoningEffort?: AgentReasoningEffort }; capabilities: { streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number } }
+interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; conformed: boolean; connectionCheck: ConnectionCheck | null; transportKind: AgentProviderTransport; model: string; utilityModel: string | null; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string>; agentReasoningEffort?: AgentReasoningEffort; utilityReasoningEffort?: AgentReasoningEffort; media?: { attachments: boolean; imageGeneration?: { model: 'gemini-3.1-flash-image'; pricingRevision: string }; transcription?: { model: 'gemini-3.5-transcribe'; pricingRevision: string } } }; capabilities: { streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number } }
 interface BrowserTarget { id: string; canonicalUrl: string; enabled: boolean; policySha256: string }
 interface GroupOption { id: number; name: string; isSystem: boolean }
-interface ProfileDraft { displayName: string; transportKind: AgentProviderTransport; model: string; utilityModel: string; agentReasoningEffort: AgentReasoningEffort | null; utilityReasoningEffort: AgentReasoningEffort | null; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; cancellation: boolean }
+interface ProfileDraft { mediaAttachments: boolean; mediaImages: boolean; mediaSpeech: boolean; imageInputRate: string; imageOutputRate: string; speechInputRate: string; speechOutputRate: string; displayName: string; transportKind: AgentProviderTransport; model: string; utilityModel: string; agentReasoningEffort: AgentReasoningEffort | null; utilityReasoningEffort: AgentReasoningEffort | null; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; cancellation: boolean }
 
 const { csrfToken, embedded = false } = defineProps<{ csrfToken: string; embedded?: boolean }>()
 const { smAndDown } = useDisplay()
@@ -679,7 +699,7 @@ const formatConnectionCheckDate = (completedAt: string): string => {
   const completed = new Date(completedAt)
   return Number.isNaN(completed.getTime()) ? 'at an unknown time' : connectionDateFormatter.format(completed)
 }
-const defaults = (): ProfileDraft => ({ displayName: '', transportKind: 'openai-responses', model: '', utilityModel: '', agentReasoningEffort: null, utilityReasoningEffort: null, ...agentProviderProtocolDefaults('openai-responses'), secretValue: '', exposureMode: 'all_agent_users', groupIds: [], maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, reservationMilliseconds: 300000, timeoutMs: 120000, maxRetries: 0, maxAttempts: 3, promptVersion: 1, additionalHeaders: {} })
+const defaults = (): ProfileDraft => ({ mediaAttachments: false, mediaImages: false, mediaSpeech: false, imageInputRate: '', imageOutputRate: '', speechInputRate: '', speechOutputRate: '', displayName: '', transportKind: 'openai-responses', model: '', utilityModel: '', agentReasoningEffort: null, utilityReasoningEffort: null, ...agentProviderProtocolDefaults('openai-responses'), secretValue: '', exposureMode: 'all_agent_users', groupIds: [], maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, reservationMilliseconds: 300000, timeoutMs: 120000, maxRetries: 0, maxAttempts: 3, promptVersion: 1, additionalHeaders: {} })
 const profileDraft = reactive<ProfileDraft>(defaults())
 const profileDraftFingerprint = (): string => JSON.stringify(profileDraft)
 const profileBaseline = ref(profileDraftFingerprint())
@@ -745,7 +765,7 @@ const protocolBehaviorRows = computed(() => {
 const selectProtocol = (value: unknown) => {
   if (!isAgentProviderTransport(value)) return
   profileDraft.transportKind = value
-  Object.assign(profileDraft, agentProviderProtocolDefaults(value), { agentReasoningEffort: null, utilityReasoningEffort: null })
+  Object.assign(profileDraft, agentProviderProtocolDefaults(value), { agentReasoningEffort: null, utilityReasoningEffort: null, mediaAttachments: false, mediaImages: false, mediaSpeech: false })
 }
 const selectToolCalling = () => {
   profileDraft.parallelToolCalls = profileDraft.toolCalling === 'native' && agentProviderProtocolDefaults(profileDraft.transportKind).parallelToolCalls
@@ -848,7 +868,7 @@ const providerBaseUrlRule = (): true | string => providerBaseUrlError.value || t
 const providerBaseUrlRules = [providerBaseUrlRule]
 const profileStepIsValid = (step: ProfileStep): boolean => {
   if (step === 'identity') return Boolean(profileDraft.displayName.trim() && profileDraft.transportKind)
-  if (step === 'models') return Boolean(profileDraft.model.trim())
+  if (step === 'models') return Boolean(profileDraft.model.trim()) && mediaSettingsValid.value
   if (step === 'connection') return !providerBaseUrlError.value && Boolean(editingProfile.value?.secretConfigured || profileDraft.secretValue.trim())
   if (step === 'access') return profileDraft.exposureMode !== 'groups' || profileDraft.groupIds.length > 0
   return integerInRange(profileDraft.maxContextTokens, 1024, 10_000_000) &&
@@ -959,6 +979,13 @@ const openProfile = (profile?: Profile) => {
     utilityModel: profile.utilityModel ?? '',
     agentReasoningEffort: profile.adapterConfig.agentReasoningEffort ?? null,
     utilityReasoningEffort: profile.adapterConfig.utilityReasoningEffort ?? null,
+    mediaAttachments: profile.adapterConfig.media?.attachments ?? false,
+    mediaImages: Boolean(profile.adapterConfig.media?.imageGeneration),
+    mediaSpeech: Boolean(profile.adapterConfig.media?.transcription),
+    imageInputRate: profile.adapterConfig.media?.imageGeneration?.pricingRevision.split('|')[1] ?? '',
+    imageOutputRate: profile.adapterConfig.media?.imageGeneration?.pricingRevision.split('|')[2] ?? '',
+    speechInputRate: profile.adapterConfig.media?.transcription?.pricingRevision.split('|')[1] ?? '',
+    speechOutputRate: profile.adapterConfig.media?.transcription?.pricingRevision.split('|')[2] ?? '',
     baseUrl: profile.baseUrl,
     authMode: profile.authMode,
     maxContextTokens: profile.capabilities.maxContextTokens,
@@ -983,7 +1010,20 @@ const openProfile = (profile?: Profile) => {
   profileBaseline.value = profileDraftFingerprint()
   profileDialog.value = true
 }
-const profilePayload = () => ({ transportKind: profileDraft.transportKind, model: profileDraft.model, utilityModel: profileDraft.utilityModel.trim() || null, baseUrl: profileDraft.baseUrl, authMode: profileDraft.authMode, secretReference: null, ...(profileDraft.secretValue ? { secretValue: profileDraft.secretValue } : {}), adapterConfig: { timeoutMs: profileDraft.timeoutMs, maxRetries: profileDraft.maxRetries, additionalHeaders: profileDraft.additionalHeaders, ...(profileDraft.agentReasoningEffort === null ? {} : { agentReasoningEffort: profileDraft.agentReasoningEffort }), ...(profileDraft.utilityReasoningEffort === null ? {} : { utilityReasoningEffort: profileDraft.utilityReasoningEffort }) }, capabilities: { streaming: profileDraft.streaming, toolCalling: profileDraft.toolCalling, parallelToolCalls: profileDraft.parallelToolCalls, structuredOutput: profileDraft.structuredOutput, usage: profileDraft.usage, cancellation: profileDraft.cancellation, maxContextTokens: profileDraft.maxContextTokens, maxOutputTokens: profileDraft.maxOutputTokens }, capabilityRevision: agentProviderCapabilityRevision(profileDraft.transportKind), policies: { allowedModes: ['agent'], dailyTokens: profileDraft.dailyTokens, dailyCostMicros: profileDraft.dailyCostMicros, reservationTokens: profileDraft.reservationTokens, reservationCostMicros: profileDraft.reservationCostMicros, reservationMilliseconds: profileDraft.reservationMilliseconds, promptVersion: profileDraft.promptVersion, maxAttempts: profileDraft.maxAttempts }, pricingRevision: AGENT_PROVIDER_PRICING_REVISION })
+const mediaRateValid = (value: string): boolean => /^[1-9][0-9]{0,14}$/u.test(value) && Number.isSafeInteger(Number(value))
+const mediaRateRule = (value: string): true | string => mediaRateValid(value) || 'Enter a positive whole number in microdollars per million tokens.'
+const mediaSettingsValid = computed(() => profileDraft.transportKind !== 'gemini-api' || (
+  (!profileDraft.mediaImages || (mediaRateValid(profileDraft.imageInputRate) && mediaRateValid(profileDraft.imageOutputRate))) &&
+  (!profileDraft.mediaSpeech || (mediaRateValid(profileDraft.speechInputRate) && mediaRateValid(profileDraft.speechOutputRate)))
+))
+const mediaPayload = () => profileDraft.transportKind !== 'gemini-api' || !(profileDraft.mediaAttachments || profileDraft.mediaImages || profileDraft.mediaSpeech) ? {} : {
+  media: {
+    attachments: profileDraft.mediaAttachments,
+    ...(profileDraft.mediaImages ? { imageGeneration: { model: 'gemini-3.1-flash-image', pricingRevision: `gemini-image-v1|${profileDraft.imageInputRate}|${profileDraft.imageOutputRate}` } } : {}),
+    ...(profileDraft.mediaSpeech ? { transcription: { model: 'gemini-3.5-transcribe', pricingRevision: `gemini-speech-v1|${profileDraft.speechInputRate}|${profileDraft.speechOutputRate}` } } : {})
+  }
+}
+const profilePayload = () => ({ transportKind: profileDraft.transportKind, model: profileDraft.model, utilityModel: profileDraft.utilityModel.trim() || null, baseUrl: profileDraft.baseUrl, authMode: profileDraft.authMode, secretReference: null, ...(profileDraft.secretValue ? { secretValue: profileDraft.secretValue } : {}), adapterConfig: { ...mediaPayload(), timeoutMs: profileDraft.timeoutMs, maxRetries: profileDraft.maxRetries, additionalHeaders: profileDraft.additionalHeaders, ...(profileDraft.agentReasoningEffort === null ? {} : { agentReasoningEffort: profileDraft.agentReasoningEffort }), ...(profileDraft.utilityReasoningEffort === null ? {} : { utilityReasoningEffort: profileDraft.utilityReasoningEffort }) }, capabilities: { streaming: profileDraft.streaming, toolCalling: profileDraft.toolCalling, parallelToolCalls: profileDraft.parallelToolCalls, structuredOutput: profileDraft.structuredOutput, usage: profileDraft.usage, cancellation: profileDraft.cancellation, maxContextTokens: profileDraft.maxContextTokens, maxOutputTokens: profileDraft.maxOutputTokens }, capabilityRevision: agentProviderCapabilityRevision(profileDraft.transportKind), policies: { allowedModes: ['agent'], dailyTokens: profileDraft.dailyTokens, dailyCostMicros: profileDraft.dailyCostMicros, reservationTokens: profileDraft.reservationTokens, reservationCostMicros: profileDraft.reservationCostMicros, reservationMilliseconds: profileDraft.reservationMilliseconds, promptVersion: profileDraft.promptVersion, maxAttempts: profileDraft.maxAttempts }, pricingRevision: AGENT_PROVIDER_PRICING_REVISION })
 const saveProfile = async (): Promise<void> => {
   if (saving.value || !profileDirty.value) return
   if (!profileDraftValid.value) {

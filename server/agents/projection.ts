@@ -1,3 +1,4 @@
+import { projectAgentMedia, type AgentMediaRow } from './media.ts'
 import { AgentKnowledgeContextSchema, type AgentKnowledgeContext } from '../../shared/agents/knowledge-context.ts'
 import type { Knex } from 'knex'
 import { z } from 'zod'
@@ -614,6 +615,15 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
       /* The run reader handles corrupt execution context; history remains readable. */
     }
   }
+  const mediaRows = messageRows.length
+    ? await knex<AgentMediaRow>('agentMedia')
+        .where({ ownerId, sessionId })
+        .whereIn(
+          'messageId',
+          messageRows.map(message => message.id)
+        )
+        .select('id', 'kind', 'filename', 'mimeType', 'byteLength', 'messageId', 'expiresAt')
+    : []
   const messages: AgentMessageView[] = messageRows.map(message => ({
     id: message.id,
     runId: message.runId,
@@ -622,6 +632,9 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     status: message.status,
     content: message.content,
     citations: citations(message.citations),
+    ...(mediaRows.some(media => media.messageId === message.id)
+      ? { media: mediaRows.filter(media => media.messageId === message.id).map(projectAgentMedia) }
+      : {}),
     ...(message.role === 'user' && message.runId && sourceContexts.has(message.runId) ? { knowledgeContext: sourceContexts.get(message.runId)! } : {}),
     createdAt: message.createdAt,
     updatedAt: message.updatedAt

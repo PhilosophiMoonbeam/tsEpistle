@@ -38,6 +38,7 @@ export const AGENT_ACTION_NAMES = [
   'skills.list',
   'skills.read',
   'memory.manage',
+  'media.generateImage',
   'browser.navigate',
   'browser.observe',
   'browser.act',
@@ -74,6 +75,7 @@ export const AGENT_TOOL_NAMES = {
   'skills.list': 'wiki_list_skills',
   'skills.read': 'wiki_read_skill',
   'memory.manage': 'wiki_manage_memory',
+  'media.generateImage': 'wiki_generate_image',
   'browser.navigate': 'wiki_browser_navigate',
   'browser.observe': 'wiki_browser_observe',
   'browser.act': 'wiki_browser_act',
@@ -220,7 +222,23 @@ export interface AgentFollowUpSuggestion {
   readonly prompt: string
 }
 
+export interface AgentMediaCapabilities {
+  readonly attachments: boolean
+  readonly imageGeneration: boolean
+  readonly transcription: boolean
+}
+
+export interface AgentMediaView {
+  readonly id: string
+  readonly kind: 'attachment' | 'generated-image'
+  readonly filename: string
+  readonly mimeType: string
+  readonly byteLength: number
+  readonly available: boolean
+}
+
 export interface AgentMessageView {
+  readonly media?: readonly AgentMediaView[]
   readonly knowledgeContext?: AgentKnowledgeContext
   readonly id: string
   readonly runId: string | null
@@ -265,6 +283,7 @@ export const agentProviderReasoningEfforts = (transport: AgentProviderTransport)
   AGENT_REASONING_EFFORTS_BY_TRANSPORT[transport]
 
 export interface AgentProviderProfileView {
+  readonly media?: AgentMediaCapabilities
   readonly id: string
   readonly name: string
   readonly transport: AgentProviderTransport
@@ -551,6 +570,8 @@ export interface UpdateAgentSessionProfileRequest {
 }
 
 export interface SubmitAgentMessageRequest {
+  readonly attachmentIds?: readonly string[]
+  readonly responseMode?: 'text' | 'image'
   readonly clientRequestId: string
   readonly expectedSessionVersion: number
   readonly profileResolutionToken: string

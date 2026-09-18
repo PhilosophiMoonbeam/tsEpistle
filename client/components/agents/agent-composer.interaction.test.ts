@@ -28,6 +28,7 @@ interface KeyOptions {
 }
 
 interface SentMessage {
+  readonly media?: { attachmentIds: readonly string[]; responseMode: 'text' | 'image' }
   readonly content: string
   readonly invokedSkillVersionIds: readonly string[]
   readonly mode: 'message' | 'goal'
@@ -35,6 +36,8 @@ interface SentMessage {
 }
 
 interface ComposerHarness {
+  readonly mediaSubmission: Ref<{ attachmentIds: readonly string[]; responseMode: 'text' | 'image' }>
+  readonly mediaBusy: Ref<boolean>
   readonly draft: Ref<string>
   readonly goalMode: Ref<boolean>
   readonly selectedSkillIds: Ref<string[]>
@@ -58,6 +61,12 @@ const evaluateComposer = new Function(
   '{ computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch, defineProps, defineEmits, defineExpose, filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills, caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret, window, document, HTMLElement, HTMLTextAreaElement }',
   `${executableScript}
 return {
+  mediaSubmission,
+  mediaBusy,
+  appendDictation,
+  handleMediaPaste,
+  handleMediaDragOver,
+  handleMediaDrop,
   props,
   emit,
   draft,
@@ -310,7 +319,8 @@ const loadComposer = (
             content: String(args[0]),
             invokedSkillVersionIds: args[1] as readonly string[],
             mode: args[2] as 'message' | 'goal',
-            complete: args[3] as (success: boolean) => void
+            complete: args[3] as (success: boolean) => void,
+            media: args[4] as SentMessage['media']
           })
         }
       },
@@ -386,6 +396,9 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
       initialMode: String,
       initialSkillVersionIds: Array,
       hasMessages: Boolean,
+      csrfToken: String,
+      mediaSession: Object,
+      mediaCapabilities: Object,
       networkBlocked: Boolean
     },
     emits: ['draftChange', 'compositionChange', 'send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences'],
@@ -417,6 +430,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     render: renderAgentComposer
   })
   const app = Vue.createApp(composerComponent, componentProps)
+  app.component('AgentComposerMedia', { template: '<div />' })
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.mount(host)
   for (const element of host.querySelectorAll<HTMLElement>('*')) element.setAttribute(composerScopeAttribute, '')
@@ -602,6 +616,22 @@ describe('Agent composer slash-command keyboard gates', () => {
 })
 
 describe('Agent composer send admission', () => {
+  it('sends an attachment-only message with its selected image response mode', () => {
+    const composer = loadComposer()
+    composer.mediaSubmission.value = { attachmentIds: ['owned-image'], responseMode: 'image' }
+    composer.submit()
+    expect(composer.sent).toHaveLength(1)
+    expect(composer.sent[0]?.content).toBe('')
+    expect(composer.sent[0]?.media).toEqual({ attachmentIds: ['owned-image'], responseMode: 'image' })
+  })
+  it('blocks send while media is uploading or dictation is pending', () => {
+    const composer = loadComposer()
+    composer.draft.value = 'Please examine the upload'
+    composer.mediaBusy.value = true
+    composer.submit()
+    expect(composer.sent).toHaveLength(0)
+  })
+
   it('does not submit a non-empty draft while the composer is disabled', () => {
     const disabled = loadComposer({ disabled: true })
     disabled.draft.value = 'keep this draft'

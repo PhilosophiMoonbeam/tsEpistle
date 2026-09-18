@@ -1,3 +1,4 @@
+import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 import {
@@ -361,6 +362,7 @@ describe('durable agent repositories', () => {
     knex = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
     await createTables(knex)
     await addAgentGoalBudgetTiers(knex)
+    await addAgentMedia(knex)
     await knex('users').insert([{ id: 7 }, { id: 8 }, { id: 9 }])
     await knex('groups').insert([{ id: 1 }])
     await createAgentSession(knex, { id: sessionId, ownerId: 7, title: 'Thread', retention: 'saved', providerProfileId: null, executionMode: 'agent' })
@@ -2313,9 +2315,7 @@ describe('durable agent repositories', () => {
           contentTruncated: false,
           actionCallIds: []
         })
-        await sink.text(
-          'Alpha requires review. [[cite:page:1:revision:rev-1]] Beta requires audit. [[cite:page:2:revision:rev-2]]'
-        )
+        await sink.text('Alpha requires review. [[cite:page:1:revision:rev-1]] Beta requires audit. [[cite:page:2:revision:rev-2]]')
         return {
           inputTokens: 10,
           outputTokens: 5,

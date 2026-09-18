@@ -82,6 +82,7 @@ export const KNOWN_APPLICATION_TABLES: Readonly<Record<string, true>> = {
   agentQuotaDaily: true,
   agentQuotaReservations: true,
   agentArtifacts: true,
+  agentMedia: true,
   agentBrowserTargets: true,
   agentProviderSecrets: true,
   agentUserSkillPreferences: true,

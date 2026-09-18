@@ -15,6 +15,7 @@ import {
   AGENT_TOOL_CALL_NAMES,
   type AgentConversationFolderView,
   type AgentEventType,
+  type AgentMediaView,
   type AgentProviderProfileView,
   type AgentThreadState,
   type CancelAgentGoalRequest,
@@ -52,7 +53,16 @@ const Citation = z.object({
   label: z.string(),
   href: z.string().nullable()
 })
+const Media = z.object({
+  id: Uuid,
+  kind: z.enum(['attachment', 'generated-image']),
+  filename: z.string(),
+  mimeType: z.string(),
+  byteLength: z.number().int().nonnegative(),
+  available: z.boolean()
+})
 const Message = z.object({
+  media: z.array(Media).optional(),
   knowledgeContext: AgentKnowledgeContextSchema.optional(),
   id: Uuid,
   runId: Uuid.nullable(),
@@ -245,6 +255,7 @@ const SessionSummary = z.object({
 })
 const ConversationFolder = z.object({ id: Uuid, name: z.string(), version: z.number().int().positive(), createdAt: Iso, updatedAt: Iso })
 const Profile = z.object({
+  media: z.object({ attachments: z.boolean(), imageGeneration: z.boolean(), transcription: z.boolean() }).optional(),
   id: Uuid,
   name: z.string(),
   transport: z.enum(AGENT_PROVIDER_TRANSPORTS),
@@ -401,7 +412,7 @@ const requestJson = async <T>(fetcher: typeof fetch, csrfToken: string, path: st
     ...init,
     headers: {
       accept: 'application/json',
-      ...(init.body ? { 'content-type': 'application/json' } : {}),
+      ...(init.body && !(init.body instanceof FormData) ? { 'content-type': 'application/json' } : {}),
       ...(init.method && init.method !== 'GET' ? { 'x-wiki-csrf': csrfToken } : {}),
       ...init.headers
     }
@@ -735,3 +746,21 @@ export const subscribeAgentRun = (
   source.addEventListener('error', handlers.error)
   return source
 }
+
+export const agentMediaContentUrl = (id: string): string => `/_api/agents/media/${encodeURIComponent(id)}/content`
+
+export const uploadAgentMedia = async (fetcher: typeof fetch, csrfToken: string, sessionId: string, file: File, signal?: AbortSignal): Promise<AgentMediaView> => {
+  assertUuid(sessionId, 'Session ID')
+  const body = new FormData()
+  body.append('file', file)
+  return (await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/media`, z.object({ media: Media }), { method: 'POST', body, signal })).media
+}
+export const deleteAgentMedia = async (fetcher: typeof fetch, csrfToken: string, id: string): Promise<void> => {
+  assertUuid(id, 'Media ID')
+  const response = await fetcher(`/_api/agents/media/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', headers: { 'x-wiki-csrf': csrfToken, accept: 'application/json' } })
+  if (!response.ok) throw new AgentApiError(response.status, await errorMessage(response))
+}
+export const startAgentTranscription = async (fetcher: typeof fetch, csrfToken: string, sessionId: string, input: { clientRequestId: string; expectedSessionVersion: number; profileResolutionToken: string; attachmentId: string }, signal?: AbortSignal): Promise<string> =>
+  (await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/transcriptions`, z.object({ runId: Uuid }), { method: 'POST', body: JSON.stringify(input), signal })).runId
+export const getAgentTranscription = (fetcher: typeof fetch, csrfToken: string, runId: string, signal?: AbortSignal) =>
+  requestJson(fetcher, csrfToken, `/_api/agents/runs/${encodeURIComponent(runId)}/transcription`, z.object({ status: RunStatus, text: z.string().optional() }), { signal })

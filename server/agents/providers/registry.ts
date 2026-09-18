@@ -48,30 +48,6 @@ const FORBIDDEN_HEADERS = new Set([
   'x-forwarded-host',
   'x-forwarded-proto'
 ])
-export const AgentProviderAdapterConfigSchema = z.strictObject({
-  timeoutMs: z.number().int().min(1_000).max(300_000),
-  maxRetries: z.literal(0),
-  additionalHeaders: z
-    .record(HeaderNameSchema, z.string().max(2_000))
-    .refine(value => Object.keys(value).length <= 16, 'At most 16 additional headers are allowed')
-    .default({}),
-  temperature: z.number().min(0).max(2).optional(),
-  agentReasoningEffort: z.enum(AGENT_REASONING_EFFORTS).optional(),
-  utilityReasoningEffort: z.enum(AGENT_REASONING_EFFORTS).optional()
-})
-export const AgentProviderPoliciesSchema = z.strictObject({
-  allowedModes: z
-    .array(z.enum(['agent', 'generation-only']))
-    .min(1)
-    .max(2),
-  dailyTokens: z.number().int().positive().max(1_000_000_000),
-  dailyCostMicros: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  reservationTokens: z.number().int().positive().max(10_000_000),
-  reservationCostMicros: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  reservationMilliseconds: z.number().int().min(10_000).max(3_600_000),
-  promptVersion: z.number().int().positive(),
-  maxAttempts: z.number().int().min(1).max(10).default(3)
-})
 export const AgentProviderPricingRevisionSchema = z
   .string()
   .regex(/^[A-Za-z0-9._-]{1,64}\|[0-9]{1,15}\|[0-9]{1,15}$/)
@@ -86,6 +62,48 @@ export const AgentProviderPricingRevisionSchema = z
         }),
     'Provider token rates must be positive safe integers'
   )
+
+export const AgentProviderMediaConfigSchema = z.strictObject({
+  attachments: z.boolean().default(false),
+  imageGeneration: z
+    .strictObject({
+      model: z.literal('gemini-3.1-flash-image'),
+      pricingRevision: AgentProviderPricingRevisionSchema
+    })
+    .optional(),
+  transcription: z
+    .strictObject({
+      model: z.literal('gemini-3.5-transcribe'),
+      pricingRevision: AgentProviderPricingRevisionSchema
+    })
+    .optional()
+})
+
+export const AgentProviderAdapterConfigSchema = z.strictObject({
+  timeoutMs: z.number().int().min(1_000).max(300_000),
+  maxRetries: z.literal(0),
+  additionalHeaders: z
+    .record(HeaderNameSchema, z.string().max(2_000))
+    .refine(value => Object.keys(value).length <= 16, 'At most 16 additional headers are allowed')
+    .default({}),
+  temperature: z.number().min(0).max(2).optional(),
+  agentReasoningEffort: z.enum(AGENT_REASONING_EFFORTS).optional(),
+  utilityReasoningEffort: z.enum(AGENT_REASONING_EFFORTS).optional(),
+  media: AgentProviderMediaConfigSchema.optional()
+})
+export const AgentProviderPoliciesSchema = z.strictObject({
+  allowedModes: z
+    .array(z.enum(['agent', 'generation-only']))
+    .min(1)
+    .max(2),
+  dailyTokens: z.number().int().positive().max(1_000_000_000),
+  dailyCostMicros: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  reservationTokens: z.number().int().positive().max(10_000_000),
+  reservationCostMicros: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  reservationMilliseconds: z.number().int().min(10_000).max(3_600_000),
+  promptVersion: z.number().int().positive(),
+  maxAttempts: z.number().int().min(1).max(10).default(3)
+})
 
 export const AgentProviderSettingsInputSchema = z.strictObject({
   transportKind: TransportKindSchema,
@@ -325,6 +343,11 @@ const validateSettings = (input: AgentProviderSettingsInput, allowManagedReferen
   if (transportKind === 'legacy-completions' && (authMode === 'anthropic-api-key' || authMode === 'google-api-key'))
     throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Legacy completions require bearer or generic API key authentication', 400)
   const adapterConfig = AgentProviderAdapterConfigSchema.parse(input.adapterConfig)
+  if (
+    adapterConfig.media !== undefined &&
+    (transportKind !== 'gemini-api' || baseUrl.replace(/\/$/u, '') !== 'https://generativelanguage.googleapis.com/v1beta')
+  )
+    throw new AgentRepositoryError('INVALID_PROVIDER_CONFIG', 'Media requires the official Google Gemini Interactions endpoint', 400)
   const supportedReasoningEfforts = agentProviderReasoningEfforts(transportKind)
   for (const [field, label] of [
     ['agentReasoningEffort', 'Agent reasoning effort'],
@@ -929,7 +952,16 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       capabilities: profile.capabilities,
       capabilityRevision: profile.capabilityRevision,
       policyVersion: profile.policyVersion,
-      isGlobalDefault: profile.isGlobalDefault
+      isGlobalDefault: profile.isGlobalDefault,
+      ...(profile.transportKind === 'gemini-api' && profile.adapterConfig.media
+        ? {
+            media: {
+              attachments: profile.adapterConfig.media.attachments,
+              imageGeneration: profile.adapterConfig.media.imageGeneration !== undefined,
+              transcription: profile.adapterConfig.media.transcription !== undefined
+            }
+          }
+        : {})
     }))
   }
 

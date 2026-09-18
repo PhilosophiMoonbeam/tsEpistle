@@ -251,6 +251,7 @@ const evaluateComposer = new Function(
   'scrollTopForCaret',
   `${executableComposerScript}
 return {
+  mediaSubmission, mediaBusy, appendDictation, handleMediaPaste, handleMediaDragOver, handleMediaDrop,
   props,
   emit,
   draft,
@@ -371,6 +372,9 @@ const loadGoalLockState = (
   }
   const props = {
     csrfToken: 'csrf',
+    mediaProfile: undefined,
+    mediaRefreshing: false,
+    refreshAfterMedia: () => {},
     ownerId: 2,
     resumeSessionId: undefined,
     providerEnabled: true,
@@ -482,6 +486,9 @@ const mountInlineAgent = (
   const page = options.page ?? lockState?.currentPage.value ?? null
   const context: Record<string, unknown> = {
     csrfToken: 'csrf',
+    mediaProfile: undefined,
+    mediaRefreshing: false,
+    refreshAfterMedia: () => {},
     ownerId: 2,
     resumeSessionId: undefined,
     approvalId: undefined,
@@ -662,6 +669,9 @@ const mountInlineAgent = (
       statusTone: String,
       hasMessages: Boolean,
       externalDescriptionId: String,
+      csrfToken: String,
+      mediaSession: Object,
+      mediaCapabilities: Object,
       networkBlocked: Boolean
     },
     emits: ['send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'draftChange'],
@@ -716,6 +726,7 @@ const mountInlineAgent = (
     })
   )
   app.component('AgentComposer', composerComponent)
+  app.component('AgentComposerMedia', { template: '<div />' })
   app.mount(host)
 
   const root = host.querySelector<HTMLElement>('.inline-agent')
