@@ -18,6 +18,7 @@ import {
   subscribeOfflineStorageChanges,
   type OfflineStorage
 } from '../../helpers/offline-storage.ts'
+import { offlinePageHref, offlineRecordAtUrl } from '../../helpers/offline-routes.ts'
 import { renderOfflineHtmlFragment } from '../../helpers/offline-renderer.ts'
 import {
   createOfflineSyncUnavailableResult,
@@ -42,6 +43,8 @@ type FocusAfterRemove = {
 }
 
 const props = defineProps<{
+  showSettings?: boolean
+  navigateOnOpen?: boolean
   storage: OfflineStorage | null
   storageState: string
   storageMessage?: string
@@ -53,6 +56,8 @@ const emit = defineEmits<{
   changed: []
   error: [message: string]
   'retry-storage': []
+  selected: [record: OfflineSnapshotRecord | null]
+  busy: [value: boolean]
 }>()
 
 const offlineSyncResultDetail = (result: OfflineSyncResult, fallback: string): string => {
@@ -155,15 +160,16 @@ const isValidSelector = (selector: OfflinePageSelector, origin: string): boolean
 const offlineSelectorUrl = (selector: OfflinePageSelector): string | null => {
   const origin = currentOrigin()
   if (!origin || !isValidSelector(selector, origin)) return null
-  const url = new URL(OFFLINE_DOCUMENT_PATH, origin)
-  url.searchParams.set('site', origin)
-  url.searchParams.set('pageId', String(selector.pageId))
-  url.searchParams.set('locale', selector.locale)
-  return url.href
+  const record = records.value.find(record => recordKey(record) === recordKey(selector))
+  return record ? offlinePageHref(record, origin) : null
 }
 
 const selectorFromUrl = (): OfflinePageSelector | null => {
-  if (typeof window === 'undefined' || window.location.pathname !== OFFLINE_DOCUMENT_PATH) return null
+  if (typeof window === 'undefined') return null
+  if (new URL(window.location.href).searchParams.has('saved')) return null
+  if (window.location.pathname !== OFFLINE_DOCUMENT_PATH) {
+    return offlineRecordAtUrl(activeRecords.value, window.location.href, window.location.origin, siteConfig.lang) ?? null
+  }
   const url = new URL(window.location.href)
   const entries = [...url.searchParams.entries()]
   if (!entries.length || url.hash || entries.length !== 3 || entries.some(([key]) => !['site', 'pageId', 'locale'].includes(key))) return null
@@ -198,7 +204,7 @@ const canUseNativeShare = computed(() => {
   if (!readerReady.value || !selectedOfflineUrl.value || typeof navigator === 'undefined' || typeof navigator.share !== 'function') return false
   const payload = {
     title: selectedSnapshot.value?.title || 'Saved page',
-    text: `${selectedOfflineText.value}\n\nThis local link opens only where this page was saved.`.trim(),
+    text: `${selectedOfflineText.value}\n\nOpen this page online, or from a saved copy on your device.`.trim(),
     url: selectedOfflineUrl.value
   }
   return typeof navigator.canShare !== 'function' || navigator.canShare(payload)
@@ -364,14 +370,14 @@ const shareSelected = async (): Promise<void> => {
   try {
     await navigator.share({
       title: snapshot.title || 'Saved page',
-      text: `${selectedOfflineText.value}\n\nThis local link opens only where this page was saved.`.trim(),
+      text: `${selectedOfflineText.value}\n\nOpen this page online, or from a saved copy on your device.`.trim(),
       url
     })
     if (operation === readerToken && selectedKey.value === key && readerReady.value)
-      shareStatus.value = 'Excerpt and local link shared.'
+      shareStatus.value = 'Excerpt and page link shared.'
   } catch (error) {
     if (!isAbortError(error) && operation === readerToken && selectedKey.value === key)
-      shareStatus.value = 'Sharing is unavailable. Copy the local link or full page text instead.'
+      shareStatus.value = 'Sharing is unavailable. Copy the page link or full page text instead.'
   } finally {
     sharing.value = false
   }
@@ -386,7 +392,7 @@ const copySelectedLink = async (): Promise<void> => {
     await copyToClipboard(url)
     if (operation === readerToken && selectedKey.value === key && readerReady.value) shareStatus.value = 'Local link copied.'
   } catch {
-    if (operation === readerToken && selectedKey.value === key) shareStatus.value = 'The local link could not be copied.'
+    if (operation === readerToken && selectedKey.value === key) shareStatus.value = 'The page link could not be copied.'
   }
 }
 
@@ -463,10 +469,8 @@ const restoreReaderFocus = async (key: string | null, opener: HTMLElement | null
 }
 
 const clearOfflineSelector = (): void => {
-  if (typeof window === 'undefined' || window.location.pathname !== OFFLINE_DOCUMENT_PATH) return
-  const url = new URL(window.location.href)
-  for (const key of ['site', 'pageId', 'locale']) url.searchParams.delete(key)
-  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+  if (typeof window === 'undefined' || props.navigateOnOpen) return
+  window.history.replaceState(window.history.state, '', '/?saved=1')
 }
 
 const setSelectionUrl = (record: OfflineSnapshotRecord, mode: ReaderHistoryMode): void => {
@@ -474,6 +478,7 @@ const setSelectionUrl = (record: OfflineSnapshotRecord, mode: ReaderHistoryMode)
   const href = offlineSelectorUrl(selector)
   if (!href || typeof window === 'undefined') return
   if (mode === 'initial' || mode === 'history') {
+    if (window.location.pathname === OFFLINE_DOCUMENT_PATH) window.history.replaceState(window.history.state, '', href)
     historyMode.value = mode
     return
   }
@@ -541,6 +546,11 @@ const finishReaderError = (operation: number, key: string, message: string): voi
 const openRecord = async (record: OfflineSnapshotRecord, event?: MouseEvent, options: ReaderOpenOptions = {}): Promise<void> => {
   const key = recordKey(record)
   const origin = currentOrigin()
+  if (props.navigateOnOpen && origin) {
+    const href = offlinePageHref(record, origin)
+    if (href) window.location.assign(href)
+    return
+  }
   const storage = props.storage
   const view = corpus.value
   const currentPolicy = policy.value
@@ -623,10 +633,15 @@ const openRecord = async (record: OfflineSnapshotRecord, event?: MouseEvent, opt
     target.replaceChildren(...Array.from(staging.childNodes))
     target.setAttribute('dir', 'auto')
     readerState.value = 'ready'
-    readerMessage.value = 'Saved page ready to read.'
+    readerMessage.value = 'Reading the saved version. Changes will sync when you reconnect.'
+    document.title = `${record.snapshot.title || 'Untitled page'} | ${siteConfig.title}`
+    emit('selected', record)
     await nextTick()
     if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
     selectedHeading.value?.focus({ preventScroll: true })
+    if (window.location.hash) {
+      try { document.getElementById(decodeURIComponent(window.location.hash.slice(1)))?.scrollIntoView() } catch { /* malformed fragment */ }
+    }
   } catch (error) {
     if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
     finishReaderError(operation, key, normalizeError(error, 'This saved page failed its integrity or safety checks.'))
@@ -642,6 +657,7 @@ const closeRecord = (options: ReaderCloseOptions = {}): void => {
   ++readerToken
   renderTarget.value?.replaceChildren()
   selectedKey.value = null
+  emit('selected', null)
   readerState.value = 'idle'
   readerMessage.value = ''
   shareStatus.value = ''
@@ -793,8 +809,11 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     }
     await runSearch()
     if (token !== loadToken) return false
-    const selectorKey = requestedSelectorKey.value
-    if (selector && selectorKey && requestedSelectorConsumed.value !== selectorKey) {
+    const routeRecord = !props.navigateOnOpen && !new URL(window.location.href).searchParams.has('saved')
+      ? offlineRecordAtUrl(activeRecords.value, window.location.href, origin, siteConfig.lang) : undefined
+    const requested = selector ?? routeRecord
+    const selectorKey = requested ? recordKey(requested) : requestedSelectorKey.value
+    if (requested && selectorKey && requestedSelectorConsumed.value !== selectorKey) {
       requestedSelectorConsumed.value = selectorKey
       const selected = activeRecords.value.find((record: OfflineSnapshotRecord) => recordKey(record) === selectorKey)
       if (!selected) {
@@ -803,6 +822,9 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
       }
       await openRecord(selected, undefined, { history: 'initial' })
       if (token !== loadToken) return false
+    }
+    if (!props.navigateOnOpen && !requested && window.location.pathname !== '/' && window.location.pathname !== OFFLINE_DOCUMENT_PATH) {
+      emit('error', 'This page has not been saved on this device. You can open another saved page below or reconnect to continue.')
     }
     return true
   } catch (error) {
@@ -1219,6 +1241,8 @@ const handlePopState = (): void => {
   void openRecord(selected, undefined, { history: 'history' })
 }
 
+watch(() => Boolean(policyMutationLoading.value || refreshing.value || removingKey.value), value => emit('busy', value), { flush: 'sync' })
+
 watch(searchQuery, () => {
   void runSearch()
 })
@@ -1277,16 +1301,15 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="offline-library" aria-labelledby="downloaded-pages-title">
-    <div class="library-heading">
+    <div v-if="!selectedRecord" class="library-heading">
       <div>
-        <p class="section-kicker">Local index <span aria-hidden="true">01</span></p>
         <h2 id="downloaded-pages-title">Saved pages</h2>
       </div>
       <span class="count-note" aria-label="Saved page count">{{ hasCorpus ? activeRecords.length : '—' }}</span>
     </div>
 
-    <p class="scope-note">Public pages saved by an explicit download or an enabled offline policy on this device. Search stays local and never includes an account or private content.</p>
-    <div class="search-field">
+    <p v-if="!selectedRecord" class="scope-note">Pages available on this device. Your saved copies stay available while the connection is interrupted.</p>
+    <div v-if="!selectedRecord" class="search-field">
       <label for="downloaded-pages-search">Search saved pages</label>
       <input
         id="downloaded-pages-search"
@@ -1300,7 +1323,7 @@ onBeforeUnmount(() => {
       />
       <p id="downloaded-pages-search-detail" class="field-hint" role="status" aria-live="polite" aria-atomic="true">{{ searchDetail }}</p>
     </div>
-    <section class="offline-policy" aria-labelledby="offline-policy-title">
+    <section v-if="showSettings" class="offline-policy" aria-labelledby="offline-policy-title">
       <div class="policy-heading">
         <div>
           <p class="section-kicker">Policy <span aria-hidden="true">03</span></p>
@@ -1343,7 +1366,7 @@ onBeforeUnmount(() => {
       <p class="policy-diagnostics" role="status" aria-live="polite">{{ syncDiagnosticsDetail }}</p>
       <p v-if="policyError" class="library-inline-error" role="alert">{{ policyError }}</p>
     </section>
-    <section v-if="missingPolicyPages.length" class="offline-policy missing-pages" aria-labelledby="missing-pages-title">
+    <section v-if="showSettings && missingPolicyPages.length" class="offline-policy missing-pages" aria-labelledby="missing-pages-title">
       <div class="policy-heading">
         <div>
           <p class="section-kicker">Needs attention <span aria-hidden="true">04</span></p>
@@ -1411,14 +1434,14 @@ onBeforeUnmount(() => {
     <article v-else-if="selectedRecord && selectedSnapshot" class="offline-reader" :lang="selectedSnapshot.locale" dir="auto" aria-labelledby="offline-reader-title" aria-describedby="offline-reader-status">
       <div class="reader-heading">
         <div class="reader-title-block">
-          <p class="section-kicker">Local reading copy <span aria-hidden="true">02</span></p>
-          <h3 id="offline-reader-title" ref="selectedHeading" tabindex="-1">{{ selectedSnapshot.title || 'Untitled page' }}</h3>
+          <p class="section-kicker">Saved on this device</p>
+          <h1 id="offline-reader-title" ref="selectedHeading" tabindex="-1">{{ selectedSnapshot.title || 'Untitled page' }}</h1>
         </div>
         <div class="reader-actions" aria-label="Saved page actions">
           <button v-if="canUseNativeShare" class="text-button" type="button" :disabled="sharing || !readerReady" @click="shareSelected">
-            {{ sharing ? 'Sharing…' : 'Share excerpt + local link' }}
+            {{ sharing ? 'Sharing…' : 'Share page' }}
           </button>
-          <button class="text-button" type="button" :disabled="!readerReady" @click="copySelectedLink">Copy local link</button>
+          <button class="text-button" type="button" :disabled="!readerReady" @click="copySelectedLink">Copy page link</button>
           <button class="text-button" type="button" :disabled="!readerReady" @click="copySelectedText">Copy full page text</button>
           <button class="text-button" type="button" @click="closeRecord()">Back to saved pages</button>
         </div>
@@ -1427,7 +1450,7 @@ onBeforeUnmount(() => {
       <p class="reader-meta">
         <span>{{ selectedSnapshot.locale }}</span><span aria-hidden="true"> · </span><bdi>{{ selectedSnapshot.path }}</bdi><span aria-hidden="true"> · </span><span>Saved version</span><span aria-hidden="true"> </span><bdi>{{ selectedSnapshot.sourceRevision }}</bdi><span aria-hidden="true"> · </span>{{ expiryLabel(selectedRecord) }}
       </p>
-      <p class="reader-meta reader-policy-meta">
+      <p v-if="showSettings" class="reader-meta reader-policy-meta">
         <span>Provenance: {{ provenanceLabel(selectedRecord) }}</span><span aria-hidden="true"> · </span><span>Availability: {{ availabilityLabel(selectedRecord) }}</span>
       </p>
       <p v-if="storageUnavailable || loadError" class="library-inline-error" role="alert">
@@ -1435,7 +1458,7 @@ onBeforeUnmount(() => {
         <button class="text-button" type="button" @click="retryStorage">Retry saved pages</button>
       </p>
       <p id="offline-reader-status" class="reader-status" :class="`is-${readerState}`" role="status" aria-live="polite" aria-atomic="true">{{ readerMessage }}</p>
-      <div ref="renderTarget" class="offline-page-body" aria-label="Saved page content" :aria-busy="readerState === 'loading' ? 'true' : 'false'"></div>
+      <div ref="renderTarget" class="offline-page-body contents" aria-label="Saved page content" :aria-busy="readerState === 'loading' ? 'true' : 'false'"></div>
       <div v-if="readerState === 'error'" class="reader-error" role="alert">
         <p>{{ readerMessage }}</p>
         <button class="secondary-button" type="button" @click="retryReader">Retry opening this page</button>
@@ -1450,7 +1473,7 @@ onBeforeUnmount(() => {
         :value="copyFallbackText"
       ></textarea>
       <p v-if="shareStatus" class="reader-status" role="status" aria-live="polite">{{ shareStatus }}</p>
-      <p class="reader-footnote">This is a saved public page on this device. The local link opens only where the same download exists; it is not a backup or a server recall.</p>
+
     </article>
 
     <div v-else-if="searchError" class="library-message is-error" role="alert">
@@ -1491,7 +1514,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="page-card-actions">
             <button class="secondary-button" type="button" :data-offline-record-key="recordDomKey(record)" :aria-label="`Open saved page ${record.snapshot.title || 'Untitled page'}`" @click="openRecord(record, $event)">Open page</button>
-            <button class="text-button" type="button" :disabled="removingKey === recordKey(record) || policyMutationLoading || refreshing" @click="removeRecord(record)">
+            <button v-if="showSettings" class="text-button" type="button" :disabled="removingKey === recordKey(record) || policyMutationLoading || refreshing" @click="removeRecord(record)">
               {{ removingKey === recordKey(record) ? 'Removing…' : 'Remove page' }}
             </button>
           </div>
@@ -1502,6 +1525,36 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.offline-library {
+  --offline-paper: rgb(var(--v-theme-background));
+  --offline-paper-raised: var(--wiki-surface-raised);
+  --offline-paper-sunken: rgb(var(--v-theme-surface-variant));
+  --offline-ink: rgb(var(--v-theme-on-surface));
+  --offline-muted: var(--wiki-muted);
+  --offline-faint: var(--wiki-muted);
+  --offline-accent: rgb(var(--v-theme-primary));
+  --offline-accent-strong: var(--wiki-accent-ink);
+  --offline-warm: var(--wiki-accent-warm);
+  --offline-border: var(--wiki-surface-border);
+  --offline-border-strong: var(--wiki-surface-border);
+  --offline-focus: rgb(var(--v-theme-primary));
+  --offline-shadow: var(--wiki-shadow-sm);
+  --offline-shadow-small: var(--wiki-shadow-xs);
+  --offline-radius: 12px;
+  --offline-mono: var(--wiki-font-body);
+  --offline-body: var(--wiki-font-body);
+  --offline-heading: var(--wiki-font-display);
+  color: var(--offline-ink);
+}
+button { font: inherit; cursor: pointer; min-height: 44px; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--offline-focus); outline-offset: 3px; }
+.secondary-button, .text-button { padding: .5rem .8rem; border-radius: 8px; color: var(--offline-accent-strong); }
+.secondary-button { border: 1px solid var(--offline-border); background: var(--offline-paper-raised); }
+.text-button { border: 0; background: transparent; }
+.offline-reader h1 { font-family: var(--wiki-font-display); font-size: clamp(2rem, 4vw, 3rem); line-height: 1.16; }
+.reader-actions { flex-wrap: wrap; }
+
 .offline-library {
   min-width: 0;
   max-inline-size: 100%;
@@ -1975,13 +2028,8 @@ onBeforeUnmount(() => {
 .reader-status.is-error { color: var(--offline-warm); }
 
 .offline-page-body {
-  max-inline-size: 75ch;
-  min-inline-size: 0;
-  margin-block: 1.15rem;
-  color: var(--offline-ink);
-  font-family: var(--offline-body);
-  font-size: 1rem;
-  line-height: 1.7;
+  margin-block-start: 1.5rem;
+  max-width: var(--wiki-reader-copy-width, 85ch);
   overflow-wrap: anywhere;
 }
 

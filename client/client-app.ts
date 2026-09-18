@@ -1,8 +1,8 @@
+import { rememberOfflinePresentation } from './helpers/offline-presentation.ts'
 import { applyReaderLayout } from './helpers/reader-layout.ts'
 import { createApp, shallowRef, watch } from 'vue'
 import type { AsyncComponentLoader } from 'vue'
-import { createVuetify } from 'vuetify'
-import * as vuetifyLocaleMessages from 'vuetify/locale'
+import { createAppVuetify } from './helpers/app-vuetify.ts'
 import Hammer from 'hammerjs'
 import moment from 'moment-timezone'
 import helpersPlugin, { applyUserPresentation } from './helpers/index.ts'
@@ -11,8 +11,7 @@ import localization from './modules/localization.ts'
 import { pinia, wikiStore } from './store/index.ts'
 import { router } from './router'
 import { registerPwa, setReloadSafetyProvider, pwaState } from './helpers/pwa.ts'
-import { createWikiThemes, installThemeSwitchGuard, resolveThemeName, WIKI_THEME_VARIATIONS } from './helpers/theme.ts'
-import { normalizeThemeColors } from '../shared/theme-colors.ts'
+import { installThemeSwitchGuard, resolveThemeName } from './helpers/theme.ts'
 import { createAsyncComponent } from './components/common/async-component-state.vue'
 import { openOfflineStorage, type OfflineStorage } from './helpers/offline-storage.ts'
 import {
@@ -186,112 +185,13 @@ const registrations = [
 ]
 
 applyReaderLayout(siteConfig.readerLayout)
+rememberOfflinePresentation()
+watch(() => wikiStore.user.appearance, appearance => rememberOfflinePresentation(appearance))
 // Auth is fail-closed in the store and must not prevent the neutral shell from
 // mounting when the server is slow or unavailable.
 const authRefresh = wikiStore.refreshAuth()
 
-const resolveVuetifyMessageLocale = (language: string): keyof typeof vuetifyLocaleMessages | undefined => {
-  const languageParts = language.trim().toLowerCase().replaceAll('_', '-').split('-')
-  const baseLanguage = languageParts[0]
-
-  if (baseLanguage === 'sr') return languageParts.includes('latn') ? 'srLatn' : 'srCyrl'
-  if (baseLanguage === 'zh') {
-    const usesTraditionalCharacters =
-      languageParts.includes('hant') || languageParts.includes('tw') || languageParts.includes('hk') || languageParts.includes('mo')
-    return usesTraditionalCharacters ? 'zhHant' : 'zhHans'
-  }
-
-  return Object.hasOwn(vuetifyLocaleMessages, baseLanguage) ? (baseLanguage as keyof typeof vuetifyLocaleMessages) : undefined
-}
-
-const vuetifyMessageLocale = resolveVuetifyMessageLocale(siteConfig.lang)
-const selectedVuetifyMessages = vuetifyMessageLocale
-  ? { en: vuetifyLocaleMessages.en, [siteConfig.lang]: vuetifyLocaleMessages[vuetifyMessageLocale] }
-  : { en: vuetifyLocaleMessages.en }
-
-const vuetify = createVuetify({
-  locale: {
-    fallback: 'en',
-    locale: siteConfig.lang,
-    messages: selectedVuetifyMessages,
-    rtl: { [siteConfig.lang]: siteConfig.rtl }
-  },
-  defaults: {
-    VCard: {
-      elevation: 0,
-      rounded: 'lg',
-      variant: 'flat'
-    },
-    VBtn: {
-      elevation: 0,
-      rounded: 'lg'
-    },
-    VTextField: {
-      baseColor: 'on-surface',
-      color: 'primary',
-      rounded: 'lg',
-      variant: 'outlined'
-    },
-    VTextarea: {
-      baseColor: 'on-surface',
-      color: 'primary',
-      rounded: 'lg',
-      variant: 'outlined'
-    },
-    VSelect: {
-      baseColor: 'on-surface',
-      color: 'primary',
-      rounded: 'lg',
-      variant: 'outlined'
-    },
-    VAutocomplete: {
-      baseColor: 'on-surface',
-      color: 'primary',
-      rounded: 'lg',
-      variant: 'outlined'
-    },
-    VCombobox: {
-      baseColor: 'on-surface',
-      color: 'primary',
-      rounded: 'lg',
-      variant: 'outlined'
-    },
-    VChip: {
-      rounded: 'pill',
-      variant: 'tonal'
-    },
-    VDialog: {
-      scrim: 'black',
-      transition: 'dialog-transition'
-    },
-    VMenu: {
-      offset: 6,
-      transition: 'fade-transition'
-    },
-    VTooltip: {
-      location: 'bottom',
-      offset: 6,
-      openDelay: 200,
-      transition: 'fade-transition'
-    },
-    VDataTable: {
-      density: 'comfortable',
-      hover: true
-    },
-    VNavigationDrawer: {
-      elevation: 0
-    },
-    VAppBar: {
-      elevation: 0
-    }
-  },
-  theme: {
-    defaultTheme: resolveThemeName(wikiStore.user.appearance, siteConfig.darkMode),
-    variations: WIKI_THEME_VARIATIONS,
-    themes: createWikiThemes(normalizeThemeColors(siteConfig.themeColors)),
-    transition: false
-  }
-})
+const vuetify = createAppVuetify(wikiStore.user.appearance)
 
 const i18n = await localization.init()
 const app = createApp({})
@@ -315,19 +215,19 @@ window.boot = boot
 moment.locale(siteConfig.lang)
 applyUserPresentation(wikiStore.user)
 
+// Mutable screens replace this default during mount with their safety snapshot.
+setReloadSafetyProvider(() => ({ safe: true, revision: 'client-app-ready', actorEpoch: 'client' }))
 app.mount('#root')
 void startOfflineSync()
 void authRefresh.then(outcome => {
   if (outcome === 'authenticated') {
     applyUserPresentation(wikiStore.user)
+    rememberOfflinePresentation(wikiStore.user.appearance)
     void vuetify.theme.change(resolveThemeName(wikiStore.user.appearance, siteConfig.darkMode), false)
   }
 })
 
 boot.onDOMReady(() => {
-  // Non-editor documents have no mutable editor facts to protect. The editor
-  // coordinator replaces this provider with its complete safety snapshot.
-  setReloadSafetyProvider(() => ({ safe: true, revision: 'client-app-ready', actorEpoch: 'client' }))
   void registerPwa({
     onNeedReload: () => {
       window.location.reload()

@@ -113,6 +113,14 @@ describe('PWA route policy', () => {
     expect(isAllowlistedNavigation(request({ url: `${ORIGIN}/en/guide?section=intro#start` }), ORIGIN)).toBe(true)
   })
 
+  test('allows only the exact device settings document within protected profile routes', () => {
+    expect(isAllowlistedNavigation(request({ url: `${ORIGIN}/p/offline` }), ORIGIN)).toBe(true)
+    for (const path of ['/p/profile', '/p/offline/nested', '/p/offline?token=x', '/p/%6fffline']) {
+      expect(isAllowlistedNavigation(request({ url: `${ORIGIN}${path}` }), ORIGIN)).toBe(false)
+    }
+    expect(isAllowlistedNavigation(request({ url: `${ORIGIN}/p/offline`, mode: 'cors' }), ORIGIN)).toBe(false)
+  })
+
   test('matches only exact owned precache cache names', () => {
     const ownedName = `${PRECACHE_CACHE_PREFIX}0123456789abcdef`
     expect(isOwnedPrecacheCacheName(ownedName)).toBe(true)

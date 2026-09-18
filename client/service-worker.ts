@@ -378,6 +378,8 @@ function handleFetch(request: Request): Promise<Response> | undefined {
     return cachedShell().then(fallback => fallback ?? fetch(request))
   }
 
+  if (url.pathname === '/p/offline' && isAllowlistedNavigation(request, worker.location.origin)) return handleNavigation(request)
+
   if (isNetworkOnlyPath(url.pathname) && !url.pathname.toLowerCase().startsWith(OFFLINE_ASSET_PREFIX)) return undefined
 
   if (PRECACHE_URLS.has(url.href)) {

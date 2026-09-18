@@ -44,7 +44,8 @@ const adminRoutes = (): RouteRecordRaw[] => [
 const profileRoutes = (): RouteRecordRaw[] => [
   { path: '/', redirect: '/profile' },
   { path: '/profile', component: () => import('./components/profile/profile.vue') },
-  { path: '/pages', component: () => import('./components/profile/pages.vue') }
+  { path: '/pages', component: () => import('./components/profile/pages.vue') },
+  { path: '/offline', component: () => import('./components/pwa/offline-settings.vue') }
 ]
 
 const profileLoadingKey = 'profile'

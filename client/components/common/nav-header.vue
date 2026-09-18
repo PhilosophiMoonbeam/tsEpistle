@@ -603,6 +603,7 @@ export default defineComponent({
     return { siteNotifications }
   },
   props: {
+    localNavigation: { type: Boolean, default: false },
     dense: {
       type: Boolean,
       default: false
@@ -997,7 +998,7 @@ export default defineComponent({
       })
     },
     guardHeaderNavigation (event: Event): void {
-      if (!this.transportVerified) event.preventDefault()
+      if (!this.transportVerified && !this.localNavigation) event.preventDefault()
     },
     searchFocus () {
       this.searchIsFocused = true

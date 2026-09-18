@@ -187,13 +187,17 @@ const offlineContentSecurityPolicy = (request: Request, html: string, host: unkn
   const origin = requestOrigin(request) ?? configuredOrigin(host)
   const scripts = paths.scripts.map(pathName => cspSource(origin, pathName))
   const styles = paths.styles.map(pathName => cspSource(origin, pathName))
+  // Shared app chrome loads bundled chunks/fonts and Vuetify creates theme
+  // styles at runtime. Keep scripts restricted to the packaged asset directory.
+  scripts.push(cspSource(origin, '/_assets/js/'))
+  styles.push(cspSource(origin, '/_assets/assets/'), "'unsafe-inline'")
   return [
     "default-src 'none'",
     `script-src ${scripts.length > 0 ? scripts.join(' ') : "'none'"}`,
     `style-src ${styles.length > 0 ? styles.join(' ') : "'none'"}`,
     "connect-src 'self'",
     "img-src 'none'",
-    "font-src 'none'",
+    `font-src ${cspSource(origin, '/_assets/assets/')}`,
     "media-src 'none'",
     "object-src 'none'",
     "base-uri 'none'",

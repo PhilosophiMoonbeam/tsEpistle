@@ -101,12 +101,12 @@ section.pwa-status-panel(
         | Open Share or your browser menu and choose Add to Home Screen, if available.
       p(v-else) Your browser does not offer installation right now. You can keep using tsEpistle here.
 
-    .pwa-status-panel__links
-      a.pwa-status-panel__library(href='/_offline#offline-policy-title')
+    .pwa-status-panel__links(v-if='showLinks')
+      a.pwa-status-panel__library(href='/p/offline')
         v-icon(icon='mdi-tune-variant', size='18', aria-hidden='true')
-        span Manage automatic saving
+        span Offline preferences
         v-icon(icon='mdi-arrow-top-right', size='16', aria-hidden='true')
-      a.pwa-status-panel__library(href='/_offline')
+      a.pwa-status-panel__library(href='/p/offline#downloaded-pages-title')
         v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
         span Saved pages
         v-icon(icon='mdi-arrow-top-right', size='16', aria-hidden='true')
@@ -115,6 +115,8 @@ section.pwa-status-panel(
 <script setup lang='ts'>
 import { computed, ref } from 'vue'
 import { pwaConnectionPresentation, pwaState, promptPwaInstall, requestPwaUpdate, retryServerConnection } from '../../helpers/pwa'
+
+const { showLinks = true } = defineProps<{ showLinks?: boolean }>()
 
 const isRetrying = ref(false)
 const isInstalling = ref(false)
@@ -167,15 +169,15 @@ const offlineShellLabel = computed(() => {
 
 const summaryDescription = computed(() => {
   if (pwaState.connection === 'checking') return 'Checking whether tsEpistle is available.'
-  if (pwaState.connection === 'offline') return 'Your browser reports no connection. Check offline access below to use your saved pages.'
-  if (pwaState.connection === 'server-unavailable') return 'The server is unavailable right now. Check offline access below to use your saved pages.'
+  if (pwaState.connection === 'offline') return 'You’re offline. Keep reading saved pages; syncing will resume when you reconnect.'
+  if (pwaState.connection === 'server-unavailable') return 'The server is temporarily unavailable. Your saved pages remain available here.'
   if (pwaState.connection === 'online' && pwaState.serverReachable === true && pwaState.serverHealthy === true) {
     return 'The server is available. You can browse and sync saved pages.'
   }
   return 'Check the connection to see whether the server is available.'
 })
 
-const panelLabel = computed(() => `Offline app and connection status: ${connectionPresentation.value.label}`)
+const panelLabel = computed(() => `Connection and offline access: ${connectionPresentation.value.label}`)
 const networkHintLabel = computed(() => {
   if (pwaState.onlineHint === true) return 'Reports a connection'
   if (pwaState.onlineHint === false) return 'Reports no connection'

@@ -268,6 +268,7 @@
 
 </template>
 <script lang='ts'>
+import { offlinePageHref } from '../../helpers/offline-routes.ts'
 import { defineComponent } from 'vue'
 import AsyncState from '@/components/common/async-state.vue'
 import InlineAgentChat from '../agents/inline-agent-chat.vue'
@@ -300,6 +301,7 @@ type OnlineSearchRow = PageSearchRow & {
 type DownloadedSearchRow = PageSearchRow & {
   readonly offline: true
   readonly offlineSiteId: string
+  readonly offlineCanonicalPath: string
   readonly offlinePageId: number
   readonly offlineLocale: string
 }
@@ -308,7 +310,7 @@ type SearchResponse = Omit<PageSearchResult, 'results'> & {
   results: SearchResultRow[]
 }
 
-const OFFLINE_DOCUMENT_PATH = '/_offline'
+const OFFLINE_DOCUMENT_PATH = '/?saved=1'
 const OFFLINE_LOCALE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{1,34}$/u
 
 const offlineRecordKey = (siteId: string, pageId: number, locale: string): string =>
@@ -350,16 +352,6 @@ const isDownloadedSearchRow = (item: SearchResultRow): item is DownloadedSearchR
   item.offlinePageId > 0 &&
   typeof item.offlineLocale === 'string'
 
-const offlineSelectorHref = (siteId: string, pageId: number, locale: string): string | null => {
-  if (typeof window === 'undefined') return null
-  const origin = window.location.origin
-  if (siteId !== origin || !Number.isSafeInteger(pageId) || pageId < 1 || !isOfflineLocale(locale)) return null
-  const url = new URL(OFFLINE_DOCUMENT_PATH, origin)
-  url.searchParams.set('site', origin)
-  url.searchParams.set('pageId', String(pageId))
-  url.searchParams.set('locale', locale)
-  return `${url.pathname}?${url.searchParams.toString()}`
-}
 
 type InlineAgentChatRef = {
   focusComposer: () => Promise<void>
@@ -996,7 +988,7 @@ export default defineComponent({
       return `wiki-search-result-${this.pagination}-${index}`
     },
     pageHref(item: SearchResultRow): string {
-      if (isDownloadedSearchRow(item)) return offlineSelectorHref(item.offlineSiteId, item.offlinePageId, item.offlineLocale) ?? OFFLINE_DOCUMENT_PATH
+      if (isDownloadedSearchRow(item)) return offlinePageHref({ siteId: item.offlineSiteId, snapshot: { canonicalPath: item.offlineCanonicalPath } }, window.location.origin) ?? OFFLINE_DOCUMENT_PATH
       const visibilityScope = item.visibility === 'private' ? '/_private' : ''
       return `${visibilityScope}/${item.locale}/${item.path}`
     },
@@ -1239,6 +1231,7 @@ export default defineComponent({
             offline: true,
             offlineSiteId: origin,
             offlinePageId: document.pageId,
+            offlineCanonicalPath: document.canonicalPath,
             offlineLocale: document.locale
           })),
           suggestions: [],

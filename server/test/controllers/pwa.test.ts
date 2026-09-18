@@ -253,7 +253,10 @@ describe('mounted PWA delivery', () => {
     expect(csp).toContain(`script-src ${running.baseURL}/_assets/js/offline-entry.js`)
     expect(csp).toContain(`style-src ${running.baseURL}/_assets/assets/offline.css`)
     expect(csp).toContain("connect-src 'self'")
-    expect(csp).not.toContain("'unsafe-inline'")
+    expect(csp).toContain(`${running.baseURL}/_assets/js/`)
+    expect(csp).toContain(`font-src ${running.baseURL}/_assets/assets/`)
+    expect(csp.split('; ').find(directive => directive.startsWith('script-src'))).not.toContain("'unsafe-inline'")
+    expect(csp).toContain("img-src 'none'")
     expect(await get.text()).toContain('offline fixture')
 
     const head = await fetch(`${running.baseURL}${OFFLINE_PATH}`, { method: 'HEAD' })

@@ -421,11 +421,11 @@ describe('service worker lifecycle', () => {
     try {
       await harness.dispatchInstall()
       online = false
-      for (const path of ['/_offline', '/_offline?pageId=1&locale=en']) {
+      for (const path of ['/_offline', '/_offline?pageId=1&locale=en', '/p/offline']) {
         const response = await harness.dispatchFetch(requestLike(`${ORIGIN}${path}`, 'navigate'))
         expect(await response.text()).toContain('offline')
       }
-      for (const path of ['/_offline/nested', '/_api/users/whoami', '/login', '/logout', '/_private/en/notes']) {
+      for (const path of ['/_offline/nested', '/p/profile', '/p/offline/nested', '/p/offline?token=x', '/_api/users/whoami', '/login', '/logout', '/_private/en/notes']) {
         await expect(harness.dispatchFetch(requestLike(`${ORIGIN}${path}`, 'navigate'))).rejects.toThrow('Network is offline')
       }
       await expect(harness.dispatchFetch(requestLike(SHELL_URL, 'cors'))).rejects.toThrow('Network is offline')

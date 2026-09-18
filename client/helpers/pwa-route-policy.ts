@@ -8,6 +8,7 @@ export interface PwaRequestLike {
 
 export const PRECACHE_CACHE_PREFIX = 'tsepistle-pwa-precache-v1-'
 export const OFFLINE_DOCUMENT_PATH = '/_offline'
+export const OFFLINE_SETTINGS_PATH = '/p/offline'
 export const OFFLINE_ASSET_PREFIX = '/_assets/'
 
 const PRECACHE_CACHE_NAME_PATTERN = /^tsepistle-pwa-precache-v1-[0-9a-f]{16}$/u
@@ -144,6 +145,7 @@ export function isNetworkOnlyPath(path: string): boolean {
 export function isAllowlistedNavigation(request: PwaRequestLike, origin: string): boolean {
   if (request.method.toUpperCase() !== 'GET' || request.mode !== 'navigate' || !acceptsHTML(request)) return false
   const url = sameOriginURL(request.url, origin)
+  if (url?.pathname === OFFLINE_SETTINGS_PATH && !url.search) return true
   if (!url || url.pathname === OFFLINE_DOCUMENT_PATH || isNetworkOnlyPath(url.pathname)) return false
   const decodedPath = decodePath(url.pathname)
   if (decodedPath === null || isNetworkOnlyPath(decodedPath)) return false

@@ -45,6 +45,9 @@
           v-list-item.profile-navigation-item(to='/pages' color='primary')
             template(v-slot:prepend): v-icon mdi-file-document-outline
             v-list-item-title {{$t('profile:pages.title')}}
+          v-list-item.profile-navigation-item(to='/offline' color='primary')
+            template(v-slot:prepend): v-icon mdi-cloud-check-outline
+            v-list-item-title Offline access
     v-main.profile-main(ref='profileMain' tabindex='-1')
       router-view(v-slot='{ Component }')
         transition(name='profile-router')

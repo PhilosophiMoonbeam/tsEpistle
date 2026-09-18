@@ -920,6 +920,12 @@ export default function createCommonController(wiki: CommonWiki): express.Router
   /**
    * Profile
    */
+  // Device settings contain no account data; personal profile routes stay protected.
+  router.get('/p/offline', (_req, res) => {
+    _.set(res.locals, 'pageMeta.title', 'Offline access')
+    res.render('profile')
+  })
+
   router.get(['/p', '/p/*profilePath'], (req, res) => {
     const userId = req.user?.id
     if (typeof userId !== 'number' || userId < 1 || userId === 2) {

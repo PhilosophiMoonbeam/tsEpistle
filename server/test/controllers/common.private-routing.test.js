@@ -110,12 +110,25 @@ describe('common page routing', () => {
     const { default: createCommonController } = await vi.importFresh('../../controllers/common.ts', import.meta.url)
     createCommonController(global.WIKI)
     return {
+      offlineSettings: express.__router.get.mock.calls.find(([path]) => path === '/p/offline')[1],
+      profile: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/p'))[1],
       byId: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/i'))[1],
       admin: express.__router.get.mock.calls.find(([path]) => path === '/_admin/private/:id')[1],
       editor: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/e'))[1],
       view: express.__router.get.mock.calls.find(([path]) => path === '/{*pagePath}')[1]
     }
   }
+
+  it('exposes device settings without exposing personal profile data to guests', async () => {
+    const { offlineSettings, profile } = await handlers()
+    const deviceResponse = response()
+    await offlineSettings(request({ id: 2 }), deviceResponse)
+    expect(deviceResponse.render).toHaveBeenCalledWith('profile')
+    const profileResponse = response()
+    await profile(request({ id: 2 }), profileResponse)
+    expect(profileResponse.status).toHaveBeenCalledWith(403)
+    expect(profileResponse.render).toHaveBeenCalledWith('unauthorized', { action: 'view' })
+  })
 
   it('redirects owners and administrators to distinct private routes', async () => {
     const { byId } = await handlers()

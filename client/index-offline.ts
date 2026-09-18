@@ -1,17 +1,14 @@
-import { createApp } from 'vue'
-import OfflineApp from './offline-app.vue'
-import { registerPwa, setReloadSafetyProvider } from './helpers/pwa.ts'
+import 'vuetify/styles'
+import '@mdi/font/css/materialdesignicons.css'
+import './scss/app.scss'
+import './themes/default/scss/app.scss'
+import { offlinePresentation } from './helpers/offline-presentation.ts'
 
-const mountPoint = document.getElementById('offline-app')
-if (!mountPoint) throw new Error('The neutral offline shell mount point is missing.')
-
-// The neutral shell has no editor memory or publish request, so the lifecycle
-// can acknowledge that a foreground update reload is safe with a stable
-// revision-bound snapshot.
-setReloadSafetyProvider(() => ({ safe: true, revision: 'offline-neutral', actorEpoch: 'neutral' }))
-void registerPwa({
-  onNeedReload: () => {
-    window.location.reload()
-  }
-})
-createApp(OfflineApp).mount(mountPoint)
+const { config, appearance } = offlinePresentation()
+window.siteConfig = config
+window.siteLangs = []
+document.documentElement.lang = config.lang
+document.documentElement.dir = config.rtl ? 'rtl' : 'ltr'
+// Store/header modules read the bootstrap at module evaluation time.
+const { mountOfflineApp } = await import('./offline-client.ts')
+await mountOfflineApp(appearance)
