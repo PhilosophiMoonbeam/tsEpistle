@@ -736,7 +736,7 @@ test('offline Browse immediately lists saved copies and recovers without an onli
   expect(await page.evaluate(() => localStorage.getItem('navPref'))).toBe('custom')
 })
 
-test('missed disconnect switches Browse to saved pages and preserves the logo on first offline navigation', async ({ page, browserName }) => {
+for (const cachedBrowse of [false, true]) test(`missed disconnect switches ${cachedBrowse ? 'cached' : 'fresh'} Browse to saved pages and preserves the logo on first offline navigation`, async ({ page, browserName }) => {
   test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
   test.setTimeout(90_000)
   await warmFeatureWorker(page)
@@ -756,6 +756,12 @@ test('missed disconnect switches Browse to saved pages and preserves the logo on
   if (mobile) await page.getByRole('button', { name: /open navigation/i }).click()
   const browse = page.locator('.nav-sidebar-modes').getByRole('button', { name: 'Browse', exact: true })
   await expect(browse).toBeVisible()
+  if (cachedBrowse) {
+    await browse.click()
+    await expect(page.locator('.nav-sidebar-loading-status')).toHaveCount(0)
+    await expect(page.locator('.nav-sidebar .async-state--error')).toHaveCount(0)
+    await page.locator('.nav-sidebar-mode').first().click()
+  }
   // A connection can disappear while navigator.onLine still says true. No hint
   // or refresh should be necessary to recover from the failed directory fetch.
   await page.evaluate(() => {
@@ -763,7 +769,9 @@ test('missed disconnect switches Browse to saved pages and preserves the logo on
     Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true })
   })
   await page.context().setOffline(true)
-  await browse.click()
+  // A foreground probe may already have switched the sidebar by this point.
+  // Activate Browse if it is still present without waiting for it to reappear.
+  await browse.evaluateAll(buttons => (buttons[0] as HTMLElement | undefined)?.click())
   const navigation = page.getByRole('navigation', { name: 'Browse saved pages', exact: true })
   await expect(navigation).toBeVisible({ timeout: 5_000 })
   await expect(page.locator('.nav-sidebar .async-state--error')).toHaveCount(0)
@@ -776,6 +784,7 @@ test('missed disconnect switches Browse to saved pages and preserves the logo on
   await expect(logo).toHaveAttribute('src', logoPath!)
   await expect.poll(() => logo.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true)
   await expectResponsiveLayout(page, 'first offline navigation with preserved branding')
+  await page.screenshot({ path: test.info().outputPath('offline-branding.png') })
   await page.context().setOffline(false)
   await expect(page.locator('.page-header-section')).toBeVisible({ timeout: 40_000 })
   await expect(logo).toHaveAttribute('src', logoPath!)

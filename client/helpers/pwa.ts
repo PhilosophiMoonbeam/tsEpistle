@@ -1076,8 +1076,9 @@ export function registerPwa(callbacks: PwaLifecycleCallbacks = {}): Promise<Serv
   return registrationInFlight
 }
 
-export async function retryServerConnection(options: { quiet?: boolean } = {}): Promise<boolean> {
+export async function retryServerConnection(options: { quiet?: boolean; reusePending?: boolean } = {}): Promise<boolean> {
   if (hasWindow() && (pageSuspended || document.visibilityState === 'hidden')) return false
+  if (options.reusePending && activeProbe) return activeProbe.promise
   clearConnectionRetry()
   const epoch = ++connectionEpoch
   activeProbe?.controller.abort()

@@ -287,6 +287,38 @@ async function cleanupIncompleteCaches(): Promise<void> {
   }
 }
 
+async function fetchPrecacheAsset(url: string): Promise<Response> {
+  const signal = AbortSignal.timeout(10_000)
+  for (let attempt = 0; ; attempt += 1) {
+    signal.throwIfAborted()
+    let response: Response | undefined
+    try {
+      response = await fetch(new Request(url, { cache: 'reload', credentials: 'same-origin', signal }))
+      // HTTP and policy/integrity validation failures must remain authoritative.
+      if (response.status !== 200 || response.redirected || !responseTypeIsUsable(response)) return response
+      // A transient transport failure can happen after headers were received.
+      // Keep the original metadata while verifying that its body arrived fully.
+      await response.clone().arrayBuffer()
+      return response
+    } catch (error) {
+      void response?.body?.cancel().catch(() => undefined)
+      if (!(error instanceof TypeError) || signal.aborted || attempt >= 2) throw error
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = (): void => {
+          clearTimeout(timer)
+          reject(signal.reason)
+        }
+        const timer = setTimeout(() => {
+          signal.removeEventListener('abort', onAbort)
+          resolve()
+        }, attempt === 0 ? 100 : 300)
+        signal.addEventListener('abort', onAbort, { once: true })
+        if (signal.aborted) onAbort()
+      })
+    }
+  }
+}
+
 async function installPrecache(): Promise<void> {
   const entries = precacheEntries()
   const offlineURL = new URL(OFFLINE_DOCUMENT_PATH, worker.location.origin).href
@@ -305,7 +337,7 @@ async function installPrecache(): Promise<void> {
   try {
     for (const request of await cache.keys()) await cache.delete(request)
     for (const { entry, url } of entries) {
-      const response = await fetch(new Request(url, { cache: 'reload', credentials: 'same-origin' }))
+      const response = await fetchPrecacheAsset(url)
       if (response.status !== 200 || response.redirected || !responseTypeIsUsable(response) || !(await integrityMatches(response, entry.integrity))) {
         throw new Error(`The offline shell dependency could not be precached: ${url}`)
       }

@@ -13,8 +13,8 @@ const storage = preference => {
     setItem: vi.fn((key, value) => values.set(key, value))
   }
 }
-const mountSidebar = ({ localStorage = storage(null), items = [], navMode = 'MIXED', expandParentByDefault = false, connectionState = 'online' } = {}) => {
-  const component = new Function('defineComponent', 'AsyncState', 'OfflineNavigation', 'pwaState', 'observeBrowserConnection', 'window', executable)(options => options, {}, {}, { connectionState, mode: 'feature' }, () => {}, { localStorage })
+const mountSidebar = ({ localStorage = storage(null), items = [], navMode = 'MIXED', expandParentByDefault = false, connectionState = 'online', checkConnection = vi.fn(async () => true) } = {}) => {
+  const component = new Function('defineComponent', 'AsyncState', 'OfflineNavigation', 'pwaState', 'observeBrowserConnection', 'retryServerConnection', 'window', executable)(options => options, {}, {}, { connectionState, mode: 'feature' }, () => {}, checkConnection, { localStorage })
   const sidebar = { ...component.data(), items, navMode, expandParentByDefault, $t: key => key }
   for (const [name, method] of Object.entries(component.methods)) sidebar[name] = method.bind(sidebar)
   Object.defineProperty(sidebar, 'connectionState', { get: () => component.computed.connectionState.call(sidebar) })
@@ -72,6 +72,15 @@ describe('Custom Navigation preserves its two views', () => {
       expect(sidebar.fetchBrowseItems).toHaveBeenCalledTimes(expected === 'browse' ? 1 : 0)
     })
   }
+
+  it('rechecks connectivity when opening Browse even when its tree was loaded earlier', () => {
+    const checkConnection = vi.fn(async () => true)
+    const sidebar = mountSidebar({ localStorage: storage('custom'), checkConnection })
+    sidebar.loadedCache = [0]
+    sidebar.switchMode('browse')
+    expect(checkConnection).toHaveBeenCalledWith({ quiet: true, reusePending: true })
+    expect(sidebar.fetchBrowseItems).not.toHaveBeenCalled()
+  })
 
   it('loads the current page directory when expanding parents is enabled', () => {
     const sidebar = mountSidebar({ expandParentByDefault: true, items: [guide] })

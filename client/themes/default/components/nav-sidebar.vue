@@ -150,7 +150,7 @@
 
 <script lang='ts'>
 import _ from 'lodash'
-import { observeBrowserConnection, pwaState, reportServerConnectionFailure } from '../../../helpers/pwa.ts'
+import { observeBrowserConnection, pwaState, reportServerConnectionFailure, retryServerConnection } from '../../../helpers/pwa.ts'
 import OfflineNavigation from '@/components/pwa/offline-navigation.vue'
 import AsyncState from '@/components/common/async-state.vue'
 import { defineComponent, markRaw, type PropType } from 'vue'
@@ -272,6 +272,7 @@ export default defineComponent({
     switchMode (mode: NavigationMode) {
       observeBrowserConnection()
       if (this.connectionUnavailable) return
+      if (mode === 'browse') void retryServerConnection({ quiet: true, reusePending: true })
       this.currentMode = mode
       try {
         window.localStorage.setItem('navPref', mode)

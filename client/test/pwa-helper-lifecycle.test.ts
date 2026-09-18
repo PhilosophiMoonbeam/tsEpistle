@@ -107,7 +107,7 @@ type PwaModule = {
   registerPwa(callbacks?: PwaLifecycleCallbacks): Promise<RegistrationLike | null>
   setReloadSafetyProvider(provider: ReloadSafetyProvider | null): void
   requestPwaUpdate(): Promise<boolean>
-  retryServerConnection(options?: { quiet?: boolean }): Promise<boolean>
+  retryServerConnection(options?: { quiet?: boolean; reusePending?: boolean }): Promise<boolean>
   observeBrowserConnection(): void
   reportServerConnectionFailure(): void
 }
@@ -765,6 +765,24 @@ describe('connection loss without a browser event', () => {
       await harness.module.retryServerConnection()
       harness.module.observeBrowserConnection()
       expect(harness.module.pwaState.connectionState).toBe('online')
+    } finally { harness.restore() }
+  })
+
+  it('reuses a pending quiet check when Browse is activated', async () => {
+    const harness = await createHarness()
+    try {
+      await harness.module.registerPwa()
+      await harness.module.retryServerConnection()
+      const before = harness.fetchCalls.length
+      let finish = (_response: Response): void => {}
+      harness.setFetchImplementation(() => new Promise(resolve => { finish = resolve }))
+      const first = harness.module.retryServerConnection({ quiet: true })
+      const second = harness.module.retryServerConnection({ quiet: true, reusePending: true })
+      expect(harness.fetchCalls).toHaveLength(before + 1)
+      expect(harness.module.pwaState.connectionState).toBe('online')
+      finish(new Response('{}', { status: 200 }))
+      expect(await first).toBe(true)
+      expect(await second).toBe(true)
     } finally { harness.restore() }
   })
 

@@ -174,6 +174,7 @@ const defineGlobal = (name: string, value: unknown, originals: Map<string, Prope
 
 const createHarness = async (options: {
   shell?: string
+  manifest?: readonly { url: string; revision: string | null; integrity?: string }[]
   fetch?: (url: string, init?: RequestInit) => Response | Promise<Response>
   onSkipWaiting?: () => void | Promise<void>
 } = {}): Promise<WorkerHarness> => {
@@ -193,7 +194,7 @@ const createHarness = async (options: {
   let skipWaitingCalls = 0
   const networkFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-    if (options.fetch) return await options.fetch(url, init)
+    if (options.fetch) return await options.fetch(url, init ?? (input instanceof Request ? { signal: input.signal, cache: input.cache, credentials: input.credentials } : undefined))
     if (url === SHELL_URL) return new Response(options.shell ?? shell())
     if (url === JS_URL) return new Response('export default 1')
     if (url === CSS_URL) return new Response('body { color: black; }')
@@ -207,7 +208,7 @@ const createHarness = async (options: {
     skipWaitingCalls += 1
     await options.onSkipWaiting?.()
   }, originals)
-  defineGlobal('__WB_MANIFEST', manifest, originals)
+  defineGlobal('__WB_MANIFEST', options.manifest ?? manifest, originals)
   defineGlobal('fetch', networkFetch, originals)
   defineGlobal('addEventListener', hub.addEventListener.bind(hub), originals)
   defineGlobal('removeEventListener', hub.removeEventListener.bind(hub), originals)
@@ -518,6 +519,107 @@ describe('service worker lifecycle', () => {
       expect(await (await harness.dispatchFetch(request)).text()).toBe('network image')
       expect(harness.caches.stores.get(OFFLINE_BRANDING_CACHE_NAME)?.entries.size).toBe(0)
     } finally { harness.restore() }
+  })
+
+  it.each(['headers', 'body'] as const)('retries only a transient asset %s transport failure before publishing a complete cache', async failure => {
+    const calls = new Map<string, number>()
+    const harness = await createHarness({ fetch: async url => {
+      const attempt = (calls.get(url) ?? 0) + 1
+      calls.set(url, attempt)
+      if (url === CSS_URL && attempt < 3) {
+        if (failure === 'headers') throw new TypeError('Failed to fetch')
+        return new Response(new ReadableStream({ start(controller) { controller.error(new TypeError('Network changed during body read')) } }))
+      }
+      return new Response(url === SHELL_URL ? shell() : 'asset')
+    } })
+    try {
+      await harness.dispatchInstall()
+      expect(calls.get(CSS_URL)).toBe(3)
+      expect(calls.get(SHELL_URL)).toBe(1)
+      const cache = harness.caches.stores.get(harness.worker.PWA_SERVICE_WORKER_CACHE_NAME)!
+      expect((await cache.keys()).some(request => new URL(request.url).searchParams.has('__tsepistle_pwa_complete'))).toBe(true)
+    } finally { harness.restore() }
+  })
+
+  it('stops after two transport retries and preserves the prior complete cache', async () => {
+    let attempts = 0
+    const harness = await createHarness({ fetch: async url => {
+      if (url === CSS_URL) { attempts += 1; throw new TypeError('Failed to fetch') }
+      return new Response(url === SHELL_URL ? shell() : 'asset')
+    } })
+    try {
+      await seedCompleteCache(harness.caches, ownedPriorCacheName)
+      await expect(harness.dispatchInstall()).rejects.toThrow('Failed to fetch')
+      expect(attempts).toBe(3)
+      expect(harness.caches.stores.has(harness.worker.PWA_SERVICE_WORKER_CACHE_NAME)).toBe(false)
+      expect(harness.caches.stores.has(ownedPriorCacheName)).toBe(true)
+    } finally { harness.restore() }
+  })
+
+  for (const failure of [401, 404, 503, 'integrity', 'SecurityError', 'AbortError', 'TimeoutError'] as const) {
+    it(`does not retry an asset ${failure} failure`, async () => {
+      let attempts = 0
+      const harness = await createHarness({
+        manifest: manifest.map(entry => entry.url === '/_assets/assets/offline.css' && failure === 'integrity'
+          ? { ...entry, integrity: `sha256-${btoa('0'.repeat(32))}` } : entry),
+        fetch: async url => {
+          if (url === CSS_URL) {
+            attempts += 1
+            if (typeof failure === 'number') return new Response('denied', { status: failure })
+            if (failure !== 'integrity') throw new DOMException('Policy or cancellation failure', failure)
+          }
+          return new Response(url === SHELL_URL ? shell() : 'asset')
+        }
+      })
+      try {
+        await expect(harness.dispatchInstall()).rejects.toThrow()
+        expect(attempts).toBe(1)
+        expect(harness.caches.stores.has(harness.worker.PWA_SERVICE_WORKER_CACHE_NAME)).toBe(false)
+      } finally { harness.restore() }
+    })
+  }
+
+  it('shares one asset deadline across retries and cancels a retry backoff when it expires', async () => {
+    const controller = new AbortController()
+    const deadline = vi.spyOn(AbortSignal, 'timeout').mockImplementation(milliseconds => {
+      expect(milliseconds).toBe(10_000)
+      return controller.signal
+    })
+    let attempts = 0
+    const harness = await createHarness({ fetch: async url => {
+      if (url === CSS_URL) { attempts += 1; throw new TypeError('Failed to fetch') }
+      return new Response(url === SHELL_URL ? shell() : 'asset')
+    } })
+    try {
+      const installation = harness.dispatchInstall()
+      await vi.waitFor(() => expect(attempts).toBe(1))
+      controller.abort(new DOMException('Asset deadline exceeded', 'TimeoutError'))
+      await expect(installation).rejects.toThrow('Asset deadline exceeded')
+      expect(attempts).toBe(1)
+      expect(harness.caches.stores.has(harness.worker.PWA_SERVICE_WORKER_CACHE_NAME)).toBe(false)
+    } finally { harness.restore(); deadline.mockRestore() }
+  })
+
+  it('cancels a stalled asset request at its deadline without retrying or publishing readiness', async () => {
+    const controller = new AbortController()
+    const deadline = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
+    let pending = false
+    let cancelled = false
+    const harness = await createHarness({ fetch: async (url, init) => {
+      if (url !== CSS_URL) return new Response(url === SHELL_URL ? shell() : 'asset')
+      pending = true
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => { cancelled = true; reject(init.signal?.reason) }, { once: true })
+      })
+    } })
+    try {
+      const installation = harness.dispatchInstall()
+      await vi.waitFor(() => expect(pending).toBe(true))
+      controller.abort(new DOMException('Asset deadline exceeded', 'TimeoutError'))
+      await expect(installation).rejects.toThrow('Asset deadline exceeded')
+      expect(cancelled).toBe(true)
+      expect(harness.caches.stores.has(harness.worker.PWA_SERVICE_WORKER_CACHE_NAME)).toBe(false)
+    } finally { harness.restore(); deadline.mockRestore() }
   })
 
   it.each(['fetch', 'put'] as const)('preserves the prior complete cache and removes a failed %s candidate', async failure => {
