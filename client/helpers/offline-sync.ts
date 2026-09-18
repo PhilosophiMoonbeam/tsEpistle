@@ -635,8 +635,11 @@ export class OfflineSyncCoordinator {
       )
 
       if (retryDenied) {
+        const selectedPageIds = new Set(currentPolicy.pages.filter(page =>
+          page.siteId === this.options.siteId && !page.excluded && (page.manual || page.tag)
+        ).map(page => page.pageId))
         const retryPageIds = new Set(currentPolicy.pages.filter(page =>
-          page.siteId === this.options.siteId && !page.excluded && (page.manual || page.tag) && page.availability === 'ineligible'
+          page.siteId === this.options.siteId && selectedPageIds.has(page.pageId) && page.availability === 'ineligible'
         ).map(page => page.pageId))
         // A denial covers every locale of a page. Clear the old observation, not
         // the user's selection/exclusion flags; only the server can admit a body.

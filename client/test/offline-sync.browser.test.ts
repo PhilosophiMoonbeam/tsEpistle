@@ -357,6 +357,7 @@ export async function run(operation, payload = {}) {
       await storage.recordEligibleReaderVisit(selector(1, 'fr'));
       await coordinator.reconcile('manual');
       denyReselectedPage = false;
+      if (kind === 'retry-precleared') await storage.setPageAvailability(selector(1), 'unknown');
       if (kind === 'retry-excluded') await storage.removeOfflinePage(selector(1));
       if (kind === 'retry-concurrent-denial') {
         const originalPut = storage.putSnapshot.bind(storage);
@@ -553,7 +554,7 @@ test('exposes an explicit unavailable service result', () => {
 })
 
 describe('foreground offline sync coordinator', () => {
-  test.each(['retry-recovered', 'retry-coalesced'])('manual synchronization rechecks old denials including locale variants: %s', async kind => {
+  test.each(['retry-recovered', 'retry-coalesced', 'retry-precleared'])('manual synchronization rechecks old denials including locale variants: %s', async kind => {
     const run = await runScenario(kind)
     expect(run.result.status).toBe('complete')
     expect(pageIds(run)).toEqual([1])
