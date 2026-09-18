@@ -188,7 +188,12 @@ const components: Record<string, Vue.Component> = {
   VDivider: passthrough('hr'),
   VIcon: passthrough('span'),
   VList: passthrough('div'),
-  VListItem: passthrough('div'),
+  VListItem: Vue.defineComponent({
+    inheritAttrs: false,
+    setup(_props, { attrs, slots }) {
+      return () => Vue.h('div', attrs, [...(slots.prepend?.() ?? []), ...(slots.default?.() ?? [])])
+    }
+  }),
   VTextField: Vue.defineComponent({
     inheritAttrs: false,
     setup(_props, { attrs }) {
@@ -392,14 +397,25 @@ const Login = compiledLoginModule.exports.default
 if (!Login) throw new Error('login.vue did not export a component')
 Object.assign(Login, { render: renderLogin })
 
-const createLoginHarness = (effect: LogoEffectDescriptor | null, initialLoading = false, initialLoaderTitle = 'Working...') =>
+const createLoginHarness = (
+  effect: LogoEffectDescriptor | null,
+  initialLoading = false,
+  initialLoaderTitle = 'Working...',
+  strategies?: Array<{
+    key: string
+    displayName: string
+    order: number
+    selfRegistration: boolean
+    strategy: { useForm: boolean; usernameType: string; color: string; icon: string; logo?: string }
+  }>
+) =>
   Vue.defineComponent({
     name: 'LoginLayoutBehaviorHarness',
     components,
     data: () => ({
       errorShown: false,
       fieldErrors: { username: '', password: '', newPassword: '', newPasswordVerify: '' },
-      filteredStrategies: [
+      filteredStrategies: strategies ?? [
         {
           key: 'local',
           displayName: 'Local',
@@ -448,8 +464,8 @@ const createLoginHarness = (effect: LogoEffectDescriptor | null, initialLoading 
     render: renderLogin
   })
 
-const renderLoginDom = async (effect: LogoEffectDescriptor | null): Promise<JSDOM> => {
-  const app = Vue.createSSRApp(createLoginHarness(effect))
+const renderLoginDom = async (effect: LogoEffectDescriptor | null, strategies?: Parameters<typeof createLoginHarness>[3]): Promise<JSDOM> => {
+  const app = Vue.createSSRApp(createLoginHarness(effect, false, 'Working...', strategies))
   app.config.globalProperties.$t = (key: string): string => key
   const html = await renderToString(app)
   return new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { url: 'http://localhost/login' })
@@ -486,6 +502,38 @@ const resolveConfiguredLogoEffect = (logoUrl: string, logoEffect: LogoEffectDesc
 }
 
 describe('login personalized static-logo integration', () => {
+  it('renders provider logos supplied by the authentication API and falls back to an icon', async () => {
+    const dom = await renderLoginDom(null, [
+      {
+        key: 'dropbox',
+        displayName: 'Dropbox',
+        order: 0,
+        selfRegistration: false,
+        strategy: { useForm: false, usernameType: 'email', color: 'blue', icon: '', logo: 'https://static.requarks.io/logo/dropbox.svg' }
+      },
+      {
+        key: 'local',
+        displayName: 'Backend',
+        order: 1,
+        selfRegistration: false,
+        strategy: { useForm: true, usernameType: 'email', color: 'primary', icon: '', logo: '/_assets/svg/icon-tsepistle.svg' }
+      },
+      {
+        key: 'custom',
+        displayName: 'Custom',
+        order: 2,
+        selfRegistration: false,
+        strategy: { useForm: false, usernameType: 'email', color: 'primary', icon: 'mdi-login' }
+      }
+    ])
+    const providerList = dom.window.document.querySelector('.login-list')
+    expect(Array.from(providerList?.querySelectorAll('img') ?? []).map(image => image.getAttribute('src'))).toEqual([
+      'https://static.requarks.io/logo/dropbox.svg',
+      '/_assets/svg/icon-tsepistle.svg'
+    ])
+    expect(providerList?.textContent).toContain('mdi-login')
+  })
+
   it('renders the decorative field as the direct sibling immediately after the unchanged login card', async () => {
     const dom = await renderLoginDom(managedEffect)
     const document = dom.window.document

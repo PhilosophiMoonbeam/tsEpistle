@@ -19,6 +19,13 @@
       <v-alert class="skill-boundary" type="info" variant="tonal" density="compact" icon="mdi-shield-lock-outline">
         Organization skills provide approved instructions and tool guidance. They never bypass page, write, browser, approval, or deployment permissions.
       </v-alert>
+      <v-alert v-if="bundledSkill && bundledSkill.status !== 'enabled'" type="warning" variant="tonal" density="compact" icon="mdi-book-check-outline">
+        The built-in wiki-authoring skill is installed but unavailable until an administrator {{ bundledSkill.currentVersionId ? 'enables' : 'reviews and approves' }} it.
+        <template #append>
+          <v-btn v-if="bundledSkill.currentVersionId" variant="text" size="small" :disabled="Boolean(actionBusyId)" @click="setEnabled(bundledSkill.id, true)">Enable skill</v-btn>
+          <v-btn v-else variant="text" size="small" :disabled="Boolean(actionBusyId)" @click="openPreview(bundledSkill.id)">Review source</v-btn>
+        </template>
+      </v-alert>
       <v-alert v-if="error" class="skill-error" type="error" variant="tonal" closable @click:close="error = ''">
         {{ error }}
         <template #append><v-btn variant="text" size="small" @click="reload">Retry</v-btn></template>
@@ -291,6 +298,7 @@ type Skill = z.infer<typeof SkillSchema>
 type Preview = z.infer<typeof PreviewSchema>
 
 const skills = shallowRef<Skill[]>([])
+const bundledSkill = computed(() => skills.value.find(skill => skill.name === 'wiki-authoring' && skill.rootPath === `${sourceNamespace.value}/wiki-authoring`) ?? null)
 const groups = shallowRef<z.infer<typeof GroupSchema>[]>([])
 const preview = shallowRef<Preview | null>(null)
 const search = ref('')

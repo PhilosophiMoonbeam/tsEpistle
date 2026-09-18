@@ -222,6 +222,7 @@ Wiki.js does not supply tsEpistle Agent runtime keys or provider profiles. After
 
 - keep all Agent key files outside Git and back them up securely;
 - configure a provider under **Administration → Wiki Agent → Providers** and require successful conformance;
+- review and approve the bundled `wiki-authoring` source under **Administration → Wiki Agent → Skills**, then enable it; the source page and disabled mapping are installed automatically, but no skill revision is approved on the administrator's behalf;
 - remember that `manage:system` grants administrator access, while non-admin users need `use:agents`;
 - re-enable API access only when needed for MCP;
 - create a new narrowly scoped MCP group with `use:mcp` and the required page permissions;

@@ -359,95 +359,9 @@ The MCP surface uses the official `@modelcontextprotocol/server` TypeScript SDK 
 
 When skills and a tool-capable Agent profile are enabled, each run receives the names, descriptions, exact version IDs, and content hashes of the approved system skills visible to that user and the user's personal skills marked **Available to the agent automatically**. The model must inspect that catalog and load a matching `SKILL.md` with `wiki_read_skill` before it calls task actions; do not load unrelated skills. Users manage personal `SKILL.md` documents from the chat Skills menu, can remove them from automatic discovery without preventing explicit use, and can type `/` at the start of the composer to fuzzy-search and invoke any selectable system or personal skill for the next message. Skills pinned in Session configuration and skills explicitly invoked for one message are loaded in full before generation starts. Skill bodies are untrusted instructions constrained by runtime permissions and the frontmatter allowlist.
 
-Install the following operational skill as the Markdown source page `system/agent-skills/wiki-authoring`, then register the page as `wiki-authoring`, approve its exact version, and expose it to the intended groups in `/admin/agents`. Edit skill source pages with the Markdown source editor because YAML frontmatter is part of the signed skill bytes. Reapprove after every source change. The `wiki_*` names are the single public tool vocabulary used by both built-in Agent providers and MCP clients; dotted action IDs remain internal authority and audit identifiers only.
+On first full boot, tsEpistle installs the bundled [`wiki-authoring` source](../server/agents/skills/builtin/wiki-authoring.md) as an unpublished, unsearchable Markdown page at `system/agent-skills/wiki-authoring` (or the configured skill namespace) and registers a disabled system skill for all Agent users. The source is not a container filesystem directory. An administrator must review its exact source, approve that revision, and enable it under **Administration → Wiki Agent → Skills** before Agents can use it. The admin screen highlights this pending step. A later boot never overwrites the page, approves a revision, or reverses an administrator's policy choice. Edit the source page with the Markdown source editor and reapprove after every change. The `wiki_*` names are the public tool vocabulary for built-in Agent providers and MCP clients; dotted action IDs remain internal authority and audit identifiers.
 
-```markdown
----
-name: wiki-authoring
-description: Create and edit Wiki pages while preserving Markdown, links, and human-editor compatibility.
-compatibility: tsEpistle Visual Markdown and Markdown source editors
-metadata:
-  owner: wiki-operations
-allowed-tools:
-  - wiki_search_pages
-  - wiki_search_tags
-  - wiki_list_tags
-  - wiki_discover_pages
-  - wiki_get_page
-  - wiki_get_page_okf
-  - wiki_read_page_for_patch
-  - wiki_list_recent_pages
-  - wiki_list_page_history
-  - wiki_get_page_version
-  - wiki_list_page_links
-  - wiki_get_related_pages
-  - wiki_prepare_page_create
-  - wiki_prepare_page_patch
-  - wiki_prepare_page_move
-  - wiki_prepare_page_restore
-  - wiki_apply_page_proposal
----
-# Wiki authoring
-
-Use this skill for any request to discover, read, create, edit, move, or restore a Wiki page, or to draft Wiki-compatible page source.
-
-## One knowledge path
-
-- The `wiki_*` names in this file are exact callable tool names in both built-in Agent runs and external MCP sessions.
-- Use ordinary Wiki page reads (`wiki_get_page`, `wiki_get_page_version`, search, discovery, recent, and related-page actions) by default. They expose the authoritative page plus its authority record and revision-matched `knowledge` projection when ready.
-- OKF authority is implicit for every Markdown page lifecycle operation, including create, read, update, move, restore, import, export, and download. Every mutation still goes through immutable preparation, human approval, live reauthorization, and application.
-- Projection lifecycle, trust, verification, and staleness values rank or filter retrieval; they never grant permission or replace page-source evidence. Read the underlying page before making a factual claim or proposing an edit.
-- Call `wiki_get_page_okf` only for exact canonical OKF interchange or an exact source-revision document. Use the immutable `wiki://pages/{pageId}/versions/{version|current}/revisions/{sourceRevision}/okf` resource identity; storage import/export remains an administrator operation, and page authoring uses ordinary proposals.
-
-## Before acting
-
-1. Resolve the exact locale and path with page search/read actions. Never infer an existing page identity from display text.
-2. Read the target before editing. Only Markdown pages support hashline patches. Do not convert or rewrite an HTML page; explain that it requires a human HTML-editor workflow.
-3. Preserve the page's language, terminology, heading hierarchy, link style, line ending, and final-newline state unless the user explicitly requests a change.
-4. Make the smallest source change that fulfills the request. Do not normalize unrelated text or reserialize the whole document.
-
-## Compatible Markdown
-
-For new pages, write canonical GitHub Flavored Markdown that round-trips through Visual Markdown:
-
-- paragraphs and ATX headings (`#` through `######`);
-- bold, italic, strikethrough, inline code, and fenced code blocks with language identifiers;
-- ordered, unordered, nested, and task lists;
-- blockquotes, horizontal rules, basic images, and rectangular GFM tables;
-- ordinary links. For internal pages, prefer the root-relative path form already used by nearby pages and preserve locale prefixes where the Wiki uses them.
-
-Do not add raw HTML, Markdown attributes, custom classes or IDs, merged/multiline tables, tabsets, math, diagrams, footnotes, or other extended syntax unless the existing page already uses that construct and the user specifically asks to preserve or change it. Never replace supported source with rendered HTML. These constraints keep the page editable in both Visual Markdown and Markdown source editors.
-
-Skill source pages are a deliberate exception: preserve their YAML frontmatter and edit them only as Markdown source.
-
-## Create workflow
-
-1. Check both the requested path and likely collisions with `wiki_search_pages` or `wiki_get_page`.
-2. Supply a concise title and description, canonical Markdown content, `contentType: "markdown"`, the resolved locale/path, publication state, and intentional tags to `wiki_prepare_page_create`.
-3. The prepare action waits for the human decision. A denial leaves the page unchanged.
-4. Approval triggers live reauthorization and automatic application of the exact immutable proposal. The prepare action returns `status: "applied"` only after the mutation commits.
-5. Use `wiki_get_page` when the final source or metadata must be verified.
-
-## Edit workflow
-
-1. Read the page, then call `wiki_read_page_for_patch` with `previousSnapshotToken: null` and only the ranges needed. Use a returned token only for later reads of the same page.
-2. Build `wiki-line-patch-v1` from the exact document tag, snapshot token, line numbers, and line tags. Keep undisclosed lines untouched. Preserve the snapshot's final-newline state unless the requested edit changes it.
-3. Submit the patch with `wiki_prepare_page_patch`. If the revision or an anchor changed, reread and rebuild; never guess a token or tag.
-4. Wait for the human decision. Approval triggers live reauthorization and automatic application of the exact immutable proposal.
-5. Do not say the page changed until the prepare action returns `status: "applied"`.
-
-## Knowledge discovery and exact interchange
-
-1. Use `wiki_discover_pages` to browse candidate concepts and `wiki_search_pages` for a focused query. Apply knowledge lifecycle filters only when the request requires them.
-2. Read the authoritative source with `wiki_get_page` before making a factual claim or proposing an edit. Treat trust, verification, and staleness as retrieval signals rather than permission or proof.
-3. If `knowledge` is `null` or `partial`, continue with the page source. Do not fabricate missing projection fields or invoke an undeclared enrichment path.
-4. Call `wiki_get_page_okf` only when exact canonical OKF interchange or an exact source revision is required. It is not a normal read shortcut; its immutable resource URI must match the returned page identity and source revision.
-5. Use the ordinary create or patch proposal workflow for every requested authoring change.
-
-Move and restore follow the same prepare, human approval, and automatic application sequence. `wiki_apply_page_proposal` remains available for MCP clients and idempotent recovery; Agent chat does not rely on another model-selected tool call after approval.
-```
-
-This skill intentionally omits deletion. Keep destructive deletion in a separate, narrowly exposed skill and rollout.
+The bundled source omits deletion. Keep destructive deletion in a separate, narrowly exposed skill and rollout.
 
 ## Browser worker
 

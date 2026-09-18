@@ -1,4 +1,11 @@
-import { ApiAssignableGroupSchema, ApiKeyGrantSchema, ApiConnectionInfoSchema, type ApiAssignableGroup, type ApiKeyGrant, type ApiConnectionInfo } from '../../shared/api-admin.ts'
+import {
+  type ApiAssignableGroup,
+  ApiAssignableGroupSchema,
+  type ApiConnectionInfo,
+  ApiConnectionInfoSchema,
+  type ApiKeyGrant,
+  ApiKeyGrantSchema
+} from '../../shared/api-admin.ts'
 import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards'
 
@@ -40,6 +47,7 @@ export type AuthStrategy = {
     usernameType: string
     color: string
     icon: string
+    logo?: string
   }
 }
 
@@ -329,7 +337,8 @@ export async function fetchAuthStrategies(fetchImpl: FetchImpl, fallbackMessage 
         typeof value.strategy.useForm !== 'boolean' ||
         typeof value.strategy.usernameType !== 'string' ||
         typeof value.strategy.color !== 'string' ||
-        typeof value.strategy.icon !== 'string'
+        typeof value.strategy.icon !== 'string' ||
+        (value.strategy.logo !== undefined && typeof value.strategy.logo !== 'string')
       ) {
         throw new Error(fallbackMessage)
       }
@@ -445,7 +454,13 @@ export async function fetchAdminApiBootstrap(fetchImpl: FetchImpl, fallbackMessa
   })
 
   const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!isRecord(payload) || typeof payload.enabled !== 'boolean' || typeof payload.createFullAccess !== 'boolean' || !Array.isArray(payload.assignableGroups) || !Array.isArray(payload.keys)) {
+  if (
+    !isRecord(payload) ||
+    typeof payload.enabled !== 'boolean' ||
+    typeof payload.createFullAccess !== 'boolean' ||
+    !Array.isArray(payload.assignableGroups) ||
+    !Array.isArray(payload.keys)
+  ) {
     throw new Error(fallbackMessage)
   }
 

@@ -48,7 +48,8 @@
                 )
                 template(v-slot:prepend)
                   v-avatar.mr-3(rounded='0', size='24')
-                    v-icon(v-if='stg.strategy.icon') {{ stg.strategy.icon }}
+                    img(v-if='stg.strategy.logo' :src='stg.strategy.logo' width='24' height='24' alt='')
+                    v-icon(v-else-if='stg.strategy.icon') {{ stg.strategy.icon }}
                 span.text-none {{stg.displayName}}
         template(v-if='screen === `login` && selectedStrategy.strategy.useForm')
           .login-subtitle
