@@ -92,6 +92,8 @@
                 <a v-if="media.available && media.mimeType.startsWith('image/')" :href="agentMediaContentUrl(media.id)" target="_blank" rel="noopener" :aria-label="`Open ${media.filename}`">
                   <img :src="agentMediaContentUrl(media.id)" :alt="media.kind === 'generated-image' ? 'Image created by Wiki Agent' : media.filename" loading="lazy" />
                 </a>
+                <video v-if="media.available && media.kind === 'generated-video'" :src="agentMediaContentUrl(media.id)" controls preload="metadata" playsinline :aria-label="media.filename" />
+                <audio v-if="media.available && media.kind === 'generated-audio'" :src="agentMediaContentUrl(media.id)" controls preload="metadata" :aria-label="media.filename" />
                 <figcaption>
                   <a v-if="media.available" :href="agentMediaContentUrl(media.id)" :download="media.filename">{{ media.filename }} <span>· Download</span></a>
                   <span v-else>{{ media.filename }} · No longer available</span>
@@ -473,6 +475,8 @@ watch(
 .agent-message__media { display: grid; gap: 12px; margin-top: 8px; }
 .agent-message__media figure { margin: 0; min-width: 0; }
 .agent-message__media img { display: block; max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 12px; }
+.agent-message__media video { display: block; width: 100%; max-height: 480px; border-radius: 12px; background: #000; }
+.agent-message__media audio { display: block; width: min(100%, 440px); }
 .agent-message__media figcaption { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; font-size: .8rem; overflow-wrap: anywhere; }
 .agent-message__media figcaption a { color: rgb(var(--v-theme-primary)); }
 

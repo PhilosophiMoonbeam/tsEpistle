@@ -28,7 +28,7 @@ import {
   isGeminiInteractionsModel,
   preserveGeminiInteractionState
 } from './gemini-interactions.ts'
-import { createGeminiMediaTransport, GEMINI_MEDIA_INPUT_LIMIT, GEMINI_MEDIA_OUTPUT_LIMIT, GEMINI_PDF_INPUT_LIMIT } from './gemini-media.ts'
+import { createGeminiMediaTransport, GEMINI_MEDIA_INPUT_LIMIT, GEMINI_MEDIA_OUTPUT_LIMIT, GEMINI_PDF_INPUT_LIMIT, GEMINI_VIDEO_RESPONSE_LIMIT, GEMINI_MUSIC_RESPONSE_LIMIT } from './gemini-media.ts'
 import { createOpenResponsesFetch } from './openresponses.ts'
 import {
   AgentProviderAdapterConfigSchema,
@@ -702,6 +702,7 @@ const geminiMediaEndpointAllowed = (base: URL, url: URL, init?: RequestInit): bo
   if (length > (pdfUpload ? GEMINI_PDF_INPUT_LIMIT : GEMINI_MEDIA_INPUT_LIMIT)) return false
   if (url.pathname === '/v1beta/interactions') return method === 'POST' && !url.search
   if (/^\/v1beta\/models\/gemini-3(?:\.[0-9]+)?(?:-[a-z0-9][a-z0-9._-]*)?:countTokens$/u.test(url.pathname)) return method === 'POST' && !url.search
+  if (/^\/v1beta\/models\/(?:gemini-omni-1\.1-flash|lyria-3\.5):countTokens$/u.test(url.pathname)) return method === 'POST' && !url.search
   if (/^\/v1beta\/files\/[A-Za-z0-9_-]{1,128}$/u.test(url.pathname)) return ['GET', 'DELETE'].includes(method) && !url.search && length === 0
   if (url.pathname !== '/upload/v1beta/files' || method !== 'POST') return false
   if (!url.search) return true
@@ -764,13 +765,23 @@ export const createGuardedProviderFetch = (
         const failure = await providerFailure(response, signal)
         throw new AgentProviderAttemptError(failure.code, response.status, retryAfter(response.headers.get('retry-after')), failure.parameter)
       }
+      let mediaBodyLimit = GEMINI_MEDIA_OUTPUT_LIMIT
+      if (endpoint === 'gemini-media') {
+        if (url.pathname === '/v1beta/interactions' && typeof init?.body === 'string') {
+          try {
+            const model = JSON.parse(init.body)?.model
+            if (model === 'lyria-3.5') mediaBodyLimit = GEMINI_MUSIC_RESPONSE_LIMIT
+            if (model === 'gemini-omni-1.1-flash') mediaBodyLimit = GEMINI_VIDEO_RESPONSE_LIMIT
+          } catch { /* invalid JSON retains the smaller bound */ }
+        }
+      }
       return guardedSuccessfulResponse(
         response,
         endpoint === 'gemini-media'
           ? {
               ...limits,
-              rawBodyBytes: Math.min(limits.rawBodyBytes, GEMINI_MEDIA_OUTPUT_LIMIT),
-              rawChunkBytes: GEMINI_MEDIA_OUTPUT_LIMIT
+              rawBodyBytes: Math.min(limits.rawBodyBytes, mediaBodyLimit),
+              rawChunkBytes: Math.min(limits.rawChunkBytes, mediaBodyLimit)
             }
           : limits,
         onLimit,
@@ -962,14 +973,14 @@ export class AgentProviderFactory {
       throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider profile data is invalid', 500)
     }
     const config = adapterConfig.media
-    if (!config || (!config.attachments && !config.imageGeneration && !config.transcription))
+    if (!config || (!config.attachments && !config.imageGeneration && !config.transcription && !config.videoGeneration && !config.musicGeneration))
       throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Media is not enabled for this provider', 403)
     const secret = await this.#secrets.get(row.secretReference)
     if (!secret) throw new AgentRepositoryError('PROFILE_SECRET_UNAVAILABLE', 'Provider profile secret is unavailable', 503)
     const limits = {
       ...deriveAgentProviderResourceLimits(capabilities.maxOutputTokens),
-      rawBodyBytes: GEMINI_MEDIA_OUTPUT_LIMIT,
-      rawChunkBytes: GEMINI_MEDIA_OUTPUT_LIMIT
+      rawBodyBytes: config.videoGeneration ? GEMINI_VIDEO_RESPONSE_LIMIT : config.musicGeneration ? GEMINI_MUSIC_RESPONSE_LIMIT : GEMINI_MEDIA_OUTPUT_LIMIT,
+      rawChunkBytes: config.videoGeneration ? GEMINI_VIDEO_RESPONSE_LIMIT : config.musicGeneration ? GEMINI_MUSIC_RESPONSE_LIMIT : GEMINI_MEDIA_OUTPUT_LIMIT
     }
     const maxOutputTokens = Math.min(capabilities.maxOutputTokens, 8_192)
     const maxInputTokens = capabilities.maxContextTokens - maxOutputTokens
@@ -986,6 +997,8 @@ export class AgentProviderFactory {
       config,
       capabilities,
       pricing: {
+        ...(config.videoGeneration ? { videoGeneration: { ...parseAgentProviderPricing(config.videoGeneration.pricingRevision), textOutputMicrosPerMillionTokens: config.videoGeneration.textOutputMicrosPerMillionTokens } } : {}),
+        ...(config.musicGeneration ? { musicGeneration: { costMicrosPerSong: config.musicGeneration.costMicrosPerSong } } : {}),
         ...(config.imageGeneration
           ? {
               imageGeneration: parseAgentProviderPricing(config.imageGeneration.pricingRevision)

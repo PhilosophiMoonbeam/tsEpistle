@@ -2992,6 +2992,43 @@ describe('Agent media execution', () => {
   })
   const image = Buffer.from('generated raster')
   const mediaResult = { text: '', images: [{ bytes: image, mimeType: 'image/png' }], usage: { inputTokens: 100, outputTokens: 500, totalTokens: 600 } }
+  for (const kind of ['video', 'music'] as const) {
+    it(`reserves and settles ${kind} independently and publishes a private playable output`, async () => {
+      const dispatchBudget = budget()
+      const media = vi.fn(async () => {})
+      const event = vi.fn(async () => {})
+      const usage = { inputTokens: 100, outputTokens: 1000, totalTokens: 1100 }
+      const generate = async (input: { beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>; onDispatch: () => void }) => {
+        await input.beforeDispatch({ inputTokens: 100, outputTokens: 65536, totalTokens: 65636 })
+        input.onDispatch()
+        return { text: '', files: [{ bytes: image, mimeType: kind === 'video' ? 'video/mp4' : 'audio/mpeg' }], usage,
+          usageSource: 'reported' as const, ...(kind === 'video' ? { outputTokensByModality: { text: 100, video: 900 } } : {}) }
+      }
+      const createMedia = async () => ({ config: {}, capabilities, pricing: {
+        videoGeneration: { revision: 'video-v1', inputMicrosPerMillionTokens: 1500000, outputMicrosPerMillionTokens: 17500000, textOutputMicrosPerMillionTokens: 9000000 },
+        musicGeneration: { costMicrosPerSong: 80000 }
+      }, transport: { generateVideo: generate, generateMusic: generate } })
+      const engine = new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory)
+      const result = await engine.execute({ ...mediaRequest(), mediaRequest: { kind }, dispatchBudget }, { media, event, text: async () => {} })
+      expect(result.costMicros).toBe(kind === 'music' ? 80000 : 16800)
+      expect(dispatchBudget.reserve).toHaveBeenCalledWith({ tokens: 65636, costMicros: kind === 'music' ? 80000 : 1147030 })
+      expect(dispatchBudget.reconcile).toHaveBeenCalledWith(expect.anything(), { ...usage, costMicros: result.costMicros })
+      expect(media).toHaveBeenCalledWith([{ payload: image, mimeType: kind === 'video' ? 'video/mp4' : 'audio/mpeg', kind: kind === 'video' ? 'generated-video' : 'generated-audio', filename: kind === 'video' ? 'generated-video.mp4' : 'generated-music.mp3' }])
+      expect(event).toHaveBeenCalledWith('media.usage', { kind, usageSource: 'reported', priceBasis: kind === 'music' ? 'song' : 'tokens' })
+    })
+    it(`keeps uncertain ${kind} charges reserved after dispatch cancellation`, async () => {
+      const dispatchBudget = budget()
+      const generate = async (input: { beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>; onDispatch: () => void }) => {
+        await input.beforeDispatch({ inputTokens: 1, outputTokens: 65536, totalTokens: 65537 })
+        input.onDispatch()
+        throw new Error('cancelled after dispatch')
+      }
+      const createMedia = async () => ({ config: {}, capabilities, pricing: { videoGeneration: { ...pricing, textOutputMicrosPerMillionTokens: 1 }, musicGeneration: { costMicrosPerSong: 80000 } }, transport: { generateVideo: generate, generateMusic: generate } })
+      await expect(new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute({ ...mediaRequest(), mediaRequest: { kind }, dispatchBudget }, { media: async () => {}, text: async () => {}, event: async () => {} })).rejects.toThrow('cancelled after dispatch')
+      expect(dispatchBudget.release).not.toHaveBeenCalled()
+      expect(dispatchBudget.reconcile).not.toHaveBeenCalled()
+    })
+  }
   it('fails closed when a media request lacks current authorization', async () => {
     const createMedia = vi.fn(async () => {
       throw new Error('must not load provider')
@@ -3170,7 +3207,7 @@ describe('Agent media execution', () => {
           capabilityRevision: 'test',
           pricingRevision: 'test',
           pricing,
-          ...(enabled ? { mediaConfig: { imageGeneration: { model: 'gemini-3.1-flash-image', pricingRevision: 'v1|1|1' } } } : {})
+          ...(enabled ? { mediaConfig: { imageGeneration: { model: 'gemini-3.1-flash-image', pricingRevision: 'v1|1|1' }, videoGeneration: { model: 'gemini-omni-1.1-flash' }, musicGeneration: { model: 'lyria-3.5' } } } : {})
         })
       } as unknown as AgentProviderFactory
       const actions: AgentActionSessionProvider = {
@@ -3180,7 +3217,7 @@ describe('Agent media execution', () => {
         { ...request(new AbortController().signal), messages: [{ role: 'user', content: 'Hello' }] },
         { text: async () => {}, event: async () => {} }
       )
-      expect(offered.some(tool => tool.name === 'wiki_generate_image')).toBe(enabled)
+      for (const name of ['wiki_generate_image', 'wiki_generate_video', 'wiki_generate_music']) expect(offered.some(tool => tool.name === name)).toBe(enabled)
     }
   })
 })

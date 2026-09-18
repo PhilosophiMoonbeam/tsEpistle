@@ -657,7 +657,7 @@ export interface AdmitAgentRunInput {
   readonly userMessageVisible?: boolean
   readonly assistantMessageVisible?: boolean
   readonly attachmentIds?: readonly string[]
-  readonly mediaRequest?: { readonly kind: 'image' | 'transcription' }
+  readonly mediaRequest?: { readonly kind: 'image' | 'transcription' | 'video' | 'music' }
   readonly ownerId: number
   readonly sessionId: string
   readonly clientRequestId: string

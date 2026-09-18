@@ -71,6 +71,17 @@ export const AgentProviderMediaConfigSchema = z.strictObject({
       pricingRevision: AgentProviderPricingRevisionSchema
     })
     .optional(),
+  videoGeneration: z.strictObject({
+    model: z.literal('gemini-omni-1.1-flash'),
+    pricingRevision: AgentProviderPricingRevisionSchema,
+    textOutputMicrosPerMillionTokens: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    usagePolicy: z.literal('reported-or-estimated')
+  }).optional(),
+  musicGeneration: z.strictObject({
+    model: z.literal('lyria-3.5'),
+    costMicrosPerSong: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    usagePolicy: z.literal('reported-or-estimated')
+  }).optional(),
   transcription: z
     .strictObject({
       model: z.literal('gemini-3.5-transcribe'),
@@ -958,6 +969,8 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
             media: {
               attachments: profile.adapterConfig.media.attachments,
               imageGeneration: profile.adapterConfig.media.imageGeneration !== undefined,
+              videoGeneration: profile.adapterConfig.media.videoGeneration !== undefined,
+              musicGeneration: profile.adapterConfig.media.musicGeneration !== undefined,
               transcription: profile.adapterConfig.media.transcription !== undefined
             }
           }

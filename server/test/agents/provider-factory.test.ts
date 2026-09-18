@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from '../bun-test.mts'
-import createKnex, { type Knex } from 'knex'
 import type { LookupAddress } from 'node:dns'
+import createKnex, { type Knex } from 'knex'
+import { AgentExecutionFailure, classifyAgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import {
   AgentProviderAttemptError,
   AgentProviderFactory,
@@ -10,9 +10,9 @@ import {
   deriveAgentProviderResourceLimits,
   encodeAgentProviderContinuation
 } from '../../agents/providers/factory.ts'
-import { AgentExecutionFailure, classifyAgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import { readAgentProviderUsage, readAgentUsageEvent } from '../../agents/providers/usage.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
+import { afterEach, describe, expect, it } from '../bun-test.mts'
 
 const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
 const privateResolver = async (): Promise<LookupAddress[]> => [{ address: '127.0.0.1', family: 4 }]
@@ -56,6 +56,30 @@ const openAIResponsesStream = (
 }
 
 describe('guarded provider fetch', () => {
+  it('allows larger inline video and music responses while preserving the image response bound', async () => {
+    const largerBody = new Uint8Array(16 * 1024 * 1024 + 1)
+    const limits = { ...deriveAgentProviderResourceLimits(65_536), rawBodyBytes: 64 * 1024 * 1024, rawChunkBytes: 64 * 1024 * 1024 }
+    const guarded = createGuardedProviderFetch(
+      'https://generativelanguage.googleapis.com/v1beta',
+      'gemini-media',
+      {},
+      (async () => new Response(largerBody)) as typeof fetch,
+      publicResolver as never,
+      limits
+    )
+    for (const [url, init] of [
+      ['https://generativelanguage.googleapis.com/v1beta/interactions', { method: 'POST', body: JSON.stringify({ model: 'gemini-omni-1.1-flash' }) }],
+      ['https://generativelanguage.googleapis.com/v1beta/interactions', { method: 'POST', body: JSON.stringify({ model: 'lyria-3.5' }) }]
+    ] as const) {
+      const response = await guarded(url, init)
+      expect((await response.arrayBuffer()).byteLength).toBe(largerBody.byteLength)
+    }
+    const image = await guarded('https://generativelanguage.googleapis.com/v1beta/interactions', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'gemini-3.1-flash-image' })
+    })
+    await expect(image.arrayBuffer()).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+  })
   it('allows only the configured HTTPS endpoint and rejects private DNS results', async () => {
     let called = 0
     const implementation = async (): Promise<Response> => {

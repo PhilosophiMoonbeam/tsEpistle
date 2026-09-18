@@ -2,11 +2,12 @@ import { AgentMediaUploadGate, parseAgentMediaUpload } from '../agents/media-upl
 import multer from 'multer'
 import { createReadStream } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
+import { Readable } from 'node:stream'
 import { readAgentWikiAsset } from '../agents/wiki-assets.ts'
 import { sweepAgentPdfCache } from '../agents/pdf-cache.ts'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import type { PagePrincipal } from '../helpers/page-access.ts'
-import { AGENT_MEDIA_MAX_BYTES, getOwnedAgentMedia, getOwnedAgentMediaMetadata, stageOwnedAgentMedia, projectAgentMedia, storeAgentMedia } from '../agents/media.ts'
+import { AGENT_MEDIA_MAX_BYTES, readOwnedAgentMediaRange, getOwnedAgentMedia, getOwnedAgentMediaMetadata, stageOwnedAgentMedia, projectAgentMedia, storeAgentMedia } from '../agents/media.ts'
 import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { createHash, createHmac } from 'node:crypto'
 import express, { type NextFunction, type Request, type Response } from 'express'
@@ -201,7 +202,7 @@ const SubmitMessageSchema = z
     profileResolutionToken: z.string().min(1).max(4_096),
     content: z.string().max(32_000),
     attachmentIds: z.array(z.uuid()).max(4).optional(),
-    responseMode: z.enum(['text', 'image']).optional(),
+    responseMode: z.enum(['text', 'image', 'video', 'music']).optional(),
     invokedSkillVersionIds: z.array(z.uuid()).max(8).optional(),
     knowledgeContext: AgentKnowledgeContextSchema.optional(),
     currentPage: z
@@ -505,7 +506,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const session = await getOwnedAgentSession(wiki.models.knex, ownerId, sessionId)
       const profiles = await wiki.providerRegistry.listVisible(ownerId)
       const profile = session.providerProfileId ? profiles.find(item => item.id === session.providerProfileId) : (profiles.find(item => item.isGlobalDefault) ?? (profiles.length === 1 ? profiles[0] : undefined))
-      if (!profile?.media?.attachments && !profile?.media?.imageGeneration) return disabledRoute(res)
+      if (!profile?.media?.attachments && !profile?.media?.imageGeneration && !profile?.media?.videoGeneration && !profile?.media?.musicGeneration) return disabledRoute(res)
       return mediaUploads.run(ownerId, async () => {
         const source = await readAgentWikiAsset(wiki.models.knex, { assetId, signal, authorize: async (path, transaction) => {
           if (!req.user || !wiki.auth.loadPageRuleAuthority || !wiki.auth.checkPageAccess) throw new AgentRepositoryError('AGENT_ASSET_UNAVAILABLE', 'Wiki assets are unavailable.', 403)
@@ -533,7 +534,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         ? profiles.find(item => item.id === session.providerProfileId)
         : (profiles.find(item => item.isGlobalDefault) ?? (profiles.length === 1 ? profiles[0] : undefined))
       const mediaCapabilities = profile?.media
-      if (!mediaCapabilities || (!mediaCapabilities.attachments && !mediaCapabilities.transcription && !mediaCapabilities.imageGeneration))
+      if (!mediaCapabilities || (!mediaCapabilities.attachments && !mediaCapabilities.transcription && !mediaCapabilities.imageGeneration && !mediaCapabilities.videoGeneration && !mediaCapabilities.musicGeneration))
         return disabledRoute(res)
       return mediaUploads.run(ownerId, async () => {
         await parseAgentMediaUpload(parseMedia, req, res, signal)
@@ -542,7 +543,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
           !req.file ||
           (req.file.mimetype.startsWith('audio/')
             ? !mediaCapabilities.transcription
-            : !mediaCapabilities.attachments && !(req.file.mimetype.startsWith('image/') && mediaCapabilities.imageGeneration))
+            : !mediaCapabilities.attachments && !(req.file.mimetype.startsWith('image/') && (mediaCapabilities.imageGeneration || mediaCapabilities.videoGeneration || mediaCapabilities.musicGeneration)))
         )
           return disabledRoute(res)
         const media = await storeAgentMedia(wiki.models.knex, {
@@ -566,8 +567,31 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         'X-Content-Type-Options': 'nosniff',
         'Content-Security-Policy': "default-src 'none'; sandbox",
         'Content-Type': media.mimeType,
-        'Content-Disposition': `${media.mimeType.startsWith('image/') ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(media.filename)}`
+        'Content-Disposition': `${media.mimeType.startsWith('image/') || media.mimeType === 'video/mp4' || media.mimeType === 'audio/mpeg' ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(media.filename)}`
       })
+      if (media.mimeType === 'video/mp4' || media.mimeType === 'audio/mpeg') {
+        const total = Number(media.byteLength)
+        let start = 0
+        let end = total - 1
+        const range = req.get('if-range') ? undefined : req.get('range')
+        res.set('Accept-Ranges', 'bytes')
+        if (range) {
+          const match = /^bytes=(\d*)-(\d*)$/.exec(range)
+          const first = match?.[1] ? Number(match[1]) : null
+          const last = match?.[2] ? Number(match[2]) : null
+          if (!match || (first === null && (last === null || last === 0)) || (first !== null && (!Number.isSafeInteger(first) || first >= total)) || (last !== null && !Number.isSafeInteger(last)) || (first !== null && last !== null && last < first)) {
+            res.set('Content-Range', `bytes */${total}`)
+            return res.status(416).end()
+          }
+          start = first ?? Math.max(0, total - last!)
+          end = first === null ? total - 1 : Math.min(last ?? total - 1, total - 1)
+          res.status(206).set('Content-Range', `bytes ${start}-${end}/${total}`)
+        }
+        res.set('Content-Length', String(end - start + 1))
+        if (req.method === 'HEAD') return res.end()
+        await pipeline(Readable.from(readOwnedAgentMediaRange(wiki.models.knex, ownerId, media, start, end, signal)), res, { signal })
+        return
+      }
       if (media.mimeType === 'application/pdf') {
         const staged = await stageOwnedAgentMedia(wiki.models.knex, ownerId, media.id, signal)
         try { await pipeline(createReadStream(staged.path), res, { signal }) } finally { await staged.cleanup() }

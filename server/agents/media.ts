@@ -4,7 +4,7 @@ import { chmod, mkdtemp, open, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { prepareAgentPdfFromPath, type PreparedAgentPdf } from './pdf-preparation.ts'
-import { AGENT_ATTACHMENT_MAX_BYTES, AGENT_PDF_ATTACHMENT_MAX_BYTES } from '../../shared/agents/media-limits.ts'
+import { AGENT_ATTACHMENT_MAX_BYTES, AGENT_PDF_ATTACHMENT_MAX_BYTES, AGENT_GENERATED_VIDEO_MAX_BYTES, AGENT_GENERATED_AUDIO_MAX_BYTES } from '../../shared/agents/media-limits.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { AgentMediaView } from '../../shared/agents/contracts.ts'
@@ -42,7 +42,7 @@ export interface AgentMediaRow extends AgentMediaPayload {
   readonly sessionId: string
   readonly messageId: string | null
   readonly runId: string | null
-  readonly kind: 'attachment' | 'generated-image'
+  readonly kind: 'attachment' | 'generated-image' | 'generated-video' | 'generated-audio'
   readonly expiresAt: Date | string | null
 }
 export const projectAgentMedia = (row: Pick<AgentMediaRow, 'id' | 'kind' | 'filename' | 'mimeType' | 'byteLength' | 'expiresAt'>): AgentMediaView => ({
@@ -97,7 +97,7 @@ export const mediaFilename = (value: string): string =>
 export const assertAgentMediaCapability = async (
   db: Knex | Knex.Transaction,
   versionId: string,
-  kind: 'attachments' | 'imageGeneration' | 'transcription'
+  kind: 'attachments' | 'imageGeneration' | 'videoGeneration' | 'musicGeneration' | 'transcription'
 ): Promise<void> => {
   const row = (await db('agentProviderProfileVersions').where({ id: versionId }).first('transportKind', 'baseUrl', 'adapterConfig')) as
     | { transportKind: string; baseUrl: string; adapterConfig: string }
@@ -121,16 +121,30 @@ export const storeAgentMedia = async (
     payload: Buffer
     mimeType: string
     filename: string
-    kind?: 'attachment' | 'generated-image'
+    kind?: 'attachment' | 'generated-image' | 'generated-video' | 'generated-audio'
     messageId?: string
     runId?: string
     leaseOwner?: string | null
     leaseToken?: string | null
   }
 ): Promise<AgentMediaRow> => {
-  const mimeType = validateAgentMedia(input.payload, input.mimeType)
-  if (input.kind === 'generated-image' && (!mimeType.startsWith('image/') || !input.messageId || !input.runId || !input.leaseOwner || !input.leaseToken))
+  const generated = input.kind !== undefined && input.kind !== 'attachment'
+  if (generated && (!input.messageId || !input.runId || !input.leaseOwner || !input.leaseToken))
     throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Generated media requires an active run lease.', 500)
+  let mimeType: string
+  if (input.kind === 'generated-video' || input.kind === 'generated-audio') {
+    const video = input.kind === 'generated-video'
+    mimeType = video ? 'video/mp4' : 'audio/mpeg'
+    const signature = video
+      ? input.payload.length >= 12 && input.payload.toString('ascii', 4, 8) === 'ftyp'
+      : input.payload.toString('ascii', 0, 3) === 'ID3' || (input.payload[0] === 255 && (input.payload[1]! & 224) === 224)
+    if (input.mimeType !== mimeType || !signature || input.payload.length > (video ? AGENT_GENERATED_VIDEO_MAX_BYTES : AGENT_GENERATED_AUDIO_MAX_BYTES))
+      throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'The provider returned an unsupported or oversized media file.', 502)
+  } else {
+    mimeType = validateAgentMedia(input.payload, input.mimeType)
+    if (input.kind === 'generated-image' && !mimeType.startsWith('image/'))
+      throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'The provider returned an unsupported image file.', 502)
+  }
   if (mimeType.startsWith('image/')) {
     try {
       const decoder = sharp(input.payload, { limitInputPixels: 25_000_000, failOn: 'warning', unlimited: false })
@@ -291,3 +305,22 @@ export const ownedAgentMediaSource = (db: Knex, ownerId: number, sessionId: stri
     } finally { await staged.cleanup() }
   }) } : {})
 })
+
+/** Reads only the requested immutable bytea range, never a full video-sized Buffer. */
+export async function* readOwnedAgentMediaRange(db: Knex, ownerId: number, media: AgentMediaMetadata, start: number, end: number, signal: AbortSignal): AsyncGenerator<Buffer> {
+  const fresh = await getOwnedAgentMediaMetadata(db, ownerId, media.id)
+  if (fresh.sha256 !== media.sha256 || Number(fresh.byteLength) !== Number(media.byteLength) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end >= Number(media.byteLength))
+    throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
+  const digest = start === 0 && end === Number(media.byteLength) - 1 ? createHash('sha256') : null
+  for (let offset = start; offset <= end; offset += 1024 * 1024) {
+    signal.throwIfAborted()
+    const length = Math.min(1024 * 1024, end - offset + 1)
+    const expression = db.client.config.client === 'pg' ? 'substring(?? from ? for ?) as chunk' : 'substr(??, ?, ?) as chunk'
+    const row = await db('agentMedia').where({ id: media.id, ownerId, sessionId: media.sessionId, sha256: media.sha256, byteLength: media.byteLength }).first(db.raw(expression, ['payload', offset + 1, length])) as { chunk: Uint8Array } | undefined
+    if (!row || !(row.chunk instanceof Uint8Array) || row.chunk.byteLength !== length) throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
+    signal.throwIfAborted()
+    digest?.update(row.chunk)
+    if (digest && offset + length > end && digest.digest('hex') !== media.sha256) throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
+    yield Buffer.isBuffer(row.chunk) ? row.chunk : Buffer.from(row.chunk)
+  }
+}

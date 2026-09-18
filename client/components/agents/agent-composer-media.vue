@@ -1,13 +1,19 @@
 <template>
-  <div v-if="capabilities?.attachments || capabilities?.imageGeneration || capabilities?.transcription" class="agent-media-composer">
+  <div v-if="capabilities?.attachments || generationModes.length || capabilities?.transcription" class="agent-media-composer">
     <div ref="mediaControls" class="agent-media-composer__controls" role="group" aria-label="Message media">
-      <input ref="fileInput" class="agent-media-composer__file" type="file" :accept="capabilities?.attachments ? 'image/png,image/jpeg,image/webp,application/pdf' : 'image/png,image/jpeg,image/webp'" multiple :aria-label="capabilities?.attachments ? 'Choose images or PDFs' : 'Choose images'" @change="chooseFiles" />
-      <v-menu v-if="capabilities.attachments || capabilities.imageGeneration" v-model="attachmentMenu" content-class="agent-owned-overlay" location="top start">
-        <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" class="agent-media-composer__attach" variant="text" size="small" prepend-icon="mdi-paperclip" :disabled="locked || !session || attachments.length >= 4" :aria-label="capabilities.attachments ? 'Attach images or PDFs' : 'Attach images'">Attach</v-btn></template>
+      <input ref="fileInput" class="agent-media-composer__file" type="file" :accept="capabilities?.attachments && generationMode === 'text' ? 'image/png,image/jpeg,image/webp,application/pdf' : 'image/png,image/jpeg,image/webp'" multiple :aria-label="capabilities?.attachments ? 'Choose images or PDFs' : 'Choose images'" @change="chooseFiles" />
+      <v-menu v-if="capabilities?.attachments || generationModes.length" v-model="attachmentMenu" content-class="agent-owned-overlay" location="top start">
+        <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" class="agent-media-composer__attach" variant="text" size="small" prepend-icon="mdi-paperclip" :disabled="locked || !session || attachments.length >= 4" :aria-label="capabilities?.attachments ? 'Attach images or PDFs' : 'Attach images'">Attach</v-btn></template>
         <v-list density="compact" aria-label="Attachment source"><v-list-item prepend-icon="mdi-upload" title="Upload files" @click="chooseUpload" /><v-list-item prepend-icon="mdi-folder-outline" title="Browse Wiki assets" @click="browseAssets" /></v-list>
       </v-menu>
-      <v-btn v-if="capabilities.imageGeneration" :variant="imageMode ? 'tonal' : 'text'" :color="imageMode ? 'primary' : undefined" size="small" prepend-icon="mdi-image-outline" :aria-pressed="imageMode" aria-label="Generate or edit an image" :disabled="locked" @click="toggleImageMode">{{ imageMode ? 'Image mode on' : 'Image' }}</v-btn>
-      <v-btn v-if="capabilities.transcription && !recording && !transcribing" variant="text" size="small" prepend-icon="mdi-microphone-outline" :disabled="locked" aria-label="Dictate a message" @click="startRecording">Dictate</v-btn>
+      <v-menu v-if="generationModes.length" v-model="generationMenu" content-class="agent-owned-overlay" location="top start">
+        <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" :variant="generationMode !== 'text' ? 'tonal' : 'text'" :color="generationMode !== 'text' ? 'primary' : undefined" size="small" :prepend-icon="selectedGeneration?.icon ?? 'mdi-creation-outline'" append-icon="mdi-chevron-down" aria-label="Choose generation mode" :disabled="locked">{{ selectedGeneration?.title ?? 'Create' }}</v-btn></template>
+        <v-list density="compact" aria-label="Generation mode">
+          <v-list-item title="Text" prepend-icon="mdi-message-text-outline" :active="generationMode === 'text'" @click="selectGeneration('text')" />
+          <v-list-item v-for="mode in generationModes" :key="mode.value" :title="mode.title" :prepend-icon="mode.icon" :active="generationMode === mode.value" @click="selectGeneration(mode.value)" />
+        </v-list>
+      </v-menu>
+      <v-btn v-if="capabilities?.transcription && !recording && !transcribing" variant="text" size="small" prepend-icon="mdi-microphone-outline" :disabled="locked" aria-label="Dictate a message" @click="startRecording">Dictate</v-btn>
       <template v-if="recording">
         <span class="agent-media-composer__recording" role="status">Recording · {{ seconds }} / 60s</span>
         <v-btn variant="tonal" color="primary" size="small" prepend-icon="mdi-stop" @click="stopRecording">Transcribe</v-btn>
@@ -16,7 +22,7 @@
       <v-btn v-if="recording || transcribing" variant="text" size="small" @click="cancelDictation">Cancel dictation</v-btn>
       <span v-if="uploading" role="status">Uploading…</span>
     </div>
-    <p v-if="imageMode" class="agent-media-composer__hint">Describe the image to create, or attach an image and describe your changes.</p>
+    <p v-if="selectedGeneration" class="agent-media-composer__hint">{{ selectedGeneration.hint }}</p>
     <ul v-if="attachments.length" class="agent-media-composer__attachments" aria-label="Attachments for the next message">
       <li v-for="item in attachments" :key="item.id">
         <img v-if="item.mimeType.startsWith('image/')" :src="agentMediaContentUrl(item.id)" alt="" />
@@ -25,7 +31,7 @@
         <v-btn icon="mdi-close" size="x-small" variant="text" :aria-label="`Remove ${item.filename}`" :disabled="locked" @click="removeAttachment(item)" />
       </li>
     </ul>
-    <AgentAssetPicker v-if="assetPickerOpen" :image-only="imageMode || !capabilities.attachments" :busy="uploading" :disabled="disabled || networkBlocked" :attachment-error="error" @close="closeAssetPicker" @select="attachAsset" />
+    <AgentAssetPicker v-if="assetPickerOpen" :image-only="generationMode !== 'text' || !capabilities?.attachments" :busy="uploading" :disabled="disabled || networkBlocked" :attachment-error="error" @close="closeAssetPicker" @select="attachAsset" />
     <p v-if="error && !assetPickerOpen" class="agent-media-composer__error" role="alert">{{ error }}</p>
   </div>
 </template>
@@ -49,7 +55,14 @@ const mediaControls = useTemplateRef<HTMLDivElement>('mediaControls')
 const attachmentMenu = ref(false)
 const assetPickerOpen = ref(false)
 const attachments = ref<AgentMediaView[]>([])
-const imageMode = ref(false)
+const generationMenu = ref(false)
+const generationMode = ref<AgentMediaSubmission['responseMode']>('text')
+const generationModes = computed(() => [
+  { value: 'image' as const, enabled: props.capabilities?.imageGeneration, title: 'Image', icon: 'mdi-image-outline', hint: 'Describe the image to create, or attach an image and describe your changes.' },
+  { value: 'video' as const, enabled: props.capabilities?.videoGeneration, title: 'Video', icon: 'mdi-movie-open-outline', hint: 'Describe a 3–10 second landscape video. Add an image for inspiration. Output is 720p.' },
+  { value: 'music' as const, enabled: props.capabilities?.musicGeneration, title: 'Music', icon: 'mdi-music-note-outline', hint: 'Describe a new composition: mood, instruments, style or lyrics. Images can provide inspiration.' }
+].filter(mode => mode.enabled))
+const selectedGeneration = computed(() => generationModes.value.find(mode => mode.value === generationMode.value))
 const error = ref('')
 const uploading = ref(false)
 const recording = ref(false)
@@ -65,7 +78,7 @@ let recorder: MediaRecorder | null = null
 let stream: MediaStream | null = null
 let timer: ReturnType<typeof setInterval> | null = null
 let transcriptionRunId: string | null = null
-watch([attachments, imageMode], () => emit('change', { attachmentIds: attachments.value.map(item => item.id), responseMode: imageMode.value ? 'image' : 'text' }), { deep: true, immediate: true })
+watch([attachments, generationMode], () => emit('change', { attachmentIds: attachments.value.map(item => item.id), responseMode: generationMode.value }), { deep: true, immediate: true })
 watch([uploading, recording, transcribing], () => emit('busy', uploading.value || recording.value || transcribing.value), { flush: 'sync' })
 const releaseMicrophone = () => {
   if (timer !== null) clearInterval(timer)
@@ -92,15 +105,18 @@ const cancelDictation = () => {
     void cancelAgentRun(fetcher, props.csrfToken, id).catch(() => {}).finally(() => { if (!disposed) emit('settled') })
   }
 }
-const toggleImageMode = () => {
-  if (imageMode.value && !props.capabilities?.attachments && attachments.value.length) { error.value = 'Remove image attachments to return to text mode.'; return }
-  if (!imageMode.value && attachments.value.some(item => item.mimeType === 'application/pdf')) { error.value = 'Remove PDF attachments before creating an image.'; return }
-  imageMode.value = !imageMode.value
+const selectGeneration = (mode: AgentMediaSubmission['responseMode']) => {
+  if (locked.value || (mode !== 'text' && !generationModes.value.some(item => item.value === mode))) return
+  if (mode === 'text' && !props.capabilities?.attachments && attachments.value.length) { error.value = 'Remove image attachments to return to text mode.'; return }
+  if (mode !== 'text' && attachments.value.some(item => item.mimeType === 'application/pdf')) { error.value = 'Remove PDF attachments before creating media.'; return }
+  generationMode.value = mode
+  generationMenu.value = false
+  error.value = ''
 }
 const clear = () => {
   // Accepted uploads now belong to the message; never delete them here.
   attachments.value = []
-  imageMode.value = false
+  generationMode.value = 'text'
   error.value = ''
 }
 const removeAttachment = async (item: AgentMediaView) => {
@@ -113,11 +129,11 @@ const removeAttachment = async (item: AgentMediaView) => {
   finally { if (!disposed) uploading.value = false }
 }
 const addFiles = async (files: readonly File[]) => {
-  if (locked.value || !(props.capabilities?.attachments || props.capabilities?.imageGeneration) || !props.session) return false
+  if (locked.value || !(props.capabilities?.attachments || generationModes.value.length) || !props.session) return false
   error.value = ''
   if (attachments.value.length + files.length > 4) { error.value = 'Attach up to 4 files per message.'; return }
   for (const file of files) {
-    if (file.type === 'application/pdf' && imageMode.value) { error.value = 'Attach images only when creating or editing an image.'; return false }
+    if (file.type === 'application/pdf' && generationMode.value !== 'text') { error.value = 'Attach images only when creating media.'; return false }
     if (file.type === 'application/pdf' && !props.capabilities?.attachments) { error.value = 'This provider supports image attachments only.'; return false }
     const problem = validateAgentAttachment(file)
     if (problem) { error.value = problem; return false }
@@ -135,7 +151,7 @@ const addFiles = async (files: readonly File[]) => {
         return
       }
       attachments.value = [...attachments.value, media]
-      if (!props.capabilities?.attachments && props.capabilities?.imageGeneration) imageMode.value = true
+      if (!props.capabilities?.attachments && generationMode.value === 'text') generationMode.value = generationModes.value[0]?.value ?? 'text'
     }
     return true
   } catch (value) {
@@ -150,7 +166,7 @@ const chooseUpload = () => {
 }
 const browseAssets = () => {
   attachmentMenu.value = false
-  if (locked.value || !props.session || attachments.value.length >= 4 || !(props.capabilities?.attachments || props.capabilities?.imageGeneration)) return
+  if (locked.value || !props.session || attachments.value.length >= 4 || !(props.capabilities?.attachments || generationModes.value.length)) return
   error.value = ''
   assetPickerOpen.value = true
 }
@@ -167,12 +183,12 @@ const closeAssetPicker = () => {
   })
 }
 const attachAsset = async (asset: Asset) => {
-  if (!assetPickerOpen.value || locked.value || !props.session || attachments.value.length >= 4 || !(props.capabilities?.attachments || props.capabilities?.imageGeneration)) return
+  if (!assetPickerOpen.value || locked.value || !props.session || attachments.value.length >= 4 || !(props.capabilities?.attachments || generationModes.value.length)) return
   const mimeTypes: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', pdf: 'application/pdf' }
   const type = mimeTypes[asset.ext.replace(/^\./, '').toLowerCase()] ?? ''
   const problem = validateAgentAttachment({ type, size: asset.fileSize })
   if (problem) { error.value = problem; return }
-  if (type === 'application/pdf' && (imageMode.value || !props.capabilities?.attachments)) { error.value = 'Attach images only when creating or editing an image.'; return }
+  if (type === 'application/pdf' && (generationMode.value !== 'text' || !props.capabilities?.attachments)) { error.value = 'Attach images only when creating media.'; return }
   const sessionId = props.session.id
   const csrfToken = props.csrfToken
   const controller = new AbortController()
@@ -186,7 +202,7 @@ const attachAsset = async (asset: Asset) => {
       return
     }
     attachments.value = [...attachments.value, media]
-    if (!props.capabilities?.attachments && props.capabilities?.imageGeneration) imageMode.value = true
+    if (!props.capabilities?.attachments && generationMode.value === 'text') generationMode.value = generationModes.value[0]?.value ?? 'text'
     closeAssetPicker()
   } catch (value) {
     if (!disposed && !controller.signal.aborted) error.value = value instanceof AgentApiError && value.status === 403 ? 'You no longer have access to this Wiki asset. Choose another file or upload a copy.' : value instanceof Error ? value.message : 'The Wiki asset could not be attached.'
@@ -216,7 +232,7 @@ const editImage = async (media: AgentMediaView): Promise<boolean> => {
     if (uploadController === controller) { uploadController = null; uploading.value = false }
   }
   const added = await addFiles([file])
-  if (added) imageMode.value = true
+  if (added) generationMode.value = 'image'
   return added === true
 }
 const chooseFiles = (event: Event) => {
@@ -328,7 +344,23 @@ watch(() => props.session?.id, (id, previous) => {
   for (const item of attachments.value) void deleteAgentMedia(fetcher, props.csrfToken, item.id).catch(() => {})
   clear()
 }, { flush: 'sync' })
-watch(() => props.capabilities, () => { attachmentMenu.value = false; closeAssetPicker() })
+watch(() => props.capabilities, () => {
+  attachmentMenu.value = false
+  generationMenu.value = false
+  closeAssetPicker()
+  uploadController?.abort()
+  if (!generationModes.value.some(mode => mode.value === generationMode.value)) generationMode.value = 'text'
+  if (!props.capabilities?.transcription) cancelDictation()
+  if (!props.capabilities?.attachments && attachments.value.length) {
+    if (generationModes.value.length && attachments.value.every(item => item.mimeType.startsWith('image/'))) {
+      if (generationMode.value === 'text') generationMode.value = generationModes.value[0]!.value
+    } else {
+      for (const item of attachments.value) void deleteAgentMedia(fetcher, props.csrfToken, item.id).catch(() => {})
+      attachments.value = []
+      error.value = 'Attachments were removed because this provider no longer supports them.'
+    }
+  }
+}, { deep: true })
 onBeforeUnmount(() => {
   disposed = true
   cancelDictation()

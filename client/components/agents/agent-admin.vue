@@ -402,14 +402,14 @@
                 </div>
               </div>
               <div v-if="profileDraft.transportKind === 'gemini-api'" class="subsection-card">
-                <div class="subsection-card__heading"><div><h4>Images, files &amp; voice</h4><p>Choose what this provider makes available in chat. Each capability stays hidden until enabled here.</p></div><v-icon size="20">mdi-image-outline</v-icon></div>
+                <div class="subsection-card__heading"><div><h4>Media &amp; attachments</h4><p>Choose what this provider makes available in chat. Each capability stays hidden until enabled here.</p></div><v-icon size="20">mdi-image-outline</v-icon></div>
                 <v-switch v-model="profileDraft.mediaAttachments" label="PDF and image attachments" color="primary" hide-details />
                 <p class="text-body-2 mb-2">Attach up to four files: PDFs up to 250 MB, images up to 10 MB. Large PDFs are prepared automatically, preserving page content and numbering.</p>
                 <details class="media-storage-help mb-3">
                   <summary>Privacy, retention and storage</summary>
                   <dl>
                     <dt>Privacy and limits</dt><dd>Files stay private to the conversation and are sent to Google when used. A request can include up to 1,000 PDF pages, within the model’s context limit.</dd>
-                    <dt>Conversation retention</dt><dd>Originals and generated images follow the configured conversation policy. By default, unfiled saved conversations are removed after 90 days without activity. Conversations kept in folders remain until deleted.</dd>
+                    <dt>Conversation retention</dt><dd>Originals and generated media follow the configured conversation policy. By default, unfiled saved conversations are removed after 90 days without activity. Conversations kept in folders remain until deleted.</dd>
                     <dt>Storage</dt><dd>Saved originals are limited to 1 GB per user and 10 GB overall. Prepared PDFs are cached privately for up to six hours, with limits of 1 GB per user and 2 GB overall.</dd>
                   </dl>
                 </details>
@@ -419,6 +419,22 @@
                   <span class="text-body-2">Generate images in chat and edit uploaded images.</span>
                   <v-text-field v-model="profileDraft.imageInputRate" :rules="[mediaRateRule]" label="Image input rate" hint="Microdollars per million tokens. Use the highest applicable input rate." persistent-hint inputmode="numeric" />
                   <v-text-field v-model="profileDraft.imageOutputRate" :rules="[mediaRateRule]" label="Image output rate" hint="Microdollars per million tokens. Include image output pricing." persistent-hint inputmode="numeric" />
+                </div>
+                <v-switch v-model="profileDraft.mediaVideo" label="Video creation" color="primary" hide-details />
+                <div v-if="profileDraft.mediaVideo" class="mt-3">
+                  <p class="text-body-2 mb-3"><code>gemini-omni-1.1-flash</code> · 3–10 second landscape videos at 720p, from text or images.</p>
+                  <div class="form-grid">
+                    <v-text-field v-model="profileDraft.videoInputRate" :rules="[mediaRateRule]" label="Video input rate" hint="Microdollars per million input tokens." persistent-hint inputmode="numeric" />
+                    <v-text-field v-model="profileDraft.videoOutputRate" :rules="[mediaRateRule]" label="Video output rate" hint="Microdollars per million video output tokens." persistent-hint inputmode="numeric" />
+                    <v-text-field v-model="profileDraft.videoTextOutputRate" :rules="[mediaRateRule]" label="Video text output rate" hint="Microdollars per million text output tokens." persistent-hint inputmode="numeric" />
+                  </div>
+                  <p class="text-body-2 mb-3">Usage is estimated when Google omits token counts; budget limits still apply.</p>
+                </div>
+                <v-switch v-model="profileDraft.mediaMusic" label="Music creation" color="primary" hide-details />
+                <div v-if="profileDraft.mediaMusic" class="mt-3">
+                  <p class="text-body-2 mb-3"><code>lyria-3.5</code> · New MP3 compositions from text or images.</p>
+                  <v-text-field v-model="profileDraft.musicSongRate" :rules="[(value: string) => mediaRateValid(value) || 'Enter a positive whole number in microdollars per song.']" label="Cost per song" hint="Microdollars per song. 80,000 = $0.08." persistent-hint inputmode="numeric" />
+                  <p class="text-body-2 mb-3">Each completed composition is charged at this rate. Token usage is estimated if Google omits it.</p>
                 </div>
                 <v-switch v-model="profileDraft.mediaSpeech" label="Speech input" color="primary" hide-details />
                 <div v-if="profileDraft.mediaSpeech" class="form-grid mt-3">
@@ -625,10 +641,10 @@ interface RuntimePolicy {
 }
 interface ConnectionCheck { status: 'passed' | 'failed'; errorCode: string | null; message: string | null; completedAt: string }
 interface ConnectionHistoryCheck extends ConnectionCheck { id: string; checks: { name: string; passed: boolean; detail?: string }[] }
-interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; conformed: boolean; connectionCheck: ConnectionCheck | null; transportKind: AgentProviderTransport; model: string; utilityModel: string | null; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string>; agentReasoningEffort?: AgentReasoningEffort; utilityReasoningEffort?: AgentReasoningEffort; media?: { attachments: boolean; imageGeneration?: { model: 'gemini-3.1-flash-image'; pricingRevision: string }; transcription?: { model: 'gemini-3.5-transcribe'; pricingRevision: string } } }; capabilities: { streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number } }
+interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; conformed: boolean; connectionCheck: ConnectionCheck | null; transportKind: AgentProviderTransport; model: string; utilityModel: string | null; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string>; agentReasoningEffort?: AgentReasoningEffort; utilityReasoningEffort?: AgentReasoningEffort; media?: { attachments: boolean; imageGeneration?: { model: 'gemini-3.1-flash-image'; pricingRevision: string }; transcription?: { model: 'gemini-3.5-transcribe'; pricingRevision: string }; videoGeneration?: { model: 'gemini-omni-1.1-flash'; pricingRevision: string; textOutputMicrosPerMillionTokens: number; usagePolicy: 'reported-or-estimated' }; musicGeneration?: { model: 'lyria-3.5'; costMicrosPerSong: number; usagePolicy: 'reported-or-estimated' } } }; capabilities: { streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number } }
 interface BrowserTarget { id: string; canonicalUrl: string; enabled: boolean; policySha256: string }
 interface GroupOption { id: number; name: string; isSystem: boolean }
-interface ProfileDraft { mediaAttachments: boolean; mediaImages: boolean; mediaSpeech: boolean; imageInputRate: string; imageOutputRate: string; speechInputRate: string; speechOutputRate: string; displayName: string; transportKind: AgentProviderTransport; model: string; utilityModel: string; agentReasoningEffort: AgentReasoningEffort | null; utilityReasoningEffort: AgentReasoningEffort | null; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; cancellation: boolean }
+interface ProfileDraft { mediaAttachments: boolean; mediaImages: boolean; mediaSpeech: boolean; mediaVideo: boolean; mediaMusic: boolean; videoInputRate: string; videoOutputRate: string; videoTextOutputRate: string; musicSongRate: string; imageInputRate: string; imageOutputRate: string; speechInputRate: string; speechOutputRate: string; displayName: string; transportKind: AgentProviderTransport; model: string; utilityModel: string; agentReasoningEffort: AgentReasoningEffort | null; utilityReasoningEffort: AgentReasoningEffort | null; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; cancellation: boolean }
 
 const { csrfToken, embedded = false } = defineProps<{ csrfToken: string; embedded?: boolean }>()
 const { smAndDown } = useDisplay()
@@ -707,7 +723,7 @@ const formatConnectionCheckDate = (completedAt: string): string => {
   const completed = new Date(completedAt)
   return Number.isNaN(completed.getTime()) ? 'at an unknown time' : connectionDateFormatter.format(completed)
 }
-const defaults = (): ProfileDraft => ({ mediaAttachments: false, mediaImages: false, mediaSpeech: false, imageInputRate: '', imageOutputRate: '', speechInputRate: '', speechOutputRate: '', displayName: '', transportKind: 'openai-responses', model: '', utilityModel: '', agentReasoningEffort: null, utilityReasoningEffort: null, ...agentProviderProtocolDefaults('openai-responses'), secretValue: '', exposureMode: 'all_agent_users', groupIds: [], maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, reservationMilliseconds: 300000, timeoutMs: 120000, maxRetries: 0, maxAttempts: 3, promptVersion: 1, additionalHeaders: {} })
+const defaults = (): ProfileDraft => ({ mediaAttachments: false, mediaImages: false, mediaSpeech: false, mediaVideo: false, mediaMusic: false, videoInputRate: '1500000', videoOutputRate: '17500000', videoTextOutputRate: '9000000', musicSongRate: '80000', imageInputRate: '', imageOutputRate: '', speechInputRate: '', speechOutputRate: '', displayName: '', transportKind: 'openai-responses', model: '', utilityModel: '', agentReasoningEffort: null, utilityReasoningEffort: null, ...agentProviderProtocolDefaults('openai-responses'), secretValue: '', exposureMode: 'all_agent_users', groupIds: [], maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, reservationMilliseconds: 300000, timeoutMs: 120000, maxRetries: 0, maxAttempts: 3, promptVersion: 1, additionalHeaders: {} })
 const profileDraft = reactive<ProfileDraft>(defaults())
 const profileDraftFingerprint = (): string => JSON.stringify(profileDraft)
 const profileBaseline = ref(profileDraftFingerprint())
@@ -773,7 +789,7 @@ const protocolBehaviorRows = computed(() => {
 const selectProtocol = (value: unknown) => {
   if (!isAgentProviderTransport(value)) return
   profileDraft.transportKind = value
-  Object.assign(profileDraft, agentProviderProtocolDefaults(value), { agentReasoningEffort: null, utilityReasoningEffort: null, mediaAttachments: false, mediaImages: false, mediaSpeech: false })
+  Object.assign(profileDraft, agentProviderProtocolDefaults(value), { agentReasoningEffort: null, utilityReasoningEffort: null, mediaAttachments: false, mediaImages: false, mediaSpeech: false, mediaVideo: false, mediaMusic: false })
 }
 const selectToolCalling = () => {
   profileDraft.parallelToolCalls = profileDraft.toolCalling === 'native' && agentProviderProtocolDefaults(profileDraft.transportKind).parallelToolCalls
@@ -990,6 +1006,12 @@ const openProfile = (profile?: Profile) => {
     mediaAttachments: profile.adapterConfig.media?.attachments ?? false,
     mediaImages: Boolean(profile.adapterConfig.media?.imageGeneration),
     mediaSpeech: Boolean(profile.adapterConfig.media?.transcription),
+    mediaVideo: Boolean(profile.adapterConfig.media?.videoGeneration),
+    mediaMusic: Boolean(profile.adapterConfig.media?.musicGeneration),
+    videoInputRate: profile.adapterConfig.media?.videoGeneration?.pricingRevision.split('|')[1] ?? '1500000',
+    videoOutputRate: profile.adapterConfig.media?.videoGeneration?.pricingRevision.split('|')[2] ?? '17500000',
+    videoTextOutputRate: String(profile.adapterConfig.media?.videoGeneration?.textOutputMicrosPerMillionTokens ?? 9000000),
+    musicSongRate: String(profile.adapterConfig.media?.musicGeneration?.costMicrosPerSong ?? 80000),
     imageInputRate: profile.adapterConfig.media?.imageGeneration?.pricingRevision.split('|')[1] ?? '',
     imageOutputRate: profile.adapterConfig.media?.imageGeneration?.pricingRevision.split('|')[2] ?? '',
     speechInputRate: profile.adapterConfig.media?.transcription?.pricingRevision.split('|')[1] ?? '',
@@ -1022,11 +1044,15 @@ const mediaRateValid = (value: string): boolean => /^[1-9][0-9]{0,14}$/u.test(va
 const mediaRateRule = (value: string): true | string => mediaRateValid(value) || 'Enter a positive whole number in microdollars per million tokens.'
 const mediaSettingsValid = computed(() => profileDraft.transportKind !== 'gemini-api' || (
   (!profileDraft.mediaImages || (mediaRateValid(profileDraft.imageInputRate) && mediaRateValid(profileDraft.imageOutputRate))) &&
+  (!profileDraft.mediaVideo || [profileDraft.videoInputRate, profileDraft.videoOutputRate, profileDraft.videoTextOutputRate].every(mediaRateValid)) &&
+  (!profileDraft.mediaMusic || mediaRateValid(profileDraft.musicSongRate)) &&
   (!profileDraft.mediaSpeech || (mediaRateValid(profileDraft.speechInputRate) && mediaRateValid(profileDraft.speechOutputRate)))
 ))
-const mediaPayload = () => profileDraft.transportKind !== 'gemini-api' || !(profileDraft.mediaAttachments || profileDraft.mediaImages || profileDraft.mediaSpeech) ? {} : {
+const mediaPayload = () => profileDraft.transportKind !== 'gemini-api' || !(profileDraft.mediaAttachments || profileDraft.mediaImages || profileDraft.mediaSpeech || profileDraft.mediaVideo || profileDraft.mediaMusic) ? {} : {
   media: {
     attachments: profileDraft.mediaAttachments,
+    ...(profileDraft.mediaVideo ? { videoGeneration: { model: 'gemini-omni-1.1-flash', pricingRevision: `video-v1|${profileDraft.videoInputRate}|${profileDraft.videoOutputRate}`, textOutputMicrosPerMillionTokens: Number(profileDraft.videoTextOutputRate), usagePolicy: 'reported-or-estimated' } } : {}),
+    ...(profileDraft.mediaMusic ? { musicGeneration: { model: 'lyria-3.5', costMicrosPerSong: Number(profileDraft.musicSongRate), usagePolicy: 'reported-or-estimated' } } : {}),
     ...(profileDraft.mediaImages ? { imageGeneration: { model: 'gemini-3.1-flash-image', pricingRevision: `gemini-image-v1|${profileDraft.imageInputRate}|${profileDraft.imageOutputRate}` } } : {}),
     ...(profileDraft.mediaSpeech ? { transcription: { model: 'gemini-3.5-transcribe', pricingRevision: `gemini-speech-v1|${profileDraft.speechInputRate}|${profileDraft.speechOutputRate}` } } : {})
   }

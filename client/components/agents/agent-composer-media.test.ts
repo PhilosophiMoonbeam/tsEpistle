@@ -7,7 +7,7 @@ const source = fs.readFileSync(new URL('./agent-composer-media.vue', import.meta
 const script = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1]
 if (!script) throw new Error('Media composer script is missing')
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
-const evaluate = new Function('dependencies', `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, addFiles, editImage, clear, cancelDictation, startRecording, stopRecording, attachments, imageMode, recording, transcribing, error }`)
+const evaluate = new Function('dependencies', `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, addFiles, editImage, clear, cancelDictation, startRecording, stopRecording, attachments, generationMode, generationModes, selectGeneration, recording, transcribing, error }`)
 const sessionId = '00000000-0000-4000-8000-000000000081'
 const mediaId = '00000000-0000-4000-8000-000000000082'
 const runId = '00000000-0000-4000-8000-000000000083'
@@ -24,7 +24,7 @@ class Recorder {
   start() { this.state = 'recording' }
   stop() { this.state = 'inactive'; this.ondataavailable?.({ data: new Blob(['voice'], { type: this.mimeType }) }); this.onstop?.() }
 }
-const mount = (options: { media?: { attachments: boolean; imageGeneration: boolean; transcription: boolean }; fetch?: typeof fetch; microphone?: () => Promise<unknown>; focus?: () => void } = {}) => {
+const mount = (options: { media?: { attachments: boolean; imageGeneration: boolean; videoGeneration?: boolean; musicGeneration?: boolean; transcription: boolean }; fetch?: typeof fetch; microphone?: () => Promise<unknown>; focus?: () => void } = {}) => {
   const props = reactive({ csrfToken: 'csrf', session: { id: sessionId, version: 3, profileResolutionToken: 'resolved' }, capabilities: options.media, disabled: false, networkBlocked: false })
   const events: Array<[string, unknown]> = []
   const cleanup: Array<() => void> = []
@@ -98,7 +98,7 @@ describe('Agent media composer lifecycle', () => {
     expect(await harness.api.editImage({ ...media, kind: 'generated-image' })).toBe(false)
     expect(requests).toBe(1)
     expect(harness.api.attachments.value).toHaveLength(1)
-    expect(harness.api.imageMode.value).toBe(false)
+    expect(harness.api.generationMode.value).toBe('text')
     expect(harness.api.error.value).toContain('Remove PDF')
     harness.api.clear()
     harness.unmount()
@@ -107,7 +107,7 @@ describe('Agent media composer lifecycle', () => {
     const methods: string[] = []
     const harness = mount({ media: { attachments: false, imageGeneration: true, transcription: false }, fetch: async (_input, init) => { methods.push(init?.method ?? 'GET'); return response({ media }) } })
     await harness.api.addFiles([new File(['bytes'], 'image.png', { type: 'image/png' })])
-    expect(harness.api.imageMode.value).toBe(true)
+    expect(harness.api.generationMode.value).toBe('image')
     expect(harness.api.attachments.value).toHaveLength(1)
     harness.api.clear(); harness.unmount()
     expect(methods).toEqual(['POST'])
@@ -184,10 +184,33 @@ describe('Agent Wiki asset attachments', () => {
     await harness.api.attachAsset({ ...asset, ext: '.pdf', filename: 'document.pdf' })
     expect(requests).toBe(0)
     await harness.api.attachAsset(asset)
-    expect(harness.api.imageMode.value).toBe(true)
+    expect(harness.api.generationMode.value).toBe('image')
     harness.api.attachments.value = [media, media, media, media]
     harness.api.browseAssets()
     expect(harness.api.assetPickerOpen.value).toBe(false)
+    harness.api.clear(); harness.unmount()
+  })
+})
+
+describe('generation modes', () => {
+  it('offers configured modes only and resets a removed capability', async () => {
+    const harness = mount({ media: { attachments: false, imageGeneration: false, videoGeneration: true, musicGeneration: true, transcription: false } })
+    expect(harness.api.generationModes.value.map((mode: { value: string }) => mode.value)).toEqual(['video', 'music'])
+    harness.api.selectGeneration('image')
+    expect(harness.api.generationMode.value).toBe('text')
+    harness.api.selectGeneration('video'); await nextTick()
+    expect(harness.events).toContainEqual(['change', { attachmentIds: [], responseMode: 'video' }])
+    harness.props.capabilities!.videoGeneration = false; await nextTick()
+    expect(harness.api.generationMode.value).toBe('text')
+    harness.unmount()
+  })
+  it('admits image inputs for music-only providers and rejects PDFs in generation mode', async () => {
+    const harness = mount({ media: { attachments: false, imageGeneration: false, musicGeneration: true, transcription: false } })
+    await harness.api.addFiles([new File(['bytes'], 'image.png', { type: 'image/png' })]); await nextTick()
+    expect(harness.api.generationMode.value).toBe('music')
+    expect(await harness.api.addFiles([new File(['%PDF-1.7'], 'source.pdf', { type: 'application/pdf' })])).toBe(false)
+    harness.api.selectGeneration('text')
+    expect(harness.api.generationMode.value).toBe('music')
     harness.api.clear(); harness.unmount()
   })
 })

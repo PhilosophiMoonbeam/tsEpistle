@@ -2,7 +2,7 @@ import { AGENT_ATTACHMENT_MAX_BYTES, AGENT_PDF_ATTACHMENT_MAX_BYTES } from '../.
 
 export interface AgentMediaSubmission {
   readonly attachmentIds: readonly string[]
-  readonly responseMode: 'text' | 'image'
+  readonly responseMode: 'text' | 'image' | 'video' | 'music'
 }
 export const validateAgentAttachment = (file: Pick<File, 'type' | 'size'>): string | null => {
   if (!['image/png', 'image/jpeg', 'image/webp', 'application/pdf'].includes(file.type)) return 'Choose a PNG, JPEG, WebP image, or PDF.'

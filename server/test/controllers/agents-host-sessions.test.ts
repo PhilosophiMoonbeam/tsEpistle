@@ -328,6 +328,7 @@ describe('ordinary-origin agent session API', () => {
   let agentsEnabled = true
   let mediaAuthorized = true
   let mediaUploadEnabled = false
+  let visibleMediaCapabilities: { attachments: boolean; imageGeneration: boolean; transcription: boolean; videoGeneration?: boolean; musicGeneration?: boolean } = { attachments: true, imageGeneration: true, transcription: true }
   let assetAccessAllowed = true
   const assetAccessPaths: string[] = []
   let revokeMediaInEngine: 'permission' | 'profile' | 'grant' | null = null
@@ -341,6 +342,7 @@ describe('ordinary-origin agent session API', () => {
   let engineMemory: AgentEngineRequest['memory'] | undefined
   let engineRunId: string | undefined
   let engineFailure: unknown = null
+  let generatedOutput: { payload: Buffer; mimeType: string; filename: string; kind: 'generated-video' | 'generated-audio' } | null = null
   let engineContextLimit: AgentEngineResult['contextLimit']
   const runtimeLogs: unknown[] = []
   const auxiliaryRuntimes = new Set<AgentProductRuntime>()
@@ -559,6 +561,7 @@ describe('ordinary-origin agent session API', () => {
     agentsEnabled = true
     mediaAuthorized = true
     mediaUploadEnabled = false
+    visibleMediaCapabilities = { attachments: true, imageGeneration: true, transcription: true }
     assetAccessAllowed = true
     assetAccessPaths.length = 0
     revokeMediaInEngine = null
@@ -571,6 +574,7 @@ describe('ordinary-origin agent session API', () => {
     engineMemory = undefined
     engineRunId = undefined
     engineFailure = null
+    generatedOutput = null
     engineContextLimit = undefined
     runtimeLogs.length = 0
     ;({ db, destroy: destroyDatabase } = await createAgentMediaTestDatabase())
@@ -604,6 +608,7 @@ describe('ordinary-origin agent session API', () => {
           await request.authorizeMedia!()
         }
         if (engineFailure !== null) throw engineFailure
+        if (generatedOutput) await sink.media!([generatedOutput])
         await sink.text('Hello ')
         await sink.text('from the deterministic engine.')
         return {
@@ -717,7 +722,7 @@ describe('ordinary-origin agent session API', () => {
           if (!mediaUploadEnabled) return undefined
           return {
             listVisible: async () => [
-              { id: '00000000-0000-4000-8000-000000000070', isGlobalDefault: true, media: { attachments: true, imageGeneration: true, transcription: true } }
+              { id: '00000000-0000-4000-8000-000000000070', isGlobalDefault: true, media: visibleMediaCapabilities }
             ],
             issueResolutionToken: async () => 'test-profile-resolution'
           } as unknown as NonNullable<Parameters<typeof createAgentsHostController>[0]['providerRegistry']>
@@ -999,6 +1004,86 @@ describe('ordinary-origin agent session API', () => {
     expect(attachment?.preparePdf).toBeTypeOf('function')
     expect(queries.some(sql => /select \*/.test(sql) && sql.includes('agentMedia'))).toBe(false)
     expect(engineMessages.some(message => message.content.includes('Attachment content is unavailable'))).toBe(false)
+  })
+  it.each(['video', 'music'] as const)('admits configured %s generation, preserves replay identity, and privately serves playback byte ranges', async mode => {
+    await enableTestMedia()
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const input = { ownerId: 7, sessionId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), content: 'Create a short scene.', responseMode: mode }
+    await expect(runtime.submit(input)).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+    const config = { timeoutMs: 30000, maxRetries: 0, media: {
+      attachments: true,
+      videoGeneration: { model: 'gemini-omni-1.1-flash', pricingRevision: 'USD|1|1', textOutputMicrosPerMillionTokens: 1, usagePolicy: 'reported-or-estimated' },
+      musicGeneration: { model: 'lyria-3.5', costMicrosPerSong: 1, usagePolicy: 'reported-or-estimated' }
+    } }
+    await db('agentProviderProfileVersions').where({ id: '00000000-0000-4000-8000-000000000070' }).update({ adapterConfig: JSON.stringify(config) })
+    visibleMediaCapabilities = { attachments: false, imageGeneration: false, transcription: false, videoGeneration: mode === 'video', musicGeneration: mode === 'music' }
+    const image = await sharp({ create: { width: 1, height: 1, channels: 3, background: 'red' } }).png().toBuffer()
+    const imageForm = new FormData()
+    imageForm.append('file', new Blob([image], { type: 'image/png' }), 'reference.png')
+    const imageUpload = await uploadForm(sessionId, imageForm)
+    expect(imageUpload.status).toBe(201)
+    const imageId = ((await imageUpload.json()) as { media: { id: string } }).media.id
+    const pdfForm = new FormData()
+    pdfForm.append('file', new Blob(['%PDF-1.7'], { type: 'application/pdf' }), 'brief.pdf')
+    expect((await uploadForm(sessionId, pdfForm)).status).toBe(404)
+    const videoForm = new FormData()
+    videoForm.append('file', new Blob(['0000ftypisom'], { type: 'video/mp4' }), 'input.mp4')
+    expect((await uploadForm(sessionId, videoForm)).status).toBe(404)
+    const pdf = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: Buffer.from('%PDF-1.7'), mimeType: 'application/pdf', filename: 'brief.pdf' })
+    await expect(runtime.submit({ ...input, attachmentIds: [pdf.id] })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
+    const generationInput = { ...input, attachmentIds: [imageId] }
+    const admitted = await runtime.submit(generationInput)
+    expect(JSON.parse(admitted.run.mediaRequest!)).toEqual({ kind: mode })
+    expect((await runtime.submit(generationInput)).replayed).toBe(true)
+    await expect(runtime.submit({ ...generationInput, responseMode: mode === 'video' ? 'music' : 'video' })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
+    const payload = Buffer.from(mode === 'video' ? '\0\0\0\x18ftypisom0000000000000000' : 'ID3generated music bytes')
+    generatedOutput = { payload, mimeType: mode === 'video' ? 'video/mp4' : 'audio/mpeg', filename: mode === 'video' ? 'clip.mp4' : 'song.mp3', kind: mode === 'video' ? 'generated-video' : 'generated-audio' }
+    await runtime.runOnce()
+    const stored = await db('agentMedia').where({ runId: admitted.run.id, kind: generatedOutput.kind }).first('id', 'byteLength')
+    expect(stored?.byteLength).toBe(payload.length)
+    const threadResponse = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
+    expect(await threadResponse.json()).toMatchObject({ messages: [{}, { media: [{ id: stored.id, kind: generatedOutput.kind }] }] })
+    generatedOutput = null
+    // Past playback remains available when administrators disable generation.
+    await db('agentProviderProfileVersions').where({ id: '00000000-0000-4000-8000-000000000070' }).update({ adapterConfig: JSON.stringify({ timeoutMs: 30000, maxRetries: 0, media: { attachments: true } }) })
+    const mediaUrl = `${baseUrl}/_api/agents/media/${stored.id}/content`
+    const queries: string[] = []
+    const record = (query: { sql: string }) => queries.push(query.sql)
+    db.on('query', record)
+    const range = await fetch(mediaUrl, { headers: { cookie, range: 'bytes=4-7' } })
+    expect(range.status).toBe(206)
+    expect(range.headers.get('content-range')).toBe(`bytes 4-7/${payload.length}`)
+    expect(range.headers.get('content-length')).toBe('4')
+    expect(range.headers.get('accept-ranges')).toBe('bytes')
+    expect(range.headers.get('cache-control')).toBe('private, no-store')
+    expect(range.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(Buffer.from(await range.arrayBuffer())).toEqual(payload.subarray(4, 8))
+    db.off('query', record)
+    expect(queries.some(sql => /select \*/.test(sql) && sql.includes('agentMedia'))).toBe(false)
+    expect(queries.filter(sql => /substr(?:ing)?\(/.test(sql))).toHaveLength(1)
+    for (const [header, expected] of [['bytes=-3', payload.subarray(-3)], ['bytes=5-', payload.subarray(5)]] as const) {
+      const response = await fetch(mediaUrl, { headers: { cookie, range: header } })
+      expect(response.status).toBe(206)
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(expected)
+    }
+    for (const header of ['bytes=999-1000', 'bytes=9-2', 'bytes=0-1,4-5', 'bytes=-0']) {
+      const response = await fetch(mediaUrl, { headers: { cookie, range: header } })
+      expect(response.status).toBe(416)
+      expect(response.headers.get('content-range')).toBe(`bytes */${payload.length}`)
+    }
+    const full = await fetch(mediaUrl, { headers: { cookie } })
+    expect(full.status).toBe(200)
+    expect(Buffer.from(await full.arrayBuffer())).toEqual(payload)
+    const head = await fetch(mediaUrl, { method: 'HEAD', headers: { cookie } })
+    expect(head.headers.get('content-length')).toBe(String(payload.length))
+    expect((await head.arrayBuffer()).byteLength).toBe(0)
+    const sessionVersion = Number((await db('agentSessions').where({ id: sessionId }).first('version')).version)
+    await runtime.submit({ ...input, expectedSessionVersion: sessionVersion, clientRequestId: randomUUID(), responseMode: 'text', content: 'Continue the chat.' })
+    await runtime.runOnce()
+    expect(engineMessages.flatMap(message => message.attachments ?? []).some(file => file.id === stored.id)).toBe(false)
+    ownerId = 8
+    expect((await fetch(mediaUrl, { headers: { cookie, range: 'bytes=0-3' } })).status).toBe(404)
   })
   it('keeps transcription turns hidden, exposes only completed text to the owner, and purges recording bytes', async () => {
     await enableTestMedia()

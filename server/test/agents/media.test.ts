@@ -1,4 +1,5 @@
 import sharp from 'sharp'
+import { AGENT_GENERATED_VIDEO_MAX_BYTES, AGENT_GENERATED_AUDIO_MAX_BYTES } from '../../../shared/agents/media-limits.ts'
 import { readFile, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
@@ -209,6 +210,26 @@ describe('private Agent media', () => {
     expect(await source.loadPayload!(new AbortController().signal)).toEqual(png)
     await db('agentSessions').where({ id: sessionId }).update({ deletedAt: new Date() })
     await expect(source.loadPayload!(new AbortController().signal)).rejects.toMatchObject({ status: 404 })
+  })
+  it.each(['generated-video', 'generated-audio'] as const)('stores %s only with a live run lease, expected MIME, signature, and generated size limit', async kind => {
+    const video = kind === 'generated-video'
+    const payload = Buffer.from(video ? '\0\0\0\x18ftypisom0000000000000000' : 'ID3generated music bytes')
+    const input = { ownerId: 7, sessionId, payload, mimeType: video ? 'video/mp4' : 'audio/mpeg', filename: video ? 'clip.mp4' : 'song.mp3', kind, messageId, runId, leaseOwner: 'worker', leaseToken: runId }
+    await expect(storeAgentMedia(db, { ...input, leaseToken: randomUUID() })).rejects.toMatchObject({ code: 'RUN_LEASE_LOST' })
+    await expect(storeAgentMedia(db, { ...input, mimeType: 'text/html' })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
+    await expect(storeAgentMedia(db, { ...input, payload: Buffer.from('not playable media') })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
+    const oversized = Buffer.alloc((video ? AGENT_GENERATED_VIDEO_MAX_BYTES : AGENT_GENERATED_AUDIO_MAX_BYTES) + 1)
+    payload.copy(oversized)
+    await expect(storeAgentMedia(db, { ...input, payload: oversized })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
+    const stored = await storeAgentMedia(db, input)
+    expect(stored.kind).toBe(kind)
+    expect(stored.expiresAt).toBeNull()
+    expect((await getOwnedAgentMedia(db, 7, stored.id)).payload).toEqual(payload)
+    await expect(getOwnedAgentMedia(db, 8, stored.id)).rejects.toMatchObject({ status: 404 })
+    expect((await db('agentRuns').where({ id: runId }).first('sideEffectsStarted')).sideEffectsStarted).toBeTruthy()
+    expect(() => validateAgentMedia(payload, 'video/mp4')).toThrow()
+    await db('agentSessions').where({ id: sessionId }).delete()
+    expect(await db('agentMedia').where({ id: stored.id }).first()).toBeUndefined()
   })
   it('rejects stale generated-output leases and cancellation', async () => {
     const input = {

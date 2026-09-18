@@ -55,7 +55,7 @@ const Citation = z.object({
 })
 const Media = z.object({
   id: Uuid,
-  kind: z.enum(['attachment', 'generated-image']),
+  kind: z.enum(['attachment', 'generated-image', 'generated-video', 'generated-audio']),
   filename: z.string(),
   mimeType: z.string(),
   byteLength: z.number().int().nonnegative(),
@@ -255,7 +255,7 @@ const SessionSummary = z.object({
 })
 const ConversationFolder = z.object({ id: Uuid, name: z.string(), version: z.number().int().positive(), createdAt: Iso, updatedAt: Iso })
 const Profile = z.object({
-  media: z.object({ attachments: z.boolean(), imageGeneration: z.boolean(), transcription: z.boolean() }).optional(),
+  media: z.object({ attachments: z.boolean(), imageGeneration: z.boolean(), videoGeneration: z.boolean().default(false), musicGeneration: z.boolean().default(false), transcription: z.boolean() }).optional(),
   id: Uuid,
   name: z.string(),
   transport: z.enum(AGENT_PROVIDER_TRANSPORTS),

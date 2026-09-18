@@ -45,7 +45,7 @@ test('Agent media stays hidden without administrator configuration', async ({ pa
   const fixture = await installEnabledAgentFixture(page)
   const agent = await openAgent(page)
   await expect(agent.getByRole('button', { name: 'Attach images or PDFs', exact: true })).toHaveCount(0)
-  await expect(agent.getByRole('button', { name: 'Generate or edit an image', exact: true })).toHaveCount(0)
+  await expect(agent.getByRole('button', { name: 'Choose generation mode', exact: true })).toHaveCount(0)
   await expect(agent.getByRole('button', { name: 'Dictate a message', exact: true })).toHaveCount(0)
   const screenshot = test.info().outputPath('agent-media-final-layout.png')
   await page.screenshot({ path: screenshot })
@@ -123,7 +123,8 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
   await fileInput.setInputFiles({ name: 'reference.png', mimeType: 'image/png', buffer: png })
   await expect(agent.getByRole('button', { name: 'Remove reference.png', exact: true })).toBeVisible()
   await input.fill('Turn this into a watercolor illustration.')
-  await agent.getByRole('button', { name: 'Generate or edit an image', exact: true }).click()
+  await agent.getByRole('button', { name: 'Choose generation mode', exact: true }).click()
+  await page.locator('[aria-label="Generation mode"]').getByText('Image', { exact: true }).click()
   await agent.getByRole('button', { name: 'Create image', exact: true }).click()
   await expect(agent.locator('.agent-message__media img[alt="Image created by Wiki Agent"]')).toBeVisible()
   await expect(agent.getByRole('link', { name: 'generated-image.png · Download', exact: true })).toBeVisible()
@@ -131,7 +132,7 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
   expect(sent[0]?.responseMode).toBe('image')
   expect(sent[0]?.attachmentIds).toEqual([uploaded[1]?.id])
   await agent.getByRole('button', { name: 'Edit image', exact: true }).click()
-  await expect(agent.getByRole('button', { name: 'Generate or edit an image', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(agent.getByRole('button', { name: 'Choose generation mode', exact: true })).toContainText('Image')
   await expect(agent.getByRole('button', { name: 'Remove reference.png', exact: true })).toBeVisible()
   await expect(input).toHaveValue('Edit this image: ')
   expect(uploaded).toHaveLength(3)
@@ -210,5 +211,75 @@ test('Agent attaches a Wiki asset through a keyboard-accessible private-copy pic
   await picker.locator('.agent-asset-picker').screenshot({ path: screenshot })
   await test.info().attach('agent-wiki-asset-picker', { path: screenshot, contentType: 'image/png' })
   await picker.getByRole('button', { name: 'Close asset picker', exact: true }).click()
+  fixture.assertNoUnexpectedRequests()
+})
+
+
+test('Agent video and music modes create playable, downloadable results', async ({ page }) => {
+  await installBrowserIdentity(page)
+  const fixture = await installEnabledAgentFixture(page, { media: { attachments: false, imageGeneration: false, videoGeneration: true, musicGeneration: true, transcription: false } })
+  // One-second silent fixtures exercise native decoding without paid provider requests.
+  const videoBytes = Buffer.from('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', 'base64')
+  const musicBytes = Buffer.from('SUQzBAAAAAAAIlRTU0UAAAAOAAADTGF2ZjYyLjMuMTAwAAAAAAAAAAAAAAD/83DAAAAAAAAAAAAASW5mbwAAAA8AAAApAAAE5QAqKjAwNTU1Ojo/Pz9FRUpKSk9PVVVaWlpgYGVlZWpqb29vdXV6enp/f4WFioqKkJCVlZWamp+fn6WlqqqwsLC1tbq6usDAxcXFysrPz8/V1dra4ODg5eXq6urw8PX19fr6//8AAAAATGF2YzYyLjExAAAAAAAAAAAAAAAAJAPeAAAAAAAABOXVLMe7AAAAAAAAAAAAAAAAAP/zEMQAAAADSAAAAABMQU1FMy4xMExBTUUz//MSxA0AAANIAAAAAC4xMDEgKGJlTEFNRTMu//MQxBsAAANIAAAAADEwMSAoYmVMQU1FMy7/8xDEKAAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMQ1AAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxEIAAANIAAAAADEwMSAoYmVMQU1FMy7/8xDETwAAA0gAAAAAMTAxIChiZXRMQU1FM//zEMRcAAADSAAAAAAuMTAxIChiZUxBTUUz//MQxGkAAANIAAAAAC4xMDEgKGJlTEFNRTP/8xLEdgAAA0gAAAAALjEwMSAoYmVMQU1FMy7/8xDEhAAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMSRAAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxJ4AAANIAAAAADEwMSAoYmVMQU1FMy7/8xDEqwAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMS4AAADSAAAAAAxMDEgKGJldExBTUUz//MQxMUAAANIAAAAAC4xMDEgKGJlTEFNRTP/8xDE0gAAA0gAAAAALjEwMSAoYmVMQU1FM//zEsTfAAADSAAAAAAuMTAxIChiZUxBTUUzLv/zEMTtAAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxPIAAANIAAAAADEwMSAoYmVMQU1FMy7/8xDE8gAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMTyAAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxPIAAANIAAAAADEwMSAoYmV0YSAzKVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MSxPEAAANIAAAAAFVVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xLE8QAAA0gAAAAAVVVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVQ==', 'base64')
+  const outputs = new Map<string, boolean>()
+  let thread: AgentThreadState | null = null
+  const sent: string[] = []
+  await page.route(/\/_api\/agents(?:\/|$)/, async route => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    if (/\/media\/[^/]+\/content$/.test(path)) {
+      const isVideo = outputs.get(path.split('/').at(-2)!)
+      return route.fulfill({ contentType: isVideo ? 'video/mp4' : 'audio/mpeg', body: isVideo ? videoBytes : musicBytes })
+    }
+    if (thread && path === `/_api/agents/sessions/${fixture.sessionId}` && request.method() === 'GET') return route.fulfill({ json: thread })
+    if (thread && path.endsWith(`/sessions/${fixture.sessionId}/messages`) && request.method() === 'POST') {
+      const body = request.postDataJSON() as { content: string; responseMode: string }
+      sent.push(body.responseMode)
+      const video = body.responseMode === 'video'
+      const mediaId = crypto.randomUUID()
+      outputs.set(mediaId, video)
+      const now = new Date().toISOString()
+      const run = { id: crypto.randomUUID(), sessionId: fixture.sessionId, status: 'succeeded' as const, attempt: 1, eventSequence: 2, canCancel: false, createdAt: now, startedAt: now, completedAt: now, errorCode: null, errorMessage: null }
+      thread = { ...thread, session: { ...thread.session, version: thread.session.version + 1, currentRun: run }, messages: [...thread.messages,
+        { id: crypto.randomUUID(), runId: run.id, ordinal: thread.messages.length, role: 'user', status: 'complete', content: body.content, citations: [], createdAt: now, updatedAt: now },
+        { id: crypto.randomUUID(), runId: run.id, ordinal: thread.messages.length + 1, role: 'assistant', status: 'complete', content: '', citations: [], createdAt: now, updatedAt: now, media: [{ id: mediaId, kind: video ? 'generated-video' : 'generated-audio', filename: video ? 'generated-video.mp4' : 'generated-music.mp3', mimeType: video ? 'video/mp4' : 'audio/mpeg', byteLength: 100, available: true }] }
+      ] }
+      return route.fulfill({ status: 202, json: { run, replayed: false } })
+    }
+    return route.fallback()
+  })
+  const initialThread = page.waitForResponse(response => {
+    const path = new URL(response.url()).pathname
+    return (path === `/_api/agents/sessions/${fixture.sessionId}` && response.request().method() === 'GET') || (path === '/_api/agents/sessions' && response.request().method() === 'POST')
+  })
+  const agent = await openAgent(page)
+  thread = await (await initialThread).json() as AgentThreadState
+  const input = agent.locator('.agent-composer textarea')
+  for (const mode of ['Video', 'Music']) {
+    const trigger = agent.getByRole('button', { name: 'Choose generation mode', exact: true })
+    await expectLocatorWithinViewport(trigger, 'Generation mode control')
+    await trigger.click()
+    const menu = page.locator('[aria-label="Generation mode"]')
+    await expect(menu.getByText('Image', { exact: true })).toHaveCount(0)
+    await menu.getByText(mode, { exact: true }).click()
+    await expect(input).toHaveAttribute('placeholder', mode === 'Video' ? /Describe your video/ : /Describe your music/)
+    await input.fill(mode === 'Video' ? 'A calm sunrise over the sea.' : 'An ambient piano composition for sunrise.')
+    await agent.getByRole('button', { name: `Create ${mode.toLowerCase()}`, exact: true }).click()
+    const player = agent.locator(mode === 'Video' ? 'video' : 'audio')
+    await expect(player).toBeVisible()
+    await expect(player).toHaveAttribute('controls', '')
+    await expect(player).toHaveAttribute('preload', 'metadata')
+    await expect.poll(() => player.evaluate(element => (element as HTMLMediaElement).readyState)).toBeGreaterThanOrEqual(1)
+    await player.evaluate(element => (element as HTMLMediaElement).play())
+    await expect.poll(() => player.evaluate(element => (element as HTMLMediaElement).currentTime)).toBeGreaterThan(0)
+    await player.evaluate(element => (element as HTMLMediaElement).pause())
+    await expect(player).not.toHaveAttribute('autoplay')
+    await expectLocatorWithinViewport(player, `${mode} player`)
+    await expect(agent.getByRole('link', { name: mode === 'Video' ? 'generated-video.mp4 · Download' : 'generated-music.mp3 · Download', exact: true })).toBeVisible()
+  }
+  expect(sent).toEqual(['video', 'music'])
+  const screenshot = test.info().outputPath('agent-generation-players.png')
+  await page.screenshot({ path: screenshot })
+  await test.info().attach('agent-generation-players', { path: screenshot, contentType: 'image/png' })
   fixture.assertNoUnexpectedRequests()
 })

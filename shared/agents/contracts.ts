@@ -39,6 +39,8 @@ export const AGENT_ACTION_NAMES = [
   'skills.read',
   'memory.manage',
   'media.generateImage',
+  'media.generateVideo',
+  'media.generateMusic',
   'browser.navigate',
   'browser.observe',
   'browser.act',
@@ -76,6 +78,8 @@ export const AGENT_TOOL_NAMES = {
   'skills.read': 'wiki_read_skill',
   'memory.manage': 'wiki_manage_memory',
   'media.generateImage': 'wiki_generate_image',
+  'media.generateVideo': 'wiki_generate_video',
+  'media.generateMusic': 'wiki_generate_music',
   'browser.navigate': 'wiki_browser_navigate',
   'browser.observe': 'wiki_browser_observe',
   'browser.act': 'wiki_browser_act',
@@ -225,12 +229,14 @@ export interface AgentFollowUpSuggestion {
 export interface AgentMediaCapabilities {
   readonly attachments: boolean
   readonly imageGeneration: boolean
+  readonly videoGeneration?: boolean
+  readonly musicGeneration?: boolean
   readonly transcription: boolean
 }
 
 export interface AgentMediaView {
   readonly id: string
-  readonly kind: 'attachment' | 'generated-image'
+  readonly kind: 'attachment' | 'generated-image' | 'generated-video' | 'generated-audio'
   readonly filename: string
   readonly mimeType: string
   readonly byteLength: number
@@ -500,6 +506,7 @@ export const AGENT_EVENT_TYPES = [
   'approval.requested',
   'approval.resolved',
   'usage.updated',
+  'media.usage',
   'run.completed',
   'run.partial',
   'run.failed',
@@ -571,7 +578,7 @@ export interface UpdateAgentSessionProfileRequest {
 
 export interface SubmitAgentMessageRequest {
   readonly attachmentIds?: readonly string[]
-  readonly responseMode?: 'text' | 'image'
+  readonly responseMode?: 'text' | 'image' | 'video' | 'music'
   readonly clientRequestId: string
   readonly expectedSessionVersion: number
   readonly profileResolutionToken: string

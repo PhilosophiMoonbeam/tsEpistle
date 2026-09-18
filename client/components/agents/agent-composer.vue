@@ -245,7 +245,7 @@
           aria-label="Toggle goal mode"
           :aria-pressed="goalMode"
           :title="goalMode ? 'Disable durable goal mode' : 'Enable durable goal mode for multi-step tasks'"
-          :disabled="disabled || sendInProgress || mediaBusy || mediaSubmission.attachmentIds.length > 0 || mediaSubmission.responseMode === 'image'"
+          :disabled="disabled || sendInProgress || mediaBusy || mediaSubmission.attachmentIds.length > 0 || mediaSubmission.responseMode !== 'text'"
           @click="goalMode = !goalMode"
         >
           <span>Goal</span>
@@ -321,18 +321,18 @@ const mediaBusy = ref(false)
 const appendDictation = (text: string) => { draft.value = [draft.value.trimEnd(), text].filter(Boolean).join(' '); void focusInput() }
 const handleMediaPaste = (event: ClipboardEvent) => {
   const files = Array.from(event.clipboardData?.files ?? [])
-  if (!(props.mediaCapabilities?.attachments || props.mediaCapabilities?.imageGeneration) || !files.length) return
+  if (!(props.mediaCapabilities?.attachments || props.mediaCapabilities?.imageGeneration || props.mediaCapabilities?.videoGeneration || props.mediaCapabilities?.musicGeneration) || !files.length) return
   event.preventDefault()
   void mediaComposer.value?.addFiles(files)
 }
 const handleMediaDragOver = (event: DragEvent) => {
-  if ((props.mediaCapabilities?.attachments || props.mediaCapabilities?.imageGeneration) && event.dataTransfer?.types.includes('Files')) event.preventDefault()
+  if ((props.mediaCapabilities?.attachments || props.mediaCapabilities?.imageGeneration || props.mediaCapabilities?.videoGeneration || props.mediaCapabilities?.musicGeneration) && event.dataTransfer?.types.includes('Files')) event.preventDefault()
 }
 const handleMediaDrop = (event: DragEvent) => {
   const files = Array.from(event.dataTransfer?.files ?? [])
   if (!files.length) return
   event.preventDefault()
-  if (props.mediaCapabilities?.attachments || props.mediaCapabilities?.imageGeneration) void mediaComposer.value?.addFiles(files)
+  if (props.mediaCapabilities?.attachments || props.mediaCapabilities?.imageGeneration || props.mediaCapabilities?.videoGeneration || props.mediaCapabilities?.musicGeneration) void mediaComposer.value?.addFiles(files)
 }
 const draft = ref(props.initialDraft ?? '')
 watch(draft, text => {
@@ -416,6 +416,8 @@ const composerInputDescriptionIds = computed(() => [
 ].filter(Boolean).join(' '))
 const composerInputPlaceholder = computed(() => {
   if (mediaSubmission.value.responseMode === 'image') return 'Describe an image or the changes to make'
+  if (mediaSubmission.value.responseMode === 'video') return 'Describe your video: subject, movement and atmosphere'
+  if (mediaSubmission.value.responseMode === 'music') return 'Describe your music: mood, instruments and style'
   if (goalMode.value) return 'Describe a bounded outcome for Wiki Agent'
   if (props.skillsEnabled) {
     return props.hasMessages
@@ -435,7 +437,7 @@ const liveStatusLabel = computed(() => {
 })
 const submitLabel = computed(() => {
   if (sendFailed.value) return 'Retry'
-  return goalMode.value ? 'Start goal' : mediaSubmission.value.responseMode === 'image' ? 'Create image' : 'Send'
+  return goalMode.value ? 'Start goal' : mediaSubmission.value.responseMode !== 'text' ? `Create ${mediaSubmission.value.responseMode}` : 'Send'
 })
 const submitIcon = computed(() => {
   if (sendFailed.value) return 'mdi-refresh'

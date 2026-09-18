@@ -2,13 +2,20 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 
 import { AgentRepositoryError } from '../repository.ts'
-import type { AgentProviderFetch } from './factory.ts'
+import { AgentProviderAttemptError, type AgentProviderFetch } from './factory.ts'
 
 export const GEMINI_MEDIA_INPUT_LIMIT = 10 * 1_024 * 1_024
 export const GEMINI_PDF_INPUT_LIMIT = 48_000_000
 export const GEMINI_MEDIA_OUTPUT_LIMIT = 16 * 1_024 * 1_024
 export const GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image'
 export const GEMINI_TRANSCRIPTION_MODEL = 'gemini-3.5-transcribe'
+export const GEMINI_VIDEO_MODEL = 'gemini-omni-1.1-flash'
+export const GEMINI_MUSIC_MODEL = 'lyria-3.5'
+export const GEMINI_VIDEO_OUTPUT_LIMIT = 64 * 1_024 * 1_024
+export const GEMINI_VIDEO_RESPONSE_LIMIT = 90 * 1_024 * 1_024
+export const GEMINI_MUSIC_OUTPUT_LIMIT = 16 * 1_024 * 1_024
+export const GEMINI_MUSIC_RESPONSE_LIMIT = 24 * 1_024 * 1_024
+const GENERATED_MEDIA_TOKEN_LIMIT = 65_536
 const ORIGIN = 'https://generativelanguage.googleapis.com'
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 const AUDIO_TYPES = new Set(['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/aac', 'audio/flac'])
@@ -40,6 +47,13 @@ export interface GeminiMediaOptions {
   fetch: AgentProviderFetch
 }
 export type GeminiMediaContent = { type: 'text'; text: string } | { type: 'image' | 'audio' | 'document'; uri: string; mime_type: string }
+export interface GeminiGeneratedMediaResult {
+  text: string
+  usage: GeminiMediaUsage
+  files: { bytes: Buffer; mimeType: string }[]
+  usageSource: 'reported' | 'estimated'
+  outputTokensByModality?: { text: number; video: number }
+}
 export interface GeminiMediaTokenLimits {
   maxInputTokens?: number
   maxOutputTokens?: number
@@ -95,6 +109,76 @@ const interactionSchema = z.object({
   steps: z.array(stepSchema).max(64),
   usage: usageSchema
 })
+
+const generatedAudioSchema = z.strictObject({
+  type: z.literal('audio'),
+  mime_type: z.enum(['audio/mp3', 'audio/mpeg']),
+  data: z.string().max(Math.ceil(GEMINI_MUSIC_OUTPUT_LIMIT / 3) * 4),
+  channels: z.number().int().min(1).max(2).optional(),
+  sample_rate: z.number().int().positive().max(192_000).optional()
+})
+const generatedVideoSchema = z.strictObject({
+  type: z.literal('video'),
+  mime_type: z.literal('video/mp4'),
+  data: z.string().max(Math.ceil(GEMINI_VIDEO_OUTPUT_LIMIT / 3) * 4)
+})
+const generatedInteractionSchema = z.object({
+  model: z.string(),
+  status: z.literal('completed'),
+  usage: z.unknown().optional(),
+  steps: z
+    .array(
+      z.discriminatedUnion('type', [
+        z.strictObject({
+          type: z.literal('model_output'),
+          id: z.string().max(256).optional(),
+          content: z.array(z.union([textSchema, generatedAudioSchema, generatedVideoSchema])).max(16)
+        }),
+        z.strictObject({
+          type: z.literal('thought'),
+          id: z.string().max(256).optional(),
+          signature: z.string().max(GEMINI_MEDIA_OUTPUT_LIMIT).optional(),
+          summary: z.array(textSchema).max(16).optional(),
+          content: z
+            .array(
+              z.union([
+                textSchema,
+                z.strictObject({
+                  type: z.literal('thought'),
+                  text: z.string().max(MAX_TEXT).optional(),
+                  signature: z.string().max(GEMINI_MEDIA_OUTPUT_LIMIT).optional()
+                })
+              ])
+            )
+            .max(16)
+            .optional()
+        }),
+        z.strictObject({
+          type: z.literal('user_input'),
+          id: z.string().max(256).optional(),
+          content: z
+            .array(z.union([textSchema, z.strictObject({ type: z.literal('image'), uri: z.string().max(512), mime_type: z.string().max(128).optional() })]))
+            .max(16)
+        })
+      ])
+    )
+    .max(64)
+})
+const generatedUsageSchema = usageSchema.and(
+  z.object({
+    total_thought_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    output_tokens_by_modality: z
+      .array(
+        z.object({ modality: z.enum(['text', 'video', 'audio', 'image', 'document']), tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) })
+      )
+      .max(5)
+      .optional()
+  })
+)
+const validMp4 = (bytes: Buffer): boolean =>
+  bytes.length >= 12 && bytes.toString('ascii', 4, 8) === 'ftyp' && bytes.readUInt32BE(0) >= 12 && bytes.readUInt32BE(0) <= bytes.length
+const validMp3 = (bytes: Buffer): boolean =>
+  bytes.length >= 10 && (bytes.toString('ascii', 0, 3) === 'ID3' || (bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0 && (bytes[1]! & 0x06) === 0x02))
 
 const validRaster = (bytes: Uint8Array, mime: string): boolean => {
   const buffer = Buffer.from(bytes)
@@ -155,7 +239,7 @@ export const createGeminiMediaTransport = (options: GeminiMediaOptions) => {
       })
     } catch (error) {
       if (signal.aborted) throw new AgentRepositoryError('AGENT_MEDIA_CANCELLED', 'The media request was cancelled or timed out', 408)
-      if (error instanceof AgentRepositoryError) throw error
+      if (error instanceof AgentRepositoryError || error instanceof AgentProviderAttemptError) throw error
       throw new AgentRepositoryError('AGENT_MEDIA_PROVIDER_FAILED', 'The media provider request failed', 502)
     }
     if (response.status >= 300 && response.status < 400) {
@@ -310,7 +394,12 @@ export const createGeminiMediaTransport = (options: GeminiMediaOptions) => {
     }
   }
   const countTokens = async (model: string, input: readonly GeminiMediaContent[], signal?: AbortSignal): Promise<number> => {
-    if (!/^gemini-3(?:\.[0-9]+)?(?:-[a-z0-9][a-z0-9._-]*)?$/u.test(model) || model.length > 128 || input.length > 32) throw inputError()
+    if (
+      (!/^gemini-3(?:\.[0-9]+)?(?:-[a-z0-9][a-z0-9._-]*)?$/u.test(model) && ![GEMINI_VIDEO_MODEL, GEMINI_MUSIC_MODEL].includes(model)) ||
+      model.length > 128 ||
+      input.length > 32
+    )
+      throw inputError()
     const parts = input.map(block => {
       if (block.type === 'text') {
         if (typeof block.text !== 'string' || block.text.length > MAX_TEXT) throw inputError()
@@ -417,10 +506,118 @@ export const createGeminiMediaTransport = (options: GeminiMediaOptions) => {
       }
     }
   }
+  const generateMedia = async (
+    kind: 'video' | 'music',
+    input: { prompt: string; images?: readonly GeminiMediaInput[] } & GeminiMediaTokenLimits,
+    signal?: AbortSignal
+  ): Promise<GeminiGeneratedMediaResult> => {
+    if (!input.prompt.trim() || input.prompt.length > MAX_TEXT || (input.images?.length || 0) > 4) throw inputError()
+    tokenLimit(input.maxInputTokens)
+    tokenLimit(input.maxOutputTokens)
+    const maxInputTokens = Math.min(input.maxInputTokens ?? GENERATED_MEDIA_TOKEN_LIMIT, GENERATED_MEDIA_TOKEN_LIMIT)
+    const maxOutputTokens = Math.min(input.maxOutputTokens ?? GENERATED_MEDIA_TOKEN_LIMIT, GENERATED_MEDIA_TOKEN_LIMIT)
+    for (const image of input.images || []) {
+      validateInput(image)
+      if (!IMAGE_TYPES.has(image.mimeType)) throw inputError()
+    }
+    const activeSignal = operationSignal(signal)
+    const temporaryNames = new Set<string>()
+    const contents: GeminiMediaContent[] = [{ type: 'text', text: input.prompt }]
+    const model = kind === 'video' ? GEMINI_VIDEO_MODEL : GEMINI_MUSIC_MODEL
+    try {
+      for (const image of input.images || []) {
+        await input.beforeUpload?.()
+        const uploaded = await upload(image, activeSignal)
+        temporaryNames.add(uploaded.name)
+        contents.push({ type: 'image', uri: uploaded.uri, mime_type: uploaded.mimeType })
+      }
+      const inputTokens = await countTokens(model, contents, activeSignal)
+      if (inputTokens > maxInputTokens) throw new AgentRepositoryError('AGENT_MEDIA_CONTEXT_LIMIT', 'The media exceeds this provider’s input token limit', 413)
+      const exposure = { inputTokens, outputTokens: maxOutputTokens, totalTokens: inputTokens + maxOutputTokens }
+      await input.beforeDispatch?.(exposure)
+      activeSignal.throwIfAborted()
+      input.onDispatch?.()
+      const raw = await json(
+        await request(
+          `${ORIGIN}/v1beta/interactions`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', accept: 'application/json' },
+            body: JSON.stringify({
+              model,
+              store: false,
+              background: false,
+              stream: false,
+              input: contents,
+              generation_config: { max_output_tokens: maxOutputTokens },
+              ...(kind === 'video' ? { response_format: { type: 'video', resolution: '720p', aspect_ratio: '16:9' } } : {})
+            })
+          },
+          activeSignal
+        ),
+        activeSignal,
+        kind === 'music' ? GEMINI_MUSIC_RESPONSE_LIMIT : GEMINI_VIDEO_RESPONSE_LIMIT
+      )
+      const parsed = generatedInteractionSchema.safeParse(raw)
+      if (!parsed.success || parsed.data.model !== model) throw invalid()
+      let usage: GeminiMediaUsage = exposure
+      let usageSource: 'reported' | 'estimated' = 'estimated'
+      let outputTokensByModality: { text: number; video: number } | undefined
+      if (parsed.data.usage !== undefined) {
+        const measured = generatedUsageSchema.safeParse(parsed.data.usage)
+        if (!measured.success) throw invalid()
+        const value = measured.data
+        if (value.total_thought_tokens !== undefined && value.total_thought_tokens > value.total_tokens - value.total_input_tokens - value.total_output_tokens)
+          throw invalid()
+        usage = { inputTokens: value.total_input_tokens, outputTokens: value.total_output_tokens, totalTokens: value.total_tokens }
+        usageSource = 'reported'
+        if (value.output_tokens_by_modality) {
+          const entries = value.output_tokens_by_modality
+          const total = entries.reduce((sum, entry) => sum + entry.tokens, 0)
+          if (!Number.isSafeInteger(total) || total > value.total_output_tokens || new Set(entries.map(entry => entry.modality)).size !== entries.length)
+            throw invalid()
+          if (kind === 'video' && total === value.total_output_tokens && entries.every(entry => ['text', 'video'].includes(entry.modality)))
+            outputTokensByModality = {
+              text: entries.find(entry => entry.modality === 'text')?.tokens ?? 0,
+              video: entries.find(entry => entry.modality === 'video')?.tokens ?? 0
+            }
+        }
+      }
+      const blocks = parsed.data.steps.flatMap(step => (step.type === 'model_output' ? step.content : []))
+      const text = blocks
+        .filter(block => block.type === 'text')
+        .map(block => block.text)
+        .join('\n')
+      const media = blocks.filter(block => block.type !== 'text')
+      if (text.length > MAX_TEXT || media.length !== 1) throw invalid()
+      const output = media[0]!
+      let bytes: Buffer
+      let mimeType: string
+      if (kind === 'video' && output.type === 'video') {
+        if (output.data.length % 4 !== 0 || /[^A-Za-z0-9+/=]/u.test(output.data)) throw invalid()
+        bytes = Buffer.from(output.data, 'base64')
+        if (bytes.length > GEMINI_VIDEO_OUTPUT_LIMIT || bytes.toString('base64') !== output.data || !validMp4(bytes)) throw invalid()
+        mimeType = 'video/mp4'
+      } else if (kind === 'music' && output.type === 'audio') {
+        if (output.data.length % 4 !== 0 || /[^A-Za-z0-9+/=]/u.test(output.data)) throw invalid()
+        bytes = Buffer.from(output.data, 'base64')
+        if (bytes.length > GEMINI_MUSIC_OUTPUT_LIMIT || bytes.toString('base64') !== output.data || !validMp3(bytes)) throw invalid()
+        mimeType = 'audio/mpeg'
+      } else throw invalid()
+      activeSignal.throwIfAborted()
+      return { text, usage, usageSource, files: [{ bytes, mimeType }], ...(outputTokensByModality ? { outputTokensByModality } : {}) }
+    } finally {
+      await cleanup([...temporaryNames])
+    }
+  }
   return {
     upload,
     countTokens,
     delete: remove,
+    generateVideo: (input: { prompt: string; images?: readonly GeminiMediaInput[] } & GeminiMediaTokenLimits, signal?: AbortSignal) =>
+      generateMedia('video', input, signal),
+    generateMusic: (input: { prompt: string; images?: readonly GeminiMediaInput[] } & GeminiMediaTokenLimits, signal?: AbortSignal) =>
+      generateMedia('music', input, signal),
     generateImage: async (input: { prompt: string; images?: readonly GeminiMediaInput[] } & GeminiMediaTokenLimits, signal?: AbortSignal) => {
       if (!input.prompt.trim() || input.prompt.length > MAX_TEXT || (input.images?.length || 0) > 4) throw inputError()
       for (const image of input.images || []) {

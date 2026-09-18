@@ -28,6 +28,7 @@ import {
   AgentProviderFactory
 } from './factory.ts'
 import { assertAgentTokenUsage, readAgentProviderUsage } from './usage.ts'
+import { agentVideoCostMicros } from './media-pricing.ts'
 import { createToolDiscovery, resolveToolDiscoveryCall, type ToolDiscoveryController, type ToolDiscoveryTurn } from './tool-discovery.ts'
 import { classifyAgentExecutionFailure, AgentExecutionFailure, type AgentExecutionFailureStage } from './execution-failure.ts'
 import {
@@ -1737,7 +1738,7 @@ export class AxAgentEngine implements AgentEngine {
   async #media(
     request: AgentEngineRequest,
     sink: AgentEngineSink,
-    kind: 'image' | 'transcription',
+    kind: 'image' | 'transcription' | 'video' | 'music',
     prompt?: string,
     attachmentIds?: readonly string[]
   ): Promise<AgentEngineResult & { imageCount?: number }> {
@@ -1746,7 +1747,13 @@ export class AxAgentEngine implements AgentEngine {
     await this.#authorizeMedia(request)
     const provider = await this.#factory.createMedia(request.run.providerProfileVersionId)
     const pricing = kind === 'image' ? provider.pricing.imageGeneration : provider.pricing.transcription
-    if (!pricing || (kind === 'image' && !sink.media)) throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'This media capability is unavailable', 403)
+    const videoPricing = provider.pricing.videoGeneration
+    const musicPricing = provider.pricing.musicGeneration
+    if (!(kind === 'video' ? videoPricing : kind === 'music' ? musicPricing : pricing) || (kind !== 'transcription' && !sink.media))
+      throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'This media capability is unavailable', 403)
+    const costFor = (usage: AgentTokenUsage, breakdown?: { text: number; video: number }): number =>
+      kind === 'music' ? musicPricing!.costMicrosPerSong : kind === 'video' ? agentVideoCostMicros(videoPricing!, usage, breakdown)
+        : agentProviderCostMicros(pricing!, usage.inputTokens, usage.outputTokens, usage.totalTokens)
     const latest = request.messages.filter(message => message.role === 'user').at(-1)
     const candidates = request.messages.flatMap(message => message.attachments ?? [])
     const files =
@@ -1766,8 +1773,8 @@ export class AxAgentEngine implements AgentEngine {
     const beforeDispatch = async (exposure: AgentTokenUsage): Promise<void> => {
       request.signal.throwIfAborted()
       if (request.limits?.maxTokens !== undefined && exposure.totalTokens > request.limits.maxTokens)
-        throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'The remaining budget cannot admit this media request', 409)
-      const costMicros = agentProviderCostMicros(pricing, exposure.inputTokens, exposure.outputTokens, exposure.totalTokens)
+        throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'The remaining token budget cannot admit this generation. Increase the Agent token allowance or start a new conversation.', 409)
+      const costMicros = costFor(exposure)
       const admitted = await request.dispatchBudget!.reserve({ tokens: exposure.totalTokens, costMicros })
       if (
         !admitted ||
@@ -1789,7 +1796,7 @@ export class AxAgentEngine implements AgentEngine {
     const beforeUpload = () => this.#authorizeMedia(request)
     const inputs = []
     for (const file of files) inputs.push({ bytes: await loadAgentMediaPayload(file, request.signal), mimeType: file.mimeType, displayName: file.filename.slice(0, 128) })
-    let result: { text: string; usage: AgentTokenUsage; images?: { bytes: Buffer; mimeType: string }[] }
+    let result: { text: string; usage: AgentTokenUsage; images?: { bytes: Buffer; mimeType: string }[]; files?: { bytes: Buffer; mimeType: string }[]; usageSource?: 'reported' | 'estimated'; outputTokensByModality?: { text: number; video: number } }
     try {
       request.signal.throwIfAborted()
       result =
@@ -1798,7 +1805,10 @@ export class AxAgentEngine implements AgentEngine {
               { prompt: prompt ?? latest?.content ?? '', images: inputs, beforeUpload, beforeDispatch, onDispatch },
               request.signal
             )
-          : await provider.transport.transcribe({ ...inputs[0]!, beforeUpload, beforeDispatch, onDispatch }, request.signal)
+          : kind === 'video' || kind === 'music'
+            ? await provider.transport[kind === 'video' ? 'generateVideo' : 'generateMusic'](
+                { prompt: prompt ?? latest?.content ?? '', images: inputs, beforeUpload, beforeDispatch, onDispatch }, request.signal)
+            : await provider.transport.transcribe({ ...inputs[0]!, beforeUpload, beforeDispatch, onDispatch }, request.signal)
     } catch (error) {
       if (!dispatched && reservation) await request.dispatchBudget.release(reservation)
       throw error
@@ -1806,7 +1816,7 @@ export class AxAgentEngine implements AgentEngine {
     if (!reservation) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Media dispatch reservation was not returned', 500)
     const usage = {
       ...result.usage,
-      costMicros: agentProviderCostMicros(pricing, result.usage.inputTokens, result.usage.outputTokens, result.usage.totalTokens)
+      costMicros: costFor(result.usage, result.outputTokensByModality)
     }
     await request.dispatchBudget.reconcile(reservation, usage)
     request.signal.throwIfAborted()
@@ -1819,7 +1829,16 @@ export class AxAgentEngine implements AgentEngine {
         }))
       )
     }
-    if (prompt === undefined) await presentAcceptedContent(result.text || 'Your image is ready.', sink)
+    if (result.files) {
+      await sink.media!(result.files.map(file => ({ payload: file.bytes, mimeType: file.mimeType,
+        kind: kind === 'video' ? 'generated-video' as const : 'generated-audio' as const,
+        filename: kind === 'video' ? 'generated-video.mp4' : 'generated-music.mp3' })))
+    }
+    if (kind === 'video' || kind === 'music') await sink.event('media.usage', {
+      kind, usageSource: result.usageSource ?? 'reported', priceBasis: kind === 'music' ? 'song' : 'tokens',
+      ...(result.usageSource === 'estimated' ? { estimateRevision: 'google-media-quota-v1' } : {})
+    })
+    if (prompt === undefined) await presentAcceptedContent(result.text || (kind === 'video' ? 'Your video is ready.' : kind === 'music' ? 'Your music is ready.' : 'Your image is ready.'), sink)
     return { ...usage, ...(result.images ? { imageCount: result.images.length } : {}) }
   }
 
@@ -1957,15 +1976,18 @@ export class AxAgentEngine implements AgentEngine {
           actionSession!.invoke('skills.list', {}, request.signal, 'skill-catalog-bootstrap')
         )
       }
-      if (actionSession !== null && request.purpose !== 'subagent' && request.purpose !== 'planner' && provider.mediaConfig?.imageGeneration) {
+      for (const [feature, name] of [
+        ['imageGeneration', 'media.generateImage'], ['videoGeneration', 'media.generateVideo'], ['musicGeneration', 'media.generateMusic']
+      ] as const) {
+        if (actionSession === null || request.purpose === 'subagent' || request.purpose === 'planner' || !provider.mediaConfig?.[feature]) continue
         const base = actionSession
-        const definition = ACTION_CATALOG['media.generateImage']
+        const definition = ACTION_CATALOG[name]
         actionSession = {
           authoritySha256: base.authoritySha256,
           functions: [
             ...base.functions,
             {
-              name: 'media.generateImage',
+              name,
               title: definition.descriptor.title,
               description: definition.descriptor.description,
               risk: 'read',
@@ -2891,9 +2913,10 @@ export class AxAgentEngine implements AgentEngine {
             const output =
               cached?.output ??
               (await withInvokingAgentRunLease(request.signal, request.run, async () => {
-                if (resolved.name !== 'media.generateImage') return actionSession!.invoke(resolved.name, input, request.signal, actionCallId)
-                const parsed = ACTION_CATALOG['media.generateImage'].input.parse(input) as { prompt: string; attachmentIds?: string[] }
-                const mediaUsage = await this.#media(request, sink, 'image', parsed.prompt, parsed.attachmentIds ?? [])
+                if (resolved.name !== 'media.generateImage' && resolved.name !== 'media.generateVideo' && resolved.name !== 'media.generateMusic') return actionSession!.invoke(resolved.name, input, request.signal, actionCallId)
+                const parsed = ACTION_CATALOG[resolved.name].input.parse(input) as { prompt: string; attachmentIds?: string[] }
+                const kind = resolved.name === 'media.generateVideo' ? 'video' : resolved.name === 'media.generateMusic' ? 'music' : 'image'
+                const mediaUsage = await this.#media(request, sink, kind, parsed.prompt, parsed.attachmentIds ?? [])
                 inputTokens = safeUsageAddition(inputTokens, mediaUsage.inputTokens, 'Media input tokens')
                 outputTokens = safeUsageAddition(outputTokens, mediaUsage.outputTokens, 'Media output tokens')
                 totalTokens = safeUsageAddition(totalTokens, mediaUsage.totalTokens, 'Media total tokens')

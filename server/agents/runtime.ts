@@ -485,7 +485,7 @@ export interface AgentRecoveredAction {
 
 export interface AgentEngineRequest {
   readonly authorizeMedia?: () => Promise<void>
-  readonly mediaRequest?: { readonly kind: 'image' | 'transcription' }
+  readonly mediaRequest?: { readonly kind: 'image' | 'transcription' | 'video' | 'music' }
   readonly run: AgentRunClaim
   readonly purpose?: 'root' | 'planner' | 'subagent'
   readonly actionAllowlist?: readonly AgentActionName[]
@@ -510,7 +510,7 @@ export interface AgentEngineRequest {
 }
 
 export interface AgentEngineSink {
-  media?(images: readonly { readonly payload: Buffer; readonly mimeType: string; readonly filename: string }[]): Promise<void>
+  media?(images: readonly { readonly payload: Buffer; readonly mimeType: string; readonly filename: string; readonly kind?: 'generated-image' | 'generated-video' | 'generated-audio' }[]): Promise<void>
   text(delta: string): Promise<void>
   event(type: AgentEventType, data: AgentEventData): Promise<void>
 }
@@ -545,7 +545,7 @@ export interface AgentEngine {
 
 export interface SubmitAgentMessageInput {
   readonly attachmentIds?: readonly string[]
-  readonly responseMode?: 'text' | 'image'
+  readonly responseMode?: 'text' | 'image' | 'video' | 'music'
   readonly transcription?: boolean
   readonly ownerId: number
   readonly sessionId: string
@@ -1210,7 +1210,7 @@ export class AgentProductRuntime {
 
   async submit(input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }> {
     if (!input.content.trim() && input.attachmentIds?.length)
-      input = { ...input, content: input.responseMode === 'image' ? 'Create an image using these attachments.' : 'Use the attached files.' }
+      input = { ...input, content: input.responseMode && input.responseMode !== 'text' ? `Create ${input.responseMode === 'music' ? 'music' : `a${input.responseMode === 'image' ? 'n' : ''} ${input.responseMode}`} using these attachments.` : 'Use the attached files.' }
     const now = new Date()
     return this.#knex.transaction(async transaction => {
       await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
@@ -1225,17 +1225,17 @@ export class AgentProductRuntime {
         if (input.attachmentIds?.length !== 1) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Choose one audio recording.', 400)
         await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'transcription')
       } else {
-        if (input.attachmentIds?.length && input.responseMode !== 'image')
+        if (input.attachmentIds?.length && (!input.responseMode || input.responseMode === 'text'))
           await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'attachments')
-        if (input.responseMode === 'image') {
-          await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'imageGeneration')
+        if (input.responseMode && input.responseMode !== 'text') {
+          await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, input.responseMode === 'image' ? 'imageGeneration' : input.responseMode === 'video' ? 'videoGeneration' : 'musicGeneration')
           if (input.attachmentIds?.length) {
             const files = (await transaction('agentMedia')
               .where({ ownerId: input.ownerId, sessionId: input.sessionId })
               .whereIn('id', input.attachmentIds)
               .select('mimeType')) as { mimeType: string }[]
             if (files.some(file => !file.mimeType.startsWith('image/')))
-              throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Image generation accepts image attachments only.', 400)
+              throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Media generation accepts image attachments only.', 400)
           }
         }
       }
@@ -1249,8 +1249,8 @@ export class AgentProductRuntime {
         ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
         ...(input.transcription
           ? { mediaRequest: { kind: 'transcription' as const }, userMessageVisible: false, assistantMessageVisible: false }
-          : input.responseMode === 'image'
-            ? { mediaRequest: { kind: 'image' as const } }
+          : input.responseMode && input.responseMode !== 'text'
+            ? { mediaRequest: { kind: input.responseMode } }
             : {}),
         ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
         ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
@@ -2068,11 +2068,11 @@ export class AgentProductRuntime {
             .orderBy('createdAt', 'desc')
             .select(...AGENT_MEDIA_METADATA_COLUMNS)
         : []
-      const mediaRequest = claim.mediaRequest ? (JSON.parse(claim.mediaRequest) as { kind: 'image' | 'transcription' }) : undefined
-      if (mediaRequest && mediaRequest.kind !== 'image' && mediaRequest.kind !== 'transcription')
+      const mediaRequest = claim.mediaRequest ? (JSON.parse(claim.mediaRequest) as { kind: 'image' | 'transcription' | 'video' | 'music' }) : undefined
+      if (mediaRequest && !['image', 'transcription', 'video', 'music'].includes(mediaRequest.kind))
         throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Invalid media request.', 500)
       if (mediaRequest)
-        await assertAgentMediaCapability(this.#knex, claim.providerProfileVersionId, mediaRequest.kind === 'image' ? 'imageGeneration' : 'transcription')
+        await assertAgentMediaCapability(this.#knex, claim.providerProfileVersionId, mediaRequest.kind === 'image' ? 'imageGeneration' : mediaRequest.kind === 'video' ? 'videoGeneration' : mediaRequest.kind === 'music' ? 'musicGeneration' : 'transcription')
       let includeMediaBytes = true
       if (!mediaRequest && mediaIndex.length) {
         try {
@@ -2082,7 +2082,7 @@ export class AgentProductRuntime {
           includeMediaBytes = false
         }
       }
-      const attachedRows = includeMediaBytes ? mediaIndex : []
+      const attachedRows = includeMediaBytes ? mediaIndex.filter(row => row.kind !== 'generated-video' && row.kind !== 'generated-audio') : []
       if (attachedRows.length > AGENT_MEDIA_PROMPT_MAX_FILES || attachedRows.reduce((total, row) => total + Number(row.byteLength), 0) > AGENT_MEDIA_PROMPT_MAX_BYTES)
         throw new AgentRepositoryError('AGENT_MEDIA_WINDOW_LIMIT', 'This conversation exceeds the attachment window of 16 files or 1 GB. Start a new chat with the files needed for this request.', 413)
       if (!includeMediaBytes && mediaIndex.some(row => row.messageId === claim.userMessageId && row.kind === 'attachment'))
@@ -2287,7 +2287,7 @@ export class AgentProductRuntime {
       }
       const sink: AgentEngineSink = {
         media: async images => {
-          if (images.length > 4) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Too many generated images.', 502)
+          if (images.length > 4) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Too many generated media files.', 502)
           for (const image of images) {
             executionSignal.throwIfAborted()
             const fenced = await this.#knex('agentRuns')
@@ -2303,7 +2303,7 @@ export class AgentProductRuntime {
               runId: claim.id,
               leaseOwner: claim.leaseOwner,
               leaseToken: claim.leaseToken,
-              kind: 'generated-image'
+              kind: image.kind ?? 'generated-image'
             })
           }
         },

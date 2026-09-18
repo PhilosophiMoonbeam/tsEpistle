@@ -1,7 +1,16 @@
 import type { lookup } from 'node:dns/promises'
 import createKnex, { type Knex } from 'knex'
-import { AgentProviderFactory, type AgentProviderFetch, createGuardedProviderFetch } from '../../agents/providers/factory.ts'
-import { createGeminiMediaTransport, GEMINI_MEDIA_INPUT_LIMIT, GEMINI_MEDIA_OUTPUT_LIMIT, GEMINI_PDF_INPUT_LIMIT } from '../../agents/providers/gemini-media.ts'
+import { AgentProviderAttemptError, AgentProviderFactory, type AgentProviderFetch, createGuardedProviderFetch } from '../../agents/providers/factory.ts'
+import {
+  createGeminiMediaTransport,
+  GEMINI_MEDIA_INPUT_LIMIT,
+  GEMINI_MEDIA_OUTPUT_LIMIT,
+  GEMINI_MUSIC_MODEL,
+  GEMINI_MUSIC_OUTPUT_LIMIT,
+  GEMINI_PDF_INPUT_LIMIT,
+  GEMINI_VIDEO_MODEL,
+  GEMINI_VIDEO_OUTPUT_LIMIT
+} from '../../agents/providers/gemini-media.ts'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 const origin = 'https://generativelanguage.googleapis.com'
@@ -56,7 +65,8 @@ describe('Gemini media egress guard', () => {
       ['/upload/v1beta/files', 'DELETE'],
       ['/upload/v1beta/files?upload_id=abc&api_key=secret', 'POST'],
       ['/v1beta/models', 'GET'],
-      ['/v1beta/files/abc:download', 'GET']
+      ['/v1beta/files/abc:download', 'GET'],
+      ['/v1beta/files/abc:download?alt=media', 'GET']
     ])
       await expect(guard(`${origin}${path}`, { method })).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
     await expect(
@@ -72,7 +82,13 @@ describe('Gemini media egress guard', () => {
 
   it('allows larger prepared PDFs only on the Files upload path', async () => {
     let calls = 0
-    const implementation = Object.assign(async () => { calls++; return Response.json({}) }, { preconnect: () => {} }) as AgentProviderFetch
+    const implementation = Object.assign(
+      async () => {
+        calls++
+        return Response.json({})
+      },
+      { preconnect: () => {} }
+    ) as AgentProviderFetch
     const guard = createGuardedProviderFetch(`${origin}/v1beta`, 'gemini-media', {}, implementation, resolve)
     const body = Buffer.alloc(GEMINI_MEDIA_INPUT_LIMIT + 1)
     body.write('%PDF-1.7')
@@ -82,7 +98,9 @@ describe('Gemini media egress guard', () => {
       ['/upload/v1beta/files?upload_id=abc', 'image/png', body],
       ['/upload/v1beta/files?upload_id=abc', 'application/pdf', Buffer.alloc(GEMINI_PDF_INPUT_LIMIT + 1)]
     ] as const)
-      await expect(guard(`${origin}${path}`, { method: 'POST', headers: { 'content-type': type }, body: bytes })).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+      await expect(guard(`${origin}${path}`, { method: 'POST', headers: { 'content-type': type }, body: bytes })).rejects.toMatchObject({
+        code: 'PROVIDER_EGRESS_DENIED'
+      })
     expect(calls).toBe(1)
   })
 
@@ -335,6 +353,14 @@ describe('Gemini media transport', () => {
       expect(requests).toHaveLength(1)
       expect(requests[0]?.url).toContain(':countTokens')
     }
+  })
+
+  it('preserves sanitized guarded HTTP failures for actionable provider diagnostics', async () => {
+    const failure = new AgentProviderAttemptError('invalid_argument', 400, null, 'generation_config')
+    const { transport } = setup(() => {
+      throw failure
+    })
+    await expect(transport.generateVideo({ prompt: 'A landscape' })).rejects.toBe(failure)
   })
 
   it('awaits measured admission before dispatch and never generates when admission rejects', async () => {
@@ -678,5 +704,251 @@ describe('Gemini media transport', () => {
       await expect(transport.generateImage({ prompt: 'Draw' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
       expect(cancelled).toBe(true)
     }
+  })
+})
+
+const mp4 = Buffer.from('000000186674797069736f6d0000000069736f6d6d703432', 'hex')
+const mp3 = Buffer.from([0xff, 0xfb, 0x90, 0x00, ...Array(400).fill(0)])
+const videoUri = `${origin}/v1beta/files/video123:download?alt=media`
+const avResponse = (kind: 'video' | 'music', measured: unknown = usage, content?: unknown[]) => ({
+  model: kind === 'video' ? GEMINI_VIDEO_MODEL : GEMINI_MUSIC_MODEL,
+  status: 'completed',
+  steps: [
+    { type: 'user_input', content: [{ type: 'text', text: 'A peaceful sunset.' }] },
+    { type: 'thought', signature: 'opaque', content: [{ type: 'thought', text: 'Discard this reasoning.' }] },
+    {
+      type: 'model_output',
+      content: content ?? [
+        kind === 'video'
+          ? { type: 'video', data: mp4.toString('base64'), mime_type: 'video/mp4' }
+          : { type: 'audio', data: mp3.toString('base64'), mime_type: 'audio/mp3' }
+      ]
+    }
+  ],
+  ...(measured === 'absent' ? {} : { usage: measured })
+})
+
+describe('Gemini video and music transport', () => {
+  for (const kind of ['video', 'music'] as const)
+    it(`counts and admits ${kind} before dispatch, returning only private bytes`, async () => {
+      const order: string[] = []
+      const { transport, requests } = setup((url, init) => {
+        if (url.endsWith(':countTokens')) {
+          order.push('count')
+          return Response.json({ totalTokens: 5 })
+        }
+        if (url.endsWith('/interactions')) {
+          order.push('paid')
+          return Response.json(avResponse(kind))
+        }
+        if (init.method === 'DELETE') {
+          order.push('delete')
+          return new Response(null, { status: 204 })
+        }
+        throw new Error('Unexpected media request')
+      })
+      const input = {
+        prompt: 'A peaceful sunset.',
+        beforeDispatch: async (exposure: { inputTokens: number; outputTokens: number; totalTokens: number }) => {
+          order.push('reserve')
+          expect(exposure).toEqual({ inputTokens: 5, outputTokens: 65536, totalTokens: 65541 })
+        },
+        onDispatch: () => {
+          order.push('dispatch')
+        }
+      }
+      const result = await (kind === 'video' ? transport.generateVideo(input) : transport.generateMusic(input))
+      expect(order.slice(0, 4)).toEqual(['count', 'reserve', 'dispatch', 'paid'])
+      expect(result.usageSource).toBe('reported')
+      expect(result.usage).toEqual({ inputTokens: 4, outputTokens: 6, totalTokens: 10 })
+      expect(result.files).toEqual([{ bytes: kind === 'video' ? mp4 : mp3, mimeType: kind === 'video' ? 'video/mp4' : 'audio/mpeg' }])
+      expect(JSON.stringify(result)).not.toContain('generativelanguage.googleapis.com')
+      const body = JSON.parse(String(requests.find(row => row.url.endsWith('/interactions'))!.init.body))
+      expect(body).toMatchObject({
+        model: kind === 'video' ? GEMINI_VIDEO_MODEL : GEMINI_MUSIC_MODEL,
+        store: false,
+        background: false,
+        stream: false,
+        generation_config: { max_output_tokens: 65536 }
+      })
+      expect(body.tools).toBeUndefined()
+      if (kind === 'video') {
+        expect(body.response_format).toEqual({ type: 'video', resolution: '720p', aspect_ratio: '16:9' })
+        expect(requests).toHaveLength(2)
+      } else expect(body.response_format).toBeUndefined()
+    })
+
+  it('keeps new model caps independent of legacy image limits and marks missing usage as estimated', async () => {
+    let body: { generation_config: { max_output_tokens: number } } | undefined
+    const fetch = Object.assign(
+      async (url: unknown, init?: RequestInit) => {
+        if (String(url).endsWith(':countTokens')) return Response.json({ totalTokens: 8 })
+        body = JSON.parse(String(init?.body))
+        return Response.json(avResponse('music', 'absent'))
+      },
+      { preconnect: () => {} }
+    ) as AgentProviderFetch
+    const transport = createGeminiMediaTransport({ apiKey: 'key', baseUrl: `${origin}/v1beta`, timeoutMs: 5000, maxInputTokens: 1, maxOutputTokens: 1, fetch })
+    const result = await transport.generateMusic({ prompt: 'A song.' })
+    expect(body?.generation_config.max_output_tokens).toBe(65536)
+    expect(result.usageSource).toBe('estimated')
+    expect(result.usage).toEqual({ inputTokens: 8, outputTokens: 65536, totalTokens: 65544 })
+  })
+
+  for (const failure of ['count', 'context', 'admission', 'cancel'] as const)
+    it(`does not make a paid call after ${failure} failure`, async () => {
+      const controller = new AbortController()
+      const { transport, requests } = setup(() =>
+        failure === 'count' ? new Response(null, { status: 404 }) : Response.json({ totalTokens: failure === 'context' ? 65537 : 5 })
+      )
+      await expect(
+        transport.generateMusic(
+          {
+            prompt: 'A song.',
+            beforeDispatch: async () => {
+              if (failure === 'admission') throw new Error('budget')
+              if (failure === 'cancel') controller.abort()
+            }
+          },
+          controller.signal
+        )
+      ).rejects.toThrow()
+      expect(requests.some(row => row.url.endsWith('/interactions'))).toBe(false)
+    })
+
+  it('uploads reference images under fresh authorization and deletes them on rejection', async () => {
+    const order: string[] = []
+    const { transport } = setup((url, init) => {
+      if (init.method === 'DELETE') {
+        order.push('delete')
+        return new Response(null, { status: 204 })
+      }
+      if (url.endsWith(':countTokens')) return Response.json({ totalTokens: 5 })
+      if (url.endsWith('/interactions')) throw new Error('must not dispatch')
+      if (!url.includes('upload_id')) {
+        order.push('upload')
+        return start()
+      }
+      return Response.json({ file: file() })
+    })
+    await expect(
+      transport.generateVideo({
+        prompt: 'Animate this.',
+        images: [{ bytes: png, mimeType: 'image/png' }],
+        beforeUpload: async () => {
+          order.push('authorize')
+        },
+        beforeDispatch: async () => {
+          throw new Error('denied')
+        }
+      })
+    ).rejects.toThrow()
+    expect(order).toEqual(['authorize', 'upload', 'delete'])
+  })
+
+  for (const uri of [
+    'https://evil.invalid/video.mp4',
+    `${origin}/v1beta/files/video123:download?alt=media&key=leak`,
+    `${origin}/v1beta/files/video123:download?alt=media&alt=media`,
+    `${origin}/v1beta/files/video123:download?alt=media#fragment`,
+    `${origin}/v1beta/files/%76ideo123:download?alt=media`
+  ])
+    it(`rejects unrequested video URI ${uri}`, async () => {
+      const { transport, requests } = setup(url =>
+        url.endsWith(':countTokens')
+          ? Response.json({ totalTokens: 5 })
+          : Response.json(avResponse('video', usage, [{ type: 'video', mime_type: 'video/mp4', uri }]))
+      )
+      await expect(transport.generateVideo({ prompt: 'A sunset.' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+      expect(requests).toHaveLength(2)
+    })
+
+  for (const failure of ['signature', 'usage', 'base64', 'mime', 'oversize'] as const)
+    it(`rejects invalid inline video ${failure}`, async () => {
+      const data = failure === 'oversize' ? Buffer.alloc(GEMINI_VIDEO_OUTPUT_LIMIT + 1) : failure === 'signature' ? Buffer.alloc(mp4.length) : mp4
+      const { transport, requests } = setup(url =>
+        url.endsWith(':countTokens')
+          ? Response.json({ totalTokens: 5 })
+          : Response.json(
+              avResponse('video', failure === 'usage' ? { total_input_tokens: -1 } : usage, [
+                { type: 'video', mime_type: failure === 'mime' ? 'text/html' : 'video/mp4', data: failure === 'base64' ? 'invalid!' : data.toString('base64') }
+              ])
+            )
+      )
+      await expect(transport.generateVideo({ prompt: 'A sunset.' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+      expect(requests).toHaveLength(2)
+    })
+
+  it('cleans uploaded references with an independent signal when inline generation is cancelled', async () => {
+    const controller = new AbortController()
+    let deleted = false
+    const { transport } = setup((url, init) => {
+      if (init.method === 'DELETE') {
+        expect(init.signal?.aborted).toBe(false)
+        deleted = true
+        return new Response(null, { status: 204 })
+      }
+      if (url.endsWith(':countTokens')) return Response.json({ totalTokens: 5 })
+      if (url.endsWith('/interactions')) {
+        controller.abort()
+        return Response.json(avResponse('video'))
+      }
+      return url.includes('upload_id') ? Response.json({ file: file() }) : start()
+    })
+    await expect(transport.generateVideo({ prompt: 'A sunset.', images: [{ bytes: png, mimeType: 'image/png' }] }, controller.signal)).rejects.toThrow()
+    expect(deleted).toBe(true)
+  })
+
+  it('returns complete video/text modality usage without losing thought tokens', async () => {
+    const { transport } = setup((url, init) => {
+      if (url.endsWith(':countTokens')) return Response.json({ totalTokens: 5 })
+      if (url.endsWith('/interactions'))
+        return Response.json(
+          avResponse('video', {
+            ...usage,
+            total_tokens: 13,
+            total_thought_tokens: 3,
+            output_tokens_by_modality: [
+              { modality: 'video', tokens: 5 },
+              { modality: 'text', tokens: 1 }
+            ]
+          })
+        )
+      if (init.method === 'DELETE') return new Response(null, { status: 204 })
+      throw new Error('Unexpected media request')
+    })
+    const result = await transport.generateVideo({ prompt: 'A sunset.' })
+    expect(result.outputTokensByModality).toEqual({ text: 1, video: 5 })
+    expect(result.usage.totalTokens).toBe(13)
+  })
+
+  for (const [label, content] of [
+    ['noncanonical base64', [{ type: 'audio', mime_type: 'audio/mp3', data: `${mp3.toString('base64')}!` }]],
+    ['invalid audio', [{ type: 'audio', mime_type: 'audio/mpeg', data: Buffer.alloc(12).toString('base64') }]],
+    [
+      'multiple outputs',
+      [
+        { type: 'audio', mime_type: 'audio/mp3', data: mp3.toString('base64') },
+        { type: 'audio', mime_type: 'audio/mp3', data: mp3.toString('base64') }
+      ]
+    ],
+    ['unexpected video', [{ type: 'video', mime_type: 'video/mp4', uri: videoUri }]]
+  ] as const)
+    it(`rejects ${label} in music output`, async () => {
+      const { transport } = setup(url =>
+        url.endsWith(':countTokens') ? Response.json({ totalTokens: 5 }) : Response.json(avResponse('music', usage, [...content]))
+      )
+      await expect(transport.generateMusic({ prompt: 'A song.' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    })
+
+  it('rejects music output above its decoded byte limit', async () => {
+    const bytes = Buffer.alloc(GEMINI_MUSIC_OUTPUT_LIMIT + 1)
+    bytes.write('ID3')
+    const { transport } = setup(url =>
+      url.endsWith(':countTokens')
+        ? Response.json({ totalTokens: 5 })
+        : Response.json(avResponse('music', usage, [{ type: 'audio', mime_type: 'audio/mp3', data: bytes.toString('base64') }]))
+    )
+    await expect(transport.generateMusic({ prompt: 'A song.' })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
   })
 })

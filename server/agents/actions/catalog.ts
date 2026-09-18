@@ -498,6 +498,20 @@ export const ACTION_CATALOG = {
     output: strict({ generated: z.literal(true), count: z.number().int().min(1).max(4) }),
     requiredFlags: baseFlags
   },
+  'media.generateVideo': {
+    descriptor: descriptor('media.generateVideo', 'Create a video', 'Generate one short landscape video from a complete prompt and optional image attachment IDs. Use only when the user requests video generation. The clip appears directly in chat. Do not claim to edit or extend an existing video.', 'read', [], agentOnly, readAnnotations),
+    group: 'core',
+    input: strict({ prompt: z.string().trim().min(1).max(16_000), attachmentIds: z.array(Uuid).max(4).optional() }),
+    output: strict({ generated: z.literal(true), count: z.literal(1) }),
+    requiredFlags: baseFlags
+  },
+  'media.generateMusic': {
+    descriptor: descriptor('media.generateMusic', 'Create music', 'Generate one new song or instrumental composition from a complete musical prompt and optional image attachment IDs. Use only when the user requests music generation. Include requested lyrics in the prompt. Audio appears directly in chat; editing existing audio is not supported.', 'read', [], agentOnly, readAnnotations),
+    group: 'core',
+    input: strict({ prompt: z.string().trim().min(1).max(16_000), attachmentIds: z.array(Uuid).max(4).optional() }),
+    output: strict({ generated: z.literal(true), count: z.literal(1) }),
+    requiredFlags: baseFlags
+  },
   'browser.navigate': {
     descriptor: descriptor(
       'browser.navigate',

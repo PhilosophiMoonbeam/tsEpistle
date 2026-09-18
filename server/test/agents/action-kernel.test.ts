@@ -65,7 +65,7 @@ describe('shared action catalog admission', () => {
     expect(offered.map(action => action.definition.descriptor.name)).toEqual(['pages.get', 'browser.navigate'])
 
     expect(kernel.offer(auth, admission({ executionMode: 'generation-only' }), requestId)).toEqual([])
-    expect(kernel.offer(auth, admission({ permissions: ['use:agents'] }), requestId).map(action => action.definition.descriptor.name)).toEqual(['skills.list', 'skills.read', 'memory.manage', 'media.generateImage'])
+    expect(kernel.offer(auth, admission({ permissions: ['use:agents'] }), requestId).map(action => action.definition.descriptor.name)).toEqual(['skills.list', 'skills.read', 'memory.manage', 'media.generateImage', 'media.generateVideo', 'media.generateMusic'])
     expect(kernel.offer(auth, admission({ featureFlags: { ...flags, 'agents.provider.enabled': false } }), requestId)).toEqual([])
 
     const administratorActions = kernel.offer(auth, admission({ permissions: ['manage:system'] }), requestId).map(action => action.definition.descriptor.name)
