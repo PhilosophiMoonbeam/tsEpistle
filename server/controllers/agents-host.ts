@@ -485,7 +485,8 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     })
   )
   const mediaUploads = new AgentMediaUploadGate()
-  const parseMedia = multer({ storage: multer.memoryStorage(), limits: { fileSize: AGENT_MEDIA_MAX_BYTES, files: 1, fields: 0, parts: 1 } }).single('file')
+  // Busboy signals partsLimit when the count reaches it; leave headroom for one completed file.
+  const parseMedia = multer({ storage: multer.memoryStorage(), limits: { fileSize: AGENT_MEDIA_MAX_BYTES, files: 1, fields: 0, parts: 2 } }).single('file')
   router.post(
     `${apiPrefix}/sessions/:sessionId/media`,
     asyncRoute(async (req, res, signal) => {

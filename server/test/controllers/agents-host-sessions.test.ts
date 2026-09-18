@@ -1,3 +1,4 @@
+import sharp from 'sharp'
 import { createAgentMediaTestDatabase } from '../agents/media-database.ts'
 import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { storeAgentMedia } from '../../agents/media.ts'
@@ -325,6 +326,7 @@ describe('ordinary-origin agent session API', () => {
   let administrator = false
   let agentsEnabled = true
   let mediaAuthorized = true
+  let mediaUploadEnabled = false
   let revokeMediaInEngine: 'permission' | 'profile' | 'grant' | null = null
   let mediaAuthorizationChecks = 0
   let currentMediaProfileChanged = false
@@ -553,6 +555,7 @@ describe('ordinary-origin agent session API', () => {
     administrator = false
     agentsEnabled = true
     mediaAuthorized = true
+    mediaUploadEnabled = false
     revokeMediaInEngine = null
     mediaAuthorizationChecks = 0
     currentMediaProfileChanged = false
@@ -697,6 +700,15 @@ describe('ordinary-origin agent session API', () => {
           }
         },
         models: { knex: db },
+        get providerRegistry() {
+          if (!mediaUploadEnabled) return undefined
+          return {
+            listVisible: async () => [
+              { id: '00000000-0000-4000-8000-000000000070', isGlobalDefault: true, media: { attachments: true, imageGeneration: true, transcription: true } }
+            ],
+            issueResolutionToken: async () => 'test-profile-resolution'
+          } as unknown as NonNullable<Parameters<typeof createAgentsHostController>[0]['providerRegistry']>
+        },
         agentRuntime: runtime
       })
     )
@@ -769,6 +781,7 @@ describe('ordinary-origin agent session API', () => {
     expect(await response.json()).toMatchObject({ error: 'AGENT_ROUTE_DISABLED' })
   })
   const enableTestMedia = async () => {
+    mediaUploadEnabled = true
     await db('agentProviderProfileVersions')
       .where({ id: '00000000-0000-4000-8000-000000000070' })
       .update({
@@ -785,6 +798,90 @@ describe('ordinary-origin agent session API', () => {
         })
       })
   }
+  const uploadForm = (sessionId: string, body: FormData) =>
+    fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/media`, {
+      method: 'POST',
+      headers: { cookie, origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf },
+      body
+    })
+  const recordingWav = (): Buffer => {
+    const bytes = Buffer.alloc(46)
+    bytes.write('RIFF', 0)
+    bytes.writeUInt32LE(38, 4)
+    bytes.write('WAVEfmt ', 8)
+    bytes.writeUInt32LE(16, 16)
+    bytes.writeUInt16LE(1, 20)
+    bytes.writeUInt16LE(1, 22)
+    bytes.writeUInt32LE(16000, 24)
+    bytes.writeUInt32LE(32000, 28)
+    bytes.writeUInt16LE(2, 32)
+    bytes.writeUInt16LE(16, 34)
+    bytes.write('data', 36)
+    bytes.writeUInt32LE(2, 40)
+    return bytes
+  }
+  it.each(['audio/wav', 'audio/webm', 'image/png', 'application/pdf'] as const)(
+    'accepts a real multipart %s attachment and preserves its owner and bytes',
+    async mimeType => {
+      await enableTestMedia()
+      const sessionId = randomUUID()
+      await insertAccountingSession(sessionId)
+      const payload =
+        mimeType === 'image/png'
+          ? await sharp({ create: { width: 2, height: 2, channels: 3, background: 'red' } })
+              .png()
+              .toBuffer()
+          : mimeType === 'application/pdf'
+            ? Buffer.from('%PDF-1.7\n%%EOF\n')
+            : mimeType === 'audio/wav'
+              ? recordingWav()
+              : Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x80])
+      const body = new FormData()
+      body.append('file', new Blob([payload], { type: mimeType }), 'attachment')
+      const response = await uploadForm(sessionId, body)
+      expect(response.status).toBe(201)
+      const { media } = (await response.json()) as { media: { id: string; mimeType: string; byteLength: number } }
+      expect(media).toMatchObject({ mimeType, byteLength: payload.length })
+      const stored = await db('agentMedia').where({ id: media.id }).first('ownerId', 'sessionId', 'messageId', 'payload')
+      expect(stored).toMatchObject({ ownerId: 7, sessionId, messageId: null })
+      expect(Buffer.from(stored.payload)).toEqual(payload)
+      if (mimeType === 'audio/wav') {
+        const transcription = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/transcriptions`, {
+          method: 'POST',
+          headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf },
+          body: JSON.stringify({
+            clientRequestId: randomUUID(),
+            expectedSessionVersion: 1,
+            profileResolutionToken: 'test-profile-resolution',
+            attachmentId: media.id
+          })
+        })
+        expect(transcription.status).toBe(202)
+        const { runId } = (await transcription.json()) as { runId: string }
+        await runtime.runOnce()
+        const result = await fetch(`${baseUrl}/_api/agents/runs/${runId}/transcription`, { headers: { cookie } })
+        expect(await result.json()).toMatchObject({ status: 'succeeded', text: 'Hello from the deterministic engine.' })
+        expect(await db('agentMedia').where({ id: media.id }).first()).toBeUndefined()
+      }
+    }
+  )
+  it.each(['extra field', 'second file', 'oversized file'] as const)(
+    'rejects a real multipart upload containing an %s without saving media',
+    async invalidPart => {
+      await enableTestMedia()
+      const sessionId = randomUUID()
+      await insertAccountingSession(sessionId)
+      const payload = invalidPart === 'oversized file' ? Buffer.concat([recordingWav(), Buffer.alloc(10 * 1024 * 1024)]) : recordingWav()
+      const body = new FormData()
+      body.append('file', new Blob([payload], { type: 'audio/wav' }), 'recording.wav')
+      if (invalidPart === 'extra field') body.append('unexpected', 'value')
+      if (invalidPart === 'second file') body.append('file', new Blob([recordingWav()], { type: 'audio/wav' }), 'second.wav')
+      const response = await uploadForm(sessionId, body)
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({ error: 'INVALID_AGENT_MEDIA' })
+      expect(await db('agentMedia').where({ sessionId }).first()).toBeUndefined()
+    }
+  )
   it('binds attachments atomically and includes attachment IDs and image mode in replay identity', async () => {
     await enableTestMedia()
     const sessionId = randomUUID()
