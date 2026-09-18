@@ -591,6 +591,7 @@ onBeforeUnmount(() => {
 }
 .agent-context__sources {
   display: flex;
+  order: 1;
   min-width: 0;
   max-width: 100%;
   max-height: 4rem;
@@ -604,6 +605,7 @@ onBeforeUnmount(() => {
 .agent-context__sources .v-chip { max-width: 100%; border-radius: var(--wiki-radius-pill); }
 .agent-context__source-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-context__limit {
+  order: 2;
   flex: 1 1 100%;
   margin: var(--wiki-space-1) 0 0;
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);

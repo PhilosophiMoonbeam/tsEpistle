@@ -9,6 +9,8 @@ export interface AgentFixtureOptions {
   readonly seedMemory?: boolean
   readonly seedFolders?: boolean
   readonly distinctSessionIds?: boolean
+  readonly skillsEnabled?: boolean
+  readonly goalsEnabled?: boolean
 }
 
 export interface EnabledAgentFixture {
@@ -16,6 +18,7 @@ export interface EnabledAgentFixture {
   readonly mode: AgentFixtureMode
   readonly unexpectedRequests: readonly string[]
   readonly requests: readonly string[]
+  pauseNextResponse(): () => void
   assertNoUnexpectedRequests(): void
   dispose(): Promise<void>
 }
@@ -430,6 +433,8 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
   const mode = options.mode ?? 'success'
   const unexpectedRequests: string[] = []
   const requests: string[] = []
+  let responseGate: Promise<void> | null = null
+  let releaseResponse: (() => void) | null = null
   const approvalWindowStart = Date.now()
   const approvalRequestedAt = new Date(approvalWindowStart).toISOString()
   const approvalExpiresAt = new Date(approvalWindowStart + 15 * 60_000).toISOString()
@@ -454,7 +459,7 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
     approvalExpiresAt
   }
 
-  await page.addInitScript(() => {
+  await page.addInitScript(({ skillsEnabled, goalsEnabled }) => {
     let captured: Record<string, unknown> | undefined
     Object.defineProperty(window, 'siteConfig', {
       configurable: true,
@@ -464,10 +469,12 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
         captured = value as Record<string, unknown>
         captured.agentsEnabled = true
         captured.agentProviderEnabled = true
+        if (skillsEnabled !== undefined) captured.agentSkillsEnabled = skillsEnabled
+        if (goalsEnabled !== undefined) captured.agentGoalsEnabled = goalsEnabled
         captured.agentCsrfToken = typeof captured.agentCsrfToken === 'string' && captured.agentCsrfToken ? captured.agentCsrfToken : 'fixture-agent-csrf-token'
       }
     })
-  })
+  }, { skillsEnabled: options.skillsEnabled, goalsEnabled: options.goalsEnabled })
 
   await page.route(/\/_api\/agents(?:\/|$)/, async route => {
     const request = route.request()
@@ -661,6 +668,7 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
       const runId = eventsMatch[1]!
       const run = state.thread.session.currentRun
       if (!run || run.id !== runId) return await failUnexpected()
+      if (responseGate) await responseGate
       state.eventReads += 1
       if (state.mode === 'focus') {
         const assistant = [...state.thread.messages].reverse().find(message => message.runId === runId && message.role === 'assistant')
@@ -719,10 +727,18 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
     get requests() {
       return [...requests]
     },
+    pauseNextResponse() {
+      if (responseGate) throw new Error('An Agent fixture response is already paused')
+      responseGate = new Promise<void>(resolve => { releaseResponse = resolve })
+      return () => { releaseResponse?.(); releaseResponse = null; responseGate = null }
+    },
     assertNoUnexpectedRequests() {
       if (unexpectedRequests.length) throw new Error(`Unexpected Agent fixture requests: ${unexpectedRequests.join(', ')}`)
     },
     async dispose() {
+      releaseResponse?.()
+      releaseResponse = null
+      responseGate = null
       if (!page.isClosed()) await page.unroute(/\/_api\/agents(?:\/|$)/)
     }
   }

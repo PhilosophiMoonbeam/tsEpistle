@@ -1766,144 +1766,161 @@ test.describe('responsive UI quality matrix', () => {
       await fixture.dispose()
     }
   })
-  test('keeps the Latest response control visible, safe, and operable', async ({ page }, testInfo) => {
+  test('keeps Agent source controls stable and Latest navigation smoothly responsive', async ({ page }, testInfo) => {
     const desktopProject = testInfo.project.name === 'responsive-chromium-desktop' || testInfo.project.name === 'responsive-chromium-wide'
     const coarseProject = testInfo.project.name === 'responsive-chromium-mobile'
     if (!desktopProject && !coarseProject) return
     if (coarseProject) await page.setViewportSize({ width: 320, height: 640 })
-    const fixture = await installEnabledAgentFixture(page, { mode: 'latest' })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.route('**/_api/users/whoami', route => route.fulfill({ json: { authenticated: true, user: { id: 900001, name: 'Agent layout fixture', email: 'layout@example.invalid', permissions: ['use:agents'], localeCode: 'en' } } }))
+    await page.route(/\/_api\/pages\/\d+\/watch$/, route => route.fulfill({ json: { watched: false, emailEnabled: false, inAppEnabled: false } }))
+    const sources = Array.from({ length: 3 }, (_, index) => ({ id: 701 + index, locale: 'en', path: `release-source-${index + 1}`, title: `Release evidence source ${index + 1} with a long descriptive title`, description: 'A deterministic source for layout checks.', visibility: 'public' as const, updatedAt: '2026-09-01T12:00:00.000Z', sourceRevision: '1', excerpt: 'Release evidence', excerptTruncated: false }))
+    await page.route('**/_api/pages/search?**', route => route.fulfill({ json: { results: sources.map(source => ({ ...source, tags: [], score: 10, matchedFields: ['title'] })), suggestions: [], totalHits: sources.length, nextCursor: null } }))
+    await page.route('**/_api/pages/preview?**', route => {
+      const id = Number(new URL(route.request().url()).searchParams.get('id'))
+      const source = sources.find(item => item.id === id)
+      return source ? route.fulfill({ json: source }) : route.fulfill({ status: 404, json: { error: 'Fixture source not found' } })
+    })
+    const fixture = await installEnabledAgentFixture(page, { mode: 'latest', skillsEnabled: true, goalsEnabled: true })
+    let releaseResponse: (() => void) | null = null
     try {
-      const agent = await openFixtureAgentFromSearch(page)
-      const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
+      await page.goto('/', { waitUntil: 'domcontentloaded' })
+      await expect(page.locator('.nav-header')).toBeVisible()
+      const search = await openSearch(page)
+      await search.fill('release')
+      const searchDialog = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
+      await searchDialog.getByRole('button', { name: 'Ask about this', exact: true }).click()
+      const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
+      const composer = agent.locator('.agent-composer textarea')
+      await expect(composer).toBeEnabled()
+      const skills = agent.locator('.agent-composer__skill-button')
+      const goal = agent.getByRole('button', { name: 'Toggle goal mode', exact: true })
+      await expect(skills).toBeVisible()
+      await expect(goal).toBeVisible()
+      const controlPlacement = () => agent.locator('.agent-composer__context-controls').evaluate(element => {
+        const group = element.getBoundingClientRect()
+        return ['.agent-composer__skill-button', '.agent-composer__goal-button'].map(selector => {
+          const control = element.querySelector(selector)
+          if (!control) throw new Error(`Missing composer control ${selector}`)
+          const bounds = control.getBoundingClientRect()
+          return { x: bounds.x - group.x, y: bounds.y - group.y, width: bounds.width, height: bounds.height }
+        })
+      })
+      const beforeSources = await controlPlacement()
+      await agent.getByRole('button', { name: 'Add sources', exact: true }).click()
+      const sourceDialog = page.getByRole('dialog', { name: 'Add sources', exact: true })
+      await sourceDialog.getByRole('textbox', { name: 'Search pages', exact: true }).fill('release')
+      await expect(sourceDialog.getByRole('checkbox')).toHaveCount(sources.length)
+      for (const checkbox of await sourceDialog.getByRole('checkbox').all()) await checkbox.check()
+      await sourceDialog.getByRole('button', { name: 'Add 3 sources and return', exact: true }).click()
+      await expect(sourceDialog).toBeHidden()
+      await expect(agent.locator('.agent-context__sources .v-chip')).toHaveCount(3)
+      const afterSources = await controlPlacement()
+      for (const [index, before] of beforeSources.entries()) {
+        const after = afterSources[index]!
+        expect(Math.abs(after.x - before.x), 'Adding source chips keeps control columns stable').toBeLessThanOrEqual(1)
+        expect(Math.abs(after.y - before.y), 'Adding source chips keeps Skills and Goal on their original control rows').toBeLessThanOrEqual(1)
+      }
+      const [sourceBounds, goalBounds, skillBounds] = await Promise.all([agent.locator('.agent-context__sources').boundingBox(), goal.boundingBox(), skills.boundingBox()])
+      expect(sourceBounds).not.toBeNull()
+      expect(goalBounds).not.toBeNull()
+      expect(skillBounds).not.toBeNull()
+      if (sourceBounds && goalBounds && skillBounds) expect(sourceBounds.y).toBeGreaterThanOrEqual(Math.max(goalBounds.y + goalBounds.height, skillBounds.y + skillBounds.height) - 1)
+      // Remove the chips after testing placement so the small viewport can focus on reading behavior.
+      for (const source of sources) await agent.getByRole('button', { name: `Remove source ${source.title}`, exact: true }).click()
+      await expect(agent.locator('.agent-context__sources')).toHaveCount(0)
       await composer.fill('Show enough release evidence to inspect the latest response navigation.')
       await agent.getByRole('button', { name: 'Send', exact: true }).click()
-      await expect(agent.locator('.agent-message--assistant').last()).toContainText(
-        'The final checkpoint keeps the newest response at the end of the conversation.'
-      )
-
+      await expect(agent.locator('.agent-message--assistant').last()).toContainText('The final checkpoint keeps the newest response at the end of the conversation.')
       const transcript = agent.locator('.inline-agent__transcript')
-      await expect.poll(() => transcript.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(100)
-      await transcript.evaluate(element => element.scrollTo({ top: 0, behavior: 'auto' }))
+      const footer = agent.locator('.inline-agent__composer')
       const latest = agent.getByRole('button', { name: 'Jump to latest response', exact: true })
       const face = latest.locator('.inline-agent__follow-jump-face')
-      const halo = latest.locator('.inline-agent__follow-jump-halo')
-      const jumpDock = agent.locator('.inline-agent__jump-dock')
-      const card = agent.locator('.inline-agent__card')
-      const body = agent.locator('.inline-agent__body')
-      const composerFooter = agent.locator('.inline-agent__composer')
-      const addSources = agent.getByText('Add sources', { exact: true })
+      const distanceFromBottom = () => transcript.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)
+      const opacity = (locator: Locator) => locator.evaluate(element => Number(getComputedStyle(element).opacity))
+      const readAtDistance = async (distance: number) => {
+        await page.mouse.move(1, 1)
+        await transcript.focus()
+        await transcript.evaluate((element, requestedDistance) => element.scrollTo({ top: Math.max(0, element.scrollHeight - element.clientHeight - requestedDistance), behavior: 'auto' }), distance)
+        await expect.poll(distanceFromBottom).toBeCloseTo(distance, 0)
+      }
+      await expect.poll(() => transcript.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(400)
+      await expect.poll(distanceFromBottom, { message: 'A newly completed assistant response is brought into view' }).toBeLessThanOrEqual(25)
+      await readAtDistance(400)
       await expect(latest).toBeVisible()
-      await expect(addSources).toBeVisible()
-
-      const assertJumpGeometry = async (scheme: 'light' | 'dark'): Promise<void> => {
-        await page.emulateMedia({ colorScheme: scheme, forcedColors: 'none', reducedMotion: 'no-preference' })
-        await expect(latest).toBeVisible()
-        const [cardBounds, jumpBounds, faceBounds, haloBounds, bodyBounds, composerBounds, addSourcesBounds] = await Promise.all([
-          card.boundingBox(),
-          jumpDock.boundingBox(),
-          face.boundingBox(),
-          halo.boundingBox(),
-          body.boundingBox(),
-          composerFooter.boundingBox(),
-          addSources.boundingBox()
-        ])
-        expect(cardBounds).not.toBeNull()
-        expect(jumpBounds).not.toBeNull()
-        expect(faceBounds).not.toBeNull()
-        expect(haloBounds).not.toBeNull()
-        expect(bodyBounds).not.toBeNull()
-        expect(composerBounds).not.toBeNull()
-        expect(addSourcesBounds).not.toBeNull()
-        if (cardBounds && jumpBounds && faceBounds && haloBounds && bodyBounds && composerBounds && addSourcesBounds) {
-          expect(faceBounds.height).toBeGreaterThanOrEqual(35)
-          expect(faceBounds.height).toBeLessThanOrEqual(37)
-          expect(faceBounds.x).toBeGreaterThanOrEqual(jumpBounds.x)
-          expect(faceBounds.x + faceBounds.width).toBeLessThanOrEqual(jumpBounds.x + jumpBounds.width)
-          const paintOutset = 4
-          expect(haloBounds.x - paintOutset).toBeGreaterThanOrEqual(cardBounds.x - 1)
-          expect(haloBounds.x + haloBounds.width + paintOutset).toBeLessThanOrEqual(cardBounds.x + cardBounds.width + 1)
-          expect(haloBounds.y - paintOutset).toBeGreaterThanOrEqual(cardBounds.y - 1)
-          expect(haloBounds.y + haloBounds.height + paintOutset).toBeLessThanOrEqual(composerBounds.y + 1)
-          expect(haloBounds.y - paintOutset).toBeGreaterThanOrEqual(bodyBounds.y + bodyBounds.height - 1)
-          const overlapsAddSources =
-            faceBounds.x < addSourcesBounds.x + addSourcesBounds.width &&
-            addSourcesBounds.x < faceBounds.x + faceBounds.width &&
-            faceBounds.y < addSourcesBounds.y + addSourcesBounds.height &&
-            addSourcesBounds.y < faceBounds.y + faceBounds.height
-          expect(overlapsAddSources, `Latest response face overlaps Add sources in ${scheme} mode`).toBe(false)
-        }
-        const [haloStyles, faceStyles, transcriptStyles] = await Promise.all([
-          halo.evaluate(element => {
-            const styles = getComputedStyle(element)
-            return { filter: styles.filter, opacity: Number(styles.opacity) }
-          }),
-          face.evaluate(element => {
-            const styles = getComputedStyle(element)
-            return { background: styles.backgroundColor, border: styles.borderColor }
-          }),
-          transcript.evaluate(element => getComputedStyle(element).scrollBehavior)
-        ])
-        expect(haloStyles.filter, `Latest response halo remains painted in ${scheme} mode`).toContain('blur')
-        expect(haloStyles.opacity, `Latest response halo remains visible in ${scheme} mode`).toBeGreaterThan(0)
-        expect(faceStyles.background, `Latest response face has a visible background in ${scheme} mode`).not.toBe('rgba(0, 0, 0, 0)')
-        expect(faceStyles.border, `Latest response face has a visible border in ${scheme} mode`).not.toBe('rgba(0, 0, 0, 0)')
-        expect(transcriptStyles).toBe('smooth')
+      await expect(face).toHaveText('Latest')
+      await expect.poll(() => opacity(footer)).toBeCloseTo(0.2, 2)
+      await expect.poll(() => opacity(latest)).toBeCloseTo(0.8, 2)
+      const [latestBounds, faceBounds, footerBounds] = await Promise.all([latest.boundingBox(), face.boundingBox(), footer.boundingBox()])
+      expect(latestBounds).not.toBeNull()
+      expect(faceBounds).not.toBeNull()
+      expect(footerBounds).not.toBeNull()
+      if (latestBounds && faceBounds && footerBounds) {
+        expect(faceBounds.height).toBeGreaterThanOrEqual(35)
+        expect(faceBounds.height).toBeLessThanOrEqual(37)
+        expect(faceBounds.width).toBeLessThan(footerBounds.width * 0.65)
+        expect(faceBounds.y + faceBounds.height).toBeLessThanOrEqual(footerBounds.y + 1)
+        if (coarseProject) expect(Math.min(latestBounds.width, latestBounds.height)).toBeGreaterThanOrEqual(44)
       }
-
+      const dockPaint = await agent.locator('.inline-agent__jump-dock').evaluate(element => {
+        const styles = getComputedStyle(element)
+        return { position: styles.position, background: styles.backgroundColor, image: styles.backgroundImage, backdrop: styles.backdropFilter }
+      })
+      expect(dockPaint).toEqual({ position: 'absolute', background: 'rgba(0, 0, 0, 0)', image: 'none', backdrop: 'none' })
+      await composer.focus()
+      await expect.poll(() => opacity(footer)).toBeCloseTo(1, 2)
+      await readAtDistance(400)
       if (desktopProject) {
-        await assertJumpGeometry('light')
-        await assertJumpGeometry('dark')
-        await page.emulateMedia({ colorScheme: 'dark', forcedColors: 'active', reducedMotion: 'reduce' })
-        await expect(latest).toBeVisible()
-        const forcedStyles = await halo.evaluate(element => {
-          const styles = getComputedStyle(element)
-          return { display: styles.display, filter: styles.filter }
-        })
-        expect(forcedStyles.display).toBe('none')
-        expect(forcedStyles.filter).toBe('blur(4px)')
-        expect(await transcript.evaluate(element => getComputedStyle(element).scrollBehavior)).toBe('auto')
-      } else {
-        await page.emulateMedia({ colorScheme: 'light', forcedColors: 'none', reducedMotion: 'reduce' })
-        const [outerBounds, compactFaceBounds] = await Promise.all([latest.boundingBox(), face.boundingBox()])
-        expect(outerBounds).not.toBeNull()
-        expect(compactFaceBounds).not.toBeNull()
-        if (outerBounds && compactFaceBounds) {
-          expect(Math.min(outerBounds.width, outerBounds.height)).toBeGreaterThanOrEqual(44)
-          expect(compactFaceBounds.height).toBeGreaterThanOrEqual(35)
-          expect(compactFaceBounds.height).toBeLessThanOrEqual(37)
-        }
+        await footer.hover()
+        await expect.poll(() => opacity(footer)).toBeCloseTo(1, 2)
+        await readAtDistance(400)
       }
-
-      const moveAwayFromLatest = async (): Promise<void> => {
-        await transcript.evaluate(element => element.scrollTo({ top: 0, behavior: 'auto' }))
-        await expect(latest).toBeVisible()
+      const samples: Array<{ composer: number; latest: number }> = []
+      for (const distance of [140, 100, 60]) {
+        await readAtDistance(distance)
+        const expectedProgress = (distance - 24) / (160 - 24)
+        await expect.poll(() => opacity(footer)).toBeCloseTo(1 - 0.8 * expectedProgress, 1)
+        await expect.poll(() => opacity(latest)).toBeCloseTo(0.8 * expectedProgress, 1)
+        samples.push({ composer: await opacity(footer), latest: await opacity(latest) })
       }
-      const expectLatestReached = async (): Promise<void> => {
-        await expect.poll(() => transcript.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(160)
-        await expect(latest).toBeHidden()
-        await expect(transcript).toBeFocused()
+      for (let index = 1; index < samples.length; index++) {
+        expect(samples[index]!.composer).toBeGreaterThan(samples[index - 1]!.composer)
+        expect(samples[index]!.latest).toBeLessThan(samples[index - 1]!.latest)
       }
-      await moveAwayFromLatest()
-      await latest.click()
-      await expectLatestReached()
-      await moveAwayFromLatest()
+      await readAtDistance(20)
+      await expect(latest).toBeHidden()
+      await expect.poll(() => opacity(footer)).toBeCloseTo(1, 2)
+      await readAtDistance(400)
       await latest.focus()
       await latest.press('Enter')
-      await expectLatestReached()
-
-      const [agentBounds, transcriptBounds, composerBounds] = await Promise.all([agent.boundingBox(), transcript.boundingBox(), composerFooter.boundingBox()])
-      expect(agentBounds).not.toBeNull()
-      expect(transcriptBounds).not.toBeNull()
-      expect(composerBounds).not.toBeNull()
-      if (agentBounds && transcriptBounds && composerBounds) {
-        expect(agentBounds.x).toBeGreaterThanOrEqual(-1)
-        expect(agentBounds.x + agentBounds.width).toBeLessThanOrEqual((page.viewportSize()?.width ?? 0) + 1)
-        expect(transcriptBounds.x + transcriptBounds.width).toBeLessThanOrEqual(composerBounds.x + composerBounds.width + 1)
-      }
+      await expect.poll(distanceFromBottom).toBeLessThanOrEqual(25)
+      await expect(latest).toBeHidden()
+      await expect(transcript).toBeFocused()
+      // A held provider response distinguishes submission scrolling from response-arrival scrolling.
+      releaseResponse = fixture.pauseNextResponse()
+      await composer.fill('Show another complete review while preserving readable earlier messages.')
+      await readAtDistance(400)
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(agent.locator('.agent-message--user').last()).toContainText('Show another complete review')
+      await expect.poll(distanceFromBottom, { message: 'Submitting a message immediately returns to the newest messages' }).toBeLessThanOrEqual(25)
+      await readAtDistance(400)
+      await expect.poll(() => opacity(footer)).toBeCloseTo(0.2, 2)
+      releaseResponse()
+      releaseResponse = null
+      await expect(agent.locator('.agent-message--assistant').last()).toContainText('The final checkpoint keeps the newest response at the end of the conversation.')
+      await expect.poll(distanceFromBottom, { message: 'The arriving completed response returns to the newest messages even after reading earlier content' }).toBeLessThanOrEqual(25)
+      await readAtDistance(400)
+      await page.emulateMedia({ colorScheme: 'dark', forcedColors: 'active', reducedMotion: 'reduce' })
+      await expect(latest).toBeVisible()
+      await expect(latest.locator('.inline-agent__follow-jump-halo')).toHaveCSS('display', 'none')
+      await latest.click()
+      await expect(transcript).toBeFocused()
+      await expect.poll(distanceFromBottom).toBeLessThanOrEqual(25)
       expect(await agent.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
       expect(await transcript.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
       fixture.assertNoUnexpectedRequests()
     } finally {
+      releaseResponse?.()
       await fixture.dispose()
     }
   })

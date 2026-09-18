@@ -323,13 +323,14 @@
                     color="primary"
                     variant="text"
                     aria-label="Jump to latest response"
+                    :style="{ opacity: 0.8 * transcriptReadingProgress }"
                     @click="scrollToLatest"
                   >
                     <span class="inline-agent__follow-jump-frame">
                       <span class="inline-agent__follow-jump-halo" aria-hidden="true" />
                       <span class="inline-agent__follow-jump-face">
                         <v-icon icon="mdi-arrow-down" size="16" aria-hidden="true" />
-                        <span>Latest response</span>
+                        <span>Latest</span>
                       </span>
                     </span>
                   </v-btn>
@@ -338,8 +339,10 @@
                 <footer
                   class="inline-agent__composer"
                   :class="{ 'inline-agent__composer--scrolled': !transcriptFollowing, 'inline-agent__composer--focused': composerFocused }"
+                  :style="{ '--agent-composer-opacity': 1 - 0.8 * transcriptReadingProgress }"
                   @focusin="handleComposerFocusIn"
                   @focusout="handleComposerFocusOut"
+                  @keydown="handleComposerFocusIn"
                 >
                   <div class="inline-agent__composer-inner">
                     <p
@@ -627,6 +630,9 @@ const handleTranscriptEngagement = (event: FocusEvent | PointerEvent): void => {
   composerFocused.value = false
 }
 const transcriptFollowing = ref(true)
+const transcriptBottomDistance = ref(0)
+// Restore the composer over the final 160px, with a quiet 24px landing zone.
+const transcriptReadingProgress = computed(() => Math.min(1, Math.max(0, (transcriptBottomDistance.value - 24) / 136)))
 let transcriptObserver: MutationObserver | null = null
 let transcriptFrame: number | null = null
 let transcriptFrameShouldFollow = false
@@ -661,7 +667,7 @@ const openGoal = computed(() => {
   return goal && (goal.status === 'active' || goal.status === 'paused' || goal.status === 'blocked') ? goal : null
 })
 const hasConversation = computed(() => Boolean(thread.value && (thread.value.messages.length || thread.value.tools.length || thread.value.artifacts.length || thread.value.goal)))
-const followJumpVisible = computed(() => Boolean(hasConversation.value && !transcriptFollowing.value && !approvalJumpVisible.value))
+const followJumpVisible = computed(() => Boolean(hasConversation.value && transcriptReadingProgress.value > 0 && !approvalJumpVisible.value))
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
 const mediaProfile = computed(() => thread.value?.session.providerProfileId ? profiles.value.find(profile => profile.id === thread.value?.session.providerProfileId) : profiles.value.find(profile => profile.isGlobalDefault) ?? (profiles.value.length === 1 ? profiles.value[0] : undefined))
 const mediaRefreshing = ref(false)
@@ -952,9 +958,11 @@ const sendPrompt = async (
     const initialized = await ensureInitialized()
     if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
     if (!initialized || !canSubmit.value || (mode === 'goal' && !props.goalsEnabled)) { completion?.(false); return false }
+    transcriptFollowing.value = true
     const success = await agents.send(prompt, invokedSkillVersionIds, mode, media)
     if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
     completion?.(success)
+    if (success) await reconcileTranscriptGrowth(true)
     return success
   } catch (value) {
     if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
@@ -1254,6 +1262,10 @@ const jumpToApproval = async (): Promise<void> => {
 const transcriptIsNearBottom = (element: HTMLElement | null): boolean =>
   Boolean(element && element.scrollHeight - element.scrollTop - element.clientHeight < 160)
 const handleTranscriptScroll = (): void => {
+  const container = transcript.value
+  const distance = container ? Math.max(0, container.scrollHeight - container.scrollTop - container.clientHeight) : 0
+  if (distance > transcriptBottomDistance.value + 1) composerFocused.value = false
+  transcriptBottomDistance.value = distance
   const following = transcriptIsNearBottom(transcript.value)
   transcriptFollowing.value = following
   if (!following) transcriptFrameShouldFollow = false
@@ -1261,6 +1273,7 @@ const handleTranscriptScroll = (): void => {
 }
 const reconcileTranscriptGrowth = async (shouldFollow: boolean): Promise<void> => {
   await nextTick()
+  if (disposed) return
   if (!hasConversation.value && transcript.value) {
     transcript.value.scrollTo({ top: 0, behavior: 'auto' })
     transcriptFollowing.value = true
@@ -1270,7 +1283,7 @@ const reconcileTranscriptGrowth = async (shouldFollow: boolean): Promise<void> =
   } else {
     transcriptFollowing.value = transcriptIsNearBottom(transcript.value)
   }
-  updateApprovalJump()
+  handleTranscriptScroll()
 }
 const handleGoalExpanded = async (expanded: boolean): Promise<void> => {
   const container = transcript.value
@@ -1284,7 +1297,7 @@ const handleGoalExpanded = async (expanded: boolean): Promise<void> => {
   } else {
     transcriptFollowing.value = transcriptIsNearBottom(container)
   }
-  updateApprovalJump()
+  handleTranscriptScroll()
 }
 const scheduleTranscriptReconcile = (): void => {
   transcriptFrameShouldFollow ||= transcriptFollowing.value || transcriptIsNearBottom(transcript.value)
@@ -1302,6 +1315,17 @@ const observeTranscript = (container: HTMLElement | null): void => {
 }
 
 watch(transcript, observeTranscript, { flush: 'post' })
+watch(() => {
+  const messages = thread.value?.messages ?? []
+  const response = messages.findLast(message => message.role === 'assistant' && (message.content || message.media?.length))
+  return [thread.value?.session.id, response?.id, response?.status === 'complete'] as const
+}, ([sessionId, responseId, complete], previous) => {
+  // Follow each new answer and its completion, but let readers scroll back during streaming.
+  if (sessionId !== previous[0] || (responseId && (responseId !== previous[1] || (complete && !previous[2])))) {
+    transcriptFollowing.value = true
+    void reconcileTranscriptGrowth(true)
+  }
+}, { flush: 'post' })
 watch(networkPaused, paused => {
   if (!paused && pwaState.connectionState === 'online') waitingForConnection.value = false
 })
@@ -1397,7 +1421,7 @@ watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
       if (container) container.scrollTop = 0
       if (restoreWorkspaceFocus) await composer.value?.focusInput()
     }
-    updateApprovalJump()
+    handleTranscriptScroll()
   })
 })
 watch(() => thread.value?.goal?.id, (goalId, previousGoalId) => {
@@ -1413,7 +1437,13 @@ onMounted(() => {
   ]
   panelModeMedia.forEach(media => media.addEventListener('change', reconcilePanelMode))
   reconcilePanelMode()
-  transcriptObserver = new MutationObserver(scheduleTranscriptReconcile)
+  transcriptObserver = new MutationObserver(records => {
+    // Navigation fades must never trigger following or change a reader's position.
+    if (records.some(record => {
+      const element = record.target instanceof Element ? record.target : record.target.parentElement
+      return element === transcript.value || element?.closest('.agent-thread, .inline-agent__goal-dock, .inline-agent__composer')
+    })) scheduleTranscriptReconcile()
+  })
   observeTranscript(transcript.value)
   window.addEventListener('resize', scheduleTranscriptReconcile)
   window.visualViewport?.addEventListener('resize', scheduleTranscriptReconcile)
@@ -1803,7 +1833,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   outline: none;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   scroll-padding-block: var(--wiki-space-4);
 }
 .inline-agent__conversation-dock {
@@ -1818,7 +1848,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   pointer-events: none;
 }
 .inline-agent__conversation-dock > .inline-agent__goal-dock,
-.inline-agent__conversation-dock > .inline-agent__jump-dock,
 .inline-agent__conversation-dock > .inline-agent__composer {
   pointer-events: auto;
 }
@@ -1889,6 +1918,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__jump-dock {
+  position: absolute;
+  inset-block-end: 100%;
+  inset-inline-end: max(0px, calc((100% - var(--agent-conversation-width)) / 2));
   display: flex;
   align-items: center;
   width: min(100%, var(--agent-conversation-width));
@@ -1898,7 +1930,12 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   margin-inline: auto;
   padding: var(--wiki-space-4);
   border: 0;
-  background: rgb(var(--v-theme-background));
+  background: transparent;
+  pointer-events: none;
+}
+
+.inline-agent__jump-dock > .v-btn {
+  pointer-events: auto;
 }
 
 .inline-agent__approval-jump {
@@ -1914,6 +1951,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   border-radius: var(--wiki-control-radius);
   background: transparent !important;
   box-shadow: none;
+  transition: opacity 160ms var(--wiki-motion-ease);
 }
 
 .inline-agent__follow-jump :deep(.v-btn__content) {
@@ -2146,13 +2184,16 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   border-top: 0;
   background: transparent;
   box-shadow: none;
+  opacity: var(--agent-composer-opacity, 1);
+  transition: opacity 160ms var(--wiki-motion-ease);
 }
-.inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
-  border-color: var(--wiki-surface-border-strong);
-  background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-xs);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
+.inline-agent__composer--focused {
+  opacity: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .inline-agent__composer:hover {
+    opacity: 1;
+  }
 }
 .inline-agent__composer-inner {
   width: min(100%, var(--agent-conversation-width));
@@ -2660,6 +2701,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 @media (forced-colors: active) {
+  .inline-agent__composer {
+    opacity: 1;
+  }
   .inline-agent__welcome h2::before {
     display: none;
   }
@@ -2723,6 +2767,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     animation: none;
   }
   .inline-agent__starter,
+  .inline-agent__composer,
+  .inline-agent__follow-jump,
   .inline-agent__card,
   .inline-agent__toolbar,
   .inline-agent__body {

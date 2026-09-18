@@ -555,6 +555,7 @@ const mountInlineAgent = (
     handleDraftChange: () => undefined,
     submitUnavailableReason: lockState?.submitUnavailableReason.value ?? '',
     transcriptFollowing,
+    transcriptReadingProgress: options.followJumpVisible ? 1 : 0,
     invocationLimit: lockState?.invocationLimit.value ?? 8,
     composerFocused,
     handleComposerFocusIn,
@@ -1120,9 +1121,9 @@ describe('Inline Agent latest response dock', () => {
     expect(conversationDock.classList.contains('inline-agent__conversation-dock')).toBe(true)
     expect(dock.nextElementSibling).toBe(composer)
     expect(button.getAttribute('aria-label')).toBe('Jump to latest response')
-    expect(button.textContent?.trim()).toBe('Latest response')
+    expect(button.textContent?.trim()).toBe('Latest')
     expect(button.querySelectorAll('button')).toHaveLength(0)
-    expect(face.textContent?.trim()).toBe('Latest response')
+    expect(face.textContent?.trim()).toBe('Latest')
     expect(halo.getAttribute('aria-hidden')).toBe('true')
   })
 
