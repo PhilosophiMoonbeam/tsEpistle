@@ -646,7 +646,7 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
     }
     if (sessionMatch && request.method() === 'PUT') return json(route, copy(state.thread))
     if (sessionMatch && request.method() === 'DELETE') {
-      state.thread = threadFor()
+      if (sessionMatch[1] === state.thread.session.id) state.thread = threadFor()
       return route.fulfill({ status: 204 })
     }
     const messageMatch = path.match(/^\/_api\/agents\/sessions\/([^/]+)\/messages$/)

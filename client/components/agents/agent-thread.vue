@@ -145,14 +145,15 @@
                     :is="group.safeHref ? 'a' : 'div'"
                     class="agent-sources__page"
                     :href="group.safeHref"
-                    :target="group.safeHref ? '_blank' : undefined"
+                    :target="group.safeHref && !group.previewSelector ? '_blank' : undefined"
                     :rel="group.safeHref ? 'noopener noreferrer' : undefined"
+                    @click="previewCitation($event, group.previewSelector)"
                   >
                     <span v-if="group.pageCitation" class="agent-sources__number">{{ group.pageCitation.number }}</span>
                     <v-icon v-else icon="mdi-file-document-outline" size="18" aria-hidden="true" />
                     <strong>{{ group.pageLabel }}</strong>
-                    <v-icon v-if="group.safeHref" icon="mdi-open-in-new" size="15" aria-hidden="true" />
-                    <span v-if="group.safeHref" class="agent-sources__new-window"> (opens in a new tab)</span>
+                    <v-icon v-if="group.safeHref" :icon="group.previewSelector ? 'mdi-text-box-search-outline' : 'mdi-open-in-new'" size="15" aria-hidden="true" />
+                    <span v-if="group.safeHref" class="agent-sources__new-window">{{ group.previewSelector ? ' (preview source)' : ' (opens in a new tab)' }}</span>
                   </component>
                   <v-btn v-if="group.previewSelector" class="agent-sources__preview" size="small" variant="text" prepend-icon="mdi-text-box-search-outline" :aria-label="`Preview ${group.pageLabel}`" @click="previewSelector = group.previewSelector">Preview source</v-btn>
                   <ol v-if="group.sections.length" class="agent-sources__sections">
@@ -164,13 +165,14 @@
                       <component
                         :is="citationEntry.safeHref ? 'a' : 'span'"
                         :href="citationEntry.safeHref"
-                        :target="citationEntry.safeHref ? '_blank' : undefined"
+                        :target="citationEntry.safeHref && !citationEntry.previewSelector ? '_blank' : undefined"
                         :rel="citationEntry.safeHref ? 'noopener noreferrer' : undefined"
-                        :aria-label="`Citation ${citationEntry.number}: ${citationEntry.citation.label}${citationEntry.safeHref ? ' (opens in a new tab)' : ''}`"
+                        :aria-label="`Citation ${citationEntry.number}: ${citationEntry.citation.label}${citationEntry.previewSelector ? ' (preview source)' : citationEntry.safeHref ? ' (opens in a new tab)' : ''}`"
+                        @click="previewCitation($event, citationEntry.previewSelector)"
                       >
                         <span class="agent-sources__number">{{ citationEntry.number }}</span>
                         <span class="agent-sources__label">{{ citationEntry.sectionLabel }}</span>
-                        <v-icon v-if="citationEntry.safeHref" icon="mdi-open-in-new" size="14" aria-hidden="true" />
+                        <v-icon v-if="citationEntry.safeHref" :icon="citationEntry.previewSelector ? 'mdi-text-box-search-outline' : 'mdi-open-in-new'" size="14" aria-hidden="true" />
                       </component>
                     </li>
                   </ol>
@@ -299,6 +301,11 @@ const forwardDecision = (
 ): void => emit('decision', proposalId, approvalId, decision, confirmationPath)
 
 const previewSelector = ref<WikiSourceSelector | null>(null)
+const previewCitation = (event: MouseEvent, selector: WikiSourceSelector | null): void => {
+  if (!selector || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+  event.preventDefault()
+  previewSelector.value = selector
+}
 const sourceSelector = (href: string | null): WikiSourceSelector | null => {
   if (!href) return null
   const origin = typeof window === 'undefined' ? 'https://wiki.invalid' : window.location.origin

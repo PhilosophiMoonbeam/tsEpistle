@@ -199,7 +199,7 @@ describe('Agent thread disclosures', () => {
     expect(activityDetails).toContain('aria-hidden="true"')
   })
 
-  test('preserves ordered numbered citations and renders only safe source URLs as new-tab links', () => {
+  test('preserves ordered numbered citations and renders safe source URLs with previews or new-tab links', () => {
     const { safeNavigableHref } = loadThreadHelpers()
 
     expect(safeNavigableHref('/en/runbook#response')).toBe('/en/runbook#response')
@@ -214,11 +214,11 @@ describe('Agent thread disclosures', () => {
     expect(sourceDetails).toContain('{{ citationEntry.number }}')
     expect(sourceDetails).toContain(":is=\"group.safeHref ? 'a' : 'div'\"")
     expect(sourceDetails).toContain(':href="group.safeHref"')
-    expect(sourceDetails).toContain(':target="group.safeHref ? \'_blank\' : undefined"')
+    expect(sourceDetails).toContain(':target="group.safeHref && !group.previewSelector ? \'_blank\' : undefined"')
     expect(sourceDetails).toContain(':rel="group.safeHref ? \'noopener noreferrer\' : undefined"')
     expect(sourceDetails).toContain(":is=\"citationEntry.safeHref ? 'a' : 'span'\"")
     expect(sourceDetails).toContain(':href="citationEntry.safeHref"')
-    expect(sourceDetails).toContain(':target="citationEntry.safeHref ? \'_blank\' : undefined"')
+    expect(sourceDetails).toContain(':target="citationEntry.safeHref && !citationEntry.previewSelector ? \'_blank\' : undefined"')
     expect(sourceDetails).toContain(':rel="citationEntry.safeHref ? \'noopener noreferrer\' : undefined"')
     expect(sourceDetails).toContain('v-if="group.previewSelector"')
   })

@@ -45,6 +45,72 @@ const decodeWikiPagePayloadForTest = (encoded: string): WikiPagePayload => {
   }
 }
 
+type ContinuitySubmission = { currentPage?: { id: number }; knowledgeContext: { sources: Array<{ id: number }> } }
+
+async function installAgentContinuityPages(page: Page): Promise<void> {
+  await page.route('**/_api/users/whoami', route => route.fulfill({ json: { authenticated: true, user: { id: 900001, name: 'Agent context fixture', email: 'context@example.invalid', permissions: ['use:agents'], localeCode: 'en' } } }))
+  await page.route(/\/_api\/pages\/\d+\/watch$/, route => route.fulfill({ json: { watched: false, emailEnabled: false, inAppEnabled: false } }))
+  await page.route(/\/_api\/pages\/\d+\/approval$/, route => route.fulfill({ json: { approval: null } }))
+  await page.route('**/_api/pages/watches/notifications', route => route.fulfill({ json: { ownerId: 900001, items: [], unreadCount: 0, nextCursor: null, unreadComplete: true } }))
+  await page.route('**/_api/pages/approvals/inbox', route => route.fulfill({ json: { ownerId: 900001, items: [], nextCursor: null } }))
+  await page.route('**/_api/pages/search?**', route => route.fulfill({ json: { results: [], suggestions: [], totalHits: 0, nextCursor: null } }))
+  const sources = [
+    ...['a', 'b', 'c'].map((suffix, index) => ({ id: 901 + index, path: `agent-context-fixture-${suffix}`, title: `Context page ${suffix.toUpperCase()}` })),
+    { id: 6, path: 'release-guide', title: 'Release guide' }
+  ].map(source => ({ ...source, locale: 'en', visibility: 'public', description: 'A browser-only Agent source.', updatedAt: '2026-09-01T12:00:00.000Z', sourceRevision: '1', excerpt: 'Release evidence excerpt.', excerptTruncated: false }))
+  await page.route('**/_api/pages/preview?**', route => {
+    const params = new URL(route.request().url()).searchParams
+    const source = sources.find(item => params.has('id') ? item.id === Number(params.get('id')) : item.path === params.get('path'))
+    return route.fulfill({ status: source ? 200 : 404, json: source ?? { error: 'Fixture source not found' } })
+  })
+  // Serve three public fixture page identities using the deployed app shell, without creating wiki records.
+  await page.route(/\/agent-context-fixture-[abc]$/, async route => {
+    const path = new URL(route.request().url()).pathname.slice(1)
+    const source = sources.find(item => item.path === path)!
+    const response = await route.fetch({ url: new URL('/', route.request().url()).href })
+    expect(response.ok()).toBe(true)
+    const html = await response.text()
+    let replaced = false
+    const body = html.replace(/(<wiki-page\b[^>]*\bpayload=)(["'])([^"']+)\2/u, (_match, prefix: string, quote: string, encoded: string) => {
+      const payload = decodeWikiPagePayloadForTest(encoded)
+      const patched = { ...payload, spaNavigation: true, props: { ...payload.props, pageId: source.id, locale: source.locale, path: source.path, title: source.title, updatedAt: source.updatedAt, sourceRevision: source.sourceRevision } }
+      replaced = true
+      return `${prefix}${quote}${Buffer.from(JSON.stringify(patched)).toString('base64')}${quote}`
+    })
+    expect(replaced, 'The deployed wiki document exposes its normal navigation payload').toBe(true)
+    await route.fulfill({ response, body })
+  })
+}
+
+async function openContinuityAgent(page: Page, path?: string): Promise<Locator> {
+  if (path) {
+    await page.goto(path, { waitUntil: 'domcontentloaded' })
+    await expect(page.locator('.nav-header')).toBeVisible({ timeout: 15_000 })
+  }
+  const search = await openSearch(page)
+  await search.fill('context')
+  await page.getByRole('dialog', { name: 'Search the Wiki', exact: true }).getByRole('button', { name: 'Ask about this', exact: true }).click()
+  const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
+  await expect(agent.locator('.agent-composer textarea')).toBeEnabled()
+  return agent
+}
+
+async function closeContinuityAgent(page: Page): Promise<void> {
+  await page.locator('.search-results-close:visible, .inline-agent__mobile-close:visible').first().click()
+  await expect(page.getByRole('region', { name: 'Wiki Agent', exact: true })).toBeHidden()
+}
+
+async function sendContinuityPrompt(page: Page, agent: Locator, prompt: string): Promise<ContinuitySubmission> {
+  const request = page.waitForRequest(request => request.method() === 'POST' && /\/_api\/agents\/sessions\/[^/]+\/messages$/.test(new URL(request.url()).pathname))
+  await agent.locator('.agent-composer textarea').fill(prompt)
+  await agent.getByRole('button', { name: 'Send', exact: true }).click()
+  const body = (await request).postDataJSON() as ContinuitySubmission
+  await expect(agent.locator('.agent-message--user').last()).toContainText(prompt)
+  await expect(agent.locator('.agent-message--assistant').last()).toContainText('The release is ready for a deliberate review.')
+  await expect(agent.locator('.agent-composer textarea')).toBeEnabled()
+  return body
+}
+
 test.describe('responsive UI quality matrix', () => {
   test.beforeEach(() => {
     test.setTimeout(60_000)
@@ -2063,183 +2129,116 @@ test.describe('responsive UI quality matrix', () => {
       await fixture.dispose()
     }
   })
-  test('reopens a pinned conversation across pages and creates a fresh session only after unpinning', async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Pinned Agent retention coverage is owned by Chromium desktop.')
-    const fixture = await installEnabledAgentFixture(page, { mode: 'pin', distinctSessionIds: true })
-    const messagePath = (request: { method(): string; url(): string }): boolean =>
-      request.method() === 'POST' && /\/_api\/agents\/sessions\/[^/]+\/messages$/.test(new URL(request.url()).pathname)
-    const sessionPath = (request: { method(): string; url(): string }): boolean =>
-      request.method() === 'GET' && /\/_api\/agents\/sessions\/[^/]+$/.test(new URL(request.url()).pathname)
-    const createSessionPath = (response: { request(): { method(): string }; url(): string }): boolean =>
-      response.request().method() === 'POST' && new URL(response.url()).pathname === '/_api/agents/sessions'
+  test('Agent continuity resumes briefly on the same page and starts fresh after expiry or navigation', async ({ page }, testInfo) => {
+    test.skip(!['responsive-chromium-desktop', 'responsive-chromium-mobile'].includes(testInfo.project.name))
+    await installAgentContinuityPages(page)
+    const fixture = await installEnabledAgentFixture(page, { distinctSessionIds: true })
+    const creates = () => fixture.requests.filter(value => value === 'POST /_api/agents/sessions').length
     try {
-      await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
-      await expect(page.locator('.page-header-section')).toBeVisible()
-      const firstCreatePromise = page.waitForResponse(createSessionPath)
-      await page.locator('.nav-header-agent:visible').first().click()
-      const firstCreateResponse = await firstCreatePromise
-      expect(firstCreateResponse.status()).toBe(201)
-      const firstCreated = (await firstCreateResponse.json()) as { session?: { id?: unknown; retention?: unknown } }
-      const sessionA = firstCreated.session?.id
-      expect(firstCreated.session?.retention).toBe('saved')
-      expect(typeof sessionA).toBe('string')
-      if (typeof sessionA !== 'string') throw new Error('The fixture did not return the first created session ID.')
-      const agent = page.getByRole('region', { name: 'Wiki Agent' })
-      await expect(agent).toBeVisible()
-      const pin = agent.locator('header').getByRole('button', { name: /^(?:Pin|Unpin) conversation$/ })
-      const composerInput = agent.getByRole('textbox', { name: /^(?:Message|Follow up with) Wiki Agent$/ })
-      await expect(pin).toHaveAttribute('aria-pressed', 'false')
-      await pin.click()
-      await expect(pin).toHaveAttribute('aria-pressed', 'true')
-      await expect(pin).toHaveAttribute('title', 'Unpin conversation')
-      const pageContext = agent.getByRole('group', { name: 'Current page context: en/visual-markdown-browser', exact: true })
-      const contextToggle = pageContext.getByRole('button', { name: /^(?:Exclude|Include) current page$/ })
-      await expect(pageContext, 'An open workspace exposes the page context it was opened with').toBeVisible()
-      await expect(contextToggle).toHaveAttribute('aria-label', 'Exclude current page')
-      await expect(contextToggle).toHaveAttribute('aria-pressed', 'true')
-
-      const promptA = 'Remember the first page context.'
-      const messageARequestPromise = page.waitForRequest(messagePath)
-      await composerInput.fill(promptA)
-      await agent.getByRole('button', { name: 'Send', exact: true }).click()
-      const messageARequest = await messageARequestPromise
-      const bodyA = messageARequest.postDataJSON() as {
-        content?: unknown
-        currentPage?: { id?: unknown; locale?: unknown; path?: unknown; observedUpdatedAt?: unknown }
-      }
-      expect(bodyA.content).toBe(promptA)
-      expect(bodyA.currentPage).toEqual(expect.objectContaining({ locale: 'en', path: 'visual-markdown-browser' }))
-      await expect(agent.locator('.agent-message--assistant').last()).toContainText('The release is ready for a deliberate review.')
-      await page.evaluate(() => {
-        window.history.pushState(null, '', '/en/home')
-        window.dispatchEvent(new PopStateEvent('popstate'))
-      })
-      await expect(page).toHaveURL('/en/home')
-      await expect(page.locator('.page-title').first()).toHaveText('Home')
-      await expect(pageContext, 'Changing the reader page does not relatch an open Agent workspace').toBeVisible()
-      await expect(contextToggle).toHaveAttribute('aria-label', 'Exclude current page')
-      await expect(contextToggle).toHaveAttribute('aria-pressed', 'true')
-
-      await contextToggle.click()
-      await expect(contextToggle).toHaveAttribute('aria-label', 'Include current page')
-      await expect(contextToggle).toHaveAttribute('aria-pressed', 'false')
-      const promptExcluded = 'Exclude the current page from this request.'
-      const messageExcludedRequestPromise = page.waitForRequest(messagePath)
-      await composerInput.fill(promptExcluded)
-      await agent.getByRole('button', { name: 'Send', exact: true }).click()
-      const messageExcludedRequest = await messageExcludedRequestPromise
-      const bodyExcluded = messageExcludedRequest.postDataJSON() as {
-        content?: unknown
-        currentPage?: { id?: unknown; locale?: unknown; path?: unknown; observedUpdatedAt?: unknown }
-      }
-      expect(bodyExcluded.content).toBe(promptExcluded)
-      expect(bodyExcluded).not.toHaveProperty('currentPage')
-      await expect(agent.locator('.agent-message--assistant').last()).toContainText('The release is ready for a deliberate review.')
-
-      await contextToggle.click()
-      await expect(contextToggle).toHaveAttribute('aria-label', 'Exclude current page')
-      await expect(contextToggle).toHaveAttribute('aria-pressed', 'true')
-      const promptReincluded = 'Reinclude the latched page context for this request.'
-      const messageReincludedRequestPromise = page.waitForRequest(messagePath)
-      await composerInput.fill(promptReincluded)
-      await agent.getByRole('button', { name: 'Send', exact: true }).click()
-      const messageReincludedRequest = await messageReincludedRequestPromise
-      const bodyReincluded = messageReincludedRequest.postDataJSON() as {
-        content?: unknown
-        currentPage?: { id?: unknown; locale?: unknown; path?: unknown; observedUpdatedAt?: unknown }
-      }
-      expect(bodyReincluded.content).toBe(promptReincluded)
-      expect(bodyReincluded.currentPage).toEqual(expect.objectContaining({ locale: 'en', path: 'visual-markdown-browser' }))
-      await expect(agent.locator('.agent-message--assistant').last()).toContainText('The release is ready for a deliberate review.')
-      await expect(agent.locator('.agent-message--user')).toHaveCount(3)
-      await expect(agent.locator('.agent-message--user').filter({ hasText: promptExcluded })).toBeVisible()
-      await expect(agent.locator('.agent-message--user').filter({ hasText: promptReincluded })).toBeVisible()
-
-      await page.keyboard.press('Escape')
-      const firstSearchDialog = page.getByRole('dialog', { name: 'Wiki search', exact: true })
-      await expect(firstSearchDialog).toBeVisible()
-      await page.keyboard.press('Escape')
-      await expect(firstSearchDialog).toBeHidden()
-
-      await openAuthenticatedPage(page, '/en/home', '.page-header-section')
-      await expect(page.locator('.page-header-section')).toBeVisible()
-      const reopenAResponsePromise = page.waitForResponse(response => {
-        const request = response.request()
-        return sessionPath(request) && new URL(response.url()).pathname === `/_api/agents/sessions/${sessionA}`
-      })
-      const createsBeforeReopen = fixture.requests.filter(request => request === 'POST /_api/agents/sessions').length
-      await page.locator('.nav-header-agent:visible').first().click()
-      const reopenAResponse = await reopenAResponsePromise
-      expect(reopenAResponse.status()).toBe(200)
-      const reopenedA = (await reopenAResponse.json()) as { session?: { id?: unknown } }
-      expect(reopenedA.session?.id).toBe(sessionA)
-      expect(fixture.requests.filter(request => request === 'POST /_api/agents/sessions')).toHaveLength(createsBeforeReopen)
-      const reopenedPageContext = agent.getByRole('group', { name: 'Current page context: en/home', exact: true })
-      await expect(reopenedPageContext, 'Reopening the pinned workspace on another page captures that page').toBeVisible()
-
-      await expect(pin).toHaveAttribute('aria-pressed', 'true')
-      await expect(pin).toHaveAttribute('title', 'Unpin conversation')
-
-      await page.reload({ waitUntil: 'networkidle' })
-      await expect(page.locator('.page-header-section')).toBeVisible()
-      const reloadAResponsePromise = page.waitForResponse(response => {
-        const request = response.request()
-        return sessionPath(request) && new URL(response.url()).pathname === `/_api/agents/sessions/${sessionA}`
-      })
-      const createsBeforeReload = fixture.requests.filter(request => request === 'POST /_api/agents/sessions').length
-      await page.locator('.nav-header-agent:visible').first().click()
-      const reloadAResponse = await reloadAResponsePromise
-      expect(reloadAResponse.status()).toBe(200)
-      const reloadedA = (await reloadAResponse.json()) as { session?: { id?: unknown } }
-      expect(reloadedA.session?.id).toBe(sessionA)
-      expect(fixture.requests.filter(request => request === 'POST /_api/agents/sessions')).toHaveLength(createsBeforeReload)
-      await expect(reopenedPageContext).toBeVisible()
-
-      await expect(pin).toHaveAttribute('aria-pressed', 'true')
-      await expect(pin).toHaveAttribute('title', 'Unpin conversation')
-
-      const promptB = 'Remember the newly visited page context.'
-      const messageBRequestPromise = page.waitForRequest(messagePath)
-      await composerInput.fill(promptB)
-      await agent.getByRole('button', { name: 'Send', exact: true }).click()
-      const messageBRequest = await messageBRequestPromise
-      const bodyB = messageBRequest.postDataJSON() as {
-        content?: unknown
-        currentPage?: { id?: unknown; locale?: unknown; path?: unknown; observedUpdatedAt?: unknown }
-      }
-      expect(bodyB.content).toBe(promptB)
-      expect(bodyB.currentPage).toEqual(expect.objectContaining({ locale: 'en', path: 'home' }))
-      expect(bodyA.currentPage).toEqual(expect.objectContaining({ locale: 'en', path: 'visual-markdown-browser' }))
-      await expect(agent.locator('.agent-message--user')).toHaveCount(4)
-      await expect(agent.locator('.agent-message--user').filter({ hasText: promptA })).toBeVisible()
-      await expect(agent.locator('.agent-message--user').filter({ hasText: promptExcluded })).toBeVisible()
-      await expect(agent.locator('.agent-message--user').filter({ hasText: promptReincluded })).toBeVisible()
-      await expect(agent.locator('.agent-message--user').filter({ hasText: promptB })).toBeVisible()
-
-      await pin.click()
-      await expect(pin).toHaveAttribute('aria-pressed', 'false')
-      await page.keyboard.press('Escape')
-      const secondSearchDialog = page.getByRole('dialog', { name: 'Wiki search', exact: true })
-      await expect(secondSearchDialog).toBeVisible()
-      await page.keyboard.press('Escape')
-      await expect(secondSearchDialog).toBeHidden()
-
-      const freshCreateResponsePromise = page.waitForResponse(createSessionPath)
-      const createsBeforeFresh = fixture.requests.filter(request => request === 'POST /_api/agents/sessions').length
-      await page.locator('.nav-header-agent:visible').first().click()
-      const freshCreateResponse = await freshCreateResponsePromise
-      expect(freshCreateResponse.status()).toBe(201)
-      const freshCreated = (await freshCreateResponse.json()) as { session?: { id?: unknown; retention?: unknown } }
-      expect(typeof freshCreated.session?.id).toBe('string')
-      expect(freshCreated.session?.id).not.toBe(sessionA)
-      expect(freshCreated.session?.retention).toBe('saved')
-      expect(fixture.requests.filter(request => request === 'POST /_api/agents/sessions')).toHaveLength(createsBeforeFresh + 1)
+      let agent = await openContinuityAgent(page, '/agent-context-fixture-a')
+      await sendContinuityPrompt(page, agent, 'Keep this conversation briefly.')
+      expect(creates()).toBe(1)
+      await closeContinuityAgent(page)
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await expect(page.locator('.nav-header')).toBeVisible({ timeout: 15_000 })
+      agent = await openContinuityAgent(page)
+      await expect(agent.locator('.agent-message--user')).toContainText('Keep this conversation briefly.')
+      expect(creates()).toBe(1)
+      await closeContinuityAgent(page)
+      await page.evaluate(() => { const original = Date.now; Date.now = () => original() + 15 * 60_000 + 1 })
+      agent = await openContinuityAgent(page)
       await expect(agent.locator('.agent-message--user')).toHaveCount(0)
-      await expect(reopenedPageContext).toBeVisible()
+      expect(creates()).toBe(2)
+      await sendContinuityPrompt(page, agent, 'A new conversation after the resume window.')
+      await closeContinuityAgent(page)
+      agent = await openContinuityAgent(page, '/agent-context-fixture-b')
+      await expect(agent.locator('.agent-message--user')).toHaveCount(0)
+      expect(creates()).toBe(3)
+      await expect(agent.getByRole('group', { name: 'Current page context: en/agent-context-fixture-b', exact: true })).toBeVisible()
       fixture.assertNoUnexpectedRequests()
-    } finally {
-      await fixture.dispose()
-    }
+    } finally { await fixture.dispose() }
+  })
+
+  test('Agent continuity keeps pinned context across pages, revisits, and exclusions', async ({ page }, testInfo) => {
+    test.skip(!['responsive-chromium-desktop', 'responsive-chromium-mobile'].includes(testInfo.project.name))
+    await installAgentContinuityPages(page)
+    const fixture = await installEnabledAgentFixture(page, { distinctSessionIds: true })
+    try {
+      let agent = await openContinuityAgent(page, '/agent-context-fixture-a')
+      const pin = () => agent.getByRole('button', { name: /^(?:Pin|Unpin) conversation$/ })
+      await expect(pin()).toHaveAttribute('title', 'Keep this conversation across pages until unpinned')
+      await pin().click()
+      await expect(pin()).toHaveAttribute('title', 'Unpin; reopen here for 15 minutes after closing')
+      const initial = await sendContinuityPrompt(page, agent, 'Start with page A.')
+      expect(initial.currentPage?.id).toBe(901)
+      await closeContinuityAgent(page)
+      agent = await openContinuityAgent(page, '/agent-context-fixture-b')
+      await expect(pin()).toHaveAttribute('aria-pressed', 'true')
+      await expect(agent.locator('.agent-context__sources')).toContainText('Context page A')
+      const second = await sendContinuityPrompt(page, agent, 'Now include page B.')
+      expect(second.currentPage?.id).toBe(902)
+      expect(second.knowledgeContext.sources.map(source => source.id)).toEqual([901])
+      await closeContinuityAgent(page)
+      agent = await openContinuityAgent(page, '/agent-context-fixture-c')
+      const third = await sendContinuityPrompt(page, agent, 'Now include page C.')
+      expect(third.currentPage?.id).toBe(903)
+      expect(third.knowledgeContext.sources.map(source => source.id)).toEqual([901, 902])
+      await agent.getByRole('button', { name: 'Exclude current page', exact: true }).click()
+      await closeContinuityAgent(page)
+      agent = await openContinuityAgent(page, '/agent-context-fixture-a')
+      const revisited = await sendContinuityPrompt(page, agent, 'Return to page A without excluded C.')
+      expect(revisited.currentPage?.id).toBe(901)
+      expect(revisited.knowledgeContext.sources.map(source => source.id)).toEqual([902])
+      await expect(agent.locator('.agent-context__sources')).not.toContainText('Context page C')
+      await expect(agent.locator('.agent-message--user')).toHaveCount(4)
+      expect(fixture.requests.filter(value => value === 'POST /_api/agents/sessions')).toHaveLength(1)
+      await pin().click()
+      await closeContinuityAgent(page)
+      agent = await openContinuityAgent(page)
+      await expect(agent.locator('.agent-message--user')).toHaveCount(4)
+      await expect(pin()).toHaveAttribute('aria-pressed', 'false')
+      fixture.assertNoUnexpectedRequests()
+    } finally { await fixture.dispose() }
+  })
+
+  test('Agent source citations preview in place and multiline prompts remain fully visible', async ({ page }, testInfo) => {
+    test.skip(!['responsive-chromium-desktop', 'responsive-chromium-mobile'].includes(testInfo.project.name))
+    await installAgentContinuityPages(page)
+    const fixture = await installEnabledAgentFixture(page)
+    try {
+      const agent = await openContinuityAgent(page, '/agent-context-fixture-a')
+      const input = agent.locator('.agent-composer textarea')
+      const prompt = 'The first line must remain readable.\nCompare the release evidence.\nKeep the important details in view.'
+      await input.fill(prompt)
+      await expect(input).toHaveValue(prompt)
+      expect(await input.evaluate(element => ({ mask: getComputedStyle(element).maskImage, webkitMask: getComputedStyle(element).webkitMaskImage, scrollTop: element.scrollTop }))).toEqual({ mask: 'none', webkitMask: 'none', scrollTop: 0 })
+      const screenshot = testInfo.outputPath('agent-multiline-prompt.png')
+      await page.screenshot({ path: screenshot })
+      await testInfo.attach('agent-multiline-prompt', { path: screenshot, contentType: 'image/png' })
+      await sendContinuityPrompt(page, agent, prompt)
+      const tabsBefore = page.context().pages().length
+      const preview = page.getByRole('dialog', { name: 'Release guide', exact: true })
+      const citation = agent.locator('a[data-agent-citation]').first()
+      await expect(citation).toHaveAttribute('href', /#verification-sequence$/)
+      await citation.click()
+      await expect(preview).toBeVisible()
+      await expect(preview.getByRole('region', { name: 'Source excerpt' })).toContainText('Release evidence excerpt.')
+      expect(page.context().pages()).toHaveLength(tabsBefore)
+      await preview.getByRole('button', { name: 'Close source preview', exact: true }).click()
+      await agent.locator('.agent-sources summary').click()
+      await agent.locator('.agent-sources__page').first().click()
+      await expect(preview).toBeVisible()
+      await preview.getByRole('button', { name: 'Close source preview', exact: true }).click()
+      await agent.locator('.agent-sources__sections a').filter({ hasText: 'Verification sequence' }).click()
+      await expect(preview).toBeVisible()
+      await preview.getByRole('button', { name: 'Ask about this page', exact: true }).click()
+      await expect(preview).toBeHidden()
+      await expect(agent.locator('.agent-context__sources')).toContainText('Release guide')
+      await expect(input).not.toHaveValue('')
+      await expect(agent.locator('.agent-message--user')).toHaveCount(1)
+      expect(page.context().pages()).toHaveLength(tabsBefore)
+      fixture.assertNoUnexpectedRequests()
+    } finally { await fixture.dispose() }
   })
   test('creates and moves a conversation folder from the empty drop target', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Agent history folder coverage is owned by Chromium desktop.')

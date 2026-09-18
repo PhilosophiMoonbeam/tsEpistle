@@ -508,6 +508,9 @@ export default defineComponent({
     currentPageLocale(): string { return wikiStore.page.locale },
     currentPagePath(): string { return wikiStore.page.path },
     currentPageUpdatedAt(): string { return wikiStore.page.updatedAt },
+    currentPageContextKey(): string {
+      return JSON.stringify([this.currentPageId, this.currentPageLocale, this.currentPagePath, this.currentPageUpdatedAt])
+    },
     searchRequestKey(): string {
       return JSON.stringify([
         this.normalizedSearch,
@@ -588,8 +591,14 @@ export default defineComponent({
         this.searchIsFocused = false
       }
     },
-    currentPageId(newPageId: number, oldPageId: number | undefined) {
-      if (oldPageId !== undefined && newPageId !== oldPageId) this.agentResumeSessionId = null
+    authAuthorityReady(ready: boolean) {
+      if (ready) useAgentsStore().notePageNavigation(this.currentPageHint(), this.agentOwnerId)
+    },
+    currentPageContextKey() {
+      this.agentResumeSessionId = null
+      const page = this.currentPageHint()
+      useAgentsStore().notePageNavigation(page, this.authAuthorityReady ? this.agentOwnerId : undefined)
+      if (this.agentOpeningPageCaptured) this.agentOpeningPage = page
     },
     results() {
       this.cursor = -1
@@ -603,6 +612,7 @@ export default defineComponent({
     }
   },
   mounted() {
+    if (this.authAuthorityReady) useAgentsStore().notePageNavigation(this.currentPageHint(), this.agentOwnerId)
     if (!this.canAsk && this.searchMode === 'ask') this.searchMode = 'search'
     const approvalId = new URL(window.location.href).searchParams.get('agentApproval')
     if (approvalId && /^[0-9a-f-]{36}$/i.test(approvalId) && this.canAsk) {
@@ -651,7 +661,6 @@ export default defineComponent({
       return { id, locale: this.currentPageLocale, path: this.currentPagePath, observedUpdatedAt: this.currentPageUpdatedAt }
     },
     latchAgentOpeningPage(): void {
-      if (this.agentOpeningPageCaptured) return
       this.agentOpeningPageCaptured = true
       this.agentOpeningPage = this.currentPageHint()
     },
@@ -811,9 +820,9 @@ export default defineComponent({
       else this.searchMode = 'search'
     },
     captureAgentExcursion(): void {
-      const agents = useAgentsStore()
-      const sessionId = agents.workspaceDisposed ? null : agents.thread?.session.id
-      if (sessionId && isAgentSessionId(sessionId)) this.agentResumeSessionId = sessionId
+      // The store owns the same-page, 15-minute resume window; a search
+      // excursion must not create an explicit session override without expiry.
+      this.agentResumeSessionId = null
     },
     openAsk(): void {
       if (!this.canAsk) return

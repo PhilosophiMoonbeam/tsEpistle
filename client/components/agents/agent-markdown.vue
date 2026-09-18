@@ -208,14 +208,8 @@ const decorateRenderedHtml = (html: string): string => {
   for (const anchor of template.content.querySelectorAll<HTMLAnchorElement>('a[data-agent-citation]')) {
     if (!sourcePreviews) continue
     const href = anchor.getAttribute('href') ?? ''
-    let url: URL
     const selector = wikiSourceSelectorFromHref(href, origin)
-    try {
-      url = new URL(href, origin)
-    } catch {
-      continue
-    }
-    if (!selector || url.hash) continue
+    if (!selector) continue
     anchor.dataset.sourcePreview = 'true'
     anchor.removeAttribute('target')
     anchor.setAttribute('aria-label', `${anchor.getAttribute('aria-label') ?? 'Citation'} (preview source)`)

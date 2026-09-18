@@ -157,6 +157,7 @@ const user = (id: number, authenticated = id > 0): HeaderUser => ({
 
 const connection = VueRuntime.reactive({ connection: 'online', connectionState: 'online', serverReachable: true, serverHealthy: true })
 const calls: NotificationCall[] = []
+let agentDestroyCalls = 0
 let refreshAuthBehavior: () => Promise<AuthRefreshOutcome> = async () => 'authenticated'
 const wikiStore = VueRuntime.reactive({
   site: {
@@ -235,12 +236,14 @@ const globals = globalThis as typeof globalThis & {
   __headerConnection: typeof connection
   __headerWikiStore: typeof wikiStore
   __headerSiteNotifications: typeof siteNotifications
+  __headerDestroyAgents: () => void
   siteConfig: Record<string, unknown>
   siteLangs: Array<{ code: string; name: string }>
 }
 globals.__headerConnection = connection
 globals.__headerWikiStore = wikiStore
 globals.__headerSiteNotifications = siteNotifications
+globals.__headerDestroyAgents = () => { agentDestroyCalls += 1 }
 globals.siteConfig = {
   agentsEnabled: false,
   devMode: false
@@ -330,8 +333,8 @@ const bundle = await Bun.build({
           if (args.path.endsWith('/pages-api')) {
             return { contents: 'export const fetchPageLocaleRelations = async () => []; export const movePage = async () => {}', loader: 'js' }
           }
-          if (args.path.endsWith('/agent-chat-pin')) {
-            return { contents: 'export const clearAgentChatPin = () => {}', loader: 'js' }
+          if (args.path === '../../store/agents.ts') {
+            return { contents: 'export const useAgentsStore = () => ({ destroyWorkspace: globalThis.__headerDestroyAgents })', loader: 'js' }
           }
           if (args.path.endsWith('/page-action-events')) {
             return {
@@ -448,6 +451,7 @@ afterEach(() => {
   browserWindow.document.body.replaceChildren()
   for (const restore of browserGlobalRestorations.splice(0).reverse()) restore()
   calls.splice(0)
+  agentDestroyCalls = 0
   Object.assign(connection, { connection: 'online', connectionState: 'online', serverReachable: true, serverHealthy: true })
   translationCalls.splice(0)
   wikiStore.user = user(1)
@@ -693,6 +697,21 @@ describe('account continuity without a verified connection', () => {
     await settle()
     expect(host.querySelector('[aria-label="Sign in"]')?.getAttribute('href')).toBe('/login')
     expect(host.querySelector('.account-menu__unverified')).toBeNull()
+  })
+
+  it('retires Agent continuity before submitting logout so pagehide cannot restore it', async () => {
+    const { host } = await mountHeader()
+    const form = host.querySelector('form[action="/logout"]')
+    if (!form) throw new Error('Logout form missing')
+    let submitted = false
+    Object.defineProperty(form, 'submit', { value: () => {
+      expect(agentDestroyCalls).toBe(1)
+      submitted = true
+    } })
+    form.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
+    expect(agentDestroyCalls).toBe(1)
+    await settle()
+    expect(submitted).toBe(true)
   })
 
   it('keeps the warm account visible while pausing server actions and allowing Home', async () => {

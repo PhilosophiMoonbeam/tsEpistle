@@ -65,7 +65,7 @@ const evaluateAgentThread = new Function(
   'agentLiveAnnouncement',
   'buildAgentThreadPresentation',
   `${executableScript}
-return { emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, sourceDomId, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel }`
+return { emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, sourceDomId, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 
 const NullStub = Vue.defineComponent({
@@ -325,6 +325,7 @@ describe('AgentThread live status and interaction behavior', () => {
             citations: [
               { evidenceId: 'page:runbook', kind: 'page', label: 'Runbook', href: '/en/runbook' },
               { evidenceId: 'page:runbook:section:1', kind: 'page', label: 'Runbook › Response sequence', href: '/en/runbook#response' },
+              { evidenceId: 'external', kind: 'page', label: 'Vendor documentation', href: 'https://vendor.test/en/reference' },
               { evidenceId: 'page:runbook:section:2', kind: 'page', label: 'Runbook › Unsafe', href: 'javascript:alert(1)' }
             ]
           })
@@ -334,16 +335,29 @@ describe('AgentThread live status and interaction behavior', () => {
 
     const pageLink = mounted.host.querySelector<HTMLAnchorElement>('.agent-sources__page')
     expect(pageLink?.getAttribute('href')).toBe('/en/runbook')
-    expect(pageLink?.getAttribute('target')).toBe('_blank')
+    expect(pageLink?.getAttribute('target')).toBeNull()
     const hashLink = mounted.host.querySelector<HTMLAnchorElement>('.agent-sources__sections a[href="/en/runbook#response"]')
-    expect(hashLink?.getAttribute('target')).toBe('_blank')
+    expect(hashLink?.getAttribute('target')).toBeNull()
     expect(hashLink?.getAttribute('rel')).toBe('noopener noreferrer')
+    const externalLink = mounted.host.querySelector<HTMLAnchorElement>('a[href="https://vendor.test/en/reference"]')
+    expect(externalLink?.getAttribute('target')).toBe('_blank')
     expect(mounted.host.querySelector('.agent-sources__sections a[href^="javascript:"]')).toBeNull()
-    expect(mounted.host.querySelector('.agent-sources__sections > li:last-child span')?.textContent).toContain('Unsafe')
+    expect(mounted.host.textContent).toContain('Unsafe')
 
-    const previewButton = mounted.host.querySelector<HTMLButtonElement>('.agent-sources__preview')
-    if (!previewButton) throw new Error('Wiki source preview button did not render')
-    previewButton.click()
+    if (!hashLink) throw new Error('Section citation did not render')
+    for (const modifier of ['ctrlKey', 'metaKey', 'shiftKey', 'altKey'] as const) {
+      const modifiedClick = new browserWindow.MouseEvent('click', { bubbles: true, cancelable: true, [modifier]: true })
+      let wasIntercepted = true
+      const finish = (event: Event): void => { wasIntercepted = event.defaultPrevented; event.preventDefault() }
+      mounted.host.addEventListener('click', finish, { once: true })
+      hashLink.dispatchEvent(modifiedClick)
+      expect(wasIntercepted).toBe(false)
+      await settle()
+      expect(mounted.host.querySelector('.wiki-source-preview')).toBeNull()
+    }
+    const click = new browserWindow.MouseEvent('click', { bubbles: true, cancelable: true })
+    hashLink.dispatchEvent(click)
+    expect(click.defaultPrevented).toBe(true)
     await settle()
     expect(JSON.parse(mounted.host.querySelector('.wiki-source-preview')?.getAttribute('data-selector') ?? '{}')).toEqual({
       locale: 'en',

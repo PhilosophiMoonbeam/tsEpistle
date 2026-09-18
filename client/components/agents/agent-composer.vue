@@ -892,6 +892,9 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__input :deep(textarea) {
+  /* This label-free editor needs no floating-label fade over its first line. */
+  -webkit-mask-image: none;
+  mask-image: none;
   box-sizing: border-box;
   min-height: calc(var(--wiki-space-12) * 1.35);
   max-height: min(calc(var(--wiki-space-12) * 2.7), 30dvh);

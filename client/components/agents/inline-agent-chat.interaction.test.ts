@@ -929,7 +929,7 @@ describe('Inline Agent workspace actions', () => {
       random.mockRestore()
     }
   })
-  it('latches the opening page for the component lifetime instead of following prop changes', () => {
+  it('keeps the Included page synchronized with Wiki navigation', () => {
     const firstPage: TestPageHint = {
       id: 41,
       locale: 'en',
@@ -949,7 +949,7 @@ describe('Inline Agent workspace actions', () => {
     first.componentProps.pageLocale = secondPage.locale
     first.componentProps.pagePath = secondPage.path
     first.componentProps.pageUpdatedAt = secondPage.observedUpdatedAt
-    expect(first.currentPage.value).toEqual(firstPage)
+    expect(first.currentPage.value).toEqual(secondPage)
 
     const reopened = loadGoalLockState(null, false, null, true, false, secondPage)
     expect(reopened.currentPage.value).toEqual(secondPage)

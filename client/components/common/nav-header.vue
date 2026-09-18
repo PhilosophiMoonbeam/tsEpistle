@@ -560,7 +560,7 @@ import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
 import AccountNotifications from './account-notifications.vue'
 import ControlBorderBeam from './control-border-beam.vue'
 import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
-import { clearAgentChatPin } from '../../helpers/agent-chat-pin'
+import { useAgentsStore } from '../../store/agents.ts'
 import {
   offPageConvert,
   offPageDelete,
@@ -908,7 +908,8 @@ export default defineComponent({
         : undefined
 
       this.notificationIdentityRecoveryGeneration += 1
-      clearAgentChatPin()
+      // Retire the live workspace too, so pagehide cannot recreate its bookmarks.
+      useAgentsStore().destroyWorkspace()
       this.siteNotifications.reset()
 
       void (async () => {

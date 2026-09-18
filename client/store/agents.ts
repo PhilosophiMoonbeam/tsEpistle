@@ -1,7 +1,21 @@
 import type { AgentMediaSubmission } from '../helpers/agent-media.ts'
 import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { emptyAgentDraft, type AgentDraft } from '../helpers/agent-draft.ts'
-import { clearAgentChatPin, isAgentSessionId, readAgentChatPin, writeAgentChatPin } from '../helpers/agent-chat-pin.ts'
+import {
+  clearAgentChatPin,
+  clearAgentChatRecent,
+  isAgentSessionId,
+  readAgentChatPin,
+  writeAgentChatPin,
+  readAgentChatRecent,
+  writeAgentChatRecent,
+  sameAgentChatPage,
+  agentChatPageSelector,
+  type AgentChatPageSelector,
+  type AgentChatContextSelector
+} from '../helpers/agent-chat-pin.ts'
+import { fetchWikiSource } from '../helpers/wiki-source.ts'
+import type { WikiSource } from '../../shared/wiki-source.ts'
 import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
 import type {
@@ -133,7 +147,13 @@ export const useAgentsStore = defineStore('agents', {
     initializedWorkspaceVersion: null as number | null,
     pinnedSessionId: null as string | null,
     pinStorageAvailable: true,
-    pinOwnerId: null as number | null
+    pinOwnerId: null as number | null,
+    conversationPage: null as AgentChatPageSelector | null,
+    continuitySessionId: null as string | null,
+    workspaceClosedAt: null as number | null,
+    contextTransferNotice: '',
+    contextTransferController: null as AbortController | null,
+    contextTransferGeneration: 0
   }),
   getters: {
     sessionMutationBusy: state => state.sessionMutationToken !== null,
@@ -172,15 +192,27 @@ export const useAgentsStore = defineStore('agents', {
         this.stoppingRunId = null
         this.decidingApprovalId = null
         this.pinnedSessionId = null
+        this.conversationPage = null
+        this.continuitySessionId = null
+        this.workspaceClosedAt = null
+        this.contextTransferNotice = ''
         clearAgentChatPin()
       }
 
       const previousThread = this.thread
+      const previousContext = this.currentChatContext()
+      const requestedPage = agentChatPageSelector(options.currentPage)
       const requestedResumeId = isAgentSessionId(options.resumeSessionId) ? options.resumeSessionId : null
       const retainOpenWorkspace =
         !ownerChanged &&
+        !this.workspaceDisposed &&
+        this.initializedWorkspaceVersion === this.workspaceVersion &&
+        (sameAgentChatPage(this.conversationPage, requestedPage) ||
+          (this.conversationPage === null && requestedPage === null) ||
+          this.pinnedSessionId === previousThread?.session.id) &&
         previousThread !== null &&
         (requestedResumeId === null || requestedResumeId === previousThread.session.id)
+      this.cancelContextTransfer()
       this.initializationGeneration += 1
       this.initializationController?.abort()
       const initializationGeneration = this.initializationGeneration
@@ -229,6 +261,7 @@ export const useAgentsStore = defineStore('agents', {
       this.pinStorageAvailable = pin.available
       const pinnedSessionId = pin.sessionId ?? (!pin.available ? previousPinnedSessionId : null)
       this.pinnedSessionId = pinnedSessionId
+      const recent = readAgentChatRecent(options.ownerId, requestedPage)
       this.listenForVisibility()
       void this.reloadSkills()
       const allowCreate = options.allowCreate ?? true
@@ -252,33 +285,42 @@ export const useAgentsStore = defineStore('agents', {
         }
         if (this.folderReloadGeneration === folderReloadGeneration) this.folders = markRaw(folders)
 
-        if (retainOpenWorkspace && this.thread === previousThread) {
-          initialized = await this.openSession(previousThread.session.id, { preservePin: true })
-        } else {
-          const routeSessionId = pathMatch?.[1]
-          if (routeSessionId && isAgentSessionId(routeSessionId)) {
-            initialized = await this.openSession(routeSessionId)
+        const routeSessionId = pathMatch?.[1]
+        const explicitSessionId = isAgentSessionId(routeSessionId) ? routeSessionId : requestedResumeId
+        const candidates = [
+          ...new Set(
+            [
+              explicitSessionId,
+              retainOpenWorkspace && this.thread === previousThread ? previousThread.session.id : null,
+              pinnedSessionId,
+              recent?.sessionId ?? null
+            ].filter((id): id is string => id !== null)
+          )
+        ]
+        for (const candidate of candidates) {
+          if (!isCurrent()) return false
+          try {
+            initialized = await this.openSession(candidate, { preservePin: candidate !== explicitSessionId || candidate === pinnedSessionId })
+            if (initialized) break
+          } catch (error) {
+            if (!(error instanceof AgentApiError) || (error.status !== 404 && error.status !== 410)) throw error
+            if (candidate === pinnedSessionId) this.clearPinnedState()
+            if (candidate === recent?.sessionId) clearAgentChatRecent()
+          }
+        }
+        if (!initialized && allowCreate && isCurrent()) initialized = await this.newSession('saved', undefined, true)
+        if (initialized && isCurrent()) {
+          if (this.thread?.session.id === this.pinnedSessionId) {
+            const context = previousThread?.session.id === this.thread.session.id && previousContext ? previousContext : pin.context
+            initialized = await this.reconcilePinnedContext(context)
           } else {
-            const resumeSessionId = isAgentSessionId(options.resumeSessionId) ? options.resumeSessionId : null
-            let resumeWasAbsent = false
-            if (resumeSessionId) {
-              try {
-                initialized = await this.openSession(resumeSessionId, { preservePin: true })
-              } catch (error) {
-                if (!(error instanceof AgentApiError) || (error.status !== 404 && error.status !== 410)) throw error
-                resumeWasAbsent = true
-                if (pinnedSessionId === resumeSessionId) this.clearPinnedState()
-              }
-            }
-            if (!initialized && isCurrent() && (!resumeWasAbsent || pinnedSessionId !== resumeSessionId) && pinnedSessionId) {
-              try {
-                initialized = await this.openSession(pinnedSessionId, { preservePin: true })
-              } catch (error) {
-                if (!(error instanceof AgentApiError) || (error.status !== 404 && error.status !== 410)) throw error
-                this.clearPinnedState()
-              }
-            }
-            if (!initialized && allowCreate && isCurrent()) initialized = await this.newSession('saved', undefined, true)
+            this.conversationPage = requestedPage
+            this.contextTransferNotice = ''
+          }
+          if (initialized && isCurrent()) {
+            this.workspaceClosedAt = null
+            this.continuitySessionId = this.thread?.session.id ?? null
+            clearAgentChatRecent()
           }
         }
         if (initialized && isCurrent()) this.initializedWorkspaceVersion = workspaceVersion
@@ -302,6 +344,20 @@ export const useAgentsStore = defineStore('agents', {
       this.pinnedSessionId = null
       this.pinStorageAvailable = clearAgentChatPin()
     },
+    currentChatContext(): AgentChatContextSelector | undefined {
+      const sessionId = this.thread?.session.id
+      if (!sessionId) return undefined
+      const draft = this.drafts[sessionId] ?? emptyAgentDraft()
+      return {
+        page: this.continuitySessionId === sessionId ? this.conversationPage : agentChatPageSelector(this.contextPage),
+        includeCurrentPage: draft.includeCurrentPage,
+        sources: draft.sources.map(({ id, locale }) => ({ id, locale }))
+      }
+    },
+    persistPinnedContext(): void {
+      if (this.pinOwnerId === null || !this.pinnedSessionId || this.thread?.session.id !== this.pinnedSessionId) return
+      this.pinStorageAvailable = writeAgentChatPin(this.pinOwnerId, this.pinnedSessionId, this.currentChatContext())
+    },
     setCurrentChatPinned(value: boolean): void {
       if (!this.canPinCurrentChat) return
       const sessionId = this.thread?.session.id
@@ -312,10 +368,87 @@ export const useAgentsStore = defineStore('agents', {
       }
       if (!sessionId || ownerId === null) return
       this.pinnedSessionId = sessionId
-      this.pinStorageAvailable = writeAgentChatPin(ownerId, sessionId)
+      clearAgentChatRecent()
+      this.persistPinnedContext()
+    },
+    notePageNavigation(page: AgentCurrentPageHint | null, ownerId?: number): void {
+      this.contextPage = page
+      const owner = ownerId ?? this.pinOwnerId
+      if (owner === null || !Number.isSafeInteger(owner) || owner <= 0) return
+      // Navigation can precede the first Agent mount, so consult its tab selector
+      // without assigning an owner or overwriting the last reconciled page.
+      const pinned = owner === this.pinOwnerId ? this.pinnedSessionId : readAgentChatPin(owner).sessionId
+      if (!pinned) readAgentChatRecent(owner, agentChatPageSelector(page))
     },
     setCurrentPage(page: AgentCurrentPageHint | null) {
-      this.contextPage = page
+      this.notePageNavigation(page)
+    },
+    cancelContextTransfer(): void {
+      this.contextTransferGeneration += 1
+      this.contextTransferController?.abort()
+      this.contextTransferController = null
+    },
+    async reconcilePinnedContext(previous?: AgentChatContextSelector): Promise<boolean> {
+      const sessionId = this.thread?.session.id
+      const ownerId = this.pinOwnerId
+      if (!sessionId || ownerId === null || sessionId !== this.pinnedSessionId) return true
+      this.cancelContextTransfer()
+      const generation = this.contextTransferGeneration
+      const controller = markRaw(new AbortController())
+      this.contextTransferController = controller
+      const workspaceVersion = this.workspaceVersion
+      const ownerGeneration = this.ownerGeneration
+      const current = agentChatPageSelector(this.contextPage)
+      const isCurrent = (): boolean =>
+        !controller.signal.aborted &&
+        this.contextTransferGeneration === generation &&
+        this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
+        this.thread?.session.id === sessionId
+      const existingDraft = this.drafts[sessionId]
+      const draft = existingDraft ?? emptyAgentDraft()
+      const prior = previous ?? {
+        page: current,
+        includeCurrentPage: draft.includeCurrentPage,
+        sources: draft.sources.map(({ id, locale }) => ({ id, locale }))
+      }
+      const pageChanged = !(sameAgentChatPage(prior.page, current) || (prior.page === null && current === null))
+      let unavailable = false
+      let atCapacity = false
+      const hydrate = async (selector: AgentChatPageSelector): Promise<WikiSource | null> => {
+        try {
+          const source = await fetchWikiSource({ id: selector.id }, '', controller.signal)
+          if (source.id !== selector.id || source.locale !== selector.locale) throw new Error('Source identity changed.')
+          return source
+        } catch {
+          if (!controller.signal.aborted) unavailable = true
+          return null
+        }
+      }
+      let sources = existingDraft
+        ? [...draft.sources]
+        : (await Promise.all(prior.sources.map(hydrate))).filter((source): source is WikiSource => source !== null)
+      if (!isCurrent()) return false
+      if (pageChanged && current) sources = sources.filter(source => !sameAgentChatPage(source, current))
+      if (pageChanged && prior.page && prior.includeCurrentPage && !sources.some(source => sameAgentChatPage(source, prior.page))) {
+        if (sources.length >= 8) atCapacity = true
+        else {
+          const source = await hydrate(prior.page)
+          if (!isCurrent()) return false
+          if (source) sources.push(source)
+        }
+      }
+      if (!isCurrent()) return false
+      this.drafts[sessionId] = { ...(this.drafts[sessionId] ?? draft), sources, includeCurrentPage: pageChanged ? true : prior.includeCurrentPage }
+      this.conversationPage = current
+      this.contextTransferNotice = [
+        unavailable ? 'A previous source could not be restored. Check access and add it again if needed.' : '',
+        atCapacity ? 'The previous page was not added because this chat already has eight sources. Remove a source and add the page to include it.' : ''
+      ]
+        .filter(Boolean)
+        .join(' ')
+      this.contextTransferController = null
+      this.persistPinnedContext()
+      return true
     },
     isWorkspaceCurrent(version: number) {
       return !this.workspaceDisposed && this.workspaceVersion === version
@@ -373,6 +506,7 @@ export const useAgentsStore = defineStore('agents', {
       this.visibilityListening = true
     },
     beginSessionTransition(kind: 'read' | 'mutation' = 'mutation') {
+      this.cancelContextTransfer()
       const version = this.sessionTransitionVersion + 1
       this.sessionTransitionVersion = version
       this.sessionTransitionController?.abort()
@@ -403,6 +537,12 @@ export const useAgentsStore = defineStore('agents', {
       this.sessionTransitionKind = null
     },
     closeWorkspace() {
+      if (!this.workspaceDisposed && this.workspaceClosedAt === null && this.pinOwnerId !== null && this.thread?.session.id === this.continuitySessionId) {
+        this.workspaceClosedAt = Date.now()
+        if (this.pinnedSessionId === this.thread.session.id) this.persistPinnedContext()
+        else writeAgentChatRecent(this.pinOwnerId, this.thread.session.id, this.conversationPage, this.workspaceClosedAt)
+      }
+      this.cancelContextTransfer()
       this.invalidateSessionMutation()
       this.workspaceVersion += 1
       this.workspaceDisposed = true
@@ -457,6 +597,10 @@ export const useAgentsStore = defineStore('agents', {
       this.contextPage = null
       this.error = ''
       this.pinnedSessionId = null
+      this.conversationPage = null
+      this.continuitySessionId = null
+      this.workspaceClosedAt = null
+      this.contextTransferNotice = ''
       clearAgentChatPin()
     },
     setDraft(sessionId: string, text: string) {
@@ -466,6 +610,7 @@ export const useAgentsStore = defineStore('agents', {
     updateDraft(sessionId: string, patch: Partial<AgentDraft>) {
       if (!sessionId) return
       this.drafts[sessionId] = { ...(this.drafts[sessionId] ?? emptyAgentDraft()), ...patch }
+      if (sessionId === this.pinnedSessionId) this.persistPinnedContext()
     },
     async newSession(retention: 'temporary' | 'saved', mutationOwner?: number, allowWhileInitializing = false): Promise<boolean> {
       if (
@@ -520,6 +665,10 @@ export const useAgentsStore = defineStore('agents', {
     },
     applyCreatedThread(created: CreatedAgentThread) {
       this.thread = markRaw(created)
+      this.continuitySessionId = created.session.id
+      this.workspaceClosedAt = null
+      this.conversationPage = agentChatPageSelector(this.contextPage)
+      this.contextTransferNotice = ''
       const launch = created.launchPage
       this.launchPage =
         launch?.pageId && launch.locale && launch.path && launch.observedUpdatedAt
@@ -546,6 +695,8 @@ export const useAgentsStore = defineStore('agents', {
         this.closeStream()
         this.invalidateRefresh()
         this.thread = markRaw(candidate)
+        this.continuitySessionId = candidate.session.id
+        this.workspaceClosedAt = null
         this.launchPage = null
         if (!options.preservePin && this.pinnedSessionId && this.pinnedSessionId !== sessionId) this.clearPinnedState()
         if (this.routeSync) window.history.replaceState(null, '', `/sessions/${sessionId}`)

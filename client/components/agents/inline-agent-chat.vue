@@ -137,7 +137,7 @@
             rounded="pill"
             :aria-label="thread && pinnedSessionId === thread.session.id ? 'Unpin conversation' : 'Pin conversation'"
             :aria-pressed="Boolean(thread && pinnedSessionId === thread.session.id)"
-            :title="thread && pinnedSessionId === thread.session.id ? 'Unpin conversation' : 'Pin conversation'"
+            :title="thread && pinnedSessionId === thread.session.id ? 'Unpin; reopen here for 15 minutes after closing' : 'Keep this conversation across pages until unpinned'"
             :disabled="!canPinCurrentChat"
             type="button"
             @click="setCurrentChatPinned(!Boolean(thread && pinnedSessionId === thread.session.id))"
@@ -358,6 +358,10 @@
                     <p v-if="pinStorageAvailable === false" class="inline-agent__pin-storage-warning" role="status" aria-live="polite">
                       <v-icon icon="mdi-information-outline" size="16" aria-hidden="true" />
                       <span>Pinning is available for this tab, but browser storage is unavailable; it will not survive a reload.</span>
+                    </p>
+                    <p v-if="agents.contextTransferNotice" class="inline-agent__pin-storage-warning" role="status" aria-live="polite">
+                      <v-icon icon="mdi-information-outline" size="16" aria-hidden="true" />
+                      <span>{{ agents.contextTransferNotice }}</span>
                     </p>
                     <AgentComposer
                       :key="`${ownerId}:${thread?.session.id ?? 'opening'}:${mediaProfile?.id ?? 'none'}:${mediaProfile?.policyVersion ?? 0}`"
@@ -657,7 +661,7 @@ const pageHintFromProps = (): AgentCurrentPageHint | null => {
   if (props.pageId < 1 || !props.pageLocale || !props.pagePath || !props.pageUpdatedAt) return null
   return { id: props.pageId, locale: props.pageLocale, path: props.pagePath, observedUpdatedAt: props.pageUpdatedAt }
 }
-const currentPage = ref<AgentCurrentPageHint | null>(pageHintFromProps())
+const currentPage = computed(pageHintFromProps)
 const activeRun = computed(() => {
   const run = thread.value?.session.currentRun
   return run && (run.status === 'queued' || run.status === 'running' || run.status === 'awaiting_approval') ? run : null
@@ -1362,7 +1366,27 @@ watch(() => props.ownerId, (ownerId, previousOwnerId) => {
     forceFresh: true
   })
 })
-watch(currentPage, page => agents.setCurrentPage(page), { immediate: true })
+watch(currentPage, (page, previous) => {
+  if (page?.id === previous?.id && page?.locale === previous?.locale) {
+    agents.setCurrentPage(page)
+    return
+  }
+  componentGeneration += 1
+  retryGeneration += 1
+  promptGeneration += 1
+  actionGeneration += 1
+  promptSubmissionPending.value = false
+  connectionRetrying.value = false
+  keepingConversation.value = false
+  creatingRetention.value = null
+  clearingUnfiledHistory.value = false
+  offlineComposerDraft.value = ''
+  void ensureInitialized({ forceFresh: true })
+}, { flush: 'post' })
+const handlePageHide = (): void => { agents.closeWorkspace() }
+const handlePageShow = (event: PageTransitionEvent): void => {
+  if (event.persisted) void ensureInitialized({ forceFresh: true })
+}
 watch(skillManagerOpen, (open, wasOpen) => {
   if (!open && wasOpen) void nextTick(() => composer.value?.focusSkillsTrigger())
 })
@@ -1446,6 +1470,8 @@ onMounted(() => {
   })
   observeTranscript(transcript.value)
   window.addEventListener('resize', scheduleTranscriptReconcile)
+  window.addEventListener('pagehide', handlePageHide)
+  window.addEventListener('pageshow', handlePageShow)
   window.visualViewport?.addEventListener('resize', scheduleTranscriptReconcile)
   void ensureInitialized()
 })
@@ -1463,6 +1489,8 @@ onBeforeUnmount(() => {
   panelFocusScope?.deactivate({ restoreFocus: false })
   panelModeMedia.forEach(media => media.removeEventListener('change', reconcilePanelMode))
   window.removeEventListener('resize', scheduleTranscriptReconcile)
+  window.removeEventListener('pagehide', handlePageHide)
+  window.removeEventListener('pageshow', handlePageShow)
   window.visualViewport?.removeEventListener('resize', scheduleTranscriptReconcile)
   agents.closeWorkspace()
 })
