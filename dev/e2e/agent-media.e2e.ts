@@ -15,7 +15,7 @@ async function openAgent(page: Page): Promise<Locator> {
   await expect(page.locator('.nav-header')).toBeVisible()
   const search = await openSearch(page)
   await search.fill('home')
-  const dialog = page.getByRole('dialog', { name: 'Wiki search', exact: true })
+  const dialog = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
   await expect(dialog).toBeVisible()
   await dialog.getByRole('button', { name: 'Ask about this', exact: true }).click()
   const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
@@ -47,6 +47,9 @@ test('Agent media stays hidden without administrator configuration', async ({ pa
   await expect(agent.getByRole('button', { name: 'Attach images or PDFs', exact: true })).toHaveCount(0)
   await expect(agent.getByRole('button', { name: 'Generate or edit an image', exact: true })).toHaveCount(0)
   await expect(agent.getByRole('button', { name: 'Dictate a message', exact: true })).toHaveCount(0)
+  const screenshot = test.info().outputPath('agent-media-final-layout.png')
+  await page.screenshot({ path: screenshot })
+  await test.info().attach('agent-media-final-layout', { path: screenshot, contentType: 'image/png' })
   fixture.assertNoUnexpectedRequests()
 })
 
@@ -101,7 +104,10 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
     if (path === `/_api/agents/runs/${speechRunId}/transcription`) return route.fulfill({ json: { status: 'succeeded', text: 'Make the background green.' } })
     return route.fallback()
   })
-  const initialThread = page.waitForResponse(response => new URL(response.url()).pathname === `/_api/agents/sessions/${fixture.sessionId}` && response.request().method() === 'GET')
+  const initialThread = page.waitForResponse(response => {
+    const path = new URL(response.url()).pathname
+    return (path === `/_api/agents/sessions/${fixture.sessionId}` && response.request().method() === 'GET') || (path === '/_api/agents/sessions' && response.request().method() === 'POST')
+  })
   const agent = await openAgent(page)
   thread = await (await initialThread).json() as AgentThreadState
   const input = agent.locator('.agent-composer textarea')
@@ -112,6 +118,8 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
   await expect(agent.getByRole('button', { name: 'Remove reference.pdf', exact: true })).toBeVisible()
   await agent.getByRole('button', { name: 'Remove reference.pdf', exact: true }).click()
   await expect.poll(() => removed.length).toBe(1)
+  await expect(agent.getByRole('button', { name: 'Remove reference.pdf', exact: true })).toHaveCount(0)
+  await expect(attach).toBeEnabled()
   await fileInput.setInputFiles({ name: 'reference.png', mimeType: 'image/png', buffer: png })
   await expect(agent.getByRole('button', { name: 'Remove reference.png', exact: true })).toBeVisible()
   await input.fill('Turn this into a watercolor illustration.')
@@ -136,5 +144,8 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
   await expect(input).toHaveValue('Keep my draft. Make the background green.')
   await expect.poll(() => page.evaluate(() => Reflect.get(window, '__agentMediaStopped'))).toBe(1)
   expect(sent).toHaveLength(1)
+  const screenshot = test.info().outputPath('agent-media-final-layout.png')
+  await page.screenshot({ path: screenshot })
+  await test.info().attach('agent-media-final-layout', { path: screenshot, contentType: 'image/png' })
   fixture.assertNoUnexpectedRequests()
 })
