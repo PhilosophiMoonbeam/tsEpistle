@@ -208,6 +208,76 @@ test.describe('release accessibility profiles', () => {
       await fixture.dispose()
     }
   })
+  test('shows Agent glass throughout its opening animation', async ({ page }, testInfo) => {
+    requireAnyProject(testInfo, ['accessibility-keyboard', 'accessibility-mobile'])
+    const fixture = await installEnabledAgentFixture(page, { mode: 'success' })
+    try {
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+      // This visual check uses public page content and browser-local Agent fixtures.
+      await page.route('**/_api/users/whoami', route => route.fulfill({ json: {
+        authenticated: true,
+        user: { id: 1, name: 'Visual test', email: 'visual@example.test', permissions: ['use:agents'] }
+      } }))
+      await page.goto('/', { waitUntil: 'domcontentloaded' })
+      await expect(page.locator('.page-header-section')).toBeVisible()
+      await page.getByRole('button', { name: 'Open Wiki Agent' }).click()
+      const agent = page.locator('.inline-agent--contextual')
+      await expect(agent).toBeVisible()
+      const container = page.locator('.search-results-container--ask')
+      // Seek the actual entrance animation: inspecting only its settled state misses
+      // opacity on an ancestor temporarily cutting glass off from the page backdrop.
+      const frames = await container.evaluate(element => {
+        const animation = element.getAnimations()[0]
+        if (!animation) throw new Error('Expected the Agent entrance animation')
+        animation.pause()
+        const duration = Number(animation.effect?.getTiming().duration)
+        return [0, 0.25, 0.5, 0.99].map(progress => {
+          animation.currentTime = duration * progress
+          return Array.from(element.querySelectorAll('.inline-agent__toolbar, .inline-agent__body')).map(surface => {
+            const style = getComputedStyle(surface)
+            const blockedBy: string[] = []
+            for (let parent = surface.parentElement; parent; parent = parent.parentElement) {
+              if (Number(getComputedStyle(parent).opacity) < 1) blockedBy.push(parent.className)
+            }
+            return { progress, blur: style.backdropFilter, background: style.backgroundColor, blockedBy }
+          })
+        }).flat()
+      })
+      expect(frames).toHaveLength(8)
+      for (const frame of frames) {
+        expect(frame.blockedBy, `Glass must see the page at entrance progress ${frame.progress}`).toEqual([])
+        expect(frame.blur).toContain('blur(')
+        expect(frame.background).toMatch(/^rgba\(/u)
+      }
+      await page.screenshot({ path: testInfo.outputPath('agent-opening-glass.png') })
+      await container.evaluate(element => element.getAnimations().forEach(animation => animation.finish()))
+      await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeFocused()
+      await page.keyboard.press('Escape')
+      await expect(agent).toBeHidden()
+      // Escape returns to Search by design; its glass uses the same visual tokens.
+      const search = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
+      await expect(search).toBeVisible()
+      await expect(page.locator('.nav-header-search-control input:visible').first()).toBeFocused()
+      await expect(search).toHaveCSS('backdrop-filter', frames[0].blur)
+      await expect(search).toHaveCSS('background-color', frames[0].background)
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await page.getByRole('button', { name: 'Open Wiki Agent' }).click()
+      await expect(agent).toBeVisible()
+      await expect(container).toHaveCSS('animation-name', 'none')
+      await expect(agent.locator('.inline-agent__body')).toHaveCSS('opacity', '1')
+      await expect(agent.locator('.inline-agent__toolbar > *').first()).toHaveCSS('animation-name', 'none')
+      await expect(agent.locator('.inline-agent__body > *').first()).toHaveCSS('animation-name', 'none')
+      const cdp = await page.context().newCDPSession(page)
+      await cdp.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }]
+      })
+      await expect(agent.locator('.inline-agent__body')).toHaveCSS('backdrop-filter', 'none')
+      await cdp.detach()
+      fixture.assertNoUnexpectedRequests()
+    } finally {
+      await fixture.dispose()
+    }
+  })
   test('keeps contextual Agent glass isolated from opaque surfaces', async ({ page }, testInfo) => {
     requireAnyProject(testInfo, ['accessibility-keyboard', 'accessibility-mobile'])
     test.setTimeout(60_000)

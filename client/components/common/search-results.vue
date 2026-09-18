@@ -1693,11 +1693,19 @@ export default defineComponent({
   --search-header-height: 56px;
 }
 
+// Keep opacity off the glass surfaces' ancestors: a translucent ancestor
+// becomes a backdrop root and hides the page from blur until the fade ends.
+.search-results-container--ask .inline-agent__toolbar > *,
+.search-results-container--ask .inline-agent__body > * {
+  animation: agentContentReveal var(--wiki-motion-slow) var(--wiki-motion-ease-out);
+}
+
 @keyframes agentWorkspaceReveal {
-  from {
-    opacity: 0;
-    transform: scale(.992);
-  }
+  from { transform: scale(.992); }
+}
+
+@keyframes agentContentReveal {
+  from { opacity: 0; }
 }
 
 @keyframes searchResultsReveal {
@@ -1732,6 +1740,8 @@ export default defineComponent({
 @media (prefers-reduced-motion: reduce) {
   .search-results,
   .search-results-container--ask,
+  .search-results-container--ask .inline-agent__toolbar > *,
+  .search-results-container--ask .inline-agent__body > *,
   .search-results-item { animation: none; transition: none; }
 }
 </style>
