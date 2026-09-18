@@ -105,6 +105,7 @@
       :csrf-token="csrfToken ?? ''"
       :session="mediaSession ?? null"
       :capabilities="mediaCapabilities"
+      :generation-tools-enabled="generationToolsEnabled"
       :disabled="disabled || sendInProgress || canStop || goalMode"
       :network-blocked="Boolean(networkBlocked)"
       @change="mediaSubmission = $event"
@@ -245,7 +246,7 @@
           aria-label="Toggle goal mode"
           :aria-pressed="goalMode"
           :title="goalMode ? 'Disable durable goal mode' : 'Enable durable goal mode for multi-step tasks'"
-          :disabled="disabled || sendInProgress || mediaBusy || mediaSubmission.attachmentIds.length > 0 || mediaSubmission.responseMode !== 'text'"
+          :disabled="disabled || sendInProgress || mediaBusy || mediaSubmission.attachmentIds.length > 0"
           @click="goalMode = !goalMode"
         >
           <span>Goal</span>
@@ -293,6 +294,7 @@ const props = defineProps<{
   csrfToken?: string
   mediaSession?: AgentThreadState['session'] | null
   mediaCapabilities?: AgentProviderProfileView['media']
+  generationToolsEnabled?: boolean
   disabled: boolean
   sending: boolean
   canStop: boolean
@@ -316,23 +318,23 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void, media?: AgentMediaSubmission]; mediaSettled: []; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
 const mediaComposer = useTemplateRef<{ clear: () => void; addFiles: (files: readonly File[]) => Promise<unknown>; editImage: (media: AgentMediaView) => Promise<boolean> }>('mediaComposer')
-const mediaSubmission = ref<AgentMediaSubmission>({ attachmentIds: [], responseMode: 'text' })
+const mediaSubmission = ref<AgentMediaSubmission>({ attachmentIds: [] })
 const mediaBusy = ref(false)
 const appendDictation = (text: string) => { draft.value = [draft.value.trimEnd(), text].filter(Boolean).join(' '); void focusInput() }
 const handleMediaPaste = (event: ClipboardEvent) => {
   const files = Array.from(event.clipboardData?.files ?? [])
-  if (!(props.mediaCapabilities?.attachments || props.mediaCapabilities?.imageGeneration || props.mediaCapabilities?.videoGeneration || props.mediaCapabilities?.musicGeneration) || !files.length) return
+  if (!(props.mediaCapabilities?.attachments) || !files.length) return
   event.preventDefault()
   void mediaComposer.value?.addFiles(files)
 }
 const handleMediaDragOver = (event: DragEvent) => {
-  if ((props.mediaCapabilities?.attachments || props.mediaCapabilities?.imageGeneration || props.mediaCapabilities?.videoGeneration || props.mediaCapabilities?.musicGeneration) && event.dataTransfer?.types.includes('Files')) event.preventDefault()
+  if ((props.mediaCapabilities?.attachments) && event.dataTransfer?.types.includes('Files')) event.preventDefault()
 }
 const handleMediaDrop = (event: DragEvent) => {
   const files = Array.from(event.dataTransfer?.files ?? [])
   if (!files.length) return
   event.preventDefault()
-  if (props.mediaCapabilities?.attachments || props.mediaCapabilities?.imageGeneration || props.mediaCapabilities?.videoGeneration || props.mediaCapabilities?.musicGeneration) void mediaComposer.value?.addFiles(files)
+  if (props.mediaCapabilities?.attachments) void mediaComposer.value?.addFiles(files)
 }
 const draft = ref(props.initialDraft ?? '')
 watch(draft, text => {
@@ -415,9 +417,6 @@ const composerInputDescriptionIds = computed(() => [
   composerIds.status
 ].filter(Boolean).join(' '))
 const composerInputPlaceholder = computed(() => {
-  if (mediaSubmission.value.responseMode === 'image') return 'Describe an image or the changes to make'
-  if (mediaSubmission.value.responseMode === 'video') return 'Describe your video: subject, movement and atmosphere'
-  if (mediaSubmission.value.responseMode === 'music') return 'Describe your music: mood, instruments and style'
   if (goalMode.value) return 'Describe a bounded outcome for Wiki Agent'
   if (props.skillsEnabled) {
     return props.hasMessages
@@ -437,7 +436,7 @@ const liveStatusLabel = computed(() => {
 })
 const submitLabel = computed(() => {
   if (sendFailed.value) return 'Retry'
-  return goalMode.value ? 'Start goal' : mediaSubmission.value.responseMode !== 'text' ? `Create ${mediaSubmission.value.responseMode}` : 'Send'
+  return goalMode.value ? 'Start goal' : 'Send'
 })
 const submitIcon = computed(() => {
   if (sendFailed.value) return 'mdi-refresh'
@@ -793,7 +792,7 @@ const submit = (): void => {
         resizeInput()
       })
     }
-  }, { attachmentIds: [...mediaSubmission.value.attachmentIds], responseMode: mediaSubmission.value.responseMode })
+  }, { attachmentIds: [...mediaSubmission.value.attachmentIds], generationTools: mediaSubmission.value.generationTools })
 }
 const setDraft = async (value: string): Promise<void> => {
   draft.value = value

@@ -337,6 +337,7 @@ describe('ordinary-origin agent session API', () => {
   let currentMediaGrantRevoked = false
   const csrf = 'csrf-token'
   let engineCurrentPage: unknown
+  let engineGenerationTools: AgentEngineRequest['generationTools']
   let engineMessages: AgentEngineRequest['messages'] = []
   let engineSkills: readonly { readonly id: string; readonly name: string }[] = []
   let engineMemory: AgentEngineRequest['memory'] | undefined
@@ -569,6 +570,7 @@ describe('ordinary-origin agent session API', () => {
     currentMediaProfileChanged = false
     currentMediaGrantRevoked = false
     engineCurrentPage = undefined
+    engineGenerationTools = undefined
     engineMessages = []
     engineSkills = []
     engineMemory = undefined
@@ -597,6 +599,7 @@ describe('ordinary-origin agent session API', () => {
       preflight: preflightAgentRequest,
       async execute(request, sink) {
         engineCurrentPage = request.currentPage
+        engineGenerationTools = request.generationTools
         engineMessages = request.messages.map(message => ({ ...message }))
         engineSkills = request.skills.map(skill => ({ id: skill.id, name: skill.name }))
         engineMemory = request.memory
@@ -958,6 +961,91 @@ describe('ordinary-origin agent session API', () => {
       expect(await db('agentMedia').where({ sessionId }).first()).toBeUndefined()
     }
   )
+  it('forwards and canonicalizes normal-chat generation tools with bound attachments and distinct replay identity', async () => {
+    await enableTestMedia()
+    const versionId = '00000000-0000-4000-8000-000000000070'
+    const profile = await db('agentProviderProfileVersions').where({ id: versionId }).first('adapterConfig')
+    const config = JSON.parse(profile.adapterConfig)
+    config.media.musicGeneration = { model: 'lyria-3.5', costMicrosPerSong: 80000, usagePolicy: 'reported-or-estimated' }
+    await db('agentProviderProfileVersions').where({ id: versionId }).update({ adapterConfig: JSON.stringify(config) })
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: Buffer.from('%PDF-1.7'), mimeType: 'application/pdf', filename: 'brief.pdf' })
+    const input = { clientRequestId: randomUUID(), expectedSessionVersion: 1, profileResolutionToken: 'test', content: 'Answer using these options.', generationTools: ['music', 'image'], attachmentIds: [media.id] }
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const post = (body: unknown) => fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/messages`, { method: 'POST', headers, body: JSON.stringify(body) })
+    const response = await post(input)
+    expect(response.status).toBe(202)
+    const admission = await response.json() as { run: { id: string } }
+    const queued = await db('agentEvents').where({ runId: admission.run.id, type: 'run.queued' }).first('data', 'dataSha256')
+    expect(JSON.parse(queued.data).generationTools).toEqual(['image', 'music'])
+    expect(queued.dataSha256).toBe(createHash('sha256').update(queued.data).digest('hex'))
+    expect((await db('agentMedia').where({ id: media.id }).first('runId')).runId).toBe(admission.run.id)
+    expect((await (await post({ ...input, generationTools: ['image', 'music'] })).json()) as unknown).toMatchObject({ replayed: true, run: { id: admission.run.id } })
+    expect((await post({ ...input, generationTools: [] })).status).toBe(409)
+    expect((await post({ ...input, generationTools: undefined })).status).toBe(409)
+    await runtime.runOnce()
+    expect(engineGenerationTools).toEqual(['image', 'music'])
+    expect(engineMessages.flatMap(message => message.attachments ?? []).map(file => file.id)).toContain(media.id)
+  })
+  it.each([{ generationTools: undefined }, { generationTools: [] }] as const)('preserves omitted versus explicitly disabled generation preferences (%j)', async ({ generationTools }) => {
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const admitted = await runtime.submit({ ownerId: 7, sessionId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), content: 'Normal conversation', ...(generationTools === undefined ? {} : { generationTools }) })
+    const queued = JSON.parse((await db('agentEvents').where({ runId: admitted.run.id, type: 'run.queued' }).first('data')).data)
+    expect(Object.hasOwn(queued, 'generationTools')).toBe(generationTools !== undefined)
+    await runtime.runOnce()
+    expect(engineGenerationTools).toEqual(generationTools)
+  })
+  it('rejects duplicate, unknown and unavailable generation tools without admitting a run', async () => {
+    await enableTestMedia()
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const input = { ownerId: 7, sessionId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), content: 'Normal chat' }
+    await expect(runtime.submit({ ...input, generationTools: ['image', 'image'] })).rejects.toMatchObject({ code: 'INVALID_GENERATION_TOOLS' })
+    await expect(runtime.submit({ ...input, generationTools: ['video'] })).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+    const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/messages`, { method: 'POST', headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }, body: JSON.stringify({ ...input, ownerId: undefined, sessionId: undefined, generationTools: ['unknown'] }) })
+    expect(response.status).toBe(400)
+    expect(await db('agentRuns').where({ sessionId }).first()).toBeUndefined()
+  })
+  it.each([{ generationTools: null }, { generationTools: ['image', 'image'] }, { generationTools: ['invalid'] }, { generationTools: 'image' }])('fails closed before engine execution for malformed stored generation preferences (%j)', async ({ generationTools }) => {
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const admitted = await runtime.submit({ ownerId: 7, sessionId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), content: 'Normal chat', generationTools: [] })
+    const row = await db('agentEvents').where({ runId: admitted.run.id, type: 'run.queued' }).first('data')
+    const data = JSON.stringify({ ...JSON.parse(row.data), generationTools })
+    await db('agentEvents').where({ runId: admitted.run.id, type: 'run.queued' }).update({ data, dataSha256: createHash('sha256').update(data).digest('hex') })
+    await runtime.runOnce()
+    expect(engineRunId).toBeUndefined()
+    expect((await db('agentRuns').where({ id: admitted.run.id }).first('status')).status).toBe('failed')
+  })
+  it('preserves selected generation tools when a goal continues', async () => {
+    await enableTestMedia()
+    const sessionId = randomUUID()
+    const goalId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const admitted = await runtime.createGoal({ ownerId: 7, sessionId, goalId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), objective: 'Complete the illustration.', generationTools: ['image'] })
+    await settleAccountingRun(admitted.run.id, 1, 1, 'consumed', 2)
+    const expectedVersion = await pauseAccountingGoal(goalId)
+    const continued = await runtime.resumeGoal({ ownerId: 7, goalId, expectedVersion, runId: randomUUID(), clientRequestId: randomUUID() })
+    expect(continued.run).not.toBeNull()
+    const queued = await db('agentEvents').where({ runId: continued.run?.id, type: 'run.queued' }).first('data')
+    expect(JSON.parse(queued.data).generationTools).toEqual(['image'])
+    await runtime.runOnce()
+    expect(engineGenerationTools).toEqual(['image'])
+  })
+  it('keeps ordinary attachment authorization independent from allowed generation tools', async () => {
+    await enableTestMedia()
+    const versionId = '00000000-0000-4000-8000-000000000070'
+    const row = await db('agentProviderProfileVersions').where({ id: versionId }).first('adapterConfig')
+    const config = JSON.parse(row.adapterConfig)
+    config.media.attachments = false
+    await db('agentProviderProfileVersions').where({ id: versionId }).update({ adapterConfig: JSON.stringify(config) })
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: Buffer.from('%PDF-1.7'), mimeType: 'application/pdf', filename: 'brief.pdf' })
+    await expect(runtime.submit({ ownerId: 7, sessionId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), content: 'Use this file.', generationTools: ['image'], attachmentIds: [media.id] })).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+  })
   it('binds attachments atomically and includes attachment IDs and image mode in replay identity', async () => {
     await enableTestMedia()
     const sessionId = randomUUID()
@@ -2422,6 +2510,7 @@ describe('ordinary-origin agent session API', () => {
       profileResolutionToken: 'accounting-test',
       clientRequestId: '00000000-0000-4000-8000-000000000363',
       expectedSessionVersion: 1,
+      generationTools: [],
       objective: 'Renew exactly one exhausted token budget cycle.'
     })
     await db.transaction(transaction =>
@@ -2501,6 +2590,8 @@ describe('ordinary-origin agent session API', () => {
       run: { id: renewal.runId, goalContinuation: 1 },
       replayed: false
     })
+    const inheritedPreferences = JSON.parse((await db('agentEvents').where({ runId: renewal.runId, type: 'run.queued' }).first('data')).data)
+    expect(inheritedPreferences.generationTools).toEqual([])
     const renewalEvent = await db('agentEvents').where({ runId: renewal.runId, type: 'run.resumed' }).first('data', 'dataSha256')
     expect(renewalEvent).toBeDefined()
     expect(renewalEvent?.dataSha256).toBe(createHash('sha256').update(String(renewalEvent?.data)).digest('hex'))

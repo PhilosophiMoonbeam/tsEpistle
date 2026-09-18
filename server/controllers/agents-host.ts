@@ -14,7 +14,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import type { Knex } from 'knex'
 import { z, ZodError } from 'zod'
 
-import { isTerminalAgentRunStatus, type DecideAgentApprovalRequest } from '../../shared/agents/contracts.ts'
+import { AGENT_GENERATION_TOOLS, isTerminalAgentRunStatus, type DecideAgentApprovalRequest } from '../../shared/agents/contracts.ts'
 import { cleanAgentConversationFolderName } from '../../shared/agents/conversation-folders.ts'
 
 import { SkillValidationError } from '../agents/skills/parser.ts'
@@ -195,6 +195,7 @@ const ConversationFolderNameSchema = z.string().transform(cleanAgentConversation
 const CreateConversationFolderSchema = z.strictObject({ name: ConversationFolderNameSchema })
 const RenameConversationFolderSchema = z.strictObject({ expectedVersion: z.number().int().positive(), name: ConversationFolderNameSchema })
 const MoveSessionFolderSchema = z.strictObject({ expectedSessionVersion: z.number().int().positive(), folderId: z.uuid().nullable() })
+const GenerationToolsSchema = z.array(z.enum(AGENT_GENERATION_TOOLS)).max(3).refine(tools => new Set(tools).size === tools.length, 'Choose each generation tool at most once.')
 const SubmitMessageSchema = z
   .strictObject({
     clientRequestId: z.uuid(),
@@ -203,6 +204,7 @@ const SubmitMessageSchema = z
     content: z.string().max(32_000),
     attachmentIds: z.array(z.uuid()).max(4).optional(),
     responseMode: z.enum(['text', 'image', 'video', 'music']).optional(),
+    generationTools: GenerationToolsSchema.optional(),
     invokedSkillVersionIds: z.array(z.uuid()).max(8).optional(),
     knowledgeContext: AgentKnowledgeContextSchema.optional(),
     currentPage: z
@@ -216,6 +218,7 @@ const SubmitMessageSchema = z
   })
   .refine(value => value.content.trim().length > 0 || (value.attachmentIds?.length ?? 0) > 0, 'Write a message or attach a file.')
 const CreateGoalSchema = z.strictObject({
+  generationTools: GenerationToolsSchema.optional(),
   goalId: z.uuid(),
   clientRequestId: z.uuid(),
   expectedSessionVersion: z.number().int().positive(),
@@ -669,6 +672,9 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         expectedSessionVersion: input.expectedSessionVersion,
         profileResolutionToken: input.profileResolutionToken,
         content: input.content,
+        ...(input.attachmentIds === undefined ? {} : { attachmentIds: input.attachmentIds }),
+        ...(input.responseMode === undefined ? {} : { responseMode: input.responseMode }),
+        ...(input.generationTools === undefined ? {} : { generationTools: input.generationTools }),
         ...(input.invokedSkillVersionIds === undefined ? {} : { invokedSkillVersionIds: input.invokedSkillVersionIds }),
         ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
         ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext })
@@ -686,6 +692,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       if ((input.invokedSkillVersionIds?.length ?? 0) > 0 && !wiki.config.agents.skills.enabled) return disabledRoute(res)
       const created = await wiki.agentRuntime.createGoal({
         goalId: input.goalId,
+        ...(input.generationTools === undefined ? {} : { generationTools: input.generationTools }),
         clientRequestId: input.clientRequestId,
         expectedSessionVersion: input.expectedSessionVersion,
         profileResolutionToken: input.profileResolutionToken,

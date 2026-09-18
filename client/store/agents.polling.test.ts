@@ -2331,3 +2331,26 @@ describe('Agent unfiled history clearing', () => {
     store.closeWorkspace()
   })
 })
+
+
+describe('creation tool request selection', () => {
+  it('forwards both selected and explicitly disabled tools to durable goal admission', async () => {
+    for (const generationTools of [['image', 'music'] as const, [] as const]) {
+      setActivePinia(createPinia())
+      const store = useAgentsStore()
+      store.csrfToken = 'csrf-token'
+      const active = activeThread()
+      store.thread = { ...active, session: { ...active.session, currentRun: null } }
+      markWorkspaceReady(store)
+      const fetcher = vi.spyOn(window, 'fetch').mockImplementation(async () => Response.json({ message: 'Test admission refusal' }, { status: 409 }))
+      expect(await store.send('Create a soundtrack and artwork', [], 'goal', { attachmentIds: [], generationTools })).toBe(false)
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      const [path, init] = fetcher.mock.calls[0]!
+      expect(String(path)).toBe(`/_api/agents/sessions/${active.session.id}/goals`)
+      expect(JSON.parse(String(init?.body))).toMatchObject({ objective: 'Create a soundtrack and artwork', generationTools: [...generationTools] })
+      expect(JSON.parse(String(init?.body)).responseMode).toBeUndefined()
+      fetcher.mockRestore()
+      store.$dispose()
+    }
+  })
+})

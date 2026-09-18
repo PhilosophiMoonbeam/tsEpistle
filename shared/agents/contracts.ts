@@ -576,7 +576,11 @@ export interface UpdateAgentSessionProfileRequest {
   readonly providerProfileId: string | null
 }
 
+export const AGENT_GENERATION_TOOLS = ['image', 'video', 'music'] as const
+export type AgentGenerationTool = (typeof AGENT_GENERATION_TOOLS)[number]
+
 export interface SubmitAgentMessageRequest {
+  readonly generationTools?: readonly AgentGenerationTool[]
   readonly attachmentIds?: readonly string[]
   readonly responseMode?: 'text' | 'image' | 'video' | 'music'
   readonly clientRequestId: string
@@ -588,6 +592,7 @@ export interface SubmitAgentMessageRequest {
   readonly knowledgeContext?: AgentKnowledgeContext
 }
 export interface CreateAgentGoalRequest {
+  readonly generationTools?: readonly AgentGenerationTool[]
   readonly goalId: string
   readonly clientRequestId: string
   readonly expectedSessionVersion: number

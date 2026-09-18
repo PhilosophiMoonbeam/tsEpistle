@@ -3187,8 +3187,8 @@ describe('Agent media execution', () => {
     ).rejects.toThrow('settlement failed')
     expect(media).not.toHaveBeenCalled()
   })
-  it('offers image tools only for configured root Agent conversations', async () => {
-    for (const enabled of [false, true]) {
+  it('offers only configured and selected generation tools to root Agent conversations', async () => {
+    for (const enabled of [false, true]) for (const generationTools of [undefined, [], ['image', 'music']] as const) {
       let offered: readonly { name: string }[] = []
       const factory = {
         create: async () => ({
@@ -3214,11 +3214,69 @@ describe('Agent media execution', () => {
         open: async () => ({ authoritySha256: null, functions: [], invoke: async () => null, snapshot: async () => ({}), close: () => {} })
       }
       await new AxAgentEngine(factory, actions).execute(
-        { ...request(new AbortController().signal), messages: [{ role: 'user', content: 'Hello' }] },
+        { ...request(new AbortController().signal), generationTools, messages: [{ role: 'user', content: 'Hello' }] },
         { text: async () => {}, event: async () => {} }
       )
-      for (const name of ['wiki_generate_image', 'wiki_generate_video', 'wiki_generate_music']) expect(offered.some(tool => tool.name === name)).toBe(enabled)
+      for (const kind of ['image', 'video', 'music'] as const)
+        expect(offered.some(tool => tool.name === `wiki_generate_${kind}`)).toBe(enabled && (generationTools === undefined || (generationTools as readonly string[]).includes(kind)))
     }
+  })
+  it('rejects generation disabled by the request before loading or charging a media provider', async () => {
+    const createMedia = vi.fn()
+    const dispatchBudget = budget()
+    for (const kind of ['image', 'video', 'music'] as const) {
+      await expect(new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
+        { ...mediaRequest(), mediaRequest: { kind }, generationTools: [], dispatchBudget },
+        { text: async () => {}, event: async () => {}, media: async () => {} }
+      )).rejects.toMatchObject({ code: 'ACTION_NOT_OFFERED' })
+    }
+    expect(createMedia).not.toHaveBeenCalled()
+    expect(dispatchBudget.reserve).not.toHaveBeenCalled()
+  })
+  it('uses image and music tools within one normal text conversation', async () => {
+    let turn = 0
+    const chat = vi.fn(async (): Promise<AxChatResponse> => ({
+      results: [++turn === 1 ? {
+        index: 0,
+        functionCalls: ['image', 'music'].map(kind => ({ id: `make-${kind}`, type: 'function' as const,
+          function: { name: `wiki_generate_${kind}`, params: JSON.stringify({ prompt: `Create ${kind} for an observatory` }) } }))
+      } : { index: 0, content: 'Your image and music are ready.' }],
+      modelUsage: { ai: 'gemini', model: 'test', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
+    }))
+    const generate = (kind: 'image' | 'music') => vi.fn(async (input: {
+      beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>; onDispatch: () => void
+    }) => {
+      await input.beforeDispatch({ inputTokens: 100, outputTokens: 500, totalTokens: 600 })
+      input.onDispatch()
+      return kind === 'image' ? mediaResult : {
+        text: '', files: [{ bytes: Buffer.from('music'), mimeType: 'audio/mpeg' }], usage: mediaResult.usage, usageSource: 'reported' as const
+      }
+    })
+    const generateImage = generate('image')
+    const generateMusic = generate('music')
+    const factory = {
+      create: async () => ({ service: { chat }, capabilities: { ...capabilities, parallelToolCalls: true }, model: 'test',
+        transportKind: 'gemini-api', capabilityRevision: 'test', pricingRevision: 'test', pricing,
+        mediaConfig: { imageGeneration: {}, musicGeneration: {} } }),
+      createMedia: async () => ({ config: {}, capabilities, pricing: { imageGeneration: pricing, musicGeneration: { costMicrosPerSong: 80000 } },
+        transport: { generateImage, generateMusic } })
+    } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => null)
+    const actions: AgentActionSessionProvider = { open: async () => ({ authoritySha256: null, functions: [], invoke,
+      snapshot: async () => ({}), close: () => {} }) }
+    const media = vi.fn(async () => {})
+    const text = vi.fn(async () => {})
+    const result = await new AxAgentEngine(factory, actions).execute({
+      ...request(new AbortController().signal), generationTools: ['image', 'music'], dispatchBudget: budget(),
+      messages: [{ role: 'user', content: 'Create an observatory image and accompanying music.' }]
+    }, { media, text, event: async () => {} })
+    expect(generateImage).toHaveBeenCalledTimes(1)
+    expect(generateMusic).toHaveBeenCalledTimes(1)
+    expect(media).toHaveBeenCalledTimes(2)
+    expect(text).toHaveBeenCalledWith('Your image and music are ready.')
+    expect(invoke).not.toHaveBeenCalled()
+    expect(result.totalTokens).toBe(1208)
+    expect(result.costMicros).toBe(81112)
   })
 })
 

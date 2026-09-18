@@ -45,7 +45,7 @@ test('Agent media stays hidden without administrator configuration', async ({ pa
   const fixture = await installEnabledAgentFixture(page)
   const agent = await openAgent(page)
   await expect(agent.getByRole('button', { name: 'Attach images or PDFs', exact: true })).toHaveCount(0)
-  await expect(agent.getByRole('button', { name: 'Choose generation mode', exact: true })).toHaveCount(0)
+  await expect(agent.getByRole('button', { name: 'Choose creation tools', exact: true })).toHaveCount(0)
   await expect(agent.getByRole('button', { name: 'Dictate a message', exact: true })).toHaveCount(0)
   const screenshot = test.info().outputPath('agent-media-final-layout.png')
   await page.screenshot({ path: screenshot })
@@ -59,7 +59,7 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
   const fixture = await installEnabledAgentFixture(page, { media: { attachments: true, imageGeneration: true, transcription: true } })
   const uploaded: AgentMediaView[] = []
   const removed: string[] = []
-  const sent: Array<{ content: string; attachmentIds: string[]; responseMode: string }> = []
+  const sent: Array<{ content: string; attachmentIds: string[]; generationTools: string[]; responseMode?: string }> = []
   let thread: AgentThreadState | null = null
   let uploadIndex = 0
   let speechRunId = ''
@@ -82,7 +82,7 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
     }
     if (thread && path === `/_api/agents/sessions/${fixture.sessionId}` && request.method() === 'GET') return route.fulfill({ json: thread })
     if (thread && path.endsWith(`/sessions/${fixture.sessionId}/messages`) && request.method() === 'POST') {
-      const body = request.postDataJSON() as { content: string; attachmentIds: string[]; responseMode: string }
+      const body = request.postDataJSON() as { content: string; attachmentIds: string[]; generationTools: string[]; responseMode?: string }
       sent.push(body)
       const now = new Date().toISOString()
       const run = { id: crypto.randomUUID(), sessionId: fixture.sessionId, status: 'succeeded' as const, attempt: 1, eventSequence: 2, canCancel: false, createdAt: now, startedAt: now, completedAt: now, errorCode: null, errorMessage: null }
@@ -123,16 +123,15 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
   await fileInput.setInputFiles({ name: 'reference.png', mimeType: 'image/png', buffer: png })
   await expect(agent.getByRole('button', { name: 'Remove reference.png', exact: true })).toBeVisible()
   await input.fill('Turn this into a watercolor illustration.')
-  await agent.getByRole('button', { name: 'Choose generation mode', exact: true }).click()
-  await page.locator('[aria-label="Generation mode"]').getByText('Image', { exact: true }).click()
-  await agent.getByRole('button', { name: 'Create image', exact: true }).click()
+  await agent.getByRole('button', { name: 'Send', exact: true }).click()
   await expect(agent.locator('.agent-message__media img[alt="Image created by Wiki Agent"]')).toBeVisible()
   await expect(agent.getByRole('link', { name: 'generated-image.png · Download', exact: true })).toBeVisible()
   expect(sent).toHaveLength(1)
-  expect(sent[0]?.responseMode).toBe('image')
+  expect(sent[0]?.generationTools).toEqual(['image'])
+  expect(sent[0]?.responseMode).toBeUndefined()
   expect(sent[0]?.attachmentIds).toEqual([uploaded[1]?.id])
   await agent.getByRole('button', { name: 'Edit image', exact: true }).click()
-  await expect(agent.getByRole('button', { name: 'Choose generation mode', exact: true })).toContainText('Image')
+  await expect(agent.getByRole('button', { name: 'Choose creation tools', exact: true })).toContainText('Create')
   await expect(agent.getByRole('button', { name: 'Remove reference.png', exact: true })).toBeVisible()
   await expect(input).toHaveValue('Edit this image: ')
   expect(uploaded).toHaveLength(3)
@@ -215,7 +214,7 @@ test('Agent attaches a Wiki asset through a keyboard-accessible private-copy pic
 })
 
 
-test('Agent video and music modes create playable, downloadable results', async ({ page }) => {
+test('Agent combines selected creation tools in a normal conversation', async ({ page }) => {
   await installBrowserIdentity(page)
   const fixture = await installEnabledAgentFixture(page, { media: { attachments: false, imageGeneration: false, videoGeneration: true, musicGeneration: true, transcription: false } })
   // One-second silent fixtures exercise native decoding without paid provider requests.
@@ -223,7 +222,7 @@ test('Agent video and music modes create playable, downloadable results', async 
   const musicBytes = Buffer.from('SUQzBAAAAAAAIlRTU0UAAAAOAAADTGF2ZjYyLjMuMTAwAAAAAAAAAAAAAAD/83DAAAAAAAAAAAAASW5mbwAAAA8AAAApAAAE5QAqKjAwNTU1Ojo/Pz9FRUpKSk9PVVVaWlpgYGVlZWpqb29vdXV6enp/f4WFioqKkJCVlZWamp+fn6WlqqqwsLC1tbq6usDAxcXFysrPz8/V1dra4ODg5eXq6urw8PX19fr6//8AAAAATGF2YzYyLjExAAAAAAAAAAAAAAAAJAPeAAAAAAAABOXVLMe7AAAAAAAAAAAAAAAAAP/zEMQAAAADSAAAAABMQU1FMy4xMExBTUUz//MSxA0AAANIAAAAAC4xMDEgKGJlTEFNRTMu//MQxBsAAANIAAAAADEwMSAoYmVMQU1FMy7/8xDEKAAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMQ1AAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxEIAAANIAAAAADEwMSAoYmVMQU1FMy7/8xDETwAAA0gAAAAAMTAxIChiZXRMQU1FM//zEMRcAAADSAAAAAAuMTAxIChiZUxBTUUz//MQxGkAAANIAAAAAC4xMDEgKGJlTEFNRTP/8xLEdgAAA0gAAAAALjEwMSAoYmVMQU1FMy7/8xDEhAAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMSRAAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxJ4AAANIAAAAADEwMSAoYmVMQU1FMy7/8xDEqwAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMS4AAADSAAAAAAxMDEgKGJldExBTUUz//MQxMUAAANIAAAAAC4xMDEgKGJlTEFNRTP/8xDE0gAAA0gAAAAALjEwMSAoYmVMQU1FM//zEsTfAAADSAAAAAAuMTAxIChiZUxBTUUzLv/zEMTtAAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxPIAAANIAAAAADEwMSAoYmVMQU1FMy7/8xDE8gAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMTyAAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxPIAAANIAAAAADEwMSAoYmV0YSAzKVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MSxPEAAANIAAAAAFVVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xLE8QAAA0gAAAAAVVVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVQ==', 'base64')
   const outputs = new Map<string, boolean>()
   let thread: AgentThreadState | null = null
-  const sent: string[] = []
+  const sent: Array<{ generationTools?: string[]; responseMode?: string }> = []
   await page.route(/\/_api\/agents(?:\/|$)/, async route => {
     const request = route.request()
     const path = new URL(request.url()).pathname
@@ -233,16 +232,19 @@ test('Agent video and music modes create playable, downloadable results', async 
     }
     if (thread && path === `/_api/agents/sessions/${fixture.sessionId}` && request.method() === 'GET') return route.fulfill({ json: thread })
     if (thread && path.endsWith(`/sessions/${fixture.sessionId}/messages`) && request.method() === 'POST') {
-      const body = request.postDataJSON() as { content: string; responseMode: string }
-      sent.push(body.responseMode)
-      const video = body.responseMode === 'video'
-      const mediaId = crypto.randomUUID()
-      outputs.set(mediaId, video)
+      const body = request.postDataJSON() as { content: string; generationTools: string[]; responseMode?: string }
+      sent.push(body)
+      const generatedMedia: AgentMediaView[] = body.generationTools.map(tool => {
+        const video = tool === 'video'
+        const id = crypto.randomUUID()
+        outputs.set(id, video)
+        return { id, kind: video ? 'generated-video' : 'generated-audio', filename: video ? 'generated-video.mp4' : 'generated-music.mp3', mimeType: video ? 'video/mp4' : 'audio/mpeg', byteLength: 100, available: true }
+      })
       const now = new Date().toISOString()
       const run = { id: crypto.randomUUID(), sessionId: fixture.sessionId, status: 'succeeded' as const, attempt: 1, eventSequence: 2, canCancel: false, createdAt: now, startedAt: now, completedAt: now, errorCode: null, errorMessage: null }
       thread = { ...thread, session: { ...thread.session, version: thread.session.version + 1, currentRun: run }, messages: [...thread.messages,
         { id: crypto.randomUUID(), runId: run.id, ordinal: thread.messages.length, role: 'user', status: 'complete', content: body.content, citations: [], createdAt: now, updatedAt: now },
-        { id: crypto.randomUUID(), runId: run.id, ordinal: thread.messages.length + 1, role: 'assistant', status: 'complete', content: '', citations: [], createdAt: now, updatedAt: now, media: [{ id: mediaId, kind: video ? 'generated-video' : 'generated-audio', filename: video ? 'generated-video.mp4' : 'generated-music.mp3', mimeType: video ? 'video/mp4' : 'audio/mpeg', byteLength: 100, available: true }] }
+        { id: crypto.randomUUID(), runId: run.id, ordinal: thread.messages.length + 1, role: 'assistant', status: 'complete', content: 'Here is the composition and accompanying video.', citations: [], createdAt: now, updatedAt: now, media: generatedMedia }
       ] }
       return route.fulfill({ status: 202, json: { run, replayed: false } })
     }
@@ -255,17 +257,32 @@ test('Agent video and music modes create playable, downloadable results', async 
   const agent = await openAgent(page)
   thread = await (await initialThread).json() as AgentThreadState
   const input = agent.locator('.agent-composer textarea')
-  for (const mode of ['Video', 'Music']) {
-    const trigger = agent.getByRole('button', { name: 'Choose generation mode', exact: true })
-    await expectLocatorWithinViewport(trigger, 'Generation mode control')
-    await trigger.click()
-    const menu = page.locator('[aria-label="Generation mode"]')
-    await expect(menu.getByText('Image', { exact: true })).toHaveCount(0)
-    await menu.getByText(mode, { exact: true }).click()
-    await expect(input).toHaveAttribute('placeholder', mode === 'Video' ? /Describe your video/ : /Describe your music/)
-    await input.fill(mode === 'Video' ? 'A calm sunrise over the sea.' : 'An ambient piano composition for sunrise.')
-    await agent.getByRole('button', { name: `Create ${mode.toLowerCase()}`, exact: true }).click()
-    const player = agent.locator(mode === 'Video' ? 'video' : 'audio')
+  const trigger = agent.getByRole('button', { name: 'Choose creation tools', exact: true })
+  await expectLocatorWithinViewport(trigger, 'Creation tools control')
+  await expect(agent.getByRole('button', { name: 'Attach images or PDFs', exact: true })).toHaveCount(0)
+  await trigger.click()
+  const menu = page.locator('[aria-label="Creation tools"]')
+  await expect(menu.getByText('Images', { exact: true })).toHaveCount(0)
+  await expect(menu.getByText('Text', { exact: true })).toHaveCount(0)
+  await expect(menu.getByText('Available for the assistant to use', { exact: true })).toBeVisible()
+  const videoTool = menu.getByRole('menuitemcheckbox', { name: 'Video', exact: true })
+  const musicTool = menu.getByRole('menuitemcheckbox', { name: 'Music', exact: true })
+  await expect(videoTool).toHaveAttribute('aria-checked', 'true')
+  await expect(musicTool).toHaveAttribute('aria-checked', 'true')
+  await expectLocatorWithinViewport(menu, 'Creation tools menu')
+  const menuScreenshot = test.info().outputPath('agent-creation-tools-menu.png')
+  await page.screenshot({ path: menuScreenshot })
+  await test.info().attach('agent-creation-tools-menu', { path: menuScreenshot, contentType: 'image/png' })
+  await musicTool.click()
+  await expect(menu).toBeVisible()
+  await expect(musicTool).toHaveAttribute('aria-checked', 'false')
+  await expect(videoTool).toHaveAttribute('aria-checked', 'true')
+  await musicTool.click()
+  await page.keyboard.press('Escape')
+  await input.fill('Compose ambient piano music and create an accompanying sunrise video. Explain your choices.')
+  await agent.getByRole('button', { name: 'Send', exact: true }).click()
+  for (const kind of ['video', 'audio']) {
+    const player = agent.locator(kind)
     await expect(player).toBeVisible()
     await expect(player).toHaveAttribute('controls', '')
     await expect(player).toHaveAttribute('preload', 'metadata')
@@ -274,12 +291,24 @@ test('Agent video and music modes create playable, downloadable results', async 
     await expect.poll(() => player.evaluate(element => (element as HTMLMediaElement).currentTime)).toBeGreaterThan(0)
     await player.evaluate(element => (element as HTMLMediaElement).pause())
     await expect(player).not.toHaveAttribute('autoplay')
-    await expectLocatorWithinViewport(player, `${mode} player`)
-    await expect(agent.getByRole('link', { name: mode === 'Video' ? 'generated-video.mp4 · Download' : 'generated-music.mp3 · Download', exact: true })).toBeVisible()
+    await player.scrollIntoViewIfNeeded()
+    await expectLocatorWithinViewport(player, `${kind} player`)
   }
-  expect(sent).toEqual(['video', 'music'])
-  const screenshot = test.info().outputPath('agent-generation-players.png')
+  expect(sent[0]?.generationTools).toEqual(['video', 'music'])
+  expect(sent[0]?.responseMode).toBeUndefined()
+  await trigger.click()
+  await expect(videoTool).toHaveAttribute('aria-checked', 'true')
+  await expect(musicTool).toHaveAttribute('aria-checked', 'true')
+  await videoTool.click()
+  await musicTool.click()
+  await page.keyboard.press('Escape')
+  await input.fill('Now explain the scene without creating any more media.')
+  await agent.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect.poll(() => sent.length).toBe(2)
+  expect(sent[1]?.generationTools).toEqual([])
+  expect(sent[1]?.responseMode).toBeUndefined()
+  const screenshot = test.info().outputPath('agent-creation-tools.png')
   await page.screenshot({ path: screenshot })
-  await test.info().attach('agent-generation-players', { path: screenshot, contentType: 'image/png' })
+  await test.info().attach('agent-creation-tools', { path: screenshot, contentType: 'image/png' })
   fixture.assertNoUnexpectedRequests()
 })

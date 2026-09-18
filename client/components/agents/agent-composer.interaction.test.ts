@@ -28,7 +28,7 @@ interface KeyOptions {
 }
 
 interface SentMessage {
-  readonly media?: { attachmentIds: readonly string[]; responseMode: 'text' | 'image' }
+  readonly media?: { attachmentIds: readonly string[]; generationTools?: readonly ('image' | 'video' | 'music')[] }
   readonly content: string
   readonly invokedSkillVersionIds: readonly string[]
   readonly mode: 'message' | 'goal'
@@ -36,7 +36,7 @@ interface SentMessage {
 }
 
 interface ComposerHarness {
-  readonly mediaSubmission: Ref<{ attachmentIds: readonly string[]; responseMode: 'text' | 'image' }>
+  readonly mediaSubmission: Ref<{ attachmentIds: readonly string[]; generationTools?: readonly ('image' | 'video' | 'music')[] }>
   readonly mediaBusy: Ref<boolean>
   readonly draft: Ref<string>
   readonly goalMode: Ref<boolean>
@@ -616,13 +616,13 @@ describe('Agent composer slash-command keyboard gates', () => {
 })
 
 describe('Agent composer send admission', () => {
-  it('sends an attachment-only message with its selected image response mode', () => {
+  it('sends an attachment-only message with its selected generation tools', () => {
     const composer = loadComposer()
-    composer.mediaSubmission.value = { attachmentIds: ['owned-image'], responseMode: 'image' }
+    composer.mediaSubmission.value = { attachmentIds: ['owned-image'], generationTools: ['image', 'video'] }
     composer.submit()
     expect(composer.sent).toHaveLength(1)
     expect(composer.sent[0]?.content).toBe('')
-    expect(composer.sent[0]?.media).toEqual({ attachmentIds: ['owned-image'], responseMode: 'image' })
+    expect(composer.sent[0]?.media).toEqual({ attachmentIds: ['owned-image'], generationTools: ['image', 'video'] })
   })
   it('blocks send while media is uploading or dictation is pending', () => {
     const composer = loadComposer()

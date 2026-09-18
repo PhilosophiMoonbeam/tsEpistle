@@ -274,7 +274,7 @@
               <AgentThread
                 v-else-if="thread"
                 :thread="thread"
-                :image-editing-enabled="providerEnabled && mediaProfile?.media?.imageGeneration === true"
+                :image-editing-enabled="providerEnabled && mediaProfile?.media?.imageGeneration === true && mediaProfile?.media?.attachments === true && thread?.session.executionMode === 'agent'"
                 :connection="connection"
                 :deciding-approval-id="decidingApprovalId"
                 :can-submit="canSubmit"
@@ -369,6 +369,7 @@
                       :csrf-token="csrfToken"
                       :media-session="thread?.session"
                       :media-capabilities="providerEnabled ? mediaProfile?.media : undefined"
+                      :generation-tools-enabled="thread?.session.executionMode === 'agent'"
                       @media-settled="refreshAfterMedia"
                       :session-id="thread?.session.id ?? offlineSessionId"
                       :initial-draft="thread ? agents.drafts[thread.session.id]?.text ?? offlineComposerDraft : offlineComposerDraft"

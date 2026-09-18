@@ -4,6 +4,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import {
   isTerminalAgentRunStatus,
+  AGENT_GENERATION_TOOLS,
+  type AgentGenerationTool,
   type AgentActionName,
   type AgentEventData,
   type AgentEventType,
@@ -648,6 +650,7 @@ export const reconcileAgentRunQuota = async (knex: Knex, input: ReconcileAgentQu
   knex.transaction(transaction => reconcileAgentRunQuotaInTransaction(transaction, input))
 
 export interface AdmitAgentRunInput {
+  readonly generationTools?: readonly AgentGenerationTool[]
   readonly id?: string
   readonly userMessageId?: string
   readonly assistantMessageId?: string
@@ -683,6 +686,13 @@ export interface AdmitAgentRunInput {
   readonly now?: Date
 }
 
+export const normalizeAgentGenerationTools = (value: unknown): readonly AgentGenerationTool[] | undefined => {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || value.length > AGENT_GENERATION_TOOLS.length || new Set(value).size !== value.length || value.some(tool => !AGENT_GENERATION_TOOLS.includes(tool)))
+    throw new AgentRepositoryError('INVALID_GENERATION_TOOLS', 'Choose each supported generation tool at most once.', 400)
+  return AGENT_GENERATION_TOOLS.filter(tool => value.includes(tool))
+}
+
 const admissionEnvelope = (input: AdmitAgentRunInput): string =>
   canonicalJson({
     sessionId: input.sessionId,
@@ -695,6 +705,7 @@ const admissionEnvelope = (input: AdmitAgentRunInput): string =>
     ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
     ...(input.mediaRequest ? { mediaRequest: input.mediaRequest } : {}),
     content: input.content,
+    ...(input.generationTools === undefined ? {} : { generationTools: input.generationTools }),
     currentPage: input.currentPage ?? null,
     ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
     providerProfileVersionId: input.providerProfileVersionId,
@@ -718,11 +729,13 @@ const nextMessageOrdinal = async (transaction: Knex.Transaction, sessionId: stri
 const queuedEventData = (
   runId: string,
   currentPage?: Readonly<Record<string, unknown>>,
-  knowledgeContext?: AgentKnowledgeContext
+  knowledgeContext?: AgentKnowledgeContext,
+  generationTools?: readonly AgentGenerationTool[]
 ): { data: string; dataSha256: string } => {
   const value: AgentEventData = {
     runId,
     status: 'queued',
+    ...(generationTools === undefined ? {} : { generationTools }),
     ...(currentPage === undefined ? {} : { currentPage }),
     ...(knowledgeContext === undefined ? {} : { knowledgeContext })
   }
@@ -734,6 +747,8 @@ export const admitAgentRunInTransaction = async (
   transaction: Knex.Transaction,
   input: AdmitAgentRunInput
 ): Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }> => {
+  const generationTools = normalizeAgentGenerationTools(input.generationTools)
+  if (generationTools !== undefined) input = { ...input, generationTools }
   if (!/^[a-f0-9]{64}$/.test(input.profileResolutionSha256))
     throw new AgentRepositoryError('INVALID_PROFILE_RESOLUTION', 'Profile resolution hash is invalid', 400)
   if (input.content.length < 1 || input.content.length > 32_000)
@@ -854,7 +869,7 @@ export const admitAgentRunInTransaction = async (
   if (input.skillVersionIds.length > 0)
     await transaction('agentRunSkills').insert(input.skillVersionIds.map((skillVersionId, ordinal) => ({ runId, skillVersionId, ordinal })))
   await reserveQuotaInTransaction(transaction, runId, input.ownerId, input.quota, input.quotaLimits, now, input.reservationExpiresAt)
-  const event = queuedEventData(runId, input.currentPage, input.knowledgeContext)
+  const event = queuedEventData(runId, input.currentPage, input.knowledgeContext, input.generationTools)
   await transaction('agentEvents').insert({
     id: input.queuedEventId ?? randomUUID(),
     runId,

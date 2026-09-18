@@ -1121,13 +1121,14 @@ export const useAgentsStore = defineStore('agents', {
             await createAgentGoal(fetchFromWindow, this.csrfToken, sessionId, {
               ...request,
               goalId: crypto.randomUUID(),
-              objective: trimmed
+              objective: trimmed,
+              ...(media?.generationTools ? { generationTools: media.generationTools } : {})
             })
           } else {
             await submitAgentMessage(fetchFromWindow, this.csrfToken, sessionId, {
               ...request,
               content: trimmed,
-              ...(media ? { attachmentIds: media.attachmentIds, responseMode: media.responseMode } : {})
+              ...(media ? { attachmentIds: media.attachmentIds, generationTools: media.generationTools } : {})
             })
           }
         } catch (error) {

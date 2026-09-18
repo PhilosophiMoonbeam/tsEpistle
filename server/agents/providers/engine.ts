@@ -1743,6 +1743,8 @@ export class AxAgentEngine implements AgentEngine {
     attachmentIds?: readonly string[]
   ): Promise<AgentEngineResult & { imageCount?: number }> {
     request.signal.throwIfAborted()
+    if (kind !== 'transcription' && request.generationTools !== undefined && !request.generationTools.includes(kind))
+      throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'This generation tool is disabled for this request', 403)
     if (!request.dispatchBudget) throw new AgentRepositoryError('MEDIA_BUDGET_REQUIRED', 'Media requires an admitted Agent run', 409)
     await this.#authorizeMedia(request)
     const provider = await this.#factory.createMedia(request.run.providerProfileVersionId)
@@ -1976,10 +1978,11 @@ export class AxAgentEngine implements AgentEngine {
           actionSession!.invoke('skills.list', {}, request.signal, 'skill-catalog-bootstrap')
         )
       }
-      for (const [feature, name] of [
-        ['imageGeneration', 'media.generateImage'], ['videoGeneration', 'media.generateVideo'], ['musicGeneration', 'media.generateMusic']
+      for (const [kind, feature, name] of [
+        ['image', 'imageGeneration', 'media.generateImage'], ['video', 'videoGeneration', 'media.generateVideo'], ['music', 'musicGeneration', 'media.generateMusic']
       ] as const) {
-        if (actionSession === null || request.purpose === 'subagent' || request.purpose === 'planner' || !provider.mediaConfig?.[feature]) continue
+        if (actionSession === null || request.purpose === 'subagent' || request.purpose === 'planner' || !provider.mediaConfig?.[feature] ||
+          (request.generationTools !== undefined && !request.generationTools.includes(kind))) continue
         const base = actionSession
         const definition = ACTION_CATALOG[name]
         actionSession = {

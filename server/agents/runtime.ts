@@ -5,6 +5,7 @@ import type { Knex } from 'knex'
 import {
   isTerminalAgentRunStatus,
   type AgentActionName,
+  type AgentGenerationTool,
   type AgentCurrentPageHint,
   type AgentEventData,
   type AgentEventType,
@@ -20,6 +21,7 @@ import {
   AgentQuotaSettlementError,
   acquireAgentCoordinatorAdvisoryLocks,
   admitAgentRunInTransaction,
+  normalizeAgentGenerationTools,
   ensureAgentRunQuota,
   persistAgentRunQuotaSettlementIntent,
   terminalizeAgentRun,
@@ -484,6 +486,7 @@ export interface AgentRecoveredAction {
 }
 
 export interface AgentEngineRequest {
+  readonly generationTools?: readonly AgentGenerationTool[]
   readonly authorizeMedia?: () => Promise<void>
   readonly mediaRequest?: { readonly kind: 'image' | 'transcription' | 'video' | 'music' }
   readonly run: AgentRunClaim
@@ -544,6 +547,7 @@ export interface AgentEngine {
 }
 
 export interface SubmitAgentMessageInput {
+  readonly generationTools?: readonly AgentGenerationTool[]
   readonly attachmentIds?: readonly string[]
   readonly responseMode?: 'text' | 'image' | 'video' | 'music'
   readonly transcription?: boolean
@@ -558,6 +562,7 @@ export interface SubmitAgentMessageInput {
   readonly knowledgeContext?: AgentKnowledgeContext
 }
 export interface CreateAgentGoalInput {
+  readonly generationTools?: readonly AgentGenerationTool[]
   readonly goalId: string
   readonly ownerId: number
   readonly sessionId: string
@@ -811,6 +816,22 @@ const priorRunActivity = (rows: readonly RuntimePriorEventRow[]): readonly Agent
       tools: run.tools
     }
   })
+}
+
+const generationToolsHint = (value: string | undefined): readonly AgentGenerationTool[] | undefined => {
+  if (value === undefined) return undefined
+  try {
+    if (Buffer.byteLength(value, 'utf8') > 32 * 1024) throw new Error('context too large')
+    const parsed: unknown = JSON.parse(value)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('invalid context')
+    return normalizeAgentGenerationTools(Reflect.get(parsed, 'generationTools'))
+  } catch {
+    throw new AgentRepositoryError('AGENT_RUN_CONTEXT_CORRUPT', 'Stored generation tool preferences are invalid.', 500)
+  }
+}
+const assertGenerationToolCapabilities = async (db: Knex | Knex.Transaction, versionId: string, tools: readonly AgentGenerationTool[] | undefined, executionMode: AgentExecutionMode): Promise<void> => {
+  if (tools?.length && executionMode !== 'agent') throw new AgentRepositoryError('INVALID_GENERATION_TOOLS', 'This conversation mode cannot use generation tools.', 400)
+  for (const tool of tools ?? []) await assertAgentMediaCapability(db, versionId, tool === 'image' ? 'imageGeneration' : tool === 'video' ? 'videoGeneration' : 'musicGeneration')
 }
 
 const knowledgeContextHint = (value: string | undefined): AgentKnowledgeContext | undefined => {
@@ -1211,6 +1232,7 @@ export class AgentProductRuntime {
   async submit(input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }> {
     if (!input.content.trim() && input.attachmentIds?.length)
       input = { ...input, content: input.responseMode && input.responseMode !== 'text' ? `Create ${input.responseMode === 'music' ? 'music' : `a${input.responseMode === 'image' ? 'n' : ''} ${input.responseMode}`} using these attachments.` : 'Use the attached files.' }
+    const generationTools = normalizeAgentGenerationTools(input.generationTools)
     const now = new Date()
     return this.#knex.transaction(async transaction => {
       await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
@@ -1221,6 +1243,7 @@ export class AgentProductRuntime {
         profileResolutionToken: input.profileResolutionToken
       })
       this.#assertResolvedAdmission(resolved)
+      await assertGenerationToolCapabilities(transaction, resolved.providerProfileVersionId, generationTools, resolved.executionMode)
       if (input.transcription) {
         if (input.attachmentIds?.length !== 1) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Choose one audio recording.', 400)
         await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'transcription')
@@ -1252,6 +1275,7 @@ export class AgentProductRuntime {
           : input.responseMode && input.responseMode !== 'text'
             ? { mediaRequest: { kind: input.responseMode } }
             : {}),
+        ...(generationTools === undefined ? {} : { generationTools }),
         ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
         ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
         ...resolved,
@@ -1264,6 +1288,7 @@ export class AgentProductRuntime {
 
   async createGoal(input: CreateAgentGoalInput): Promise<{ readonly goal: AgentGoalRecord; readonly run: AgentRunRecord; readonly replayed: boolean }> {
     if (!this.#goals.enabled) throw new AgentRepositoryError('AGENT_GOALS_DISABLED', 'Durable goals are disabled', 404)
+    const generationTools = normalizeAgentGenerationTools(input.generationTools)
     const now = new Date()
     const created = await this.#knex.transaction(async transaction => {
       await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
@@ -1274,6 +1299,7 @@ export class AgentProductRuntime {
         profileResolutionToken: input.profileResolutionToken
       })
       this.#assertResolvedAdmission(resolved)
+      await assertGenerationToolCapabilities(transaction, resolved.providerProfileVersionId, generationTools, resolved.executionMode)
       const skillVersionIds = await this.#skillVersionIds(transaction, input.ownerId, context.groupIds, input.invokedSkillVersionIds ?? [])
       const goal = await insertAgentGoal(transaction, {
         id: input.goalId,
@@ -1289,6 +1315,7 @@ export class AgentProductRuntime {
         clientRequestId: input.clientRequestId,
         expectedSessionVersion: context.sessionVersion,
         content: goal.objective,
+        ...(generationTools === undefined ? {} : { generationTools }),
         ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
         ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
         ...resolved,
@@ -2055,6 +2082,7 @@ export class AgentProductRuntime {
       ])
       if (!sessionRow) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
       const currentPage = currentPageHint(contextRow?.data)
+      const generationTools = generationToolsHint(contextRow?.data)
       const knowledgeContext = knowledgeContextHint(contextRow?.data)
       const memory = decodeAgentMemorySnapshot(sessionRow.memorySnapshot)
       const priorActivity = priorRunActivity([...priorEventRows].reverse())
@@ -2261,6 +2289,7 @@ export class AgentProductRuntime {
         executionSignal.throwIfAborted()
       }
       const engineRequest: AgentEngineRequest = {
+        ...(generationTools === undefined ? {} : { generationTools }),
         authorizeMedia,
         ...(mediaRequest ? { mediaRequest } : {}),
         run: claim,
@@ -2945,9 +2974,11 @@ export class AgentProductRuntime {
       )}`
       const initialContext = (await transaction('agentEvents as events')
         .join('agentRuns as runs', 'runs.id', 'events.runId')
-        .where({ 'runs.goalId': locked.id, 'events.type': 'run.queued' })
+        .where({ 'runs.goalId': locked.id, 'runs.goalContinuation': 0, 'events.type': 'run.queued' })
         .orderBy('events.createdAt', 'asc')
         .first('events.data')) as { data: string } | undefined
+      const generationTools = generationToolsHint(initialContext?.data)
+      await assertGenerationToolCapabilities(transaction, resolved.providerProfileVersionId, generationTools, resolved.executionMode)
       const knowledgeContext = knowledgeContextHint(initialContext?.data)
       const currentPage = currentPageHint(initialContext?.data)
       const changed = await transaction('agentGoals')
@@ -2972,6 +3003,7 @@ export class AgentProductRuntime {
         clientRequestId,
         expectedSessionVersion: context.sessionVersion,
         content,
+        ...(generationTools === undefined ? {} : { generationTools }),
         ...(knowledgeContext === undefined ? {} : { knowledgeContext }),
         ...(currentPage === undefined ? {} : { currentPage: { ...currentPage } }),
         ...resolved,
@@ -3208,9 +3240,11 @@ export class AgentProductRuntime {
       )}`
       const initialContext = (await transaction('agentEvents as events')
         .join('agentRuns as runs', 'runs.id', 'events.runId')
-        .where({ 'runs.goalId': locked.id, 'events.type': 'run.queued' })
+        .where({ 'runs.goalId': locked.id, 'runs.goalContinuation': 0, 'events.type': 'run.queued' })
         .orderBy('events.createdAt', 'asc')
         .first('events.data')) as { data: string } | undefined
+      const generationTools = generationToolsHint(initialContext?.data)
+      await assertGenerationToolCapabilities(transaction, resolved.providerProfileVersionId, generationTools, resolved.executionMode)
       const knowledgeContext = knowledgeContextHint(initialContext?.data)
       const currentPage = currentPageHint(initialContext?.data)
       const newMaxTokens = safeUsageSum(Math.max(locked.maxTokens, usage.tokens), locked.tokenAllowance, 'Renewed goal token budget')
@@ -3237,6 +3271,7 @@ export class AgentProductRuntime {
         clientRequestId: input.clientRequestId,
         expectedSessionVersion: context.sessionVersion,
         content,
+        ...(generationTools === undefined ? {} : { generationTools }),
         ...(knowledgeContext === undefined ? {} : { knowledgeContext }),
         ...(currentPage === undefined ? {} : { currentPage: { ...currentPage } }),
         ...resolved,
