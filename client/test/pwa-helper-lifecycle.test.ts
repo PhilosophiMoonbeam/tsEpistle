@@ -57,11 +57,40 @@ class MemoryCaches {
   }
 }
 
+class TestPort {
+  peer!: TestPort
+  closed = false
+  onmessage: ((event: { data: unknown }) => void) | null = null
+  postMessage(data: unknown): void {
+    if (!this.closed && !this.peer.closed) this.peer.onmessage?.({ data })
+  }
+  close(): void { this.closed = true }
+}
+
+class TestMessageChannel {
+  port1 = new TestPort()
+  port2 = new TestPort()
+  constructor() {
+    this.port1.peer = this.port2
+    this.port2.peer = this.port1
+  }
+}
+
+class TestBroadcastChannel {
+  static instances = new Set<TestBroadcastChannel>()
+  onmessage: ((event: { data: unknown }) => void) | null = null
+  sent: unknown[] = []
+  constructor(readonly name: string) { TestBroadcastChannel.instances.add(this) }
+  postMessage(data: unknown): void { this.sent.push(data) }
+  close(): void { TestBroadcastChannel.instances.delete(this) }
+}
+
 type WorkerLike = {
   state: string
   messages: unknown[]
   addEventListener: (type: string, listener: Listener) => void
-  postMessage: (message: unknown) => void
+  replies: { type: string; port: TestPort }[]
+  postMessage: (message: unknown, ports?: TestPort[]) => void
 }
 
 type RegistrationLike = {
@@ -77,6 +106,7 @@ type PwaModule = {
   readonly pwaState: PwaState
   registerPwa(callbacks?: PwaLifecycleCallbacks): Promise<RegistrationLike | null>
   setReloadSafetyProvider(provider: ReloadSafetyProvider | null): void
+  requestPwaUpdate(): Promise<boolean>
 }
 
 type PwaHarness = {
@@ -109,9 +139,12 @@ const createWorker = (hub: EventHub): WorkerLike => {
   const worker: WorkerLike = {
     state: 'activated',
     messages: [],
+    replies: [],
     addEventListener: hub.addEventListener.bind(hub),
-    postMessage(message: unknown) {
+    postMessage(message: unknown, ports: TestPort[] = []) {
       worker.messages.push(message)
+      const envelope = message as { message: { type: string } }
+      if (ports[0]) worker.replies.push({ type: envelope.message.type, port: ports[0] })
     }
   }
   return worker
@@ -168,6 +201,8 @@ const createHarness = async (mode: 'feature' | 'retirement' = 'feature'): Promis
   defineGlobal('document', document, originals)
   defineGlobal('navigator', navigator, originals)
   defineGlobal('caches', caches, originals)
+  defineGlobal('MessageChannel', TestMessageChannel, originals)
+  defineGlobal('BroadcastChannel', TestBroadcastChannel, originals)
   const module = await vi.importFresh<PwaModule>(`../helpers/pwa.ts?lifecycle=${importSequence++}`, import.meta.url)
   return {
     module,
@@ -183,9 +218,19 @@ const createHarness = async (mode: 'feature' | 'retirement' = 'feature'): Promis
       registerImplementation = implementation
     },
     sendWorkerMessage(data, source = activeWorker) {
-      workerHub.emit('message', { data, source })
+      const readiness = (data as { type: string }).type.startsWith('PWA_OFFLINE_')
+      const matches = (reply: { type: string; port: TestPort }) => !reply.port.peer.closed &&
+        (readiness ? reply.type === 'PWA_OFFLINE_READY_REQUEST' : reply.type === 'PWA_CONNECT')
+      if (!source.replies.some(matches) && (source === registration.active || source === container.controller || source === registration.waiting)) {
+        const waiting = registration.waiting
+        registration.waiting = source
+        windowHub.emit('pageshow')
+        registration.waiting = waiting
+      }
+      source.replies.findLast(matches)?.port.postMessage(data)
     },
     restore() {
+      windowHub.emit('pagehide')
       for (const [name, descriptor] of originals) {
         if (descriptor) Object.defineProperty(globalThis, name, descriptor)
         else Reflect.deleteProperty(globalThis, name)
@@ -206,6 +251,73 @@ const readyMessage = (overrides: Record<string, unknown> = {}): Record<string, u
 })
 
 describe('PWA helper lifecycle', () => {
+  it('uses the new envelope and drops pending replies across pagehide and BFCache restoration', async () => {
+    const harness = await createHarness()
+    try {
+      await harness.module.registerPwa()
+      expect(harness.activeWorker.messages.length).toBeGreaterThan(0)
+      expect(harness.activeWorker.messages.every(message => (message as { type: string }).type === 'PWA_PORT_REQUEST')).toBe(true)
+      const oldPorts = harness.activeWorker.replies.map(reply => reply.port)
+      harness.windowHub.emit('pagehide', { persisted: true })
+      expect(oldPorts.every(port => port.peer.closed)).toBe(true)
+      expect(TestBroadcastChannel.instances.size).toBe(0)
+      for (const port of oldPorts) port.postMessage(readyMessage())
+      harness.workerHub.emit('message', { source: harness.activeWorker, data: readyMessage() })
+      expect(harness.module.pwaState.offlineReady).toBe(false)
+
+      const cache = await harness.caches.open(CACHE_NAME)
+      await cache.put(SHELL_URL, shell(RELEASE))
+      await cache.put(MARKER_URL, new Response(JSON.stringify({ release: RELEASE, manifestDigest: DIGEST, cacheName: CACHE_NAME })))
+      harness.windowHub.emit('pageshow', { persisted: true })
+      expect(TestBroadcastChannel.instances.size).toBe(1)
+      harness.sendWorkerMessage(readyMessage())
+      await vi.waitFor(() => expect(harness.module.pwaState.offlineReady).toBe(true))
+    } finally { harness.restore() }
+  })
+
+  it('uses wakeups only to reconnect the known waiting worker and bounds an unanswered preparation', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    try {
+      await harness.module.registerPwa()
+      const waiting = createWorker(new EventHub())
+      harness.registration.waiting = waiting
+      const wakeup = [...TestBroadcastChannel.instances][0]!
+      wakeup.onmessage?.({ data: { type: 'PWA_UPDATE_ACTIVATED', workerId: 'forged' } })
+      expect(waiting.messages).toHaveLength(0)
+      wakeup.onmessage?.({ data: 'connect' })
+      expect(waiting.messages.at(-1)).toMatchObject({ type: 'PWA_PORT_REQUEST', message: { type: 'PWA_CONNECT' } })
+      expect(harness.module.pwaState.preparation).not.toBe('activated')
+      await harness.module.requestPwaUpdate()
+      expect(wakeup.sent).toEqual(['connect'])
+      expect(waiting.messages.at(-1)).toMatchObject({ type: 'PWA_PORT_REQUEST', message: { type: 'PWA_PREPARE_UPDATE' } })
+      await vi.advanceTimersByTimeAsync(20_001)
+      expect(harness.module.pwaState.preparation).toBe('deferred')
+      expect(harness.module.pwaState.preparationReason).toContain('Retry')
+    } finally { harness.restore(); vi.useRealTimers() }
+  })
+
+  it('cancels an old async safety response when its update port is replaced', async () => {
+    const harness = await createHarness()
+    try {
+      await harness.module.registerPwa()
+      const waiting = createWorker(new EventHub())
+      harness.registration.waiting = waiting
+      let finish!: (value: { safe: boolean; revision: string }) => void
+      const pending = new Promise<{ safe: boolean; revision: string }>(resolve => { finish = resolve })
+      harness.module.setReloadSafetyProvider(() => pending)
+      harness.windowHub.emit('pageshow')
+      const old = waiting.replies.findLast(reply => reply.type === 'PWA_CONNECT')!.port
+      old.postMessage({ type: 'PWA_RELOAD_SAFETY_REQUEST', workerId: 'worker', release: RELEASE, roundNonce: 'round' })
+      harness.windowHub.emit('pageshow')
+      finish({ safe: true, revision: 'old-clean' })
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(waiting.messages.some(message => (message as { message: { type: string } }).message.type === 'PWA_RELOAD_SAFETY')).toBe(false)
+      expect(old.peer.closed).toBe(true)
+    } finally { harness.restore() }
+  })
+
   it('probes an initially online server during registration without browser online events or explicit Retry', async () => {
     const harness = await createHarness()
     try {

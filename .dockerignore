@@ -24,6 +24,8 @@ test-results
 .env.*
 !.env.example
 *.log
+dumps/
+*.dmp
 
 # Operator-owned deployment state must never enter an image build context.
 deploy/**/.env

@@ -225,6 +225,12 @@ let readyNotified = false
 let offlineReadinessEpoch = 0
 let offlineReadyNotifiedRelease: string | null = null
 let updateReadyWorker: ServiceWorker | null = null
+let pageSuspended = false
+let updateWakeups: BroadcastChannel | null = null
+let preparationTimer: ReturnType<typeof setTimeout> | null = null
+const replyPorts = new Map<MessagePort, () => void>()
+const updateReplyPorts = new Map<ServiceWorkerMessageTarget, MessagePort>()
+const UPDATE_WAKEUP_CHANNEL = 'tsepistle-pwa-update-connect-v1'
 
 const hasWindow = (): boolean => typeof window !== 'undefined' && typeof document !== 'undefined'
 const hasNavigator = (): boolean => typeof navigator !== 'undefined'
@@ -300,12 +306,73 @@ const workerTargets = (registration: ServiceWorkerRegistration | null): ServiceW
 }
 
 const postToWorker = (worker: ServiceWorkerMessageTarget | null | undefined, message: unknown): void => {
-  if (!worker) return
-  try {
-    worker.postMessage(message)
-  } catch {
-    // A worker can become redundant between selecting it and posting.
+  if (!worker || pageSuspended) return
+  const type = (message as { type?: unknown })?.type
+  const envelope = { type: 'PWA_PORT_REQUEST', message }
+  // Votes retain the browser-provided source identity and the round's existing
+  // subscription. Readiness uses independent, short-lived reply channels.
+  if (type === RELOAD_SAFETY_MESSAGE) {
+    try { worker.postMessage(envelope) } catch { /* The worker became redundant. */ }
+    return
   }
+  if (typeof MessageChannel === 'undefined') return
+  const channel = new MessageChannel()
+  const readiness = type === OFFLINE_READY_REQUEST_MESSAGE
+  const close = (): void => {
+    clearTimeout(timer)
+    channel.port1.onmessage = null
+    channel.port1.close()
+    replyPorts.delete(channel.port1)
+    if (updateReplyPorts.get(worker) === channel.port1) updateReplyPorts.delete(worker)
+  }
+  const timer = setTimeout(close, 30_000)
+  replyPorts.set(channel.port1, close)
+  if (!readiness) {
+    safetySequence += 1
+    const previous = updateReplyPorts.get(worker)
+    if (previous) replyPorts.get(previous)?.()
+    updateReplyPorts.set(worker, channel.port1)
+  }
+  channel.port1.onmessage = event => {
+    // MessagePort events have no ServiceWorker source. Identity comes from the
+    // worker to which this document transferred the other end of this channel.
+    handleWorkerMessage(event, worker as ServiceWorker)
+    if (readiness) close()
+  }
+  try {
+    worker.postMessage(envelope, [channel.port2])
+  } catch {
+    channel.port2.close()
+    close()
+  }
+}
+
+const attachUpdateWakeups = (): void => {
+  if (updateWakeups || pageSuspended || state.mode === 'retirement' || typeof BroadcastChannel === 'undefined') return
+  try {
+    updateWakeups = new BroadcastChannel(UPDATE_WAKEUP_CHANNEL)
+    updateWakeups.onmessage = event => {
+      // This is only a wakeup: it supplies no worker identity, vote or round.
+      const waiting = registrationReference?.waiting
+      if (event.data === 'connect' && waiting && !pageSuspended) postToWorker(waiting, { type: 'PWA_CONNECT' })
+    }
+  } catch { /* Without a wakeup, unresponsive peers make update voting defer. */ }
+}
+
+const clearPreparationTimer = (): void => {
+  if (preparationTimer !== null) clearTimeout(preparationTimer)
+  preparationTimer = null
+}
+
+const startPreparationTimer = (): void => {
+  clearPreparationTimer()
+  preparationTimer = setTimeout(() => {
+    preparationTimer = null
+    if (state.preparation !== 'checking' && state.preparation !== 'collecting') return
+    state.preparation = 'deferred'
+    state.preparationReason = 'The update did not receive a response from every open page. Retry after refreshing or closing older tabs.'
+    state.updateState = 'ready'
+  }, 20_000)
 }
 
 const postToWorkers = (message: unknown, registration = registrationReference): void => {
@@ -353,6 +420,7 @@ const noteAcceptedActivation = (
 }
 
 const maybeReloadAcceptedWorker = async (worker: ServiceWorker): Promise<void> => {
+  if (pageSuspended) return
   const activation = acceptedActivation
   if (!activation || (activation.worker !== worker && activation.activatedWorker !== worker) || reloadRequestedActivations.has(activation.nonce)) return
   deferredReloadWorker = worker
@@ -404,6 +472,7 @@ const reportReloadSafety = async (context: SafetyRequestContext = {}, target: Se
 }
 
 const handleActivatedUpdate = (nonce: string, workerId: string, release: string, source: ServiceWorkerMessageTarget | null): void => {
+  clearPreparationTimer()
   const sourceWorker = source as ServiceWorker | null
   let activation = acceptedActivation
   if (!activation || activation.nonce !== nonce) {
@@ -551,7 +620,7 @@ const markOfflineReady = async (
 }
 
 const requestOfflineReadiness = (): void => {
-  if (state.mode === 'retirement' || !registrationReference) return
+  if (pageSuspended || state.mode === 'retirement' || !registrationReference) return
   if (!state.offlineReady) state.offlineReadiness = 'checking'
   postToWorkers({ type: OFFLINE_READY_REQUEST_MESSAGE }, registrationReference)
 }
@@ -576,7 +645,11 @@ const handleUpdatePreparing = (
   state.preparationReason = null
   state.updateState = message.phase === 'activating' ? 'activating' : 'ready'
   if (message.phase === 'activating') {
+    clearPreparationTimer()
     noteAcceptedActivation(message.roundNonce, message.workerId, message.release, sourceWorker)
+    if (currentServiceWorkerContainer()?.controller === sourceWorker) handleActivatedUpdate(message.roundNonce, message.workerId, message.release, sourceWorker)
+  } else {
+    startPreparationTimer()
   }
 }
 
@@ -594,6 +667,7 @@ const handleUpdateDeferred = (
   )
     return
   if (acceptedActivation?.nonce === message.roundNonce) acceptedActivation = null
+  clearPreparationTimer()
   state.preparation = 'deferred'
   state.preparationReason = typeof message.reason === 'string' ? message.reason : 'The update was deferred until every document is safe.'
   state.updateState = 'ready'
@@ -622,6 +696,8 @@ const observeWorker = (registration: ServiceWorkerRegistration, worker: ServiceW
       return
     }
     if (worker.state === 'redundant') {
+      const port = updateReplyPorts.get(worker)
+      if (port) replyPorts.get(port)?.()
       const initialInstallFailure = !registration.active && !container?.controller && registration.waiting !== worker
       if (initialInstallFailure) {
         registrationReference = null
@@ -675,6 +751,90 @@ const attachRegistrationListeners = (registration: ServiceWorkerRegistration): v
   }
 }
 
+const handleWorkerMessage = (messageEvent: Pick<MessageEvent, 'data'>, source: ServiceWorker): void => {
+  if (pageSuspended || !knownWorker(source)) return
+  if (typeof messageEvent.data !== 'object' || messageEvent.data === null) return
+  const message = messageEvent.data as {
+    type?: unknown
+    workerId?: unknown
+    release?: unknown
+    roundNonce?: unknown
+    safe?: unknown
+    revision?: unknown
+    actorEpoch?: unknown
+    phase?: unknown
+    reason?: unknown
+    complete?: unknown
+    manifestDigest?: unknown
+    cacheName?: unknown
+    shellPath?: unknown
+    markerURL?: unknown
+  }
+  if (message.type === RETIREMENT_NOTICE_MESSAGE) {
+    state.retirementNotice = true
+    markOfflineUnavailable()
+    return
+  }
+  if (message.type === RELOAD_SAFETY_REQUEST_MESSAGE && source) {
+    void reportReloadSafety(
+      {
+        workerId: typeof message.workerId === 'string' ? message.workerId : undefined,
+        release: typeof message.release === 'string' ? message.release : undefined,
+        roundNonce: typeof message.roundNonce === 'string' ? message.roundNonce : undefined
+      },
+      source
+    )
+    return
+  }
+  if (message.type === OFFLINE_READY_MESSAGE && source) {
+    const registration = registrationReference
+    if (registration) void markOfflineReady(registration, source as ServiceWorker, message)
+    return
+  }
+  if (message.type === OFFLINE_NOT_READY_MESSAGE && source && knownWorker(source as ServiceWorker)) {
+    const registration = registrationReference
+    const release = message.release
+    if (
+      registration &&
+      (!state.workerRelease ||
+        typeof release !== 'string' ||
+        release === state.workerRelease ||
+        source === registration.waiting ||
+        source === registration.installing)
+    )
+      markOfflineUnavailable()
+    return
+  }
+  if (message.type === UPDATE_PREPARING_MESSAGE) {
+    handleUpdatePreparing(message, source)
+    return
+  }
+  if (message.type === UPDATE_DEFERRED_MESSAGE) {
+    handleUpdateDeferred(message, source)
+    return
+  }
+  if (
+    message.type === UPDATE_ACTIVATING_MESSAGE &&
+    typeof message.workerId === 'string' &&
+    typeof message.release === 'string' &&
+    typeof message.roundNonce === 'string'
+  ) {
+    clearPreparationTimer()
+    noteAcceptedActivation(message.roundNonce, message.workerId, message.release, source as ServiceWorker | null)
+    state.preparation = 'activating'
+    if (currentServiceWorkerContainer()?.controller === source) handleActivatedUpdate(message.roundNonce, message.workerId, message.release, source)
+    return
+  }
+  if (
+    message.type === ACTIVATED_UPDATE_MESSAGE &&
+    typeof message.workerId === 'string' &&
+    typeof message.release === 'string' &&
+    typeof message.roundNonce === 'string'
+  ) {
+    handleActivatedUpdate(message.roundNonce, message.workerId, message.release, source)
+  }
+}
+
 const attachServiceWorkerListeners = (): void => {
   if (serviceWorkerListenersAttached) return
   const container = currentServiceWorkerContainer()
@@ -682,88 +842,11 @@ const attachServiceWorkerListeners = (): void => {
   serviceWorkerListenersAttached = true
   if (typeof container.addEventListener === 'function') {
     container.addEventListener('controllerchange', () => markController(container.controller ?? null))
+    // Retirement workers predate the port protocol. Their notice cannot vote
+    // for an update or establish offline readiness.
     container.addEventListener('message', event => {
-      const messageEvent = event as MessageEvent
-      if (typeof messageEvent.data !== 'object' || messageEvent.data === null) return
-      const message = messageEvent.data as {
-        type?: unknown
-        workerId?: unknown
-        release?: unknown
-        roundNonce?: unknown
-        safe?: unknown
-        revision?: unknown
-        actorEpoch?: unknown
-        phase?: unknown
-        reason?: unknown
-        complete?: unknown
-        manifestDigest?: unknown
-        cacheName?: unknown
-        shellPath?: unknown
-        markerURL?: unknown
-      }
-      const sourceCandidate = messageEvent.source
-      const source =
-        sourceCandidate && typeof (sourceCandidate as ServiceWorker).postMessage === 'function' ? (sourceCandidate as ServiceWorkerMessageTarget) : null
-      if (message.type === RETIREMENT_NOTICE_MESSAGE) {
-        state.retirementNotice = true
-        markOfflineUnavailable()
-        return
-      }
-      if (message.type === RELOAD_SAFETY_REQUEST_MESSAGE && source) {
-        void reportReloadSafety(
-          {
-            workerId: typeof message.workerId === 'string' ? message.workerId : undefined,
-            release: typeof message.release === 'string' ? message.release : undefined,
-            roundNonce: typeof message.roundNonce === 'string' ? message.roundNonce : undefined
-          },
-          source
-        )
-        return
-      }
-      if (message.type === OFFLINE_READY_MESSAGE && source) {
-        const registration = registrationReference
-        if (registration) void markOfflineReady(registration, source as ServiceWorker, message)
-        return
-      }
-      if (message.type === OFFLINE_NOT_READY_MESSAGE && source && knownWorker(source as ServiceWorker)) {
-        const registration = registrationReference
-        const release = message.release
-        if (
-          registration &&
-          (!state.workerRelease ||
-            typeof release !== 'string' ||
-            release === state.workerRelease ||
-            source === registration.waiting ||
-            source === registration.installing)
-        )
-          markOfflineUnavailable()
-        return
-      }
-      if (message.type === UPDATE_PREPARING_MESSAGE) {
-        handleUpdatePreparing(message, source)
-        return
-      }
-      if (message.type === UPDATE_DEFERRED_MESSAGE) {
-        handleUpdateDeferred(message, source)
-        return
-      }
-      if (
-        message.type === UPDATE_ACTIVATING_MESSAGE &&
-        typeof message.workerId === 'string' &&
-        typeof message.release === 'string' &&
-        typeof message.roundNonce === 'string'
-      ) {
-        noteAcceptedActivation(message.roundNonce, message.workerId, message.release, source as ServiceWorker | null)
-        state.preparation = 'activating'
-        return
-      }
-      if (
-        message.type === ACTIVATED_UPDATE_MESSAGE &&
-        typeof message.workerId === 'string' &&
-        typeof message.release === 'string' &&
-        typeof message.roundNonce === 'string'
-      ) {
-        handleActivatedUpdate(message.roundNonce, message.workerId, message.release, source)
+      if ((event.data as { type?: unknown } | null)?.type === RETIREMENT_NOTICE_MESSAGE) {
+        handleWorkerMessage(event, event.source as ServiceWorker)
       }
     })
   }
@@ -833,12 +916,31 @@ const attachWindowListeners = (): void => {
   if (!hasWindow() || installListenersAttached) return
   installListenersAttached = true
   updateStandaloneState()
+  attachUpdateWakeups()
+  window.addEventListener('pagehide', () => {
+    pageSuspended = true
+    safetySequence += 1
+    offlineReadinessEpoch += 1
+    clearPreparationTimer()
+    for (const close of replyPorts.values()) close()
+    updateWakeups?.close()
+    updateWakeups = null
+  })
+  window.addEventListener('pageshow', () => {
+    pageSuspended = false
+    attachUpdateWakeups()
+    requestOfflineReadiness()
+    const waiting = registrationReference?.waiting
+    if (waiting) postToWorker(waiting, { type: 'PWA_CONNECT' })
+    retryDeferredReload()
+  })
   window.addEventListener(INSTALL_EVENT, captureInstallPrompt as EventListener)
   window.addEventListener(INSTALLED_EVENT, markInstalled as EventListener)
   window.addEventListener('online', handleOnlineHint)
   window.addEventListener('offline', handleOfflineHint)
   window.addEventListener('visibilitychange', () => {
     updateStandaloneState()
+    if (document.visibilityState === 'hidden') return
     requestOfflineReadiness()
     retryDeferredReload()
   })
@@ -1085,6 +1187,9 @@ const requestUpdate = async (): Promise<boolean> => {
   state.updateReady = true
   state.updateState = 'ready'
   state.preparation = 'checking'
+  attachUpdateWakeups()
+  updateWakeups?.postMessage('connect')
+  startPreparationTimer()
   postToWorker(waiting, { type: PREPARE_UPDATE_MESSAGE })
   return true
 }

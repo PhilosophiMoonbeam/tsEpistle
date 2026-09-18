@@ -152,7 +152,7 @@ const client = (id: string): TestClient => ({
   url: `${ORIGIN}/en/${id}`,
   messages: [],
   postMessage(message: unknown) {
-    this.messages.push(message)
+    throw new Error("Client.postMessage must never be used")
   }
 })
 
@@ -182,6 +182,11 @@ const createHarness = async (options: {
     matchAll: async (_options?: unknown) => [...clients.list]
   }
   const registration = { scope: `${ORIGIN}/` }
+  const connected = new Set<string>()
+  const replyPort = (source: TestClient) => ({
+    postMessage: (message: unknown) => source.messages.push(message),
+    close: () => undefined
+  })
   let skipWaitingCalls = 0
   const networkFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
@@ -230,7 +235,19 @@ const createHarness = async (options: {
       return await (event.response ?? networkFetch(request))
     },
     dispatchMessage: async (source, data) => {
-      const event = hub.emit('message', { source, data })
+      const type = (data as { type?: string }).type
+      // Model the explicit update wakeup delivered to the other live pages.
+      if (type === 'PWA_PREPARE_UPDATE') {
+        for (const peer of clients.list) {
+          if (peer.id === source.id || connected.has(peer.id)) continue
+          const connect = hub.emit('message', { source: peer, data: { type: 'PWA_PORT_REQUEST', message: { type: 'PWA_CONNECT' } }, ports: [replyPort(peer)] })
+          await Promise.all(connect.waits)
+          connected.add(peer.id)
+        }
+      }
+      const ports = type === 'PWA_RELOAD_SAFETY' ? [] : [replyPort(source)]
+      if (type === 'PWA_CONNECT' || type === 'PWA_PREPARE_UPDATE') connected.add(source.id)
+      const event = hub.emit('message', { source, data: { type: 'PWA_PORT_REQUEST', message: data }, ports })
       await Promise.all(event.waits)
     },
     restore,
@@ -257,6 +274,98 @@ const ownedPriorCacheName = `${PRECACHE_CACHE_PREFIX}abcdef0123456789`
 
 
 describe('service worker lifecycle', () => {
+  it('uses real reply ports for readiness and never messages a client after navigation', async () => {
+    const harness = await createHarness()
+    const source = client('leaving')
+    source.postMessage = vi.fn()
+    harness.clients.list = [source]
+    const first = new MessageChannel()
+    const delayed = new MessageChannel()
+    try {
+      await harness.dispatchInstall()
+      const received: unknown[] = []
+      first.port1.onmessage = event => received.push(event.data)
+      const ready = harness.hub.emit('message', { source, ports: [first.port2], data: {
+        type: 'PWA_PORT_REQUEST', message: { type: 'PWA_OFFLINE_READY_REQUEST' }
+      } })
+      await Promise.all(ready.waits)
+      await vi.waitFor(() => expect(received).toHaveLength(1))
+      expect(received[0]).toMatchObject({ type: 'PWA_OFFLINE_READY', complete: true })
+
+      let resume!: () => void
+      const pending = new Promise<void>(resolve => { resume = resolve })
+      const open = harness.caches.open.bind(harness.caches)
+      harness.caches.open = async name => { await pending; return open(name) }
+      delayed.port1.onmessage = event => received.push(event.data)
+      const reply = harness.hub.emit('message', { source, ports: [delayed.port2], data: {
+        type: 'PWA_PORT_REQUEST', message: { type: 'PWA_OFFLINE_READY_REQUEST' }
+      } })
+      harness.clients.list = []
+      delayed.port1.close() // pagehide while Cache Storage is still pending
+      resume()
+      await Promise.all(reply.waits)
+      await harness.dispatchActivate()
+      expect(source.postMessage).not.toHaveBeenCalled()
+      expect(received).toHaveLength(1)
+    } finally {
+      first.port1.close()
+      delayed.port1.close()
+      harness.restore()
+    }
+  })
+
+  it('ignores legacy requests and requires older tabs to participate before an update', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    const current = client('current')
+    const legacy = client('legacy')
+    harness.clients.list = [current, legacy]
+    const port = { postMessage: (message: unknown) => current.messages.push(message), close: vi.fn() }
+    try {
+      harness.hub.emit('message', { source: legacy, data: { type: 'PWA_OFFLINE_READY_REQUEST' } })
+      const event = harness.hub.emit('message', { source: current, ports: [port], data: {
+        type: 'PWA_PORT_REQUEST', message: { type: 'PWA_PREPARE_UPDATE' }
+      } })
+      await Promise.all(event.waits)
+      const round = current.messages[0] as Record<string, unknown>
+      await harness.dispatchMessage(current, { ...round, type: 'PWA_RELOAD_SAFETY', safe: true, revision: 'clean' })
+      harness.hub.emit('message', { source: legacy, data: { ...round, type: 'PWA_RELOAD_SAFETY', safe: true, revision: 'legacy' } })
+      expect(harness.skipWaitingCalls).toBe(0)
+      expect(legacy.messages).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(15_001)
+      expect(current.messages.at(-1)).toMatchObject({ type: 'PWA_UPDATE_DEFERRED', reason: 'preparation-deadline' })
+      expect(harness.skipWaitingCalls).toBe(0)
+      expect(port.close).toHaveBeenCalled()
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('rebuilds subscriptions after worker restart when peers reconnect after preparation starts', async () => {
+    const harness = await createHarness()
+    const first = client('first')
+    const second = client('second')
+    harness.clients.list = [first, second]
+    try {
+      // No volatile subscriptions survived the worker restart.
+      const event = harness.hub.emit('message', { source: first, ports: [{
+        postMessage: (message: unknown) => first.messages.push(message), close: () => undefined
+      }], data: { type: 'PWA_PORT_REQUEST', message: { type: 'PWA_PREPARE_UPDATE' } } })
+      await Promise.all(event.waits)
+      const round = first.messages[0] as Record<string, unknown>
+      await harness.dispatchMessage(first, { ...round, type: 'PWA_RELOAD_SAFETY', safe: true, revision: 'first-clean' })
+      expect(harness.skipWaitingCalls).toBe(0)
+      expect(second.messages).toHaveLength(0)
+      await harness.dispatchMessage(second, { type: 'PWA_CONNECT' })
+      expect(second.messages.at(-1)).toMatchObject({ type: 'PWA_RELOAD_SAFETY_REQUEST', roundNonce: round.roundNonce })
+      await harness.dispatchMessage(second, { ...round, type: 'PWA_RELOAD_SAFETY', safe: true, revision: 'second-clean' })
+      expect(harness.skipWaitingCalls).toBe(1)
+    } finally {
+      harness.restore()
+    }
+  })
+
   it('leaves protected navigation, APIs, streams, downloads, and third-party requests to the browser', async () => {
     const harness = await createHarness({ fetch: () => { throw new Error('Worker must not fetch passthrough requests') } })
     try {
@@ -268,6 +377,37 @@ describe('service worker lifecycle', () => {
     } finally {
       harness.restore()
     }
+  })
+
+  it('rechecks votes when a peer reconnects during the final awaited roster lookup', async () => {
+    const harness = await createHarness()
+    const first = client('first')
+    const second = client('second')
+    harness.clients.list = [first, second]
+    try {
+      await harness.dispatchMessage(first, { type: 'PWA_PREPARE_UPDATE' })
+      const round = first.messages[0] as Record<string, unknown>
+      const vote = (source: TestClient) => harness.dispatchMessage(source, {
+        ...round, type: 'PWA_RELOAD_SAFETY', safe: true, revision: `${source.id}-clean`
+      })
+      await vote(first)
+      let resume!: () => void
+      const gate = new Promise<void>(resolve => { resume = resolve })
+      let lookups = 0
+      harness.clients.matchAll = async () => {
+        lookups += 1
+        if (lookups === 2) await gate
+        return [...harness.clients.list]
+      }
+      const finalVote = vote(second)
+      await vi.waitFor(() => expect(lookups).toBe(2))
+      await harness.dispatchMessage(first, { type: 'PWA_CONNECT' })
+      resume()
+      await finalVote
+      expect(harness.skipWaitingCalls).toBe(0)
+      await vote(first)
+      expect(harness.skipWaitingCalls).toBe(1)
+    } finally { harness.restore() }
   })
 
   it('opens the cached offline library directly without allowing protected or non-navigation fallbacks', async () => {
@@ -493,7 +633,7 @@ describe('service worker lifecycle', () => {
       const rounds = new Set(preparingMessages.map(message => `${message.workerId}:${message.roundNonce}`))
       expect(rounds).toHaveLength(1)
       expect(first.messages.filter(message => (message as { type?: unknown }).type === 'PWA_RELOAD_SAFETY_REQUEST')).toHaveLength(1)
-      expect(second.messages.filter(message => (message as { type?: unknown }).type === 'PWA_RELOAD_SAFETY_REQUEST')).toHaveLength(1)
+      expect(second.messages.filter(message => (message as { type?: unknown }).type === 'PWA_RELOAD_SAFETY_REQUEST')).toHaveLength(2)
 
       const preparing = preparingMessages[0]!
       const vote = (source: TestClient, revision: string) => harness.dispatchMessage(source, {
@@ -698,7 +838,7 @@ describe('service worker lifecycle', () => {
     }
   })
 
-  it('freezes the roster at skipWaiting and notifies a later unsafe client without adding it to consensus', async () => {
+  it('freezes the roster at skipWaiting without broadcasting to later unsubscribed clients', async () => {
     const first = client('first')
     const second = client('second')
     const late = client('late')
@@ -732,7 +872,7 @@ describe('service worker lifecycle', () => {
       expect(late.messages.filter(message => (message as { type?: unknown }).type === 'PWA_UPDATE_ACTIVATING')).toHaveLength(0)
 
       await harness.dispatchActivate()
-      expect(late.messages.filter(message => (message as { type?: unknown }).type === 'PWA_UPDATE_ACTIVATED')).toHaveLength(1)
+      expect(late.messages).toHaveLength(0)
       expect(first.messages.filter(message => (message as { type?: unknown }).type === 'PWA_UPDATE_ACTIVATING')).toHaveLength(1)
       expect(second.messages.filter(message => (message as { type?: unknown }).type === 'PWA_UPDATE_ACTIVATING')).toHaveLength(1)
     } finally {

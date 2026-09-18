@@ -19,8 +19,9 @@ type PrecacheManifestEntry = {
 type WorkerClient = {
   id: string
   url: string
-  postMessage(message: unknown): void
 }
+
+type ReplyPort = Pick<MessagePort, 'postMessage' | 'close'>
 
 type WorkerClients = {
   matchAll(options?: { type?: string; includeUncontrolled?: boolean }): Promise<WorkerClient[]>
@@ -51,6 +52,7 @@ type FetchEvent = Event & {
 type MessageEventLike = Event & {
   data: unknown
   source: WorkerClient | null
+  ports?: readonly ReplyPort[]
   waitUntil?(promise: Promise<unknown>): void
 }
 
@@ -112,6 +114,7 @@ const WORKER_ID = createToken()
 const PRECACHE_URLS = new Set(precacheEntries().map(value => value.url))
 let activationIntent: ActivationIntent | null = null
 let preparationRound: PreparationRound | null = null
+const updatePorts = new Map<string, { url: string; port: ReplyPort }>()
 
 function manifestDigest(manifest: readonly PrecacheManifestEntry[], release: string): string {
   const revisionSet = [...new Set(manifest.map(entry => JSON.stringify([entry.url, entry.revision])))].sort()
@@ -405,14 +408,26 @@ function scopedClient(client: WorkerClient): boolean {
 }
 
 async function scopedClients(): Promise<WorkerClient[]> {
-  return (await worker.clients.matchAll({ type: 'window', includeUncontrolled: true })).filter(scopedClient)
+  const clients = (await worker.clients.matchAll({ type: 'window', includeUncontrolled: true })).filter(scopedClient)
+  for (const [id, connection] of updatePorts) {
+    if (!clients.some(client => client.id === id && client.url === connection.url)) {
+      connection.port.close()
+      updatePorts.delete(id)
+    }
+  }
+  return clients
 }
 
 function post(client: WorkerClient, message: unknown): void {
+  const connection = updatePorts.get(client.id)
+  if (!connection || connection.url !== client.url) return
   try {
-    client.postMessage(message)
+    connection.port.postMessage(message)
   } catch {
-    // A client can disappear between matchAll() and postMessage().
+    // Never fall back to Client.postMessage: a navigated document may be in
+    // BFCache, where Chromium's service-worker eviction path can crash.
+    connection.port.close()
+    updatePorts.delete(client.id)
   }
 }
 
@@ -443,6 +458,27 @@ async function deferRound(round: PreparationRound, reason: string): Promise<void
   preparationRound = null
   if (round.deadlineTimer !== null) clearTimeout(round.deadlineTimer)
   postRound(round, roundMessage(round, UPDATE_DEFERRED_MESSAGE, { reason }))
+  closeUpdatePorts()
+}
+
+function closeUpdatePorts(): void {
+  for (const { port } of updatePorts.values()) port.close()
+  updatePorts.clear()
+}
+
+function connectUpdatePort(source: WorkerClient, port: ReplyPort): void {
+  if (preparationRound && !preparationRound.started) preparationRound.votes.delete(source.id)
+  updatePorts.get(source.id)?.port.close()
+  updatePorts.set(source.id, { url: source.url, port })
+}
+
+function replayPreparation(source: WorkerClient): void {
+  const round = preparationRound
+  if (!round || round.roster.get(source.id) !== source.url) return
+  post(source, roundMessage(round, UPDATE_PREPARING_MESSAGE, { phase: round.started ? 'activating' : 'collecting' }))
+  if (!round.started) {
+    post(source, roundMessage(round, RELOAD_SAFETY_REQUEST_MESSAGE, { clientId: source.id }))
+  }
 }
 
 function schedulePreparationCheck(round: PreparationRound): Promise<void> | null {
@@ -470,6 +506,12 @@ function schedulePreparationCheck(round: PreparationRound): Promise<void> | null
       await deferRound(round, 'client-roster-changed')
       return
     }
+    // A peer can reconnect or retract its vote while the final roster lookup
+    // is pending. Require the current votes at the irreversible boundary too.
+    for (const client of finalClients) {
+      const vote = round.votes.get(client.id)
+      if (!vote || !vote.safe || vote.revision !== round.firstRevisions.get(client.id)) return
+    }
 
     // This is the irreversible boundary. No await occurs between the final
     // roster check and skipWaiting().
@@ -482,6 +524,8 @@ function schedulePreparationCheck(round: PreparationRound): Promise<void> | null
     } catch {
       postRound(round, roundMessage(round, UPDATE_DEFERRED_MESSAGE, { reason: 'skip-waiting-failed' }))
       preparationRound = null
+      activationIntent = null
+      closeUpdatePorts()
     }
   })().finally(() => {
     round.checking = false
@@ -499,13 +543,13 @@ async function startPreparation(source: WorkerClient): Promise<void> {
   if (!scopedClient(source)) return
   const initialRound = preparationRound
   if (initialRound) {
-    post(source, roundMessage(initialRound, UPDATE_PREPARING_MESSAGE, { phase: initialRound.started ? 'activating' : 'collecting' }))
+    replayPreparation(source)
     return
   }
   const clients = await scopedClients().catch(() => [])
   const currentRound = preparationRound
   if (currentRound) {
-    post(source, roundMessage(currentRound, UPDATE_PREPARING_MESSAGE, { phase: currentRound.started ? 'activating' : 'collecting' }))
+    replayPreparation(source)
     return
   }
   if (!clients.some(client => client.id === source.id)) return
@@ -568,7 +612,7 @@ async function acceptSafetyVote(
   if (check) await check
 }
 
-async function sendOfflineReady(target?: WorkerClient | null): Promise<void> {
+async function sendOfflineReady(port: ReplyPort): Promise<void> {
   const cache = await caches.open(PRECACHE_CACHE_NAME).catch(() => null)
   const complete = cache ? await completeCache(cache).catch(() => false) : false
   const message = complete
@@ -589,11 +633,11 @@ async function sendOfflineReady(target?: WorkerClient | null): Promise<void> {
         cacheName: PRECACHE_CACHE_NAME,
         shellPath: OFFLINE_DOCUMENT_PATH
       }
-  if (target) {
-    post(target, message)
-    return
+  try {
+    port.postMessage(message)
+  } finally {
+    port.close()
   }
-  for (const client of await scopedClients().catch(() => [])) post(client, message)
 }
 
 worker.addEventListener('install', event => {
@@ -606,7 +650,6 @@ worker.addEventListener('activate', event => {
       await cleanupIncompleteCaches()
       await retireOldPrecacheCaches().catch(() => undefined)
       if (typeof worker.clients.claim === 'function') await worker.clients.claim().catch(() => undefined)
-      await sendOfflineReady()
 
       const intent = activationIntent
       if (!intent) return
@@ -618,6 +661,7 @@ worker.addEventListener('activate', event => {
         roundNonce: intent.roundNonce
       }
       for (const client of clients) post(client, message)
+      closeUpdatePorts()
       activationIntent = null
       preparationRound = null
     })()
@@ -632,8 +676,16 @@ worker.addEventListener('fetch', event => {
 
 worker.addEventListener('message', event => {
   const messageEvent = event as MessageEventLike
-  if (!messageEvent.source || typeof messageEvent.data !== 'object' || messageEvent.data === null) return
-  const message = messageEvent.data as {
+  const source = messageEvent.source
+  const port = messageEvent.ports?.[0]
+  // The new envelope is deliberately unknown to older workers, so upgraded
+  // documents never solicit a legacy Client.postMessage reply during rollout.
+  const envelope = messageEvent.data as { type?: unknown; message?: unknown } | null
+  if (!source || !scopedClient(source) || envelope?.type !== 'PWA_PORT_REQUEST' || typeof envelope.message !== 'object' || !envelope.message) {
+    port?.close()
+    return
+  }
+  const message = envelope.message as {
     type?: unknown
     workerId?: unknown
     release?: unknown
@@ -642,21 +694,34 @@ worker.addEventListener('message', event => {
     revision?: unknown
     actorEpoch?: unknown
   }
+  if (message.type === 'PWA_OFFLINE_READY_REQUEST' && port) {
+    const readiness = sendOfflineReady(port).catch(() => port.close())
+    if (typeof messageEvent.waitUntil === 'function') messageEvent.waitUntil(readiness)
+    return
+  }
+  if ((message.type === 'PWA_CONNECT' || message.type === PREPARE_UPDATE_MESSAGE) && port) {
+    connectUpdatePort(source, port)
+    if (message.type === 'PWA_CONNECT') {
+      const reconnect = scopedClients().then(() => replayPreparation(source)).catch(() => undefined)
+      if (typeof messageEvent.waitUntil === 'function') messageEvent.waitUntil(reconnect)
+      return
+    }
+  } else {
+    port?.close()
+  }
+  const connection = updatePorts.get(source.id)
+  if (!connection || connection.url !== source.url) return
   if (message.type === PREPARE_UPDATE_MESSAGE) {
-    const preparation = startPreparation(messageEvent.source)
+    const preparation = startPreparation(source)
     if (typeof messageEvent.waitUntil === 'function') messageEvent.waitUntil(preparation)
     else void preparation
     return
   }
   if (message.type === RELOAD_SAFETY_MESSAGE) {
-    const vote = acceptSafetyVote(messageEvent.source, message)
+    const vote = acceptSafetyVote(source, message)
     if (typeof messageEvent.waitUntil === 'function') messageEvent.waitUntil(vote)
     else void vote
     return
-  }
-  if (message.type === 'PWA_OFFLINE_READY_REQUEST') {
-    const readiness = sendOfflineReady(messageEvent.source)
-    if (typeof messageEvent.waitUntil === 'function') messageEvent.waitUntil(readiness)
   }
 })
 
