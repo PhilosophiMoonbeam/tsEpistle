@@ -120,6 +120,7 @@ type PwaHarness = {
   readonly registerCalls: unknown[][]
   readonly fetchCalls: string[]
   setRegisterImplementation(implementation: () => Promise<RegistrationLike>): void
+  setFetchImplementation(implementation: () => Promise<Response>): void
   sendWorkerMessage(data: unknown, source?: WorkerLike): void
   restore(): void
 }
@@ -166,6 +167,7 @@ const createHarness = async (mode: 'feature' | 'retirement' = 'feature'): Promis
   }
   const registerCalls: unknown[][] = []
   const fetchCalls: string[] = []
+  let fetchImplementation = async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
   let registerImplementation = async (): Promise<RegistrationLike> => registration
   const container = {
     controller: activeWorker as WorkerLike | null,
@@ -191,7 +193,7 @@ const createHarness = async (mode: 'feature' | 'retirement' = 'feature'): Promis
     matchMedia: () => ({ matches: false, addEventListener: () => undefined, removeEventListener: () => undefined }),
     fetch: async (input: string) => {
       fetchCalls.push(input)
-      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+      return await fetchImplementation()
     },
     addEventListener: windowHub.addEventListener.bind(windowHub),
     removeEventListener: windowHub.removeEventListener.bind(windowHub)
@@ -214,6 +216,7 @@ const createHarness = async (mode: 'feature' | 'retirement' = 'feature'): Promis
     container,
     registerCalls,
     fetchCalls,
+    setFetchImplementation(implementation) { fetchImplementation = implementation },
     setRegisterImplementation(implementation) {
       registerImplementation = implementation
     },
@@ -565,5 +568,53 @@ describe('PWA helper lifecycle', () => {
     } finally {
       harness.restore()
     }
+  })
+})
+
+
+describe('foreground connection recovery', () => {
+  it('recovers from an unavailable server without requiring another browser online event', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    try {
+      harness.setFetchImplementation(async () => { throw new Error('Network transition') })
+      await harness.module.registerPwa()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(harness.module.pwaState.connectionState).toBe('server-unavailable')
+      expect(harness.fetchCalls).toHaveLength(1)
+      harness.setFetchImplementation(async () => new Response('{}', { status: 200 }))
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(harness.fetchCalls).toHaveLength(2)
+      expect(harness.module.pwaState.connectionState).toBe('online')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(harness.fetchCalls).toHaveLength(2)
+    } finally { harness.restore(); vi.useRealTimers() }
+  })
+
+  it('suspends recovery while hidden, offline, or leaving the document', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    try {
+      harness.setFetchImplementation(async () => new Response('{}', { status: 503 }))
+      await harness.module.registerPwa()
+      await vi.advanceTimersByTimeAsync(1)
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      harness.windowHub.emit('visibilitychange')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(harness.fetchCalls).toHaveLength(1)
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+      harness.windowHub.emit('visibilitychange')
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(harness.fetchCalls).toHaveLength(2)
+      harness.windowHub.emit('offline')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(harness.fetchCalls).toHaveLength(2)
+      harness.windowHub.emit('online')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(harness.fetchCalls).toHaveLength(3)
+      harness.windowHub.emit('pagehide')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(harness.fetchCalls).toHaveLength(3)
+    } finally { harness.restore(); vi.useRealTimers() }
   })
 })

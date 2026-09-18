@@ -707,6 +707,7 @@ test('tag following saves device offline preferences independently of browse sel
   await expect(page.locator('.tags-selection-status')).toContainText('Following Alpha (alpha) for offline saving on this device.')
 
   await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(page.locator('.tags-index')).toBeVisible({ timeout: 30_000 })
   await expect(follow).toHaveAttribute('aria-pressed', 'true')
   await expect(alpha).toHaveAttribute('aria-pressed', 'false')
   await expect(follow).toBeEnabled({ timeout: 30_000 })

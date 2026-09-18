@@ -215,6 +215,8 @@ let safetySequence = 0
 let activeSafetyRequest: { target: ServiceWorkerMessageTarget; context: SafetyRequestContext } | null = null
 let connectionEpoch = 0
 let activeProbe: ProbeAttempt | undefined
+let connectionRetryTimer: ReturnType<typeof setTimeout> | null = null
+let connectionRetryDelay = 3_000
 let updateRequestInFlight: Promise<boolean> | undefined
 let callbackSet: PwaLifecycleCallbacks = {}
 const observedWorkers = new WeakSet<ServiceWorker>()
@@ -234,6 +236,22 @@ const UPDATE_WAKEUP_CHANNEL = 'tsepistle-pwa-update-connect-v1'
 
 const hasWindow = (): boolean => typeof window !== 'undefined' && typeof document !== 'undefined'
 const hasNavigator = (): boolean => typeof navigator !== 'undefined'
+
+const clearConnectionRetry = (): void => {
+  if (connectionRetryTimer !== null) clearTimeout(connectionRetryTimer)
+  connectionRetryTimer = null
+}
+
+const scheduleConnectionRetry = (): void => {
+  clearConnectionRetry()
+  if (!hasWindow() || !hasNavigator() || pageSuspended || document.visibilityState === 'hidden' ||
+    navigator.onLine === false || state.connectionState !== 'server-unavailable') return
+  connectionRetryTimer = setTimeout(() => {
+    connectionRetryTimer = null
+    if (!pageSuspended && document.visibilityState !== 'hidden' && navigator.onLine !== false) void retryServerConnection()
+  }, connectionRetryDelay)
+  connectionRetryDelay = Math.min(connectionRetryDelay * 2, 30_000)
+}
 
 const errorMessage = (error: unknown, fallback: string): string => {
   if (error instanceof Error && error.message.trim()) return error.message
@@ -904,6 +922,8 @@ const handleOnlineHint = (): void => {
 }
 
 const handleOfflineHint = (): void => {
+  clearConnectionRetry()
+  connectionRetryDelay = 3_000
   connectionEpoch += 1
   activeProbe?.controller.abort()
   state.onlineHint = false
@@ -919,6 +939,7 @@ const attachWindowListeners = (): void => {
   attachUpdateWakeups()
   window.addEventListener('pagehide', () => {
     pageSuspended = true
+    clearConnectionRetry()
     safetySequence += 1
     offlineReadinessEpoch += 1
     clearPreparationTimer()
@@ -928,6 +949,7 @@ const attachWindowListeners = (): void => {
   })
   window.addEventListener('pageshow', () => {
     pageSuspended = false
+    scheduleConnectionRetry()
     attachUpdateWakeups()
     requestOfflineReadiness()
     const waiting = registrationReference?.waiting
@@ -940,7 +962,8 @@ const attachWindowListeners = (): void => {
   window.addEventListener('offline', handleOfflineHint)
   window.addEventListener('visibilitychange', () => {
     updateStandaloneState()
-    if (document.visibilityState === 'hidden') return
+    if (document.visibilityState === 'hidden') { clearConnectionRetry(); return }
+    scheduleConnectionRetry()
     requestOfflineReadiness()
     retryDeferredReload()
   })
@@ -1019,6 +1042,7 @@ export function registerPwa(callbacks: PwaLifecycleCallbacks = {}): Promise<Serv
 }
 
 export async function retryServerConnection(): Promise<boolean> {
+  clearConnectionRetry()
   const epoch = ++connectionEpoch
   activeProbe?.controller.abort()
   if (!hasWindow() || !hasNavigator()) {
@@ -1058,6 +1082,7 @@ export async function retryServerConnection(): Promise<boolean> {
       const sameOrigin = !responseUrl || responseUrl.origin === window.location.origin
       state.serverReachable = sameOrigin
       state.serverHealthy = sameOrigin && response.ok
+      if (sameOrigin && response.ok) connectionRetryDelay = 3_000
       setConnection(sameOrigin && response.ok ? 'online' : 'server-unavailable')
       return sameOrigin && response.ok
     } catch {
@@ -1070,6 +1095,7 @@ export async function retryServerConnection(): Promise<boolean> {
     } finally {
       clearTimeout(timeout)
       if (activeProbe?.epoch === epoch) activeProbe = undefined
+      if (epoch === connectionEpoch) scheduleConnectionRetry()
     }
   })()
   activeProbe = { epoch, controller, promise }
