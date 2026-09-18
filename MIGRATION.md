@@ -179,6 +179,7 @@ Validate data, behavior, and containment—not just the health endpoint.
 - Open representative Markdown pages, long pages, pages with Unicode headings, and pages with revision history.
 - Confirm PostgreSQL search reaches representative migrated content.
 - Confirm all current pages eventually receive knowledge projections and no knowledge outbox entries remain persistently failed or retrying.
+- Check projection *enrichment* separately. A current deterministic projection can be complete while optional utility-LLM enrichment is still unavailable or failed.
 
 Useful target checks include:
 
@@ -191,6 +192,10 @@ FROM "pageMutationOutbox"
 WHERE "effectKind" = 'knowledge'
 GROUP BY status
 ORDER BY status;
+SELECT "enrichmentState", count(*)
+FROM "pageKnowledgeProjections"
+GROUP BY "enrichmentState"
+ORDER BY "enrichmentState";
 ```
 
 ### Authentication
@@ -224,6 +229,14 @@ Wiki.js does not supply tsEpistle Agent runtime keys or provider profiles. After
 - keep browser automation disabled unless its separate sandboxed worker has been deployed.
 
 Feature flags alone do not grant permissions, configure a provider, or bypass proposal approval.
+
+### Existing-page knowledge enrichment
+
+The migration builds a deterministic knowledge projection for each current page from its title, description, content, existing tags, and imported OKF metadata. This does not require an LLM. Utility-LLM enrichment is a separate, optional pass that fills gaps in the *derived projection* (for example, suggested tags, entities, relationships, and alternative search terms). It does not rewrite authoritative page tags or `pages.extra.okf`.
+
+The background worker selects only an enabled, conformed **global-default** provider whose current version is conformed. A provider restricted to selected groups is not eligible for this work, even if its utility model is configured. Making a provider global default requires visibility to all Agent users and also makes it the workspace fallback provider; review that access change, model egress, and the cost of processing existing public pages before enabling it. The worker automatically requeues eligible `unavailable` projections when such a provider becomes available. Only current, public, published, searchable, non-password-protected pages within their publication window are sent for enrichment.
+
+Inspect `enrichmentState` and `lastError` as well as the knowledge outbox status: an outbox effect may be `succeeded` because the deterministic projection was persisted while optional enrichment is `failed`. Failed enrichment is retried after 24 hours. A malformed model response can fail strict validation even when the malformed field was not one of the requested gaps; a fresh retry may succeed, but repeated failures warrant investigation rather than assuming the projection is complete. Do not requeue by changing authoritative page content or broadly resetting the outbox.
 
 ## Phase 7: Final synchronization and cutover
 
@@ -262,6 +275,7 @@ Never use an application-only rollback against a database that has completed new
 - Copied external integrations and API keys were a greater immediate risk than the schema migration itself.
 - Duplicate emails across authentication providers can make a correct password appear wrong when the provider identity is overlooked.
 - New knowledge projections exposed a Unicode length-boundary defect that ordinary page rendering did not; wait for background work to drain and inspect warnings.
+- Deterministic projection completion and utility-LLM enrichment are distinct milestones. A group-restricted provider does not backfill existing pages; an eligible global default triggers automatic requeue, and enrichment failures need separate monitoring.
 - Agent availability depends on feature flags, encryption/signing keys, permissions, provider conformance, API/MCP claims, and egress—not a single enable switch.
 - Production health should be checked throughout the rehearsal, including unchanged container start times when isolation is a requirement.
 
