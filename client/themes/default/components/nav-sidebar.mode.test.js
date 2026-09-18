@@ -115,3 +115,36 @@ describe('Custom Navigation preserves its two views', () => {
     expect(isPressed('browse')).toBe(true)
   })
 })
+
+
+describe('offline navigation continuity', () => {
+  const component = new Function('defineComponent', 'AsyncState', 'pwaState', executable)(options => options, {}, { connectionState: 'offline' })
+
+  it('does not attempt directory requests when the connection is known to be unavailable', async () => {
+    const sidebar = { ...component.data(), connectionUnavailable: true }
+    await component.methods.fetchBrowseItems.call(sidebar)
+    await component.methods.loadFromCurrentPath.call(sidebar)
+    expect(sidebar.browseRequestSequence).toBe(0)
+    expect(sidebar.navLoading).toBe(false)
+    expect(sidebar.navError).toBe('')
+  })
+
+  it('cancels obsolete requests on disconnect, preserves visible navigation and reloads after reconnect', () => {
+    const abort = vi.fn()
+    const retryBrowse = vi.fn()
+    const currentItems = [{ id: 1, title: 'Saved guide' }]
+    const sidebar = { ...component.data(), currentItems, currentMode: 'browse', connectionUnavailable: true, navLoading: true,
+      browseRequestController: { abort }, retryBrowse }
+    component.watch.connectionState.call(sidebar, 'offline')
+    expect(abort).toHaveBeenCalledTimes(1)
+    expect(sidebar.browseRequestSequence).toBe(1)
+    expect(sidebar.navLoading).toBe(false)
+    expect(sidebar.currentItems).toBe(currentItems)
+    expect(retryBrowse).not.toHaveBeenCalled()
+    sidebar.connectionUnavailable = false
+    component.watch.connectionState.call(sidebar, 'checking')
+    expect(retryBrowse).not.toHaveBeenCalled()
+    component.watch.connectionState.call(sidebar, 'online')
+    expect(retryBrowse).toHaveBeenCalledTimes(1)
+  })
+})

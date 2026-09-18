@@ -40,7 +40,9 @@ const service: OfflineSyncService = {
 }
 provide(OFFLINE_SYNC_COORDINATOR_KEY, service)
 const connectionMessage = computed(() => pwaState.connectionState === 'online'
-  ? 'Connected. Saved pages are syncing.'
+  ? 'Connected. Your account and saved pages can sync again.'
+  : pwaState.connectionState === 'checking' ? 'Checking connection. Your saved pages are available.'
+  : pwaState.connectionState === 'server-unavailable' ? 'The server is unavailable. Your saved pages are still available.'
   : 'You’re offline. Saved pages are available; account actions and syncing will resume when you reconnect.')
 
 async function openStorage(): Promise<void> {
@@ -85,6 +87,7 @@ async function restoreServerPage(): Promise<void> {
 }
 watch(() => pwaState.connectionState, state => {
   if (state !== 'online') { coordinator?.invalidateIdentity(); return }
+  void wikiStore.refreshAuth()
   coordinator?.observe('online')
   void restoreServerPage()
 })
@@ -97,6 +100,7 @@ function selectRecord(record: OfflineSnapshotRecord | null): void {
 onMounted(() => {
   wikiStore.page.mode = settingsView ? 'profile' : 'view'
   document.title = `${settingsView ? 'Offline access' : 'Saved pages'} | ${siteTitle}`
+  if (pwaState.connectionState === 'online') void wikiStore.refreshAuth()
   void openStorage()
 })
 onBeforeUnmount(() => { disposed = true; coordinator?.dispose(); storage.value?.close() })
@@ -105,7 +109,7 @@ onBeforeUnmount(() => { disposed = true; coordinator?.dispose(); storage.value?.
 <template>
   <v-app class="offline-application">
     <a class="offline-skip" href="#offline-main">Skip to content</a>
-    <nav-header :local-navigation="true">
+    <nav-header>
       <template #mobileBrand>
         <v-btn icon="mdi-menu" aria-label="Open navigation" @click="drawer = !drawer" />
         <span>{{ settingsView ? 'Profile' : siteTitle }}</span>
@@ -124,7 +128,7 @@ onBeforeUnmount(() => { disposed = true; coordinator?.dispose(); storage.value?.
       <div class="offline-connection" role="status">
         <v-icon :icon="pwaState.connectionState === 'online' ? 'mdi-cloud-check-outline' : 'mdi-cloud-off-outline'" size="20" />
         <span>{{ connectionMessage }}</span>
-        <v-btn size="small" variant="text" :loading="retrying" @click="retry">Reconnect</v-btn>
+        <v-btn v-if="pwaState.connectionState !== 'online'" size="small" variant="text" :loading="retrying" @click="retry">Reconnect</v-btn>
       </div>
       <OfflineSettings v-if="settingsView" />
       <div v-else class="offline-reading-surface">

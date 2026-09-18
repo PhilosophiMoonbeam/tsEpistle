@@ -30,9 +30,7 @@
           a.nav-header-logo(
             v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp'
             :href='homePath'
-            :title='!transportVerified ? navigationUnavailableReason : undefined'
             :aria-label='$t(`common:header.home`)'
-            @click='guardHeaderNavigation'
           )
             img.org-logo(
               v-if='logoUrl && !logoImageFailed'
@@ -493,9 +491,9 @@
                 span {{accountButtonLabel}}
             v-list.nav-header-menu.account-menu(:aria-label='accountMenuLabel')
               template(v-if='isAuthenticated')
-                v-list-item.py-3.bg-surface-variant(
-                  href='/p'
-                  :aria-label='`Open profile for ${name}`'
+                v-list-item.account-menu__profile.py-3.bg-surface-variant(
+                  :href='onlineActionReady ? `/p` : undefined'
+                  :aria-label='onlineActionReady ? `Open profile for ${name}` : `Last verified account: ${name}`'
                 )
                   template(v-slot:prepend)
                     v-avatar
@@ -504,25 +502,30 @@
                       v-avatar(v-else-if='picture.kind === `image`', :size='40')
                         v-img(:src='picture.url', alt='')
                   v-list-item-title
-                    span.account-menu__profile-label Profile
+                    span.account-menu__profile-label {{ onlineActionReady ? `Profile` : `Account` }}
                     | {{name}}
-                  v-list-item-subtitle {{email}}
+                  v-list-item-subtitle {{ onlineActionReady ? email : `Last verified account · Reconnect for account actions` }}
                   template(v-slot:append): v-icon(color='secondary') mdi-face-profile
                 v-divider
-                AccountNotifications.account-menu__notifications(v-if='!siteNotifications.identityStale')
+                AccountNotifications.account-menu__notifications(v-if='onlineActionReady && !siteNotifications.identityStale')
                 v-divider
-              PwaStatus.account-menu__pwa
+              v-list-item.account-menu__offline(href='/p/offline', aria-label='Connection and offline access')
+                template(v-slot:prepend)
+                  v-icon(:icon='connectionPresentation.icon', :color='connectionPresentation.tone')
+                v-list-item-title Offline access
+                v-list-item-subtitle {{ connectionPresentation.label }} · Saved pages and device settings
+                template(v-slot:append): v-icon(size='18', aria-hidden='true') mdi-chevron-right
               v-divider
               template(v-if='isAuthenticated')
                 section.account-menu__preferences(role='region' aria-label='Appearance settings')
                   appearance-selector
                 v-divider
                 form(action='/logout', method='post', :aria-busy='logoutPending ? `true` : undefined', @submit='clearAgentChatPinOnLogout')
-                  v-list-item(tag='button', type='submit', link, :disabled='logoutPending')
+                  v-list-item(tag='button', type='submit', link, :disabled='logoutPending || !onlineActionReady', :title='!onlineActionReady ? `Reconnect to sign out` : undefined')
                     template(v-slot:append): v-icon(color='error') mdi-logout
                     v-list-item-title.text-error {{ logoutPending ? `Signing out…` : $t('common:header.logout') }}
                 v-divider
-              template(v-else)
+              template(v-else-if='verifiedAnonymous')
                 v-list-item(
                   role='button'
                   link
@@ -532,6 +535,10 @@
                 )
                   template(v-slot:prepend): v-icon(color='primary') mdi-login
                   v-list-item-title Sign in
+              v-list-item.account-menu__unverified(v-else, role='status')
+                template(v-slot:prepend): v-icon mdi-account-clock-outline
+                v-list-item-title {{ accountVerificationTitle }}
+                v-list-item-subtitle {{ accountVerificationDetail }}
     page-selector(mode='create', v-model='newPageModal', :open-handler='pageNewCreate', :locale='locale')
     page-selector(mode='move', v-model='movePageModal', :open-handler='pageMoveRename', :path='path', :locale='locale')
     page-selector(mode='create', v-model='duplicateOpts.modal', :open-handler='pageDuplicateHandle', :path='duplicateOpts.path', :locale='duplicateOpts.locale')
@@ -551,7 +558,6 @@ import { invalidateOfflineIdentity, wikiStore } from '@/store/index.ts'
 import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
 import AccountNotifications from './account-notifications.vue'
 import ControlBorderBeam from './control-border-beam.vue'
-import PwaStatus from '../pwa/pwa-status.vue'
 import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
 import { clearAgentChatPin } from '../../helpers/agent-chat-pin'
 import {
@@ -592,7 +598,6 @@ const ADMIN_PERMISSION_NAMES = new Set([
 export default defineComponent({
   components: {
     AccountNotifications,
-    PwaStatus,
     ControlBorderBeam,
     AppearanceSelector: defineAsyncComponent(() => import('./appearance-selector.vue')),
     PageDelete: defineAsyncComponent(() => import('./page-delete.vue')),
@@ -603,7 +608,6 @@ export default defineComponent({
     return { siteNotifications }
   },
   props: {
-    localNavigation: { type: Boolean, default: false },
     dense: {
       type: Boolean,
       default: false
@@ -710,6 +714,18 @@ export default defineComponent({
       return ''
     },
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
+    verifiedAnonymous(): boolean {
+      return this.transportVerified && !wikiStore.authRefreshPending &&
+        wikiStore.authRefreshSettled && wikiStore.authRefreshOutcome === 'anonymous'
+    },
+    accountVerificationTitle(): string {
+      return this.transportVerified && wikiStore.authRefreshPending ? 'Checking account…' : 'Account not verified'
+    },
+    accountVerificationDetail(): string {
+      return this.transportVerified && wikiStore.authRefreshPending
+        ? 'Confirming your session with the server.'
+        : 'Reconnect to verify your session. Offline access is still available.'
+    },
     notificationOwnerId(): number { return this.isAuthenticated ? wikiStore.user.id : 0 },
     notificationState(): 'available' | 'unknown' | 'clear' { return this.siteNotifications.notificationState },
     hasNotifications(): boolean { return this.notificationState === 'available' },
@@ -781,6 +797,9 @@ export default defineComponent({
     }
   },
   watch: {
+    transportVerified(connected: boolean, previous: boolean): void {
+      if (connected && previous === false && !wikiStore.authRefreshPending) void wikiStore.refreshAuth()
+    },
     searchIsFocused(open: boolean): void {
       if (!open && this.$vuetify.display.smAndDown) this.searchIsShown = false
     },
@@ -876,7 +895,7 @@ export default defineComponent({
     },
     clearAgentChatPinOnLogout (event: SubmitEvent): void {
       event.preventDefault()
-      if (this.logoutPending) return
+      if (this.logoutPending || !this.onlineActionReady) return
       this.logoutPending = true
 
       const currentTarget = event.currentTarget
@@ -998,7 +1017,7 @@ export default defineComponent({
       })
     },
     guardHeaderNavigation (event: Event): void {
-      if (!this.transportVerified && !this.localNavigation) event.preventDefault()
+      if (!this.transportVerified) event.preventDefault()
     },
     searchFocus () {
       this.searchIsFocused = true
@@ -1717,10 +1736,12 @@ export default defineComponent({
 .account-menu__trigger {
   position: relative;
 }
-.account-menu__pwa {
-  display: block;
-  width: 100%;
-  min-width: 0;
+.account-menu__profile .v-list-item-subtitle,
+.account-menu__offline .v-list-item-subtitle,
+.account-menu__unverified .v-list-item-subtitle {
+  white-space: normal;
+  -webkit-line-clamp: unset;
+  line-height: 1.5;
 }
 
 .account-menu__connectivity-indicator {
@@ -1731,9 +1752,8 @@ export default defineComponent({
   width: 1rem;
   height: 1rem;
   place-items: center;
-  border: 2px solid rgb(var(--v-theme-surface));
-  border-radius: 50%;
-  background: rgb(var(--v-theme-surface));
+  border: 0;
+  background: transparent;
   color: rgb(var(--v-theme-on-surface-variant));
   line-height: 1;
 }
@@ -2065,8 +2085,7 @@ export default defineComponent({
   }
 
   .account-menu__connectivity-indicator {
-    border-color: ButtonText;
-    background: ButtonFace;
+    background: transparent;
     color: ButtonText;
   }
 

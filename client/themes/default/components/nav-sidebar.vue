@@ -31,10 +31,16 @@
       span {{$t('common:sidebar.browse')}}
       v-icon(icon='mdi-file-tree-outline', size='16', aria-hidden='true')
     v-divider.nav-sidebar-edge
+    .nav-sidebar-offline(v-if='connectionUnavailable', role='status')
+      v-icon(size='22', aria-hidden='true') mdi-cloud-off-outline
+      div
+        strong {{ connectionState === `offline` ? `You’re offline` : `Server unavailable` }}
+        p Navigation will update when you reconnect. Open your saved pages to keep reading.
+        a(href='/p/offline', @click='sidebarLinkClicked') Open offline access
     //-> Custom Navigation
     v-list.nav-sidebar-list.py-2(v-if='currentMode === `custom`', density="compact", :class='color', nav, role='group', tabindex='-1')
       async-state(
-        v-if='customItems.length === 0'
+        v-if='customItems.length === 0 && !connectionUnavailable'
         state='empty'
         :title='$t(`common:sidebar.noNavigationItems`)'
         :message='navMode === `MIXED` ? $t(`common:sidebar.emptyNavigationHint`) : undefined'
@@ -88,7 +94,7 @@
         :aria-label='$t(`common:sidebar.loadingNavigation`)'
       )
       async-state(
-        v-else-if='navError'
+        v-else-if='navError && !connectionUnavailable'
         state='error'
         :title='$t(`common:sidebar.navigationLoadError`)'
         :message='navError'
@@ -96,7 +102,7 @@
         @retry='retryBrowse'
       )
       async-state(
-        v-else-if='currentItems.length === 0'
+        v-else-if='currentItems.length === 0 && !connectionUnavailable'
         state='empty'
         :title='$t(`common:sidebar.noPagesInDirectory`)'
       )
@@ -148,6 +154,7 @@
 
 <script lang='ts'>
 import _ from 'lodash'
+import { pwaState } from '../../../helpers/pwa.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import { defineComponent, markRaw, type PropType } from 'vue'
 import { fetchPageTree, type PageTreeRow } from '../../../helpers/pages-api'
@@ -216,6 +223,8 @@ export default defineComponent({
     }
   },
   computed: {
+    connectionState () { return pwaState.connectionState },
+    connectionUnavailable () { return this.connectionState === 'offline' || this.connectionState === 'server-unavailable' },
     path () {
       return wikiStore.page.path
     },
@@ -233,6 +242,15 @@ export default defineComponent({
     }
   },
   watch: {
+    connectionState (state: string) {
+      if (this.connectionUnavailable) {
+        this.browseRequestSequence += 1
+        this.browseRequestController?.abort()
+        this.navLoading = false
+      } else if (state === 'online' && this.currentMode === 'browse') {
+        this.retryBrowse()
+      }
+    },
     pageLocationKey (value: string, previous: string) {
       if (value === previous || this.currentMode !== 'browse') return
       this.resetBrowseRoot()
@@ -267,6 +285,7 @@ export default defineComponent({
       }
     },
     async fetchBrowseItems (requestedItem?: NavigationTreeItem) {
+      if (this.connectionUnavailable) return
       const requestSequence = ++this.browseRequestSequence
       this.browseRequestController?.abort()
       const requestController = markRaw(new AbortController())
@@ -311,6 +330,7 @@ export default defineComponent({
       }
     },
     async loadFromCurrentPath() {
+      if (this.connectionUnavailable) return
       const requestSequence = ++this.browseRequestSequence
       this.browseRequestController?.abort()
       const requestController = markRaw(new AbortController())
@@ -415,6 +435,17 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
+.nav-sidebar-offline {
+  display: flex;
+  gap: .65rem;
+  padding: 1rem;
+  font-size: .8125rem;
+  line-height: 1.5;
+  color: rgb(var(--v-theme-on-surface));
+  p { margin: .35rem 0 .65rem; color: rgb(var(--v-theme-on-surface-variant)); }
+  a { color: rgb(var(--v-theme-primary)); font-weight: 600; text-underline-offset: .2em; }
+}
+
 .nav-sidebar-directory-heading {
   display: flex;
   align-items: center;

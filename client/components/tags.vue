@@ -77,6 +77,10 @@
             )
               span {{indexExpanded ? $t('tags:hideTags', { defaultValue: 'Hide tags' }) : $t('tags:showTags', { defaultValue: 'Show tags' })}}
               v-icon(size='20' aria-hidden='true') {{indexExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'}}
+            .tags-follow-help#tags-follow-help
+              p Follow tags to save their public pages for offline reading on this device. Pages with any followed tag are included; following does not enable change notifications.
+              a(href='/p/offline') Offline preferences
+              a.tags-offline-recovery(v-if='offlineBrowseUnavailable && (tagsError || pagesError)' href='/p/offline#downloaded-pages-title') Browse saved pages
             p.tags-follow-status(role='status' aria-live='polite' aria-atomic='true') {{offlinePolicyDetail}}
             .tags-index-panel#tags-index-panel(v-show='indexIsVisible')
               p.tags-index-status(role='status') {{tagIndexStatus}}
@@ -88,9 +92,9 @@
               )
               async-state(
                 v-else-if='tagsError'
-                state='error'
-                :title='$t(`tags:loadError`, { defaultValue: `Tags could not be loaded` })'
-                :message='tagsError'
+                :state='offlineBrowseUnavailable ? `empty` : `error`'
+                :title='offlineBrowseUnavailable ? `Reconnect to browse all tags` : $t(`tags:loadError`, { defaultValue: `Tags could not be loaded` })'
+                :message='offlineBrowseUnavailable ? `The tag library needs a connection. You can still open saved pages from Offline preferences.` : tagsError'
                 :retry-label='$t(`common:actions.retry`, { defaultValue: `Try again` })'
                 @retry='loadTags'
               )
@@ -145,8 +149,9 @@
                         type='button'
                         :aria-pressed='isFollowed(tag.tag)'
                         :aria-label='followTagButtonLabel(tag)'
+                        aria-describedby='tags-follow-help'
                         :data-tag-color='tagColor(tag.tag)'
-                        :class='{ "tags-follow-item--followed": isFollowed(tag.tag) }'
+                        :class='{ "tags-follow-item--followed": isFollowed(tag.tag), "tags-follow-item--animate": offlineFollowAnimationTag === offlineTagCanonical(tag.tag) }'
                         :disabled='offlineFollowDisabled(tag.tag)'
                         @click='toggleFollowedTag(tag.tag)'
                       )
@@ -235,7 +240,7 @@
               template(v-slot:header='props')
                 p.tags-results-status(role='status')
                   span(v-if='isLoading') {{$t('tags:retrievingResultsLoading', { defaultValue: 'Loading matching pages…' })}}
-                  span(v-else-if='pagesError') {{$t('tags:resultsError', { defaultValue: 'Matching pages could not be loaded.' })}}
+                  span(v-else-if='pagesError') {{offlineBrowseUnavailable ? 'Reconnect to view matching pages.' : $t('tags:resultsError', { defaultValue: 'Matching pages could not be loaded.' })}}
                   span(v-else) {{props.itemsCount}} {{$t('tags:resultCount', { defaultValue: 'matching pages' })}}
               template(v-slot:loader)
                 .tags-state.tags-state--loading(role='status')
@@ -244,9 +249,9 @@
               template(v-slot:no-data)
                 async-state(
                   v-if='pagesError'
-                  state='error'
-                  :title='$t(`tags:resultsError`, { defaultValue: `Matching pages could not be loaded` })'
-                  :message='pagesError'
+                  :state='offlineBrowseUnavailable ? `empty` : `error`'
+                  :title='offlineBrowseUnavailable ? `Reconnect to browse matching pages` : $t(`tags:resultsError`, { defaultValue: `Matching pages could not be loaded` })'
+                  :message='offlineBrowseUnavailable ? `The full tag library needs a connection. Your saved pages are still available in Offline preferences.` : pagesError'
                   :retry-label='$t(`common:actions.retry`, { defaultValue: `Try again` })'
                   @retry='loadPages'
                 )
@@ -294,6 +299,7 @@ import { pathFromTagSelection, tagSelectionFromPath } from '../helpers/tag-navig
 import { tagColorBucket } from '../../shared/tag-colors.ts'
 import { wikiStore } from '@/store/index.ts'
 import { openOfflineStorage, subscribeOfflineStorageChanges, type OfflineStorage } from '../helpers/offline-storage.ts'
+import { pwaState } from '../helpers/pwa.ts'
 import {
   createOfflineSyncUnavailableResult,
   OFFLINE_SYNC_COORDINATOR_KEY,
@@ -379,6 +385,8 @@ export default {
       offlinePolicyLoading: false,
       offlinePolicyError: '',
       offlineActionLoading: false,
+      offlineFollowAnimationTag: '',
+      offlineFollowAnimationTimer: null as number | null,
       offlineTags: [] as string[],
       offlinePolicySequence: 0,
       offlineStorageChangesUnsubscribe: null as (() => void) | null,
@@ -390,12 +398,15 @@ export default {
     hasSelection (): boolean {
       return this.selection.length > 0
     },
+    offlineBrowseUnavailable (): boolean {
+      return pwaState.connectionState === 'offline' || pwaState.connectionState === 'server-unavailable'
+    },
     offlinePolicyDetail (): string {
-      if (this.offlinePolicyLoading) return 'Loading followed tags on this device…'
+      if (this.offlinePolicyLoading) return 'Loading offline preferences…'
       if (this.offlinePolicyError) return this.offlinePolicyError
-      if (!this.offlineStorage) return 'Followed tags are unavailable on this device.'
-      if (!this.offlineTags.length) return 'No followed tags. Following uses a union (OR); browse selection remains AND-only.'
-      return `Following uses a union (OR) of ${this.offlineTags.length} followed tag${this.offlineTags.length === 1 ? '' : 's'}.`
+      if (!this.offlineStorage) return 'Offline saving is unavailable on this device.'
+      if (!this.offlineTags.length) return 'No tags followed for offline saving yet.'
+      return `${this.offlineTags.length} tag${this.offlineTags.length === 1 ? '' : 's'} followed for offline saving.`
     },
     indexIsVisible (): boolean {
       return !this.hasSelection || this.indexExpanded || this.$vuetify.display.mdAndUp
@@ -547,6 +558,9 @@ export default {
   },
   beforeUnmount () {
     this.disposed = true
+    if (this.offlineFollowAnimationTimer !== null) window.clearTimeout(this.offlineFollowAnimationTimer)
+    this.offlineFollowAnimationTimer = null
+    this.offlineFollowAnimationTag = ''
     this.tagsLoadSequence += 1
     this.pagesLoadSequence += 1
     this.offlinePolicySequence += 1
@@ -610,7 +624,21 @@ export default {
         this.offlineActionLoading
     },
     followTagButtonLabel (tag: PageTagRow): string {
-      return `${this.isFollowed(tag.tag) ? 'Unfollow' : 'Follow'} ${this.tagButtonLabel(tag)}`
+      return `${this.isFollowed(tag.tag) ? 'Unfollow' : 'Follow'} ${this.tagButtonLabel(tag)} for offline saving on this device`
+    },
+    animateFollowedTag (canonical: string): void {
+      if (this.offlineFollowAnimationTimer !== null) window.clearTimeout(this.offlineFollowAnimationTimer)
+      this.offlineFollowAnimationTimer = null
+      this.offlineFollowAnimationTag = ''
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+      this.$nextTick(() => {
+        if (this.disposed) return
+        this.offlineFollowAnimationTag = canonical
+        this.offlineFollowAnimationTimer = window.setTimeout(() => {
+          this.offlineFollowAnimationTag = ''
+          this.offlineFollowAnimationTimer = null
+        }, 420)
+      })
     },
     async toggleFollowedTag (tag: string): Promise<void> {
       const storage = this.offlineStorage
@@ -634,14 +662,17 @@ export default {
           expectedPolicyRevision: policy.state.policyRevision
         })
         policyMutationCommitted = true
-        if (!this.disposed) this.offlineTags = [...next.selectedTags]
+        if (!this.disposed) {
+          this.offlineTags = [...next.selectedTags]
+          this.animateFollowedTag(canonical)
+        }
         const syncResult: OfflineSyncResult = this.offlineSyncService
           ? await this.offlineSyncService.reconcile('tags')
           : createOfflineSyncUnavailableResult('Offline synchronization is unavailable.')
         if (!this.disposed) {
           const localAnnouncement = followed
-            ? `${label} is no longer followed locally.`
-            : `${label} is now followed locally. Following uses a union (OR).`
+            ? `Stopped following ${label} for offline saving.`
+            : `Following ${label} for offline saving on this device.`
           if (syncResult.outcome === 'error') {
             const detail = offlineSyncResultDetail(syncResult, 'Offline synchronization reported an error.')
             this.offlinePolicyError = `The followed-tag setting was saved locally, but offline sync failed: ${detail}`
@@ -666,8 +697,8 @@ export default {
         if (policyMutationCommitted) {
           this.offlinePolicyError = `The followed-tag setting was saved locally, but offline sync failed: ${detail}`
           this.selectionAnnouncement = followed
-            ? `${label} is no longer followed locally. Offline sync failed; the saved setting remains on this device.`
-            : `${label} is now followed locally. Offline sync failed; the saved setting remains on this device.`
+            ? `Stopped following ${label} for offline saving. Offline sync failed; the saved setting remains on this device.`
+            : `Following ${label} for offline saving on this device. Offline sync failed; the saved setting remains on this device.`
         } else {
           this.offlinePolicyError = detail
         }
@@ -1020,13 +1051,18 @@ export default {
   padding: var(--wiki-space-5);
   border-bottom: 1px solid var(--wiki-surface-border);
 }
-  .tags-follow-status {
-    min-height: 1.25rem;
-    margin: var(--wiki-space-3) var(--wiki-space-5) 0;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, var(--wiki-surface-raised));
-    font-size: .8125rem;
-    line-height: 1.5;
-  }
+.tags-follow-help,
+.tags-follow-status {
+  margin: var(--wiki-space-3) var(--wiki-space-5) 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, var(--wiki-surface-raised));
+  font-size: .8125rem;
+  line-height: 1.5;
+}
+
+.tags-follow-help p { margin: 0 0 .3rem; }
+.tags-follow-help a { color: var(--wiki-accent-ink); text-underline-offset: .2em; }
+.tags-offline-recovery { display: inline-block; margin-inline-start: 1rem; }
+.tags-follow-status { min-height: 1.25rem; }
 
 .tags-index-heading-copy {
   min-width: 0;
@@ -1141,6 +1177,11 @@ export default {
   color: var(--wiki-tag-color-ink);
 }
 
+.tags-follow-item.wiki-tag-color[data-tag-color]:not(.tags-follow-item--followed) {
+  border-color: transparent;
+  background-color: transparent;
+}
+
 .tags-follow-item.wiki-tag-color[data-tag-color]:hover {
   border-color: color-mix(in srgb, var(--wiki-accent-ink) 24%, var(--wiki-surface-border));
   background: color-mix(in srgb, var(--wiki-accent-ink) 7%, var(--wiki-surface-raised));
@@ -1163,6 +1204,25 @@ export default {
 
 .tags-follow-item-icon {
   flex: 0 0 auto;
+  transform-origin: 50% 25%;
+}
+
+.tags-follow-item-icon.wiki-tag-color[data-tag-color] {
+  border: 0;
+  background-color: transparent;
+  color: var(--wiki-tag-color-ink);
+  opacity: 1;
+}
+
+.tags-follow-item--animate .tags-follow-item-icon {
+  animation: tags-follow-toggle 360ms ease-out;
+}
+
+@keyframes tags-follow-toggle {
+  0%, 100% { transform: rotate(0deg) scale(1); }
+  25% { transform: rotate(-12deg) scale(1.1); }
+  55% { transform: rotate(8deg) scale(1.05); }
+  80% { transform: rotate(-3deg) scale(1); }
 }
 
 .tags-index-item {
@@ -1558,6 +1618,9 @@ export default {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .tags-follow-item--animate .tags-follow-item-icon {
+    animation: none;
+  }
   .tags * {
     transition-duration: .01ms !important;
     animation-duration: .01ms !important;

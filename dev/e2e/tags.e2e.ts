@@ -520,12 +520,21 @@ test('public tag colors follow canonical identity across browse states', async (
       const label = item.querySelector<HTMLElement>('.tags-index-item-label')?.textContent?.trim() ?? ''
       const canonical = item.querySelector<HTMLElement>('.tags-index-item-canonical')?.textContent?.trim() || label
       const icon = item.querySelector<HTMLElement>('.tags-index-item-icon')
+      const followIcon = item.closest('.tags-index-row')?.querySelector<HTMLElement>('.tags-follow-item-icon')
+      const iconStyle = icon ? getComputedStyle(icon) : null
+      const followStyle = followIcon ? getComputedStyle(followIcon) : null
       return {
         canonical,
         bucket: item.getAttribute('data-tag-color'),
         itemClass: item.classList.contains('wiki-tag-color'),
         iconBucket: icon?.getAttribute('data-tag-color'),
-        iconClass: icon?.classList.contains('wiki-tag-color')
+        iconClass: icon?.classList.contains('wiki-tag-color'),
+        iconColor: iconStyle?.color,
+        followColor: followStyle?.color,
+        iconBackground: iconStyle?.backgroundColor,
+        followBackground: followStyle?.backgroundColor,
+        iconBorder: iconStyle?.borderTopWidth,
+        followBorder: followStyle?.borderTopWidth
       }
     })
   })
@@ -538,6 +547,11 @@ test('public tag colors follow canonical identity across browse states', async (
     expect(row.itemClass).toBe(true)
     expect(row.iconClass).toBe(true)
     expect(row.iconBucket).toBe(row.bucket)
+    expect(row.followColor).toBe(row.iconColor)
+    expect(row.followBackground).toBe(row.iconBackground)
+    expect(row.followBackground).toBe('rgba(0, 0, 0, 0)')
+    expect(row.followBorder).toBe(row.iconBorder)
+    expect(row.followBorder).toBe('0px')
     expect(row.bucket).toBe(tagColorBucket(fixture.tag))
     bucketByTag.set(fixture.tag, row.bucket)
   }
@@ -671,4 +685,75 @@ test('public tag results keep the latest selection when responses resolve out of
   await staleResponse
   await expect(page.getByRole('link', { name: /stale result/i })).toHaveCount(0)
   await expectResponsiveLayout(page, 'latest tag result response')
+})
+
+
+test('tag following saves device offline preferences independently of browse selection', async ({ page }) => {
+  await openTags(page)
+  const alpha = await revealTagButton(page, 'Alpha')
+  const follow = alpha.locator('..').locator('.tags-follow-item')
+  await expect(page.locator('#tags-follow-help')).toContainText('save their public pages for offline reading on this device')
+  await expect(page.locator('#tags-follow-help')).toContainText('following does not enable change notifications')
+  await expect(page.locator('#tags-follow-help').getByRole('link', { name: 'Offline preferences', exact: true })).toHaveAttribute('href', '/p/offline')
+  await expect(page.locator('.tags-follow-status')).not.toContainText(/union|AND-only|\(OR\)/)
+  await expect(follow).toHaveAccessibleName('Follow Alpha (alpha) for offline saving on this device')
+  await expect(follow).toBeEnabled({ timeout: 30_000 })
+  await follow.click()
+  await expect(follow).toHaveAttribute('aria-pressed', 'true')
+  await expect(follow).toHaveAccessibleName('Unfollow Alpha (alpha) for offline saving on this device')
+  await expect(alpha).toHaveAttribute('aria-pressed', 'false')
+  await expect(page).toHaveURL('/t')
+  await expect(follow).toBeEnabled({ timeout: 30_000 })
+  await expect(page.locator('.tags-selection-status')).toContainText('Following Alpha (alpha) for offline saving on this device.')
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(follow).toHaveAttribute('aria-pressed', 'true')
+  await expect(alpha).toHaveAttribute('aria-pressed', 'false')
+  await expect(follow).toBeEnabled({ timeout: 30_000 })
+  await follow.click()
+  await expect(follow).toHaveAttribute('aria-pressed', 'false')
+  await expect(follow).toBeEnabled({ timeout: 30_000 })
+  await expect(page.locator('.tags-selection-status')).toContainText('Stopped following Alpha (alpha) for offline saving.')
+  await expect(page).toHaveURL('/t')
+})
+
+test('tag follow feedback finishes cleanly and respects reduced motion', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await openTags(page)
+  const alpha = await revealTagButton(page, 'Alpha')
+  const follow = alpha.locator('..').locator('.tags-follow-item')
+  await expect(follow).toBeEnabled({ timeout: 30_000 })
+  await follow.evaluate(element => {
+    element.addEventListener('animationstart', event => {
+      element.setAttribute('data-follow-animation-seen', (event as AnimationEvent).animationName)
+    })
+  })
+  await follow.click()
+  await expect(follow).toHaveAttribute('aria-pressed', 'true')
+  await expect(follow).toHaveAttribute('data-follow-animation-seen', /tags-follow-toggle/)
+  await expect(follow).not.toHaveClass(/tags-follow-item--animate/)
+  await expect(follow).toBeEnabled({ timeout: 30_000 })
+
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await follow.evaluate(element => element.removeAttribute('data-follow-animation-seen'))
+  await follow.click()
+  await expect(follow).toHaveAttribute('aria-pressed', 'false')
+  await expect(follow).toBeEnabled({ timeout: 30_000 })
+  await expect(follow).not.toHaveClass(/tags-follow-item--animate/)
+  await expect(follow).not.toHaveAttribute('data-follow-animation-seen')
+  await expect(follow.locator('.tags-follow-item-icon')).toHaveCSS('animation-name', 'none')
+})
+
+test('tag browsing offers saved pages when a live page query loses its connection', async ({ page, browserName }) => {
+  test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
+  await openTags(page)
+  const alpha = await revealTagButton(page, 'Alpha')
+  await page.unrouteAll({ behavior: 'wait' })
+  await page.context().setOffline(true)
+  await alpha.click()
+  await expect(page.locator('.tags-results')).toContainText('Reconnect to browse matching pages')
+  await expect(page.locator('.tags-results')).toContainText('Your saved pages are still available in Offline preferences.')
+  await expect(page.locator('.tags-offline-recovery')).toHaveAttribute('href', '/p/offline#downloaded-pages-title')
+  await expect(page.locator('.tags-offline-recovery')).toBeVisible()
+  await page.context().setOffline(false)
 })

@@ -13,7 +13,7 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).toContain("import { loadingStart, loadingStop } from '../../../helpers/root-ui-store'")
     expect(script.match(/const requestSequence = \+\+this\.browseRequestSequence/g)).toHaveLength(2)
-    expect(script.match(/this\.browseRequestController\?\.abort\(\)/g)).toHaveLength(3)
+    expect(script.match(/this\.browseRequestController\?\.abort\(\)/g)).toHaveLength(4)
     expect(script.match(/const requestController = markRaw\(new AbortController\(\)\)/g)).toHaveLength(2)
     expect(script.match(/this\.browseRequestController = requestController/g)).toHaveLength(2)
     expect(script.match(/\(url, init\) => window\.fetch\(url, \{ \.\.\.init, signal: requestController\.signal \}\)/g)).toHaveLength(2)
@@ -74,7 +74,7 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
 
   test('announces every SPA sidebar destination before navigation', () => {
     expect(script).toContain("emits: ['navigate']")
-    expect(source.match(/@click='sidebarLinkClicked'/g)).toHaveLength(3)
+    expect(source.match(/@click='sidebarLinkClicked'/g)).toHaveLength(4)
     expect(source).toMatch(/v-if='item\.k === `link`'[\s\S]*?:href='item\.t'[\s\S]*?@click='sidebarLinkClicked'/)
     expect(source).toMatch(/v-list-item\.nav-sidebar-current-page\([\s\S]*?:href='pagePath\(currentParent\)'[\s\S]*?@click='sidebarLinkClicked'/)
     expect(source).toMatch(/v-list-item\.nav-sidebar-page\([^\n]+:href='[^']+item\.locale[^']+item\.path'[^\n]+@click='sidebarLinkClicked'/)

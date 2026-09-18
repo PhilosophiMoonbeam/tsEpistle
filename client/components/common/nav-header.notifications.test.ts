@@ -155,6 +155,7 @@ const user = (id: number, authenticated = id > 0): HeaderUser => ({
   authenticated
 })
 
+const connection = VueRuntime.reactive({ connection: 'online', connectionState: 'online', serverReachable: true, serverHealthy: true })
 const calls: NotificationCall[] = []
 let refreshAuthBehavior: () => Promise<AuthRefreshOutcome> = async () => 'authenticated'
 const wikiStore = VueRuntime.reactive({
@@ -231,11 +232,13 @@ const siteNotifications = VueRuntime.reactive({
 })
 
 const globals = globalThis as typeof globalThis & {
+  __headerConnection: typeof connection
   __headerWikiStore: typeof wikiStore
   __headerSiteNotifications: typeof siteNotifications
   siteConfig: Record<string, unknown>
   siteLangs: Array<{ code: string; name: string }>
 }
+globals.__headerConnection = connection
 globals.__headerWikiStore = wikiStore
 globals.__headerSiteNotifications = siteNotifications
 globals.siteConfig = {
@@ -297,7 +300,7 @@ const bundle = await Bun.build({
           if (args.path.endsWith('/helpers/pwa.ts')) {
             return {
               contents:
-                'export const pwaState = { connection: "online", connectionState: "online", serverReachable: true, serverHealthy: true }; export const pwaConnectionPresentation = () => ({ label: "Connected", tone: "success", icon: "mdi-check-network-outline" })',
+                'export const pwaState = globalThis.__headerConnection; export const pwaConnectionPresentation = () => ({ label: "Connected", tone: "success", icon: "mdi-check-network-outline" })',
               loader: 'js'
             }
           }
@@ -445,6 +448,7 @@ afterEach(() => {
   browserWindow.document.body.replaceChildren()
   for (const restore of browserGlobalRestorations.splice(0).reverse()) restore()
   calls.splice(0)
+  Object.assign(connection, { connection: 'online', connectionState: 'online', serverReachable: true, serverHealthy: true })
   translationCalls.splice(0)
   wikiStore.user = user(1)
   wikiStore.authRefreshPending = false
@@ -567,7 +571,7 @@ describe('account menu containment', () => {
     const accountMenus = mounted.host.querySelectorAll('.nav-header-menu.account-menu')
     const accountMenu = accountMenus[0]
     const profileLink = mounted.host.querySelector('[aria-label="Open profile for User 1"]')
-    const offlinePanels = mounted.host.querySelectorAll('.pwa-status-panel')
+    const offlinePanels = mounted.host.querySelectorAll('.account-menu__offline')
     const offlinePanel = offlinePanels[0]
     const notifications = mounted.host.querySelector('.account-menu__notifications')
     const preferences = mounted.host.querySelector('.account-menu__preferences')
@@ -578,8 +582,9 @@ describe('account menu containment', () => {
     expect(accountMenu?.getAttribute('aria-label')).toBe('Account menu')
     expect(profileLink?.closest('.account-menu')).toBe(accountMenu)
     expect(offlinePanel?.closest('.account-menu')).toBe(accountMenu)
-    expect(offlinePanel?.getAttribute('role')).toBe('region')
-    expect(offlinePanel?.getAttribute('aria-label')).toBe('Offline app and connection status: Connected')
+    expect(offlinePanel?.getAttribute('href')).toBe('/p/offline')
+    expect(offlinePanel?.getAttribute('aria-label')).toBe('Connection and offline access')
+    expect(mounted.host.querySelector('.pwa-status-panel')).toBeNull()
     expect(notifications?.closest('.account-menu')).toBe(accountMenu)
     expect(preferences?.closest('.account-menu')).toBe(accountMenu)
     expect(logoutForm?.closest('.account-menu')).toBe(accountMenu)
@@ -592,11 +597,12 @@ describe('account menu containment', () => {
 
   it('keeps guest sign-in and offline app controls inside the account menu without authenticated actions', async () => {
     wikiStore.user = user(0, false)
+    wikiStore.authRefreshOutcome = 'anonymous'
     siteNotifications.ownerId = null
     const mounted = await mountHeader()
     const accountMenus = mounted.host.querySelectorAll('.nav-header-menu.account-menu')
     const accountMenu = accountMenus[0]
-    const offlinePanels = mounted.host.querySelectorAll('.pwa-status-panel')
+    const offlinePanels = mounted.host.querySelectorAll('.account-menu__offline')
     const offlinePanel = offlinePanels[0]
     const signIn = mounted.host.querySelector('[aria-label="Sign in"]')
     const button = mounted.host.querySelector<HTMLElement>('.account-menu__trigger')
@@ -606,8 +612,9 @@ describe('account menu containment', () => {
     expect(offlinePanels).toHaveLength(1)
     expect(accountMenu?.getAttribute('aria-label')).toBe('Account menu')
     expect(offlinePanel?.closest('.account-menu')).toBe(accountMenu)
-    expect(offlinePanel?.getAttribute('role')).toBe('region')
-    expect(offlinePanel?.getAttribute('aria-label')).toBe('Offline app and connection status: Connected')
+    expect(offlinePanel?.getAttribute('href')).toBe('/p/offline')
+    expect(offlinePanel?.getAttribute('aria-label')).toBe('Connection and offline access')
+    expect(mounted.host.querySelector('.pwa-status-panel')).toBeNull()
     expect(signIn?.closest('.account-menu')).toBe(accountMenu)
     expect(mounted.host.querySelector('[aria-label^="Open profile for "]')).toBeNull()
     expect(mounted.host.querySelector('.account-menu__notifications')).toBeNull()
@@ -657,5 +664,61 @@ describe('notification header tri-state indicator', () => {
     expect(indicator()).toBeNull()
     expect(button()?.getAttribute('aria-label')).toBe('Localized account')
     expect(translationCalls.every(call => call.key === 'common:header.account')).toBe(true)
+  })
+})
+
+
+describe('account continuity without a verified connection', () => {
+  it('does not present a cold offline session as signed out, then offers sign in only after anonymous verification', async () => {
+    wikiStore.user = user(0, false)
+    wikiStore.authRefreshSettled = false
+    Object.assign(connection, { connection: 'offline', connectionState: 'offline', serverReachable: false, serverHealthy: false })
+    const { host } = await mountHeader()
+    expect(host.textContent).toContain('Account not verified')
+    expect(host.textContent).toContain('Reconnect to verify your session')
+    expect(host.querySelector('[aria-label="Sign in"]')).toBeNull()
+    expect(host.querySelector('.account-menu__offline')?.getAttribute('href')).toBe('/p/offline')
+
+    Object.assign(connection, { connection: 'online', connectionState: 'online', serverReachable: true, serverHealthy: true })
+    wikiStore.authRefreshPending = true
+    await settle()
+    expect(host.textContent).toContain('Checking account')
+    expect(host.querySelector('[aria-label="Sign in"]')).toBeNull()
+    wikiStore.authRefreshPending = false
+    wikiStore.authRefreshSettled = true
+    wikiStore.authRefreshOutcome = 'unavailable'
+    await settle()
+    expect(host.querySelector('[aria-label="Sign in"]')).toBeNull()
+    wikiStore.authRefreshOutcome = 'anonymous'
+    await settle()
+    expect(host.querySelector('[aria-label="Sign in"]')?.getAttribute('href')).toBe('/login')
+    expect(host.querySelector('.account-menu__unverified')).toBeNull()
+  })
+
+  it('keeps the warm account visible while pausing server actions and allowing Home', async () => {
+    const { host } = await mountHeader()
+    Object.assign(connection, { connection: 'offline', connectionState: 'offline', serverReachable: false, serverHealthy: false })
+    wikiStore.authRefreshOutcome = 'unavailable'
+    await settle()
+    const profile = host.querySelector('.account-menu__profile')
+    expect(profile?.textContent).toContain('User 1')
+    expect(profile?.textContent).toContain('Last verified account')
+    expect(profile?.hasAttribute('href')).toBe(false)
+    expect(host.querySelector('.account-menu__notifications')).toBeNull()
+    expect(host.querySelector('[aria-label="Sign in"]')).toBeNull()
+    const form = host.querySelector('form[action="/logout"]')
+    expect(form?.querySelector('[type="submit"]')?.hasAttribute('disabled')).toBe(true)
+    const before = calls.filter(call => call.kind === 'reset').length
+    form?.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
+    await settle()
+    expect(calls.filter(call => call.kind === 'reset')).toHaveLength(before)
+    const home = host.querySelector('.nav-header-logo')
+    const click = new browserWindow.MouseEvent('click', { bubbles: true, cancelable: true })
+    home?.dispatchEvent(click)
+    expect(click.defaultPrevented).toBe(false)
+    calls.splice(0)
+    Object.assign(connection, { connection: 'online', connectionState: 'online', serverReachable: true, serverHealthy: true })
+    await settle()
+    expect(calls.filter(call => call.kind === 'refreshAuth')).toHaveLength(1)
   })
 })
