@@ -18,7 +18,8 @@ import {
   axAIOpenAIResponsesDefaultConfig
 } from '@ax-llm/ax'
 import type { Knex } from 'knex'
-import { Agent, type RequestInit as UndiciRequestInit, fetch as undiciFetch } from 'undici'
+// The explicit entry point avoids Bun's built-in shim, which ignores dispatchers.
+import { Agent, type RequestInit as UndiciRequestInit, fetch as undiciFetch } from 'undici/index.js'
 import { type AgentReasoningEffort, agentProviderReasoningEfforts } from '../../../shared/agents/contracts.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import {
@@ -484,15 +485,22 @@ const retryAfter = (value: string | null, now = Date.now()): number | null => {
   if (!Number.isFinite(milliseconds) || milliseconds < 0) return null
   return Math.min(MAX_RETRY_AFTER_MS, Math.ceil(milliseconds))
 }
-const readBoundedResponseBytes = async (response: Response, maximumBytes: number): Promise<Uint8Array | null> => {
+const readBoundedResponseBytes = async (response: Response, maximumBytes: number, signal?: AbortSignal): Promise<Uint8Array | null> => {
   const body = response.body
   if (body === null) return new Uint8Array()
   const reader = body.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
+  const onAbort = (): void => {
+    void reader.cancel(signal?.reason).catch(() => {})
+  }
+  signal?.addEventListener('abort', onAbort, { once: true })
+  if (signal?.aborted) onAbort()
   try {
     while (true) {
+      signal?.throwIfAborted()
       const item = await reader.read()
+      signal?.throwIfAborted()
       if (item.done) break
       const value = item.value
       if (
@@ -510,6 +518,7 @@ const readBoundedResponseBytes = async (response: Response, maximumBytes: number
   } catch {
     return null
   } finally {
+    signal?.removeEventListener('abort', onAbort)
     try {
       reader.releaseLock()
     } catch {
@@ -528,14 +537,17 @@ const readBoundedResponseBytes = async (response: Response, maximumBytes: number
 const boundedProviderResponseBody = (
   body: ReadableStream<Uint8Array>,
   limits: AgentProviderResourceLimits,
-  onLimit?: (error: AgentRepositoryError) => void
+  onLimit?: (error: AgentRepositoryError) => void,
+  signal?: AbortSignal
 ): ReadableStream<Uint8Array> => {
   const reader = body.getReader()
   let total = 0
   let finished = false
   let cancellationRequested = false
   let readerReleased = false
+  let onAbort: (() => void) | undefined
   const releaseReader = (): void => {
+    if (onAbort) signal?.removeEventListener('abort', onAbort)
     if (readerReleased) return
     readerReleased = true
     try {
@@ -545,6 +557,7 @@ const boundedProviderResponseBody = (
     }
   }
   const cancel = (reason: unknown): void => {
+    finished = true
     if (!cancellationRequested) {
       cancellationRequested = true
       void reader.cancel(reason).catch(() => {})
@@ -552,15 +565,28 @@ const boundedProviderResponseBody = (
     releaseReader()
   }
   return new ReadableStream<Uint8Array>({
+    start(controller) {
+      // Under Bun, Undici closes the socket on abort but a pending body read may
+      // remain unresolved. Terminate our stream and its reader explicitly.
+      onAbort = () => {
+        if (finished) return
+        const reason: unknown = signal?.reason ?? new DOMException('The request was aborted', 'AbortError')
+        cancel(reason)
+        controller.error(reason)
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      if (signal?.aborted) onAbort()
+    },
     async pull(controller) {
       if (finished) return
       const item = await reader.read().catch(error => {
+        if (finished) return null
         finished = true
         releaseReader()
         controller.error(error)
         return null
       })
-      if (item === null) return
+      if (finished || item === null) return
       if (item.done) {
         finished = true
         releaseReader()
@@ -583,7 +609,12 @@ const boundedProviderResponseBody = (
   })
 }
 
-const guardedSuccessfulResponse = (response: Response, limits: AgentProviderResourceLimits, onLimit?: (error: AgentRepositoryError) => void): Response => {
+const guardedSuccessfulResponse = (
+  response: Response,
+  limits: AgentProviderResourceLimits,
+  onLimit?: (error: AgentRepositoryError) => void,
+  signal?: AbortSignal
+): Response => {
   const declared = Number(response.headers.get('content-length') ?? 0)
   if (Number.isFinite(declared) && declared > limits.rawBodyBytes) {
     const error = new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider response exceeded its byte limit', 502)
@@ -593,19 +624,22 @@ const guardedSuccessfulResponse = (response: Response, limits: AgentProviderReso
     throw error
   }
   if (response.body === null) return response
-  return new Response(boundedProviderResponseBody(response.body, limits, onLimit), {
+  return new Response(boundedProviderResponseBody(response.body, limits, onLimit, signal), {
     status: response.status,
     statusText: response.statusText,
     headers: response.headers
   })
 }
 
-const providerFailure = async (response: Response): Promise<{ code: string; parameter: string | null }> => {
+const providerFailure = async (response: Response, signal?: AbortSignal): Promise<{ code: string; parameter: string | null }> => {
   const fallback = { code: `HTTP_${response.status}`, parameter: null }
   const length = Number(response.headers.get('content-length') ?? 0)
-  if (Number.isFinite(length) && length > MAX_PROVIDER_ERROR_BYTES) return fallback
+  if (Number.isFinite(length) && length > MAX_PROVIDER_ERROR_BYTES) {
+    await response.body?.cancel().catch(() => {})
+    return fallback
+  }
   try {
-    const bytes = await readBoundedResponseBytes(response, MAX_PROVIDER_ERROR_BYTES)
+    const bytes = await readBoundedResponseBytes(response, MAX_PROVIDER_ERROR_BYTES, signal)
     if (bytes === null) return fallback
     const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
     if (typeof value !== 'object' || value === null) return fallback
@@ -627,6 +661,10 @@ const pinnedProviderDispatcher = (resolve: typeof lookup): Agent => {
   const existing = providerDispatchers.get(resolve)
   if (existing) return existing
   const dispatcher = new Agent({
+    // Reuse idle connections between chat turns, not just adjacent tool calls.
+    // Provider keep-alive hints still apply; never retain an idle socket indefinitely.
+    keepAliveTimeout: 30_000,
+    keepAliveMaxTimeout: 60_000,
     connect: {
       lookup: (hostname, options, callback) => {
         void resolve(hostname, { all: true, verbatim: true }).then(
@@ -708,16 +746,21 @@ export const createGuardedProviderFetch = (
       assertPublicProviderAddresses(await resolve(url.hostname, { all: true, verbatim: true }))
       const headers = new Headers(init?.headers)
       for (const [name, value] of Object.entries(additionalHeaders)) headers.set(name, value)
+      const signal = init?.signal ?? (typeof input === 'string' || input instanceof URL ? undefined : input.signal)
       const response = (await (implementation as unknown as typeof undiciFetch)(url, {
         ...init,
+        ...(signal ? { signal } : {}),
         headers,
         redirect: 'manual',
         credentials: 'omit',
         dispatcher
       } as unknown as UndiciRequestInit)) as unknown as Response
-      if (response.status >= 300 && response.status < 400) throw new AgentProviderAttemptError('PROVIDER_REDIRECT_DENIED', response.status, null)
+      if (response.status >= 300 && response.status < 400) {
+        await response.body?.cancel().catch(() => {})
+        throw new AgentProviderAttemptError('PROVIDER_REDIRECT_DENIED', response.status, null)
+      }
       if (!response.ok) {
-        const failure = await providerFailure(response)
+        const failure = await providerFailure(response, signal)
         throw new AgentProviderAttemptError(failure.code, response.status, retryAfter(response.headers.get('retry-after')), failure.parameter)
       }
       return guardedSuccessfulResponse(
@@ -729,7 +772,8 @@ export const createGuardedProviderFetch = (
               rawChunkBytes: GEMINI_MEDIA_OUTPUT_LIMIT
             }
           : limits,
-        onLimit
+        onLimit,
+        signal
       )
     },
     { preconnect: disabledProviderPreconnect }

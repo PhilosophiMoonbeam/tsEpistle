@@ -2583,7 +2583,7 @@ export class AgentProductRuntime {
           const unsettledExposure = dispatchBudget?.unsettledExposure ?? { tokens: 0, costMicros: 0 }
           const consumedTokens = safeUsageSum(settledUsage.totalTokens, unsettledExposure.tokens, 'Total provider tokens')
           const consumedCostMicros = safeUsageSum(settledUsage.costMicros, unsettledExposure.costMicros, 'Total provider cost')
-          const unsettledEventData =
+          const unsettledEventData: { unsettledExposure?: { tokens: number; costMicros: number } } =
             unsettledExposure.tokens === 0 && unsettledExposure.costMicros === 0
               ? {}
               : { unsettledExposure: { tokens: unsettledExposure.tokens, costMicros: unsettledExposure.costMicros } }
