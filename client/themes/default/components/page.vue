@@ -741,7 +741,11 @@ import { hydrateContentExtensions, revealContentExtensionTarget } from '../../..
 import { getErrorMessage, pushGraphError, showNotification } from '../../../helpers/root-ui-store'
 import { tagColorBucket } from '../../../../shared/tag-colors.ts'
 import { pwaState } from '../../../helpers/pwa.ts'
-import { offlineSavedPageState, offlineSavedPageStatus } from '../../../helpers/offline-page-status.ts'
+import {
+  offlineIneligibilityIsQuiet,
+  offlineSavedPageState,
+  offlineSavedPageStatus
+} from '../../../helpers/offline-page-status.ts'
 import {
   openOfflineStorage,
   subscribeOfflineStorageChanges,
@@ -1469,6 +1473,15 @@ export default defineComponent({
       if (this.pageProtection.protected) return 'Password-protected pages cannot be saved offline.'
       return ''
     },
+    offlineQuietIneligibility (): boolean {
+      return this.offlineState === 'ineligible' && offlineIneligibilityIsQuiet({
+        serverDenied: this.offlinePolicy?.availability === 'ineligible',
+        selected: this.offlineSelected,
+        hasSnapshot: this.offlineHasSnapshot,
+        excluded: Boolean(this.offlinePolicy?.excluded),
+        localReason: this.offlineLocalIneligibilityReason
+      })
+    },
     offlineControlState (): string {
       if (this.offlineState === 'checking') return 'checking'
       if (this.offlineState === 'downloading' || this.offlineState === 'removing') return this.offlineState
@@ -1476,7 +1489,7 @@ export default defineComponent({
       if (this.offlineState === 'sync-pending') return this.pageTransportVerified ? 'sync-pending' : 'saved'
       if (this.offlineState === 'error') return 'error'
       if (this.offlineState === 'unavailable') return 'unavailable'
-      if (this.offlineState === 'ineligible' && this.offlinePolicy?.excluded && !this.offlineLocalIneligibilityReason) return 'off'
+      if (this.offlineState === 'ineligible' && ((this.offlinePolicy?.excluded && !this.offlineLocalIneligibilityReason) || this.offlineQuietIneligibility)) return 'off'
       if (this.offlineState === 'ineligible') return 'ineligible'
       if (this.offlineSelected) return this.offlineHasValidBody ? (this.offlineState === 'expiring' ? 'expiring' : 'saved') : 'pending'
       return 'off'
@@ -1504,6 +1517,7 @@ export default defineComponent({
       if (this.offlineState === 'checking') return 'Checking offline availability.'
       if (this.offlineState === 'downloading' || this.offlineState === 'removing') return 'Offline copy change in progress.'
       if (this.offlineState === 'error' || this.offlineState === 'unavailable') return 'Offline sync is unavailable. Retry offline sync.'
+      if (this.offlineQuietIneligibility) return 'Not available for offline use under this Wiki’s access settings.'
       return this.offlineControlLabel
     },
     offlineControlDisabled (): boolean {
@@ -1516,6 +1530,7 @@ export default defineComponent({
       if (this.offlineState === 'checking') return 'Checking offline'
       if (this.offlineState === 'downloading') return 'Saving offline copy'
       if (this.offlineState === 'removing') return 'Removing offline copy'
+      if (this.offlineQuietIneligibility) return 'Offline copy unavailable'
       return this.offlineSelected ? 'Remove offline copy' : 'Save offline copy'
     },
     offlineControlIcon (): string {
@@ -1559,6 +1574,7 @@ export default defineComponent({
           const localReason = this.offlineLocalIneligibilityReason
           if (localReason) return localReason
           if (this.offlinePolicy?.excluded) return 'Excluded from offline sync.'
+          if (this.offlineQuietIneligibility) return 'Not available for offline use under this Wiki’s access settings.'
           return 'The server could not create a safe offline copy. Retry, or manage saved pages from your account menu.'
         }
         case 'error':

@@ -1,5 +1,17 @@
 export type OfflineSavedPageState = 'saved' | 'expiring' | 'sync-pending' | 'stale'
 
+export const offlineIneligibilityIsQuiet = (input: {
+  serverDenied: boolean
+  selected: boolean
+  hasSnapshot: boolean
+  excluded: boolean
+  localReason: string
+}): boolean => input.serverDenied &&
+  !input.selected &&
+  !input.hasSnapshot &&
+  !input.excluded &&
+  input.localReason === ''
+
 export const offlineSavedPageState = (input: {
   savedRevision: string
   latestKnownRevision: string

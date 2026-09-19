@@ -1,5 +1,9 @@
 import { describe, expect, it } from '../../server/test/bun-test.mts'
-import { offlineSavedPageState, offlineSavedPageStatus } from '../helpers/offline-page-status.ts'
+import {
+  offlineIneligibilityIsQuiet,
+  offlineSavedPageState,
+  offlineSavedPageStatus
+} from '../helpers/offline-page-status.ts'
 
 const now = Date.parse('2026-09-18T12:00:00Z')
 const snapshot = { savedRevision: '12', latestKnownRevision: '12', expiresAt: null, refreshFailed: false, now }
@@ -34,5 +38,30 @@ describe('saved page status', () => {
   it('offers reconnection without asserting freshness and retains the continued-sync distinction online', () => {
     expect(offlineSavedPageStatus('saved', false, true)).toContain('Reconnect to check for updates.')
     expect(offlineSavedPageStatus('saved', true, false)).toContain('not included for continued sync')
+  })
+})
+
+describe('ineligible page status', () => {
+  const automaticDenial = {
+    serverDenied: true,
+    selected: false,
+    hasSnapshot: false,
+    excluded: false,
+    localReason: ''
+  }
+
+  it('quietly presents an automatic-only server denial after selection and bodies are removed', () => {
+    expect(offlineIneligibilityIsQuiet(automaticDenial)).toBe(true)
+  })
+
+  it('keeps explicit manual, tag, or mixed selection denials actionable', () => {
+    expect(offlineIneligibilityIsQuiet({ ...automaticDenial, selected: true })).toBe(false)
+  })
+
+  it('does not hide retained bodies, local eligibility reasons, exclusions, or non-authoritative failures', () => {
+    expect(offlineIneligibilityIsQuiet({ ...automaticDenial, hasSnapshot: true })).toBe(false)
+    expect(offlineIneligibilityIsQuiet({ ...automaticDenial, localReason: 'Private pages cannot be saved offline.' })).toBe(false)
+    expect(offlineIneligibilityIsQuiet({ ...automaticDenial, excluded: true })).toBe(false)
+    expect(offlineIneligibilityIsQuiet({ ...automaticDenial, serverDenied: false })).toBe(false)
   })
 })
