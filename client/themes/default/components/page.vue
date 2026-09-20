@@ -675,6 +675,31 @@
               v-btn(v-if='pageApproval.canSubmitter && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', color='error', variant='text', :disabled='approvalLoading || !approvalActionReady', :title='!approvalActionReady ? approvalActionUnavailableReason : undefined', @click='transitionPageApproval(`cancel`)') {{$t('common:page.cancelRequest')}}
             v-spacer
             v-btn(@click='approvalDialog = false') {{$t('common:actions.close')}}
+    v-dialog(v-model='offlineUnlockOpen', max-width='480', :persistent='offlineUnlockBusy')
+      v-card
+        v-card-title Unlock private offline pages
+        v-card-text
+          p Enter the secret saved when private offline reading was set up on this device.
+          v-text-field(
+            v-model='offlineUnlockSecret'
+            label='Unlock secret'
+            type='password'
+            autocomplete='off'
+            spellcheck='false'
+            :disabled='offlineUnlockBusy'
+            :error-messages='offlineUnlockError ? [offlineUnlockError] : []'
+            @keyup.enter='unlockPrivateOfflinePage'
+          )
+        v-card-actions
+          v-spacer
+          v-btn(variant='text', :disabled='offlineUnlockBusy', @click='closeOfflineUnlock') Cancel
+          v-btn(
+            color='primary'
+            variant='tonal'
+            :loading='offlineUnlockBusy'
+            :disabled='offlineUnlockBusy || !offlineUnlockSecret'
+            @click='unlockPrivateOfflinePage'
+          ) Unlock
     v-fab-transition
       v-btn.page-return-top(
         v-if='upBtnShown'
@@ -688,45 +713,65 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent, h, inject, markRaw, mergeProps, shallowRef, type PropType, type VNode } from 'vue'
+import ClipboardJS from 'clipboard'
 import i18next from 'i18next'
+import _ from 'lodash'
+import type { Environment as PrismEnvironment } from 'prismjs'
+import { defineComponent, h, inject, markRaw, mergeProps, type PropType, shallowRef, type VNode } from 'vue'
 import { useGoTo } from 'vuetify'
 import AsyncState from '@/components/common/async-state.vue'
 import PageBrandingMark from '@/components/common/page-branding-mark.vue'
-import StatusIndicator from '@/components/common/status-indicator.vue'
-import { externalSourceUrl } from '../../../../shared/general-policy.ts'
-import type { PageBrandingView } from '../../../../shared/page-branding.ts'
-import {
-  normalizePageBrandingView,
-  pageBrandingIdentity,
-  resolvePageBrandingStyle
-} from '../../../helpers/page-branding'
 import SiteBanner from '@/components/common/site-banner.vue'
-import NavSidebar, { type SidebarItem } from './nav-sidebar.vue'
-import type { Environment as PrismEnvironment } from 'prismjs'
-import Prism from '../../../libs/prism/setup'
+import StatusIndicator from '@/components/common/status-indicator.vue'
 import {
-  MERMAID_MAX_TEXT_SIZE,
-  renderMermaidSvg,
-  selectMermaidRenderHosts
-} from '../../../helpers/content-extension-runtimes/mermaid.ts'
-import { wikiStore } from '@/store/index.ts'
-import { useSiteNotificationsStore } from '../../../store/site-notifications.ts'
-import _ from 'lodash'
-import {
-  type OutlineNode,
   buildOutlineTree,
   filterOutlineTree,
   getAncestorAnchors,
   getInitialExpandedAnchors,
   getSearchExpandedAnchors,
   isBranchEffectivelyExpanded,
+  type OutlineNode,
   outlineSublistId,
-  trackPageOutline,
-  type PageOutlineTracker
+  type PageOutlineTracker, 
+  trackPageOutline
 } from '@/helpers/page-outline'
-import ClipboardJS from 'clipboard'
-import boot from '../../../modules/boot.ts'
+import { wikiStore } from '@/store/index.ts'
+import { externalSourceUrl } from '../../../../shared/general-policy.ts'
+import type { OfflinePagePolicyRecord, OfflinePolicySnapshot, OfflineSnapshotCorpus, OfflineSnapshotRecord, OfflineSnapshotSelector } from '../../../../shared/offline.ts'
+import type { PageBrandingView } from '../../../../shared/page-branding.ts'
+import { tagColorBucket } from '../../../../shared/tag-colors.ts'
+import { decodeBase64Json } from '../../../helpers/base64'
+import { hydrateContentExtensions, revealContentExtensionTarget } from '../../../helpers/content-extension-runtime'
+import {
+  MERMAID_MAX_TEXT_SIZE,
+  renderMermaidSvg,
+  selectMermaidRenderHosts
+} from '../../../helpers/content-extension-runtimes/mermaid.ts'
+import {
+  type OfflinePageAccessState, 
+  offlineIneligibilityIsQuiet,
+  offlinePrivateAccessStatus,
+  offlineSavedPageState,
+  offlineSavedPageStatus,
+  offlineSelectionSources
+} from '../../../helpers/offline-page-status.ts'
+import {
+  currentOfflineReadingHandle,
+  decodeOfflineReadingSecret,
+  isCurrentOfflineReadingHandle,
+  unlockOfflineReading
+} from '../../../helpers/offline-session.ts'
+import {
+  type OfflineStorage, 
+  openOfflineStorage,
+  subscribeOfflineStorageChanges
+} from '../../../helpers/offline-storage.ts'
+import {
+  createOfflineSyncUnavailableResult,
+  OFFLINE_SYNC_COORDINATOR_KEY,
+  type OfflineSyncResult,
+  type OfflineSyncService
+} from '../../../helpers/offline-sync.ts'
 import {
   emitPageConvert,
   emitPageDelete,
@@ -736,37 +781,22 @@ import {
   emitPageMove,
   emitPageSource
 } from '../../../helpers/page-action-events'
-import { decodeBase64Json } from '../../../helpers/base64'
-import { hydrateContentExtensions, revealContentExtensionTarget } from '../../../helpers/content-extension-runtime'
-import { getErrorMessage, pushGraphError, showNotification } from '../../../helpers/root-ui-store'
-import { tagColorBucket } from '../../../../shared/tag-colors.ts'
+import {
+  normalizePageBrandingView,
+  pageBrandingIdentity,
+  resolvePageBrandingStyle
+} from '../../../helpers/page-branding'
 import { pwaState } from '../../../helpers/pwa.ts'
+import { getErrorMessage, pushGraphError, showNotification } from '../../../helpers/root-ui-store'
 import {
-  offlineIneligibilityIsQuiet,
-  offlinePrivateAccessStatus,
-  offlineSavedPageState,
-  offlineSavedPageStatus,
-  offlineSelectionSources,
-  type OfflinePageAccessState
-} from '../../../helpers/offline-page-status.ts'
-import {
-  openOfflineStorage,
-  subscribeOfflineStorageChanges,
-  type OfflineStorage
-} from '../../../helpers/offline-storage.ts'
-import { currentOfflineReadingHandle, isCurrentOfflineReadingHandle } from '../../../helpers/offline-session.ts'
-import {
-  createOfflineSyncUnavailableResult,
-  OFFLINE_SYNC_COORDINATOR_KEY,
-  type OfflineSyncResult,
-  type OfflineSyncService
-} from '../../../helpers/offline-sync.ts'
-import type { OfflinePagePolicyRecord, OfflinePolicySnapshot, OfflineSnapshotCorpus, OfflineSnapshotRecord, OfflineSnapshotSelector } from '../../../../shared/offline.ts'
-import {
-  normalizeTableOfContents,
   type FlattenedTableOfContentsNode,
+  normalizeTableOfContents,
   type TableOfContentsNode
 } from '../../../helpers/table-of-contents'
+import Prism from '../../../libs/prism/setup'
+import boot from '../../../modules/boot.ts'
+import { useSiteNotificationsStore } from '../../../store/site-notifications.ts'
+import NavSidebar, { type SidebarItem } from './nav-sidebar.vue'
 
 /* global siteLangs */
 
@@ -1250,6 +1280,10 @@ export default defineComponent({
       offlineAccessState: null as OfflinePageAccessState | null,
       offlineError: '',
       offlineAvailabilityError: '',
+      offlineUnlockOpen: false,
+      offlineUnlockSecret: '',
+      offlineUnlockBusy: false,
+      offlineUnlockError: '',
       offlinePolicy: null as OfflinePagePolicyRecord | null,
       offlineHasSnapshot: false,
       offlineSnapshotRevision: '',
@@ -1540,7 +1574,7 @@ export default defineComponent({
     offlineControlDisabled (): boolean {
       if (!Number.isSafeInteger(this.pageId) || this.pageId < 1 || !this.offlineSelector()) return true
       if (this.offlineOwnedOperationId !== null || this.offlineActionLoading || this.offlineState === 'checking') return true
-      if (this.offlineState === 'setup-required' || this.offlineState === 'locked') return true
+      if (this.offlineState === 'setup-required' || this.offlineState === 'locked') return false
       if (this.offlineState === 'ineligible' && !this.offlineSelected && !this.offlinePolicy?.excluded) return true
       return Boolean(this.offlineLocalIneligibilityReason && !this.offlineSelected)
     },
@@ -1914,6 +1948,8 @@ export default defineComponent({
     this.offlineStorageChangesUnsubscribe = null
     this.offlineStorage?.close()
     this.offlineStorage = null
+    this.offlineUnlockSecret = ''
+    this.offlineUnlockError = ''
     if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler)
     if (this.railScrollHandler) window.removeEventListener('scroll', this.railScrollHandler)
     this.railScrollHandler = null
@@ -2575,7 +2611,44 @@ export default defineComponent({
         }
       }
     },
+    closeOfflineUnlock (): void {
+      if (this.offlineUnlockBusy) return
+      this.offlineUnlockOpen = false
+      this.offlineUnlockSecret = ''
+      this.offlineUnlockError = ''
+    },
+    async unlockPrivateOfflinePage (): Promise<void> {
+      if (!this.offlinePrivatePath || this.offlineState !== 'locked' || this.offlineUnlockBusy || !this.offlineUnlockSecret) return
+      const entered = this.offlineUnlockSecret
+      this.offlineUnlockSecret = ''
+      this.offlineUnlockError = ''
+      this.offlineUnlockBusy = true
+      let secret: Uint8Array | null = null
+      try {
+        const operationId = this.offlineOperationId
+        const storage = await this.offlineStorageForOperation(operationId)
+        if (!storage || operationId !== this.offlineOperationId) return
+        secret = decodeOfflineReadingSecret(entered)
+        await unlockOfflineReading(storage, secret)
+        this.offlineUnlockOpen = false
+        await this.refreshOfflinePageState()
+      } catch {
+        this.offlineUnlockError = 'The private offline vault could not be unlocked.'
+      } finally {
+        secret?.fill(0)
+        this.offlineUnlockBusy = false
+      }
+    },
     async toggleOfflinePage (): Promise<void> {
+      if (this.offlineState === 'setup-required') {
+        window.location.assign('/p/offline')
+        return
+      }
+      if (this.offlineState === 'locked') {
+        this.offlineUnlockError = ''
+        this.offlineUnlockOpen = true
+        return
+      }
       if (this.offlineControlDisabled) return
       if (this.offlineSelected || this.offlineHasSnapshot) {
         await this.removeOfflinePage()
