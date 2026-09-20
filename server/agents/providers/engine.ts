@@ -502,16 +502,60 @@ const sentenceAbbreviations: Readonly<Record<string, true>> = {
   vs: true
 }
 
+interface CodeSpan {
+  readonly start: number
+  readonly end: number
+}
+
+const codeSpans = (markdown: string): readonly CodeSpan[] => {
+  const runs: Array<{ start: number; end: number; length: number; escaped: boolean; next: number | undefined }> = []
+  const nextByLength = new Map<number, number>()
+  for (let index = 0; index < markdown.length; ) {
+    if (markdown[index] !== '`') {
+      index += 1
+      continue
+    }
+    const start = index
+    while (markdown[index] === '`') index += 1
+    let slashes = 0
+    for (let before = start - 1; before >= 0 && markdown[before] === '\\'; before--) slashes += 1
+    runs.push({ start, end: index, length: index - start, escaped: slashes % 2 === 1, next: undefined })
+  }
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    const run = runs[index]!
+    run.next = nextByLength.get(run.length)
+    nextByLength.set(run.length, index)
+  }
+  const spans: CodeSpan[] = []
+  for (let index = 0; index < runs.length; ) {
+    const opener = runs[index]!
+    if (opener.escaped || opener.next === undefined) {
+      index += 1
+      continue
+    }
+    const closer = runs[opener.next]!
+    spans.push({ start: opener.start, end: closer.end })
+    index = opener.next + 1
+  }
+  return spans
+}
+
 const sentenceBoundaryEnds = (value: string): readonly number[] => {
   const ends: number[] = []
+  const spans = value.includes('`') ? codeSpans(value) : []
+  let spanIndex = 0
   let start = 0
   for (const boundary of value.matchAll(/([.!?][*_]*)\s+(?=[*_]*\p{Lu})/gu)) {
-    const end = (boundary.index ?? 0) + boundary[1]!.length
-    const preceding = value.slice(start, (boundary.index ?? 0) + 1)
+    const index = boundary.index ?? 0
+    while (spanIndex < spans.length && spans[spanIndex]!.end <= index) spanIndex += 1
+    const span = spans[spanIndex]
+    if (span !== undefined && index >= span.start && index < span.end) continue
+    const end = index + boundary[1]!.length
+    const preceding = value.slice(start, index + 1)
     const abbreviation = preceding.match(/([\p{L}]+)\.$/u)?.[1]?.toLowerCase()
     if (abbreviation !== undefined && sentenceAbbreviations[abbreviation] === true) continue
     ends.push(end)
-    start = (boundary.index ?? 0) + boundary[0].length
+    start = index + boundary[0].length
   }
   return ends
 }
@@ -1192,12 +1236,23 @@ const factualSegments = (claim: string, evidence: CitationEvidence): readonly st
   })
 }
 
+const passivePredicateTerms: Readonly<Record<string, readonly string[]>> = {
+  listed: ['listed', 'list'],
+  included: ['included', 'include'],
+  provided: ['provided', 'provide']
+}
+
 const assessClaimClauses = (claim: string, evidence: CitationEvidence): readonly ClauseAssessment[] =>
   factualSegments(claim, evidence).map(text => {
     const membership = membershipAssessment(text, evidence)
     if (membership !== null) return membership
     const terms = normalizedTerms(text)
-    const candidates = evidence.sourceUnits.filter(unit => unitSupportsClause(text, unit))
+    const passivePredicate = text.match(/^\s*(.+?)\s+(?:is|are)\s+(listed|included|provided)\s*[.!?]?\s*$/iu)?.[2]?.toLowerCase()
+    const candidates = evidence.sourceUnits.filter(
+      unit =>
+        (passivePredicate === undefined || passivePredicateTerms[passivePredicate]?.some(term => unit.textTerms.has(term)) === true) &&
+        unitSupportsClause(text, unit)
+    )
     const matchedTerms = terms.filter(term => candidates.some(unit => unit.terms.has(term)))
     return { text, terms, matchedTerms, supported: candidates.length > 0, kind: 'fact' }
   })
@@ -1381,7 +1436,7 @@ const relevantSourceUnits = (fragment: string, evidence: CitationEvidence, asses
     .filter(candidate => candidate.matches > 0)
     .sort(
       (left, right) =>
-        right.structuralMatches - left.structuralMatches || right.matches - left.matches || right.textMatches - left.textMatches || left.index - right.index
+        right.structuralMatches - left.structuralMatches || right.textMatches - left.textMatches || right.matches - left.matches || left.index - right.index
     )
     .map(candidate => candidate.unit)
 }
@@ -1420,11 +1475,7 @@ const evidenceCorrectionFragments = (assessment: DraftAssessment, registry: Read
   for (let pass = 0; pass < 2 && selected.length < 4; pass++) {
     for (const failed of failedClauses) {
       if (selected.length === 4) break
-      if (
-        selected.some(
-          ({ fragment }) => fragment.evidenceId === failed.evidenceId && (pass === 0 || fragment.draftFragment === failed.draftFragment)
-        )
-      )
+      if (selected.some(({ fragment }) => fragment.evidenceId === failed.evidenceId && (pass === 0 || fragment.draftFragment === failed.draftFragment)))
         continue
       const unit = failed.sourceUnits[0]
       if (!unit) continue
