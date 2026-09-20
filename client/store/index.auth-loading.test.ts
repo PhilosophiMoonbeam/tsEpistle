@@ -663,6 +663,47 @@ describe('root authentication and loading ownership', () => {
     expect(store.notification.message).toBe('Offline identity cleanup failed. Reconnect and try again.')
   })
 
+  it('keeps a matching vault for a configured installation identity', async () => {
+    const storage = {
+      currentSessionGeneration: vi.fn(async () => 4),
+      getReadingVault: vi.fn(async () => ({
+        context: {
+          canonicalOrigin: 'https://wiki.example.test',
+          siteId: 'site-fixture',
+          accountId: 42,
+          authVersion: 1
+        }
+      })),
+      bumpSessionGeneration: vi.fn(async () => 5),
+      close: vi.fn()
+    }
+    vi.mockModule('../helpers/offline-storage.ts', import.meta.url, () => ({
+      openOfflineStorage: vi.fn(async () => storage)
+    }))
+    const fetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ authenticated: true, user: { id: 42, name: 'A', authVersion: 1 } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+    )
+    installWindow(fetch)
+    window.siteConfig.offlineDraftSiteId = 'site-fixture'
+    const { useWikiStore, pinia } = await vi.importFresh<typeof WikiStoreModule>('./index.ts', import.meta.url)
+    const store = useWikiStore(pinia)
+    store.user.authenticated = true
+    store.user.id = 42
+    store.user.authVersion = 1
+    store.offlineIdentityReady = true
+    store.authRefreshSettled = true
+    store.authRefreshOutcome = 'authenticated'
+
+    await expect(store.refreshAuth()).resolves.toBe('authenticated')
+    expect(storage.getReadingVault).toHaveBeenCalledOnce()
+    expect(storage.bumpSessionGeneration).not.toHaveBeenCalled()
+    expect(store.offlineIdentityReady).toBe(true)
+  })
+
   it('retires a persisted vault whose site or account authority no longer matches', async () => {
     const storage = {
       currentSessionGeneration: vi.fn(async () => 4),

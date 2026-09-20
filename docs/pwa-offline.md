@@ -1,6 +1,6 @@
 # Progressive Web App and offline architecture
 
-Status: approved implementation plan for Development Sprint work
+Status: implemented in Development Sprint
 
 ## 1. Purpose
 
@@ -9,6 +9,7 @@ tsEpistle will become an installable Progressive Web App with a deliberately bou
 - an authentication-neutral offline shell;
 - explicit download and removal of eligible pages;
 - bounded local search over downloaded pages;
+- encrypted, account-scoped offline reading for authorized private pages;
 - durable recovery of eligible editor text drafts;
 - explicit, revision-safe foreground publishing after reconnection;
 - truthful connectivity, persistence, update, and capability states;
@@ -17,7 +18,7 @@ tsEpistle will become an installable Progressive Web App with a deliberately bou
 
 The server, PostgreSQL, page-rule authorization, publication state, page protection, source revisions, collaboration generations, and Agent action kernel remain authoritative. Browser state never grants authorization and is never a second source of truth.
 
-This plan is complete for the requested feature. Push notifications, Background Sync, Periodic Background Sync, inbound share targets, private-page offline access, and database replication are explicit non-goals because they are not required for correct offline behavior and are not consistently available across target platforms.
+Push notifications, Background Sync, Periodic Background Sync, inbound share targets, and database replication remain explicit non-goals. Private-page offline access is supported only through the account-scoped encrypted corpus described below; protected pages remain ineligible.
 
 ## 2. Repository facts and constraints
 
@@ -70,6 +71,7 @@ The server serves `/sw.js`, `/_offline`, and the manifest with correct MIME type
 | Neutral shell | Available after one successful warm-up | Refreshes safely when update accepted |
 | Explicitly downloaded page | Readable until local/known publication expiry | Revalidate eligibility and revision |
 | Downloaded-page search | Local, bounded, visibly partial | Server search remains authoritative online |
+| Authorized private page | Readable and searchable only after explicit secret unlock | Revalidate current account, auth version, page authority, and revision |
 | Eligible editor text draft | Durable local recovery | Explicit foreground review/publish |
 | Page create/update/move/delete | Unavailable | Existing revision-safe server operation |
 | Agent/Ask/Wiki Agent | Unavailable with explanation | Existing authenticated initialization and send |
@@ -82,9 +84,9 @@ The server serves `/sw.js`, `/_offline`, and the manifest with correct MIME type
 
 `navigator.onLine` is a hint only. A capability becomes available after its actual request succeeds. UI wording MUST distinguish **Available offline**, **Saved on this device**, **Waiting for connection**, **Needs review**, **Publishing**, **Published**, **Update ready**, and **Server unavailable**.
 
-## 5. Server admission contract
+## 5. Server admission contracts
 
-Add `GET /_api/pages/:id/offline-snapshot` as the only page-download admission boundary. It is not a generic page cache endpoint.
+`GET /_api/pages/:id/offline-snapshot` is the public page-download admission boundary. It is not a generic page cache endpoint.
 
 The operation MUST evaluate the real database-backed guest principal and freshly loaded page-rule authority independently of the requesting account. It MUST require, from one coherent authoritative state:
 
@@ -96,6 +98,8 @@ The operation MUST evaluate the real database-backed guest principal and freshly
 - current positive `sourceRevision`.
 
 A privileged caller, writer permission, password-unlock session, or success from ordinary `get()` MUST NOT make a page eligible. Unknown authority, incomplete context, inconsistent revision, unsupported active content, or projection failure fails closed.
+
+`GET /_api/pages/:id/offline-private-snapshot` is a separate current-account boundary. In one database transaction it reloads the human account and current `authVersion`, current page-rule authority, page state, policy revision, and sanitized body/search projection. It fails closed on session drift, denial, protection, publication failure, revision mismatch, unsupported content, or incoherent body/search/policy state. The response is an exhaustive versioned DTO with `Cache-Control: private, no-store` and `Vary: Cookie`; it is never a guest snapshot and never enters Cache Storage.
 
 Successful responses use an exhaustive versioned DTO; they never spread `PageDetails`, SSR locals, editor bootstrap objects, or mutation responses:
 
@@ -138,12 +142,16 @@ Downloaded public information cannot be remotely recalled while disconnected. Th
 
 ## 6. IndexedDB contract
 
-Create `shared/offline.ts` for schemas and `client/helpers/offline-storage.ts` for the only database adapter. Database schema versions are integers. Stores:
+`shared/offline.ts` defines the schemas and `client/helpers/offline-storage.ts` is the only database adapter. IndexedDB schema version 6 has these stores:
 
 - `meta`: schema/version, persisted `sessionGeneration`, last cleanup, storage estimates;
 - `snapshots`: guest-readable `OfflinePageSnapshotV1` records keyed by `[siteId, immutable pageId, locale]`; mutable `path` and `canonicalPath` are fields, never identity;
-- `drafts`: account-owned encrypted `OfflineDraftEnvelopeV1` records keyed only by opaque random `recordId`; IndexedDB's origin partition supplies site selection, and the clear envelope retains only `accountId`, `authVersion`, fixed `keyVersion`, `sessionGeneration`, `draftRevision`, and opaque `submissionId`; editor/page identity, route, locale, base state, timestamps, and workflow state are encrypted payload fields.
-- `searchDocuments`: disposable normalized records derived only from current snapshots, keyed by the same site/page/locale identity.
+- `drafts`: account-owned encrypted `OfflineDraftEnvelopeV1` records keyed only by opaque random `recordId`; IndexedDB's origin partition supplies site selection, and the clear envelope retains only bounded selectors needed for fencing;
+- `searchDocuments`: disposable normalized records derived only from current public snapshots, keyed by the same site/page/locale identity;
+- `readingVault`: one account/auth-version/site-bound `OfflineReadingVaultV1` containing only the encrypted reading key and its wrapping parameters;
+- `privateRecords`: encrypted private body, search, and policy envelopes. Keys and clear selectors are strictly validated and every readable body/search pair must match one retained, nonexcluded policy record and one coherent revision.
+
+The version-6 upgrade purges legacy plaintext snapshot, search, and policy material before opening the new private corpus. Drafts are preserved.
 
 Limits are fixed: at most 100 snapshots, 20 MiB total managed data, and 1 MiB per snapshot or encrypted draft envelope. Least-recently-opened snapshots may be evicted after warning; dirty drafts and immutable publishing/outcome records are never silently evicted. Use `navigator.storage.persist()`, `persisted()`, and `estimate()` when supported. Denial is normal degradation, not an error promise.
 
@@ -153,13 +161,13 @@ Snapshot download and revalidation use one readwrite transaction: for the site a
 
 ### 6.1 Ownership, generation, and confidentiality
 
-Snapshots are guest-readable and contain only guest-admitted content. Draft keys contain a minimal stable server-derived account ID for selection and race checks; remembered UI state, cookies, local permissions, and tokens do not establish ownership. `accountId`, `sessionGeneration`, and draft revisions are selection/race controls, not confidentiality controls: IndexedDB is origin-wide, so adapter filtering alone is never a security boundary.
+Public snapshots are guest-readable and contain only guest-admitted content. Private reading records and drafts are account-owned encrypted envelopes. Remembered UI state, cookies, local permissions, clear selectors, and tokens do not establish ownership or authorization: IndexedDB is origin-wide, so adapter filtering alone is never a security boundary.
 
-A persisted monotonically changing `sessionGeneration` fences logout, account switch, explicit clear-data, and identity invalidation. Every asynchronous read, write, search, download, and publish captures owner plus session generation and rechecks both before commit or render. BroadcastChannel coordinates tabs, but generation checks are authoritative against late resurrection.
+A persisted monotonically changing `sessionGeneration` fences logout, account switch, explicit clear-data, and identity invalidation. Every asynchronous read, write, search, download, and publish captures the verified account, current `authVersion`, configured installation identity, and session generation and rechecks them before commit or render. BroadcastChannel and a localStorage invalidation marker coordinate tabs; generation checks remain authoritative against late resurrection. Focus, visible `pageshow`, and visibility restoration synchronously lock private reading before online revalidation.
 
 On logout start—before waiting for network logout—the client locks account-owned UI, advances `sessionGeneration`, aborts requests, broadcasts invalidation, clears in-memory projections and the draft key, and purges ordinary account drafts. It MUST retain any immutable `publishing` or `outcome-unknown` submission whose request may have committed, but marks it locked and opaque; it remains non-renderable and non-exportable until the same account is verified online and reconciliation completes, or until the user explicitly deletes it. Account switch uses the same boundary. A failed network logout is reported separately and does not unlock local account content.
 
-Cold offline startup never reconstructs an authenticated session and never obtains a draft key. Locked records reveal only a generic count; no record metadata is rendered until the current online same-account `authVersion` verification releases the matching key. A wrong-owner record, unavailable current key, authentication/tag failure, malformed envelope, or undecryptable ciphertext is opaque and delete-only: it may not be rendered, searched, exported, reconciled, or used to recover server content.
+Cold startup never reconstructs an authenticated session or reading key. A persisted reading vault survives restart but remains locked until the user enters its one-time generated secret; the secret and unwrapped key are never persisted. Locked private records reveal no page metadata. A wrong owner, stale `authVersion`, unavailable key, authentication/tag failure, malformed envelope, incoherent revision pair, or undecryptable ciphertext is opaque and delete-only: it may not be rendered, searched, exported, reconciled, or used to recover server content.
 
 ### 6.2 Draft key lifecycle
 
@@ -170,6 +178,12 @@ The successful `application/octet-stream` response is one exact frame: ASCII mag
 The client immediately imports the framed key bytes as a non-extractable `CryptoKey`, drops the raw response/frame buffer with best-effort zeroing, keeps only the key and non-secret server context in memory, and never stores key bytes in IndexedDB, Cache Storage, localStorage, URLs, logs, or service-worker state. Logout, account switch, tab/session invalidation, and key release failure drop all references. Each encryption uses a fresh random 96-bit AES-GCM nonce and a 128-bit authentication tag stored with ciphertext. Canonical AAD is encoded in this exact order: `U32_BE(schemaVersion)`, `LP_UTF8(recordId)`, `U64_BE(accountId)`, `U64_BE(authVersion)`, `LP_UTF8("session-secret-v1")`, `U64_BE(sessionGeneration)`, `U64_BE(draftRevision)`, `0x00` for null or `0x01 || LP_UTF8(submissionId)` for non-null, then `LP_BYTES(nonce)` where `LP_BYTES` is `U32_BE(byteLength(bytes)) || bytes`. The AAD includes the nonce and excludes ciphertext; AES-GCM authenticates the ciphertext itself. Editor/page identity, locale/path, base revision, timestamps, state, title, description, and source content exist only inside the authenticated ciphertext.
 
 Auth-version advance or server-session-secret rotation prevents future release of old envelopes; they remain locked/delete-only. Logout/account switch drops local key references and blocks release while the same account is unverified; a later online verification of the same account may release the matching current-account/current-authVersion key so retained `publishing` or `outcome-unknown` submissions can reconcile. Logout cannot remotely erase a `CryptoKey` already held by a live compromised context. New writes use current values. No revocation status is inferred beyond the current server auth/session checks.
+
+### 6.3 Private reading key lifecycle
+
+`POST /_api/offline/reading-key` verifies the current human session and database account version, then returns an exact `TSORK1` binary frame containing server-authoritative canonical origin, configured installation ID, account, `authVersion`, key ID, and 256-bit reading key. Enrollment generates a separate 256-bit unlock secret in the browser, displays it once for exact confirmation, derives an AES-GCM wrapping key with HKDF, persists only the wrapped reading key, and installs a non-extractable `CryptoKey` in memory. The unlock secret, raw reading key, and unwrapped key never enter IndexedDB, Cache Storage, localStorage, URLs, logs, or service-worker state.
+
+Private body, search, and policy records use fresh AES-GCM nonces and canonical AAD binding schema, record kind, canonical origin, configured installation ID, account, `authVersion`, reading-key ID, session generation, immutable page selector, policy revision, source revision, and pair identity. Alias, replay, torn-pair, mixed-revision, and malformed-primary-key records fail closed. Logout, account switch, confirmed version drift, explicit lock, cross-tab invalidation, and lifecycle revalidation drop the memory handle and fence pending work.
 
 ## 7. Draft and reconciliation state machine
 
@@ -231,15 +245,15 @@ Before service-worker update reload, every active client reports whether it has 
 
 The visual direction is a **resilient field notebook**: a quiet, editorial extension of the current reader chrome, not a dashboard replacement. Reuse theme surface, glass, typography, focus, and motion tokens.
 
-The page tools surface gains **Pin for offline** only when the server snapshot endpoint admits the page. States include checking, updating, available offline, expiring, stale/error, unavailable, remove, and explicit exclusion. The control uses **Pin for offline**/**Unpin from offline** wording and accessible status; icon-only color semantics are insufficient. The reader status is source-aware: it reports whether the page is selected or excluded and names every active source—**Manual pin**, **Automatic saving**, and each followed tag—alongside whether a readable offline copy is present, pending, stale, or unavailable.
+The page tools surface gains **Save offline copy** only when an admission endpoint allows the page and the required private key is unlocked. States include checking, updating, saved, locked, expiring, stale/error, unavailable, remove, and explicit exclusion. The reader status is source-aware: it reports whether the page is selected or excluded and names every active source—**Manual**, **Automatic**, and each followed tag—alongside whether a readable offline copy is present, pending, stale, locked, or unavailable.
 
 ### 8.1 Foreground snapshot synchronization
 
 An app-owned foreground coordinator owns offline snapshot reconciliation. It coalesces startup, online, foreground, manual-download, automatic-policy, and tag-subscription triggers, and runs only while the page is visible and the network is reachable. Each pass captures the session generation and policy revision; generation/revision fences reject stale writes and request a fresh pass. The service worker remains shell/cache-only and never replays snapshot mutations in the background.
 
-An admitted page's **Pin for offline** action records manual intent and immediately calls the foreground coordinator; it does not wait for a background queue. If the request cannot complete while offline or unavailable, the policy retains its pending and diagnostic state for a later foreground retry.
+An admitted page's **Save offline copy** action records manual intent and immediately calls the foreground coordinator; it does not wait for a background queue. If the request cannot complete while offline or unavailable, the policy retains its pending and diagnostic state for a later foreground retry.
 
-Automatic selection is opt-in. Eligible reader visits update visit count and recency; each sync sets the automatic set to exactly the current top 10 eligible pages ranked by visit count, recency, and stable identity tie-break—not a historical accumulation. A page deselected from that set leaves the offline set when it has no manual-pin or followed-tag provenance; those sources remain preserved. Automatic-only pages with no activity for 60 days are expired and pruned; manual or tag provenance prevents that automatic-only expiry.
+Automatic selection is on by default and can be disabled per device. Eligible reader visits update visit count and recency; each sync sets the automatic set to exactly the current top 10 eligible pages ranked by visit count, recency, and stable identity tie-break—not a historical accumulation. A page deselected from that set leaves the offline set when it has no manual or followed-tag provenance; those sources remain preserved. Automatic-only pages with no activity for 60 days are expired and pruned; manual or tag provenance prevents that automatic-only expiry.
 
 Tag subscriptions have per-row **Follow**/**Unfollow** controls on the Browse by Tags page and use union (OR) semantics: each followed tag contributes pages to one deduplicated candidate set, including pages with overlapping tags, rather than intersecting tags. Unfollowing one tag removes only that tag's provenance; the page remains selected while another followed tag, a manual pin, or automatic selection still includes it.
 
@@ -256,6 +270,8 @@ The neutral shell includes:
 Local search normalizes title, description, and safe plain `searchText`; it is bounded to the downloaded corpus, cancelable, deterministic, and may run in a worker. Ranking prioritizes exact title, title prefix/token, description, then body term frequency. Results state **Searching N downloaded pages** and never imply parity with server lexical/semantic/Agent search. Structured server-query syntax may be treated as plain text or explain that advanced search requires connection.
 
 The existing search overlay switches explicitly between online wiki search and downloaded search. Ask/Agent, server preview, comments, watch, approvals, protection, history, administration, and mutations remain visible when contextually useful but disabled with concise explanations and a Retry action. Hiding them without explanation is prohibited; enabling them from cached permission state is prohibited.
+
+The same-document private reader and downloaded-search overlay decrypt only after a current handle passes account, site, auth-version, generation, policy, revision, and pair-coherence checks. Opening a saved private result never places ciphertext, key material, or private query data in a URL. A cold restart presents the unlock control; successful unlock restores local reading without requesting page content from the server.
 
 ## 9. Install, update, sharing, and platform behavior
 
@@ -312,7 +328,7 @@ Exercise Chromium desktop/mobile, Firefox desktop, and WebKit desktop/mobile usi
 1. first online visit installs worker; first-ever offline visit without warm-up fails honestly;
 2. warmed neutral shell launches offline;
 3. eligible page downloads, survives reload, searches locally, expires, revalidates, and removes;
-4. protected/private/unpublished/rule-restricted/custom-active-content pages cannot download and leave no Cache Storage/IDB residue;
+4. authorized private pages save as encrypted body/search/policy pairs, survive restart locked, unlock with the generated secret, render and search locally, and fail closed after tamper, denial, logout, account switch, or `authVersion` change; protected/unpublished/rule-restricted/custom-active-content pages leave no readable residue;
 5. logout/account switch during download/search/draft/publish cannot resurrect stale data in another tab;
 6. eligible editor text survives crash/offline reload and is labeled local, not published;
 7. reconnect requires review; 409 opens merge; 401 locks; 403/404 invalidates; ambiguous transport outcome never replays;
@@ -341,4 +357,4 @@ Residual risks are explicit:
 - encrypted drafts protect durable account payloads from wrong-account adapter access, but an actively compromised origin while a verified key is in memory remains outside this browser-storage boundary;
 - safe offline projection intentionally rejects content that cannot be represented without active or authenticated dependencies.
 
-These risks are mitigated by guest-only snapshot admission, bounded retention, local expiry, online revalidation, explicit states, no mutation replay, revision CAS, authenticated encryption with memory-only keys, export/delete controls, tombstone retirement, and truthful UI. Private or protected offline page snapshots remain disabled; encrypted account drafts are not server authorization and never become readable without same-account online key release.
+These risks are mitigated by separate guest and account-scoped admission, bounded retention, local expiry, online revalidation, strict envelope and primary-key validation, coherent private body/search/policy pairs, revision CAS, authenticated encryption with memory-only keys, explicit cold-start unlock, generation fencing, export/delete controls, tombstone retirement, and truthful UI. Protected offline page snapshots remain disabled; encrypted private reading records and drafts are not server authorization and never become readable without their matching current account boundary.
