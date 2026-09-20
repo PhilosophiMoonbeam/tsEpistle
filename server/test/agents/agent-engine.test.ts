@@ -2023,11 +2023,11 @@ describe('Ax agent engine', () => {
     await expect(execution).rejects.toMatchObject({ code: 'PROVIDER_REQUEST_FAILED' })
     expect(chat).toHaveBeenCalledOnce()
   })
-  it('keeps only a contiguous newest conversation suffix within provider capacity and rejects an irreducibly oversized latest turn', async () => {
+  it('rejects an irreducibly oversized current turn without dispatching it', async () => {
     const chat = vi.fn(
       async (_input: Readonly<AxChatRequest<unknown>>) =>
         ({
-          results: [{ index: 0, content: 'Bounded answer.' }],
+          results: [{ index: 0, content: 'should not run', finishReason: 'stop' }],
           modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 2, totalTokens: 9 } }
         }) satisfies AxChatResponse
     )
@@ -2052,41 +2052,16 @@ describe('Ax agent engine', () => {
       })
     } as unknown as AgentProviderFactory
     const input = request(new AbortController().signal)
-    const messages = [
-      { role: 'user' as const, content: 'older context that would fit' },
-      { role: 'assistant' as const, content: 'older answer' },
-      { role: 'user' as const, content: `omitted recent context:${'x'.repeat(16_000)}` },
-      { role: 'assistant' as const, content: 'omitted recent answer' },
-      { role: 'user' as const, content: 'latest user turn' }
-    ]
-    const boundedRequest: AgentEngineRequest = {
-      ...input,
-      run: { ...input.run, executionMode: 'generation-only' },
-      messages,
-      limits: { maxTurns: 1, maxToolCalls: 0, maxOutputTokens: 1_000 },
-      priorActivity: [
-        { runId: 'older', status: 'succeeded', userMessageOrdinal: 1, assistantMessageOrdinal: 2, modelTurns: 1, rejectedEvidenceDrafts: 0, tools: [] },
-        { runId: 'newer', status: 'succeeded', userMessageOrdinal: 3, assistantMessageOrdinal: 4, modelTurns: 1, rejectedEvidenceDrafts: 0, tools: [] }
-      ]
-    }
 
-    await new AxAgentEngine(factory).execute(boundedRequest, { text: async () => {}, event: async () => {} })
-
-    const providerRequest = chat.mock.calls[0]?.[0] as AxChatRequest<unknown>
-    expect(Buffer.byteLength(JSON.stringify(providerRequest), 'utf8')).toBeLessThanOrEqual(23_000)
-    expect(providerRequest.chatPrompt).toContainEqual(expect.objectContaining({ role: 'user', content: 'latest user turn' }))
-    expect(providerRequest.chatPrompt).not.toContainEqual(expect.objectContaining({ role: 'user', content: 'older context that would fit' }))
-    expect(providerRequest.chatPrompt).not.toContainEqual(
-      expect.objectContaining({ role: 'user', content: expect.stringContaining('omitted recent context:') })
-    )
-    const systemContent = String(providerRequest.chatPrompt?.[0]?.content)
-    expect(systemContent.indexOf('"runId":"older"')).toBeLessThan(systemContent.indexOf('"runId":"newer"'))
-
-    chat.mockClear()
     await expect(
       Promise.resolve(
         new AxAgentEngine(factory).execute(
-          { ...boundedRequest, messages: [{ role: 'user', content: 'x'.repeat(24_000) }] },
+          {
+            ...input,
+            run: { ...input.run, executionMode: 'generation-only' },
+            messages: [{ role: 'user', content: 'x'.repeat(24_000) }],
+            limits: { maxTurns: 1, maxToolCalls: 0, maxOutputTokens: 1_000 }
+          },
           { text: async () => {}, event: async () => {} }
         )
       )

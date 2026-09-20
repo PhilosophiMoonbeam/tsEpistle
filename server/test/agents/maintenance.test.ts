@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { createHash } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
 import { requestUnfiledAgentHistoryClear, runAgentMaintenance } from '../../agents/maintenance.ts'
 
@@ -225,7 +226,105 @@ describe('agent retention maintenance', () => {
     expect((await knex('agentMessages').where({ id: 'ordinary-message' }).first('content')).content).toBe('Keep this ordinary answer')
     expect((await knex('agentRuns').where({ id: 'grounded' }).first('totalTokens')).totalTokens).toBe(17)
     const event = await knex('agentEvents').where({ id: 'grounded-turn' }).first('data')
-    expect(JSON.parse(event.data)).toEqual({ content: '', inputTokens: 10, outputTokens: 7, totalTokens: 17 })
+    expect(JSON.parse(event.data)).toMatchObject({ content: '', inputTokens: 10, outputTokens: 7, totalTokens: 17 })
+  })
+
+  it('purges expired derived context in awaiting-approval runs while preserving usage receipts', async () => {
+    const expiry = '2026-08-16T12:00:00.000Z'
+    const turn = JSON.stringify({
+      usageVersion: 2,
+      outcome: 'answer_accepted',
+      content: 'Derived summary',
+      groundedExpiresAt: expiry,
+      inputTokens: 11,
+      outputTokens: 3,
+      totalTokens: 14,
+      costMicros: 5
+    })
+    await knex('agentSessions').insert({
+      id: 'derived-session',
+      ownerId: 7,
+      retention: 'saved',
+      folderId: 'folder',
+      expiresAt: null,
+      deletedAt: null,
+      updatedAt: now,
+      lastActivityAt: now,
+      version: 1
+    })
+    await knex('agentRuns').insert({
+      id: 'derived-run',
+      sessionId: 'derived-session',
+      ownerId: 7,
+      assistantMessageId: 'derived-message',
+      status: 'awaiting_approval',
+      totalTokens: 14,
+      updatedAt: now
+    })
+    await knex('agentMessages').insert([
+      {
+        id: 'derived-user',
+        sessionId: 'derived-session',
+        runId: 'derived-run',
+        ordinal: 0,
+        role: 'user',
+        status: 'complete',
+        content: 'Original question',
+        googleSearchGrounding: null,
+        providerStateCiphertext: null,
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: 'derived-message',
+        sessionId: 'derived-session',
+        runId: 'derived-run',
+        ordinal: 1,
+        role: 'assistant',
+        status: 'complete',
+        content: 'Answer derived from summary',
+        googleSearchGrounding: null,
+        providerStateCiphertext: Buffer.from('derived native state'),
+        createdAt: now,
+        updatedAt: now
+      }
+    ])
+    await knex('agentEvents').insert([
+      {
+        id: 'derived-turn',
+        runId: 'derived-run',
+        type: 'model.turn',
+        data: turn,
+        dataSha256: createHash('sha256').update(turn).digest('hex'),
+        createdAt: now
+      },
+      {
+        id: 'derived-suggestions',
+        runId: 'derived-run',
+        type: 'suggestions.updated',
+        data: JSON.stringify({ suggestions: ['Keep secret'] }),
+        dataSha256: 'unused',
+        createdAt: now
+      }
+    ])
+
+    await runAgentMaintenance(knex, { batchSize: 100, savedSessionDays: 90, mcpContentDays: 7, auditDays: 10_000, compactDeltaDays: 10_000 }, now)
+
+    expect(await knex('agentMessages').where({ id: 'derived-message' }).first('content', 'providerStateCiphertext')).toEqual({
+      content: '',
+      providerStateCiphertext: null
+    })
+    expect((await knex('agentMessages').where({ id: 'derived-user' }).first('content')).content).toBe('Original question')
+    expect(JSON.parse((await knex('agentEvents').where({ id: 'derived-turn' }).first('data')).data)).toMatchObject({
+      content: '',
+      contentPurged: true,
+      inputTokens: 11,
+      outputTokens: 3,
+      totalTokens: 14,
+      costMicros: 5
+    })
+    expect(JSON.parse((await knex('agentEvents').where({ id: 'derived-suggestions' }).first('data')).data)).toEqual({ suggestions: [] })
+    expect((await knex('agentRuns').where({ id: 'derived-run' }).first('totalTokens')).totalTokens).toBe(14)
   })
 
   it('rechecks retention when a candidate is filed or refreshed before expiry is committed', async () => {

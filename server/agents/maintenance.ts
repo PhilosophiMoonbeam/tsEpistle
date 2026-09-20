@@ -3,6 +3,7 @@ import { sweepAgentPdfCache } from './pdf-cache.ts'
 import type { Knex } from 'knex'
 import { AGENT_TERMINAL_RUN_STATUSES } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
+import { AGENT_GROUNDED_HISTORY_DAYS } from './compaction.ts'
 import { AgentRepositoryError } from './repository.ts'
 import {
   AgentQuotaSettlementError,
@@ -17,7 +18,6 @@ const TERMINAL_PROPOSAL_STATUSES = ['denied', 'expired', 'applied', 'failed', 'c
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 const PROPOSAL_RECOVERY_MILLISECONDS = 5 * 60_000
 const before = (now: Date, days: number): Date => new Date(now.valueOf() - days * 86_400_000)
-const GOOGLE_SEARCH_HISTORY_DAYS = 2 * 365
 
 export interface AgentMaintenancePolicy {
   readonly batchSize: number
@@ -375,25 +375,53 @@ const compactEvents = async (knex: Knex, cutoff: Date, batchSize: number): Promi
 }
 const scrubGroundedMessages = async (knex: Knex, cutoff: Date, now: Date, batchSize: number): Promise<number> =>
   knex.transaction<number>(async transaction => {
-    const rows = (await transaction('agentMessages')
+    const sourceRows = (await transaction('agentMessages')
       .whereNotNull('googleSearchGrounding')
       .andWhere('createdAt', '<=', cutoff)
-      .whereNotExists(function activeRun() {
-        this.select(transaction.raw('1'))
-          .from('agentRuns')
-          .where('agentRuns.assistantMessageId', transaction.ref('agentMessages.id'))
-          .whereIn('agentRuns.status', ['queued', 'running', 'awaiting_approval'])
-      })
       .orderBy('createdAt')
       .limit(batchSize)
       .select('id', 'runId')) as Array<{ id: string; runId: string | null }>
-    if (rows.length === 0) return 0
-    const runIds = rows.flatMap(row => (row.runId === null ? [] : [row.runId]))
-    if (runIds.length > 0) {
+    const expiryExpression =
+      transaction.client.config.client === 'pg' || transaction.client.config.client === 'postgresql'
+        ? `(events.data::jsonb ->> 'groundedExpiresAt')`
+        : `json_extract(events.data, '$.groundedExpiresAt')`
+    const derivedEvents = (await transaction('agentEvents as events')
+      .where({ 'events.type': 'model.turn' })
+      .whereRaw(`${expiryExpression} <= ?`, [now.toISOString()])
+      .andWhere('events.data', 'not like', '%"contentPurged":true%')
+      .orderBy('events.createdAt')
+      .limit(batchSize)
+      .select('events.runId', 'events.data', 'events.dataSha256')) as Array<{
+      runId: string
+      data: string
+      dataSha256: string
+    }>
+    const sourceRunIds = new Set(sourceRows.flatMap(row => (row.runId === null ? [] : [row.runId])))
+    const runIds = new Set(sourceRunIds)
+    for (const event of derivedEvents) {
+      if (runIds.size >= batchSize) break
+      if (sha256(event.data) !== event.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored grounded model event hash is invalid', 500)
+      let data: Readonly<Record<string, unknown>>
+      try {
+        const parsed: unknown = JSON.parse(event.data)
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('invalid event')
+        data = parsed as Readonly<Record<string, unknown>>
+      } catch {
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored grounded model event is invalid', 500)
+      }
+      if (data.contentPurged === true || !Object.hasOwn(data, 'groundedExpiresAt')) continue
+      const expiresAt = data.groundedExpiresAt
+      if (expiresAt !== null && (typeof expiresAt !== 'string' || !Number.isFinite(Date.parse(expiresAt)) || new Date(expiresAt).toISOString() !== expiresAt))
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored grounded model event expiry is invalid', 500)
+      if (typeof expiresAt === 'string' && Date.parse(expiresAt) <= now.valueOf()) runIds.add(event.runId)
+    }
+    const affectedRunIds = [...runIds]
+    if (sourceRows.length === 0 && affectedRunIds.length === 0) return 0
+    if (affectedRunIds.length > 0) {
       const events = (await transaction('agentEvents')
-        .whereIn('runId', runIds)
+        .whereIn('runId', affectedRunIds)
         .whereIn('type', ['message.delta', 'model.turn', 'suggestions.updated'])
-        .select('id', 'type', 'data')) as Array<{ id: string; type: string; data: string }>
+        .select('id', 'runId', 'type', 'data')) as Array<{ id: string; runId: string; type: string; data: string }>
       for (const event of events) {
         let data: Readonly<Record<string, unknown>>
         if (event.type === 'message.delta') {
@@ -404,7 +432,12 @@ const scrubGroundedMessages = async (knex: Knex, cutoff: Date, now: Date, batchS
           try {
             const parsed: unknown = JSON.parse(event.data)
             if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('invalid event')
-            data = { ...(parsed as Readonly<Record<string, unknown>>), content: '' }
+            const record = parsed as Readonly<Record<string, unknown>>
+            if (!sourceRunIds.has(event.runId)) {
+              const expiresAt = record.groundedExpiresAt
+              if (typeof expiresAt !== 'string' || Date.parse(expiresAt) > now.valueOf()) continue
+            }
+            data = { ...record, content: '', contentPurged: true }
           } catch {
             throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored grounded model event is invalid', 500)
           }
@@ -415,19 +448,21 @@ const scrubGroundedMessages = async (knex: Knex, cutoff: Date, now: Date, batchS
           .update({ data: encoded, dataSha256: sha256(encoded) })
       }
     }
-    return transaction('agentMessages')
-      .whereIn(
-        'id',
-        rows.map(row => row.id)
-      )
-      .update<number>({
-        content: '',
-        citations: null,
-        googleSearchGrounding: null,
-        providerStateCiphertext: null,
-        providerStateSha256: null,
-        updatedAt: now
-      })
+    const sourceMessageIds = sourceRows.map(row => row.id)
+    const messageQuery = transaction('agentMessages')
+    if (sourceMessageIds.length > 0 && affectedRunIds.length > 0)
+      messageQuery.where(builder => builder.whereIn('id', sourceMessageIds).orWhereIn('runId', affectedRunIds))
+    else if (sourceMessageIds.length > 0) messageQuery.whereIn('id', sourceMessageIds)
+    else messageQuery.whereIn('runId', affectedRunIds)
+    messageQuery.andWhere('role', 'assistant')
+    return messageQuery.update<number>({
+      content: '',
+      citations: null,
+      googleSearchGrounding: null,
+      providerStateCiphertext: null,
+      providerStateSha256: null,
+      updatedAt: now
+    })
   })
 
 const reconcileExpiredReservations = async (knex: Knex, now: Date, batchSize: number): Promise<number> => {
@@ -480,7 +515,7 @@ export const runAgentMaintenance = async (
   const scrubbedMcpProposals = await scrubMcpProposals(knex, before(now, policy.mcpContentDays), now, policy.batchSize)
   const scrubbedSkillUses = await scrubSkillUses(knex, before(now, policy.mcpContentDays), policy.batchSize)
   const compactedEvents = await compactEvents(knex, before(now, policy.compactDeltaDays), policy.batchSize)
-  const scrubbedGroundedMessages = await scrubGroundedMessages(knex, before(now, GOOGLE_SEARCH_HISTORY_DAYS), now, policy.batchSize)
+  const scrubbedGroundedMessages = await scrubGroundedMessages(knex, before(now, AGENT_GROUNDED_HISTORY_DAYS), now, policy.batchSize)
   const reconciledReservations = await reconcileExpiredReservations(knex, now, policy.batchSize)
   const purgedMcpProposals = await purgeMcpProposals(knex, before(now, policy.auditDays), policy.batchSize)
   const purgedSkillUses = await purgeSkillUses(knex, before(now, policy.auditDays), policy.batchSize)

@@ -448,6 +448,24 @@ const assistantSteps = (message: Extract<AxChatRequest['chatPrompt'][number], { 
   return steps
 }
 
+/** Visible prior tool work may be summarized; signatures, thoughts and search widgets may not. */
+export const geminiInteractionCompactionPrefix = (
+  message: Extract<AxChatRequest['chatPrompt'][number], { role: 'assistant' }>
+): readonly Readonly<Record<string, unknown>>[] => {
+  if (!message.thoughtBlocks?.length) return []
+  if (message.thoughtBlocks.length !== 1) throw corruptState()
+  const state = decodeState(message.thoughtBlocks[0]!, 'stored')
+  assertAssistantStateMatches(message, state.steps.slice(state.assistantStepStart))
+  return state.steps.slice(0, state.assistantStepStart).flatMap((step): Readonly<Record<string, unknown>>[] => {
+    if (step.type === 'model_output' || step.type === 'user_input')
+      return [{ role: step.type === 'model_output' ? 'assistant' : 'user', content: (step.content ?? []).map(part => part.text).join('') }]
+    if (step.type === 'function_call') return [{ role: 'assistant', functionCalls: [{ id: step.id, name: step.name, arguments: step.arguments }] }]
+    if (step.type === 'function_result')
+      return [{ role: 'tool', callId: step.call_id, name: step.name, result: step.result.map(part => part.text).join(''), isError: step.is_error === true }]
+    return []
+  })
+}
+
 const requestParts = (chatPrompt: Readonly<AxChatRequest<unknown>>['chatPrompt']): { systemInstruction?: string; input: unknown[] } => {
   const system: string[] = []
   const input: unknown[] = []

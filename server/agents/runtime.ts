@@ -17,6 +17,22 @@ import {
 import { type AgentKnowledgeContext, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import {
+  agentCompactionBindingMatches,
+  agentGroundedExpiry,
+  agentCompactionMinimumExpiry,
+  agentCompactionSha256,
+  agentCompactionSourceDigest,
+  agentCompactionSourcePrefixes,
+  isAgentCompactionOutcome,
+  type AgentCompactionCanonicalSource,
+  type AgentCompactionCheckpoint,
+  type AgentCompactionContext,
+  type AgentCompactionExposure,
+  type AgentCompactionReceipt,
+  readAgentCompactionCheckpoint,
+  readAgentCompactionMetadata
+} from './compaction.ts'
+import {
   type AgentApprovalContinuationCheckpoint,
   type AgentQuotaLimits,
   type AgentQuotaRequest,
@@ -156,11 +172,17 @@ export interface AgentDispatchBudgetReservation {
 }
 
 export interface AgentDispatchBudget {
+  reserveSequence?(maximum: AgentQuotaRequest): Promise<AgentDispatchBudgetSequence>
   reserve(maximum: AgentQuotaRequest): Promise<AgentDispatchBudgetReservation>
   reconcile(reservation: AgentDispatchBudgetReservation, actual: AgentDispatchUsage): Promise<void>
   release(reservation: AgentDispatchBudgetReservation): Promise<void>
   consumeTool(): Promise<void>
   readonly unsettledExposure: AgentDispatchExposure
+}
+
+export interface AgentDispatchBudgetSequence extends AgentDispatchBudget {
+  /** Release only undispatched sequence capacity; in-flight reservations remain accountable. */
+  close(): Promise<void>
 }
 
 class AgentRunDispatchBudget implements AgentDispatchBudget {
@@ -243,6 +265,73 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
       return await operation()
     } finally {
       release()
+    }
+  }
+  async reserveSequence(maximum: AgentQuotaRequest): Promise<AgentDispatchBudgetSequence> {
+    const parent = await this.reserve(maximum)
+    let closed = false
+    const children = new Set<number>()
+    const budget = this
+    const reserve = async (requested: AgentQuotaRequest): Promise<AgentDispatchBudgetReservation> =>
+      this.#exclusive(async () => {
+        if (closed) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is closed', 500)
+        const remaining = this.#active.get(parent.id)
+        if (!remaining) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is not active', 500)
+        const tokens = nonNegativeUsage(requested.tokens, 'Dispatch token exposure')
+        const costMicros = nonNegativeUsage(requested.costMicros, 'Dispatch cost exposure')
+        if (tokens > remaining.tokens || costMicros > remaining.costMicros)
+          throw new AgentRepositoryError('DISPATCH_RESERVATION_EXCEEDED', 'Provider dispatch exceeds its sequence reservation', 502)
+        this.#active.set(parent.id, { tokens: remaining.tokens - tokens, costMicros: remaining.costMicros - costMicros })
+        const child = { id: this.#nextId++, tokens, costMicros }
+        this.#active.set(child.id, { tokens, costMicros })
+        children.add(child.id)
+        return child
+      })
+    const assertChild = (reservation: AgentDispatchBudgetReservation): void => {
+      if (!children.has(reservation.id))
+        throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch reservation does not belong to this sequence', 500)
+    }
+    return {
+      reserve,
+      reconcile: async (reservation, actual) => {
+        if (closed) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is closed', 500)
+        assertChild(reservation)
+        await budget.reconcile(reservation, actual)
+        children.delete(reservation.id)
+      },
+      release: async reservation => {
+        if (closed) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is closed', 500)
+        assertChild(reservation)
+        await budget.release(reservation)
+        children.delete(reservation.id)
+      },
+      consumeTool: async () => {
+        if (closed) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is closed', 500)
+        await budget.consumeTool()
+      },
+      get unsettledExposure() {
+        let tokens = 0
+        let costMicros = 0
+        const remaining = budget.#active.get(parent.id)
+        if (remaining) {
+          tokens = safeUsageSum(tokens, remaining.tokens, 'Sequence token exposure')
+          costMicros = safeUsageSum(costMicros, remaining.costMicros, 'Sequence cost exposure')
+        }
+        for (const id of children) {
+          const exposure = budget.#active.get(id)
+          if (!exposure) continue
+          tokens = safeUsageSum(tokens, exposure.tokens, 'Sequence token exposure')
+          costMicros = safeUsageSum(costMicros, exposure.costMicros, 'Sequence cost exposure')
+        }
+        return { tokens, costMicros }
+      },
+      close: async () => {
+        if (closed) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is already closed', 500)
+        closed = true
+        await budget.#exclusive(async () => {
+          if (!budget.#active.delete(parent.id)) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is not active', 500)
+        })
+      }
     }
   }
   async reserve(maximum: AgentQuotaRequest): Promise<AgentDispatchBudgetReservation> {
@@ -457,6 +546,7 @@ export interface AgentAdmissionResolver {
   resolveCurrent(transaction: Knex.Transaction, input: { readonly ownerId: number; readonly sessionId: string }): Promise<AgentResolvedAdmission>
 }
 export interface AgentEngineMessage {
+  readonly canonicalSource?: AgentCompactionCanonicalSource
   readonly attachments?: readonly AgentMediaSource[]
   readonly role: 'user' | 'assistant'
   readonly content: string
@@ -499,6 +589,7 @@ export interface AgentRecoveredAction {
 }
 
 export interface AgentEngineRequest {
+  readonly compaction?: AgentCompactionContext
   readonly googleSearchEnabled: boolean
   readonly generationTools?: readonly AgentGenerationTool[]
   readonly authorizeMedia?: () => Promise<void>
@@ -527,6 +618,7 @@ export interface AgentEngineRequest {
 }
 
 export interface AgentEngineSink {
+  commitCompaction?(receipt: AgentCompactionReceipt): Promise<void>
   googleSearchSuggestions?(suggestions: readonly string[]): Promise<void>
   media?(
     images: readonly {
@@ -558,6 +650,9 @@ export interface AgentEngineResult {
 }
 
 export interface AgentEnginePreflight {
+  readonly compactionExposure?: AgentCompactionExposure
+  readonly requiredTotalExposureTokens?: number
+  readonly requiredCostMicros?: number
   readonly admissible: boolean
   readonly inputExposureTokens: number
   readonly outputExposureTokens: number
@@ -634,8 +729,12 @@ export interface AgentProductRuntimeOptions {
 
 interface RuntimeMessageRow {
   id: string
+  ordinal: number
   role: 'user' | 'assistant'
   content: string
+  citations: string | null
+  isVisible: boolean
+  createdAt: Date | string
   googleSearchGrounding: string | null
   runId: string | null
   providerStateCiphertext: Uint8Array | null
@@ -689,6 +788,43 @@ const parsedObject = (value: string, code: string): Record<string, unknown> => {
     return parsed as Record<string, unknown>
   } catch {
     throw new AgentRepositoryError(code, 'Stored agent diagnostic context is invalid', 500)
+  }
+}
+
+const runtimeGroundingExpiry = (message: RuntimeMessageRow, inherited: string | null): string | null =>
+  agentCompactionMinimumExpiry(message.googleSearchGrounding === null ? null : agentGroundedExpiry(message.createdAt), inherited)
+
+const runtimeCanonicalSource = (
+  message: RuntimeMessageRow,
+  attachments: readonly AgentMediaMetadata[],
+  inheritedExpiry: string | null
+): AgentCompactionCanonicalSource => {
+  const groundedExpiresAt = runtimeGroundingExpiry(message, inheritedExpiry)
+  return {
+    id: message.id,
+    ordinal: Number(message.ordinal),
+    sourceSha256: agentCompactionSourceDigest({
+      id: message.id,
+      ordinal: Number(message.ordinal),
+      role: message.role,
+      content: message.content,
+      citations: message.citations,
+      isVisible: message.isVisible,
+      attachments: [...attachments]
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map(item => ({
+          id: item.id,
+          kind: item.kind,
+          filename: item.filename,
+          mimeType: item.mimeType,
+          byteLength: Number(item.byteLength),
+          sha256: item.sha256
+        })),
+      providerStateSha256: message.providerStateSha256,
+      googleSearchGroundingSha256: message.googleSearchGrounding === null ? null : agentCompactionSha256(message.googleSearchGrounding),
+      groundedExpiresAt
+    }),
+    groundedExpiresAt
   }
 }
 
@@ -769,7 +905,7 @@ const priorRunActivity = (rows: readonly RuntimePriorEventRow[]): readonly Agent
     }
     const data = parsedObject(row.data, 'AGENT_PRIOR_ACTIVITY_CORRUPT')
     if (row.type === 'model.turn') {
-      run.modelTurns += 1
+      if (!isAgentCompactionOutcome(data.outcome)) run.modelTurns += 1
       continue
     }
     if (row.type === 'evidence.provenance') {
@@ -1603,6 +1739,7 @@ export class AgentProductRuntime {
               signal: preflightSignal
             })
           )
+          const requiredTotalExposureTokens = preflight.requiredTotalExposureTokens ?? preflight.totalExposureTokens
           if (
             !Number.isSafeInteger(preflight.inputExposureTokens) ||
             preflight.inputExposureTokens < 0 ||
@@ -1611,7 +1748,9 @@ export class AgentProductRuntime {
             !Number.isSafeInteger(preflight.totalExposureTokens) ||
             preflight.totalExposureTokens < 1 ||
             preflight.outputExposureTokens > reservation.maxOutputTokens ||
-            preflight.totalExposureTokens > reservation.totalTokens ||
+            !Number.isSafeInteger(requiredTotalExposureTokens) ||
+            requiredTotalExposureTokens < 1 ||
+            requiredTotalExposureTokens > reservation.totalTokens ||
             !preflight.admissible
           ) {
             admissible = false
@@ -1702,7 +1841,7 @@ export class AgentProductRuntime {
         continue
       }
       if (typeof Reflect.get(data, 'taskId') !== 'string' || typeof Reflect.get(data, 'subagentRunId') !== 'string') {
-        modelTurns += 1
+        if (!isAgentCompactionOutcome(Reflect.get(data, 'outcome'))) modelTurns += 1
         modelUsage.inputTokens = safeUsageSum(modelUsage.inputTokens, eventUsage.inputTokens, 'Model input tokens')
         modelUsage.outputTokens = safeUsageSum(modelUsage.outputTokens, eventUsage.outputTokens, 'Model output tokens')
         modelUsage.totalTokens = safeUsageSum(modelUsage.totalTokens, eventUsage.totalTokens, 'Model total tokens')
@@ -1887,12 +2026,18 @@ export class AgentProductRuntime {
               const remainingOutputCharacters = reservation.outputCharacters - consumed.outputCharacters
               if (turnOutputCharacters > remainingOutputCharacters) {
                 consumed.outputCharacters = reservation.outputCharacters
-                await this.#appendPresentationEvent(claim, type, {
+                const limited: Record<string, AgentEventData[string]> = {
                   ...contextualData,
                   content: turnContent.slice(0, Math.max(0, remainingOutputCharacters)),
                   contentTruncated: true,
                   budgetOutputCharacters: Math.max(0, remainingOutputCharacters)
-                })
+                }
+                if (data.outcome === 'context_compacted') {
+                  limited.outcome = 'context_compaction_rejected'
+                  limited.content = ''
+                  delete limited.compaction
+                }
+                await this.#appendPresentationEvent(claim, type, limited)
                 throw new AgentRepositoryError('AGENT_CHILD_BUDGET_EXCEEDED', 'Subagent output exceeded its reserved allowance', 409)
               }
               consumed.outputCharacters = safeUsageSum(consumed.outputCharacters, turnOutputCharacters, 'Consumed child output characters')
@@ -2114,6 +2259,10 @@ export class AgentProductRuntime {
           .orderBy('messages.ordinal')
           .select({
             id: 'messages.id',
+            ordinal: 'messages.ordinal',
+            citations: 'messages.citations',
+            isVisible: 'messages.isVisible',
+            createdAt: 'messages.createdAt',
             role: 'messages.role',
             content: 'messages.content',
             googleSearchGrounding: 'messages.googleSearchGrounding',
@@ -2176,6 +2325,73 @@ export class AgentProductRuntime {
             .orderBy('createdAt', 'desc')
             .select(...AGENT_MEDIA_METADATA_COLUMNS)
         : []
+      const modelTurnRows = (await this.#knex('agentEvents as events')
+        .join('agentRuns as runs', 'runs.id', 'events.runId')
+        .where({ 'runs.ownerId': claim.ownerId, 'runs.sessionId': claim.sessionId, 'events.type': 'model.turn' })
+        .orderBy('events.createdAt', 'desc')
+        .orderBy('events.sequence', 'desc')
+        .select('events.runId', 'events.data', 'events.dataSha256')) as Array<{
+        runId: string
+        data: string
+        dataSha256: string
+      }>
+      const inheritedExpiryByRun = new Map<string, string | null>()
+      const checkpointCandidates: AgentCompactionCheckpoint[] = []
+      for (const row of modelTurnRows) {
+        if (sha256(row.data) !== row.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored model event hash is invalid', 500)
+        const data = parsedObject(row.data, 'AGENT_EVENT_CORRUPT') as AgentEventData
+        if (Object.hasOwn(data, 'groundedExpiresAt')) {
+          const value = Reflect.get(data, 'groundedExpiresAt')
+          if (value !== null && typeof value !== 'string') throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored model event expiry is invalid', 500)
+          inheritedExpiryByRun.set(row.runId, agentCompactionMinimumExpiry(inheritedExpiryByRun.get(row.runId), value as string | null))
+        }
+        const checkpoint = typeof data.taskId === 'string' || typeof data.subagentRunId === 'string' ? null : readAgentCompactionCheckpoint(data)
+        if (checkpoint !== null) {
+          if (
+            checkpoint.metadata.sourceRunId !== row.runId ||
+            checkpoint.metadata.ownerId !== claim.ownerId ||
+            checkpoint.metadata.sessionId !== claim.sessionId
+          )
+            throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored compaction producer binding is invalid', 500)
+          readAgentUsageEvent(data)
+          checkpointCandidates.push(checkpoint)
+        }
+      }
+      const canonicalSources = messageRows.map(message =>
+        runtimeCanonicalSource(
+          message,
+          mediaIndex.filter(item => item.messageId === message.id),
+          message.role !== 'assistant' || message.runId === null ? null : (inheritedExpiryByRun.get(message.runId) ?? null)
+        )
+      )
+      const sourcePrefixSha256 = agentCompactionSourcePrefixes(canonicalSources)
+      const binding = {
+        ownerId: claim.ownerId,
+        sessionId: claim.sessionId,
+        providerProfileVersionId: claim.providerProfileVersionId,
+        transportKind: claim.transportKind,
+        model: claim.model,
+        capabilityRevision: claim.capabilityRevision
+      }
+      const nowMilliseconds = Date.now()
+      const checkpoint = checkpointCandidates.find(candidate => {
+        if (!agentCompactionBindingMatches(candidate.metadata, binding)) return false
+        if (candidate.metadata.groundedExpiresAt !== null && Date.parse(candidate.metadata.groundedExpiresAt) <= nowMilliseconds) return false
+        const index = canonicalSources.findIndex(
+          source => source.id === candidate.metadata.throughMessageId && source.ordinal === candidate.metadata.throughOrdinal
+        )
+        return index >= 0 && sourcePrefixSha256[index] === candidate.metadata.sourceSha256
+      })
+      const effectiveGroundedExpiresAt = agentCompactionMinimumExpiry(
+        ...canonicalSources.map(source =>
+          source.groundedExpiresAt !== null && Date.parse(source.groundedExpiresAt) > nowMilliseconds ? source.groundedExpiresAt : null
+        )
+      )
+      const compactionContext: AgentCompactionContext = {
+        ...(checkpoint === undefined ? {} : { checkpoint }),
+        sourcePrefixSha256,
+        groundedExpiresAt: effectiveGroundedExpiresAt
+      }
       const mediaRequest = claim.mediaRequest ? (JSON.parse(claim.mediaRequest) as { kind: 'image' | 'transcription' | 'video' | 'music' }) : undefined
       if (mediaRequest && !['image', 'transcription', 'video', 'music'].includes(mediaRequest.kind))
         throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Invalid media request.', 500)
@@ -2213,7 +2429,9 @@ export class AgentProductRuntime {
       if (!includeMediaBytes && mediaIndex.some(row => row.messageId === claim.userMessageId && row.kind === 'attachment'))
         throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Attachments are disabled for this provider. Select a provider with attachments enabled.', 403)
       const retainedMediaIds = attachedRows.map(row => row.id)
-      const messages: AgentEngineMessage[] = messageRows.map(message => {
+      const messages: AgentEngineMessage[] = messageRows.map((message, index) => {
+        const canonicalSource = canonicalSources[index]!
+        const expired = canonicalSource.groundedExpiresAt !== null && Date.parse(canonicalSource.groundedExpiresAt) <= nowMilliseconds
         const stateOriginMatches =
           message.role === 'assistant' &&
           message.runId !== null &&
@@ -2222,7 +2440,8 @@ export class AgentProductRuntime {
           message.originProviderProfileVersionId === claim.providerProfileVersionId &&
           message.originTransportKind === claim.transportKind &&
           message.originModel === claim.model &&
-          message.originCapabilityRevision === claim.capabilityRevision
+          message.originCapabilityRevision === claim.capabilityRevision &&
+          !expired
         let state: AgentEngineMessage['providerState']
         if (stateOriginMatches) {
           try {
@@ -2231,14 +2450,15 @@ export class AgentProductRuntime {
             throw classifyAgentExecutionFailure(error, 'setup')
           }
         }
-        const attachments = attachedRows
-          .filter(row => row.messageId === message.id)
-          .map(row => ownedAgentMediaSource(this.#knex, claim.ownerId, claim.sessionId, row))
+        const attachments = expired
+          ? []
+          : attachedRows.filter(row => row.messageId === message.id).map(row => ownedAgentMediaSource(this.#knex, claim.ownerId, claim.sessionId, row))
         return {
+          canonicalSource,
           role: message.role,
           content:
-            message.content +
-            (mediaIndex.some(item => item.messageId === message.id && !retainedMediaIds.includes(item.id))
+            (expired ? '' : message.content) +
+            (!expired && mediaIndex.some(item => item.messageId === message.id && !retainedMediaIds.includes(item.id))
               ? '\n[Attachment content is unavailable in this turn because of the media window or provider configuration. Do not infer its contents.]'
               : ''),
           ...(state ? { providerState: state } : {}),
@@ -2394,6 +2614,7 @@ export class AgentProductRuntime {
       const googleSearchEnabled = mediaRequest === undefined && claim.googleSearchEnabled
       let googleSearchSuggestions: readonly string[] | undefined
       const engineRequest: AgentEngineRequest = {
+        compaction: compactionContext,
         ...(generationTools === undefined ? {} : { generationTools }),
         authorizeMedia,
         ...(mediaRequest ? { mediaRequest } : {}),
@@ -2420,7 +2641,115 @@ export class AgentProductRuntime {
         ...(currentPage === undefined ? {} : { currentPage }),
         ...(knowledgeContext === undefined ? {} : { knowledgeContext })
       }
+      const assertGroundedContextFresh = (): void => {
+        if (effectiveGroundedExpiresAt !== null && Date.parse(effectiveGroundedExpiresAt) <= Date.now())
+          throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'Retained source context has expired; restart this turn from available history', 413)
+      }
       const sink: AgentEngineSink = {
+        commitCompaction: async receipt => {
+          executionSignal.throwIfAborted()
+          const metadata = readAgentCompactionMetadata(receipt.compaction)
+          const storedCheckpoint = readAgentCompactionCheckpoint(receipt as unknown as AgentEventData)
+          if (
+            storedCheckpoint === null ||
+            metadata.scope !== 'history' ||
+            metadata.sourceRunId !== claim.id ||
+            !agentCompactionBindingMatches(metadata, binding) ||
+            receipt.outcome !== 'context_compacted' ||
+            receipt.usageVersion !== 2 ||
+            receipt.contentTruncated !== false ||
+            receipt.actionCallIds.length !== 0 ||
+            receipt.groundedExpiresAt !== metadata.groundedExpiresAt ||
+            agentCompactionSha256(receipt.content) !== metadata.summarySha256
+          )
+            throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine emitted invalid compaction metadata', 500)
+          readAgentUsageEvent(receipt as unknown as AgentEventData)
+          const throughIndex = canonicalSources.findIndex(source => source.id === metadata.throughMessageId && source.ordinal === metadata.throughOrdinal)
+          if (throughIndex < 0 || sourcePrefixSha256[throughIndex] !== metadata.sourceSha256)
+            throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine compacted a non-canonical source prefix', 500)
+          await this.#knex.transaction(async transaction => {
+            const expectedSources = canonicalSources.slice(0, throughIndex + 1)
+            const rows = (await transaction('agentMessages as messages')
+              .leftJoin('agentRuns as originRuns', function () {
+                this.on('originRuns.id', '=', 'messages.runId').andOn('originRuns.sessionId', '=', 'messages.sessionId')
+              })
+              .where('messages.sessionId', claim.sessionId)
+              .andWhere('messages.ordinal', '<=', metadata.throughOrdinal)
+              .andWhere('messages.id', '!=', claim.assistantMessageId)
+              .andWhere(visible => visible.where('messages.isVisible', true).orWhereNull('messages.isVisible').orWhere('messages.id', claim.userMessageId))
+              .orderBy('messages.ordinal')
+              .select({
+                id: 'messages.id',
+                ordinal: 'messages.ordinal',
+                role: 'messages.role',
+                content: 'messages.content',
+                citations: 'messages.citations',
+                isVisible: 'messages.isVisible',
+                createdAt: 'messages.createdAt',
+                googleSearchGrounding: 'messages.googleSearchGrounding',
+                runId: 'messages.runId',
+                providerStateCiphertext: 'messages.providerStateCiphertext',
+                providerStateSha256: 'messages.providerStateSha256',
+                originOwnerId: 'originRuns.ownerId',
+                originSessionId: 'originRuns.sessionId',
+                originProviderProfileVersionId: 'originRuns.providerProfileVersionId',
+                originTransportKind: 'originRuns.transportKind',
+                originModel: 'originRuns.model',
+                originCapabilityRevision: 'originRuns.capabilityRevision'
+              })) as RuntimeMessageRow[]
+            if (rows.length !== expectedSources.length || rows.some((row, index) => row.id !== expectedSources[index]!.id || row.isVisible === false))
+              throw new AgentRepositoryError('AGENT_COMPACTION_SOURCE_CHANGED', 'Compaction source changed while summarizing', 409)
+            const currentMedia = (await transaction<AgentMediaMetadata>('agentMedia')
+              .where({ ownerId: claim.ownerId, sessionId: claim.sessionId })
+              .whereIn(
+                'messageId',
+                rows.map(row => row.id)
+              )
+              .select(...AGENT_MEDIA_METADATA_COLUMNS)) as AgentMediaMetadata[]
+            const sourceRunIds = rows.flatMap(row => (row.runId === null ? [] : [row.runId]))
+            const currentExpiryByRun = new Map<string, string | null>()
+            if (sourceRunIds.length > 0) {
+              const expiryEvents = (await transaction('agentEvents')
+                .whereIn('runId', sourceRunIds)
+                .where({ type: 'model.turn' })
+                .select('runId', 'data', 'dataSha256')) as Array<{ runId: string; data: string; dataSha256: string }>
+              for (const event of expiryEvents) {
+                if (sha256(event.data) !== event.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored model event hash is invalid', 500)
+                const data = parsedObject(event.data, 'AGENT_EVENT_CORRUPT')
+                if (!Object.hasOwn(data, 'groundedExpiresAt')) continue
+                const value = Reflect.get(data, 'groundedExpiresAt')
+                if (value !== null && typeof value !== 'string')
+                  throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored model event expiry is invalid', 500)
+                currentExpiryByRun.set(event.runId, agentCompactionMinimumExpiry(currentExpiryByRun.get(event.runId), value as string | null))
+              }
+            }
+            const currentSources = rows.map(row =>
+              runtimeCanonicalSource(
+                row,
+                currentMedia.filter(item => item.messageId === row.id),
+                row.role !== 'assistant' || row.runId === null ? null : (currentExpiryByRun.get(row.runId) ?? null)
+              )
+            )
+            const currentPrefix = agentCompactionSourcePrefixes(currentSources)
+            if (
+              currentPrefix.at(-1) !== metadata.sourceSha256 ||
+              currentSources.some((source, index) => canonicalJson(source) !== canonicalJson(expectedSources[index]))
+            )
+              throw new AgentRepositoryError('AGENT_COMPACTION_SOURCE_CHANGED', 'Compaction source changed while summarizing', 409)
+            const currentExpiry = agentCompactionMinimumExpiry(
+              ...currentSources
+                .filter(
+                  (source, index) =>
+                    (source.groundedExpiresAt === null || Date.parse(source.groundedExpiresAt) > nowMilliseconds) &&
+                    (rows[index]!.content.length > 0 || currentMedia.some(item => item.messageId === source.id))
+                )
+                .map(source => source.groundedExpiresAt)
+            )
+            if (currentExpiry !== metadata.groundedExpiresAt || (currentExpiry !== null && Date.parse(currentExpiry) <= Date.now()))
+              throw new AgentRepositoryError('AGENT_COMPACTION_SOURCE_EXPIRED', 'Compaction source expired while summarizing', 409)
+            await this.#appendPresentationEventInTransaction(transaction, claim, 'model.turn', receipt as unknown as AgentEventData)
+          })
+        },
         media: async images => {
           if (images.length > 4) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Too many generated media files.', 502)
           for (const image of images) {
@@ -2444,6 +2773,7 @@ export class AgentProductRuntime {
         },
         text: async delta => {
           if (executionSignal.aborted) throw executionSignal.reason
+          assertGroundedContextFresh()
           if (typeof delta !== 'string' || delta.length === 0 || delta.length > 16_000 || content.length + delta.length > 128_000)
             throw new AgentRepositoryError('INVALID_ENGINE_DELTA', 'Inference engine emitted an invalid text delta', 500)
           content += delta
@@ -2451,10 +2781,23 @@ export class AgentProductRuntime {
         },
         event: async (type, data) => {
           if (executionSignal.aborted) throw executionSignal.reason
-          await this.#appendPresentationEvent(claim, type, data)
+          let persisted = data
+          if (type === 'model.turn') {
+            const suppliedExpiry = Reflect.get(data, 'groundedExpiresAt')
+            if (suppliedExpiry !== undefined && suppliedExpiry !== null && typeof suppliedExpiry !== 'string')
+              throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine emitted an invalid grounding expiry', 500)
+            const groundedExpiresAt = agentCompactionMinimumExpiry(effectiveGroundedExpiresAt, typeof suppliedExpiry === 'string' ? suppliedExpiry : null)
+            persisted = {
+              ...data,
+              groundedExpiresAt,
+              ...(groundedExpiresAt !== null && Date.parse(groundedExpiresAt) <= Date.now() ? { content: '', contentPurged: true } : {})
+            }
+          }
+          await this.#appendPresentationEvent(claim, type, persisted)
         },
         googleSearchSuggestions: async suggestions => {
           if (executionSignal.aborted) throw executionSignal.reason
+          assertGroundedContextFresh()
           if (!googleSearchEnabled)
             throw new AgentRepositoryError(
               'INVALID_ENGINE_RESULT',
@@ -2487,12 +2830,14 @@ export class AgentProductRuntime {
         totalTokens: safeUsageSum(orchestrationTelemetry.modelUsage.totalTokens, resultModelUsage.totalTokens, 'Model total tokens'),
         costMicros: safeUsageSum(orchestrationTelemetry.modelUsage.costMicros, resultModelUsage.costMicros, 'Model cost')
       }
+      assertGroundedContextFresh()
       const titleUsage =
         continuation === null && mediaRequest?.kind !== 'transcription'
           ? await this.#generateConversationTitle(claim, sessionRow, messages, content, executionSignal, dispatchBudget)
           : { title: '', source: 'fallback' as const, inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
       assertAgentTokenUsage(titleUsage.inputTokens, titleUsage.outputTokens, titleUsage.totalTokens)
       if (executionSignal.aborted) throw executionSignal.reason
+      assertGroundedContextFresh()
       const inputTokens = safeUsageSum(
         safeUsageSum(orchestrationUsage.inputTokens, modelUsage.inputTokens, 'Input tokens'),
         titleUsage.inputTokens,
@@ -2609,6 +2954,7 @@ export class AgentProductRuntime {
         outcome: completion.outcome,
         issueCodes: completion.issues.map(issue => issue.code)
       })
+      assertGroundedContextFresh()
       if (googleSearchSuggestions !== undefined)
         await publishAgentGoogleSearchSuggestions(this.#knex, {
           ownerId: claim.ownerId,
@@ -2624,6 +2970,7 @@ export class AgentProductRuntime {
         consumedTokens,
         consumedCostMicros
       })
+      assertGroundedContextFresh()
       await terminalizeAgentRun(this.#knex, {
         runId: claim.id,
         ownerId: claim.ownerId,
