@@ -1,11 +1,11 @@
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
-import { describe, expect, it, vi } from '../bun-test.mts'
-
-import { AxAgentEngine, type AgentActionSessionProvider } from '../../agents/providers/engine.ts'
-import { AgentProviderAttemptError, type AgentProviderFactory, type AgentProviderService } from '../../agents/providers/factory.ts'
-import { AgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
-import type { AgentEngineRequest } from '../../agents/runtime.ts'
 import { AgentChildBudgetReservations, type AgentOrchestrationLimits } from '../../agents/orchestration.ts'
+
+import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
+import { AgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
+import { AgentProviderAttemptError, type AgentProviderFactory, type AgentProviderService } from '../../agents/providers/factory.ts'
+import type { AgentEngineRequest } from '../../agents/runtime.ts'
+import { describe, expect, it, vi } from '../bun-test.mts'
 
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
@@ -1730,7 +1730,7 @@ describe('provider fragment boundaries', () => {
         async () =>
           responseStream([
             {
-              results: [{ id: 'signature-exact', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(32_768) }] }],
+              results: [{ id: 'signature-exact', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(131_039) }] }],
               modelUsage: usage
             }
           ]),
@@ -1746,7 +1746,7 @@ describe('provider fragment boundaries', () => {
             responseStream(
               [
                 {
-                  results: [{ id: 'signature-next', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(32_769) }] }],
+                  results: [{ id: 'signature-next', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(131_040) }] }],
                   modelUsage: usage
                 }
               ],
@@ -1887,7 +1887,6 @@ describe('child aggregate budget reservations', () => {
     expect(reservations.reserve(2)).toEqual(expect.objectContaining({ totalTokens: 6_000, maxOutputTokens: 2_048 }))
     expect(reservations.reserve(1)).toEqual(expect.objectContaining({ totalTokens: 6_000, maxOutputTokens: 2_048 }))
   })
-
 
   it('uses aggregate token headroom smaller than the per-child ceiling', () => {
     const limits = {
