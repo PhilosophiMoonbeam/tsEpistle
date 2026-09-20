@@ -238,7 +238,7 @@ make_plan() {
     local probe
     while IFS= read -r probe; do
       case "$probe" in
-        site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection) ;;
+        site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection|agent-google-search-grounding-columns|agent-google-search-consent-admission) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
       esac
     done < <(jq -r '.rehearsalPostconditions[],.runtimePostconditions[]' <<< "$contract")
@@ -423,8 +423,16 @@ verify_postconditions() {
         [[ "$result" == 3 ]] || die "Postcondition failed: $probe ($result/3 constraints)"
         ;;
       agent-goal-budget-tier-selection)
-        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentGoals\" WHERE (\"budgetSelection\"='legacy' AND (\"budgetPolicyVersion\" IS NOT NULL OR \"tokenTier\" IS NOT NULL OR \"tokenAllowance\" IS NOT NULL OR \"budgetCycle\" IS DISTINCT FROM 0)) OR (\"budgetSelection\"='pending' AND (\"budgetPolicyVersion\" IS DISTINCT FROM 1 OR \"tokenTier\" IS NOT NULL OR \"tokenAllowance\" IS NOT NULL OR \"budgetCycle\" IS DISTINCT FROM 0)) OR (\"budgetSelection\" IN ('utility','fallback') AND (\"budgetPolicyVersion\" IS DISTINCT FROM 1 OR \"tokenTier\" IS NULL OR \"tokenAllowance\" IS NULL OR \"budgetCycle\" IS NULL OR \"budgetCycle\"<1));")"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentGoals\" WHERE (\"budgetSelection\"='legacy' AND (\"budgetPolicyVersion\" IS NOT NULL OR \"tokenTier\" IS NOT NULL OR \"tokenAllowance\" IS NOT NULL OR \"budgetCycle\" IS DISTINCT FROM 0)) OR (\"budgetSelection\"='pending' AND (\"budgetPolicyVersion\" IS DISTINCT FROM 2 OR \"tokenTier\" IS NOT NULL OR \"tokenAllowance\" IS NOT NULL OR \"budgetCycle\" IS DISTINCT FROM 0)) OR (\"budgetSelection\" IN ('utility','fallback') AND (\"budgetPolicyVersion\" NOT IN (1,2) OR \"tokenTier\" IS NULL OR (\"budgetPolicyVersion\"=1 AND \"tokenTier\"='small') OR \"tokenAllowance\" IS NULL OR \"budgetCycle\" IS NULL OR \"budgetCycle\"<1));")"
         [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result inconsistent goals)"
+        ;;
+      agent-google-search-grounding-columns)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND ((table_name IN ('agentSessions','agentRuns') AND column_name='googleSearchEnabled' AND data_type='boolean' AND is_nullable='NO' AND column_default='false') OR (table_name='agentMessages' AND column_name='googleSearchGrounding' AND data_type='text' AND is_nullable='YES'));")"
+        [[ "$result" == 3 ]] || die "Postcondition failed: $probe ($result/3 columns)"
+        ;;
+      agent-google-search-consent-admission)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentRuns\" WHERE \"googleSearchEnabled\" AND (\"transportKind\" <> 'gemini-api' OR model !~ '^gemini-3(\\.[0-9]+)?(-[a-z0-9][a-z0-9._-]*)?$');")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result incompatible search runs)"
         ;;
       *) die "Unsupported named migration postcondition: $probe" ;;
     esac

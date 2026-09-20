@@ -60,12 +60,14 @@ const createSchema = async (db: Knex): Promise<void> => {
     table.integer('groupId').notNullable()
   })
   await db.schema.createTable('agentSessions', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.string('id').primary()
     table.integer('ownerId').notNullable()
     table.integer('version').notNullable()
     table.dateTime('updatedAt').defaultTo(db.fn.now())
   })
   await db.schema.createTable('agentRuns', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.string('id').primary()
     table.string('sessionId').notNullable()
     table.integer('ownerId').notNullable()

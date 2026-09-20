@@ -60,8 +60,8 @@ describe('agent utility model', () => {
     const prompt = chat.mock.calls[0]?.[0] as { chatPrompt: Array<{ role: string; content: string }> }
     expect(JSON.parse(prompt.chatPrompt.at(-1)?.content ?? '')).toEqual({ transcript: request.messages })
   })
-  it('selects standard and extended goal tiers only for exact utility classifications', async () => {
-    const outputs = ['standard', 'extended', '1000000']
+  it('selects small, standard, and extended tiers only for exact utility classifications', async () => {
+    const outputs = ['small', 'standard', 'extended', '1000000']
     let outputIndex = 0
     const chat = vi.fn(async () => ({
       results: [{ index: 0, content: outputs[outputIndex++] }],
@@ -80,6 +80,14 @@ describe('agent utility model', () => {
       signal: new AbortController().signal
     }
 
+    await expect(utility.classifyGoalBudget(classificationRequest)).resolves.toEqual({
+      tier: 'small',
+      selection: 'utility',
+      inputTokens: 3,
+      outputTokens: 4,
+      totalTokens: 7,
+      costMicros: 11
+    })
     await expect(utility.classifyGoalBudget(classificationRequest)).resolves.toEqual({
       tier: 'standard',
       selection: 'utility',
@@ -232,7 +240,6 @@ describe('agent utility model', () => {
     ).rejects.toMatchObject({ code: 'AGENT_QUOTA_CORRUPT', status: 500 })
     expect(chat).toHaveBeenCalledOnce()
   })
-
 
   it('falls back to the first user message when utility inference fails', async () => {
     const create = vi.fn(async () => {

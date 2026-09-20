@@ -139,6 +139,41 @@
     <div class="agent-composer__actions">
       <div class="agent-composer__context-controls" role="group" aria-label="Conversation context controls">
         <slot name="context-controls" />
+        <div class="agent-composer__web-search">
+          <label
+            class="agent-composer__web-search-toggle wiki-purpose-control"
+            :class="{ 'wiki-purpose-control--selected': googleSearchEnabled }"
+            :data-state="googleSearchEnabled ? 'selected' : undefined"
+            :title="googleSearchAvailable ? 'Use Google Search for future responses in this conversation' : 'Google Search is unavailable for this provider'"
+          >
+            <input
+              type="checkbox"
+              :checked="googleSearchEnabled"
+              :aria-checked="googleSearchEnabled"
+              :disabled="webSearchDisabled"
+              aria-label="Use Google Search for this conversation"
+              @change="toggleGoogleSearch"
+            >
+            <v-icon icon="mdi-web" size="17" aria-hidden="true" />
+            <span>Web search</span>
+          </label>
+          <v-menu content-class="agent-owned-overlay" location="top start" :close-on-content-click="true">
+            <template #activator="{ props: activatorProps }">
+              <v-btn
+                v-bind="activatorProps"
+                class="agent-composer__web-search-info"
+                icon="mdi-information-outline"
+                variant="text"
+                size="x-small"
+                aria-label="About Google Search in Agent conversations"
+              />
+            </template>
+            <v-card class="agent-composer__web-search-help" max-width="330">
+              <v-card-title class="text-body-large">Optional Google Search</v-card-title>
+              <v-card-text>When enabled, search queries and relevant conversation context may be sent to Google Search. Google Search charges are additional to model token charges. Answers and citations remain in your normal conversation history.</v-card-text>
+            </v-card>
+          </v-menu>
+        </div>
         <v-menu content-class="agent-owned-overlay agent-composer__skill-menu-content" v-if="skillsEnabled" v-model="skillMenuOpen" :close-on-content-click="false">
           <template #activator="{ props: activatorProps }">
             <v-btn
@@ -299,6 +334,9 @@ const props = defineProps<{
   sending: boolean
   canStop: boolean
   skillsEnabled: boolean
+  googleSearchAvailable: boolean
+  googleSearchEnabled: boolean
+  googleSearchBusy?: boolean
   goalsEnabled: boolean
   skills: readonly VisibleAgentSkill[]
   skillsLoading: boolean
@@ -316,7 +354,7 @@ const props = defineProps<{
   externalDescriptionId?: string
   networkBlocked?: boolean
 }>()
-const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void, media?: AgentMediaSubmission]; mediaSettled: []; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
+const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void, media?: AgentMediaSubmission]; mediaSettled: []; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]]; updateGoogleSearch: [enabled: boolean] }>()
 const mediaComposer = useTemplateRef<{ clear: () => void; addFiles: (files: readonly File[]) => Promise<unknown>; editImage: (media: AgentMediaView) => Promise<boolean> }>('mediaComposer')
 const mediaSubmission = ref<AgentMediaSubmission>({ attachmentIds: [] })
 const mediaBusy = ref(false)
@@ -365,6 +403,17 @@ const activeCommandIndex = ref(0)
 const sendFailed = ref(false)
 const submissionPending = ref(false)
 const sendInProgress = computed(() => props.sending || submissionPending.value)
+const webSearchDisabled = computed(() =>
+  props.disabled || sendInProgress.value || props.googleSearchBusy || (!props.googleSearchAvailable && !props.googleSearchEnabled)
+)
+const toggleGoogleSearch = (event: Event): void => {
+  const input = event.currentTarget
+  if (!(input instanceof HTMLInputElement)) return
+  const enabled = input.checked
+  input.checked = props.googleSearchEnabled
+  if (webSearchDisabled.value) return
+  emit('updateGoogleSearch', enabled)
+}
 let restoreInputWhenReady = false
 let mounted = false
 const composerId = useId()
@@ -995,6 +1044,7 @@ onBeforeUnmount(() => {
 /* Compact action faces retain a 44px effective pointer target through an invisible before-pseudo-element. */
 .agent-composer__skill-button,
 .agent-composer__goal-button,
+.agent-composer__web-search-toggle,
 .agent-composer__submit,
 .agent-composer__stop {
   position: relative;
@@ -1008,6 +1058,7 @@ onBeforeUnmount(() => {
 
 .agent-composer__skill-button::before,
 .agent-composer__goal-button::before,
+.agent-composer__web-search-toggle::before,
 .agent-composer__submit::before,
 .agent-composer__stop::before {
   position: absolute;
@@ -1032,6 +1083,57 @@ onBeforeUnmount(() => {
 
 .agent-composer__skill-button {
   max-width: 100%;
+}
+.agent-composer__web-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+.agent-composer__web-search-toggle {
+  position: relative;
+  display: inline-flex;
+  min-height: var(--agent-composer-control-face-height);
+  align-items: center;
+  gap: var(--wiki-space-2);
+  padding-inline: var(--agent-composer-control-padding-inline);
+  border-radius: var(--wiki-radius-pill);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 76%, transparent);
+  cursor: pointer;
+  font-size: var(--agent-composer-control-font-size);
+  font-weight: 500;
+  user-select: none;
+}
+
+.agent-composer__web-search-toggle:has(input:checked) {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 13%, transparent);
+  color: rgb(var(--v-theme-primary));
+}
+
+.agent-composer__web-search-toggle:has(input:focus-visible) {
+  outline: 2px solid var(--wiki-focus-color);
+  outline-offset: 2px;
+}
+
+.agent-composer__web-search-toggle:has(input:disabled) {
+  cursor: default;
+  opacity: .45;
+}
+
+.agent-composer__web-search-toggle input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.agent-composer__web-search-info {
+  min-width: 32px !important;
+}
+
+.agent-composer__web-search-help :deep(.v-card-text) {
+  line-height: 1.55;
 }
 .agent-composer__actions :deep(.v-btn__prepend),
 .agent-composer__actions :deep(.v-btn__append) {

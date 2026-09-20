@@ -214,10 +214,14 @@ test.describe('release accessibility profiles', () => {
     try {
       await page.emulateMedia({ reducedMotion: 'no-preference' })
       // This visual check uses public page content and browser-local Agent fixtures.
-      await page.route('**/_api/users/whoami', route => route.fulfill({ json: {
-        authenticated: true,
-        user: { id: 1, name: 'Visual test', email: 'visual@example.test', permissions: ['use:agents'] }
-      } }))
+      await page.route('**/_api/users/whoami', route =>
+        route.fulfill({
+          json: {
+            authenticated: true,
+            user: { id: 1, authVersion: 1, name: 'Visual test', email: 'visual@example.test', permissions: ['use:agents'] }
+          }
+        })
+      )
       await page.goto('/', { waitUntil: 'domcontentloaded' })
       await expect(page.locator('.page-header-section')).toBeVisible()
       await page.getByRole('button', { name: 'Open Wiki Agent' }).click()
@@ -231,7 +235,7 @@ test.describe('release accessibility profiles', () => {
         if (!animation) throw new Error('Expected the Agent entrance animation')
         animation.pause()
         const duration = Number(animation.effect?.getTiming().duration)
-        return [0, 0.25, 0.5, 0.99].map(progress => {
+        return [0, 0.25, 0.5, 0.99].flatMap(progress => {
           animation.currentTime = duration * progress
           return Array.from(element.querySelectorAll('.inline-agent__toolbar, .inline-agent__body')).map(surface => {
             const style = getComputedStyle(surface)
@@ -241,7 +245,7 @@ test.describe('release accessibility profiles', () => {
             }
             return { progress, blur: style.backdropFilter, background: style.backgroundColor, blockedBy }
           })
-        }).flat()
+        })
       })
       expect(frames).toHaveLength(8)
       for (const frame of frames) {
@@ -250,7 +254,9 @@ test.describe('release accessibility profiles', () => {
         expect(frame.background).toMatch(/^rgba\(/u)
       }
       await page.screenshot({ path: testInfo.outputPath('agent-opening-glass.png') })
-      await container.evaluate(element => element.getAnimations().forEach(animation => animation.finish()))
+      await container.evaluate(element => {
+        for (const animation of element.getAnimations()) animation.finish()
+      })
       await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeFocused()
       await page.keyboard.press('Escape')
       await expect(agent).toBeHidden()

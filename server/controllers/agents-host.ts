@@ -7,7 +7,15 @@ import { readAgentWikiAsset } from '../agents/wiki-assets.ts'
 import { sweepAgentPdfCache } from '../agents/pdf-cache.ts'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import type { PagePrincipal } from '../helpers/page-access.ts'
-import { AGENT_MEDIA_MAX_BYTES, readOwnedAgentMediaRange, getOwnedAgentMedia, getOwnedAgentMediaMetadata, stageOwnedAgentMedia, projectAgentMedia, storeAgentMedia } from '../agents/media.ts'
+import {
+  AGENT_MEDIA_MAX_BYTES,
+  readOwnedAgentMediaRange,
+  getOwnedAgentMedia,
+  getOwnedAgentMediaMetadata,
+  stageOwnedAgentMedia,
+  projectAgentMedia,
+  storeAgentMedia
+} from '../agents/media.ts'
 import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { createHash, createHmac } from 'node:crypto'
 import express, { type NextFunction, type Request, type Response } from 'express'
@@ -104,6 +112,7 @@ interface AgentHostWiki {
     | 'create'
     | 'getAdmin'
     | 'assertProfileAvailable'
+    | 'assertSessionGoogleSearchAvailable'
     | 'issueResolutionToken'
     | 'listAll'
     | 'listVisible'
@@ -188,14 +197,18 @@ const UpdateSessionSchema = z
   .strictObject({
     expectedSessionVersion: z.number().int().positive(),
     title: z.string().max(255).optional(),
-    retention: z.enum(['temporary', 'saved']).optional()
+    retention: z.enum(['temporary', 'saved']).optional(),
+    googleSearchEnabled: z.boolean().optional()
   })
-  .refine(value => value.title !== undefined || value.retention !== undefined)
+  .refine(value => value.title !== undefined || value.retention !== undefined || value.googleSearchEnabled !== undefined)
 const ConversationFolderNameSchema = z.string().transform(cleanAgentConversationFolderName).pipe(z.string().min(1).max(64))
 const CreateConversationFolderSchema = z.strictObject({ name: ConversationFolderNameSchema })
 const RenameConversationFolderSchema = z.strictObject({ expectedVersion: z.number().int().positive(), name: ConversationFolderNameSchema })
 const MoveSessionFolderSchema = z.strictObject({ expectedSessionVersion: z.number().int().positive(), folderId: z.uuid().nullable() })
-const GenerationToolsSchema = z.array(z.enum(AGENT_GENERATION_TOOLS)).max(3).refine(tools => new Set(tools).size === tools.length, 'Choose each generation tool at most once.')
+const GenerationToolsSchema = z
+  .array(z.enum(AGENT_GENERATION_TOOLS))
+  .max(3)
+  .refine(tools => new Set(tools).size === tools.length, 'Choose each generation tool at most once.')
 const SubmitMessageSchema = z
   .strictObject({
     clientRequestId: z.uuid(),
@@ -508,16 +521,26 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const ownerId = requestSkillPrincipal(req).userId
       const session = await getOwnedAgentSession(wiki.models.knex, ownerId, sessionId)
       const profiles = await wiki.providerRegistry.listVisible(ownerId)
-      const profile = session.providerProfileId ? profiles.find(item => item.id === session.providerProfileId) : (profiles.find(item => item.isGlobalDefault) ?? (profiles.length === 1 ? profiles[0] : undefined))
-      if (!profile?.media?.attachments && !profile?.media?.imageGeneration && !profile?.media?.videoGeneration && !profile?.media?.musicGeneration) return disabledRoute(res)
+      const profile = session.providerProfileId
+        ? profiles.find(item => item.id === session.providerProfileId)
+        : (profiles.find(item => item.isGlobalDefault) ?? (profiles.length === 1 ? profiles[0] : undefined))
+      if (!profile?.media?.attachments && !profile?.media?.imageGeneration && !profile?.media?.videoGeneration && !profile?.media?.musicGeneration)
+        return disabledRoute(res)
       return mediaUploads.run(ownerId, async () => {
-        const source = await readAgentWikiAsset(wiki.models.knex, { assetId, signal, authorize: async (path, transaction) => {
-          if (!req.user || !wiki.auth.loadPageRuleAuthority || !wiki.auth.checkPageAccess) throw new AgentRepositoryError('AGENT_ASSET_UNAVAILABLE', 'Wiki assets are unavailable.', 403)
-          const authority = await wiki.auth.loadPageRuleAuthority(req.user, transaction)
-          if (!wiki.auth.checkPageAccess(req.user, ['manage:system', 'read:assets'], { path }, authority)) throw new AgentRepositoryError('AGENT_ASSET_UNAVAILABLE', 'This Wiki asset is unavailable or you no longer have access to it.', 404)
-          const { protectedAssetRequiresUnlock } = await import('../operations/page-protection.ts')
-          if (await protectedAssetRequiresUnlock({ requester: req.user, assetPath: path, sessionId: req.sessionID })) throw new AgentRepositoryError('AGENT_ASSET_LOCKED', 'Unlock the page that protects this asset before attaching it.', 403)
-        } })
+        const source = await readAgentWikiAsset(wiki.models.knex, {
+          assetId,
+          signal,
+          authorize: async (path, transaction) => {
+            if (!req.user || !wiki.auth.loadPageRuleAuthority || !wiki.auth.checkPageAccess)
+              throw new AgentRepositoryError('AGENT_ASSET_UNAVAILABLE', 'Wiki assets are unavailable.', 403)
+            const authority = await wiki.auth.loadPageRuleAuthority(req.user, transaction)
+            if (!wiki.auth.checkPageAccess(req.user, ['manage:system', 'read:assets'], { path }, authority))
+              throw new AgentRepositoryError('AGENT_ASSET_UNAVAILABLE', 'This Wiki asset is unavailable or you no longer have access to it.', 404)
+            const { protectedAssetRequiresUnlock } = await import('../operations/page-protection.ts')
+            if (await protectedAssetRequiresUnlock({ requester: req.user, assetPath: path, sessionId: req.sessionID }))
+              throw new AgentRepositoryError('AGENT_ASSET_LOCKED', 'Unlock the page that protects this asset before attaching it.', 403)
+          }
+        })
         if (source.mimeType === 'application/pdf' && !profile.media?.attachments) return disabledRoute(res)
         signal.throwIfAborted()
         const media = await storeAgentMedia(wiki.models.knex, { ownerId, sessionId, ...source })
@@ -537,7 +560,14 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         ? profiles.find(item => item.id === session.providerProfileId)
         : (profiles.find(item => item.isGlobalDefault) ?? (profiles.length === 1 ? profiles[0] : undefined))
       const mediaCapabilities = profile?.media
-      if (!mediaCapabilities || (!mediaCapabilities.attachments && !mediaCapabilities.transcription && !mediaCapabilities.imageGeneration && !mediaCapabilities.videoGeneration && !mediaCapabilities.musicGeneration))
+      if (
+        !mediaCapabilities ||
+        (!mediaCapabilities.attachments &&
+          !mediaCapabilities.transcription &&
+          !mediaCapabilities.imageGeneration &&
+          !mediaCapabilities.videoGeneration &&
+          !mediaCapabilities.musicGeneration)
+      )
         return disabledRoute(res)
       return mediaUploads.run(ownerId, async () => {
         await parseAgentMediaUpload(parseMedia, req, res, signal)
@@ -546,7 +576,11 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
           !req.file ||
           (req.file.mimetype.startsWith('audio/')
             ? !mediaCapabilities.transcription
-            : !mediaCapabilities.attachments && !(req.file.mimetype.startsWith('image/') && (mediaCapabilities.imageGeneration || mediaCapabilities.videoGeneration || mediaCapabilities.musicGeneration)))
+            : !mediaCapabilities.attachments &&
+              !(
+                req.file.mimetype.startsWith('image/') &&
+                (mediaCapabilities.imageGeneration || mediaCapabilities.videoGeneration || mediaCapabilities.musicGeneration)
+              ))
         )
           return disabledRoute(res)
         const media = await storeAgentMedia(wiki.models.knex, {
@@ -582,7 +616,13 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
           const match = /^bytes=(\d*)-(\d*)$/.exec(range)
           const first = match?.[1] ? Number(match[1]) : null
           const last = match?.[2] ? Number(match[2]) : null
-          if (!match || (first === null && (last === null || last === 0)) || (first !== null && (!Number.isSafeInteger(first) || first >= total)) || (last !== null && !Number.isSafeInteger(last)) || (first !== null && last !== null && last < first)) {
+          if (
+            !match ||
+            (first === null && (last === null || last === 0)) ||
+            (first !== null && (!Number.isSafeInteger(first) || first >= total)) ||
+            (last !== null && !Number.isSafeInteger(last)) ||
+            (first !== null && last !== null && last < first)
+          ) {
             res.set('Content-Range', `bytes */${total}`)
             return res.status(416).end()
           }
@@ -597,7 +637,11 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       }
       if (media.mimeType === 'application/pdf') {
         const staged = await stageOwnedAgentMedia(wiki.models.knex, ownerId, media.id, signal)
-        try { await pipeline(createReadStream(staged.path), res, { signal }) } finally { await staged.cleanup() }
+        try {
+          await pipeline(createReadStream(staged.path), res, { signal })
+        } finally {
+          await staged.cleanup()
+        }
         return
       }
       const content = await getOwnedAgentMedia(wiki.models.knex, ownerId, media.id)
@@ -855,17 +899,24 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
       const input = UpdateSessionSchema.parse(req.body)
       const ownerId = requestSkillPrincipal(req).userId
-      await updateAgentSession(wiki.models.knex, {
-        ownerId,
-        sessionId,
-        expectedVersion: input.expectedSessionVersion,
-        ...(input.title === undefined ? {} : { title: input.title }),
-        ...(input.retention === undefined
-          ? {}
-          : {
-              retention: input.retention,
-              expiresAt: input.retention === 'temporary' ? new Date(Date.now() + (wiki.agentLimits?.retention.temporarySessionHours ?? 24) * 3_600_000) : null
-            })
+      await wiki.models.knex.transaction(async transaction => {
+        if (input.googleSearchEnabled === true) {
+          if (!wiki.providerRegistry) throw new AgentRepositoryError('GOOGLE_SEARCH_UNAVAILABLE', 'Google Search is unavailable', 409)
+          await wiki.providerRegistry.assertSessionGoogleSearchAvailable(ownerId, sessionId, transaction)
+        }
+        await updateAgentSession(transaction, {
+          ownerId,
+          sessionId,
+          expectedVersion: input.expectedSessionVersion,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.googleSearchEnabled === undefined ? {} : { googleSearchEnabled: input.googleSearchEnabled }),
+          ...(input.retention === undefined
+            ? {}
+            : {
+                retention: input.retention,
+                expiresAt: input.retention === 'temporary' ? new Date(Date.now() + (wiki.agentLimits?.retention.temporarySessionHours ?? 24) * 3_600_000) : null
+              })
+        })
       })
       return res.json(await projectSession(ownerId, sessionId, signal))
     })

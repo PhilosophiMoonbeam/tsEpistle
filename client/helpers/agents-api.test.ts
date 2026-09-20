@@ -466,7 +466,34 @@ describe('agents client boundary', () => {
     expect(source).toBeInstanceOf(FakeEventSource)
   })
 
-  it('accepts the mutable provider selection contract without internal version fields', async () => {
+  it('accepts real-size transient Google Search widgets without advancing the durable cursor and rejects oversized payloads', () => {
+    const listeners = new Map<string, (event: MessageEvent) => void>()
+    class FakeEventSource {
+      constructor(readonly url: string) {}
+      addEventListener(type: string, listener: EventListener) {
+        listeners.set(type, listener as (event: MessageEvent) => void)
+      }
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const event = vi.fn()
+    const googleSearchSuggestions = vi.fn()
+    const runId = '00000000-0000-4000-8000-000000000001'
+    subscribeAgentRun(runId, 7, { event, googleSearchSuggestions, error: vi.fn() })
+    const listener = listeners.get('google_search.suggestions')
+    const realSizeWidget = `<a href="https://www.google.com/search?q=grounding">${'result '.repeat(660)}</a>`
+
+    listener?.({ data: JSON.stringify({ runId, suggestions: [realSizeWidget] }), lastEventId: '' } as MessageEvent)
+    listener?.({ data: JSON.stringify({ runId, suggestions: ['x'.repeat(32_769)] }), lastEventId: '999' } as MessageEvent)
+    listener?.({ data: JSON.stringify({ runId, suggestions: Array.from({ length: 5 }, () => 'x'.repeat(30_000)) }), lastEventId: '999' } as MessageEvent)
+    listener?.({ data: JSON.stringify({ runId, suggestions: ['valid'], unexpected: true }), lastEventId: '999' } as MessageEvent)
+    listener?.({ data: JSON.stringify({ runId: '00000000-0000-4000-8000-000000000002', suggestions: ['wrong run'] }), lastEventId: '999' } as MessageEvent)
+
+    expect(googleSearchSuggestions).toHaveBeenCalledOnce()
+    expect(googleSearchSuggestions).toHaveBeenCalledWith(runId, [realSizeWidget])
+    expect(event).not.toHaveBeenCalled()
+  })
+
+  it('requires explicit server capability before making Google Search available', async () => {
     const profile = {
       id: '00000000-0000-4000-8000-000000000001',
       name: 'OpenAI',
@@ -488,8 +515,15 @@ describe('agents client boundary', () => {
       policyVersion: 2,
       isGlobalDefault: true
     }
-    const fetcher = vi.fn(async () => Response.json({ profiles: [profile] })) as unknown as typeof fetch
-    expect(await listAgentProfiles(fetcher, 'csrf')).toEqual([profile])
+    const responses = [
+      Response.json({ profiles: [profile] }),
+      Response.json({ profiles: [{ ...profile, googleSearchAvailable: true }] }),
+      Response.json({ profiles: [{ ...profile, googleSearchAvailable: 'true' }] })
+    ]
+    const fetcher = vi.fn(async () => responses.shift()!) as unknown as typeof fetch
+    expect((await listAgentProfiles(fetcher, 'csrf'))[0]?.googleSearchAvailable).toBe(false)
+    expect((await listAgentProfiles(fetcher, 'csrf'))[0]?.googleSearchAvailable).toBe(true)
+    await expect(listAgentProfiles(fetcher, 'csrf')).rejects.toThrow()
   })
 
   it('validates personal skill documents across create, list, update, and remove requests', async () => {
@@ -842,13 +876,21 @@ describe('agents client boundary', () => {
   })
 })
 
-
 describe('Wiki asset attachment client boundary', () => {
   it('posts an asset ID with session credentials, CSRF and cancellation, and validates the returned copy', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000081'
-    const media = { id: '00000000-0000-4000-8000-000000000082', kind: 'attachment', filename: 'report.pdf', mimeType: 'application/pdf', byteLength: 25, available: true }
+    const media = {
+      id: '00000000-0000-4000-8000-000000000082',
+      kind: 'attachment',
+      filename: 'report.pdf',
+      mimeType: 'application/pdf',
+      byteLength: 25,
+      available: true
+    }
     const signal = new AbortController().signal
-    const fetcher = vi.fn(async (_input: unknown, _init?: RequestInit) => new Response(JSON.stringify({ media }), { headers: { 'content-type': 'application/json' } }))
+    const fetcher = vi.fn(
+      async (_input: unknown, _init?: RequestInit) => new Response(JSON.stringify({ media }), { headers: { 'content-type': 'application/json' } })
+    )
     expect(await attachAgentAsset(fetcher as typeof fetch, 'token', sessionId, 42, signal)).toEqual(media)
     const [url, init] = fetcher.mock.calls[0]!
     expect(url).toBe(`/_api/agents/sessions/${sessionId}/media/assets`)
@@ -858,7 +900,9 @@ describe('Wiki asset attachment client boundary', () => {
     await expect(attachAgentAsset(fetcher as typeof fetch, 'token', sessionId, -1)).rejects.toThrow('Asset ID')
     await expect(attachAgentAsset(fetcher as typeof fetch, 'token', 'invalid', 42)).rejects.toThrow()
     expect(fetcher).toHaveBeenCalledTimes(1)
-    fetcher.mockImplementation(async () => new Response(JSON.stringify({ media: { ...media, id: 'not-valid' } }), { headers: { 'content-type': 'application/json' } }))
+    fetcher.mockImplementation(
+      async () => new Response(JSON.stringify({ media: { ...media, id: 'not-valid' } }), { headers: { 'content-type': 'application/json' } })
+    )
     await expect(attachAgentAsset(fetcher as typeof fetch, 'token', sessionId, 42)).rejects.toThrow()
   })
 })

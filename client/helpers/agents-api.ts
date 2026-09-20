@@ -28,6 +28,7 @@ import {
   type SubmitAgentMessageRequest,
   type UpdateAgentSessionFolderRequest,
   type UpdateAgentSessionProfileRequest,
+  type UpdateAgentSessionRequest,
   type UpdateAgentSkillPreferencesRequest
 } from '../../shared/agents/contracts.ts'
 
@@ -47,6 +48,30 @@ const Run = z.object({
   errorCode: z.string().nullable(),
   errorMessage: z.string().nullable()
 })
+const GoogleSearchCitation = z
+  .object({
+    url: z
+      .url()
+      .max(2_048)
+      .refine(value => {
+        for (let index = 0; index < value.length; index++) {
+          const code = value.charCodeAt(index)
+          if (code <= 32 || code === 127) return false
+        }
+        const url = new URL(value)
+        return url.protocol === 'https:' && url.username === '' && url.password === ''
+      }),
+    title: z
+      .string()
+      .min(1)
+      .max(512)
+      .refine(title => title.trim().length > 0, { message: 'Grounding citation title is empty.' }),
+    startIndex: z.number().int().nonnegative().max(10_000_000),
+    endIndex: z.number().int().positive().max(10_000_000)
+  })
+  .strict()
+  .refine(citation => citation.endIndex > citation.startIndex, { message: 'Grounding citation range is invalid.' })
+const GoogleSearchGrounding = z.object({ citations: z.array(GoogleSearchCitation).max(32) }).strict()
 const Citation = z.object({
   evidenceId: z.string(),
   kind: z.enum(['page', 'search-result', 'skill', 'browser']),
@@ -63,6 +88,7 @@ const Media = z.object({
 })
 const Message = z.object({
   media: z.array(Media).optional(),
+  googleSearchGrounding: GoogleSearchGrounding.optional(),
   knowledgeContext: AgentKnowledgeContextSchema.optional(),
   id: Uuid,
   runId: Uuid.nullable(),
@@ -88,6 +114,7 @@ const Skill = z.object({
   ordinal: z.number().int().nonnegative()
 })
 const Session = z.object({
+  googleSearchEnabled: z.boolean().optional().default(false),
   id: Uuid,
   title: z.string(),
   retention: z.enum(['temporary', 'saved']),
@@ -255,7 +282,16 @@ const SessionSummary = z.object({
 })
 const ConversationFolder = z.object({ id: Uuid, name: z.string(), version: z.number().int().positive(), createdAt: Iso, updatedAt: Iso })
 const Profile = z.object({
-  media: z.object({ attachments: z.boolean(), imageGeneration: z.boolean(), videoGeneration: z.boolean().default(false), musicGeneration: z.boolean().default(false), transcription: z.boolean() }).optional(),
+  googleSearchAvailable: z.boolean().optional().default(false),
+  media: z
+    .object({
+      attachments: z.boolean(),
+      imageGeneration: z.boolean(),
+      videoGeneration: z.boolean().default(false),
+      musicGeneration: z.boolean().default(false),
+      transcription: z.boolean()
+    })
+    .optional(),
   id: Uuid,
   name: z.string(),
   transport: z.enum(AGENT_PROVIDER_TRANSPORTS),
@@ -522,11 +558,7 @@ export const updateAgentSession = (
   fetcher: typeof fetch,
   csrfToken: string,
   sessionId: string,
-  input: {
-    readonly expectedSessionVersion: number
-    readonly title?: string
-    readonly retention?: 'temporary' | 'saved'
-  }
+  input: UpdateAgentSessionRequest
 ): Promise<AgentThreadState> => {
   assertUuid(sessionId, 'Session ID')
   assertPositiveVersion(input.expectedSessionVersion)
@@ -730,10 +762,22 @@ export const updateAgentSkillPreferences = async (
     })
   ).skillIds
 
+const MAX_GOOGLE_SEARCH_SUGGESTIONS_JSON = 128 * 1_024
+const GoogleSearchSuggestionsEvent = z
+  .object({
+    runId: Uuid,
+    suggestions: z.array(z.string().min(1).max(32_768)).max(8)
+  })
+  .strict()
+
 export const subscribeAgentRun = (
   runId: string,
   after: number,
-  handlers: { readonly event: (type: AgentEventType, sequence: number) => void; readonly error: () => void }
+  handlers: {
+    readonly event: (type: AgentEventType, sequence: number) => void
+    readonly googleSearchSuggestions?: (runId: string, suggestions: readonly string[]) => void
+    readonly error: () => void
+  }
 ): EventSource => {
   const source = new EventSource(`/_api/agents/runs/${encodeURIComponent(runId)}/events?after=${after}`)
   for (const type of AGENT_EVENT_TYPES) {
@@ -743,29 +787,90 @@ export const subscribeAgentRun = (
       handlers.event(type, Number.isSafeInteger(sequence) && sequence > after ? sequence : after)
     })
   }
+  source.addEventListener('google_search.suggestions', event => {
+    const data = (event as MessageEvent).data
+    if (
+      typeof data !== 'string' ||
+      data.length > MAX_GOOGLE_SEARCH_SUGGESTIONS_JSON ||
+      new TextEncoder().encode(data).byteLength > MAX_GOOGLE_SEARCH_SUGGESTIONS_JSON
+    )
+      return
+    try {
+      const parsed = GoogleSearchSuggestionsEvent.parse(JSON.parse(data))
+      if (parsed.runId === runId) handlers.googleSearchSuggestions?.(parsed.runId, parsed.suggestions)
+    } catch {
+      // Transient display data is ignored when malformed; it never affects the durable event cursor.
+    }
+  })
   source.addEventListener('error', handlers.error)
   return source
 }
 
 export const agentMediaContentUrl = (id: string): string => `/_api/agents/media/${encodeURIComponent(id)}/content`
 
-export const uploadAgentMedia = async (fetcher: typeof fetch, csrfToken: string, sessionId: string, file: File, signal?: AbortSignal): Promise<AgentMediaView> => {
+export const uploadAgentMedia = async (
+  fetcher: typeof fetch,
+  csrfToken: string,
+  sessionId: string,
+  file: File,
+  signal?: AbortSignal
+): Promise<AgentMediaView> => {
   assertUuid(sessionId, 'Session ID')
   const body = new FormData()
   body.append('file', file)
-  return (await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/media`, z.object({ media: Media }), { method: 'POST', body, signal })).media
+  return (
+    await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/media`, z.object({ media: Media }), {
+      method: 'POST',
+      body,
+      signal
+    })
+  ).media
 }
-export const attachAgentAsset = async (fetcher: typeof fetch, csrfToken: string, sessionId: string, assetId: number, signal?: AbortSignal): Promise<AgentMediaView> => {
+export const attachAgentAsset = async (
+  fetcher: typeof fetch,
+  csrfToken: string,
+  sessionId: string,
+  assetId: number,
+  signal?: AbortSignal
+): Promise<AgentMediaView> => {
   assertUuid(sessionId, 'Session ID')
   if (!Number.isSafeInteger(assetId) || assetId < 1) throw new Error('Asset ID must be a positive integer')
-  return (await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/media/assets`, z.object({ media: Media }), { method: 'POST', body: JSON.stringify({ assetId }), signal })).media
+  return (
+    await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/media/assets`, z.object({ media: Media }), {
+      method: 'POST',
+      body: JSON.stringify({ assetId }),
+      signal
+    })
+  ).media
 }
 export const deleteAgentMedia = async (fetcher: typeof fetch, csrfToken: string, id: string): Promise<void> => {
   assertUuid(id, 'Media ID')
-  const response = await fetcher(`/_api/agents/media/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', headers: { 'x-wiki-csrf': csrfToken, accept: 'application/json' } })
+  const response = await fetcher(`/_api/agents/media/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    headers: { 'x-wiki-csrf': csrfToken, accept: 'application/json' }
+  })
   if (!response.ok) throw new AgentApiError(response.status, await errorMessage(response))
 }
-export const startAgentTranscription = async (fetcher: typeof fetch, csrfToken: string, sessionId: string, input: { clientRequestId: string; expectedSessionVersion: number; profileResolutionToken: string; attachmentId: string }, signal?: AbortSignal): Promise<string> =>
-  (await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/transcriptions`, z.object({ runId: Uuid }), { method: 'POST', body: JSON.stringify(input), signal })).runId
+export const startAgentTranscription = async (
+  fetcher: typeof fetch,
+  csrfToken: string,
+  sessionId: string,
+  input: { clientRequestId: string; expectedSessionVersion: number; profileResolutionToken: string; attachmentId: string },
+  signal?: AbortSignal
+): Promise<string> =>
+  (
+    await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/transcriptions`, z.object({ runId: Uuid }), {
+      method: 'POST',
+      body: JSON.stringify(input),
+      signal
+    })
+  ).runId
 export const getAgentTranscription = (fetcher: typeof fetch, csrfToken: string, runId: string, signal?: AbortSignal) =>
-  requestJson(fetcher, csrfToken, `/_api/agents/runs/${encodeURIComponent(runId)}/transcription`, z.object({ status: RunStatus, text: z.string().optional() }), { signal })
+  requestJson(
+    fetcher,
+    csrfToken,
+    `/_api/agents/runs/${encodeURIComponent(runId)}/transcription`,
+    z.object({ status: RunStatus, text: z.string().optional() }),
+    { signal }
+  )

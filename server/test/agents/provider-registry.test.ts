@@ -96,6 +96,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.integer('groupId')
   })
   await knex.schema.createTable('agentSessions', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.string('id').primary()
     table.integer('ownerId')
     table.integer('version')
@@ -105,6 +106,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.dateTime('updatedAt')
   })
   await knex.schema.createTable('agentRuns', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.string('id')
     table.string('sessionId')
     table.string('status')
@@ -511,7 +513,12 @@ describe('agent provider profile registry', () => {
     const media = {
       attachments: true,
       imageGeneration: { model: 'gemini-3.1-flash-image' as const, pricingRevision: 'image-v1|500000|60000000' },
-      videoGeneration: { model: 'gemini-omni-1.1-flash' as const, pricingRevision: 'video-v1|1500000|17500000', textOutputMicrosPerMillionTokens: 9000000, usagePolicy: 'reported-or-estimated' as const },
+      videoGeneration: {
+        model: 'gemini-omni-1.1-flash' as const,
+        pricingRevision: 'video-v1|1500000|17500000',
+        textOutputMicrosPerMillionTokens: 9000000,
+        usagePolicy: 'reported-or-estimated' as const
+      },
       musicGeneration: { model: 'lyria-3.5' as const, costMicrosPerSong: 80000, usagePolicy: 'reported-or-estimated' as const },
       transcription: { model: 'gemini-3.5-transcribe' as const, pricingRevision: 'speech-v1|1000000|2000000' }
     }

@@ -61,6 +61,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.integer('id').primary()
   })
   await knex.schema.createTable('agentSessions', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.uuid('id').primary()
     table.integer('ownerId').notNullable()
     table.string('title').notNullable()
@@ -115,6 +116,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.unique(['ownerId', 'normalizedName'])
   })
   await knex.schema.createTable('agentMessages', table => {
+    table.text('googleSearchGrounding').nullable()
     table.uuid('id').primary()
     table.uuid('sessionId').notNullable()
     table.uuid('runId').nullable()
@@ -131,6 +133,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.unique(['sessionId', 'ordinal'])
   })
   await knex.schema.createTable('agentRuns', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.uuid('id').primary()
     table.uuid('sessionId').notNullable()
     table.uuid('userMessageId').notNullable()
@@ -324,6 +327,7 @@ const insertRun = async (knex: Knex): Promise<void> => {
     clientRequestId: '00000000-0000-4000-8000-000000000005',
     clientRequestSha256: 'a'.repeat(64),
     profileResolutionSha256: 'b'.repeat(64),
+    googleSearchEnabled: false,
     status: 'running',
     attempts: 1,
     maxAttempts: 3,
@@ -1858,6 +1862,7 @@ describe('durable agent repositories', () => {
       clientRequestId: '00000000-0000-4000-8000-000000000036',
       expectedSessionVersion: 1,
       profileResolutionSha256: 'a'.repeat(64),
+      googleSearchEnabled: false,
       content: 'Durable question',
       currentPage: { id: 42, locale: 'en', path: 'guide', observedUpdatedAt: '2026-08-17T00:00:00.000Z' },
       providerProfileVersionId: '00000000-0000-4000-8000-000000000037',
@@ -1936,6 +1941,7 @@ describe('durable agent repositories', () => {
         async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
           return {
             profileResolutionSha256: 'd'.repeat(64),
+            googleSearchEnabled: false,
             providerProfileVersionId: '00000000-0000-4000-8000-000000000086',
             transportKind: 'test',
             model: 'test',
@@ -1953,6 +1959,7 @@ describe('durable agent repositories', () => {
         async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
           return {
             profileResolutionSha256: 'd'.repeat(64),
+            googleSearchEnabled: false,
             providerProfileVersionId: '00000000-0000-4000-8000-000000000086',
             transportKind: 'test',
             model: 'test',
@@ -2039,6 +2046,7 @@ describe('durable agent repositories', () => {
           async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
             return {
               profileResolutionSha256: 'f'.repeat(64),
+              googleSearchEnabled: false,
               providerProfileVersionId: '00000000-0000-4000-8000-000000000098',
               transportKind: 'test',
               model: 'test',
@@ -2056,6 +2064,7 @@ describe('durable agent repositories', () => {
           async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
             return {
               profileResolutionSha256: 'f'.repeat(64),
+              googleSearchEnabled: false,
               providerProfileVersionId: '00000000-0000-4000-8000-000000000098',
               transportKind: 'test',
               model: 'test',
@@ -2117,6 +2126,7 @@ describe('durable agent repositories', () => {
     const session = await getOwnedAgentSession(knex, 7, goalSessionId)
     const admission = {
       profileResolutionSha256: 'd'.repeat(64),
+      googleSearchEnabled: false,
       providerProfileVersionId: '00000000-0000-4000-8000-000000000183',
       transportKind: 'test',
       model: 'test',
@@ -2235,6 +2245,7 @@ describe('durable agent repositories', () => {
         async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
           return {
             profileResolutionSha256: 'e'.repeat(64),
+            googleSearchEnabled: false,
             providerProfileVersionId: profileVersionId,
             transportKind: 'test',
             model: 'test',
@@ -2252,6 +2263,7 @@ describe('durable agent repositories', () => {
         async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
           return {
             profileResolutionSha256: 'e'.repeat(64),
+            googleSearchEnabled: false,
             providerProfileVersionId: profileVersionId,
             transportKind: 'test',
             model: 'test',
@@ -2840,6 +2852,7 @@ describe('durable agent repositories', () => {
         clientRequestId: `00000000-0000-4000-8000-${String(400 + index).padStart(12, '0')}`,
         clientRequestSha256: 'a'.repeat(64),
         profileResolutionSha256: 'b'.repeat(64),
+        googleSearchEnabled: false,
         status: 'queued',
         attempts: 0,
         maxAttempts: 3,

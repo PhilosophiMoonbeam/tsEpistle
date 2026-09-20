@@ -125,7 +125,7 @@ export type AgentEvidenceConfidence = 'high' | 'medium' | 'low'
 export const AGENT_GOAL_STATUSES = ['active', 'paused', 'blocked', 'budget_limited', 'completed', 'cancelled', 'failed'] as const
 export type AgentGoalStatus = (typeof AGENT_GOAL_STATUSES)[number]
 export type AgentCompletionOutcome = 'complete' | 'retry' | 'blocked' | 'partial'
-export const AGENT_GOAL_TOKEN_TIERS = ['standard', 'extended'] as const
+export const AGENT_GOAL_TOKEN_TIERS = ['small', 'standard', 'extended'] as const
 export type AgentGoalTokenTier = (typeof AGENT_GOAL_TOKEN_TIERS)[number]
 export const AGENT_GOAL_BUDGET_SELECTIONS = ['pending', 'utility', 'fallback', 'legacy'] as const
 export type AgentGoalBudgetSelection = (typeof AGENT_GOAL_BUDGET_SELECTIONS)[number]
@@ -243,8 +243,20 @@ export interface AgentMediaView {
   readonly available: boolean
 }
 
+export interface AgentGoogleSearchCitation {
+  readonly url: string
+  readonly title: string
+  readonly startIndex: number
+  readonly endIndex: number
+}
+
+export interface AgentGoogleSearchGrounding {
+  readonly citations: readonly AgentGoogleSearchCitation[]
+}
+
 export interface AgentMessageView {
   readonly media?: readonly AgentMediaView[]
+  readonly googleSearchGrounding?: AgentGoogleSearchGrounding
   readonly knowledgeContext?: AgentKnowledgeContext
   readonly id: string
   readonly runId: string | null
@@ -290,6 +302,7 @@ export const agentProviderReasoningEfforts = (transport: AgentProviderTransport)
 
 export interface AgentProviderProfileView {
   readonly media?: AgentMediaCapabilities
+  readonly googleSearchAvailable?: boolean
   readonly id: string
   readonly name: string
   readonly transport: AgentProviderTransport
@@ -328,6 +341,7 @@ export interface AgentConversationFolderView {
 }
 
 export interface AgentSessionView {
+  readonly googleSearchEnabled?: boolean
   readonly id: string
   readonly title: string
   readonly retention: AgentSessionRetention
@@ -561,6 +575,7 @@ export interface UpdateAgentSessionRequest {
   readonly expectedSessionVersion: number
   readonly title?: string
   readonly retention?: AgentSessionRetention
+  readonly googleSearchEnabled?: boolean
 }
 export interface UpdateAgentSessionFolderRequest {
   readonly expectedSessionVersion: number

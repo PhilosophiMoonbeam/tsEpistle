@@ -17,6 +17,7 @@ const TERMINAL_PROPOSAL_STATUSES = ['denied', 'expired', 'applied', 'failed', 'c
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 const PROPOSAL_RECOVERY_MILLISECONDS = 5 * 60_000
 const before = (now: Date, days: number): Date => new Date(now.valueOf() - days * 86_400_000)
+const GOOGLE_SEARCH_HISTORY_DAYS = 2 * 365
 
 export interface AgentMaintenancePolicy {
   readonly batchSize: number
@@ -56,6 +57,7 @@ export interface AgentMaintenanceResult {
   readonly purgedSkillUses: number
   readonly purgedUsageRows: number
   readonly compactedEvents: number
+  readonly scrubbedGroundedMessages: number
   readonly reconciledReservations: number
 }
 
@@ -371,6 +373,62 @@ const compactEvents = async (knex: Knex, cutoff: Date, batchSize: number): Promi
     .whereIn('id', ids)
     .update({ data, dataSha256: sha256(data) })
 }
+const scrubGroundedMessages = async (knex: Knex, cutoff: Date, now: Date, batchSize: number): Promise<number> =>
+  knex.transaction<number>(async transaction => {
+    const rows = (await transaction('agentMessages')
+      .whereNotNull('googleSearchGrounding')
+      .andWhere('createdAt', '<=', cutoff)
+      .whereNotExists(function activeRun() {
+        this.select(transaction.raw('1'))
+          .from('agentRuns')
+          .where('agentRuns.assistantMessageId', transaction.ref('agentMessages.id'))
+          .whereIn('agentRuns.status', ['queued', 'running', 'awaiting_approval'])
+      })
+      .orderBy('createdAt')
+      .limit(batchSize)
+      .select('id', 'runId')) as Array<{ id: string; runId: string | null }>
+    if (rows.length === 0) return 0
+    const runIds = rows.flatMap(row => (row.runId === null ? [] : [row.runId]))
+    if (runIds.length > 0) {
+      const events = (await transaction('agentEvents')
+        .whereIn('runId', runIds)
+        .whereIn('type', ['message.delta', 'model.turn', 'suggestions.updated'])
+        .select('id', 'type', 'data')) as Array<{ id: string; type: string; data: string }>
+      for (const event of events) {
+        let data: Readonly<Record<string, unknown>>
+        if (event.type === 'message.delta') {
+          data = { compacted: true }
+        } else if (event.type === 'suggestions.updated') {
+          data = { suggestions: [] }
+        } else {
+          try {
+            const parsed: unknown = JSON.parse(event.data)
+            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('invalid event')
+            data = { ...(parsed as Readonly<Record<string, unknown>>), content: '' }
+          } catch {
+            throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored grounded model event is invalid', 500)
+          }
+        }
+        const encoded = canonicalJson(data)
+        await transaction('agentEvents')
+          .where({ id: event.id })
+          .update({ data: encoded, dataSha256: sha256(encoded) })
+      }
+    }
+    return transaction('agentMessages')
+      .whereIn(
+        'id',
+        rows.map(row => row.id)
+      )
+      .update<number>({
+        content: '',
+        citations: null,
+        googleSearchGrounding: null,
+        providerStateCiphertext: null,
+        providerStateSha256: null,
+        updatedAt: now
+      })
+  })
 
 const reconcileExpiredReservations = async (knex: Knex, now: Date, batchSize: number): Promise<number> => {
   const rows = await knex('agentQuotaReservations')
@@ -422,6 +480,7 @@ export const runAgentMaintenance = async (
   const scrubbedMcpProposals = await scrubMcpProposals(knex, before(now, policy.mcpContentDays), now, policy.batchSize)
   const scrubbedSkillUses = await scrubSkillUses(knex, before(now, policy.mcpContentDays), policy.batchSize)
   const compactedEvents = await compactEvents(knex, before(now, policy.compactDeltaDays), policy.batchSize)
+  const scrubbedGroundedMessages = await scrubGroundedMessages(knex, before(now, GOOGLE_SEARCH_HISTORY_DAYS), now, policy.batchSize)
   const reconciledReservations = await reconcileExpiredReservations(knex, now, policy.batchSize)
   const purgedMcpProposals = await purgeMcpProposals(knex, before(now, policy.auditDays), policy.batchSize)
   const purgedSkillUses = await purgeSkillUses(knex, before(now, policy.auditDays), policy.batchSize)
@@ -442,6 +501,7 @@ export const runAgentMaintenance = async (
     scrubbedSkillUses,
     purgedSkillUses,
     purgedUsageRows,
+    scrubbedGroundedMessages,
     compactedEvents,
     reconciledReservations
   }

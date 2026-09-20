@@ -129,7 +129,30 @@
               <span>Search: {{ entry.message.knowledgeContext.scope.kind === 'selected' ? 'selected pages' : entry.message.knowledgeContext.scope.kind === 'section' ? entry.message.knowledgeContext.scope.path : entry.message.knowledgeContext.scope.kind === 'locale' ? entry.message.knowledgeContext.scope.locale.toUpperCase() : 'all Wiki' }}</span>
               <v-btn v-for="source in entry.message.knowledgeContext.sources" :key="source.id" size="x-small" variant="text" prepend-icon="mdi-file-document-outline" :aria-label="`Preview ${source.title}, selected revision ${source.sourceRevision}`" @click="previewSelector = { id: source.id }">{{ source.title }} · r{{ source.sourceRevision }}</v-btn>
             </div>
-            <AgentAnswerActions v-if="entry.message.role === 'assistant' && entry.message.status === 'complete' && entry.message.content" :content="entry.message.content" :citations="entry.message.citations" />
+            <AgentAnswerActions v-if="entry.message.role === 'assistant' && entry.message.status === 'complete' && entry.message.content" :content="entry.message.content" :citations="entry.message.citations" :google-search-grounding="entry.message.googleSearchGrounding" />
+            <details v-if="entry.googleSearchCitations?.length" class="agent-sources agent-web-sources mt-3" aria-label="Google Search sources">
+              <summary class="agent-sources__heading">
+                <v-icon icon="mdi-web" size="18" aria-hidden="true" />
+                <strong>Web sources</strong>
+                <span class="agent-sources__origin">Google Search</span>
+                <span class="agent-sources__count">{{ entry.googleSearchCitations?.length }}</span>
+              </summary>
+              <ol class="agent-web-sources__list">
+                <li v-for="(item, index) in entry.googleSearchCitations" :key="`${item.citation.url}:${item.citation.startIndex}:${item.citation.endIndex}`">
+                  <a v-if="item.safeHref" :href="item.safeHref" target="_blank" rel="noopener noreferrer">
+                    <span class="agent-sources__number">{{ index + 1 }}</span>
+                    <strong>{{ item.citation.title }}</strong>
+                    <v-icon icon="mdi-open-in-new" size="14" aria-hidden="true" />
+                    <span class="agent-sources__new-window"> (opens in a new tab)</span>
+                  </a>
+                  <span v-else>
+                    <span class="agent-sources__number">{{ index + 1 }}</span>
+                    <strong>{{ item.citation.title }}</strong>
+                  </span>
+                  <blockquote v-if="item.quote">{{ item.quote }}</blockquote>
+                </li>
+              </ol>
+            </details>
             <details v-if="entry.message.citations.length" class="agent-sources mt-3" aria-label="Sources">
               <summary class="agent-sources__heading">
                 <v-icon icon="mdi-book-open-page-variant-outline" size="18" aria-hidden="true" />
@@ -181,6 +204,10 @@
                 </li>
               </ol>
             </details>
+            <AgentSearchSuggestions
+              v-if="entry.message.role === 'assistant' && entry.message.runId && googleSearchSuggestions?.runId === entry.message.runId && googleSearchSuggestions.suggestions.length"
+              :suggestions="googleSearchSuggestions.suggestions"
+            />
             <nav
               v-if="entry.message.role === 'assistant' && entry.run?.pageLinks.length"
               class="agent-page-links mt-3"
@@ -267,13 +294,13 @@
 </template>
 
 <script setup lang="ts">
-import type { AgentMediaView } from '../../../shared/agents/contracts.ts'
+import type { AgentGoogleSearchCitation, AgentMediaView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import { computed, ref, watch } from 'vue'
 import StatusIndicator from '../common/status-indicator.vue'
-import type { AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import AgentMarkdown from './agent-markdown.vue'
 import AgentAnswerActions from './agent-answer-actions.vue'
+import AgentSearchSuggestions from './agent-search-suggestions.vue'
 import WikiSourcePreview from '../common/wiki-source-preview.vue'
 import { wikiSourceSelectorFromHref, type WikiSource, type WikiSourceSelector } from '../../../shared/wiki-source.ts'
 import AgentTaskProgress from './agent-task-progress.vue'
@@ -288,7 +315,15 @@ import {
   type AgentThreadPresentation
 } from './agent-thread-presentation.ts'
 
-const props = defineProps<{ thread: AgentThreadState; connection: string; decidingApprovalId?: string | null; canSubmit?: boolean; imageEditingEnabled?: boolean; networkBlocked?: boolean }>()
+const props = defineProps<{
+  thread: AgentThreadState
+  connection: string
+  decidingApprovalId?: string | null
+  canSubmit?: boolean
+  imageEditingEnabled?: boolean
+  networkBlocked?: boolean
+  googleSearchSuggestions?: { readonly runId: string; readonly suggestions: readonly string[] } | null
+}>()
 const emit = defineEmits<{
   editImage: [media: AgentMediaView]
   askSource: [source: WikiSource]
@@ -327,6 +362,10 @@ const safeNavigableHref = (href: string | null): string | undefined => {
   } catch {
     return undefined
   }
+}
+const googleCitationQuote = (content: string, citation: AgentGoogleSearchCitation): string => {
+  if (citation.startIndex < 0 || citation.endIndex <= citation.startIndex || citation.endIndex > content.length) return ''
+  return content.slice(citation.startIndex, citation.endIndex)
 }
 const normalizeSourceIdSegment = (segment: string): string =>
   encodeURIComponent(segment.normalize('NFC').replace(/[\uD800-\uDFFF]/gu, '\uFFFD'))
@@ -368,10 +407,16 @@ type ProjectedCitationGroup = Omit<AgentCitationGroup, 'sections'> & LinkPresent
 type ProjectedRun = Omit<AgentRunPresentation, 'pageLinks'> & {
   readonly pageLinks: readonly (AgentRunPresentation['pageLinks'][number] & LinkPresentationMetadata)[]
 }
+interface ProjectedGoogleSearchCitation {
+  readonly citation: AgentGoogleSearchCitation
+  readonly safeHref: string | undefined
+  readonly quote: string
+}
 type ProjectedMessage = Omit<AgentMessagePresentation, 'run' | 'citationGroups'> & {
   readonly run: ProjectedRun | null
   readonly citationGroups: readonly ProjectedCitationGroup[]
   readonly temporal: MessageTemporalMetadata
+  readonly googleSearchCitations: readonly ProjectedGoogleSearchCitation[]
 }
 interface ThreadProjection {
   readonly orderedMessages: readonly ProjectedMessage[]
@@ -409,6 +454,11 @@ const threadProjection = computed<ThreadProjection>(() => {
           ...citationEntry,
           ...metadataForHref(citationEntry.citation.href)
         }))
+      })),
+      googleSearchCitations: (entry.message.googleSearchGrounding?.citations ?? []).map(citation => ({
+        citation,
+        safeHref: safeNavigableHref(citation.url),
+        quote: googleCitationQuote(entry.message.content, citation)
       })),
       run: entry.run
         ? {
@@ -762,6 +812,46 @@ watch(
   font-weight: 700;
 }
 
+.agent-sources__origin {
+  margin-inline-start: auto;
+  font-size: .7rem;
+  font-weight: 500;
+}
+
+.agent-web-sources__list {
+  display: grid;
+  gap: var(--wiki-space-3);
+  margin: 0;
+  padding: var(--wiki-space-3);
+  list-style: none;
+}
+
+.agent-web-sources__list > li {
+  min-width: 0;
+}
+
+.agent-web-sources__list a,
+.agent-web-sources__list li > span {
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  color: inherit;
+  text-decoration: none;
+}
+
+.agent-web-sources__list a:hover strong {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.agent-web-sources__list blockquote {
+  margin: var(--wiki-space-2) 0 0 calc(var(--wiki-space-6) + var(--wiki-space-1));
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  font-size: .76rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
 .agent-sources__count {
   align-items: center;
   background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent);
@@ -774,6 +864,10 @@ watch(
   min-height: var(--wiki-space-5);
   min-width: var(--wiki-space-5);
   padding-inline: var(--wiki-space-1);
+}
+
+.agent-web-sources .agent-sources__count {
+  margin-inline-start: var(--wiki-space-1);
 }
 
 .agent-sources__groups {

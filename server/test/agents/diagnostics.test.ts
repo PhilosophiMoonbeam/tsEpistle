@@ -34,6 +34,7 @@ const now = '2026-08-24T12:00:00.000Z'
 
 const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('agentSessions', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.uuid('id').primary()
     table.integer('ownerId')
     table.string('title')
@@ -53,6 +54,7 @@ const createTables = async (db: Knex): Promise<void> => {
     table.dateTime('deletedAt').nullable()
   })
   await db.schema.createTable('agentMessages', table => {
+    table.text('googleSearchGrounding').nullable()
     table.uuid('id').primary()
     table.uuid('sessionId')
     table.uuid('runId').nullable()
@@ -67,6 +69,7 @@ const createTables = async (db: Knex): Promise<void> => {
     table.dateTime('updatedAt')
   })
   await db.schema.createTable('agentRuns', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.uuid('id').primary()
     table.uuid('sessionId')
     table.uuid('userMessageId')

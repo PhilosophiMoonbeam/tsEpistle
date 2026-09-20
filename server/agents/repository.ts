@@ -6,6 +6,7 @@ import {
   type AgentEvent,
   type AgentEventData,
   type AgentEventType,
+  type AgentGoogleSearchGrounding,
   type AgentExecutionMode,
   type AgentMessageRole,
   type AgentMessageStatus,
@@ -24,6 +25,59 @@ const messageStatusSchema = z.enum(['pending', 'streaming', 'complete', 'failed'
 const iso = (value: Date | string): string => (value instanceof Date ? value.toISOString() : new Date(value).toISOString())
 const digest = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex')
 const AgentSessionCursorSchema = z.tuple([z.iso.datetime(), z.string().min(1).max(128)])
+const storedBoolean = (value: unknown, label: string): boolean => {
+  if (value === undefined || value === null) return false
+  if (value === true || value === 1) return true
+  if (value === false || value === 0) return false
+  throw new AgentRepositoryError('AGENT_SESSION_CORRUPT', `${label} is invalid`, 500)
+}
+
+const GoogleSearchGroundingSchema = z.strictObject({
+  citations: z
+    .array(
+      z
+        .strictObject({
+          url: z
+            .string()
+            .min(1)
+            .max(2_048)
+            .refine(value => {
+              for (let index = 0; index < value.length; index++) {
+                const code = value.charCodeAt(index)
+                if (code <= 32 || code === 127) return false
+              }
+              try {
+                const url = new URL(value)
+                return url.protocol === 'https:' && url.username === '' && url.password === ''
+              } catch {
+                return false
+              }
+            }),
+          title: z
+            .string()
+            .min(1)
+            .max(512)
+            .refine(value => {
+              if (value.trim().length === 0) return false
+              for (let index = 0; index < value.length; index++) {
+                const code = value.charCodeAt(index)
+                if (code < 32 || code === 127) return false
+              }
+              return true
+            }),
+          startIndex: z.number().int().nonnegative().max(10_000_000),
+          endIndex: z.number().int().positive().max(10_000_000)
+        })
+        .refine(citation => citation.endIndex > citation.startIndex)
+    )
+    .max(32)
+})
+
+export const validateAgentGoogleSearchGrounding = (value: unknown): AgentGoogleSearchGrounding => {
+  const parsed = GoogleSearchGroundingSchema.safeParse(value)
+  if (!parsed.success) throw new AgentRepositoryError('INVALID_GOOGLE_SEARCH_GROUNDING', 'Google Search grounding is invalid', 500)
+  return parsed.data
+}
 
 interface AgentSessionCursor {
   readonly lastActivityAt: Date
@@ -83,6 +137,7 @@ export interface AgentSessionRecord {
   readonly retention: AgentSessionRetention
   readonly folderId: string | null
   readonly providerProfileId: string | null
+  readonly googleSearchEnabled: boolean
   readonly executionMode: AgentExecutionMode
   readonly version: number
   readonly summary: string | null
@@ -105,6 +160,7 @@ interface SessionRow extends Omit<AgentSessionRecord, 'createdAt' | 'updatedAt' 
 const sessionRecord = (row: SessionRow): AgentSessionRecord => ({
   ...row,
   folderId: row.folderId ?? null,
+  googleSearchEnabled: storedBoolean(row.googleSearchEnabled, 'Google Search consent'),
   retention: retentionSchema.parse(row.retention),
   executionMode: executionModeSchema.parse(row.executionMode),
   createdAt: iso(row.createdAt),
@@ -141,6 +197,7 @@ export const createAgentSession = async (knex: Knex | Knex.Transaction, input: C
     retention,
     folderId: null,
     providerProfileId: input.providerProfileId,
+    googleSearchEnabled: false,
     executionMode,
     version: 1,
     summary: null,
@@ -328,25 +385,36 @@ export interface UpdateAgentSessionInput {
   readonly title?: string
   readonly retention?: AgentSessionRetention
   readonly expiresAt?: Date | null
+  readonly googleSearchEnabled?: boolean
 }
 
-export const updateAgentSession = async (knex: Knex, input: UpdateAgentSessionInput): Promise<AgentSessionRecord> => {
-  await getOwnedAgentSession(knex, input.ownerId, input.sessionId)
-  const now = new Date()
-  const patch: Record<string, unknown> = { version: knex.raw('?? + 1', ['version']), updatedAt: now, lastActivityAt: now }
-  if (input.title !== undefined) {
-    patch.title = input.title.trim().slice(0, 255)
-    patch.titleSource = input.title.trim().length > 0 ? 'manual' : 'none'
-  }
-  if (input.retention !== undefined) patch.retention = retentionSchema.parse(input.retention)
-  if (input.expiresAt !== undefined) patch.expiresAt = input.expiresAt
-  const changed = await knex('agentSessions')
-    .where({ id: input.sessionId, ownerId: input.ownerId, version: input.expectedVersion })
-    .whereNull('deletedAt')
-    .update(patch)
-  if (changed !== 1) return conflict('SESSION_VERSION_CHANGED', 'Agent session changed concurrently')
-  return getOwnedAgentSession(knex, input.ownerId, input.sessionId)
-}
+export const updateAgentSession = async (knex: Knex | Knex.Transaction, input: UpdateAgentSessionInput): Promise<AgentSessionRecord> =>
+  knex.transaction(async transaction => {
+    const session = await transaction('agentSessions').where({ id: input.sessionId, ownerId: input.ownerId }).whereNull('deletedAt').forUpdate().first('id')
+    if (!session) return notFound()
+    if (input.googleSearchEnabled !== undefined) {
+      const active = await transaction('agentRuns')
+        .where({ sessionId: input.sessionId, ownerId: input.ownerId })
+        .whereIn('status', ['queued', 'running', 'awaiting_approval'])
+        .first('id')
+      if (active) throw new AgentRepositoryError('SESSION_RUN_ACTIVE', 'Google Search cannot be changed while the session has active work', 409)
+    }
+    const now = new Date()
+    const patch: Record<string, unknown> = { version: transaction.raw('?? + 1', ['version']), updatedAt: now, lastActivityAt: now }
+    if (input.title !== undefined) {
+      patch.title = input.title.trim().slice(0, 255)
+      patch.titleSource = input.title.trim().length > 0 ? 'manual' : 'none'
+    }
+    if (input.retention !== undefined) patch.retention = retentionSchema.parse(input.retention)
+    if (input.expiresAt !== undefined) patch.expiresAt = input.expiresAt
+    if (input.googleSearchEnabled !== undefined) patch.googleSearchEnabled = input.googleSearchEnabled
+    const changed = await transaction('agentSessions')
+      .where({ id: input.sessionId, ownerId: input.ownerId, version: input.expectedVersion })
+      .whereNull('deletedAt')
+      .update(patch)
+    if (changed !== 1) return conflict('SESSION_VERSION_CHANGED', 'Agent session changed concurrently')
+    return getOwnedAgentSession(transaction, input.ownerId, input.sessionId)
+  })
 
 export interface AgentMessageRecord {
   readonly id: string
@@ -357,6 +425,7 @@ export interface AgentMessageRecord {
   readonly status: AgentMessageStatus
   readonly content: string
   readonly citations: string | null
+  readonly googleSearchGrounding: string | null
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -372,6 +441,7 @@ const messageRecord = (row: MessageRow): AgentMessageRecord => {
   delete message.isVisible
   return {
     ...message,
+    googleSearchGrounding: row.googleSearchGrounding ?? null,
     role: messageRoleSchema.parse(row.role),
     status: messageStatusSchema.parse(row.status),
     createdAt: iso(row.createdAt),
@@ -387,6 +457,7 @@ export interface AppendAgentMessageInput {
   readonly status: AgentMessageStatus
   readonly content: string
   readonly citations?: string | null
+  readonly googleSearchGrounding?: string | null
   readonly id?: string
 }
 
@@ -419,6 +490,7 @@ export const appendAgentMessage = async (knex: Knex, input: AppendAgentMessageIn
       status: messageStatusSchema.parse(input.status),
       content: input.content,
       citations: input.citations ?? null,
+      googleSearchGrounding: input.googleSearchGrounding ?? null,
       createdAt: now,
       updatedAt: now
     }

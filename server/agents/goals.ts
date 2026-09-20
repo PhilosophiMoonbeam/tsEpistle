@@ -31,19 +31,23 @@ export interface AgentGoalLimits {
 export const DEFAULT_AGENT_GOAL_LIMITS: AgentGoalLimits = {
   enabled: false,
   maxContinuations: 3,
-  maxTokens: 48_000,
+  maxTokens: 192_000,
   maxToolCalls: 96,
   maxDurationMilliseconds: 60 * 60_000
 }
 
-export const AGENT_GOAL_BUDGET_POLICY_VERSION = 1 as const
+export const AGENT_GOAL_BUDGET_POLICY_VERSION = 2 as const
+const SELECTED_AGENT_GOAL_BUDGET_POLICY_VERSIONS = [1, AGENT_GOAL_BUDGET_POLICY_VERSION] as const
 
-const positiveSafeInteger = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+export const isSelectedAgentGoalBudgetPolicyVersion = (value: number | null): value is 1 | 2 =>
+  value !== null && SELECTED_AGENT_GOAL_BUDGET_POLICY_VERSIONS.includes(value as 1 | 2)
+
+const positiveSafeInteger = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 
 export const agentGoalTokenAllowance = (maxTokens: number, tier: AgentGoalTokenTier): number => {
   if (!positiveSafeInteger(maxTokens)) throw new AgentRepositoryError('INVALID_AGENT_GOAL', 'Configured goal token budget is invalid', 400)
-  const allowance = tier === 'standard' ? Math.floor(maxTokens / 2) : maxTokens
+  const divisor = tier === 'small' ? 6 : tier === 'standard' ? 2 : 1
+  const allowance = Math.floor(maxTokens / divisor)
   if (!positiveSafeInteger(allowance)) throw new AgentRepositoryError('INVALID_AGENT_GOAL', 'Selected goal token allowance is invalid', 400)
   return allowance
 }
@@ -117,7 +121,7 @@ export interface AgentGoalRecord {
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 const iso = (value: Date | string): string => new Date(value).toISOString()
-const nullableIso = (value: Date | string | null): string | null => value === null ? null : iso(value)
+const nullableIso = (value: Date | string | null): string | null => (value === null ? null : iso(value))
 
 export const decodeCompletionAssessment = (
   encoded: string | null,
@@ -125,18 +129,35 @@ export const decodeCompletionAssessment = (
   expectedSha256: string | null
 ): AgentCompletionAssessment | null => {
   if (encoded === null) {
-    if (expectedOutcome !== null || expectedSha256 !== null) throw new AgentRepositoryError('AGENT_COMPLETION_CORRUPT', 'Agent completion assessment is incomplete', 500)
+    if (expectedOutcome !== null || expectedSha256 !== null)
+      throw new AgentRepositoryError('AGENT_COMPLETION_CORRUPT', 'Agent completion assessment is incomplete', 500)
     return null
   }
   if (!expectedSha256 || !SHA256.test(expectedSha256) || sha256(encoded) !== expectedSha256) {
     throw new AgentRepositoryError('AGENT_COMPLETION_CORRUPT', 'Agent completion assessment integrity check failed', 500)
   }
   let value: unknown
-  try { value = JSON.parse(encoded) } catch { throw new AgentRepositoryError('AGENT_COMPLETION_CORRUPT', 'Agent completion assessment is invalid', 500) }
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new AgentRepositoryError('AGENT_COMPLETION_CORRUPT', 'Agent completion assessment is invalid', 500)
+  try {
+    value = JSON.parse(encoded)
+  } catch {
+    throw new AgentRepositoryError('AGENT_COMPLETION_CORRUPT', 'Agent completion assessment is invalid', 500)
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    throw new AgentRepositoryError('AGENT_COMPLETION_CORRUPT', 'Agent completion assessment is invalid', 500)
   const outcome = Reflect.get(value, 'outcome')
   const issues = Reflect.get(value, 'issues')
-  if (!['complete', 'retry', 'blocked', 'partial'].includes(String(outcome)) || !Array.isArray(issues) || issues.some(issue => typeof issue !== 'object' || issue === null || typeof Reflect.get(issue, 'code') !== 'string' || typeof Reflect.get(issue, 'message') !== 'string' || typeof Reflect.get(issue, 'retryable') !== 'boolean')) {
+  if (
+    !['complete', 'retry', 'blocked', 'partial'].includes(String(outcome)) ||
+    !Array.isArray(issues) ||
+    issues.some(
+      issue =>
+        typeof issue !== 'object' ||
+        issue === null ||
+        typeof Reflect.get(issue, 'code') !== 'string' ||
+        typeof Reflect.get(issue, 'message') !== 'string' ||
+        typeof Reflect.get(issue, 'retryable') !== 'boolean'
+    )
+  ) {
     throw new AgentRepositoryError('AGENT_COMPLETION_CORRUPT', 'Agent completion assessment is invalid', 500)
   }
   if (expectedOutcome !== outcome) throw new AgentRepositoryError('AGENT_COMPLETION_CORRUPT', 'Agent completion outcome does not match its assessment', 500)
@@ -145,8 +166,7 @@ export const decodeCompletionAssessment = (
 const isBudgetSelection = (value: unknown): value is AgentGoalBudgetSelection =>
   typeof value === 'string' && AGENT_GOAL_BUDGET_SELECTIONS.includes(value as AgentGoalBudgetSelection)
 
-const isTokenTier = (value: unknown): value is AgentGoalTokenTier =>
-  typeof value === 'string' && AGENT_GOAL_TOKEN_TIERS.includes(value as AgentGoalTokenTier)
+const isTokenTier = (value: unknown): value is AgentGoalTokenTier => typeof value === 'string' && AGENT_GOAL_TOKEN_TIERS.includes(value as AgentGoalTokenTier)
 
 const isBudgetLimitReason = (value: unknown): value is AgentGoalBudgetLimitReason =>
   value === null || (typeof value === 'string' && AGENT_GOAL_BUDGET_LIMIT_REASONS.includes(value as AgentGoalBudgetLimitReason))
@@ -161,13 +181,12 @@ const tokenBudgetCanRenew = (goal: {
   readonly budgetLimitReason: AgentGoalBudgetLimitReason | null
 }): boolean =>
   goal.status === 'budget_limited' &&
-  goal.budgetPolicyVersion === AGENT_GOAL_BUDGET_POLICY_VERSION &&
+  isSelectedAgentGoalBudgetPolicyVersion(goal.budgetPolicyVersion) &&
   (goal.budgetSelection === 'utility' || goal.budgetSelection === 'fallback') &&
   goal.tokenTier !== null &&
   goal.tokenAllowance !== null &&
   goal.budgetCycle >= 1 &&
   goal.budgetLimitReason === 'tokens'
-
 
 const parseAssessment = (row: AgentGoalRow): AgentCompletionAssessment | null =>
   decodeCompletionAssessment(row.completionAssessment, row.completionOutcome, row.completionAssessmentSha256)
@@ -216,9 +235,10 @@ export const agentGoalRecord = (row: AgentGoalRow): AgentGoalRecord => {
         budgetCycle !== 0 ||
         (budgetLimitReason !== null && !(row.status === 'blocked' && budgetLimitReason === 'accounting')))) ||
     (selected &&
-      (budgetPolicyVersion !== AGENT_GOAL_BUDGET_POLICY_VERSION ||
+      (!isSelectedAgentGoalBudgetPolicyVersion(budgetPolicyVersion) ||
         tokenTier === null ||
         tokenAllowance === null ||
+        (budgetPolicyVersion === 1 && tokenTier === 'small') ||
         budgetCycle < 1))
   ) {
     throw new AgentRepositoryError('AGENT_GOAL_CORRUPT', 'Stored agent goal budget policy is invalid', 500)
@@ -285,7 +305,8 @@ export const insertAgentGoal = async (transaction: Knex.Transaction, input: Inse
   const existing = await transaction<AgentGoalRow>('agentGoals').where({ id: input.id, ownerId: input.ownerId }).first()
   if (existing) {
     const goal = agentGoalRecord(existing)
-    if (goal.sessionId !== input.sessionId || goal.objectiveSha256 !== sha256(objective)) throw new AgentRepositoryError('GOAL_IDEMPOTENCY_MISMATCH', 'Goal ID was reused with different input', 409)
+    if (goal.sessionId !== input.sessionId || goal.objectiveSha256 !== sha256(objective))
+      throw new AgentRepositoryError('GOAL_IDEMPOTENCY_MISMATCH', 'Goal ID was reused with different input', 409)
     return goal
   }
   const open = await transaction('agentGoals').where({ sessionId: input.sessionId }).whereIn('status', OPEN_GOAL_STATUSES).first('id')
@@ -334,17 +355,10 @@ export interface SelectAgentGoalTokenBudgetInput {
   readonly now?: Date
 }
 
-export const selectAgentGoalTokenBudget = async (
-  transaction: Knex.Transaction,
-  input: SelectAgentGoalTokenBudgetInput
-): Promise<AgentGoalRecord> => {
+export const selectAgentGoalTokenBudget = async (transaction: Knex.Transaction, input: SelectAgentGoalTokenBudgetInput): Promise<AgentGoalRecord> => {
   const goal = await getOwnedAgentGoal(transaction, input.ownerId, input.goalId, true)
   if (goal.budgetSelection !== 'pending') {
-    if (
-      (goal.budgetSelection === 'utility' || goal.budgetSelection === 'fallback') &&
-      goal.tokenTier === input.tier &&
-      goal.tokenAllowance !== null
-    )
+    if ((goal.budgetSelection === 'utility' || goal.budgetSelection === 'fallback') && goal.tokenTier === input.tier && goal.tokenAllowance !== null)
       return goal
     throw new AgentRepositoryError('GOAL_BUDGET_ALREADY_SELECTED', 'Agent goal token tier is already selected', 409)
   }
@@ -352,19 +366,17 @@ export const selectAgentGoalTokenBudget = async (
     throw new AgentRepositoryError('AGENT_GOAL_CORRUPT', 'Agent goal budget selection is invalid', 500)
   const allowance = agentGoalTokenAllowance(goal.maxTokens, input.tier)
   const now = input.now ?? new Date()
-  const changed = await transaction('agentGoals')
-    .where({ id: goal.id, ownerId: goal.ownerId, version: goal.version, budgetSelection: 'pending' })
-    .update({
-      maxTokens: allowance,
-      budgetSelection: input.selection,
-      tokenTier: input.tier,
-      tokenAllowance: allowance,
-      budgetCycle: 1,
-      budgetLimitReason: null,
-      errorCode: null,
-      errorMessage: null,
-      updatedAt: now
-    })
+  const changed = await transaction('agentGoals').where({ id: goal.id, ownerId: goal.ownerId, version: goal.version, budgetSelection: 'pending' }).update({
+    maxTokens: allowance,
+    budgetSelection: input.selection,
+    tokenTier: input.tier,
+    tokenAllowance: allowance,
+    budgetCycle: 1,
+    budgetLimitReason: null,
+    errorCode: null,
+    errorMessage: null,
+    updatedAt: now
+  })
   if (changed !== 1) throw new AgentRepositoryError('GOAL_VERSION_CHANGED', 'Agent goal changed concurrently', 409)
   return getOwnedAgentGoal(transaction, goal.ownerId, goal.id)
 }
@@ -385,7 +397,6 @@ export const assessAgentRunCompletion = (input: {
     } else if (task.status !== 'completed' || task.outcome !== 'completed') {
       issues.push(issue('REQUIRED_TASK_INCOMPLETE', `Research task “${task.title}” did not complete.`, true))
     } else if (task.evidenceCount < task.requiredEvidenceCount) {
-
       issues.push(issue('REQUIRED_EVIDENCE_MISSING', `Research task “${task.title}” did not satisfy its evidence requirement.`, true))
     }
   }
@@ -393,79 +404,83 @@ export const assessAgentRunCompletion = (input: {
   if (input.pendingProposalCount > 0) issues.push(issue('APPROVAL_PENDING', 'A required proposal is still awaiting resolution.', false))
   if (!input.usageReconciled) issues.push(issue('USAGE_NOT_RECONCILED', 'Aggregate usage has not been reconciled.', true))
   const blocked = issues.some(entry => entry.code === 'APPROVAL_PENDING' || entry.code === 'REQUIRED_TASK_BLOCKED')
-  const outcome = issues.length === 0
-    ? 'complete'
-    : blocked
-      ? 'blocked'
-      : issues.some(entry => entry.retryable)
-        ? 'retry'
-        : 'partial'
+  const outcome = issues.length === 0 ? 'complete' : blocked ? 'blocked' : issues.some(entry => entry.retryable) ? 'retry' : 'partial'
   return { outcome, issues }
 }
 
-export const encodedCompletionAssessment = (assessment: AgentCompletionAssessment): { readonly encoded: string, readonly sha256: string } => {
+export const encodedCompletionAssessment = (assessment: AgentCompletionAssessment): { readonly encoded: string; readonly sha256: string } => {
   const encoded = canonicalJson(assessment)
   return { encoded, sha256: sha256(encoded) }
 }
 
-export const updateGoalStatus = async (knex: Knex, input: {
-  readonly ownerId: number
-  readonly goalId: string
-  readonly expectedVersion?: number
-  readonly from: readonly AgentGoalStatus[]
-  readonly to: AgentGoalStatus
-  readonly completion?: AgentCompletionAssessment | null
-  readonly consumedTokens?: number
-  readonly maxTokens?: number
-  readonly consumedToolCalls?: number
-  readonly continuationCount?: number
-  readonly budgetPolicyVersion?: number | null
-  readonly budgetSelection?: AgentGoalBudgetSelection
-  readonly tokenTier?: AgentGoalTokenTier | null
-  readonly tokenAllowance?: number | null
-  readonly budgetCycle?: number
-  readonly budgetLimitReason?: AgentGoalBudgetLimitReason | null
-  readonly errorCode?: string | null
-  readonly errorMessage?: string | null
-  readonly now?: Date
-}): Promise<AgentGoalRecord> => knex.transaction(async transaction => {
-  const goal = await getOwnedAgentGoal(transaction, input.ownerId, input.goalId, true)
-  if (input.expectedVersion !== undefined && goal.version !== input.expectedVersion) throw new AgentRepositoryError('GOAL_VERSION_CHANGED', 'Agent goal changed concurrently', 409)
-  if (!input.from.includes(goal.status)) throw new AgentRepositoryError('INVALID_GOAL_TRANSITION', 'Agent goal transition is invalid', 409)
-  const now = input.now ?? new Date()
-  const terminal = TERMINAL_GOAL_STATUSES.includes(input.to)
-  const completion = input.completion === undefined ? goal.completion : input.completion
-  const assessment = completion === null ? null : encodedCompletionAssessment(completion)
-  const changed = await transaction('agentGoals').where({ id: goal.id, ownerId: goal.ownerId, version: goal.version, status: goal.status }).update({
-    status: input.to,
-    version: goal.version + 1,
-    continuationCount: input.continuationCount ?? goal.continuationCount,
-    consumedTokens: input.consumedTokens ?? goal.consumedTokens,
-    maxTokens: input.maxTokens ?? goal.maxTokens,
-    consumedToolCalls: input.consumedToolCalls ?? goal.consumedToolCalls,
-    budgetPolicyVersion: input.budgetPolicyVersion === undefined ? goal.budgetPolicyVersion : input.budgetPolicyVersion,
-    budgetSelection: input.budgetSelection ?? goal.budgetSelection,
-    tokenTier: input.tokenTier === undefined ? goal.tokenTier : input.tokenTier,
-    tokenAllowance: input.tokenAllowance === undefined ? goal.tokenAllowance : input.tokenAllowance,
-    budgetCycle: input.budgetCycle ?? goal.budgetCycle,
-    budgetLimitReason: input.budgetLimitReason === undefined ? goal.budgetLimitReason : input.budgetLimitReason,
-    completionOutcome: completion?.outcome ?? null,
-    completionAssessment: assessment?.encoded ?? null,
-    completionAssessmentSha256: assessment?.sha256 ?? null,
-    errorCode: input.errorCode ?? null,
-    errorMessage: input.errorMessage ?? null,
-    updatedAt: now,
-    completedAt: terminal ? now : null
+export const updateGoalStatus = async (
+  knex: Knex,
+  input: {
+    readonly ownerId: number
+    readonly goalId: string
+    readonly expectedVersion?: number
+    readonly from: readonly AgentGoalStatus[]
+    readonly to: AgentGoalStatus
+    readonly completion?: AgentCompletionAssessment | null
+    readonly consumedTokens?: number
+    readonly maxTokens?: number
+    readonly consumedToolCalls?: number
+    readonly continuationCount?: number
+    readonly budgetPolicyVersion?: number | null
+    readonly budgetSelection?: AgentGoalBudgetSelection
+    readonly tokenTier?: AgentGoalTokenTier | null
+    readonly tokenAllowance?: number | null
+    readonly budgetCycle?: number
+    readonly budgetLimitReason?: AgentGoalBudgetLimitReason | null
+    readonly errorCode?: string | null
+    readonly errorMessage?: string | null
+    readonly now?: Date
+  }
+): Promise<AgentGoalRecord> =>
+  knex.transaction(async transaction => {
+    const goal = await getOwnedAgentGoal(transaction, input.ownerId, input.goalId, true)
+    if (input.expectedVersion !== undefined && goal.version !== input.expectedVersion)
+      throw new AgentRepositoryError('GOAL_VERSION_CHANGED', 'Agent goal changed concurrently', 409)
+    if (!input.from.includes(goal.status)) throw new AgentRepositoryError('INVALID_GOAL_TRANSITION', 'Agent goal transition is invalid', 409)
+    const now = input.now ?? new Date()
+    const terminal = TERMINAL_GOAL_STATUSES.includes(input.to)
+    const completion = input.completion === undefined ? goal.completion : input.completion
+    const assessment = completion === null ? null : encodedCompletionAssessment(completion)
+    const changed = await transaction('agentGoals')
+      .where({ id: goal.id, ownerId: goal.ownerId, version: goal.version, status: goal.status })
+      .update({
+        status: input.to,
+        version: goal.version + 1,
+        continuationCount: input.continuationCount ?? goal.continuationCount,
+        consumedTokens: input.consumedTokens ?? goal.consumedTokens,
+        maxTokens: input.maxTokens ?? goal.maxTokens,
+        consumedToolCalls: input.consumedToolCalls ?? goal.consumedToolCalls,
+        budgetPolicyVersion: input.budgetPolicyVersion === undefined ? goal.budgetPolicyVersion : input.budgetPolicyVersion,
+        budgetSelection: input.budgetSelection ?? goal.budgetSelection,
+        tokenTier: input.tokenTier === undefined ? goal.tokenTier : input.tokenTier,
+        tokenAllowance: input.tokenAllowance === undefined ? goal.tokenAllowance : input.tokenAllowance,
+        budgetCycle: input.budgetCycle ?? goal.budgetCycle,
+        budgetLimitReason: input.budgetLimitReason === undefined ? goal.budgetLimitReason : input.budgetLimitReason,
+        completionOutcome: completion?.outcome ?? null,
+        completionAssessment: assessment?.encoded ?? null,
+        completionAssessmentSha256: assessment?.sha256 ?? null,
+        errorCode: input.errorCode ?? null,
+        errorMessage: input.errorMessage ?? null,
+        updatedAt: now,
+        completedAt: terminal ? now : null
+      })
+    if (changed !== 1) throw new AgentRepositoryError('GOAL_VERSION_CHANGED', 'Agent goal changed concurrently', 409)
+    return getOwnedAgentGoal(transaction, goal.ownerId, goal.id)
   })
-  if (changed !== 1) throw new AgentRepositoryError('GOAL_VERSION_CHANGED', 'Agent goal changed concurrently', 409)
-  return getOwnedAgentGoal(transaction, goal.ownerId, goal.id)
-})
 
-export const emitGoalEvent = async (knex: Knex, input: {
-  readonly goal: AgentGoalRecord
-  readonly run: Pick<AgentRunRecord, 'id' | 'attempts'>
-  readonly type: 'goal.created' | 'goal.status' | 'run.interrupted' | 'run.resumed'
-}): Promise<void> => {
+export const emitGoalEvent = async (
+  knex: Knex,
+  input: {
+    readonly goal: AgentGoalRecord
+    readonly run: Pick<AgentRunRecord, 'id' | 'attempts'>
+    readonly type: 'goal.created' | 'goal.status' | 'run.interrupted' | 'run.resumed'
+  }
+): Promise<void> => {
   await appendAgentEvent(knex, {
     id: randomUUID(),
     runId: input.run.id,

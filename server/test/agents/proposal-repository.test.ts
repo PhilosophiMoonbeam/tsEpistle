@@ -11,32 +11,34 @@ import { OKF_PRODUCER_CONTEXT } from '../../okf/mutation-context.ts'
 
 const flags = Object.fromEntries(AGENT_FEATURE_FLAG_KEYS.map(flag => [flag, true])) as AgentFeatureFlags
 
-const authority = (requestId = '00000000-0000-4000-8000-000000000001') => createActionAuthority(
-  'pages.prepareMove',
-  requestId,
-  { kind: 'user', userId: 7, ownershipUserId: 7, principal: null },
-  {
-    transport: 'agent',
-    executionMode: 'agent',
-    supportsTools: true,
-    permissions: ['use:agents', 'write:pages'],
-    groupIds: [3],
-    featureFlags: flags
-  }
-)
-const applyingAuthority = (requestId = '00000000-0000-4000-8000-000000000002') => createActionAuthority(
-  'pages.applyProposal',
-  requestId,
-  { kind: 'user', userId: 7, ownershipUserId: 7, principal: null },
-  {
-    transport: 'agent',
-    executionMode: 'agent',
-    supportsTools: true,
-    permissions: ['use:agents', 'write:pages'],
-    groupIds: [3],
-    featureFlags: flags
-  }
-)
+const authority = (requestId = '00000000-0000-4000-8000-000000000001') =>
+  createActionAuthority(
+    'pages.prepareMove',
+    requestId,
+    { kind: 'user', userId: 7, ownershipUserId: 7, principal: null },
+    {
+      transport: 'agent',
+      executionMode: 'agent',
+      supportsTools: true,
+      permissions: ['use:agents', 'write:pages'],
+      groupIds: [3],
+      featureFlags: flags
+    }
+  )
+const applyingAuthority = (requestId = '00000000-0000-4000-8000-000000000002') =>
+  createActionAuthority(
+    'pages.applyProposal',
+    requestId,
+    { kind: 'user', userId: 7, ownershipUserId: 7, principal: null },
+    {
+      transport: 'agent',
+      executionMode: 'agent',
+      supportsTools: true,
+      permissions: ['use:agents', 'write:pages'],
+      groupIds: [3],
+      featureFlags: flags
+    }
+  )
 
 describe('agent proposal repository', () => {
   let knex: Knex
@@ -133,6 +135,7 @@ describe('agent proposal repository', () => {
       table.text('payload').notNullable()
     })
     await knex.schema.createTable('agentRuns', table => {
+      table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
       table.uuid('id').primary()
       table.uuid('sessionId').notNullable()
       table.integer('ownerId').notNullable()
@@ -240,18 +243,25 @@ describe('agent proposal repository', () => {
     }
     await persistProposal(knex, { ...base, input: { pageId: 42, destinationPath: 'docs/a' } })
 
-    await expect(Promise.resolve(persistProposal(knex, { ...base, input: { pageId: 42, destinationPath: 'docs/b' } }))).rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH', status: 409 })
+    await expect(Promise.resolve(persistProposal(knex, { ...base, input: { pageId: 42, destinationPath: 'docs/b' } }))).rejects.toMatchObject({
+      code: 'IDEMPOTENCY_MISMATCH',
+      status: 409
+    })
   })
 
   it('fails closed when an agent proposal omits its durable run scope', async () => {
-    await expect(Promise.resolve(persistProposal(knex, {
-      authority: authority(),
-      risk: 'proposal',
-      actionCallId: 'call-1',
-      input: { pageId: 42 },
-      operation: { kind: 'move' },
-      summary: 'Move page'
-    }))).rejects.toMatchObject({ code: 'INVALID_PROPOSAL_SCOPE', status: 400 })
+    await expect(
+      Promise.resolve(
+        persistProposal(knex, {
+          authority: authority(),
+          risk: 'proposal',
+          actionCallId: 'call-1',
+          input: { pageId: 42 },
+          operation: { kind: 'move' },
+          summary: 'Move page'
+        })
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_PROPOSAL_SCOPE', status: 400 })
   })
   it('persists an execution claim before mutation and applies once', async () => {
     const draft = {
@@ -333,7 +343,7 @@ describe('agent proposal repository', () => {
         await knex('appliedPages').insert({ id: 42, path: 'docs/next' })
         throw new Error('connection lost after commit')
       },
-      reconcile: async () => await knex('appliedPages').where({ id: 42, path: 'docs/next' }).first() ? expected : null
+      reconcile: async () => ((await knex('appliedPages').where({ id: 42, path: 'docs/next' }).first()) ? expected : null)
     })
     expect(result).toMatchObject({ status: 'applied', result: expected })
     expect(await knex('agentActionExecutions').select('status', 'error')).toEqual([{ status: 'committed', error: null }])
@@ -360,18 +370,23 @@ describe('agent proposal repository', () => {
       authorize: async () => {}
     })
 
-    await expect(Promise.resolve(applyApprovedProposal(knex, {
-      proposalId: persisted.proposal.id,
-      approvalId: persisted.approval.id,
-      authority: applyingAuthority(),
-      signal: new AbortController().signal,
-      reauthorize: async () => {},
-      mutate: async () => knex.transaction(async transaction => {
-        await transaction('appliedPages').insert({ id: 42, path: 'docs/next' })
-        throw new Error('domain write failed')
-      }),
-      reconcile: async () => null
-    }))).rejects.toThrow('domain write failed')
+    await expect(
+      Promise.resolve(
+        applyApprovedProposal(knex, {
+          proposalId: persisted.proposal.id,
+          approvalId: persisted.approval.id,
+          authority: applyingAuthority(),
+          signal: new AbortController().signal,
+          reauthorize: async () => {},
+          mutate: async () =>
+            knex.transaction(async transaction => {
+              await transaction('appliedPages').insert({ id: 42, path: 'docs/next' })
+              throw new Error('domain write failed')
+            }),
+          reconcile: async () => null
+        })
+      )
+    ).rejects.toThrow('domain write failed')
 
     expect(await knex('appliedPages')).toHaveLength(0)
     expect(await knex('agentActionExecutions').select('status')).toEqual([{ status: 'failed' }])
@@ -393,13 +408,17 @@ describe('agent proposal repository', () => {
     await knex('agentProposals').where({ id: persisted.proposal.id }).update({ expiresAt: expiredAt })
     await knex('agentApprovals').where({ id: persisted.approval.id }).update({ expiresAt: expiredAt })
 
-    await expect(Promise.resolve(decideProposal(knex, {
-      proposalId: persisted.proposal.id,
-      approvalId: persisted.approval.id,
-      userId: 7,
-      decision: 'approved',
-      authorize: vi.fn()
-    }))).rejects.toMatchObject({ code: 'PROPOSAL_EXPIRED', status: 409 })
+    await expect(
+      Promise.resolve(
+        decideProposal(knex, {
+          proposalId: persisted.proposal.id,
+          approvalId: persisted.approval.id,
+          userId: 7,
+          decision: 'approved',
+          authorize: vi.fn()
+        })
+      )
+    ).rejects.toMatchObject({ code: 'PROPOSAL_EXPIRED', status: 409 })
     expect(await knex('agentProposals').select('status')).toEqual([{ status: 'expired' }])
     expect(await knex('agentApprovals').select('status')).toEqual([{ status: 'expired' }])
   })
@@ -409,7 +428,17 @@ describe('agent proposal repository', () => {
     const sessionId = '00000000-0000-4000-8000-000000000020'
     const leaseOwner = 'proposal-test-worker'
     const leaseToken = '00000000-0000-4000-8000-000000000030'
-    await knex('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running', attempts: 1, leaseOwner, leaseToken, eventSequence: 0, updatedAt: new Date() })
+    await knex('agentRuns').insert({
+      id: runId,
+      sessionId,
+      ownerId: 7,
+      status: 'running',
+      attempts: 1,
+      leaseOwner,
+      leaseToken,
+      eventSequence: 0,
+      updatedAt: new Date()
+    })
     let currentPage: Record<string, unknown> | null = null
     const missingPage = (): Error => Object.assign(new Error('missing'), { name: 'PageNotFoundError' })
     const operations = {
@@ -440,7 +469,7 @@ describe('agent proposal repository', () => {
     registerPageProposalActions(kernel, {
       knex,
       operations,
-      resolveRequester: async () => ({} as Express.User),
+      resolveRequester: async () => ({}) as Express.User,
       snapshotSigningSecret: Buffer.alloc(32, 7)
     })
     const admissionSnapshot = {
@@ -458,10 +487,8 @@ describe('agent proposal repository', () => {
       admissionSnapshot
     )
     const signal = new AbortController().signal
-    const preparedPromise = withInvokingAgentRunLease(
-      signal,
-      { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken },
-      () => kernel.execute({
+    const preparedPromise = withInvokingAgentRunLease(signal, { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken }, () =>
+      kernel.execute({
         authority: prepareAuthority,
         actionCallId: 'create-call',
         input: {
@@ -496,13 +523,22 @@ describe('agent proposal repository', () => {
     expect(await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('status')).toEqual({ status: 'committed' })
   })
 
-
   it('pauses a prepared move for approval and applies only the approved immutable operation', async () => {
     const runId = '00000000-0000-4000-8000-000000000001'
     const sessionId = '00000000-0000-4000-8000-000000000020'
     const leaseOwner = 'proposal-test-worker'
     const leaseToken = '00000000-0000-4000-8000-000000000030'
-    await knex('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running', attempts: 1, leaseOwner, leaseToken, eventSequence: 0, updatedAt: new Date() })
+    await knex('agentRuns').insert({
+      id: runId,
+      sessionId,
+      ownerId: 7,
+      status: 'running',
+      attempts: 1,
+      leaseOwner,
+      leaseToken,
+      eventSequence: 0,
+      updatedAt: new Date()
+    })
     let currentPage = {
       id: 42,
       path: 'docs/start',
@@ -534,7 +570,7 @@ describe('agent proposal repository', () => {
     registerPageProposalActions(kernel, {
       knex,
       operations,
-      resolveRequester: async () => ({} as Express.User),
+      resolveRequester: async () => ({}) as Express.User,
       snapshotSigningSecret: Buffer.alloc(32, 7)
     })
     const prepareAuthority = authority(runId)
@@ -547,10 +583,8 @@ describe('agent proposal repository', () => {
       featureFlags: flags
     }
     const signal = new AbortController().signal
-    const preparedPromise = withInvokingAgentRunLease(
-      signal,
-      { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken },
-      () => kernel.execute({
+    const preparedPromise = withInvokingAgentRunLease(signal, { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken }, () =>
+      kernel.execute({
         authority: prepareAuthority,
         actionCallId: 'move-call',
         input: { pageId: 42, sourceRevision: '8', destinationPath: 'docs/next', destinationLocale: 'en' },
@@ -571,9 +605,11 @@ describe('agent proposal repository', () => {
     expect(await preparedPromise).toMatchObject({ proposalId: approval.proposalId, approvalId: approval.id, status: 'applied' })
     expect(await knex('agentRuns').where({ id: runId }).first('status')).toEqual({ status: 'running' })
     expect(operations.move).toHaveBeenCalledOnce()
-    expect(operations.move).toHaveBeenCalledWith(expect.objectContaining({
-      [OKF_PRODUCER_CONTEXT]: `agent:${runId}`
-    }))
+    expect(operations.move).toHaveBeenCalledWith(
+      expect.objectContaining({
+        [OKF_PRODUCER_CONTEXT]: `agent:${runId}`
+      })
+    )
     expect(await knex('agentProposals').where({ id: approval.proposalId }).first('status')).toEqual({ status: 'applied' })
     expect(await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('status')).toEqual({ status: 'committed' })
     expect(await knex('agentEvents').orderBy('sequence').pluck('type')).toEqual(['proposal.created', 'approval.requested', 'approval.resolved'])
@@ -583,7 +619,17 @@ describe('agent proposal repository', () => {
     const sessionId = '00000000-0000-4000-8000-000000000020'
     const leaseOwner = 'proposal-test-worker'
     const leaseToken = '00000000-0000-4000-8000-000000000030'
-    await knex('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running', attempts: 1, leaseOwner, leaseToken, eventSequence: 0, updatedAt: new Date() })
+    await knex('agentRuns').insert({
+      id: runId,
+      sessionId,
+      ownerId: 7,
+      status: 'running',
+      attempts: 1,
+      leaseOwner,
+      leaseToken,
+      eventSequence: 0,
+      updatedAt: new Date()
+    })
     let currentPage: Record<string, unknown> | null = {
       id: 42,
       path: 'docs/disposable',
@@ -626,7 +672,7 @@ describe('agent proposal repository', () => {
     registerPageProposalActions(kernel, {
       knex,
       operations,
-      resolveRequester: async () => ({} as Express.User),
+      resolveRequester: async () => ({}) as Express.User,
       snapshotSigningSecret: Buffer.alloc(32, 7)
     })
     const admissionSnapshot = {
@@ -644,10 +690,8 @@ describe('agent proposal repository', () => {
       admissionSnapshot
     )
     const signal = new AbortController().signal
-    const preparedPromise = withInvokingAgentRunLease(
-      signal,
-      { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken },
-      () => kernel.execute({
+    const preparedPromise = withInvokingAgentRunLease(signal, { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken }, () =>
+      kernel.execute({
         authority: prepareAuthority,
         actionCallId: 'delete-call',
         input: { pageId: 42, sourceRevision: '8', confirmationPath: 'docs/disposable' },
@@ -667,5 +711,4 @@ describe('agent proposal repository', () => {
     expect(operations.remove).toHaveBeenCalledOnce()
     expect(await knex('agentActionExecutions').select('status')).toEqual([{ status: 'committed' }])
   })
-
 })

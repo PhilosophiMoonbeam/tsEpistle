@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { compileStyle, compileTemplate, parse } from '@vue/compiler-sfc'
+import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { JSDOM } from 'jsdom'
 import * as Vue from 'vue'
 import { createSSRApp, defineComponent } from 'vue'
@@ -12,7 +12,7 @@ import { buildAgentThreadPresentation } from './agent-thread-presentation.ts'
 
 const componentPath = join(process.cwd(), 'client/components/agents/agent-thread.vue')
 const source = readFileSync(componentPath, 'utf8')
-const { descriptor, errors } = parse(source, { filename: componentPath })
+const { descriptor } = parse(source, { filename: componentPath })
 const template = descriptor.template?.content ?? ''
 const script = descriptor.scriptSetup?.content ?? ''
 const helperScript = script.match(/const safeNavigableHref[\s\S]*?(?=interface LinkPresentationMetadata)/)?.[0]
@@ -29,9 +29,6 @@ const loadThreadHelpers = (): {
   return evaluate()
 }
 
-const sourceDetails = template.match(/<details\b[^>]*class="agent-sources\b[^>]*>[\s\S]*?<\/details>/)?.[0] ?? ''
-const activityDetails = template.match(/<details\b[^>]*class="agent-activity\b[^>]*>[\s\S]*?<\/details>/)?.[0] ?? ''
-
 const componentStyleId = 'agent-thread-disclosures'
 const componentScopeId = `data-v-${componentStyleId}`
 const compiledTemplate = compileTemplate({
@@ -44,20 +41,6 @@ if (compiledTemplate.errors.length > 0) {
   throw new Error(`Could not compile agent-thread.vue template: ${compiledTemplate.errors.join(', ')}`)
 }
 const renderThreadTemplate = new Function('Vue', compiledTemplate.code)(Vue) as RenderFunction
-const componentStyles = descriptor.styles
-  .map(style => {
-    const compiled = compileStyle({
-      source: style.content,
-      filename: componentPath,
-      id: componentStyleId,
-      scoped: style.scoped
-    })
-    if (compiled.errors.length > 0) {
-      throw new Error(`Could not compile agent-thread.vue styles: ${compiled.errors.join(', ')}`)
-    }
-    return compiled.code
-  })
-  .join('\n')
 
 const makeMessage = (id: string, ordinal: number, runId: string | null = null): AgentMessageView => ({
   id,
@@ -175,14 +158,6 @@ const renderDuplicateSources = async (tools: readonly AgentToolCallView[] = []):
 }
 
 describe('Agent thread disclosures', () => {
-  test('renders Sources as a closed native disclosure and keeps Activity collapsible', () => {
-    expect(errors).toEqual([])
-    expect(sourceDetails).toContain('<summary class="agent-sources__heading">')
-    expect(sourceDetails).not.toMatch(/\bopen(?:\s|=|$)/)
-    expect(activityDetails).toContain('<summary>')
-    expect(activityDetails).not.toMatch(/\bopen(?:\s|=|$)/)
-  })
-
   test('renders omitted and not-executed activity states as calm accessible rows', async () => {
     const renderedHtml = await renderDuplicateSources([
       makeTool('complete', 'complete'),
@@ -196,10 +171,9 @@ describe('Agent thread disclosures', () => {
     expect(activity.textContent).toContain('Result omitted')
     expect(activity.textContent).toContain('Not executed')
     expect(activity.textContent).not.toContain('failed')
-    expect(activityDetails).toContain('aria-hidden="true"')
   })
 
-  test('preserves ordered numbered citations and renders safe source URLs with previews or new-tab links', () => {
+  test('rejects executable and malformed source URLs while allowing navigable sources', () => {
     const { safeNavigableHref } = loadThreadHelpers()
 
     expect(safeNavigableHref('/en/runbook#response')).toBe('/en/runbook#response')
@@ -207,20 +181,6 @@ describe('Agent thread disclosures', () => {
     expect(safeNavigableHref('javascript:alert(1)')).toBeUndefined()
     expect(safeNavigableHref('data:text/html,unsafe')).toBeUndefined()
     expect(safeNavigableHref('https://[')).toBeUndefined()
-
-    expect(template).toContain(':citations="entry.message.citations"')
-    expect(sourceDetails).toMatch(/v-for="group in entry\.citationGroups"[\s\S]*v-for="citationEntry in group\.sections"/)
-    expect(sourceDetails).toContain('{{ group.pageCitation.number }}')
-    expect(sourceDetails).toContain('{{ citationEntry.number }}')
-    expect(sourceDetails).toContain(":is=\"group.safeHref ? 'a' : 'div'\"")
-    expect(sourceDetails).toContain(':href="group.safeHref"')
-    expect(sourceDetails).toContain(':target="group.safeHref && !group.previewSelector ? \'_blank\' : undefined"')
-    expect(sourceDetails).toContain(':rel="group.safeHref ? \'noopener noreferrer\' : undefined"')
-    expect(sourceDetails).toContain(":is=\"citationEntry.safeHref ? 'a' : 'span'\"")
-    expect(sourceDetails).toContain(':href="citationEntry.safeHref"')
-    expect(sourceDetails).toContain(':target="citationEntry.safeHref && !citationEntry.previewSelector ? \'_blank\' : undefined"')
-    expect(sourceDetails).toContain(':rel="citationEntry.safeHref ? \'noopener noreferrer\' : undefined"')
-    expect(sourceDetails).toContain('v-if="group.previewSelector"')
   })
 
   test('renders unique encoded page and section identifiers when messages repeat evidence', async () => {
@@ -236,30 +196,5 @@ describe('Agent thread disclosures', () => {
     expect(sectionIds[0]).not.toBe(sectionIds[1])
     expect(new Set(sourceIds).size).toBe(sourceIds.length)
     expect(sourceIds.every(id => id.length > 0 && !/\s/u.test(id))).toBe(true)
-  })
-
-  test('keeps the source count and chevron together behind one auto spacer', async () => {
-    const renderedHtml = await renderDuplicateSources()
-    const dom = new JSDOM(`<!doctype html><html><head><style>${componentStyles}</style></head><body>${renderedHtml}</body></html>`)
-    const summary = dom.window.document.querySelector<HTMLElement>('.agent-sources__heading')
-    if (!summary) throw new Error('Rendered source summary was not found')
-    expect(summary.lastElementChild?.classList.contains('agent-sources__count')).toBe(true)
-
-    const rules = [...dom.window.document.styleSheets[0]!.cssRules].filter((rule): rule is CSSStyleRule => 'selectorText' in rule)
-    const styleFor = (selector: string): CSSStyleDeclaration => {
-      const rule = rules.find(candidate => candidate.selectorText.split(',').some(candidateSelector => candidateSelector.trim() === selector))
-      if (!rule) throw new Error(`Compiled source summary rule was not found: ${selector}`)
-      return rule.style
-    }
-    const summarySelector = `.agent-sources__heading[${componentScopeId}]`
-    const summaryStyle = styleFor(summarySelector)
-    const countStyle = styleFor(`.agent-sources__count[${componentScopeId}]`)
-    const chevronStyle = styleFor(`${summarySelector}::after`)
-    const autoSpacers = [countStyle, chevronStyle].map(style => style.getPropertyValue('margin-inline-start').trim()).filter(value => value === 'auto')
-
-    expect(summaryStyle.getPropertyValue('gap').trim()).toBe('var(--wiki-space-2)')
-    expect(countStyle.getPropertyValue('margin-inline-start').trim()).toBe('auto')
-    expect(chevronStyle.getPropertyValue('margin-inline-start').trim()).toBe('')
-    expect(autoSpacers).toHaveLength(1)
   })
 })

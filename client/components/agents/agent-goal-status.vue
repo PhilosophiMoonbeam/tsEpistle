@@ -110,8 +110,12 @@
               <dd>{{ tokenTierLabel }}</dd>
             </div>
             <div>
-              <dt>Lifetime token usage</dt>
-              <dd>{{ formatBudgetValue(goal.consumedTokens) }} of {{ formatBudgetValue(goal.maxTokens) }} tokens</dd>
+              <dt>{{ goal.budgetPolicyVersion === 2 ? 'Current cycle usage' : 'Lifetime token budget' }}</dt>
+              <dd>{{ formatBudgetValue(currentCycleTokens) }} of {{ formatBudgetValue(currentCycleTokenLimit) }} tokens</dd>
+            </div>
+            <div>
+              <dt>Lifetime usage</dt>
+              <dd>{{ formatBudgetValue(goal.consumedTokens) }} tokens</dd>
             </div>
             <div>
               <dt>Budget cycle</dt>
@@ -122,12 +126,12 @@
               <dd>{{ budgetLimitReasonLabel }}</dd>
             </div>
             <div>
-              <dt>Additional token allowance</dt>
+              <dt>Next cycle allowance</dt>
               <dd>{{ renewalAllowanceDescription }}</dd>
             </div>
           </dl>
           <p v-if="canRenewTokenBudget" class="agent-goal__renewal-copy" role="status">
-            Confirm one continuation to add exactly {{ renewalAllowanceLabel }} tokens to this goal's lifetime allowance.
+            Confirm one continuation with another {{ renewalAllowanceLabel }}-token cycle. Unused tokens from the current cycle do not roll over.
           </p>
           <p v-else class="agent-goal__renewal-copy" role="status">
             This limit cannot be renewed from this goal.
@@ -141,7 +145,7 @@
             :loading="pendingAction === 'renew-budget' && busy"
             :disabled="busy || networkBlocked"
             @click="renewBudget"
-          >Add {{ renewalAllowanceLabel }} tokens and continue</v-btn>
+          >Continue with another {{ renewalAllowanceLabel }}-token cycle</v-btn>
         </section>
 
         <p class="agent-goal__summary">{{ progressLabel }}</p>
@@ -300,12 +304,17 @@ const canRenewTokenBudget = computed(
     goal.canRenewTokenBudget &&
     goal.tokenAllowance !== null
 )
-const tokenPercent = computed(() => goal.maxTokens > 0 ? (goal.consumedTokens / goal.maxTokens) * 100 : 0)
+const cycleTokenBaseline = computed(() =>
+  goal.budgetPolicyVersion !== 2 || goal.tokenAllowance === null || goal.budgetCycle < 1 ? 0 : Math.max(0, goal.maxTokens - goal.tokenAllowance)
+)
+const currentCycleTokens = computed(() => Math.max(0, goal.consumedTokens - cycleTokenBaseline.value))
+const currentCycleTokenLimit = computed(() => goal.budgetPolicyVersion === 2 ? (goal.tokenAllowance ?? goal.maxTokens) : goal.maxTokens)
+const tokenPercent = computed(() => currentCycleTokenLimit.value > 0 ? (currentCycleTokens.value / currentCycleTokenLimit.value) * 100 : 0)
 const toolPercent = computed(() => goal.maxToolCalls > 0 ? (goal.consumedToolCalls / goal.maxToolCalls) * 100 : 0)
 const continuationPercent = computed(() => goal.maxContinuations > 0 ? (goal.continuationCount / goal.maxContinuations) * 100 : 0)
 const budgetPercent = computed(() => Math.min(100, Math.max(0, Math.max(tokenPercent.value, toolPercent.value, continuationPercent.value))))
 const formatBudgetValue = (value: number): string => value.toLocaleString()
-const tokenTierLabel = computed(() => goal.tokenTier === 'standard' ? 'Standard' : goal.tokenTier === 'extended' ? 'Extended' : 'Unavailable')
+const tokenTierLabel = computed(() => goal.tokenTier === 'small' ? 'Small' : goal.tokenTier === 'standard' ? 'Standard' : goal.tokenTier === 'extended' ? 'Extended' : 'Unavailable')
 const renewalAllowanceLabel = computed(() => goal.tokenAllowance === null ? 'Unavailable' : formatBudgetValue(goal.tokenAllowance))
 const renewalAllowanceDescription = computed(() => goal.tokenAllowance === null ? 'Unavailable' : `Exactly ${renewalAllowanceLabel.value} tokens`)
 const budgetLimitReasonLabel = computed(() => {
@@ -320,9 +329,9 @@ const budgetLimitReasonLabel = computed(() => {
 })
 const budgetMetrics = computed(() => [
   {
-    label: 'Tokens',
-    value: formatBudgetValue(goal.consumedTokens),
-    limit: formatBudgetValue(goal.maxTokens),
+    label: goal.budgetPolicyVersion === 2 ? 'Current cycle tokens' : 'Lifetime tokens',
+    value: formatBudgetValue(currentCycleTokens.value),
+    limit: formatBudgetValue(currentCycleTokenLimit.value),
     percent: Math.min(100, Math.max(0, tokenPercent.value))
   },
   {
@@ -390,7 +399,7 @@ const pendingActionLabel = computed(() => {
   if (pendingAction.value === 'pause') return 'Pausing goal…'
   if (pendingAction.value === 'resume') return 'Resuming goal…'
   if (pendingAction.value === 'cancel') return 'Cancelling goal…'
-  if (pendingAction.value === 'renew-budget') return 'Adding token allowance and continuing…'
+  if (pendingAction.value === 'renew-budget') return 'Starting another token allowance cycle…'
   return 'Updating goal…'
 })
 const budgetLabel = computed(() => {
@@ -406,7 +415,7 @@ const progressLabel = computed(() => {
   if (goal.status === 'completed') return `Completed in ${goal.continuationCount + 1} run${goal.continuationCount === 0 ? '' : 's'}.`
   if (goal.status === 'budget_limited') {
     return canRenewTokenBudget.value
-      ? 'The token budget stopped this run. Confirm the additional allowance below to continue once.'
+      ? 'The token budget stopped this run. Confirm another allowance cycle below to continue once.'
       : `${budgetLimitReasonLabel.value} stopped further work. This limit cannot be renewed from this goal.`
   }
   if (goal.status === 'cancelled') return 'No further work will run for this goal.'

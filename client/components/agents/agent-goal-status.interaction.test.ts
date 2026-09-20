@@ -77,7 +77,7 @@ const makeGoal = (overrides: Partial<AgentGoalView> = {}): AgentGoalView => ({
   maxTokens: 1_000,
   consumedToolCalls: 2,
   maxToolCalls: 10,
-  budgetPolicyVersion: 1,
+  budgetPolicyVersion: 2,
   budgetSelection: 'pending',
   tokenTier: null,
   tokenAllowance: null,
@@ -110,6 +110,8 @@ const loadGoal = (goal: AgentGoalView, expanded: boolean): GoalHarness => {
       budgetPercent,
       budgetAriaLabel,
       budgetMetrics,
+      currentCycleTokens,
+      currentCycleTokenLimit,
       formatBudgetValue,
       tokenTierLabel,
       budgetLimitReasonLabel,
@@ -250,21 +252,31 @@ describe('Agent goal status interaction', () => {
     expanded.toggleExpanded()
     expect(expanded.emit).toHaveBeenCalledWith('update:expanded', false)
   })
-  it('shows one-cycle renewal CTA only for a token-limited goal', async () => {
+  it('shows distinct cycle and lifetime usage with an explicit no-rollover renewal action', async () => {
     const renewable = await renderGoalStatus(
       makeGoal({
         status: 'budget_limited',
+        consumedTokens: 1_450,
+        maxTokens: 1_500,
+        budgetPolicyVersion: 2,
         budgetSelection: 'utility',
-        tokenTier: 'standard',
+        tokenTier: 'small',
         tokenAllowance: 500,
-        budgetCycle: 1,
+        budgetCycle: 2,
         budgetLimitReason: 'tokens',
         canRenewTokenBudget: true
       }),
       true
     )
-    expect(renewable).toContain('Confirm one continuation to add exactly 500 tokens to this goal')
-    expect(renewable).toContain('Add 500 tokens and continue')
+    const renewableDocument = new JSDOM(renewable).window.document
+    const renewableText = renewableDocument.body.textContent ?? ''
+    expect(renewableText).toContain('Current cycle usage')
+    expect(renewableText).toContain('450 of 500 tokens')
+    expect(renewableText).toContain('Lifetime usage')
+    expect(renewableText).toContain('1,450 tokens')
+    const continueButton = renewableDocument.querySelector<HTMLButtonElement>('.agent-goal__renewal button')
+    expect(continueButton?.disabled).toBe(false)
+    expect(continueButton?.textContent).toContain('500')
 
     const nonRenewable = await renderGoalStatus(
       makeGoal({
@@ -278,8 +290,25 @@ describe('Agent goal status interaction', () => {
       }),
       true
     )
-    expect(nonRenewable).toContain('This limit cannot be renewed from this goal.')
-    expect(nonRenewable).not.toContain('Add 500 tokens and continue')
+    expect(new JSDOM(nonRenewable).window.document.querySelector('.agent-goal__renewal button')).toBeNull()
   })
 
+  it('preserves the truthful lifetime budget for historical rollover cycles', async () => {
+    const html = await renderGoalStatus(
+      makeGoal({
+        status: 'budget_limited',
+        budgetPolicyVersion: 1,
+        budgetSelection: 'utility',
+        tokenTier: 'standard',
+        tokenAllowance: 100,
+        budgetCycle: 2,
+        consumedTokens: 95,
+        maxTokens: 200,
+        budgetLimitReason: 'tokens'
+      }),
+      true
+    )
+    const document = new JSDOM(html).window.document
+    expect(document.querySelector('.agent-goal__renewal-facts')?.textContent).toContain('95 of 200 tokens')
+  })
 })

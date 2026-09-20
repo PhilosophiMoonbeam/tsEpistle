@@ -15,6 +15,7 @@ import {
   type AgentEvent,
   type AgentFollowUpSuggestion,
   type AgentMessageView,
+  type AgentGoogleSearchGrounding,
   type AgentProposalView,
   type AgentPageActionLink,
   type AgentRunView,
@@ -27,7 +28,13 @@ import {
   type AgentToolState
 } from '../../shared/agents/contracts.ts'
 
-import { AgentRepositoryError, getOwnedAgentSession, listOwnedAgentProjectionEvents, listOwnedAgentMessages } from './repository.ts'
+import {
+  AgentRepositoryError,
+  getOwnedAgentSession,
+  listOwnedAgentProjectionEvents,
+  listOwnedAgentMessages,
+  validateAgentGoogleSearchGrounding
+} from './repository.ts'
 import { listAgentTaskViews } from './tasks.ts'
 import { latestAgentGoalForSession, projectAgentGoal } from './goals.ts'
 
@@ -70,6 +77,11 @@ const citations = (value: string | null): readonly AgentCitation[] => {
     .safeParse(parsed)
   if (!result.success) throw new AgentRepositoryError('AGENT_MESSAGE_CORRUPT', 'Agent message citations are invalid', 500)
   return result.data
+}
+const googleSearchGrounding = (value: string | null): AgentGoogleSearchGrounding | undefined => {
+  const parsed = parseJson(value, 'AGENT_MESSAGE_CORRUPT')
+  if (parsed === null) return undefined
+  return validateAgentGoogleSearchGrounding(parsed)
 }
 interface ToolAccumulator {
   id: string
@@ -624,21 +636,25 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
         )
         .select('id', 'kind', 'filename', 'mimeType', 'byteLength', 'messageId', 'expiresAt')
     : []
-  const messages: AgentMessageView[] = messageRows.map(message => ({
-    id: message.id,
-    runId: message.runId,
-    ordinal: message.ordinal,
-    role: message.role,
-    status: message.status,
-    content: message.content,
-    citations: citations(message.citations),
-    ...(mediaRows.some(media => media.messageId === message.id)
-      ? { media: mediaRows.filter(media => media.messageId === message.id).map(projectAgentMedia) }
-      : {}),
-    ...(message.role === 'user' && message.runId && sourceContexts.has(message.runId) ? { knowledgeContext: sourceContexts.get(message.runId)! } : {}),
-    createdAt: message.createdAt,
-    updatedAt: message.updatedAt
-  }))
+  const messages: AgentMessageView[] = messageRows.map(message => {
+    const grounding = googleSearchGrounding(message.googleSearchGrounding)
+    return {
+      id: message.id,
+      runId: message.runId,
+      ordinal: message.ordinal,
+      role: message.role,
+      status: message.status,
+      content: message.content,
+      citations: citations(message.citations),
+      ...(grounding === undefined ? {} : { googleSearchGrounding: grounding }),
+      ...(mediaRows.some(media => media.messageId === message.id)
+        ? { media: mediaRows.filter(media => media.messageId === message.id).map(projectAgentMedia) }
+        : {}),
+      ...(message.role === 'user' && message.runId && sourceContexts.has(message.runId) ? { knowledgeContext: sourceContexts.get(message.runId)! } : {}),
+      createdAt: message.createdAt,
+      updatedAt: message.updatedAt
+    }
+  })
   const sessionView: AgentSessionView = {
     id: session.id,
     title: session.title,
@@ -648,6 +664,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     executionMode: session.executionMode,
     version: session.version,
     providerProfileId: session.providerProfileId,
+    googleSearchEnabled: session.googleSearchEnabled,
     profileResolutionToken: options.profileResolutionToken(session),
     skills: skillRows.map(skillView),
     currentRun,

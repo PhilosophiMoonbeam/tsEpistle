@@ -79,6 +79,7 @@ describe('durable agent task ledger', () => {
   beforeEach(async () => {
     knex = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await knex.schema.createTable('agentRuns', table => {
+      table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
       table.uuid('id').primary()
       table.uuid('sessionId').notNullable()
       table.integer('ownerId').notNullable()
