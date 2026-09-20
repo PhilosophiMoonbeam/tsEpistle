@@ -1,6 +1,7 @@
 import createKnex, { type Knex } from 'knex'
 import type { AgentEvent } from '../../../shared/agents/contracts.ts'
 import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../../shared/agents/conversation-folders.ts'
+import { agentCompactionSha256, type AgentCompactionReceipt } from '../../agents/compaction.ts'
 import {
   AgentQuotaSettlementError,
   AgentRunCoordinator,
@@ -53,6 +54,45 @@ const preflightAgentRequest = async (request: Parameters<AgentEngine['preflight'
     inputExposureTokens,
     outputExposureTokens,
     totalExposureTokens
+  }
+}
+
+const compactionReceiptFor = (request: Parameters<AgentEngine['execute']>[0], content: string, through: number | null): AgentCompactionReceipt => {
+  const binding = {
+    version: 1 as const,
+    ownerId: request.run.ownerId,
+    sessionId: request.run.sessionId,
+    sourceRunId: request.run.id,
+    providerProfileVersionId: request.run.providerProfileVersionId,
+    transportKind: request.run.transportKind,
+    model: request.run.model,
+    capabilityRevision: request.run.capabilityRevision,
+    summarySha256: agentCompactionSha256(content),
+    groundedExpiresAt: null
+  }
+  return {
+    turn: 1,
+    outcome: 'context_compacted',
+    usageVersion: 2,
+    inputTokens: 11,
+    outputTokens: 3,
+    totalTokens: 14,
+    costMicros: 5,
+    content,
+    contentTruncated: false,
+    actionCallIds: [],
+    finishReason: 'stop',
+    groundedExpiresAt: null,
+    compaction:
+      through === null
+        ? { ...binding, scope: 'active', throughMessageId: null, throughOrdinal: null, sourceSha256: agentCompactionSha256('active source') }
+        : {
+            ...binding,
+            scope: 'history',
+            throughMessageId: request.messages[through]!.canonicalSource!.id,
+            throughOrdinal: request.messages[through]!.canonicalSource!.ordinal,
+            sourceSha256: request.compaction!.sourcePrefixSha256[through]!
+          }
   }
 }
 
@@ -357,6 +397,35 @@ const insertRun = async (knex: Knex): Promise<void> => {
     updatedAt: now,
     completedAt: null
   })
+}
+
+const prepareCompactionRun = async (knex: Knex): Promise<void> => {
+  await knex('agentMessages').where({ id: assistantMessageId }).update({ ordinal: 4 })
+  await knex('agentMessages').where({ id: userMessageId }).update({ ordinal: 3 })
+  const oldUserId = '00000000-0000-4000-8000-000000000071'
+  const oldAssistantId = '00000000-0000-4000-8000-000000000072'
+  await appendAgentMessage(knex, { id: oldUserId, ownerId: 7, sessionId, role: 'user', status: 'complete', content: 'The project key is COMPACT-ALPHA.' })
+  await appendAgentMessage(knex, { id: oldAssistantId, ownerId: 7, sessionId, role: 'assistant', status: 'complete', content: 'Keep that project key.' })
+  await knex('agentMessages').where({ id: oldUserId }).update({ ordinal: 1 })
+  await knex('agentMessages').where({ id: oldAssistantId }).update({ ordinal: 2 })
+  const now = new Date()
+  await knex('agentRuns').where({ id: runId }).update({
+    status: 'queued',
+    attempts: 0,
+    leaseOwner: null,
+    leaseToken: null,
+    leaseExpiresAt: null,
+    availableAt: now
+  })
+  await reserveAgentRunQuota(
+    knex,
+    runId,
+    7,
+    { tokens: 100, costMicros: 100 },
+    { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+    new Date(now.getTime() + 60_000),
+    now
+  )
 }
 
 describe('durable agent repositories', () => {
@@ -1395,6 +1464,67 @@ describe('durable agent repositories', () => {
     expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toEqual(dailyAfterTerminal)
     await restarted.shutdown()
   })
+
+  it('holds a dispatch sequence once, splits it concurrently, and retains uncertain child exposure on close', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: now,
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null
+    })
+    await reserveAgentRunQuota(
+      knex,
+      runId,
+      7,
+      { tokens: 100, costMicros: 100 },
+      { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      new Date('2026-08-17T00:05:00.000Z'),
+      now
+    )
+    let heldDuringDispatch: { reservedTokens: number; reservedCostMicros: number } | undefined
+    const engine: AgentEngine = {
+      preflight: preflightAgentRequest,
+      async execute(request) {
+        if (!request.dispatchBudget?.reserveSequence) throw new Error('dispatch sequence missing')
+        const sequence = await request.dispatchBudget.reserveSequence({ tokens: 180, costMicros: 180 })
+        const [uncertain, settled] = await Promise.all([sequence.reserve({ tokens: 80, costMicros: 80 }), sequence.reserve({ tokens: 70, costMicros: 70 })])
+        heldDuringDispatch = await knex('agentQuotaReservations').where({ runId }).first('reservedTokens', 'reservedCostMicros')
+        await sequence.reconcile(settled, { inputTokens: 40, outputTokens: 20, totalTokens: 60, costMicros: 60 })
+        expect(sequence.unsettledExposure).toEqual({ tokens: 110, costMicros: 110 })
+        await sequence.close()
+        expect(request.dispatchBudget.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
+        throw new Error('provider outcome uncertain')
+      }
+    }
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      { workerId: 'worker-sequence-hold', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
+
+    expect(await runtime.runOnce()).toBe(true)
+    expect(heldDuringDispatch).toEqual({ reservedTokens: 180, reservedCostMicros: 180 })
+    expect(await knex('agentQuotaReservations').where({ runId }).first('status', 'consumedTokens', 'consumedCostMicros')).toEqual({
+      status: 'consumed',
+      consumedTokens: 140,
+      consumedCostMicros: 140
+    })
+    await runtime.shutdown()
+  })
   it('persists an overrun intent across failed settlement, restart, and repair', async () => {
     const now = new Date('2026-08-17T00:02:00.000Z')
     const expiresAt = new Date('2026-08-17T00:05:00.000Z')
@@ -1704,6 +1834,109 @@ describe('durable agent repositories', () => {
     expect(await runtime.runOnce()).toBe(false)
     expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toEqual(dailyAfterTerminal)
     await runtime.shutdown()
+  })
+
+  it('recovers a committed compaction after worker replacement without replacing history or charging it twice', async () => {
+    await prepareCompactionRun(knex)
+    const originals = await knex('agentMessages').where('ordinal', '<=', 2).orderBy('ordinal').select('id', 'content')
+    const summary = 'The project key is COMPACT-ALPHA.'
+    let executions = 0
+    const engine: AgentEngine = {
+      preflight: preflightAgentRequest,
+      async execute(request, sink) {
+        executions++
+        if (executions === 1) {
+          await sink.commitCompaction!(compactionReceiptFor(request, summary, 1))
+          await knex('agentRuns').where({ id: runId }).update({
+            status: 'queued',
+            leaseOwner: null,
+            leaseToken: null,
+            leaseExpiresAt: null,
+            availableAt: new Date()
+          })
+          throw Object.assign(new Error('Worker was replaced after its durable checkpoint'), { code: 'RUN_LEASE_LOST' })
+        }
+        expect(request.compaction?.checkpoint?.content).toBe(summary)
+        await sink.event('model.turn', {
+          usageVersion: 2,
+          outcome: 'answer_accepted',
+          inputTokens: 3,
+          outputTokens: 2,
+          totalTokens: 5,
+          costMicros: 3,
+          content: 'Recovered answer.',
+          contentTruncated: false,
+          actionCallIds: [],
+          finishReason: 'stop'
+        })
+        await sink.text('Recovered answer.')
+        return { inputTokens: 3, outputTokens: 2, totalTokens: 5, costMicros: 3 }
+      }
+    }
+    const createRuntime = (workerId: string) =>
+      new AgentProductRuntime(
+        knex,
+        {
+          async resolve() {
+            throw new Error('not used')
+          },
+          async resolveCurrent() {
+            throw new Error('not used')
+          }
+        },
+        engine,
+        { workerId, globalConcurrency: 1, perUserConcurrency: 1 }
+      )
+    const first = createRuntime('compaction-before-replacement')
+    expect(await first.runOnce()).toBe(true)
+    await first.shutdown()
+    const recovered = createRuntime('compaction-after-replacement')
+    expect(await recovered.runOnce()).toBe(true)
+    await recovered.shutdown()
+    expect(executions).toBe(2)
+    expect(await knex('agentMessages').where('ordinal', '<=', 2).orderBy('ordinal').select('id', 'content')).toEqual(originals)
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'totalTokens', 'estimatedCostMicros')).toEqual({
+      status: 'succeeded',
+      totalTokens: 19,
+      estimatedCostMicros: 8
+    })
+    expect(await knex('agentQuotaReservations').where({ runId }).first('consumedTokens', 'consumedCostMicros')).toEqual({
+      consumedTokens: 19,
+      consumedCostMicros: 8
+    })
+  })
+
+  it('rejects a summary whose canonical source changed during generation', async () => {
+    await prepareCompactionRun(knex)
+    let rejected = false
+    const engine: AgentEngine = {
+      preflight: preflightAgentRequest,
+      async execute(request, sink) {
+        const receipt = compactionReceiptFor(request, 'A summary of the original source.', 1)
+        await knex('agentMessages').where({ id: request.messages[0]!.canonicalSource!.id }).update({ content: 'The canonical source changed.' })
+        await expect(sink.commitCompaction!(receipt)).rejects.toMatchObject({ code: 'AGENT_COMPACTION_SOURCE_CHANGED' })
+        rejected = true
+        return { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
+      }
+    }
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        },
+        async resolveCurrent() {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      { workerId: 'compaction-source-change', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
+    expect(await runtime.runOnce()).toBe(true)
+    await runtime.shutdown()
+    expect(rejected).toBe(true)
+    const events = await knex('agentEvents').where({ runId, type: 'model.turn' }).pluck('data')
+    expect(events.map(value => JSON.parse(String(value))).filter(value => value.outcome === 'context_compacted')).toEqual([])
   })
 
   it('reconciles persisted retry turns when recovered synthesis terminalizes partial', async () => {
@@ -2675,6 +2908,81 @@ describe('durable agent repositories', () => {
     }
     expect(await runtime.runOnce()).toBe(false)
     await runtime.shutdown()
+  })
+
+  it('rejects child compaction beyond its output allowance without persisting a corrupt accepted summary', async () => {
+    const now = new Date()
+    await knex('agentMessages').where({ id: userMessageId }).update({ content: 'Compare the alpha and beta deployment guides.' })
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: now
+    })
+    await reserveAgentRunQuota(
+      knex,
+      runId,
+      7,
+      { tokens: 10_000, costMicros: 1_000 },
+      { dailyTokens: 20_000, dailyCostMicros: 2_000 },
+      new Date(now.getTime() + 60_000),
+      now
+    )
+    const engine: AgentEngine = {
+      preflight: preflightAgentRequest,
+      async execute(request, sink) {
+        if (request.purpose === 'planner') {
+          await sink.text(
+            JSON.stringify({
+              tasks: [
+                { kind: 'source_scout', title: 'Review alpha', question: 'What does alpha require?', sourceScope: ['alpha'], requiredEvidenceCount: 1 },
+                { kind: 'source_scout', title: 'Review beta', question: 'What does beta require?', sourceScope: ['beta'], requiredEvidenceCount: 1 }
+              ]
+            })
+          )
+          return { inputTokens: 3, outputTokens: 2, totalTokens: 5, costMicros: 0 }
+        }
+        if (request.purpose === 'subagent') {
+          await sink.event('model.turn', { ...compactionReceiptFor(request, 'A complete summary longer than the child allowance.', null) })
+          throw new Error('The over-budget summary must not be applied')
+        }
+        await sink.text('The available research is incomplete.')
+        return { inputTokens: 4, outputTokens: 2, totalTokens: 6, costMicros: 0 }
+      }
+    }
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        },
+        async resolveCurrent() {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      {
+        workerId: 'compaction-child-output-budget',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true, maxConcurrentChildren: 1, maxAggregateChildOutputCharacters: 16 }
+      }
+    )
+    expect(await runtime.runOnce()).toBe(true)
+    await runtime.shutdown()
+    const turns = (await knex('agentEvents').where({ runId, type: 'model.turn' }).pluck('data')).map(value => JSON.parse(String(value)))
+    expect(turns).toEqual([
+      expect.objectContaining({
+        outcome: 'context_compaction_rejected',
+        content: '',
+        totalTokens: 14,
+        budgetOutputCharacters: 16
+      })
+    ])
+    expect(turns[0].compaction).toBeUndefined()
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'totalTokens')).toEqual({ status: 'partial', totalTokens: 25 })
   })
 
   it('falls back to the ordinary root path when the initial child batch is not admissible', async () => {
