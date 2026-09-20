@@ -17,12 +17,20 @@ function presentationStorage(value = '{}') {
 }
 
 describe('offline presentation branding allowlist', () => {
-  it('remembers the public logo without retaining bootstrap credentials, user state, or logo effects', () => {
+  it('remembers only normalized public presentation data without bootstrap credentials, user state, or logo effects', () => {
     const values = presentationStorage()
-    vi.stubGlobal('siteConfig', { title: 'Reading room', logoUrl: logo, logoEffect: { private: 'never persisted' },
-      agentCsrfToken: 'secret', user: { authenticated: true }, lang: 'en', rtl: false })
+    vi.stubGlobal('siteConfig', {
+      title: 'Reading\u0000 room',
+      logoUrl: logo,
+      logoEffect: { private: 'never persisted' },
+      agentCsrfToken: 'secret',
+      user: { authenticated: true, privatePageTitle: 'secret page' },
+      lang: 'en',
+      rtl: false
+    })
     rememberOfflinePresentation('dark')
     const stored = values.get(key)!
+    expect(JSON.parse(stored).title).toBe('Reading room')
     expect(JSON.parse(stored).logoUrl).toBe(logo)
     expect(stored).not.toMatch(/secret|authenticated|private|logoEffect/u)
     expect(offlinePresentation().config.logoUrl).toBe(logo)

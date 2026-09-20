@@ -14,6 +14,7 @@ import { registerPwa, setReloadSafetyProvider, pwaState } from './helpers/pwa.ts
 import { installThemeSwitchGuard, resolveThemeName } from './helpers/theme.ts'
 import { createAsyncComponent } from './components/common/async-component-state.vue'
 import { openOfflineStorage, type OfflineStorage } from './helpers/offline-storage.ts'
+import { currentOfflineReadingHandle, OFFLINE_READING_STATE_EVENT } from './helpers/offline-session.ts'
 import {
   createOfflineSyncCoordinator,
   createOfflineSyncUnavailableResult,
@@ -29,6 +30,8 @@ let offlineSyncStartToken = 0
 let offlineSyncStartPromise: Promise<OfflineSyncCoordinator | null> | null = null
 let offlineSyncPendingReconcile: Promise<OfflineSyncResult> | null = null
 let stopOfflinePwaWatch: (() => void) | null = null
+let stopOfflineReadingWatch: (() => void) | null = null
+let stopOfflineIdentityWatch: (() => void) | null = null
 let pendingOfflineSyncReason: string | null = null
 let offlineSyncStartError: string | null = null
 let offlineSyncLifecycleAttached = false
@@ -59,13 +62,16 @@ const detachOfflineSyncLifecycle = (): void => {
   window.removeEventListener('pageshow', handleOfflinePageShow)
   offlineSyncLifecycleAttached = false
 }
-
 const stopOfflineSync = (): void => {
   offlineSyncStartToken += 1
   offlineSyncPendingReconcile = null
   pendingOfflineSyncReason = null
   stopOfflinePwaWatch?.()
   stopOfflinePwaWatch = null
+  stopOfflineReadingWatch?.()
+  stopOfflineReadingWatch = null
+  stopOfflineIdentityWatch?.()
+  stopOfflineIdentityWatch = null
   offlineSyncCoordinator.value?.dispose()
   offlineSyncCoordinator.value = null
   offlineSyncStorage?.close()
@@ -91,11 +97,67 @@ const startOfflineSync = (): Promise<OfflineSyncCoordinator | null> => {
       const coordinator = createOfflineSyncCoordinator({
         storage,
         siteId: window.location.origin,
+        privateSiteId: (() => {
+          try {
+            const configured = Reflect.get(Reflect.get(window, 'siteConfig') ?? {}, 'offlineDraftSiteId')
+            return typeof configured === 'string' && configured.trim().length > 0 ? configured.trim() : window.location.origin
+          } catch {
+            return window.location.origin
+          }
+        })(),
         fetchImpl: window.fetch.bind(window),
         isOnline: () => pwaState.connectionState === 'online',
         isForeground: () => typeof document === 'undefined' || document.visibilityState === 'visible',
-        isRetired: () => pwaState.mode === 'retirement'
+        isRetired: () => pwaState.mode === 'retirement',
+        isIdentityValid: () => {
+          if (wikiStore.authRefreshOutcome !== 'authenticated') return true
+          return wikiStore.offlineIdentityReady === true && wikiStore.user.authenticated === true
+        },
+        getCurrentAccount: () => {
+          if (
+            wikiStore.authRefreshOutcome !== 'authenticated' ||
+            wikiStore.offlineIdentityReady !== true ||
+            wikiStore.user.authenticated !== true ||
+            !Number.isSafeInteger(wikiStore.user.id) ||
+            wikiStore.user.id < 1 ||
+            !Number.isSafeInteger(wikiStore.user.authVersion) ||
+            wikiStore.user.authVersion < 0
+          )
+            return null
+          return { accountId: wikiStore.user.id, authVersion: wikiStore.user.authVersion, verified: true }
+        },
+        getReadingHandle: () => currentOfflineReadingHandle()
       })
+      const onReadingState = (): void => {
+        coordinator.invalidateIdentity()
+        coordinator.observe('reading-state')
+      }
+      window.addEventListener(OFFLINE_READING_STATE_EVENT, onReadingState)
+      stopOfflineReadingWatch = () => window.removeEventListener(OFFLINE_READING_STATE_EVENT, onReadingState)
+      stopOfflineIdentityWatch = watch(
+        () => [wikiStore.authRefreshOutcome, wikiStore.offlineIdentityReady, wikiStore.user.authenticated, wikiStore.user.id, wikiStore.user.authVersion],
+        () => {
+          coordinator.invalidateIdentity()
+          coordinator.observe('identity')
+        },
+        { flush: 'sync' }
+      )
+      if (token !== offlineSyncStartToken) {
+        stopOfflineReadingWatch()
+        stopOfflineReadingWatch = null
+        stopOfflineIdentityWatch?.()
+        stopOfflineIdentityWatch = null
+        storage.close()
+        return null
+      }
+      if (offlineSyncCoordinator.value !== null) {
+        stopOfflineReadingWatch()
+        stopOfflineReadingWatch = null
+        stopOfflineIdentityWatch?.()
+        stopOfflineIdentityWatch = null
+        storage.close()
+        return null
+      }
       offlineSyncStartError = null
       offlineSyncStorage = storage
       offlineSyncCoordinator.value = coordinator
@@ -112,6 +174,10 @@ const startOfflineSync = (): Promise<OfflineSyncCoordinator | null> => {
       offlineSyncStartError = error instanceof Error && error.message.trim() ? error.message : 'Offline storage is unavailable.'
       stopOfflinePwaWatch?.()
       stopOfflinePwaWatch = null
+      stopOfflineReadingWatch?.()
+      stopOfflineReadingWatch = null
+      stopOfflineIdentityWatch?.()
+      stopOfflineIdentityWatch = null
       offlineSyncCoordinator.value?.dispose()
       offlineSyncCoordinator.value = null
       offlineSyncStorage = null
@@ -145,11 +211,31 @@ const reconcileAfterOfflineSyncStartup = (reason: string): Promise<OfflineSyncRe
   return sharedPromise
 }
 
+const requireOfflineSyncCoordinator = async (): Promise<OfflineSyncCoordinator> => {
+  const coordinator = offlineSyncCoordinator.value ?? (await startOfflineSync())
+  if (!coordinator) throw new Error(offlineSyncStartError ?? 'Offline storage is unavailable.')
+  return coordinator
+}
 const offlineSyncService: OfflineSyncService = {
   async reconcile(reason = 'manual'): Promise<OfflineSyncResult> {
     const coordinator = offlineSyncCoordinator.value
     if (coordinator) return await coordinator.reconcile(reason)
     return await reconcileAfterOfflineSyncStartup(reason)
+  },
+  async readOfflinePolicy() {
+    return await (await requireOfflineSyncCoordinator()).readOfflinePolicy()
+  },
+  async readSnapshotCorpus(selector) {
+    return await (await requireOfflineSyncCoordinator()).readSnapshotCorpus(selector)
+  },
+  async setManualOfflineIntent(selector, selected) {
+    return await (await requireOfflineSyncCoordinator()).setManualOfflineIntent(selector, selected)
+  },
+  async removeOfflinePage(selector) {
+    return await (await requireOfflineSyncCoordinator()).removeOfflinePage(selector)
+  },
+  async recordEligibleReaderVisit(selector) {
+    return await (await requireOfflineSyncCoordinator()).recordEligibleReaderVisit(selector)
   }
 }
 
@@ -186,7 +272,10 @@ const registrations = [
 
 applyReaderLayout(siteConfig.readerLayout)
 rememberOfflinePresentation()
-watch(() => wikiStore.user.appearance, appearance => rememberOfflinePresentation(appearance))
+watch(
+  () => wikiStore.user.appearance,
+  appearance => rememberOfflinePresentation(appearance)
+)
 // Auth is fail-closed in the store and must not prevent the neutral shell from
 // mounting when the server is slow or unavailable.
 const authRefresh = wikiStore.refreshAuth()

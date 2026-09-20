@@ -1,8 +1,10 @@
 import { describe, expect, it } from '../../server/test/bun-test.mts'
 import {
   offlineIneligibilityIsQuiet,
+  offlinePrivateAccessStatus,
   offlineSavedPageState,
-  offlineSavedPageStatus
+  offlineSavedPageStatus,
+  offlineSelectionSources
 } from '../helpers/offline-page-status.ts'
 
 const now = Date.parse('2026-09-18T12:00:00Z')
@@ -39,6 +41,12 @@ describe('saved page status', () => {
     expect(offlineSavedPageStatus('saved', false, true)).toContain('Reconnect to check for updates.')
     expect(offlineSavedPageStatus('saved', true, false)).toContain('not included for continued sync')
   })
+  it('keeps manual, automatic, and followed-tag provenance bounded and explicit', () => {
+    expect(offlineSelectionSources({ manual: true, automatic: false, tag: false })).toBe('Manual')
+    expect(offlineSelectionSources({ manual: false, automatic: true, tag: false })).toBe('Automatic')
+    expect(offlineSelectionSources({ manual: false, automatic: false, tag: true, tagNames: ['docs'] })).toBe('Followed tag #docs')
+    expect(offlineSelectionSources({ manual: false, automatic: false, tag: true, tagNames: ['private'], revealTagNames: false })).toBe('Followed tag')
+  })
 })
 
 describe('ineligible page status', () => {
@@ -63,5 +71,14 @@ describe('ineligible page status', () => {
     expect(offlineIneligibilityIsQuiet({ ...automaticDenial, localReason: 'Private pages cannot be saved offline.' })).toBe(false)
     expect(offlineIneligibilityIsQuiet({ ...automaticDenial, excluded: true })).toBe(false)
     expect(offlineIneligibilityIsQuiet({ ...automaticDenial, serverDenied: false })).toBe(false)
+  })
+  it('keeps authoritative private denials visible even when only automatic selection was attempted', () => {
+    expect(offlineIneligibilityIsQuiet({ ...automaticDenial, privatePath: true })).toBe(false)
+  })
+
+  it('keeps setup-required and locked states generic and bounded', () => {
+    expect(offlinePrivateAccessStatus('setup-required')).toContain('one-time account setup')
+    expect(offlinePrivateAccessStatus('locked')).toContain('locked')
+    expect(offlinePrivateAccessStatus('locked')).not.toMatch(/title|tag|route|denied/iu)
   })
 })

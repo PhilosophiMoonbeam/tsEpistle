@@ -743,21 +743,25 @@ import { tagColorBucket } from '../../../../shared/tag-colors.ts'
 import { pwaState } from '../../../helpers/pwa.ts'
 import {
   offlineIneligibilityIsQuiet,
+  offlinePrivateAccessStatus,
   offlineSavedPageState,
-  offlineSavedPageStatus
+  offlineSavedPageStatus,
+  offlineSelectionSources,
+  type OfflinePageAccessState
 } from '../../../helpers/offline-page-status.ts'
 import {
   openOfflineStorage,
   subscribeOfflineStorageChanges,
   type OfflineStorage
 } from '../../../helpers/offline-storage.ts'
+import { currentOfflineReadingHandle, isCurrentOfflineReadingHandle } from '../../../helpers/offline-session.ts'
 import {
   createOfflineSyncUnavailableResult,
   OFFLINE_SYNC_COORDINATOR_KEY,
   type OfflineSyncResult,
   type OfflineSyncService
 } from '../../../helpers/offline-sync.ts'
-import type { OfflinePagePolicyRecord, OfflineSnapshotRecord, OfflineSnapshotSelector } from '../../../../shared/offline.ts'
+import type { OfflinePagePolicyRecord, OfflinePolicySnapshot, OfflineSnapshotCorpus, OfflineSnapshotRecord, OfflineSnapshotSelector } from '../../../../shared/offline.ts'
 import {
   normalizeTableOfContents,
   type FlattenedTableOfContentsNode,
@@ -828,8 +832,15 @@ type PageProtection = {
 }
 
 
-type OfflinePageState = 'checking' | 'eligible' | 'downloading' | 'saved' | 'expiring' | 'stale' | 'sync-pending' | 'removing' | 'ineligible' | 'error' | 'unavailable'
+type OfflinePageState = 'checking' | 'eligible' | 'downloading' | 'saved' | 'expiring' | 'stale' | 'sync-pending' | 'removing' | 'ineligible' | 'error' | 'unavailable' | OfflinePageAccessState
 const widenOfflinePageState = (state: OfflinePageState): OfflinePageState => state
+type OfflineAccountAwareService = OfflineSyncService & {
+  readOfflinePolicy?: () => Promise<OfflinePolicySnapshot>
+  readSnapshotCorpus?: (selector?: OfflineSnapshotSelector) => Promise<OfflineSnapshotCorpus>
+  setManualOfflineIntent?: (selector: OfflineSnapshotSelector, selected: boolean) => Promise<OfflinePagePolicyRecord>
+  removeOfflinePage?: (selector: OfflineSnapshotSelector) => Promise<OfflinePagePolicyRecord>
+  recordEligibleReaderVisit?: (selector: OfflineSnapshotSelector) => Promise<OfflinePagePolicyRecord>
+}
 function decodePageAnchor (anchor: string): string {
   try {
     return decodeURIComponent(anchor)
@@ -1236,6 +1247,7 @@ export default defineComponent({
       pageWatchEmailEnabled: true,
       pageWatchInAppEnabled: true,
       offlineState: 'checking' as OfflinePageState,
+      offlineAccessState: null as OfflinePageAccessState | null,
       offlineError: '',
       offlineAvailabilityError: '',
       offlinePolicy: null as OfflinePagePolicyRecord | null,
@@ -1442,6 +1454,9 @@ export default defineComponent({
       const locale = this.locales.length > 0 ? `/${this.locale}` : ''
       return new URL(`${scope}${locale}/${this.path}`, window.location.origin).href
     },
+    offlinePrivatePath (): boolean {
+      return this.visibility === 'private' || this.offlinePrivateHandle() !== null
+    },
     offlineStatusId (): string {
       return `${this.pageArticleId}-offline-status`
     },
@@ -1458,17 +1473,16 @@ export default defineComponent({
     offlineSelectionSources (): string {
       const policy = this.offlinePolicy
       if (!policy || policy.excluded) return ''
-      const sources: string[] = []
-      if (policy.manual) sources.push('Manual')
-      if (policy.automatic) sources.push('Automatic')
-      if (policy.tag) {
-        sources.push(policy.tagNames.length > 0 ? `Followed tag${policy.tagNames.length > 1 ? 's' : ''} #${policy.tagNames.join(', #')}` : 'Followed tag')
-      }
-      return sources.join(' + ')
+      return offlineSelectionSources({
+        manual: policy.manual,
+        automatic: policy.automatic,
+        tag: policy.tag,
+        tagNames: policy.tagNames,
+        revealTagNames: !(this.offlinePrivatePath && this.offlineAccessState !== null)
+      })
     },
     offlineLocalIneligibilityReason (): string {
       if (!this.offlineSelector()) return 'This page cannot be saved offline.'
-      if (this.visibility !== 'public') return 'Private pages cannot be saved offline.'
       if (!this.isPublished) return 'Unpublished pages cannot be saved offline.'
       if (this.pageProtection.protected) return 'Password-protected pages cannot be saved offline.'
       return ''
@@ -1479,12 +1493,14 @@ export default defineComponent({
         selected: this.offlineSelected,
         hasSnapshot: this.offlineHasSnapshot,
         excluded: Boolean(this.offlinePolicy?.excluded),
-        localReason: this.offlineLocalIneligibilityReason
+        localReason: this.offlineLocalIneligibilityReason,
+        privatePath: this.offlinePrivatePath
       })
     },
     offlineControlState (): string {
       if (this.offlineState === 'checking') return 'checking'
       if (this.offlineState === 'downloading' || this.offlineState === 'removing') return this.offlineState
+      if (this.offlineState === 'setup-required' || this.offlineState === 'locked') return this.offlineState
       if (this.offlineState === 'stale') return 'stale'
       if (this.offlineState === 'sync-pending') return this.pageTransportVerified ? 'sync-pending' : 'saved'
       if (this.offlineState === 'error') return 'error'
@@ -1497,7 +1513,7 @@ export default defineComponent({
     offlineControlColor (): string | undefined {
       if (['saved', 'expiring'].includes(this.offlineControlState)) return 'primary'
       if (['error', 'unavailable'].includes(this.offlineControlState)) return 'error'
-      if (['stale', 'sync-pending', 'ineligible'].includes(this.offlineControlState)) return 'warning'
+      if (['stale', 'sync-pending', 'ineligible', 'setup-required', 'locked'].includes(this.offlineControlState)) return 'warning'
       return undefined
     },
     offlineCanRetry (): boolean {
@@ -1512,6 +1528,7 @@ export default defineComponent({
     },
     offlineControlTitle (): string {
       if (this.offlineSelected) return `${this.offlineControlLabel} · ${this.offlineHasValidBody ? this.offlineSelectionSources : 'Copy not saved'}`
+      if (this.offlinePrivatePath && this.offlineAccessState !== null) return offlinePrivateAccessStatus(this.offlineAccessState)
       const localReason = this.offlineLocalIneligibilityReason
       if (localReason) return localReason
       if (this.offlineState === 'checking') return 'Checking offline availability.'
@@ -1523,6 +1540,7 @@ export default defineComponent({
     offlineControlDisabled (): boolean {
       if (!Number.isSafeInteger(this.pageId) || this.pageId < 1 || !this.offlineSelector()) return true
       if (this.offlineOwnedOperationId !== null || this.offlineActionLoading || this.offlineState === 'checking') return true
+      if (this.offlineState === 'setup-required' || this.offlineState === 'locked') return true
       if (this.offlineState === 'ineligible' && !this.offlineSelected && !this.offlinePolicy?.excluded) return true
       return Boolean(this.offlineLocalIneligibilityReason && !this.offlineSelected)
     },
@@ -1530,12 +1548,15 @@ export default defineComponent({
       if (this.offlineState === 'checking') return 'Checking offline'
       if (this.offlineState === 'downloading') return 'Saving offline copy'
       if (this.offlineState === 'removing') return 'Removing offline copy'
+      if (this.offlineState === 'setup-required') return 'Offline setup required'
+      if (this.offlineState === 'locked') return 'Offline copy locked'
       if (this.offlineQuietIneligibility) return 'Offline copy unavailable'
       return this.offlineSelected ? 'Remove offline copy' : 'Save offline copy'
     },
     offlineControlIcon (): string {
       if (this.offlineState === 'checking') return 'mdi-cloud-search-outline'
       if (this.offlineState === 'downloading' || this.offlineState === 'removing') return 'mdi-cloud-sync-outline'
+      if (this.offlineState === 'setup-required' || this.offlineState === 'locked') return 'mdi-lock-outline'
       if (this.offlineState === 'stale' || (this.offlineState === 'sync-pending' && this.pageTransportVerified) || this.offlineState === 'error' || this.offlineState === 'unavailable') return 'mdi-cloud-alert-outline'
       if (this.offlineState === 'ineligible') return 'mdi-cloud-off-outline'
       if (this.offlineSelected && this.offlineHasValidBody) return 'mdi-cloud-check-outline'
@@ -1543,6 +1564,7 @@ export default defineComponent({
       return 'mdi-cloud-outline'
     },
     offlineStatusLabel (): string {
+      if (this.offlinePrivatePath && this.offlineAccessState !== null) return offlinePrivateAccessStatus(this.offlineAccessState)
       const sources = this.offlineSelectionSources
       const selected = this.offlineSelected
       const selectedDetail = selected ? `Included via ${sources}.` : 'Not included in offline sync.'
@@ -1570,6 +1592,9 @@ export default defineComponent({
           return `${selectedDetail} ${offlineSavedPageStatus(this.offlineState, this.pageTransportVerified, selected)}`
         case 'removing':
           return 'Removing the readable offline copy and excluding this page; the change is not committed yet.'
+        case 'setup-required':
+        case 'locked':
+          return offlinePrivateAccessStatus(this.offlineState)
         case 'ineligible': {
           const localReason = this.offlineLocalIneligibilityReason
           if (localReason) return localReason
@@ -1982,8 +2007,16 @@ export default defineComponent({
       if (this.editShortcuts) wikiStore.page.editShortcuts = decodeBase64Json(this.editShortcuts)
       wikiStore.page.mode = 'view'
     },
+    offlinePrivateHandle (): ReturnType<typeof currentOfflineReadingHandle> {
+      if (typeof window === 'undefined' || !wikiStore.user.authenticated || wikiStore.offlineIdentityReady !== true) return null
+      const handle = currentOfflineReadingHandle()
+      return handle && isCurrentOfflineReadingHandle(handle) && handle.context.canonicalOrigin === window.location.origin
+        ? handle
+        : null
+    },
     offlineSiteId (): string {
-      return typeof window === 'undefined' ? '' : window.location.origin
+      if (typeof window === 'undefined') return ''
+      return this.offlinePrivatePath ? this.offlinePrivateHandle()?.context.siteId ?? '' : window.location.origin
     },
     offlineSelector (): OfflineSnapshotSelector | null {
       const siteId = this.offlineSiteId()
@@ -2006,12 +2039,65 @@ export default defineComponent({
       this.offlineStorage = storage
       return storage
     },
+    offlineAccountAwareService (): OfflineAccountAwareService | null {
+      return this.offlineSyncService as OfflineAccountAwareService | null
+    },
+    async offlinePolicyForOperation (storage: OfflineStorage): Promise<OfflinePolicySnapshot> {
+      if (!this.offlinePrivatePath) return await storage.readOfflinePolicy()
+      const service = this.offlineAccountAwareService()
+      if (!service?.readOfflinePolicy) throw new Error('Offline private policy is locked.')
+      return await service.readOfflinePolicy()
+    },
+    async offlineCorpusForOperation (storage: OfflineStorage, selector: OfflineSnapshotSelector, policy: OfflinePolicySnapshot): Promise<OfflineSnapshotCorpus> {
+      if (!this.offlinePrivatePath) {
+        return await storage.readSnapshotCorpus({
+          expectedSessionGeneration: policy.sessionGeneration,
+          selector
+        })
+      }
+      const service = this.offlineAccountAwareService()
+      if (!service?.readSnapshotCorpus) throw new Error('Offline private policy is locked.')
+      return await service.readSnapshotCorpus(selector)
+    },
+    async setOfflineManualIntent (storage: OfflineStorage, selector: OfflineSnapshotSelector, selected: boolean, policy: OfflinePolicySnapshot): Promise<OfflinePagePolicyRecord> {
+      if (this.offlinePrivatePath) {
+        const service = this.offlineAccountAwareService()
+        if (!service?.setManualOfflineIntent) throw new Error('Offline private policy is locked.')
+        return await service.setManualOfflineIntent(selector, selected)
+      }
+      return await storage.setManualOfflineIntent(selector, selected, {
+        expectedSessionGeneration: policy.sessionGeneration,
+        expectedPolicyRevision: policy.state.policyRevision
+      })
+    },
+    async removeOfflineSelection (storage: OfflineStorage, selector: OfflineSnapshotSelector, policy: OfflinePolicySnapshot): Promise<OfflinePagePolicyRecord> {
+      if (this.offlinePrivatePath) {
+        const service = this.offlineAccountAwareService()
+        if (service?.removeOfflinePage) return await service.removeOfflinePage(selector)
+        if (service?.setManualOfflineIntent) return await service.setManualOfflineIntent(selector, false)
+        throw new Error('Offline private policy is locked.')
+      }
+      return await storage.removeOfflinePage(selector, {
+        expectedSessionGeneration: policy.sessionGeneration,
+        expectedPolicyRevision: policy.state.policyRevision
+      })
+    },
+    offlinePrivateAccessFromError (error: unknown): OfflinePageAccessState | null {
+      if (!this.offlinePrivatePath) return null
+      const status = error && typeof error === 'object' ? Number(Reflect.get(error, 'status')) : Number.NaN
+      const code = error && typeof error === 'object' ? String(Reflect.get(error, 'code') ?? '') : ''
+      const detail = getErrorMessage(error).toLowerCase()
+      if (status === 401 || code === 'setup-required' || /enroll|setup required|vault.*(?:missing|not found|enrolled)/u.test(detail)) return 'setup-required'
+      if (code === 'locked' || /unlock|reading.*(?:key|handle)|private.*locked/u.test(detail)) return 'locked'
+      return null
+    },
     async refreshOfflinePageState (): Promise<void> {
       if (this.offlineDisposed) return
       const pageId = this.pageId
       const locale = this.locale
       const operationId = ++this.offlineOperationId
       this.offlineState = 'checking'
+      this.offlineAccessState = null
       this.offlineAvailabilityError = ''
       this.offlinePolicy = null
       this.offlineHasSnapshot = false
@@ -2019,6 +2105,11 @@ export default defineComponent({
       this.offlineExpiresAt = null
       this.offlineGeneration = null
       this.offlinePolicyRevision = null
+      if (this.offlinePrivatePath && !this.offlinePrivateHandle()) {
+        this.offlineAccessState = 'locked'
+        this.offlineState = 'locked'
+        return
+      }
       if (!Number.isSafeInteger(pageId) || pageId < 1 || !this.offlineSelector()) {
         this.offlineState = 'ineligible'
         return
@@ -2027,12 +2118,10 @@ export default defineComponent({
       try {
         const storage = await this.offlineStorageForOperation(operationId)
         if (!storage || !this.isCurrentOfflineOperation(operationId, pageId)) return
-        const policy = await storage.readOfflinePolicy()
+        const selector = { siteId: this.offlineSiteId(), pageId, locale }
+        const policy = await this.offlinePolicyForOperation(storage)
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
-        const corpus = await storage.readSnapshotCorpus({
-          expectedSessionGeneration: policy.sessionGeneration,
-          selector: { siteId: this.offlineSiteId(), pageId, locale }
-        })
+        const corpus = await this.offlineCorpusForOperation(storage, selector, policy)
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
         const origin = this.offlineSiteId()
         const now = Date.now()
@@ -2072,11 +2161,24 @@ export default defineComponent({
         }
       } catch (error) {
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+        const privateAccess = this.offlinePrivateAccessFromError(error)
+        if (privateAccess) {
+          this.offlineAccessState = privateAccess
+          this.offlineState = privateAccess
+          this.offlineAvailabilityError = ''
+          return
+        }
+        const status = error && typeof error === 'object' ? Number(Reflect.get(error, 'status')) : Number.NaN
         this.offlineAvailabilityError = typeof navigator !== 'undefined' && navigator.onLine === false
-          ? 'Waiting for a connection to check offline availability.'
-          : getErrorMessage(error) || 'Offline availability could not be checked.'
+          ? 'Waiting for a verified server connection.'
+          : this.offlinePrivatePath
+            ? [403, 404, 410, 422].includes(status)
+              ? 'This private page is not available for offline use under the current account.'
+              : 'Private offline availability could not be confirmed.'
+            : getErrorMessage(error) || 'Offline availability could not be checked.'
+        const privateAuthorityDenied = this.offlinePrivatePath && [403, 404, 410, 422].includes(status)
         const unavailable = /unavailable|opening|closed/iu.test(this.offlineAvailabilityError)
-        this.offlineState = unavailable ? 'unavailable' : this.offlineHasSnapshot ? 'sync-pending' : 'error'
+        this.offlineState = privateAuthorityDenied ? 'error' : unavailable ? 'unavailable' : this.offlineHasSnapshot ? 'sync-pending' : 'error'
       }
     },
     async recordOfflineReaderVisit (): Promise<void> {
@@ -2089,14 +2191,22 @@ export default defineComponent({
       try {
         const storage = await this.offlineStorageForOperation(operationId)
         if (!storage || !this.isCurrentOfflineOperation(operationId, pageId)) return
-        const policy = await storage.readOfflinePolicy()
+        const policy = this.offlinePrivatePath
+          ? await this.offlinePolicyForOperation(storage)
+          : await storage.readOfflinePolicy()
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
-        await storage.recordEligibleReaderVisit(selector, {
-          expectedSessionGeneration: policy.sessionGeneration,
-          expectedPolicyRevision: policy.state.policyRevision
-        })
+        const service = this.offlineAccountAwareService()
+        const updated = this.offlinePrivatePath
+          ? await (service?.recordEligibleReaderVisit
+              ? service.recordEligibleReaderVisit(selector)
+              : Promise.reject(new Error('Offline private policy is locked.')))
+          : await storage.recordEligibleReaderVisit(selector, {
+              expectedSessionGeneration: policy.sessionGeneration,
+              expectedPolicyRevision: policy.state.policyRevision
+            })
         if (!this.isCurrentOfflineOperation(operationId, pageId)) return
         this.offlineGeneration = policy.sessionGeneration
+        this.offlinePolicy = updated
         this.offlinePolicyRevision = policy.state.policyRevision + 1
         if (policy.state.automaticSavingEnabled) {
           await (this.offlineSyncService
@@ -2111,6 +2221,10 @@ export default defineComponent({
       }
     },
     async updateOfflineAdmission (availability: 'ineligible' | 'unknown'): Promise<void> {
+      if (this.offlinePrivatePath) {
+        await this.refreshOfflinePageState()
+        return
+      }
       const selector = this.offlineSelector()
       if (!selector || this.offlineDisposed) return
       const generation = this.pageActionGeneration
@@ -2180,7 +2294,12 @@ export default defineComponent({
       const selector = this.offlineSelector()
       const pageId = selector?.pageId ?? this.pageId
       if (this.offlineDisposed || !selector || !Number.isSafeInteger(pageId) || pageId < 1 || (manualSelection && !this.offlineVisitEligible())) {
-        this.offlineState = 'ineligible'
+        if (this.offlinePrivatePath && !this.offlinePrivateHandle()) {
+          this.offlineAccessState = 'locked'
+          this.offlineState = 'locked'
+        } else {
+          this.offlineState = 'ineligible'
+        }
         return
       }
       const generation = this.pageActionGeneration
@@ -2201,15 +2320,12 @@ export default defineComponent({
       try {
         const storage = await this.offlineStorageForOperation(operationId)
         if (!storage || !isCurrentOperation()) return
-        const policy = await storage.readOfflinePolicy()
+        const policy = await this.offlinePolicyForOperation(storage)
         if (!isCurrentOperation()) return
         const previousPolicy = policy.pages.find((record: OfflinePagePolicyRecord) =>
           record.siteId === selector.siteId && record.pageId === selector.pageId && record.locale === selector.locale
         )
-        const updatedPolicy = await storage.setManualOfflineIntent(selector, manualSelection, {
-          expectedSessionGeneration: policy.sessionGeneration,
-          expectedPolicyRevision: policy.state.policyRevision
-        })
+        const updatedPolicy = await this.setOfflineManualIntent(storage, selector, manualSelection, policy)
         policyMutationCommitted = true
         if (!isCurrentOperation()) return
         this.offlinePolicy = updatedPolicy
@@ -2328,7 +2444,12 @@ export default defineComponent({
       const selector = this.offlineSelector()
       const pageId = selector?.pageId ?? this.pageId
       if (this.offlineDisposed || !selector || !Number.isSafeInteger(pageId) || pageId < 1) {
-        this.offlineState = 'ineligible'
+        if (this.offlinePrivatePath && !this.offlinePrivateHandle()) {
+          this.offlineAccessState = 'locked'
+          this.offlineState = 'locked'
+        } else {
+          this.offlineState = 'ineligible'
+        }
         return
       }
       const generation = this.pageActionGeneration
@@ -2349,12 +2470,9 @@ export default defineComponent({
       try {
         const storage = await this.offlineStorageForOperation(operationId)
         if (!storage || !isCurrentOperation()) return
-        const policy = await storage.readOfflinePolicy()
+        const policy = await this.offlinePolicyForOperation(storage)
         if (!isCurrentOperation()) return
-        const excludedPolicy = await storage.removeOfflinePage(selector, {
-          expectedSessionGeneration: policy.sessionGeneration,
-          expectedPolicyRevision: policy.state.policyRevision
-        })
+        const excludedPolicy = await this.removeOfflineSelection(storage, selector, policy)
         policyMutationCommitted = true
         if (!isCurrentOperation()) return
         this.offlinePolicy = excludedPolicy
@@ -2488,10 +2606,10 @@ export default defineComponent({
       try {
         const storage = await this.offlineStorageForOperation(operationId)
         if (!storage || !isCurrentOperation()) return
-        const policy = await storage.readOfflinePolicy()
+        const policy = await this.offlinePolicyForOperation(storage)
         if (!isCurrentOperation()) return
         const pagePolicy = policy.pages.find(page => page.siteId === selector.siteId && page.pageId === selector.pageId && page.locale === selector.locale)
-        if (pagePolicy?.availability === 'ineligible' && !pagePolicy.excluded) {
+        if (!this.offlinePrivatePath && pagePolicy?.availability === 'ineligible' && !pagePolicy.excluded) {
           await storage.setPageAvailability(selector, 'unknown', {
             expectedSessionGeneration: policy.sessionGeneration,
             expectedPolicyRevision: policy.state.policyRevision

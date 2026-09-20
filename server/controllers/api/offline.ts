@@ -1,14 +1,22 @@
 import express from 'express'
-import { getTransportRuntime, type NextFunction, type Request, type Response } from '../_types.ts'
-import { createOfflineDraftKeyFrame, resolveOfflineDraftKeyContext, type OfflineDraftKeyRuntime } from '../../helpers/offline-draft-keys.ts'
+import { RequestAuthenticationError } from '../../helpers/request-auth.ts'
+import { errorStatus, getTransportRuntime, type NextFunction, type Request, type Response } from '../_types.ts'
+import {
+  createOfflineDraftKeyFrame,
+  createOfflineReadingKeyFrame,
+  resolveOfflineDraftKeyContext,
+  resolveOfflineReadingContext,
+  type OfflineDraftKeyRuntime,
+  type OfflineReadingKeyRuntime
+} from '../../helpers/offline-draft-keys.ts'
 
 export const OFFLINE_DRAFT_KEY_PATH = '/_api/offline/draft-key' as const
+export const OFFLINE_READING_KEY_PATH = '/_api/offline/reading-key' as const
 export type OfflineDraftKeyPrivacyMiddleware = (req: Request, res: Response, next: NextFunction) => void
-
 /**
- * The delivery layer mounts this at OFFLINE_DRAFT_KEY_PATH before authentication,
- * origin/fetch metadata checks, body parsing, and any other rejection boundary.
- * The route repeats it as a defense for direct router mounts.
+ * The delivery layer mounts this at the draft-key and reading-key paths before
+ * authentication, origin/fetch metadata checks, body parsing, and any other
+ * rejection boundary. The routes repeat it as a defense for direct router mounts.
  */
 export const offlineDraftKeyPrivacyHeaders: OfflineDraftKeyPrivacyMiddleware = (_req, res, next) => {
   res.set('Cache-Control', 'private, no-store')
@@ -37,6 +45,21 @@ router.post('/draft-key', offlineDraftKeyPrivacyHeaders, requireSameOriginFetchS
     res.status(200).send(frame)
   } catch (error) {
     next(error)
+  }
+})
+
+router.post('/reading-key', offlineDraftKeyPrivacyHeaders, requireSameOriginFetchSite, async (req, res) => {
+  try {
+    const runtime = getTransportRuntime<OfflineReadingKeyRuntime>()
+    const context = await resolveOfflineReadingContext(req, runtime)
+    const frame = createOfflineReadingKeyFrame(context)
+    res.set('Content-Type', 'application/octet-stream')
+    res.status(200).send(frame)
+  } catch (error) {
+    const authenticationFailure = error instanceof RequestAuthenticationError || errorStatus(error) === 401
+    res.status(authenticationFailure ? 401 : 500).json({
+      error: authenticationFailure ? 'Authentication required.' : 'Offline reading key is temporarily unavailable.'
+    })
   }
 })
 

@@ -1,20 +1,52 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from '../../server/test/bun-test.mts'
 import {
+  decodeOfflineReadingSecret,
   decryptOfflineDraft,
   decryptOfflineDraftForReconciliation,
+  decryptOfflinePrivateRecord,
+  encodeOfflineReadingSecret,
   encodeOfflineDraftAad,
   encryptOfflineDraft,
+  encryptOfflinePrivateRecord,
+  enrollOfflineReading,
+  generateOfflineReadingPairId,
+  generateOfflineReadingSecret,
+  lockOfflineReading,
+  parseOfflineReadingKeyFrame,
+  readPrivateCorpus,
   requestDraftKey,
-  type OfflineDraftKeyHandle
+  unlockOfflineReading,
+  unwrapOfflineReadingKey,
+  wrapOfflineReadingKey,
+  type OfflineDraftKeyHandle,
+  type OfflineReadingHandleV1
 } from '../helpers/offline-crypto.ts'
-import { invalidateOfflineSession, isCurrentOfflineDraftKey, OfflineDraftOpaqueError } from '../helpers/offline-session.ts'
+import {
+  confirmOfflineReadingSecret,
+  currentOfflineReadingEpoch,
+  currentOfflineReadingHandle,
+  invalidateOfflineSession,
+  isCurrentOfflineDraftKey,
+  isCurrentOfflineReadingHandle,
+  OFFLINE_READING_STATE_EVENT,
+  OfflineDraftOpaqueError
+} from '../helpers/offline-session.ts'
 import {
   OFFLINE_DRAFT_KEY_MAGIC,
   OFFLINE_DRAFT_TAG_BYTES,
   OFFLINE_KEY_VERSION,
+  OFFLINE_READING_KEY_MAGIC,
+  OFFLINE_READING_KEY_VERSION,
+  OFFLINE_READING_NONCE_BYTES,
+  OFFLINE_READING_SALT_BYTES,
   type DraftKeyContext,
   type OfflineDraftEnvelopeV1,
-  type OfflineDraftPayloadV1
+  type OfflineDraftPayloadV1,
+  type OfflinePagePolicyRecord,
+  type OfflinePolicyState,
+  type OfflinePrivateEnvelopeV1,
+  type OfflineReadingContextV1,
+  type OfflineReadingVaultV1
 } from '../../shared/offline.ts'
 
 const ORIGIN = 'https://wiki.example.test'
@@ -61,13 +93,98 @@ const payloadWithSubmission: OfflineDraftPayloadV1 = {
   description: 'Brouillon sécurisé.',
   content: '# Révision\n\n秘密.'
 }
+const READING_AUTH_VERSION = 3
+const READING_GENERATION = SESSION_GENERATION
+const READING_KEY_BYTES = Uint8Array.from({ length: 32 }, (_, index) => 0xa0 + index)
+const READING_KEY_ID = 'AAAAAAAAAAAAAAAAAAAAAA'
+const readingContext: OfflineReadingContextV1 = {
+  schemaVersion: 1,
+  canonicalOrigin: ORIGIN,
+  siteId: SITE_ID,
+  accountId: ACCOUNT_ID,
+  authVersion: READING_AUTH_VERSION,
+  keyVersion: OFFLINE_READING_KEY_VERSION,
+  keyId: READING_KEY_ID
+}
+const readingSnapshot = {
+  schemaVersion: 1 as const,
+  pageId: 12,
+  locale: 'en',
+  path: '/guide',
+  canonicalPath: '/guide',
+  title: 'A private page',
+  description: 'A private offline page.',
+  sourceRevision: '7',
+  capturedAt: '2026-09-01T12:00:00.000Z',
+  expiresAt: null,
+  content: {
+    representation: 'sanitized-html-fragment' as const,
+    sanitizerVersion: 'offline-html-allowlist-v1' as const,
+    html: '<p>Confidential page.</p>'
+  },
+  searchText: 'Confidential page.',
+  contentType: 'sanitized-html-fragment' as const,
+  integrity: 'sha256:fixture'
+}
+const readingSearchDocument = {
+  schemaVersion: 1 as const,
+  siteId: SITE_ID,
+  pageId: 12,
+  locale: 'en',
+  path: '/guide',
+  canonicalPath: '/guide',
+  title: 'A private page',
+  description: 'A private offline page.',
+  searchText: 'Confidential page.',
+  capturedAt: '2026-09-01T12:00:00.000Z',
+  byteSize: 20
+}
+const readingPolicyState: OfflinePolicyState = {
+  key: 'state',
+  recordType: 'state',
+  schemaVersion: 1,
+  automaticSavingEnabled: true,
+  automaticSavingDefaultApplied: true,
+  selectedTags: [],
+  policyRevision: 1,
+  syncDiagnostics: {
+    status: 'idle',
+    lastAttemptAt: null,
+    lastSuccessAt: null,
+    lastError: null,
+    pendingCount: 0,
+    retainedCount: 0,
+    removedCount: 0
+  },
+  byteSize: 0
+}
+const readingPolicyPage: OfflinePagePolicyRecord = {
+  key: `${SITE_ID}\u0000${readingSnapshot.pageId}\u0000${readingSnapshot.locale}`,
+  recordType: 'page',
+  schemaVersion: 1,
+  siteId: SITE_ID,
+  pageId: readingSnapshot.pageId,
+  locale: readingSnapshot.locale,
+  manual: true,
+  automatic: false,
+  tag: false,
+  tagNames: [],
+  visitCount: 0,
+  lastVisitedAt: null,
+  lastEditedAt: null,
+  automaticSelectedAt: null,
+  excluded: false,
+  availability: 'available',
+  byteSize: 0
+}
 
 type FetchImplementation = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 type FetchApi = typeof window.fetch
 type FetchMock = Mock<FetchImplementation>
 type GlobalDescriptor = PropertyDescriptor | undefined
-const globalsToRestore = ['window', 'location', 'BroadcastChannel', 'fetch'] as const
+const globalsToRestore = ['window', 'document', 'location', 'BroadcastChannel', 'fetch'] as const
 const savedGlobals = new Map<string, GlobalDescriptor>()
+const dispatchedReadingEvents: string[] = []
 
 class TestBroadcastChannel {
   readonly name: string
@@ -90,12 +207,19 @@ const setGlobal = (name: string, value: unknown): void => {
   Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
 }
 const installBrowserGlobals = (fetchImpl: FetchApi): void => {
-  setGlobal('window', { fetch: fetchImpl, location: { origin: ORIGIN } })
+  setGlobal('window', {
+    fetch: fetchImpl,
+    location: { origin: ORIGIN },
+    dispatchEvent: (event: Event) => {
+      dispatchedReadingEvents.push(event.type)
+      return true
+    }
+  })
+  setGlobal('document', {})
   setGlobal('location', { origin: ORIGIN })
   setGlobal('BroadcastChannel', TestBroadcastChannel as unknown as typeof BroadcastChannel)
   setGlobal('fetch', fetchImpl)
 }
-
 const restoreBrowserGlobals = (): void => {
   for (const name of [...globalsToRestore].reverse()) {
     if (!savedGlobals.has(name)) continue
@@ -142,6 +266,60 @@ const tsodk1Frame = (frameContext: DraftKeyContext, keyBytes = KEY_BYTES): Uint8
     lpUtf8(frameContext.keyVersion),
     keyBytes
   ])
+/** Builds the public TSORK1 frame with a length-prefixed context and raw reading key. */
+const tsork1Frame = (frameContext: OfflineReadingContextV1, keyBytes = READING_KEY_BYTES): Uint8Array =>
+  concatBytes([
+    textEncoder.encode(OFFLINE_READING_KEY_MAGIC),
+    lpUtf8(frameContext.canonicalOrigin),
+    lpUtf8(frameContext.siteId),
+    u64be(frameContext.accountId),
+    u64be(frameContext.authVersion),
+    lpUtf8(frameContext.keyVersion),
+    lpUtf8(frameContext.keyId),
+    keyBytes
+  ])
+
+const cloneVault = (vault: OfflineReadingVaultV1): OfflineReadingVaultV1 => ({
+  ...vault,
+  context: { ...vault.context },
+  salt: new Uint8Array(vault.salt),
+  nonce: new Uint8Array(vault.nonce),
+  wrappedKey: new Uint8Array(vault.wrappedKey)
+})
+type ReadingStorageFixture = {
+  readonly storage: {
+    readonly currentSessionGeneration: () => Promise<number>
+    readonly getReadingVault: () => Promise<OfflineReadingVaultV1 | null>
+    readonly putReadingVault: (vault: OfflineReadingVaultV1) => Promise<void>
+  }
+  readonly getVault: () => OfflineReadingVaultV1 | null
+}
+
+const createReadingStorage = (initial: OfflineReadingVaultV1 | null = null, generation = READING_GENERATION): ReadingStorageFixture => {
+  let vault = initial ? cloneVault(initial) : null
+  return {
+    storage: {
+      currentSessionGeneration: async () => generation,
+      getReadingVault: async () => (vault ? cloneVault(vault) : null),
+      putReadingVault: async (next: OfflineReadingVaultV1) => {
+        vault = cloneVault(next)
+      }
+    },
+    getVault: () => (vault ? cloneVault(vault) : null)
+  }
+}
+
+const mutateByte = (bytes: Uint8Array): Uint8Array => {
+  const result = new Uint8Array(bytes)
+  result[0] = (result[0] ?? 0) ^ 1
+  return result
+}
+const clonePrivateEnvelope = (envelope: OfflinePrivateEnvelopeV1): OfflinePrivateEnvelopeV1 => ({
+  ...envelope,
+  context: { ...envelope.context },
+  nonce: new Uint8Array(envelope.nonce),
+  ciphertext: new Uint8Array(envelope.ciphertext)
+})
 
 const octetStreamResponse = (frame: Uint8Array): Response =>
   new Response(frame.slice(), {
@@ -251,21 +429,39 @@ beforeEach(() => {
   })
   installBrowserGlobals(fetchType(unusedFetch))
   invalidateOfflineSession()
+  lockOfflineReading()
+  dispatchedReadingEvents.length = 0
 })
 
 afterEach(() => {
   invalidateOfflineSession()
+  lockOfflineReading()
   restoreBrowserGlobals()
 })
+const enrollReadingFixture = async (
+  confirmSecret: (displaySecret: string) => boolean | Promise<boolean> = () => true
+): Promise<{
+  readonly fetchMock: FetchMock
+  readonly storage: ReadingStorageFixture
+  readonly secret: Uint8Array
+  readonly vault: OfflineReadingVaultV1
+  readonly handle: OfflineReadingHandleV1
+}> => {
+  const fetchMock = installFetch(octetStreamResponse(tsork1Frame(readingContext)))
+  const storage = createReadingStorage()
+  const result = await enrollOfflineReading(fetchType(fetchMock), storage.storage, {
+    expectedAccountId: ACCOUNT_ID,
+    expectedAuthVersion: READING_AUTH_VERSION,
+    expectedSessionGeneration: READING_GENERATION,
+    confirmSecret
+  })
+  return { fetchMock, storage, ...result }
+}
 
 describe('offline draft crypto', () => {
   it('imports the authVersion 0 server frame as a non-extractable key and requests an absolute same-origin endpoint', async () => {
     const fetchMock = installFetch(octetStreamResponse(tsodk1Frame(context)))
-
     const handle = await requestKey(fetchMock)
-
-    expect(handle.context).toEqual(context)
-    expect(handle.sessionGeneration).toBe(SESSION_GENERATION)
     expect(handle.key.type).toBe('secret')
     expect(handle.key.extractable).toBe(false)
     expect(handle.key.usages).toEqual(['encrypt', 'decrypt'])
@@ -326,15 +522,18 @@ describe('offline draft crypto', () => {
     const currentFetch = installFetch(octetStreamResponse(tsodk1Frame(context)))
     const currentHandle = await requestKey(currentFetch)
     await expect(decryptOfflineDraftForReconciliation(currentHandle, oldEnvelope)).resolves.toEqual(payload)
-    await expect(
-      decryptOfflineDraftForReconciliation(currentHandle, { ...cloneEnvelope(oldEnvelope), accountId: ACCOUNT_ID + 1 })
-    ).rejects.toMatchObject({ code: 'opaque', deleteOnly: true })
-    await expect(
-      decryptOfflineDraftForReconciliation(currentHandle, { ...cloneEnvelope(oldEnvelope), authVersion: 1 })
-    ).rejects.toMatchObject({ code: 'opaque', deleteOnly: true })
-    await expect(
-      decryptOfflineDraftForReconciliation(currentHandle, { ...cloneEnvelope(oldEnvelope), submissionId: 'receipt' })
-    ).rejects.toMatchObject({ code: 'opaque', deleteOnly: true })
+    await expect(decryptOfflineDraftForReconciliation(currentHandle, { ...cloneEnvelope(oldEnvelope), accountId: ACCOUNT_ID + 1 })).rejects.toMatchObject({
+      code: 'opaque',
+      deleteOnly: true
+    })
+    await expect(decryptOfflineDraftForReconciliation(currentHandle, { ...cloneEnvelope(oldEnvelope), authVersion: 1 })).rejects.toMatchObject({
+      code: 'opaque',
+      deleteOnly: true
+    })
+    await expect(decryptOfflineDraftForReconciliation(currentHandle, { ...cloneEnvelope(oldEnvelope), submissionId: 'receipt' })).rejects.toMatchObject({
+      code: 'opaque',
+      deleteOnly: true
+    })
   })
 
   for (const vector of OFFLINE_CRYPTO_VECTORS) {
@@ -415,16 +614,22 @@ describe('offline draft crypto', () => {
       ['sessionGeneration', (value: OfflineDraftEnvelopeV1) => ({ ...cloneEnvelope(value), sessionGeneration: SESSION_GENERATION + 1 })],
       ['draftRevision', (value: OfflineDraftEnvelopeV1) => ({ ...cloneEnvelope(value), draftRevision: 4 })],
       ['submissionId', (value: OfflineDraftEnvelopeV1) => ({ ...cloneEnvelope(value), submissionId: null })],
-      ['nonce', (value: OfflineDraftEnvelopeV1) => {
-        const result = cloneEnvelope(value)
-        result.nonce[0] = (result.nonce[0] ?? 0) ^ 1
-        return result
-      }],
-      ['ciphertext', (value: OfflineDraftEnvelopeV1) => {
-        const result = cloneEnvelope(value)
-        result.ciphertext[0] = (result.ciphertext[0] ?? 0) ^ 1
-        return result
-      }]
+      [
+        'nonce',
+        (value: OfflineDraftEnvelopeV1) => {
+          const result = cloneEnvelope(value)
+          result.nonce[0] = (result.nonce[0] ?? 0) ^ 1
+          return result
+        }
+      ],
+      [
+        'ciphertext',
+        (value: OfflineDraftEnvelopeV1) => {
+          const result = cloneEnvelope(value)
+          result.ciphertext[0] = (result.ciphertext[0] ?? 0) ^ 1
+          return result
+        }
+      ]
     ] as const
 
     for (const [field, mutate] of tampered) {
@@ -434,11 +639,14 @@ describe('offline draft crypto', () => {
   })
 
   it.each([
-    ['wrong magic', (() => {
-      const frame = tsodk1Frame(context)
-      frame[0] = (frame[0] ?? 0) ^ 1
-      return frame
-    })()],
+    [
+      'wrong magic',
+      (() => {
+        const frame = tsodk1Frame(context)
+        frame[0] = (frame[0] ?? 0) ^ 1
+        return frame
+      })()
+    ],
     ['truncated', tsodk1Frame(context).slice(0, -1)],
     ['trailing bytes', concatBytes([tsodk1Frame(context), new Uint8Array([0])])],
     ['oversized', new Uint8Array(16 * 1024 + 1)]
@@ -587,11 +795,393 @@ describe('offline draft crypto', () => {
 
     invalidateOfflineSession()
     expect(isCurrentOfflineDraftKey(initialHandle)).toBe(false)
-    await expect(encryptOfflineDraft(initialHandle, payload, { recordId: 'record-1', draftRevision: 3, submissionId: null })).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    await expect(encryptOfflineDraft(initialHandle, payload, { recordId: 'record-1', draftRevision: 3, submissionId: null })).rejects.toBeInstanceOf(
+      OfflineDraftOpaqueError
+    )
 
     const request = (lateFetch.mock.calls[0] as [RequestInfo | URL, RequestInit])[1]
     expect(request.signal?.aborted).toBe(true)
     releaseResponse(octetStreamResponse(tsodk1Frame(context)))
     await expect(lateRequest).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+  })
+  it('strictly parses bounded TSORK1 frames and rejects malformed context fields', () => {
+    const expected = {
+      canonicalOrigin: ORIGIN,
+      expectedAccountId: ACCOUNT_ID,
+      expectedSessionGeneration: READING_GENERATION,
+      expectedAuthVersion: READING_AUTH_VERSION,
+      expectedSiteId: SITE_ID
+    }
+    const parsed = parseOfflineReadingKeyFrame(tsork1Frame(readingContext), expected)
+    expect(parsed.context).toEqual(readingContext)
+    expect(Array.from(parsed.keyBytes)).toEqual(Array.from(READING_KEY_BYTES))
+
+    const malformedFrames: readonly [string, Uint8Array][] = [
+      [
+        'wrong magic',
+        (() => {
+          const frame = tsork1Frame(readingContext)
+          frame[0] = (frame[0] ?? 0) ^ 1
+          return frame
+        })()
+      ],
+      ['truncated', tsork1Frame(readingContext).slice(0, -1)],
+      ['trailing bytes', concatBytes([tsork1Frame(readingContext), new Uint8Array([0])])],
+      ['oversized frame', new Uint8Array(16 * 1024 + 1)],
+      ['oversized origin field', concatBytes([textEncoder.encode(OFFLINE_READING_KEY_MAGIC), lpUtf8('x'.repeat(8193))])],
+      ['oversized site field', concatBytes([textEncoder.encode(OFFLINE_READING_KEY_MAGIC), lpUtf8(ORIGIN), lpUtf8('x'.repeat(1025))])],
+      ['oversized key id field', tsork1Frame({ ...readingContext, keyId: 'x'.repeat(129) })],
+      ['invalid origin', tsork1Frame({ ...readingContext, canonicalOrigin: `${ORIGIN}/path` })],
+      ['invalid key id', tsork1Frame({ ...readingContext, keyId: 'A'.repeat(21) })],
+      ['wrong key version', tsork1Frame({ ...readingContext, keyVersion: 'random-reading-v2' as typeof OFFLINE_READING_KEY_VERSION })],
+      ['wrong site expectation', tsork1Frame({ ...readingContext, siteId: 'another-site' })],
+      ['wrong auth expectation', tsork1Frame({ ...readingContext, authVersion: READING_AUTH_VERSION + 1 })]
+    ]
+    for (const [label, frame] of malformedFrames) {
+      expect(() => parseOfflineReadingKeyFrame(frame, expected), `malformed ${label} frame must stay opaque`).toThrow(OfflineDraftOpaqueError)
+    }
+  })
+
+  it('generates and canonically encodes independent reading secrets', () => {
+    const secret = generateOfflineReadingSecret()
+    const displaySecret = encodeOfflineReadingSecret(secret)
+
+    expect(secret).toHaveLength(32)
+    expect(displaySecret).toHaveLength(43)
+    expect(displaySecret).not.toContain('=')
+    expect(Array.from(decodeOfflineReadingSecret(displaySecret))).toEqual(Array.from(secret))
+    expect(confirmOfflineReadingSecret(secret, new Uint8Array(32))).toBe(false)
+    expect(() => decodeOfflineReadingSecret(`${displaySecret}=`)).toThrow(OfflineDraftOpaqueError)
+  })
+
+  it('binds wrapped reading keys to the secret, context, salt, nonce, and ciphertext', async () => {
+    const secret = Uint8Array.from({ length: 32 }, (_, index) => index + 10)
+    const salt = Uint8Array.from({ length: OFFLINE_READING_SALT_BYTES }, (_, index) => index + 1)
+    const nonce = Uint8Array.from({ length: OFFLINE_READING_NONCE_BYTES }, (_, index) => index + 33)
+    const wrapped = await wrapOfflineReadingKey(secret, readingContext, READING_GENERATION, salt, nonce, READING_KEY_BYTES)
+
+    await expect(unwrapOfflineReadingKey(secret, readingContext, READING_GENERATION, salt, nonce, wrapped)).resolves.toEqual(READING_KEY_BYTES)
+    const wrongSecret = new Uint8Array(secret)
+    wrongSecret[0] = (wrongSecret[0] ?? 0) ^ 1
+    await expect(unwrapOfflineReadingKey(wrongSecret, readingContext, READING_GENERATION, salt, nonce, wrapped)).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+
+    const alteredContexts: readonly OfflineReadingContextV1[] = [
+      { ...readingContext, canonicalOrigin: 'https://other.example.test' },
+      { ...readingContext, siteId: 'other-site' },
+      { ...readingContext, accountId: ACCOUNT_ID + 1 },
+      { ...readingContext, authVersion: READING_AUTH_VERSION + 1 },
+      { ...readingContext, keyId: 'AQEBAQEBAQEBAQEBAQEBAQ' }
+    ]
+    for (const alteredContext of alteredContexts) {
+      await expect(unwrapOfflineReadingKey(secret, alteredContext, READING_GENERATION, salt, nonce, wrapped)).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    }
+    await expect(unwrapOfflineReadingKey(secret, readingContext, READING_GENERATION + 1, salt, nonce, wrapped)).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    await expect(unwrapOfflineReadingKey(secret, readingContext, READING_GENERATION, mutateByte(salt), nonce, wrapped)).rejects.toBeInstanceOf(
+      OfflineDraftOpaqueError
+    )
+    await expect(unwrapOfflineReadingKey(secret, readingContext, READING_GENERATION, salt, mutateByte(nonce), wrapped)).rejects.toBeInstanceOf(
+      OfflineDraftOpaqueError
+    )
+    await expect(unwrapOfflineReadingKey(secret, readingContext, READING_GENERATION, salt, nonce, mutateByte(wrapped))).rejects.toBeInstanceOf(
+      OfflineDraftOpaqueError
+    )
+  })
+
+  it('fences reading state synchronously on pageshow and document visibility changes', async () => {
+    const windowListeners = new Map<string, Array<() => void>>()
+    const documentListeners = new Map<string, Array<() => void>>()
+    const windowObject = globalThis.window as unknown as {
+      addEventListener: (type: string, listener: () => void) => void
+    }
+    const documentObject = globalThis.document as unknown as {
+      addEventListener: (type: string, listener: () => void) => void
+    }
+    windowObject.addEventListener = (type, listener) => {
+      const listeners = windowListeners.get(type) ?? []
+      listeners.push(listener)
+      windowListeners.set(type, listeners)
+    }
+    documentObject.addEventListener = (type, listener) => {
+      const listeners = documentListeners.get(type) ?? []
+      listeners.push(listener)
+      documentListeners.set(type, listeners)
+    }
+
+    const fetchMock = createFetchMock(async () => octetStreamResponse(tsork1Frame(readingContext)))
+    const storage = createReadingStorage()
+    const enrolled = await enrollOfflineReading(fetchType(fetchMock), storage.storage, {
+      expectedAccountId: ACCOUNT_ID,
+      expectedAuthVersion: READING_AUTH_VERSION,
+      expectedSessionGeneration: READING_GENERATION,
+      confirmSecret: () => true
+    })
+    expect(windowListeners.has('focus')).toBe(true)
+    expect(windowListeners.has('pageshow')).toBe(true)
+    expect(documentListeners.has('visibilitychange')).toBe(true)
+    expect(currentOfflineReadingHandle()).toBe(enrolled.handle)
+
+    for (const listener of windowListeners.get('pageshow') ?? []) listener()
+    expect(currentOfflineReadingHandle()).toBeNull()
+    lockOfflineReading()
+
+    const secondFetchMock = createFetchMock(async () => octetStreamResponse(tsork1Frame(readingContext)))
+    const secondStorage = createReadingStorage()
+    const enrolledAgain = await enrollOfflineReading(fetchType(secondFetchMock), secondStorage.storage, {
+      expectedAccountId: ACCOUNT_ID,
+      expectedAuthVersion: READING_AUTH_VERSION,
+      expectedSessionGeneration: READING_GENERATION,
+      confirmSecret: () => true
+    })
+    for (const listener of documentListeners.get('visibilitychange') ?? []) listener()
+    expect(currentOfflineReadingHandle()).toBeNull()
+    expect(enrolledAgain.handle.sessionGeneration).toBe(READING_GENERATION)
+  })
+
+  it('confirms a generated secret and unlocks a wrapped vault after a simulated browser reload', async () => {
+    let displayedSecret = ''
+    const enrolled = await enrollReadingFixture(displaySecret => {
+      displayedSecret = displaySecret
+      return true
+    })
+    const persisted = enrolled.storage.getVault()
+    expect(persisted).not.toBeNull()
+    expect(Object.keys(persisted ?? {}).sort()).toEqual(['context', 'nonce', 'salt', 'schemaVersion', 'sessionGeneration', 'wrappedKey'])
+    expect(persisted).not.toHaveProperty('secret')
+    expect(persisted).not.toHaveProperty('keyBytes')
+    expect(persisted?.wrappedKey.byteLength).toBe(48)
+    expect(Array.from(persisted?.wrappedKey.slice(0, READING_KEY_BYTES.byteLength) ?? [])).not.toEqual(Array.from(READING_KEY_BYTES))
+    expect(displayedSecret).toBe(encodeOfflineReadingSecret(enrolled.secret))
+    expect(decodeOfflineReadingSecret(displayedSecret)).toEqual(enrolled.secret)
+    expect(enrolled.handle.key.extractable).toBe(false)
+    lockOfflineReading()
+    expect(isCurrentOfflineReadingHandle(enrolled.handle)).toBe(false)
+    expect(currentOfflineReadingHandle()).toBeNull()
+    const wrongSecret = new Uint8Array(enrolled.secret)
+    wrongSecret[0] = (wrongSecret[0] ?? 0) ^ 1
+    await expect(unlockOfflineReading(enrolled.storage.storage, wrongSecret)).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    const reloaded = await unlockOfflineReading(enrolled.storage.storage, new Uint8Array(enrolled.secret))
+    expect(reloaded).not.toBe(enrolled.handle)
+    expect(reloaded.key.extractable).toBe(false)
+    expect(isCurrentOfflineReadingHandle(reloaded)).toBe(true)
+  })
+
+  it('publishes reading state changes and advances the epoch on lock fences', async () => {
+    const enrolled = await enrollReadingFixture()
+    expect(dispatchedReadingEvents).toEqual([OFFLINE_READING_STATE_EVENT])
+    const unlockedEpoch = currentOfflineReadingEpoch()
+    expect(currentOfflineReadingHandle()).toBe(enrolled.handle)
+
+    lockOfflineReading()
+
+    expect(currentOfflineReadingEpoch()).toBe(unlockedEpoch + 1)
+    expect(dispatchedReadingEvents).toEqual([OFFLINE_READING_STATE_EVENT, OFFLINE_READING_STATE_EVENT])
+    expect(currentOfflineReadingHandle()).toBeNull()
+  })
+  it('rejects an enrollment whose generated secret is not confirmed and does not persist a vault', async () => {
+    const fetchMock = installFetch(octetStreamResponse(tsork1Frame(readingContext)))
+    const storage = createReadingStorage()
+    await expect(
+      enrollOfflineReading(fetchType(fetchMock), storage.storage, {
+        expectedAccountId: ACCOUNT_ID,
+        expectedSessionGeneration: READING_GENERATION,
+        confirmSecret: () => false
+      })
+    ).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    expect(storage.getVault()).toBeNull()
+    expect(currentOfflineReadingHandle()).toBeNull()
+  })
+
+  it('fences enrollment and unlock results that lose the reading lifecycle epoch', async () => {
+    let releaseResponse: (response: Response) => void = () => {}
+    const fetchMock = createFetchMock(
+      () =>
+        new Promise<Response>(resolve => {
+          releaseResponse = resolve
+        })
+    )
+    installBrowserGlobals(fetchType(fetchMock))
+    const storage = createReadingStorage()
+    const enrollment = enrollOfflineReading(fetchType(fetchMock), storage.storage, {
+      expectedAccountId: ACCOUNT_ID,
+      expectedSessionGeneration: READING_GENERATION,
+      confirmSecret: () => true
+    })
+    await Promise.resolve()
+    lockOfflineReading()
+    releaseResponse(octetStreamResponse(tsork1Frame(readingContext)))
+    await expect(enrollment).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    expect(storage.getVault()).toBeNull()
+
+    const enrolled = await enrollReadingFixture()
+    lockOfflineReading()
+    let releaseVault: (vault: OfflineReadingVaultV1) => void = () => {}
+    const delayedStorage = {
+      currentSessionGeneration: async () => READING_GENERATION,
+      getReadingVault: async () =>
+        await new Promise<OfflineReadingVaultV1>(resolve => {
+          releaseVault = resolve
+        }),
+      putReadingVault: async (_vault: OfflineReadingVaultV1) => {}
+    }
+    const unlock = unlockOfflineReading(delayedStorage, new Uint8Array(enrolled.secret))
+    await Promise.resolve()
+    lockOfflineReading()
+    releaseVault(enrolled.vault)
+    await expect(unlock).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    expect(currentOfflineReadingHandle()).toBeNull()
+  })
+
+  it('requires an authoritative private snapshot response and binds account, site, authVersion, page, and locale selectors', async () => {
+    const enrolled = await enrollReadingFixture()
+    const pairId = generateOfflineReadingPairId()
+    const selectors = { pageId: readingSnapshot.pageId, locale: readingSnapshot.locale, recordRevision: 1, pairId }
+    const responsePayload = {
+      schemaVersion: 1 as const,
+      audience: 'private' as const,
+      context: {
+        canonicalOrigin: ORIGIN,
+        siteId: SITE_ID,
+        accountId: ACCOUNT_ID,
+        authVersion: READING_AUTH_VERSION
+      },
+      snapshot: readingSnapshot
+    }
+    const envelope = await encryptOfflinePrivateRecord(enrolled.handle, 'snapshot', responsePayload, selectors)
+    await expect(
+      encryptOfflinePrivateRecord(
+        enrolled.handle,
+        'snapshot',
+        { ...responsePayload, context: { ...responsePayload.context, authVersion: READING_AUTH_VERSION + 1 } },
+        selectors
+      )
+    ).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    await expect(decryptOfflinePrivateRecord(enrolled.handle, envelope)).resolves.toEqual(readingSnapshot)
+    await expect(encryptOfflinePrivateRecord(enrolled.handle, 'snapshot', readingSnapshot, selectors)).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    await expect(
+      encryptOfflinePrivateRecord(enrolled.handle, 'search', { ...readingSearchDocument, sourceRevision: '7', siteId: 'other-site' }, selectors)
+    ).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+
+    const contextTampered: readonly [string, OfflinePrivateEnvelopeV1][] = [
+      ['accountId', { ...clonePrivateEnvelope(envelope), context: { ...envelope.context, accountId: ACCOUNT_ID + 1 } }],
+      ['siteId', { ...clonePrivateEnvelope(envelope), context: { ...envelope.context, siteId: 'other-site' } }],
+      ['authVersion', { ...clonePrivateEnvelope(envelope), context: { ...envelope.context, authVersion: READING_AUTH_VERSION + 1 } }],
+      ['pageId', { ...clonePrivateEnvelope(envelope), pageId: readingSnapshot.pageId + 1 }],
+      ['locale', { ...clonePrivateEnvelope(envelope), locale: 'fr' }]
+    ]
+    for (const [field, tampered] of contextTampered) {
+      await expect(decryptOfflinePrivateRecord(enrolled.handle, tampered), `tampered ${field} selector must stay opaque`).rejects.toBeInstanceOf(
+        OfflineDraftOpaqueError
+      )
+    }
+  })
+
+  it('fails closed for torn body/search pairs and sourceRevision mismatches', async () => {
+    const enrolled = await enrollReadingFixture()
+    const pairId = generateOfflineReadingPairId()
+    const selectors = { pageId: readingSnapshot.pageId, locale: readingSnapshot.locale, recordRevision: 1, pairId }
+    const responsePayload = {
+      schemaVersion: 1 as const,
+      audience: 'private' as const,
+      context: {
+        canonicalOrigin: ORIGIN,
+        siteId: SITE_ID,
+        accountId: ACCOUNT_ID,
+        authVersion: READING_AUTH_VERSION
+      },
+      snapshot: readingSnapshot
+    }
+    const body = await encryptOfflinePrivateRecord(enrolled.handle, 'snapshot', responsePayload, selectors)
+    const search = await encryptOfflinePrivateRecord(
+      enrolled.handle,
+      'search',
+      { ...readingSearchDocument, sourceRevision: readingSnapshot.sourceRevision },
+      selectors
+    )
+    const policyStateEnvelope = await encryptOfflinePrivateRecord(enrolled.handle, 'policy-state', readingPolicyState, {
+      pageId: null,
+      locale: null,
+      recordRevision: 2,
+      pairId: null
+    })
+    const policyPageEnvelope = await encryptOfflinePrivateRecord(enrolled.handle, 'policy-page', readingPolicyPage, {
+      pageId: readingPolicyPage.pageId,
+      locale: readingPolicyPage.locale,
+      recordRevision: 2,
+      pairId: null
+    })
+    const coherentRecords = [body, search, policyStateEnvelope, policyPageEnvelope] as const
+    const storageFor = (records: readonly OfflinePrivateEnvelopeV1[]) => ({
+      currentCorpusRevision: async () => 4,
+      listPrivateRecords: async (_keyId: string, _options?: { readonly expectedSessionGeneration?: number; readonly expectedCorpusRevision?: number }) =>
+        records
+    })
+
+    const ciphertextTampered = clonePrivateEnvelope(body)
+    ciphertextTampered.ciphertext[0] = (ciphertextTampered.ciphertext[0] ?? 0) ^ 1
+    await expect(readPrivateCorpus(enrolled.handle, storageFor([ciphertextTampered, search, policyStateEnvelope, policyPageEnvelope]))).rejects.toBeInstanceOf(
+      OfflineDraftOpaqueError
+    )
+
+    const corpus = await readPrivateCorpus(enrolled.handle, storageFor(coherentRecords))
+    expect(corpus.snapshots).toEqual([readingSnapshot])
+    expect(corpus.searchDocuments).toEqual([{ ...readingSearchDocument, sourceRevision: readingSnapshot.sourceRevision }])
+    expect(corpus.corpusRevision).toBe(4)
+
+    const pairTampered = clonePrivateEnvelope(body)
+    pairTampered.pairId = generateOfflineReadingPairId()
+    await expect(readPrivateCorpus(enrolled.handle, storageFor([pairTampered, search, policyStateEnvelope, policyPageEnvelope]))).rejects.toBeInstanceOf(
+      OfflineDraftOpaqueError
+    )
+    const revisionTampered = clonePrivateEnvelope(body)
+    revisionTampered.recordRevision = 2
+    await expect(readPrivateCorpus(enrolled.handle, storageFor([revisionTampered, search, policyStateEnvelope, policyPageEnvelope]))).rejects.toBeInstanceOf(
+      OfflineDraftOpaqueError
+    )
+    await expect(readPrivateCorpus(enrolled.handle, storageFor(coherentRecords), 3)).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    await expect(readPrivateCorpus(enrolled.handle, storageFor([body]))).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+
+    const mismatchedSearch = await encryptOfflinePrivateRecord(enrolled.handle, 'search', { ...readingSearchDocument, sourceRevision: '8' }, selectors)
+    await expect(readPrivateCorpus(enrolled.handle, storageFor([body, mismatchedSearch, policyStateEnvelope, policyPageEnvelope]))).rejects.toBeInstanceOf(
+      OfflineDraftOpaqueError
+    )
+    await expect(readPrivateCorpus(enrolled.handle, storageFor([body, body, search, policyStateEnvelope, policyPageEnvelope]))).rejects.toBeInstanceOf(
+      OfflineDraftOpaqueError
+    )
+    await expect(readPrivateCorpus(enrolled.handle, storageFor([body, search, policyPageEnvelope]))).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    await expect(readPrivateCorpus(enrolled.handle, storageFor([body, search, policyStateEnvelope]))).rejects.toBeInstanceOf(OfflineDraftOpaqueError)
+    const mixedPolicyRevision = await encryptOfflinePrivateRecord(enrolled.handle, 'policy-page', readingPolicyPage, {
+      pageId: readingPolicyPage.pageId,
+      locale: readingPolicyPage.locale,
+      recordRevision: 3,
+      pairId: null
+    })
+    await expect(readPrivateCorpus(enrolled.handle, storageFor([body, search, policyStateEnvelope, mixedPolicyRevision]))).rejects.toBeInstanceOf(
+      OfflineDraftOpaqueError
+    )
+    for (const page of [
+      { ...readingPolicyPage, availability: 'ineligible' as const },
+      { ...readingPolicyPage, excluded: true },
+      { ...readingPolicyPage, manual: false, automatic: false, tag: false }
+    ]) {
+      const ineligiblePolicy = await encryptOfflinePrivateRecord(enrolled.handle, 'policy-page', page, {
+        pageId: page.pageId,
+        locale: page.locale,
+        recordRevision: 2,
+        pairId: null
+      })
+      await expect(readPrivateCorpus(enrolled.handle, storageFor([body, search, policyStateEnvelope, ineligiblePolicy]))).rejects.toBeInstanceOf(
+        OfflineDraftOpaqueError
+      )
+    }
+
+    const wrongPolicyState = await encryptOfflinePrivateRecord(
+      enrolled.handle,
+      'policy-state',
+      { ...readingPolicyState, policyRevision: 2 },
+      { pageId: null, locale: null, recordRevision: 2, pairId: null }
+    )
+    await expect(readPrivateCorpus(enrolled.handle, storageFor([body, search, wrongPolicyState, policyPageEnvelope]))).rejects.toBeInstanceOf(
+      OfflineDraftOpaqueError
+    )
   })
 })

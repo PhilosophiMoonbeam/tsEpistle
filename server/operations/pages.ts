@@ -17,7 +17,14 @@ import {
   OfflinePageProjectionError,
   type OfflinePageSource
 } from '../helpers/offline-page.ts'
-import type { OfflinePageSnapshotV1 } from '../../shared/offline.ts'
+import {
+  OFFLINE_PRIVATE_SNAPSHOT_RESPONSE_SCHEMA_VERSION,
+  OfflinePrivateSnapshotResponseV1Schema,
+  type OfflinePageSnapshotV1,
+  type OfflinePrivateSnapshotResponseV1
+} from '../../shared/offline.ts'
+import { accountSessionIsCurrent, sessionVersion } from '../helpers/account-session.ts'
+import { isApiPrincipal } from '../helpers/api-principal.ts'
 import {
   canDeletePage,
   canReadPage,
@@ -39,6 +46,7 @@ import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBra
 import { resolveAssetBrandingView } from '../helpers/asset-branding.ts'
 
 const { ApplicationError } = errors
+const propertyValue = (value: unknown, key: string): unknown => (typeof value === 'object' && value !== null ? Reflect.get(value, key) : undefined)
 const PRIVATE_SEARCH_WINDOW_LIMIT = 50
 const KNOWLEDGE_SEARCH_WINDOW_LIMIT = 100
 const DEFAULT_PUBLIC_SEARCH_WINDOW_LIMIT = 100
@@ -247,6 +255,7 @@ interface WikiPageOperations {
     PageDeleteForbidden: new () => Error
     PageMoveForbidden: new () => Error
   }
+
   auth: {
     checkPageAccess(user: Express.User | undefined, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority): boolean
     loadPageRuleAuthority(requester: Express.User | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
@@ -401,6 +410,54 @@ const loadOfflinePage = async (transaction: Knex.Transaction, pageId: number): P
   return { ...(row as Record<string, unknown>), tags } as unknown as OfflinePageSource
 }
 
+const privateOfflineAuthenticationFailure = (): never => {
+  const error = new OfflinePageAuthorityError()
+  Object.assign(error, { status: 401, code: 'OFFLINE_AUTHENTICATION_REQUIRED' })
+  throw error
+}
+const offlinePositiveHumanAccountId = (value: unknown): number => {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 && value !== 2) return value
+  return privateOfflineAuthenticationFailure()
+}
+
+const offlineNonNegativeSessionVersion = (value: unknown): number => {
+  const version = sessionVersion(value)
+  if (version !== null) return version
+  return privateOfflineAuthenticationFailure()
+}
+
+interface OfflineCurrentAccount {
+  readonly id?: unknown
+  readonly isActive?: unknown
+  readonly authVersion?: unknown
+}
+
+const loadOfflineCurrentAccount = async (
+  transaction: Knex.Transaction,
+  requester: Express.User | undefined
+): Promise<{ readonly accountId: number; readonly authVersion: number }> => {
+  if (typeof requester !== 'object' || requester === null || isApiPrincipal(requester)) privateOfflineAuthenticationFailure()
+  const accountId = offlinePositiveHumanAccountId(principalId(requester))
+  const requesterId = propertyValue(requester, 'id')
+  if (typeof requesterId !== 'number' || !Number.isSafeInteger(requesterId) || requesterId !== accountId) privateOfflineAuthenticationFailure()
+  const ownership = propertyValue(requester, 'ownershipUserId')
+  if (ownership !== undefined && ownership !== accountId) privateOfflineAuthenticationFailure()
+  const authVersionClaim = propertyValue(requester, 'authVersion')
+  if (authVersionClaim !== undefined) offlineNonNegativeSessionVersion(authVersionClaim)
+  const account = (await transaction('users').select('id', 'isActive', 'authVersion').where('id', accountId).first()) as OfflineCurrentAccount | undefined
+  if (!accountSessionIsCurrent({ id: accountId, authVersion: authVersionClaim }, account)) privateOfflineAuthenticationFailure()
+  const currentAccountId = offlinePositiveHumanAccountId(account?.id)
+  const currentAuthVersion = offlineNonNegativeSessionVersion(account?.authVersion)
+  return { accountId: currentAccountId, authVersion: currentAuthVersion }
+}
+
+const offlineSiteId = (canonicalOrigin: string): string => {
+  const configured = propertyValue(wiki.config, 'offlineDraftSiteId')
+  const value = configured === undefined || configured === null || configured === '' ? canonicalOrigin : configured
+  if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value, 'utf8') > 256) throw new OfflinePageAuthorityError()
+  return value
+}
+
 const getOfflineSnapshot = async (input: OperationInput): Promise<OfflinePageSnapshotV1> => {
   const pageId = positiveInteger(input.id, 'id')
   return wiki.models.knex.transaction(
@@ -411,15 +468,68 @@ const getOfflineSnapshot = async (input: OperationInput): Promise<OfflinePageSna
       if (!page) throw new OfflinePageProjectionError()
       const protection = await transaction('pageAccessPasswords').where({ pageId }).first('pageId')
       if (protection) throw new OfflinePageProjectionError()
-      if (page.visibility !== 'public') throw new OfflinePageProjectionError()
+      const visibility = page.visibility
+      if (visibility !== 'public' && visibility !== 'private') throw new OfflinePageProjectionError()
+      if (visibility !== 'public') throw new OfflinePageProjectionError()
       let canonicalPath: string
       try {
-        canonicalPath = pageRoute({ visibility: 'public', localeCode: page.localeCode, path: page.path })
+        canonicalPath = pageRoute({ visibility, localeCode: page.localeCode, path: page.path })
       } catch {
         throw new OfflinePageProjectionError()
       }
       const canonicalOrigin = canonicalOfflineOrigin(wiki.config.host)
-      return buildOfflinePageSnapshot({ page, guest, authority, canonicalOrigin, canonicalPath, capturedAt: new Date() })
+      return buildOfflinePageSnapshot({ page, requester: guest, authority, audience: 'public', canonicalOrigin, canonicalPath, capturedAt: new Date() })
+    },
+    { isolationLevel: 'repeatable read' }
+  )
+}
+
+const getOfflinePrivateSnapshot = async (input: OperationInput): Promise<OfflinePrivateSnapshotResponseV1> => {
+  const pageId = positiveInteger(input.id, 'id')
+  const requester = input.requester
+  if (!requester || isApiPrincipal(requester)) privateOfflineAuthenticationFailure()
+  return wiki.models.knex.transaction(
+    async transaction => {
+      const account = await loadOfflineCurrentAccount(transaction, requester)
+      const loadedAuthority = await wiki.auth.loadPageRuleAuthority(requester, transaction)
+      const effectiveRequester = {
+        ...requester,
+        id: account.accountId,
+        authVersion: account.authVersion,
+        ownershipUserId: account.accountId,
+        permissions: [...loadedAuthority.permissions]
+      } as Express.User
+      const authority: PageRuleAuthority = { ...loadedAuthority, requester: effectiveRequester }
+      const page = await loadOfflinePage(transaction, pageId)
+      if (!page) throw new OfflinePageProjectionError()
+      const protection = await transaction('pageAccessPasswords').where({ pageId }).first('pageId')
+      if (protection) throw new OfflinePageProjectionError()
+      const visibility = page.visibility
+      if (visibility !== 'public' && visibility !== 'private') throw new OfflinePageProjectionError()
+      let canonicalPath: string
+      try {
+        canonicalPath = pageRoute({ visibility, localeCode: page.localeCode, path: page.path })
+      } catch {
+        throw new OfflinePageProjectionError()
+      }
+      const canonicalOrigin = canonicalOfflineOrigin(wiki.config.host)
+      const snapshot = buildOfflinePageSnapshot({
+        page,
+        requester: effectiveRequester,
+        authority,
+        audience: 'private',
+        canonicalOrigin,
+        canonicalPath,
+        capturedAt: new Date()
+      })
+      const parsed = OfflinePrivateSnapshotResponseV1Schema.safeParse({
+        schemaVersion: OFFLINE_PRIVATE_SNAPSHOT_RESPONSE_SCHEMA_VERSION,
+        audience: 'private',
+        context: { canonicalOrigin, siteId: offlineSiteId(canonicalOrigin), accountId: account.accountId, authVersion: account.authVersion },
+        snapshot
+      })
+      if (!parsed.success) throw new OfflinePageAuthorityError()
+      return parsed.data
     },
     { isolationLevel: 'repeatable read' }
   )
@@ -741,13 +851,11 @@ const listTags = async (requester?: Express.User, suppliedAuthority?: PageRuleAu
 const RECENT_CONTENT_PROMPT_BYTES = 2_048
 const RECENT_CANDIDATE_BATCH_LIMIT = 50
 
-const recentPromptEscapedJson = (value: string): string =>
-  JSON.stringify(JSON.stringify(value)).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e')
+const recentPromptEscapedJson = (value: string): string => JSON.stringify(JSON.stringify(value)).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e')
 
 const recentPromptEmptyBytes = Buffer.byteLength(recentPromptEscapedJson(''), 'utf8')
 
-const recentPromptCharacterBytes = (character: string): number =>
-  Buffer.byteLength(recentPromptEscapedJson(character), 'utf8') - recentPromptEmptyBytes
+const recentPromptCharacterBytes = (character: string): number => Buffer.byteLength(recentPromptEscapedJson(character), 'utf8') - recentPromptEmptyBytes
 
 /**
  * Keep an exact opening source prefix while measuring the representation that
@@ -805,7 +913,6 @@ const recentPageEvidence = (page: PageSourceRecord): RecentPageEvidence | null =
     }
   }
 }
-
 
 interface RecentCursor {
   readonly updatedAt: Date | string
@@ -880,7 +987,7 @@ const listRecent = async (input: OperationInput): Promise<RecentPageEvidenceResu
         await pageRequiresUnlock({
           requester,
           pageId: candidateId,
-          sessionId: typeof input.sessionId === 'string' ? input.sessionId : '',
+          sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
         })
       )
         continue
@@ -2467,6 +2574,7 @@ export default {
   create,
   discover,
   get,
+  getOfflinePrivateSnapshot,
   getOfflineSnapshot,
   getByPath,
   getConflictLatest,

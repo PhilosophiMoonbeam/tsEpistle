@@ -9,6 +9,7 @@ const storagePath = fileURLToPath(new URL('../helpers/offline-storage.ts', impor
 const sessionPath = fileURLToPath(new URL('../helpers/offline-session.ts', import.meta.url))
 const executablePath = process.env.CHROME_BIN ?? '/usr/bin/google-chrome'
 const capturedAt = '2026-09-01T00:00:00.000Z'
+const privateKeyId = 'A'.repeat(22)
 
 type Outcome = { ok: true; value: unknown } | { ok: false; error: { name: string; code?: string; message: string } }
 
@@ -272,6 +273,11 @@ const seedUnknownMeta = async (name: string): Promise<void> => {
     storage: { usageBytes: null, quotaBytes: null, persisted: null, persistenceRequested: false }
   });
   await transactionDone(transaction);
+  const legacyData = database.transaction(legacyStores, 'readwrite');
+  legacyData.objectStore('drafts').put({ recordId: 'unknown-draft', bytes: new Uint8Array([1, 2, 3, 4]) });
+  legacyData.objectStore('snapshots').put({ siteId: 'unknown-site', pageId: 1, locale: 'en', bytes: new Uint8Array([5, 6, 7]) });
+  legacyData.objectStore('searchDocuments').put({ siteId: 'unknown-site', pageId: 1, locale: 'en', bytes: new Uint8Array([8, 9, 10]) });
+  await transactionDone(legacyData);
   database.close();
 };
 const inflateManagedBytes = async (name: string): Promise<void> => {
@@ -279,6 +285,55 @@ const inflateManagedBytes = async (name: string): Promise<void> => {
   const transaction = database.transaction('meta', 'readwrite');
   const current = await requestValue(transaction.objectStore('meta').get('state')) as Record<string, unknown>;
   transaction.objectStore('meta').put({ ...current, managedBytes: 20 * 1024 * 1024 + 1024 });
+  await transactionDone(transaction);
+  database.close();
+};
+const privateKeyId = 'A'.repeat(22);
+const privatePairId = 'B'.repeat(22);
+const makePrivateContext = (accountId: number, keyId: string): Record<string, unknown> => ({
+  schemaVersion: 1,
+  canonicalOrigin: 'http://localhost',
+  siteId: 'private-site',
+  accountId,
+  authVersion: 1,
+  keyVersion: 'random-reading-v1',
+  keyId
+});
+const makePrivateVault = (accountId: number, keyId: string, sessionGeneration: number): Record<string, unknown> => ({
+  schemaVersion: 1,
+  context: makePrivateContext(accountId, keyId),
+  sessionGeneration,
+  salt: new Uint8Array(32).fill(1),
+  nonce: new Uint8Array(12).fill(2),
+  wrappedKey: new Uint8Array(48).fill(3)
+});
+const makePrivateRecord = (
+  kind: 'snapshot' | 'search',
+  accountId: number,
+  keyId: string,
+  sessionGeneration: number,
+  recordRevision: number,
+  pairId: string,
+  seed: number
+): Record<string, unknown> => ({
+  schemaVersion: 1,
+  context: makePrivateContext(accountId, keyId),
+  sessionGeneration,
+  kind,
+  pageId: 42,
+  locale: 'en',
+  recordRevision,
+  pairId,
+  nonce: new Uint8Array(12).fill(seed),
+  ciphertext: new Uint8Array(20).fill(seed + 1)
+});
+const putPrivateAlias = async (name: string, accountId: number, keyId: string, sessionGeneration: number): Promise<void> => {
+  const database = await openDatabase(name);
+  const transaction = database.transaction('privateRecords', 'readwrite');
+  transaction.objectStore('privateRecords').put(
+    makePrivateRecord('snapshot', accountId, keyId, sessionGeneration, 1, privatePairId, 4),
+    [keyId, 'snapshot', 42, 'fr']
+  );
   await transactionDone(transaction);
   database.close();
 };
@@ -317,6 +372,25 @@ const dump = async (name: string): Promise<unknown> => {
   await transactionDone(transaction);
   database.close();
   return serialise({ meta, policy, snapshots, searchDocuments, drafts });
+};
+const dumpLegacy = async (name: string): Promise<unknown> => {
+  const database = await openDatabase(name);
+  const transaction = database.transaction(legacyStores, 'readonly');
+  const [meta, snapshots, searchDocuments, drafts] = await Promise.all([
+    requestValue(transaction.objectStore('meta').get('state')),
+    requestValue(transaction.objectStore('snapshots').getAll()),
+    requestValue(transaction.objectStore('searchDocuments').getAll()),
+    requestValue(transaction.objectStore('drafts').getAll())
+  ]);
+  await transactionDone(transaction);
+  database.close();
+  return serialise({ meta, snapshots, searchDocuments, drafts });
+};
+const storeNames = async (name: string): Promise<string[]> => {
+  const database = await openDatabase(name);
+  const names = Array.from(database.objectStoreNames);
+  database.close();
+  return names;
 };
 const deleteDatabase = (name: string): Promise<void> => new Promise((resolve, reject) => {
   const request = indexedDB.deleteDatabase(name);
@@ -369,6 +443,8 @@ export async function run(operation: string, payload: Record<string, unknown> = 
     if (operation === 'release') { closeRawHold(String(payload.name)); return { ok: true, value: { released: true } }; }
     if (operation === 'deleteDatabase') { await deleteDatabase(String(payload.name)); return { ok: true, value: { deleted: true } }; }
     if (operation === 'dump') return { ok: true, value: await dump(String(payload.name)) };
+    if (operation === 'dumpLegacy') return { ok: true, value: await dumpLegacy(String(payload.name)) };
+    if (operation === 'storeNames') return { ok: true, value: await storeNames(String(payload.name)) };
     if (operation === 'open') return { ok: true, value: await openHandle(String(payload.id), String(payload.name), typeof payload.blockedTimeoutMs === 'number' ? payload.blockedTimeoutMs : undefined) };
     if (operation === 'close') { handles.get(String(payload.id))?.close(); handles.delete(String(payload.id)); return { ok: true, value: true }; }
     if (operation === 'terminate') { storageFor(payload.id).markTerminated(); return { ok: true, value: true }; }
@@ -388,6 +464,60 @@ export async function run(operation: string, payload: Record<string, unknown> = 
       }
     }
     if (operation === 'isClosed') return { ok: true, value: storageFor(payload.id).isClosed };
+    if (operation === 'enrollPrivate') {
+      const storage = storageFor(payload.id)
+      const sessionGeneration = await storage.currentSessionGeneration()
+      const accountId = Number(payload.accountId ?? 1)
+      const keyId = String(payload.keyId ?? privateKeyId)
+      return {
+        ok: true,
+        value: await storage.putReadingVault(makePrivateVault(accountId, keyId, sessionGeneration) as never)
+      }
+    }
+    if (operation === 'putPrivatePair') {
+      const storage = storageFor(payload.id)
+      const sessionGeneration = await storage.currentSessionGeneration()
+      const corpusRevision = await storage.currentCorpusRevision()
+      const accountId = Number(payload.accountId ?? 1)
+      const keyId = String(payload.keyId ?? privateKeyId)
+      const revision = Number(payload.revision ?? 1)
+      const pairId = String(payload.pairId ?? privatePairId)
+      const expectedRecordRevision = payload.expectedRecordRevision === null ? null : Number(payload.expectedRecordRevision ?? revision - 1)
+      return {
+        ok: true,
+        value: await storage.putPrivateSnapshotRecords(
+          makePrivateRecord('snapshot', accountId, keyId, sessionGeneration, revision, pairId, 4) as never,
+          makePrivateRecord('search', accountId, keyId, sessionGeneration, revision, pairId, 5) as never,
+          { expectedSessionGeneration: sessionGeneration, expectedCorpusRevision: corpusRevision, expectedRecordRevision } as never
+        )
+      }
+    }
+    if (operation === 'putPrivateSingle') {
+      const storage = storageFor(payload.id)
+      const sessionGeneration = await storage.currentSessionGeneration()
+      const corpusRevision = await storage.currentCorpusRevision()
+      const accountId = Number(payload.accountId ?? 1)
+      const keyId = String(payload.keyId ?? privateKeyId)
+      const revision = Number(payload.revision ?? 1)
+      return {
+        ok: true,
+        value: await storage.putPrivateRecords(
+          [makePrivateRecord('snapshot', accountId, keyId, sessionGeneration, revision, privatePairId, 6)] as never,
+          { expectedSessionGeneration: sessionGeneration, expectedCorpusRevision: corpusRevision, expectedRecordRevision: null } as never
+        )
+      }
+    }
+    if (operation === 'putPrivateAlias') {
+      await putPrivateAlias(String(payload.name), Number(payload.accountId ?? 1), String(payload.keyId ?? privateKeyId), 0)
+      return { ok: true, value: true }
+    }
+    if (operation === 'listPrivate') {
+      const storage = storageFor(payload.id)
+      return { ok: true, value: await storage.listPrivateRecords(String(payload.keyId ?? privateKeyId), payload.options as never) }
+    }
+    if (operation === 'retirePrivate') {
+      return { ok: true, value: await storageFor(payload.id).retireReadingVault(payload.options as never) }
+    }
     if (operation === 'bump') return { ok: true, value: await storageFor(payload.id).bumpSessionGeneration(undefined, payload.options as never) };
     if (operation === 'setAutomatic') return { ok: true, value: await storageFor(payload.id).setAutomaticSavingEnabled(payload.enabled as boolean, payload.options as never) };
     if (operation === 'setManual') return {
@@ -664,7 +794,7 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(reopened.policy.find(record => record.recordType === 'state')).toMatchObject({ automaticSavingEnabled: false, automaticSavingDefaultApplied: true })
   })
 
-  test('upgrades physical v1 through the current schema without changing encrypted envelope bytes and marks migrated snapshots manual', async () => {
+  test('purges legacy plaintext corpus metadata while preserving encrypted drafts and installing private stores', async () => {
     const name = freshDatabase('upgrade')
     const envelope = makeEnvelope('legacy-draft', { seed: 19 })
     const snapshot = makeSnapshot('legacy', 7)
@@ -673,23 +803,19 @@ describe('real IndexedDB offline storage adapter', () => {
     await succeeded('open', { id: 'legacy', name })
     const dump = await readDump(name)
     expect(dump.meta?.schemaVersion).toBe(1)
-    expect(dump.meta?.sessionGeneration).toBe(0)
+    expect(dump.meta?.sessionGeneration).toBe(1)
+    expect(dump.meta?.corpusRevision).toBe(1)
     expect(dump.drafts).toHaveLength(1)
     expect(bytes(dump.drafts[0]?.nonce)).toEqual(Array.from(envelope.nonce))
     expect(bytes(dump.drafts[0]?.ciphertext)).toEqual(Array.from(envelope.ciphertext))
-    expect(dump.snapshots).toHaveLength(1)
-    expect(dump.snapshots[0]?.snapshot).toEqual(snapshot)
-    expect(dump.policy.filter(record => record.recordType === 'page')).toHaveLength(1)
-    expect(dump.policy.find(record => record.recordType === 'page')).toMatchObject({
-      siteId: 'legacy-site',
-      pageId: 7,
-      locale: 'legacy',
-      manual: true,
-      automatic: false,
-      tag: false,
-      lastEditedAt: null,
-      availability: 'available'
-    })
+    expect(dump.snapshots).toHaveLength(0)
+    expect(dump.searchDocuments).toHaveLength(0)
+    expect(dump.policy.filter(record => record.recordType === 'page')).toHaveLength(0)
+    expect(dump.policy.map(record => record.recordType)).toEqual(['state'])
+    expect(dump.meta?.managedBytes).toBe(draftLogicalBytes(envelope) + policyManagedBytes(dump))
+    expect(await succeeded<string[]>('storeNames', { name })).toEqual(
+      expect.arrayContaining(['meta', 'snapshots', 'drafts', 'searchDocuments', 'policy', 'readingVault', 'privateRecords'])
+    )
   })
   test('preserves existing policy metadata across reopen migration while backfilling a missing snapshot policy', async () => {
     const name = freshDatabase('policy-migration-reopen')
@@ -805,6 +931,40 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(afterLogout.meta?.sessionGeneration).toBe(2)
     expect(afterLogout.drafts.map(draft => draft.recordId).sort()).toEqual(['opaque-boundary-row', 'receipt'])
     expect(bytes(afterLogout.drafts.find(draft => draft.recordId === 'receipt')?.ciphertext)).toEqual(Array.from(receipt.ciphertext))
+  })
+  test('separates private vault ownership and rejects torn body/search writes', async () => {
+    const name = freshDatabase('private-separation')
+    await succeeded('open', { id: 'storage', name })
+    await succeeded('enrollPrivate', { id: 'storage', accountId: 1 })
+    await succeeded('putPrivatePair', { id: 'storage', accountId: 1, revision: 1, expectedRecordRevision: null })
+    await failedWith('putPrivatePair', { id: 'storage', accountId: 1, revision: 2, pairId: 'C'.repeat(22), expectedRecordRevision: 2 }, 'transaction')
+    const records = await succeeded<Array<Record<string, unknown>>>('listPrivate', { id: 'storage', keyId: privateKeyId })
+    expect(records).toHaveLength(2)
+    await failedWith('putPrivatePair', { id: 'storage', accountId: 2, revision: 2, expectedRecordRevision: 1 }, 'generation-fenced')
+    await failedWith('putPrivateSingle', { id: 'storage', accountId: 1, revision: 2 }, 'invalid-record')
+    await failedWith('listPrivate', { id: 'storage', keyId: 'C'.repeat(22) }, 'generation-fenced')
+  })
+  test('rejects private alias keys while retirement clears obsolete physical rows', async () => {
+    const name = freshDatabase('private-alias')
+    await succeeded('open', { id: 'storage', name })
+    await succeeded('enrollPrivate', { id: 'storage', accountId: 1 })
+    await succeeded('putPrivatePair', { id: 'storage', accountId: 1, revision: 1, expectedRecordRevision: null })
+    await succeeded('putPrivateAlias', { id: 'storage', name, accountId: 1 })
+    await failedWith('listPrivate', { id: 'storage', keyId: privateKeyId }, 'metadata-recovery')
+    await expect(await succeeded<number>('retirePrivate', { id: 'storage', options: { expectedSessionGeneration: 0 } })).toBe(3)
+    await failedWith('listPrivate', { id: 'storage', keyId: privateKeyId, options: { expectedSessionGeneration: 0 } }, 'generation-fenced')
+  })
+
+  test('retires private authority atomically and fences a stale tab', async () => {
+    const name = freshDatabase('private-retirement')
+    await succeeded('open', { id: 'first', name })
+    await succeeded('open', { id: 'second', name })
+    await succeeded('enrollPrivate', { id: 'first', accountId: 1 })
+    await succeeded('putPrivatePair', { id: 'first', accountId: 1, revision: 1, expectedRecordRevision: null })
+    const retired = await succeeded<number>('retirePrivate', { id: 'first', options: { expectedSessionGeneration: 0 } })
+    expect(retired).toBe(2)
+    await failedWith('listPrivate', { id: 'second', keyId: privateKeyId, options: { expectedSessionGeneration: 0 } }, 'generation-fenced')
+    expect((await readDump(name)).meta?.sessionGeneration).toBe(1)
   })
 
   test('advances the persisted generation after failed draft-key acquisition without deleting recovery rows', async () => {
@@ -1371,14 +1531,14 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(estimate.policyPageCount).toBe(0)
     expect(estimate.policyRevision).toBe(0)
     expect(estimate.managedBytes).toBe(draftLogicalBytes(valid) + policyManagedBytes(dump))
-    await failedWith('putDraft', { id: 'storage', envelope: makeEnvelope('growth', { seed: 22 }) }, 'quota')
+    await failedWith('putDraft', { id: 'storage', envelope: makeEnvelope('growth', { generation: 1, seed: 22 }) }, 'quota')
     await succeeded('deleteRaw', { id: 'storage', recordId: 'opaque-row' })
     const afterDelete = await readDump(name)
     expect(afterDelete.drafts.map(draft => draft.recordId)).toEqual(['valid'])
     expect(afterDelete.meta?.accountingComplete).toBe(false)
     await succeeded('close', { id: 'storage' })
     await succeeded('open', { id: 'recovered', name })
-    await succeeded('putDraft', { id: 'recovered', envelope: makeEnvelope('growth', { seed: 22 }) })
+    await succeeded('putDraft', { id: 'recovered', envelope: makeEnvelope('growth', { generation: 1, seed: 22 }) })
   })
 
   test('keeps a cancelled clear side-effect free and advances generation only after confirmation', async () => {
@@ -1411,15 +1571,18 @@ describe('real IndexedDB offline storage adapter', () => {
     await succeeded('open', { id: 'versioned-reopened', name: versionChangeName })
   })
 
-  test('preserves unknown metadata schemas and refuses clear as a write', async () => {
+  test('preserves unknown metadata and every legacy byte while refusing writes after v6 upgrade', async () => {
     const name = freshDatabase('unknown')
     await succeeded('seedUnknownMeta', { name })
+    const before = await succeeded<unknown>('dumpLegacy', { name })
     await succeeded('open', { id: 'unknown', name })
     await failedWith('estimate', { id: 'unknown' }, 'unsupported-schema')
     await failedWith('clear', { id: 'unknown', confirmed: true }, 'unsupported-schema')
-    const dump = await readDump(name)
-    expect(dump.meta?.schemaVersion).toBe(99)
-    expect(dump.meta?.sessionGeneration).toBe(4)
+    const after = await succeeded<unknown>('dumpLegacy', { name })
+    expect(after).toEqual(before)
+    expect(await succeeded<string[]>('storeNames', { name })).toEqual(
+      expect.arrayContaining(['meta', 'snapshots', 'drafts', 'searchDocuments', 'policy', 'readingVault', 'privateRecords'])
+    )
   })
 })
 
@@ -1430,7 +1593,10 @@ test('reader status reads only the selected snapshot and retains generation/poli
   const options = { selector: { siteId: 'site', pageId: 1, locale: 'en' }, expectedSessionGeneration: 0, expectedPolicyRevision: 0 }
   const corpus = await succeeded<{ snapshots: Array<{ pageId: number }> }>('readScopedCorpus', { id: 'storage', options })
   expect(corpus.snapshots.map(record => record.pageId)).toEqual([1])
-  const missing = await succeeded<{ snapshots: unknown[] }>('readScopedCorpus', { id: 'storage', options: { ...options, selector: { ...options.selector, pageId: 3 } } })
+  const missing = await succeeded<{ snapshots: unknown[] }>('readScopedCorpus', {
+    id: 'storage',
+    options: { ...options, selector: { ...options.selector, pageId: 3 } }
+  })
   expect(missing.snapshots).toEqual([])
   const fenced = await invoke('readScopedCorpus', { id: 'storage', options: { ...options, expectedPolicyRevision: 999 } })
   expect(fenced.ok).toBe(false)

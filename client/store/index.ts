@@ -2,6 +2,7 @@ import { createPinia, defineStore } from 'pinia'
 import { sameOriginJsonFetch } from '../helpers/json-transport.ts'
 import {
   invalidateOfflineSession,
+  lockOfflineReading,
   registerOfflineIdentityBoundaryOwner,
   registerOfflineSessionInvalidationOwner,
   type OfflineIdentityBoundaryReason,
@@ -32,6 +33,7 @@ const defaultUser = () => ({
   appearance: '',
   fontFamily: normalizeUserFontFamily(undefined),
   permissions: [] as string[],
+  authVersion: 0,
   iat: 0,
   exp: 0,
   authenticated: false
@@ -56,6 +58,25 @@ type WhoAmIResponse = {
   json(): Promise<unknown>
 }
 
+type AuthenticatedWhoAmIUser = Record<string, unknown> & {
+  id: number
+  authVersion: number
+}
+
+type WhoAmIPayload = { authenticated: true; user: AuthenticatedWhoAmIUser } | { authenticated: false; user: null }
+
+const isNonnegativeSafeInteger = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+
+const parseWhoAmIPayload = (value: unknown): WhoAmIPayload | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (record.authenticated === false && record.user === null) return { authenticated: false, user: null }
+  if (record.authenticated !== true || !record.user || typeof record.user !== 'object' || Array.isArray(record.user)) return null
+  const user = record.user as Record<string, unknown>
+  if (!isPositiveAccountId(user.id) || !isNonnegativeSafeInteger(user.authVersion)) return null
+  return { authenticated: true, user: user as AuthenticatedWhoAmIUser }
+}
+
 export type AuthRefreshOutcome = 'authenticated' | 'anonymous' | 'unavailable'
 
 type AuthOutcomeEvent = {
@@ -77,6 +98,119 @@ const dispatchAuthOutcome = (outcome: AuthRefreshOutcome, accountChanged: boolea
 }
 
 const isPositiveAccountId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+const OFFLINE_LOGOUT_PENDING_STORAGE_KEY = 'tsepistle.offline-logout-pending.v1'
+export const OFFLINE_IDENTITY_CLEANUP_FAILURE_MESSAGE = 'Offline identity cleanup failed. Reconnect and try again.'
+
+type PendingOfflineLogout = {
+  readonly present: boolean
+  readonly accountId: number | undefined
+}
+
+const offlineLogoutStorage = (): Storage | null => {
+  if (typeof window === 'undefined') return null
+  try {
+    const storage = window.localStorage
+    return storage && typeof storage.getItem === 'function' && typeof storage.setItem === 'function' && typeof storage.removeItem === 'function'
+      ? storage
+      : null
+  } catch {
+    return null
+  }
+}
+
+const pendingOfflineLogout = (): PendingOfflineLogout => {
+  const storage = offlineLogoutStorage()
+  if (!storage) return { present: false, accountId: undefined }
+  try {
+    const raw = storage.getItem(OFFLINE_LOGOUT_PENDING_STORAGE_KEY)
+    if (raw === null) return { present: false, accountId: undefined }
+    const accountId = Number(raw)
+    return {
+      present: true,
+      accountId: isPositiveAccountId(accountId) ? accountId : undefined
+    }
+  } catch {
+    return { present: true, accountId: undefined }
+  }
+}
+
+export const markOfflineLogoutPending = (accountId?: number): boolean => {
+  const storage = offlineLogoutStorage()
+  if (!storage) return false
+  try {
+    const marker = isPositiveAccountId(accountId) ? String(accountId) : 'pending'
+    storage.setItem(OFFLINE_LOGOUT_PENDING_STORAGE_KEY, marker)
+    return storage.getItem(OFFLINE_LOGOUT_PENDING_STORAGE_KEY) === marker
+  } catch {
+    return false
+  }
+}
+
+const clearOfflineLogoutPending = (): void => {
+  try {
+    offlineLogoutStorage()?.removeItem(OFFLINE_LOGOUT_PENDING_STORAGE_KEY)
+  } catch {
+    // A failed optional marker cleanup cannot restore private access.
+  }
+}
+
+export const resolvePendingOfflineLogoutAfterExplicitSignIn = (): void => {
+  clearOfflineLogoutPending()
+}
+
+export const hasOfflineLogoutPending = (): boolean => pendingOfflineLogout().present
+
+const currentOfflineOrigin = (): string => {
+  if (typeof window === 'undefined') return ''
+  try {
+    const value = window.location?.origin
+    if (typeof value !== 'string' || value.length < 1) return ''
+    return new URL(value).origin
+  } catch {
+    return ''
+  }
+}
+
+const currentOfflineSiteId = (origin: string): string => {
+  if (typeof window === 'undefined') return origin
+  try {
+    const configured = Reflect.get(Reflect.get(window, 'siteConfig') ?? {}, 'offlineDraftSiteId')
+    return typeof configured === 'string' && configured.trim().length > 0 ? configured.trim() : origin
+  } catch {
+    return origin
+  }
+}
+
+const isMatchingReadingVault = (vault: unknown, accountId: number, authVersion: number): boolean => {
+  if (!vault || typeof vault !== 'object' || Array.isArray(vault)) return false
+  const context = Reflect.get(vault, 'context')
+  if (!context || typeof context !== 'object' || Array.isArray(context)) return false
+  const origin = currentOfflineOrigin()
+  const siteId = currentOfflineSiteId(origin)
+  return (
+    origin.length > 0 &&
+    Reflect.get(context, 'canonicalOrigin') === origin &&
+    Reflect.get(context, 'siteId') === siteId &&
+    Reflect.get(context, 'accountId') === accountId &&
+    Reflect.get(context, 'authVersion') === authVersion
+  )
+}
+
+const inspectPersistedReadingVault = async (accountId: number | undefined, authVersion?: number): Promise<boolean | null> => {
+  let storage: OfflineStorage | null = null
+  try {
+    storage = await openOfflineStorage()
+    const getReadingVault = Reflect.get(storage, 'getReadingVault')
+    if (typeof getReadingVault !== 'function') return true
+    const vault = await getReadingVault.call(storage)
+    if (vault === null || vault === undefined) return true
+    return accountId !== undefined && authVersion !== undefined && isMatchingReadingVault(vault, accountId, authVersion)
+  } catch {
+    return null
+  } finally {
+    storage?.close()
+  }
+}
 
 /**
  * Establishes one local identity boundary for an explicit logout, confirmed
@@ -150,6 +284,7 @@ export const invalidateOfflineIdentity = (accountId?: number, reason?: OfflineId
 
   identityBoundarySetupLocked = true
   try {
+    lockOfflineReading()
     advanceOfflineIdentityEpoch()
     invalidateOfflineSession()
     const previous = identityBoundaryTail
@@ -340,8 +475,12 @@ export const useWikiStore = defineStore('wiki', {
         return 'unavailable'
       }
       const authWasSettled = this.authRefreshSettled
+      const pendingLogoutAtStart = pendingOfflineLogout()
       const previousAccountIdAtStart = this.user.authenticated && isPositiveAccountId(this.user.id) ? this.user.id : undefined
-      const warmIdentityAtStart = previousAccountIdAtStart !== undefined && this.offlineIdentityReady
+      const pendingLogoutBlocksWarmIdentity =
+        pendingLogoutAtStart.present && (pendingLogoutAtStart.accountId === undefined || pendingLogoutAtStart.accountId === previousAccountIdAtStart)
+      if (pendingLogoutBlocksWarmIdentity) lockOfflineReading()
+      const warmIdentityAtStart = previousAccountIdAtStart !== undefined && this.offlineIdentityReady && !pendingLogoutBlocksWarmIdentity
       this.authRefreshPending = true
       this.authRefreshSettled = false
       this.authRefreshOutcome = null
@@ -381,15 +520,45 @@ export const useWikiStore = defineStore('wiki', {
           // outcome and must wait for a fresh verification.
           return publishOutcome(outcome, false) ? outcome : settleStale()
         }
-        const boundary = previousAccountId === undefined ? null : beginBoundary(previousAccountId, reason)
-        if (previousAccountId !== undefined && boundary === null) return settleStale()
+        let boundary: Promise<boolean> | null = null
+        if (previousAccountId !== undefined) {
+          boundary = beginBoundary(previousAccountId, reason)
+          if (boundary === null) return settleStale()
+        } else if (reason === 'unauthorized') {
+          const vaultReady = await inspectPersistedReadingVault(undefined)
+          if (!isCurrentRefresh()) return settleStale()
+          if (vaultReady === null) {
+            lockOfflineReading()
+            this.user = defaultUser()
+            this.offlineIdentityReady = false
+            this.showNotification({
+              style: 'red',
+              message: OFFLINE_IDENTITY_CLEANUP_FAILURE_MESSAGE,
+              icon: 'alert'
+            })
+            return publishOutcome('unavailable', false) ? 'unavailable' : settleStale()
+          }
+          if (!vaultReady) {
+            boundary = beginBoundary(undefined, reason)
+            if (boundary === null) return settleStale()
+          }
+        }
         if (!isCurrentRefresh()) return settleStale()
         this.user = defaultUser()
         this.offlineIdentityReady = false
         if (boundary !== null) {
-          await boundary
+          const boundaryReady = await boundary
           if (!isCurrentRefresh()) return settleStale()
+          if (!boundaryReady) {
+            this.showNotification({
+              style: 'red',
+              message: OFFLINE_IDENTITY_CLEANUP_FAILURE_MESSAGE,
+              icon: 'alert'
+            })
+            return publishOutcome('unavailable', previousAccountId !== undefined) ? 'unavailable' : settleStale()
+          }
         }
+        clearOfflineLogoutPending()
         return publishOutcome(outcome, previousAccountId !== undefined) ? outcome : settleStale()
       }
 
@@ -403,31 +572,69 @@ export const useWikiStore = defineStore('wiki', {
           if (!response.ok) {
             return await settleAnonymous(response.status === 401 ? 'anonymous' : 'unavailable', response.status === 401 ? 'unauthorized' : undefined)
           }
-          const payload = await response.json()
+          const payload = parseWhoAmIPayload(await response.json())
           if (!isCurrentRefresh()) return settleStale()
-          if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return await settleAnonymous('unavailable')
-          const record = payload as Record<string, unknown>
-          if (record.authenticated === false) return await settleAnonymous('anonymous', 'unauthorized')
-          if (record.authenticated !== true) return await settleAnonymous('unavailable')
-          const user = record.user
-          if (!user || typeof user !== 'object' || Array.isArray(user)) return await settleAnonymous('unavailable')
-          const profile = user as Record<string, unknown>
+          if (!payload) return await settleAnonymous('unavailable')
+          if (payload.authenticated === false) return await settleAnonymous('anonymous', 'unauthorized')
+          const profile = payload.user
           const id = profile.id
-          if (!isPositiveAccountId(id)) return await settleAnonymous('unavailable')
           if (!isCurrentRefresh()) return settleStale()
           const previousAuthenticatedId = this.user.authenticated && isPositiveAccountId(this.user.id) ? this.user.id : null
+          const authVersion = profile.authVersion
           const accountChanged = previousAuthenticatedId !== null && previousAuthenticatedId !== id
           const passiveLogin = authWasSettled && previousAuthenticatedId === null
+          const securityVersionChanged = previousAuthenticatedId === id && Number.isSafeInteger(this.user.authVersion) && this.user.authVersion !== authVersion
+          const pendingLogout = pendingOfflineLogout()
+          if (
+            pendingLogout.present &&
+            (pendingLogout.accountId === undefined || pendingLogout.accountId === id) &&
+            (previousAuthenticatedId === null || previousAuthenticatedId === id) &&
+            !accountChanged
+          ) {
+            this.user = defaultUser()
+            this.offlineIdentityReady = false
+            this.showNotification({
+              style: 'red',
+              message: OFFLINE_IDENTITY_CLEANUP_FAILURE_MESSAGE,
+              icon: 'alert'
+            })
+            return publishOutcome('unavailable', false) ? 'unavailable' : settleStale()
+          }
           if (accountChanged) {
             this.user = defaultUser()
             this.offlineIdentityReady = false
           }
           let boundaryReady = true
-          if (accountChanged || passiveLogin) {
-            const boundary = beginBoundary(accountChanged ? (previousAuthenticatedId ?? undefined) : undefined)
+          if (accountChanged || passiveLogin || securityVersionChanged) {
+            const boundary = beginBoundary(
+              accountChanged || securityVersionChanged ? (previousAuthenticatedId ?? undefined) : undefined,
+              securityVersionChanged ? 'unauthorized' : undefined
+            )
             if (boundary === null) return settleStale()
             boundaryReady = await boundary
             if (!isCurrentRefresh()) return settleStale()
+          } else if (!accountChanged && !passiveLogin) {
+            const vaultMatches = await inspectPersistedReadingVault(id, authVersion)
+            if (!isCurrentRefresh()) return settleStale()
+            if (vaultMatches === null) {
+              lockOfflineReading()
+              boundaryReady = false
+            } else if (!vaultMatches) {
+              const boundary = beginBoundary(id, 'unauthorized')
+              if (boundary === null) return settleStale()
+              boundaryReady = await boundary
+              if (!isCurrentRefresh()) return settleStale()
+            }
+          }
+          if (!boundaryReady) {
+            this.user = defaultUser()
+            this.offlineIdentityReady = false
+            this.showNotification({
+              style: 'red',
+              message: OFFLINE_IDENTITY_CLEANUP_FAILURE_MESSAGE,
+              icon: 'alert'
+            })
+            return publishOutcome('unavailable', false) ? 'unavailable' : settleStale()
           }
           if (!isCurrentRefresh()) return settleStale()
           this.user = {
@@ -446,9 +653,10 @@ export const useWikiStore = defineStore('wiki', {
             permissions: Array.isArray(profile.permissions)
               ? profile.permissions.filter((permission): permission is string => typeof permission === 'string')
               : [],
+            authVersion,
             authenticated: true
           }
-          this.offlineIdentityReady = boundaryReady
+          this.offlineIdentityReady = true
           return publishOutcome('authenticated', accountChanged) ? 'authenticated' : settleStale()
         } catch {
           if (!isCurrentRefresh()) return settleStale()

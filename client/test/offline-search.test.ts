@@ -1,11 +1,12 @@
 import { describe, expect, test } from '../../server/test/bun-test.mts'
-import type { OfflineSearchDocumentV1 } from '../../shared/offline.ts'
+import { OFFLINE_SAVED_PAGE_OPEN_EVENT, requestOfflineSavedPageOpen } from '../helpers/offline-routes.ts'
 import {
   OFFLINE_SEARCH_DOCUMENT_CHARACTER_LIMIT,
   OFFLINE_SEARCH_QUERY_CHARACTER_LIMIT,
   OFFLINE_SEARCH_QUERY_TERM_LIMIT,
   OFFLINE_SEARCH_RESULT_LIMIT,
   OFFLINE_SEARCH_SCORING_CHUNK_CHARACTERS,
+  mergeOfflineSearchCorpora,
   normalizeOfflineSearchText,
   prepareOfflineSearchCorpus,
   searchPreparedOfflineDocuments,
@@ -82,11 +83,73 @@ describe('offline search', () => {
     expect(pageIds((await searchPreparedOfflineDocumentsAsync(corpus, 'description')).results)).toEqual([1])
   })
 
+  test('unions public and private prepared corpora while private identities win', async () => {
+    const publicDocument = makeDocument(1, { title: 'Public page' })
+    const publicCollision = makeDocument(2, { title: 'Public projection' })
+    const privateCollision = makeDocument(2, { title: 'Private page' })
+    const privateDocument = makeDocument(3, { siteId: 'private-site-id', title: 'Private notes' })
+    const publicCorpus = await prepareOfflineSearchCorpus([publicDocument, publicCollision])
+    const privateCorpus = await prepareOfflineSearchCorpus([privateCollision, privateDocument])
+
+    const merged = mergeOfflineSearchCorpora(publicCorpus, privateCorpus)
+
+    expect(pageIds(searchPreparedOfflineDocuments(merged, '').results)).toEqual([3, 2, 1])
+    expect(searchPreparedOfflineDocuments(merged, 'private').results.map(result => result.document.title)).toEqual(['Private notes', 'Private page'])
+  })
+
+  test('requests in-document private saved-page activation without changing canonical links', () => {
+    const originalWindow = (globalThis as typeof globalThis & { window?: unknown }).window
+    const events: CustomEvent[] = []
+    const windowMock = {
+      location: { origin: 'https://wiki.example.test' },
+      dispatchEvent(event: Event): boolean {
+        events.push(event as CustomEvent)
+        event.preventDefault()
+        return true
+      }
+    }
+    Object.defineProperty(globalThis, 'window', { configurable: true, writable: true, value: windowMock })
+    try {
+      expect(
+        requestOfflineSavedPageOpen({
+          siteId: 'private-site-id',
+          pageId: 1,
+          locale: 'en',
+          audience: 'private',
+          canonicalPath: '/_private/en/x'
+        })
+      ).toBe(true)
+      expect(
+        requestOfflineSavedPageOpen({
+          siteId: 'private-site-id',
+          pageId: 2,
+          locale: 'en',
+          audience: 'private',
+          canonicalPath: '/en/x'
+        })
+      ).toBe(true)
+      const canonicalPaths = events.map(event => {
+        const detail = event.detail
+        if (!detail || typeof detail !== 'object' || !('canonicalPath' in detail) || typeof detail.canonicalPath !== 'string') return ''
+        return detail.canonicalPath
+      })
+      expect(events.map((event, index) => [event.type, canonicalPaths[index]] as const)).toEqual([
+        [OFFLINE_SAVED_PAGE_OPEN_EVENT, '/_private/en/x'],
+        [OFFLINE_SAVED_PAGE_OPEN_EVENT, '/en/x']
+      ])
+    } finally {
+      if (originalWindow === undefined) delete (globalThis as typeof globalThis & { window?: unknown }).window
+      else Object.defineProperty(globalThis, 'window', { configurable: true, writable: true, value: originalWindow })
+    }
+  })
+
   test('bounds a 100-document corpus to 50 results and ignores records beyond the corpus bound', async () => {
-    const documents = Array.from({ length: 100 }, (_, index) => makeDocument(index + 1, {
-      title: `Entry ${String(index + 1).padStart(3, '0')}`,
-      searchText: 'common-term'
-    }))
+    const documents = Array.from({ length: 100 }, (_, index) =>
+      makeDocument(index + 1, {
+        title: `Entry ${String(index + 1).padStart(3, '0')}`,
+        searchText: 'common-term'
+      })
+    )
     const overflow = makeDocument(101, { title: 'Overflow sentinel', searchText: 'overflow-sentinel' })
     const corpus = await prepareOfflineSearchCorpus([...documents, overflow])
 
@@ -101,10 +164,7 @@ describe('offline search', () => {
     const duplicate = makeDocument(1, { title: 'Duplicate without marker' })
     const invalid = { ...makeDocument(2), pageId: 0 } as unknown as OfflineSearchDocumentV1
     const firstHundred = Array.from({ length: 100 }, (_, index) => (index % 2 === 0 ? duplicate : invalid))
-    const corpus = await prepareOfflineSearchCorpus([
-      ...firstHundred,
-      makeDocument(101, { title: 'Candidate 101', searchText: 'overflow-sentinel' })
-    ])
+    const corpus = await prepareOfflineSearchCorpus([...firstHundred, makeDocument(101, { title: 'Candidate 101', searchText: 'overflow-sentinel' })])
     const response = searchPreparedOfflineDocuments(corpus, 'overflow-sentinel')
 
     expect(response).toEqual({ results: [], hasMore: false })
@@ -127,10 +187,7 @@ describe('offline search', () => {
   test('bounds scoring characters per document without admitting a marker beyond the budget', async () => {
     const beyondBudget = 'x'.repeat(OFFLINE_SEARCH_DOCUMENT_CHARACTER_LIMIT) + ' beyond-budget'
     const insideBudget = `needle ${'x'.repeat(OFFLINE_SEARCH_DOCUMENT_CHARACTER_LIMIT)}`
-    const corpus = await prepareOfflineSearchCorpus([
-      makeDocument(1, { searchText: beyondBudget }),
-      makeDocument(2, { searchText: insideBudget })
-    ])
+    const corpus = await prepareOfflineSearchCorpus([makeDocument(1, { searchText: beyondBudget }), makeDocument(2, { searchText: insideBudget })])
 
     const response = searchPreparedOfflineDocuments(corpus, 'beyond-budget')
     expect(response).toEqual({ results: [], hasMore: false })
@@ -138,30 +195,18 @@ describe('offline search', () => {
   })
 
   test('reports more only when a matching result exceeds the effective limit', async () => {
-    const noMatches = searchPreparedOfflineDocuments(
-      await prepareOfflineSearchCorpus([makeDocument(1, { searchText: 'other' })]),
-      'missing'
-    )
-    const oneMatch = searchPreparedOfflineDocuments(
-      await prepareOfflineSearchCorpus([makeDocument(1, { searchText: 'needle' })]),
-      'needle'
-    )
+    const noMatches = searchPreparedOfflineDocuments(await prepareOfflineSearchCorpus([makeDocument(1, { searchText: 'other' })]), 'missing')
+    const oneMatch = searchPreparedOfflineDocuments(await prepareOfflineSearchCorpus([makeDocument(1, { searchText: 'needle' })]), 'needle')
     const exactlyFifty = searchPreparedOfflineDocuments(
-      await prepareOfflineSearchCorpus(
-        Array.from({ length: 50 }, (_, index) => makeDocument(index + 1, { searchText: 'needle' }))
-      ),
+      await prepareOfflineSearchCorpus(Array.from({ length: 50 }, (_, index) => makeDocument(index + 1, { searchText: 'needle' }))),
       'needle'
     )
     const fiftyOne = searchPreparedOfflineDocuments(
-      await prepareOfflineSearchCorpus(
-        Array.from({ length: 51 }, (_, index) => makeDocument(index + 1, { searchText: 'needle' }))
-      ),
+      await prepareOfflineSearchCorpus(Array.from({ length: 51 }, (_, index) => makeDocument(index + 1, { searchText: 'needle' }))),
       'needle'
     )
     const elevenAtTen = searchPreparedOfflineDocuments(
-      await prepareOfflineSearchCorpus(
-        Array.from({ length: 11 }, (_, index) => makeDocument(index + 1, { searchText: 'needle' }))
-      ),
+      await prepareOfflineSearchCorpus(Array.from({ length: 11 }, (_, index) => makeDocument(index + 1, { searchText: 'needle' }))),
       'needle',
       { limit: 10 }
     )
@@ -177,10 +222,7 @@ describe('offline search', () => {
   })
 
   test('normalizes Unicode compatibility forms and whitespace in queries and fields', async () => {
-    const documents = [
-      makeDocument(1, { title: '  ＣＡＦe\u0301  ' }),
-      makeDocument(2, { title: 'Whitespace example', searchText: 'release\u000breview' })
-    ]
+    const documents = [makeDocument(1, { title: '  ＣＡＦe\u0301  ' }), makeDocument(2, { title: 'Whitespace example', searchText: 'release\u000breview' })]
     const corpus = await prepareOfflineSearchCorpus(documents)
 
     expect(pageIds(searchPreparedOfflineDocuments(corpus, '\n café\u00a0').results)).toEqual([1])
@@ -225,9 +267,7 @@ describe('offline search', () => {
       return originalNormalize.apply(this, args)
     }
     try {
-      await prepareOfflineSearchCorpus([
-        makeDocument(1, { searchText: `${'\uFDFA'.repeat(OFFLINE_SEARCH_DOCUMENT_CHARACTER_LIMIT)} overflow` })
-      ])
+      await prepareOfflineSearchCorpus([makeDocument(1, { searchText: `${'\uFDFA'.repeat(OFFLINE_SEARCH_DOCUMENT_CHARACTER_LIMIT)} overflow` })])
     } finally {
       String.prototype.normalize = originalNormalize
     }
@@ -236,13 +276,18 @@ describe('offline search', () => {
   })
 
   test('aborts preparation during a maximum-corpus near-limit workload', async () => {
-    const documents = Array.from({ length: 100 }, (_, index) =>
-      makeDocument(index + 1, { searchText: 'x'.repeat(OFFLINE_SEARCH_DOCUMENT_CHARACTER_LIMIT) })
-    )
+    const documents = Array.from({ length: 100 }, (_, index) => makeDocument(index + 1, { searchText: 'x'.repeat(OFFLINE_SEARCH_DOCUMENT_CHARACTER_LIMIT) }))
     const controller = new AbortController()
     const preparation = prepareOfflineSearchCorpus(documents, { signal: controller.signal })
     let settled = false
-    void preparation.then(() => { settled = true }, () => { settled = true })
+    void preparation.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
     await Promise.resolve()
     expect(settled).toBe(false)
     controller.abort()

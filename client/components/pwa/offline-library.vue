@@ -9,6 +9,7 @@ import type {
   OfflineSnapshotRecord
 } from '../../../shared/offline.ts'
 import {
+  mergeOfflineSearchCorpora,
   prepareOfflineSearchCorpus,
   searchPreparedOfflineDocumentsAsync,
   type OfflineSearchCorpus,
@@ -18,7 +19,13 @@ import {
   subscribeOfflineStorageChanges,
   type OfflineStorage
 } from '../../helpers/offline-storage.ts'
-import { offlinePageHref, offlineRecordAtUrl } from '../../helpers/offline-routes.ts'
+import {
+  OFFLINE_SAVED_PAGE_OPEN_EVENT,
+  offlinePageHref,
+  offlineRecordAtUrl,
+  parseOfflineSavedPageOpenRequest,
+  type OfflineSavedPageOpenRequest
+} from '../../helpers/offline-routes.ts'
 import { renderOfflineHtmlFragment } from '../../helpers/offline-renderer.ts'
 import {
   createOfflineSyncUnavailableResult,
@@ -26,16 +33,34 @@ import {
   type OfflineSyncResult,
   type OfflineSyncService
 } from '../../helpers/offline-sync.ts'
+import {
+  currentOfflineReadingEpoch,
+  currentOfflineReadingHandle,
+  isCurrentOfflineReadingHandle,
+  OFFLINE_READING_STATE_EVENT,
+  type OfflineReadingHandleV1
+} from '../../helpers/offline-session.ts'
 
+type OfflineAudience = 'public' | 'private'
 type OfflinePageSelector = {
   readonly siteId: string
   readonly pageId: number
   readonly locale: string
+  readonly audience?: OfflineAudience
+}
+type OfflineVisibleRecord = OfflineSnapshotRecord & {
+  readonly audience: OfflineAudience
+  readonly readingContext?: {
+    readonly accountId: number
+    readonly authVersion: number
+    readonly keyId: string
+    readonly sessionGeneration: number
+  }
 }
 
 type ReaderHistoryMode = 'none' | 'initial' | 'pushed' | 'history'
 type ReaderCloseOptions = { readonly fromHistory?: boolean; readonly restoreFocus?: boolean }
-type ReaderOpenOptions = { readonly history?: ReaderHistoryMode }
+type ReaderOpenOptions = { readonly history?: ReaderHistoryMode; readonly inDocument?: boolean }
 
 type FocusAfterRemove = {
   readonly nextKey: string | null
@@ -71,8 +96,12 @@ const offlineSyncResultDetail = (result: OfflineSyncResult, fallback: string): s
 const offlineSyncService = inject<OfflineSyncService>(OFFLINE_SYNC_COORDINATOR_KEY)
 const OFFLINE_DOCUMENT_PATH = '/_offline'
 const OFFLINE_LOCALE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{1,34}$/u
+const currentOrigin = (): string => typeof window === 'undefined' ? '' : window.location.origin
+const isOfflineLocale = (value: string): boolean => OFFLINE_LOCALE_PATTERN.test(value)
 
-const records = shallowRef<readonly OfflineSnapshotRecord[]>([])
+const records = shallowRef<readonly OfflineVisibleRecord[]>([])
+const publicRecords = shallowRef<readonly OfflineVisibleRecord[]>([])
+const privateRecords = shallowRef<readonly OfflineVisibleRecord[]>([])
 const corpus = shallowRef<OfflineSnapshotCorpus | null>(null)
 const preparedCorpus = shallowRef<OfflineSearchCorpus | null>(null)
 const corpusRevision = ref<number | null>(null)
@@ -81,6 +110,10 @@ const policyLoading = ref(false)
 const policyMutationLoading = ref(false)
 const policyError = ref('')
 const sessionGeneration = ref<number | null>(null)
+const readingHandle = shallowRef<OfflineReadingHandleV1 | null>(null)
+const readingEpoch = ref(currentOfflineReadingEpoch())
+const publicPolicyRevision = ref<number | null>(null)
+const privatePolicyRevision = ref<number | null>(null)
 const hasCorpus = ref(false)
 const searchQuery = ref('')
 const searchResults = shallowRef<OfflineSearchResult[]>([])
@@ -116,19 +149,18 @@ let preparationController: AbortController | null = null
 let clockTimer: number | undefined
 let unsubscribeStorageChanges: (() => void) | undefined
 
-const currentOrigin = (): string | null => typeof window === 'undefined' ? null : window.location.origin
+const audienceFor = (record: OfflineSnapshotRecord | { readonly audience?: OfflineAudience }): OfflineAudience =>
+  'audience' in record && record.audience !== undefined ? record.audience : 'public'
 
-const isOfflineLocale = (value: string): boolean => OFFLINE_LOCALE_PATTERN.test(value)
-
-const recordKey = (record: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId' | 'locale'>): string =>
-  `${record.siteId}\u0000${record.pageId}\u0000${record.locale}`
+const recordKey = (record: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId' | 'locale'> & { readonly audience?: OfflineAudience }): string =>
+  `${audienceFor(record)}\u0000${record.siteId}\u0000${record.pageId}\u0000${record.locale}`
 
 const isSameOfflinePage = (
-  left: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId'>,
-  right: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId'>
-): boolean => left.siteId === right.siteId && left.pageId === right.pageId
+  left: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId'> & { readonly audience?: OfflineAudience },
+  right: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId'> & { readonly audience?: OfflineAudience }
+): boolean => left.siteId === right.siteId && left.pageId === right.pageId && audienceFor(left) === audienceFor(right)
 
-const recordDomKey = (record: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId' | 'locale'>): string =>
+const recordDomKey = (record: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId' | 'locale'> & { readonly audience?: OfflineAudience }): string =>
   encodeURIComponent(recordKey(record))
 
 const isExpired = (record: OfflineSnapshotRecord, at = clock.value): boolean => {
@@ -142,36 +174,58 @@ const isExpiringSoon = (record: OfflineSnapshotRecord, at = clock.value): boolea
   const expiry = Date.parse(record.snapshot.expiresAt)
   return Number.isFinite(expiry) && expiry - at <= 7 * 24 * 60 * 60 * 1000
 }
+const isValidSnapshotRecord = (
+  record: OfflineSnapshotRecord,
+  origin: string,
+  audience: OfflineAudience = audienceFor(record),
+  handle: OfflineReadingHandleV1 | null = readingHandle.value
+): boolean => {
+  const identityValid = audience === 'private'
+    ? Boolean(handle && handle.context.canonicalOrigin === origin && record.siteId === handle.context.siteId)
+    : record.siteId === origin
+  return identityValid &&
+    record.pageId === record.snapshot.pageId &&
+    record.locale === record.snapshot.locale &&
+    Number.isSafeInteger(record.pageId) &&
+    record.pageId > 0 &&
+    isOfflineLocale(record.locale)
+}
 
-const isValidSnapshotRecord = (record: OfflineSnapshotRecord, origin: string): boolean =>
-  record.siteId === origin &&
-  record.pageId === record.snapshot.pageId &&
-  record.locale === record.snapshot.locale &&
-  Number.isSafeInteger(record.pageId) &&
-  record.pageId > 0 &&
-  isOfflineLocale(record.locale)
-
-const isValidSelector = (selector: OfflinePageSelector, origin: string): boolean =>
-  selector.siteId === origin &&
-  Number.isSafeInteger(selector.pageId) &&
-  selector.pageId > 0 &&
-  isOfflineLocale(selector.locale)
-
+const isValidSelector = (
+  selector: OfflinePageSelector,
+  origin: string,
+  handle: OfflineReadingHandleV1 | null = readingHandle.value
+): boolean => {
+  const identityValid = audienceFor(selector) === 'private'
+    ? Boolean(handle && handle.context.canonicalOrigin === origin && selector.siteId === handle.context.siteId)
+    : selector.siteId === origin
+  return identityValid &&
+    Number.isSafeInteger(selector.pageId) &&
+    selector.pageId > 0 &&
+    isOfflineLocale(selector.locale) &&
+    (selector.audience === undefined || selector.audience === 'public' || selector.audience === 'private')
+}
 const offlineSelectorUrl = (selector: OfflinePageSelector): string | null => {
   const origin = currentOrigin()
   if (!origin || !isValidSelector(selector, origin)) return null
-  const record = records.value.find(record => recordKey(record) === recordKey(selector))
+  const record = records.value.find(candidate => recordKey(candidate) === recordKey(selector))
   const path = record ? offlinePageHref(record, origin) : null
   return path ? new URL(path, origin).href : null
 }
 
 const selectorFromUrl = (): OfflinePageSelector | null => {
   if (typeof window === 'undefined') return null
-  if (new URL(window.location.href).searchParams.has('saved')) return null
-  if (window.location.pathname !== OFFLINE_DOCUMENT_PATH) {
-    return offlineRecordAtUrl(activeRecords.value, window.location.href, window.location.origin, siteConfig.lang) ?? null
+  let url: URL
+  try {
+    url = new URL(window.location.href)
+  } catch {
+    return null
   }
-  const url = new URL(window.location.href)
+  if (url.searchParams.has('saved')) return null
+  if (window.location.pathname !== OFFLINE_DOCUMENT_PATH) {
+    const record = offlineRecordAtUrl(activeRecords.value, window.location.href, window.location.origin, siteConfig.lang) as OfflineVisibleRecord | undefined
+    return record ? { siteId: record.siteId, pageId: record.pageId, locale: record.locale, audience: record.audience } : null
+  }
   const entries = [...url.searchParams.entries()]
   if (!entries.length || url.hash || entries.length !== 3 || entries.some(([key]) => !['site', 'pageId', 'locale'].includes(key))) return null
   const siteValues = url.searchParams.getAll('site')
@@ -188,12 +242,12 @@ const requestedSelectorKey = computed(() => {
   return selector ? recordKey(selector) : null
 })
 
-const activeRecords = computed(() => records.value.filter((record: OfflineSnapshotRecord) => !isExpired(record)))
-const selectedRecord = computed(() => activeRecords.value.find((record: OfflineSnapshotRecord) => recordKey(record) === selectedKey.value) ?? null)
+const activeRecords = computed(() => records.value.filter(record => !isExpired(record)))
+const selectedRecord = computed(() => activeRecords.value.find(record => recordKey(record) === selectedKey.value) ?? null)
 const selectedSnapshot = computed<OfflinePageSnapshotV1 | null>(() => selectedRecord.value?.snapshot ?? null)
 const selectedOfflineUrl = computed(() => {
   const record = selectedRecord.value
-  return record ? offlineSelectorUrl({ siteId: record.siteId, pageId: record.pageId, locale: record.locale }) ?? '' : ''
+  return record ? offlineSelectorUrl({ siteId: record.siteId, pageId: record.pageId, locale: record.locale, audience: record.audience }) ?? '' : ''
 })
 const selectedOfflineText = computed(() => {
   const snapshot = selectedSnapshot.value
@@ -213,8 +267,9 @@ const canUseNativeShare = computed(() => {
 const policyByKey = computed(() => new Map(
   policy.value?.pages.map((record: OfflinePagePolicyRecord) => [recordKey(record), record] as const) ?? []
 ))
+
 const policyForRecord = (record: OfflineSnapshotRecord): OfflinePagePolicyRecord | null =>
-  policyByKey.value.get(recordKey(record)) ?? null
+  policyByKey.value.get(recordKey({ siteId: record.siteId, pageId: record.pageId, locale: record.locale })) ?? null
 const automaticSavingEnabled = computed(() => policy.value?.state.automaticSavingEnabled === true)
 const selectedTags = computed(() => policy.value?.state.selectedTags ?? [])
 const syncDiagnostics = computed(() => policy.value?.state.syncDiagnostics ?? null)
@@ -246,10 +301,16 @@ const availabilityLabel = (record: OfflineSnapshotRecord): string =>
 const storageChecking = computed(() => props.storageState === 'uninspected' || props.storageState === 'checking')
 const storageUnavailable = computed(() => !storageChecking.value && (!props.storage || props.storageState !== 'available'))
 const resultRecords = computed(() => {
-  const byKey = new Map(activeRecords.value.map((record: OfflineSnapshotRecord) => [recordKey(record), record]))
   return searchResults.value
-    .map((result: OfflineSearchResult) => byKey.get(recordKey(result.document)))
-    .filter((record): record is OfflineSnapshotRecord => record !== undefined && !isExpired(record))
+    .map(result => activeRecords.value
+      .filter(record =>
+        record.siteId === result.document.siteId &&
+        record.pageId === result.document.pageId &&
+        record.locale === result.document.locale
+      )
+      .sort((left, right) => (right.audience === 'private' ? 1 : 0) - (left.audience === 'private' ? 1 : 0))[0]
+    )
+    .filter((record): record is OfflineVisibleRecord => record !== undefined && !isExpired(record))
 })
 type MissingPolicyPageStatus = 'pending' | 'denied' | 'stale'
 type MissingPolicyPage = {
@@ -257,26 +318,42 @@ type MissingPolicyPage = {
   readonly status: MissingPolicyPageStatus
 }
 
-const hasEffectivePolicyIntent = (page: OfflinePagePolicyRecord): boolean =>
-  page.siteId === currentOrigin() &&
-  !page.excluded &&
-  (page.manual || page.tag || (automaticSavingEnabled.value && page.automatic))
-
+const hasEffectivePolicyIntent = (page: OfflinePagePolicyRecord): boolean => {
+  const origin = currentOrigin()
+  const handle = readingHandle.value
+  const siteMatches = page.siteId === origin ||
+    Boolean(handle && handle.context.canonicalOrigin === origin && page.siteId === handle.context.siteId)
+  return siteMatches &&
+    !page.excluded &&
+    (page.manual || page.tag || (automaticSavingEnabled.value && page.automatic))
+}
 const missingPolicyPageStatus = (page: OfflinePagePolicyRecord): MissingPolicyPageStatus => {
   if (page.availability === 'ineligible') return 'denied'
   if (page.availability === 'unknown') return 'pending'
   return 'stale'
 }
+const missingPolicyStatusLabel = (status: MissingPolicyPageStatus): string =>
+  status === 'pending' ? 'Waiting for sync' : status === 'denied' ? 'Not eligible' : 'Saved copy is stale'
+
 
 const missingPolicyPages = computed<MissingPolicyPage[]>(() => {
   if (!policy.value || !hasCorpus.value) return []
-  const bodyKeys = new Set(activeRecords.value.map(recordKey))
+  const bodyKeys = new Set(activeRecords.value.map(record => recordKey({
+    siteId: record.siteId,
+    pageId: record.pageId,
+    locale: record.locale
+  })))
   return policy.value.pages
     .filter((page: OfflinePagePolicyRecord) => hasEffectivePolicyIntent(page) && !bodyKeys.has(recordKey(page)))
     .map((page: OfflinePagePolicyRecord) => ({ page, status: missingPolicyPageStatus(page) }))
 })
-const missingPolicyStatusLabel = (status: MissingPolicyPageStatus): string =>
-  status === 'pending' ? 'Pending snapshot' : status === 'denied' ? 'Download denied' : 'Snapshot stale'
+
+const isReadingCurrent = (handle: OfflineReadingHandleV1 | null, epoch: number): boolean => {
+  if (currentOfflineReadingEpoch() !== epoch) return false
+  const current = currentOfflineReadingHandle()
+  return handle === null ? current === null : current === handle && isCurrentOfflineReadingHandle(handle)
+}
+
 
 const searchDetail = computed(() => {
   if (storageChecking.value || loading.value || !hasCorpus.value) return 'Checking saved pages on this device.'
@@ -365,7 +442,9 @@ const shareSelected = async (): Promise<void> => {
   const url = selectedOfflineUrl.value
   const operation = readerToken
   const key = selectedKey.value
-  if (!snapshot || !url || !readerReady.value || typeof navigator.share !== 'function' || sharing.value) return
+  const handle = readingHandle.value
+  const epoch = readingEpoch.value
+  if (!snapshot || !url || !readerReady.value || !isReadingCurrent(handle, epoch) || typeof navigator.share !== 'function' || sharing.value) return
   sharing.value = true
   shareStatus.value = ''
   try {
@@ -374,10 +453,10 @@ const shareSelected = async (): Promise<void> => {
       text: `${selectedOfflineText.value}\n\nOpen this page online, or from a saved copy on your device.`.trim(),
       url
     })
-    if (operation === readerToken && selectedKey.value === key && readerReady.value)
+    if (operation === readerToken && selectedKey.value === key && readerReady.value && isReadingCurrent(handle, epoch))
       shareStatus.value = 'Excerpt and page link shared.'
   } catch (error) {
-    if (!isAbortError(error) && operation === readerToken && selectedKey.value === key)
+    if (!isAbortError(error) && operation === readerToken && selectedKey.value === key && isReadingCurrent(handle, epoch))
       shareStatus.value = 'Sharing is unavailable. Copy the page link or full page text instead.'
   } finally {
     sharing.value = false
@@ -387,13 +466,15 @@ const shareSelected = async (): Promise<void> => {
 const copySelectedLink = async (): Promise<void> => {
   const operation = readerToken
   const key = selectedKey.value
+  const handle = readingHandle.value
+  const epoch = readingEpoch.value
   const url = selectedOfflineUrl.value
-  if (!readerReady.value || !url) return
+  if (!readerReady.value || !url || !isReadingCurrent(handle, epoch)) return
   try {
     await copyToClipboard(url)
-    if (operation === readerToken && selectedKey.value === key && readerReady.value) shareStatus.value = 'Page link copied.'
+    if (operation === readerToken && selectedKey.value === key && readerReady.value && isReadingCurrent(handle, epoch)) shareStatus.value = 'Page link copied.'
   } catch {
-    if (operation === readerToken && selectedKey.value === key) shareStatus.value = 'The page link could not be copied.'
+    if (operation === readerToken && selectedKey.value === key && isReadingCurrent(handle, epoch)) shareStatus.value = 'The page link could not be copied.'
   }
 }
 
@@ -401,29 +482,31 @@ const copySelectedText = async (): Promise<void> => {
   if (!readerReady.value || !selectedSnapshot.value) return
   const operation = readerToken
   const key = selectedKey.value
+  const handle = readingHandle.value
+  const epoch = readingEpoch.value
   const text = committedReaderText()
-  if (!text) return
+  if (!text || !isReadingCurrent(handle, epoch)) return
   try {
     await copyToClipboard(text)
-    if (operation === readerToken && selectedKey.value === key && readerReady.value) {
+    if (operation === readerToken && selectedKey.value === key && readerReady.value && isReadingCurrent(handle, epoch)) {
       copyFallbackText.value = ''
       shareStatus.value = 'Full page text copied.'
     }
   } catch {
-    if (operation !== readerToken || selectedKey.value !== key || !readerReady.value) return
+    if (operation !== readerToken || selectedKey.value !== key || !readerReady.value || !isReadingCurrent(handle, epoch)) return
     await revealCopyFallback(text)
-    if (operation === readerToken && selectedKey.value === key) shareStatus.value = 'Clipboard access was denied. The full page text is selected below.'
+    if (operation === readerToken && selectedKey.value === key && isReadingCurrent(handle, epoch)) shareStatus.value = 'Clipboard access was denied. The full page text is selected below.'
   }
 }
-
 const runSearch = async (): Promise<void> => {
-  searchController?.abort()
   const controller = new AbortController()
   searchController = controller
   const requestId = ++searchRequestId
   const prepared = preparedCorpus.value
   const revision = corpusRevision.value
   const generation = sessionGeneration.value
+  const handle = readingHandle.value
+  const epoch = readingEpoch.value
   searching.value = true
   searchError.value = ''
   try {
@@ -433,11 +516,12 @@ const runSearch = async (): Promise<void> => {
       limit: 50
     })
     if (controller.signal.aborted || requestId !== searchRequestId || searchController !== controller) return
-    if (revision !== corpusRevision.value || generation !== sessionGeneration.value) return
+    if (revision !== corpusRevision.value || generation !== sessionGeneration.value || !isReadingCurrent(handle, epoch)) return
     searchResults.value = response.results
     searchHasMore.value = response.hasMore
   } catch (error) {
     if (controller.signal.aborted || requestId !== searchRequestId || searchController !== controller || isAbortError(error)) return
+    if (!isReadingCurrent(handle, epoch)) return
     searchResults.value = []
     searchHasMore.value = false
     searchError.value = normalizeError(error, 'Saved-page search could not be completed.')
@@ -449,7 +533,7 @@ const runSearch = async (): Promise<void> => {
   }
 }
 
-const rememberReaderOpener = (record: OfflineSnapshotRecord, event?: MouseEvent): void => {
+const rememberReaderOpener = (record: OfflineVisibleRecord, event?: MouseEvent): void => {
   const currentTarget = event?.currentTarget
   readerOpenerKey.value = recordKey(record)
   readerOpener.value = currentTarget instanceof HTMLElement ? currentTarget : null
@@ -474,8 +558,8 @@ const clearOfflineSelector = (): void => {
   window.history.replaceState(window.history.state, '', '/?saved=1')
 }
 
-const setSelectionUrl = (record: OfflineSnapshotRecord, mode: ReaderHistoryMode): void => {
-  const selector = { siteId: record.siteId, pageId: record.pageId, locale: record.locale }
+const setSelectionUrl = (record: OfflineVisibleRecord, mode: ReaderHistoryMode): void => {
+  const selector = { siteId: record.siteId, pageId: record.pageId, locale: record.locale, audience: record.audience }
   const href = offlineSelectorUrl(selector)
   if (!href || typeof window === 'undefined') return
   if (mode === 'initial' || mode === 'history') {
@@ -494,22 +578,32 @@ const setSelectionUrl = (record: OfflineSnapshotRecord, mode: ReaderHistoryMode)
   historyMode.value = 'pushed'
 }
 
-const activeRecordForKey = (key: string | null): OfflineSnapshotRecord | null =>
-  key ? activeRecords.value.find((record: OfflineSnapshotRecord) => recordKey(record) === key) ?? null : null
+const activeRecordForKey = (key: string | null): OfflineVisibleRecord | null =>
+  key ? activeRecords.value.find(record => recordKey(record) === key) ?? null : null
 
 const isReaderCurrent = (
   operation: number,
   key: string,
   generation: number,
   revision: number,
-  expectedPolicyRevision: number
+  expectedPolicyRevision: number | null,
+  handle: OfflineReadingHandleV1 | null,
+  epoch: number
 ): boolean =>
   operation === readerToken &&
   selectedKey.value === key &&
   sessionGeneration.value === generation &&
   corpusRevision.value === revision &&
-  policy.value?.sessionGeneration === generation &&
-  policy.value?.state.policyRevision === expectedPolicyRevision &&
+  isReadingCurrent(handle, epoch) &&
+  (expectedPolicyRevision === null ||
+    (
+      policy.value?.sessionGeneration === generation &&
+      (
+        policy.value?.state.policyRevision === expectedPolicyRevision ||
+        publicPolicyRevision.value === expectedPolicyRevision ||
+        privatePolicyRevision.value === expectedPolicyRevision
+      )
+    )) &&
   Boolean(activeRecordForKey(key))
 
 const decorateReaderTree = (target: HTMLElement): void => {
@@ -544,10 +638,13 @@ const finishReaderError = (operation: number, key: string, message: string): voi
   copyFallbackText.value = ''
 }
 
-const openRecord = async (record: OfflineSnapshotRecord, event?: MouseEvent, options: ReaderOpenOptions = {}): Promise<void> => {
+const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, options: ReaderOpenOptions = {}): Promise<void> => {
   const key = recordKey(record)
   const origin = currentOrigin()
-  if (props.navigateOnOpen && origin) {
+  const openHandle = readingHandle.value
+  const openEpoch = readingEpoch.value
+  if (props.navigateOnOpen && !options.inDocument && origin) {
+    if (record.audience === 'private' && !isReadingCurrent(openHandle, openEpoch)) return
     const href = offlinePageHref(record, origin)
     if (href) window.location.assign(href)
     return
@@ -560,8 +657,8 @@ const openRecord = async (record: OfflineSnapshotRecord, event?: MouseEvent, opt
     rememberReaderOpener(record, event)
     if (typeof window !== 'undefined' && selectedKey.value === null) listScrollTop.value = window.scrollY
   }
-  if (!origin || !isValidSnapshotRecord(record, origin)) {
-    emit('error', 'This saved page is invalid and cannot be opened.')
+  if (!origin || !isValidSnapshotRecord(record, origin) || (record.audience === 'private' && !isReadingCurrent(openHandle, openEpoch))) {
+    emit('error', 'This saved page is invalid or no longer available to open.')
     return
   }
   if (isExpired(record)) {
@@ -589,48 +686,61 @@ const openRecord = async (record: OfflineSnapshotRecord, event?: MouseEvent, opt
   renderTarget.value?.replaceChildren()
   const generation = view.sessionGeneration
   const revision = view.corpusRevision
-  const expectedPolicyRevision = currentPolicy.state.policyRevision
+  const expectedPolicyRevision: number | null = record.audience === 'private'
+    ? privatePolicyRevision.value
+    : publicPolicyRevision.value ?? currentPolicy.state.policyRevision
+  const privateOptions = record.audience === 'private' ? { readingHandle: openHandle! } : {}
+  const policyOptions = expectedPolicyRevision === null ? {} : { expectedPolicyRevision }
   await nextTick()
-  if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
+  if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch)) return
   const staging = document.createElement('div')
   staging.setAttribute('dir', 'auto')
   try {
     await renderOfflineHtmlFragment(staging, record.snapshot)
-    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
+    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch)) return
     const verifiedView = await storage.readSnapshotCorpus({
-      expectedSessionGeneration: generation,
-      expectedPolicyRevision
+      ...privateOptions,
+      ...policyOptions,
+      expectedSessionGeneration: generation
     })
-    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
-    const verifiedRecord = verifiedView.snapshots.find((candidate: OfflineSnapshotRecord) => recordKey(candidate) === key)
+    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch)) return
+    const verifiedRecord = verifiedView.snapshots.find(candidate =>
+      candidate.siteId === record.siteId && candidate.pageId === record.pageId && candidate.locale === record.locale
+    )
     if (verifiedView.corpusRevision !== revision || !verifiedRecord || isExpired(verifiedRecord)) {
       finishReaderError(operation, key, 'This saved page changed or expired before it finished opening.')
       return
     }
-    const opened = await storage.markSnapshotOpened(
-      { siteId: verifiedRecord.siteId, pageId: verifiedRecord.pageId, locale: verifiedRecord.locale },
-      {
-        expectedSessionGeneration: generation,
-        expectedPolicyRevision
-      }
-    )
-    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision) || !opened) {
+    let opened = true
+    if (record.audience === 'public') {
+      opened = await storage.markSnapshotOpened(
+        { siteId: verifiedRecord.siteId, pageId: verifiedRecord.pageId, locale: verifiedRecord.locale },
+        {
+          expectedSessionGeneration: generation,
+          ...policyOptions
+        }
+      )
+    }
+    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch) || !opened) {
       finishReaderError(operation, key, 'This saved page is no longer available on this device.')
       return
     }
     const committedView = await storage.readSnapshotCorpus({
-      expectedSessionGeneration: generation,
-      expectedPolicyRevision
+      ...privateOptions,
+      ...policyOptions,
+      expectedSessionGeneration: generation
     })
-    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
-    const committedRecord = committedView.snapshots.find((candidate: OfflineSnapshotRecord) => recordKey(candidate) === key)
+    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch)) return
+    const committedRecord = committedView.snapshots.find(candidate =>
+      candidate.siteId === record.siteId && candidate.pageId === record.pageId && candidate.locale === record.locale
+    )
     if (committedView.corpusRevision !== revision || !committedRecord || isExpired(committedRecord)) {
       finishReaderError(operation, key, 'This saved page changed before it could be committed for reading.')
       return
     }
     decorateReaderTree(staging)
     const target = renderTarget.value
-    if (!target || !isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
+    if (!target || !isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch)) return
     target.replaceChildren(...Array.from(staging.childNodes))
     target.setAttribute('dir', 'auto')
     readerState.value = 'ready'
@@ -638,13 +748,13 @@ const openRecord = async (record: OfflineSnapshotRecord, event?: MouseEvent, opt
     document.title = `${record.snapshot.title || 'Untitled page'} | ${siteConfig.title}`
     emit('selected', record)
     await nextTick()
-    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
+    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch)) return
     selectedHeading.value?.focus({ preventScroll: true })
     if (window.location.hash) {
       try { document.getElementById(decodeURIComponent(window.location.hash.slice(1)))?.scrollIntoView() } catch { /* malformed fragment */ }
     }
   } catch (error) {
-    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision)) return
+    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch)) return
     finishReaderError(operation, key, normalizeError(error, 'This saved page failed its integrity or safety checks.'))
     emit('error', readerMessage.value)
   }
@@ -690,6 +800,12 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
   const readerOperationAtStart = readerToken
   const selectedKeyAtStart = selectedKey.value
   const previousPolicyRevision = policy.value?.state.policyRevision ?? null
+  const reading = {
+    handle: currentOfflineReadingHandle() && isCurrentOfflineReadingHandle(currentOfflineReadingHandle()!) ? currentOfflineReadingHandle() : null,
+    epoch: currentOfflineReadingEpoch()
+  }
+  readingHandle.value = reading.handle
+  readingEpoch.value = reading.epoch
   preparationController?.abort()
   preparationController = null
   searchController?.abort()
@@ -700,6 +816,8 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     policyLoading.value = false
     loading.value = false
     loadError.value = ''
+    records.value = publicRecords.value
+    privateRecords.value = []
     return false
   }
   const origin = currentOrigin()
@@ -707,7 +825,8 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     policy.value = null
     policyLoading.value = false
     hasCorpus.value = false
-    records.value = []
+    records.value = publicRecords.value
+    privateRecords.value = []
     corpus.value = null
     preparedCorpus.value = null
     loadError.value = 'The current site identity is unavailable; saved pages cannot be opened safely.'
@@ -719,7 +838,8 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     policy.value = null
     policyLoading.value = false
     hasCorpus.value = false
-    records.value = []
+    records.value = publicRecords.value
+    privateRecords.value = []
     corpus.value = null
     preparedCorpus.value = null
     loadError.value = 'The requested saved-page link is invalid or belongs to another site.'
@@ -727,54 +847,99 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     loading.value = false
     return false
   }
+  const currentLoad = (): boolean => token === loadToken && isReadingCurrent(reading.handle, reading.epoch)
   loading.value = true
   policyLoading.value = true
   loadError.value = ''
   try {
-    const loadedPolicy = await storage.readOfflinePolicy()
-    if (token !== loadToken) return false
-    const loaded = await storage.readSnapshotCorpus({
-      expectedSessionGeneration: loadedPolicy.sessionGeneration,
-      expectedPolicyRevision: loadedPolicy.state.policyRevision
+    const loadedPublicPolicy = await storage.readOfflinePolicy()
+    if (!currentLoad()) return false
+    const loadedPublic = await storage.readSnapshotCorpus({
+      expectedSessionGeneration: loadedPublicPolicy.sessionGeneration,
+      expectedPolicyRevision: loadedPublicPolicy.state.policyRevision
     })
-    if (token !== loadToken) return false
+    if (!currentLoad()) return false
+    let loadedPolicy = loadedPublicPolicy
+    let loadedPrivatePolicy: OfflinePolicySnapshot | null = null
+    let loadedPrivate: OfflineSnapshotCorpus | null = null
+    if (reading.handle) {
+      try {
+        loadedPrivatePolicy = await storage.readOfflinePolicy({
+          readingHandle: reading.handle,
+          expectedSessionGeneration: reading.handle.sessionGeneration
+        })
+        loadedPolicy = loadedPrivatePolicy
+        if (!currentLoad()) return false
+      } catch {
+        if (!currentLoad()) return false
+      }
+      try {
+        loadedPrivate = await storage.readSnapshotCorpus({
+          readingHandle: reading.handle,
+          expectedSessionGeneration: reading.handle.sessionGeneration,
+          expectedCorpusRevision: loadedPublic.corpusRevision
+        })
+        if (!currentLoad()) return false
+      } catch {
+        if (!currentLoad()) return false
+      }
+    }
     const loadedAt = Date.now()
     const previousRevision = corpusRevision.value
     const previousGeneration = sessionGeneration.value
     const sameCommittedCorpus =
-      previousRevision === loaded.corpusRevision &&
-      previousGeneration === loaded.sessionGeneration &&
+      previousRevision === loadedPublic.corpusRevision &&
+      previousGeneration === loadedPublic.sessionGeneration &&
       preparedCorpus.value !== null &&
-      !records.value.some((record: OfflineSnapshotRecord) => isExpired(record, loadedAt))
-    const validRecords = loaded.snapshots
-      .filter((record: OfflineSnapshotRecord) => isValidSnapshotRecord(record, origin) && !isExpired(record, loadedAt))
-      .sort((left: OfflineSnapshotRecord, right: OfflineSnapshotRecord) => {
-        const capturedOrder = right.snapshot.capturedAt.localeCompare(left.snapshot.capturedAt)
-        if (capturedOrder !== 0) return capturedOrder
-        const titleOrder = left.snapshot.title.localeCompare(right.snapshot.title)
-        if (titleOrder !== 0) return titleOrder
-        return recordKey(left).localeCompare(recordKey(right))
-      })
+      readingHandle.value === reading.handle &&
+      readingEpoch.value === reading.epoch &&
+      !records.value.some(record => isExpired(record, loadedAt))
+    const publicVisible: OfflineVisibleRecord[] = loadedPublic.snapshots
+      .filter(record => isValidSnapshotRecord(record, origin, 'public'))
+      .filter(record => !isExpired(record, loadedAt))
+      .map(record => ({ ...record, audience: 'public' as const }))
+    const privateVisible: OfflineVisibleRecord[] = (loadedPrivate?.snapshots ?? [])
+      .filter(record => isValidSnapshotRecord(record, origin, 'private', reading.handle))
+      .filter(record => !isExpired(record, loadedAt))
+      .map(record => ({
+        ...record,
+        audience: 'private' as const,
+        readingContext: reading.handle
+          ? {
+              accountId: reading.handle.context.accountId,
+              authVersion: reading.handle.context.authVersion,
+              keyId: reading.handle.context.keyId,
+              sessionGeneration: reading.handle.sessionGeneration
+            }
+          : undefined
+      }))
+    const validRecords = [...publicVisible, ...privateVisible].sort((left, right) => {
+      const capturedOrder = right.snapshot.capturedAt.localeCompare(left.snapshot.capturedAt)
+      if (capturedOrder !== 0) return capturedOrder
+      const titleOrder = left.snapshot.title.localeCompare(right.snapshot.title)
+      if (titleOrder !== 0) return titleOrder
+      return recordKey(left).localeCompare(recordKey(right))
+    })
     const nextCorpus = Object.freeze({
-      snapshots: Object.freeze(validRecords.map((record: OfflineSnapshotRecord) => ({ ...record, snapshot: { ...record.snapshot } }))),
-      sessionGeneration: loaded.sessionGeneration,
-      corpusRevision: loaded.corpusRevision
-    }) as OfflineSnapshotCorpus
+      snapshots: Object.freeze(validRecords.map(record => ({ ...record, snapshot: { ...record.snapshot } }))),
+      sessionGeneration: loadedPublic.sessionGeneration,
+      corpusRevision: loadedPublic.corpusRevision
+    }) as unknown as OfflineSnapshotCorpus
     if (
-      token !== loadToken ||
+      !currentLoad() ||
       (
         selectedKey.value &&
         selectedKey.value === selectedKeyAtStart &&
         readerToken === readerOperationAtStart &&
         previousRevision !== null &&
         (
-          previousRevision !== loaded.corpusRevision ||
-          previousGeneration !== loaded.sessionGeneration ||
+          previousRevision !== loadedPublic.corpusRevision ||
+          previousGeneration !== loadedPublic.sessionGeneration ||
           previousPolicyRevision !== loadedPolicy.state.policyRevision
         )
       )
     ) {
-      if (token !== loadToken) return false
+      if (!currentLoad()) return false
       ++readerToken
       renderTarget.value?.replaceChildren()
       readerState.value = 'error'
@@ -785,18 +950,26 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
       const controller = new AbortController()
       preparationController = controller
       try {
-        prepared = await prepareOfflineSearchCorpus(validRecords.map(toSearchDocument), { signal: controller.signal })
-        if (token !== loadToken || preparationController !== controller) return false
+        const publicPrepared = await prepareOfflineSearchCorpus(publicVisible.map(toSearchDocument), { signal: controller.signal })
+        const privatePrepared = privateVisible.length
+          ? await prepareOfflineSearchCorpus(privateVisible.map(toSearchDocument), { signal: controller.signal })
+          : null
+        prepared = mergeOfflineSearchCorpora(publicPrepared, privatePrepared)
+        if (!currentLoad() || preparationController !== controller) return false
       } finally {
         if (preparationController === controller) preparationController = null
       }
     }
-    if (token !== loadToken || !prepared) return false
-    records.value = validRecords
+    if (!currentLoad() || !prepared) return false
+    publicRecords.value = Object.freeze(publicVisible)
+    privateRecords.value = Object.freeze(privateVisible)
+    records.value = Object.freeze(validRecords)
     corpus.value = nextCorpus
     preparedCorpus.value = prepared
-    corpusRevision.value = loaded.corpusRevision
-    sessionGeneration.value = loaded.sessionGeneration
+    corpusRevision.value = loadedPublic.corpusRevision
+    sessionGeneration.value = loadedPublic.sessionGeneration
+    publicPolicyRevision.value = loadedPublicPolicy.state.policyRevision
+    privatePolicyRevision.value = loadedPrivatePolicy?.state.policyRevision ?? null
     hasCorpus.value = true
     policy.value = loadedPolicy
     if (!preservePolicyError) policyError.value = ''
@@ -810,32 +983,37 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
       clearOfflineSelector()
     }
     await runSearch()
-    if (token !== loadToken) return false
-    const routeRecord = !props.navigateOnOpen && !new URL(window.location.href).searchParams.has('saved')
-      ? offlineRecordAtUrl(activeRecords.value, window.location.href, origin, siteConfig.lang) : undefined
+    if (!currentLoad()) return false
+    let routeRecord: OfflineVisibleRecord | undefined
+    try {
+      routeRecord = !props.navigateOnOpen && !new URL(window.location.href).searchParams.has('saved')
+        ? offlineRecordAtUrl(activeRecords.value, window.location.href, origin, siteConfig.lang) as OfflineVisibleRecord | undefined : undefined
+    } catch {
+      routeRecord = undefined
+    }
     const requested = selector ?? routeRecord
     const selectorKey = requested ? recordKey(requested) : requestedSelectorKey.value
     if (requested && selectorKey && requestedSelectorConsumed.value !== selectorKey) {
       requestedSelectorConsumed.value = selectorKey
-      const selected = activeRecords.value.find((record: OfflineSnapshotRecord) => recordKey(record) === selectorKey)
+      const selected = activeRecords.value.find(record => recordKey(record) === selectorKey)
       if (!selected) {
         emit('error', 'The requested saved page is no longer available on this device.')
         return true
       }
       await openRecord(selected, undefined, { history: 'initial' })
-      if (token !== loadToken) return false
+      if (!currentLoad()) return false
     }
     if (!props.navigateOnOpen && !requested && window.location.pathname !== '/' && window.location.pathname !== OFFLINE_DOCUMENT_PATH) {
       emit('error', 'This page has not been saved on this device. You can open another saved page below or reconnect to continue.')
     }
     return true
   } catch (error) {
-    if (token !== loadToken || isAbortError(error)) return false
+    if (!currentLoad() || isAbortError(error)) return false
     loadError.value = normalizeError(error, 'Saved pages could not be read from this device.')
     emit('error', loadError.value)
     return false
   } finally {
-    if (token === loadToken) {
+    if (token === loadToken && isReadingCurrent(reading.handle, reading.epoch)) {
       loading.value = false
       policyLoading.value = false
     }
@@ -854,13 +1032,15 @@ const focusAfterRemoval = async (): Promise<void> => {
   target?.focus({ preventScroll: true })
 }
 
-const removeLocalPageProjection = (selector: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId' | 'locale'>): void => {
+const removeLocalPageProjection = (selector: Pick<OfflineSnapshotRecord, 'siteId' | 'pageId' | 'locale'> & { readonly audience?: OfflineAudience }): void => {
   const selectedWasRemoved =
     selectedKey.value !== null &&
     (selectedKey.value === recordKey(selector) ||
       records.value.some(record => recordKey(record) === selectedKey.value && isSameOfflinePage(record, selector)))
   records.value = records.value.filter(record => !isSameOfflinePage(record, selector))
-  searchResults.value = searchResults.value.filter(result => !isSameOfflinePage(result.document, selector))
+  publicRecords.value = publicRecords.value.filter(record => !isSameOfflinePage(record, selector))
+  privateRecords.value = privateRecords.value.filter(record => !isSameOfflinePage(record, selector))
+  searchResults.value = []
   if (corpus.value) {
     corpus.value = Object.freeze({
       ...corpus.value,
@@ -917,12 +1097,15 @@ const reconcileAfterCommittedRemoval = async (): Promise<void> => {
   }
 }
 
-const removeRecord = async (record: OfflineSnapshotRecord): Promise<void> => {
+const removeRecord = async (record: OfflineVisibleRecord): Promise<void> => {
   const storage = props.storage
   if (!storage || removingKey.value || refreshing.value || policyMutationLoading.value) return
+  const handle = record.audience === 'private' ? readingHandle.value : null
+  const epoch = readingEpoch.value
+  if (record.audience === 'private' && (!handle || !isReadingCurrent(handle, epoch))) return
   const key = recordKey(record)
   const visible = resultRecords.value
-  const index = visible.findIndex((candidate: OfflineSnapshotRecord) => recordKey(candidate) === key)
+  const index = visible.findIndex(candidate => recordKey(candidate) === key)
   const focusedRow = document.activeElement instanceof HTMLElement && document.activeElement.closest(`[data-offline-record-key="${recordDomKey(record)}"]`)
   if (focusedRow && index >= 0) {
     const next = visible.slice(index + 1).find(candidate => !isSameOfflinePage(candidate, record))
@@ -938,14 +1121,19 @@ const removeRecord = async (record: OfflineSnapshotRecord): Promise<void> => {
   try {
     try {
       const generation = sessionGeneration.value ?? await storage.currentSessionGeneration()
-      const currentPolicy = await storage.readOfflinePolicy({ expectedSessionGeneration: generation })
+      const currentPolicy = await storage.readOfflinePolicy({
+        expectedSessionGeneration: generation,
+        ...(handle ? { readingHandle: handle } : {})
+      })
       await storage.removeOfflinePage(
         { siteId: record.siteId, pageId: record.pageId, locale: record.locale },
         {
           expectedSessionGeneration: generation,
-          expectedPolicyRevision: currentPolicy.state.policyRevision
+          expectedPolicyRevision: currentPolicy.state.policyRevision,
+          ...(handle ? { readingHandle: handle } : {})
         }
       )
+      if (record.audience === 'private' && !isReadingCurrent(handle, epoch)) return
       removalCommitted = true
     } catch (error) {
       emit('error', normalizeError(error, 'The saved page could not be removed.'))
@@ -963,15 +1151,18 @@ const removeRecord = async (record: OfflineSnapshotRecord): Promise<void> => {
 
 const toggleAutomaticSaving = async (): Promise<void> => {
   const storage = props.storage
-  if (!storage || policyMutationLoading.value || refreshing.value) return
+  const handle = readingHandle.value
+  const epoch = readingEpoch.value
+  if (!storage || policyMutationLoading.value || refreshing.value || (handle && !isReadingCurrent(handle, epoch))) return
   policyMutationLoading.value = true
   policyError.value = ''
   let policyMutationCommitted = false
   try {
-    const current = await storage.readOfflinePolicy()
+    const current = await storage.readOfflinePolicy(handle ? { readingHandle: handle } : {})
     const state = await storage.setAutomaticSavingEnabled(!current.state.automaticSavingEnabled, {
       expectedSessionGeneration: current.sessionGeneration,
-      expectedPolicyRevision: current.state.policyRevision
+      expectedPolicyRevision: current.state.policyRevision,
+      ...(handle ? { readingHandle: handle } : {})
     })
     policyMutationCommitted = true
     policy.value = { ...current, state }
@@ -1005,16 +1196,19 @@ const toggleAutomaticSaving = async (): Promise<void> => {
 
 const removeSelectedTag = async (tag: string): Promise<void> => {
   const storage = props.storage
-  if (!storage || policyMutationLoading.value || refreshing.value) return
+  const handle = readingHandle.value
+  const epoch = readingEpoch.value
+  if (!storage || policyMutationLoading.value || refreshing.value || (handle && !isReadingCurrent(handle, epoch))) return
   policyMutationLoading.value = true
   policyError.value = ''
   let policyMutationCommitted = false
   try {
-    const current = await storage.readOfflinePolicy()
+    const current = await storage.readOfflinePolicy(handle ? { readingHandle: handle } : {})
     const nextTags = current.state.selectedTags.filter((candidate: string) => candidate !== tag)
     const state = await storage.setOfflineTagSubscriptions(nextTags, {
       expectedSessionGeneration: current.sessionGeneration,
-      expectedPolicyRevision: current.state.policyRevision
+      expectedPolicyRevision: current.state.policyRevision,
+      ...(handle ? { readingHandle: handle } : {})
     })
     policyMutationCommitted = true
     policy.value = { ...current, state }
@@ -1073,7 +1267,9 @@ const refreshOfflineSync = async (): Promise<void> => {
   }
 }
 const retryMissingPage = async (page: OfflinePagePolicyRecord): Promise<void> => {
-  if (refreshing.value || policyMutationLoading.value || removingKey.value) return
+  const handle = readingHandle.value
+  const epoch = readingEpoch.value
+  if (refreshing.value || policyMutationLoading.value || removingKey.value || (handle && !isReadingCurrent(handle, epoch))) return
   if (page.availability !== 'ineligible') {
     await refreshOfflineSync()
     return
@@ -1091,7 +1287,10 @@ const retryMissingPage = async (page: OfflinePagePolicyRecord): Promise<void> =>
   let resetCommitted = false
   try {
     const generation = sessionGeneration.value ?? await storage.currentSessionGeneration()
-    const current = await storage.readOfflinePolicy({ expectedSessionGeneration: generation })
+    const current = await storage.readOfflinePolicy({
+      expectedSessionGeneration: generation,
+      ...(handle ? { readingHandle: handle } : {})
+    })
     const currentPage = current.pages.find(candidate => recordKey(candidate) === recordKey(page))
     if (!currentPage || currentPage.excluded) return
     await storage.setPageAvailability(
@@ -1099,7 +1298,8 @@ const retryMissingPage = async (page: OfflinePagePolicyRecord): Promise<void> =>
       'unknown',
       {
         expectedSessionGeneration: generation,
-        expectedPolicyRevision: current.state.policyRevision
+        expectedPolicyRevision: current.state.policyRevision,
+        ...(handle ? { readingHandle: handle } : {})
       }
     )
     resetCommitted = true
@@ -1116,7 +1316,9 @@ const retryMissingPage = async (page: OfflinePagePolicyRecord): Promise<void> =>
 
 const removeMissingPage = async (page: OfflinePagePolicyRecord): Promise<void> => {
   const storage = props.storage
-  if (!storage || removingKey.value || refreshing.value || policyMutationLoading.value) return
+  const handle = readingHandle.value
+  const epoch = readingEpoch.value
+  if (!storage || removingKey.value || refreshing.value || policyMutationLoading.value || (handle && !isReadingCurrent(handle, epoch))) return
   const key = recordKey(page)
   const visible = missingPolicyPages.value.map(item => item.page)
   const index = visible.findIndex(candidate => recordKey(candidate) === key)
@@ -1135,14 +1337,19 @@ const removeMissingPage = async (page: OfflinePagePolicyRecord): Promise<void> =
   try {
     try {
       const generation = sessionGeneration.value ?? await storage.currentSessionGeneration()
-      const currentPolicy = await storage.readOfflinePolicy({ expectedSessionGeneration: generation })
+      const currentPolicy = await storage.readOfflinePolicy({
+        expectedSessionGeneration: generation,
+        ...(handle ? { readingHandle: handle } : {})
+      })
       await storage.removeOfflinePage(
         { siteId: page.siteId, pageId: page.pageId, locale: page.locale },
         {
           expectedSessionGeneration: generation,
-          expectedPolicyRevision: currentPolicy.state.policyRevision
+          expectedPolicyRevision: currentPolicy.state.policyRevision,
+          ...(handle ? { readingHandle: handle } : {})
         }
       )
+      if (handle && !isReadingCurrent(handle, epoch)) return
       removalCommitted = true
     } catch (error) {
       emit('error', normalizeError(error, 'The selected page could not be removed.'))
@@ -1168,13 +1375,18 @@ const invalidateLocalProjection = (): void => {
   preparationController = null
   searchController?.abort()
   searchController = null
-  records.value = []
+  privateRecords.value = []
+  records.value = publicRecords.value
   searchResults.value = []
   searchHasMore.value = false
   corpus.value = null
   preparedCorpus.value = null
   corpusRevision.value = null
   sessionGeneration.value = null
+  readingHandle.value = null
+  readingEpoch.value = currentOfflineReadingEpoch()
+  publicPolicyRevision.value = null
+  privatePolicyRevision.value = null
   policy.value = null
   policyLoading.value = false
   hasCorpus.value = false
@@ -1189,6 +1401,7 @@ const invalidateLocalProjection = (): void => {
   readerMessage.value = ''
   shareStatus.value = ''
   copyFallbackText.value = ''
+  document.title = `${siteConfig.title}`
   requestedSelectorConsumed.value = null
   readerOpener.value = null
   readerOpenerKey.value = null
@@ -1242,6 +1455,32 @@ const handlePopState = (): void => {
   }
   void openRecord(selected, undefined, { history: 'history' })
 }
+const handleReadingStateChange = (): void => {
+  invalidateLocalProjection()
+  void loadRecords()
+}
+const handleSavedPageOpen = (event: Event): void => {
+  const request: OfflineSavedPageOpenRequest | null = parseOfflineSavedPageOpenRequest(
+    event instanceof CustomEvent ? event.detail : null,
+    currentOrigin()
+  )
+  if (!request || request.audience !== 'private') return
+  const handle = currentOfflineReadingHandle()
+  const epoch = currentOfflineReadingEpoch()
+  if (!handle || !isCurrentOfflineReadingHandle(handle) || !isReadingCurrent(handle, epoch)) return
+  const record = activeRecords.value.find(candidate =>
+    audienceFor(candidate) === request.audience &&
+    candidate.siteId === request.siteId &&
+    candidate.pageId === request.pageId &&
+    candidate.locale === request.locale &&
+    offlinePageHref(candidate, currentOrigin()) === request.canonicalPath
+  )
+  if (record) {
+    event.preventDefault()
+    void openRecord(record, undefined, { history: 'pushed', inDocument: true })
+  }
+}
+
 
 watch(() => Boolean(policyMutationLoading.value || refreshing.value || removingKey.value), value => emit('busy', value), { flush: 'sync' })
 
@@ -1259,7 +1498,6 @@ watch(
 watch(() => props.clearDeviceToken, (value, previous) => {
   if (value !== previous) invalidateLocalProjection()
 })
-
 watch(requestedSelectorKey, (value, previous) => {
   if (value !== previous) requestedSelectorConsumed.value = null
 })
@@ -1275,13 +1513,15 @@ watch(clock, () => {
 onMounted(() => {
   clockTimer = window.setInterval(() => { clock.value = Date.now() }, 60_000)
   window.addEventListener('popstate', handlePopState)
+  window.addEventListener(OFFLINE_READING_STATE_EVENT, handleReadingStateChange)
+  window.addEventListener(OFFLINE_SAVED_PAGE_OPEN_EVENT, handleSavedPageOpen)
   unsubscribeStorageChanges = subscribeOfflineStorageChanges(notice => {
-    if (notice.kind === 'generation') {
+    if (notice.kind === 'generation' || notice.kind === 'corpus') {
       invalidateLocalProjection()
       void loadRecords()
       return
     }
-    if (notice.kind !== 'policy' && notice.kind !== 'corpus') return
+    if (notice.kind !== 'policy') return
     void loadRecords({ preservePolicyError: Boolean(policyError.value) })
   })
   void loadRecords()
@@ -1296,7 +1536,9 @@ onBeforeUnmount(() => {
   searchController?.abort()
   searchController = null
   window.removeEventListener('popstate', handlePopState)
+  window.removeEventListener(OFFLINE_READING_STATE_EVENT, handleReadingStateChange)
   unsubscribeStorageChanges?.()
+  window.removeEventListener(OFFLINE_SAVED_PAGE_OPEN_EVENT, handleSavedPageOpen)
   if (clockTimer !== undefined) window.clearInterval(clockTimer)
 })
 </script>

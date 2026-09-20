@@ -1,9 +1,27 @@
-import { DraftKeyContextSchema, OFFLINE_DRAFT_KEY_BYTES, OFFLINE_DRAFT_KEY_MAGIC, OFFLINE_KEY_VERSION, type DraftKeyContext } from '../../shared/offline.ts'
+import {
+  DraftKeyContextSchema,
+  OFFLINE_DRAFT_KEY_BYTES,
+  OFFLINE_DRAFT_KEY_MAGIC,
+  OFFLINE_KEY_VERSION,
+  OFFLINE_READING_KEY_BYTES,
+  OFFLINE_READING_KEY_MAGIC,
+  OFFLINE_READING_KEY_VERSION,
+  OFFLINE_READING_NONCE_BYTES,
+  OFFLINE_READING_SALT_BYTES,
+  OFFLINE_READING_TAG_BYTES,
+  OfflineReadingContextV1Schema,
+  OfflineReadingVaultV1Schema,
+  type DraftKeyContext,
+  type OfflineReadingContextV1,
+  type OfflineReadingVaultV1
+} from '../../shared/offline.ts'
 
 const MAX_FRAME_BYTES = 16 * 1024
 const MAX_CANONICAL_ORIGIN_BYTES = 8 * 1024
 const MAX_SITE_ID_BYTES = 1024
+const MAX_KEY_ID_BYTES = 128
 const MAGIC_BYTES = new TextEncoder().encode(OFFLINE_DRAFT_KEY_MAGIC)
+const READING_MAGIC_BYTES = new TextEncoder().encode(OFFLINE_READING_KEY_MAGIC)
 
 export type DraftKeyFrameExpectation = {
   readonly canonicalOrigin: string
@@ -244,7 +262,6 @@ export const requestOfflineIdentityBoundary = (request: OfflineIdentityBoundaryR
   }
 }
 
-
 const currentEntry = (accountId: number, sessionGeneration: number): RegistryEntry | undefined => registry.get(identity(accountId, sessionGeneration))
 
 const clearRegistry = (preserveOwner = false): void => {
@@ -260,8 +277,33 @@ const clearRegistry = (preserveOwner = false): void => {
 }
 const SESSION_CHANNEL_NAME = 'tsepistle-offline-session'
 const SESSION_INVALIDATION_MESSAGE = 'invalidate'
+const SESSION_STORAGE_KEY = 'tsepistle-offline-session-invalidation'
 export const OFFLINE_SESSION_INVALIDATED_EVENT = 'tsepistle:offline-session-invalidated'
 let sessionChannel: BroadcastChannel | null | undefined
+let sessionStorageListenerBound = false
+let sessionNoticeCounter = 0
+const seenSessionNoticeTokens = new Set<string>()
+
+const rememberSessionNoticeToken = (token: string): boolean => {
+  if (seenSessionNoticeTokens.has(token)) return false
+  seenSessionNoticeTokens.add(token)
+  if (seenSessionNoticeTokens.size > 32) {
+    const oldest = seenSessionNoticeTokens.values().next().value
+    if (typeof oldest === 'string') seenSessionNoticeTokens.delete(oldest)
+  }
+  return true
+}
+
+const nextSessionNoticeToken = (): string => {
+  sessionNoticeCounter = sessionNoticeCounter >= Number.MAX_SAFE_INTEGER ? 1 : sessionNoticeCounter + 1
+  let instanceToken = ''
+  try {
+    instanceToken = typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID() : Math.random().toString(36).slice(2)
+  } catch {
+    instanceToken = Math.random().toString(36).slice(2)
+  }
+  return `${Date.now().toString(36)}:${sessionNoticeCounter.toString(36)}:${instanceToken}`
+}
 
 const dispatchSessionInvalidation = (): void => {
   if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function' || typeof Event === 'undefined') return
@@ -273,13 +315,28 @@ const dispatchSessionInvalidation = (): void => {
   }
 }
 
-const broadcastSessionInvalidation = (): void => {
+const broadcastSessionInvalidation = (token: string): void => {
   const channel = ensureSessionChannel()
   try {
-    channel?.postMessage(SESSION_INVALIDATION_MESSAGE)
+    channel?.postMessage({ type: SESSION_INVALIDATION_MESSAGE, token })
   } catch {
     // Cross-tab coordination is best effort; generation fencing is authoritative.
   }
+}
+
+const writeSessionInvalidationNotice = (token: string): void => {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) window.localStorage.setItem(SESSION_STORAGE_KEY, token)
+  } catch {
+    // localStorage is an optional transport; lifecycle revalidation remains authoritative.
+  }
+}
+
+const emitSessionInvalidationNotice = (): void => {
+  const token = nextSessionNoticeToken()
+  rememberSessionNoticeToken(token)
+  broadcastSessionInvalidation(token)
+  writeSessionInvalidationNotice(token)
 }
 
 const publishSessionInvalidation = (broadcast: boolean, preserveOwner = false): void => {
@@ -287,15 +344,33 @@ const publishSessionInvalidation = (broadcast: boolean, preserveOwner = false): 
   sessionInvalidationInProgress = true
   try {
     clearRegistry(preserveOwner)
+    if (typeof lockOfflineReading === 'function') lockOfflineReading()
     dispatchSessionInvalidation()
-    if (broadcast) broadcastSessionInvalidation()
+    if (broadcast) emitSessionInvalidationNotice()
   } finally {
     sessionInvalidationInProgress = false
   }
 }
 
-const onSessionChannelMessage = (event: MessageEvent<unknown>): void => {
-  if (event.data !== SESSION_INVALIDATION_MESSAGE) return
+/**
+ * Publishes the committed generation/vault boundary after the storage
+ * transaction has completed. Generation/vault callers already lock reading
+ * state before beginning their transaction, so this avoids a second reading
+ * mutation while still fencing draft keys and notifying local observers.
+ */
+export const publishOfflineSessionInvalidationNotice = (): void => {
+  if (sessionInvalidationInProgress) return
+  sessionInvalidationInProgress = true
+  try {
+    clearRegistry()
+    dispatchSessionInvalidation()
+    emitSessionInvalidationNotice()
+  } finally {
+    sessionInvalidationInProgress = false
+  }
+}
+
+const onRemoteSessionInvalidation = (): void => {
   publishSessionInvalidation(false)
   try {
     offlineSessionInvalidationOwner?.()
@@ -303,7 +378,37 @@ const onSessionChannelMessage = (event: MessageEvent<unknown>): void => {
     // A remote observer cannot undo the in-memory session fence.
   }
 }
+
+const onSessionChannelMessage = (event: MessageEvent<unknown>): void => {
+  const value = event.data
+  const message = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null
+  const token =
+    message?.type === SESSION_INVALIDATION_MESSAGE && typeof message.token === 'string'
+      ? message.token
+      : value === SESSION_INVALIDATION_MESSAGE
+        ? null
+        : undefined
+  if (token === undefined || (token !== null && !rememberSessionNoticeToken(token))) return
+  onRemoteSessionInvalidation()
+}
+
+const onSessionStorageEvent = (event: StorageEvent): void => {
+  if (event.key !== SESSION_STORAGE_KEY || typeof event.newValue !== 'string' || !rememberSessionNoticeToken(event.newValue)) return
+  onRemoteSessionInvalidation()
+}
+
+const ensureSessionStorageListener = (): void => {
+  if (sessionStorageListenerBound || typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
+  try {
+    window.addEventListener('storage', onSessionStorageEvent)
+    sessionStorageListenerBound = true
+  } catch {
+    // Event listeners are optional in non-browser test/runtime environments.
+  }
+}
+
 const ensureSessionChannel = (): BroadcastChannel | null => {
+  ensureSessionStorageListener()
   if (sessionChannel !== undefined) return sessionChannel
   if (typeof BroadcastChannel === 'undefined') {
     sessionChannel = null
@@ -319,7 +424,7 @@ const ensureSessionChannel = (): BroadcastChannel | null => {
   return sessionChannel
 }
 
-/** Registers the single owner for remote session invalidations and opens the channel eagerly. */
+/** Registers the single owner for remote session invalidations and opens the transports eagerly. */
 export const registerOfflineSessionInvalidationOwner = (owner: OfflineSessionInvalidationOwner): (() => void) => {
   offlineSessionInvalidationOwner = owner
   ensureSessionChannel()
@@ -339,13 +444,7 @@ const currentOrigin = (): string => {
 }
 
 const assertRequestCurrent = (accountId: number, sessionGeneration: number, epoch: number, signal?: AbortSignal): void => {
-  if (
-    signal?.aborted ||
-    registryEpoch !== epoch ||
-    activeAccountId !== accountId ||
-    activeSessionGeneration !== sessionGeneration
-  )
-    throw opaque()
+  if (signal?.aborted || registryEpoch !== epoch || activeAccountId !== accountId || activeSessionGeneration !== sessionGeneration) throw opaque()
 }
 
 const contentTypeIsOctetStream = (response: Response): boolean => {
@@ -369,11 +468,7 @@ const cancelResponseBody = async (response: Response): Promise<void> => {
     // The response is already unusable; the bounded reader remains authoritative.
   }
 }
-const readBoundedFrame = async (
-  response: Response,
-  signal: AbortSignal,
-  assertCurrent: () => void
-): Promise<Uint8Array> => {
+const readBoundedFrame = async (response: Response, signal: AbortSignal, assertCurrent: () => void): Promise<Uint8Array> => {
   const contentLength = response.headers.get('content-length')
   if (contentLength !== null) {
     const parsedLength = Number(contentLength)
@@ -475,12 +570,7 @@ const acquireDraftKey = async (
     imported = undefined
     return handle
   } catch (error) {
-    if (
-      !controller.signal.aborted &&
-      registryEpoch === epoch &&
-      activeAccountId === accountId &&
-      activeSessionGeneration === sessionGeneration
-    ) {
+    if (!controller.signal.aborted && registryEpoch === epoch && activeAccountId === accountId && activeSessionGeneration === sessionGeneration) {
       await requestOfflineIdentityBoundary({ accountId, reason: 'draft-key-denied' })
     }
     if (error instanceof OfflineDraftOpaqueError || error instanceof OfflineDraftSessionError) throw error
@@ -492,11 +582,7 @@ const acquireDraftKey = async (
   }
 }
 
-const createPendingKeyRequest = (
-  fetchImpl: typeof window.fetch,
-  options: DraftKeyRequestOptions,
-  origin: string
-): PendingKeyRequest => {
+const createPendingKeyRequest = (fetchImpl: typeof window.fetch, options: DraftKeyRequestOptions, origin: string): PendingKeyRequest => {
   const key = identity(options.expectedAccountId, options.expectedSessionGeneration)
   const controller = new AbortController()
   const epoch = registryEpoch
@@ -529,10 +615,7 @@ const releasePendingConsumer = (acquisition: PendingKeyRequest): void => {
   acquisition.controller.abort()
 }
 
-const waitForPendingKey = async (
-  acquisition: PendingKeyRequest,
-  signal: AbortSignal | undefined
-): Promise<OfflineDraftKeyHandle> => {
+const waitForPendingKey = async (acquisition: PendingKeyRequest, signal: AbortSignal | undefined): Promise<OfflineDraftKeyHandle> => {
   acquisition.consumers += 1
   let onAbort: (() => void) | undefined
   try {
@@ -580,9 +663,7 @@ export const requestDraftKey = async (fetchImpl: typeof window.fetch, rawOptions
   }
 
   const key = identity(options.expectedAccountId, options.expectedSessionGeneration)
-  const acquisition =
-    pendingKeyRequests.get(key) ??
-    createPendingKeyRequest(fetchImpl, options, origin)
+  const acquisition = pendingKeyRequests.get(key) ?? createPendingKeyRequest(fetchImpl, options, origin)
   return await waitForPendingKey(acquisition, options.signal)
 }
 
@@ -607,9 +688,7 @@ export const requireCurrentOfflineDraftKey = (handle: OfflineDraftKeyHandle): Cr
 export const invalidateOfflineSession = (expectedSessionGeneration?: number): void => {
   if (
     expectedSessionGeneration !== undefined &&
-    (!isSafeNonnegativeInteger(expectedSessionGeneration) ||
-      activeSessionGeneration === undefined ||
-      activeSessionGeneration !== expectedSessionGeneration)
+    (!isSafeNonnegativeInteger(expectedSessionGeneration) || activeSessionGeneration === undefined || activeSessionGeneration !== expectedSessionGeneration)
   )
     return
   publishSessionInvalidation(true)
@@ -617,3 +696,619 @@ export const invalidateOfflineSession = (expectedSessionGeneration?: number): vo
 
 /** Explicit alias for callers that need to drop only the in-memory key boundary. */
 export const dropOfflineDraftKey = (): void => invalidateOfflineSession()
+export type OfflineReadingKeyFrameExpectation = {
+  readonly canonicalOrigin: string
+  readonly expectedAccountId: number
+  readonly expectedSessionGeneration: number
+  readonly expectedAuthVersion?: number
+  readonly expectedSiteId?: string
+}
+
+export type ParsedOfflineReadingKeyFrame = {
+  readonly context: OfflineReadingContextV1
+  /** Raw key material exists only until the caller imports and clears it. */
+  readonly keyBytes: Uint8Array
+}
+
+const offlineReadingHandleBrand = Symbol('offline-reading-handle')
+export type OfflineReadingHandleV1 = {
+  readonly [offlineReadingHandleBrand]: true
+  readonly context: OfflineReadingContextV1
+  readonly sessionGeneration: number
+  readonly key: CryptoKey
+}
+
+export type OfflineReadingVaultStorage = {
+  readonly currentSessionGeneration: () => Promise<number>
+  readonly getReadingVault: () => Promise<OfflineReadingVaultV1 | null>
+  readonly putReadingVault: (vault: OfflineReadingVaultV1, options?: { readonly expectedSessionGeneration?: number }) => Promise<unknown>
+}
+
+export type OfflineReadingEnrollmentOptions = {
+  readonly expectedAccountId: number
+  readonly expectedSessionGeneration: number
+  readonly expectedAuthVersion?: number
+  readonly signal?: AbortSignal
+  readonly confirmSecret?: Uint8Array | string | ((displaySecret: string) => Promise<boolean> | boolean)
+}
+
+const readingRegistry = new Map<string, { readonly handle: OfflineReadingHandleV1; readonly epoch: number }>()
+let readingRegistryEpoch = 0
+let activeReadingHandle: OfflineReadingHandleV1 | undefined
+let activeReadingStorage: Pick<OfflineReadingVaultStorage, 'currentSessionGeneration' | 'getReadingVault'> | undefined
+let readingWindowLifecycleBound = false
+let readingDocumentLifecycleBound = false
+let readingRevalidationInFlight: Promise<void> | null = null
+
+export const OFFLINE_READING_STATE_EVENT = 'tsepistle:offline-reading-state'
+
+const dispatchReadingState = (): void => {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function' || typeof Event === 'undefined') return
+  try {
+    window.dispatchEvent(new Event(OFFLINE_READING_STATE_EVENT))
+  } catch {
+    // Generation fencing remains authoritative if an optional observer fails.
+  }
+}
+const sameReadingContext = (left: OfflineReadingContextV1, right: OfflineReadingContextV1): boolean =>
+  left.canonicalOrigin === right.canonicalOrigin &&
+  left.siteId === right.siteId &&
+  left.accountId === right.accountId &&
+  left.authVersion === right.authVersion &&
+  left.keyVersion === right.keyVersion &&
+  left.keyId === right.keyId
+const revalidateReadingIdentity = async (
+  handle: OfflineReadingHandleV1,
+  storage: Pick<OfflineReadingVaultStorage, 'currentSessionGeneration' | 'getReadingVault'>
+): Promise<void> => {
+  try {
+    const [generation, vaultValue] = await Promise.all([storage.currentSessionGeneration(), storage.getReadingVault()])
+    if (generation !== handle.sessionGeneration || !vaultValue) throw readingOpaque()
+    const vault = OfflineReadingVaultV1Schema.safeParse(vaultValue)
+    if (!vault.success || vault.data.sessionGeneration !== handle.sessionGeneration || !sameReadingContext(vault.data.context, handle.context))
+      throw readingOpaque()
+  } catch {
+    // The synchronous lifecycle fence already hid private state. Re-unlock is
+    // deliberately never attempted from this best-effort revalidation.
+  }
+}
+
+const scheduleReadingRevalidation = (): void => {
+  const handle = activeReadingHandle
+  const storage = activeReadingStorage
+  if (readingRevalidationInFlight || !handle || !storage) return
+  // A lifecycle boundary is a synchronous privacy fence. The persisted
+  // identity is checked only after the handle has been discarded.
+  publishSessionInvalidation(false)
+  const pending = revalidateReadingIdentity(handle, storage).finally(() => {
+    if (readingRevalidationInFlight === pending) readingRevalidationInFlight = null
+  })
+  readingRevalidationInFlight = pending
+}
+
+const ensureReadingLifecycle = (): void => {
+  ensureSessionChannel()
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function' && !readingWindowLifecycleBound) {
+    try {
+      window.addEventListener('focus', scheduleReadingRevalidation)
+      window.addEventListener('pageshow', scheduleReadingRevalidation)
+      readingWindowLifecycleBound = true
+    } catch {
+      // Lifecycle events are optional in non-browser test/runtime environments.
+    }
+  }
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function' && !readingDocumentLifecycleBound) {
+    try {
+      document.addEventListener('visibilitychange', scheduleReadingRevalidation)
+      readingDocumentLifecycleBound = true
+    } catch {
+      // Lifecycle events are optional in non-browser test/runtime environments.
+    }
+  }
+}
+
+const readingOpaque = (): OfflineDraftOpaqueError => new OfflineDraftOpaqueError()
+const base64UrlEncode = (bytes: Uint8Array): string => {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '')
+}
+
+const base64UrlDecode = (value: string, expectedBytes: number): Uint8Array => {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/u.test(value) || value.length !== Math.ceil((expectedBytes * 8) / 6)) throw readingOpaque()
+  const padded = value.replace(/-/gu, '+').replace(/_/gu, '/') + '==='.slice((value.length + 3) % 4)
+  let decoded: string
+  try {
+    decoded = atob(padded)
+  } catch {
+    throw readingOpaque()
+  }
+  const bytes = Uint8Array.from(decoded, character => character.charCodeAt(0))
+  if (bytes.byteLength !== expectedBytes || base64UrlEncode(bytes) !== value) throw readingOpaque()
+  return bytes
+}
+
+export const encodeOfflineReadingSecret = (secretBytes: Uint8Array): string => {
+  if (!(secretBytes instanceof Uint8Array) || secretBytes.byteLength !== OFFLINE_READING_KEY_BYTES) throw readingOpaque()
+  return base64UrlEncode(secretBytes)
+}
+
+export const decodeOfflineReadingSecret = (displaySecret: string): Uint8Array => base64UrlDecode(displaySecret, OFFLINE_READING_KEY_BYTES)
+
+export const generateOfflineReadingSecret = (): Uint8Array => {
+  const secret = new Uint8Array(OFFLINE_READING_KEY_BYTES)
+  if (!globalThis.crypto?.getRandomValues) throw new OfflineDraftSessionError('Web Crypto is unavailable.')
+  globalThis.crypto.getRandomValues(secret)
+  return secret
+}
+
+const readingIdentity = (context: OfflineReadingContextV1, generation: number): string =>
+  `${context.keyId}:${context.accountId}:${context.authVersion}:${generation}`
+
+const readingSubtle = (): SubtleCrypto => {
+  if (!globalThis.crypto?.subtle) throw new OfflineDraftSessionError('Web Crypto is unavailable.')
+  return globalThis.crypto.subtle
+}
+
+const lpUtf8Reading = (value: string): Uint8Array => {
+  const bytes = new TextEncoder().encode(value)
+  if (bytes.byteLength > 0xffffffff) throw readingOpaque()
+  const result = new Uint8Array(4 + bytes.byteLength)
+  new DataView(result.buffer).setUint32(0, bytes.byteLength, false)
+  result.set(bytes, 4)
+  return result
+}
+
+const u32Reading = (value: number): Uint8Array => {
+  if (!isSafeNonnegativeInteger(value) || value > 0xffffffff) throw readingOpaque()
+  const result = new Uint8Array(4)
+  new DataView(result.buffer).setUint32(0, value, false)
+  return result
+}
+
+const u64Reading = (value: number): Uint8Array => {
+  if (!isSafeNonnegativeInteger(value)) throw readingOpaque()
+  const result = new Uint8Array(8)
+  new DataView(result.buffer).setBigUint64(0, BigInt(value), false)
+  return result
+}
+
+const lpBytesReading = (value: Uint8Array): Uint8Array => {
+  const result = new Uint8Array(4 + value.byteLength)
+  result.set(u32Reading(value.byteLength), 0)
+  result.set(value, 4)
+  return result
+}
+
+const concatReading = (parts: readonly Uint8Array[]): Uint8Array => {
+  const result = new Uint8Array(parts.reduce((total, part) => total + part.byteLength, 0))
+  let offset = 0
+  for (const part of parts) {
+    result.set(part, offset)
+    offset += part.byteLength
+  }
+  return result
+}
+
+export const encodeOfflineReadingContext = (context: OfflineReadingContextV1): Uint8Array => {
+  const parsed = OfflineReadingContextV1Schema.parse(context)
+  return concatReading([
+    lpUtf8Reading(parsed.canonicalOrigin),
+    lpUtf8Reading(parsed.siteId),
+    u64Reading(parsed.accountId),
+    u64Reading(parsed.authVersion),
+    lpUtf8Reading(parsed.keyVersion),
+    lpUtf8Reading(parsed.keyId)
+  ])
+}
+
+export const encodeOfflineReadingWrapAad = (context: OfflineReadingContextV1, generation: number, salt: Uint8Array, nonce: Uint8Array): Uint8Array => {
+  const parsed = OfflineReadingContextV1Schema.parse(context)
+  if (!isSafeNonnegativeInteger(generation) || salt.byteLength !== OFFLINE_READING_SALT_BYTES || nonce.byteLength !== OFFLINE_READING_NONCE_BYTES)
+    throw readingOpaque()
+  return concatReading([
+    lpUtf8Reading('tsepistle/offline-reading-vault/v1'),
+    u32Reading(1),
+    encodeOfflineReadingContext(parsed),
+    u64Reading(generation),
+    lpBytesReading(salt),
+    lpBytesReading(nonce)
+  ])
+}
+
+export const deriveOfflineReadingWrappingKey = async (
+  secretBytes: Uint8Array,
+  context: OfflineReadingContextV1,
+  generation: number,
+  salt: Uint8Array
+): Promise<CryptoKey> => {
+  if (secretBytes.byteLength !== OFFLINE_READING_KEY_BYTES || salt.byteLength !== OFFLINE_READING_SALT_BYTES) throw readingOpaque()
+  const subtle = readingSubtle()
+  let input: CryptoKey | undefined
+  try {
+    input = await subtle.importKey('raw', secretBytes as unknown as BufferSource, 'HKDF', false, ['deriveKey'])
+    return await subtle.deriveKey(
+      {
+        name: 'HKDF',
+        hash: 'SHA-256',
+        salt: salt as unknown as BufferSource,
+        info: concatReading([
+          lpUtf8Reading('tsepistle/offline-reading-wrap/v1'),
+          encodeOfflineReadingContext(context),
+          u64Reading(generation)
+        ]) as unknown as BufferSource
+      },
+      input,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    )
+  } catch {
+    throw readingOpaque()
+  } finally {
+    input = undefined
+  }
+}
+
+export const wrapOfflineReadingKey = async (
+  secretBytes: Uint8Array,
+  context: OfflineReadingContextV1,
+  generation: number,
+  salt: Uint8Array,
+  nonce: Uint8Array,
+  readingKeyBytes: Uint8Array
+): Promise<Uint8Array> => {
+  if (readingKeyBytes.byteLength !== OFFLINE_READING_KEY_BYTES) throw readingOpaque()
+  let aad: Uint8Array | undefined
+  let encrypted: Uint8Array | undefined
+  let returned = false
+  try {
+    const wrappingKey = await deriveOfflineReadingWrappingKey(secretBytes, context, generation, salt)
+    aad = encodeOfflineReadingWrapAad(context, generation, salt, nonce)
+    encrypted = new Uint8Array(
+      await readingSubtle().encrypt(
+        { name: 'AES-GCM', iv: nonce as unknown as BufferSource, additionalData: aad as unknown as BufferSource, tagLength: OFFLINE_READING_TAG_BYTES * 8 },
+        wrappingKey,
+        readingKeyBytes as unknown as BufferSource
+      )
+    )
+    if (encrypted.byteLength !== OFFLINE_READING_KEY_BYTES + OFFLINE_READING_TAG_BYTES) throw readingOpaque()
+    returned = true
+    return encrypted
+  } catch (error) {
+    if (error instanceof OfflineDraftOpaqueError) throw error
+    throw readingOpaque()
+  } finally {
+    aad?.fill(0)
+    if (!returned) encrypted?.fill(0)
+  }
+}
+
+export const unwrapOfflineReadingKey = async (
+  secretBytes: Uint8Array,
+  context: OfflineReadingContextV1,
+  generation: number,
+  salt: Uint8Array,
+  nonce: Uint8Array,
+  wrappedKey: Uint8Array
+): Promise<Uint8Array> => {
+  if (wrappedKey.byteLength !== OFFLINE_READING_KEY_BYTES + OFFLINE_READING_TAG_BYTES) throw readingOpaque()
+  let aad: Uint8Array | undefined
+  let raw: Uint8Array | undefined
+  try {
+    const wrappingKey = await deriveOfflineReadingWrappingKey(secretBytes, context, generation, salt)
+    aad = encodeOfflineReadingWrapAad(context, generation, salt, nonce)
+    raw = new Uint8Array(
+      await readingSubtle().decrypt(
+        { name: 'AES-GCM', iv: nonce as unknown as BufferSource, additionalData: aad as unknown as BufferSource, tagLength: OFFLINE_READING_TAG_BYTES * 8 },
+        wrappingKey,
+        wrappedKey as unknown as BufferSource
+      )
+    )
+    if (raw.byteLength !== OFFLINE_READING_KEY_BYTES) throw readingOpaque()
+    return raw
+  } catch {
+    raw?.fill(0)
+    throw readingOpaque()
+  } finally {
+    aad?.fill(0)
+  }
+}
+
+const importReadingKey = async (keyBytes: Uint8Array): Promise<CryptoKey> => {
+  if (keyBytes.byteLength !== OFFLINE_READING_KEY_BYTES) throw readingOpaque()
+  try {
+    return await readingSubtle().importKey('raw', keyBytes as unknown as BufferSource, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+  } catch {
+    throw readingOpaque()
+  }
+}
+
+const readingHandle = (context: OfflineReadingContextV1, generation: number, key: CryptoKey): OfflineReadingHandleV1 =>
+  Object.freeze({ context: Object.freeze(context), sessionGeneration: generation, key, [offlineReadingHandleBrand]: true }) as OfflineReadingHandleV1
+
+const installReadingKey = (
+  context: OfflineReadingContextV1,
+  generation: number,
+  key: CryptoKey,
+  expectedEpoch: number,
+  storage: Pick<OfflineReadingVaultStorage, 'currentSessionGeneration' | 'getReadingVault'>
+): OfflineReadingHandleV1 => {
+  if (expectedEpoch !== readingRegistryEpoch) throw readingOpaque()
+  const handle = readingHandle(context, generation, key)
+  readingRegistry.clear()
+  readingRegistry.set(readingIdentity(context, generation), { handle, epoch: readingRegistryEpoch })
+  activeReadingHandle = handle
+  activeReadingStorage = storage
+  ensureReadingLifecycle()
+  dispatchReadingState()
+  return handle
+}
+
+const assertReadingOperationCurrent = (epoch: number, signal?: AbortSignal): void => {
+  if (signal?.aborted || epoch !== readingRegistryEpoch) throw readingOpaque()
+}
+
+export const isCurrentOfflineReadingHandle = (handle: OfflineReadingHandleV1): boolean => {
+  try {
+    const entry = readingRegistry.get(readingIdentity(handle.context, handle.sessionGeneration))
+    return activeReadingHandle === handle && entry?.handle === handle && entry.epoch === readingRegistryEpoch
+  } catch {
+    return false
+  }
+}
+export function lockOfflineReading(): void {
+  readingRegistryEpoch += 1
+  readingRegistry.clear()
+  activeReadingHandle = undefined
+  activeReadingStorage = undefined
+  readingRevalidationInFlight = null
+  dispatchReadingState()
+}
+export const currentOfflineReadingHandle = (): OfflineReadingHandleV1 | null => activeReadingHandle ?? null
+export const requireCurrentOfflineReadingKey = (handle: OfflineReadingHandleV1): CryptoKey => {
+  if (!isCurrentOfflineReadingHandle(handle)) throw readingOpaque()
+  return handle.key
+}
+
+const validateReadingExpectation = (expected: OfflineReadingKeyFrameExpectation): OfflineReadingKeyFrameExpectation => {
+  if (!expected || !isSafePositiveInteger(expected.expectedAccountId) || !isSafeNonnegativeInteger(expected.expectedSessionGeneration)) throw readingOpaque()
+  const origin = canonicalOrigin(expected.canonicalOrigin)
+  if (expected.expectedAuthVersion !== undefined && !isSafeNonnegativeInteger(expected.expectedAuthVersion)) throw readingOpaque()
+  if (
+    expected.expectedSiteId !== undefined &&
+    (expected.expectedSiteId.trim() !== expected.expectedSiteId || expected.expectedSiteId.length < 1 || expected.expectedSiteId.length > 256)
+  )
+    throw readingOpaque()
+  return { ...expected, canonicalOrigin: origin }
+}
+
+const readReadingLength = (bytes: Uint8Array, view: DataView, offset: number, maximum: number): { readonly value: string; readonly offset: number } => {
+  if (offset + 4 > bytes.byteLength) throw readingOpaque()
+  const length = view.getUint32(offset, false)
+  const valueOffset = offset + 4
+  if (length > maximum || valueOffset + length > bytes.byteLength) throw readingOpaque()
+  let value: string
+  try {
+    value = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(valueOffset, valueOffset + length))
+  } catch {
+    throw readingOpaque()
+  }
+  return { value, offset: valueOffset + length }
+}
+
+const readReadingU64 = (bytes: Uint8Array, view: DataView, offset: number): { readonly value: number; readonly offset: number } => {
+  if (offset + 8 > bytes.byteLength) throw readingOpaque()
+  const value = view.getBigUint64(offset, false)
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw readingOpaque()
+  return { value: Number(value), offset: offset + 8 }
+}
+
+export const parseOfflineReadingKeyFrame = (input: ArrayBuffer | Uint8Array, rawExpected: OfflineReadingKeyFrameExpectation): ParsedOfflineReadingKeyFrame => {
+  const expected = validateReadingExpectation(rawExpected)
+  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input)
+  if (bytes.byteLength < READING_MAGIC_BYTES.byteLength || bytes.byteLength > MAX_FRAME_BYTES) throw readingOpaque()
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  let offset = READING_MAGIC_BYTES.byteLength
+  for (let index = 0; index < READING_MAGIC_BYTES.byteLength; index += 1) if (bytes[index] !== READING_MAGIC_BYTES[index]) throw readingOpaque()
+  const originField = readReadingLength(bytes, view, offset, MAX_CANONICAL_ORIGIN_BYTES)
+  offset = originField.offset
+  const siteField = readReadingLength(bytes, view, offset, MAX_SITE_ID_BYTES)
+  offset = siteField.offset
+  const accountField = readReadingU64(bytes, view, offset)
+  offset = accountField.offset
+  const authField = readReadingU64(bytes, view, offset)
+  offset = authField.offset
+  const versionField = readReadingLength(bytes, view, offset, OFFLINE_READING_KEY_VERSION.length)
+  offset = versionField.offset
+  const keyIdField = readReadingLength(bytes, view, offset, MAX_KEY_ID_BYTES)
+  offset = keyIdField.offset
+  if (offset + OFFLINE_READING_KEY_BYTES !== bytes.byteLength) throw readingOpaque()
+  const origin = canonicalOrigin(originField.value)
+  if (origin !== expected.canonicalOrigin || siteField.value.trim() !== siteField.value || siteField.value.length < 1 || siteField.value.length > 256)
+    throw readingOpaque()
+  if (expected.expectedSiteId !== undefined && expected.expectedSiteId !== siteField.value) throw readingOpaque()
+  if (
+    accountField.value !== expected.expectedAccountId ||
+    !isSafePositiveInteger(accountField.value) ||
+    !isSafeNonnegativeInteger(authField.value) ||
+    (expected.expectedAuthVersion !== undefined && authField.value !== expected.expectedAuthVersion)
+  )
+    throw readingOpaque()
+  if (versionField.value !== OFFLINE_READING_KEY_VERSION) throw readingOpaque()
+  const keyIdBytes = base64UrlDecode(keyIdField.value, 16)
+  keyIdBytes.fill(0)
+  const parsed = OfflineReadingContextV1Schema.safeParse({
+    schemaVersion: 1,
+    canonicalOrigin: origin,
+    siteId: siteField.value,
+    accountId: accountField.value,
+    authVersion: authField.value,
+    keyVersion: versionField.value,
+    keyId: keyIdField.value
+  })
+  if (!parsed.success) throw readingOpaque()
+  return { context: Object.freeze(parsed.data) as OfflineReadingContextV1, keyBytes: bytes.subarray(offset, offset + OFFLINE_READING_KEY_BYTES) }
+}
+
+const confirmReadingSecret = async (secret: Uint8Array, confirmation: OfflineReadingEnrollmentOptions['confirmSecret']): Promise<void> => {
+  if (confirmation === undefined) throw readingOpaque()
+  if (typeof confirmation === 'function') {
+    if (!(await confirmation(encodeOfflineReadingSecret(secret)))) throw readingOpaque()
+    return
+  }
+  const confirmed = typeof confirmation === 'string' ? decodeOfflineReadingSecret(confirmation) : confirmation
+  if (!(confirmed instanceof Uint8Array) || confirmed.byteLength !== secret.byteLength || confirmed.some((byte, index) => byte !== secret[index]))
+    throw readingOpaque()
+}
+
+const normalizeReadingEnrollmentOptions = (
+  raw: OfflineReadingEnrollmentOptions | number,
+  generation: number | undefined,
+  signal: AbortSignal | undefined
+): OfflineReadingEnrollmentOptions => {
+  if (typeof raw === 'number') {
+    if (generation === undefined) throw readingOpaque()
+    return { expectedAccountId: raw, expectedSessionGeneration: generation, signal }
+  }
+  return raw
+}
+
+export const enrollOfflineReading = async (
+  fetchImpl: typeof window.fetch,
+  storage: OfflineReadingVaultStorage,
+  rawOptions: OfflineReadingEnrollmentOptions | number,
+  generation?: number,
+  signal?: AbortSignal
+): Promise<{ readonly secret: Uint8Array; readonly vault: OfflineReadingVaultV1; readonly handle: OfflineReadingHandleV1 }> => {
+  const operationEpoch = readingRegistryEpoch
+  const options = normalizeReadingEnrollmentOptions(rawOptions, generation, signal)
+  if (
+    !isSafePositiveInteger(options.expectedAccountId) ||
+    !isSafeNonnegativeInteger(options.expectedSessionGeneration) ||
+    (options.expectedAuthVersion !== undefined && !isSafeNonnegativeInteger(options.expectedAuthVersion))
+  )
+    throw readingOpaque()
+  const secret = generateOfflineReadingSecret()
+  let frame: Uint8Array | undefined
+  let parsed: ParsedOfflineReadingKeyFrame | undefined
+  let rawKey: Uint8Array | undefined
+  let wrapped: Uint8Array | undefined
+  try {
+    assertReadingOperationCurrent(operationEpoch, options.signal)
+    const origin = currentOrigin()
+    assertReadingOperationCurrent(operationEpoch, options.signal)
+    const response = await fetchImpl(new URL('/_api/offline/reading-key', origin).href, {
+      method: 'POST',
+      mode: 'same-origin',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      redirect: 'error',
+      headers: { accept: 'application/octet-stream' },
+      signal: options.signal
+    })
+    assertReadingOperationCurrent(operationEpoch, options.signal)
+    if (!response.ok || response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/octet-stream') throw readingOpaque()
+    const contentLength = response.headers.get('content-length')
+    if (contentLength !== null && Number.isFinite(Number(contentLength)) && Number(contentLength) > MAX_FRAME_BYTES) throw readingOpaque()
+    assertReadingOperationCurrent(operationEpoch, options.signal)
+    frame = new Uint8Array(await response.arrayBuffer())
+    assertReadingOperationCurrent(operationEpoch, options.signal)
+    if (frame.byteLength > MAX_FRAME_BYTES) throw readingOpaque()
+    parsed = parseOfflineReadingKeyFrame(frame, {
+      canonicalOrigin: origin,
+      expectedAccountId: options.expectedAccountId,
+      expectedSessionGeneration: options.expectedSessionGeneration,
+      ...(options.expectedAuthVersion === undefined ? {} : { expectedAuthVersion: options.expectedAuthVersion })
+    })
+    rawKey = new Uint8Array(parsed.keyBytes)
+    assertReadingOperationCurrent(operationEpoch, options.signal)
+    await confirmReadingSecret(secret, options.confirmSecret)
+    assertReadingOperationCurrent(operationEpoch, options.signal)
+    const salt = new Uint8Array(OFFLINE_READING_SALT_BYTES)
+    const nonce = new Uint8Array(OFFLINE_READING_NONCE_BYTES)
+    globalThis.crypto.getRandomValues(salt)
+    globalThis.crypto.getRandomValues(nonce)
+    assertReadingOperationCurrent(operationEpoch, options.signal)
+    wrapped = await wrapOfflineReadingKey(secret, parsed.context, options.expectedSessionGeneration, salt, nonce, rawKey)
+    assertReadingOperationCurrent(operationEpoch, options.signal)
+    const vault = OfflineReadingVaultV1Schema.parse({
+      schemaVersion: 1,
+      context: parsed.context,
+      sessionGeneration: options.expectedSessionGeneration,
+      salt,
+      nonce,
+      wrappedKey: new Uint8Array(wrapped)
+    })
+    assertReadingOperationCurrent(operationEpoch, options.signal)
+    await storage.putReadingVault(vault, { expectedSessionGeneration: options.expectedSessionGeneration })
+    assertReadingOperationCurrent(operationEpoch, options.signal)
+    const key = await importReadingKey(rawKey)
+    assertReadingOperationCurrent(operationEpoch, options.signal)
+    return { secret, vault, handle: installReadingKey(parsed.context, options.expectedSessionGeneration, key, operationEpoch, storage) }
+  } catch (error) {
+    secret.fill(0)
+    if (error instanceof OfflineDraftOpaqueError || error instanceof OfflineDraftSessionError) throw error
+    throw readingOpaque()
+  } finally {
+    frame?.fill(0)
+    parsed?.keyBytes.fill(0)
+    rawKey?.fill(0)
+    wrapped?.fill(0)
+  }
+}
+
+export const unlockOfflineReading = async (
+  storage: OfflineReadingVaultStorage,
+  secretBytes: Uint8Array,
+  signal?: AbortSignal
+): Promise<OfflineReadingHandleV1> => {
+  const operationEpoch = readingRegistryEpoch
+  if (!(secretBytes instanceof Uint8Array) || secretBytes.byteLength !== OFFLINE_READING_KEY_BYTES) throw readingOpaque()
+  let rawKey: Uint8Array | undefined
+  try {
+    assertReadingOperationCurrent(operationEpoch, signal)
+    const vaultValue = await storage.getReadingVault()
+    assertReadingOperationCurrent(operationEpoch, signal)
+    if (!vaultValue) throw readingOpaque()
+    const vault = OfflineReadingVaultV1Schema.parse(vaultValue)
+    assertReadingOperationCurrent(operationEpoch, signal)
+    const currentGeneration = await storage.currentSessionGeneration()
+    assertReadingOperationCurrent(operationEpoch, signal)
+    const origin = currentOrigin()
+    if (vault.sessionGeneration !== currentGeneration || vault.context.canonicalOrigin !== origin) throw readingOpaque()
+    assertReadingOperationCurrent(operationEpoch, signal)
+    rawKey = await unwrapOfflineReadingKey(secretBytes, vault.context, vault.sessionGeneration, vault.salt, vault.nonce, vault.wrappedKey)
+    assertReadingOperationCurrent(operationEpoch, signal)
+    const key = await importReadingKey(rawKey)
+    assertReadingOperationCurrent(operationEpoch, signal)
+    return installReadingKey(vault.context, vault.sessionGeneration, key, operationEpoch, storage)
+  } catch (error) {
+    if (error instanceof OfflineDraftOpaqueError || error instanceof OfflineDraftSessionError) throw error
+    throw readingOpaque()
+  } finally {
+    rawKey?.fill(0)
+  }
+}
+
+export const isCurrentOfflineReadingEpoch = (handle: OfflineReadingHandleV1, epoch: number): boolean =>
+  isCurrentOfflineReadingHandle(handle) && epoch === readingRegistryEpoch
+export const parseReadingKeyFrame = parseOfflineReadingKeyFrame
+export const parseTSORK1Frame = parseOfflineReadingKeyFrame
+export type ParsedReadingKeyFrame = ParsedOfflineReadingKeyFrame
+export type OfflineReadingHandle = OfflineReadingHandleV1
+
+export const confirmOfflineReadingSecret = (secretBytes: Uint8Array, enteredSecret: Uint8Array | string): boolean => {
+  if (!(secretBytes instanceof Uint8Array) || secretBytes.byteLength !== OFFLINE_READING_KEY_BYTES) return false
+  let entered: Uint8Array | undefined
+  try {
+    entered = typeof enteredSecret === 'string' ? decodeOfflineReadingSecret(enteredSecret) : enteredSecret
+    return entered instanceof Uint8Array && entered.byteLength === secretBytes.byteLength && entered.every((byte, index) => byte === secretBytes[index])
+  } catch {
+    return false
+  } finally {
+    if (typeof enteredSecret === 'string') entered?.fill(0)
+  }
+}
+export const currentOfflineReadingEpoch = (): number => readingRegistryEpoch
+export const offlineReadingEpoch = (): number => readingRegistryEpoch

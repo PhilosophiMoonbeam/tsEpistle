@@ -59,7 +59,7 @@ import { createApiPrincipal } from './helpers/api-principal.ts'
 import pageOperations from './operations/pages.ts'
 import { PageKnowledgeLifecycle } from './knowledge/lifecycle.ts'
 import { PageProjectionLifecycle } from './core/page-mutation-outbox.ts'
-import { OFFLINE_DRAFT_KEY_PATH, offlineDraftKeyPrivacyHeaders } from './controllers/api/offline.ts'
+import { OFFLINE_DRAFT_KEY_PATH, OFFLINE_READING_KEY_PATH, offlineDraftKeyPrivacyHeaders } from './controllers/api/offline.ts'
 const { collectEntry } = viteAssets
 
 interface MasterConfig extends Record<string, unknown> {
@@ -224,6 +224,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   wiki.app = app
   const pwaMode = currentPwaMode()
   app.use(OFFLINE_DRAFT_KEY_PATH, offlineDraftKeyPrivacyHeaders)
+  app.use(OFFLINE_READING_KEY_PATH, offlineDraftKeyPrivacyHeaders)
   const agentLimits = parseAgentOperationalLimits(wiki.config.agents)
   app.set('views', path.join(wiki.SERVERPATH, 'views'))
   app.set('view engine', 'pug')
@@ -486,11 +487,17 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       mcpContentDays: agentLimits.retention.mcpContentDays,
       auditDays: agentLimits.retention.auditDays,
       compactDeltaDays: 1
-    }).catch(() => {
-      try {
-        wiki.logger.warn(JSON.stringify({ event: 'agent.maintenance.failed', errorCode: 'AGENT_MAINTENANCE_FAILED' }))
-      } catch { /* maintenance diagnostics must not escape through the logger */ }
-    }).finally(() => { maintenanceRun = undefined })
+    })
+      .catch(() => {
+        try {
+          wiki.logger.warn(JSON.stringify({ event: 'agent.maintenance.failed', errorCode: 'AGENT_MAINTENANCE_FAILED' }))
+        } catch {
+          /* maintenance diagnostics must not escape through the logger */
+        }
+      })
+      .finally(() => {
+        maintenanceRun = undefined
+      })
   }
   wiki.backgroundWorkers = {
     start(): void {

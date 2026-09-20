@@ -90,7 +90,7 @@
         .search-results-content
           .search-results-capability-note(v-if='offlineSearchActive || serverUnavailable' role='status' aria-live='polite')
             .search-results-capability-note-title {{ serverUnavailable ? `Server unavailable · Downloaded pages only` : `Downloaded pages` }}
-            p {{ serverUnavailable ? `Wiki search, Ask/Agent, and server preview need a live server. This bounded local search uses only public pages saved on this device.` : `This search is bounded to public pages saved on this device; it does not include server suggestions, graph matches, or private metadata.` }}
+            p {{ serverUnavailable ? offlineSearchUnavailableDescription : offlineSearchScopeDescription }}
             v-btn(
               v-if='serverUnavailable'
               size='small'
@@ -268,7 +268,7 @@
 
 </template>
 <script lang='ts'>
-import { offlinePageHref } from '../../helpers/offline-routes.ts'
+import { offlinePageHref, requestOfflineSavedPageOpen } from '../../helpers/offline-routes.ts'
 import { defineComponent } from 'vue'
 import AsyncState from '@/components/common/async-state.vue'
 import InlineAgentChat from '../agents/inline-agent-chat.vue'
@@ -283,14 +283,26 @@ import { useAgentsStore } from '../../store/agents.ts'
 import { isAgentSessionId } from '../../helpers/agent-chat-pin.ts'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
 import { openOfflineStorage } from '../../helpers/offline-storage.ts'
+import { readPrivateCorpus } from '../../helpers/offline-crypto.ts'
 import {
   OFFLINE_SEARCH_RESULT_LIMIT,
+  mergeOfflineSearchCorpora,
   prepareOfflineSearchCorpus,
   searchPreparedOfflineDocumentsAsync,
   type OfflineSearchCorpus
 } from '../../helpers/offline-search.ts'
-import type { OfflineSearchDocumentV1, OfflineSnapshotRecord } from '../../../shared/offline.ts'
 import { pwaState, retryServerConnection } from '../../helpers/pwa.ts'
+import {
+  currentOfflineReadingEpoch,
+  currentOfflineReadingHandle,
+  OFFLINE_READING_STATE_EVENT,
+  type OfflineReadingHandleV1
+} from '../../helpers/offline-session.ts'
+import {
+  OfflinePrivateSearchDocumentV1Schema,
+  type OfflineSearchDocumentV1,
+  type OfflineSnapshotRecord
+} from '../../../shared/offline.ts'
 import { activeOwnedOverlayRoots, createModalFocusScope, type ModalFocusScope } from './modal-focus-scope'
 import { navigateToWikiPage } from '../../helpers/wiki-navigation'
 
@@ -339,6 +351,13 @@ const toOfflineSearchDocument = (record: OfflineSnapshotRecord): OfflineSearchDo
   capturedAt: record.snapshot.capturedAt,
   byteSize: record.byteSize
 })
+
+const toOfflinePrivateSearchDocument = (value: unknown): OfflineSearchDocumentV1 | null => {
+  const parsed = OfflinePrivateSearchDocumentV1Schema.safeParse(value)
+  if (!parsed.success) return null
+  const { sourceRevision: _sourceRevision, ...document } = parsed.data
+  return document
+}
 const isOfflineSnapshotExpired = (record: OfflineSnapshotRecord, at = Date.now()): boolean => {
   if (!record.snapshot.expiresAt) return false
   const expiry = Date.parse(record.snapshot.expiresAt)
@@ -385,6 +404,10 @@ export default defineComponent({
       offlineSearchCorpusRevision: null as number | null,
       offlineSearchCorpusSessionGeneration: null as number | null,
       offlineSearchCorpusExpiresAt: null as number | null,
+      offlinePrivateSearchCorpus: null as OfflineSearchCorpus | null,
+      offlinePrivateSearchCorpusRevision: null as number | null,
+      offlinePrivateSearchCorpusSessionGeneration: null as number | null,
+      offlinePrivateSearchEnabled: false,
       serverRetryPending: false,
       searchRetryId: 0,
       cursor: -1,
@@ -452,6 +475,16 @@ export default defineComponent({
       const count = this.offlineCorpusCount
       if (count === null) return 'Bounded downloaded-page corpus'
       return `Bounded corpus: ${count} downloaded ${count === 1 ? 'page' : 'pages'}`
+    },
+    offlineSearchScopeDescription(): string {
+      return this.offlinePrivateSearchEnabled
+        ? 'This search is bounded to public pages saved on this device and your unlocked private pages; it does not include server suggestions or graph matches.'
+        : 'This search is bounded to public pages saved on this device; it does not include server suggestions, graph matches, or private metadata.'
+    },
+    offlineSearchUnavailableDescription(): string {
+      return `Wiki search, Ask/Agent, and server preview need a live server. This bounded local search uses ${this.offlinePrivateSearchEnabled
+        ? 'public pages saved on this device and your unlocked private pages.'
+        : 'only public pages saved on this device.'}`
     },
     searchLoadingMessage(): string {
       if (!this.offlineSearchActive) return 'Searching the pages you can access.'
@@ -631,6 +664,7 @@ export default defineComponent({
     void this.$nextTick(this.syncSearchInputA11y)
     document.addEventListener('focusin', this.captureSearchRestoreTarget, true)
     if (this.searchIsFocused) void this.activateAgentModal()
+    window.addEventListener(OFFLINE_READING_STATE_EVENT, this.handleOfflineReadingStateChange)
   },
   beforeUnmount() {
     this.searchRequestId += 1
@@ -645,6 +679,7 @@ export default defineComponent({
     offSearchMove(this.handleSearchMove)
     offSearchEnter(this.handleSearchEnter)
     offSearchExit(this.handleSearchExit)
+    window.removeEventListener(OFFLINE_READING_STATE_EVENT, this.handleOfflineReadingStateChange)
     document.removeEventListener('focusin', this.captureSearchRestoreTarget, true)
     this.deactivateModalLayers(false)
     this.agentResumeSessionId = null
@@ -832,6 +867,32 @@ export default defineComponent({
       this.searchIsFocused = true
       this.searchMode = 'ask'
     },
+    handleOfflineReadingStateChange(): void {
+      this.searchRequestId += 1
+      this.searchRetryId += 1
+      if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
+      this.searchTimer = null
+      this.searchAbortController?.abort()
+      this.searchAbortController = null
+      this.searchIsLoading = false
+      this.searchError = ''
+      this.moreError = ''
+      this.response = emptySearchResponse()
+      this.responseKey = ''
+      this.cursor = -1
+      this.pagination = 1
+      this.offlineCorpusCount = null
+      this.offlineResultsTruncated = false
+      this.offlineSearchCorpus = null
+      this.offlineSearchCorpusRevision = null
+      this.offlineSearchCorpusSessionGeneration = null
+      this.offlineSearchCorpusExpiresAt = null
+      this.offlinePrivateSearchCorpus = null
+      this.offlinePrivateSearchCorpusRevision = null
+      this.offlinePrivateSearchCorpusSessionGeneration = null
+      this.offlinePrivateSearchEnabled = typeof currentOfflineReadingHandle === 'function' && Boolean(currentOfflineReadingHandle())
+      this.search = ''
+    },
     async returnToSearch(): Promise<void> {
       this.captureAgentExcursion()
       this.pendingAskRestoreTarget = null
@@ -997,15 +1058,35 @@ export default defineComponent({
       return `wiki-search-result-${this.pagination}-${index}`
     },
     pageHref(item: SearchResultRow): string {
-      if (isDownloadedSearchRow(item)) return offlinePageHref({ siteId: item.offlineSiteId, snapshot: { canonicalPath: item.offlineCanonicalPath } }, window.location.origin) ?? OFFLINE_DOCUMENT_PATH
+      if (isDownloadedSearchRow(item)) {
+        if (item.visibility === 'private') {
+          return item.offlineCanonicalPath.startsWith('/') ? item.offlineCanonicalPath : `/${item.offlineCanonicalPath}`
+        }
+        return offlinePageHref({ siteId: item.offlineSiteId, snapshot: { canonicalPath: item.offlineCanonicalPath } }, window.location.origin) ?? OFFLINE_DOCUMENT_PATH
+      }
       const visibilityScope = item.visibility === 'private' ? '/_private' : ''
       return `${visibilityScope}/${item.locale}/${item.path}`
+    },
+    requestOfflineSavedResultOpen(item: SearchResultRow): boolean {
+      if (!isDownloadedSearchRow(item) || item.visibility !== 'private' || !currentOfflineReadingHandle()) return false
+      return requestOfflineSavedPageOpen({
+        siteId: item.offlineSiteId,
+        pageId: item.offlinePageId,
+        locale: item.offlineLocale,
+        audience: 'private',
+        canonicalPath: item.offlineCanonicalPath
+      })
     },
     openPreview(item: PageSearchRow): void {
       if (!this.serverCapabilitiesAvailable || !this.hasFreshResponse) return
       this.previewSelector = { id: Number(item.id) }
     },
     handleResultClick(event: Event, item: SearchResultRow): void {
+      if (this.requestOfflineSavedResultOpen(item)) {
+        event.preventDefault()
+        this.closeSearch()
+        return
+      }
       if (!isDownloadedSearchRow(item) && (!this.serverCapabilitiesAvailable || !this.hasFreshResponse)) {
         event.preventDefault()
         return
@@ -1013,6 +1094,10 @@ export default defineComponent({
       this.closeSearch()
     },
     navigateToPage(item: SearchResultRow): void {
+      if (this.requestOfflineSavedResultOpen(item)) {
+        this.closeSearch()
+        return
+      }
       if (!isDownloadedSearchRow(item) && (!this.serverCapabilitiesAvailable || !this.hasFreshResponse)) return
       const href = this.pageHref(item)
       this.closeSearch()
@@ -1166,17 +1251,35 @@ export default defineComponent({
       const controller = new AbortController()
       this.searchAbortController?.abort()
       this.searchAbortController = controller
+      const getReadingHandle = typeof currentOfflineReadingHandle === 'function' ? currentOfflineReadingHandle : (() => null)
+      const getReadingEpoch = typeof currentOfflineReadingEpoch === 'function' ? currentOfflineReadingEpoch : (() => 0)
+      const readingHandle: OfflineReadingHandleV1 | null = getReadingHandle()
+      const readingEpoch = getReadingEpoch()
+      const makeEmptyResponse = typeof emptySearchResponse === 'function'
+        ? emptySearchResponse
+        : (() => ({ results: [], suggestions: [], totalHits: 0 }))
+      const documentIdentity = (document: Pick<OfflineSearchDocumentV1, 'siteId' | 'pageId' | 'locale'>): string =>
+        `${document.siteId}\u0000${document.pageId}\u0000${document.locale}`
       let storage: Awaited<ReturnType<typeof openOfflineStorage>> | null = null
       try {
         const origin = window.location.origin
         storage = await openOfflineStorage()
-        if (requestId !== this.searchRequestId || requestKey !== this.searchRequestKey || controller.signal.aborted) return
+        const isCurrent = (): boolean =>
+          requestId === this.searchRequestId &&
+          requestKey === this.searchRequestKey &&
+          this.searchMode === 'search' &&
+          this.offlineSearchActive &&
+          !controller.signal.aborted &&
+          getReadingEpoch() === readingEpoch &&
+          getReadingHandle() === readingHandle
+        if (!isCurrent()) return
+
         const corpus = await storage.readSnapshotCorpus()
-        if (
-          requestId !== this.searchRequestId ||
-          requestKey !== this.searchRequestKey ||
-          controller.signal.aborted
-        ) return
+        if (!isCurrent()) return
+        const corpusRevision = corpus.corpusRevision
+        const corpusSessionGeneration = corpus.sessionGeneration
+        const sessionGeneration = readingHandle?.sessionGeneration ?? corpusSessionGeneration
+        if (readingHandle && corpusSessionGeneration !== sessionGeneration) return
 
         const now = Date.now()
         const activeRecords = corpus.snapshots.filter(record =>
@@ -1189,8 +1292,23 @@ export default defineComponent({
           if (!Number.isFinite(expiry) || expiry <= now) return soonest
           return soonest === null || expiry < soonest ? expiry : soonest
         }, null)
-        const corpusRevision = corpus.corpusRevision
-        const corpusSessionGeneration = corpus.sessionGeneration
+
+        let privateDocuments: OfflineSearchDocumentV1[] = []
+        if (readingHandle) {
+          const privateCorpus = await readPrivateCorpus(readingHandle, storage, corpusRevision)
+          if (!isCurrent()) return
+          privateDocuments = privateCorpus.searchDocuments.flatMap(value => {
+            const document = toOfflinePrivateSearchDocument(value)
+            return document ? [document] : []
+          })
+          this.offlinePrivateSearchEnabled = true
+        } else {
+          this.offlinePrivateSearchEnabled = false
+          this.offlinePrivateSearchCorpus = null
+          this.offlinePrivateSearchCorpusRevision = null
+          this.offlinePrivateSearchCorpusSessionGeneration = null
+        }
+
         const cacheExpired =
           this.offlineSearchCorpusExpiresAt !== null &&
           this.offlineSearchCorpusExpiresAt <= now
@@ -1201,48 +1319,71 @@ export default defineComponent({
           cacheExpired
         ) {
           const prepared = await prepareOfflineSearchCorpus(activeDocuments, { signal: controller.signal })
-          if (
-            requestId !== this.searchRequestId ||
-            requestKey !== this.searchRequestKey ||
-            controller.signal.aborted
-          ) return
+          if (!isCurrent()) return
           this.offlineSearchCorpus = prepared
           this.offlineSearchCorpusRevision = corpusRevision
           this.offlineSearchCorpusSessionGeneration = corpusSessionGeneration
           this.offlineSearchCorpusExpiresAt = nextExpiry
         }
-        const preparedCorpus = this.offlineSearchCorpus
-        if (!preparedCorpus) throw new Error('Downloaded search corpus is unavailable.')
+        if (readingHandle && (
+          this.offlinePrivateSearchCorpus === null ||
+          this.offlinePrivateSearchCorpusRevision !== corpusRevision ||
+          this.offlinePrivateSearchCorpusSessionGeneration !== sessionGeneration
+        )) {
+          const preparedPrivate = await prepareOfflineSearchCorpus(privateDocuments, { signal: controller.signal })
+          if (!isCurrent()) return
+          this.offlinePrivateSearchCorpus = preparedPrivate
+          this.offlinePrivateSearchCorpusRevision = corpusRevision
+          this.offlinePrivateSearchCorpusSessionGeneration = sessionGeneration
+        }
+        const preparedPublic = this.offlineSearchCorpus
+        if (!preparedPublic) throw new Error('Downloaded search corpus is unavailable.')
+        const mergeCorpora = typeof mergeOfflineSearchCorpora === 'function'
+          ? mergeOfflineSearchCorpora
+          : (publicCorpus: OfflineSearchCorpus, _privateCorpus: OfflineSearchCorpus | null): OfflineSearchCorpus => publicCorpus
+        const preparedCorpus = mergeCorpora(preparedPublic, readingHandle ? this.offlinePrivateSearchCorpus : null)
+        if (!isCurrent()) return
         const ranked = await searchPreparedOfflineDocumentsAsync(preparedCorpus, query, {
           limit: OFFLINE_SEARCH_RESULT_LIMIT,
           signal: controller.signal
         })
+        if (!isCurrent()) return
+        const currentRevision = await storage.currentCorpusRevision?.()
+        const currentSessionGeneration = await storage.currentSessionGeneration?.()
         if (
-          requestId !== this.searchRequestId ||
-          requestKey !== this.searchRequestKey ||
-          controller.signal.aborted
+          !isCurrent() ||
+          (currentRevision !== undefined && currentRevision !== corpusRevision) ||
+          (currentSessionGeneration !== undefined && currentSessionGeneration !== sessionGeneration)
         ) return
-        this.offlineCorpusCount = activeDocuments.length
+
+        const privateIdentities = new Set(privateDocuments.map(documentIdentity))
+        const resultDocuments = new Set<string>()
+        for (const document of activeDocuments) resultDocuments.add(documentIdentity(document))
+        for (const document of privateDocuments) resultDocuments.add(documentIdentity(document))
+        this.offlineCorpusCount = resultDocuments.size
         this.offlineResultsTruncated = ranked.hasMore
         this.moreError = ''
         this.searchError = ''
         this.response = {
-          results: ranked.results.map(({ document, score }): DownloadedSearchRow => ({
-            id: document.pageId,
-            title: document.title,
-            description: document.description,
-            path: document.path,
-            locale: document.locale,
-            visibility: 'public',
-            tags: [],
-            score,
-            matchedFields: [],
-            offline: true,
-            offlineSiteId: origin,
-            offlinePageId: document.pageId,
-            offlineCanonicalPath: document.canonicalPath,
-            offlineLocale: document.locale
-          })),
+          results: ranked.results.map(({ document, score }): DownloadedSearchRow => {
+            const isPrivate = privateIdentities.has(documentIdentity(document))
+            return {
+              id: document.pageId,
+              title: document.title,
+              description: document.description,
+              path: document.path,
+              locale: document.locale,
+              visibility: isPrivate ? 'private' : 'public',
+              tags: [],
+              score,
+              matchedFields: [],
+              offline: true,
+              offlineSiteId: document.siteId,
+              offlinePageId: document.pageId,
+              offlineCanonicalPath: document.canonicalPath,
+              offlineLocale: document.locale
+            }
+          }),
           suggestions: [],
           totalHits: 0
         }
@@ -1252,11 +1393,13 @@ export default defineComponent({
         if (
           requestId !== this.searchRequestId ||
           requestKey !== this.searchRequestKey ||
-          controller.signal.aborted
+          controller.signal.aborted ||
+          getReadingEpoch() !== readingEpoch ||
+          getReadingHandle() !== readingHandle
         ) return
         this.searchError = getErrorMessage(error)
         this.responseKey = ''
-        this.response = emptySearchResponse()
+        this.response = makeEmptyResponse()
       } finally {
         storage?.close()
         if (this.searchAbortController === controller) this.searchAbortController = null
