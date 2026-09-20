@@ -1572,9 +1572,9 @@ export default defineComponent({
       return this.offlineControlLabel
     },
     offlineControlDisabled (): boolean {
+      if (this.offlinePrivatePath && (this.offlineState === 'setup-required' || this.offlineState === 'locked')) return false
       if (!Number.isSafeInteger(this.pageId) || this.pageId < 1 || !this.offlineSelector()) return true
       if (this.offlineOwnedOperationId !== null || this.offlineActionLoading || this.offlineState === 'checking') return true
-      if (this.offlineState === 'setup-required' || this.offlineState === 'locked') return false
       if (this.offlineState === 'ineligible' && !this.offlineSelected && !this.offlinePolicy?.excluded) return true
       return Boolean(this.offlineLocalIneligibilityReason && !this.offlineSelected)
     },
@@ -1583,7 +1583,7 @@ export default defineComponent({
       if (this.offlineState === 'downloading') return 'Saving offline copy'
       if (this.offlineState === 'removing') return 'Removing offline copy'
       if (this.offlineState === 'setup-required') return 'Offline setup required'
-      if (this.offlineState === 'locked') return 'Offline copy locked'
+      if (this.offlineState === 'locked') return 'Unlock private offline reading'
       if (this.offlineQuietIneligibility) return 'Offline copy unavailable'
       return this.offlineSelected ? 'Remove offline copy' : 'Save offline copy'
     },
