@@ -280,4 +280,6 @@ Retain native shell execution and useful context maintenance. Not every external
 - If activation fails, restore only the recipe's changes from the retained copies and remove only its own newly created files. If another actor has edited a touched file since backup, reconcile the specific changes instead of blindly restoring over their work.
 - Report changed files, effective routing/capacity, focused check results, limitations, and the recovery location/procedure in a short factual response. No standalone evidence document is required.
 
+**Recovery:** protected copies of all three files (`config.yml`, `agents/planner.md`, and `AGENTS.md`) are in: `~/.omp/recipe-backups/2026-09-20T02-22-47-807Z/`.
+
 During normal development, compare accepted-change quality, end-to-end latency, total model usage/cost, rework, conflicts, budget stops, and human interventions. Tune routing or effort when repeated evidence warrants it; change one policy dimension at a time when attribution matters. Keep **32-worker capacity** while improving packet sizing and scheduling. Optimize for reliable completed work per unit time and cost—not the fewest tokens, the most agents, or the most process steps.
