@@ -1,4 +1,26 @@
 export type OfflineSavedPageState = 'saved' | 'expiring' | 'sync-pending' | 'stale'
+export type OfflinePageAccessState = 'setup-required' | 'locked'
+export const offlineSelectionSources = (input: {
+  manual: boolean
+  automatic: boolean
+  tag: boolean
+  tagNames?: readonly string[]
+  revealTagNames?: boolean
+}): string => {
+  const sources: string[] = []
+  if (input.manual) sources.push('Manual')
+  if (input.automatic) sources.push('Automatic')
+  if (input.tag) {
+    const tags = input.tagNames ?? []
+    sources.push(input.revealTagNames !== false && tags.length > 0 ? `Followed tag${tags.length > 1 ? 's' : ''} #${tags.join(', #')}` : 'Followed tag')
+  }
+  return sources.join(' + ')
+}
+
+export const offlinePrivateAccessStatus = (state: OfflinePageAccessState): string =>
+  state === 'setup-required'
+    ? 'Offline saving for this private page needs one-time account setup.'
+    : 'Offline saving for this private page is locked. Unlock your account to continue.'
 
 export const offlineIneligibilityIsQuiet = (input: {
   serverDenied: boolean
@@ -6,11 +28,9 @@ export const offlineIneligibilityIsQuiet = (input: {
   hasSnapshot: boolean
   excluded: boolean
   localReason: string
-}): boolean => input.serverDenied &&
-  !input.selected &&
-  !input.hasSnapshot &&
-  !input.excluded &&
-  input.localReason === ''
+  /** Private authority denials are actionable and must not be collapsed to Guest copy. */
+  privatePath?: boolean
+}): boolean => input.serverDenied && !input.privatePath && !input.selected && !input.hasSnapshot && !input.excluded && input.localReason === ''
 
 export const offlineSavedPageState = (input: {
   savedRevision: string
@@ -32,8 +52,9 @@ export const offlineSavedPageState = (input: {
 
 export const offlineSavedPageStatus = (state: OfflineSavedPageState, connected: boolean, selected: boolean): string => {
   const saved = 'A readable offline copy is saved on this device.'
-  if (state === 'stale') return `${saved} A newer version was last seen online. ${connected ? 'Use Retry offline sync to update this copy.' : 'Reconnect to update this copy.'}`
-  if (state === 'expiring') return `A readable offline copy is saved on this device, but expires soon.${connected ? '' : ' Reconnect to renew it.'}`
+  if (state === 'stale')
+    return `${saved} A newer version was last seen online. ${connected ? 'Use Retry offline sync to update this copy.' : 'Reconnect to update this copy.'}`
+  if (state === 'expiring') return `${saved} A readable offline copy is saved on this device, but expires soon.${connected ? '' : ' Reconnect to renew it.'}`
   if (!connected) return `${saved} Reconnect to check for updates.`
   if (state === 'sync-pending') return `${saved} The latest check for updates could not be completed. Use Retry offline sync.`
   return selected ? saved : 'A readable offline copy is saved on this device, but this page is not included for continued sync.'

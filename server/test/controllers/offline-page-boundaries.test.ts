@@ -11,7 +11,8 @@ const router = {
 
 const pageOperations = {
   get: vi.fn(),
-  getOfflineSnapshot: vi.fn()
+  getOfflineSnapshot: vi.fn(),
+  getOfflinePrivateSnapshot: vi.fn()
 }
 const auth = {
   checkAccess: vi.fn(),
@@ -22,6 +23,8 @@ const canReadPage = vi.fn()
 const canWritePage = vi.fn()
 const managesSystem = vi.fn()
 const principalId = vi.fn()
+const pageAuthorizationContext = vi.fn()
+const pageRoute = vi.fn()
 const canViewRestrictedPageFields = vi.fn()
 const projectPageFields = vi.fn()
 const buildPageOkfView = vi.fn()
@@ -37,7 +40,14 @@ vi.mockModule('../../operations/page-locale-relations.ts', import.meta.url, () =
   listPageLocaleRelations: vi.fn(),
   unlinkPageLocaleRelation: vi.fn()
 }))
-vi.mockModule('../../helpers/page-access.ts', import.meta.url, () => ({ canReadPage, canWritePage, managesSystem, principalId }))
+vi.mockModule('../../helpers/page-access.ts', import.meta.url, () => ({
+  canReadPage,
+  canWritePage,
+  managesSystem,
+  pageAuthorizationContext,
+  pageRoute,
+  principalId
+}))
 vi.mockModule('../../helpers/page-field-projection.ts', import.meta.url, () => ({ canViewRestrictedPageFields, projectPageFields }))
 vi.mockModule('../../operations/page-watching.ts', import.meta.url, () => ({
   getPageWatchState: vi.fn(),
@@ -75,7 +85,7 @@ await vi.importFresh('../../controllers/api/pages.ts', import.meta.url)
 const handlerFor = (path: string) => router.get.mock.calls.find(([registeredPath]) => registeredPath === path)?.[1]
 const getPage = handlerFor('/:id')!
 const getOfflineSnapshot = handlerFor('/:id/offline-snapshot')!
-
+const getOfflinePrivateSnapshot = handlerFor('/:id/offline-private-snapshot')!
 const response = () => {
   const res = {
     json: vi.fn(),
@@ -127,17 +137,34 @@ const offlineSnapshot = {
   contentType: 'sanitized-html-fragment',
   integrity: 'integrity'
 }
+const offlinePrivateSnapshot = {
+  schemaVersion: 1,
+  audience: 'private',
+  context: {
+    canonicalOrigin: 'https://wiki.example.test',
+    siteId: 'site-fixture',
+    accountId: 9,
+    authVersion: 3
+  },
+  snapshot: {
+    ...offlineSnapshot,
+    canonicalPath: '/_private/en/docs/alpha'
+  }
+}
 
 beforeEach(() => {
   for (const operation of [
     pageOperations.get,
     pageOperations.getOfflineSnapshot,
+    pageOperations.getOfflinePrivateSnapshot,
     auth.checkAccess,
     auth.loadPageRuleAuthority,
     canReadPage,
     canWritePage,
     managesSystem,
     principalId,
+    pageAuthorizationContext,
+    pageRoute,
     canViewRestrictedPageFields,
     projectPageFields,
     buildPageOkfView,
@@ -146,9 +173,9 @@ beforeEach(() => {
   ])
     operation.mockReset()
 
-  const requester = { id: 9, permissions: ['read:pages'] }
+  const requester = { id: 9, permissions: ['read:pages'], authVersion: 3 }
   const authority = { requester, permissions: ['read:pages'], groups: [], tagAliases: {} }
-  principalId.mockReturnValue(requester.id)
+  principalId.mockImplementation((user: { id?: unknown } | undefined) => (typeof user?.id === 'number' ? user.id : null))
   canReadPage.mockReturnValue(true)
   canViewRestrictedPageFields.mockReturnValue(false)
   projectPageFields.mockImplementation(({ value }: { value: unknown }) => value)
@@ -157,6 +184,7 @@ beforeEach(() => {
   buildPageOkfView.mockResolvedValue({ authority: { state: 'missing', metadata: null, trust: null }, projection: { state: 'pending', value: null } })
   pageOperations.get.mockResolvedValue(publicPage)
   pageOperations.getOfflineSnapshot.mockResolvedValue(offlineSnapshot)
+  pageOperations.getOfflinePrivateSnapshot.mockResolvedValue(offlinePrivateSnapshot)
 })
 
 describe('page response privacy boundaries', () => {
@@ -261,5 +289,60 @@ describe('offline snapshot transport boundary', () => {
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
     expect(pageOperations.getOfflineSnapshot).not.toHaveBeenCalled()
+  })
+})
+describe('offline private snapshot transport boundary', () => {
+  it('propagates the authorized requester and returns the strict private response with privacy headers', async () => {
+    const requester = { id: 9, authVersion: 3, permissions: ['read:pages'] }
+    const res = response()
+
+    await getOfflinePrivateSnapshot({ user: requester, params: { id: '7' } }, res, vi.fn())
+
+    expect(pageOperations.getOfflinePrivateSnapshot).toHaveBeenCalledWith({ id: 7, requester })
+    expect(res.json).toHaveBeenCalledWith(offlinePrivateSnapshot)
+    const payload = res.json.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(Object.keys(payload).sort()).toEqual(['audience', 'context', 'schemaVersion', 'snapshot'])
+    expect(payload).not.toHaveProperty('authority')
+    expect(payload).not.toHaveProperty('source')
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
+  })
+
+  it.each([
+    ['anonymous', undefined],
+    ['service', { api: 4, grp: 8, ownershipUserId: null }]
+  ])('uses one generic denial for %s requests', async (_label: string, user: unknown) => {
+    const res = response()
+    const next = vi.fn()
+
+    await getOfflinePrivateSnapshot({ user, params: { id: '7' } }, res, next)
+
+    expect(res.status).toHaveBeenCalledWith(401)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Offline snapshot is unavailable.' })
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain('account')
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain('authority')
+    expect(pageOperations.getOfflinePrivateSnapshot).not.toHaveBeenCalled()
+    expect(next).not.toHaveBeenCalled()
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
+  })
+
+  it.each([
+    ['ineligible', Object.assign(new Error('private page secret'), { code: 'OFFLINE_PAGE_INELIGIBLE', status: 404 }), 404],
+    ['stale authentication', Object.assign(new Error('session details'), { code: 'OFFLINE_AUTHENTICATION_REQUIRED', status: 401 }), 401]
+  ])('normalizes %s to the generic private denial', async (_label: string, failure: Error, status: number) => {
+    pageOperations.getOfflinePrivateSnapshot.mockRejectedValueOnce(failure)
+    const res = response()
+    const next = vi.fn()
+
+    await getOfflinePrivateSnapshot({ user: { id: 9, authVersion: 3 }, params: { id: '7' } }, res, next)
+
+    expect(res.status).toHaveBeenCalledWith(status)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Offline snapshot is unavailable.' })
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain('secret')
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain('session')
+    expect(next).not.toHaveBeenCalled()
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
   })
 })

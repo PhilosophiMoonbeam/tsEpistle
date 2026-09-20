@@ -1,10 +1,16 @@
-import { createHash, createHmac } from 'node:crypto'
+import { createHash, createHmac, randomBytes } from 'node:crypto'
 import type { Request } from 'express'
 import {
   OFFLINE_DRAFT_KEY_MAGIC as SHARED_OFFLINE_DRAFT_KEY_MAGIC,
   OFFLINE_DRAFT_KEY_BYTES,
   OFFLINE_KEY_VERSION,
-  type DraftKeyContext
+  OFFLINE_READING_KEY_BYTES,
+  OFFLINE_READING_KEY_ID_BYTES,
+  OFFLINE_READING_KEY_MAGIC,
+  OFFLINE_READING_KEY_VERSION,
+  OFFLINE_READING_CONTEXT_SCHEMA_VERSION,
+  type DraftKeyContext,
+  type OfflineReadingContextV1
 } from '../../shared/offline.ts'
 import { accountSessionIsCurrent, sessionVersion } from './account-session.ts'
 import { getAuthenticatedUserContext, RequestAuthenticationError } from './request-auth.ts'
@@ -34,6 +40,9 @@ export interface OfflineDraftKeyRuntime {
       }
     }
   }
+}
+export type OfflineReadingKeyRuntime = Omit<OfflineDraftKeyRuntime, 'config'> & {
+  readonly config: Omit<OfflineDraftKeyRuntime['config'], 'sessionSecret'>
 }
 
 const propertyValue = (value: unknown, key: string): unknown => (typeof value === 'object' && value !== null ? Reflect.get(value, key) : undefined)
@@ -187,5 +196,110 @@ export const resolveOfflineDraftKeyContext = async (
     accountId: currentAccountId,
     authVersion: currentAuthVersion,
     keyVersion: OFFLINE_DRAFT_KEY_VERSION
+  }
+}
+
+export const OFFLINE_READING_KEY_FRAME_MAX_BYTES = 16 * 1024
+
+const canonicalReadingKeyId = (value: unknown): string => {
+  if (typeof value !== 'string' || value.length !== 22) throw new TypeError('Offline reading key id is invalid')
+  let decoded: Buffer | undefined
+  try {
+    decoded = Buffer.from(value, 'base64url')
+    if (decoded.byteLength !== OFFLINE_READING_KEY_ID_BYTES || decoded.toString('base64url') !== value) {
+      throw new Error('Non-canonical offline reading key id')
+    }
+    return value
+  } catch {
+    throw new TypeError('Offline reading key id is invalid')
+  } finally {
+    decoded?.fill(0)
+  }
+}
+
+const readingContextFields = (
+  context: OfflineReadingContextV1
+): {
+  readonly canonicalOrigin: string
+  readonly siteId: string
+  readonly accountId: number
+  readonly authVersion: number
+  readonly keyId: string
+} => {
+  if (context.schemaVersion !== OFFLINE_READING_CONTEXT_SCHEMA_VERSION) throw new Error('Unsupported offline reading context version')
+  if (context.keyVersion !== OFFLINE_READING_KEY_VERSION) throw new Error('Unsupported offline reading key version')
+  if (typeof context.canonicalOrigin !== 'string' || typeof context.siteId !== 'string') throw new TypeError('Offline reading context is invalid')
+  const canonicalOrigin = canonicalOriginFromConfig(context.canonicalOrigin)
+  const siteId = configuredSiteId(context.siteId)
+  assertBoundedUtf8(canonicalOrigin, 'Canonical origin', 2048)
+  assertBoundedUtf8(siteId, 'Site identity', 256)
+  const accountId = assertUnsignedInteger(context.accountId, 'accountId', 1)
+  const authVersion = assertUnsignedInteger(context.authVersion, 'authVersion', 0)
+  const keyId = canonicalReadingKeyId(context.keyId)
+  return { canonicalOrigin, siteId, accountId, authVersion, keyId }
+}
+
+export const encodeOfflineReadingKeyFrame = (context: OfflineReadingContextV1, key: Uint8Array): Buffer => {
+  const { canonicalOrigin, siteId, accountId, authVersion, keyId } = readingContextFields(context)
+  if (key.byteLength !== OFFLINE_READING_KEY_BYTES) throw new RangeError(`Offline reading key must contain exactly ${OFFLINE_READING_KEY_BYTES} bytes`)
+  const frame = Buffer.concat([
+    Buffer.from(OFFLINE_READING_KEY_MAGIC, 'ascii'),
+    lpUtf8(canonicalOrigin),
+    lpUtf8(siteId),
+    u64be(accountId, 'accountId', 1),
+    u64be(authVersion, 'authVersion'),
+    lpUtf8(OFFLINE_READING_KEY_VERSION),
+    lpUtf8(keyId),
+    key
+  ])
+  if (frame.byteLength > OFFLINE_READING_KEY_FRAME_MAX_BYTES) throw new RangeError('Offline reading key frame is too large')
+  return frame
+}
+
+export const createOfflineReadingKeyFrame = (context: OfflineReadingContextV1): Buffer => {
+  const key = randomBytes(OFFLINE_READING_KEY_BYTES)
+  try {
+    return encodeOfflineReadingKeyFrame(context, key)
+  } finally {
+    key.fill(0)
+  }
+}
+
+export const resolveOfflineReadingContext = async (
+  req: Request,
+  runtime: OfflineReadingKeyRuntime = getTransportRuntime<OfflineReadingKeyRuntime>()
+): Promise<OfflineReadingContextV1> => {
+  const authContext = getAuthenticatedUserContext(req)
+  const accountIdClaim = propertyValue(authContext.principal, 'id')
+  const authVersionClaim = propertyValue(authContext.principal, 'authVersion')
+  if (accountIdClaim !== authContext.userId || typeof authVersionClaim !== 'number' || !Number.isSafeInteger(authVersionClaim) || authVersionClaim < 0)
+    authenticationRequired()
+  const accountId = assertUnsignedInteger(authContext.userId, 'accountId', 1)
+  const account = await runtime.models.users.query().findById(accountId)
+  if (!accountSessionIsCurrent({ id: accountIdClaim, authVersion: authVersionClaim }, account)) authenticationRequired()
+  const currentAccountId = assertUnsignedInteger(account?.id, 'accountId', 1)
+  const currentAuthVersion = sessionVersion(account?.authVersion)
+  if (currentAuthVersion === null) throw new RequestAuthenticationError('A current human user session is required')
+  const canonicalOrigin = canonicalOriginFromConfig(runtime.config.host)
+  const configuredSiteIdentity = propertyValue(runtime.config, 'offlineDraftSiteId')
+  const siteId =
+    configuredSiteIdentity === undefined || configuredSiteIdentity === null || configuredSiteIdentity === ''
+      ? configuredSiteId(canonicalOrigin)
+      : configuredSiteId(configuredSiteIdentity)
+  const keyIdBytes = randomBytes(OFFLINE_READING_KEY_ID_BYTES)
+  let keyId: string
+  try {
+    keyId = keyIdBytes.toString('base64url')
+  } finally {
+    keyIdBytes.fill(0)
+  }
+  return {
+    schemaVersion: OFFLINE_READING_CONTEXT_SCHEMA_VERSION,
+    canonicalOrigin,
+    siteId,
+    accountId: currentAccountId,
+    authVersion: currentAuthVersion,
+    keyVersion: OFFLINE_READING_KEY_VERSION,
+    keyId
   }
 }

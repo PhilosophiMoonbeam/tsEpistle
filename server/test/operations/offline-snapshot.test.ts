@@ -3,10 +3,15 @@ import { evaluateGroupAccess, type AccessPage, type PageRuleAuthority } from '..
 
 const assertPageUnlocked = vi.fn(async () => {})
 const protectedAssetRequiresUnlock = vi.fn(async () => false)
-vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({ assertPageUnlocked, pageRequiresUnlock: vi.fn(async () => false), protectedAssetRequiresUnlock }))
+vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({
+  assertPageUnlocked,
+  pageRequiresUnlock: vi.fn(async () => false),
+  protectedAssetRequiresUnlock
+}))
 
 type SnapshotOperations = {
   getOfflineSnapshot(input: { id: number; requester?: unknown }): Promise<Record<string, unknown> & { content: { html: string } }>
+  getOfflinePrivateSnapshot(input: { id: number; requester?: unknown }): Promise<Record<string, unknown> & { snapshot: { content: { html: string } } }>
 }
 
 type Query = {
@@ -22,6 +27,7 @@ let operations: SnapshotOperations
 let page: Record<string, unknown>
 let protectedPage = false
 let guest: Record<string, unknown>
+let currentAccount: Record<string, unknown>
 let usersQuery: ReturnType<typeof vi.fn>
 let loadPageRuleAuthority: ReturnType<typeof vi.fn>
 let transaction: ReturnType<typeof vi.fn>
@@ -94,6 +100,7 @@ beforeEach(async () => {
     groups: [],
     getGlobalPermissions: vi.fn(() => ['read:pages'])
   }
+  currentAccount = { id: 7, isActive: true, authVersion: 3 }
   usersQuery = vi.fn(() => ({ findById: vi.fn(() => userLookupFor(guest)) }))
   loadPageRuleAuthority = vi.fn(async (requester: Record<string, unknown>) => ({
     requester,
@@ -108,6 +115,7 @@ beforeEach(async () => {
   }))
 
   transaction = vi.fn((table: string) => {
+    if (table === 'users') return queryFor(currentAccount)
     if (table === 'pages') return queryFor(page)
     if (table === 'pageTags') return queryFor([{ tag: 'safe' }])
     if (table === 'pageAccessPasswords') return queryFor(protectedPage ? { pageId: 7 } : undefined)
@@ -181,6 +189,66 @@ describe('offline snapshot admission operations', () => {
       'title'
     ])
     expect(JSON.stringify(snapshot)).not.toContain('must not be persisted')
+  })
+  it('authorizes private snapshots with the current account and authority inside one transaction', async () => {
+    page.visibility = 'private'
+    page.ownerId = 7
+    const requester = { id: 7, authVersion: 3, permissions: ['read:pages'] }
+
+    const response = await operations.getOfflinePrivateSnapshot({ id: 7, requester })
+
+    expect(transaction).toHaveBeenCalledTimes(4)
+    expect(transaction.mock.calls.map(([table]) => table)).toEqual(['users', 'pages', 'pageTags', 'pageAccessPasswords'])
+    expect(loadPageRuleAuthority).toHaveBeenCalledWith(requester, transaction)
+    expect(response).toMatchObject({
+      schemaVersion: 1,
+      audience: 'private',
+      context: {
+        canonicalOrigin: 'https://wiki.example.test',
+        accountId: 7,
+        authVersion: 3
+      },
+      snapshot: {
+        pageId: 7,
+        canonicalPath: '/_private/en/docs/alpha',
+        content: { html: '<p>Readable offline content</p>' }
+      }
+    })
+    expect(Object.keys(response).sort()).toEqual(['audience', 'context', 'schemaVersion', 'snapshot'])
+  })
+
+  it.each([
+    [
+      'stale authVersion',
+      (requester: Record<string, unknown>) => {
+        requester.authVersion = 2
+      }
+    ],
+    [
+      'inactive account',
+      (_requester: Record<string, unknown>) => {
+        currentAccount.isActive = false
+      }
+    ],
+    [
+      'wrong account',
+      (_requester: Record<string, unknown>) => {
+        currentAccount.id = 8
+      }
+    ]
+  ])('fails closed for private snapshots with %s', async (_label: string, mutate: (requester: Record<string, unknown>) => void) => {
+    page.visibility = 'private'
+    page.ownerId = 7
+    const requester = { id: 7, authVersion: 3, permissions: ['read:pages'] }
+    mutate(requester)
+
+    const failure = operations.getOfflinePrivateSnapshot({ id: 7, requester })
+    const error = await failure.catch(value => value as Error)
+
+    expect(error).toMatchObject({ status: 401, code: 'OFFLINE_AUTHENTICATION_REQUIRED' })
+    expect(String(error)).not.toContain('secret')
+    expect(transaction).toHaveBeenCalledOnce()
+    expect(loadPageRuleAuthority).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -277,7 +345,8 @@ describe('offline snapshot admission operations', () => {
   })
 
   it('keeps Markdown tables readable while removing passive cell alignment', async () => {
-    page.render = '<table><thead><tr><th style="text-align:right">Count</th></tr></thead><tbody><tr><td style="text-align: center;">12</td></tr></tbody></table>'
+    page.render =
+      '<table><thead><tr><th style="text-align:right">Count</th></tr></thead><tbody><tr><td style="text-align: center;">12</td></tr></tbody></table>'
 
     const snapshot = await operations.getOfflineSnapshot({ id: 7 })
 

@@ -3,8 +3,11 @@ import { fileURLToPath } from 'node:url'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { chromium, type Browser, type Page } from 'playwright-core'
-import type { OfflinePagePolicyRecord, OfflineSnapshotRecord } from '../../shared/offline.ts'
+import type { OfflinePagePolicyRecord, OfflinePrivateEnvelopeV1, OfflineSnapshotRecord } from '../../shared/offline.ts'
 import { createOfflineSyncUnavailableResult, type OfflineSyncPassResult } from '../helpers/offline-sync.ts'
+
+// The browser fixture intentionally enrolls through the real reading-key session
+// boundary instead of manufacturing an unbranded handle.
 
 const storagePath = fileURLToPath(new URL('../helpers/offline-storage.ts', import.meta.url))
 const syncPath = fileURLToPath(new URL('../helpers/offline-sync.ts', import.meta.url))
@@ -12,7 +15,6 @@ const executablePath = process.env.CHROME_BIN ?? '/usr/bin/google-chrome'
 const siteId = 'https://offline-sync.example.test'
 const currentTime = '2026-09-16T00:00:00.000Z'
 const oldTime = '2026-07-01T00:00:00.000Z'
-
 type SyncRun = {
   result: OfflineSyncPassResult
   pages: OfflinePagePolicyRecord[]
@@ -20,6 +22,9 @@ type SyncRun = {
   policyRevision: number
   sessionGeneration: number
   requests: string[]
+  privateCorpus?: { snapshots: Array<{ pageId: number; locale: string; sourceRevision: string }> }
+  privateVault?: Record<string, unknown>
+  privatePolicy?: { state: Record<string, unknown>; pages: OfflinePagePolicyRecord[] }
   pendingFetchAborted?: boolean
   recoveryStatus?: string
   recoveryFetchAborted?: boolean
@@ -30,12 +35,18 @@ type Outcome = { ok: true; value: SyncRun } | { ok: false; error: { message: str
 const driverSource = (absoluteStoragePath: string, absoluteSyncPath: string): string => `
 import { openOfflineStorage, OfflineStorageError } from ${JSON.stringify(absoluteStoragePath)};
 import { createOfflineSyncCoordinator } from ${JSON.stringify(absoluteSyncPath)};
+import { enrollOfflineReading } from ${JSON.stringify(fileURLToPath(new URL('../helpers/offline-session.ts', import.meta.url)))};
 
-const SITE_ID = ${JSON.stringify(siteId)};
+const SITE_ID = globalThis.location.origin;
+const PRIVATE_SITE_ID = SITE_ID + '/private';
 const CURRENT_TIME = ${JSON.stringify(currentTime)};
 const OLD_TIME = ${JSON.stringify(oldTime)};
+const PRIVATE_ACCOUNT_ID = 7;
+const PRIVATE_AUTH_VERSION = 3;
+const PRIVATE_KEY_ID = 'A'.repeat(22);
 
 const selector = (pageId, locale = 'en') => ({ siteId: SITE_ID, pageId, locale });
+const privateSelector = (pageId, locale = 'en') => ({ siteId: PRIVATE_SITE_ID, pageId, locale });
 const makeSnapshot = (pageId, capturedAt = CURRENT_TIME, locale = 'en') => ({
   schemaVersion: 1,
   pageId,
@@ -77,6 +88,58 @@ const errorValue = (error) => ({
   name: error && typeof error.name === 'string' ? error.name : 'Error',
   message: error instanceof Error ? error.message : String(error)
 });
+const lp = value => {
+  const bytes = new TextEncoder().encode(value);
+  const result = new Uint8Array(4 + bytes.byteLength);
+  new DataView(result.buffer).setUint32(0, bytes.byteLength, false);
+  result.set(bytes, 4);
+  return result;
+};
+const u64 = value => {
+  const result = new Uint8Array(8);
+  new DataView(result.buffer).setBigUint64(0, BigInt(value), false);
+  return result;
+};
+const join = parts => {
+  const result = new Uint8Array(parts.reduce((total, part) => total + part.byteLength, 0));
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.byteLength;
+  }
+  return result;
+};
+const readingKeyFrame = () =>
+  join([
+    new TextEncoder().encode('TSORK1'),
+    lp(SITE_ID),
+    lp(PRIVATE_SITE_ID),
+    u64(PRIVATE_ACCOUNT_ID),
+    u64(PRIVATE_AUTH_VERSION),
+    lp('random-reading-v1'),
+    lp(PRIVATE_KEY_ID),
+    new Uint8Array(32).fill(19)
+  ]);
+const privateKeyResponse = () =>
+  new Response(readingKeyFrame(), {
+    status: 200,
+    headers: { 'content-type': 'application/octet-stream', 'content-length': String(readingKeyFrame().byteLength) }
+  });
+const privateResponse = (pageId, status = 200, context = {}) =>
+  status === 200
+    ? json({
+        schemaVersion: 1,
+        audience: 'private',
+        context: {
+          canonicalOrigin: SITE_ID,
+          siteId: PRIVATE_SITE_ID,
+          accountId: PRIVATE_ACCOUNT_ID,
+          authVersion: PRIVATE_AUTH_VERSION,
+          ...context
+        },
+        snapshot: makeSnapshot(pageId)
+      })
+    : json({ message: 'Private snapshot unavailable.' }, status);
 
 export async function run(operation, payload = {}) {
   if (operation === 'cleanup') {
@@ -98,9 +161,12 @@ export async function run(operation, payload = {}) {
   const requests = [];
   const retryScenario = kind.startsWith('retry-');
   const lifecycleScenario = kind.startsWith('lifecycle-');
+  const privateScenario = kind.startsWith('private-');
+  let privateHandle = null;
   let clock = CURRENT_TIME;
   let denyReselectedPage = kind === 'reselect-denied' || kind === 'denied-manual' || retryScenario;
   let fenceMutationDone = false;
+  let privateSuccessCount = 0;
   const disposeFetchStartedGate = Promise.withResolvers();
   const disposeFetchStarted = disposeFetchStartedGate.promise;
   let releaseDisposeFetch = () => {};
@@ -122,11 +188,21 @@ export async function run(operation, payload = {}) {
   const fetchImpl = async (input, init) => {
     const requestURL = new URL(input, SITE_ID);
     requests.push(requestURL.pathname + requestURL.search);
+    if (requestURL.pathname === '/_api/offline/reading-key') return privateKeyResponse();
     if (requestURL.pathname === '/_api/pages' && requestURL.searchParams.has('tags')) {
       const tag = requestURL.searchParams.get('tags');
       if (kind === 'tag-error' && tag === 'broken') return json({ message: 'Tag discovery failed.' }, 503);
       const ids = tag === 'alpha' ? [200, 201] : tag === 'beta' ? [200, 202] : tag === 'keep' ? (kind === 'rotation' || kind === 'disable' ? [3] : [92]) : [];
       return json(ids.map(pageId => makePageRow(pageId, [tag])));
+    }
+    if (requestURL.pathname.endsWith('/offline-private-snapshot')) {
+      const pageId = Number(requestURL.pathname.split('/').at(-2));
+      if (kind === 'private-retirement') return privateResponse(pageId, 401);
+      if (kind === 'private-denied-403' && privateSuccessCount > 0) return privateResponse(pageId, 403);
+      if (kind === 'private-denied-404' && privateSuccessCount > 0) return privateResponse(pageId, 404);
+      if (kind === 'private-strict-context') return privateResponse(pageId, 200, { accountId: PRIVATE_ACCOUNT_ID + 1 });
+      privateSuccessCount += 1;
+      return privateResponse(pageId);
     }
     if (requestURL.pathname.endsWith('/offline-snapshot')) {
       const pageId = Number(requestURL.pathname.split('/').at(-2));
@@ -141,6 +217,12 @@ export async function run(operation, payload = {}) {
         await recoveryFetchRelease.promise;
       }
       if (denyReselectedPage) return json({ message: 'Snapshot not found.' }, 404);
+      if (kind === 'private-public-transport') throw new TypeError('offline public transport failed');
+      if (kind === 'private-public-401') return json({ message: 'Guest is not authorized.' }, 401);
+      if (kind === 'private-public-404') return json({ message: 'Guest cannot read this page.' }, 404);
+      if (kind === 'private-public-410') return json({ message: 'Guest page expired.' }, 410);
+      if (kind === 'private-public-422') return json({ message: 'Guest page is not eligible.' }, 422);
+      if (kind.startsWith('private-denied-') || kind === 'private-retirement' || kind === 'private-strict-context') return json({ message: 'Guest cannot read this page.' }, 404);
       if (kind === 'fence' && !fenceMutationDone) {
         fenceMutationDone = true;
         await storage.recordEligibleReaderVisit(selector(pageId));
@@ -155,9 +237,9 @@ export async function run(operation, payload = {}) {
       if ((kind === 'refill' || kind === 'refill-locales') && pageId === 1) return json({ message: 'Snapshot not found.' }, 404);
       if (kind === 'refill-locales' && pageId === 2) return json({ message: 'Snapshot not found.' }, 404);
       if (kind === 'transient' && pageId === 1) return json({ message: 'Temporary failure.' }, 503);
-      const allowed = fatalSibling ? [1, 2] : retryScenario || lifecycleScenario || kind === 'manual' || kind === 'reselect-denied' || kind === 'fence' || kind === 'dispose' || kind === 'dispose-commit'
+      const allowed = fatalSibling ? [1, 2] : retryScenario || lifecycleScenario || kind === 'manual' || kind === 'reselect-denied' || kind === 'fence' || kind === 'dispose' || kind === 'dispose-commit' || kind.startsWith('private-manual') || kind.startsWith('private-public-') || kind.startsWith('private-retirement') || kind.startsWith('private-denied-') || kind === 'private-strict-context'
         ? [1]
-        : kind === 'automatic'
+        : kind === 'automatic' || kind === 'private-automatic'
           ? Array.from({ length: 10 }, (_value, index) => index + 1)
           : kind === 'refill'
             ? Array.from({ length: 11 }, (_value, index) => index + 1)
@@ -169,7 +251,7 @@ export async function run(operation, payload = {}) {
                   ? Array.from({ length: 11 }, (_value, index) => index + 1)
                   : kind === 'disable'
                     ? [2, 3]
-                    : kind === 'tags'
+                    : kind === 'tags' || kind === 'private-tags'
                       ? [200, 201, 202]
                       : [91, 92];
       if (!allowed.includes(pageId)) return json({ message: 'Snapshot not found.' }, 404);
@@ -179,8 +261,52 @@ export async function run(operation, payload = {}) {
   };
 
   try {
-    if (retryScenario) await storage.setAutomaticSavingEnabled(false);
-    if (fatalSibling) {
+    if (privateScenario) {
+      const generation = await storage.currentSessionGeneration();
+      let enrolledVault;
+      const enrollmentStorage = {
+        currentSessionGeneration: async () => generation,
+        getReadingVault: async () => enrolledVault,
+        putReadingVault: async vault => {
+          enrolledVault = vault;
+        }
+      };
+      const enrolled = await enrollOfflineReading(fetchImpl, enrollmentStorage, {
+        expectedAccountId: PRIVATE_ACCOUNT_ID,
+        expectedSessionGeneration: generation,
+        confirmSecret: () => true
+      });
+      await storage.putReadingVault(enrolled.vault);
+      privateHandle = enrolled.handle;
+      if (kind === 'private-automatic') {
+        await storage.setAutomaticSavingEnabled(true, { readingHandle: privateHandle });
+        const originalToISOString = Date.prototype.toISOString;
+        try {
+          Date.prototype.toISOString = () => CURRENT_TIME;
+          for (let pageId = 1; pageId <= 10; pageId += 1) {
+            for (let visit = 0; visit < 12 - pageId; visit += 1)
+              await storage.recordEligibleReaderVisit(privateSelector(pageId), { readingHandle: privateHandle });
+          }
+        } finally {
+          Date.prototype.toISOString = originalToISOString;
+        }
+      } else if (kind === 'private-tags') {
+        await storage.setOfflineTagSubscriptions(['alpha', 'beta'], { readingHandle: privateHandle });
+      } else {
+        await storage.setManualOfflineIntent(privateSelector(1), true, { readingHandle: privateHandle });
+      }
+      if (kind === 'private-quota') {
+        const originalPutPrivatePair = storage.putPrivateSnapshotRecords.bind(storage);
+        storage.putPrivateSnapshotRecords = async () => {
+          throw new OfflineStorageError('quota', 'The private device is full.');
+        };
+        restorePut = () => {
+          storage.putPrivateSnapshotRecords = originalPutPrivatePair;
+        };
+      }
+    } else {
+      if (retryScenario) await storage.setAutomaticSavingEnabled(false);
+      if (fatalSibling) {
       await storage.setManualOfflineIntent(selector(1), true);
       await storage.setManualOfflineIntent(selector(2), true);
       const originalPutSnapshot = storage.putSnapshot.bind(storage);
@@ -308,6 +434,7 @@ export async function run(operation, payload = {}) {
     } else {
       throw new Error('Unknown coordinator scenario.');
     }
+    }
 
     if (kind === 'dispose-commit') {
       const originalPut = IDBObjectStore.prototype.put;
@@ -351,9 +478,20 @@ export async function run(operation, payload = {}) {
       now: () => clock,
       isOnline: () => kind !== 'offline' && kind !== 'offline-remove',
       isForeground: () => true,
-      maxConcurrentFetches: 2
+      maxConcurrentFetches: 2,
+      ...(privateScenario
+        ? {
+            privateSiteId: PRIVATE_SITE_ID,
+            getCurrentAccount: () => ({ accountId: PRIVATE_ACCOUNT_ID, authVersion: PRIVATE_AUTH_VERSION, verified: true }),
+            getReadingHandle: () => privateHandle
+          }
+        : {
+            getCurrentAccount: () => null,
+            getReadingHandle: () => null
+          })
     });
     let result;
+    let privateCorpus;
     if (retryScenario) {
       await storage.recordEligibleReaderVisit(selector(1, 'fr'));
       await coordinator.reconcile('manual');
@@ -394,6 +532,13 @@ export async function run(operation, payload = {}) {
     } else if (kind === 'offline-remove') {
       await storage.removeOfflinePage(selector(1));
       result = await coordinator.reconcile('manual');
+    } else if (privateScenario) {
+      result = await coordinator.reconcile('manual');
+      if (kind === 'private-denied-403' || kind === 'private-denied-404') result = await coordinator.reconcile('manual');
+      if (kind === 'private-manual') {
+        await coordinator.reconcile('manual');
+        privateCorpus = await storage.readSnapshotCorpus({ readingHandle: privateHandle });
+      }
     } else if (kind === 'dispose') {
       const pending = coordinator.reconcile('manual');
       await disposeFetchStarted;
@@ -437,15 +582,37 @@ export async function run(operation, payload = {}) {
       };
     }
     const policy = await storage.readOfflinePolicy();
+    let privatePolicy;
+    let privateRecords;
+    let privateVault;
+    if (privateScenario) {
+      try {
+        privatePolicy = await storage.readOfflinePolicy({ readingHandle: privateHandle });
+      } catch {
+        privatePolicy = undefined;
+      }
+      try {
+        privateRecords = await storage.listPrivateRecords(PRIVATE_KEY_ID);
+      } catch {
+        privateRecords = [];
+      }
+      try {
+        privateVault = await storage.getReadingVault();
+      } catch {
+        privateVault = undefined;
+      }
+    }
+    const effectivePolicy = privatePolicy ?? policy;
     return {
       ok: true,
       value: {
         result,
-        pages: await storage.listPagePolicies(SITE_ID),
+        pages: privateScenario ? (privatePolicy?.pages ?? []) : await storage.listPagePolicies(SITE_ID),
         snapshots: await storage.listSnapshots(SITE_ID),
-        policyRevision: policy.state.policyRevision,
-        sessionGeneration: policy.sessionGeneration,
+        policyRevision: effectivePolicy.state.policyRevision,
+        sessionGeneration: effectivePolicy.sessionGeneration,
         requests,
+        ...(privateScenario ? { privateRecords, privateVault, privatePolicy, privateCorpus } : {}),
         pendingFetchAborted,
         recoveryStatus,
         recoveryFetchAborted
@@ -555,13 +722,16 @@ test('exposes an explicit unavailable service result', () => {
 })
 
 describe('foreground offline sync coordinator', () => {
-  test.each(['retry-recovered', 'retry-coalesced', 'retry-precleared'])('manual synchronization rechecks old denials including locale variants: %s', async kind => {
-    const run = await runScenario(kind)
-    expect(run.result.status).toBe('complete')
-    expect(pageIds(run)).toEqual([1])
-    expect(snapshotRequests(run)).toEqual([1, 1])
-    expect(run.pages.find(page => page.locale === 'fr')).toMatchObject({ manual: false, availability: 'unknown' })
-  })
+  test.each(['retry-recovered', 'retry-coalesced', 'retry-precleared'])(
+    'manual synchronization rechecks old denials including locale variants: %s',
+    async kind => {
+      const run = await runScenario(kind)
+      expect(run.result.status).toBe('complete')
+      expect(pageIds(run)).toEqual([1])
+      expect(snapshotRequests(run)).toEqual([1, 1])
+      expect(run.pages.find(page => page.locale === 'fr')).toMatchObject({ manual: false, availability: 'unknown' })
+    }
+  )
 
   test('manual retry never reselects an excluded page', async () => {
     const run = await runScenario('retry-excluded')
@@ -578,15 +748,18 @@ describe('foreground offline sync coordinator', () => {
     expect(run.result.status).toBe('partial')
   })
 
-  test.each(['lifecycle-recent', 'lifecycle-expired', 'lifecycle-future', 'lifecycle-explicit', 'lifecycle-partial'])('bounds navigation sync without suppressing expired or explicit work: %s', async kind => {
-    const run = await runScenario(kind)
-    expect(run.result.status).toBe('complete')
-    expect(snapshotRequests(run)).toEqual(kind === 'lifecycle-recent' ? [1] : [1, 1])
-    if (kind === 'lifecycle-recent') {
-      expect(run.result.attempted).toBe(0)
-      expect(run.result.diagnostics.lastSuccessAt).toBe(currentTime)
+  test.each(['lifecycle-recent', 'lifecycle-expired', 'lifecycle-future', 'lifecycle-explicit', 'lifecycle-partial'])(
+    'bounds navigation sync without suppressing expired or explicit work: %s',
+    async kind => {
+      const run = await runScenario(kind)
+      expect(run.result.status).toBe('complete')
+      expect(snapshotRequests(run)).toEqual(kind === 'lifecycle-recent' ? [1] : [1, 1])
+      if (kind === 'lifecycle-recent') {
+        expect(run.result.attempted).toBe(0)
+        expect(run.result.diagnostics.lastSuccessAt).toBe(currentTime)
+      }
     }
-  })
+  )
 
   test('a late worker from a failed pass cannot cancel the next synchronization pass', async () => {
     const run = await runScenario('fatal-sibling-new-pass')
@@ -811,5 +984,76 @@ describe('foreground offline sync coordinator', () => {
     expect(run.policyRevision).toBe(2)
     expect(snapshotRequests(run)).toEqual([1, 1])
     expect(pageIds(run)).toEqual([1])
+  })
+  test('keeps the public Guest path unchanged without an account or reading handle', async () => {
+    const run = await runScenario('manual')
+    expect(run.result.status).toBe('complete')
+    expect(run.result.saved).toBe(1)
+    expect(snapshotRequests(run)).toEqual([1])
+    expect(run.privateRecords).toBeUndefined()
+  })
+
+  test.each(['private-public-404', 'private-public-410', 'private-public-422'])(
+    'uses the verified private endpoint only for bounded Guest ineligibility: %s',
+    async kind => {
+      const run = await runScenario(kind)
+      expect(run.result.status).toBe('complete')
+      expect(run.result.saved).toBe(1)
+      expect(snapshotRequests(run)).toEqual([1])
+      expect(run.requests.filter(request => request.endsWith('/offline-private-snapshot'))).toHaveLength(1)
+      expect(run.privateRecords).toHaveLength(4)
+    }
+  )
+
+  test.each(['private-public-401', 'private-public-transport'])('does not fall back from arbitrary Guest failures to private storage: %s', async kind => {
+    const run = await runScenario(kind)
+    expect(run.requests.filter(request => request.endsWith('/offline-private-snapshot'))).toEqual([])
+    expect(run.privateRecords).toHaveLength(2)
+    expect(run.privatePolicy?.pages).toHaveLength(1)
+    expect(run.result.saved).toBe(0)
+  })
+
+  test('rejects a private response for another account without persisting its payload', async () => {
+    const run = await runScenario('private-strict-context')
+    expect(run.requests.filter(request => request.endsWith('/offline-private-snapshot'))).toHaveLength(1)
+    expect(run.privateRecords).toHaveLength(0)
+    expect(run.privateVault).toBeNull()
+    expect(run.privatePolicy).toBeUndefined()
+  })
+
+  test.each(['private-manual', 'private-automatic', 'private-tags'])('persists encrypted private snapshots, search and policy for %s', async kind => {
+    const run = await runScenario(kind)
+    const expectedPageIds = kind === 'private-automatic' ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] : kind === 'private-tags' ? [200, 201, 202] : [1]
+    expect(run.result.status).toBe('complete')
+    expect(run.result.saved).toBe(expectedPageIds.length)
+    expect(run.privateRecords).toHaveLength(1 + expectedPageIds.length * 3)
+    if (kind === 'private-manual') expect(run.privateCorpus?.snapshots).toMatchObject([{ pageId: 1, locale: 'en', snapshot: { sourceRevision: 'revision-1' } }])
+    expect(run.privateRecords?.every(record => record.ciphertext.length > 16)).toBe(true)
+    const persisted = JSON.stringify({ records: run.privateRecords, vault: run.privateVault })
+    for (const secret of ['Page 1', 'docs/en/1', 'alpha', '<p>Page 1</p>', currentTime]) expect(persisted).not.toContain(secret)
+  })
+
+  test('rolls back a quota-failed encrypted body/search pair and its policy revision', async () => {
+    const run = await runScenario('private-quota')
+    expect(run.result.status).toBe('error')
+    expect(run.result.saved).toBe(0)
+    expect(run.privateRecords).toHaveLength(2)
+    expect(run.privatePolicy?.pages[0]).toMatchObject({ manual: true, availability: 'unknown' })
+  })
+
+  test('retires the entire private vault after a private endpoint 401', async () => {
+    const run = await runScenario('private-retirement')
+    expect(run.requests.filter(request => request.endsWith('/offline-private-snapshot'))).toHaveLength(1)
+    expect(run.privateRecords).toEqual([])
+    expect(run.privateVault).toBeNull()
+    expect(run.privatePolicy).toBeUndefined()
+  })
+
+  test.each(['private-denied-403', 'private-denied-404'])('deletes denied private body/search and fences its policy: %s', async kind => {
+    const run = await runScenario(kind)
+    expect(run.privateRecords).toHaveLength(2)
+    expect(run.privateRecords?.every(record => record.kind === 'policy-state' || record.kind === 'policy-page')).toBe(true)
+    expect(run.privatePolicy?.pages[0]).toMatchObject({ manual: true, availability: 'ineligible' })
+    expect(run.result.removed).toBe(1)
   })
 })

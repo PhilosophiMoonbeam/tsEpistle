@@ -342,7 +342,8 @@ router.get('/whoami', async (req, res, next) => {
         'timeFormat',
         'appearance',
         'fontFamily',
-        'permissions'
+        'permissions',
+        'authVersion'
       ])
     })
   } catch (err) {

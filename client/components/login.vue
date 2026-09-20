@@ -381,7 +381,7 @@ import { newPasswordIssue } from '../../shared/security-policy.ts'
 
 import { defineAsyncComponent, defineComponent } from 'vue'
 import Cookies from 'js-cookie'
-import { wikiStore } from '@/store/index.ts'
+import { wikiStore, resolvePendingOfflineLogoutAfterExplicitSignIn } from '@/store/index.ts'
 import { fetchAuthStrategies, submitAuthRequest, submitStatusRequest, type AuthResponse, type AuthStrategy } from '../helpers/auth-api'
 import { getErrorMessage } from '../helpers/root-ui-store'
 import { sanitizeTfaQrImage } from '../helpers/tfa-qr'
@@ -844,6 +844,14 @@ export default defineComponent({
         }, 500)
         this.isLoading = false
       } else if (respObj.authenticated === true) {
+        try {
+          resolvePendingOfflineLogoutAfterExplicitSignIn()
+        } catch (err) {
+          console.error(err)
+          this.isLoading = false
+          this.showError(this.$t('auth:genericError'))
+          return
+        }
         this.loaderColor = 'green-darken-1'
         this.loaderTitle = this.$t('auth:loginSuccess')
         if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)

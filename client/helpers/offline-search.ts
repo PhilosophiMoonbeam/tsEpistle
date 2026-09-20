@@ -70,9 +70,7 @@ type RankedOfflineSearchDocument = {
  */
 export const normalizeOfflineSearchText = (value: string): string =>
   [...value.normalize('NFKC')]
-    .map(character =>
-      character.charCodeAt(0) <= 0x1f || (character.charCodeAt(0) >= 0x7f && character.charCodeAt(0) <= 0x9f) ? ' ' : character
-    )
+    .map(character => (character.charCodeAt(0) <= 0x1f || (character.charCodeAt(0) >= 0x7f && character.charCodeAt(0) <= 0x9f) ? ' ' : character))
     .join('')
     .toLowerCase()
     .replace(/\s+/gu, ' ')
@@ -174,9 +172,7 @@ const boundedText = (value: string, limit: number): string => {
 const normalizeOfflineQuery = (query: string): { normalizedQuery: string; queryTerms: string[] } => {
   const boundedInput = boundedText(query, OFFLINE_SEARCH_QUERY_CHARACTER_LIMIT)
   const normalizedQuery = boundedText(normalizeOfflineSearchText(boundedInput), OFFLINE_SEARCH_QUERY_CHARACTER_LIMIT)
-  const queryTerms = normalizedQuery
-    ? [...new Set(tokenize(normalizedQuery))].slice(0, OFFLINE_SEARCH_QUERY_TERM_LIMIT)
-    : []
+  const queryTerms = normalizedQuery ? [...new Set(tokenize(normalizedQuery))].slice(0, OFFLINE_SEARCH_QUERY_TERM_LIMIT) : []
   return { normalizedQuery, queryTerms }
 }
 
@@ -252,14 +248,7 @@ const recordMatches = (automaton: SearchAutomaton, scan: TextScan, endIndex: num
   }
 }
 
-const scanTextChunk = (
-  automaton: SearchAutomaton,
-  text: string,
-  scan: TextScan,
-  startIndex: number,
-  endIndex: number,
-  signal?: AbortSignal
-): void => {
+const scanTextChunk = (automaton: SearchAutomaton, text: string, scan: TextScan, startIndex: number, endIndex: number, signal?: AbortSignal): void => {
   for (let index = startIndex; index < endIndex; index += 1) {
     if (index === startIndex || index % OFFLINE_SEARCH_SCORING_CHUNK_CHARACTERS === 0) throwIfAborted(signal)
     const character = text.charCodeAt(index)
@@ -273,12 +262,7 @@ const scanTextChunk = (
   }
 }
 
-const scanText = (
-  automaton: SearchAutomaton,
-  text: string,
-  maxCharacters: number,
-  signal?: AbortSignal
-): TextScan => {
+const scanText = (automaton: SearchAutomaton, text: string, maxCharacters: number, signal?: AbortSignal): TextScan => {
   const scan = createTextScan(automaton.patterns.length, automaton.queryTermCount)
   const endIndex = Math.min(text.length, Math.max(0, maxCharacters))
   for (let startIndex = 0; startIndex < endIndex; startIndex += OFFLINE_SEARCH_SCORING_CHUNK_CHARACTERS) {
@@ -292,12 +276,7 @@ const scanText = (
 
 const yieldToEventLoop = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
 
-const scanTextAsync = async (
-  automaton: SearchAutomaton,
-  text: string,
-  maxCharacters: number,
-  signal?: AbortSignal
-): Promise<TextScan> => {
+const scanTextAsync = async (automaton: SearchAutomaton, text: string, maxCharacters: number, signal?: AbortSignal): Promise<TextScan> => {
   const scan = createTextScan(automaton.patterns.length, automaton.queryTermCount)
   const endIndex = Math.min(text.length, Math.max(0, maxCharacters))
   for (let startIndex = 0; startIndex < endIndex; startIndex += OFFLINE_SEARCH_SCORING_CHUNK_CHARACTERS) {
@@ -311,11 +290,7 @@ const scanTextAsync = async (
   return scan
 }
 
-const scoreBody = (scan: TextScan): number =>
-  BODY_SCORE +
-  scan.phraseCount * BODY_TERM_SCORE * 2 +
-  scan.termCount * BODY_TERM_SCORE +
-  scan.wordCount
+const scoreBody = (scan: TextScan): number => BODY_SCORE + scan.phraseCount * BODY_TERM_SCORE * 2 + scan.termCount * BODY_TERM_SCORE + scan.wordCount
 
 const matchesEveryQueryTerm = (queryTerms: readonly string[], scans: readonly TextScan[]): boolean =>
   queryTerms.every((_term, index) => scans.some(scan => scan.matchedTerms[index]))
@@ -454,10 +429,7 @@ const prepareDocument = (document: OfflineSearchDocumentV1, signal?: AbortSignal
   }
 }
 
-const prepareDocuments = async (
-  documents: readonly OfflineSearchDocumentV1[],
-  signal?: AbortSignal
-): Promise<PreparedOfflineSearchDocument[]> => {
+const prepareDocuments = async (documents: readonly OfflineSearchDocumentV1[], signal?: AbortSignal): Promise<PreparedOfflineSearchDocument[]> => {
   const unique = new Map<string, PreparedOfflineSearchDocument>()
   const candidateLimit = Math.min(documents.length, OFFLINE_SEARCH_DOCUMENT_LIMIT)
   for (let index = 0; index < candidateLimit; index += 1) {
@@ -499,14 +471,31 @@ export const prepareOfflineSearchCorpus = async (
   return Object.freeze(corpus)
 }
 
-const preparedDocuments = (corpus: OfflineSearchCorpus): readonly PreparedOfflineSearchDocument[] =>
-  (corpus as PreparedOfflineSearchCorpus).documents
+const preparedDocuments = (corpus: OfflineSearchCorpus): readonly PreparedOfflineSearchDocument[] => (corpus as PreparedOfflineSearchCorpus).documents
 
-const finishSearch = (
-  ranked: RankedOfflineSearchDocument[],
-  maxResults: number,
-  signal?: AbortSignal
-): OfflineSearchResponse => {
+/**
+ * Combine the public Guest corpus with a private corpus that was prepared
+ * under the current reading handle. Private documents win identity
+ * collisions so a stale/public projection can never hide the private route.
+ */
+export const mergeOfflineSearchCorpora = (...corpora: readonly (OfflineSearchCorpus | null | undefined)[]): OfflineSearchCorpus => {
+  const unique = new Map<string, PreparedOfflineSearchDocument>()
+  for (const corpus of corpora) {
+    if (!corpus) continue
+    for (const prepared of preparedDocuments(corpus)) {
+      const identity = identityFor(prepared.document)
+      unique.delete(identity)
+      unique.set(identity, prepared)
+    }
+  }
+  const merged: PreparedOfflineSearchCorpus = {
+    [OFFLINE_SEARCH_CORPUS_BRAND]: true,
+    documents: Object.freeze([...unique.values()])
+  }
+  return Object.freeze(merged)
+}
+
+const finishSearch = (ranked: RankedOfflineSearchDocument[], maxResults: number, signal?: AbortSignal): OfflineSearchResponse => {
   throwIfAborted(signal)
   ranked.sort(compareDocuments)
   throwIfAborted(signal)
@@ -571,11 +560,7 @@ const rankPreparedDocumentsAsync = async (
  * The prepared value is immutable and may be reused for every query in the
  * same committed corpus revision.
  */
-export const searchPreparedOfflineDocuments = (
-  corpus: OfflineSearchCorpus,
-  query = '',
-  options: OfflineSearchOptions = {}
-): OfflineSearchResponse => {
+export const searchPreparedOfflineDocuments = (corpus: OfflineSearchCorpus, query = '', options: OfflineSearchOptions = {}): OfflineSearchResponse => {
   throwIfAborted(options.signal)
   const maxResults = boundedLimit(options.limit)
   const { normalizedQuery, queryTerms } = normalizeOfflineQuery(query)

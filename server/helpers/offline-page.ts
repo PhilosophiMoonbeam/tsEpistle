@@ -105,9 +105,10 @@ const ACTIVE_ATTRIBUTES = new Set([
 ])
 const DOM_CLOBBERING_ATTRIBUTES = new Set(['id', 'name', 'slot'])
 
+export const OFFLINE_PAGE_INELIGIBLE_CODE = 'OFFLINE_PAGE_INELIGIBLE' as const
 export class OfflinePageProjectionError extends Error {
   readonly status = 404
-  readonly code = 'OFFLINE_PAGE_INELIGIBLE'
+  readonly code = OFFLINE_PAGE_INELIGIBLE_CODE
 
   constructor(message = 'This page is not available for offline use.') {
     super(message)
@@ -130,8 +131,8 @@ export class OfflinePageAuthorityError extends Error {
 }
 
 /**
- * The configured site origin and the page's canonical public route are the
- * only base coordinates permitted for resolving passive document links.
+ * The configured site origin and the page's canonical route are the only
+ * base coordinates permitted for resolving passive document links.
  */
 export interface OfflinePageLinkProjection {
   readonly canonicalOrigin: string
@@ -160,13 +161,18 @@ export interface OfflinePageSource extends Record<string, unknown> {
 
 export interface OfflinePageSnapshotInput extends OfflinePageLinkProjection {
   page: unknown
-  guest: PagePrincipal
+  requester: PagePrincipal
   authority: PageRuleAuthority
+  audience: 'public' | 'private'
   capturedAt?: Date
 }
 
 const invalid = (message: string): never => {
   throw new OfflinePageProjectionError(message)
+}
+const offlinePageVisibility = (value: unknown): 'public' | 'private' => {
+  if (value === 'public' || value === 'private') return value
+  return invalid('The page identity is invalid')
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -245,8 +251,7 @@ const resolveLinkProjection = (projection: OfflinePageLinkProjection): ResolvedO
   } catch {
     throw new TypeError('Offline page route is invalid')
   }
-  if (pageUrl.origin !== origin || pageUrl.pathname !== route || pageUrl.search || pageUrl.hash)
-    throw new TypeError('Offline page route is invalid')
+  if (pageUrl.origin !== origin || pageUrl.pathname !== route || pageUrl.search || pageUrl.hash) throw new TypeError('Offline page route is invalid')
   return { origin, pageUrl }
 }
 
@@ -303,8 +308,7 @@ const canonicalAnchorUrl = (value: string, projection: ResolvedOfflinePageLinkPr
   }
   if (url.username || url.password) return null
   if (url.protocol !== 'http:' && url.protocol !== 'https:' && url.protocol !== 'mailto:') return null
-  if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin === projection.origin && reservedSameOriginPath(url.pathname))
-    return null
+  if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin === projection.origin && reservedSameOriginPath(url.pathname)) return null
   return url.href
 }
 
@@ -419,9 +423,10 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
   const authority = input.authority
   if (
     !isRecord(input.page) ||
-    !input.guest ||
+    !input.requester ||
     !isRecord(authority) ||
-    authority.requester !== input.guest ||
+    authority.requester !== input.requester ||
+    (input.audience !== 'public' && input.audience !== 'private') ||
     !Array.isArray(authority.permissions) ||
     !authority.permissions.every(permission => typeof permission === 'string') ||
     !Array.isArray(authority.groups) ||
@@ -449,11 +454,11 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
   if (!Array.isArray(tags)) invalid('The page identity is invalid')
   const sourceRevision = canonicalSourceRevision(page.sourceRevision)
   const renderedSourceRevision =
-    page.renderedSourceRevision === undefined || page.renderedSourceRevision === null
-      ? null
-      : canonicalSourceRevision(page.renderedSourceRevision)
+    page.renderedSourceRevision === undefined || page.renderedSourceRevision === null ? null : canonicalSourceRevision(page.renderedSourceRevision)
   if (renderedSourceRevision === null || renderedSourceRevision !== sourceRevision) invalid('The page render is not current for its source revision')
-  const canonicalPath = pageRoute({ visibility: 'public', localeCode, path })
+  const visibility = offlinePageVisibility(page.visibility)
+  if (input.audience === 'public' && visibility !== 'public') invalid('The page is not publicly readable')
+  const canonicalPath = pageRoute({ visibility, localeCode, path })
   if (input.canonicalPath !== canonicalPath) throw new TypeError('Offline page route is invalid')
   const linkProjection: OfflinePageLinkProjection = { canonicalOrigin: input.canonicalOrigin, canonicalPath }
   resolveLinkProjection(linkProjection)
@@ -472,9 +477,9 @@ export const buildOfflinePageSnapshot = (input: OfflinePageSnapshotInput): Offli
   const contentType = page.contentType
   const render = typeof renderValue === 'string' ? renderValue : invalid('The page has no rendered projection')
 
-  if (page.visibility !== 'public') invalid('The page is not publicly readable')
-  const accessPage: PageVisibilityRecord = { path, locale: localeCode, localeCode, visibility: 'public', ownerId: pageOwnerId, tags }
-  if (pageAuthorizationContext(accessPage) === null || !canReadPage(input.guest, accessPage, input.authority)) invalid('The page is not publicly readable')
+  const accessPage: PageVisibilityRecord = { path, locale: localeCode, localeCode, visibility, ownerId: pageOwnerId, tags }
+  if (pageAuthorizationContext(accessPage) === null || !canReadPage(input.requester, accessPage, input.authority))
+    invalid(input.audience === 'public' ? 'The page is not publicly readable' : 'The page is not readable')
   const capturedAt =
     input.capturedAt === undefined
       ? new Date()

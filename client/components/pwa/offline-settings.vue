@@ -4,6 +4,17 @@ import OfflineLibrary from './offline-library.vue'
 import PwaStatus from './pwa-status.vue'
 import { OfflineStorageError, openOfflineStorage, subscribeOfflineStorageChanges, type OfflineStorage } from '../../helpers/offline-storage.ts'
 import { createOfflineSyncUnavailableResult, OFFLINE_SYNC_COORDINATOR_KEY, type OfflineSyncService } from '../../helpers/offline-sync.ts'
+import {
+  currentOfflineReadingHandle,
+  decodeOfflineReadingSecret,
+  enrollOfflineReading,
+  isCurrentOfflineReadingHandle,
+  lockOfflineReading,
+  OFFLINE_READING_STATE_EVENT,
+  OFFLINE_SESSION_INVALIDATED_EVENT,
+  unlockOfflineReading
+} from '../../helpers/offline-session.ts'
+import { wikiStore } from '../../store/index.ts'
 import type { OfflineStorageEstimate } from '../../../shared/offline.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope.ts'
 import { notifyReloadSafetyChanged, setReloadSafetyProvider } from '../../helpers/pwa.ts'
@@ -16,6 +27,19 @@ const storageEstimate = shallowRef<OfflineStorageEstimate | null>(null)
 const storageState = ref<StorageState>('uninspected')
 const storageMessage = ref('Offline storage has not been checked yet.')
 const storageBusy = ref(false)
+type ReadingState = 'setup-required' | 'locked' | 'unlocked' | 'unavailable'
+const readingState = ref<ReadingState>('unavailable')
+const readingMessage = ref('')
+const readingBusy = ref(false)
+const unlockSecret = ref('')
+const enrollmentSecret = ref('')
+const enrollmentConfirmation = ref('')
+const enrollmentNotice = ref('')
+const enrollmentConfirming = ref(false)
+let enrollmentController: AbortController | null = null
+let unlockController: AbortController | null = null
+let enrollmentResolver: ((confirmed: boolean) => void) | null = null
+let stopReadingStateEvents: (() => void) | null = null
 const persistenceBusy = ref(false)
 const clearBusy = ref(false)
 const clearDialogOpen = ref(false)
@@ -27,6 +51,31 @@ const removeNotice = ref('')
 const clearNotice = ref('')
 const libraryNotice = ref('')
 const libraryRefreshToken = ref(0)
+const verifiedAccount = computed(() => {
+  if (
+    wikiStore.authRefreshOutcome !== 'authenticated' ||
+    wikiStore.offlineIdentityReady !== true ||
+    wikiStore.user.authenticated !== true ||
+    !Number.isSafeInteger(wikiStore.user.id) ||
+    wikiStore.user.id < 1 ||
+    !Number.isSafeInteger(wikiStore.user.authVersion) ||
+    wikiStore.user.authVersion < 0
+  )
+    return null
+  return { accountId: wikiStore.user.id, authVersion: wikiStore.user.authVersion }
+})
+const readingStateLabel = computed(() => ({
+  'setup-required': 'Not set up',
+  locked: 'Locked',
+  unlocked: 'Unlocked',
+  unavailable: 'Unavailable'
+}[readingState.value]))
+const readingStateDescription = computed(() => ({
+  'setup-required': 'Enable private offline reading after the server verifies your account.',
+  locked: 'A private vault is saved on this device. Enter its secret to unlock private pages.',
+  unlocked: 'Private offline pages are available in this browser until you lock them.',
+  unavailable: 'Private offline reading is unavailable until this device can open offline storage.'
+}[readingState.value]))
 const libraryBusy = ref(false)
 let safetyRevision = 0
 let ownsReloadSafety = false
@@ -34,8 +83,8 @@ let clearFocusScope: ModalFocusScope | null = null
 let storageOpenToken = 0
 let unsubscribeStorageChanges: (() => void) | null = null
 
-const reloadBlocked = computed(() => storageBusy.value || persistenceBusy.value || clearBusy.value || clearDialogOpen.value || libraryBusy.value)
-watch([storageBusy, persistenceBusy, clearBusy, clearDialogOpen, libraryBusy], () => {
+const reloadBlocked = computed(() => storageBusy.value || persistenceBusy.value || clearBusy.value || clearDialogOpen.value || libraryBusy.value || readingBusy.value)
+watch([storageBusy, persistenceBusy, clearBusy, clearDialogOpen, libraryBusy, readingBusy], () => {
   safetyRevision += 1
   if (ownsReloadSafety) notifyReloadSafetyChanged()
 }, { flush: 'sync' })
@@ -96,6 +145,129 @@ async function refreshStorageStatus(): Promise<boolean> {
     return false
   }
 }
+async function refreshReadingState(): Promise<void> {
+  const storage = offlineStorage.value
+  if (!storage || storageState.value !== 'available') {
+    readingState.value = 'unavailable'
+    return
+  }
+  try {
+    const vault = await storage.getReadingVault()
+    if (offlineStorage.value !== storage) return
+    if (!vault) {
+      readingState.value = 'setup-required'
+      readingMessage.value = ''
+      return
+    }
+    const handle = currentOfflineReadingHandle()
+    readingState.value = handle && isCurrentOfflineReadingHandle(handle) ? 'unlocked' : 'locked'
+    readingMessage.value = ''
+  } catch {
+    if (offlineStorage.value !== storage) return
+    readingState.value = 'unavailable'
+    readingMessage.value = 'Private offline reading is unavailable on this device.'
+  }
+}
+
+function cancelEnrollment(): void {
+  enrollmentController?.abort()
+  enrollmentResolver?.(false)
+  enrollmentResolver = null
+  enrollmentConfirming.value = false
+  enrollmentSecret.value = ''
+  enrollmentConfirmation.value = ''
+  readingBusy.value = false
+}
+
+async function beginEnrollment(): Promise<void> {
+  const storage = offlineStorage.value
+  const account = verifiedAccount.value
+  if (!storage || !account || readingBusy.value || readingState.value !== 'setup-required') return
+  readingBusy.value = true
+  enrollmentNotice.value = ''
+  enrollmentSecret.value = ''
+  enrollmentConfirmation.value = ''
+  enrollmentConfirming.value = false
+  const controller = new AbortController()
+  enrollmentController = controller
+  let result: Awaited<ReturnType<typeof enrollOfflineReading>> | null = null
+  try {
+    const generation = await storage.currentSessionGeneration()
+    if (enrollmentController !== controller || controller.signal.aborted) return
+    result = await enrollOfflineReading(window.fetch.bind(window), storage, {
+      expectedAccountId: account.accountId,
+      expectedAuthVersion: account.authVersion,
+      expectedSessionGeneration: generation,
+      signal: controller.signal,
+      confirmSecret: displaySecret =>
+        new Promise<boolean>(resolve => {
+          enrollmentSecret.value = displaySecret
+          enrollmentConfirming.value = true
+          enrollmentResolver = resolve
+        })
+    })
+    if (controller.signal.aborted || enrollmentController !== controller) return
+    enrollmentNotice.value = 'Private offline reading is enabled on this device.'
+    readingState.value = 'unlocked'
+  } catch {
+    if (!controller.signal.aborted) enrollmentNotice.value = 'Private offline reading could not be enabled.'
+    await refreshReadingState()
+  } finally {
+    result?.secret.fill(0)
+    if (enrollmentController === controller) enrollmentController = null
+    enrollmentResolver = null
+    enrollmentConfirming.value = false
+    enrollmentSecret.value = ''
+    enrollmentConfirmation.value = ''
+    readingBusy.value = false
+  }
+}
+
+function confirmEnrollment(): void {
+  if (!enrollmentResolver) return
+  if (enrollmentConfirmation.value !== enrollmentSecret.value) {
+    enrollmentNotice.value = 'The confirmation could not be accepted.'
+    return
+  }
+  const resolver = enrollmentResolver
+  enrollmentResolver = null
+  enrollmentConfirming.value = false
+  resolver(true)
+}
+
+async function unlockReading(): Promise<void> {
+  const storage = offlineStorage.value
+  if (!storage || readingBusy.value || readingState.value !== 'locked') return
+  const entered = unlockSecret.value
+  unlockSecret.value = ''
+  readingBusy.value = true
+  readingMessage.value = ''
+  let secret: Uint8Array | null = null
+  const controller = new AbortController()
+  unlockController = controller
+  try {
+    secret = decodeOfflineReadingSecret(entered)
+    await unlockOfflineReading(storage, secret, controller.signal)
+    readingState.value = 'unlocked'
+    readingMessage.value = 'Private offline reading is unlocked in this browser.'
+  } catch {
+    if (!controller.signal.aborted) {
+      readingMessage.value = 'The private offline vault could not be unlocked.'
+      await refreshReadingState()
+    }
+  } finally {
+    secret?.fill(0)
+    if (unlockController === controller) unlockController = null
+    readingBusy.value = false
+  }
+}
+
+function lockReading(): void {
+  lockOfflineReading()
+  unlockSecret.value = ''
+  readingState.value = 'locked'
+  readingMessage.value = 'Private offline reading is locked.'
+}
 
 async function openStorage(): Promise<void> {
   if (storageBusy.value) return
@@ -118,6 +290,7 @@ async function openStorage(): Promise<void> {
     if (token === storageOpenToken && offlineStorage.value === opened && storageAvailable) {
       storageMessage.value = 'Changes are saved automatically on this device.'
       libraryRefreshToken.value += 1
+      await refreshReadingState()
     }
   } catch (error) {
     if (token !== storageOpenToken) return
@@ -252,11 +425,13 @@ async function confirmClearDeviceData(): Promise<void> {
   closeClearDialog()
   clearNotice.value = 'Clearing saved pages, locked drafts, and submission recovery…'
   // Invalidate all local projections before the strict generation-fenced clear.
+  lockOfflineReading()
   clearDeviceToken.value += 1
   try {
     await storage.clearDeviceData({ expectedSessionGeneration })
     libraryRefreshToken.value += 1
     await refreshStorageStatus()
+    await refreshReadingState()
     clearNotice.value = 'Offline data was cleared on this device. Your server data was not deleted.'
   } catch (error) {
     const failure = storageFailure(error)
@@ -274,11 +449,17 @@ async function confirmClearDeviceData(): Promise<void> {
       restoreTarget.focus({ preventScroll: true })
   }
 }
-
-
 function handleLibraryChanged(): void {
   libraryNotice.value = ''
   void refreshStorageStatus()
+}
+function handleReadingStateEvent(): void {
+  const handle = currentOfflineReadingHandle()
+  if (!handle) {
+    if (enrollmentConfirming.value) cancelEnrollment()
+    unlockController?.abort()
+  }
+  void refreshReadingState()
 }
 
 watch(clearDialogOpen, async isOpen => {
@@ -300,7 +481,16 @@ onMounted(() => {
     revision: `offline-settings:${safetyRevision}`,
     actorEpoch: 'device-settings'
   }))
-  unsubscribeStorageChanges = subscribeOfflineStorageChanges(() => { void refreshStorageStatus() })
+  unsubscribeStorageChanges = subscribeOfflineStorageChanges(() => {
+    void refreshStorageStatus()
+    void refreshReadingState()
+  })
+  window.addEventListener(OFFLINE_READING_STATE_EVENT, handleReadingStateEvent)
+  window.addEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, handleReadingStateEvent)
+  stopReadingStateEvents = () => {
+    window.removeEventListener(OFFLINE_READING_STATE_EVENT, handleReadingStateEvent)
+    window.removeEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, handleReadingStateEvent)
+  }
   void openStorage()
 })
 
@@ -308,6 +498,9 @@ onBeforeUnmount(() => {
   ownsReloadSafety = false
   setReloadSafetyProvider(null)
   storageOpenToken += 1
+  cancelEnrollment()
+  unlockController?.abort()
+  unlockController = null
   unsubscribeStorageChanges?.()
   clearFocusScope?.deactivate({ restoreFocus: false })
   clearFocusScope = null
@@ -333,9 +526,8 @@ onBeforeUnmount(() => {
           :storage-state="storageState"
           :storage-message="storageMessage"
           :refresh-token="libraryRefreshToken"
-          :clear-device-token="clearDeviceToken"
+          :navigate-on-open="false"
           :show-settings="true"
-          :navigate-on-open="true"
           @changed="handleLibraryChanged"
           @busy="libraryBusy = $event"
           @error="libraryNotice = $event"
@@ -344,6 +536,62 @@ onBeforeUnmount(() => {
         <p v-if="libraryNotice" class="offline-settings__notice" role="alert">{{ libraryNotice }}</p>
       </v-card>
       <aside class="offline-settings__utilities" aria-label="Device settings">
+        <v-card class="offline-settings__reading" variant="flat">
+          <div class="offline-settings__reading-heading">
+            <h2 class="text-title-large">Private offline reading</h2>
+            <v-chip size="small" :color="readingState === 'unlocked' ? 'success' : 'default'" variant="tonal">{{ readingStateLabel }}</v-chip>
+          </div>
+          <p>{{ readingStateDescription }}</p>
+          <p v-if="readingMessage" class="offline-settings__notice" role="status">{{ readingMessage }}</p>
+          <template v-if="readingState === 'setup-required' && !enrollmentConfirming">
+            <p v-if="!verifiedAccount" class="text-medium-emphasis">Sign in and reconnect once to enable private offline reading. Public saved pages remain available.</p>
+            <div class="offline-settings__actions">
+              <v-btn variant="tonal" color="primary" :disabled="!verifiedAccount || readingBusy" :loading="readingBusy" @click="beginEnrollment">
+                Set up private reading
+              </v-btn>
+            </div>
+          </template>
+          <template v-else-if="readingState === 'locked'">
+            <v-text-field
+              v-model="unlockSecret"
+              class="offline-settings__secret-field"
+              label="Unlock secret"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              :disabled="readingBusy"
+              @keyup.enter="unlockReading"
+            />
+            <div class="offline-settings__actions">
+              <v-btn variant="tonal" color="primary" :disabled="readingBusy || !unlockSecret" :loading="readingBusy" @click="unlockReading">Unlock private pages</v-btn>
+            </div>
+          </template>
+          <template v-else-if="readingState === 'unlocked'">
+            <p class="text-medium-emphasis">Private pages stay in encrypted local storage and are not sent in URLs or logs.</p>
+            <div class="offline-settings__actions">
+              <v-btn variant="outlined" :disabled="readingBusy" @click="lockReading">Lock private pages</v-btn>
+            </div>
+          </template>
+          <template v-if="enrollmentConfirming">
+            <v-alert type="warning" variant="tonal" role="alert">
+              Save this secret somewhere safe. It is shown once and cannot be recovered.
+              <code class="offline-settings__secret">{{ enrollmentSecret }}</code>
+            </v-alert>
+            <v-text-field
+              v-model="enrollmentConfirmation"
+              label="Re-enter secret exactly"
+              autocomplete="off"
+              spellcheck="false"
+              :disabled="!readingBusy"
+              @keyup.enter="confirmEnrollment"
+            />
+            <div class="offline-settings__actions">
+              <v-btn variant="tonal" color="primary" :disabled="!enrollmentConfirmation || !readingBusy" @click="confirmEnrollment">Confirm and save</v-btn>
+              <v-btn variant="text" :disabled="!readingBusy" @click="cancelEnrollment">Cancel</v-btn>
+            </div>
+          </template>
+          <p v-if="enrollmentNotice" class="offline-settings__notice" role="status">{{ enrollmentNotice }}</p>
+        </v-card>
         <PwaStatus :show-links="false" />
         <v-card class="offline-settings__storage" variant="flat">
           <h2 class="text-title-large">Device storage</h2>
@@ -406,7 +654,10 @@ onBeforeUnmount(() => {
 .offline-settings__heading { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
 .offline-settings__heading p { margin: .4rem 0 0; max-width: 70ch; }
 .offline-settings__layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 1.5rem; align-items: start; }
-.offline-settings__library, .offline-settings__storage { min-width: 0; padding: 1.25rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); }
+.offline-settings__library, .offline-settings__storage, .offline-settings__reading { min-width: 0; padding: 1.25rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); }
+.offline-settings__reading-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.offline-settings__reading-heading h2 { margin: 0; }
+.offline-settings__secret { display: block; margin-top: .75rem; padding: .75rem; overflow-wrap: anywhere; user-select: all; font-family: var(--offline-mono); font-size: .9rem; letter-spacing: .04em; }
 .offline-settings__utilities { display: grid; gap: 1.25rem; min-width: 0; }
 .offline-settings__storage p, .offline-settings__dialog p { margin: .75rem 0; line-height: 1.6; overflow-wrap: anywhere; }
 .offline-settings__actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }

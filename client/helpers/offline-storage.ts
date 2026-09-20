@@ -1,5 +1,6 @@
-import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction, type StoreNames } from 'idb'
+import { openDB, unwrap, type DBSchema, type IDBPDatabase, type IDBPTransaction, type StoreNames } from 'idb'
 import {
+  OfflineCorpusNoticeSchema,
   OfflineDraftEnvelopeV1Schema,
   OfflineMetaRecordSchema,
   OfflinePagePolicyRecordSchema,
@@ -7,12 +8,14 @@ import {
   OfflinePolicyRecordSchema,
   OfflinePolicySnapshotSchema,
   OfflinePolicyStateSchema,
+  OfflinePrivateEnvelopeV1Schema,
+  OfflineReadingVaultV1Schema,
   OfflineSearchDocumentV1Schema,
   OfflineSnapshotProvenanceSchema,
-  OfflineSyncDiagnosticsSchema,
   OfflineSnapshotRecordSchema,
   OfflineSnapshotSelectorSchema,
   OfflineStorageEstimateSchema,
+  OfflineSyncDiagnosticsSchema,
   OFFLINE_AUTOMATIC_INACTIVITY_MS,
   OFFLINE_AUTOMATIC_PAGE_LIMIT,
   OFFLINE_DB_NAME,
@@ -21,27 +24,32 @@ import {
   OFFLINE_POLICY_PAGE_LIMIT,
   OFFLINE_POLICY_SCHEMA_VERSION,
   OFFLINE_POLICY_STATE_KEY,
+  OFFLINE_PRIVATE_RECORD_BYTES_LIMIT,
   OFFLINE_RECORD_BYTES_LIMIT,
   OFFLINE_SCHEMA_VERSION,
   OFFLINE_SNAPSHOT_LIMIT,
-  OfflineCorpusNoticeSchema,
-  type OfflineDraftEnvelopeV1,
   type OfflineCorpusNotice,
+  type OfflineDraftEnvelopeV1,
   type OfflineMetaRecord,
   type OfflinePagePolicyRecord,
   type OfflinePageSnapshotV1,
   type OfflinePolicyRecord,
   type OfflinePolicyState,
   type OfflinePolicySnapshot,
-  type OfflineSnapshotProvenance,
-  type OfflineSyncDiagnostics,
-  type OfflineStorageFailureCode,
+  type OfflinePrivateEnvelopeV1,
+  type OfflineReadingContextV1,
+  type OfflineReadingVaultV1,
   type OfflineSearchDocumentV1,
   type OfflineSnapshotCorpus,
+  type OfflineSnapshotProvenance,
   type OfflineSnapshotRecord,
   type OfflineSnapshotSelector,
-  type OfflineStorageEstimate
+  type OfflineStorageEstimate,
+  type OfflineStorageFailureCode,
+  type OfflineSyncDiagnostics
 } from '../../shared/offline.ts'
+import { decryptOfflinePrivateRecord, encryptOfflinePrivateRecord, readPrivateCorpus } from './offline-crypto.ts'
+import { isCurrentOfflineReadingHandle, lockOfflineReading, publishOfflineSessionInvalidationNotice, type OfflineReadingHandleV1 } from './offline-session.ts'
 
 const META_KEY = 'state' as const
 const CORPUS_CHANNEL = `${OFFLINE_DB_NAME}:changes`
@@ -49,6 +57,8 @@ const now = (): string => new Date().toISOString()
 
 type SnapshotKey = [siteId: string, pageId: number, locale: string]
 type SearchDocumentKey = SnapshotKey
+type PrivateRecordKey = [keyId: string, kind: string, pageId: number, locale: string]
+const READING_VAULT_KEY = 'active' as const
 
 type OfflineStorageDbSchema = DBSchema & {
   meta: {
@@ -84,11 +94,26 @@ type OfflineStorageDbSchema = DBSchema & {
       'by-page': number
     }
   }
+  readingVault: {
+    key: typeof READING_VAULT_KEY
+    value: OfflineReadingVaultV1
+  }
+  privateRecords: {
+    key: PrivateRecordKey
+    value: OfflinePrivateEnvelopeV1
+    indexes: {
+      'by-vault': string
+      'by-kind': string
+      'by-page': number
+    }
+  }
 }
 
 export type OfflineStorageGenerationOptions = {
   expectedSessionGeneration?: number
   expectedPolicyRevision?: number
+  expectedCorpusRevision?: number
+  readingHandle?: OfflineReadingHandleV1
 }
 
 export type OfflineDraftWriteOptions = OfflineStorageGenerationOptions & {
@@ -158,11 +183,15 @@ const notifyListeners = (notice: OfflineCorpusNotice): void => {
 
 const ensureCorpusChannel = (): BroadcastChannel | null => {
   if (corpusChannel || typeof BroadcastChannel === 'undefined') return corpusChannel
-  corpusChannel = new BroadcastChannel(CORPUS_CHANNEL)
-  corpusChannel.onmessage = event => {
-    const parsed = OfflineCorpusNoticeSchema.safeParse(event.data)
-    if (!parsed.success) return
-    notifyListeners(parsed.data)
+  try {
+    corpusChannel = new BroadcastChannel(CORPUS_CHANNEL)
+    corpusChannel.onmessage = event => {
+      const parsed = OfflineCorpusNoticeSchema.safeParse(event.data)
+      if (!parsed.success) return
+      notifyListeners(parsed.data)
+    }
+  } catch {
+    corpusChannel = null
   }
   return corpusChannel
 }
@@ -175,6 +204,7 @@ export const subscribeOfflineStorageChanges = (listener: OfflineStorageNoticeLis
 
 const notifyPostCommit = (notice: OfflineCorpusNotice): void => {
   notifyListeners(notice)
+  if (notice.kind === 'generation') publishOfflineSessionInvalidationNotice()
   try {
     ensureCorpusChannel()?.postMessage(notice)
   } catch {
@@ -417,6 +447,56 @@ const logicalEnvelopeBytes = (envelope: OfflineDraftEnvelopeV1): number =>
   envelope.ciphertext.byteLength
 
 const normalizeSearchText = (value: string): string => value.normalize('NFKC').toLocaleLowerCase().trim().replace(/\s+/gu, ' ')
+const cloneReadingVault = (vault: OfflineReadingVaultV1): OfflineReadingVaultV1 => ({
+  ...vault,
+  context: { ...vault.context },
+  salt: new Uint8Array(vault.salt),
+  nonce: new Uint8Array(vault.nonce),
+  wrappedKey: new Uint8Array(vault.wrappedKey)
+})
+
+const clonePrivateEnvelope = (envelope: OfflinePrivateEnvelopeV1): OfflinePrivateEnvelopeV1 => ({
+  ...envelope,
+  context: { ...envelope.context },
+  nonce: new Uint8Array(envelope.nonce),
+  ciphertext: new Uint8Array(envelope.ciphertext)
+})
+const isSameReadingContext = (left: OfflineReadingContextV1, right: OfflineReadingContextV1): boolean =>
+  left.canonicalOrigin === right.canonicalOrigin &&
+  left.siteId === right.siteId &&
+  left.accountId === right.accountId &&
+  left.authVersion === right.authVersion &&
+  left.keyVersion === right.keyVersion &&
+  left.keyId === right.keyId
+
+const privateEnvelopeLogicalBytes = (envelope: OfflinePrivateEnvelopeV1): number =>
+  encodedBytes({
+    schemaVersion: envelope.schemaVersion,
+    context: envelope.context,
+    sessionGeneration: envelope.sessionGeneration,
+    kind: envelope.kind,
+    pageId: envelope.pageId,
+    locale: envelope.locale,
+    recordRevision: envelope.recordRevision,
+    pairId: envelope.pairId,
+    nonceBytes: envelope.nonce.byteLength,
+    ciphertextBytes: envelope.ciphertext.byteLength
+  }) +
+  envelope.nonce.byteLength +
+  envelope.ciphertext.byteLength
+
+const readingVaultLogicalBytes = (vault: OfflineReadingVaultV1): number =>
+  encodedBytes({
+    schemaVersion: vault.schemaVersion,
+    context: vault.context,
+    sessionGeneration: vault.sessionGeneration,
+    saltBytes: vault.salt.byteLength,
+    nonceBytes: vault.nonce.byteLength,
+    wrappedKeyBytes: vault.wrappedKey.byteLength
+  }) +
+  vault.salt.byteLength +
+  vault.nonce.byteLength +
+  vault.wrappedKey.byteLength
 
 const validateGeneration = (value: number): number => {
   if (!Number.isSafeInteger(value) || value < 0) throw new OfflineStorageError('generation-fenced', 'Session generation must be a non-negative safe integer.')
@@ -546,12 +626,44 @@ type Accounting = {
   policyPageCount: number
   complete: boolean
 }
+const privateRecordKey = (envelope: OfflinePrivateEnvelopeV1): PrivateRecordKey => [
+  envelope.context.keyId,
+  envelope.kind,
+  envelope.pageId ?? 0,
+  envelope.locale ?? ''
+]
+
+const isCanonicalPrivateRecordKey = (key: unknown, envelope: OfflinePrivateEnvelopeV1): boolean =>
+  Array.isArray(key) &&
+  key.length === 4 &&
+  key[0] === envelope.context.keyId &&
+  key[1] === envelope.kind &&
+  key[2] === (envelope.pageId ?? 0) &&
+  key[3] === (envelope.locale ?? '')
+
+const readPrivateEntriesInTransaction = async (
+  tx: OfflineTransaction | OfflineWriteTransaction,
+  keyId?: string
+): Promise<readonly { readonly key: IDBValidKey; readonly value: unknown }[]> => {
+  const store = tx.objectStore('privateRecords')
+  if (keyId === undefined) {
+    const [values, keys] = await Promise.all([store.getAll(), store.getAllKeys()])
+    if (values.length !== keys.length) throw new OfflineStorageError('transaction', 'Private record keys and values could not be read consistently.')
+    return values.map((value, index) => ({ key: keys[index]!, value }))
+  }
+  const index = store.index('by-vault')
+  const [values, keys] = await Promise.all([index.getAll(keyId), index.getAllKeys(keyId)])
+  if (values.length !== keys.length) throw new OfflineStorageError('transaction', 'Private record keys and values could not be read consistently.')
+  return values.map((value, index) => ({ key: keys[index]!, value }))
+}
 
 const recountAccountingInTransaction = async (tx: OfflineTransaction): Promise<Accounting> => {
   const snapshots = await tx.objectStore('snapshots').getAll()
   const searches = await tx.objectStore('searchDocuments').getAll()
   const drafts = await tx.objectStore('drafts').getAll()
   const policies = await tx.objectStore('policy').getAll()
+  const readingVault = await tx.objectStore('readingVault').get(READING_VAULT_KEY)
+  const privateEntries = await readPrivateEntriesInTransaction(tx)
   let managedBytes = 0
   let snapshotCount = 0
   let policyPageCount = 0
@@ -615,6 +727,33 @@ const recountAccountingInTransaction = async (tx: OfflineTransaction): Promise<A
     }
     try {
       addBytes(policyRecordLogicalBytes(parsed.data))
+    } catch {
+      complete = false
+    }
+  }
+  if (readingVault !== undefined) {
+    const parsed = OfflineReadingVaultV1Schema.safeParse(readingVault)
+    if (!parsed.success) complete = false
+    else {
+      try {
+        addBytes(readingVaultLogicalBytes(parsed.data))
+      } catch {
+        complete = false
+      }
+    }
+  }
+  for (const entry of privateEntries) {
+    const parsed = OfflinePrivateEnvelopeV1Schema.safeParse(entry.value)
+    if (!parsed.success || !isCanonicalPrivateRecordKey(entry.key, parsed.data)) {
+      complete = false
+      continue
+    }
+    if (parsed.data.kind === 'snapshot') {
+      if (snapshotCount === Number.MAX_SAFE_INTEGER) complete = false
+      else snapshotCount += 1
+    }
+    try {
+      addBytes(privateEnvelopeLogicalBytes(parsed.data))
     } catch {
       complete = false
     }
@@ -890,13 +1029,19 @@ export class OfflineStorage {
   async currentSessionGeneration(): Promise<number> {
     return (await this.readMeta()).sessionGeneration
   }
+  async currentCorpusRevision(): Promise<number> {
+    return (await this.readMeta()).corpusRevision
+  }
 
   async bumpSessionGeneration(nextGeneration?: number, options: OfflineStorageGenerationOptions = {}): Promise<number> {
+    lockOfflineReading()
     this.assertOpen(true)
     const expected = options.expectedSessionGeneration === undefined ? undefined : validateGeneration(options.expectedSessionGeneration)
     let tx: OfflineWriteTransaction | undefined
     try {
-      tx = this.db.transaction('meta', 'readwrite', { durability: 'strict' }) as OfflineWriteTransaction
+      tx = this.db.transaction(['meta', 'snapshots', 'drafts', 'searchDocuments', 'policy', 'readingVault', 'privateRecords'], 'readwrite', {
+        durability: 'strict'
+      }) as OfflineWriteTransaction
       const metaStore = tx.objectStore('meta')
       const current = await metaStore.get(META_KEY)
       const parsed = OfflineMetaRecordSchema.safeParse(current)
@@ -908,9 +1053,22 @@ export class OfflineStorage {
       const candidate = nextGeneration === undefined ? parsed.data.sessionGeneration + 1 : validateGeneration(nextGeneration)
       if (candidate <= parsed.data.sessionGeneration) throw new OfflineStorageError('generation-fenced', 'Session generation must increase monotonically.')
       if (!Number.isSafeInteger(candidate)) throw new OfflineStorageError('generation-fenced', 'Session generation overflowed.')
-      await metaStore.put({ ...parsed.data, sessionGeneration: candidate })
+      const privateStore = tx.objectStore('privateRecords')
+      const privateCount = await privateStore.count()
+      await tx.objectStore('readingVault').clear()
+      await privateStore.clear()
+      const accounting = await recountAccountingInTransaction(tx)
+      const nextMeta = {
+        ...parsed.data,
+        sessionGeneration: candidate,
+        managedBytes: accounting.managedBytes,
+        snapshotCount: accounting.snapshotCount,
+        accountingComplete: accounting.complete,
+        corpusRevision: checkedAccountingValue(parsed.data.corpusRevision, privateCount > 0 ? 1 : 0, 'Offline corpus revision')
+      }
+      await metaStore.put(nextMeta)
       await this.finish(tx, candidate)
-      notifyPostCommit({ kind: 'generation', sessionGeneration: candidate, corpusRevision: parsed.data.corpusRevision })
+      notifyPostCommit({ kind: 'generation', sessionGeneration: candidate, corpusRevision: nextMeta.corpusRevision })
       return candidate
     } catch (error) {
       await this.abort(tx)
@@ -1106,6 +1264,29 @@ export class OfflineStorage {
   }
   async readSnapshotCorpus(options: OfflineStorageGenerationOptions & { selector?: OfflineSnapshotSelector } = {}): Promise<OfflineSnapshotCorpus> {
     this.assertOpen(false)
+    if (options.readingHandle) {
+      if (options.expectedPolicyRevision !== undefined) await this.readPrivatePolicy(options.readingHandle, options)
+      const corpus = await readPrivateCorpus(options.readingHandle, this, options.expectedCorpusRevision)
+      const selector = options.selector === undefined ? undefined : this.assertPrivateSelector(options.readingHandle, options.selector)
+      const snapshots: OfflineSnapshotRecord[] = []
+      for (const value of corpus.snapshots) {
+        const parsed = OfflinePageSnapshotV1Schema.safeParse(value)
+        if (!parsed.success || (selector && (parsed.data.pageId !== selector.pageId || parsed.data.locale !== selector.locale))) continue
+        const withoutSize = {
+          siteId: options.readingHandle.context.siteId,
+          pageId: parsed.data.pageId,
+          locale: parsed.data.locale,
+          snapshot: parsed.data,
+          lastOpenedAt: parsed.data.capturedAt
+        }
+        snapshots.push(OfflineSnapshotRecordSchema.parse({ ...withoutSize, byteSize: encodedBytes(withoutSize) }))
+      }
+      return Object.freeze({
+        snapshots: Object.freeze(snapshots),
+        sessionGeneration: options.readingHandle.sessionGeneration,
+        corpusRevision: corpus.corpusRevision ?? (await this.currentCorpusRevision())
+      }) as unknown as OfflineSnapshotCorpus
+    }
     const selector = options.selector === undefined ? undefined : OfflineSnapshotSelectorSchema.parse(options.selector)
     const expected = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = options.expectedPolicyRevision === undefined ? undefined : validatePolicyRevision(options.expectedPolicyRevision)
@@ -1117,9 +1298,7 @@ export class OfflineStorage {
         throw new OfflinePolicyRevisionFencedError(expectedPolicy, policy.policyRevision)
       const store = tx.objectStore('snapshots')
       // A reader's status check needs only its own body, even for a large library.
-      const values = selector
-        ? [await store.get([selector.siteId, selector.pageId, selector.locale])]
-        : await store.getAll()
+      const values = selector ? [await store.get([selector.siteId, selector.pageId, selector.locale])] : await store.getAll()
       const snapshots: OfflineSnapshotRecord[] = []
       for (const value of values) {
         const parsed = OfflineSnapshotRecordSchema.safeParse(value)
@@ -1162,14 +1341,107 @@ export class OfflineStorage {
       await store.put(opened)
       await this.putAccountingDelta(tx, meta, managedBytesDelta, 0, false)
       await this.finish(tx, undefined)
+
       return true
     } catch (error) {
       await this.abort(tx)
       throw toFailure(error, 'transaction', 'The snapshot open time could not be recorded.')
     }
   }
+  private async readPrivatePolicy(handle: OfflineReadingHandleV1, options: OfflineStorageGenerationOptions = {}): Promise<OfflinePolicySnapshot> {
+    if (!isCurrentOfflineReadingHandle(handle)) throw new OfflineStorageError('generation-fenced', 'The private reading handle is no longer current.')
+    if (options.expectedSessionGeneration !== undefined && options.expectedSessionGeneration !== handle.sessionGeneration)
+      throw new OfflineGenerationFencedError(options.expectedSessionGeneration, handle.sessionGeneration)
+    try {
+      const corpus = await readPrivateCorpus(handle, this, options.expectedCorpusRevision)
+      let state: OfflinePolicyState | null = null
+      const pages: OfflinePagePolicyRecord[] = []
+      for (const value of corpus.policies) {
+        if (state === null && OfflinePolicyStateSchema.safeParse(value).success) {
+          state = OfflinePolicyStateSchema.parse(value)
+          continue
+        }
+        const page = OfflinePagePolicyRecordSchema.safeParse(value)
+        if (!page.success) throw new OfflineStorageError('metadata-recovery', 'The encrypted private policy is unavailable.')
+        if (page.data.siteId === handle.context.siteId) pages.push(clonePolicyPage(page.data))
+      }
+      const resolvedState = state ?? makePolicyState()
+      if (options.expectedPolicyRevision !== undefined && resolvedState.policyRevision !== options.expectedPolicyRevision)
+        throw new OfflinePolicyRevisionFencedError(options.expectedPolicyRevision, resolvedState.policyRevision)
+      pages.sort((left, right) => compareSelectors(selectorForPage(left), selectorForPage(right)))
+      return OfflinePolicySnapshotSchema.parse({
+        state: clonePolicyState(resolvedState),
+        pages,
+        sessionGeneration: handle.sessionGeneration
+      }) as OfflinePolicySnapshot
+    } catch (error) {
+      if (error instanceof OfflineStorageError) throw error
+      throw new OfflineStorageError('metadata-recovery', 'The encrypted private policy is unavailable.', error)
+    }
+  }
+
+  private async mutatePrivatePolicy(
+    handle: OfflineReadingHandleV1,
+    options: OfflineStorageGenerationOptions,
+    mutate: (policy: OfflinePolicySnapshot) => {
+      policy: OfflinePolicySnapshot | { readonly state: OfflinePolicyState; readonly pages: readonly OfflinePagePolicyRecord[] }
+      removePageIds?: readonly number[]
+    }
+  ): Promise<OfflinePolicySnapshot> {
+    const current = await this.readPrivatePolicy(handle, options)
+    const result = mutate(current)
+    const next = OfflinePolicySnapshotSchema.parse({
+      ...result.policy,
+      sessionGeneration: handle.sessionGeneration
+    }) as OfflinePolicySnapshot
+    if (
+      next.state.policyRevision === current.state.policyRevision &&
+      JSON.stringify(next.pages) === JSON.stringify(current.pages) &&
+      (!result.removePageIds || result.removePageIds.length === 0)
+    )
+      return next
+    const recordRevision = Math.max(1, next.state.policyRevision + 1)
+    const records: OfflinePrivateEnvelopeV1[] = []
+    records.push(
+      await encryptOfflinePrivateRecord(handle, 'policy-state', next.state, {
+        pageId: null,
+        locale: null,
+        recordRevision,
+        pairId: null
+      })
+    )
+    for (const page of next.pages) {
+      records.push(
+        await encryptOfflinePrivateRecord(handle, 'policy-page', page, {
+          pageId: page.pageId,
+          locale: page.locale,
+          recordRevision,
+          pairId: null
+        })
+      )
+    }
+    await this.putPrivatePolicyRecords(records, {
+      expectedSessionGeneration: handle.sessionGeneration,
+      expectedPolicyRevision: current.state.policyRevision,
+      readingHandle: handle,
+      removePrivatePageIds: result.removePageIds
+    })
+    return next
+  }
+
+  private assertPrivateSelector(handle: OfflineReadingHandleV1, selector: OfflineSnapshotSelector): OfflineSnapshotSelector {
+    const parsed = OfflineSnapshotSelectorSchema.parse(selector)
+    if (!isCurrentOfflineReadingHandle(handle) || parsed.siteId !== handle.context.siteId)
+      throw new OfflineStorageError('generation-fenced', 'The private reading handle is not authorized for this site.')
+    return parsed
+  }
+
+  private privatePageResult(policy: OfflinePolicySnapshot, selector: OfflineSnapshotSelector): OfflinePagePolicyRecord {
+    return clonePolicyPage(policy.pages.find(page => page.key === offlinePolicyPageKey(selector)) ?? makePolicyPage(selector))
+  }
   async readOfflinePolicy(options: OfflineStorageGenerationOptions = {}): Promise<OfflinePolicySnapshot> {
     this.assertOpen(false)
+    if (options.readingHandle) return await this.readPrivatePolicy(options.readingHandle, options)
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
     try {
@@ -1206,9 +1478,22 @@ export class OfflineStorage {
     const page = pages.find((candidate: OfflinePagePolicyRecord) => candidate.key === key)
     return page ? clonePolicyPage(page) : null
   }
-
   async setAutomaticSavingEnabled(enabled: boolean, options: OfflinePolicyMutationOptions = {}): Promise<OfflinePolicyState> {
     this.assertOpen(true)
+    if (typeof enabled !== 'boolean') throw new OfflineStorageError('invalid-record', 'Automatic offline saving setting is invalid.')
+    if (options.readingHandle) {
+      const next = await this.mutatePrivatePolicy(options.readingHandle, options, current => ({
+        policy: {
+          state: {
+            ...current.state,
+            automaticSavingEnabled: enabled,
+            policyRevision: current.state.automaticSavingEnabled === enabled ? current.state.policyRevision : current.state.policyRevision + 1
+          },
+          pages: current.pages
+        }
+      }))
+      return clonePolicyState(next.state)
+    }
     if (typeof enabled !== 'boolean') throw new OfflineStorageError('invalid-record', 'Automatic offline saving setting is invalid.')
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
@@ -1246,6 +1531,29 @@ export class OfflineStorage {
   async setOfflineTagSubscriptions(tags: readonly string[], options: OfflinePolicyMutationOptions = {}): Promise<OfflinePolicyState> {
     this.assertOpen(true)
     const normalizedTags = normalizeTags(tags)
+    if (options.readingHandle) {
+      const next = await this.mutatePrivatePolicy(options.readingHandle, options, current => {
+        const removedTags = new Set(current.state.selectedTags.filter(tag => !normalizedTags.includes(tag)))
+        const tagsChanged =
+          current.state.selectedTags.length !== normalizedTags.length || current.state.selectedTags.some((tag, index) => tag !== normalizedTags[index])
+        const pages = current.pages.map(page => {
+          if (removedTags.size === 0) return page
+          const tagNames = page.tagNames.filter(tag => !removedTags.has(tag))
+          return tagNames.length === page.tagNames.length ? page : storePolicyPage({ ...page, tag: tagNames.length > 0, tagNames })
+        })
+        const changedPages = pages.some((page, index) => JSON.stringify(page) !== JSON.stringify(current.pages[index]))
+        const changed = tagsChanged || changedPages
+        return {
+          policy: {
+            state: changed
+              ? makePolicyState({ ...current.state, selectedTags: normalizedTags, policyRevision: current.state.policyRevision + 1 })
+              : current.state,
+            pages
+          }
+        }
+      })
+      return clonePolicyState(next.state)
+    }
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
     let tx: OfflineWriteTransaction | undefined
@@ -1299,7 +1607,25 @@ export class OfflineStorage {
     options: OfflinePolicyMutationOptions = {}
   ): Promise<OfflinePagePolicyRecord> {
     this.assertOpen(true)
+    if (typeof selected !== 'boolean') throw new OfflineStorageError('invalid-record', 'Manual offline intent is invalid.')
     const parsedSelector = OfflineSnapshotSelectorSchema.parse(selector)
+    if (options.readingHandle) {
+      const privateSelector = this.assertPrivateSelector(options.readingHandle, parsedSelector)
+      const next = await this.mutatePrivatePolicy(options.readingHandle, options, current => {
+        const previous = current.pages.find(page => page.key === offlinePolicyPageKey(privateSelector)) ?? makePolicyPage(privateSelector)
+        const nextPage = storePolicyPage({ ...previous, manual: selected, excluded: selected ? false : previous.excluded })
+        const changed = JSON.stringify(previous) !== JSON.stringify(nextPage)
+        return {
+          policy: {
+            state: changed ? makePolicyState({ ...current.state, policyRevision: current.state.policyRevision + 1 }) : current.state,
+            pages: current.pages.some(page => page.key === nextPage.key)
+              ? current.pages.map(page => (page.key === nextPage.key ? nextPage : page))
+              : [...current.pages, nextPage]
+          }
+        }
+      })
+      return this.privatePageResult(next, privateSelector)
+    }
     if (typeof selected !== 'boolean') throw new OfflineStorageError('invalid-record', 'Manual offline intent is invalid.')
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
@@ -1354,6 +1680,26 @@ export class OfflineStorage {
   async recordEligibleReaderVisit(selector: OfflineSnapshotSelector, options: OfflinePolicyMutationOptions = {}): Promise<OfflinePagePolicyRecord> {
     this.assertOpen(true)
     const parsedSelector = OfflineSnapshotSelectorSchema.parse(selector)
+    if (options.readingHandle) {
+      const privateSelector = this.assertPrivateSelector(options.readingHandle, parsedSelector)
+      const next = await this.mutatePrivatePolicy(options.readingHandle, options, current => {
+        const previous = current.pages.find(page => page.key === offlinePolicyPageKey(privateSelector)) ?? makePolicyPage(privateSelector)
+        const nextPage = storePolicyPage({
+          ...previous,
+          visitCount: previous.visitCount + 1,
+          lastVisitedAt: now()
+        })
+        return {
+          policy: {
+            state: makePolicyState({ ...current.state, policyRevision: current.state.policyRevision + 1 }),
+            pages: current.pages.some(page => page.key === nextPage.key)
+              ? current.pages.map(page => (page.key === nextPage.key ? nextPage : page))
+              : [...current.pages, nextPage]
+          }
+        }
+      })
+      return this.privatePageResult(next, privateSelector)
+    }
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
     let tx: OfflineWriteTransaction | undefined
@@ -1399,6 +1745,26 @@ export class OfflineStorage {
     this.assertOpen(true)
     const parsedSelector = OfflineSnapshotSelectorSchema.parse(selector)
     const editedAt = validateEditedAt(options.editedAt ?? now())
+    if (options.readingHandle) {
+      const privateSelector = this.assertPrivateSelector(options.readingHandle, parsedSelector)
+      const next = await this.mutatePrivatePolicy(options.readingHandle, options, current => {
+        const previous =
+          current.pages.find(page => page.key === offlinePolicyPageKey(privateSelector)) ?? makePolicyPage(privateSelector, { availability: 'available' })
+        const previousMs = previous.lastEditedAt === null ? Number.NEGATIVE_INFINITY : Date.parse(previous.lastEditedAt)
+        const nextEditedAt = previousMs >= Date.parse(editedAt) ? previous.lastEditedAt : editedAt
+        if (nextEditedAt === previous.lastEditedAt) return { policy: current }
+        const nextPage = storePolicyPage({ ...previous, lastEditedAt: nextEditedAt })
+        return {
+          policy: {
+            state: makePolicyState({ ...current.state, policyRevision: current.state.policyRevision + 1 }),
+            pages: current.pages.some(page => page.key === nextPage.key)
+              ? current.pages.map(page => (page.key === nextPage.key ? nextPage : page))
+              : [...current.pages, nextPage]
+          }
+        }
+      })
+      return this.privatePageResult(next, privateSelector)
+    }
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
     let tx: OfflineWriteTransaction | undefined
@@ -1503,11 +1869,55 @@ export class OfflineStorage {
       throw new OfflineStorageError('invalid-record', 'Too many automatic offline page selections.')
     const parsedSelectors = selectors.map((selector: OfflineSnapshotSelector) => OfflineSnapshotSelectorSchema.parse(selector))
     const validatedSiteId = options.siteId === undefined ? undefined : validateSiteId(options.siteId)
+    const asOf = options.asOf ?? now()
+    if (!Number.isFinite(Date.parse(asOf))) throw new OfflineStorageError('invalid-record', 'Automatic selection time is invalid.')
     const uniqueSelectors = [
       ...new Map(parsedSelectors.map((selector: OfflineSnapshotSelector) => [offlinePolicyPageKey(selector), selector])).values()
     ].filter((selector: OfflineSnapshotSelector) => validatedSiteId === undefined || selector.siteId === validatedSiteId)
-    const asOf = options.asOf ?? now()
-    if (!Number.isFinite(Date.parse(asOf))) throw new OfflineStorageError('invalid-record', 'Automatic selection time is invalid.')
+    if (options.readingHandle) {
+      const privateSiteId = options.siteId ?? options.readingHandle.context.siteId
+      const uniquePrivateSelectors = [...new Map(parsedSelectors.map(selector => [offlinePolicyPageKey(selector), selector])).values()].filter(
+        selector => selector.siteId === privateSiteId
+      )
+      const requested = new Set(uniquePrivateSelectors.map(selector => offlinePolicyPageKey(selector)))
+      const next = await this.mutatePrivatePolicy(options.readingHandle, options, current => {
+        const pages = current.pages.map(page => ({ ...page, tagNames: [...page.tagNames] }))
+        const byKey = new Map(pages.map(page => [page.key, page]))
+        for (const selector of uniquePrivateSelectors) {
+          const previous = byKey.get(offlinePolicyPageKey(selector)) ?? makePolicyPage(selector)
+          const eligible = !previous.excluded && previous.availability !== 'ineligible'
+          const updated = storePolicyPage(
+            eligible
+              ? { ...previous, automatic: true, automaticSelectedAt: previous.automaticSelectedAt ?? options.asOf ?? now() }
+              : { ...previous, automatic: false, automaticSelectedAt: null }
+          )
+          byKey.set(updated.key, updated)
+        }
+        const removePageIds: number[] = []
+        for (const previous of pages) {
+          if (
+            previous.siteId !== privateSiteId ||
+            requested.has(previous.key) ||
+            previous.excluded ||
+            (!previous.automatic && previous.automaticSelectedAt === null)
+          )
+            continue
+          const updated = storePolicyPage({ ...previous, automatic: false, automaticSelectedAt: null })
+          byKey.set(updated.key, updated)
+          if (previous.automatic && !previous.manual && !previous.tag) removePageIds.push(previous.pageId)
+        }
+        const nextPages = [...byKey.values()]
+        const changed = JSON.stringify(nextPages) !== JSON.stringify(current.pages)
+        return {
+          policy: {
+            state: changed ? makePolicyState({ ...current.state, policyRevision: current.state.policyRevision + 1 }) : current.state,
+            pages: nextPages
+          },
+          removePageIds
+        }
+      })
+      return next.pages.map(clonePolicyPage)
+    }
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
     let tx: OfflineWriteTransaction | undefined
@@ -1606,10 +2016,37 @@ export class OfflineStorage {
     if (!Array.isArray(selectors) || selectors.length > OFFLINE_POLICY_PAGE_LIMIT)
       throw new OfflineStorageError('invalid-record', 'Too many offline tag page records.')
     const parsedSelectors = selectors.map((selector: OfflineSnapshotSelector) => OfflineSnapshotSelectorSchema.parse(selector))
-    const desired = new Map(parsedSelectors.map((selector: OfflineSnapshotSelector) => [offlinePolicyPageKey(selector), selector]))
+    if (options.readingHandle) {
+      const privateSelectors = new Map(parsedSelectors.map(selector => [offlinePolicyPageKey(selector), selector]))
+      const next = await this.mutatePrivatePolicy(options.readingHandle, options, current => {
+        if (!current.state.selectedTags.includes(normalizedTag))
+          throw new OfflinePolicyRevisionFencedError(options.expectedPolicyRevision ?? current.state.policyRevision, current.state.policyRevision)
+        const pagesByKey = new Map(current.pages.map(page => [page.key, page]))
+        for (const selector of privateSelectors.values()) {
+          const previous = pagesByKey.get(offlinePolicyPageKey(selector)) ?? makePolicyPage(selector)
+          if (previous.excluded || previous.tagNames.includes(normalizedTag)) continue
+          pagesByKey.set(previous.key, storePolicyPage({ ...previous, tag: true, tagNames: normalizeTags([...previous.tagNames, normalizedTag]) }))
+        }
+        for (const previous of current.pages) {
+          if (!previous.tagNames.includes(normalizedTag) || privateSelectors.has(previous.key)) continue
+          const tagNames = previous.tagNames.filter(value => value !== normalizedTag)
+          pagesByKey.set(previous.key, storePolicyPage({ ...previous, tag: tagNames.length > 0, tagNames }))
+        }
+        const pages = [...pagesByKey.values()]
+        const changed = JSON.stringify(pages) !== JSON.stringify(current.pages)
+        return {
+          policy: {
+            state: changed ? makePolicyState({ ...current.state, policyRevision: current.state.policyRevision + 1 }) : current.state,
+            pages
+          }
+        }
+      })
+      return next.pages.map(clonePolicyPage)
+    }
+    const desired = new Map(parsedSelectors.map(selector => [offlinePolicyPageKey(selector), selector]))
+    let tx: OfflineWriteTransaction | undefined
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
-    let tx: OfflineWriteTransaction | undefined
     try {
       tx = this.db.transaction(['meta', 'policy'], 'readwrite')
       const { meta, policy } = await this.assertGenerationAndPolicyInTransaction(tx, expectedGeneration, expectedPolicy)
@@ -1670,6 +2107,24 @@ export class OfflineStorage {
   ): Promise<OfflinePagePolicyRecord> {
     this.assertOpen(true)
     const parsedSelector = OfflineSnapshotSelectorSchema.parse(selector)
+    if (options.readingHandle) {
+      if (availability === 'ineligible') return await this.markPrivatePageIneligible(options.readingHandle, parsedSelector, options)
+      const privateSelector = this.assertPrivateSelector(options.readingHandle, parsedSelector)
+      const next = await this.mutatePrivatePolicy(options.readingHandle, options, current => {
+        const previous = current.pages.find(page => page.key === offlinePolicyPageKey(privateSelector)) ?? makePolicyPage(privateSelector)
+        const nextPage = storePolicyPage({ ...previous, availability })
+        const changed = JSON.stringify(previous) !== JSON.stringify(nextPage)
+        return {
+          policy: {
+            state: changed ? makePolicyState({ ...current.state, policyRevision: current.state.policyRevision + 1 }) : current.state,
+            pages: current.pages.some(page => page.key === nextPage.key)
+              ? current.pages.map(page => (page.key === nextPage.key ? nextPage : page))
+              : [...current.pages, nextPage]
+          }
+        }
+      })
+      return this.privatePageResult(next, privateSelector)
+    }
     if (availability === 'ineligible') return await this.markPageIneligible(parsedSelector, options)
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
@@ -1707,6 +2162,7 @@ export class OfflineStorage {
   async markPageIneligible(selector: OfflineSnapshotSelector, options: OfflinePolicyMutationOptions = {}): Promise<OfflinePagePolicyRecord> {
     this.assertOpen(true)
     const parsedSelector = OfflineSnapshotSelectorSchema.parse(selector)
+    if (options.readingHandle) return await this.markPrivatePageIneligible(options.readingHandle, parsedSelector, options)
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
     let tx: OfflineWriteTransaction | undefined
@@ -1774,6 +2230,31 @@ export class OfflineStorage {
   async removeOfflinePage(selector: OfflineSnapshotSelector, options: OfflinePolicyMutationOptions = {}): Promise<OfflinePagePolicyRecord> {
     this.assertOpen(true)
     const parsedSelector = OfflineSnapshotSelectorSchema.parse(selector)
+    if (options.readingHandle) {
+      const privateSelector = this.assertPrivateSelector(options.readingHandle, parsedSelector)
+      const next = await this.mutatePrivatePolicy(options.readingHandle, options, current => {
+        const currentPage = current.pages.find(page => page.key === offlinePolicyPageKey(privateSelector)) ?? makePolicyPage(privateSelector)
+        const nextPage = storePolicyPage({
+          ...currentPage,
+          manual: false,
+          automatic: false,
+          tag: false,
+          tagNames: [],
+          automaticSelectedAt: null,
+          lastEditedAt: null,
+          excluded: true,
+          availability: 'unknown' as const
+        })
+        const pages = current.pages.some(page => page.key === nextPage.key)
+          ? current.pages.map(page => (page.key === nextPage.key ? nextPage : page))
+          : [...current.pages, nextPage]
+        return {
+          policy: { state: makePolicyState({ ...current.state, policyRevision: current.state.policyRevision + 1 }), pages },
+          removePageIds: [privateSelector.pageId]
+        }
+      })
+      return this.privatePageResult(next, privateSelector)
+    }
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
     let tx: OfflineWriteTransaction | undefined
@@ -1837,6 +2318,16 @@ export class OfflineStorage {
   }
   async pruneUnselectedPageBodies(options: OfflineStorageGenerationOptions = {}): Promise<number> {
     this.assertOpen(true)
+    if (options.readingHandle) {
+      const candidates = (await this.readPrivatePolicy(options.readingHandle, options)).pages.filter(
+        page => !page.manual && !page.automatic && !page.tag && !page.excluded
+      )
+      await this.mutatePrivatePolicy(options.readingHandle, options, current => ({
+        policy: current,
+        removePageIds: candidates.map(page => page.pageId)
+      }))
+      return candidates.length
+    }
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
     let tx: OfflineWriteTransaction | undefined
@@ -1873,6 +2364,15 @@ export class OfflineStorage {
   async updateSyncDiagnostics(diagnostics: OfflineSyncDiagnostics, options: OfflineStorageGenerationOptions = {}): Promise<OfflinePolicyState> {
     this.assertOpen(true)
     const parsedDiagnostics = OfflineSyncDiagnosticsSchema.parse(diagnostics)
+    if (options.readingHandle) {
+      const next = await this.mutatePrivatePolicy(options.readingHandle, options, current => ({
+        policy: {
+          state: makePolicyState({ ...current.state, syncDiagnostics: parsedDiagnostics, policyRevision: current.state.policyRevision + 1 }),
+          pages: current.pages
+        }
+      }))
+      return clonePolicyState(next.state)
+    }
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
     let tx: OfflineWriteTransaction | undefined
@@ -1899,6 +2399,27 @@ export class OfflineStorage {
   async searchDocuments(siteId: string, query = '', options: OfflineStorageGenerationOptions = {}): Promise<OfflineSearchDocumentV1[]> {
     this.assertOpen(false)
     const validatedSiteId = validateSiteId(siteId)
+    if (options.readingHandle) {
+      if (validatedSiteId !== options.readingHandle.context.siteId || !isCurrentOfflineReadingHandle(options.readingHandle))
+        throw new OfflineStorageError('generation-fenced', 'The private reading handle is no longer current.')
+      const normalizedQuery = normalizeSearchText(query)
+      const records = await this.listPrivateRecords(options.readingHandle.context.keyId, { expectedSessionGeneration: options.readingHandle.sessionGeneration })
+      const result: OfflineSearchDocumentV1[] = []
+      for (const envelope of records) {
+        if (envelope.kind !== 'search') continue
+        const value = await decryptOfflinePrivateRecord(options.readingHandle, envelope)
+        const parsed = OfflineSearchDocumentV1Schema.safeParse(value)
+        if (!parsed.success) continue
+        if (
+          !normalizedQuery ||
+          normalizeSearchText(
+            `${parsed.data.title} ${parsed.data.description} ${parsed.data.searchText} ${parsed.data.path} ${parsed.data.canonicalPath}`
+          ).includes(normalizedQuery)
+        )
+          result.push(parsed.data)
+      }
+      return result
+    }
     const expected = await this.expectedGeneration(options.expectedSessionGeneration)
     const normalizedQuery = normalizeSearchText(query)
     try {
@@ -2176,36 +2697,48 @@ export class OfflineStorage {
   }
 
   async invalidateAccountSession(accountId: number, options: OfflineStorageGenerationOptions = {}): Promise<OfflineAccountInvalidationResult> {
+    lockOfflineReading()
     this.assertOpen(true)
     const validatedAccountId = validateAccountId(accountId)
     const expected = await this.expectedGeneration(options.expectedSessionGeneration)
     let tx: OfflineWriteTransaction | undefined
     try {
-      tx = this.db.transaction(['meta', 'drafts'], 'readwrite', { durability: 'strict' })
+      tx = this.db.transaction(['meta', 'snapshots', 'drafts', 'searchDocuments', 'policy', 'readingVault', 'privateRecords'], 'readwrite', {
+        durability: 'strict'
+      })
       const meta = await this.assertGenerationInTransaction(tx, expected)
       const store = tx.objectStore('drafts')
       const values = await store.getAll()
       let deletedCount = 0
       let preservedOpaqueCount = 0
       let preservedReceiptCount = 0
-      let removedBytes = 0
-      let accountingComplete = meta.accountingComplete
       for (const value of values) {
         const parsed = OfflineDraftEnvelopeV1Schema.safeParse(value)
         if (!parsed.success) {
           preservedOpaqueCount += 1
-          accountingComplete = false
           continue
         }
         if (parsed.data.accountId !== validatedAccountId) continue
         if (parsed.data.submissionId === null) {
-          removedBytes = checkedAccountingValue(removedBytes, logicalEnvelopeBytes(parsed.data), 'Offline invalidation bytes')
           await store.delete(parsed.data.recordId)
           deletedCount += 1
         } else preservedReceiptCount += 1
       }
+      await tx.objectStore('readingVault').delete(READING_VAULT_KEY)
+      const privateStore = tx.objectStore('privateRecords')
+      for (const key of await privateStore.getAllKeys()) await privateStore.delete(key)
       const nextGeneration = checkedAccountingValue(meta.sessionGeneration, 1, 'Session generation')
-      const nextMeta = await this.putAccountingDelta(tx, { ...meta, sessionGeneration: nextGeneration }, -removedBytes, 0, false, accountingComplete, now())
+      const accounting = await recountAccountingInTransaction(tx)
+      const nextMeta = {
+        ...meta,
+        sessionGeneration: nextGeneration,
+        managedBytes: accounting.managedBytes,
+        snapshotCount: accounting.snapshotCount,
+        accountingComplete: accounting.complete,
+        corpusRevision: checkedAccountingValue(meta.corpusRevision, 1, 'Offline corpus revision'),
+        lastCleanupAt: now()
+      }
+      await tx.objectStore('meta').put(nextMeta)
       await this.finish(tx, undefined)
       notifyPostCommit({ kind: 'generation', sessionGeneration: nextMeta.sessionGeneration, corpusRevision: nextMeta.corpusRevision })
       return { sessionGeneration: nextGeneration, deletedCount, preservedOpaqueCount, preservedReceiptCount }
@@ -2216,17 +2749,22 @@ export class OfflineStorage {
   }
 
   async clearDeviceData(options: OfflineStorageGenerationOptions = {}): Promise<number> {
+    lockOfflineReading()
     this.assertOpen(true)
     const expected = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)
     let tx: OfflineWriteTransaction | undefined
     try {
-      tx = this.db.transaction(['meta', 'snapshots', 'drafts', 'searchDocuments', 'policy'], 'readwrite', { durability: 'strict' })
+      tx = this.db.transaction(['meta', 'snapshots', 'drafts', 'searchDocuments', 'policy', 'readingVault', 'privateRecords'], 'readwrite', {
+        durability: 'strict'
+      })
       const { meta, policy } = await this.assertGenerationAndPolicyInTransaction(tx, expected, expectedPolicy)
       await tx.objectStore('snapshots').clear()
       await tx.objectStore('searchDocuments').clear()
       await tx.objectStore('drafts').clear()
       await tx.objectStore('policy').clear()
+      await tx.objectStore('readingVault').clear()
+      await tx.objectStore('privateRecords').clear()
       const nextGeneration = meta.sessionGeneration + 1
       const nextCorpusRevision = meta.corpusRevision + 1
       const nextPolicyRevision = policy.policyRevision + 1
@@ -2440,6 +2978,443 @@ export class OfflineStorage {
       throw toFailure(error, 'transaction', 'Offline storage estimate could not be read.')
     }
   }
+  async getReadingVault(): Promise<OfflineReadingVaultV1 | null> {
+    this.assertOpen(false)
+    try {
+      const value = await this.db.get('readingVault', READING_VAULT_KEY)
+      if (value === undefined) return null
+      const parsed = OfflineReadingVaultV1Schema.safeParse(value)
+      if (!parsed.success) throw new OfflineStorageError('metadata-recovery', 'The private offline vault is unavailable.')
+      return cloneReadingVault(parsed.data)
+    } catch (error) {
+      throw toFailure(error, 'transaction', 'The private offline vault could not be read.')
+    }
+  }
+
+  async putReadingVault(vault: OfflineReadingVaultV1, options: OfflineStorageGenerationOptions = {}): Promise<OfflineReadingVaultV1> {
+    this.assertOpen(true)
+    const parsedVault = OfflineReadingVaultV1Schema.parse(vault)
+    const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
+    if (parsedVault.sessionGeneration !== expectedGeneration) throw new OfflineGenerationFencedError(expectedGeneration, parsedVault.sessionGeneration)
+    if (readingVaultLogicalBytes(parsedVault) > OFFLINE_PRIVATE_RECORD_BYTES_LIMIT)
+      throw new OfflineStorageError('quota', 'The private offline vault exceeds the per-record limit.')
+    let tx: OfflineWriteTransaction | undefined
+    try {
+      tx = this.db.transaction(['meta', 'readingVault', 'privateRecords'], 'readwrite', { durability: 'strict' }) as OfflineWriteTransaction
+      const meta = await this.assertGenerationInTransaction(tx, expectedGeneration)
+      const store = tx.objectStore('readingVault')
+      const existingValue = await store.get(READING_VAULT_KEY)
+      const existing = existingValue === undefined ? null : OfflineReadingVaultV1Schema.safeParse(existingValue)
+      if (existingValue !== undefined && !existing?.success) throw new OfflineStorageError('metadata-recovery', 'The private offline vault is opaque.')
+      if (existing?.success) {
+        if (JSON.stringify(existing.data.context) !== JSON.stringify(parsedVault.context) || existing.data.sessionGeneration !== parsedVault.sessionGeneration)
+          throw new OfflineStorageError('transaction', 'A private offline vault is already enrolled.')
+        await this.finish(tx, undefined)
+        return cloneReadingVault(existing.data)
+      }
+      const bytes = readingVaultLogicalBytes(parsedVault)
+      if (!meta.accountingComplete) throw new OfflineStorageError('quota', 'Offline accounting is incomplete; private enrollment is blocked.')
+      const projected = checkedAccountingValue(meta.managedBytes, bytes, 'Offline managed bytes')
+      if (projected > OFFLINE_MANAGED_BYTES_LIMIT) throw new OfflineStorageError('quota', 'Offline managed storage limit would be exceeded.')
+      await store.put(cloneReadingVault(parsedVault), READING_VAULT_KEY)
+      await this.putAccountingDelta(tx, meta, bytes, 0, false)
+      await this.finish(tx, undefined)
+      return cloneReadingVault(parsedVault)
+    } catch (error) {
+      await this.abort(tx)
+      throw toFailure(error, 'transaction', 'The private offline vault could not be committed.')
+    }
+  }
+
+  async retireReadingVault(options: OfflineStorageGenerationOptions = {}): Promise<number> {
+    lockOfflineReading()
+    this.assertOpen(true)
+    const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
+    let tx: OfflineWriteTransaction | undefined
+    try {
+      tx = this.db.transaction(['meta', 'snapshots', 'drafts', 'searchDocuments', 'policy', 'readingVault', 'privateRecords'], 'readwrite', {
+        durability: 'strict'
+      }) as OfflineWriteTransaction
+      const meta = await this.assertGenerationInTransaction(tx, expectedGeneration)
+      const vaultStore = tx.objectStore('readingVault')
+      const privateStore = tx.objectStore('privateRecords')
+      const vaultValue = await vaultStore.get(READING_VAULT_KEY)
+      const privateCount = await privateStore.count()
+      const hadPrivateState = vaultValue !== undefined || privateCount > 0
+      await vaultStore.delete(READING_VAULT_KEY)
+      await privateStore.clear()
+      const accounting = await recountAccountingInTransaction(tx)
+      const nextGeneration = hadPrivateState ? checkedAccountingValue(meta.sessionGeneration, 1, 'Session generation') : meta.sessionGeneration
+      const nextMeta = {
+        ...meta,
+        sessionGeneration: nextGeneration,
+        managedBytes: accounting.managedBytes,
+        snapshotCount: accounting.snapshotCount,
+        accountingComplete: accounting.complete,
+        corpusRevision: checkedAccountingValue(meta.corpusRevision, hadPrivateState ? 1 : 0, 'Offline corpus revision'),
+        lastCleanupAt: now()
+      }
+      await tx.objectStore('meta').put(nextMeta)
+      await this.finish(tx, undefined)
+      if (hadPrivateState) notifyPostCommit({ kind: 'generation', sessionGeneration: nextMeta.sessionGeneration, corpusRevision: nextMeta.corpusRevision })
+      return privateCount
+    } catch (error) {
+      await this.abort(tx)
+      throw toFailure(error, 'transaction', 'The private offline vault could not be retired.')
+    }
+  }
+
+  async listPrivateRecords(keyId: string, options: OfflineStorageGenerationOptions = {}): Promise<OfflinePrivateEnvelopeV1[]> {
+    this.assertOpen(false)
+    if (typeof keyId !== 'string' || !/^[A-Za-z0-9_-]{22}$/u.test(keyId)) throw new OfflineStorageError('invalid-record', 'Private vault identity is invalid.')
+    const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
+    try {
+      const tx = this.db.transaction(['meta', 'readingVault', 'privateRecords'], 'readonly') as OfflineTransaction
+      await this.assertGenerationInTransaction(tx, expectedGeneration)
+      if (options.expectedCorpusRevision !== undefined && (!Number.isSafeInteger(options.expectedCorpusRevision) || options.expectedCorpusRevision < 0))
+        throw new OfflineStorageError('generation-fenced', 'Offline corpus revision is invalid.')
+      const metadata = await tx.objectStore('meta').get(META_KEY)
+      const parsedMetadata = OfflineMetaRecordSchema.safeParse(metadata)
+      if (!parsedMetadata.success || (options.expectedCorpusRevision !== undefined && parsedMetadata.data.corpusRevision !== options.expectedCorpusRevision))
+        throw new OfflineGenerationFencedError(options.expectedCorpusRevision ?? -1, parsedMetadata.success ? parsedMetadata.data.corpusRevision : -1)
+      const vault = await tx.objectStore('readingVault').get(READING_VAULT_KEY)
+      const parsedVault = vault === undefined ? null : OfflineReadingVaultV1Schema.safeParse(vault)
+      if (!parsedVault?.success || parsedVault.data.context.keyId !== keyId || parsedVault.data.sessionGeneration !== expectedGeneration)
+        throw new OfflineStorageError('generation-fenced', 'The active private vault is unavailable.')
+      const entries = await readPrivateEntriesInTransaction(tx, keyId)
+      const result: OfflinePrivateEnvelopeV1[] = []
+      for (const entry of entries) {
+        const parsed = OfflinePrivateEnvelopeV1Schema.safeParse(entry.value)
+        if (!parsed.success || !isCanonicalPrivateRecordKey(entry.key, parsed.data))
+          throw new OfflineStorageError('metadata-recovery', 'A private offline record is opaque.')
+        if (!isSameReadingContext(parsed.data.context, parsedVault.data.context))
+          throw new OfflineStorageError('generation-fenced', 'The private offline record belongs to another vault.')
+        result.push(clonePrivateEnvelope(parsed.data))
+      }
+      return await this.finishRead(tx, result)
+    } catch (error) {
+      throw toFailure(error, 'transaction', 'Private offline records could not be read.')
+    }
+  }
+  async putPrivateRecords(
+    envelopes: readonly OfflinePrivateEnvelopeV1[],
+    options: OfflineStorageGenerationOptions & {
+      readonly expectedRecordRevision?: number | null
+      readonly removePrivatePageIds?: readonly number[]
+    } = {}
+  ): Promise<OfflinePrivateEnvelopeV1[]> {
+    this.assertOpen(true)
+    if (!Array.isArray(envelopes) || envelopes.length < 1 || envelopes.length > OFFLINE_POLICY_PAGE_LIMIT + 3)
+      throw new OfflineStorageError('invalid-record', 'Private offline records are invalid.')
+    const parsed = envelopes.map(value => OfflinePrivateEnvelopeV1Schema.parse(value))
+    const first = parsed[0]
+    if (parsed.some(value => !isSameReadingContext(value.context, first.context) || value.sessionGeneration !== first.sessionGeneration))
+      throw new OfflineStorageError('invalid-record', 'Private records do not share one vault.')
+    const paired = parsed.some(value => value.kind === 'snapshot' || value.kind === 'search')
+    const expectedRecordRevision = options.expectedRecordRevision
+    if (paired) {
+      if (expectedRecordRevision === undefined)
+        throw new OfflineStorageError('invalid-record', 'Private body/search writes require an explicit compare-and-swap revision.')
+      if (expectedRecordRevision !== null && (!Number.isSafeInteger(expectedRecordRevision) || expectedRecordRevision < 1))
+        throw new OfflineStorageError('invalid-record', 'Private compare-and-swap revision is invalid.')
+      const policyRecordCount = parsed.filter(value => value.kind === 'policy-page' || value.kind === 'policy-state').length
+      if (parsed.length !== policyRecordCount + 2 || !parsed.some(value => value.kind === 'snapshot') || !parsed.some(value => value.kind === 'search'))
+        throw new OfflineStorageError('invalid-record', 'Private body/search records must be committed as a pair.')
+      const body = parsed.find(value => value.kind === 'snapshot')
+      const search = parsed.find(value => value.kind === 'search')
+      if (
+        !body ||
+        !search ||
+        body.pageId !== search.pageId ||
+        body.locale !== search.locale ||
+        body.pairId !== search.pairId ||
+        body.recordRevision !== search.recordRevision
+      )
+        throw new OfflineStorageError('invalid-record', 'Private body/search records do not match.')
+    }
+    const policyRecords = parsed.filter(value => value.kind === 'policy-page' || value.kind === 'policy-state')
+    if (policyRecords.length > 0) {
+      const policyStateRecords = policyRecords.filter(value => value.kind === 'policy-state')
+      if (policyStateRecords.length !== 1) throw new OfflineStorageError('invalid-record', 'Private policy state must be unique.')
+      const policyPageKeys = new Set<string>()
+      for (const value of policyRecords) {
+        if (value.recordRevision !== policyRecords[0]!.recordRevision)
+          throw new OfflineStorageError('invalid-record', 'Private policy records must share one revision.')
+        if (value.kind === 'policy-page') {
+          const key = `${value.pageId}\u0000${value.locale}`
+          if (policyPageKeys.has(key)) throw new OfflineStorageError('invalid-record', 'Private policy pages must be unique.')
+          policyPageKeys.add(key)
+        }
+      }
+    }
+    const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
+    for (const value of parsed) {
+      if (privateEnvelopeLogicalBytes(value) > OFFLINE_PRIVATE_RECORD_BYTES_LIMIT)
+        throw new OfflineStorageError('quota', 'The encrypted private record exceeds the per-record limit.')
+    }
+    if (options.readingHandle && (!isCurrentOfflineReadingHandle(options.readingHandle) || !isSameReadingContext(options.readingHandle.context, first.context)))
+      throw new OfflineStorageError('generation-fenced', 'The private reading handle is no longer current.')
+    if (first.sessionGeneration !== expectedGeneration) throw new OfflineGenerationFencedError(expectedGeneration, first.sessionGeneration)
+    let tx: OfflineWriteTransaction | undefined
+    try {
+      tx = this.db.transaction(['meta', 'readingVault', 'privateRecords'], 'readwrite', { durability: 'strict' }) as OfflineWriteTransaction
+      const meta = await this.assertGenerationInTransaction(tx, expectedGeneration)
+      if (
+        options.expectedCorpusRevision !== undefined &&
+        (!Number.isSafeInteger(options.expectedCorpusRevision) || options.expectedCorpusRevision < 0 || meta.corpusRevision !== options.expectedCorpusRevision)
+      )
+        throw new OfflineGenerationFencedError(options.expectedCorpusRevision ?? -1, meta.corpusRevision)
+      const vault = await tx.objectStore('readingVault').get(READING_VAULT_KEY)
+      const parsedVault = vault === undefined ? null : OfflineReadingVaultV1Schema.safeParse(vault)
+      if (!parsedVault?.success || !isSameReadingContext(parsedVault.data.context, first.context) || parsedVault.data.sessionGeneration !== expectedGeneration)
+        throw new OfflineStorageError('generation-fenced', 'The active private vault is unavailable.')
+      const existingEntries = await readPrivateEntriesInTransaction(tx)
+      const existingPrivateRecords: OfflinePrivateEnvelopeV1[] = []
+      for (const entry of existingEntries) {
+        const existing = OfflinePrivateEnvelopeV1Schema.safeParse(entry.value)
+        if (
+          !existing.success ||
+          !isCanonicalPrivateRecordKey(entry.key, existing.data) ||
+          !isSameReadingContext(existing.data.context, parsedVault.data.context) ||
+          existing.data.sessionGeneration !== expectedGeneration
+        )
+          throw new OfflineStorageError('metadata-recovery', 'A private offline record is opaque.')
+        existingPrivateRecords.push(existing.data)
+      }
+      const store = tx.objectStore('privateRecords')
+      let oldBytes = 0
+      let oldSnapshots = 0
+      if (options.removePrivatePageIds && options.removePrivatePageIds.length > 0) {
+        const removePageIds = new Set(options.removePrivatePageIds)
+        for (const parsedValue of existingPrivateRecords) {
+          if ((parsedValue.kind !== 'snapshot' && parsedValue.kind !== 'search') || parsedValue.pageId === null || !removePageIds.has(parsedValue.pageId))
+            continue
+          oldBytes = checkedAccountingValue(oldBytes, privateEnvelopeLogicalBytes(parsedValue), 'Private removal bytes')
+          if (parsedValue.kind === 'snapshot') oldSnapshots += 1
+          await store.delete(privateRecordKey(parsedValue))
+        }
+      }
+      const currentRecords: Array<OfflinePrivateEnvelopeV1 | null> = []
+      for (const value of parsed) {
+        const currentValue = await store.get(privateRecordKey(value))
+        if (currentValue === undefined) {
+          currentRecords.push(null)
+          continue
+        }
+        const current = OfflinePrivateEnvelopeV1Schema.safeParse(currentValue)
+        if (!current.success) throw new OfflineStorageError('metadata-recovery', 'A private offline record is opaque.')
+        currentRecords.push(current.data)
+        oldBytes = checkedAccountingValue(oldBytes, privateEnvelopeLogicalBytes(current.data), 'Private record bytes')
+        if (current.data.kind === 'snapshot') oldSnapshots += 1
+        if (!paired && expectedRecordRevision !== undefined && current.data.recordRevision !== expectedRecordRevision)
+          throw new OfflineStorageError('transaction', 'A private record changed before compare-and-swap commit.')
+      }
+      const nextPolicyState = parsed.find(value => value.kind === 'policy-state')
+      if (options.expectedPolicyRevision !== undefined) {
+        const currentPolicyValue = await store.get([first.context.keyId, 'policy-state', 0, ''])
+        const currentPolicy = currentPolicyValue === undefined ? null : OfflinePrivateEnvelopeV1Schema.safeParse(currentPolicyValue)
+        if (options.expectedPolicyRevision === 0) {
+          if (currentPolicyValue !== undefined)
+            throw new OfflinePolicyRevisionFencedError(0, currentPolicy?.success ? currentPolicy.data.recordRevision - 1 : -1)
+        } else if (!currentPolicy?.success || currentPolicy.data.recordRevision !== options.expectedPolicyRevision + 1) {
+          throw new OfflinePolicyRevisionFencedError(options.expectedPolicyRevision, currentPolicy?.success ? currentPolicy.data.recordRevision - 1 : -1)
+        }
+        if (!nextPolicyState || nextPolicyState.recordRevision <= options.expectedPolicyRevision + 1) {
+          throw new OfflineStorageError('transaction', 'The encrypted private policy revision did not advance.')
+        }
+      }
+      if (paired) {
+        const body = parsed.find(value => value.kind === 'snapshot')!
+        const search = parsed.find(value => value.kind === 'search')!
+        const bodyIndex = parsed.indexOf(body)
+        const searchIndex = parsed.indexOf(search)
+        const oldBody = currentRecords[bodyIndex]
+        const oldSearch = currentRecords[searchIndex]
+        if (expectedRecordRevision === null) {
+          if (oldBody !== null || oldSearch !== null) throw new OfflineStorageError('transaction', 'The private body/search pair already exists.')
+        } else {
+          if (!oldBody || !oldSearch) throw new OfflineStorageError('transaction', 'The existing private body/search pair is incomplete.')
+          if (
+            oldBody.kind !== 'snapshot' ||
+            oldSearch.kind !== 'search' ||
+            oldBody.pageId !== body.pageId ||
+            oldBody.locale !== body.locale ||
+            oldSearch.pageId !== search.pageId ||
+            oldSearch.locale !== search.locale ||
+            !isSameReadingContext(oldBody.context, first.context) ||
+            !isSameReadingContext(oldSearch.context, first.context) ||
+            oldBody.sessionGeneration !== expectedGeneration ||
+            oldSearch.sessionGeneration !== expectedGeneration ||
+            oldBody.pairId !== oldSearch.pairId ||
+            oldBody.recordRevision !== oldSearch.recordRevision ||
+            oldBody.recordRevision !== expectedRecordRevision
+          )
+            throw new OfflineStorageError('transaction', 'The existing private body/search pair is inconsistent.')
+          if (body.pairId === oldBody.pairId || body.recordRevision <= oldBody.recordRevision)
+            throw new OfflineStorageError('transaction', 'The replacement private pair must advance its revision and pair identity.')
+        }
+      }
+      const newBytes = parsed.reduce((total, value) => checkedAccountingValue(total, privateEnvelopeLogicalBytes(value), 'Private record bytes'), 0)
+      const newSnapshots = parsed.filter(value => value.kind === 'snapshot').length
+      const managedBytesDelta = newBytes - oldBytes
+      const snapshotCountDelta = newSnapshots - oldSnapshots
+      const projectedBytes = checkedAccountingValue(meta.managedBytes, managedBytesDelta, 'Offline managed bytes')
+      const projectedCount = checkedAccountingValue(meta.snapshotCount, snapshotCountDelta, 'Offline snapshot count')
+      if (!meta.accountingComplete && managedBytesDelta > 0)
+        throw new OfflineStorageError('quota', 'Offline accounting is incomplete; private growth is blocked.')
+      if (projectedBytes > OFFLINE_MANAGED_BYTES_LIMIT || projectedCount > OFFLINE_SNAPSHOT_LIMIT)
+        throw new OfflineStorageError('quota', 'Offline private limits would be exceeded.')
+      for (const value of parsed) await store.put(clonePrivateEnvelope(value), privateRecordKey(value))
+      const nextMeta = await this.putAccountingDelta(tx, meta, managedBytesDelta, snapshotCountDelta, snapshotCountDelta !== 0)
+      await this.finish(tx, undefined)
+      notifyPostCommit({ kind: 'corpus', sessionGeneration: nextMeta.sessionGeneration, corpusRevision: nextMeta.corpusRevision })
+      return parsed.map(clonePrivateEnvelope)
+    } catch (error) {
+      await this.abort(tx)
+      throw toFailure(error, 'transaction', 'Private offline records could not be committed.')
+    }
+  }
+
+  async putPrivatePolicyRecords(
+    records: readonly OfflinePrivateEnvelopeV1[],
+    options: OfflineStorageGenerationOptions & { readonly removePrivatePageIds?: readonly number[] } = {}
+  ): Promise<OfflinePrivateEnvelopeV1[]> {
+    return await this.putPrivateRecords(records, options)
+  }
+  async markPrivatePageIneligible(
+    handle: OfflineReadingHandleV1,
+    selector: OfflineSnapshotSelector,
+    options?: OfflineStorageGenerationOptions
+  ): Promise<OfflinePagePolicyRecord>
+  async markPrivatePageIneligible(keyId: string, pageId: number, options?: OfflineStorageGenerationOptions): Promise<number>
+  async markPrivatePageIneligible(
+    keyIdOrHandle: string | OfflineReadingHandleV1,
+    pageIdOrSelector: number | OfflineSnapshotSelector,
+    options: OfflineStorageGenerationOptions = {}
+  ): Promise<number | OfflinePagePolicyRecord> {
+    if (typeof keyIdOrHandle !== 'string') {
+      const handle = keyIdOrHandle
+      const selector = this.assertPrivateSelector(handle, pageIdOrSelector as OfflineSnapshotSelector)
+      const next = await this.mutatePrivatePolicy(handle, options, current => {
+        const pages = current.pages.map(page =>
+          page.pageId === selector.pageId
+            ? storePolicyPage({ ...page, automatic: false, automaticSelectedAt: null, lastEditedAt: null, availability: 'ineligible' as const })
+            : page
+        )
+        const currentPage =
+          pages.find(page => page.key === offlinePolicyPageKey(selector)) ??
+          storePolicyPage({
+            ...makePolicyPage(selector),
+            availability: 'ineligible' as const
+          })
+        if (!pages.some(page => page.key === currentPage.key)) pages.push(currentPage)
+        return {
+          policy: { state: makePolicyState({ ...current.state, policyRevision: current.state.policyRevision + 1 }), pages },
+          removePageIds: [selector.pageId]
+        }
+      })
+      return this.privatePageResult(next, selector)
+    }
+    const keyId = keyIdOrHandle
+    const pageId = pageIdOrSelector as number
+    this.assertOpen(true)
+    if (typeof keyId !== 'string' || !/^[A-Za-z0-9_-]{22}$/u.test(keyId)) throw new OfflineStorageError('invalid-record', 'Private vault identity is invalid.')
+    if (!Number.isSafeInteger(pageId) || pageId < 1) throw new OfflineStorageError('invalid-record', 'Private page identity is invalid.')
+    const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
+    let tx: OfflineWriteTransaction | undefined
+    try {
+      tx = this.db.transaction(['meta', 'readingVault', 'privateRecords'], 'readwrite', { durability: 'strict' }) as OfflineWriteTransaction
+      const meta = await this.assertGenerationInTransaction(tx, expectedGeneration)
+      const vault = await tx.objectStore('readingVault').get(READING_VAULT_KEY)
+      const parsedVault = vault === undefined ? null : OfflineReadingVaultV1Schema.safeParse(vault)
+      if (!parsedVault?.success || parsedVault.data.context.keyId !== keyId || parsedVault.data.sessionGeneration !== expectedGeneration)
+        throw new OfflineStorageError('generation-fenced', 'The active private vault is unavailable.')
+      const store = tx.objectStore('privateRecords')
+      const entries = await readPrivateEntriesInTransaction(tx, keyId)
+      let removedBytes = 0
+      let removedSnapshots = 0
+      let removed = 0
+      for (const entry of entries) {
+        const parsed = OfflinePrivateEnvelopeV1Schema.safeParse(entry.value)
+        if (!parsed.success || !isCanonicalPrivateRecordKey(entry.key, parsed.data))
+          throw new OfflineStorageError('metadata-recovery', 'A private offline record is opaque.')
+        if (!isSameReadingContext(parsed.data.context, parsedVault.data.context))
+          throw new OfflineStorageError('generation-fenced', 'The private offline record belongs to another vault.')
+        if (parsed.data.pageId !== pageId) continue
+        removedBytes = checkedAccountingValue(removedBytes, privateEnvelopeLogicalBytes(parsed.data), 'Private removal bytes')
+        if (parsed.data.kind === 'snapshot') removedSnapshots += 1
+        await store.delete(privateRecordKey(parsed.data))
+        removed += 1
+      }
+      const nextMeta = await this.putAccountingDelta(tx, meta, -removedBytes, -removedSnapshots, removed > 0)
+      await this.finish(tx, undefined)
+      if (removed > 0) notifyPostCommit({ kind: 'corpus', sessionGeneration: nextMeta.sessionGeneration, corpusRevision: nextMeta.corpusRevision })
+      return removed
+    } catch (error) {
+      await this.abort(tx)
+      throw toFailure(error, 'transaction', 'Private page denial could not be committed.')
+    }
+  }
+
+  async getPrivateRecords(keyId: string, options: OfflineStorageGenerationOptions = {}): Promise<OfflinePrivateEnvelopeV1[]> {
+    return this.listPrivateRecords(keyId, options)
+  }
+
+  async clearPrivateRecords(options: OfflineStorageGenerationOptions = {}): Promise<number> {
+    lockOfflineReading()
+    return this.retireReadingVault(options)
+  }
+
+  async privateSnapshotRevision(
+    handle: OfflineReadingHandleV1,
+    selector: OfflineSnapshotSelector,
+    options: OfflineStorageGenerationOptions = {}
+  ): Promise<number | null> {
+    const parsedSelector = this.assertPrivateSelector(handle, selector)
+    const records = await this.listPrivateRecords(handle.context.keyId, {
+      expectedSessionGeneration: handle.sessionGeneration,
+      expectedCorpusRevision: options.expectedCorpusRevision
+    })
+    const body = records.find(value => value.kind === 'snapshot' && value.pageId === parsedSelector.pageId && value.locale === parsedSelector.locale)
+    return body?.recordRevision ?? null
+  }
+  async putPrivateSnapshotRecords(
+    body: OfflinePrivateEnvelopeV1,
+    search: OfflinePrivateEnvelopeV1,
+    options: OfflineStorageGenerationOptions & {
+      readonly expectedRecordRevision?: number | null
+      readonly policyPage?: OfflinePagePolicyRecord
+      readonly policyState?: OfflinePolicyState
+      readonly removePrivatePageIds?: readonly number[]
+    } = {}
+  ): Promise<OfflinePrivateEnvelopeV1[]> {
+    if (options.readingHandle && options.policyPage && options.policyState) {
+      const current = await this.readPrivatePolicy(options.readingHandle, options)
+      const pages = current.pages.some(page => page.key === options.policyPage!.key)
+        ? current.pages.map(page => (page.key === options.policyPage!.key ? storePolicyPage(options.policyPage!) : page))
+        : [...current.pages, storePolicyPage(options.policyPage!)]
+      const recordRevision = options.policyState.policyRevision + 1
+      const stateEnvelope = await encryptOfflinePrivateRecord(options.readingHandle, 'policy-state', options.policyState, {
+        pageId: null,
+        locale: null,
+        recordRevision,
+        pairId: null
+      })
+      const policyEnvelopes: OfflinePrivateEnvelopeV1[] = [stateEnvelope]
+      for (const page of pages) {
+        policyEnvelopes.push(
+          await encryptOfflinePrivateRecord(options.readingHandle, 'policy-page', page, {
+            pageId: page.pageId,
+            locale: page.locale,
+            recordRevision,
+            pairId: null
+          })
+        )
+      }
+      return this.putPrivateRecords([body, search, ...policyEnvelopes], options)
+    }
+    return this.putPrivateRecords([body, search], options)
+  }
 
   async storageStatus(): Promise<OfflineStorageEstimate> {
     return this.storageEstimate()
@@ -2451,7 +3426,7 @@ export type OfflineStorageOpenOptions = {
   blockedTimeoutMs?: number
 }
 
-const allStoreNames = ['meta', 'snapshots', 'drafts', 'searchDocuments', 'policy'] as const
+const allStoreNames = ['meta', 'snapshots', 'drafts', 'searchDocuments', 'policy', 'readingVault', 'privateRecords'] as const
 const createStores = (
   database: IDBPDatabase<OfflineStorageDbSchema>,
   transaction: IDBPTransaction<OfflineStorageDbSchema, StoreNames<OfflineStorageDbSchema>[], 'versionchange'>
@@ -2499,6 +3474,21 @@ const createStores = (
     if (!store.indexNames.contains('by-type')) store.createIndex('by-type', 'recordType')
     if (!store.indexNames.contains('by-page')) store.createIndex('by-page', 'pageId')
   }
+  if (!database.objectStoreNames.contains('readingVault')) database.createObjectStore('readingVault')
+  if (!database.objectStoreNames.contains('privateRecords')) {
+    const store = database.createObjectStore('privateRecords')
+    store.createIndex('by-vault', 'context.keyId')
+    store.createIndex('by-kind', 'kind')
+    store.createIndex('by-page', 'pageId')
+  } else {
+    const store = transaction.objectStore('privateRecords') as unknown as {
+      indexNames: { contains(name: string): boolean }
+      createIndex(name: string, keyPath: string): unknown
+    }
+    if (!store.indexNames.contains('by-vault')) store.createIndex('by-vault', 'context.keyId')
+    if (!store.indexNames.contains('by-kind')) store.createIndex('by-kind', 'kind')
+    if (!store.indexNames.contains('by-page')) store.createIndex('by-page', 'pageId')
+  }
 }
 
 const migratePolicyRecords = async (tx: OfflineWriteTransaction, storage: OfflineStorage, snapshots: readonly unknown[]): Promise<void> => {
@@ -2515,12 +3505,14 @@ const migratePolicyRecords = async (tx: OfflineWriteTransaction, storage: Offlin
       return
     }
     if (parsedState.data.automaticSavingDefaultApplied !== true) {
-      await policyStore.put(makePolicyState({
-        ...parsedState.data,
-        automaticSavingEnabled: true,
-        automaticSavingDefaultApplied: true,
-        policyRevision: checkedAccountingValue(parsedState.data.policyRevision, 1, 'Offline policy revision')
-      }))
+      await policyStore.put(
+        makePolicyState({
+          ...parsedState.data,
+          automaticSavingEnabled: true,
+          automaticSavingDefaultApplied: true,
+          policyRevision: checkedAccountingValue(parsedState.data.policyRevision, 1, 'Offline policy revision')
+        })
+      )
     }
   }
   const existingValues = await policyStore.index('by-type').getAll('page')
@@ -2608,10 +3600,10 @@ const migrateMetadata = async (db: IDBPDatabase<OfflineStorageDbSchema>, storage
       await tx.objectStore('meta').put({
         key: META_KEY,
         schemaVersion: OFFLINE_SCHEMA_VERSION,
-        sessionGeneration: legacy.sessionGeneration,
+        sessionGeneration: checkedAccountingValue(legacy.sessionGeneration, 1, 'Offline session generation'),
         managedBytes: accounting.managedBytes,
         snapshotCount: accounting.snapshotCount,
-        corpusRevision: 0,
+        corpusRevision: 1,
         accountingComplete: accounting.complete,
         lastCleanupAt: legacy.lastCleanupAt,
         storage: legacy.storage
@@ -2651,7 +3643,37 @@ export const openOfflineStorage = async (options: OfflineStorageOpenOptions = {}
     upgrade(database, oldVersion, _newVersion, transaction) {
       if (oldVersion > OFFLINE_DB_VERSION) throw new OfflineStorageError('unsupported-schema', 'A newer offline database schema is present.')
       createStores(database, transaction)
-      if (oldVersion === 0) transaction.objectStore('meta').put(defaultMeta())
+      if (oldVersion === 0) {
+        transaction.objectStore('meta').put(defaultMeta())
+      } else if (oldVersion < OFFLINE_DB_VERSION) {
+        const snapshots = transaction.objectStore('snapshots')
+        const searches = transaction.objectStore('searchDocuments')
+        const policy = transaction.objectStore('policy')
+        const meta = transaction.objectStore('meta')
+        const request = unwrap(meta).get(META_KEY)
+        request.onsuccess = () => {
+          const rawMeta = request.result
+          const parsed = OfflineMetaRecordSchema.safeParse(rawMeta)
+          const legacy = safeLegacyMeta(rawMeta)
+          // Never purge or advance a database whose metadata belongs to a future
+          // or otherwise unknown schema. migrateMetadata marks it unsupported
+          // after the versionchange transaction completes.
+          if ((parsed.success && parsed.data.schemaVersion > OFFLINE_SCHEMA_VERSION) || (!parsed.success && legacy === null)) return
+          snapshots.clear()
+          searches.clear()
+          policy.clear()
+          policy.put(makePolicyState())
+          if (!parsed.success) return
+          meta.put({
+            ...parsed.data,
+            sessionGeneration: checkedAccountingValue(parsed.data.sessionGeneration, 1, 'Offline session generation'),
+            managedBytes: 0,
+            snapshotCount: 0,
+            corpusRevision: checkedAccountingValue(parsed.data.corpusRevision, 1, 'Offline corpus revision'),
+            accountingComplete: true
+          })
+        }
+      }
     },
     blocked() {
       failed = true

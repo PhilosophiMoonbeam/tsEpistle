@@ -555,12 +555,17 @@
 
 <script lang='ts'>
 import { defineAsyncComponent, defineComponent, markRaw, mergeProps } from 'vue'
-import { invalidateOfflineIdentity, wikiStore } from '@/store/index.ts'
-import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
+import {
+  invalidateOfflineIdentity,
+  markOfflineLogoutPending,
+  OFFLINE_IDENTITY_CLEANUP_FAILURE_MESSAGE,
+  wikiStore
+} from '@/store/index.ts'
 import AccountNotifications from './account-notifications.vue'
 import ControlBorderBeam from './control-border-beam.vue'
 import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
 import { useAgentsStore } from '../../store/agents.ts'
+import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
 import {
   offPageConvert,
   offPageDelete,
@@ -907,13 +912,24 @@ export default defineComponent({
         ? wikiStore.user.id
         : undefined
 
+      if (!markOfflineLogoutPending(accountId)) {
+        this.logoutPending = false
+        wikiStore.showError(new Error(OFFLINE_IDENTITY_CLEANUP_FAILURE_MESSAGE))
+        return
+      }
+
       this.notificationIdentityRecoveryGeneration += 1
       // Retire the live workspace too, so pagehide cannot recreate its bookmarks.
       useAgentsStore().destroyWorkspace()
       this.siteNotifications.reset()
 
       void (async () => {
-        await invalidateOfflineIdentity(accountId)
+        const retired = await invalidateOfflineIdentity(accountId)
+        if (!retired) {
+          this.logoutPending = false
+          wikiStore.showError(new Error(OFFLINE_IDENTITY_CLEANUP_FAILURE_MESSAGE))
+          return
+        }
         if (form) form.submit()
       })()
     },

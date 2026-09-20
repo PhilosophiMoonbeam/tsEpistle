@@ -4,7 +4,14 @@ import OfflineLibrary from './components/pwa/offline-library.vue'
 import OfflineNavigation from './components/pwa/offline-navigation.vue'
 import OfflineSettings from './components/pwa/offline-settings.vue'
 import { openOfflineStorage, type OfflineStorage } from './helpers/offline-storage.ts'
-import { createOfflineSyncCoordinator, createOfflineSyncUnavailableResult, OFFLINE_SYNC_COORDINATOR_KEY, type OfflineSyncCoordinator, type OfflineSyncService } from './helpers/offline-sync.ts'
+import { currentOfflineReadingHandle, OFFLINE_READING_STATE_EVENT } from './helpers/offline-session.ts'
+import {
+  createOfflineSyncCoordinator,
+  createOfflineSyncUnavailableResult,
+  OFFLINE_SYNC_COORDINATOR_KEY,
+  type OfflineSyncCoordinator,
+  type OfflineSyncService
+} from './helpers/offline-sync.ts'
 import { pwaState, retryServerConnection } from './helpers/pwa.ts'
 import { wikiStore } from './store/index.ts'
 import type { OfflineSnapshotRecord } from '../shared/offline.ts'
@@ -18,6 +25,8 @@ const selected = shallowRef<OfflineSnapshotRecord | null>(null)
 const drawer = ref(window.innerWidth >= 960)
 const retrying = ref(false)
 let coordinator: OfflineSyncCoordinator | null = null
+let stopReadingWatch: (() => void) | null = null
+let stopIdentityWatch: (() => void) | null = null
 let disposed = false
 let restored = false
 const requestedSelector = (() => {
@@ -36,8 +45,17 @@ const requestedSelector = (() => {
   return { siteId: window.location.origin, pageId, locale }
 })()
 const settingsView = settings || window.location.pathname === '/p/offline'
+const requireOfflineSyncCoordinator = (): OfflineSyncCoordinator => {
+  if (coordinator) return coordinator
+  throw new Error('Offline synchronization is not ready yet.')
+}
 const service: OfflineSyncService = {
-  reconcile: reason => coordinator?.reconcile(reason) ?? Promise.resolve(createOfflineSyncUnavailableResult('Offline storage is not ready yet.'))
+  reconcile: reason => coordinator?.reconcile(reason) ?? Promise.resolve(createOfflineSyncUnavailableResult('Offline storage is not ready yet.')),
+  readOfflinePolicy: async () => await requireOfflineSyncCoordinator().readOfflinePolicy(),
+  readSnapshotCorpus: async selector => await requireOfflineSyncCoordinator().readSnapshotCorpus(selector),
+  setManualOfflineIntent: async (selector, selected) => await requireOfflineSyncCoordinator().setManualOfflineIntent(selector, selected),
+  removeOfflinePage: async selector => await requireOfflineSyncCoordinator().removeOfflinePage(selector),
+  recordEligibleReaderVisit: async selector => await requireOfflineSyncCoordinator().recordEligibleReaderVisit(selector)
 }
 provide(OFFLINE_SYNC_COORDINATOR_KEY, service)
 const connectionMessage = computed(() => pwaState.connectionState === 'online'
@@ -52,14 +70,68 @@ async function openStorage(): Promise<void> {
     const opened = await openOfflineStorage()
     if (disposed) { opened.close(); return }
     coordinator?.dispose()
+    stopReadingWatch?.()
+    stopReadingWatch = null
+    stopIdentityWatch?.()
+    stopIdentityWatch = null
     storage.value?.close()
     storage.value = opened
     storageState.value = 'available'
-    coordinator = createOfflineSyncCoordinator({ storage: opened, siteId: window.location.origin,
-      fetchImpl: window.fetch.bind(window), isOnline: () => pwaState.connectionState === 'online',
-      isForeground: () => document.visibilityState === 'visible', isRetired: () => pwaState.mode === 'retirement' })
+    coordinator = createOfflineSyncCoordinator({
+      storage: opened,
+      siteId: window.location.origin,
+      privateSiteId: (() => {
+        try {
+          const configured = Reflect.get(Reflect.get(window, 'siteConfig') ?? {}, 'offlineDraftSiteId')
+          return typeof configured === 'string' && configured.trim().length > 0 ? configured.trim() : window.location.origin
+        } catch {
+          return window.location.origin
+        }
+      })(),
+      fetchImpl: window.fetch.bind(window),
+      isOnline: () => pwaState.connectionState === 'online',
+      isForeground: () => document.visibilityState === 'visible',
+      isRetired: () => pwaState.mode === 'retirement',
+      isIdentityValid: () => {
+        if (wikiStore.authRefreshOutcome !== 'authenticated') return true
+        return wikiStore.offlineIdentityReady === true && wikiStore.user.authenticated === true
+      },
+      getCurrentAccount: () => {
+        if (
+          wikiStore.authRefreshOutcome !== 'authenticated' ||
+          wikiStore.offlineIdentityReady !== true ||
+          wikiStore.user.authenticated !== true ||
+          !Number.isSafeInteger(wikiStore.user.id) ||
+          wikiStore.user.id < 1 ||
+          !Number.isSafeInteger(wikiStore.user.authVersion) ||
+          wikiStore.user.authVersion < 0
+        )
+          return null
+        return { accountId: wikiStore.user.id, authVersion: wikiStore.user.authVersion, verified: true }
+      },
+      getReadingHandle: () => currentOfflineReadingHandle()
+    })
+    const onReadingState = (): void => {
+      coordinator?.invalidateIdentity()
+      coordinator?.observe('reading-state')
+    }
+    window.addEventListener(OFFLINE_READING_STATE_EVENT, onReadingState)
+    stopReadingWatch = () => window.removeEventListener(OFFLINE_READING_STATE_EVENT, onReadingState)
+    stopIdentityWatch = watch(
+      () => [wikiStore.authRefreshOutcome, wikiStore.offlineIdentityReady, wikiStore.user.authenticated, wikiStore.user.id, wikiStore.user.authVersion],
+      () => {
+        coordinator?.invalidateIdentity()
+        coordinator?.observe('identity')
+      },
+      { flush: 'sync' }
+    )
     coordinator.start()
   } catch {
+    stopReadingWatch?.()
+    stopReadingWatch = null
+    stopIdentityWatch?.()
+    stopIdentityWatch = null
+    coordinator = null
     storageState.value = 'unavailable'
     message.value = 'Saved pages could not be opened on this device. Try again or reconnect.'
   }
@@ -106,7 +178,16 @@ onMounted(() => {
   if (pwaState.connectionState === 'online') void wikiStore.refreshAuth()
   void openStorage()
 })
-onBeforeUnmount(() => { disposed = true; coordinator?.dispose(); storage.value?.close() })
+onBeforeUnmount(() => {
+  disposed = true
+  stopReadingWatch?.()
+  stopReadingWatch = null
+  stopIdentityWatch?.()
+  stopIdentityWatch = null
+  coordinator?.dispose()
+  coordinator = null
+  storage.value?.close()
+})
 </script>
 
 <template>

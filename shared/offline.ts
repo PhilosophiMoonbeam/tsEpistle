@@ -5,11 +5,21 @@ import { PAGE_EDITOR_KEYS } from './page-editors.ts'
 export const OFFLINE_SCHEMA_VERSION = 1 as const
 export const OFFLINE_DB_NAME = 'tsepistle-offline' as const
 /** The physical IndexedDB version. The payload/schema version remains v1. */
-export const OFFLINE_DB_VERSION = 5 as const
+export const OFFLINE_DB_VERSION = 6 as const
 export const OFFLINE_KEY_VERSION = 'session-secret-v1' as const
+export const OFFLINE_READING_KEY_VERSION = 'random-reading-v1' as const
+export const OFFLINE_READING_KEY_MAGIC = 'TSORK1' as const
 export const OFFLINE_DRAFT_KEY_MAGIC = 'TSODK1' as const
 export const OFFLINE_HTML_SANITIZER_VERSION = 'offline-html-allowlist-v1' as const
 export const OFFLINE_CONTENT_TYPE = 'sanitized-html-fragment' as const
+
+export const OFFLINE_READING_CONTEXT_SCHEMA_VERSION = 1 as const
+export const OFFLINE_READING_VAULT_SCHEMA_VERSION = 1 as const
+export const OFFLINE_PRIVATE_ENVELOPE_SCHEMA_VERSION = 1 as const
+export const OFFLINE_PRIVATE_SNAPSHOT_RESPONSE_SCHEMA_VERSION = 1 as const
+export const OFFLINE_READING_WRAP_INFO = 'tsepistle/offline-reading-wrap/v1' as const
+export const OFFLINE_READING_VAULT_AAD = 'tsepistle/offline-reading-vault/v1' as const
+export const OFFLINE_READING_RECORD_AAD = 'tsepistle/offline-reading-record/v1' as const
 
 export const OFFLINE_POLICY_SCHEMA_VERSION = 1 as const
 export const OFFLINE_POLICY_STORE_NAME = 'policy' as const
@@ -28,7 +38,7 @@ export const OFFLINE_DRAFT_KEY_BYTES = 32
 export const OFFLINE_DRAFT_NONCE_BYTES = 12
 export const OFFLINE_DRAFT_TAG_BYTES = 16
 
-export const OFFLINE_STORE_NAMES = ['meta', 'snapshots', 'drafts', 'searchDocuments', 'policy'] as const
+export const OFFLINE_STORE_NAMES = ['meta', 'snapshots', 'drafts', 'searchDocuments', 'policy', 'readingVault', 'privateRecords'] as const
 export type OfflineStoreName = (typeof OFFLINE_STORE_NAMES)[number]
 
 export const OFFLINE_DRAFT_STATES = ['local', 'needs-review', 'publishing', 'conflict', 'locked', 'unavailable', 'outcome-unknown'] as const
@@ -360,3 +370,122 @@ export const OfflineStorageFailureCodeSchema = z.enum([
   'closed'
 ])
 export type OfflineStorageFailureCode = z.infer<typeof OfflineStorageFailureCodeSchema>
+export const OFFLINE_READING_VAULT_STORE_NAME = 'readingVault' as const
+export const OFFLINE_PRIVATE_RECORDS_STORE_NAME = 'privateRecords' as const
+export const OFFLINE_READING_KEY_BYTES = 32
+export const OFFLINE_READING_SALT_BYTES = 32
+export const OFFLINE_READING_NONCE_BYTES = 12
+export const OFFLINE_READING_TAG_BYTES = 16
+export const OFFLINE_READING_PAIR_ID_BYTES = 16
+export const OFFLINE_READING_KEY_ID_BYTES = 16
+export const OFFLINE_PRIVATE_RECORD_BYTES_LIMIT = OFFLINE_RECORD_BYTES_LIMIT
+
+const canonicalBase64Url = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]+$/u)
+  .refine(value => !value.includes('=') && value.length > 0)
+
+const canonicalOriginSchema = z
+  .string()
+  .min(1)
+  .max(2048)
+  .refine(value => {
+    try {
+      const parsed = new URL(value)
+      const localHttp = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)
+      return (
+        parsed.origin === value &&
+        (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && localHttp)) &&
+        parsed.username === '' &&
+        parsed.password === '' &&
+        parsed.pathname === '/' &&
+        parsed.search === '' &&
+        parsed.hash === ''
+      )
+    } catch {
+      return false
+    }
+  })
+
+export const OfflineReadingContextV1Schema = z
+  .object({
+    schemaVersion: z.literal(OFFLINE_READING_CONTEXT_SCHEMA_VERSION),
+    canonicalOrigin: canonicalOriginSchema,
+    siteId: boundedIdentifier,
+    accountId: positiveSafeInteger,
+    authVersion: nonnegativeSafeInteger,
+    keyVersion: z.literal(OFFLINE_READING_KEY_VERSION),
+    keyId: canonicalBase64Url.refine(value => value.length === 22)
+  })
+  .strict()
+export type OfflineReadingContextV1 = z.infer<typeof OfflineReadingContextV1Schema>
+export const OfflineReadingContextSchema = OfflineReadingContextV1Schema
+
+export const OfflineReadingVaultV1Schema = z
+  .object({
+    schemaVersion: z.literal(OFFLINE_READING_VAULT_SCHEMA_VERSION),
+    context: OfflineReadingContextV1Schema,
+    sessionGeneration: nonnegativeSafeInteger,
+    salt: byteArray.refine(value => value.byteLength === OFFLINE_READING_SALT_BYTES),
+    nonce: byteArray.refine(value => value.byteLength === OFFLINE_READING_NONCE_BYTES),
+    wrappedKey: byteArray.refine(value => value.byteLength === OFFLINE_READING_KEY_BYTES + OFFLINE_READING_TAG_BYTES)
+  })
+  .strict()
+export type OfflineReadingVaultV1 = z.infer<typeof OfflineReadingVaultV1Schema>
+export const OfflineReadingVaultSchema = OfflineReadingVaultV1Schema
+
+export const OFFLINE_PRIVATE_ENVELOPE_KINDS = ['snapshot', 'search', 'policy-page', 'policy-state'] as const
+export const OfflinePrivateEnvelopeKindSchema = z.enum(OFFLINE_PRIVATE_ENVELOPE_KINDS)
+export type OfflinePrivateEnvelopeKind = z.infer<typeof OfflinePrivateEnvelopeKindSchema>
+
+const nullablePrivatePageId = positiveSafeInteger.nullable()
+const nullablePrivateLocale = boundedLocale.nullable()
+const nullablePairId = canonicalBase64Url.refine(value => value.length === 22).nullable()
+
+export const OfflinePrivateEnvelopeV1Schema = z
+  .object({
+    schemaVersion: z.literal(OFFLINE_PRIVATE_ENVELOPE_SCHEMA_VERSION),
+    context: OfflineReadingContextV1Schema,
+    sessionGeneration: nonnegativeSafeInteger,
+    kind: OfflinePrivateEnvelopeKindSchema,
+    pageId: nullablePrivatePageId,
+    locale: nullablePrivateLocale,
+    recordRevision: positiveSafeInteger,
+    pairId: nullablePairId,
+    nonce: byteArray.refine(value => value.byteLength === OFFLINE_READING_NONCE_BYTES),
+    ciphertext: byteArray.refine(value => value.byteLength >= OFFLINE_READING_TAG_BYTES).refine(value => value.byteLength <= OFFLINE_PRIVATE_RECORD_BYTES_LIMIT)
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const pageKind = value.kind === 'snapshot' || value.kind === 'search' || value.kind === 'policy-page'
+    if (pageKind !== (value.pageId !== null && value.locale !== null)) context.addIssue({ code: 'custom', message: 'Page selectors must match envelope kind.' })
+    const paired = value.kind === 'snapshot' || value.kind === 'search'
+    if (paired !== (value.pairId !== null)) context.addIssue({ code: 'custom', message: 'Body/search pairing must match envelope kind.' })
+  })
+export type OfflinePrivateEnvelopeV1 = z.infer<typeof OfflinePrivateEnvelopeV1Schema>
+export const OfflinePrivateEnvelopeSchema = OfflinePrivateEnvelopeV1Schema
+
+export const OfflinePrivateSnapshotResponseV1Schema = z
+  .object({
+    schemaVersion: z.literal(OFFLINE_PRIVATE_SNAPSHOT_RESPONSE_SCHEMA_VERSION),
+    audience: z.literal('private'),
+    context: z
+      .object({
+        canonicalOrigin: canonicalOriginSchema,
+        siteId: boundedIdentifier,
+        accountId: positiveSafeInteger,
+        authVersion: nonnegativeSafeInteger
+      })
+      .strict(),
+    snapshot: OfflinePageSnapshotV1Schema
+  })
+  .strict()
+export type OfflinePrivateSnapshotResponseV1 = z.infer<typeof OfflinePrivateSnapshotResponseV1Schema>
+export const OfflinePrivateSnapshotResponseSchema = OfflinePrivateSnapshotResponseV1Schema
+
+export const OfflinePrivateSearchDocumentV1Schema = OfflineSearchDocumentV1Schema.extend({ sourceRevision: boundedRevision }).strict()
+export type OfflinePrivateSearchDocumentV1 = z.infer<typeof OfflinePrivateSearchDocumentV1Schema>
+export const OfflinePrivatePolicyPageV1Schema = OfflinePagePolicyRecordSchema
+export type OfflinePrivatePolicyPageV1 = OfflinePagePolicyRecord
+export const OfflinePrivatePolicyStateV1Schema = OfflinePolicyStateSchema
+export type OfflinePrivatePolicyStateV1 = OfflinePolicyState

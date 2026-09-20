@@ -5,6 +5,7 @@ import _ from 'lodash'
 import pageOperations from '../../operations/pages.ts'
 import { linkPageLocaleRelation, listPageLocaleRelations, unlinkPageLocaleRelation } from '../../operations/page-locale-relations.ts'
 import { canReadPage, canWritePage, managesSystem, principalId, type PageVisibility } from '../../helpers/page-access.ts'
+import { isApiPrincipal } from '../../helpers/api-principal.ts'
 import { canViewRestrictedPageFields, projectPageFields } from '../../helpers/page-field-projection.ts'
 import type { PageRuleAuthority } from '../../helpers/group-access.ts'
 import { getPageWatchState, listPageWatchNotifications, markPageWatchNotificationRead, unwatchPage, watchPage } from '../../operations/page-watching.ts'
@@ -15,6 +16,7 @@ import type { Knex } from 'knex'
 import { OkfDocumentError } from '../../okf/format.ts'
 import { buildPageOkfView } from '../../okf/page-view.ts'
 import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
+import { OFFLINE_PAGE_INELIGIBLE_CODE } from '../../helpers/offline-page.ts'
 
 const router = express.Router()
 
@@ -104,7 +106,7 @@ const errorStatus = (err: unknown, fallback: number): number => {
   if (err instanceof Error && (err.name === 'PagePathCollision' || err.name === 'PageUpdateConflict')) return 409
   return fallback
 }
-const OFFLINE_PAGE_INELIGIBLE_CODE = 'OFFLINE_PAGE_INELIGIBLE'
+const OFFLINE_PRIVATE_UNAVAILABLE_MESSAGE = 'Offline snapshot is unavailable.'
 const OFFLINE_PAGE_INELIGIBLE_MESSAGE = 'This page is not available for offline use.'
 
 const requestBody = (req: Request): Record<string, unknown> => {
@@ -1113,6 +1115,23 @@ router.get('/:id/offline-snapshot', async (req, res, next) => {
     if (typeof err === 'object' && err !== null && Reflect.get(err, 'code') === OFFLINE_PAGE_INELIGIBLE_CODE)
       return res.status(404).json({ error: OFFLINE_PAGE_INELIGIBLE_MESSAGE, code: OFFLINE_PAGE_INELIGIBLE_CODE })
     return sendOperationError(res, next, err, 'Offline snapshot is unavailable')
+  }
+})
+
+router.get('/:id/offline-private-snapshot', async (req, res, next) => {
+  setPrivatePageHeaders(res)
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  if (principalId(req.user) === null || isApiPrincipal(req.user)) {
+    return res.status(401).json({ error: OFFLINE_PRIVATE_UNAVAILABLE_MESSAGE })
+  }
+  try {
+    return res.json(await pageOperations.getOfflinePrivateSnapshot({ id, ...requesterInput(req) }))
+  } catch (err) {
+    const code = typeof err === 'object' && err !== null ? Reflect.get(err, 'code') : undefined
+    if (code === OFFLINE_PAGE_INELIGIBLE_CODE) return res.status(404).json({ error: OFFLINE_PRIVATE_UNAVAILABLE_MESSAGE })
+    if (errorStatus(err, 0) === 401) return res.status(401).json({ error: OFFLINE_PRIVATE_UNAVAILABLE_MESSAGE })
+    return sendOperationError(res, next, err, OFFLINE_PRIVATE_UNAVAILABLE_MESSAGE)
   }
 })
 

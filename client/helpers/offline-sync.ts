@@ -1,12 +1,18 @@
-import { fetchOfflinePageSnapshot, fetchPagesByTag, type PageListRow } from './pages-api.ts'
+import { fetchOfflinePageSnapshot, fetchOfflinePrivatePageSnapshot, fetchPagesByTag, type PageListRow } from './pages-api.ts'
 import { OfflineGenerationFencedError, OfflinePolicyRevisionFencedError, OfflineStorageError, type OfflineStorage } from './offline-storage.ts'
+import { encryptOfflinePrivateRecord, generateOfflineReadingPairId, type OfflinePrivateRecordSelectors } from './offline-crypto.ts'
+import { isCurrentOfflineReadingHandle, type OfflineReadingHandleV1 } from './offline-session.ts'
 import {
+  OfflinePrivateSearchDocumentV1Schema,
   OfflineSnapshotSelectorSchema,
   OFFLINE_AUTOMATIC_PAGE_LIMIT,
   OfflineSyncDiagnosticsSchema,
   type OfflinePagePolicyRecord,
+  type OfflinePageSnapshotV1,
   type OfflinePolicySnapshot,
   type OfflinePolicyState,
+  type OfflinePrivateSearchDocumentV1,
+  type OfflinePrivateSnapshotResponseV1,
   type OfflineSnapshotProvenance,
   type OfflineSnapshotSelector,
   type OfflineSyncDiagnostics,
@@ -15,12 +21,20 @@ import {
 
 export type OfflineSyncFetch = Parameters<typeof fetchOfflinePageSnapshot>[0]
 
-export type OfflineSyncOutcome = 'success' | 'offline' | 'unavailable' | 'error'
+export type OfflineSyncAccount = {
+  readonly accountId: number
+  readonly authVersion: number
+  readonly verified: boolean
+}
+
+export type OfflineSyncOutcome = 'success' | 'offline' | 'error' | 'unavailable'
 export const OFFLINE_SYNC_COORDINATOR_KEY = 'offline-sync-coordinator'
 
 export type OfflineSyncCoordinatorOptions = {
   storage: OfflineStorage
   siteId: string
+  /** Private policy site identity; canonical origin remains siteId. */
+  privateSiteId?: string
   fetchImpl: OfflineSyncFetch
   now?: () => string
   isOnline?: () => boolean
@@ -28,6 +42,10 @@ export type OfflineSyncCoordinatorOptions = {
   isRetired?: () => boolean
   /** Optional identity fence for callers that rotate the current client identity. */
   isIdentityValid?: () => boolean
+  /** Current server-verified account, or null while signed out/unverified. */
+  getCurrentAccount?: () => OfflineSyncAccount | null
+  /** Current unlocked private reading handle, if any. */
+  getReadingHandle?: () => OfflineReadingHandleV1 | null
   maxConcurrentFetches?: number
   onDiagnostics?: (diagnostics: OfflineSyncDiagnostics) => void | Promise<void>
 }
@@ -73,6 +91,11 @@ export type OfflineSyncServiceResult = OfflineSyncResult
 
 export type OfflineSyncService = {
   reconcile: (reason?: string) => Promise<OfflineSyncResult>
+  readOfflinePolicy?: () => Promise<OfflinePolicySnapshot>
+  readSnapshotCorpus?: (selector?: OfflineSnapshotSelector) => Promise<Awaited<ReturnType<OfflineStorage['readSnapshotCorpus']>>>
+  setManualOfflineIntent?: (selector: OfflineSnapshotSelector, selected: boolean) => Promise<OfflinePagePolicyRecord>
+  removeOfflinePage?: (selector: OfflineSnapshotSelector) => Promise<OfflinePagePolicyRecord>
+  recordEligibleReaderVisit?: (selector: OfflineSnapshotSelector) => Promise<OfflinePagePolicyRecord>
 }
 
 type Candidate = {
@@ -98,10 +121,60 @@ type OperationContext = {
 const LIFECYCLE_SYNC_REASONS = new Set(['startup', 'pageshow', 'foreground', 'online', 'lifecycle'])
 const LIFECYCLE_SYNC_INTERVAL_MS = 60_000
 
+const PUBLIC_INELIGIBILITY_STATUSES = new Set([404, 410, 422])
+
+const currentPrivateHandle = (options: OfflineSyncCoordinatorOptions, _siteId: string): OfflineReadingHandleV1 | null => {
+  try {
+    const account = options.getCurrentAccount?.()
+    const handle = options.getReadingHandle?.()
+    if (
+      !account ||
+      account.verified !== true ||
+      !Number.isSafeInteger(account.accountId) ||
+      account.accountId < 1 ||
+      !Number.isSafeInteger(account.authVersion) ||
+      !handle ||
+      !isCurrentOfflineReadingHandle(handle)
+    )
+      return null
+    if (
+      handle.context.canonicalOrigin !== options.siteId ||
+      handle.context.siteId !== (options.privateSiteId ?? options.siteId) ||
+      handle.context.accountId !== account.accountId ||
+      handle.context.authVersion !== account.authVersion
+    )
+      return null
+    return handle
+  } catch {
+    return null
+  }
+}
+
+const privateSearchDocument = (siteId: string, snapshot: OfflinePageSnapshotV1): OfflinePrivateSearchDocumentV1 =>
+  OfflinePrivateSearchDocumentV1Schema.parse({
+    schemaVersion: snapshot.schemaVersion,
+    siteId,
+    pageId: snapshot.pageId,
+    locale: snapshot.locale,
+    path: snapshot.path,
+    canonicalPath: snapshot.canonicalPath,
+    title: snapshot.title,
+    description: snapshot.description,
+    searchText: snapshot.searchText.normalize('NFKC').toLocaleLowerCase().trim().replace(/\s+/gu, ' '),
+    capturedAt: snapshot.capturedAt,
+    sourceRevision: snapshot.sourceRevision,
+    byteSize: 0
+  })
 class OfflineSyncInvalidatedError extends Error {
   constructor() {
     super('Offline synchronization was invalidated before it could finish.')
     this.name = 'OfflineSyncInvalidatedError'
+  }
+}
+class OfflineSyncPrivateAuthorityError extends Error {
+  constructor() {
+    super('Private offline authority did not match the current account.')
+    this.name = 'OfflineSyncPrivateAuthorityError'
   }
 }
 
@@ -116,7 +189,7 @@ const errorStatus = (error: unknown): number | undefined => {
 
 const isAuthoritativeIneligibility = (error: unknown): boolean => {
   const status = errorStatus(error)
-  return status === 401 || status === 403 || status === 404 || status === 410 || status === 422
+  return status === 403 || status === 404 || status === 410 || status === 422
 }
 
 const errorMessage = (error: unknown): string => {
@@ -308,10 +381,56 @@ export class OfflineSyncCoordinator {
     if (typeof options.storage !== 'object' || options.storage === null || typeof options.storage.readOfflinePolicy !== 'function')
       throw new Error('Offline storage is required.')
     const siteId = typeof options.siteId === 'string' ? options.siteId.trim() : ''
-    if (siteId.length < 1 || siteId.length > 256) throw new Error('Offline site identity is required.')
+    const privateSiteId = options.privateSiteId === undefined ? undefined : typeof options.privateSiteId === 'string' ? options.privateSiteId.trim() : ''
+    if (siteId.length < 1 || siteId.length > 256 || (privateSiteId !== undefined && (privateSiteId.length < 1 || privateSiteId.length > 256)))
+      throw new Error('Offline site identity is required.')
     if (typeof options.fetchImpl !== 'function') throw new Error('Offline sync fetch implementation is required.')
-    this.options = { ...options, siteId }
+    this.options = { ...options, siteId, ...(privateSiteId === undefined ? {} : { privateSiteId }) }
     this.concurrency = normalizeConcurrency(options.maxConcurrentFetches)
+  }
+
+  private currentStorageHandle(): OfflineReadingHandleV1 | null {
+    return currentPrivateHandle(this.options, this.options.siteId)
+  }
+
+  async readOfflinePolicy(): Promise<OfflinePolicySnapshot> {
+    const handle = this.currentStorageHandle()
+    return this.options.storage.readOfflinePolicy(handle ? { readingHandle: handle } : {})
+  }
+
+  async readSnapshotCorpus(selector?: OfflineSnapshotSelector): Promise<Awaited<ReturnType<OfflineStorage['readSnapshotCorpus']>>> {
+    const handle = this.currentStorageHandle()
+    return this.options.storage.readSnapshotCorpus(handle ? { readingHandle: handle, selector } : { selector })
+  }
+
+  async setManualOfflineIntent(selector: OfflineSnapshotSelector, selected: boolean): Promise<OfflinePagePolicyRecord> {
+    const handle = this.currentStorageHandle()
+    const policy = await this.readOfflinePolicy()
+    return this.options.storage.setManualOfflineIntent(selector, selected, {
+      expectedSessionGeneration: policy.sessionGeneration,
+      expectedPolicyRevision: policy.state.policyRevision,
+      ...(handle ? { readingHandle: handle } : {})
+    })
+  }
+
+  async removeOfflinePage(selector: OfflineSnapshotSelector): Promise<OfflinePagePolicyRecord> {
+    const handle = this.currentStorageHandle()
+    const policy = await this.readOfflinePolicy()
+    return this.options.storage.removeOfflinePage(selector, {
+      expectedSessionGeneration: policy.sessionGeneration,
+      expectedPolicyRevision: policy.state.policyRevision,
+      ...(handle ? { readingHandle: handle } : {})
+    })
+  }
+
+  async recordEligibleReaderVisit(selector: OfflineSnapshotSelector): Promise<OfflinePagePolicyRecord> {
+    const handle = this.currentStorageHandle()
+    const policy = await this.readOfflinePolicy()
+    return this.options.storage.recordEligibleReaderVisit(selector, {
+      expectedSessionGeneration: policy.sessionGeneration,
+      expectedPolicyRevision: policy.state.policyRevision,
+      ...(handle ? { readingHandle: handle } : {})
+    })
   }
 
   get isDisposed(): boolean {
@@ -375,8 +494,7 @@ export class OfflineSyncCoordinator {
       // Preserve wakeups that arrive during an offline/cancelled pass. A recent
       // successful pass makes lifecycle followups cheap; explicit work wins.
       this.rerunRequested = true
-      if (this.pendingReason === null || LIFECYCLE_SYNC_REASONS.has(this.pendingReason) || reason === 'manual')
-        this.pendingReason = reason
+      if (this.pendingReason === null || LIFECYCLE_SYNC_REASONS.has(this.pendingReason) || reason === 'manual') this.pendingReason = reason
       return this.activePass
     }
     const pass = this.runCoalescedPass(reason)
@@ -482,12 +600,19 @@ export class OfflineSyncCoordinator {
     const result: MutablePassResult = { attempted: 0, saved: 0, retained: 0, removed: 0, failed: 0, pending: 0 }
     let policy: OfflinePolicySnapshot | null = null
     try {
-      policy = await this.awaitCurrent(this.options.storage.readOfflinePolicy(), context, false)
+      const policyHandle = currentPrivateHandle(this.options, this.options.siteId)
+      policy = await this.awaitCurrent(this.options.storage.readOfflinePolicy(policyHandle ? { readingHandle: policyHandle } : {}), context, false)
       this.assertCurrent(context, false)
       const diagnostics = policy.state.syncDiagnostics
       const successAge = Date.parse(this.currentTime()) - Date.parse(diagnostics.lastSuccessAt ?? '')
-      if (LIFECYCLE_SYNC_REASONS.has(reason) && this.canRun() && diagnostics.status === 'complete' &&
-        diagnostics.pendingCount === 0 && successAge >= 0 && successAge < LIFECYCLE_SYNC_INTERVAL_MS) {
+      if (
+        LIFECYCLE_SYNC_REASONS.has(reason) &&
+        this.canRun() &&
+        diagnostics.status === 'complete' &&
+        diagnostics.pendingCount === 0 &&
+        successAge >= 0 &&
+        successAge < LIFECYCLE_SYNC_INTERVAL_MS
+      ) {
         return this.makeResult('complete', policy.sessionGeneration, policy.state.policyRevision, diagnostics, result)
       }
       return await this.runPassBody(context, policy, result, reason === 'manual')
@@ -501,12 +626,23 @@ export class OfflineSyncCoordinator {
     }
   }
 
-  private async runPassBody(context: OperationContext, policy: OfflinePolicySnapshot, result: MutablePassResult, retryDenied: boolean): Promise<OfflineSyncPassResult> {
+  private async runPassBody(
+    context: OperationContext,
+    policy: OfflinePolicySnapshot,
+    result: MutablePassResult,
+    retryDenied: boolean
+  ): Promise<OfflineSyncPassResult> {
+    const privateStorageHandle = currentPrivateHandle(this.options, this.options.siteId)
+    const policySiteId = privateStorageHandle?.context.siteId ?? this.options.siteId
+    const currentAccount = this.options.getCurrentAccount?.()
+    if (currentAccount?.verified === true && !privateStorageHandle) throw new OfflineSyncInvalidatedError()
+    const storageOptions = <T extends Record<string, unknown>>(options: T): T & { readonly readingHandle?: OfflineReadingHandleV1 } =>
+      privateStorageHandle ? { ...options, readingHandle: privateStorageHandle } : options
     const generation = policy.sessionGeneration
     let revision = policy.state.policyRevision
     const attemptAt = this.currentTime()
     if (!this.canRun()) {
-      result.pending = selectedWorkCount(policy, this.options.siteId)
+      result.pending = selectedWorkCount(policy, policySiteId)
       const nextDiagnostics = diagnostic(policy.state.syncDiagnostics, {
         status: 'offline',
         lastAttemptAt: attemptAt,
@@ -515,7 +651,7 @@ export class OfflineSyncCoordinator {
         removedCount: 0
       })
       const persisted = await this.persistDiagnostics(nextDiagnostics, generation, revision, context, false)
-      return this.makeResult('offline', generation, revision, persisted, result)
+      return this.makeResult('offline', generation, revision, persisted.diagnostics, result)
     }
 
     this.assertCurrent(context, true)
@@ -524,7 +660,8 @@ export class OfflineSyncCoordinator {
       lastAttemptAt: attemptAt,
       lastError: null
     })
-    await this.persistDiagnostics(runningDiagnostics, generation, revision, context, true)
+    const persistedRunning = await this.persistDiagnostics(runningDiagnostics, generation, revision, context, true)
+    revision = persistedRunning.policyRevision
     this.assertCurrent(context, true)
     const cancellableFetch = this.cancellableFetch(context)
     let firstError: string | null = null
@@ -536,7 +673,7 @@ export class OfflineSyncCoordinator {
 
     try {
       const corpusBefore = await this.awaitCurrent(
-        this.options.storage.readSnapshotCorpus({ expectedSessionGeneration: generation, expectedPolicyRevision: revision }),
+        this.options.storage.readSnapshotCorpus(storageOptions({ expectedSessionGeneration: generation, expectedPolicyRevision: revision })),
         context,
         true
       )
@@ -545,13 +682,15 @@ export class OfflineSyncCoordinator {
       try {
         topAutomatic = policy.state.automaticSavingEnabled
           ? await this.awaitCurrent(
-              this.options.storage.selectTopAutomaticPages({
-                expectedSessionGeneration: generation,
-                expectedPolicyRevision: revision,
-                siteId: this.options.siteId,
-                limit: OFFLINE_AUTOMATIC_PAGE_LIMIT,
-                asOf: attemptAt
-              }),
+              this.options.storage.selectTopAutomaticPages(
+                storageOptions({
+                  expectedSessionGeneration: generation,
+                  expectedPolicyRevision: revision,
+                  siteId: policySiteId,
+                  limit: OFFLINE_AUTOMATIC_PAGE_LIMIT,
+                  asOf: attemptAt
+                })
+              ),
               context,
               true
             )
@@ -559,18 +698,18 @@ export class OfflineSyncCoordinator {
         await this.awaitCurrent(
           this.options.storage.updateAutomaticSelections(
             topAutomatic.map(page => ({ siteId: page.siteId, pageId: page.pageId, locale: page.locale })),
-            { expectedSessionGeneration: generation, expectedPolicyRevision: revision, siteId: this.options.siteId, asOf: attemptAt }
+            storageOptions({ expectedSessionGeneration: generation, expectedPolicyRevision: revision, siteId: policySiteId, asOf: attemptAt })
           ),
           context,
           true
         )
         const corpusAfterSelection = await this.awaitCurrent(
-          this.options.storage.readSnapshotCorpus({ expectedSessionGeneration: generation, expectedPolicyRevision: revision }),
+          this.options.storage.readSnapshotCorpus(storageOptions({ expectedSessionGeneration: generation, expectedPolicyRevision: revision })),
           context,
           true
         )
         const selectedBodyKeys = bodyKeysFromCorpus(corpusAfterSelection)
-        result.removed += countRemovedBodyKeys(bodyKeys, selectedBodyKeys, this.options.siteId)
+        result.removed += countRemovedBodyKeys(bodyKeys, selectedBodyKeys, policySiteId)
         bodyKeys = selectedBodyKeys
       } catch (error) {
         if (this.isFence(error)) return this.fencedResult(policy, result)
@@ -588,7 +727,7 @@ export class OfflineSyncCoordinator {
             const selectors: OfflineSnapshotSelector[] = []
             const seen = new Set<string>()
             for (const row of rows) {
-              const candidate = rowCandidate(this.options.siteId, row, tag)
+              const candidate = rowCandidate(policySiteId, row, tag)
               if (!candidate) continue
               const key = selectorKey(candidate.selector)
               if (seen.has(key)) continue
@@ -597,10 +736,14 @@ export class OfflineSyncCoordinator {
             }
             tagResults.set(tag, selectors)
             await this.awaitCurrent(
-              this.options.storage.synchronizeTagProvenance(tag, selectors, {
-                expectedSessionGeneration: generation,
-                expectedPolicyRevision: revision
-              }),
+              this.options.storage.synchronizeTagProvenance(
+                tag,
+                selectors,
+                storageOptions({
+                  expectedSessionGeneration: generation,
+                  expectedPolicyRevision: revision
+                })
+              ),
               context,
               true
             )
@@ -614,7 +757,7 @@ export class OfflineSyncCoordinator {
             discoveryFailures += 1
             result.failed += 1
             for (const page of policy.pages) {
-              if (page.siteId !== this.options.siteId || !page.tag || !page.tagNames.includes(tag)) continue
+              if (page.siteId !== policySiteId || !page.tag || !page.tagNames.includes(tag)) continue
               const retainedKey = selectorKey({ siteId: page.siteId, pageId: page.pageId, locale: page.locale })
               if (bodyKeys.has(retainedKey) && !retainedBodyKeys.has(retainedKey)) {
                 retainedBodyKeys.add(retainedKey)
@@ -629,34 +772,48 @@ export class OfflineSyncCoordinator {
       if (fence) return this.fencedResult(policy, result)
       this.assertCurrent(context, true)
       currentPolicy = await this.awaitCurrent(
-        this.options.storage.readOfflinePolicy({ expectedSessionGeneration: generation, expectedPolicyRevision: revision }),
+        this.options.storage.readOfflinePolicy(storageOptions({ expectedSessionGeneration: generation, expectedPolicyRevision: revision })),
         context,
         true
       )
 
       if (retryDenied) {
-        const selectedPageIds = new Set(currentPolicy.pages.filter(page =>
-          page.siteId === this.options.siteId && !page.excluded && (page.manual || page.tag)
-        ).map(page => page.pageId))
-        const retryPageIds = new Set(currentPolicy.pages.filter(page =>
-          page.siteId === this.options.siteId && selectedPageIds.has(page.pageId) && page.availability === 'ineligible'
-        ).map(page => page.pageId))
+        const selectedPageIds = new Set(
+          currentPolicy.pages.filter(page => page.siteId === policySiteId && !page.excluded && (page.manual || page.tag)).map(page => page.pageId)
+        )
+        const retryPageIds = new Set(
+          currentPolicy.pages
+            .filter(page => page.siteId === policySiteId && selectedPageIds.has(page.pageId) && page.availability === 'ineligible')
+            .map(page => page.pageId)
+        )
         // A denial covers every locale of a page. Clear the old observation, not
         // the user's selection/exclusion flags; only the server can admit a body.
         for (const page of currentPolicy.pages) {
-          if (page.siteId !== this.options.siteId || !retryPageIds.has(page.pageId) || page.availability !== 'ineligible') continue
-          await this.awaitCurrent(this.options.storage.setPageAvailability({ siteId: page.siteId, pageId: page.pageId, locale: page.locale }, 'unknown', {
-            expectedSessionGeneration: generation, expectedPolicyRevision: revision
-          }), context, true)
+          if (page.siteId !== policySiteId || !retryPageIds.has(page.pageId) || page.availability !== 'ineligible') continue
+          await this.awaitCurrent(
+            this.options.storage.setPageAvailability(
+              { siteId: page.siteId, pageId: page.pageId, locale: page.locale },
+              'unknown',
+              storageOptions({
+                expectedSessionGeneration: generation,
+                expectedPolicyRevision: revision
+              })
+            ),
+            context,
+            true
+          )
         }
-        if (retryPageIds.size > 0) currentPolicy = await this.awaitCurrent(
-          this.options.storage.readOfflinePolicy({ expectedSessionGeneration: generation, expectedPolicyRevision: revision }), context, true
-        )
+        if (retryPageIds.size > 0)
+          currentPolicy = await this.awaitCurrent(
+            this.options.storage.readOfflinePolicy(storageOptions({ expectedSessionGeneration: generation, expectedPolicyRevision: revision })),
+            context,
+            true
+          )
       }
 
       const candidates = new Map<string, Candidate>()
       for (const page of currentPolicy.pages) {
-        if (page.siteId !== this.options.siteId) continue
+        if (page.siteId !== policySiteId) continue
         const automaticEligible = currentPolicy.state.automaticSavingEnabled && page.automatic
         if (page.excluded || (!page.manual && !page.tag && !automaticEligible)) continue
         mergeCandidate(candidates, pageCandidate(page))
@@ -680,11 +837,11 @@ export class OfflineSyncCoordinator {
       const automaticSelectionKeys = new Set<string>(
         currentPolicy.state.automaticSavingEnabled
           ? currentPolicy.pages
-              .filter(page => page.siteId === this.options.siteId && page.automatic && isCandidateEligible(page, this.options.siteId))
+              .filter(page => page.siteId === policySiteId && page.automatic && isCandidateEligible(page, policySiteId))
               .map(page => pageKey({ siteId: page.siteId, pageId: page.pageId, locale: page.locale }))
           : []
       )
-      const ranked = currentPolicy.state.automaticSavingEnabled ? rankedAutomaticPages(currentPolicy, this.options.siteId, attemptAt) : []
+      const ranked = currentPolicy.state.automaticSavingEnabled ? rankedAutomaticPages(currentPolicy, policySiteId, attemptAt) : []
       let nextAutomaticIndex = 0
       let nextQueueIndex = 0
       result.pending = queue.length
@@ -711,9 +868,9 @@ export class OfflineSyncCoordinator {
         for (const selectedKey of automaticSelectionKeys) {
           const selectedPage = [...pagesByKey.values()].find(
             page =>
-              page.siteId === this.options.siteId &&
+              page.siteId === policySiteId &&
               page.automatic &&
-              isCandidateEligible(page, this.options.siteId) &&
+              isCandidateEligible(page, policySiteId) &&
               pageKey({ siteId: page.siteId, pageId: page.pageId, locale: page.locale }) === selectedKey
           )
           if (selectedPage) selected.push({ siteId: selectedPage.siteId, pageId: selectedPage.pageId, locale: selectedPage.locale })
@@ -723,7 +880,7 @@ export class OfflineSyncCoordinator {
       const refreshAutomaticSelectionKeys = (): void => {
         automaticSelectionKeys.clear()
         for (const page of pagesByKey.values()) {
-          if (!page.automatic || !isCandidateEligible(page, this.options.siteId)) continue
+          if (!page.automatic || !isCandidateEligible(page, policySiteId)) continue
           automaticSelectionKeys.add(pageKey({ siteId: page.siteId, pageId: page.pageId, locale: page.locale }))
         }
       }
@@ -733,7 +890,7 @@ export class OfflineSyncCoordinator {
           const immutableKey = pageKey({ siteId: candidate.siteId, pageId: candidate.pageId, locale: candidate.locale })
           if (automaticSelectionKeys.has(immutableKey) || attemptedPageKeys.has(immutableKey)) continue
           const current = pagesByKey.get(candidate.key)
-          if (!current || !isCandidateEligible(current, this.options.siteId)) continue
+          if (!current || !isCandidateEligible(current, policySiteId)) continue
           return current
         }
         return null
@@ -770,26 +927,98 @@ export class OfflineSyncCoordinator {
           attemptedKeys.add(key)
           attemptedPageKeys.add(pageKey(candidate.selector))
           result.attempted += 1
+          let privateHandle: OfflineReadingHandleV1 | null = currentPrivateHandle(this.options, this.options.siteId)
+          let privateAttempted = false
           try {
             this.assertCurrent(context, true)
-            const snapshot = await this.awaitCurrent(fetchOfflinePageSnapshot(cancellableFetch, candidate.selector.pageId), context, true)
-            this.assertCurrent(context, true)
-            if (snapshot.pageId !== candidate.selector.pageId || snapshot.locale !== candidate.selector.locale)
+            let snapshot: OfflinePageSnapshotV1 | null = null
+            let privateResponse: OfflinePrivateSnapshotResponseV1 | null = null
+            try {
+              snapshot = await this.awaitCurrent(fetchOfflinePageSnapshot(cancellableFetch, candidate.selector.pageId), context, true)
+            } catch (publicError) {
+              const publicStatus = errorStatus(publicError)
+              privateHandle = currentPrivateHandle(this.options, this.options.siteId)
+              if (!privateHandle || publicStatus === undefined || !PUBLIC_INELIGIBILITY_STATUSES.has(publicStatus)) throw publicError
+              privateAttempted = true
+              privateResponse = await this.awaitCurrent(fetchOfflinePrivatePageSnapshot(cancellableFetch, candidate.selector.pageId), context, true)
+              if (
+                privateResponse.context.canonicalOrigin !== privateHandle.context.canonicalOrigin ||
+                privateResponse.context.siteId !== privateHandle.context.siteId ||
+                privateResponse.context.accountId !== privateHandle.context.accountId ||
+                privateResponse.context.authVersion !== privateHandle.context.authVersion
+              )
+                throw new OfflineSyncPrivateAuthorityError()
+              snapshot = privateResponse.snapshot
+            }
+            if (!snapshot || snapshot.pageId !== candidate.selector.pageId || snapshot.locale !== candidate.selector.locale)
               throw new Error('Offline snapshot identity did not match the discovered page.')
+            this.assertCurrent(context, true)
             await commit(async () => {
               const currentPage = pagesByKey.get(key)
               if (!currentPage || currentPage.excluded || currentPage.availability === 'ineligible') return
               this.assertCurrent(context, true)
-              await this.awaitCurrent(
-                this.options.storage.putSnapshot(this.options.siteId, snapshot, {
-                  expectedSessionGeneration: generation,
-                  expectedPolicyRevision: revision,
-                  provenance: provenanceFor(currentPage, candidate),
-                  signal: context.signal
-                }),
-                context,
-                true
-              )
+              if (!privateHandle) {
+                await this.awaitCurrent(
+                  this.options.storage.putSnapshot(this.options.siteId, snapshot!, {
+                    expectedSessionGeneration: generation,
+                    expectedPolicyRevision: revision,
+                    provenance: provenanceFor(currentPage, candidate),
+                    signal: context.signal
+                  }),
+                  context,
+                  true
+                )
+              } else {
+                const pairId = generateOfflineReadingPairId()
+                const currentRevision = await this.awaitCurrent(
+                  this.options.storage.privateSnapshotRevision(privateHandle, candidate.selector, {
+                    expectedSessionGeneration: generation
+                  }),
+                  context,
+                  true
+                )
+                const nextRecordRevision = currentRevision === null ? 1 : currentRevision + 1
+                const selectors: OfflinePrivateRecordSelectors = {
+                  pageId: snapshot!.pageId,
+                  locale: snapshot!.locale,
+                  recordRevision: nextRecordRevision,
+                  pairId
+                }
+                const privatePayload: OfflinePrivateSnapshotResponseV1 = privateResponse ?? {
+                  schemaVersion: 1,
+                  audience: 'private',
+                  context: {
+                    canonicalOrigin: privateHandle.context.canonicalOrigin,
+                    siteId: privateHandle.context.siteId,
+                    accountId: privateHandle.context.accountId,
+                    authVersion: privateHandle.context.authVersion
+                  },
+                  snapshot: snapshot!
+                }
+                const body = await encryptOfflinePrivateRecord(privateHandle, 'snapshot', privatePayload, selectors)
+                const search = await encryptOfflinePrivateRecord(
+                  privateHandle,
+                  'search',
+                  privateSearchDocument(privateHandle.context.siteId, snapshot!),
+                  selectors
+                )
+                const nextPolicyRevision = revision + 1
+                const nextPage = { ...currentPage, availability: 'available' as const }
+                const nextState = { ...currentPolicy.state, policyRevision: nextPolicyRevision }
+                await this.awaitCurrent(
+                  this.options.storage.putPrivateSnapshotRecords(body, search, {
+                    expectedSessionGeneration: generation,
+                    expectedRecordRevision: currentRevision,
+                    expectedPolicyRevision: revision,
+                    readingHandle: privateHandle,
+                    policyPage: nextPage,
+                    policyState: nextState
+                  }),
+                  context,
+                  true
+                )
+                revision = nextPolicyRevision
+              }
               this.assertCurrent(context, true)
               bodyKeys.add(key)
               result.saved += 1
@@ -801,6 +1030,12 @@ export class OfflineSyncCoordinator {
               return
             }
             if (this.isFatalStorageError(error)) throw error
+            const status = errorStatus(error)
+            if (privateAttempted && privateHandle && (status === 401 || error instanceof OfflineSyncPrivateAuthorityError)) {
+              await this.options.storage.retireReadingVault(storageOptions({ expectedSessionGeneration: generation }))
+              this.retire()
+              return
+            }
             const authoritative = isAuthoritativeIneligibility(error)
             if (authoritative) {
               await commit(async () => {
@@ -808,14 +1043,24 @@ export class OfflineSyncCoordinator {
                 if (!currentPage || currentPage.excluded) return
                 const removedBodies = bodyForCandidate(candidate)
                 this.assertCurrent(context, true)
-                const ineligible = await this.awaitCurrent(
-                  this.options.storage.markPageIneligible(candidate.selector, {
-                    expectedSessionGeneration: generation,
-                    expectedPolicyRevision: revision
-                  }),
-                  context,
-                  true
-                )
+                const ineligible =
+                  privateAttempted && privateHandle
+                    ? await this.awaitCurrent(
+                        this.options.storage.markPrivatePageIneligible(privateHandle, candidate.selector, {
+                          expectedSessionGeneration: generation,
+                          expectedPolicyRevision: revision
+                        }),
+                        context,
+                        true
+                      )
+                    : await this.awaitCurrent(
+                        this.options.storage.markPageIneligible(candidate.selector, {
+                          expectedSessionGeneration: generation,
+                          expectedPolicyRevision: revision
+                        }),
+                        context,
+                        true
+                      )
                 revision += 1
                 pagesByKey.set(key, ineligible)
                 for (const bodyKey of [...bodyKeys]) {
@@ -832,16 +1077,19 @@ export class OfflineSyncCoordinator {
                   const selectedSelectors = selectedAutomaticSelectors()
                   selectedSelectors.push({ siteId: replacement.siteId, pageId: replacement.pageId, locale: replacement.locale })
                   const selectedPages = await this.awaitCurrent(
-                    this.options.storage.updateAutomaticSelections(selectedSelectors, {
-                      expectedSessionGeneration: generation,
-                      expectedPolicyRevision: revision,
-                      siteId: this.options.siteId,
-                      asOf: attemptAt
-                    }),
+                    this.options.storage.updateAutomaticSelections(
+                      selectedSelectors,
+                      storageOptions({
+                        expectedSessionGeneration: generation,
+                        expectedPolicyRevision: revision,
+                        siteId: policySiteId,
+                        asOf: attemptAt
+                      })
+                    ),
                     context,
                     true
                   )
-                  for (const selectedPage of selectedPages) if (selectedPage.siteId === this.options.siteId) pagesByKey.set(selectedPage.key, selectedPage)
+                  for (const selectedPage of selectedPages) if (selectedPage.siteId === policySiteId) pagesByKey.set(selectedPage.key, selectedPage)
                   refreshAutomaticSelectionKeys()
                   const replacementPage = selectedPages.find(selectedPage => selectedPage.key === replacement.key)
                   if (!replacementPage || !replacementPage.automatic) continue
@@ -856,13 +1104,18 @@ export class OfflineSyncCoordinator {
                 result.failed += 1
                 this.assertCurrent(context, true)
                 await this.awaitCurrent(
-                  this.options.storage.setPageAvailability(candidate.selector, 'transient-failure', {
-                    expectedSessionGeneration: generation,
-                    expectedPolicyRevision: revision
-                  }),
+                  this.options.storage.setPageAvailability(
+                    candidate.selector,
+                    'transient-failure',
+                    storageOptions({
+                      expectedSessionGeneration: generation,
+                      expectedPolicyRevision: revision
+                    })
+                  ),
                   context,
                   true
                 )
+                if (privateStorageHandle) revision += 1
               })
               if (firstError === null) firstError = errorMessage(error)
             }
@@ -875,24 +1128,26 @@ export class OfflineSyncCoordinator {
       this.assertCurrent(context, true)
       const corpusBeforePrune = bodyKeys
       await this.awaitCurrent(
-        this.options.storage.pruneUnselectedPageBodies({
-          expectedSessionGeneration: generation,
-          expectedPolicyRevision: revision
-        }),
+        this.options.storage.pruneUnselectedPageBodies(
+          storageOptions({
+            expectedSessionGeneration: generation,
+            expectedPolicyRevision: revision
+          })
+        ),
         context,
         true
       )
       const corpusAfterPrune = bodyKeysFromCorpus(
         await this.awaitCurrent(
-          this.options.storage.readSnapshotCorpus({ expectedSessionGeneration: generation, expectedPolicyRevision: revision }),
+          this.options.storage.readSnapshotCorpus(storageOptions({ expectedSessionGeneration: generation, expectedPolicyRevision: revision })),
           context,
           true
         )
       )
-      result.removed += countRemovedBodyKeys(corpusBeforePrune, corpusAfterPrune, this.options.siteId)
+      result.removed += countRemovedBodyKeys(corpusBeforePrune, corpusAfterPrune, policySiteId)
       bodyKeys = corpusAfterPrune
-      const deniedSelections = [...pagesByKey.values()].filter(page =>
-        page.siteId === this.options.siteId && !page.excluded && (page.manual || page.tag) && page.availability === 'ineligible'
+      const deniedSelections = [...pagesByKey.values()].filter(
+        page => page.siteId === policySiteId && !page.excluded && (page.manual || page.tag) && page.availability === 'ineligible'
       ).length
       if (deniedSelections > 0) {
         result.failed += deniedSelections
@@ -929,7 +1184,7 @@ export class OfflineSyncCoordinator {
       removedCount: result.removed
     })
     const persisted = await this.persistDiagnostics(nextDiagnostics, generation, revision, context, true)
-    return this.makeResult(status, generation, revision, persisted, result, resultError)
+    return this.makeResult(status, generation, revision, persisted.diagnostics, result, resultError)
   }
 
   private async persistDiagnostics(
@@ -938,13 +1193,14 @@ export class OfflineSyncCoordinator {
     revision: number,
     context: OperationContext,
     requireContext: boolean
-  ): Promise<OfflineSyncDiagnostics> {
+  ): Promise<{ readonly diagnostics: OfflineSyncDiagnostics; readonly policyRevision: number }> {
     this.assertCurrent(context, requireContext)
     try {
       const persisted = await this.awaitCurrent(
         this.options.storage.updateSyncDiagnostics(diagnostics, {
           expectedSessionGeneration: generation,
-          expectedPolicyRevision: revision
+          expectedPolicyRevision: revision,
+          ...(currentPrivateHandle(this.options, this.options.siteId) ? { readingHandle: currentPrivateHandle(this.options, this.options.siteId)! } : {})
         }),
         context,
         requireContext
@@ -959,12 +1215,12 @@ export class OfflineSyncCoordinator {
         if (error instanceof OfflineSyncInvalidatedError) throw error
         // Observers cannot undo a committed diagnostic.
       }
-      return persisted.syncDiagnostics
+      return { diagnostics: persisted.syncDiagnostics, policyRevision: persisted.policyRevision }
     } catch (error) {
       if (error instanceof OfflineSyncInvalidatedError) throw error
       if (this.isFence(error)) {
         this.rerunRequested = true
-        return diagnostics
+        return { diagnostics, policyRevision: revision }
       }
       throw error
     }
@@ -978,9 +1234,21 @@ export class OfflineSyncCoordinator {
   ): Promise<OfflineSyncPassResult> {
     result.failed = Math.max(1, result.failed)
     const message = errorMessage(error)
-    const generation = policy?.sessionGeneration ?? 0
-    const revision = policy?.state.policyRevision ?? 0
-    const base = policy?.state.syncDiagnostics ?? emptyDiagnostics('error', message)
+    let currentPolicy = policy
+    const handle = currentPrivateHandle(this.options, this.options.siteId)
+    if (handle) {
+      try {
+        currentPolicy = await this.options.storage.readOfflinePolicy({
+          readingHandle: handle,
+          expectedSessionGeneration: policy?.sessionGeneration
+        })
+      } catch {
+        // Preserve the initiating policy when a failed store cannot be reread.
+      }
+    }
+    const generation = currentPolicy?.sessionGeneration ?? 0
+    const revision = currentPolicy?.state.policyRevision ?? 0
+    const base = currentPolicy?.state.syncDiagnostics ?? emptyDiagnostics('error', message)
     const diagnostics = diagnostic(base, {
       status: 'error',
       lastAttemptAt: this.safeCurrentTime(),

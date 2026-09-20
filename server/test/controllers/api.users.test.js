@@ -125,6 +125,7 @@ describe('controllers/api users endpoints', () => {
               isSystem: false,
               isActive: true,
               isVerified: true,
+              authVersion: 7,
               createdAt: '2026-01-01T00:00:00.000Z',
               updatedAt: '2026-01-02T00:00:00.000Z',
               lastLoginAt: '2026-01-03T00:00:00.000Z',
@@ -910,12 +911,12 @@ describe('controllers/api users endpoints', () => {
 
     expect(res.json).toHaveBeenCalledWith({ authenticated: false, user: null })
   })
-
-  it('returns a safe authenticated user summary', async () => {
+  it('returns a safe authenticated user summary with the database-current auth version', async () => {
     const { whoami } = await loadHandler()
     const req = {
       user: {
         id: 42,
+        authVersion: 1,
         name: 'Alice',
         email: 'alice@example.com',
         providerKey: 'local',
@@ -941,7 +942,8 @@ describe('controllers/api users endpoints', () => {
         dateFormat: 'YYYY-MM-DD',
         timeFormat: '24h',
         appearance: 'dark',
-        permissions: []
+        permissions: [],
+        authVersion: 7
       }
     })
   })

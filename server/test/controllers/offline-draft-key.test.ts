@@ -1,13 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { createOriginMiddleware } from '../../middlewares/origin.ts'
 import type * as OfflineDraftKeys from '../../helpers/offline-draft-keys.ts'
-import { OFFLINE_KEY_VERSION, type DraftKeyContext } from '../../../shared/offline.ts'
+import {
+  OFFLINE_KEY_VERSION,
+  OFFLINE_READING_CONTEXT_SCHEMA_VERSION,
+  OFFLINE_READING_KEY_BYTES,
+  OFFLINE_READING_KEY_VERSION,
+  type DraftKeyContext,
+  type OfflineReadingContextV1
+} from '../../../shared/offline.ts'
 
-const actualOfflineDraftKeys = { ...await vi.importFresh<OfflineDraftKeys>('../../helpers/offline-draft-keys.ts', import.meta.url) }
+const actualOfflineDraftKeys = { ...(await vi.importFresh<OfflineDraftKeys>('../../helpers/offline-draft-keys.ts', import.meta.url)) }
 
 const router = { post: vi.fn() }
 const resolveOfflineDraftKeyContext = vi.fn()
 const createOfflineDraftKeyFrame = vi.fn()
+const resolveOfflineReadingContext = vi.fn()
+const createOfflineReadingKeyFrame = vi.fn()
 const runtime = {
   INSTANCE_ID: 'process-fixture',
   config: {
@@ -18,18 +27,24 @@ const runtime = {
 }
 
 vi.mockModule('express', import.meta.url, () => ({ default: { Router: () => router } }))
-vi.mockModule('../../controllers/_types.ts', import.meta.url, () => ({ getTransportRuntime: () => runtime }))
+vi.mockModule('../../controllers/_types.ts', import.meta.url, () => ({
+  errorStatus: (error: unknown) => (typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number' ? error.status : 0),
+  getTransportRuntime: () => runtime
+}))
 vi.mockModule('../../helpers/offline-draft-keys.ts', import.meta.url, () => ({
   createOfflineDraftKeyFrame,
-  resolveOfflineDraftKeyContext
+  createOfflineReadingKeyFrame,
+  resolveOfflineDraftKeyContext,
+  resolveOfflineReadingContext
 }))
-
 await vi.importFresh('../../controllers/api/offline.ts', import.meta.url)
 
-const route = router.post.mock.calls.find(([path]) => path === '/draft-key')!
-const privacyHeaders = route[1]!
-const sameOriginFetchSite = route[2]!
-const issueDraftKey = route[3]!
+const draftKeyRoute = router.post.mock.calls.find(([path]) => path === '/draft-key')!
+const readingKeyRoute = router.post.mock.calls.find(([path]) => path === '/reading-key')!
+const privacyHeaders = draftKeyRoute[1]!
+const sameOriginFetchSite = draftKeyRoute[2]!
+const issueDraftKey = draftKeyRoute[3]!
+const issueReadingKey = readingKeyRoute[3]!
 
 const response = () => {
   const res = {
@@ -47,6 +62,8 @@ const response = () => {
 beforeEach(() => {
   resolveOfflineDraftKeyContext.mockReset()
   createOfflineDraftKeyFrame.mockReset()
+  resolveOfflineReadingContext.mockReset()
+  createOfflineReadingKeyFrame.mockReset()
 })
 
 const vectorContext: DraftKeyContext = {
@@ -55,6 +72,15 @@ const vectorContext: DraftKeyContext = {
   accountId: 7,
   authVersion: 3,
   keyVersion: OFFLINE_KEY_VERSION
+}
+const readingContext: OfflineReadingContextV1 = {
+  schemaVersion: OFFLINE_READING_CONTEXT_SCHEMA_VERSION,
+  canonicalOrigin: 'https://wiki.example.test',
+  siteId: 'site-fixture',
+  accountId: 7,
+  authVersion: 3,
+  keyVersion: OFFLINE_READING_KEY_VERSION,
+  keyId: 'AQEBAQEBAQEBAQEBAQEBAQ'
 }
 const vectorKey = Uint8Array.from({ length: 32 }, (_, index) => index + 1)
 
@@ -152,12 +178,45 @@ describe('offline draft-key transport boundary', () => {
 
     expect(first.siteId).toBe('https://wiki.example.test')
     expect(second.siteId).toBe(first.siteId)
-    const configured = await actualOfflineDraftKeys.resolveOfflineDraftKeyContext(request as never, {
-      ...baseRuntime,
-      INSTANCE_ID: 'process-c',
-      config: { ...baseRuntime.config, offlineDraftSiteId: 'installed-site' }
-    } as never)
+    const configured = await actualOfflineDraftKeys.resolveOfflineDraftKeyContext(
+      request as never,
+      {
+        ...baseRuntime,
+        INSTANCE_ID: 'process-c',
+        config: { ...baseRuntime.config, offlineDraftSiteId: 'installed-site' }
+      } as never
+    )
     expect(configured.siteId).toBe('installed-site')
+  })
+  it('resolves a current human reading context with a fresh random key id', async () => {
+    const users = {
+      query: () => ({
+        findById: async () => ({ id: 7, isActive: true, authVersion: 3 })
+      })
+    }
+    const request = {
+      authContext: {
+        kind: 'user',
+        userId: 7,
+        principal: { id: 7, authVersion: 3 }
+      }
+    }
+    const context = await actualOfflineDraftKeys.resolveOfflineReadingContext(
+      request as never,
+      {
+        config: { host: 'https://wiki.example.test' },
+        models: { users }
+      } as never
+    )
+
+    expect(context).toMatchObject({
+      schemaVersion: OFFLINE_READING_CONTEXT_SCHEMA_VERSION,
+      canonicalOrigin: 'https://wiki.example.test',
+      accountId: 7,
+      authVersion: 3,
+      keyVersion: OFFLINE_READING_KEY_VERSION
+    })
+    expect(context.keyId).toMatch(/^[A-Za-z0-9_-]{22}$/u)
   })
 
   it('admits same-origin fetches without trusting claimed account or origin fields and sends the exact binary frame', async () => {
@@ -211,5 +270,52 @@ describe('offline draft-key transport boundary', () => {
     expect(res.status).not.toHaveBeenCalled()
     expect(res.send).not.toHaveBeenCalled()
     expect(createOfflineDraftKeyFrame).not.toHaveBeenCalled()
+  })
+  it('accepts only a current human reading-key context and sends the exact binary frame', async () => {
+    const frame = Buffer.from('TSORK1\u0000fixture-reading-key-frame', 'utf8')
+    resolveOfflineReadingContext.mockResolvedValue(readingContext)
+    createOfflineReadingKeyFrame.mockReturnValue(frame)
+    const req = { authContext: { kind: 'user', userId: 7, principal: { id: 7, authVersion: 3 } } }
+    const res = response()
+    const next = vi.fn()
+
+    privacyHeaders(req, res, vi.fn())
+    await issueReadingKey(req, res, next)
+
+    expect(resolveOfflineReadingContext).toHaveBeenCalledWith(req, runtime)
+    expect(createOfflineReadingKeyFrame).toHaveBeenCalledWith(readingContext)
+    expect(res.set).toHaveBeenCalledWith('Content-Type', 'application/octet-stream')
+    expect(res.status).toHaveBeenCalledWith(200)
+    expect(res.send).toHaveBeenCalledWith(frame)
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['service', { authContext: { kind: 'apiKey', apiKeyId: 4, groupId: 8 } }],
+    ['anonymous', { authContext: { kind: 'guest' } }]
+  ])('denies %s reading-key requests without exposing authentication details', async (_label: string, req: unknown) => {
+    const failure = Object.assign(new Error('current human user required'), { status: 401, code: 'AUTHENTICATION_REQUIRED' })
+    resolveOfflineReadingContext.mockRejectedValueOnce(failure)
+    const res = response()
+
+    privacyHeaders(req, res, vi.fn())
+    await issueReadingKey(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(401)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Authentication required.' })
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain('current human')
+  })
+
+  it('issues bounded random nonpersistent TSORK1 frames and rejects wrong key lengths', () => {
+    const first = actualOfflineDraftKeys.createOfflineReadingKeyFrame(readingContext)
+    const second = actualOfflineDraftKeys.createOfflineReadingKeyFrame(readingContext)
+
+    expect(first.subarray(0, 6).toString('ascii')).toBe('TSORK1')
+    expect(first.byteLength).toBeLessThanOrEqual(actualOfflineDraftKeys.OFFLINE_READING_KEY_FRAME_MAX_BYTES)
+    expect(second.byteLength).toBe(first.byteLength)
+    expect(first).not.toEqual(second)
+    expect(() => actualOfflineDraftKeys.encodeOfflineReadingKeyFrame(readingContext, new Uint8Array(OFFLINE_READING_KEY_BYTES - 1))).toThrow(
+      `Offline reading key must contain exactly ${OFFLINE_READING_KEY_BYTES} bytes`
+    )
   })
 })
