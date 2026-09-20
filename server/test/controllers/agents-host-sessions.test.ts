@@ -1,33 +1,34 @@
-import sharp from 'sharp'
-import assetHelper from '../../helpers/asset.ts'
-import { createAgentMediaTestDatabase } from '../agents/media-database.ts'
-import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
-import { storeAgentMedia } from '../../agents/media.ts'
 import { createHash, randomUUID } from 'node:crypto'
-import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import cookieParser from 'cookie-parser'
 import express from 'express'
 import session from 'express-session'
 import createKnex, { type Knex } from 'knex'
+import sharp from 'sharp'
 import { z } from 'zod'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
-import createAgentsHostController from '../../controllers/agents-host.ts'
-import {
-  AgentProductRuntime,
-  type AgentEngine,
-  type AgentEngineRequest,
-  type AgentEngineResult,
-  type AgentProductRuntimeOptions
-} from '../../agents/runtime.ts'
+import { AgentRunCoordinator, admitAgentRun, requestAgentRunCancellation, terminalizeAgentRun, transitionAgentRun } from '../../agents/coordinator.ts'
+import { selectAgentGoalTokenBudget } from '../../agents/goals.ts'
+import { storeAgentMedia } from '../../agents/media.ts'
 import { AgentExecutionFailure, classifyAgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import { AgentProviderAttemptError } from '../../agents/providers/factory.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
-import { selectAgentGoalTokenBudget } from '../../agents/goals.ts'
-import { AgentRunCoordinator, admitAgentRun, requestAgentRunCancellation, terminalizeAgentRun, transitionAgentRun } from '../../agents/coordinator.ts'
+import {
+  type AgentEngine,
+  type AgentEngineRequest,
+  type AgentEngineResult,
+  AgentProductRuntime,
+  type AgentProductRuntimeOptions
+} from '../../agents/runtime.ts'
+import createAgentsHostController from '../../controllers/agents-host.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 import { up as addAgentGoals } from '../../db/migrations/2.5.157.ts'
 import { up as addAgentGoalBudgetTiers } from '../../db/migrations/tsepistle-000042-agent-goal-budget-tiers.ts'
+import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
+import assetHelper from '../../helpers/asset.ts'
+import { createAgentMediaTestDatabase } from '../agents/media-database.ts'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+
 const preflightAgentRequest = async (request: Parameters<AgentEngine['preflight']>[0]) => {
   const inputExposureTokens = 1
   const outputExposureTokens = Math.max(1, Math.min(request.limits?.maxOutputTokens ?? 1, request.limits?.maxTokens ?? Number.MAX_SAFE_INTEGER))
@@ -328,7 +329,13 @@ describe('ordinary-origin agent session API', () => {
   let agentsEnabled = true
   let mediaAuthorized = true
   let mediaUploadEnabled = false
-  let visibleMediaCapabilities: { attachments: boolean; imageGeneration: boolean; transcription: boolean; videoGeneration?: boolean; musicGeneration?: boolean } = { attachments: true, imageGeneration: true, transcription: true }
+  let visibleMediaCapabilities: {
+    attachments: boolean
+    imageGeneration: boolean
+    transcription: boolean
+    videoGeneration?: boolean
+    musicGeneration?: boolean
+  } = { attachments: true, imageGeneration: true, transcription: true }
   let assetAccessAllowed = true
   const assetAccessPaths: string[] = []
   let revokeMediaInEngine: 'permission' | 'profile' | 'grant' | null = null
@@ -724,9 +731,7 @@ describe('ordinary-origin agent session API', () => {
         get providerRegistry() {
           if (!mediaUploadEnabled) return undefined
           return {
-            listVisible: async () => [
-              { id: '00000000-0000-4000-8000-000000000070', isGlobalDefault: true, media: visibleMediaCapabilities }
-            ],
+            listVisible: async () => [{ id: '00000000-0000-4000-8000-000000000070', isGlobalDefault: true, media: visibleMediaCapabilities }],
             issueResolutionToken: async () => 'test-profile-resolution'
           } as unknown as NonNullable<Parameters<typeof createAgentsHostController>[0]['providerRegistry']>
         },
@@ -825,33 +830,57 @@ describe('ordinary-origin agent session API', () => {
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
     const payload = Buffer.from('%PDF-1.7\nexisting Wiki document')
-    await db.schema.createTable('assets', table => { table.integer('id').primary(); table.string('filename'); table.integer('folderId'); table.string('hash'); table.string('ext'); table.integer('fileSize') })
-    await db.schema.createTable('assetFolders', table => { table.integer('id').primary(); table.integer('parentId'); table.string('slug') })
-    await db.schema.createTable('assetData', table => { table.integer('id').primary(); table.binary('data') })
+    await db.schema.createTable('assets', table => {
+      table.integer('id').primary()
+      table.string('filename')
+      table.integer('folderId')
+      table.string('hash')
+      table.string('ext')
+      table.integer('fileSize')
+    })
+    await db.schema.createTable('assetFolders', table => {
+      table.integer('id').primary()
+      table.integer('parentId')
+      table.string('slug')
+    })
+    await db.schema.createTable('assetData', table => {
+      table.integer('id').primary()
+      table.binary('data')
+    })
     await db('assetFolders').insert({ id: 12, parentId: null, slug: 'documents' })
-    await db('assets').insert({ id: 34, filename: 'brief.pdf', folderId: 12, hash: assetHelper.generateHash('documents/brief.pdf'), ext: 'pdf', fileSize: payload.length })
+    await db('assets').insert({
+      id: 34,
+      filename: 'brief.pdf',
+      folderId: 12,
+      hash: assetHelper.generateHash('documents/brief.pdf'),
+      ext: 'pdf',
+      fileSize: payload.length
+    })
     await db('assetData').insert({ id: 34, data: payload })
     return { sessionId, payload }
   }
-  const importWikiAsset = (sessionId: string, token = csrf) => fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/media/assets`, {
-    method: 'POST',
-    headers: { cookie, origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': token, 'content-type': 'application/json' },
-    body: JSON.stringify({ assetId: 34 })
-  })
+  const importWikiAsset = (sessionId: string, token = csrf) =>
+    fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/media/assets`, {
+      method: 'POST',
+      headers: { cookie, origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': token, 'content-type': 'application/json' },
+      body: JSON.stringify({ assetId: 34 })
+    })
   it('imports an authorized Wiki asset as a private immutable chat attachment with authoritative folder access checks', async () => {
     const { sessionId, payload } = await seedAttachmentAsset()
     administrator = true
     vi.stubGlobal('WIKI', { auth: { checkAccess: () => true } })
     const response = await importWikiAsset(sessionId)
     expect(response.status).toBe(201)
-    const result = await response.json() as { media: { id: string; mimeType: string; filename: string; byteLength: number } }
+    const result = (await response.json()) as { media: { id: string; mimeType: string; filename: string; byteLength: number } }
     expect(result.media).toMatchObject({ mimeType: 'application/pdf', filename: 'brief.pdf', byteLength: payload.length })
     expect(assetAccessPaths).toEqual(['documents/brief.pdf', 'documents/brief.pdf'])
     const stored = await db('agentMedia').where({ id: result.media.id }).first()
     expect(stored).toMatchObject({ ownerId: 7, sessionId, messageId: null, kind: 'attachment' })
     expect(Buffer.from(stored.payload)).toEqual(payload)
     expect(result.media).not.toHaveProperty('payload')
-    await db('assetData').where({ id: 34 }).update({ data: Buffer.from('replacement asset') })
+    await db('assetData')
+      .where({ id: 34 })
+      .update({ data: Buffer.from('replacement asset') })
     expect(Buffer.from((await db('agentMedia').where({ id: result.media.id }).first('payload')).payload)).toEqual(payload)
   })
   it('denies asset import before reading bytes when the caller lacks access to the authoritative asset path', async () => {
@@ -967,36 +996,59 @@ describe('ordinary-origin agent session API', () => {
     const profile = await db('agentProviderProfileVersions').where({ id: versionId }).first('adapterConfig')
     const config = JSON.parse(profile.adapterConfig)
     config.media.musicGeneration = { model: 'lyria-3.5', costMicrosPerSong: 80000, usagePolicy: 'reported-or-estimated' }
-    await db('agentProviderProfileVersions').where({ id: versionId }).update({ adapterConfig: JSON.stringify(config) })
+    await db('agentProviderProfileVersions')
+      .where({ id: versionId })
+      .update({ adapterConfig: JSON.stringify(config) })
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
     const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: Buffer.from('%PDF-1.7'), mimeType: 'application/pdf', filename: 'brief.pdf' })
-    const input = { clientRequestId: randomUUID(), expectedSessionVersion: 1, profileResolutionToken: 'test', content: 'Answer using these options.', generationTools: ['music', 'image'], attachmentIds: [media.id] }
+    const input = {
+      clientRequestId: randomUUID(),
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'test',
+      content: 'Answer using these options.',
+      generationTools: ['music', 'image'],
+      attachmentIds: [media.id]
+    }
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
     const post = (body: unknown) => fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/messages`, { method: 'POST', headers, body: JSON.stringify(body) })
     const response = await post(input)
     expect(response.status).toBe(202)
-    const admission = await response.json() as { run: { id: string } }
+    const admission = (await response.json()) as { run: { id: string } }
     const queued = await db('agentEvents').where({ runId: admission.run.id, type: 'run.queued' }).first('data', 'dataSha256')
     expect(JSON.parse(queued.data).generationTools).toEqual(['image', 'music'])
     expect(queued.dataSha256).toBe(createHash('sha256').update(queued.data).digest('hex'))
     expect((await db('agentMedia').where({ id: media.id }).first('runId')).runId).toBe(admission.run.id)
-    expect((await (await post({ ...input, generationTools: ['image', 'music'] })).json()) as unknown).toMatchObject({ replayed: true, run: { id: admission.run.id } })
+    expect((await (await post({ ...input, generationTools: ['image', 'music'] })).json()) as unknown).toMatchObject({
+      replayed: true,
+      run: { id: admission.run.id }
+    })
     expect((await post({ ...input, generationTools: [] })).status).toBe(409)
     expect((await post({ ...input, generationTools: undefined })).status).toBe(409)
     await runtime.runOnce()
     expect(engineGenerationTools).toEqual(['image', 'music'])
     expect(engineMessages.flatMap(message => message.attachments ?? []).map(file => file.id)).toContain(media.id)
   })
-  it.each([{ generationTools: undefined }, { generationTools: [] }] as const)('preserves omitted versus explicitly disabled generation preferences (%j)', async ({ generationTools }) => {
-    const sessionId = randomUUID()
-    await insertAccountingSession(sessionId)
-    const admitted = await runtime.submit({ ownerId: 7, sessionId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), content: 'Normal conversation', ...(generationTools === undefined ? {} : { generationTools }) })
-    const queued = JSON.parse((await db('agentEvents').where({ runId: admitted.run.id, type: 'run.queued' }).first('data')).data)
-    expect(Object.hasOwn(queued, 'generationTools')).toBe(generationTools !== undefined)
-    await runtime.runOnce()
-    expect(engineGenerationTools).toEqual(generationTools)
-  })
+  it.each([{ generationTools: undefined }, { generationTools: [] }] as const)(
+    'preserves omitted versus explicitly disabled generation preferences (%j)',
+    async ({ generationTools }) => {
+      const sessionId = randomUUID()
+      await insertAccountingSession(sessionId)
+      const admitted = await runtime.submit({
+        ownerId: 7,
+        sessionId,
+        expectedSessionVersion: 1,
+        profileResolutionToken: 'test',
+        clientRequestId: randomUUID(),
+        content: 'Normal conversation',
+        ...(generationTools === undefined ? {} : { generationTools })
+      })
+      const queued = JSON.parse((await db('agentEvents').where({ runId: admitted.run.id, type: 'run.queued' }).first('data')).data)
+      expect(Object.hasOwn(queued, 'generationTools')).toBe(generationTools !== undefined)
+      await runtime.runOnce()
+      expect(engineGenerationTools).toEqual(generationTools)
+    }
+  )
   it('rejects duplicate, unknown and unavailable generation tools without admitting a run', async () => {
     await enableTestMedia()
     const sessionId = randomUUID()
@@ -1004,27 +1056,53 @@ describe('ordinary-origin agent session API', () => {
     const input = { ownerId: 7, sessionId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), content: 'Normal chat' }
     await expect(runtime.submit({ ...input, generationTools: ['image', 'image'] })).rejects.toMatchObject({ code: 'INVALID_GENERATION_TOOLS' })
     await expect(runtime.submit({ ...input, generationTools: ['video'] })).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
-    const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/messages`, { method: 'POST', headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }, body: JSON.stringify({ ...input, ownerId: undefined, sessionId: undefined, generationTools: ['unknown'] }) })
+    const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf },
+      body: JSON.stringify({ ...input, ownerId: undefined, sessionId: undefined, generationTools: ['unknown'] })
+    })
     expect(response.status).toBe(400)
     expect(await db('agentRuns').where({ sessionId }).first()).toBeUndefined()
   })
-  it.each([{ generationTools: null }, { generationTools: ['image', 'image'] }, { generationTools: ['invalid'] }, { generationTools: 'image' }])('fails closed before engine execution for malformed stored generation preferences (%j)', async ({ generationTools }) => {
-    const sessionId = randomUUID()
-    await insertAccountingSession(sessionId)
-    const admitted = await runtime.submit({ ownerId: 7, sessionId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), content: 'Normal chat', generationTools: [] })
-    const row = await db('agentEvents').where({ runId: admitted.run.id, type: 'run.queued' }).first('data')
-    const data = JSON.stringify({ ...JSON.parse(row.data), generationTools })
-    await db('agentEvents').where({ runId: admitted.run.id, type: 'run.queued' }).update({ data, dataSha256: createHash('sha256').update(data).digest('hex') })
-    await runtime.runOnce()
-    expect(engineRunId).toBeUndefined()
-    expect((await db('agentRuns').where({ id: admitted.run.id }).first('status')).status).toBe('failed')
-  })
+  it.each([{ generationTools: null }, { generationTools: ['image', 'image'] }, { generationTools: ['invalid'] }, { generationTools: 'image' }])(
+    'fails closed before engine execution for malformed stored generation preferences (%j)',
+    async ({ generationTools }) => {
+      const sessionId = randomUUID()
+      await insertAccountingSession(sessionId)
+      const admitted = await runtime.submit({
+        ownerId: 7,
+        sessionId,
+        expectedSessionVersion: 1,
+        profileResolutionToken: 'test',
+        clientRequestId: randomUUID(),
+        content: 'Normal chat',
+        generationTools: []
+      })
+      const row = await db('agentEvents').where({ runId: admitted.run.id, type: 'run.queued' }).first('data')
+      const data = JSON.stringify({ ...JSON.parse(row.data), generationTools })
+      await db('agentEvents')
+        .where({ runId: admitted.run.id, type: 'run.queued' })
+        .update({ data, dataSha256: createHash('sha256').update(data).digest('hex') })
+      await runtime.runOnce()
+      expect(engineRunId).toBeUndefined()
+      expect((await db('agentRuns').where({ id: admitted.run.id }).first('status')).status).toBe('failed')
+    }
+  )
   it('preserves selected generation tools when a goal continues', async () => {
     await enableTestMedia()
     const sessionId = randomUUID()
     const goalId = randomUUID()
     await insertAccountingSession(sessionId)
-    const admitted = await runtime.createGoal({ ownerId: 7, sessionId, goalId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), objective: 'Complete the illustration.', generationTools: ['image'] })
+    const admitted = await runtime.createGoal({
+      ownerId: 7,
+      sessionId,
+      goalId,
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'test',
+      clientRequestId: randomUUID(),
+      objective: 'Complete the illustration.',
+      generationTools: ['image']
+    })
     await settleAccountingRun(admitted.run.id, 1, 1, 'consumed', 2)
     const expectedVersion = await pauseAccountingGoal(goalId)
     const continued = await runtime.resumeGoal({ ownerId: 7, goalId, expectedVersion, runId: randomUUID(), clientRequestId: randomUUID() })
@@ -1040,11 +1118,24 @@ describe('ordinary-origin agent session API', () => {
     const row = await db('agentProviderProfileVersions').where({ id: versionId }).first('adapterConfig')
     const config = JSON.parse(row.adapterConfig)
     config.media.attachments = false
-    await db('agentProviderProfileVersions').where({ id: versionId }).update({ adapterConfig: JSON.stringify(config) })
+    await db('agentProviderProfileVersions')
+      .where({ id: versionId })
+      .update({ adapterConfig: JSON.stringify(config) })
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
     const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: Buffer.from('%PDF-1.7'), mimeType: 'application/pdf', filename: 'brief.pdf' })
-    await expect(runtime.submit({ ownerId: 7, sessionId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), content: 'Use this file.', generationTools: ['image'], attachmentIds: [media.id] })).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
+    await expect(
+      runtime.submit({
+        ownerId: 7,
+        sessionId,
+        expectedSessionVersion: 1,
+        profileResolutionToken: 'test',
+        clientRequestId: randomUUID(),
+        content: 'Use this file.',
+        generationTools: ['image'],
+        attachmentIds: [media.id]
+      })
+    ).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
   })
   it('binds attachments atomically and includes attachment IDs and image mode in replay identity', async () => {
     await enableTestMedia()
@@ -1080,7 +1171,15 @@ describe('ordinary-origin agent session API', () => {
     const payload = Buffer.alloc(41 * 1024 * 1024, 32)
     payload.write('%PDF-1.7')
     const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload, mimeType: 'application/pdf', filename: 'large.pdf' })
-    await runtime.submit({ ownerId: 7, sessionId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), content: 'Read the complete PDF.', attachmentIds: [media.id] })
+    await runtime.submit({
+      ownerId: 7,
+      sessionId,
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'test',
+      clientRequestId: randomUUID(),
+      content: 'Read the complete PDF.',
+      attachmentIds: [media.id]
+    })
     const queries: string[] = []
     const record = (query: { sql: string }) => queries.push(query.sql)
     db.on('query', record)
@@ -1097,16 +1196,43 @@ describe('ordinary-origin agent session API', () => {
     await enableTestMedia()
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
-    const input = { ownerId: 7, sessionId, expectedSessionVersion: 1, profileResolutionToken: 'test', clientRequestId: randomUUID(), content: 'Create a short scene.', responseMode: mode }
+    const input = {
+      ownerId: 7,
+      sessionId,
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'test',
+      clientRequestId: randomUUID(),
+      content: 'Create a short scene.',
+      responseMode: mode
+    }
     await expect(runtime.submit(input)).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
-    const config = { timeoutMs: 30000, maxRetries: 0, media: {
-      attachments: true,
-      videoGeneration: { model: 'gemini-omni-1.1-flash', pricingRevision: 'USD|1|1', textOutputMicrosPerMillionTokens: 1, usagePolicy: 'reported-or-estimated' },
-      musicGeneration: { model: 'lyria-3.5', costMicrosPerSong: 1, usagePolicy: 'reported-or-estimated' }
-    } }
-    await db('agentProviderProfileVersions').where({ id: '00000000-0000-4000-8000-000000000070' }).update({ adapterConfig: JSON.stringify(config) })
-    visibleMediaCapabilities = { attachments: false, imageGeneration: false, transcription: false, videoGeneration: mode === 'video', musicGeneration: mode === 'music' }
-    const image = await sharp({ create: { width: 1, height: 1, channels: 3, background: 'red' } }).png().toBuffer()
+    const config = {
+      timeoutMs: 30000,
+      maxRetries: 0,
+      media: {
+        attachments: true,
+        videoGeneration: {
+          model: 'gemini-omni-1.1-flash',
+          pricingRevision: 'USD|1|1',
+          textOutputMicrosPerMillionTokens: 1,
+          usagePolicy: 'reported-or-estimated'
+        },
+        musicGeneration: { model: 'lyria-3.5', costMicrosPerSong: 1, usagePolicy: 'reported-or-estimated' }
+      }
+    }
+    await db('agentProviderProfileVersions')
+      .where({ id: '00000000-0000-4000-8000-000000000070' })
+      .update({ adapterConfig: JSON.stringify(config) })
+    visibleMediaCapabilities = {
+      attachments: false,
+      imageGeneration: false,
+      transcription: false,
+      videoGeneration: mode === 'video',
+      musicGeneration: mode === 'music'
+    }
+    const image = await sharp({ create: { width: 1, height: 1, channels: 3, background: 'red' } })
+      .png()
+      .toBuffer()
     const imageForm = new FormData()
     imageForm.append('file', new Blob([image], { type: 'image/png' }), 'reference.png')
     const imageUpload = await uploadForm(sessionId, imageForm)
@@ -1124,9 +1250,16 @@ describe('ordinary-origin agent session API', () => {
     const admitted = await runtime.submit(generationInput)
     expect(JSON.parse(admitted.run.mediaRequest!)).toEqual({ kind: mode })
     expect((await runtime.submit(generationInput)).replayed).toBe(true)
-    await expect(runtime.submit({ ...generationInput, responseMode: mode === 'video' ? 'music' : 'video' })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
+    await expect(runtime.submit({ ...generationInput, responseMode: mode === 'video' ? 'music' : 'video' })).rejects.toMatchObject({
+      code: 'RUN_IDEMPOTENCY_MISMATCH'
+    })
     const payload = Buffer.from(mode === 'video' ? '\0\0\0\x18ftypisom0000000000000000' : 'ID3generated music bytes')
-    generatedOutput = { payload, mimeType: mode === 'video' ? 'video/mp4' : 'audio/mpeg', filename: mode === 'video' ? 'clip.mp4' : 'song.mp3', kind: mode === 'video' ? 'generated-video' : 'generated-audio' }
+    generatedOutput = {
+      payload,
+      mimeType: mode === 'video' ? 'video/mp4' : 'audio/mpeg',
+      filename: mode === 'video' ? 'clip.mp4' : 'song.mp3',
+      kind: mode === 'video' ? 'generated-video' : 'generated-audio'
+    }
     await runtime.runOnce()
     const stored = await db('agentMedia').where({ runId: admitted.run.id, kind: generatedOutput.kind }).first('id', 'byteLength')
     expect(stored?.byteLength).toBe(payload.length)
@@ -1134,7 +1267,9 @@ describe('ordinary-origin agent session API', () => {
     expect(await threadResponse.json()).toMatchObject({ messages: [{}, { media: [{ id: stored.id, kind: generatedOutput.kind }] }] })
     generatedOutput = null
     // Past playback remains available when administrators disable generation.
-    await db('agentProviderProfileVersions').where({ id: '00000000-0000-4000-8000-000000000070' }).update({ adapterConfig: JSON.stringify({ timeoutMs: 30000, maxRetries: 0, media: { attachments: true } }) })
+    await db('agentProviderProfileVersions')
+      .where({ id: '00000000-0000-4000-8000-000000000070' })
+      .update({ adapterConfig: JSON.stringify({ timeoutMs: 30000, maxRetries: 0, media: { attachments: true } }) })
     const mediaUrl = `${baseUrl}/_api/agents/media/${stored.id}/content`
     const queries: string[] = []
     const record = (query: { sql: string }) => queries.push(query.sql)
@@ -1150,7 +1285,10 @@ describe('ordinary-origin agent session API', () => {
     db.off('query', record)
     expect(queries.some(sql => /select \*/.test(sql) && sql.includes('agentMedia'))).toBe(false)
     expect(queries.filter(sql => /substr(?:ing)?\(/.test(sql))).toHaveLength(1)
-    for (const [header, expected] of [['bytes=-3', payload.subarray(-3)], ['bytes=5-', payload.subarray(5)]] as const) {
+    for (const [header, expected] of [
+      ['bytes=-3', payload.subarray(-3)],
+      ['bytes=5-', payload.subarray(5)]
+    ] as const) {
       const response = await fetch(mediaUrl, { headers: { cookie, range: header } })
       expect(response.status).toBe(206)
       expect(Buffer.from(await response.arrayBuffer())).toEqual(expected)
@@ -1167,7 +1305,13 @@ describe('ordinary-origin agent session API', () => {
     expect(head.headers.get('content-length')).toBe(String(payload.length))
     expect((await head.arrayBuffer()).byteLength).toBe(0)
     const sessionVersion = Number((await db('agentSessions').where({ id: sessionId }).first('version')).version)
-    await runtime.submit({ ...input, expectedSessionVersion: sessionVersion, clientRequestId: randomUUID(), responseMode: 'text', content: 'Continue the chat.' })
+    await runtime.submit({
+      ...input,
+      expectedSessionVersion: sessionVersion,
+      clientRequestId: randomUUID(),
+      responseMode: 'text',
+      content: 'Continue the chat.'
+    })
     await runtime.runOnce()
     expect(engineMessages.flatMap(message => message.attachments ?? []).some(file => file.id === stored.id)).toBe(false)
     ownerId = 8
@@ -2490,6 +2634,304 @@ describe('ordinary-origin agent session API', () => {
     expect(await db('agentGoals').where({ id: goalId }).first('status', 'consumedTokens')).toEqual({ status: 'completed', consumedTokens: 6 })
     await recreatedRuntime.shutdown()
   })
+  it('classifies a goal first dispatched after a queued pause and preserves its resumed-run accounting across renewal', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000371'
+    const goalId = '00000000-0000-4000-8000-000000000372'
+    await insertAccountingSession(sessionId)
+    let classifierCalls = 0
+    let engineCalls = 0
+    const engineRunIds: string[] = []
+    const utilityModel: NonNullable<AgentProductRuntimeOptions['utilityModel']> = {
+      async classifyGoalBudget(request) {
+        classifierCalls += 1
+        if (!request.dispatchBudget) throw new Error('classifier dispatch budget is missing')
+        const reservation = await request.dispatchBudget.reserve({ tokens: 85, costMicros: 9 })
+        await request.dispatchBudget.reconcile(reservation, { inputTokens: 40, outputTokens: 45, totalTokens: 85, costMicros: 9 })
+        return { tier: 'standard', selection: 'utility', inputTokens: 40, outputTokens: 45, totalTokens: 85, costMicros: 9 }
+      },
+      async generateConversationTitle() {
+        return { title: 'Resumed classifier checkpoint', source: 'fallback', inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
+      }
+    }
+    const firstRuntime = makeAccountingRuntime(
+      {
+        preflight: preflightAgentRequest,
+        async execute(request) {
+          engineCalls += 1
+          engineRunIds.push(request.run.id)
+          throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'stop after resumed-run classification', 409)
+        }
+      },
+      200,
+      utilityModel
+    )
+    const admitted = await firstRuntime.createGoal({
+      goalId,
+      ownerId: 7,
+      sessionId,
+      profileResolutionToken: 'accounting-test',
+      clientRequestId: '00000000-0000-4000-8000-000000000373',
+      expectedSessionVersion: 1,
+      objective: 'Classify only when the paused queued goal is resumed.'
+    })
+    const paused = await firstRuntime.pauseGoal({ goalId, ownerId: 7, expectedVersion: admitted.goal.version })
+    expect(paused).toMatchObject({ status: 'paused', version: 2, budgetSelection: 'pending', budgetCycle: 0 })
+    expect(await db('agentRuns').where({ id: admitted.run.id }).first('status', 'totalTokens')).toEqual({ status: 'cancelled', totalTokens: 0 })
+    expect(await db('agentQuotaReservations').where({ runId: admitted.run.id }).first('status', 'consumedTokens')).toEqual({
+      status: 'released',
+      consumedTokens: 0
+    })
+    expect(await db('agentQuotaDaily').where({ ownerId: 7 }).first('reservedTokens', 'consumedTokens')).toEqual({
+      reservedTokens: 0,
+      consumedTokens: 0
+    })
+    expect(classifierCalls).toBe(0)
+    expect(engineCalls).toBe(0)
+
+    const resumed = await firstRuntime.resumeGoal({
+      goalId,
+      ownerId: 7,
+      expectedVersion: paused.version,
+      runId: '00000000-0000-4000-8000-000000000374',
+      clientRequestId: '00000000-0000-4000-8000-000000000375'
+    })
+    expect(resumed).toMatchObject({ goal: { status: 'active', version: 3 }, run: { goalContinuation: 1 }, replayed: false })
+    await expect(firstRuntime.runOnce()).resolves.toBe(true)
+    expect(classifierCalls).toBe(1)
+    expect(engineCalls).toBe(1)
+    expect(await db('agentRuns').where({ id: resumed.run?.id }).first('status', 'errorCode', 'totalTokens')).toEqual({
+      status: 'failed',
+      errorCode: 'AGENT_TOKEN_BUDGET_LIMITED',
+      totalTokens: 85
+    })
+    const limited = await db('agentGoals')
+      .where({ id: goalId })
+      .first('version', 'status', 'budgetSelection', 'tokenTier', 'tokenAllowance', 'budgetCycle', 'consumedTokens')
+    expect(limited).toEqual({
+      version: 4,
+      status: 'budget_limited',
+      budgetSelection: 'utility',
+      tokenTier: 'standard',
+      tokenAllowance: 100,
+      budgetCycle: 1,
+      consumedTokens: 85
+    })
+    await firstRuntime.shutdown()
+
+    const recreatedRuntime = makeAccountingRuntime(
+      {
+        preflight: preflightAgentRequest,
+        async execute(request, sink) {
+          engineCalls += 1
+          engineRunIds.push(request.run.id)
+          await sink.text('completed after renewal')
+          return { inputTokens: 2, outputTokens: 3, totalTokens: 5, costMicros: 1 }
+        }
+      },
+      200,
+      utilityModel
+    )
+    const renewed = await recreatedRuntime.renewGoalBudget({
+      goalId,
+      ownerId: 7,
+      expectedVersion: Number(limited?.version),
+      runId: '00000000-0000-4000-8000-000000000376',
+      clientRequestId: '00000000-0000-4000-8000-000000000377',
+      confirmed: true
+    })
+    expect(renewed).toMatchObject({
+      goal: { status: 'active', maxTokens: 200, consumedTokens: 85, tokenAllowance: 100, budgetCycle: 2 },
+      run: { goalContinuation: 2 },
+      replayed: false
+    })
+    await expect(recreatedRuntime.runOnce()).resolves.toBe(true)
+    expect(classifierCalls).toBe(1)
+    expect(engineCalls).toBe(2)
+
+    expect(engineRunIds).toEqual([resumed.run?.id, renewed.run?.id])
+    const checkpoints = await db('agentEvents as events')
+      .join('agentRuns as runs', 'runs.id', 'events.runId')
+      .where({ 'runs.goalId': goalId, 'events.type': 'usage.updated' })
+      .whereRaw("json_extract(events.data, '$.utility.purpose') = ?", ['goal_budget'])
+      .select('events.runId', 'events.data', 'events.dataSha256')
+    expect(checkpoints).toHaveLength(1)
+    expect(checkpoints[0]?.runId).toBe(resumed.run?.id)
+    expect(checkpoints[0]?.dataSha256).toBe(createHash('sha256').update(String(checkpoints[0]?.data)).digest('hex'))
+    expect(JSON.parse(String(checkpoints[0]?.data))).toMatchObject({
+      runId: resumed.run?.id,
+      utility: {
+        purpose: 'goal_budget',
+        inputTokens: 40,
+        outputTokens: 45,
+        totalTokens: 85,
+        costMicros: 9,
+        goalBudget: {
+          goalId,
+          tier: 'standard',
+          selection: 'utility',
+          budgetCycle: 1,
+          tokenAllowance: 100,
+          inputTokens: 40,
+          outputTokens: 45,
+          totalTokens: 85,
+          costMicros: 9
+        }
+      }
+    })
+    expect(await db('agentRuns').where({ goalId }).orderBy('goalContinuation').select('goalContinuation', 'totalTokens')).toEqual([
+      { goalContinuation: 0, totalTokens: 0 },
+      { goalContinuation: 1, totalTokens: 85 },
+      { goalContinuation: 2, totalTokens: 5 }
+    ])
+    expect(await db('agentGoals').where({ id: goalId }).first('status', 'consumedTokens', 'budgetSelection', 'tokenAllowance', 'budgetCycle')).toEqual({
+      status: 'completed',
+      consumedTokens: 90,
+      budgetSelection: 'utility',
+      tokenAllowance: 100,
+      budgetCycle: 2
+    })
+    expect(await db('agentQuotaDaily').where({ ownerId: 7 }).first('reservedTokens', 'consumedTokens', 'reservedCostMicros', 'consumedCostMicros')).toEqual({
+      reservedTokens: 0,
+      consumedTokens: 90,
+      reservedCostMicros: 0,
+      consumedCostMicros: 10
+    })
+    await recreatedRuntime.shutdown()
+  })
+  it.each(['stale hash', 'embedded run mismatch', 'second checkpoint'] as const)(
+    'refuses renewal for a resumed-run classifier checkpoint with %s',
+    async corruption => {
+      const sessionId = randomUUID()
+      const goalId = randomUUID()
+      await insertAccountingSession(sessionId)
+      let classifierCalls = 0
+      let engineCalls = 0
+      const accountingRuntime = makeAccountingRuntime(
+        {
+          preflight: preflightAgentRequest,
+          async execute() {
+            engineCalls += 1
+            throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'prepare a renewable resumed run', 409)
+          }
+        },
+        200,
+        {
+          async classifyGoalBudget(request) {
+            classifierCalls += 1
+            if (!request.dispatchBudget) throw new Error('classifier dispatch budget is missing')
+            const reservation = await request.dispatchBudget.reserve({ tokens: 85, costMicros: 9 })
+            await request.dispatchBudget.reconcile(reservation, { inputTokens: 40, outputTokens: 45, totalTokens: 85, costMicros: 9 })
+            return { tier: 'standard', selection: 'utility', inputTokens: 40, outputTokens: 45, totalTokens: 85, costMicros: 9 }
+          },
+          async generateConversationTitle() {
+            return { title: 'Checkpoint integrity', source: 'fallback', inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
+          }
+        }
+      )
+      const admitted = await accountingRuntime.createGoal({
+        goalId,
+        ownerId: 7,
+        sessionId,
+        profileResolutionToken: 'accounting-test',
+        clientRequestId: randomUUID(),
+        expectedSessionVersion: 1,
+        objective: 'Reject corrupted resumed-run classifier lineage.'
+      })
+      const paused = await accountingRuntime.pauseGoal({ goalId, ownerId: 7, expectedVersion: admitted.goal.version })
+      const resumed = await accountingRuntime.resumeGoal({
+        goalId,
+        ownerId: 7,
+        expectedVersion: paused.version,
+        runId: randomUUID(),
+        clientRequestId: randomUUID()
+      })
+      await expect(accountingRuntime.runOnce()).resolves.toBe(true)
+      expect(classifierCalls).toBe(1)
+      expect(engineCalls).toBe(1)
+      const checkpoint = await db('agentEvents').where({ runId: resumed.run?.id, type: 'usage.updated' }).first('id', 'data', 'dataSha256')
+      if (!checkpoint) throw new Error('resumed-run classifier checkpoint is missing')
+
+      if (corruption === 'stale hash') {
+        await db('agentEvents')
+          .where({ id: checkpoint.id })
+          .update({ data: `${checkpoint.data} ` })
+      } else if (corruption === 'embedded run mismatch') {
+        const data = JSON.stringify({ ...JSON.parse(String(checkpoint.data)), runId: admitted.run.id })
+        await db('agentEvents')
+          .where({ id: checkpoint.id })
+          .update({ data, dataSha256: createHash('sha256').update(data).digest('hex') })
+      } else {
+        const initial = await db('agentRuns').where({ id: admitted.run.id }).first('eventSequence', 'attempts')
+        if (!initial) throw new Error('initial cancelled run is missing')
+        const data = JSON.stringify({ ...JSON.parse(String(checkpoint.data)), runId: admitted.run.id })
+        const sequence = Number(initial.eventSequence) + 1
+        await db('agentEvents').insert({
+          id: randomUUID(),
+          runId: admitted.run.id,
+          sequence,
+          type: 'usage.updated',
+          attempt: Number(initial.attempts),
+          schemaVersion: 1,
+          dataSha256: createHash('sha256').update(data).digest('hex'),
+          data,
+          createdAt: new Date()
+        })
+        await db('agentRuns')
+          .where({ id: admitted.run.id, eventSequence: Number(initial.eventSequence) })
+          .update({ eventSequence: sequence })
+      }
+
+      const runCount = Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)
+      const renewal = accountingRuntime.renewGoalBudget({
+        goalId,
+        ownerId: 7,
+        expectedVersion: 4,
+        runId: randomUUID(),
+        clientRequestId: randomUUID(),
+        confirmed: true
+      })
+      if (corruption === 'stale hash') {
+        await expect(renewal).rejects.toMatchObject({ code: 'AGENT_EVENT_CORRUPT' })
+      } else {
+        await expect(renewal).resolves.toMatchObject({
+          goal: {
+            status: 'blocked',
+            version: 5,
+            budgetSelection: 'utility',
+            tokenAllowance: 100,
+            budgetCycle: 1,
+            errorCode: 'GOAL_ACCOUNTING_UNAVAILABLE'
+          },
+          run: null,
+          replayed: false
+        })
+      }
+      expect(classifierCalls).toBe(1)
+      expect(engineCalls).toBe(1)
+      expect(Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(runCount)
+      expect(await db('agentGoals').where({ id: goalId }).first('status', 'version', 'maxTokens', 'budgetSelection', 'tokenAllowance', 'budgetCycle')).toEqual({
+        status: corruption === 'stale hash' ? 'budget_limited' : 'blocked',
+        version: corruption === 'stale hash' ? 4 : 5,
+        maxTokens: 100,
+        budgetSelection: 'utility',
+        tokenAllowance: 100,
+        budgetCycle: 1
+      })
+      expect(
+        Number(
+          (await db('agentQuotaReservations').whereIn('runId', [admitted.run.id, resumed.run!.id]).count<{ count: number | string }[]>({ count: '*' }).first())
+            ?.count ?? 0
+        )
+      ).toBe(2)
+      expect(await db('agentRuns').where({ id: admitted.run.id }).first('status', 'totalTokens')).toEqual({ status: 'cancelled', totalTokens: 0 })
+      expect(await db('agentRuns').where({ id: resumed.run?.id }).first('status', 'totalTokens')).toEqual({ status: 'failed', totalTokens: 85 })
+      expect(await db('agentQuotaDaily').where({ ownerId: 7 }).first('reservedTokens', 'consumedTokens')).toEqual({
+        reservedTokens: 0,
+        consumedTokens: 85
+      })
+      await accountingRuntime.shutdown()
+    }
+  )
   it('renews one token budget cycle and replays it without a second grant', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000361'
     const goalId = '00000000-0000-4000-8000-000000000362'

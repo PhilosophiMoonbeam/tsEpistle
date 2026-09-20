@@ -4,41 +4,41 @@ import { readFile } from 'node:fs/promises'
 import type { AxChatRequest, AxChatResponse, AxChatResponseResult, AxFunctionJSONSchema } from '@ax-llm/ax'
 import {
   AGENT_TOOL_NAMES,
-  TOOL_DISCOVERY_CONTROL_NAME,
   type AgentActionName,
   type AgentCurrentPageHint,
   type AgentEventData,
-  type AgentTokenUsage
+  type AgentTokenUsage,
+  TOOL_DISCOVERY_CONTROL_NAME
 } from '../../../shared/agents/contracts.ts'
-import { withInvokingAgentRunLease, type AgentApprovalContinuationCheckpoint } from '../coordinator.ts'
-import type { AgentEngine, AgentEngineRequest, AgentEngineResult, AgentEngineSink, AgentDispatchBudgetReservation } from '../runtime.ts'
-import { ACTION_CATALOG } from '../actions/catalog.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
-import { AgentRepositoryError } from '../repository.ts'
-import { prepareAgentPdf } from '../pdf-preparation.ts'
+import { ACTION_CATALOG } from '../actions/catalog.ts'
+import { type AgentApprovalContinuationCheckpoint, withInvokingAgentRunLease } from '../coordinator.ts'
 import { loadAgentMediaPayload } from '../media.ts'
+import { prepareAgentPdf } from '../pdf-preparation.ts'
+import { AgentRepositoryError } from '../repository.ts'
+import type { AgentDispatchBudgetReservation, AgentEngine, AgentEngineRequest, AgentEngineResult, AgentEngineSink } from '../runtime.ts'
 import { WIKI_AGENT_SOUL } from '../soul.ts'
+import { AgentExecutionFailure, type AgentExecutionFailureStage, classifyAgentExecutionFailure } from './execution-failure.ts'
 import {
+  AgentProviderFactory,
+  type AgentProviderResourceLimits,
+  type AgentProviderService,
   agentProviderCostMicros,
   attachAgentProviderResourceLimits,
   deriveAgentProviderResourceLimits,
-  encodeAgentProviderContinuation,
-  type AgentProviderResourceLimits,
-  type AgentProviderService,
-  AgentProviderFactory
+  encodeAgentProviderContinuation
 } from './factory.ts'
-import { assertAgentTokenUsage, readAgentProviderUsage } from './usage.ts'
 import { agentVideoCostMicros } from './media-pricing.ts'
-import { createToolDiscovery, resolveToolDiscoveryCall, type ToolDiscoveryController, type ToolDiscoveryTurn } from './tool-discovery.ts'
-import { classifyAgentExecutionFailure, AgentExecutionFailure, type AgentExecutionFailureStage } from './execution-failure.ts'
 import {
+  type PromptToolCategoryIndex,
+  type PromptToolDefinition,
   parsePromptToolCall,
   promptToolInstructions,
-  promptToolResultMessage,
-  type PromptToolCategoryIndex,
-  type PromptToolDefinition
+  promptToolResultMessage
 } from './prompt-tools.ts'
 import type { AxActionSession } from './session-harness.ts'
+import { createToolDiscovery, resolveToolDiscoveryCall, type ToolDiscoveryController, type ToolDiscoveryTurn } from './tool-discovery.ts'
+import { assertAgentTokenUsage, readAgentProviderUsage } from './usage.ts'
 
 const MAX_TURNS = 12
 const MAX_TOOL_CALLS = 32
@@ -817,6 +817,7 @@ interface TurnResult extends AgentTokenUsage {
   readonly calls: readonly ToolCall[]
   readonly thoughtBlocks: NonNullable<AxChatResponseResult['thoughtBlocks']>
   readonly costMicros: number
+  readonly finishReason?: AxChatResponseResult['finishReason']
 }
 const MAX_DIAGNOSTIC_TURN_CHARACTERS = 32_000
 const modelTurnData = (turn: number, result: TurnResult, outcome: 'tool_calls' | 'answer_accepted' | 'answer_rejected'): AgentEventData => ({
@@ -829,7 +830,8 @@ const modelTurnData = (turn: number, result: TurnResult, outcome: 'tool_calls' |
   costMicros: result.costMicros,
   content: result.content.slice(0, MAX_DIAGNOSTIC_TURN_CHARACTERS),
   contentTruncated: result.content.length > MAX_DIAGNOSTIC_TURN_CHARACTERS,
-  actionCallIds: result.calls.map(call => call.id)
+  actionCallIds: result.calls.map(call => call.id),
+  ...(result.finishReason === undefined ? {} : { finishReason: result.finishReason })
 })
 
 export interface AgentActionSessionProvider {
@@ -858,6 +860,7 @@ interface ProviderResponseAccumulator {
   resultRecords: number
   argumentFragments: number
   thoughtFragments: number
+  finishReason?: AxChatResponseResult['finishReason']
 }
 
 const invalidProviderResponse = (message: string): never => {
@@ -1617,6 +1620,7 @@ const recentExcerptDisclosure = (groups: readonly RecentEvidenceCoverage[]): str
   groups.some(group => group.truncatedEvidenceIds.length > 0)
     ? '\n\nRecent page content is shown as bounded opening excerpts; one or more excerpts were truncated.'
     : ''
+const OUTPUT_LIMIT_DISCLOSURE = 'The provider reached its output limit before completing this response. Submit an explicit follow-up to continue.'
 const providerResultChatMessage = (mode: 'native' | 'prompt', callId: string, providerName: string, result: unknown, isError = false): ChatPromptMessage =>
   mode === 'native'
     ? { role: 'function', functionId: callId, result: JSON.stringify(result), ...(isError ? { isError: true } : {}) }
@@ -1754,8 +1758,11 @@ export class AxAgentEngine implements AgentEngine {
     if (!(kind === 'video' ? videoPricing : kind === 'music' ? musicPricing : pricing) || (kind !== 'transcription' && !sink.media))
       throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'This media capability is unavailable', 403)
     const costFor = (usage: AgentTokenUsage, breakdown?: { text: number; video: number }): number =>
-      kind === 'music' ? musicPricing!.costMicrosPerSong : kind === 'video' ? agentVideoCostMicros(videoPricing!, usage, breakdown)
-        : agentProviderCostMicros(pricing!, usage.inputTokens, usage.outputTokens, usage.totalTokens)
+      kind === 'music'
+        ? musicPricing!.costMicrosPerSong
+        : kind === 'video'
+          ? agentVideoCostMicros(videoPricing!, usage, breakdown)
+          : agentProviderCostMicros(pricing!, usage.inputTokens, usage.outputTokens, usage.totalTokens)
     const latest = request.messages.filter(message => message.role === 'user').at(-1)
     const candidates = request.messages.flatMap(message => message.attachments ?? [])
     const files =
@@ -1775,7 +1782,11 @@ export class AxAgentEngine implements AgentEngine {
     const beforeDispatch = async (exposure: AgentTokenUsage): Promise<void> => {
       request.signal.throwIfAborted()
       if (request.limits?.maxTokens !== undefined && exposure.totalTokens > request.limits.maxTokens)
-        throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'The remaining token budget cannot admit this generation. Increase the Agent token allowance or start a new conversation.', 409)
+        throw new AgentRepositoryError(
+          'AGENT_TOKEN_BUDGET_LIMITED',
+          'The remaining token budget cannot admit this generation. Increase the Agent token allowance or start a new conversation.',
+          409
+        )
       const costMicros = costFor(exposure)
       const admitted = await request.dispatchBudget!.reserve({ tokens: exposure.totalTokens, costMicros })
       if (
@@ -1797,8 +1808,16 @@ export class AxAgentEngine implements AgentEngine {
     }
     const beforeUpload = () => this.#authorizeMedia(request)
     const inputs = []
-    for (const file of files) inputs.push({ bytes: await loadAgentMediaPayload(file, request.signal), mimeType: file.mimeType, displayName: file.filename.slice(0, 128) })
-    let result: { text: string; usage: AgentTokenUsage; images?: { bytes: Buffer; mimeType: string }[]; files?: { bytes: Buffer; mimeType: string }[]; usageSource?: 'reported' | 'estimated'; outputTokensByModality?: { text: number; video: number } }
+    for (const file of files)
+      inputs.push({ bytes: await loadAgentMediaPayload(file, request.signal), mimeType: file.mimeType, displayName: file.filename.slice(0, 128) })
+    let result: {
+      text: string
+      usage: AgentTokenUsage
+      images?: { bytes: Buffer; mimeType: string }[]
+      files?: { bytes: Buffer; mimeType: string }[]
+      usageSource?: 'reported' | 'estimated'
+      outputTokensByModality?: { text: number; video: number }
+    }
     try {
       request.signal.throwIfAborted()
       result =
@@ -1809,7 +1828,9 @@ export class AxAgentEngine implements AgentEngine {
             )
           : kind === 'video' || kind === 'music'
             ? await provider.transport[kind === 'video' ? 'generateVideo' : 'generateMusic'](
-                { prompt: prompt ?? latest?.content ?? '', images: inputs, beforeUpload, beforeDispatch, onDispatch }, request.signal)
+                { prompt: prompt ?? latest?.content ?? '', images: inputs, beforeUpload, beforeDispatch, onDispatch },
+                request.signal
+              )
             : await provider.transport.transcribe({ ...inputs[0]!, beforeUpload, beforeDispatch, onDispatch }, request.signal)
     } catch (error) {
       if (!dispatched && reservation) await request.dispatchBudget.release(reservation)
@@ -1832,15 +1853,27 @@ export class AxAgentEngine implements AgentEngine {
       )
     }
     if (result.files) {
-      await sink.media!(result.files.map(file => ({ payload: file.bytes, mimeType: file.mimeType,
-        kind: kind === 'video' ? 'generated-video' as const : 'generated-audio' as const,
-        filename: kind === 'video' ? 'generated-video.mp4' : 'generated-music.mp3' })))
+      await sink.media!(
+        result.files.map(file => ({
+          payload: file.bytes,
+          mimeType: file.mimeType,
+          kind: kind === 'video' ? ('generated-video' as const) : ('generated-audio' as const),
+          filename: kind === 'video' ? 'generated-video.mp4' : 'generated-music.mp3'
+        }))
+      )
     }
-    if (kind === 'video' || kind === 'music') await sink.event('media.usage', {
-      kind, usageSource: result.usageSource ?? 'reported', priceBasis: kind === 'music' ? 'song' : 'tokens',
-      ...(result.usageSource === 'estimated' ? { estimateRevision: 'google-media-quota-v1' } : {})
-    })
-    if (prompt === undefined) await presentAcceptedContent(result.text || (kind === 'video' ? 'Your video is ready.' : kind === 'music' ? 'Your music is ready.' : 'Your image is ready.'), sink)
+    if (kind === 'video' || kind === 'music')
+      await sink.event('media.usage', {
+        kind,
+        usageSource: result.usageSource ?? 'reported',
+        priceBasis: kind === 'music' ? 'song' : 'tokens',
+        ...(result.usageSource === 'estimated' ? { estimateRevision: 'google-media-quota-v1' } : {})
+      })
+    if (prompt === undefined)
+      await presentAcceptedContent(
+        result.text || (kind === 'video' ? 'Your video is ready.' : kind === 'music' ? 'Your music is ready.' : 'Your image is ready.'),
+        sink
+      )
     return { ...usage, ...(result.images ? { imageCount: result.images.length } : {}) }
   }
 
@@ -1916,7 +1949,11 @@ export class AxAgentEngine implements AgentEngine {
         } else {
           await this.#authorizeMedia(request)
           const remote = await provider.transport.upload(
-            { bytes: await loadAgentMediaPayload(source.file, request.signal), mimeType: source.file.mimeType, displayName: source.file.filename.slice(0, 128) },
+            {
+              bytes: await loadAgentMediaPayload(source.file, request.signal),
+              mimeType: source.file.mimeType,
+              displayName: source.file.filename.slice(0, 128)
+            },
             request.signal
           )
           uploaded.push(remote)
@@ -1979,10 +2016,18 @@ export class AxAgentEngine implements AgentEngine {
         )
       }
       for (const [kind, feature, name] of [
-        ['image', 'imageGeneration', 'media.generateImage'], ['video', 'videoGeneration', 'media.generateVideo'], ['music', 'musicGeneration', 'media.generateMusic']
+        ['image', 'imageGeneration', 'media.generateImage'],
+        ['video', 'videoGeneration', 'media.generateVideo'],
+        ['music', 'musicGeneration', 'media.generateMusic']
       ] as const) {
-        if (actionSession === null || request.purpose === 'subagent' || request.purpose === 'planner' || !provider.mediaConfig?.[feature] ||
-          (request.generationTools !== undefined && !request.generationTools.includes(kind))) continue
+        if (
+          actionSession === null ||
+          request.purpose === 'subagent' ||
+          request.purpose === 'planner' ||
+          !provider.mediaConfig?.[feature] ||
+          (request.generationTools !== undefined && !request.generationTools.includes(kind))
+        )
+          continue
         const base = actionSession
         const definition = ACTION_CATALOG[name]
         actionSession = {
@@ -2215,6 +2260,10 @@ export class AxAgentEngine implements AgentEngine {
     let totalTokens = 0
     let completeUsage: AgentTokenUsage | undefined
     let observedUsage: AgentTokenUsage | undefined
+    const observeFinishReason = (finishReason: AxChatResponseResult['finishReason']): void => {
+      if (finishReason === undefined || accumulator.finishReason === 'length') return
+      accumulator.finishReason = finishReason
+    }
     let responseAccepted = false
     const accept = async (response: AxChatResponse): Promise<void> => {
       if (typeof response !== 'object' || response === null || !Array.isArray(response.results))
@@ -2243,6 +2292,7 @@ export class AxAgentEngine implements AgentEngine {
           if (typeof result.id !== 'string' || hasControlCharacter(result.id)) invalidProviderResponse('Provider returned an invalid result ID')
           boundedProviderStringBytes(result.id, MAX_PROVIDER_IDENTIFIER_BYTES, 'Provider returned an invalid result ID')
         }
+        observeFinishReason(result.finishReason)
         if (result.content !== undefined) {
           if (typeof result.content !== 'string') invalidProviderResponse('Provider returned invalid response content')
           const contentLimit = provider.transportKind === 'legacy-completions' ? 128_000 : limits.fragmentBytes
@@ -2431,7 +2481,16 @@ export class AxAgentEngine implements AgentEngine {
         await reconcileReservation({ inputTokens, outputTokens, totalTokens, costMicros })
         failureStage = 'provider_response'
       }
-      return { content, calls, thoughtBlocks, inputTokens, outputTokens, totalTokens, costMicros }
+      return {
+        content,
+        calls,
+        thoughtBlocks,
+        inputTokens,
+        outputTokens,
+        totalTokens,
+        costMicros,
+        ...(accumulator.finishReason === undefined ? {} : { finishReason: accumulator.finishReason })
+      }
     } catch (error) {
       const originalFailureStage = failureStage
       const settlementUsage = responseAccepted ? completeUsage : undefined
@@ -2611,6 +2670,42 @@ export class AxAgentEngine implements AgentEngine {
                   })
           await sink.event('model.turn', modelTurnData(turn + 1, result, assessment.valid ? 'answer_accepted' : 'answer_rejected'))
           if (request.purpose !== 'planner') await sink.event('evidence.provenance', provenanceData(assessment.valid, assessment, retrievals))
+          if (result.finishReason === 'length') {
+            const publishFragment = assessment.valid && result.content.trim().length > 0
+            const authoritySha256 = actionSession?.authoritySha256
+            if (request.purpose !== 'subagent' && actionSession && this.#actions?.saveSnapshot)
+              await this.#actions.saveSnapshot(request, await actionSession.snapshot(request.signal))
+            const closeFailure = finalizeActionSession()
+            if (closeFailure) throw closeFailure
+            const structured = request.purpose === 'planner' || request.purpose === 'subagent'
+            if (!structured) {
+              const publishedContent = publishFragment
+                ? `${result.content}${recentExcerptDisclosure(recentGroups)}${partialCoverageDisclosure(
+                    executedOmittedCount(),
+                    notExecutedActionCallIds.size
+                  )}\n\n${OUTPUT_LIMIT_DISCLOSURE}`
+                : OUTPUT_LIMIT_DISCLOSURE
+              await presentAcceptedContent(publishedContent, sink)
+            }
+            const citations = !structured && publishFragment ? answerCitations(assessment.citationIds, citationRegistry) : []
+            return {
+              inputTokens,
+              outputTokens,
+              totalTokens,
+              costMicros,
+              outputLimited: true,
+              ...(citations.length === 0 ? {} : { citations }),
+              ...(authoritySha256 === null || authoritySha256 === undefined ? {} : { authoritySha256 }),
+              ...(omittedActionCallIds.size === 0
+                ? {}
+                : {
+                    contextLimit: {
+                      reason: 'tool_result_capacity' as const,
+                      omittedActionCallIds: [...omittedActionCallIds]
+                    }
+                  })
+            }
+          }
           if (!assessment.valid) {
             if (turn + 1 >= maxTurns)
               throw classifyAgentExecutionFailure(
@@ -2915,7 +3010,8 @@ export class AxAgentEngine implements AgentEngine {
             const output =
               cached?.output ??
               (await withInvokingAgentRunLease(request.signal, request.run, async () => {
-                if (resolved.name !== 'media.generateImage' && resolved.name !== 'media.generateVideo' && resolved.name !== 'media.generateMusic') return actionSession!.invoke(resolved.name, input, request.signal, actionCallId)
+                if (resolved.name !== 'media.generateImage' && resolved.name !== 'media.generateVideo' && resolved.name !== 'media.generateMusic')
+                  return actionSession!.invoke(resolved.name, input, request.signal, actionCallId)
                 const parsed = ACTION_CATALOG[resolved.name].input.parse(input) as { prompt: string; attachmentIds?: string[] }
                 const kind = resolved.name === 'media.generateVideo' ? 'video' : resolved.name === 'media.generateMusic' ? 'music' : 'image'
                 const mediaUsage = await this.#media(request, sink, kind, parsed.prompt, parsed.attachmentIds ?? [])

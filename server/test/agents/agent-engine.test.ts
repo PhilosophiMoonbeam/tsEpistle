@@ -1,23 +1,22 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { prepareAgentPdf } from '../../agents/pdf-preparation.ts'
-
-import { describe, expect, it, vi } from '../bun-test.mts'
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
-import { registerMemoryAction } from '../../agents/actions/memory.ts'
-import type { ActionHandler, ActionHandlerContext, ActionKernel } from '../../agents/actions/kernel.ts'
-import type { AgentMemoryRepository } from '../../agents/memory.ts'
-import { AxAgentEngine, type AgentActionSessionProvider } from '../../agents/providers/engine.ts'
+import type { AgentEvent } from '../../../shared/agents/contracts.ts'
 import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
+import type { ActionHandler, ActionHandlerContext, ActionKernel } from '../../agents/actions/kernel.ts'
+import { registerMemoryAction } from '../../agents/actions/memory.ts'
+import { type AgentApprovalContinuationCheckpoint, type AgentRunLeaseIdentity, invokingAgentRunLease } from '../../agents/coordinator.ts'
+import type { AgentMemoryRepository } from '../../agents/memory.ts'
+import { prepareAgentPdf } from '../../agents/pdf-preparation.ts'
+import { reduceAgentEvents } from '../../agents/projection.ts'
+import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/providers/factory.ts'
-import { invokingAgentRunLease, type AgentApprovalContinuationCheckpoint, type AgentRunLeaseIdentity } from '../../agents/coordinator.ts'
-import { canonicalJson } from '../../helpers/canonical-json.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
 import { WIKI_AGENT_SOUL } from '../../agents/soul.ts'
-import { reduceAgentEvents } from '../../agents/projection.ts'
-import type { AgentEvent } from '../../../shared/agents/contracts.ts'
+import { canonicalJson } from '../../helpers/canonical-json.ts'
+import { describe, expect, it, vi } from '../bun-test.mts'
 
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
@@ -2049,6 +2048,289 @@ describe('Ax agent engine', () => {
     expect(result).toMatchObject({ inputTokens: 3, outputTokens: 309, totalTokens: 4_580, costMicros: 9_157 })
     expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ usageVersion: 2, inputTokens: 3, outputTokens: 309, totalTokens: 4_580 }))
   })
+  it('publishes a grounded buffered length-limited fragment without retaining continuation state', async () => {
+    const responses: AxChatResponse[] = [
+      {
+        results: [
+          {
+            index: 0,
+            functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'wiki_get_page', params: { id: 42 } } }],
+            finishReason: 'function_call'
+          }
+        ],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } }
+      },
+      {
+        results: [
+          {
+            index: 0,
+            content: 'The install steps are documented.[[cite:page:42:revision:1:section:1]]',
+            thoughtBlocks: [{ data: 'provider-continuation', encrypted: true }],
+            finishReason: 'length'
+          }
+        ],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 4, completionTokens: 5, totalTokens: 9 } }
+      },
+      {
+        results: [{ index: 0, content: 'Continuation complete.', finishReason: 'stop' }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+      }
+    ]
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return responses.shift()!
+    })
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: false,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        continuationDialect: 'openai-responses-reasoning-v1',
+        pricingRevision: 'price-1',
+        pricing,
+        preserveThoughtBlock: (_resultId: string, block: ProviderThoughtBlock) => block
+      })
+    } as unknown as AgentProviderFactory
+    const close = vi.fn()
+    const saveSnapshot = vi.fn(async () => {})
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke: async () => ({
+          id: 42,
+          title: 'Guide',
+          contentType: 'markdown',
+          content: '# Guide\n\n## Install\nThe install steps are documented.',
+          citation: { evidenceId: 'page:42:revision:1', label: 'Guide', href: '/en/guide' },
+          citationSections: [{ evidenceId: 'page:42:revision:1:section:1', label: 'Guide › Install', href: '/en/guide#install' }]
+        }),
+        snapshot: async () => ({ open: true }),
+        close
+      }),
+      saveSnapshot
+    }
+    const text = vi.fn(async (_delta: string) => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+
+    const result = await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
+
+    expect(chat).toHaveBeenCalledTimes(2)
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('The install steps are documented.[[cite:page:42:revision:1:section:1]]')
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toMatch(/output limit.*explicit follow-up/iu)
+    expect(result).toMatchObject({
+      inputTokens: 6,
+      outputTokens: 6,
+      totalTokens: 12,
+      outputLimited: true,
+      citations: [{ evidenceId: 'page:42:revision:1:section:1' }]
+    })
+    expect(result.providerState).toBeUndefined()
+    expect(saveSnapshot).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
+    expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ outcome: 'answer_accepted', finishReason: 'length' }))
+    const publishedPartial = text.mock.calls.map(([delta]) => delta).join('')
+    text.mockClear()
+    const followUpInput = request(new AbortController().signal)
+    const followUp = await new AxAgentEngine(factory, actions).execute(
+      {
+        ...followUpInput,
+        messages: [...followUpInput.messages, { role: 'assistant', content: publishedPartial }, { role: 'user', content: 'Continue the interrupted response.' }]
+      },
+      { text, event }
+    )
+    expect(chat).toHaveBeenCalledTimes(3)
+    expect(followUp).not.toHaveProperty('outputLimited')
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toBe('Continuation complete.')
+    expect(calls[2]?.chatPrompt.some(message => 'thoughtBlocks' in message)).toBe(false)
+    expect(saveSnapshot).toHaveBeenCalledTimes(2)
+    expect(close).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a streamed length reason through trailing usage-only data', async () => {
+    const stream = new ReadableStream<AxChatResponse>({
+      start(controller) {
+        controller.enqueue({ results: [{ index: 0, content: 'Bounded partial answer.' }] })
+        controller.enqueue({ results: [{ index: 0, finishReason: 'length' }] })
+        controller.enqueue({
+          results: [{ index: 0, finishReason: 'stop' }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 17, completionTokens: 29, totalTokens: 46 } }
+        })
+        controller.close()
+      }
+    })
+    const chat = vi.fn(async () => stream)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: true,
+          toolCalling: 'native',
+          parallelToolCalls: false,
+          structuredOutput: 'native-json-schema',
+          usage: 'stream',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-chat',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const text = vi.fn(async (_delta: string) => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+
+    const result = await new AxAgentEngine(factory).execute({ ...request(new AbortController().signal), purpose: 'root' }, { text, event })
+
+    expect(chat).toHaveBeenCalledOnce()
+    expect(result).toMatchObject({ inputTokens: 17, outputTokens: 29, totalTokens: 46, outputLimited: true })
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toMatch(/^Bounded partial answer\..*output limit/isu)
+    expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ finishReason: 'length', inputTokens: 17, outputTokens: 29, totalTokens: 46 }))
+  })
+
+  it('withholds an invalid length-limited evidence correction without another provider call', async () => {
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        results: [{ index: 0, content: 'I verified the unsupported draft.', finishReason: 'stop' }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } }
+      } satisfies AxChatResponse)
+      .mockResolvedValueOnce({
+        results: [{ index: 0, content: 'I verified the still unsupported correction.', finishReason: 'length' }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 5, completionTokens: 6, totalTokens: 11 } }
+      } satisfies AxChatResponse)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: false,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-chat',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const text = vi.fn(async (_delta: string) => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+    const input = request(new AbortController().signal)
+
+    const result = await new AxAgentEngine(factory).execute(
+      { ...input, run: { ...input.run, executionMode: 'generation-only' }, limits: { maxTurns: 3, maxToolCalls: 0, maxOutputTokens: 4_000 } },
+      { text, event }
+    )
+
+    const published = text.mock.calls.map(([delta]) => delta).join('')
+    expect(chat).toHaveBeenCalledTimes(2)
+    expect(result).toMatchObject({ inputTokens: 8, outputTokens: 10, totalTokens: 18, outputLimited: true })
+    expect(result.citations).toBeUndefined()
+    expect(published).toMatch(/output limit.*explicit follow-up/iu)
+    expect(published).not.toContain('verified')
+    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false }),
+      expect.objectContaining({ accepted: false })
+    ])
+  })
+
+  it.each([
+    { label: 'empty length output', purpose: 'root' as const, content: '', finishReason: 'length' as const, completionTokens: 4_000, limited: true },
+    {
+      label: 'normal stop output',
+      purpose: 'root' as const,
+      content: 'Complete answer.',
+      finishReason: 'stop' as const,
+      completionTokens: 4_000,
+      limited: false
+    },
+    { label: 'missing finish reason', purpose: 'root' as const, content: 'Complete answer.', finishReason: undefined, completionTokens: 4_000, limited: false },
+    {
+      label: 'limited planner output',
+      purpose: 'planner' as const,
+      content: '{"tasks":[',
+      finishReason: 'length' as const,
+      completionTokens: 4_000,
+      limited: true
+    },
+    {
+      label: 'limited child output',
+      purpose: 'subagent' as const,
+      content: '{"claims":[',
+      finishReason: 'length' as const,
+      completionTokens: 4_000,
+      limited: true
+    }
+  ])('classifies $label only from the explicit provider reason', async ({ purpose, content, finishReason, completionTokens, limited }) => {
+    const response = {
+      results: [{ index: 0, content, ...(finishReason === undefined ? {} : { finishReason }) }],
+      modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens, totalTokens: completionTokens + 1 } }
+    } satisfies AxChatResponse
+    const chat = vi.fn(async () => response)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: false,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-chat',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const text = vi.fn(async (_delta: string) => {})
+
+    const result = await new AxAgentEngine(factory).execute({ ...request(new AbortController().signal), purpose }, { text, event: async () => {} })
+
+    expect(chat).toHaveBeenCalledOnce()
+    expect(result).toMatchObject({ inputTokens: 1, outputTokens: completionTokens, totalTokens: completionTokens + 1 })
+    expect('outputLimited' in result).toBe(limited)
+    const published = text.mock.calls.map(([delta]) => delta).join('')
+    if (purpose !== 'root') {
+      expect(published).toBe('')
+      expect(result.citations).toBeUndefined()
+    } else if (limited) {
+      expect(published).toMatch(/output limit.*explicit follow-up/iu)
+      expect(published).not.toContain('Complete answer.')
+    } else {
+      expect(published).toBe('Complete answer.')
+    }
+  })
 
   it('presents only the validated streamed draft in bounded deltas whose concatenation is final content', async () => {
     const rejected = 'Unsupported claim. [[cite:missing]]'
@@ -2121,7 +2403,8 @@ describe('Ax agent engine', () => {
     expect(result).toMatchObject({ inputTokens: 13, outputTokens: 6, totalTokens: 19 })
   })
   it('does not carry rejected-answer reasoning state into an evidence repair turn', async () => {
-    const chat = vi.fn()
+    const chat = vi
+      .fn()
       .mockResolvedValueOnce({
         results: [{ index: 0, content: 'Unsupported claim. [[cite:missing]]', thoughtBlocks: [{ data: 'x'.repeat(16_000), encrypted: true }] }],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } }
@@ -3043,33 +3326,71 @@ describe('Agent media execution', () => {
       const media = vi.fn(async () => {})
       const event = vi.fn(async () => {})
       const usage = { inputTokens: 100, outputTokens: 1000, totalTokens: 1100 }
-      const generate = async (input: { beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>; onDispatch: () => void }) => {
+      const generate = async (input: {
+        beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>
+        onDispatch: () => void
+      }) => {
         await input.beforeDispatch({ inputTokens: 100, outputTokens: 65536, totalTokens: 65636 })
         input.onDispatch()
-        return { text: '', files: [{ bytes: image, mimeType: kind === 'video' ? 'video/mp4' : 'audio/mpeg' }], usage,
-          usageSource: 'reported' as const, ...(kind === 'video' ? { outputTokensByModality: { text: 100, video: 900 } } : {}) }
+        return {
+          text: '',
+          files: [{ bytes: image, mimeType: kind === 'video' ? 'video/mp4' : 'audio/mpeg' }],
+          usage,
+          usageSource: 'reported' as const,
+          ...(kind === 'video' ? { outputTokensByModality: { text: 100, video: 900 } } : {})
+        }
       }
-      const createMedia = async () => ({ config: {}, capabilities, pricing: {
-        videoGeneration: { revision: 'video-v1', inputMicrosPerMillionTokens: 1500000, outputMicrosPerMillionTokens: 17500000, textOutputMicrosPerMillionTokens: 9000000 },
-        musicGeneration: { costMicrosPerSong: 80000 }
-      }, transport: { generateVideo: generate, generateMusic: generate } })
+      const createMedia = async () => ({
+        config: {},
+        capabilities,
+        pricing: {
+          videoGeneration: {
+            revision: 'video-v1',
+            inputMicrosPerMillionTokens: 1500000,
+            outputMicrosPerMillionTokens: 17500000,
+            textOutputMicrosPerMillionTokens: 9000000
+          },
+          musicGeneration: { costMicrosPerSong: 80000 }
+        },
+        transport: { generateVideo: generate, generateMusic: generate }
+      })
       const engine = new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory)
       const result = await engine.execute({ ...mediaRequest(), mediaRequest: { kind }, dispatchBudget }, { media, event, text: async () => {} })
       expect(result.costMicros).toBe(kind === 'music' ? 80000 : 16800)
       expect(dispatchBudget.reserve).toHaveBeenCalledWith({ tokens: 65636, costMicros: kind === 'music' ? 80000 : 1147030 })
       expect(dispatchBudget.reconcile).toHaveBeenCalledWith(expect.anything(), { ...usage, costMicros: result.costMicros })
-      expect(media).toHaveBeenCalledWith([{ payload: image, mimeType: kind === 'video' ? 'video/mp4' : 'audio/mpeg', kind: kind === 'video' ? 'generated-video' : 'generated-audio', filename: kind === 'video' ? 'generated-video.mp4' : 'generated-music.mp3' }])
+      expect(media).toHaveBeenCalledWith([
+        {
+          payload: image,
+          mimeType: kind === 'video' ? 'video/mp4' : 'audio/mpeg',
+          kind: kind === 'video' ? 'generated-video' : 'generated-audio',
+          filename: kind === 'video' ? 'generated-video.mp4' : 'generated-music.mp3'
+        }
+      ])
       expect(event).toHaveBeenCalledWith('media.usage', { kind, usageSource: 'reported', priceBasis: kind === 'music' ? 'song' : 'tokens' })
     })
     it(`keeps uncertain ${kind} charges reserved after dispatch cancellation`, async () => {
       const dispatchBudget = budget()
-      const generate = async (input: { beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>; onDispatch: () => void }) => {
+      const generate = async (input: {
+        beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>
+        onDispatch: () => void
+      }) => {
         await input.beforeDispatch({ inputTokens: 1, outputTokens: 65536, totalTokens: 65537 })
         input.onDispatch()
         throw new Error('cancelled after dispatch')
       }
-      const createMedia = async () => ({ config: {}, capabilities, pricing: { videoGeneration: { ...pricing, textOutputMicrosPerMillionTokens: 1 }, musicGeneration: { costMicrosPerSong: 80000 } }, transport: { generateVideo: generate, generateMusic: generate } })
-      await expect(new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute({ ...mediaRequest(), mediaRequest: { kind }, dispatchBudget }, { media: async () => {}, text: async () => {}, event: async () => {} })).rejects.toThrow('cancelled after dispatch')
+      const createMedia = async () => ({
+        config: {},
+        capabilities,
+        pricing: { videoGeneration: { ...pricing, textOutputMicrosPerMillionTokens: 1 }, musicGeneration: { costMicrosPerSong: 80000 } },
+        transport: { generateVideo: generate, generateMusic: generate }
+      })
+      await expect(
+        new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
+          { ...mediaRequest(), mediaRequest: { kind }, dispatchBudget },
+          { media: async () => {}, text: async () => {}, event: async () => {} }
+        )
+      ).rejects.toThrow('cancelled after dispatch')
       expect(dispatchBudget.release).not.toHaveBeenCalled()
       expect(dispatchBudget.reconcile).not.toHaveBeenCalled()
     })
@@ -3233,88 +3554,136 @@ describe('Agent media execution', () => {
     expect(media).not.toHaveBeenCalled()
   })
   it('offers only configured and selected generation tools to root Agent conversations', async () => {
-    for (const enabled of [false, true]) for (const generationTools of [undefined, [], ['image', 'music']] as const) {
-      let offered: readonly { name: string }[] = []
-      const factory = {
-        create: async () => ({
-          service: {
-            chat: async (input: AxChatRequest) => {
-              offered = input.functions ?? []
-              return {
-                results: [{ index: 0, content: 'Hello.' }],
-                modelUsage: { ai: 'gemini', model: 'test', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
+    for (const enabled of [false, true])
+      for (const generationTools of [undefined, [], ['image', 'music']] as const) {
+        let offered: readonly { name: string }[] = []
+        const factory = {
+          create: async () => ({
+            service: {
+              chat: async (input: AxChatRequest) => {
+                offered = input.functions ?? []
+                return {
+                  results: [{ index: 0, content: 'Hello.' }],
+                  modelUsage: { ai: 'gemini', model: 'test', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
+                }
               }
-            }
-          },
-          capabilities,
-          model: 'test',
-          transportKind: 'gemini-api',
-          capabilityRevision: 'test',
-          pricingRevision: 'test',
-          pricing,
-          ...(enabled ? { mediaConfig: { imageGeneration: { model: 'gemini-3.1-flash-image', pricingRevision: 'v1|1|1' }, videoGeneration: { model: 'gemini-omni-1.1-flash' }, musicGeneration: { model: 'lyria-3.5' } } } : {})
-        })
-      } as unknown as AgentProviderFactory
-      const actions: AgentActionSessionProvider = {
-        open: async () => ({ authoritySha256: null, functions: [], invoke: async () => null, snapshot: async () => ({}), close: () => {} })
+            },
+            capabilities,
+            model: 'test',
+            transportKind: 'gemini-api',
+            capabilityRevision: 'test',
+            pricingRevision: 'test',
+            pricing,
+            ...(enabled
+              ? {
+                  mediaConfig: {
+                    imageGeneration: { model: 'gemini-3.1-flash-image', pricingRevision: 'v1|1|1' },
+                    videoGeneration: { model: 'gemini-omni-1.1-flash' },
+                    musicGeneration: { model: 'lyria-3.5' }
+                  }
+                }
+              : {})
+          })
+        } as unknown as AgentProviderFactory
+        const actions: AgentActionSessionProvider = {
+          open: async () => ({ authoritySha256: null, functions: [], invoke: async () => null, snapshot: async () => ({}), close: () => {} })
+        }
+        await new AxAgentEngine(factory, actions).execute(
+          { ...request(new AbortController().signal), generationTools, messages: [{ role: 'user', content: 'Hello' }] },
+          { text: async () => {}, event: async () => {} }
+        )
+        for (const kind of ['image', 'video', 'music'] as const)
+          expect(offered.some(tool => tool.name === `wiki_generate_${kind}`)).toBe(
+            enabled && (generationTools === undefined || (generationTools as readonly string[]).includes(kind))
+          )
       }
-      await new AxAgentEngine(factory, actions).execute(
-        { ...request(new AbortController().signal), generationTools, messages: [{ role: 'user', content: 'Hello' }] },
-        { text: async () => {}, event: async () => {} }
-      )
-      for (const kind of ['image', 'video', 'music'] as const)
-        expect(offered.some(tool => tool.name === `wiki_generate_${kind}`)).toBe(enabled && (generationTools === undefined || (generationTools as readonly string[]).includes(kind)))
-    }
   })
   it('rejects generation disabled by the request before loading or charging a media provider', async () => {
     const createMedia = vi.fn()
     const dispatchBudget = budget()
     for (const kind of ['image', 'video', 'music'] as const) {
-      await expect(new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
-        { ...mediaRequest(), mediaRequest: { kind }, generationTools: [], dispatchBudget },
-        { text: async () => {}, event: async () => {}, media: async () => {} }
-      )).rejects.toMatchObject({ code: 'ACTION_NOT_OFFERED' })
+      await expect(
+        new AxAgentEngine({ createMedia } as unknown as AgentProviderFactory).execute(
+          { ...mediaRequest(), mediaRequest: { kind }, generationTools: [], dispatchBudget },
+          { text: async () => {}, event: async () => {}, media: async () => {} }
+        )
+      ).rejects.toMatchObject({ code: 'ACTION_NOT_OFFERED' })
     }
     expect(createMedia).not.toHaveBeenCalled()
     expect(dispatchBudget.reserve).not.toHaveBeenCalled()
   })
   it('uses image and music tools within one normal text conversation', async () => {
     let turn = 0
-    const chat = vi.fn(async (): Promise<AxChatResponse> => ({
-      results: [++turn === 1 ? {
-        index: 0,
-        functionCalls: ['image', 'music'].map(kind => ({ id: `make-${kind}`, type: 'function' as const,
-          function: { name: `wiki_generate_${kind}`, params: JSON.stringify({ prompt: `Create ${kind} for an observatory` }) } }))
-      } : { index: 0, content: 'Your image and music are ready.' }],
-      modelUsage: { ai: 'gemini', model: 'test', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
-    }))
-    const generate = (kind: 'image' | 'music') => vi.fn(async (input: {
-      beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>; onDispatch: () => void
-    }) => {
-      await input.beforeDispatch({ inputTokens: 100, outputTokens: 500, totalTokens: 600 })
-      input.onDispatch()
-      return kind === 'image' ? mediaResult : {
-        text: '', files: [{ bytes: Buffer.from('music'), mimeType: 'audio/mpeg' }], usage: mediaResult.usage, usageSource: 'reported' as const
-      }
-    })
+    const chat = vi.fn(
+      async (): Promise<AxChatResponse> => ({
+        results: [
+          ++turn === 1
+            ? {
+                index: 0,
+                functionCalls: ['image', 'music'].map(kind => ({
+                  id: `make-${kind}`,
+                  type: 'function' as const,
+                  function: { name: `wiki_generate_${kind}`, params: JSON.stringify({ prompt: `Create ${kind} for an observatory` }) }
+                }))
+              }
+            : { index: 0, content: 'Your image and music are ready.' }
+        ],
+        modelUsage: { ai: 'gemini', model: 'test', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
+      })
+    )
+    const generate = (kind: 'image' | 'music') =>
+      vi.fn(
+        async (input: {
+          beforeDispatch: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => Promise<void>
+          onDispatch: () => void
+        }) => {
+          await input.beforeDispatch({ inputTokens: 100, outputTokens: 500, totalTokens: 600 })
+          input.onDispatch()
+          return kind === 'image'
+            ? mediaResult
+            : {
+                text: '',
+                files: [{ bytes: Buffer.from('music'), mimeType: 'audio/mpeg' }],
+                usage: mediaResult.usage,
+                usageSource: 'reported' as const
+              }
+        }
+      )
     const generateImage = generate('image')
     const generateMusic = generate('music')
     const factory = {
-      create: async () => ({ service: { chat }, capabilities: { ...capabilities, parallelToolCalls: true }, model: 'test',
-        transportKind: 'gemini-api', capabilityRevision: 'test', pricingRevision: 'test', pricing,
-        mediaConfig: { imageGeneration: {}, musicGeneration: {} } }),
-      createMedia: async () => ({ config: {}, capabilities, pricing: { imageGeneration: pricing, musicGeneration: { costMicrosPerSong: 80000 } },
-        transport: { generateImage, generateMusic } })
+      create: async () => ({
+        service: { chat },
+        capabilities: { ...capabilities, parallelToolCalls: true },
+        model: 'test',
+        transportKind: 'gemini-api',
+        capabilityRevision: 'test',
+        pricingRevision: 'test',
+        pricing,
+        mediaConfig: { imageGeneration: {}, musicGeneration: {} }
+      }),
+      createMedia: async () => ({
+        config: {},
+        capabilities,
+        pricing: { imageGeneration: pricing, musicGeneration: { costMicrosPerSong: 80000 } },
+        transport: { generateImage, generateMusic }
+      })
     } as unknown as AgentProviderFactory
     const invoke = vi.fn(async () => null)
-    const actions: AgentActionSessionProvider = { open: async () => ({ authoritySha256: null, functions: [], invoke,
-      snapshot: async () => ({}), close: () => {} }) }
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({ authoritySha256: null, functions: [], invoke, snapshot: async () => ({}), close: () => {} })
+    }
     const media = vi.fn(async () => {})
     const text = vi.fn(async () => {})
-    const result = await new AxAgentEngine(factory, actions).execute({
-      ...request(new AbortController().signal), generationTools: ['image', 'music'], dispatchBudget: budget(),
-      messages: [{ role: 'user', content: 'Create an observatory image and accompanying music.' }]
-    }, { media, text, event: async () => {} })
+    const result = await new AxAgentEngine(factory, actions).execute(
+      {
+        ...request(new AbortController().signal),
+        generationTools: ['image', 'music'],
+        dispatchBudget: budget(),
+        messages: [{ role: 'user', content: 'Create an observatory image and accompanying music.' }]
+      },
+      { media, text, event: async () => {} }
+    )
     expect(generateImage).toHaveBeenCalledTimes(1)
     expect(generateMusic).toHaveBeenCalledTimes(1)
     expect(media).toHaveBeenCalledTimes(2)
@@ -3516,14 +3885,24 @@ describe('Agent PDF preparation', () => {
     const fallback = vi.fn(prepareAgentPdf)
     const lazy = vi.fn(async () => prepared)
     const fixture = pdfDispatchFixture(fallback)
-    fixture.engineRequest.messages = [{ role: 'user', content: 'Read the full attachment', attachments: [{ id: '00000000-0000-4000-8000-000000000090', filename: 'large.pdf', mimeType: 'application/pdf', byteLength: 250 * 1024 * 1024, preparePdf: lazy }] }]
+    fixture.engineRequest.messages = [
+      {
+        role: 'user',
+        content: 'Read the full attachment',
+        attachments: [
+          { id: '00000000-0000-4000-8000-000000000090', filename: 'large.pdf', mimeType: 'application/pdf', byteLength: 250 * 1024 * 1024, preparePdf: lazy }
+        ]
+      }
+    ]
     try {
       await fixture.engine.execute(fixture.engineRequest, { text: async () => {}, event: async () => {} })
       expect(lazy).toHaveBeenCalledTimes(1)
       expect(fallback).not.toHaveBeenCalled()
       expect(fixture.upload).toHaveBeenCalledTimes(2)
       expect(fixture.chat).toHaveBeenCalledTimes(1)
-    } finally { await prepared.cleanup() }
+    } finally {
+      await prepared.cleanup()
+    }
   })
 
   it('rejects an unreadable PDF before uploading or reserving inference budget', async () => {
