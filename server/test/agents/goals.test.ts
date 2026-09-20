@@ -169,9 +169,9 @@ describe('agent durable goal completion assessment', () => {
     expect(() => decodeCompletionAssessment(encoded.encoded, 'retry', encoded.sha256)).toThrow('does not match')
   })
   it('derives all three policy v2 token allowances from the configured ceiling', () => {
-    expect(agentGoalTokenAllowance(192_000, 'small')).toBe(32_000)
-    expect(agentGoalTokenAllowance(192_000, 'standard')).toBe(96_000)
-    expect(agentGoalTokenAllowance(192_000, 'extended')).toBe(192_000)
+    expect(agentGoalTokenAllowance(384_000, 'small')).toBe(64_000)
+    expect(agentGoalTokenAllowance(384_000, 'standard')).toBe(192_000)
+    expect(agentGoalTokenAllowance(384_000, 'extended')).toBe(384_000)
   })
 
   it('exposes renewal only when a selected token budget is the limiting reason', () => {

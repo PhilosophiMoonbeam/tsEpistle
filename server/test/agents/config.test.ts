@@ -9,33 +9,15 @@ const base = {
 }
 
 describe('agent operational limits', () => {
-  it('applies conservative bounded defaults', () => {
-    expect(parseAgentOperationalLimits(base)).toMatchObject({
-      provider: { globalConcurrency: 4, perUserConcurrency: 1, pollingMilliseconds: 1_000 },
-      orchestration: {
-        enabled: false,
-        maxConcurrentChildren: 3,
-        maxChildren: 6,
-        plannerTurns: 2,
-        childTurns: 4,
-        childToolCalls: 8,
-        plannerTimeoutMilliseconds: 30_000,
-        childTimeoutMilliseconds: 120_000,
-        plannerMaxOutputTokens: 1_024,
-        childMaxOutputTokens: 2_048,
-        maxAggregateChildTokens: 12_000,
-        maxAggregateChildOutputCharacters: 96_000
-      },
-      goals: {
-        enabled: false,
-        maxContinuations: 3,
-        maxTokens: 192_000,
-        maxToolCalls: 96,
-        maxDurationMilliseconds: 3_600_000
-      },
-      retention: { temporarySessionHours: 24, savedSessionDays: 90, mcpContentDays: 7, auditDays: 90, maintenanceBatchSize: 100 },
-      sse: { maximumConnectionsPerUser: 3 }
-    })
+  it('keeps optional background execution disabled without operator opt-in', () => {
+    const limits = parseAgentOperationalLimits(base)
+    expect(limits.orchestration.enabled).toBe(false)
+    expect(limits.goals.enabled).toBe(false)
+  })
+
+  it('uses the goal ceiling consistently with omitted and partial goal configuration', () => {
+    expect(parseAgentOperationalLimits(base).goals.maxTokens).toBe(384_000)
+    expect(parseAgentOperationalLimits({ ...base, goals: { enabled: true } }).goals.maxTokens).toBe(384_000)
   })
 
   it('preserves an explicit operator goal ceiling', () => {

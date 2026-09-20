@@ -31,7 +31,7 @@ export interface AgentGoalLimits {
 export const DEFAULT_AGENT_GOAL_LIMITS: AgentGoalLimits = {
   enabled: false,
   maxContinuations: 3,
-  maxTokens: 192_000,
+  maxTokens: 384_000,
   maxToolCalls: 96,
   maxDurationMilliseconds: 60 * 60_000
 }
