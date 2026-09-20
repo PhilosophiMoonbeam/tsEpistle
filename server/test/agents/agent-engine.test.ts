@@ -682,140 +682,304 @@ describe('Ax agent engine', () => {
     ])
   })
 
-  it.each(['wrong section', 'generic terminology'] as const)(
-    'preserves a substantive multi-section summary when correcting %s without rereading the page',
-    async fault => {
-      const correctedSummary = [
-        'Contract pricing lists discount schedules and freight surcharges.[[cite:page:42:revision:1:section:1]]',
-        'Quotes require project details and remain valid for 30 days.[[cite:page:42:revision:1:section:2]]',
-        'MFG directory lists product categories and contact details.[[cite:page:42:revision:1:section:3]]'
-      ].join('\n\n')
-      const calls: Readonly<AxChatRequest<unknown>>[] = []
-      const responses: AxChatResponse[] = [
-        { results: [{ index: 0, functionCalls: [{ id: 'get-summary', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }] }] },
-        {
-          results: [
-            {
-              index: 0,
-              content:
-                fault === 'wrong section'
-                  ? correctedSummary.replace('section:1', 'section:3')
-                  : correctedSummary.replace('MFG directory lists', 'Manufacturer directory:')
-            }
-          ]
+  it('repairs substantive parent and child summaries from exact local source units', async () => {
+    const longEvidence = `Long evidence ${'keeps its exact source wording '.repeat(20)}remains authoritative.`
+    const source = [
+      '# General Info',
+      '',
+      '### [Contract Pricing](/contracts) | [Quick Ship](/quick-ship) | [SPIFs](/spifs)',
+      '#### [Discounts Chart](/discounts) | [UPS/USPS/FedEx](/shipping) | [Spec/CET](/cet)',
+      '',
+      '<details>',
+      '<summary>Evidence Archive</summary>',
+      '<details>',
+      '<summary>Nested Notes</summary>',
+      '# Temporary Scope',
+      longEvidence,
+      '</details>',
+      '</details>',
+      '',
+      '<details>',
+      '<summary>Supply Disruptions</summary>',
+      '',
+      'None known of at this time',
+      '',
+      'Terms remain valid for 30 days after delivery.',
+      '',
+      'Chair assignments map OM to 250 lb, IU to 300 lb.',
+      '',
+      '</details>',
+      '',
+      '<details>',
+      '<summary>Promotions</summary>',
+      '',
+      '#### [Workspace48](/workspace48)',
+      '</details>',
+      '',
+      '# MFG Directory',
+      '',
+      '###### Website | Contact | Quote Form',
+      '###### MFG Quotes | Price-Increase/Tariff/Surcharge',
+      '',
+      '## Acme',
+      '### Corporate Office',
+      'Indiana orders route through the Midwest contact.',
+      '',
+      '## Beta',
+      '### Corporate Office',
+      'California orders route through the West contact.',
+      '',
+      '<details>',
+      '<summary>Legacy MFGs</summary>',
+      '',
+      'We No Longer Represent',
+      '</details>'
+    ].join('\n')
+    const corrected = [
+      'General Info lists Contract Pricing, Quick Ship, and SPIFs.[[cite:page:1:revision:9:section:1]]',
+      'Discounts Chart is listed; Spec/CET is listed.[[cite:page:1:revision:9:section:1]]',
+      'Evidence Archive Nested Notes: Long evidence remains authoritative.[[cite:page:1:revision:9:section:1]]',
+      'Promotions lists Workspace48.[[cite:page:1:revision:9:section:1]]',
+      'Terms remain valid for 30 days after delivery.[[cite:page:1:revision:9:section:1]]',
+      'Chair assignments map om to 250 lb.[[cite:page:1:revision:9:section:1]]',
+      'Supply Disruptions: None known of at this time.[[cite:page:1:revision:9:section:1]]',
+      'MFG Directory includes Website, Contact, and Quote Form; MFG Quotes are listed.[[cite:page:1:revision:9:section:2]]',
+      'acme corporate office: indiana orders route through the midwest contact.[[cite:page:1:revision:9:section:4]]',
+      'Legacy MFGs: We No Longer Represent.[[cite:page:1:revision:9:section:2]]'
+    ].join('\n\n')
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const responses: AxChatResponse[] = [
+      { results: [{ index: 0, functionCalls: [{ id: 'homepage', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }] },
+      {
+        results: [
+          {
+            index: 0,
+            content: [
+              'CET specification tools; Workspace48 Promos.[[cite:page:1:revision:9:section:1]]',
+              'Acme Corporate Office: California orders route through the West contact.[[cite:page:1:revision:9:section:4]]',
+              'The MFG Directory provides Website, Contact, and Quote Form resources.[[cite:page:1:revision:9:section:2]]'
+            ].join('\n\n')
+          }
+        ]
+      },
+      { results: [{ index: 0, content: corrected }] }
+    ]
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return responses.shift()!
+    })
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
         },
-        { results: [{ index: 0, content: correctedSummary }] }
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => ({
+      id: 1,
+      locale: 'en',
+      path: 'home',
+      sourceRevision: '9',
+      title: 'Homepage',
+      contentType: 'markdown',
+      content: source,
+      citation: { evidenceId: 'page:1:revision:9', label: 'Homepage', href: '/en/home' },
+      citationSections: [
+        { evidenceId: 'page:1:revision:9:section:1', label: 'Homepage › General Info', href: '/en/home#general-info' },
+        { evidenceId: 'page:1:revision:9:section:2', label: 'Homepage › MFG Directory', href: '/en/home#mfg-directory' },
+        { evidenceId: 'page:1:revision:9:section:3', label: 'Homepage › MFG Directory › Acme', href: '/en/home#acme' },
+        {
+          evidenceId: 'page:1:revision:9:section:4',
+          label: 'Homepage › MFG Directory › Acme › Corporate Office',
+          href: '/en/home#corporate-office'
+        },
+        { evidenceId: 'page:1:revision:9:section:5', label: 'Homepage › MFG Directory › Beta', href: '/en/home#beta' },
+        {
+          evidenceId: 'page:1:revision:9:section:6',
+          label: 'Homepage › MFG Directory › Beta › Corporate Office',
+          href: '/en/home#corporate-office-1'
+        }
       ]
-      const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
-        calls.push(input)
-        return responses.shift()!
+    }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn()
       })
-      const factory = {
-        create: async () => ({
-          service: { chat },
-          capabilities: {
-            streaming: false,
-            toolCalling: 'native',
-            parallelToolCalls: true,
-            structuredOutput: 'native-json-schema',
-            usage: 'estimated',
-            cancellation: true,
-            maxContextTokens: 100_000,
-            maxOutputTokens: 4_000
-          },
-          transportKind: 'openai-responses',
-          model: 'gpt-test',
-          capabilityRevision: 'cap-1',
-          pricingRevision: 'price-1',
-          pricing
-        })
-      } as unknown as AgentProviderFactory
-      const invoke = vi.fn(async () => ({
-        id: 42,
-        title: 'Operations handbook',
-        contentType: 'markdown',
-        content:
-          '# Contract pricing\nDiscount schedules and freight surcharges.\n\n# Quotes\nQuotes require project details and remain valid for 30 days.\n\n# MFG\nMFG directory lists product categories and contact details.',
-        citation: { evidenceId: 'page:42:revision:1', label: 'Operations handbook', href: '/en/operations' },
-        citationSections: ['Contract pricing', 'Quotes', 'MFG'].map((title, index) => ({
-          evidenceId: `page:42:revision:1:section:${index + 1}`,
-          label: `Operations handbook › ${title}`,
-          href: `/en/operations#section-${index + 1}`
-        }))
-      }))
-      const actions: AgentActionSessionProvider = {
-        open: async () => ({
-          functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
-          invoke,
-          snapshot: async () => ({}),
-          close: vi.fn()
-        })
-      }
-      const text = vi.fn(async (_delta: string) => {})
-      const event = vi.fn(async (...args: [string, unknown]) => {
-        void args
-      })
-      const result = await new AxAgentEngine(factory, actions).execute(
-        {
-          ...request(new AbortController().signal),
-          messages: [{ role: 'user', content: 'Summarize the current Wiki page and cite the key sections.' }]
-        },
-        { text, event }
-      )
+    }
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+    const result = await new AxAgentEngine(factory, actions).execute(
+      {
+        ...request(new AbortController().signal),
+        messages: [{ role: 'user', content: 'Summarize the current Wiki page and cite the key sections.' }]
+      },
+      { text, event }
+    )
 
-      expect(chat).toHaveBeenCalledTimes(3)
-      expect(invoke).toHaveBeenCalledOnce()
-      expect(calls[0]?.chatPrompt).toContainEqual(
-        expect.objectContaining({ role: 'system', content: expect.stringContaining('summarize the substantive key sections') })
-      )
-      expect(calls[2]?.chatPrompt).toContainEqual(
-        expect.objectContaining({ role: 'user', content: expect.stringContaining('Preserve the requested topic coverage when revising') })
-      )
-      expect(calls[2]?.chatPrompt).toContainEqual(
+    const correctionText = String(calls[2]?.chatPrompt.at(-1)?.content)
+    const feedback = JSON.parse(correctionText.split('\n').at(-1)!) as Array<{
+      evidenceId: string
+      draftFragment: string
+      sourceUnits: Array<{ context: string; text: string }>
+    }>
+    expect(feedback).toEqual(
+      expect.arrayContaining([
         expect.objectContaining({
-          role: 'user',
-          content: expect.stringContaining('Never replace a requested summary with only a title, heading, or isolated quotation')
-        })
-      )
-      const correction = calls[2]?.chatPrompt.at(-1)
-      expect(correction?.role).toBe('user')
-      const correctionText = String(correction && 'content' in correction ? correction.content : '')
-      const feedbackJson = correctionText.split('\n').at(-1)!
-      const feedback = JSON.parse(feedbackJson) as Array<{ evidenceId: string; draftFragment: string; absentTerms: string[] }>
-      expect(feedbackJson.length).toBeLessThanOrEqual(1_200)
-      expect(feedback.length).toBeGreaterThan(0)
-      expect(feedback.length).toBeLessThanOrEqual(4)
-      expect(
-        feedback.every(item => item.draftFragment.length <= 160 && item.absentTerms.length <= 4 && item.absentTerms.every(term => term.length <= 40))
-      ).toBe(true)
-      expect(feedback).toContainEqual(
-        expect.objectContaining(
-          fault === 'generic terminology'
-            ? { evidenceId: 'page:42:revision:1:section:3', draftFragment: 'Manufacturer directory', absentTerms: ['manufacturer'] }
-            : { evidenceId: 'page:42:revision:1:section:3', draftFragment: 'Contract pricing lists discount schedules' }
-        )
-      )
-      expect(correctionText).toContain('not proof that a claim is false')
-      expect(JSON.stringify(event.mock.calls)).not.toContain('draftFragment')
-      expect(JSON.stringify(event.mock.calls)).not.toContain('absentTerms')
-      expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(correctedSummary)
-      expect(result.citations).toHaveLength(3)
-      expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
-        expect.objectContaining({
-          accepted: false,
-          claims: [
-            expect.objectContaining({ supported: fault !== 'wrong section' }),
-            expect.objectContaining({ supported: true }),
-            expect.objectContaining({ supported: fault !== 'generic terminology' })
-          ]
+          evidenceId: 'page:1:revision:9:section:1',
+          draftFragment: 'CET specification tools',
+          sourceUnits: expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining('[Spec/CET]') })])
         }),
         expect.objectContaining({
-          accepted: true,
-          claims: [expect.objectContaining({ supported: true }), expect.objectContaining({ supported: true }), expect.objectContaining({ supported: true })]
+          evidenceId: 'page:1:revision:9:section:1',
+          draftFragment: 'Workspace48 Promos.',
+          sourceUnits: expect.arrayContaining([
+            expect.objectContaining({ context: expect.stringContaining('General Info'), text: '#### [Workspace48](/workspace48)' })
+          ])
+        }),
+        expect.objectContaining({
+          evidenceId: 'page:1:revision:9:section:4',
+          draftFragment: 'Acme Corporate Office: California orders route through the West contact.',
+          sourceUnits: expect.arrayContaining([expect.objectContaining({ text: 'Indiana orders route through the Midwest contact.' })])
         })
       ])
+    )
+    expect(JSON.stringify(feedback).length).toBeLessThanOrEqual(1_200)
+    expect(feedback.flatMap(item => item.sourceUnits.map(unit => unit.text))).not.toContain('California orders route through the West contact.')
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+    expect(result.citations).toEqual([
+      expect.objectContaining({ evidenceId: 'page:1:revision:9:section:1' }),
+      expect.objectContaining({ evidenceId: 'page:1:revision:9:section:2' }),
+      expect.objectContaining({ evidenceId: 'page:1:revision:9:section:4' })
+    ])
+    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false }),
+      expect.objectContaining({ accepted: true })
+    ])
+  })
+
+  it.each([
+    ['unsupported predicate', 'Contract pricing guarantees free installation.[[cite:page:1:revision:9:section:2]]'],
+    ['wrong section', 'Contract pricing lists discount schedules.[[cite:page:1:revision:9:section:3]]'],
+    ['wrong revision', 'Terms remain valid for 30 days.[[cite:page:1:revision:8:section:1]]'],
+    ['numeric swap', 'Terms remain valid for 90 days.[[cite:page:1:revision:9:section:1]]'],
+    ['short identifier assignment swap', 'Chair assignments map IU to 250 lb and OM to 300 lb.[[cite:page:1:revision:9:section:1]]'],
+    ['numeric assignments swapped', 'Chair assignments map OM to 300 lb, IU to 250 lb.[[cite:page:1:revision:9:section:1]]'],
+    ['mixed-digit and range substitution', 'Model A3 covers range 10-25 units.[[cite:page:1:revision:9:section:1]]'],
+    ['temporal strengthening', 'Supply Disruptions: None.[[cite:page:1:revision:9:section:1]]'],
+    ['case-folded heading identity substitution', 'california orders route through the west contact.[[cite:page:1:revision:9:section:1]]'],
+    ['case-folded short identifier substitution', 'iu chairs are provided.[[cite:page:1:revision:9:section:1]]'],
+    ['unsupported identifying prefix', 'Beta: Indiana orders route through the Midwest contact.[[cite:page:1:revision:9:section:1]]'],
+    ['lowercase numeric assignments swapped', 'freight 10 percent, discount 20 percent.[[cite:page:1:revision:9:section:1]]'],
+    ['temporal relation substitution', 'Terms remain valid for 30 days before delivery.[[cite:page:1:revision:9:section:1]]'],
+    ['negation attachment swap', 'The office approves pickups, not deliveries.[[cite:page:1:revision:9:section:1]]'],
+    ['negation removal', 'Weekend deliveries are available.[[cite:page:1:revision:9:section:1]]'],
+    [
+      'unsupported long prefix',
+      `${Array.from({ length: 600 }, (_value, index) => `unsupported${index}`).join(' ')} Terms remain valid for 30 days.[[cite:page:1:revision:9:section:1]]`
+    ],
+    ['ambiguous repeated heading', 'Beta catalog only.[[cite:page:1:revision:9:section:4]]']
+  ] as const)('rejects %s rather than borrowing unrelated source text', async (_case, answer) => {
+    const responses: AxChatResponse[] = [
+      { results: [{ index: 0, functionCalls: [{ id: 'read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }] },
+      { results: [{ index: 0, content: answer }] }
+    ]
+    const chat = vi.fn(async () => responses.shift()!)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => ({
+      id: 1,
+      locale: 'en',
+      path: 'home',
+      sourceRevision: '9',
+      title: 'Homepage',
+      contentType: 'markdown',
+      content: [
+        '# Safety',
+        'Terms remain valid for 30 days.',
+        'No weekend deliveries.',
+        'Chair assignments map OM to 250 lb, IU to 300 lb.',
+        'Model A2 covers range 10-20 units.',
+        'Supply Disruptions: None known of at this time.',
+        'Indiana orders route through the Midwest contact.',
+        '- OM chairs are provided.',
+        'discount 10 percent, freight 20 percent.',
+        'Terms remain valid for 30 days after delivery.',
+        'The office approves deliveries, not pickups.',
+        '',
+        '# Operations',
+        'Contract pricing lists discount schedules.',
+        '',
+        '# Directory',
+        '## Outdoor',
+        'Alpha catalog only.',
+        '## Outdoor',
+        'Beta catalog only.'
+      ].join('\n'),
+      citation: { evidenceId: 'page:1:revision:9', label: 'Homepage', href: '/en/home' },
+      citationSections: [
+        { evidenceId: 'page:1:revision:9:section:1', label: 'Homepage › Safety', href: '/en/home#safety' },
+        { evidenceId: 'page:1:revision:9:section:2', label: 'Homepage › Operations', href: '/en/home#operations' },
+        { evidenceId: 'page:1:revision:9:section:3', label: 'Homepage › Directory', href: '/en/home#directory' },
+        { evidenceId: 'page:1:revision:9:section:4', label: 'Homepage › Directory › Outdoor', href: '/en/home#outdoor-1' }
+      ]
+    }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn()
+      })
     }
-  )
+    const text = vi.fn(async () => {})
+    await expect(
+      new AxAgentEngine(factory, actions).execute(
+        {
+          ...request(new AbortController().signal),
+          limits: { maxTurns: 2, maxToolCalls: 1 },
+          messages: [{ role: 'user', content: 'Summarize the current Wiki page.' }]
+        },
+        { text, event: async () => {} }
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+    expect(text).not.toHaveBeenCalled()
+  })
 
   it('reuses identical page reads while preserving every model-requested action in diagnostics', async () => {
     const responses: AxChatResponse[] = [
