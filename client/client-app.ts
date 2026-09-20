@@ -280,7 +280,7 @@ watch(
 // mounting when the server is slow or unavailable.
 const authRefresh = wikiStore.refreshAuth()
 
-const vuetify = createAppVuetify(wikiStore.user.appearance)
+const vuetify = createAppVuetify(siteConfig.initialAppearance ?? wikiStore.user.appearance)
 
 const i18n = await localization.init()
 const app = createApp({})
@@ -307,6 +307,9 @@ applyUserPresentation(wikiStore.user)
 // Mutable screens replace this default during mount with their safety snapshot.
 setReloadSafetyProvider(() => ({ safe: true, revision: 'client-app-ready', actorEpoch: 'client' }))
 app.mount('#root')
+// Vuetify now owns the live canvas, including later system/preference changes.
+document.documentElement.style.removeProperty('color-scheme')
+document.documentElement.style.backgroundColor = 'rgb(var(--v-theme-background))'
 void startOfflineSync()
 void authRefresh.then(outcome => {
   if (outcome === 'authenticated') {

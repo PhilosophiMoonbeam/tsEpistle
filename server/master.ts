@@ -579,12 +579,18 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   const themeColors = normalizeThemeColors(wiki.config.theming.colors)
   app.use(async (_req, res, next) => {
     const branding = await resolveActiveBranding(wiki.models.knex, wiki.config.logoUrl)
+    // Presentation only: JWT appearance claims may predate a saved preference.
+    const profile = _req.authContext?.kind === 'user'
+      ? await wiki.models.knex('users').select('appearance').where({ id: _req.authContext.userId }).first()
+      : undefined
+    const initialAppearance = profile?.appearance === 'light' || profile?.appearance === 'dark' ? profile.appearance : 'system'
     res.locals.faviconUrl = normalizeFaviconUrl(branding.logoUrl)
     res.locals.siteConfig = {
       title: wiki.config.title,
       theme: wiki.config.theming.theme,
       darkMode: wiki.config.theming.darkMode,
       themeColors,
+      initialAppearance,
       themeColor: themeColors.light.primary,
       backgroundColor: themeColors.light.background,
       tocPosition: wiki.config.theming.tocPosition || 'left',

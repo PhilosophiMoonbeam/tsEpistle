@@ -50,6 +50,16 @@ html(lang=siteConfig.lang)
       var siteConfig = !{JSON.stringify(siteConfig)}
       var siteLangs = !{JSON.stringify(langs)}
 
+    //- Match the document canvas to the saved preference before application assets load.
+    script.
+      (function () {
+        var appearance = siteConfig.initialAppearance;
+        var dark = appearance === 'dark' || (appearance !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        var colors = siteConfig.themeColors && siteConfig.themeColors[dark ? 'dark' : 'light'];
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        if (colors) document.documentElement.style.backgroundColor = colors.background;
+      })();
+
     //- Dev Mode Warning
     if devMode
       script.

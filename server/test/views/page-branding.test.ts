@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { runInNewContext } from 'node:vm'
 import pug from 'pug'
 import * as cheerio from 'cheerio'
 import { describe, expect, it } from '../bun-test.mts'
@@ -85,6 +86,28 @@ const jsonAttribute = ($editor: cheerio.Cheerio<cheerio.Element>, name: string):
 }
 
 describe('page and editor branding template mounts', () => {
+  it('paints the saved appearance before application modules run, independent of device mode', () => {
+    for (const [initialAppearance, systemDark, expected] of [
+      ['light', true, 'light'],
+      ['dark', false, 'dark'],
+      ['system', true, 'dark'],
+      ['system', false, 'light']
+    ] as const) {
+      const themeColors = { light: { background: '#FAFAFA' }, dark: { background: '#121212' } }
+      const html = renderView('page', { siteConfig: { lang: 'en', initialAppearance, themeColors } })
+      const style: Record<string, string> = {}
+      const context = {
+        document: { documentElement: { style } },
+        window: { matchMedia: () => ({ matches: systemDark }) }
+      }
+      cheerio.load(html)('head script:not([src])').each((_index, element) => {
+        runInNewContext(cheerio.load(element).text(), context)
+      })
+      expect(style.colorScheme).toBe(expected)
+      expect(style.backgroundColor).toBe(themeColors[expected].background)
+    }
+  })
+
   it('renders page.pug through master.pug with a decodable branded payload', () => {
     const payload = pagePayload(renderView('page', { branding: brandingView }))
 

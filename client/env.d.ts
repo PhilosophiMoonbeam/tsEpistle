@@ -18,6 +18,7 @@ export type SiteConfig = {
   theme: string
   darkMode: boolean
   themeColors: ThemeColors
+  initialAppearance?: 'light' | 'dark' | 'system'
   readerLayout?: import('../shared/theme-policy.ts').ReaderLayout
   tocPosition: string
   lang: string
