@@ -5,12 +5,27 @@ import { expectLocatorWithinViewport, openSearch, responsiveTest as test } from 
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=', 'base64')
 const generatedId = '00000000-0000-4000-8000-000000000701'
-const generated: AgentMediaView = { id: generatedId, kind: 'generated-image', filename: 'generated-image.png', mimeType: 'image/png', byteLength: png.length, available: true }
+const generated: AgentMediaView = {
+  id: generatedId,
+  kind: 'generated-image',
+  filename: 'generated-image.png',
+  mimeType: 'image/png',
+  byteLength: png.length,
+  available: true
+}
 
 async function installBrowserIdentity(page: Page) {
-  await page.route('**/_api/users/whoami', route => route.fulfill({ json: { authenticated: true, user: { id: 900001, name: 'Media fixture', email: 'media-fixture@example.invalid', permissions: ['use:agents'], localeCode: 'en' } } }))
+  await page.route('**/_api/users/whoami', route =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        user: { id: 900001, authVersion: 1, name: 'Media fixture', email: 'media-fixture@example.invalid', permissions: ['use:agents'], localeCode: 'en' }
+      }
+    })
+  )
 }
 async function openAgent(page: Page): Promise<Locator> {
+  await page.route('**/_api/pages/search?**', route => route.fulfill({ json: { results: [], suggestions: [], totalHits: 0, nextCursor: null } }))
   await page.goto('/', { waitUntil: 'domcontentloaded' })
   await expect(page.locator('.nav-header')).toBeVisible()
   const search = await openSearch(page)
@@ -26,15 +41,36 @@ async function openAgent(page: Page): Promise<Locator> {
 async function installRecorder(page: Page) {
   await page.addInitScript(() => {
     Object.defineProperty(window, '__agentMediaStopped', { configurable: true, writable: true, value: 0 })
-    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: async () => ({ getTracks: () => [{ stop: () => { Reflect.set(window, '__agentMediaStopped', Number(Reflect.get(window, '__agentMediaStopped')) + 1) } }] }) } })
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: async () => ({
+          getTracks: () => [
+            {
+              stop: () => {
+                Reflect.set(window, '__agentMediaStopped', Number(Reflect.get(window, '__agentMediaStopped')) + 1)
+              }
+            }
+          ]
+        })
+      }
+    })
     class FixtureRecorder {
-      static isTypeSupported() { return true }
+      static isTypeSupported() {
+        return true
+      }
       state = 'inactive'
       mimeType = 'audio/webm'
       ondataavailable: ((event: { data: Blob }) => void) | null = null
       onstop: (() => void) | null = null
-      start() { this.state = 'recording' }
-      stop() { this.state = 'inactive'; this.ondataavailable?.({ data: new Blob(['recorded voice'], { type: 'audio/webm' }) }); this.onstop?.() }
+      start() {
+        this.state = 'recording'
+      }
+      stop() {
+        this.state = 'inactive'
+        this.ondataavailable?.({ data: new Blob(['recorded voice'], { type: 'audio/webm' }) })
+        this.onstop?.()
+      }
     }
     Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: FixtureRecorder })
   })
@@ -71,7 +107,14 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
       expect(request.headers()['content-type']).toContain('multipart/form-data; boundary=')
       const body = request.postDataBuffer()?.toString() ?? ''
       const mimeType = body.includes('application/pdf') ? 'application/pdf' : body.includes('audio/webm') ? 'audio/webm' : 'image/png'
-      const media: AgentMediaView = { id: `00000000-0000-4000-8000-${String(800 + ++uploadIndex).padStart(12, '0')}`, kind: 'attachment', filename: mimeType === 'application/pdf' ? 'reference.pdf' : mimeType === 'audio/webm' ? 'dictation.webm' : 'reference.png', mimeType, byteLength: png.length, available: true }
+      const media: AgentMediaView = {
+        id: `00000000-0000-4000-8000-${String(800 + ++uploadIndex).padStart(12, '0')}`,
+        kind: 'attachment',
+        filename: mimeType === 'application/pdf' ? 'reference.pdf' : mimeType === 'audio/webm' ? 'dictation.webm' : 'reference.png',
+        mimeType,
+        byteLength: png.length,
+        available: true
+      }
       uploaded.push(media)
       return route.fulfill({ status: 201, json: { media } })
     }
@@ -85,12 +128,50 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
       const body = request.postDataJSON() as { content: string; attachmentIds: string[]; generationTools: string[]; responseMode?: string }
       sent.push(body)
       const now = new Date().toISOString()
-      const run = { id: crypto.randomUUID(), sessionId: fixture.sessionId, status: 'succeeded' as const, attempt: 1, eventSequence: 2, canCancel: false, createdAt: now, startedAt: now, completedAt: now, errorCode: null, errorMessage: null }
-      thread = { ...thread, session: { ...thread.session, version: thread.session.version + 1, currentRun: run }, messages: [
-        ...thread.messages,
-        { id: crypto.randomUUID(), runId: run.id, ordinal: thread.messages.length, role: 'user', status: 'complete', content: body.content, citations: [], createdAt: now, updatedAt: now, media: uploaded.filter(media => body.attachmentIds.includes(media.id)) },
-        { id: crypto.randomUUID(), runId: run.id, ordinal: thread.messages.length + 1, role: 'assistant', status: 'complete', content: '', citations: [], createdAt: now, updatedAt: now, media: [generated] }
-      ] }
+      const run = {
+        id: crypto.randomUUID(),
+        sessionId: fixture.sessionId,
+        status: 'succeeded' as const,
+        attempt: 1,
+        eventSequence: 2,
+        canCancel: false,
+        createdAt: now,
+        startedAt: now,
+        completedAt: now,
+        errorCode: null,
+        errorMessage: null
+      }
+      thread = {
+        ...thread,
+        session: { ...thread.session, version: thread.session.version + 1, currentRun: run },
+        messages: [
+          ...thread.messages,
+          {
+            id: crypto.randomUUID(),
+            runId: run.id,
+            ordinal: thread.messages.length,
+            role: 'user',
+            status: 'complete',
+            content: body.content,
+            citations: [],
+            createdAt: now,
+            updatedAt: now,
+            media: uploaded.filter(media => body.attachmentIds.includes(media.id))
+          },
+          {
+            id: crypto.randomUUID(),
+            runId: run.id,
+            ordinal: thread.messages.length + 1,
+            role: 'assistant',
+            status: 'complete',
+            content: '',
+            citations: [],
+            createdAt: now,
+            updatedAt: now,
+            media: [generated]
+          }
+        ]
+      }
       return route.fulfill({ status: 202, json: { run, replayed: false } })
     }
     if (thread && path.endsWith('/transcriptions') && request.method() === 'POST') {
@@ -106,15 +187,22 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
   })
   const initialThread = page.waitForResponse(response => {
     const path = new URL(response.url()).pathname
-    return (path === `/_api/agents/sessions/${fixture.sessionId}` && response.request().method() === 'GET') || (path === '/_api/agents/sessions' && response.request().method() === 'POST')
+    return (
+      (path === `/_api/agents/sessions/${fixture.sessionId}` && response.request().method() === 'GET') ||
+      (path === '/_api/agents/sessions' && response.request().method() === 'POST')
+    )
   })
   const agent = await openAgent(page)
-  thread = await (await initialThread).json() as AgentThreadState
+  thread = (await (await initialThread).json()) as AgentThreadState
   const input = agent.locator('.agent-composer textarea')
   const fileInput = agent.locator('input[type=file]')
   const attach = agent.getByRole('button', { name: 'Attach images or PDFs', exact: true })
   await expectLocatorWithinViewport(attach, 'Agent attachment control')
-  await fileInput.setInputFiles({ name: 'reference.pdf', mimeType: 'application/pdf', buffer: Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(11 * 1024 * 1024)]) })
+  await fileInput.setInputFiles({
+    name: 'reference.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(11 * 1024 * 1024)])
+  })
   await expect(agent.getByRole('button', { name: 'Remove reference.pdf', exact: true })).toBeVisible()
   await agent.getByRole('button', { name: 'Remove reference.pdf', exact: true }).click()
   await expect.poll(() => removed.length).toBe(1)
@@ -156,15 +244,27 @@ test('Agent attaches a Wiki asset through a keyboard-accessible private-copy pic
   let assetCopies = 0
   let denyAssets = false
   const asset = { id: 42, filename: 'team-diagram.png', ext: '.png', fileSize: png.length, kind: 'image', createdAt: '2026-09-18T00:00:00Z' }
-  await page.route('**/_api/assets?*', route => denyAssets
-    ? route.fulfill({ status: 403, json: { error: 'Restricted folder' } })
-    : route.fulfill({ json: new URL(route.request().url()).searchParams.get('folderId') === '7' ? [asset, { ...asset, id: 43, filename: 'handbook.pdf', ext: '.pdf', kind: 'binary' }] : [] }))
-  await page.route('**/_api/assets/folders?*', route => route.fulfill({ json: new URL(route.request().url()).searchParams.get('parentFolderId') === '0' ? [{ id: 7, name: 'Team', slug: 'team' }] : [] }))
+  await page.route('**/_api/assets?*', route =>
+    denyAssets
+      ? route.fulfill({ status: 403, json: { error: 'Restricted folder' } })
+      : route.fulfill({
+          json:
+            new URL(route.request().url()).searchParams.get('folderId') === '7'
+              ? [asset, { ...asset, id: 43, filename: 'handbook.pdf', ext: '.pdf', kind: 'binary' }]
+              : []
+        })
+  )
+  await page.route('**/_api/assets/folders?*', route =>
+    route.fulfill({ json: new URL(route.request().url()).searchParams.get('parentFolderId') === '0' ? [{ id: 7, name: 'Team', slug: 'team' }] : [] })
+  )
   await page.route(`**/_api/agents/sessions/${fixture.sessionId}/media/assets`, async route => {
     expect(route.request().postDataJSON()).toEqual({ assetId: 42 })
     expect(route.request().headers()['x-wiki-csrf']).toBeTruthy()
     assetCopies++
-    await route.fulfill({ status: 201, json: { media: { ...generated, id: '00000000-0000-4000-8000-000000000811', kind: 'attachment', filename: asset.filename } } })
+    await route.fulfill({
+      status: 201,
+      json: { media: { ...generated, id: '00000000-0000-4000-8000-000000000811', kind: 'attachment', filename: asset.filename } }
+    })
   })
   await page.route('**/_api/agents/media/*/content', route => route.fulfill({ contentType: 'image/png', body: png }))
   await page.route('**/_api/agents/media/00000000-0000-4000-8000-000000000811', route => route.fulfill({ status: 204 }))
@@ -213,13 +313,20 @@ test('Agent attaches a Wiki asset through a keyboard-accessible private-copy pic
   fixture.assertNoUnexpectedRequests()
 })
 
-
 test('Agent combines selected creation tools in a normal conversation', async ({ page }) => {
   await installBrowserIdentity(page)
-  const fixture = await installEnabledAgentFixture(page, { media: { attachments: false, imageGeneration: false, videoGeneration: true, musicGeneration: true, transcription: false } })
+  const fixture = await installEnabledAgentFixture(page, {
+    media: { attachments: false, imageGeneration: false, videoGeneration: true, musicGeneration: true, transcription: false }
+  })
   // One-second silent fixtures exercise native decoding without paid provider requests.
-  const videoBytes = Buffer.from('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', 'base64')
-  const musicBytes = Buffer.from('SUQzBAAAAAAAIlRTU0UAAAAOAAADTGF2ZjYyLjMuMTAwAAAAAAAAAAAAAAD/83DAAAAAAAAAAAAASW5mbwAAAA8AAAApAAAE5QAqKjAwNTU1Ojo/Pz9FRUpKSk9PVVVaWlpgYGVlZWpqb29vdXV6enp/f4WFioqKkJCVlZWamp+fn6WlqqqwsLC1tbq6usDAxcXFysrPz8/V1dra4ODg5eXq6urw8PX19fr6//8AAAAATGF2YzYyLjExAAAAAAAAAAAAAAAAJAPeAAAAAAAABOXVLMe7AAAAAAAAAAAAAAAAAP/zEMQAAAADSAAAAABMQU1FMy4xMExBTUUz//MSxA0AAANIAAAAAC4xMDEgKGJlTEFNRTMu//MQxBsAAANIAAAAADEwMSAoYmVMQU1FMy7/8xDEKAAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMQ1AAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxEIAAANIAAAAADEwMSAoYmVMQU1FMy7/8xDETwAAA0gAAAAAMTAxIChiZXRMQU1FM//zEMRcAAADSAAAAAAuMTAxIChiZUxBTUUz//MQxGkAAANIAAAAAC4xMDEgKGJlTEFNRTP/8xLEdgAAA0gAAAAALjEwMSAoYmVMQU1FMy7/8xDEhAAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMSRAAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxJ4AAANIAAAAADEwMSAoYmVMQU1FMy7/8xDEqwAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMS4AAADSAAAAAAxMDEgKGJldExBTUUz//MQxMUAAANIAAAAAC4xMDEgKGJlTEFNRTP/8xDE0gAAA0gAAAAALjEwMSAoYmVMQU1FM//zEsTfAAADSAAAAAAuMTAxIChiZUxBTUUzLv/zEMTtAAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxPIAAANIAAAAADEwMSAoYmVMQU1FMy7/8xDE8gAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMTyAAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxPIAAANIAAAAADEwMSAoYmV0YSAzKVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MSxPEAAANIAAAAAFVVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xLE8QAAA0gAAAAAVVVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVQ==', 'base64')
+  const videoBytes = Buffer.from(
+    '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',
+    'base64'
+  )
+  const musicBytes = Buffer.from(
+    'SUQzBAAAAAAAIlRTU0UAAAAOAAADTGF2ZjYyLjMuMTAwAAAAAAAAAAAAAAD/83DAAAAAAAAAAAAASW5mbwAAAA8AAAApAAAE5QAqKjAwNTU1Ojo/Pz9FRUpKSk9PVVVaWlpgYGVlZWpqb29vdXV6enp/f4WFioqKkJCVlZWamp+fn6WlqqqwsLC1tbq6usDAxcXFysrPz8/V1dra4ODg5eXq6urw8PX19fr6//8AAAAATGF2YzYyLjExAAAAAAAAAAAAAAAAJAPeAAAAAAAABOXVLMe7AAAAAAAAAAAAAAAAAP/zEMQAAAADSAAAAABMQU1FMy4xMExBTUUz//MSxA0AAANIAAAAAC4xMDEgKGJlTEFNRTMu//MQxBsAAANIAAAAADEwMSAoYmVMQU1FMy7/8xDEKAAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMQ1AAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxEIAAANIAAAAADEwMSAoYmVMQU1FMy7/8xDETwAAA0gAAAAAMTAxIChiZXRMQU1FM//zEMRcAAADSAAAAAAuMTAxIChiZUxBTUUz//MQxGkAAANIAAAAAC4xMDEgKGJlTEFNRTP/8xLEdgAAA0gAAAAALjEwMSAoYmVMQU1FMy7/8xDEhAAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMSRAAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxJ4AAANIAAAAADEwMSAoYmVMQU1FMy7/8xDEqwAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMS4AAADSAAAAAAxMDEgKGJldExBTUUz//MQxMUAAANIAAAAAC4xMDEgKGJlTEFNRTP/8xDE0gAAA0gAAAAALjEwMSAoYmVMQU1FM//zEsTfAAADSAAAAAAuMTAxIChiZUxBTUUzLv/zEMTtAAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxPIAAANIAAAAADEwMSAoYmVMQU1FMy7/8xDE8gAAA0gAAAAAMTAxIChiZUxBTUUzLv/zEMTyAAADSAAAAAAxMDEgKGJlTEFNRTMu//MQxPIAAANIAAAAADEwMSAoYmV0YSAzKVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MSxPEAAANIAAAAAFVVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xLE8QAAA0gAAAAAVVVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVf/zEMTyAAADSAAAAABVVVVVVVVVVVVVVVVV//MQxPIAAANIAAAAAFVVVVVVVVVVVVVVVVX/8xDE8gAAA0gAAAAAVVVVVVVVVVVVVVVVVQ==',
+    'base64'
+  )
   const outputs = new Map<string, boolean>()
   let thread: AgentThreadState | null = null
   const sent: Array<{ generationTools?: string[]; responseMode?: string }> = []
@@ -238,24 +345,72 @@ test('Agent combines selected creation tools in a normal conversation', async ({
         const video = tool === 'video'
         const id = crypto.randomUUID()
         outputs.set(id, video)
-        return { id, kind: video ? 'generated-video' : 'generated-audio', filename: video ? 'generated-video.mp4' : 'generated-music.mp3', mimeType: video ? 'video/mp4' : 'audio/mpeg', byteLength: 100, available: true }
+        return {
+          id,
+          kind: video ? 'generated-video' : 'generated-audio',
+          filename: video ? 'generated-video.mp4' : 'generated-music.mp3',
+          mimeType: video ? 'video/mp4' : 'audio/mpeg',
+          byteLength: 100,
+          available: true
+        }
       })
       const now = new Date().toISOString()
-      const run = { id: crypto.randomUUID(), sessionId: fixture.sessionId, status: 'succeeded' as const, attempt: 1, eventSequence: 2, canCancel: false, createdAt: now, startedAt: now, completedAt: now, errorCode: null, errorMessage: null }
-      thread = { ...thread, session: { ...thread.session, version: thread.session.version + 1, currentRun: run }, messages: [...thread.messages,
-        { id: crypto.randomUUID(), runId: run.id, ordinal: thread.messages.length, role: 'user', status: 'complete', content: body.content, citations: [], createdAt: now, updatedAt: now },
-        { id: crypto.randomUUID(), runId: run.id, ordinal: thread.messages.length + 1, role: 'assistant', status: 'complete', content: 'Here is the composition and accompanying video.', citations: [], createdAt: now, updatedAt: now, media: generatedMedia }
-      ] }
+      const run = {
+        id: crypto.randomUUID(),
+        sessionId: fixture.sessionId,
+        status: 'succeeded' as const,
+        attempt: 1,
+        eventSequence: 2,
+        canCancel: false,
+        createdAt: now,
+        startedAt: now,
+        completedAt: now,
+        errorCode: null,
+        errorMessage: null
+      }
+      thread = {
+        ...thread,
+        session: { ...thread.session, version: thread.session.version + 1, currentRun: run },
+        messages: [
+          ...thread.messages,
+          {
+            id: crypto.randomUUID(),
+            runId: run.id,
+            ordinal: thread.messages.length,
+            role: 'user',
+            status: 'complete',
+            content: body.content,
+            citations: [],
+            createdAt: now,
+            updatedAt: now
+          },
+          {
+            id: crypto.randomUUID(),
+            runId: run.id,
+            ordinal: thread.messages.length + 1,
+            role: 'assistant',
+            status: 'complete',
+            content: 'Here is the composition and accompanying video.',
+            citations: [],
+            createdAt: now,
+            updatedAt: now,
+            media: generatedMedia
+          }
+        ]
+      }
       return route.fulfill({ status: 202, json: { run, replayed: false } })
     }
     return route.fallback()
   })
   const initialThread = page.waitForResponse(response => {
     const path = new URL(response.url()).pathname
-    return (path === `/_api/agents/sessions/${fixture.sessionId}` && response.request().method() === 'GET') || (path === '/_api/agents/sessions' && response.request().method() === 'POST')
+    return (
+      (path === `/_api/agents/sessions/${fixture.sessionId}` && response.request().method() === 'GET') ||
+      (path === '/_api/agents/sessions' && response.request().method() === 'POST')
+    )
   })
   const agent = await openAgent(page)
-  thread = await (await initialThread).json() as AgentThreadState
+  thread = (await (await initialThread).json()) as AgentThreadState
   const input = agent.locator('.agent-composer textarea')
   const trigger = agent.getByRole('button', { name: 'Choose creation tools', exact: true })
   await expectLocatorWithinViewport(trigger, 'Creation tools control')

@@ -26,9 +26,20 @@ describe('agent operational limits', () => {
         maxAggregateChildTokens: 12_000,
         maxAggregateChildOutputCharacters: 96_000
       },
+      goals: {
+        enabled: false,
+        maxContinuations: 3,
+        maxTokens: 192_000,
+        maxToolCalls: 96,
+        maxDurationMilliseconds: 3_600_000
+      },
       retention: { temporarySessionHours: 24, savedSessionDays: 90, mcpContentDays: 7, auditDays: 90, maintenanceBatchSize: 100 },
       sse: { maximumConnectionsPerUser: 3 }
     })
+  })
+
+  it('preserves an explicit operator goal ceiling', () => {
+    expect(parseAgentOperationalLimits({ ...base, goals: { maxTokens: 60_000 } }).goals.maxTokens).toBe(60_000)
   })
 
   it.each([

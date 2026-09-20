@@ -42,8 +42,7 @@ const invalidDiagnosticEvent = (message: string): never => {
 const contextExclusionFor = (data: Record<string, unknown>): AgentToolContextExclusion | undefined => {
   if (!Object.hasOwn(data, 'contextExclusion')) return undefined
   const value = data.contextExclusion
-  if (typeof value !== 'object' || value === null || Array.isArray(value))
-    return invalidDiagnosticEvent('Agent tool context exclusion is invalid')
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return invalidDiagnosticEvent('Agent tool context exclusion is invalid')
   const record = value as Record<string, unknown>
   const keys = Object.keys(record)
   if (keys.length !== 2 || keys.some(key => key !== 'status' && key !== 'reason')) return invalidDiagnosticEvent('Agent tool context exclusion is invalid')
@@ -327,6 +326,7 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
       'retention',
       'folderId',
       'providerProfileId',
+      'googleSearchEnabled',
       'executionMode',
       'version',
       'summary',
@@ -344,9 +344,20 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
     knex('agentMessages')
       .where({ sessionId })
       .orderBy('ordinal')
-      .select('id', 'runId', 'ordinal', 'role', 'status', 'content', 'isVisible', 'citations', 'providerStateSha256', 'createdAt', 'updatedAt') as Promise<
-      Array<Record<string, unknown>>
-    >,
+      .select(
+        'id',
+        'runId',
+        'ordinal',
+        'role',
+        'status',
+        'content',
+        'isVisible',
+        'citations',
+        'googleSearchGrounding',
+        'providerStateSha256',
+        'createdAt',
+        'updatedAt'
+      ) as Promise<Array<Record<string, unknown>>>,
     knex('agentRuns')
       .where({ sessionId })
       .orderBy('queuedAt')
@@ -368,6 +379,7 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
         'transportKind',
         'model',
         'executionMode',
+        'googleSearchEnabled',
         'profilePolicyVersion',
         'defaultGeneration',
         'capabilityRevision',
@@ -502,6 +514,7 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
         pricingRevision: row.pricingRevision,
         profilePolicyVersion: Number(row.profilePolicyVersion),
         defaultGeneration: Number(row.defaultGeneration),
+        googleSearchEnabled: row.googleSearchEnabled === true || row.googleSearchEnabled === 1,
         promptVersion: Number(row.promptVersion)
       },
       usage,
@@ -547,6 +560,7 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
       retention: session.retention,
       folderId: session.folderId,
       providerProfileId: session.providerProfileId,
+      googleSearchEnabled: session.googleSearchEnabled === true || session.googleSearchEnabled === 1,
       executionMode: session.executionMode,
       version: Number(session.version),
       summary: session.summary,
@@ -567,6 +581,7 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
       content: message.content,
       visible: Boolean(message.isVisible),
       citations: parseOptionalJson(message.citations),
+      googleSearchGrounding: parseOptionalJson(message.googleSearchGrounding),
       providerContinuation: message.providerStateSha256 === null ? null : { sha256: message.providerStateSha256, contentExported: false },
       createdAt: iso(message.createdAt as Date | string),
       updatedAt: iso(message.updatedAt as Date | string)

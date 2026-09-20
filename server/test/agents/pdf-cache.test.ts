@@ -18,6 +18,7 @@ describe('private prepared PDF disk cache', () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     root = await mkdtemp(join(tmpdir(), 'pdf-cache-test-'))
     await db.schema.createTable('agentSessions', t => {
+      t.boolean('googleSearchEnabled').notNullable().defaultTo(false)
       t.string('id').primary()
       t.integer('ownerId')
       t.string('retention').defaultTo('saved')

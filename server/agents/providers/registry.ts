@@ -71,17 +71,21 @@ export const AgentProviderMediaConfigSchema = z.strictObject({
       pricingRevision: AgentProviderPricingRevisionSchema
     })
     .optional(),
-  videoGeneration: z.strictObject({
-    model: z.literal('gemini-omni-1.1-flash'),
-    pricingRevision: AgentProviderPricingRevisionSchema,
-    textOutputMicrosPerMillionTokens: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-    usagePolicy: z.literal('reported-or-estimated')
-  }).optional(),
-  musicGeneration: z.strictObject({
-    model: z.literal('lyria-3.5'),
-    costMicrosPerSong: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-    usagePolicy: z.literal('reported-or-estimated')
-  }).optional(),
+  videoGeneration: z
+    .strictObject({
+      model: z.literal('gemini-omni-1.1-flash'),
+      pricingRevision: AgentProviderPricingRevisionSchema,
+      textOutputMicrosPerMillionTokens: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      usagePolicy: z.literal('reported-or-estimated')
+    })
+    .optional(),
+  musicGeneration: z
+    .strictObject({
+      model: z.literal('lyria-3.5'),
+      costMicrosPerSong: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      usagePolicy: z.literal('reported-or-estimated')
+    })
+    .optional(),
   transcription: z
     .strictObject({
       model: z.literal('gemini-3.5-transcribe'),
@@ -212,6 +216,7 @@ interface TokenPayload {
   readonly defaultGeneration: number
   readonly executionMode: AgentExecutionMode
   readonly exp: number
+  readonly googleSearchEnabled?: boolean
 }
 
 export interface AgentProfileTokenKeys {
@@ -251,6 +256,13 @@ interface VersionRow {
 }
 
 const digest = (value: string): string => createHash('sha256').update(value).digest('hex')
+const supportsGoogleSearch = (version: Pick<VersionRow, 'transportKind' | 'model' | 'conformed'>): boolean =>
+  version.conformed && version.transportKind === 'gemini-api' && isGeminiInteractionsModel(version.model)
+const googleSearchConsent = (value: unknown): boolean => {
+  if (value === undefined || value === null || value === false || value === 0) return false
+  if (value === true || value === 1) return true
+  throw new AgentRepositoryError('AGENT_SESSION_CORRUPT', 'Stored Google Search consent is invalid', 500)
+}
 const containsControlCharacter = (value: string): boolean => {
   for (let index = 0; index < value.length; index++) {
     const code = value.charCodeAt(index)
@@ -939,7 +951,13 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
         throw new AgentRepositoryError('PROFILE_MODE_INCOMPATIBLE', 'Provider profile does not support Wiki Agent actions', 409)
       await transaction('agentSessions')
         .where({ id: input.sessionId, ownerId: input.ownerId, version: input.expectedSessionVersion })
-        .update({ providerProfileId: input.profileId, executionMode: 'agent', version: input.expectedSessionVersion + 1, updatedAt: new Date() })
+        .update({
+          providerProfileId: input.profileId,
+          executionMode: 'agent',
+          googleSearchEnabled: false,
+          version: input.expectedSessionVersion + 1,
+          updatedAt: new Date()
+        })
     })
   }
   async assertProfileAvailable(ownerId: number, profileId: string, database: Knex | Knex.Transaction = this.#knex): Promise<void> {
@@ -948,6 +966,17 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
     const policies = parseJson(AgentProviderPoliciesSchema, version.policies, 'PROVIDER_PROFILE_CORRUPT')
     if (!supportsAgentExecution(capabilities, policies))
       throw new AgentRepositoryError('PROFILE_MODE_INCOMPATIBLE', 'Provider profile does not support Wiki Agent actions', 409)
+  }
+  async assertSessionGoogleSearchAvailable(ownerId: number, sessionId: string, database: Knex | Knex.Transaction = this.#knex): Promise<void> {
+    const session = (await database('agentSessions').where({ id: sessionId, ownerId }).whereNull('deletedAt').first('providerProfileId')) as
+      | { providerProfileId: string | null }
+      | undefined
+    if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
+    const profileId = session.providerProfileId ?? (await this.#implicitProfileId(database, ownerId, true))
+    if (!profileId) return this.#profileUnavailable()
+    const { version } = await this.#availableProfileVersion(database, ownerId, profileId)
+    if (!supportsGoogleSearch(version))
+      throw new AgentRepositoryError('GOOGLE_SEARCH_UNAVAILABLE', 'Google Search is unavailable for the selected provider profile', 409)
   }
 
   async listVisible(ownerId: number, limit = 100): Promise<AgentProviderSelectionView[]> {
@@ -964,6 +993,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       capabilityRevision: profile.capabilityRevision,
       policyVersion: profile.policyVersion,
       isGlobalDefault: profile.isGlobalDefault,
+      googleSearchAvailable: profile.conformed && profile.transportKind === 'gemini-api' && isGeminiInteractionsModel(profile.model),
       ...(profile.transportKind === 'gemini-api' && profile.adapterConfig.media
         ? {
             media: {
@@ -984,8 +1014,8 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
         .where({ id: sessionId, ownerId })
         .whereNull('deletedAt')
         .forUpdate()
-        .first('id', 'version', 'providerProfileId', 'executionMode')) as
-        | { id: string; version: number; providerProfileId: string | null; executionMode: AgentExecutionMode }
+        .first('id', 'version', 'providerProfileId', 'executionMode', 'googleSearchEnabled')) as
+        | { id: string; version: number; providerProfileId: string | null; executionMode: AgentExecutionMode; googleSearchEnabled: boolean | number }
         | undefined
       if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
       const configuration = await this.#lockConfiguration(transaction)
@@ -1008,6 +1038,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
         profilePolicyVersion: Number(profile.policyVersion),
         defaultGeneration: configuration.defaultGeneration,
         executionMode: 'agent',
+        ...(googleSearchConsent(session.googleSearchEnabled) ? { googleSearchEnabled: true } : {}),
         exp: Math.floor(Date.now() / 1000) + Math.max(30, Math.min(900, ttlSeconds))
       } satisfies TokenPayload
     })
@@ -1021,8 +1052,8 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
   ): Promise<AgentResolvedAdmission> {
     const sessionQuery = transaction('agentSessions').where({ id: input.sessionId, ownerId: input.ownerId }).whereNull('deletedAt')
     if (payload !== null) sessionQuery.andWhere({ version: payload.sessionVersion, executionMode: payload.executionMode })
-    const session = (await sessionQuery.forUpdate().first('version', 'providerProfileId', 'executionMode')) as
-      | { version: number | string; providerProfileId: string | null; executionMode: AgentExecutionMode }
+    const session = (await sessionQuery.forUpdate().first('version', 'providerProfileId', 'executionMode', 'googleSearchEnabled')) as
+      | { version: number | string; providerProfileId: string | null; executionMode: AgentExecutionMode; googleSearchEnabled: boolean | number }
       | undefined
     if (!session)
       throw new AgentRepositoryError(
@@ -1074,6 +1105,12 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
     const policies = parseJson(AgentProviderPoliciesSchema, version.policies, 'PROVIDER_PROFILE_CORRUPT')
     if (!supportsAgentExecution(capabilities, policies))
       throw new AgentRepositoryError('PROFILE_MODE_INCOMPATIBLE', 'Provider profile does not support Wiki Agent actions', 409)
+    const googleSearchEnabled = googleSearchConsent(session.googleSearchEnabled)
+    const payloadGoogleSearchEnabled = payload?.googleSearchEnabled ?? false
+    if (payload !== null && (typeof payloadGoogleSearchEnabled !== 'boolean' || payloadGoogleSearchEnabled !== googleSearchEnabled))
+      throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', 'Google Search consent changed before admission', 409)
+    if (googleSearchEnabled && !supportsGoogleSearch(version))
+      throw new AgentRepositoryError('GOOGLE_SEARCH_UNAVAILABLE', 'Google Search is unavailable for the selected provider profile', 409)
     const resolvedPayload =
       payload ??
       ({
@@ -1088,7 +1125,8 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
         profilePolicyVersion: Number(profile.policyVersion),
         defaultGeneration: configuration.defaultGeneration,
         executionMode: session.executionMode,
-        exp: 0
+        exp: 0,
+        ...(googleSearchEnabled ? { googleSearchEnabled: true } : {})
       } satisfies TokenPayload)
     return {
       profileResolutionSha256: digest(canonicalJson(resolvedPayload)),
@@ -1096,6 +1134,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       transportKind: version.transportKind,
       model: version.model,
       executionMode: resolvedPayload.executionMode,
+      googleSearchEnabled,
       profilePolicyVersion: Number(profile.policyVersion),
       defaultGeneration: configuration.defaultGeneration,
       capabilityRevision: version.capabilityRevision,
@@ -1120,6 +1159,8 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
     } catch {
       throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', 'Profile resolution token is invalid', 409)
     }
+    if (payload.googleSearchEnabled !== undefined && typeof payload.googleSearchEnabled !== 'boolean')
+      throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', 'Profile resolution token is invalid', 409)
     if (
       payload.v !== 1 ||
       payload.kid !== keyId ||

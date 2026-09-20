@@ -61,6 +61,7 @@ const createTables = async (db: Knex): Promise<void> => {
     table.unique(['ownerId', 'normalizedName'])
   })
   await db.schema.createTable('agentSessions', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.uuid('id').primary()
     table.integer('ownerId').notNullable()
     table.string('title').notNullable()
@@ -91,6 +92,7 @@ const createTables = async (db: Knex): Promise<void> => {
     table.unique(['ownerId', 'target', 'contentSha256'])
   })
   await db.schema.createTable('agentMessages', table => {
+    table.text('googleSearchGrounding').nullable()
     table.uuid('id').primary()
     table.uuid('sessionId').notNullable()
     table.uuid('runId').nullable()
@@ -105,6 +107,7 @@ const createTables = async (db: Knex): Promise<void> => {
     table.dateTime('updatedAt').notNullable()
   })
   await db.schema.createTable('agentRuns', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.uuid('id').primary()
     table.uuid('sessionId').notNullable()
     table.uuid('userMessageId').notNullable()
@@ -366,6 +369,7 @@ describe('ordinary-origin agent session API', () => {
   const makeAccountingRuntime = (engine: AgentEngine, maxTokens: number, utilityModel?: AgentProductRuntimeOptions['utilityModel']): AgentProductRuntime => {
     const resolved = {
       profileResolutionSha256: 'a'.repeat(64),
+      googleSearchEnabled: false,
       providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
       transportKind: 'test',
       model: 'deterministic',
@@ -633,6 +637,7 @@ describe('ordinary-origin agent session API', () => {
     }
     const resolvedAdmission = {
       profileResolutionSha256: 'a'.repeat(64),
+      googleSearchEnabled: false,
       providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
       transportKind: 'test',
       model: 'deterministic',
@@ -1423,6 +1428,7 @@ describe('ordinary-origin agent session API', () => {
       clientRequestId: id,
       clientRequestSha256: 'a'.repeat(64),
       profileResolutionSha256: 'b'.repeat(64),
+      googleSearchEnabled: false,
       status: 'succeeded',
       attempts: 1,
       maxAttempts: 3,
@@ -1570,6 +1576,7 @@ describe('ordinary-origin agent session API', () => {
       clientRequestId: id,
       clientRequestSha256: 'a'.repeat(64),
       profileResolutionSha256: 'b'.repeat(64),
+      googleSearchEnabled: false,
       status: 'succeeded',
       attempts: 1,
       maxAttempts: 3,
@@ -1643,6 +1650,7 @@ describe('ordinary-origin agent session API', () => {
       clientRequestId: '00000000-0000-4000-8000-000000000065',
       clientRequestSha256: 'a'.repeat(64),
       profileResolutionSha256: 'b'.repeat(64),
+      googleSearchEnabled: false,
       status: 'succeeded',
       attempts: 1,
       maxAttempts: 3,
@@ -1929,6 +1937,7 @@ describe('ordinary-origin agent session API', () => {
     const hash = (value: Buffer): string => createHash('sha256').update(value).digest('hex')
     const resolved = {
       profileResolutionSha256: 'c'.repeat(64),
+      googleSearchEnabled: false,
       providerProfileVersionId: currentOrigin.providerProfileVersionId,
       transportKind: currentOrigin.transportKind,
       model: currentOrigin.model,
@@ -2092,6 +2101,7 @@ describe('ordinary-origin agent session API', () => {
           clientRequestId: randomUUID(),
           expectedSessionVersion: 1,
           profileResolutionSha256: 'b'.repeat(64),
+          googleSearchEnabled: false,
           content: 'Provider A request',
           providerProfileVersionId: testCase.origin.providerProfileVersionId,
           transportKind: testCase.origin.transportKind,
@@ -2478,7 +2488,7 @@ describe('ordinary-origin agent session API', () => {
     expect(Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(1)
     await recreatedRuntime.shutdown()
   })
-  it('records a token fence for a partial pre-dispatch continuation and renews from the old ceiling', async () => {
+  it('renews an early token fence from lifetime usage without rolling over unused allowance', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000321'
     const goalId = '00000000-0000-4000-8000-000000000322'
     await insertAccountingSession(sessionId)
@@ -2539,7 +2549,7 @@ describe('ordinary-origin agent session API', () => {
       confirmed: true
     })
     expect(renewed).toMatchObject({
-      goal: { status: 'active', maxTokens: 8, consumedTokens: 3, budgetCycle: 2 },
+      goal: { status: 'active', maxTokens: 7, consumedTokens: 3, tokenAllowance: 4, budgetCycle: 2 },
       run: { goalContinuation: 2 },
       replayed: false
     })
@@ -2611,7 +2621,7 @@ describe('ordinary-origin agent session API', () => {
       clientRequestId: '00000000-0000-4000-8000-000000000335',
       confirmed: true
     })
-    expect(renewed).toMatchObject({ goal: { maxTokens: 16, consumedTokens: 4, budgetCycle: 2 }, replayed: false })
+    expect(renewed).toMatchObject({ goal: { maxTokens: 12, consumedTokens: 4, tokenAllowance: 8, budgetCycle: 2 }, replayed: false })
     await expect(recreatedRuntime.runOnce()).resolves.toBe(true)
     expect(classifierCalls).toBe(1)
 
@@ -2740,7 +2750,7 @@ describe('ordinary-origin agent session API', () => {
       confirmed: true
     })
     expect(renewed).toMatchObject({
-      goal: { status: 'active', maxTokens: 200, consumedTokens: 85, tokenAllowance: 100, budgetCycle: 2 },
+      goal: { status: 'active', maxTokens: 185, consumedTokens: 85, tokenAllowance: 100, budgetCycle: 2 },
       run: { goalContinuation: 2 },
       replayed: false
     })
@@ -2963,6 +2973,7 @@ describe('ordinary-origin agent session API', () => {
         selection: 'fallback'
       })
     )
+    await db('agentGoals').where({ id: goalId }).update({ budgetPolicyVersion: 1 })
     await settleAccountingRun(admitted.run.id, 0, 0, 'consumed', 4)
     const expectedVersion = await pauseAccountingGoal(goalId)
     const limited = await accountingRuntime.resumeGoal({
@@ -3038,12 +3049,15 @@ describe('ordinary-origin agent session API', () => {
     expect(renewalEvent).toBeDefined()
     expect(renewalEvent?.dataSha256).toBe(createHash('sha256').update(String(renewalEvent?.data)).digest('hex'))
     expect(JSON.parse(String(renewalEvent?.data))).toMatchObject({
+      receiptVersion: 2,
       operation: 'renew_goal_budget',
       goalId,
       clientRequestId: renewal.clientRequestId,
       expectedVersion: renewal.expectedVersion,
       confirmed: true,
       status: 'active',
+      cycleStartedAtTokens: 4,
+      tokenAllowance: 4,
       budgetCycle: 2,
       maxTokens: 8,
       continuationCount: 1
@@ -3424,6 +3438,7 @@ describe('ordinary-origin agent session API', () => {
       clientRequestId: randomUUID(),
       expectedSessionVersion: 1,
       profileResolutionSha256: 'a'.repeat(64),
+      googleSearchEnabled: false,
       content: 'Capture a screenshot.',
       providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
       transportKind: 'test',
@@ -3598,6 +3613,7 @@ describe('ordinary-origin agent session API', () => {
         clientRequestId: requestId,
         expectedSessionVersion: 1,
         profileResolutionSha256: 'd'.repeat(64),
+        googleSearchEnabled: false,
         content: 'Cancel this run.',
         providerProfileVersionId: '00000000-0000-4000-8000-000000000205',
         transportKind: 'test',

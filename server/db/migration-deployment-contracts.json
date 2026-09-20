@@ -31,6 +31,36 @@
       "runtimePostconditions": [
         "agent-goal-budget-tier-selection"
       ]
+    },
+    "tsepistle-000045-agent-goal-budget-policy-v2.js": {
+      "persistentState": "stateful",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "agent-goal-budget-tier-selection"
+      ],
+      "runtimePostconditions": [
+        "agent-goal-budget-tier-selection"
+      ]
+    },
+    "tsepistle-000046-agent-google-search-grounding.js": {
+      "persistentState": "stateful",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "agent-google-search-grounding-columns"
+      ],
+      "runtimePostconditions": [
+        "agent-google-search-consent-admission"
+      ]
     }
   }
 }

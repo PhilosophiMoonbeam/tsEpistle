@@ -1,5 +1,6 @@
 import type { AxAIService, AxAIServiceOptions, AxChatRequest, AxChatResponse, AxChatResponseResult } from '@ax-llm/ax'
 import { z } from 'zod'
+import type { AgentGoogleSearchCitation, AgentGoogleSearchGrounding } from '../../../shared/agents/contracts.ts'
 
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { AgentRepositoryError } from '../repository.ts'
@@ -10,6 +11,14 @@ const MAX_EVENT_BYTES = 1 * 1_024 * 1_024
 const MAX_STATE_BYTES = 256 * 1_024
 const MAX_STEPS = 2_000
 const MAX_TEXT_CHARACTERS = 1_000_000
+const MAX_SEARCH_QUERIES = 16
+const MAX_SEARCH_QUERY_CHARACTERS = 2_048
+const MAX_SEARCH_SUGGESTIONS = 8
+const MAX_SEARCH_SUGGESTION_CHARACTERS = 32_768
+const MAX_SEARCH_SUGGESTIONS_BYTES = 128 * 1_024
+const MAX_GROUNDING_CITATIONS = 32
+const MAX_CITATION_URL_CHARACTERS = 2_048
+const MAX_CITATION_TITLE_CHARACTERS = 512
 const STATE_PREFIX = 'wiki.gemini.interactions.v1:'
 export const isGeminiInteractionsModel = (model: string): boolean => /^gemini-3(?:\.[0-9]+)?(?:-[a-z0-9][a-z0-9._-]*)?$/u.test(model)
 
@@ -33,9 +42,18 @@ const InteractionIdentifierSchema = z
   .refine(value => !containsControlCharacter(value), 'identifier contains a control character')
 const ToolNameSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u)
 const JsonObjectSchema = z.record(z.string(), z.unknown())
+const SignatureSchema = z.string().min(1).max(MAX_STATE_BYTES)
+const UrlCitationSchema = z.strictObject({
+  type: z.literal('url_citation'),
+  start_index: z.number().int(),
+  end_index: z.number().int(),
+  url: z.string(),
+  title: z.string()
+})
 const TextContentSchema = z.strictObject({
   type: z.literal('text'),
-  text: z.string().max(MAX_TEXT_CHARACTERS)
+  text: z.string().max(MAX_TEXT_CHARACTERS),
+  annotations: z.array(UrlCitationSchema).max(MAX_GROUNDING_CITATIONS).optional()
 })
 const ModelOutputStepSchema = z.strictObject({
   type: z.literal('model_output'),
@@ -45,15 +63,60 @@ const FunctionCallStepSchema = z.strictObject({
   type: z.literal('function_call'),
   id: IdentifierSchema,
   name: ToolNameSchema,
-  arguments: JsonObjectSchema
+  arguments: JsonObjectSchema,
+  signature: SignatureSchema.optional()
+})
+const GoogleSearchCallStepSchema = z.strictObject({
+  type: z.literal('google_search_call'),
+  id: IdentifierSchema,
+  signature: SignatureSchema,
+  arguments: z.strictObject({
+    queries: z.array(z.string().min(1).max(MAX_SEARCH_QUERY_CHARACTERS)).min(1).max(MAX_SEARCH_QUERIES)
+  }),
+  search_type: z.literal('web_search')
+})
+const GoogleSearchResultItemSchema = z.strictObject({
+  search_suggestions: z.string().optional()
+})
+const GoogleSearchResultStepSchema = z.strictObject({
+  type: z.literal('google_search_result'),
+  call_id: IdentifierSchema,
+  signature: SignatureSchema,
+  result: z.array(GoogleSearchResultItemSchema).max(MAX_SEARCH_SUGGESTIONS),
+  is_error: z.boolean()
 })
 const ThoughtStepSchema = z.strictObject({
   type: z.literal('thought'),
-  signature: z.string().min(1).max(MAX_STATE_BYTES).optional(),
+  signature: SignatureSchema.optional(),
   summary: z.array(TextContentSchema).max(64).optional()
 })
-const OutputStepSchema = z.discriminatedUnion('type', [ModelOutputStepSchema, FunctionCallStepSchema, ThoughtStepSchema])
+const OutputStepSchema = z.discriminatedUnion('type', [
+  ModelOutputStepSchema,
+  FunctionCallStepSchema,
+  GoogleSearchCallStepSchema,
+  GoogleSearchResultStepSchema,
+  ThoughtStepSchema
+])
 const OutputStepsSchema = z.array(OutputStepSchema).max(MAX_STEPS)
+const UserInputStepSchema = z.strictObject({ type: z.literal('user_input'), content: z.array(TextContentSchema).max(MAX_STEPS) })
+const FunctionResultStepSchema = z.strictObject({
+  type: z.literal('function_result'),
+  name: ToolNameSchema,
+  call_id: IdentifierSchema,
+  result: z.array(TextContentSchema).max(MAX_STEPS),
+  is_error: z.boolean().optional(),
+  signature: SignatureSchema.optional()
+})
+const NativeStepSchema = z.discriminatedUnion('type', [
+  ModelOutputStepSchema,
+  FunctionCallStepSchema,
+  GoogleSearchCallStepSchema,
+  GoogleSearchResultStepSchema,
+  ThoughtStepSchema,
+  UserInputStepSchema,
+  FunctionResultStepSchema
+])
+const NativeStepsSchema = z.array(NativeStepSchema).max(MAX_STEPS)
 const ModalityTokenCountsSchema = z.array(z.object({ modality: z.string().min(1).max(32), tokens: z.number().int().nonnegative() })).max(16)
 const ModelInvocationTokenCountsSchema = z
   .array(
@@ -93,6 +156,11 @@ const InteractionSchema = z
   .passthrough()
 
 type OutputStep = z.infer<typeof OutputStepSchema>
+type NativeStep = z.infer<typeof NativeStepSchema>
+interface DecodedState {
+  readonly steps: readonly NativeStep[]
+  readonly assistantStepStart: number
+}
 type Usage = z.infer<typeof UsageSchema>
 type ThoughtBlock = NonNullable<AxChatResponseResult['thoughtBlocks']>[number]
 
@@ -100,13 +168,181 @@ const invalidResponse = (detail: string): AgentRepositoryError => new AgentRepos
 const corruptState = (): AgentRepositoryError =>
   new AgentRepositoryError('AGENT_PROVIDER_STATE_CORRUPT', 'Stored Gemini Interactions continuation is invalid', 500)
 
-const encodedState = (steps: readonly OutputStep[]): ThoughtBlock => {
-  const data = `${STATE_PREFIX}${canonicalJson(steps)}`
+export interface GeminiGoogleSearchGrounding extends AgentGoogleSearchGrounding {
+  readonly searchSuggestions: readonly string[]
+}
+
+type GroundingSidecar = { readonly grounding?: GeminiGoogleSearchGrounding; readonly error?: AgentRepositoryError }
+const groundingSidecars = new WeakMap<AxChatResponseResult, GroundingSidecar>()
+
+const safeCitationUrl = (value: string): boolean => {
+  if (value.length < 1 || value.length > MAX_CITATION_URL_CHARACTERS || containsControlCharacter(value)) return false
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && url.username.length === 0 && url.password.length === 0
+  } catch {
+    return false
+  }
+}
+
+const utf16OffsetsForUtf8Boundaries = (text: string, offsets: readonly number[]): ReadonlyMap<number, number> | null => {
+  const requested = new Set(offsets)
+  const converted = new Map<number, number>()
+  let byteOffset = 0
+  for (let utf16Offset = 0; utf16Offset < text.length; utf16Offset++) {
+    if (requested.has(byteOffset)) converted.set(byteOffset, utf16Offset)
+    const first = text.charCodeAt(utf16Offset)
+    if (first <= 0x7f) {
+      byteOffset += 1
+    } else if (first <= 0x7ff) {
+      byteOffset += 2
+    } else if (first >= 0xd800 && first <= 0xdbff && utf16Offset + 1 < text.length) {
+      const second = text.charCodeAt(utf16Offset + 1)
+      if (second >= 0xdc00 && second <= 0xdfff) {
+        byteOffset += 4
+        utf16Offset++
+      } else {
+        byteOffset += 3
+      }
+    } else {
+      byteOffset += 3
+    }
+  }
+  if (requested.has(byteOffset)) converted.set(byteOffset, text.length)
+  return converted.size === requested.size ? converted : null
+}
+
+const normalizedNativeSteps = (
+  steps: readonly NativeStep[],
+  options: Readonly<{ requireFinalSearchCitations?: boolean; presentationStart?: number }> = {}
+): { readonly steps: readonly NativeStep[]; readonly groundingSidecar: GroundingSidecar } => {
+  const pendingSearchCalls = new Set<string>()
+  const completedSearchCalls = new Set<string>()
+  let presentationError: AgentRepositoryError | undefined
+  const searchSuggestions: string[] = []
+  let suggestionBytes = 0
+  let successfulSearch = false
+  const normalized: NativeStep[] = []
+  for (const step of steps) {
+    if (step.type === 'google_search_call') {
+      if (pendingSearchCalls.has(step.id) || completedSearchCalls.has(step.id)) throw invalidResponse('returned duplicate native search call IDs')
+      pendingSearchCalls.add(step.id)
+      normalized.push(step)
+      continue
+    }
+    if (step.type !== 'google_search_result') {
+      normalized.push(step)
+      continue
+    }
+    if (!pendingSearchCalls.delete(step.call_id) || completedSearchCalls.has(step.call_id)) throw invalidResponse('returned an unmatched native search result')
+    completedSearchCalls.add(step.call_id)
+    successfulSearch ||= !step.is_error
+    normalized.push({
+      ...step,
+      result: step.result.map(item => {
+        const suggestion = item.search_suggestions
+        if (suggestion !== undefined && suggestion.length > 0) {
+          const bytes = Buffer.byteLength(suggestion, 'utf8')
+          if (
+            suggestion.length > MAX_SEARCH_SUGGESTION_CHARACTERS ||
+            bytes > MAX_SEARCH_SUGGESTIONS_BYTES ||
+            searchSuggestions.length >= MAX_SEARCH_SUGGESTIONS ||
+            suggestionBytes > MAX_SEARCH_SUGGESTIONS_BYTES - bytes
+          ) {
+            presentationError ??= invalidResponse('returned oversized search suggestions')
+          } else {
+            searchSuggestions.push(suggestion)
+            suggestionBytes += bytes
+          }
+        }
+        return {}
+      })
+    })
+  }
+  if (pendingSearchCalls.size > 0) throw invalidResponse('returned an incomplete native search call')
+
+  try {
+    if (presentationError) throw presentationError
+    const citations: AgentGoogleSearchCitation[] = []
+    let outputOffset = 0
+    for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
+      const step = steps[stepIndex]!
+      const visible = stepIndex >= (options.presentationStart ?? 0)
+      if (step.type !== 'model_output') continue
+      for (const content of step.content ?? []) {
+        const annotations = content.annotations ?? []
+        const offsets =
+          annotations.length === 0
+            ? undefined
+            : utf16OffsetsForUtf8Boundaries(
+                content.text,
+                annotations.flatMap(annotation => [annotation.start_index, annotation.end_index])
+              )
+        if (offsets === null) throw invalidResponse('returned Google Search annotations outside UTF-8 boundaries')
+        for (const annotation of annotations) {
+          const startIndex = offsets?.get(annotation.start_index)
+          const endIndex = offsets?.get(annotation.end_index)
+          if (
+            (visible && citations.length >= MAX_GROUNDING_CITATIONS) ||
+            annotation.start_index < 0 ||
+            annotation.end_index <= annotation.start_index ||
+            startIndex === undefined ||
+            endIndex === undefined ||
+            outputOffset > 10_000_000 - endIndex ||
+            annotation.title.trim().length === 0 ||
+            annotation.title.length > MAX_CITATION_TITLE_CHARACTERS ||
+            containsControlCharacter(annotation.title) ||
+            !safeCitationUrl(annotation.url)
+          )
+            throw invalidResponse('returned invalid Google Search annotations')
+          if (visible)
+            citations.push({
+              url: annotation.url,
+              title: annotation.title,
+              startIndex: outputOffset + startIndex,
+              endIndex: outputOffset + endIndex
+            })
+        }
+        if (visible) outputOffset += content.text.length
+      }
+    }
+    if (options.requireFinalSearchCitations === true && successfulSearch && citations.length === 0) throw invalidResponse('omitted Google Search annotations')
+    return {
+      steps: normalized,
+      groundingSidecar:
+        completedSearchCalls.size === 0 && citations.length === 0
+          ? {}
+          : {
+              grounding: Object.freeze({
+                citations: Object.freeze(citations),
+                searchSuggestions: Object.freeze(searchSuggestions)
+              })
+            }
+    }
+  } catch (error) {
+    return {
+      steps: normalized,
+      groundingSidecar: {
+        error: error instanceof AgentRepositoryError ? error : invalidResponse('returned invalid Google Search annotations')
+      }
+    }
+  }
+}
+
+export const readGeminiGoogleSearchGrounding = (result: AxChatResponseResult): GeminiGoogleSearchGrounding | undefined => {
+  const sidecar = groundingSidecars.get(result)
+  if (sidecar?.error) throw sidecar.error
+  return sidecar?.grounding
+}
+
+const encodedState = (steps: readonly NativeStep[], assistantStepStart = 0): ThoughtBlock => {
+  const payload = assistantStepStart === 0 ? steps : { steps, assistantStepStart }
+  const data = `${STATE_PREFIX}${canonicalJson(payload)}`
   if (Buffer.byteLength(data, 'utf8') > MAX_STATE_BYTES) throw invalidResponse('continuation state exceeds the byte limit')
   return { data, encrypted: true }
 }
 
-const decodeState = (block: ThoughtBlock, source: 'provider' | 'stored'): readonly OutputStep[] => {
+const decodeState = (block: ThoughtBlock, source: 'provider' | 'stored'): DecodedState => {
   const fail = (): never => {
     throw source === 'provider' ? invalidResponse('returned invalid continuation state') : corruptState()
   }
@@ -124,9 +360,26 @@ const decodeState = (block: ThoughtBlock, source: 'provider' | 'stored'): readon
   } catch {
     fail()
   }
-  const parsed = OutputStepsSchema.safeParse(value)
-  if (!parsed.success) throw source === 'provider' ? invalidResponse('returned invalid continuation state') : corruptState()
-  return parsed.data
+  const legacy = NativeStepsSchema.safeParse(value)
+  const envelope = z
+    .strictObject({
+      steps: NativeStepsSchema,
+      assistantStepStart: z.number().int().nonnegative().max(MAX_STEPS)
+    })
+    .safeParse(value)
+  let steps: readonly NativeStep[]
+  let assistantStepStart: number
+  if (legacy.success) {
+    steps = legacy.data
+    assistantStepStart = 0
+  } else {
+    if (!envelope.success) return fail()
+    steps = envelope.data.steps
+    assistantStepStart = envelope.data.assistantStepStart
+  }
+  const native = normalizedNativeSteps(steps, { presentationStart: assistantStepStart })
+  if (assistantStepStart > steps.length || native.groundingSidecar.error || canonicalJson(native.steps) !== canonicalJson(steps)) return fail()
+  return { steps, assistantStepStart }
 }
 export const isGeminiInteractionContinuation = (block: ThoughtBlock): boolean => {
   try {
@@ -142,15 +395,15 @@ export const preserveGeminiInteractionState = (block: ThoughtBlock): ThoughtBloc
   return { data: block.data, encrypted: true }
 }
 
-const stepText = (steps: readonly OutputStep[]): string =>
+const stepText = (steps: readonly NativeStep[]): string =>
   steps
     .flatMap(step => (step.type === 'model_output' ? (step.content ?? []) : []))
     .map(content => content.text)
     .join('')
-const stepCalls = (steps: readonly OutputStep[]): readonly z.infer<typeof FunctionCallStepSchema>[] =>
+const stepCalls = (steps: readonly NativeStep[]): readonly z.infer<typeof FunctionCallStepSchema>[] =>
   steps.flatMap(step => (step.type === 'function_call' ? [step] : []))
 
-const assertAssistantStateMatches = (message: Extract<AxChatRequest['chatPrompt'][number], { role: 'assistant' }>, steps: readonly OutputStep[]): void => {
+const assertAssistantStateMatches = (message: Extract<AxChatRequest['chatPrompt'][number], { role: 'assistant' }>, steps: readonly NativeStep[]): void => {
   if (stepText(steps) !== (message.content ?? '')) throw corruptState()
   const expected = (message.functionCalls ?? []).map(call => ({
     id: call.id,
@@ -170,14 +423,14 @@ const assertAssistantStateMatches = (message: Extract<AxChatRequest['chatPrompt'
   if (canonicalJson(expected) !== canonicalJson(actual)) throw corruptState()
 }
 
-const assistantSteps = (message: Extract<AxChatRequest['chatPrompt'][number], { role: 'assistant' }>): readonly OutputStep[] => {
+const assistantSteps = (message: Extract<AxChatRequest['chatPrompt'][number], { role: 'assistant' }>): readonly NativeStep[] => {
   if (message.thoughtBlocks?.length) {
     if (message.thoughtBlocks.length !== 1) throw corruptState()
-    const steps = decodeState(message.thoughtBlocks[0]!, 'stored')
-    assertAssistantStateMatches(message, steps)
-    return steps
+    const state = decodeState(message.thoughtBlocks[0]!, 'stored')
+    assertAssistantStateMatches(message, state.steps.slice(state.assistantStepStart))
+    return state.steps
   }
-  const steps: OutputStep[] = []
+  const steps: NativeStep[] = []
   for (const call of message.functionCalls ?? []) {
     let argumentsValue: unknown = call.function.params ?? {}
     if (typeof argumentsValue === 'string') {
@@ -195,11 +448,11 @@ const assistantSteps = (message: Extract<AxChatRequest['chatPrompt'][number], { 
   return steps
 }
 
-const requestParts = (request: Readonly<AxChatRequest<unknown>>): { systemInstruction?: string; input: unknown[] } => {
+const requestParts = (chatPrompt: Readonly<AxChatRequest<unknown>>['chatPrompt']): { systemInstruction?: string; input: unknown[] } => {
   const system: string[] = []
   const input: unknown[] = []
   const functionNames = new Map<string, string>()
-  for (const message of request.chatPrompt) {
+  for (const message of chatPrompt) {
     if (message.role === 'system') {
       system.push(message.content)
       continue
@@ -242,8 +495,19 @@ const requestParts = (request: Readonly<AxChatRequest<unknown>>): { systemInstru
   return { ...(system.length === 0 ? {} : { systemInstruction: system.join('\n\n') }), input }
 }
 
-const toolChoice = (choice: AxChatRequest['functionCall']): unknown => {
-  if (choice === undefined || choice === 'auto') return 'auto'
+export const combineGeminiInteractionState = (chatPrompt: Readonly<AxChatRequest<unknown>>['chatPrompt'], finalBlock: ThoughtBlock): ThoughtBlock => {
+  if (chatPrompt.length === 0) return preserveGeminiInteractionState(finalBlock)
+  const priorInput = requestParts(chatPrompt).input
+  const prior = NativeStepsSchema.safeParse(priorInput)
+  if (!prior.success) throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Gemini Interactions internal continuation is invalid', 400)
+  const finalState = decodeState(finalBlock, 'provider')
+  const steps = [...prior.data, ...finalState.steps]
+  if (steps.length > MAX_STEPS) throw invalidResponse('continuation state exceeds the step limit')
+  return encodedState(steps, prior.data.length + finalState.assistantStepStart)
+}
+
+const toolChoice = (choice: AxChatRequest['functionCall'], googleSearchEnabled: boolean): unknown => {
+  if (choice === undefined || choice === 'auto') return googleSearchEnabled ? 'validated' : 'auto'
   if (choice === 'none') return 'none'
   if (choice === 'required') return 'any'
   return { allowed_tools: { mode: 'any', tools: [choice.function.name] } }
@@ -275,21 +539,29 @@ const usageResponse = (model: string, usage: Usage): NonNullable<AxChatResponse[
   }
 })
 
-const responseResult = (id: string, status: z.infer<typeof InteractionSchema>['status'], steps: readonly OutputStep[]): AxChatResponseResult => {
-  const content = stepText(steps)
-  const calls = stepCalls(steps)
-  return {
+const responseResult = (
+  id: string,
+  status: z.infer<typeof InteractionSchema>['status'],
+  steps: readonly OutputStep[],
+  includePresentation = true
+): AxChatResponseResult => {
+  const native = normalizedNativeSteps(steps, { requireFinalSearchCitations: status === 'completed' })
+  const content = stepText(native.steps)
+  const calls = stepCalls(native.steps)
+  const result: AxChatResponseResult = {
     index: 0,
     ...(id.length === 0 ? {} : { id }),
-    ...(content.length === 0 ? {} : { content }),
-    ...(calls.length === 0
+    ...(includePresentation && content.length > 0 ? { content } : {}),
+    ...(!includePresentation || calls.length === 0
       ? {}
       : {
           functionCalls: calls.map(call => ({ id: call.id, type: 'function' as const, function: { name: call.name, params: call.arguments } }))
         }),
-    thoughtBlocks: [encodedState(steps)],
+    thoughtBlocks: [encodedState(native.steps)],
     finishReason: calls.length > 0 ? 'function_call' : status === 'incomplete' || status === 'budget_exceeded' ? 'length' : 'stop'
   }
+  groundingSidecars.set(result, native.groundingSidecar)
+  return result
 }
 
 const readBoundedResponseBytes = async (response: Response): Promise<Uint8Array | null> => {
@@ -328,7 +600,7 @@ const readBoundedResponseBytes = async (response: Response): Promise<Uint8Array 
   return bytes
 }
 
-const bufferedResponse = async (response: Response, expectedModel: string): Promise<AxChatResponse> => {
+const bufferedResponse = async (response: Response, expectedModel: string, googleSearchEnabled: boolean): Promise<AxChatResponse> => {
   const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
   if (contentType !== 'application/json') throw invalidResponse('returned an invalid content type')
   const declared = Number(response.headers.get('content-length') ?? 0)
@@ -344,6 +616,8 @@ const bufferedResponse = async (response: Response, expectedModel: string): Prom
   const parsed = InteractionSchema.safeParse(value)
   if (!parsed.success || parsed.data.model !== expectedModel) throw invalidResponse('response does not match the pinned schema')
   if (parsed.data.status === 'failed' || parsed.data.status === 'cancelled') throw invalidResponse('interaction did not complete successfully')
+  if (!googleSearchEnabled && parsed.data.steps.some(step => step.type === 'google_search_call' || step.type === 'google_search_result'))
+    throw invalidResponse('returned an unrequested native search step')
   return {
     ...(!parsed.data.id ? {} : { remoteId: parsed.data.id }),
     results: [responseResult(parsed.data.id ?? '', parsed.data.status, parsed.data.steps)],
@@ -353,7 +627,15 @@ const bufferedResponse = async (response: Response, expectedModel: string): Prom
 
 const StreamStartStepSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('model_output'), content: z.array(TextContentSchema).max(MAX_STEPS).optional() }),
-  z.strictObject({ type: z.literal('function_call'), id: IdentifierSchema, name: ToolNameSchema, arguments: JsonObjectSchema.optional() }),
+  z.strictObject({
+    type: z.literal('function_call'),
+    id: IdentifierSchema,
+    name: ToolNameSchema,
+    arguments: JsonObjectSchema.optional(),
+    signature: SignatureSchema.optional()
+  }),
+  z.strictObject({ type: z.literal('google_search_call'), id: IdentifierSchema, signature: z.string().max(MAX_STATE_BYTES).optional() }),
+  z.strictObject({ type: z.literal('google_search_result'), call_id: IdentifierSchema, signature: z.string().max(MAX_STATE_BYTES).optional() }),
   z.strictObject({
     type: z.literal('thought'),
     signature: z.string().max(MAX_STATE_BYTES).optional(),
@@ -391,7 +673,20 @@ const DeltaEventSchema = z.strictObject({
     .max(MAX_STEPS - 1),
   delta: z.discriminatedUnion('type', [
     z.strictObject({ type: z.literal('text'), text: z.string().max(MAX_TEXT_CHARACTERS) }),
+    z.strictObject({ type: z.literal('text_annotation_delta'), annotations: z.array(UrlCitationSchema).max(MAX_GROUNDING_CITATIONS) }),
     z.strictObject({ type: z.literal('arguments_delta'), arguments: z.string().max(MAX_STATE_BYTES).optional() }),
+    z.strictObject({
+      type: z.literal('google_search_call'),
+      signature: z.string().max(MAX_STATE_BYTES).optional(),
+      arguments: GoogleSearchCallStepSchema.shape.arguments.optional(),
+      search_type: z.literal('web_search').optional()
+    }),
+    z.strictObject({
+      type: z.literal('google_search_result'),
+      signature: z.string().max(MAX_STATE_BYTES).optional(),
+      result: z.array(GoogleSearchResultItemSchema).max(MAX_SEARCH_SUGGESTIONS).optional(),
+      is_error: z.boolean().optional()
+    }),
     z.strictObject({ type: z.literal('thought_signature'), signature: z.string().max(MAX_STATE_BYTES).optional() })
   ])
 })
@@ -426,14 +721,19 @@ const ErrorEventSchema = z.strictObject({
 
 interface ActiveStreamStep {
   readonly start: z.infer<typeof StreamStartStepSchema>
-  text: string
+  content: z.infer<typeof TextContentSchema>[]
   arguments: string
+  searchArguments?: z.infer<typeof GoogleSearchCallStepSchema>['arguments']
+  searchType?: 'web_search'
+  searchResult?: z.infer<typeof GoogleSearchResultStepSchema>['result']
+  searchError?: boolean
   signature: string
   stopped: boolean
 }
 interface StreamState {
   interactionId: string | null
   readonly expectedModel: string
+  readonly googleSearchEnabled: boolean
   readonly active: Map<number, ActiveStreamStep>
   readonly steps: Map<number, OutputStep>
   completed: boolean
@@ -472,12 +772,14 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
     const parsed = StartEventSchema.safeParse(value)
     if (!parsed.success || state.active.has(parsed.data.index) || state.steps.has(parsed.data.index))
       throw invalidResponse('stream contains an invalid step start')
+    if (!state.googleSearchEnabled && (parsed.data.step.type === 'google_search_call' || parsed.data.step.type === 'google_search_result'))
+      throw invalidResponse('stream returned an unrequested native search step')
     const start = parsed.data.step
     state.active.set(parsed.data.index, {
       start,
-      text: start.type === 'model_output' ? (start.content ?? []).map(content => content.text).join('') : '',
+      content: start.type === 'model_output' ? (start.content ?? []).map(content => ({ ...content })) : [],
       arguments: '',
-      signature: start.type === 'thought' ? (start.signature ?? '') : '',
+      signature: 'signature' in start ? (start.signature ?? '') : '',
       stopped: false
     })
     if (start.type === 'model_output' && start.content?.length) return start.content.map(content => streamedChunk(state, { index: 0, content: content.text }))
@@ -489,13 +791,44 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
     if (!parsed.success || !current || current.stopped) throw invalidResponse('stream contains an invalid step delta')
     const delta = parsed.data.delta
     if (current.start.type === 'model_output' && delta.type === 'text') {
-      current.text += delta.text
-      if (current.text.length > MAX_TEXT_CHARACTERS) throw invalidResponse('streamed text exceeds the character limit')
+      const last = current.content.at(-1)
+      if (last === undefined) current.content.push({ type: 'text', text: delta.text })
+      else last.text += delta.text
+      if (current.content.reduce((total, content) => total + content.text.length, 0) > MAX_TEXT_CHARACTERS)
+        throw invalidResponse('streamed text exceeds the character limit')
       return [streamedChunk(state, { index: 0, content: delta.text })]
+    }
+    if (current.start.type === 'model_output' && delta.type === 'text_annotation_delta') {
+      const last = current.content.at(-1)
+      if (last === undefined) throw invalidResponse('streamed annotations preceded their text')
+      const annotations = last.annotations ?? []
+      if (annotations.length > MAX_GROUNDING_CITATIONS - delta.annotations.length) throw invalidResponse('streamed too many Google Search annotations')
+      last.annotations = [...annotations, ...delta.annotations]
+      return []
     }
     if (current.start.type === 'function_call' && delta.type === 'arguments_delta') {
       current.arguments += delta.arguments ?? ''
       if (Buffer.byteLength(current.arguments, 'utf8') > MAX_STATE_BYTES) throw invalidResponse('streamed action arguments exceed the byte limit')
+      return []
+    }
+    if (current.start.type === 'google_search_call' && delta.type === 'google_search_call') {
+      current.signature += delta.signature ?? ''
+      if (Buffer.byteLength(current.signature, 'utf8') > MAX_STATE_BYTES || (current.searchArguments !== undefined && delta.arguments !== undefined))
+        throw invalidResponse('streamed invalid native search call metadata')
+      if (delta.arguments !== undefined) current.searchArguments = delta.arguments
+      current.searchType = delta.search_type ?? current.searchType ?? 'web_search'
+      return []
+    }
+    if (current.start.type === 'google_search_result' && delta.type === 'google_search_result') {
+      current.signature += delta.signature ?? ''
+      if (
+        Buffer.byteLength(current.signature, 'utf8') > MAX_STATE_BYTES ||
+        (current.searchResult !== undefined && delta.result !== undefined) ||
+        (current.searchError !== undefined && delta.is_error !== undefined)
+      )
+        throw invalidResponse('streamed invalid native search result metadata')
+      if (delta.result !== undefined) current.searchResult = delta.result
+      if (delta.is_error !== undefined) current.searchError = delta.is_error
       return []
     }
     if (current.start.type === 'thought' && delta.type === 'thought_signature') {
@@ -512,13 +845,33 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
     current.stopped = true
     let step: OutputStep
     if (current.start.type === 'model_output') {
-      step = { type: 'model_output', ...(current.text.length === 0 ? {} : { content: [{ type: 'text', text: current.text }] }) }
+      step = { type: 'model_output', ...(current.content.length === 0 ? {} : { content: current.content }) }
     } else if (current.start.type === 'thought') {
       step = {
         type: 'thought',
         ...(current.signature.length === 0 ? {} : { signature: current.signature }),
         ...(current.start.summary === undefined ? {} : { summary: current.start.summary })
       }
+    } else if (current.start.type === 'google_search_call') {
+      const call = GoogleSearchCallStepSchema.safeParse({
+        type: 'google_search_call',
+        id: current.start.id,
+        signature: current.signature,
+        arguments: current.searchArguments,
+        search_type: current.searchType ?? 'web_search'
+      })
+      if (!call.success) throw invalidResponse('streamed native search call does not match the pinned schema')
+      step = call.data
+    } else if (current.start.type === 'google_search_result') {
+      const result = GoogleSearchResultStepSchema.safeParse({
+        type: 'google_search_result',
+        call_id: current.start.call_id,
+        signature: current.signature,
+        result: current.searchResult,
+        is_error: current.searchError
+      })
+      if (!result.success) throw invalidResponse('streamed native search result does not match the pinned schema')
+      step = result.data
     } else {
       let argumentsValue: unknown = current.start.arguments ?? {}
       if (current.arguments.length > 0) {
@@ -528,7 +881,13 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
           throw invalidResponse('streamed action arguments are not valid JSON')
         }
       }
-      const call = FunctionCallStepSchema.safeParse({ type: 'function_call', id: current.start.id, name: current.start.name, arguments: argumentsValue })
+      const call = FunctionCallStepSchema.safeParse({
+        type: 'function_call',
+        id: current.start.id,
+        name: current.start.name,
+        arguments: argumentsValue,
+        ...(current.signature.length === 0 ? {} : { signature: current.signature })
+      })
       if (!call.success) throw invalidResponse('streamed action call does not match the pinned schema')
       step = call.data
     }
@@ -560,23 +919,7 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
     if (parsed.data.interaction.steps !== undefined && canonicalJson(parsed.data.interaction.steps) !== canonicalJson(steps))
       throw invalidResponse('completed stream steps do not match streamed steps')
     state.completed = true
-    return [
-      streamedChunk(
-        state,
-        {
-          index: 0,
-          ...(state.interactionId.length === 0 ? {} : { id: state.interactionId }),
-          thoughtBlocks: [encodedState(steps)],
-          finishReason:
-            stepCalls(steps).length > 0
-              ? 'function_call'
-              : parsed.data.interaction.status === 'incomplete' || parsed.data.interaction.status === 'budget_exceeded'
-                ? 'length'
-                : 'stop'
-        },
-        parsed.data.interaction.usage
-      )
-    ]
+    return [streamedChunk(state, responseResult(state.interactionId, parsed.data.interaction.status, steps, false), parsed.data.interaction.usage)]
   }
   if (eventType === 'error') {
     if (!ErrorEventSchema.safeParse(value).success) throw invalidResponse('stream contains an invalid error event')
@@ -611,11 +954,20 @@ const processSseFrame = (frame: string, state: StreamState): readonly AxChatResp
   return processStreamEvent(value, state)
 }
 
-const streamingResponse = (response: Response, expectedModel: string): ReadableStream<AxChatResponse> => {
+const streamingResponse = (response: Response, expectedModel: string, googleSearchEnabled: boolean): ReadableStream<AxChatResponse> => {
   const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
   if (contentType !== 'text/event-stream' || !response.body) throw invalidResponse('stream response has an invalid content type')
   const decoder = new TextDecoder('utf-8', { fatal: true })
-  const state: StreamState = { interactionId: null, expectedModel, active: new Map(), steps: new Map(), completed: false, done: false, totalBytes: 0 }
+  const state: StreamState = {
+    interactionId: null,
+    expectedModel,
+    googleSearchEnabled,
+    active: new Map(),
+    steps: new Map(),
+    completed: false,
+    done: false,
+    totalBytes: 0
+  }
   let buffer = ''
   const process = (controller: TransformStreamDefaultController<AxChatResponse>, flush: boolean): void => {
     buffer = buffer.replace(/\r\n/g, '\n')
@@ -668,20 +1020,31 @@ export interface GeminiInteractionsServiceOptions {
   readonly fetch: AgentProviderFetch
   readonly timeoutMs: number
   readonly thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high'
+  readonly googleSearchEnabled?: boolean
 }
 
 export const createGeminiInteractionsService = (config: GeminiInteractionsServiceOptions): Pick<AxAIService, 'chat'> => ({
   chat: async (request: Readonly<AxChatRequest<unknown>>, options?: Readonly<AxAIServiceOptions>): Promise<AxChatResponse | ReadableStream<AxChatResponse>> => {
     options?.abortSignal?.throwIfAborted()
     assertSupportedModelConfig(request.modelConfig)
-    const { systemInstruction, input } = requestParts(request)
+    const { systemInstruction, input } = requestParts(request.chatPrompt)
     const stream = options?.stream === true
     const level = config.thinkingLevel
+    const functions = request.functions ?? []
+    const tools = [
+      ...(config.googleSearchEnabled === true ? [{ type: 'google_search' as const }] : []),
+      ...functions.map(fn => ({
+        type: 'function' as const,
+        name: fn.name,
+        description: fn.description,
+        ...(fn.parameters === undefined ? {} : { parameters: fn.parameters })
+      }))
+    ]
     const generationConfig = {
       ...(request.modelConfig?.maxTokens === undefined ? {} : { max_output_tokens: request.modelConfig.maxTokens }),
       ...(request.modelConfig?.stopSequences === undefined ? {} : { stop_sequences: request.modelConfig.stopSequences }),
       ...(level === undefined ? {} : { thinking_level: level }),
-      ...(request.functions?.length ? { tool_choice: toolChoice(request.functionCall) } : {}),
+      ...(tools.length === 0 ? {} : { tool_choice: toolChoice(request.functionCall, config.googleSearchEnabled === true) }),
       thinking_summaries: 'none' as const
     }
     const body = {
@@ -690,16 +1053,7 @@ export const createGeminiInteractionsService = (config: GeminiInteractionsServic
       stream,
       input,
       ...(systemInstruction === undefined ? {} : { system_instruction: systemInstruction }),
-      ...(request.functions?.length
-        ? {
-            tools: request.functions.map(fn => ({
-              type: 'function',
-              name: fn.name,
-              description: fn.description,
-              ...(fn.parameters === undefined ? {} : { parameters: fn.parameters })
-            }))
-          }
-        : {}),
+      ...(tools.length === 0 ? {} : { tools }),
       ...(request.responseFormat === undefined ? {} : { response_format: responseFormat(request.responseFormat) }),
       generation_config: generationConfig
     }
@@ -710,6 +1064,8 @@ export const createGeminiInteractionsService = (config: GeminiInteractionsServic
       body: JSON.stringify(body),
       signal: AbortSignal.any(signals)
     })
-    return stream ? streamingResponse(response, config.model) : await bufferedResponse(response, config.model)
+    return stream
+      ? streamingResponse(response, config.model, config.googleSearchEnabled === true)
+      : await bufferedResponse(response, config.model, config.googleSearchEnabled === true)
   }
 })

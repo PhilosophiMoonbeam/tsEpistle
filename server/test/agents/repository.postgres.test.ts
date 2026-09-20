@@ -190,6 +190,7 @@ const createAdmissionTables = async (db: Knex): Promise<void> => {
     table.integer('groupId').notNullable()
   })
   await db.schema.createTable('agentSessions', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.uuid('id').primary()
     table.integer('ownerId').notNullable()
     table.string('title').notNullable()
@@ -208,6 +209,7 @@ const createAdmissionTables = async (db: Knex): Promise<void> => {
     table.dateTime('deletedAt').nullable()
   })
   await db.schema.createTable('agentMessages', table => {
+    table.text('googleSearchGrounding').nullable()
     table.uuid('id').primary()
     table.uuid('sessionId').notNullable()
     table.uuid('runId').nullable()
@@ -223,6 +225,7 @@ const createAdmissionTables = async (db: Knex): Promise<void> => {
     table.dateTime('updatedAt').notNullable()
   })
   await db.schema.createTable('agentRuns', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.uuid('id').primary()
     table.uuid('sessionId').notNullable()
     table.uuid('userMessageId').notNullable()

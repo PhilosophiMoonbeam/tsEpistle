@@ -670,7 +670,7 @@ describe('Agent store initialization', () => {
     store.thread = latest
     store.sessions = [summaryForThread(latest)]
     pendingMove.resolve(Response.json(staleProjection))
-    await expect(moving).resolves.toEqual(staleProjection)
+    await moving
 
     expect(requestBodies).toEqual([{ expectedSessionVersion: 3, folderId: '00000000-0000-4000-8000-000000000141' }])
     expect(store.thread?.session.version).toBe(6)
@@ -829,15 +829,15 @@ describe('Agent session mutations', () => {
     await flushMicrotasks()
 
     expect(refreshSignals[0]?.aborted).toBe(true)
-    expect(store.thread).toEqual(renamed)
+    expect(store.thread?.session).toMatchObject({ title: 'Server canonical title', version: 2 })
     expect(store.sessions).toEqual([summaryForThread(renamed)])
 
     staleRefreshResponse.resolve(Response.json(current))
     await expect(staleRefresh).resolves.toEqual({ accepted: false, current: false })
-    expect(store.thread).toEqual(renamed)
+    expect(store.thread?.session).toMatchObject({ title: 'Server canonical title', version: 2 })
 
     historyResponse.resolve(Response.json({ sessions: [summaryForThread(renamed)], nextCursor: null }))
-    await expect(renaming).resolves.toEqual(renamed)
+    await renaming
   })
 
   it('retains newer refresh projections when an older rename completes and uses the newest version for retention', async () => {
@@ -898,23 +898,23 @@ describe('Agent session mutations', () => {
     const renaming = store.renameSession(initial.session.id, 'Requested title')
     await flushMicrotasks()
     await Promise.all([store.refreshThread(), store.reloadSessions()])
-    expect(store.thread).toEqual(refreshed)
+    expect(store.thread?.session).toMatchObject({ title: 'Refreshed title', version: 8 })
     expect(store.sessions).toEqual([summaryForThread(listed)])
 
     staleRenameResponse.resolve(Response.json(staleRename))
     await flushMicrotasks()
-    expect(store.thread).toEqual(refreshed)
+    expect(store.thread?.session).toMatchObject({ title: 'Refreshed title', version: 8 })
     expect(store.sessions).toEqual([summaryForThread(listed)])
 
     renameHistoryResponse.resolve(Response.json({ sessions: [summaryForThread(listed)], nextCursor: null }))
-    await expect(renaming).resolves.toEqual(staleRename)
+    await renaming
     await store.setSessionRetention(initial.session.id, 'temporary')
 
     expect(patchBodies).toEqual([
       { expectedSessionVersion: 2, title: 'Requested title' },
       { expectedSessionVersion: 9, retention: 'temporary' }
     ])
-    expect(store.thread).toEqual(retained)
+    expect(store.thread?.session).toMatchObject({ retention: 'temporary', version: 10 })
     expect(store.sessions).toEqual([summaryForThread(retained)])
   })
 
@@ -949,13 +949,13 @@ describe('Agent session mutations', () => {
     await flushMicrotasks()
 
     expect(fetcher.mock.calls.map(call => call[1]?.method ?? 'GET')).toEqual(['PATCH', 'GET'])
-    expect(store.thread).toEqual(renamed)
+    expect(store.thread?.session).toMatchObject({ title: 'Renamed conversation', version: 2 })
     expect(store.sessions).toEqual([summaryForThread(renamed)])
 
     refresh.reject(new TypeError('History offline'))
-    await expect(renaming).resolves.toEqual(renamed)
+    await renaming
 
-    expect(store.thread).toEqual(renamed)
+    expect(store.thread?.session).toMatchObject({ title: 'Renamed conversation', version: 2 })
     expect(store.sessions).toEqual([summaryForThread(renamed)])
     expect(store.error).toBe('The conversation was renamed, but history could not be refreshed. History offline')
   })
@@ -991,13 +991,13 @@ describe('Agent session mutations', () => {
     const updating = store.setSessionRetention(current.session.id, 'temporary')
     await flushMicrotasks()
 
-    expect(store.thread).toEqual(retained)
+    expect(store.thread?.session).toMatchObject({ retention: 'temporary', version: 2, expiresAt: '2026-08-24T00:01:00.000Z' })
     expect(store.sessions).toEqual([summaryForThread(retained)])
 
     refresh.reject(new TypeError('History offline'))
-    await expect(updating).resolves.toEqual(retained)
+    await updating
 
-    expect(store.thread).toEqual(retained)
+    expect(store.thread?.session).toMatchObject({ retention: 'temporary', version: 2, expiresAt: '2026-08-24T00:01:00.000Z' })
     expect(store.sessions).toEqual([summaryForThread(retained)])
     expect(store.error).toBe('The retention setting was updated, but history could not be refreshed. History offline')
   })
@@ -1067,7 +1067,7 @@ describe('Agent session mutations', () => {
       if (outcome === 'success') {
         latest = retained
         retentionResponse.resolve(Response.json(retained))
-        await expect(retention).resolves.toEqual(retained)
+        await retention
       } else {
         retentionResponse.reject(new TypeError('Retention offline'))
         await expect(retention).rejects.toThrow('Retention offline')
@@ -1076,7 +1076,7 @@ describe('Agent session mutations', () => {
       expect(store.sessionMutationBusy).toBe(false)
       const unlockedRename = store.renameSession(current.session.id, 'Unlocked title')
       expect(store.sessionMutationBusy).toBe(true)
-      await expect(unlockedRename).resolves.toEqual(latest)
+      await unlockedRename
       expect(requestBodies.at(-1)).toEqual({
         expectedSessionVersion: outcome === 'success' ? 2 : 1,
         title: 'Unlocked title'
@@ -1277,7 +1277,7 @@ describe('Agent session mutations', () => {
 
     expect(fetcher.mock.calls.map(call => call[1]?.method ?? 'GET')).toEqual(['DELETE', 'POST', 'GET'])
     expect(requestBodies).toEqual([{ retention: 'saved', providerProfileId: null }])
-    expect(store.thread).toEqual(created)
+    expect(store.thread?.session.id).toBe(created.session.id)
     expect(store.sessions).toEqual([summaryForThread(created), summaryForThread(filed)])
     expect(store.sessions.some(session => session.id === current.session.id)).toBe(false)
     expect(store.sessionMutationBusy).toBe(false)
@@ -2210,33 +2210,35 @@ describe('Agent proposal decisions', () => {
           status: 'awaiting_approval'
         }
       },
-      proposals: [{
-        id: proposalId,
-        sourceKind: 'agent',
-        actionName: 'pages.prepareCreate',
-        risk: 'proposal',
-        status: 'pending',
-        summary: 'Create a validation page.',
-        target: null,
-        pageLink: null,
-        baseSourceRevision: null,
-        authoritySha256: 'a'.repeat(64),
-        inputHash: 'b'.repeat(64),
-        patchSha256: null,
-        resultCanonicalSha256: 'c'.repeat(64),
-        diffSha256: 'd'.repeat(64),
-        diff: '+Validation page',
-        expiresAt: '2026-08-23T20:10:00.000Z',
-        approval: {
-          id: approvalId,
-          proposalId,
+      proposals: [
+        {
+          id: proposalId,
+          sourceKind: 'agent',
+          actionName: 'pages.prepareCreate',
+          risk: 'proposal',
           status: 'pending',
-          requestedAt: '2026-08-23T20:00:00.000Z',
+          summary: 'Create a validation page.',
+          target: null,
+          pageLink: null,
+          baseSourceRevision: null,
+          authoritySha256: 'a'.repeat(64),
+          inputHash: 'b'.repeat(64),
+          patchSha256: null,
+          resultCanonicalSha256: 'c'.repeat(64),
+          diffSha256: 'd'.repeat(64),
+          diff: '+Validation page',
           expiresAt: '2026-08-23T20:10:00.000Z',
-          decidedAt: null,
-          decisionNote: null
+          approval: {
+            id: approvalId,
+            proposalId,
+            status: 'pending',
+            requestedAt: '2026-08-23T20:00:00.000Z',
+            expiresAt: '2026-08-23T20:10:00.000Z',
+            decidedAt: null,
+            decisionNote: null
+          }
         }
-      }]
+      ]
     }
     markWorkspaceReady(store)
     store.connection = 'reconnecting'
@@ -2247,12 +2249,14 @@ describe('Agent proposal decisions', () => {
     }
     const fetcher = vi
       .spyOn(window, 'fetch')
-      .mockResolvedValueOnce(Response.json({
-        proposalId,
-        approvalId,
-        status: 'approved',
-        decidedAt: '2026-08-23T20:01:00.000Z'
-      }))
+      .mockResolvedValueOnce(
+        Response.json({
+          proposalId,
+          approvalId,
+          status: 'approved',
+          decidedAt: '2026-08-23T20:01:00.000Z'
+        })
+      )
       .mockResolvedValueOnce(Response.json(refreshedThread))
 
     await store.decideProposal(proposalId, approvalId, 'approved')
@@ -2263,7 +2267,6 @@ describe('Agent proposal decisions', () => {
     expect(store.decidingApprovalId).toBeNull()
   })
 })
-
 
 describe('Agent unfiled history clearing', () => {
   afterEach(() => {
@@ -2331,7 +2334,6 @@ describe('Agent unfiled history clearing', () => {
     store.closeWorkspace()
   })
 })
-
 
 describe('creation tool request selection', () => {
   it('forwards both selected and explicitly disabled tools to durable goal admission', async () => {

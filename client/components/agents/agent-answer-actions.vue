@@ -28,12 +28,12 @@
 </template>
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue'
-import type { AgentCitation } from '../../../shared/agents/contracts.ts'
+import type { AgentCitation, AgentGoogleSearchGrounding } from '../../../shared/agents/contracts.ts'
 import { wikiSourceHref } from '../../../shared/wiki-source.ts'
 import { createPage } from '../../helpers/pages-api.ts'
 import { formatAgentCitationMarkers } from './agent-citations.ts'
 import AgentMarkdown from './agent-markdown.vue'
-const props = defineProps<{ content: string; citations: readonly AgentCitation[]; defaultLocale?: string }>()
+const props = defineProps<{ content: string; citations: readonly AgentCitation[]; googleSearchGrounding?: AgentGoogleSearchGrounding; defaultLocale?: string }>()
 const draftOpen = ref(false)
 const saving = ref(false)
 const preview = ref(true)
@@ -54,7 +54,7 @@ const exportedAnswer = (): string => {
     } catch { return { ...citation, href: null } }
   })
   const body = formatAgentCitationMarkers(props.content, citations)
-  const references = citations.flatMap((citation, index) => {
+  const wikiReferences = citations.flatMap((citation, index) => {
     if (!citation.href) return []
     try {
       const url = new URL(citation.href, window.location.origin)
@@ -62,7 +62,18 @@ const exportedAnswer = (): string => {
       return [`${index + 1}. [${citation.label.replace(/[\\[\]]/g, '\\$&')}](${url.href.replaceAll('(', '%28').replaceAll(')', '%29')})`]
     } catch { return [] }
   })
-  return body + (references.length ? `\n\n## Sources\n\n${references.join('\n')}` : '')
+  const googleReferences = (props.googleSearchGrounding?.citations ?? []).flatMap((citation, index) => {
+    try {
+      const url = new URL(citation.url)
+      if (!['http:', 'https:'].includes(url.protocol)) return []
+      return [`${index + 1}. [${citation.title.replace(/[\\[\]]/g, '\\$&')}](${url.href.replaceAll('(', '%28').replaceAll(')', '%29')})`]
+    } catch { return [] }
+  })
+  return [
+    body,
+    ...(wikiReferences.length ? [`## Wiki sources\n\n${wikiReferences.join('\n')}`] : []),
+    ...(googleReferences.length ? [`## Web sources (Google Search)\n\n${googleReferences.join('\n')}`] : [])
+  ].join('\n\n')
 }
 const copyAnswer = async (): Promise<void> => {
   try { await navigator.clipboard.writeText(exportedAnswer()); copied.value = true; feedback.value = 'Answer and source links copied.' }

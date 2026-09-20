@@ -13,6 +13,7 @@ import { prepareAgentPdf } from '../../agents/pdf-preparation.ts'
 import { reduceAgentEvents } from '../../agents/projection.ts'
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/providers/factory.ts'
+import { createGeminiInteractionsService } from '../../agents/providers/gemini-interactions.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
 import { WIKI_AGENT_SOUL } from '../../agents/soul.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
@@ -21,6 +22,7 @@ import { describe, expect, it, vi } from '../bun-test.mts'
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
 const request = (signal: AbortSignal): AgentEngineRequest => ({
+  googleSearchEnabled: false,
   authorizeMedia: async () => {},
   run: {
     id: '00000000-0000-4000-8000-000000000001',
@@ -37,6 +39,7 @@ const request = (signal: AbortSignal): AgentEngineRequest => ({
     transportKind: 'openai-responses',
     model: 'gpt-test',
     executionMode: 'agent',
+    googleSearchEnabled: false,
     capabilityRevision: 'cap-1',
     pricingRevision: 'price-1',
     totalTokens: 0,
@@ -84,6 +87,101 @@ const request = (signal: AbortSignal): AgentEngineRequest => ({
 })
 
 describe('Ax agent engine', () => {
+  it('settles rejected grounding metadata only after genuine EOF, preserving exposure on a later stream failure', async () => {
+    for (const reachesEof of [true, false]) {
+      const native = createGeminiInteractionsService({
+        apiKey: 'test-key',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        model: 'gemini-3.8-flash',
+        timeoutMs: 10_000,
+        fetch: (async () =>
+          Response.json({
+            model: 'gemini-3.8-flash',
+            status: 'completed',
+            usage: { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5 },
+            steps: [
+              {
+                type: 'model_output',
+                content: [
+                  {
+                    type: 'text',
+                    text: 'Alpha',
+                    annotations: [{ type: 'url_citation', start_index: 0, end_index: 5, url: 'javascript:alert(1)', title: 'Unsafe source' }]
+                  }
+                ]
+              }
+            ]
+          })) as typeof fetch
+      })
+      let heldTokens = 0
+      let chargedTokens = 0
+      const dispatchBudget = {
+        reserve: async (maximum: { tokens: number; costMicros: number }) => {
+          heldTokens += maximum.tokens
+          return { id: 1, ...maximum }
+        },
+        reconcile: async (reservation: { tokens: number }, actual: { totalTokens: number }) => {
+          heldTokens -= reservation.tokens
+          chargedTokens += actual.totalTokens
+        },
+        release: async (reservation: { tokens: number }) => {
+          heldTokens -= reservation.tokens
+        },
+        consumeTool: async () => {},
+        get unsettledExposure() {
+          return { tokens: heldTokens, costMicros: 0 }
+        }
+      }
+      const factory = {
+        create: async () => ({
+          service: {
+            chat: async (input: AxChatRequest) => {
+              const receipt = await native.chat(input, { stream: false })
+              if (receipt instanceof ReadableStream) throw new Error('Expected buffered fixture receipt')
+              let emitted = false
+              return new ReadableStream<AxChatResponse>(
+                {
+                  pull(controller) {
+                    if (!emitted) {
+                      emitted = true
+                      controller.enqueue(receipt)
+                    } else if (reachesEof) controller.close()
+                    else controller.error(new Error('Connection failed after terminal metadata'))
+                  }
+                },
+                { highWaterMark: 0 }
+              )
+            }
+          },
+          capabilities: {
+            streaming: true,
+            toolCalling: 'native',
+            parallelToolCalls: true,
+            structuredOutput: 'native-json-schema',
+            usage: 'terminal',
+            cancellation: true,
+            maxContextTokens: 100_000,
+            maxOutputTokens: 4_000
+          },
+          transportKind: 'gemini-api',
+          model: 'gemini-3.8-flash',
+          continuationDialect: 'gemini-interactions-v1',
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          pricing
+        })
+      } as unknown as AgentProviderFactory
+      await expect(
+        new AxAgentEngine(factory).execute(
+          { ...request(new AbortController().signal), purpose: 'planner', dispatchBudget },
+          { text: async () => {}, event: async () => {} }
+        )
+      ).rejects.toThrow()
+      expect(chargedTokens).toBe(reachesEof ? 5 : 0)
+      if (reachesEof) expect(heldTokens).toBe(0)
+      else expect(heldTokens).toBeGreaterThan(5)
+    }
+  })
   it('accepts an independent provider total from a completed response', async () => {
     const response = {
       results: [{ index: 0, content: 'Real receipt answer.' }],

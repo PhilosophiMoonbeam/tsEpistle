@@ -16,7 +16,7 @@ import {
 } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { readAgentUsageEvent } from './providers/usage.ts'
-import { AgentRepositoryError } from './repository.ts'
+import { AgentRepositoryError, validateAgentGoogleSearchGrounding } from './repository.ts'
 
 const ACTIVE_STATUSES: readonly AgentRunStatus[] = ['queued', 'running', 'awaiting_approval']
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -24,6 +24,18 @@ const dateValue = (value: Date | string | null): number | null => (value === nul
 const isPostgres = (knex: Knex | Knex.Transaction): boolean => knex.client.config.client === 'pg' || knex.client.config.client === 'postgresql'
 
 const ACTION_CONTINUATION_KEY = '__wikiApprovalContinuation'
+const validatedGoogleSearchGrounding = (encoded: string): string => {
+  if (Buffer.byteLength(encoded, 'utf8') > 256 * 1_024) {
+    throw new AgentRepositoryError('INVALID_GOOGLE_SEARCH_GROUNDING', 'Google Search grounding exceeds its persistence limit', 500)
+  }
+  let value: unknown
+  try {
+    value = JSON.parse(encoded)
+  } catch {
+    throw new AgentRepositoryError('INVALID_GOOGLE_SEARCH_GROUNDING', 'Google Search grounding is invalid', 500)
+  }
+  return canonicalJson(validateAgentGoogleSearchGrounding(value))
+}
 const MAX_ACTION_CONTINUATION_BYTES = 96 * 1_024
 const MAX_RUNTIME_STATE_BYTES = 256 * 1_024
 const SHA256 = /^[a-f0-9]{64}$/
@@ -164,6 +176,7 @@ export interface AgentRunRecord {
   readonly transportKind: string
   readonly model: string
   readonly executionMode: string
+  readonly googleSearchEnabled: boolean
   readonly capabilityRevision: string
   readonly pricingRevision: string
   readonly promptVersion: number
@@ -183,7 +196,9 @@ export interface AgentRunRecord {
   readonly completedAt: string | null
 }
 
-interface RunRow extends Omit<AgentRunRecord, 'status' | 'leaseExpiresAt' | 'cancelRequestedAt' | 'queuedAt' | 'startedAt' | 'completedAt'> {
+interface RunRow
+  extends Omit<AgentRunRecord, 'status' | 'googleSearchEnabled' | 'leaseExpiresAt' | 'cancelRequestedAt' | 'queuedAt' | 'startedAt' | 'completedAt'> {
+  googleSearchEnabled: boolean | number | null | undefined
   status: string
   leaseExpiresAt: Date | string | null
   cancelRequestedAt: Date | string | null
@@ -200,6 +215,14 @@ const runStatus = (value: string): AgentRunStatus => {
 
 const runRecord = (row: RunRow): AgentRunRecord => ({
   ...row,
+  googleSearchEnabled:
+    row.googleSearchEnabled === true || row.googleSearchEnabled === 1
+      ? true
+      : row.googleSearchEnabled === false || row.googleSearchEnabled === 0 || row.googleSearchEnabled === null || row.googleSearchEnabled === undefined
+        ? false
+        : (() => {
+            throw new AgentRepositoryError('AGENT_RUN_CORRUPT', 'Run Google Search consent is invalid', 500)
+          })(),
   totalTokens: nonNegativeInteger(Number(row.totalTokens), 'Run total tokens'),
   status: runStatus(row.status),
   leaseExpiresAt: row.leaseExpiresAt === null ? null : new Date(row.leaseExpiresAt).toISOString(),
@@ -672,6 +695,7 @@ export interface AdmitAgentRunInput {
   readonly providerProfileVersionId: string
   readonly transportKind: string
   readonly model: string
+  readonly googleSearchEnabled: boolean
   readonly executionMode: AgentExecutionMode
   readonly profilePolicyVersion: number
   readonly defaultGeneration: number
@@ -688,7 +712,12 @@ export interface AdmitAgentRunInput {
 
 export const normalizeAgentGenerationTools = (value: unknown): readonly AgentGenerationTool[] | undefined => {
   if (value === undefined) return undefined
-  if (!Array.isArray(value) || value.length > AGENT_GENERATION_TOOLS.length || new Set(value).size !== value.length || value.some(tool => !AGENT_GENERATION_TOOLS.includes(tool)))
+  if (
+    !Array.isArray(value) ||
+    value.length > AGENT_GENERATION_TOOLS.length ||
+    new Set(value).size !== value.length ||
+    value.some(tool => !AGENT_GENERATION_TOOLS.includes(tool))
+  )
     throw new AgentRepositoryError('INVALID_GENERATION_TOOLS', 'Choose each supported generation tool at most once.', 400)
   return AGENT_GENERATION_TOOLS.filter(tool => value.includes(tool))
 }
@@ -712,6 +741,7 @@ const admissionEnvelope = (input: AdmitAgentRunInput): string =>
     transportKind: input.transportKind,
     model: input.model,
     executionMode: input.executionMode,
+    ...(input.googleSearchEnabled ? { googleSearchEnabled: true } : {}),
     profilePolicyVersion: input.profilePolicyVersion,
     defaultGeneration: input.defaultGeneration,
     capabilityRevision: input.capabilityRevision,
@@ -770,11 +800,24 @@ export const admitAgentRunInTransaction = async (
       throw new AgentRepositoryError('RUN_IDEMPOTENCY_MISMATCH', 'Client request ID was reused with different input', 409)
     return { run: runRecord(retry), replayed: true }
   }
-  const session = (await transaction('agentSessions').where({ id: input.sessionId, ownerId: input.ownerId }).whereNull('deletedAt').forUpdate().first()) as
-    | { version: number }
-    | undefined
+  const session = (await transaction('agentSessions')
+    .where({ id: input.sessionId, ownerId: input.ownerId })
+    .whereNull('deletedAt')
+    .forUpdate()
+    .first('version', 'googleSearchEnabled')) as { version: number; googleSearchEnabled: boolean | number | null | undefined } | undefined
   if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
   if (session.version !== input.expectedSessionVersion) throw new AgentRepositoryError('SESSION_VERSION_CHANGED', 'Agent session changed concurrently', 409)
+  const admittedConsent = session.googleSearchEnabled === true || session.googleSearchEnabled === 1
+  if (
+    (session.googleSearchEnabled !== undefined &&
+      session.googleSearchEnabled !== null &&
+      session.googleSearchEnabled !== true &&
+      session.googleSearchEnabled !== false &&
+      session.googleSearchEnabled !== 0 &&
+      session.googleSearchEnabled !== 1) ||
+    admittedConsent !== input.googleSearchEnabled
+  )
+    throw new AgentRepositoryError('GOOGLE_SEARCH_CONSENT_CHANGED', 'Google Search consent changed before admission', 409)
   const active = await transaction('agentRuns').where({ sessionId: input.sessionId }).whereIn('status', ACTIVE_STATUSES).first('id')
   if (active) throw new AgentRepositoryError('SESSION_RUN_ACTIVE', 'Agent session already has an active run', 409)
 
@@ -792,6 +835,7 @@ export const admitAgentRunInTransaction = async (
       status: 'complete',
       content: input.content,
       citations: null,
+      googleSearchGrounding: null,
       isVisible: input.userMessageVisible ?? true,
       createdAt: now,
       updatedAt: now
@@ -805,6 +849,7 @@ export const admitAgentRunInTransaction = async (
       status: 'pending',
       content: '',
       citations: null,
+      googleSearchGrounding: null,
       isVisible: input.assistantMessageVisible ?? true,
       createdAt: now,
       updatedAt: now
@@ -836,6 +881,7 @@ export const admitAgentRunInTransaction = async (
     transportKind: input.transportKind,
     model: input.model,
     executionMode: input.executionMode,
+    googleSearchEnabled: input.googleSearchEnabled,
     profilePolicyVersion: input.profilePolicyVersion,
     defaultGeneration: input.defaultGeneration,
     capabilityRevision: input.capabilityRevision,
@@ -908,6 +954,7 @@ export interface TerminalizeAgentAssistantInput {
   readonly status: AgentMessageStatus
   readonly content?: string
   readonly citations?: string | null
+  readonly googleSearchGrounding?: string | null
   readonly providerStateCiphertext?: Uint8Array | null
   readonly providerStateSha256?: string | null
 }
@@ -1065,6 +1112,8 @@ export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transac
   const messagePatch: Record<string, unknown> = { status: assistantStatus, updatedAt: now }
   if (assistant?.content !== undefined) messagePatch.content = assistant.content
   if (assistant?.citations !== undefined) messagePatch.citations = assistant.citations
+  if (assistant?.googleSearchGrounding !== undefined)
+    messagePatch.googleSearchGrounding = assistant.googleSearchGrounding === null ? null : validatedGoogleSearchGrounding(assistant.googleSearchGrounding)
   if (assistant?.providerStateCiphertext !== undefined) messagePatch.providerStateCiphertext = assistant.providerStateCiphertext
   if (assistant?.providerStateSha256 !== undefined) messagePatch.providerStateSha256 = assistant.providerStateSha256
   const messageChanged = await transaction('agentMessages').where({ id: row.assistantMessageId, runId: row.id }).update(messagePatch)

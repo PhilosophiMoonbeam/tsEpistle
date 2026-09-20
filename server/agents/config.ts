@@ -2,44 +2,84 @@ import { z } from 'zod'
 import { DEFAULT_AGENT_GOAL_LIMITS } from './goals.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from './orchestration.ts'
 
-const AgentOperationalLimitsSchema = z.object({
-  provider: z.object({
-    globalConcurrency: z.number().int().min(1).max(128).default(4),
-    perUserConcurrency: z.number().int().min(1).max(32).default(1),
-    pollingMilliseconds: z.number().int().min(250).max(60_000).default(1_000)
-  }).passthrough(),
-  orchestration: z.object({
-    enabled: z.boolean().default(false),
-    maxConcurrentChildren: z.number().int().min(1).max(8).default(3),
-    maxChildren: z.number().int().min(2).max(32).default(6),
-    plannerTurns: z.number().int().min(1).max(4).default(2),
-    childTurns: z.number().int().min(1).max(8).default(4),
-    childToolCalls: z.number().int().min(1).max(16).default(8),
-    plannerTimeoutMilliseconds: z.number().int().min(5_000).max(120_000).default(30_000),
-    childTimeoutMilliseconds: z.number().int().min(10_000).max(10 * 60_000).default(120_000),
-    plannerMaxOutputTokens: z.number().int().min(256).max(4_096).default(1_024),
-    childMaxOutputTokens: z.number().int().min(256).max(8_192).default(2_048),
-    maxAggregateChildTokens: z.number().int().min(1_000).max(100_000).default(12_000),
-    maxAggregateChildOutputCharacters: z.number().int().min(16_000).max(512_000).default(96_000)
-  }).passthrough().default(DEFAULT_AGENT_ORCHESTRATION_LIMITS),
-  goals: z.object({
-    enabled: z.boolean().default(false),
-    maxContinuations: z.number().int().min(0).max(12).default(3),
-    maxTokens: z.number().int().min(1_000).max(1_000_000).default(48_000),
-    maxToolCalls: z.number().int().min(1).max(1_024).default(96),
-    maxDurationMilliseconds: z.number().int().min(60_000).max(7 * 24 * 60 * 60_000).default(60 * 60_000)
-  }).passthrough().default({ ...DEFAULT_AGENT_GOAL_LIMITS }),
-  retention: z.object({
-    temporarySessionHours: z.number().int().min(1).max(30 * 24).default(24),
-    savedSessionDays: z.number().int().min(1).max(10 * 365).default(90),
-    mcpContentDays: z.number().int().min(1).max(365).default(7),
-    auditDays: z.number().int().min(1).max(10 * 365).default(90),
-    maintenanceBatchSize: z.number().int().min(1).max(10_000).default(100)
-  }).passthrough(),
-  sse: z.object({
-    maximumConnectionsPerUser: z.number().int().min(1).max(20).default(3)
-  }).passthrough().default({ maximumConnectionsPerUser: 3 }),
-}).passthrough()
+const AgentOperationalLimitsSchema = z
+  .object({
+    provider: z
+      .object({
+        globalConcurrency: z.number().int().min(1).max(128).default(4),
+        perUserConcurrency: z.number().int().min(1).max(32).default(1),
+        pollingMilliseconds: z.number().int().min(250).max(60_000).default(1_000)
+      })
+      .passthrough(),
+    orchestration: z
+      .object({
+        enabled: z.boolean().default(false),
+        maxConcurrentChildren: z.number().int().min(1).max(8).default(3),
+        maxChildren: z.number().int().min(2).max(32).default(6),
+        plannerTurns: z.number().int().min(1).max(4).default(2),
+        childTurns: z.number().int().min(1).max(8).default(4),
+        childToolCalls: z.number().int().min(1).max(16).default(8),
+        plannerTimeoutMilliseconds: z.number().int().min(5_000).max(120_000).default(30_000),
+        childTimeoutMilliseconds: z
+          .number()
+          .int()
+          .min(10_000)
+          .max(10 * 60_000)
+          .default(120_000),
+        plannerMaxOutputTokens: z.number().int().min(256).max(4_096).default(1_024),
+        childMaxOutputTokens: z.number().int().min(256).max(8_192).default(2_048),
+        maxAggregateChildTokens: z.number().int().min(1_000).max(100_000).default(12_000),
+        maxAggregateChildOutputCharacters: z.number().int().min(16_000).max(512_000).default(96_000)
+      })
+      .passthrough()
+      .default(DEFAULT_AGENT_ORCHESTRATION_LIMITS),
+    goals: z
+      .object({
+        enabled: z.boolean().default(false),
+        maxContinuations: z.number().int().min(0).max(12).default(3),
+        maxTokens: z.number().int().min(1_000).max(1_000_000).default(192_000),
+        maxToolCalls: z.number().int().min(1).max(1_024).default(96),
+        maxDurationMilliseconds: z
+          .number()
+          .int()
+          .min(60_000)
+          .max(7 * 24 * 60 * 60_000)
+          .default(60 * 60_000)
+      })
+      .passthrough()
+      .default({ ...DEFAULT_AGENT_GOAL_LIMITS }),
+    retention: z
+      .object({
+        temporarySessionHours: z
+          .number()
+          .int()
+          .min(1)
+          .max(30 * 24)
+          .default(24),
+        savedSessionDays: z
+          .number()
+          .int()
+          .min(1)
+          .max(10 * 365)
+          .default(90),
+        mcpContentDays: z.number().int().min(1).max(365).default(7),
+        auditDays: z
+          .number()
+          .int()
+          .min(1)
+          .max(10 * 365)
+          .default(90),
+        maintenanceBatchSize: z.number().int().min(1).max(10_000).default(100)
+      })
+      .passthrough(),
+    sse: z
+      .object({
+        maximumConnectionsPerUser: z.number().int().min(1).max(20).default(3)
+      })
+      .passthrough()
+      .default({ maximumConnectionsPerUser: 3 })
+  })
+  .passthrough()
   .refine(value => value.provider.perUserConcurrency <= value.provider.globalConcurrency, {
     message: 'per-user provider concurrency cannot exceed global provider concurrency',
     path: ['provider', 'perUserConcurrency']

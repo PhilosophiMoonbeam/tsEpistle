@@ -3,6 +3,7 @@ import createKnex, { type Knex } from 'knex'
 import { afterEach, describe, expect, it } from '../bun-test.mts'
 
 import { up as addAgentGoalBudgetTiers, down as removeAgentGoalBudgetTiers } from '../../db/migrations/tsepistle-000042-agent-goal-budget-tiers.ts'
+import { up as upgradeAgentGoalBudgetPolicy, down as downgradeAgentGoalBudgetPolicy } from '../../db/migrations/tsepistle-000045-agent-goal-budget-policy-v2.ts'
 import { down, up } from '../../db/migrations/2.5.157.ts'
 import { updateGoalStatus } from '../../agents/goals.ts'
 
@@ -195,5 +196,59 @@ describe('agent durable goals migration', () => {
 
     expect(await db('agentGoals').where({ id: legacyId }).first()).toEqual(transitionedBeforeRerun)
     expect(await db('agentGoals').where({ id: modernId }).first()).toEqual(modernBeforeRerun)
+  })
+  it('moves only pending goals to policy v2 while preserving selected v1 allowances and usage', async () => {
+    const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    databases.push(db)
+    await db.schema.createTable('agentGoals', table => {
+      table.uuid('id').primary()
+      table.integer('budgetPolicyVersion').nullable()
+      table.string('budgetSelection', 16).notNullable()
+      table.string('tokenTier', 16).nullable()
+      table.bigInteger('tokenAllowance').nullable()
+      table.bigInteger('consumedTokens').notNullable()
+      table.bigInteger('maxTokens').notNullable()
+    })
+    await db('agentGoals').insert([
+      {
+        id: '00000000-0000-4000-8000-000000000201',
+        budgetPolicyVersion: 1,
+        budgetSelection: 'pending',
+        tokenTier: null,
+        tokenAllowance: null,
+        consumedTokens: 37,
+        maxTokens: 48_000
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000202',
+        budgetPolicyVersion: 1,
+        budgetSelection: 'utility',
+        tokenTier: 'standard',
+        tokenAllowance: 24_000,
+        consumedTokens: 12_345,
+        maxTokens: 24_000
+      }
+    ])
+
+    await upgradeAgentGoalBudgetPolicy(db)
+    expect(await db('agentGoals').where({ id: '00000000-0000-4000-8000-000000000201' }).first()).toMatchObject({
+      budgetPolicyVersion: 2,
+      budgetSelection: 'pending',
+      tokenTier: null,
+      tokenAllowance: null,
+      consumedTokens: 37,
+      maxTokens: 48_000
+    })
+    expect(await db('agentGoals').where({ id: '00000000-0000-4000-8000-000000000202' }).first()).toMatchObject({
+      budgetPolicyVersion: 1,
+      budgetSelection: 'utility',
+      tokenTier: 'standard',
+      tokenAllowance: 24_000,
+      consumedTokens: 12_345,
+      maxTokens: 24_000
+    })
+
+    await upgradeAgentGoalBudgetPolicy(db)
+    await expect(Promise.resolve(downgradeAgentGoalBudgetPolicy(db))).rejects.toThrow('policy v2 token budget state')
   })
 })

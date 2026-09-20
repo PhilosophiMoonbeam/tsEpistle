@@ -48,19 +48,37 @@ const decodeWikiPagePayloadForTest = (encoded: string): WikiPagePayload => {
 type ContinuitySubmission = { currentPage?: { id: number }; knowledgeContext: { sources: Array<{ id: number }> } }
 
 async function installAgentContinuityPages(page: Page): Promise<void> {
-  await page.route('**/_api/users/whoami', route => route.fulfill({ json: { authenticated: true, user: { id: 900001, name: 'Agent context fixture', email: 'context@example.invalid', permissions: ['use:agents'], localeCode: 'en' } } }))
+  await page.route('**/_api/users/whoami', route =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        user: { id: 900001, authVersion: 1, name: 'Agent context fixture', email: 'context@example.invalid', permissions: ['use:agents'], localeCode: 'en' }
+      }
+    })
+  )
   await page.route(/\/_api\/pages\/\d+\/watch$/, route => route.fulfill({ json: { watched: false, emailEnabled: false, inAppEnabled: false } }))
   await page.route(/\/_api\/pages\/\d+\/approval$/, route => route.fulfill({ json: { approval: null } }))
-  await page.route('**/_api/pages/watches/notifications', route => route.fulfill({ json: { ownerId: 900001, items: [], unreadCount: 0, nextCursor: null, unreadComplete: true } }))
+  await page.route('**/_api/pages/watches/notifications', route =>
+    route.fulfill({ json: { ownerId: 900001, items: [], unreadCount: 0, nextCursor: null, unreadComplete: true } })
+  )
   await page.route('**/_api/pages/approvals/inbox', route => route.fulfill({ json: { ownerId: 900001, items: [], nextCursor: null } }))
   await page.route('**/_api/pages/search?**', route => route.fulfill({ json: { results: [], suggestions: [], totalHits: 0, nextCursor: null } }))
   const sources = [
     ...['a', 'b', 'c'].map((suffix, index) => ({ id: 901 + index, path: `agent-context-fixture-${suffix}`, title: `Context page ${suffix.toUpperCase()}` })),
     { id: 6, path: 'release-guide', title: 'Release guide' }
-  ].map(source => ({ ...source, locale: 'en', visibility: 'public', description: 'A browser-only Agent source.', updatedAt: '2026-09-01T12:00:00.000Z', sourceRevision: '1', excerpt: 'Release evidence excerpt.', excerptTruncated: false }))
+  ].map(source => ({
+    ...source,
+    locale: 'en',
+    visibility: 'public',
+    description: 'A browser-only Agent source.',
+    updatedAt: '2026-09-01T12:00:00.000Z',
+    sourceRevision: '1',
+    excerpt: 'Release evidence excerpt.',
+    excerptTruncated: false
+  }))
   await page.route('**/_api/pages/preview?**', route => {
     const params = new URL(route.request().url()).searchParams
-    const source = sources.find(item => params.has('id') ? item.id === Number(params.get('id')) : item.path === params.get('path'))
+    const source = sources.find(item => (params.has('id') ? item.id === Number(params.get('id')) : item.path === params.get('path')))
     return route.fulfill({ status: source ? 200 : 404, json: source ?? { error: 'Fixture source not found' } })
   })
   // Serve three public fixture page identities using the deployed app shell, without creating wiki records.
@@ -73,7 +91,19 @@ async function installAgentContinuityPages(page: Page): Promise<void> {
     let replaced = false
     const body = html.replace(/(<wiki-page\b[^>]*\bpayload=)(["'])([^"']+)\2/u, (_match, prefix: string, quote: string, encoded: string) => {
       const payload = decodeWikiPagePayloadForTest(encoded)
-      const patched = { ...payload, spaNavigation: true, props: { ...payload.props, pageId: source.id, locale: source.locale, path: source.path, title: source.title, updatedAt: source.updatedAt, sourceRevision: source.sourceRevision } }
+      const patched = {
+        ...payload,
+        spaNavigation: true,
+        props: {
+          ...payload.props,
+          pageId: source.id,
+          locale: source.locale,
+          path: source.path,
+          title: source.title,
+          updatedAt: source.updatedAt,
+          sourceRevision: source.sourceRevision
+        }
+      }
       replaced = true
       return `${prefix}${quote}${Buffer.from(JSON.stringify(patched)).toString('base64')}${quote}`
     })
@@ -101,7 +131,9 @@ async function closeContinuityAgent(page: Page): Promise<void> {
 }
 
 async function sendContinuityPrompt(page: Page, agent: Locator, prompt: string): Promise<ContinuitySubmission> {
-  const request = page.waitForRequest(request => request.method() === 'POST' && /\/_api\/agents\/sessions\/[^/]+\/messages$/.test(new URL(request.url()).pathname))
+  const request = page.waitForRequest(
+    request => request.method() === 'POST' && /\/_api\/agents\/sessions\/[^/]+\/messages$/.test(new URL(request.url()).pathname)
+  )
   await agent.locator('.agent-composer textarea').fill(prompt)
   await agent.getByRole('button', { name: 'Send', exact: true }).click()
   const body = (await request).postDataJSON() as ContinuitySubmission
@@ -1838,13 +1870,42 @@ test.describe('responsive UI quality matrix', () => {
     if (!desktopProject && !coarseProject) return
     if (coarseProject) await page.setViewportSize({ width: 320, height: 640 })
     await page.emulateMedia({ colorScheme: 'light', reducedMotion: desktopProject ? 'no-preference' : 'reduce' })
-    await page.route('**/_api/users/whoami', route => route.fulfill({ json: { authenticated: true, user: { id: 900001, name: 'Agent layout fixture', email: 'layout@example.invalid', permissions: ['use:agents'], localeCode: 'en' } } }))
+    await page.route('**/_api/users/whoami', route =>
+      route.fulfill({
+        json: {
+          authenticated: true,
+          user: { id: 900001, authVersion: 1, name: 'Agent layout fixture', email: 'layout@example.invalid', permissions: ['use:agents'], localeCode: 'en' }
+        }
+      })
+    )
     await page.route(/\/_api\/pages\/\d+\/watch$/, route => route.fulfill({ json: { watched: false, emailEnabled: false, inAppEnabled: false } }))
     await page.route(/\/_api\/pages\/\d+\/approval$/, route => route.fulfill({ json: { approval: null } }))
-    await page.route('**/_api/pages/watches/notifications', route => route.fulfill({ json: { ownerId: 900001, items: [], unreadCount: 0, nextCursor: null, unreadComplete: true } }))
+    await page.route('**/_api/pages/watches/notifications', route =>
+      route.fulfill({ json: { ownerId: 900001, items: [], unreadCount: 0, nextCursor: null, unreadComplete: true } })
+    )
     await page.route('**/_api/pages/approvals/inbox', route => route.fulfill({ json: { ownerId: 900001, items: [], nextCursor: null } }))
-    const sources = Array.from({ length: 3 }, (_, index) => ({ id: 701 + index, locale: 'en', path: `release-source-${index + 1}`, title: `Release evidence source ${index + 1} with a long descriptive title`, description: 'A deterministic source for layout checks.', visibility: 'public' as const, updatedAt: '2026-09-01T12:00:00.000Z', sourceRevision: '1', excerpt: 'Release evidence', excerptTruncated: false }))
-    await page.route('**/_api/pages/search?**', route => route.fulfill({ json: { results: sources.map(source => ({ ...source, tags: [], score: 10, matchedFields: ['title'] })), suggestions: [], totalHits: sources.length, nextCursor: null } }))
+    const sources = Array.from({ length: 3 }, (_, index) => ({
+      id: 701 + index,
+      locale: 'en',
+      path: `release-source-${index + 1}`,
+      title: `Release evidence source ${index + 1} with a long descriptive title`,
+      description: 'A deterministic source for layout checks.',
+      visibility: 'public' as const,
+      updatedAt: '2026-09-01T12:00:00.000Z',
+      sourceRevision: '1',
+      excerpt: 'Release evidence',
+      excerptTruncated: false
+    }))
+    await page.route('**/_api/pages/search?**', route =>
+      route.fulfill({
+        json: {
+          results: sources.map(source => ({ ...source, tags: [], score: 10, matchedFields: ['title'] })),
+          suggestions: [],
+          totalHits: sources.length,
+          nextCursor: null
+        }
+      })
+    )
     await page.route('**/_api/pages/preview?**', route => {
       const id = Number(new URL(route.request().url()).searchParams.get('id'))
       const source = sources.find(item => item.id === id)
@@ -1866,15 +1927,16 @@ test.describe('responsive UI quality matrix', () => {
       const goal = agent.getByRole('button', { name: 'Toggle goal mode', exact: true })
       await expect(skills).toBeVisible()
       await expect(goal).toBeVisible()
-      const controlPlacement = () => agent.locator('.agent-composer__context-controls').evaluate(element => {
-        const group = element.getBoundingClientRect()
-        return ['.agent-composer__skill-button', '.agent-composer__goal-button'].map(selector => {
-          const control = element.querySelector(selector)
-          if (!control) throw new Error(`Missing composer control ${selector}`)
-          const bounds = control.getBoundingClientRect()
-          return { x: bounds.x - group.x, y: bounds.y - group.y, width: bounds.width, height: bounds.height }
+      const controlPlacement = () =>
+        agent.locator('.agent-composer__context-controls').evaluate(element => {
+          const group = element.getBoundingClientRect()
+          return ['.agent-composer__skill-button', '.agent-composer__goal-button'].map(selector => {
+            const control = element.querySelector(selector)
+            if (!control) throw new Error(`Missing composer control ${selector}`)
+            const bounds = control.getBoundingClientRect()
+            return { x: bounds.x - group.x, y: bounds.y - group.y, width: bounds.width, height: bounds.height }
+          })
         })
-      })
       const beforeSources = await controlPlacement()
       await agent.getByRole('button', { name: 'Add sources', exact: true }).click()
       const sourceDialog = page.getByRole('dialog', { name: 'Add sources', exact: true })
@@ -1894,17 +1956,24 @@ test.describe('responsive UI quality matrix', () => {
         expect(Math.abs(after.x - before.x), 'Adding source chips keeps control columns stable').toBeLessThanOrEqual(1)
         expect(Math.abs(after.y - before.y), 'Adding source chips keeps Skills and Goal on their original control rows').toBeLessThanOrEqual(1)
       }
-      const [sourceBounds, goalBounds, skillBounds] = await Promise.all([agent.locator('.agent-context__sources').boundingBox(), goal.boundingBox(), skills.boundingBox()])
+      const [sourceBounds, goalBounds, skillBounds] = await Promise.all([
+        agent.locator('.agent-context__sources').boundingBox(),
+        goal.boundingBox(),
+        skills.boundingBox()
+      ])
       expect(sourceBounds).not.toBeNull()
       expect(goalBounds).not.toBeNull()
       expect(skillBounds).not.toBeNull()
-      if (sourceBounds && goalBounds && skillBounds) expect(sourceBounds.y).toBeGreaterThanOrEqual(Math.max(goalBounds.y + goalBounds.height, skillBounds.y + skillBounds.height) - 1)
+      if (sourceBounds && goalBounds && skillBounds)
+        expect(sourceBounds.y).toBeGreaterThanOrEqual(Math.max(goalBounds.y + goalBounds.height, skillBounds.y + skillBounds.height) - 1)
       // Remove the chips after testing placement so the small viewport can focus on reading behavior.
       for (const source of sources) await agent.getByRole('button', { name: `Remove source ${source.title}`, exact: true }).click()
       await expect(agent.locator('.agent-context__sources')).toHaveCount(0)
       await composer.fill('Show enough release evidence to inspect the latest response navigation.')
       await agent.getByRole('button', { name: 'Send', exact: true }).click()
-      await expect(agent.locator('.agent-message--assistant').last()).toContainText('The final checkpoint keeps the newest response at the end of the conversation.')
+      await expect(agent.locator('.agent-message--assistant').last()).toContainText(
+        'The final checkpoint keeps the newest response at the end of the conversation.'
+      )
       const transcript = agent.locator('.inline-agent__transcript')
       const footer = agent.locator('.inline-agent__composer')
       const latest = agent.getByRole('button', { name: 'Jump to latest response', exact: true })
@@ -1920,7 +1989,11 @@ test.describe('responsive UI quality matrix', () => {
       const readAtDistance = async (distance: number) => {
         await page.mouse.move(1, 1)
         await transcript.focus()
-        await transcript.evaluate((element, requestedDistance) => element.scrollTo({ top: Math.max(0, element.scrollHeight - element.clientHeight - requestedDistance), behavior: 'auto' }), distance)
+        await transcript.evaluate(
+          (element, requestedDistance) =>
+            element.scrollTo({ top: Math.max(0, element.scrollHeight - element.clientHeight - requestedDistance), behavior: 'auto' }),
+          distance
+        )
         await expect.poll(distanceFromBottom).toBeCloseTo(distance, 0)
       }
       await expect.poll(() => transcript.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(400)
@@ -1997,8 +2070,12 @@ test.describe('responsive UI quality matrix', () => {
       await expect.poll(() => opacity(footer)).toBeCloseTo(0.2, 2)
       releaseResponse()
       releaseResponse = null
-      await expect(agent.locator('.agent-message--assistant').last()).toContainText('The final checkpoint keeps the newest response at the end of the conversation.')
-      await expect.poll(distanceFromBottom, { message: 'The arriving completed response returns to the newest messages even after reading earlier content' }).toBeLessThanOrEqual(25)
+      await expect(agent.locator('.agent-message--assistant').last()).toContainText(
+        'The final checkpoint keeps the newest response at the end of the conversation.'
+      )
+      await expect
+        .poll(distanceFromBottom, { message: 'The arriving completed response returns to the newest messages even after reading earlier content' })
+        .toBeLessThanOrEqual(25)
       await readAtDistance(400)
       await page.emulateMedia({ colorScheme: 'dark', forcedColors: 'active', reducedMotion: 'reduce' })
       await expect(latest).toBeVisible()
@@ -2148,7 +2225,10 @@ test.describe('responsive UI quality matrix', () => {
         await expect(agent.locator('.agent-message--user')).toContainText('Keep this conversation briefly.')
         expect(creates()).toBe(1)
         await closeContinuityAgent(page)
-        await page.evaluate(() => { const original = Date.now; Date.now = () => original() + 15 * 60_000 + 1 })
+        await page.evaluate(() => {
+          const original = Date.now
+          Date.now = () => original() + 15 * 60_000 + 1
+        })
         agent = await openContinuityAgent(page)
         await expect(agent.locator('.agent-message--user')).toHaveCount(0)
         expect(creates()).toBe(2)
@@ -2159,7 +2239,9 @@ test.describe('responsive UI quality matrix', () => {
         expect(creates()).toBe(3)
         await expect(agent.getByRole('group', { name: 'Current page context: en/agent-context-fixture-b', exact: true })).toBeVisible()
         fixture.assertNoUnexpectedRequests()
-      } finally { await fixture.dispose() }
+      } finally {
+        await fixture.dispose()
+      }
     })
 
     test('Agent continuity keeps pinned context across pages, revisits, and exclusions', async ({ page }, testInfo) => {
@@ -2201,7 +2283,9 @@ test.describe('responsive UI quality matrix', () => {
         await expect(agent.locator('.agent-message--user')).toHaveCount(4)
         await expect(pin()).toHaveAttribute('aria-pressed', 'false')
         fixture.assertNoUnexpectedRequests()
-      } finally { await fixture.dispose() }
+      } finally {
+        await fixture.dispose()
+      }
     })
 
     test('Agent source citations preview in place and multiline prompts remain fully visible', async ({ page }, testInfo) => {
@@ -2214,7 +2298,13 @@ test.describe('responsive UI quality matrix', () => {
         const prompt = 'The first line must remain readable.\nCompare the release evidence.\nKeep the important details in view.'
         await input.fill(prompt)
         await expect(input).toHaveValue(prompt)
-        expect(await input.evaluate(element => ({ mask: getComputedStyle(element).maskImage, webkitMask: getComputedStyle(element).webkitMaskImage, scrollTop: element.scrollTop }))).toEqual({ mask: 'none', webkitMask: 'none', scrollTop: 0 })
+        expect(
+          await input.evaluate(element => ({
+            mask: getComputedStyle(element).maskImage,
+            webkitMask: getComputedStyle(element).webkitMaskImage,
+            scrollTop: element.scrollTop
+          }))
+        ).toEqual({ mask: 'none', webkitMask: 'none', scrollTop: 0 })
         const screenshot = testInfo.outputPath('agent-multiline-prompt.png')
         await page.screenshot({ path: screenshot })
         await testInfo.attach('agent-multiline-prompt', { path: screenshot, contentType: 'image/png' })
@@ -2241,7 +2331,9 @@ test.describe('responsive UI quality matrix', () => {
         await expect(agent.locator('.agent-message--user')).toHaveCount(1)
         expect(page.context().pages()).toHaveLength(tabsBefore)
         fixture.assertNoUnexpectedRequests()
-      } finally { await fixture.dispose() }
+      } finally {
+        await fixture.dispose()
+      }
     })
   })
   test('creates and moves a conversation folder from the empty drop target', async ({ page }, testInfo) => {

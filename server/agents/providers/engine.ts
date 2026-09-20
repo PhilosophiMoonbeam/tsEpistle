@@ -6,6 +6,7 @@ import {
   AGENT_TOOL_NAMES,
   type AgentActionName,
   type AgentCurrentPageHint,
+  type AgentGoogleSearchGrounding,
   type AgentEventData,
   type AgentTokenUsage,
   TOOL_DISCOVERY_CONTROL_NAME
@@ -28,6 +29,7 @@ import {
   deriveAgentProviderResourceLimits,
   encodeAgentProviderContinuation
 } from './factory.ts'
+import { combineGeminiInteractionState, readGeminiGoogleSearchGrounding } from './gemini-interactions.ts'
 import { agentVideoCostMicros } from './media-pricing.ts'
 import {
   type PromptToolCategoryIndex,
@@ -42,6 +44,8 @@ import { assertAgentTokenUsage, readAgentProviderUsage } from './usage.ts'
 
 const MAX_TURNS = 12
 const MAX_TOOL_CALLS = 32
+const MAX_GOOGLE_SEARCH_SUGGESTIONS = 8
+const MAX_GOOGLE_SEARCH_SUGGESTIONS_BYTES = 128 * 1_024
 const MAX_ANSWER_CITATIONS = 20
 const MAX_PRESENTATION_DELTAS = 64
 const MIN_PRESENTATION_DELTA_CHARACTERS = 256
@@ -818,6 +822,7 @@ interface TurnResult extends AgentTokenUsage {
   readonly thoughtBlocks: NonNullable<AxChatResponseResult['thoughtBlocks']>
   readonly costMicros: number
   readonly finishReason?: AxChatResponseResult['finishReason']
+  readonly googleSearchGrounding?: AgentGoogleSearchGrounding & { readonly searchSuggestions: readonly string[] }
 }
 const MAX_DIAGNOSTIC_TURN_CHARACTERS = 32_000
 const modelTurnData = (turn: number, result: TurnResult, outcome: 'tool_calls' | 'answer_accepted' | 'answer_rejected'): AgentEventData => ({
@@ -852,6 +857,7 @@ interface ProviderResponseAccumulator {
   readonly calls: Map<string, MutableToolCall>
   readonly contentFragments: string[]
   readonly thoughtBlocks: Map<string, { readonly block: NonNullable<AxChatResponseResult['thoughtBlocks']>[number]; readonly bytes: number }>
+  googleSearchGrounding?: AgentGoogleSearchGrounding & { readonly searchSuggestions: readonly string[] }
   retainedBytes: number
   contentBytes: number
   incomingBytes: number
@@ -2007,7 +2013,9 @@ export class AxAgentEngine implements AgentEngine {
     let actionSession: AxActionSession | null = null
     try {
       if (request.signal.aborted) throw request.signal.reason
-      const provider = await this.#factory.create(request.run.providerProfileVersionId)
+      const provider = await this.#factory.create(request.run.providerProfileVersionId, {
+        googleSearchEnabled: (request.purpose ?? 'root') === 'root' && request.googleSearchEnabled === true
+      })
       if (request.purpose !== 'planner' && request.run.executionMode === 'agent' && this.#actions) actionSession = await this.#actions.open(request)
       let skillCatalog: unknown = null
       if (includeSkillCatalog && request.purpose !== 'subagent' && actionSession?.functions.some(action => action.name === 'skills.list')) {
@@ -2260,11 +2268,12 @@ export class AxAgentEngine implements AgentEngine {
     let totalTokens = 0
     let completeUsage: AgentTokenUsage | undefined
     let observedUsage: AgentTokenUsage | undefined
+    let terminalPresentationFailure: unknown
+    let responseAccepted = false
     const observeFinishReason = (finishReason: AxChatResponseResult['finishReason']): void => {
       if (finishReason === undefined || accumulator.finishReason === 'length') return
       accumulator.finishReason = finishReason
     }
-    let responseAccepted = false
     const accept = async (response: AxChatResponse): Promise<void> => {
       if (typeof response !== 'object' || response === null || !Array.isArray(response.results))
         invalidProviderResponse('Provider returned an invalid response')
@@ -2291,6 +2300,19 @@ export class AxAgentEngine implements AgentEngine {
         if (result.id !== undefined) {
           if (typeof result.id !== 'string' || hasControlCharacter(result.id)) invalidProviderResponse('Provider returned an invalid result ID')
           boundedProviderStringBytes(result.id, MAX_PROVIDER_IDENTIFIER_BYTES, 'Provider returned an invalid result ID')
+        }
+        let googleSearchGrounding: (AgentGoogleSearchGrounding & { readonly searchSuggestions: readonly string[] }) | undefined
+        try {
+          googleSearchGrounding = readGeminiGoogleSearchGrounding(result)
+        } catch (error) {
+          if (responseUsage === null) throw error
+          terminalPresentationFailure = error
+          continue
+        }
+        if (googleSearchGrounding !== undefined) {
+          if (accumulator.googleSearchGrounding !== undefined && canonicalJson(accumulator.googleSearchGrounding) !== canonicalJson(googleSearchGrounding))
+            invalidProviderResponse('Provider returned conflicting Google Search grounding metadata')
+          accumulator.googleSearchGrounding = googleSearchGrounding
         }
         observeFinishReason(result.finishReason)
         if (result.content !== undefined) {
@@ -2440,6 +2462,11 @@ export class AxAgentEngine implements AgentEngine {
         totalTokens = exposure.totalExposureTokens
         completeUsage = { inputTokens, outputTokens, totalTokens }
       }
+      if (terminalPresentationFailure !== undefined) {
+        if (streamReleaseFailed) throw classifyAgentExecutionFailure(streamReleaseFailure, 'provider_stream')
+        responseAccepted = true
+        throw classifyAgentExecutionFailure(terminalPresentationFailure, 'provider_response')
+      }
       const content = accumulator.contentFragments.join('')
       if (tools?.mode === 'prompt') {
         if (accumulator.calls.size > 0)
@@ -2489,7 +2516,8 @@ export class AxAgentEngine implements AgentEngine {
         outputTokens,
         totalTokens,
         costMicros,
-        ...(accumulator.finishReason === undefined ? {} : { finishReason: accumulator.finishReason })
+        ...(accumulator.finishReason === undefined ? {} : { finishReason: accumulator.finishReason }),
+        ...(accumulator.googleSearchGrounding === undefined ? {} : { googleSearchGrounding: accumulator.googleSearchGrounding })
       }
     } catch (error) {
       const originalFailureStage = failureStage
@@ -2579,6 +2607,26 @@ export class AxAgentEngine implements AgentEngine {
         }
       }
       let inputTokens = 0
+      const googleSearchSuggestions: string[] = []
+      const collectGoogleSearchSuggestions = (grounding: TurnResult['googleSearchGrounding']): void => {
+        if (grounding === undefined) return
+        for (const suggestion of grounding.searchSuggestions) {
+          const candidate = [...googleSearchSuggestions, suggestion]
+          if (
+            suggestion.length > 32_768 ||
+            candidate.length > MAX_GOOGLE_SEARCH_SUGGESTIONS ||
+            Buffer.byteLength(JSON.stringify({ runId: request.run.id, suggestions: candidate }), 'utf8') > MAX_GOOGLE_SEARCH_SUGGESTIONS_BYTES
+          )
+            invalidProviderResponse('Provider returned too many Google Search suggestions')
+          googleSearchSuggestions.push(suggestion)
+        }
+      }
+      let googleSearchSuggestionsPublished = false
+      const publishGoogleSearchSuggestions = async (): Promise<void> => {
+        if (googleSearchSuggestionsPublished || googleSearchSuggestions.length === 0) return
+        googleSearchSuggestionsPublished = true
+        if ((request.purpose ?? 'root') === 'root') await sink.googleSearchSuggestions?.(Object.freeze([...googleSearchSuggestions]))
+      }
       let outputTokens = 0
       let totalTokens = 0
       let costMicros = 0
@@ -2647,6 +2695,7 @@ export class AxAgentEngine implements AgentEngine {
         inputTokens = safeUsageAddition(inputTokens, result.inputTokens, 'Aggregate input token usage')
         outputTokens = safeUsageAddition(outputTokens, result.outputTokens, 'Aggregate output token usage')
         totalTokens = safeUsageAddition(totalTokens, result.totalTokens, 'Aggregate total token usage')
+        collectGoogleSearchSuggestions(result.googleSearchGrounding)
         costMicros = safeUsageAddition(costMicros, result.costMicros, 'Aggregate provider cost')
         assertAgentTokenUsage(inputTokens, outputTokens, totalTokens)
         if (maxTokens !== undefined && totalTokens > maxTokens)
@@ -2687,6 +2736,7 @@ export class AxAgentEngine implements AgentEngine {
                 : OUTPUT_LIMIT_DISCLOSURE
               await presentAcceptedContent(publishedContent, sink)
             }
+            if (publishFragment && !structured) await publishGoogleSearchSuggestions()
             const citations = !structured && publishFragment ? answerCitations(assessment.citationIds, citationRegistry) : []
             return {
               inputTokens,
@@ -2695,6 +2745,9 @@ export class AxAgentEngine implements AgentEngine {
               costMicros,
               outputLimited: true,
               ...(citations.length === 0 ? {} : { citations }),
+              ...(!publishFragment || result.googleSearchGrounding === undefined
+                ? {}
+                : { googleSearchGrounding: { citations: result.googleSearchGrounding.citations } }),
               ...(authoritySha256 === null || authoritySha256 === undefined ? {} : { authoritySha256 }),
               ...(omittedActionCallIds.size === 0
                 ? {}
@@ -2714,7 +2767,8 @@ export class AxAgentEngine implements AgentEngine {
               )
             activePrompt.push({
               role: 'assistant',
-              content: result.content
+              content: result.content,
+              ...(provider.continuationDialect === 'gemini-interactions-v1' && result.thoughtBlocks.length > 0 ? { thoughtBlocks: result.thoughtBlocks } : {})
             })
             activePrompt.push({
               role: 'user',
@@ -2745,9 +2799,16 @@ export class AxAgentEngine implements AgentEngine {
               'The approved action completed, but its assistant response could not be recovered',
               409
             )
+          const acceptedThoughtBlocks =
+            request.purpose !== 'planner' &&
+            request.purpose !== 'subagent' &&
+            provider.continuationDialect === 'gemini-interactions-v1' &&
+            result.thoughtBlocks.length === 1
+              ? [combineGeminiInteractionState(activePrompt, result.thoughtBlocks[0]!)]
+              : result.thoughtBlocks
           const acceptedProviderState =
-            request.purpose !== 'planner' && request.purpose !== 'subagent' && result.thoughtBlocks.length > 0
-              ? encodeAgentProviderContinuation(provider.continuationDialect, result.thoughtBlocks)
+            request.purpose !== 'planner' && request.purpose !== 'subagent' && acceptedThoughtBlocks.length > 0
+              ? encodeAgentProviderContinuation(provider.continuationDialect, acceptedThoughtBlocks)
               : undefined
           const authoritySha256 = actionSession?.authoritySha256
           if (request.purpose !== 'subagent' && actionSession && this.#actions?.saveSnapshot)
@@ -2759,6 +2820,7 @@ export class AxAgentEngine implements AgentEngine {
             notExecutedActionCallIds.size
           )}`
           await presentAcceptedContent(acceptedContent, sink)
+          await publishGoogleSearchSuggestions()
           const citations = answerCitations(assessment.citationIds, citationRegistry)
           return {
             inputTokens,
@@ -2766,6 +2828,7 @@ export class AxAgentEngine implements AgentEngine {
             totalTokens,
             costMicros,
             ...(citations.length === 0 ? {} : { citations }),
+            ...(result.googleSearchGrounding === undefined ? {} : { googleSearchGrounding: { citations: result.googleSearchGrounding.citations } }),
             ...(acceptedProviderState === undefined ? {} : { providerState: acceptedProviderState }),
             ...(authoritySha256 === null || authoritySha256 === undefined ? {} : { authoritySha256 }),
             ...(omittedActionCallIds.size === 0

@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import type { Response } from 'express'
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
-import { streamOwnedAgentEvents, type AgentSseRequest } from '../../agents/sse.ts'
+import { publishAgentGoogleSearchSuggestions, streamOwnedAgentEvents, type AgentSseRequest } from '../../agents/sse.ts'
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 
@@ -13,8 +13,10 @@ describe('agent event SSE lifecycle', () => {
   beforeEach(async () => {
     knex = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await knex.schema.createTable('agentRuns', table => {
+      table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
       table.string('id').primary()
       table.integer('ownerId').notNullable()
+      table.string('sessionId').nullable()
       table.string('status').notNullable()
       table.integer('eventSequence').notNullable()
     })
@@ -32,6 +34,49 @@ describe('agent event SSE lifecycle', () => {
   })
 
   afterEach(async () => knex.destroy())
+
+  it('delivers bounded search widgets only to the admitted owner without durable event IDs', async () => {
+    await knex('agentRuns').insert({ id: 'web-run', sessionId: 'web-session', ownerId: 7, googleSearchEnabled: true, status: 'running', eventSequence: 0 })
+    const flushed = Promise.withResolvers<void>()
+    const delivered = Promise.withResolvers<void>()
+    const output: string[] = []
+    const response = Object.assign(new EventEmitter(), {
+      status: vi.fn(),
+      set: vi.fn(),
+      flushHeaders: () => flushed.resolve(),
+      write: (chunk: string) => {
+        output.push(chunk)
+        delivered.resolve()
+        return true
+      },
+      end: vi.fn()
+    })
+    response.status.mockReturnValue(response)
+    response.set.mockReturnValue(response)
+    const controller = new AbortController()
+    const streaming = streamOwnedAgentEvents(knex, { get: () => undefined, query: {} }, response as unknown as Response, 7, 'web-run', new Map(), {
+      maximumConnectionsPerUser: 1,
+      reconciliationMilliseconds: 60_000,
+      keepaliveMilliseconds: 60_000,
+      signal: controller.signal
+    })
+    await flushed.promise
+    try {
+      const input = { ownerId: 7, sessionId: 'web-session', runId: 'web-run', suggestions: ['<a href="https://google.com/">Search</a>'] }
+      await expect(publishAgentGoogleSearchSuggestions(knex, { ...input, ownerId: 8 })).rejects.toMatchObject({ code: 'RUN_LEASE_LOST' })
+      await expect(publishAgentGoogleSearchSuggestions(knex, { ...input, suggestions: ['x'.repeat(32_769)] })).rejects.toMatchObject({
+        code: 'INVALID_GOOGLE_SEARCH_SUGGESTIONS'
+      })
+      await publishAgentGoogleSearchSuggestions(knex, input)
+      await delivered.promise
+      expect(output).toEqual([`event: google_search.suggestions\ndata: ${JSON.stringify({ runId: input.runId, suggestions: input.suggestions })}\n\n`])
+      expect(await knex('agentEvents').count('id as count').first()).toEqual({ count: 0 })
+      expect((await knex('agentRuns').where({ id: 'web-run' }).first('eventSequence')).eventSequence).toBe(0)
+    } finally {
+      controller.abort()
+      await streaming
+    }
+  })
 
   it('ends a partial run after its final event and releases connection accounting', async () => {
     const data = '{"outcome":"partial"}'

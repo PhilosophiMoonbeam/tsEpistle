@@ -8,6 +8,7 @@ const expired = new Date('2026-08-10T00:00:00.000Z')
 
 const createTables = async (knex: Knex): Promise<void> => {
   await knex.schema.createTable('agentSessions', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.string('id').primary()
     table.integer('ownerId')
     table.string('retention')
@@ -28,6 +29,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.dateTime('updatedAt')
   })
   await knex.schema.createTable('agentMessages', table => {
+    table.text('googleSearchGrounding').nullable()
     table.string('id').primary()
     table.string('sessionId')
     table.string('runId').nullable()
@@ -42,6 +44,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.dateTime('updatedAt')
   })
   await knex.schema.createTable('agentRuns', table => {
+    table.boolean('googleSearchEnabled').notNullable().defaultTo(false)
     table.string('id').primary()
     table.string('sessionId')
     table.integer('ownerId')
@@ -161,6 +164,70 @@ describe('agent retention maintenance', () => {
   })
   afterEach(async () => knex.destroy())
 
+  it('expires interrupted grounded output without deleting unrelated history or token accounting', async () => {
+    const aged = new Date('2024-01-01T00:00:00.000Z')
+    await knex('agentSessions').insert({
+      id: 'kept',
+      ownerId: 7,
+      retention: 'saved',
+      folderId: 'folder',
+      expiresAt: null,
+      deletedAt: null,
+      updatedAt: now,
+      lastActivityAt: now,
+      version: 1
+    })
+    await knex('agentRuns').insert([
+      { id: 'grounded', sessionId: 'kept', ownerId: 7, assistantMessageId: 'grounded-message', status: 'failed', totalTokens: 17, updatedAt: now },
+      { id: 'ordinary', sessionId: 'kept', ownerId: 7, assistantMessageId: 'ordinary-message', status: 'succeeded', totalTokens: 9, updatedAt: now }
+    ])
+    await knex('agentMessages').insert([
+      {
+        id: 'grounded-message',
+        sessionId: 'kept',
+        runId: 'grounded',
+        ordinal: 1,
+        role: 'assistant',
+        status: 'failed',
+        content: 'Interrupted web answer',
+        googleSearchGrounding: '{"citations":[]}',
+        providerStateCiphertext: Buffer.from('retained native context'),
+        createdAt: aged,
+        updatedAt: aged
+      },
+      {
+        id: 'ordinary-message',
+        sessionId: 'kept',
+        runId: 'ordinary',
+        ordinal: 2,
+        role: 'assistant',
+        status: 'complete',
+        content: 'Keep this ordinary answer',
+        googleSearchGrounding: null,
+        providerStateCiphertext: null,
+        createdAt: aged,
+        updatedAt: aged
+      }
+    ])
+    await knex('agentEvents').insert({
+      id: 'grounded-turn',
+      runId: 'grounded',
+      type: 'model.turn',
+      data: JSON.stringify({ content: 'Rejected grounded draft', inputTokens: 10, outputTokens: 7, totalTokens: 17 }),
+      createdAt: aged
+    })
+    await runAgentMaintenance(knex, { batchSize: 100, savedSessionDays: 90, mcpContentDays: 7, auditDays: 10_000, compactDeltaDays: 10_000 }, now)
+    expect(await knex('agentMessages').where({ id: 'grounded-message' }).first('content', 'googleSearchGrounding', 'providerStateCiphertext')).toEqual({
+      content: '',
+      googleSearchGrounding: null,
+      providerStateCiphertext: null
+    })
+    expect((await knex('agentMessages').where({ id: 'ordinary-message' }).first('content')).content).toBe('Keep this ordinary answer')
+    expect((await knex('agentRuns').where({ id: 'grounded' }).first('totalTokens')).totalTokens).toBe(17)
+    const event = await knex('agentEvents').where({ id: 'grounded-turn' }).first('data')
+    expect(JSON.parse(event.data)).toEqual({ content: '', inputTokens: 10, outputTokens: 7, totalTokens: 17 })
+  })
+
   it('rechecks retention when a candidate is filed or refreshed before expiry is committed', async () => {
     await knex('agentSessions').insert([
       { id: 'filed-race', ownerId: 7, retention: 'saved', folderId: null, expiresAt: null, deletedAt: null, updatedAt: old, lastActivityAt: old, version: 1 },
@@ -182,7 +249,9 @@ describe('agent retention maintenance', () => {
       expect(result.tombstonedSessions).toBe(0)
       expect(result.purgedSessions).toBe(0)
       expect(await knex('agentSessions').whereNull('deletedAt').count('id as count').first()).toEqual({ count: 2 })
-    } finally { knex.removeListener('query', beforeUpdate) }
+    } finally {
+      knex.removeListener('query', beforeUpdate)
+    }
   })
 
   it('recovers leases and applies bounded content, artifact, audit, and quota retention', async () => {

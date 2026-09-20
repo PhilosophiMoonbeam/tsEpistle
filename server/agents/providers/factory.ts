@@ -28,7 +28,14 @@ import {
   isGeminiInteractionsModel,
   preserveGeminiInteractionState
 } from './gemini-interactions.ts'
-import { createGeminiMediaTransport, GEMINI_MEDIA_INPUT_LIMIT, GEMINI_MEDIA_OUTPUT_LIMIT, GEMINI_PDF_INPUT_LIMIT, GEMINI_VIDEO_RESPONSE_LIMIT, GEMINI_MUSIC_RESPONSE_LIMIT } from './gemini-media.ts'
+import {
+  createGeminiMediaTransport,
+  GEMINI_MEDIA_INPUT_LIMIT,
+  GEMINI_MEDIA_OUTPUT_LIMIT,
+  GEMINI_PDF_INPUT_LIMIT,
+  GEMINI_VIDEO_RESPONSE_LIMIT,
+  GEMINI_MUSIC_RESPONSE_LIMIT
+} from './gemini-media.ts'
 import { createOpenResponsesFetch } from './openresponses.ts'
 import {
   AgentProviderAdapterConfigSchema,
@@ -772,7 +779,9 @@ export const createGuardedProviderFetch = (
             const model = JSON.parse(init.body)?.model
             if (model === 'lyria-3.5') mediaBodyLimit = GEMINI_MUSIC_RESPONSE_LIMIT
             if (model === 'gemini-omni-1.1-flash') mediaBodyLimit = GEMINI_VIDEO_RESPONSE_LIMIT
-          } catch { /* invalid JSON retains the smaller bound */ }
+          } catch {
+            /* invalid JSON retains the smaller bound */
+          }
         }
       }
       return guardedSuccessfulResponse(
@@ -997,7 +1006,14 @@ export class AgentProviderFactory {
       config,
       capabilities,
       pricing: {
-        ...(config.videoGeneration ? { videoGeneration: { ...parseAgentProviderPricing(config.videoGeneration.pricingRevision), textOutputMicrosPerMillionTokens: config.videoGeneration.textOutputMicrosPerMillionTokens } } : {}),
+        ...(config.videoGeneration
+          ? {
+              videoGeneration: {
+                ...parseAgentProviderPricing(config.videoGeneration.pricingRevision),
+                textOutputMicrosPerMillionTokens: config.videoGeneration.textOutputMicrosPerMillionTokens
+              }
+            }
+          : {}),
         ...(config.musicGeneration ? { musicGeneration: { costMicrosPerSong: config.musicGeneration.costMicrosPerSong } } : {}),
         ...(config.imageGeneration
           ? {
@@ -1017,6 +1033,7 @@ export class AgentProviderFactory {
     loadOptions: {
       readonly requireConformed?: boolean
       readonly purpose?: 'agent' | 'utility'
+      readonly googleSearchEnabled?: boolean
     } = {}
   ): Promise<AgentProviderService> {
     const query = this.#knex<ProviderVersionRow>('agentProviderProfileVersions').where({ id: profileVersionId })
@@ -1159,7 +1176,8 @@ export class AgentProviderFactory {
           model,
           fetch: createTransportFetch(scope),
           timeoutMs: adapterConfig.timeoutMs,
-          ...(reasoningEffort === undefined ? {} : { thinkingLevel: geminiThinkingLevel(reasoningEffort) })
+          ...(reasoningEffort === undefined ? {} : { thinkingLevel: geminiThinkingLevel(reasoningEffort) }),
+          ...(loadOptions.purpose === 'utility' || loadOptions.googleSearchEnabled !== true ? {} : { googleSearchEnabled: true })
         })
       )
     } else if (row.transportKind === 'legacy-completions') {

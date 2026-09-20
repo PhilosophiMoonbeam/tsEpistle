@@ -53,7 +53,7 @@ agents:
   goals:
     enabled: true
     maxContinuations: 3
-    maxTokens: 48000
+    maxTokens: 192000
     maxToolCalls: 96
     maxDurationMilliseconds: 3600000
   sse:

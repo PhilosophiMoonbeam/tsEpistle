@@ -279,6 +279,7 @@
                 :deciding-approval-id="decidingApprovalId"
                 :can-submit="canSubmit"
                 :network-blocked="connectionBlocked"
+                :google-search-suggestions="liveGoogleSearchSuggestions"
                 @suggest="preparePrompt"
                 @edit-image="composer?.editImage($event)"
                 @ask-source="source => preparePrompt(`Help me understand “${source.title}”.`, source)"
@@ -370,6 +371,9 @@
                       :media-session="thread?.session"
                       :media-capabilities="providerEnabled ? mediaProfile?.media : undefined"
                       :generation-tools-enabled="thread?.session.executionMode === 'agent'"
+                      :google-search-available="googleSearchAvailable"
+                      :google-search-enabled="googleSearchEnabled"
+                      :google-search-busy="sessionMutationBusy"
                       @media-settled="refreshAfterMedia"
                       :session-id="thread?.session.id ?? offlineSessionId"
                       :initial-draft="thread ? agents.drafts[thread.session.id]?.text ?? offlineComposerDraft : offlineComposerDraft"
@@ -398,6 +402,7 @@
                       @manage-skills="openSkillManager"
                       @retry-skills="reloadSkillCatalog"
                       @update-skill-preferences="updateSkillPreferences"
+                      @update-google-search="updateGoogleSearch"
                     >
                       <template #context-controls>
                         <AgentContextPicker
@@ -583,7 +588,7 @@ const emit = defineEmits<{
 const welcomeGreeting = welcomeGreetings[Math.floor(Math.random() * welcomeGreetings.length)] ?? welcomeGreetings[0]
 
 const agents = useAgentsStore()
-const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
+const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, googleSearchSuggestions, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void> }>('composer')
@@ -675,6 +680,15 @@ const hasConversation = computed(() => Boolean(thread.value && (thread.value.mes
 const followJumpVisible = computed(() => Boolean(hasConversation.value && transcriptReadingProgress.value > 0 && !approvalJumpVisible.value))
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
 const mediaProfile = computed(() => thread.value?.session.providerProfileId ? profiles.value.find(profile => profile.id === thread.value?.session.providerProfileId) : profiles.value.find(profile => profile.isGlobalDefault) ?? (profiles.value.length === 1 ? profiles.value[0] : undefined))
+const googleSearchAvailable = computed(() => Boolean(thread.value && thread.value.session.executionMode === 'agent' && mediaProfile.value?.googleSearchAvailable === true))
+const googleSearchEnabled = computed(() => thread.value?.session.googleSearchEnabled === true)
+const liveGoogleSearchSuggestions = computed(() => {
+  const live = googleSearchSuggestions.value
+  const session = thread.value?.session
+  return live && session && live.ownerId === props.ownerId && live.sessionId === session.id
+    ? { runId: live.runId, suggestions: live.suggestions }
+    : null
+})
 const mediaRefreshing = ref(false)
 const refreshAfterMedia = async () => {
   mediaRefreshing.value = true
@@ -1031,6 +1045,11 @@ const reloadSkillCatalog = async (): Promise<void> => {
 }
 const updateSkillPreferences = (skillIds: readonly string[]): void => {
   if (networkActionAllowed()) void agents.setSkillPreferences(skillIds)
+}
+const updateGoogleSearch = (enabled: boolean): void => {
+  if (!networkActionAllowed() || activeRun.value || openGoal.value || sessionMutationBusy.value) return
+  if (enabled && !googleSearchAvailable.value) return
+  void agents.setGoogleSearchEnabled(enabled)
 }
 const keepConversation = async (): Promise<void> => {
   if (!networkActionAllowed()) return

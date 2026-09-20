@@ -7,7 +7,9 @@ import {
   type AgentEventType,
   type AgentExecutionMode,
   type AgentGenerationTool,
+  type AgentGoogleSearchGrounding,
   type AgentGoalBudgetLimitReason,
+  type AgentGoalTokenTier,
   type AgentRunStatus,
   type AgentToolContextExclusion,
   isTerminalAgentRunStatus
@@ -32,7 +34,6 @@ import {
   terminalizeAgentRun
 } from './coordinator.ts'
 import {
-  AGENT_GOAL_BUDGET_POLICY_VERSION,
   type AgentGoalLimits,
   type AgentGoalRecord,
   assessAgentRunCompletion,
@@ -41,6 +42,7 @@ import {
   emitGoalEvent,
   encodedCompletionAssessment,
   getOwnedAgentGoal,
+  isSelectedAgentGoalBudgetPolicyVersion,
   insertAgentGoal,
   selectAgentGoalTokenBudget,
   updateGoalStatus
@@ -88,7 +90,8 @@ import type {
   AgentGoalBudgetClassificationResult,
   AgentGoalBudgetClassifier
 } from './providers/utility.ts'
-import { AgentRepositoryError, appendAgentEvent } from './repository.ts'
+import { AgentRepositoryError, appendAgentEvent, validateAgentGoogleSearchGrounding } from './repository.ts'
+import { publishAgentGoogleSearchSuggestions } from './sse.ts'
 import { SkillValidationError } from './skills/parser.ts'
 import { lockSkillAdmissionPrincipal, resolveSelectedSkillVersionIdsInTransaction, validateSelectedSkillVersionIdsInTransaction } from './skills/runtime.ts'
 import {
@@ -434,6 +437,7 @@ export interface AgentResolvedAdmission {
   readonly providerProfileVersionId: string
   readonly transportKind: string
   readonly model: string
+  readonly googleSearchEnabled: boolean
   readonly executionMode: AgentExecutionMode
   readonly profilePolicyVersion: number
   readonly defaultGeneration: number
@@ -495,6 +499,7 @@ export interface AgentRecoveredAction {
 }
 
 export interface AgentEngineRequest {
+  readonly googleSearchEnabled: boolean
   readonly generationTools?: readonly AgentGenerationTool[]
   readonly authorizeMedia?: () => Promise<void>
   readonly mediaRequest?: { readonly kind: 'image' | 'transcription' | 'video' | 'music' }
@@ -522,6 +527,7 @@ export interface AgentEngineRequest {
 }
 
 export interface AgentEngineSink {
+  googleSearchSuggestions?(suggestions: readonly string[]): Promise<void>
   media?(
     images: readonly {
       readonly payload: Buffer
@@ -537,6 +543,7 @@ export interface AgentEngineSink {
 export interface AgentEngineResult {
   readonly outputLimited?: true
   readonly citations?: readonly Readonly<Record<string, unknown>>[]
+  readonly googleSearchGrounding?: AgentGoogleSearchGrounding
   readonly suggestions?: readonly Readonly<Record<string, unknown>>[]
   readonly inputTokens: number
   readonly outputTokens: number
@@ -629,6 +636,7 @@ interface RuntimeMessageRow {
   id: string
   role: 'user' | 'assistant'
   content: string
+  googleSearchGrounding: string | null
   runId: string | null
   providerStateCiphertext: Uint8Array | null
   providerStateSha256: string | null
@@ -681,6 +689,27 @@ const parsedObject = (value: string, code: string): Record<string, unknown> => {
     return parsed as Record<string, unknown>
   } catch {
     throw new AgentRepositoryError(code, 'Stored agent diagnostic context is invalid', 500)
+  }
+}
+
+const assertNoTransientGoogleSearchSuggestions = (value: unknown): void => {
+  const pending: Array<{ readonly value: unknown; readonly depth: number }> = [{ value, depth: 0 }]
+  let visited = 0
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    visited += 1
+    if (visited > 20_000 || current.depth > 32)
+      throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine output nesting exceeds its validation limit', 500)
+    if (Array.isArray(current.value)) {
+      for (const item of current.value) pending.push({ value: item, depth: current.depth + 1 })
+      continue
+    }
+    if (typeof current.value !== 'object' || current.value === null) continue
+    for (const [key, nested] of Object.entries(current.value)) {
+      if (key === 'searchSuggestions' || key === 'search_suggestions')
+        throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Raw Google Search suggestions cannot enter durable agent state', 500)
+      pending.push({ value: nested, depth: current.depth + 1 })
+    }
   }
 }
 
@@ -914,7 +943,7 @@ const safeUsageSum = (left: number, right: number, label: string): number => {
 interface GoalBudgetCheckpoint {
   readonly goalId: string
   readonly runId: string
-  readonly tier: 'standard' | 'extended'
+  readonly tier: AgentGoalTokenTier
   readonly selection: 'utility' | 'fallback'
   readonly budgetCycle: number
   readonly tokenAllowance: number
@@ -946,7 +975,7 @@ const goalBudgetCheckpointUsage = (data: AgentEventData, expectedGoalId?: string
     typeof runId !== 'string' ||
     !UUID.test(runId) ||
     (expectedRunId !== undefined && runId !== expectedRunId) ||
-    (tier !== 'standard' && tier !== 'extended') ||
+    (tier !== 'small' && tier !== 'standard' && tier !== 'extended') ||
     (selection !== 'utility' && selection !== 'fallback') ||
     !Number.isSafeInteger(budgetCycle) ||
     budgetCycle !== 1 ||
@@ -1129,6 +1158,7 @@ export class AgentProductRuntime {
     if (!Number.isSafeInteger(resolved.reservationMilliseconds) || resolved.reservationMilliseconds < 1) {
       throw new AgentRepositoryError('INVALID_PROFILE_RESOLUTION', 'Quota reservation duration is invalid', 500)
     }
+    if (typeof resolved.googleSearchEnabled !== 'boolean') throw new AgentRepositoryError('INVALID_PROFILE_RESOLUTION', 'Google Search consent is invalid', 500)
   }
   async #selectGoalBudgetWithCheckpoint(
     claim: AgentRunClaim,
@@ -1215,7 +1245,7 @@ export class AgentProductRuntime {
       }
     }
     if (
-      (classification.tier !== 'standard' && classification.tier !== 'extended') ||
+      (classification.tier !== 'small' && classification.tier !== 'standard' && classification.tier !== 'extended') ||
       (classification.selection !== 'utility' && classification.selection !== 'fallback') ||
       (classification.selection === 'fallback' && classification.tier !== 'extended')
     ) {
@@ -1382,6 +1412,7 @@ export class AgentProductRuntime {
       .forUpdate()
       .first('eventSequence', 'assistantMessageId')) as { eventSequence: number; assistantMessageId: string } | undefined
     if (!run) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost while recording output', 409)
+    assertNoTransientGoogleSearchSuggestions(data)
     const encoded = canonicalJson(data)
     const sequence = Number(run.eventSequence) + 1
     await transaction('agentEvents').insert({
@@ -1487,6 +1518,7 @@ export class AgentProductRuntime {
         {
           run: claim,
           purpose: 'planner',
+          googleSearchEnabled: false,
           ...(currentPage === undefined ? {} : { currentPage }),
           ...(knowledgeContext === undefined ? {} : { knowledgeContext }),
           actionAllowlist: [],
@@ -1734,7 +1766,7 @@ export class AgentProductRuntime {
       checkpoints.push(checkpoint)
     }
     const modernSelected =
-      goal.budgetPolicyVersion === AGENT_GOAL_BUDGET_POLICY_VERSION &&
+      isSelectedAgentGoalBudgetPolicyVersion(goal.budgetPolicyVersion) &&
       (goal.budgetSelection === 'utility' || goal.budgetSelection === 'fallback') &&
       goal.tokenTier !== null &&
       goal.tokenAllowance !== null &&
@@ -1770,6 +1802,7 @@ export class AgentProductRuntime {
     readonly dispatchBudget?: AgentDispatchBudget
   }): AgentEngineRequest {
     return {
+      googleSearchEnabled: false,
       run: input.claim,
       purpose: 'subagent',
       task: input.task,
@@ -2083,6 +2116,7 @@ export class AgentProductRuntime {
             id: 'messages.id',
             role: 'messages.role',
             content: 'messages.content',
+            googleSearchGrounding: 'messages.googleSearchGrounding',
             runId: 'messages.runId',
             providerStateCiphertext: 'messages.providerStateCiphertext',
             providerStateSha256: 'messages.providerStateSha256',
@@ -2260,6 +2294,10 @@ export class AgentProductRuntime {
       if (claim.status === 'awaiting_approval' && continuation === null) {
         throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_MISSING', 'Awaiting approval run has no durable action continuation', 500)
       }
+      const groundingRetention =
+        mediaRequest === undefined && (claim.googleSearchEnabled || messageRows.some(message => message.googleSearchGrounding !== null))
+          ? canonicalJson({ citations: [] })
+          : null
       if (continuation === null) {
         await this.#appendPresentationEvent(claim, 'run.attemptStarted', { runId: claim.id, attempt: claim.attempts })
         if (claim.attempts > 1)
@@ -2268,7 +2306,7 @@ export class AgentProductRuntime {
           claim,
           'message.started',
           { messageId: claim.assistantMessageId },
-          { status: 'streaming', content: '', citations: null }
+          { status: 'streaming', content: '', citations: null, googleSearchGrounding: groundingRetention }
         )
         await recoverAgentRunTasks(this.#knex, claim)
       }
@@ -2353,12 +2391,15 @@ export class AgentProductRuntime {
         })
         executionSignal.throwIfAborted()
       }
+      const googleSearchEnabled = mediaRequest === undefined && claim.googleSearchEnabled
+      let googleSearchSuggestions: readonly string[] | undefined
       const engineRequest: AgentEngineRequest = {
         ...(generationTools === undefined ? {} : { generationTools }),
         authorizeMedia,
         ...(mediaRequest ? { mediaRequest } : {}),
         run: claim,
         purpose: 'root',
+        googleSearchEnabled,
         messages,
         memory,
         skills,
@@ -2411,6 +2452,18 @@ export class AgentProductRuntime {
         event: async (type, data) => {
           if (executionSignal.aborted) throw executionSignal.reason
           await this.#appendPresentationEvent(claim, type, data)
+        },
+        googleSearchSuggestions: async suggestions => {
+          if (executionSignal.aborted) throw executionSignal.reason
+          if (!googleSearchEnabled)
+            throw new AgentRepositoryError(
+              'INVALID_ENGINE_RESULT',
+              'Inference engine emitted Google Search suggestions when search was disabled for this dispatch',
+              500
+            )
+          if (googleSearchSuggestions !== undefined)
+            throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine emitted Google Search suggestions more than once', 500)
+          googleSearchSuggestions = [...suggestions]
         }
       }
       if (mediaRequest || attachedRows.length) await authorizeMedia()
@@ -2470,11 +2523,21 @@ export class AgentProductRuntime {
       const unsettledExposure = dispatchBudget?.unsettledExposure ?? { tokens: 0, costMicros: 0 }
       const consumedTokens = safeUsageSum(measuredTotalTokens, unsettledExposure.tokens, 'Total provider tokens')
       const consumedCostMicros = safeUsageSum(measuredCostMicros, unsettledExposure.costMicros, 'Total provider cost')
+      const googleSearchGrounding = result.googleSearchGrounding === undefined ? undefined : validateAgentGoogleSearchGrounding(result.googleSearchGrounding)
+      if (googleSearchGrounding?.citations.some(citation => citation.endIndex > content.length))
+        throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Google Search citation exceeds the accepted answer', 500)
       const citations = result.citations === undefined ? null : canonicalJson(result.citations)
       const outputLimitedValue: unknown = result.outputLimited
       if (outputLimitedValue !== undefined && outputLimitedValue !== true)
         throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine emitted an invalid output limit', 500)
       const outputLimited = outputLimitedValue === true ? true : undefined
+      if (result.providerState !== undefined) assertNoTransientGoogleSearchSuggestions(result.providerState)
+      if (
+        result.providerState !== undefined &&
+        claim.transportKind === 'gemini-api' &&
+        decodeAgentProviderContinuation(result.providerState, 'gemini-interactions-v1') === undefined
+      )
+        throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine returned invalid Gemini continuation state', 500)
       const providerStateJson = outputLimited === true || result.providerState === undefined ? null : canonicalJson(result.providerState)
       if (providerStateJson !== null && Buffer.byteLength(providerStateJson, 'utf8') > 256 * 1_024)
         throw new AgentRepositoryError('AGENT_PROVIDER_STATE_TOO_LARGE', 'Provider continuation exceeds its size limit', 500)
@@ -2546,6 +2609,13 @@ export class AgentProductRuntime {
         outcome: completion.outcome,
         issueCodes: completion.issues.map(issue => issue.code)
       })
+      if (googleSearchSuggestions !== undefined)
+        await publishAgentGoogleSearchSuggestions(this.#knex, {
+          ownerId: claim.ownerId,
+          sessionId: claim.sessionId,
+          runId: claim.id,
+          suggestions: googleSearchSuggestions
+        })
       const partial = completion.outcome !== 'complete'
       await persistAgentRunQuotaSettlementIntent(this.#knex, {
         runId: claim.id,
@@ -2563,6 +2633,7 @@ export class AgentProductRuntime {
           status: 'complete',
           content,
           citations,
+          googleSearchGrounding: googleSearchGrounding === undefined ? groundingRetention : canonicalJson(googleSearchGrounding),
           providerStateCiphertext: providerStateJson === null ? null : Buffer.from(providerStateJson),
           providerStateSha256: providerStateJson === null ? null : sha256(providerStateJson)
         },
@@ -2877,6 +2948,19 @@ export class AgentProductRuntime {
       Number(Reflect.get(receipt, 'continuationCount')) < 1
     )
       throw new AgentRepositoryError('RUN_IDEMPOTENCY_MISMATCH', 'Run ID was reused with different input', 409)
+    const receiptVersion = Reflect.get(receipt, 'receiptVersion')
+    if (receiptVersion === undefined) return
+    const cycleStartedAtTokens = Reflect.get(receipt, 'cycleStartedAtTokens')
+    const tokenAllowance = Reflect.get(receipt, 'tokenAllowance')
+    if (
+      receiptVersion !== 2 ||
+      !Number.isSafeInteger(cycleStartedAtTokens) ||
+      Number(cycleStartedAtTokens) < 0 ||
+      !Number.isSafeInteger(tokenAllowance) ||
+      Number(tokenAllowance) < 1 ||
+      Number(cycleStartedAtTokens) + Number(tokenAllowance) !== Number(Reflect.get(receipt, 'maxTokens'))
+    )
+      throw new AgentRepositoryError('RUN_IDEMPOTENCY_MISMATCH', 'Run ID was reused with different input', 409)
   }
 
   async #continueGoal(
@@ -2966,6 +3050,7 @@ export class AgentProductRuntime {
           'providerProfileVersionId',
           'transportKind',
           'model',
+          'googleSearchEnabled',
           'profilePolicyVersion',
           'defaultGeneration',
           'capabilityRevision',
@@ -2976,6 +3061,7 @@ export class AgentProductRuntime {
             providerProfileVersionId: string
             transportKind: string
             model: string
+            googleSearchEnabled: boolean | number | null | undefined
             profilePolicyVersion: number | string
             defaultGeneration: number | string
             capabilityRevision: string
@@ -2990,6 +3076,13 @@ export class AgentProductRuntime {
         firstRun.providerProfileVersionId === resolved.providerProfileVersionId &&
         firstRun.transportKind === resolved.transportKind &&
         firstRun.model === resolved.model &&
+        (firstRun.googleSearchEnabled === true ||
+          firstRun.googleSearchEnabled === false ||
+          firstRun.googleSearchEnabled === 0 ||
+          firstRun.googleSearchEnabled === undefined ||
+          firstRun.googleSearchEnabled === null ||
+          firstRun.googleSearchEnabled === 1) &&
+        (firstRun.googleSearchEnabled === true || firstRun.googleSearchEnabled === 1) === resolved.googleSearchEnabled &&
         Number(firstRun.profilePolicyVersion) === resolved.profilePolicyVersion &&
         Number(firstRun.defaultGeneration) === resolved.defaultGeneration &&
         firstRun.capabilityRevision === resolved.capabilityRevision &&
@@ -3175,7 +3268,7 @@ export class AgentProductRuntime {
         .first('id')
       if (collision) throw new AgentRepositoryError('RUN_IDEMPOTENCY_MISMATCH', 'Client request ID was reused with different input', 409)
       if (
-        locked.budgetPolicyVersion !== AGENT_GOAL_BUDGET_POLICY_VERSION ||
+        !isSelectedAgentGoalBudgetPolicyVersion(locked.budgetPolicyVersion) ||
         (locked.budgetSelection !== 'utility' && locked.budgetSelection !== 'fallback') ||
         locked.tokenTier === null ||
         locked.tokenAllowance === null ||
@@ -3235,6 +3328,7 @@ export class AgentProductRuntime {
           'providerProfileVersionId',
           'transportKind',
           'model',
+          'googleSearchEnabled',
           'profilePolicyVersion',
           'defaultGeneration',
           'capabilityRevision',
@@ -3245,6 +3339,7 @@ export class AgentProductRuntime {
             providerProfileVersionId: string
             transportKind: string
             model: string
+            googleSearchEnabled: boolean | number | null | undefined
             profilePolicyVersion: number | string
             defaultGeneration: number | string
             capabilityRevision: string
@@ -3259,6 +3354,13 @@ export class AgentProductRuntime {
         firstRun.providerProfileVersionId === resolved.providerProfileVersionId &&
         firstRun.transportKind === resolved.transportKind &&
         firstRun.model === resolved.model &&
+        (firstRun.googleSearchEnabled === true ||
+          firstRun.googleSearchEnabled === false ||
+          firstRun.googleSearchEnabled === 0 ||
+          firstRun.googleSearchEnabled === undefined ||
+          firstRun.googleSearchEnabled === null ||
+          firstRun.googleSearchEnabled === 1) &&
+        (firstRun.googleSearchEnabled === true || firstRun.googleSearchEnabled === 1) === resolved.googleSearchEnabled &&
         Number(firstRun.profilePolicyVersion) === resolved.profilePolicyVersion &&
         Number(firstRun.defaultGeneration) === resolved.defaultGeneration &&
         firstRun.capabilityRevision === resolved.capabilityRevision &&
@@ -3324,7 +3426,7 @@ export class AgentProductRuntime {
       await assertGenerationToolCapabilities(transaction, resolved.providerProfileVersionId, generationTools, resolved.executionMode)
       const knowledgeContext = knowledgeContextHint(initialContext?.data)
       const currentPage = currentPageHint(initialContext?.data)
-      const newMaxTokens = safeUsageSum(Math.max(locked.maxTokens, usage.tokens), locked.tokenAllowance, 'Renewed goal token budget')
+      const newMaxTokens = safeUsageSum(usage.tokens, locked.tokenAllowance, 'Renewed goal token budget')
       const changed = await transaction('agentGoals')
         .where({ id: locked.id, ownerId: locked.ownerId, version: locked.version, status: locked.status })
         .update({
@@ -3369,12 +3471,15 @@ export class AgentProductRuntime {
         type: 'run.resumed',
         attempt: admitted.run.attempts,
         data: {
+          receiptVersion: 2,
           operation: 'renew_goal_budget',
           goalId: input.goalId,
           clientRequestId: input.clientRequestId,
           expectedVersion: input.expectedVersion,
           confirmed: true,
           budgetCycle: renewedGoal.budgetCycle,
+          cycleStartedAtTokens: usage.tokens,
+          tokenAllowance: locked.tokenAllowance,
           maxTokens: renewedGoal.maxTokens,
           status: renewedGoal.status,
           continuationCount: renewedGoal.continuationCount
