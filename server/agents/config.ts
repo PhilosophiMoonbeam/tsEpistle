@@ -37,7 +37,7 @@ const AgentOperationalLimitsSchema = z
       .object({
         enabled: z.boolean().default(false),
         maxContinuations: z.number().int().min(0).max(12).default(3),
-        maxTokens: z.number().int().min(1_000).max(1_000_000).default(192_000),
+        maxTokens: z.number().int().min(1_000).max(1_000_000).default(DEFAULT_AGENT_GOAL_LIMITS.maxTokens),
         maxToolCalls: z.number().int().min(1).max(1_024).default(96),
         maxDurationMilliseconds: z
           .number()
