@@ -278,17 +278,45 @@ test.describe('critical post-install workflows', () => {
       )
       .toMatchObject({ appearance: 'light' })
 
+    // A saved light preference must win on the first frame, not only after whoami.
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await page.route('**/_api/users/whoami', async route => {
+      const { promise, resolve } = Promise.withResolvers<void>()
+      setTimeout(resolve, 1200)
+      await promise
+      await route.continue()
+    })
+    await page.addInitScript(() => {
+      const modes: string[] = []
+      Reflect.set(window, '__appearanceFrames', modes)
+      const sample = () => {
+        const app = document.querySelector('.v-application')
+        if (app) modes.push(app.classList.contains('v-theme--dark') ? 'dark' : 'light')
+        requestAnimationFrame(sample)
+      }
+      requestAnimationFrame(sample)
+    })
+    const expectLightFromFirstFrame = async () => {
+      await expect.poll(() => page.evaluate(() => Reflect.get(window, '__appearanceFrames'))).toContain('light')
+      expect(await page.evaluate(() => Reflect.get(window, '__appearanceFrames'))).not.toContain('dark')
+    }
+
     await openClientPage(page, '/a/theme', '.theme-tabs')
     await expect(page.locator('.theme-tabs')).toBeVisible()
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+    await expectLightFromFirstFrame()
     await openClientPage(page, '/a/', '.admin-main')
     await expect(page.locator('.admin-main')).toBeVisible()
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+    await expectLightFromFirstFrame()
     await page.emulateMedia({ colorScheme: 'dark' })
     await page.reload()
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+    await expectLightFromFirstFrame()
 
     await openClientPage(page, '/en/home', '.page-header-section')
+    await expectLightFromFirstFrame()
+    await page.unroute('**/_api/users/whoami')
     await page.getByRole('button', { name: 'Account' }).click()
     const restoredAppearanceSelector = page.locator('.v-overlay--active').getByRole('group', { name: 'Appearance' })
     await restoredAppearanceSelector.getByRole('button', { name: 'System', exact: true }).click()
