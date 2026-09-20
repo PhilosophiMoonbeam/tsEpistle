@@ -1284,6 +1284,7 @@ export default defineComponent({
       offlineUnlockSecret: '',
       offlineUnlockBusy: false,
       offlineUnlockError: '',
+      offlineReadingStateVersion: 0,
       offlinePolicy: null as OfflinePagePolicyRecord | null,
       offlineHasSnapshot: false,
       offlineSnapshotRevision: '',
@@ -1516,6 +1517,7 @@ export default defineComponent({
       })
     },
     offlineLocalIneligibilityReason (): string {
+      void this.offlineReadingStateVersion
       if (!this.offlineSelector()) return 'This page cannot be saved offline.'
       if (!this.isPublished) return 'Unpublished pages cannot be saved offline.'
       if (this.pageProtection.protected) return 'Password-protected pages cannot be saved offline.'
@@ -2630,6 +2632,7 @@ export default defineComponent({
         if (!storage || operationId !== this.offlineOperationId) return
         secret = decodeOfflineReadingSecret(entered)
         await unlockOfflineReading(storage, secret)
+        this.offlineReadingStateVersion += 1
         this.offlineUnlockOpen = false
         await this.refreshOfflinePageState()
       } catch {
