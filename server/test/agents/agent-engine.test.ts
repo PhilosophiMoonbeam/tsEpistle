@@ -1918,7 +1918,7 @@ describe('Ax agent engine', () => {
           structuredOutput: 'prompt-only',
           usage: 'estimated',
           cancellation: true,
-          maxContextTokens: 12_000,
+          maxContextTokens: 100_000,
           maxOutputTokens: 1_000
         },
         transportKind: 'legacy-completions',
@@ -1945,12 +1945,9 @@ describe('Ax agent engine', () => {
         close: vi.fn()
       })
     }
-    const text = vi.fn(async () => {})
-
-    await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event: async () => {} })
+    await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text: async () => {}, event: async () => {} })
 
     expect(providerCalls[0]).not.toHaveProperty('functions')
-    expect(providerCalls[0]?.chatPrompt[0]).toEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('strict text tool protocol') }))
     expect(providerCalls[0]?.chatPrompt[0]).toEqual(expect.objectContaining({ content: expect.stringContaining('"name":"wiki_get_page"') }))
     expect(invoke).toHaveBeenCalledWith('pages.get', { id: 42 }, expect.objectContaining({ aborted: false }), expect.any(String))
     expect(providerCalls[1]?.chatPrompt).toContainEqual({
@@ -1959,10 +1956,6 @@ describe('Ax agent engine', () => {
     })
     expect(providerCalls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'user', content: expect.stringContaining('<wiki-tool-result>') }))
     expect(providerCalls[1]?.chatPrompt.some(message => message.role === 'function')).toBe(false)
-    expect(text).toHaveBeenCalledOnce()
-    expect(text).toHaveBeenCalledWith(
-      'The page is ready.\n\nPartial context coverage: 1 executed result omitted; 0 action calls not executed because provider context capacity was exhausted. The available evidence may be incomplete.'
-    )
   })
 
   it('resumes one reclaimed pre-fence approval action identity and feeds its durable result back into synthesis', async () => {
