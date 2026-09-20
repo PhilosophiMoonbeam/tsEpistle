@@ -110,6 +110,7 @@ describe('additional provider transports', () => {
     expect(payload.include).toContain('reasoning.encrypted_content')
     const firstContinuation = provider.preserveThoughtBlock('rs_1', { data: 'encrypted-reasoning', encrypted: true })
     const secondContinuation = provider.preserveThoughtBlock('rs_2', { data: 'encrypted-reasoning-2', encrypted: true })
+    if (!firstContinuation || !secondContinuation) throw new Error('OpenResponses continuation state was not preserved')
     await provider.service.chat(
       {
         chatPrompt: [
@@ -577,11 +578,11 @@ describe('OpenResponses protocol validation', () => {
 })
 
 describe('Gemini Interactions protocol validation', () => {
-  const service = (implementation: typeof fetch) =>
+  const service = (implementation: typeof fetch, model = 'gemini-3.7-flash') =>
     createGeminiInteractionsService({
       apiKey: 'gemini-key',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-      model: 'gemini-3.7-flash',
+      model,
       fetch: implementation,
       timeoutMs: 10_000
     })
@@ -719,32 +720,114 @@ describe('Gemini Interactions protocol validation', () => {
     expect(response.results[0]?.content).toBe('Hello')
   })
 
-  it('accepts bounded live modality metadata while retaining billable thought tokens', async () => {
+  it('accepts live non-grounding invocation metadata for buffered and streamed native tool responses', async () => {
+    const model = 'gemini-3.8-flash'
     const usage = {
-      total_input_tokens: 5,
-      total_output_tokens: 2,
-      total_tokens: 77,
-      total_thought_tokens: 70,
-      raw_prompt_token: 36,
+      total_input_tokens: 47,
+      total_output_tokens: 14,
+      total_tokens: 108,
+      total_cached_tokens: 0,
+      total_tool_use_tokens: 0,
+      total_thought_tokens: 47,
+      raw_prompt_token: 87,
+      input_tokens_by_modality: [{ modality: 'text', tokens: 47 }],
       model_invocation_token_counts: [
         {
-          prompt_tokens_details: [{ modality: 'text', tokens: 36 }],
-          candidates_tokens_details: [{ modality: 'text', tokens: 6 }],
-          thoughts_tokens_details: [{ modality: 'text', tokens: 70 }]
+          prompt_tokens_details: [{ modality: 'text', tokens: 87 }],
+          candidates_tokens_details: [{ modality: 'text', tokens: 20 }],
+          thoughts_tokens_details: [{ modality: 'text', tokens: 47 }]
+        }
+      ],
+      non_grounding_model_invocation_token_counts: [
+        {
+          prompt_tokens_details: [{ modality: 'text', tokens: 87 }],
+          candidates_tokens_details: [{ modality: 'text', tokens: 20 }],
+          thoughts_tokens_details: [{ modality: 'text', tokens: 47 }]
         }
       ]
     }
+    const toolStep = { type: 'function_call', id: 'wiki-call', name: 'wiki_get_page', arguments: { id: 42 } }
+    const expectedToolCall = [{ id: 'wiki-call', type: 'function', function: { name: 'wiki_get_page', params: { id: 42 } } }]
+    const expectedTokens = { promptTokens: 47, completionTokens: 14, totalTokens: 108 }
+    const request: AxChatRequest = {
+      chatPrompt: [{ role: 'user', content: 'Look up the page' }],
+      functions: [
+        {
+          name: 'wiki_get_page',
+          description: 'Read a page',
+          parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } }
+        }
+      ]
+    }
+    expect(
+      agentProviderCostMicros(
+        { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 },
+        expectedTokens.promptTokens,
+        expectedTokens.completionTokens,
+        expectedTokens.totalTokens
+      )
+    ).toBe(169)
+
+    const bufferedGemini = service(
+      (async () =>
+        Response.json({
+          model,
+          status: 'requires_action',
+          steps: [{ type: 'thought', signature: 'buffered-signature' }, toolStep],
+          usage
+        })) as typeof fetch,
+      model
+    )
+    const buffered = await bufferedGemini.chat(request, { stream: false })
+    if (buffered instanceof ReadableStream) throw new Error('Expected buffered response')
+    expect(buffered.results[0]?.functionCalls).toEqual(expectedToolCall)
+    expect(buffered.modelUsage?.tokens).toEqual(expectedTokens)
+
+    const events = [
+      {
+        event_type: 'interaction.created',
+        interaction: { id: 'interaction_tool', model, status: 'in_progress', object: 'interaction' }
+      },
+      { event_type: 'interaction.status_update', interaction_id: 'interaction_tool', status: 'in_progress' },
+      { event_type: 'step.start', index: 0, step: { type: 'thought' } },
+      { event_type: 'step.delta', index: 0, delta: { type: 'thought_signature', signature: 'streamed-signature' } },
+      { event_type: 'step.stop', index: 0 },
+      { event_type: 'step.start', index: 1, step: { type: 'function_call', id: 'wiki-call', name: 'wiki_get_page' } },
+      { event_type: 'step.delta', index: 1, delta: { type: 'arguments_delta', arguments: '{"id":42}' } },
+      { event_type: 'step.stop', index: 1 },
+      {
+        event_type: 'interaction.completed',
+        interaction: { id: 'interaction_tool', model, status: 'requires_action', usage }
+      }
+    ]
+    const body = `${events.map(event => `event: ${event.event_type}\ndata: ${JSON.stringify(event)}`).join('\n\n')}\n\nevent: done\ndata: [DONE]\n\n`
+    const streamedGemini = service((async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } })) as typeof fetch, model)
+    const streamed = await streamedGemini.chat(request, { stream: true })
+    if (!(streamed instanceof ReadableStream)) throw new Error('Expected streaming response')
+    const chunks = []
+    for await (const chunk of streamed) chunks.push(chunk)
+    expect(chunks.find(chunk => chunk.results[0]?.functionCalls)?.results[0]?.functionCalls).toEqual(expectedToolCall)
+    expect(chunks.at(-1)?.modelUsage?.tokens).toEqual(expectedTokens)
+  })
+
+  it('rejects oversized non-grounding invocation metadata', async () => {
     const gemini = service((async () =>
       Response.json({
         model: 'gemini-3.7-flash',
         status: 'completed',
         steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Hello' }] }],
-        usage
+        usage: {
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+          total_tokens: 2,
+          non_grounding_model_invocation_token_counts: Array.from({ length: 65 }, () => ({
+            prompt_tokens_details: [{ modality: 'text', tokens: 1 }]
+          }))
+        }
       })) as typeof fetch)
-    const response = await gemini.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: false })
-    if (response instanceof ReadableStream) throw new Error('Expected buffered response')
-    expect(response.modelUsage?.tokens).toEqual({ promptTokens: 5, completionTokens: 2, totalTokens: 77 })
-    expect(agentProviderCostMicros({ revision: 'test', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }, 5, 2, 77)).toBe(149)
+    await expect(gemini.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: false })).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE'
+    })
   })
 
   it('accepts a stateless buffered empty ID while retaining nonempty tool call IDs', async () => {
