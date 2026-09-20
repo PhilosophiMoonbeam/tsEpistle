@@ -1037,7 +1037,12 @@ export const createGeminiInteractionsService = (config: GeminiInteractionsServic
         type: 'function' as const,
         name: fn.name,
         description: fn.description,
-        ...(fn.parameters === undefined ? {} : { parameters: fn.parameters })
+        ...(fn.parameters === undefined
+          ? {}
+          : {
+              // Validated tool combinations require an explicit object root, including object unions.
+              parameters: fn.parameters.type === undefined ? { ...fn.parameters, type: 'object' } : fn.parameters
+            })
       }))
     ]
     const generationConfig = {

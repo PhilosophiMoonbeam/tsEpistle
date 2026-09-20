@@ -1,4 +1,6 @@
-import type { AxChatResponse, AxChatResponseResult } from '@ax-llm/ax'
+import type { AxChatResponse, AxChatResponseResult, AxFunctionJSONSchema } from '@ax-llm/ax'
+import { z } from 'zod'
+import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
 import { combineGeminiInteractionState, createGeminiInteractionsService, readGeminiGoogleSearchGrounding } from '../../agents/providers/gemini-interactions.ts'
 import { readAgentProviderUsage } from '../../agents/providers/usage.ts'
 import { describe, expect, it } from '../bun-test.mts'
@@ -90,6 +92,44 @@ describe('Gemini Interactions Google Search grounding', () => {
         fetch: (async () => jsonResponse(groundedInteraction())) as typeof globalThis.fetch
       }).chat({ chatPrompt: [{ role: 'user', content: 'no search consent' }], model }, { stream: false })
     ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+  })
+
+  it('admits union-shaped Wiki tools through the validated native-search boundary', async () => {
+    const requestSchema = z.object({
+      tools: z.array(z.object({ type: z.string(), parameters: z.unknown().optional() }))
+    })
+    const service = createGeminiInteractionsService({
+      apiKey: 'test-key',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      model,
+      timeoutMs: 10_000,
+      googleSearchEnabled: true,
+      fetch: (async (_input, init) => {
+        const request = requestSchema.parse(JSON.parse(String(init?.body)))
+        // Gemini validated mode rejects root anyOf/oneOf schemas without an explicit object type.
+        if (request.tools.some(tool => tool.type === 'function' && !z.object({ type: z.literal('object') }).safeParse(tool.parameters).success))
+          return Response.json({ error: { code: 'invalid_request' } }, { status: 400 })
+        return jsonResponse(groundedInteraction())
+      }) as typeof globalThis.fetch
+    })
+    // Ax's parameter type omits the valid root unions produced by the action catalog.
+    const parameters = z.toJSONSchema(ACTION_CATALOG['pages.get'].input) as AxFunctionJSONSchema
+    const result = resultOf(
+      await service.chat(
+        {
+          model,
+          chatPrompt: [{ role: 'user', content: 'Look up this page and verify its release date on the web.' }],
+          functions: [{ name: 'wiki_get_page', description: 'Read a Wiki page by ID or path.', parameters }],
+          functionCall: 'auto'
+        },
+        { stream: false }
+      )
+    )
+    expect(result.content).toBe('Alpha 🔍Beta')
+    expect(readGeminiGoogleSearchGrounding(result)?.citations.map(citation => citation.url)).toEqual([
+      'https://grounding.example.test/source',
+      'https://grounding.example.test/second'
+    ])
   })
 
   it('preserves native steps and citation offsets while excluding only suggestion HTML from replay', async () => {
