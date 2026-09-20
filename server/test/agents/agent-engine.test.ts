@@ -718,6 +718,9 @@ describe('Ax agent engine', () => {
       'OM chairs are provided.',
       '',
       'Acme pricing starts Jan. 1, 2026. Beta pricing starts Jan. 2, 2026.',
+      '- Northstar ships only 12 crates per order. **Aster freight is rechecked before confirmation.** _Boreal invoices are archived._',
+      '- Display only the literal `Banner. _Shipping is free._` as a test string.',
+      '- Alpha routing. Orders ship only today.',
       '',
       '{unrelated braces remain source content}',
       '',
@@ -749,7 +752,7 @@ describe('Ax agent engine', () => {
       '',
       '## Acme',
       '### Corporate Office',
-      'Indiana orders route through the Midwest contact.',
+      'Indiana orders route through the "Midwest" contact.',
       '',
       '## Beta',
       '### Corporate Office',
@@ -776,8 +779,11 @@ describe('Ax agent engine', () => {
       'Fence token Kappa remains literal.[[cite:page:1:revision:9:section:1]]',
       'Chair assignments map om to 250 lb.[[cite:page:1:revision:9:section:1]]',
       'om chairs are provided.[[cite:page:1:revision:9:section:1]]',
+      'Aster freight is rechecked before confirmation.[[cite:page:1:revision:9:section:1]]',
+      'Boreal invoices are archived.[[cite:page:1:revision:9:section:1]]',
+      'Orders ship only today.[[cite:page:1:revision:9:section:1]]',
       'MFG Directory includes Website, Contact, Quote Form, and Legacy MFGs; MFG Quotes are listed.[[cite:page:1:revision:9:section:2]]',
-      'acme corporate office: indiana orders route through the midwest contact.[[cite:page:1:revision:9:section:4]]',
+      'Acme Corporate Office: Indiana orders route through the "Midwest" contact.[[cite:page:1:revision:9:section:4]]',
       'Legacy MFGs: We No Longer Represent.[[cite:page:1:revision:9:section:2]]'
     ].join('\n\n')
     const calls: Readonly<AxChatRequest<unknown>>[] = []
@@ -788,8 +794,8 @@ describe('Ax agent engine', () => {
           {
             index: 0,
             content: [
-              'CET specification tools; Workspace48 Promos.[[cite:page:1:revision:9:section:1]]',
-              'Acme Corporate Office: California orders route through the West contact.[[cite:page:1:revision:9:section:4]]',
+              'CET specification tools; Workspace48 Promos; Terms remain valid for 90 days after delivery; Chair assignments map OM to 300 lb.[[cite:page:1:revision:9:section:1]]',
+              'Acme Corporate Office: California orders route through the "West" contact.[[cite:page:1:revision:9:section:4]]',
               'The MFG Directory provides Website, Contact, and Quote Form resources.[[cite:page:1:revision:9:section:2]]'
             ].join('\n\n')
           }
@@ -878,17 +884,21 @@ describe('Ax agent engine', () => {
         expect.objectContaining({
           evidenceId: 'page:1:revision:9:section:1',
           draftFragment: 'CET specification tools',
-          sourceUnits: expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining('[Spec/CET]') })])
+          sourceUnits: expect.arrayContaining([
+            expect.objectContaining({
+              text: '#### [Discounts Chart](/discounts) | [UPS/USPS/FedEx](/shipping) | [Spec/CET](/cet)'
+            })
+          ])
         }),
         expect.objectContaining({
           evidenceId: 'page:1:revision:9:section:4',
-          draftFragment: 'Acme Corporate Office: California orders route through the West contact.',
-          sourceUnits: expect.arrayContaining([expect.objectContaining({ text: 'Indiana orders route through the Midwest contact.' })])
+          draftFragment: 'Acme Corporate Office: California orders route through the "West" contact.',
+          sourceUnits: expect.arrayContaining([expect.objectContaining({ text: 'Indiana orders route through the "Midwest" contact.' })])
         })
       ])
     )
     expect(JSON.stringify(feedback).length).toBeLessThanOrEqual(1_200)
-    expect(feedback.flatMap(item => item.sourceUnits.map(unit => unit.text))).not.toContain('California orders route through the West contact.')
+    expect(feedback.flatMap(item => item.sourceUnits.map(unit => unit.text))).not.toContain('California orders route through the "West" contact.')
     expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
     expect(result.citations).toEqual([
       expect.objectContaining({ evidenceId: 'page:1:revision:9' }),
@@ -918,6 +928,10 @@ describe('Ax agent engine', () => {
     ['temporal relation substitution', 'Terms remain valid for 30 days before delivery.[[cite:page:1:revision:9:section:1]]'],
     ['negation attachment swap', 'The office approves pickups, not deliveries.[[cite:page:1:revision:9:section:1]]'],
     ['negation removal', 'Weekend deliveries are available.[[cite:page:1:revision:9:section:1]]'],
+    ['compound-list qualifier removal', 'Northstar ships 12 crates per order.[[cite:page:1:revision:9:section:1]]'],
+    ['compound-list qualifier relocation', 'Northstar only ships 12 crates per order.[[cite:page:1:revision:9:section:1]]'],
+    ['inline-code literal promotion', 'Shipping is free.[[cite:page:1:revision:9:section:1]]'],
+    ['unlabeled fragment membership fallback', 'Alpha routing is listed.[[cite:page:1:revision:9:section:1]]'],
     [
       'unsupported long prefix',
       `${Array.from({ length: 600 }, (_value, index) => `unsupported${index}`).join(' ')} Terms remain valid for 30 days.[[cite:page:1:revision:9:section:1]]`
@@ -979,6 +993,9 @@ describe('Ax agent engine', () => {
         'Supply Disruptions: None known of at this time.',
         'Indiana orders route through the Midwest contact.',
         'Acme pricing starts Jan. 1, 2026. Beta pricing starts Jan. 2, 2026.',
+        '- Northstar ships only 12 crates per order. **Aster freight is rechecked before confirmation.** _Boreal invoices are archived._',
+        '- Display only the literal `Banner. _Shipping is free._` as a test string.',
+        '- Alpha routing. Orders ship only today.',
         '- OM chairs are provided.',
         'discount 10 percent, freight 20 percent.',
         'Terms remain valid for 30 days after delivery.',
