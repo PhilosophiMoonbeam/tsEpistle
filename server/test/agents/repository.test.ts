@@ -1,6 +1,23 @@
-import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
-import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
+import type { AgentEvent } from '../../../shared/agents/contracts.ts'
+import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../../shared/agents/conversation-folders.ts'
+import {
+  AgentQuotaSettlementError,
+  AgentRunCoordinator,
+  admitAgentRun,
+  claimAgentRun,
+  ensureAgentRunQuota,
+  heartbeatAgentRun,
+  markAgentRunSideEffectsStarted,
+  persistAgentRunQuotaSettlementIntent,
+  reconcileAgentRunQuota,
+  requestAgentRunCancellation,
+  reserveAgentRunQuota,
+  terminalizeAgentRun,
+  transitionAgentRun
+} from '../../agents/coordinator.ts'
+import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
+import { projectAgentThread, reduceAgentEvents } from '../../agents/projection.ts'
 import {
   appendAgentEvent,
   appendAgentMessage,
@@ -15,28 +32,11 @@ import {
   storeAgentScreenshot,
   updateAgentSession
 } from '../../agents/repository.ts'
-import { projectAgentThread, reduceAgentEvents } from '../../agents/projection.ts'
-import {
-  AgentRunCoordinator,
-  AgentQuotaSettlementError,
-  admitAgentRun,
-  claimAgentRun,
-  heartbeatAgentRun,
-  markAgentRunSideEffectsStarted,
-  ensureAgentRunQuota,
-  persistAgentRunQuotaSettlementIntent,
-  reconcileAgentRunQuota,
-  requestAgentRunCancellation,
-  reserveAgentRunQuota,
-  terminalizeAgentRun,
-  transitionAgentRun
-} from '../../agents/coordinator.ts'
-import { AgentProductRuntime, type AgentAdmissionResolver, type AgentEngine } from '../../agents/runtime.ts'
-import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
+import { type AgentAdmissionResolver, type AgentEngine, AgentProductRuntime } from '../../agents/runtime.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 import { up as addAgentGoalBudgetTiers } from '../../db/migrations/tsepistle-000042-agent-goal-budget-tiers.ts'
-import type { AgentEvent } from '../../../shared/agents/contracts.ts'
-import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../../shared/agents/conversation-folders.ts'
+import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 const sessionId = '00000000-0000-4000-8000-000000000001'
 const runId = '00000000-0000-4000-8000-000000000002'
@@ -1609,6 +1609,99 @@ describe('durable agent repositories', () => {
     })
   })
 
+  it('terminalizes output-limited results as blocked partials with settled measured usage', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: now,
+      completedAt: null
+    })
+    await reserveAgentRunQuota(
+      knex,
+      runId,
+      7,
+      { tokens: 100, costMicros: 100 },
+      { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      new Date('2026-08-17T00:05:00.000Z'),
+      now
+    )
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
+        }
+      },
+      {
+        preflight: preflightAgentRequest,
+        async execute(_request, sink) {
+          await sink.text('A validated but incomplete answer.')
+          return {
+            inputTokens: 6,
+            outputTokens: 3,
+            totalTokens: 9,
+            costMicros: 13,
+            outputLimited: true,
+            contextLimit: { reason: 'tool_result_capacity', omittedActionCallIds: ['source-call'] },
+            providerState: { schemaVersion: 1, continuationDialect: 'gemini-interactions-v1', thoughtBlocks: [] }
+          }
+        }
+      },
+      { workerId: 'worker-output-limited', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
+
+    expect(await runtime.runOnce()).toBe(true)
+    const run = await knex('agentRuns')
+      .where({ id: runId })
+      .first('status', 'inputTokens', 'outputTokens', 'totalTokens', 'estimatedCostMicros', 'completionOutcome', 'completionAssessment')
+    expect(run).toMatchObject({
+      status: 'partial',
+      inputTokens: 6,
+      outputTokens: 3,
+      totalTokens: 9,
+      estimatedCostMicros: 13,
+      completionOutcome: 'blocked'
+    })
+    expect(JSON.parse(String(run?.completionAssessment))).toMatchObject({
+      outcome: 'blocked',
+      issues: [
+        {
+          code: 'AGENT_CONTEXT_TOO_LARGE',
+          retryable: false
+        },
+        {
+          code: 'AGENT_OUTPUT_LIMITED',
+          retryable: false
+        }
+      ]
+    })
+    expect(await knex('agentMessages').where({ id: assistantMessageId }).first('status', 'content', 'providerStateCiphertext', 'providerStateSha256')).toEqual({
+      status: 'complete',
+      content: 'A validated but incomplete answer.',
+      providerStateCiphertext: null,
+      providerStateSha256: null
+    })
+    expect(await knex('agentQuotaReservations').where({ runId }).first('status', 'consumedTokens', 'consumedCostMicros')).toEqual({
+      status: 'consumed',
+      consumedTokens: 9,
+      consumedCostMicros: 13
+    })
+    expect(await knex('agentEvents').where({ runId, type: 'usage.updated' }).count<{ count: number | string }[]>({ count: '*' }).first()).toMatchObject({
+      count: 1
+    })
+    const dailyAfterTerminal = await knex('agentQuotaDaily').where({ ownerId: 7 }).first()
+    expect(await runtime.runOnce()).toBe(false)
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toEqual(dailyAfterTerminal)
+    await runtime.shutdown()
+  })
+
   it('reconciles persisted retry turns when recovered synthesis terminalizes partial', async () => {
     const now = new Date('2026-08-17T00:00:00.000Z')
     await appendAgentEvent(knex, {
@@ -2016,6 +2109,110 @@ describe('durable agent repositories', () => {
     }
   })
 
+  it('blocks an output-limited goal without automatic continuation and admits explicit resume', async () => {
+    const goalSessionId = '00000000-0000-4000-8000-000000000181'
+    const goalId = '00000000-0000-4000-8000-000000000182'
+    await knex('agentRuns').where({ id: runId }).delete()
+    await createAgentSession(knex, { id: goalSessionId, ownerId: 7, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
+    const session = await getOwnedAgentSession(knex, 7, goalSessionId)
+    const admission = {
+      profileResolutionSha256: 'd'.repeat(64),
+      providerProfileVersionId: '00000000-0000-4000-8000-000000000183',
+      transportKind: 'test',
+      model: 'test',
+      executionMode: 'agent',
+      profilePolicyVersion: 1,
+      defaultGeneration: 1,
+      capabilityRevision: 'v1',
+      pricingRevision: 'v1',
+      promptVersion: 1,
+      quota: { tokens: 100, costMicros: 100 },
+      quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      reservationMilliseconds: 60_000
+    } as const
+    const execute = vi.fn(async (_request: Parameters<AgentEngine['execute']>[0], sink: Parameters<AgentEngine['execute']>[1]) => {
+      await sink.text('The provider stopped before this answer was complete.')
+      return { inputTokens: 6, outputTokens: 3, totalTokens: 9, costMicros: 13, outputLimited: true } as const
+    })
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          return admission
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          return admission
+        }
+      },
+      { preflight: preflightAgentRequest, execute },
+      {
+        workerId: 'goal-output-limited',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        goals: { enabled: true, maxContinuations: 2, maxTokens: 100, maxToolCalls: 10, maxDurationMilliseconds: 60_000 }
+      }
+    )
+    const admitted = await runtime.createGoal({
+      ownerId: 7,
+      sessionId: goalSessionId,
+      profileResolutionToken: 'token',
+      clientRequestId: '00000000-0000-4000-8000-000000000184',
+      expectedSessionVersion: session.version,
+      objective: 'Produce an answer that may reach the provider output limit.',
+      goalId
+    })
+
+    expect(await runtime.runOnce()).toBe(true)
+    expect(execute).toHaveBeenCalledOnce()
+    const finishedRun = await knex('agentRuns')
+      .where({ id: admitted.run.id })
+      .first('status', 'completionOutcome', 'completionAssessment', 'inputTokens', 'outputTokens', 'totalTokens', 'estimatedCostMicros')
+    expect(finishedRun).toMatchObject({
+      status: 'partial',
+      completionOutcome: 'blocked',
+      inputTokens: 6,
+      outputTokens: 3,
+      totalTokens: 9,
+      estimatedCostMicros: 13
+    })
+    expect(JSON.parse(String(finishedRun?.completionAssessment))).toMatchObject({
+      outcome: 'blocked',
+      issues: [
+        {
+          code: 'AGENT_OUTPUT_LIMITED',
+          retryable: false
+        }
+      ]
+    })
+    expect(await knex('agentQuotaReservations').where({ runId: admitted.run.id }).first('status', 'consumedTokens', 'consumedCostMicros')).toEqual({
+      status: 'consumed',
+      consumedTokens: 9,
+      consumedCostMicros: 13
+    })
+    const blockedGoal = await knex('agentGoals').where({ id: goalId }).first('status', 'version', 'errorCode', 'completionOutcome')
+    expect(blockedGoal).toMatchObject({ status: 'blocked', errorCode: 'GOAL_BLOCKED', completionOutcome: 'blocked' })
+    expect(Number((await knex('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(1)
+    expect(await runtime.runOnce()).toBe(false)
+    expect(execute).toHaveBeenCalledOnce()
+    expect(Number((await knex('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(1)
+
+    const resumed = await runtime.resumeGoal({
+      ownerId: 7,
+      goalId,
+      expectedVersion: Number(blockedGoal.version),
+      runId: '00000000-0000-4000-8000-000000000185',
+      clientRequestId: '00000000-0000-4000-8000-000000000186'
+    })
+    expect(resumed).toMatchObject({
+      replayed: false,
+      goal: { status: 'active', continuationCount: 1 },
+      run: { status: 'queued', goalContinuation: 1 }
+    })
+    expect(execute).toHaveBeenCalledOnce()
+    expect(Number((await knex('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(2)
+    await runtime.shutdown()
+  })
+
   it('titles the first successful exchange with utility usage included in the run', async () => {
     const titledSessionId = '00000000-0000-4000-8000-000000000090'
     const profileVersionId = '00000000-0000-4000-8000-000000000091'
@@ -2375,6 +2572,99 @@ describe('durable agent repositories', () => {
     expect(thread.tasks).toHaveLength(2)
     await runtime.shutdown()
   })
+  it.each(['planner', 'subagent'] as const)('handles output-limited %s results without parsing partial structured output', async limitedPurpose => {
+    const now = new Date('2026-08-17T00:02:00.000Z')
+    await knex('agentMessages').where({ id: userMessageId }).update({ content: 'Compare the alpha and beta deployment guides.' })
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: now,
+      completedAt: null
+    })
+    await reserveAgentRunQuota(
+      knex,
+      runId,
+      7,
+      { tokens: 10_000, costMicros: 1_000 },
+      { dailyTokens: 20_000, dailyCostMicros: 2_000 },
+      new Date('2026-08-17T00:10:00.000Z'),
+      now
+    )
+    const purposes: string[] = []
+    const engine: AgentEngine = {
+      preflight: preflightAgentRequest,
+      async execute(request, sink) {
+        purposes.push(request.purpose ?? 'root')
+        if (request.purpose === 'planner') {
+          await sink.text(
+            JSON.stringify({
+              tasks: [
+                { kind: 'source_scout', title: 'Review alpha', question: 'What does alpha require?', sourceScope: ['alpha'], requiredEvidenceCount: 1 },
+                { kind: 'source_scout', title: 'Review beta', question: 'What does beta require?', sourceScope: ['beta'], requiredEvidenceCount: 1 }
+              ]
+            })
+          )
+          return { inputTokens: 3, outputTokens: 2, totalTokens: 5, costMicros: 0, ...(limitedPurpose === 'planner' ? { outputLimited: true as const } : {}) }
+        }
+        if (request.purpose === 'subagent') {
+          await sink.event('model.turn', {
+            usageVersion: 2,
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            costMicros: 0,
+            content: '{"claims":[',
+            contentTruncated: false,
+            finishReason: 'length'
+          })
+          return { inputTokens: 2, outputTokens: 1, totalTokens: 3, costMicros: 0, outputLimited: true }
+        }
+        await sink.text('The available research is incomplete.')
+        return { inputTokens: 4, outputTokens: 2, totalTokens: 6, costMicros: 0 }
+      }
+    }
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        },
+        async resolveCurrent() {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      {
+        workerId: 'structured-output-limit',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true, maxConcurrentChildren: 1 }
+      }
+    )
+    expect(await runtime.runOnce()).toBe(true)
+    const run = await knex('agentRuns').where({ id: runId }).first('status', 'completionOutcome', 'completionAssessment', 'totalTokens')
+    if (limitedPurpose === 'planner') {
+      expect(purposes).toEqual(['planner', 'root'])
+      expect(await knex('agentRunTasks').where({ runId })).toEqual([])
+      expect(run).toMatchObject({ status: 'succeeded', totalTokens: 11 })
+      const event = await knex('agentEvents').where({ runId, type: 'task.planCreated' }).first('data')
+      expect(JSON.parse(String(event.data))).toMatchObject({ accepted: false, reason: 'AGENT_OUTPUT_LIMITED', taskCount: 0 })
+    } else {
+      expect(purposes).toEqual(['planner', 'subagent', 'subagent', 'root'])
+      expect(await knex('agentRunTasks').where({ runId }).pluck('status')).toEqual(['blocked', 'blocked'])
+      expect(run).toMatchObject({ status: 'partial', completionOutcome: 'blocked', totalTokens: 17 })
+      expect(JSON.parse(String(run.completionAssessment)).issues).toEqual(
+        expect.arrayContaining([expect.objectContaining({ code: 'REQUIRED_TASK_BLOCKED', retryable: false })])
+      )
+      expect(await knex('agentEvents').where({ runId, type: 'task.failed' })).toEqual([])
+    }
+    expect(await runtime.runOnce()).toBe(false)
+    await runtime.shutdown()
+  })
+
   it('falls back to the ordinary root path when the initial child batch is not admissible', async () => {
     const now = new Date('2026-08-17T00:00:00.000Z')
     await knex('agentMessages').where({ id: userMessageId }).update({ content: 'Compare the alpha and beta deployment guides.' })

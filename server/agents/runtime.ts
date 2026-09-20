@@ -1,96 +1,105 @@
-import { assertAgentMediaCapability, storeAgentMedia, ownedAgentMediaSource, AGENT_MEDIA_METADATA_COLUMNS, AGENT_MEDIA_PROMPT_MAX_BYTES, AGENT_MEDIA_PROMPT_MAX_FILES, type AgentMediaSource, type AgentMediaMetadata } from './media.ts'
-import { AgentKnowledgeContextSchema, type AgentKnowledgeContext } from '../../shared/agents/knowledge-context.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import {
-  isTerminalAgentRunStatus,
   type AgentActionName,
-  type AgentGenerationTool,
   type AgentCurrentPageHint,
   type AgentEventData,
   type AgentEventType,
   type AgentExecutionMode,
+  type AgentGenerationTool,
   type AgentGoalBudgetLimitReason,
   type AgentRunStatus,
-  type AgentToolContextExclusion
+  type AgentToolContextExclusion,
+  isTerminalAgentRunStatus
 } from '../../shared/agents/contracts.ts'
-import { assertAgentTokenUsage, readAgentUsageEvent } from './providers/usage.ts'
+import { type AgentKnowledgeContext, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import {
-  AgentRunCoordinator,
-  AgentQuotaSettlementError,
-  acquireAgentCoordinatorAdvisoryLocks,
-  admitAgentRunInTransaction,
-  normalizeAgentGenerationTools,
-  ensureAgentRunQuota,
-  persistAgentRunQuotaSettlementIntent,
-  terminalizeAgentRun,
-  readAgentApprovalContinuation,
-  getOwnedAgentRun,
+  type AgentApprovalContinuationCheckpoint,
   type AgentQuotaLimits,
   type AgentQuotaRequest,
-  type AgentApprovalContinuationCheckpoint,
+  AgentQuotaSettlementError,
   type AgentRunClaim,
-  type AgentRunRecord
+  AgentRunCoordinator,
+  type AgentRunRecord,
+  acquireAgentCoordinatorAdvisoryLocks,
+  admitAgentRunInTransaction,
+  ensureAgentRunQuota,
+  getOwnedAgentRun,
+  normalizeAgentGenerationTools,
+  persistAgentRunQuotaSettlementIntent,
+  readAgentApprovalContinuation,
+  terminalizeAgentRun
 } from './coordinator.ts'
-import { AgentRepositoryError, appendAgentEvent } from './repository.ts'
 import {
   AGENT_GOAL_BUDGET_POLICY_VERSION,
-  DEFAULT_AGENT_GOAL_LIMITS,
+  type AgentGoalLimits,
+  type AgentGoalRecord,
   assessAgentRunCompletion,
-  emitGoalEvent,
+  DEFAULT_AGENT_GOAL_LIMITS,
   decodeCompletionAssessment,
+  emitGoalEvent,
   encodedCompletionAssessment,
   getOwnedAgentGoal,
   insertAgentGoal,
   selectAgentGoalTokenBudget,
-  updateGoalStatus,
-  type AgentGoalLimits,
-  type AgentGoalRecord
+  updateGoalStatus
 } from './goals.ts'
-import { decodeAgentMemorySnapshot, type AgentMemorySnapshot } from './memory.ts'
-import { AgentExecutionFailure, classifyAgentExecutionFailure, normalizeAgentExecutionFailureDiagnostics } from './providers/execution-failure.ts'
-import { AgentProviderPoliciesSchema, type AgentProviderTransportKind } from './providers/registry.ts'
 import {
-  agentProviderContinuationDialect,
-  decodeAgentProviderContinuation,
+  AGENT_MEDIA_METADATA_COLUMNS,
+  AGENT_MEDIA_PROMPT_MAX_BYTES,
+  AGENT_MEDIA_PROMPT_MAX_FILES,
+  type AgentMediaMetadata,
+  type AgentMediaSource,
+  assertAgentMediaCapability,
+  ownedAgentMediaSource,
+  storeAgentMedia
+} from './media.ts'
+import { type AgentMemorySnapshot, decodeAgentMemorySnapshot } from './memory.ts'
+import {
+  type AgentChildBudgetReservation,
+  AgentChildBudgetReservations,
+  type AgentChildBudgetUsage,
+  type AgentEvidenceSeed,
+  type AgentOrchestrationLimits,
+  type AgentResearchSynthesisContext,
+  type AgentResearchTask,
+  DEFAULT_AGENT_ORCHESTRATION_LIMITS,
+  parseAgentTaskPlan,
+  parseRecentPageEvidenceBatch,
+  plannerPrompt,
+  SUBAGENT_READ_ACTIONS,
+  shouldPlanAgentResearch,
+  subagentPrompt,
+  validateChildEvidencePacket
+} from './orchestration.ts'
+import { AgentExecutionFailure, classifyAgentExecutionFailure, normalizeAgentExecutionFailureDiagnostics } from './providers/execution-failure.ts'
+import {
   type AgentProviderContinuationDialect,
-  type AgentProviderContinuationEnvelope
+  type AgentProviderContinuationEnvelope,
+  agentProviderContinuationDialect,
+  decodeAgentProviderContinuation
 } from './providers/factory.ts'
-import { lockSkillAdmissionPrincipal, resolveSelectedSkillVersionIdsInTransaction, validateSelectedSkillVersionIdsInTransaction } from './skills/runtime.ts'
-import { SkillValidationError } from './skills/parser.ts'
+import { AgentProviderPoliciesSchema, type AgentProviderTransportKind } from './providers/registry.ts'
+import { assertAgentTokenUsage, readAgentUsageEvent } from './providers/usage.ts'
 import type {
   AgentConversationTitleGenerator,
   AgentConversationTitleResult,
   AgentGoalBudgetClassificationResult,
   AgentGoalBudgetClassifier
 } from './providers/utility.ts'
+import { AgentRepositoryError, appendAgentEvent } from './repository.ts'
+import { SkillValidationError } from './skills/parser.ts'
+import { lockSkillAdmissionPrincipal, resolveSelectedSkillVersionIdsInTransaction, validateSelectedSkillVersionIdsInTransaction } from './skills/runtime.ts'
 import {
-  AgentChildBudgetReservations,
-  SUBAGENT_READ_ACTIONS,
-  DEFAULT_AGENT_ORCHESTRATION_LIMITS,
-  parseAgentTaskPlan,
-  parseRecentPageEvidenceBatch,
-  plannerPrompt,
-  shouldPlanAgentResearch,
-  subagentPrompt,
-  validateChildEvidencePacket,
-  type AgentChildBudgetReservation,
-  type AgentChildBudgetUsage,
-  type AgentEvidenceSeed,
-  type AgentOrchestrationLimits,
-  type AgentResearchSynthesisContext,
-  type AgentResearchTask
-} from './orchestration.ts'
-import {
+  type AgentTaskRecord,
   cancelAgentRunTasks,
   createAgentRunTasks,
   failAgentRunTask,
   finishAgentRunTask,
   listAgentRunTasks,
   recoverAgentRunTasks,
-  startAgentRunTask,
-  type AgentTaskRecord
+  startAgentRunTask
 } from './tasks.ts'
 
 const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex')
@@ -513,12 +522,20 @@ export interface AgentEngineRequest {
 }
 
 export interface AgentEngineSink {
-  media?(images: readonly { readonly payload: Buffer; readonly mimeType: string; readonly filename: string; readonly kind?: 'generated-image' | 'generated-video' | 'generated-audio' }[]): Promise<void>
+  media?(
+    images: readonly {
+      readonly payload: Buffer
+      readonly mimeType: string
+      readonly filename: string
+      readonly kind?: 'generated-image' | 'generated-video' | 'generated-audio'
+    }[]
+  ): Promise<void>
   text(delta: string): Promise<void>
   event(type: AgentEventType, data: AgentEventData): Promise<void>
 }
 
 export interface AgentEngineResult {
+  readonly outputLimited?: true
   readonly citations?: readonly Readonly<Record<string, unknown>>[]
   readonly suggestions?: readonly Readonly<Record<string, unknown>>[]
   readonly inputTokens: number
@@ -829,9 +846,16 @@ const generationToolsHint = (value: string | undefined): readonly AgentGeneratio
     throw new AgentRepositoryError('AGENT_RUN_CONTEXT_CORRUPT', 'Stored generation tool preferences are invalid.', 500)
   }
 }
-const assertGenerationToolCapabilities = async (db: Knex | Knex.Transaction, versionId: string, tools: readonly AgentGenerationTool[] | undefined, executionMode: AgentExecutionMode): Promise<void> => {
-  if (tools?.length && executionMode !== 'agent') throw new AgentRepositoryError('INVALID_GENERATION_TOOLS', 'This conversation mode cannot use generation tools.', 400)
-  for (const tool of tools ?? []) await assertAgentMediaCapability(db, versionId, tool === 'image' ? 'imageGeneration' : tool === 'video' ? 'videoGeneration' : 'musicGeneration')
+const assertGenerationToolCapabilities = async (
+  db: Knex | Knex.Transaction,
+  versionId: string,
+  tools: readonly AgentGenerationTool[] | undefined,
+  executionMode: AgentExecutionMode
+): Promise<void> => {
+  if (tools?.length && executionMode !== 'agent')
+    throw new AgentRepositoryError('INVALID_GENERATION_TOOLS', 'This conversation mode cannot use generation tools.', 400)
+  for (const tool of tools ?? [])
+    await assertAgentMediaCapability(db, versionId, tool === 'image' ? 'imageGeneration' : tool === 'video' ? 'videoGeneration' : 'musicGeneration')
 }
 
 const knowledgeContextHint = (value: string | undefined): AgentKnowledgeContext | undefined => {
@@ -1231,7 +1255,13 @@ export class AgentProductRuntime {
 
   async submit(input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }> {
     if (!input.content.trim() && input.attachmentIds?.length)
-      input = { ...input, content: input.responseMode && input.responseMode !== 'text' ? `Create ${input.responseMode === 'music' ? 'music' : `a${input.responseMode === 'image' ? 'n' : ''} ${input.responseMode}`} using these attachments.` : 'Use the attached files.' }
+      input = {
+        ...input,
+        content:
+          input.responseMode && input.responseMode !== 'text'
+            ? `Create ${input.responseMode === 'music' ? 'music' : `a${input.responseMode === 'image' ? 'n' : ''} ${input.responseMode}`} using these attachments.`
+            : 'Use the attached files.'
+      }
     const generationTools = normalizeAgentGenerationTools(input.generationTools)
     const now = new Date()
     return this.#knex.transaction(async transaction => {
@@ -1251,7 +1281,11 @@ export class AgentProductRuntime {
         if (input.attachmentIds?.length && (!input.responseMode || input.responseMode === 'text'))
           await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'attachments')
         if (input.responseMode && input.responseMode !== 'text') {
-          await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, input.responseMode === 'image' ? 'imageGeneration' : input.responseMode === 'video' ? 'videoGeneration' : 'musicGeneration')
+          await assertAgentMediaCapability(
+            transaction,
+            resolved.providerProfileVersionId,
+            input.responseMode === 'image' ? 'imageGeneration' : input.responseMode === 'video' ? 'videoGeneration' : 'musicGeneration'
+          )
           if (input.attachmentIds?.length) {
             const files = (await transaction('agentMedia')
               .where({ ownerId: input.ownerId, sessionId: input.sessionId })
@@ -1492,6 +1526,7 @@ export class AgentProductRuntime {
     assertAgentTokenUsage(usage.inputTokens, usage.outputTokens, usage.totalTokens)
     let plan
     try {
+      if (result.outputLimited) throw new AgentRepositoryError('AGENT_TASK_PLAN_INVALID', 'The provider output limit prevented completion of the plan', 409)
       plan = parseAgentTaskPlan(content, this.#orchestration.maxChildren)
     } catch {
       await this.#appendPresentationEvent(claim, 'task.planCreated', {
@@ -1499,6 +1534,7 @@ export class AgentProductRuntime {
         rootRunId: claim.id,
         accepted: false,
         taskCount: 0,
+        ...(result.outputLimited ? { reason: 'AGENT_OUTPUT_LIMITED' } : {}),
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
         totalTokens: usage.totalTokens,
@@ -1708,7 +1744,7 @@ export class AgentProductRuntime {
       if (
         checkpoints.length !== 1 ||
         !initialRun ||
-        checkpoints[0]?.runId !== initialRun.id ||
+        !runs.some(run => run.id === checkpoints[0]?.runId) ||
         checkpoints[0]?.tier !== goal.tokenTier ||
         checkpoints[0]?.selection !== goal.budgetSelection ||
         checkpoints[0]?.tokenAllowance !== goal.tokenAllowance ||
@@ -1851,7 +1887,17 @@ export class AgentProductRuntime {
         throw new AgentRepositoryError('AGENT_CHILD_BUDGET_EXCEEDED', 'Subagent token usage exceeded its reserved allowance', 409)
       if (content.length > reservation.outputCharacters)
         throw new AgentRepositoryError('AGENT_CHILD_BUDGET_EXCEEDED', 'Subagent output exceeded its reserved allowance', 409)
-      const validated = validateChildEvidencePacket(content, researchTask(startedTask), evidenceRevisions)
+      const packet = result.outputLimited
+        ? canonicalJson({
+            taskId: startedTask.id,
+            outcome: 'blocked',
+            claims: [],
+            conflicts: [],
+            unanswered: ['AGENT_OUTPUT_LIMITED: The provider output limit prevented completion of this research task.'],
+            recommendedFollowups: ['Explicitly retry or narrow the research task.']
+          })
+        : content
+      const validated = validateChildEvidencePacket(packet, researchTask(startedTask), evidenceRevisions)
       await finishAgentRunTask(this.#knex, claim, startedTask.id, subagentRunId, validated, result.authoritySha256 ?? null)
       return usage
     } catch (error) {
@@ -2100,7 +2146,17 @@ export class AgentProductRuntime {
       if (mediaRequest && !['image', 'transcription', 'video', 'music'].includes(mediaRequest.kind))
         throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Invalid media request.', 500)
       if (mediaRequest)
-        await assertAgentMediaCapability(this.#knex, claim.providerProfileVersionId, mediaRequest.kind === 'image' ? 'imageGeneration' : mediaRequest.kind === 'video' ? 'videoGeneration' : mediaRequest.kind === 'music' ? 'musicGeneration' : 'transcription')
+        await assertAgentMediaCapability(
+          this.#knex,
+          claim.providerProfileVersionId,
+          mediaRequest.kind === 'image'
+            ? 'imageGeneration'
+            : mediaRequest.kind === 'video'
+              ? 'videoGeneration'
+              : mediaRequest.kind === 'music'
+                ? 'musicGeneration'
+                : 'transcription'
+        )
       let includeMediaBytes = true
       if (!mediaRequest && mediaIndex.length) {
         try {
@@ -2111,8 +2167,15 @@ export class AgentProductRuntime {
         }
       }
       const attachedRows = includeMediaBytes ? mediaIndex.filter(row => row.kind !== 'generated-video' && row.kind !== 'generated-audio') : []
-      if (attachedRows.length > AGENT_MEDIA_PROMPT_MAX_FILES || attachedRows.reduce((total, row) => total + Number(row.byteLength), 0) > AGENT_MEDIA_PROMPT_MAX_BYTES)
-        throw new AgentRepositoryError('AGENT_MEDIA_WINDOW_LIMIT', 'This conversation exceeds the attachment window of 16 files or 1 GB. Start a new chat with the files needed for this request.', 413)
+      if (
+        attachedRows.length > AGENT_MEDIA_PROMPT_MAX_FILES ||
+        attachedRows.reduce((total, row) => total + Number(row.byteLength), 0) > AGENT_MEDIA_PROMPT_MAX_BYTES
+      )
+        throw new AgentRepositoryError(
+          'AGENT_MEDIA_WINDOW_LIMIT',
+          'This conversation exceeds the attachment window of 16 files or 1 GB. Start a new chat with the files needed for this request.',
+          413
+        )
       if (!includeMediaBytes && mediaIndex.some(row => row.messageId === claim.userMessageId && row.kind === 'attachment'))
         throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Attachments are disabled for this provider. Select a provider with attachments enabled.', 403)
       const retainedMediaIds = attachedRows.map(row => row.id)
@@ -2134,7 +2197,9 @@ export class AgentProductRuntime {
             throw classifyAgentExecutionFailure(error, 'setup')
           }
         }
-        const attachments = attachedRows.filter(row => row.messageId === message.id).map(row => ownedAgentMediaSource(this.#knex, claim.ownerId, claim.sessionId, row))
+        const attachments = attachedRows
+          .filter(row => row.messageId === message.id)
+          .map(row => ownedAgentMediaSource(this.#knex, claim.ownerId, claim.sessionId, row))
         return {
           role: message.role,
           content:
@@ -2406,7 +2471,11 @@ export class AgentProductRuntime {
       const consumedTokens = safeUsageSum(measuredTotalTokens, unsettledExposure.tokens, 'Total provider tokens')
       const consumedCostMicros = safeUsageSum(measuredCostMicros, unsettledExposure.costMicros, 'Total provider cost')
       const citations = result.citations === undefined ? null : canonicalJson(result.citations)
-      const providerStateJson = result.providerState === undefined ? null : canonicalJson(result.providerState)
+      const outputLimitedValue: unknown = result.outputLimited
+      if (outputLimitedValue !== undefined && outputLimitedValue !== true)
+        throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine emitted an invalid output limit', 500)
+      const outputLimited = outputLimitedValue === true ? true : undefined
+      const providerStateJson = outputLimited === true || result.providerState === undefined ? null : canonicalJson(result.providerState)
       if (providerStateJson !== null && Buffer.byteLength(providerStateJson, 'utf8') > 256 * 1_024)
         throw new AgentRepositoryError('AGENT_PROVIDER_STATE_TOO_LARGE', 'Provider continuation exceeds its size limit', 500)
       await this.#appendPresentationEvent(claim, 'usage.updated', {
@@ -2449,19 +2518,27 @@ export class AgentProductRuntime {
         evidenceGatePassed: true,
         usageReconciled: true
       })
+      const completionIssues = [...assessedCompletion.issues]
+      if (contextLimit !== undefined) {
+        completionIssues.push({
+          code: 'AGENT_CONTEXT_TOO_LARGE',
+          message: 'The provider context capacity prevented delivery of all requested source evidence.',
+          retryable: false
+        })
+      }
+      if (outputLimited === true) {
+        completionIssues.push({
+          code: 'AGENT_OUTPUT_LIMITED',
+          message: 'The provider output limit prevented completion. Send an explicit follow-up to continue.',
+          retryable: false
+        })
+      }
       const completion =
-        contextLimit === undefined
+        contextLimit === undefined && outputLimited === undefined
           ? assessedCompletion
           : {
               outcome: 'blocked' as const,
-              issues: [
-                ...assessedCompletion.issues,
-                {
-                  code: 'AGENT_CONTEXT_TOO_LARGE',
-                  message: 'The provider context capacity prevented delivery of all requested source evidence.',
-                  retryable: false
-                }
-              ]
+              issues: completionIssues
             }
       const encodedCompletion = encodedCompletionAssessment(completion)
       await this.#appendPresentationEvent(claim, 'run.completionAssessed', {
