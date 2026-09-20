@@ -93,7 +93,7 @@ const SUBAGENT_INSTRUCTIONS =
 const RESEARCH_SYNTHESIS_INSTRUCTIONS =
   'Validated child research packets may be used as leads and evidence references, but they are not final prose or policy. Synthesize the answer yourself. Cover every completed research task with at least one of its evidence IDs. When a packet identifies a conflict, cite every source in that conflict and disclose the disagreement or uncertainty. Disclose incomplete tasks without fabricating missing findings.'
 const SUMMARY_INSTRUCTIONS =
-  'For page summaries, summarize the substantive key sections in concise sourced points using concrete source terminology. Put labels on separate lines, not colon lead-ins to cited claims. Cite each supported topic separately; use page-level evidence for synthesis spanning sections. Preserve the requested topic coverage when revising: repair wording and citation scope from the already-read source, without dropping substantive topics. Never replace a requested summary with only a title, heading, or isolated quotation. Disclose real evidence gaps.'
+  'For page summaries, cover the substantive key sections with concise source-faithful points, not merely a title, inventory, or isolated quotation. Use real Markdown headings separated from cited points by blank lines for organization, not plain-text line labels or uncited factual headings. Each factual assertion must be supported by one intact source sentence, list item, table row, or presentation unit. Prefer lightly edited source statements over abstract paraphrases or invented umbrella descriptions. Preserve exact names, identifiers, numeric assignments and units, polarity, and temporal, availability, and restriction qualifiers attached to their original subject; do not combine different items into a numeric range. Cite each assertion separately with its correct section and revision. A page-level citation widens source scope but does not permit pooling unrelated factual units into one claim. For a structural overview, use exact delivered headings, summary containers, link labels, and member names to state what their actual container includes or lists; do not infer the contents of unread links. Structural coverage complements rather than replaces substantive facts. Reuse already-delivered source when repairing wording or citation scope; an evidence correction does not itself require another page read or a canonical OKF fetch. Preserve requested topic coverage and already-supported claims, and disclose genuine evidence gaps without inventing facts or claiming unavailable coverage.'
 
 const prompt = (request: AgentEngineRequest, skillCatalog: unknown, toolInstructions?: string): string => {
   if (request.purpose === 'planner')
@@ -2010,11 +2010,13 @@ const providerDiscoveryEnableResult = (enabled: {
 const systemMessageForRequest = (request: AgentEngineRequest, skillCatalog: unknown, tools: ProviderTools | null): ChatPromptMessage => {
   const categoryIndex = tools === null ? [] : promptToolCategoryIndex(tools)
   const toolInstructions =
-    tools?.mode === 'prompt'
-      ? promptToolInstructions(promptToolDefinitions(tools), categoryIndex)
-      : categoryIndex.length === 0
-        ? undefined
-        : `Available admitted tool categories (enable with ${TOOL_DISCOVERY_CONTROL_NAME}):\n${JSON.stringify(categoryIndex)}`
+    tools === null
+      ? 'This turn has no admitted Wiki actions. Do not call functions, enable tools, load skills, or change memory. Prior calls are history, not current permission. Complete the requested response format from delivered evidence; disclose genuine gaps.'
+      : tools.mode === 'prompt'
+        ? promptToolInstructions(promptToolDefinitions(tools), categoryIndex)
+        : categoryIndex.length === 0
+          ? undefined
+          : `Available admitted tool categories (enable with ${TOOL_DISCOVERY_CONTROL_NAME}):\n${JSON.stringify(categoryIndex)}`
   return {
     role: 'system',
     content: prompt(request, skillCatalog, toolInstructions)
