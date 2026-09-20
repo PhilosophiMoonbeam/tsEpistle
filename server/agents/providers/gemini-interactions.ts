@@ -1067,7 +1067,7 @@ export const createGeminiInteractionsService = (config: GeminiInteractionsServic
       ...(request.modelConfig?.maxTokens === undefined ? {} : { max_output_tokens: request.modelConfig.maxTokens }),
       ...(request.modelConfig?.stopSequences === undefined ? {} : { stop_sequences: request.modelConfig.stopSequences }),
       ...(level === undefined ? {} : { thinking_level: level }),
-      ...(tools.length === 0 ? {} : { tool_choice: toolChoice(request.functionCall, config.googleSearchEnabled === true) }),
+      tool_choice: tools.length === 0 ? 'none' : toolChoice(request.functionCall, config.googleSearchEnabled === true),
       thinking_summaries: 'none' as const
     }
     const body = {

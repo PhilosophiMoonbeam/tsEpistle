@@ -11,6 +11,7 @@ import {
   type AgentTokenUsage,
   TOOL_DISCOVERY_CONTROL_NAME
 } from '../../../shared/agents/contracts.ts'
+import { advanceMarkdownCodeFenceState, type MarkdownCodeFenceState } from '../../../shared/markdown-code-fence.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { ACTION_CATALOG } from '../actions/catalog.ts'
 import {
@@ -159,6 +160,10 @@ interface PageCitation extends Readonly<Record<string, unknown>> {
 interface CitationSourceUnit {
   readonly context: string
   readonly text: string
+  readonly containerIds: readonly number[]
+  readonly structuralId: number | null
+  readonly structuralLabel: string | null
+  readonly labels: readonly string[]
   readonly terms: ReadonlySet<string>
   readonly textTerms: ReadonlySet<string>
   readonly identifiers: readonly string[]
@@ -454,31 +459,124 @@ const hasCompatibleMarkerBindings = (clause: string, source: string, selected: (
   )
 }
 
+const markdownLabel = (value: string): string =>
+  value
+    .replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1')
+    .replace(/[*_~`]/gu, '')
+    .replace(/\s*\|(?:\s*\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0E|\uFE0F|\u200D)*)+\s*$/gu, '')
+    .trim()
+
+const structuralLabels = (value: string): readonly string[] => {
+  const links = [...value.matchAll(/\[([^\]]+)\]\([^)]*\)/gu)].map(match => markdownLabel(match[1] ?? '')).filter(Boolean)
+  if (links.length > 0) return links
+  return value
+    .split(/\s+\|\s+/u)
+    .map(markdownLabel)
+    .filter(Boolean)
+}
+
+const standaloneLinkLabels = (value: string): readonly string[] | null => {
+  const labels = [...value.matchAll(/\[([^\]]+)\]\([^)]*\)/gu)].map(match => markdownLabel(match[1] ?? '')).filter(Boolean)
+  if (labels.length === 0) return null
+  const remainder = value.replace(/\[[^\]]+\]\([^)]*\)/gu, '')
+  return /^(?:\s*(?:[|,;]|and|or|&)\s*)*$/iu.test(remainder) ? labels : null
+}
+
+const rendererAttribute =
+  /^\s*\{\s*(?:[.#][\p{L}_][\p{L}\p{N}_-]*|[\p{L}_:][\p{L}\p{N}_.:-]*=(?:"[^"]*"|'[^']*'|[^\s}]+))(?:\s+(?:[.#][\p{L}_][\p{L}\p{N}_-]*|[\p{L}_:][\p{L}\p{N}_.:-]*=(?:"[^"]*"|'[^']*'|[^\s}]+)))*\s*\}\s*$/u
+const sentenceAbbreviations: Readonly<Record<string, true>> = {
+  approx: true,
+  dept: true,
+  dr: true,
+  e: true,
+  etc: true,
+  g: true,
+  inc: true,
+  jr: true,
+  mr: true,
+  mrs: true,
+  ms: true,
+  no: true,
+  sr: true,
+  st: true,
+  vs: true
+}
+
+const sentenceBoundaryEnds = (value: string): readonly number[] => {
+  const ends: number[] = []
+  let start = 0
+  for (const boundary of value.matchAll(/[.!?]\s+(?=\p{Lu})/gu)) {
+    const end = (boundary.index ?? 0) + 1
+    const preceding = value.slice(start, end)
+    const abbreviation = preceding.match(/([\p{L}]+)\.$/u)?.[1]?.toLowerCase()
+    if (abbreviation !== undefined && sentenceAbbreviations[abbreviation] === true) continue
+    ends.push(end)
+    start = (boundary.index ?? 0) + boundary[0].length
+  }
+  return ends
+}
+
+const sourceSentences = (value: string): readonly string[] => {
+  if (/^\s*(`{3,}|~{3,})/mu.test(value)) return [value]
+  const sentences: string[] = []
+  let start = 0
+  for (const end of sentenceBoundaryEnds(value)) {
+    sentences.push(value.slice(start, end).trim())
+    start = end
+    while (start < value.length && /\s/u.test(value[start]!)) start++
+  }
+  sentences.push(value.slice(start).trim())
+  return sentences.filter(Boolean)
+}
+
 const sourceUnits = (content: string, inheritedContext: readonly string[] = []): readonly CitationSourceUnit[] => {
   const lines = content.split(/\r?\n/u)
-  const headings: Array<{ level: number; title: string }> = []
-  const details: Array<{ headings: readonly { level: number; title: string }[]; summary: string | null }> = []
+  const headings: Array<{ level: number; title: string; id: number }> = []
+  const details: Array<{ headings: readonly { level: number; title: string; id: number }[]; summary: { title: string; id: number } | null }> = []
   const units: CitationSourceUnit[] = []
+  let nextStructuralId = 1
   let block: string[] = []
+  let fence: MarkdownCodeFenceState | null = null
   const contextTitles = (): readonly string[] => {
-    const titles: string[] = [...inheritedContext]
-    for (let index = 0; index <= headings.length; index++) {
-      for (const detail of details) {
-        if (detail.headings.length === index && detail.summary !== null) titles.push(detail.summary)
-      }
-      const heading = headings[index]
-      if (heading) titles.push(heading.title)
+    const titles = [...inheritedContext]
+    let headingDepth = 0
+    for (const detail of details) {
+      titles.push(...detail.headings.slice(headingDepth).map(heading => heading.title))
+      if (detail.summary !== null) titles.push(detail.summary.title)
+      headingDepth = detail.headings.length
     }
+    titles.push(...headings.slice(headingDepth).map(heading => heading.title))
     return titles
   }
-  const addUnit = (text: string): void => {
+  const contextIds = (): readonly number[] => {
+    const ids: number[] = []
+    let headingDepth = 0
+    for (const detail of details) {
+      ids.push(...detail.headings.slice(headingDepth).map(heading => heading.id))
+      if (detail.summary !== null) ids.push(detail.summary.id)
+      headingDepth = detail.headings.length
+    }
+    ids.push(...headings.slice(headingDepth).map(heading => heading.id))
+    return ids
+  }
+  const addUnit = (
+    text: string,
+    labels: readonly string[] = [],
+    containerIds: readonly number[] = contextIds(),
+    structuralId: number | null = null,
+    structuralLabel: string | null = null
+  ): void => {
     const value = text.trim()
-    if (value.length === 0 || /^(?:-{3,}|\{[^}]+\}|<\/?details>)$/u.test(value)) return
+    if (value.length === 0 || /^(?:-{3,}|<\/?details>)$/u.test(value)) return
     const context = contextTitles().join(' › ')
     const textTerms = new Set(normalizedTerms(value))
     units.push({
       context,
       text: value,
+      containerIds,
+      structuralId,
+      structuralLabel,
+      labels,
       terms: new Set([...normalizedTerms(context), ...textTerms]),
       textTerms,
       identifiers: identifierTerms(value),
@@ -488,16 +586,21 @@ const sourceUnits = (content: string, inheritedContext: readonly string[] = []):
   }
   const flush = (): void => {
     if (block.length === 0) return
-    const value = block.join('\n').trim()
-    const sentences = value.split(/(?<=[.!?])\s+/u)
-    if (sentences.length > 1) {
-      for (const sentence of sentences) addUnit(sentence)
+    const linkLabels = block.map(standaloneLinkLabels)
+    if (linkLabels.every((labels): labels is readonly string[] => labels !== null)) {
+      for (let index = 0; index < block.length; index++) addUnit(block[index]!, linkLabels[index]!)
     } else {
-      addUnit(value)
+      for (const sentence of sourceSentences(block.join('\n').trim())) addUnit(sentence)
     }
     block = []
   }
   for (const line of lines) {
+    const nextFence = advanceMarkdownCodeFenceState(line, fence)
+    if (fence !== null || nextFence !== null) {
+      block.push(line)
+      fence = nextFence
+      continue
+    }
     const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/u)
     const summary = line.match(/^\s*<summary>([\s\S]*?)<\/summary>\s*$/iu)
     if (/^\s*<details(?:\s[^>]*)?>\s*$/iu.test(line)) {
@@ -510,15 +613,23 @@ const sourceUnits = (content: string, inheritedContext: readonly string[] = []):
       const level = heading[1].length
       const containerDepth = details.at(-1)?.headings.length ?? 0
       while (headings.length > containerDepth && headings.at(-1)!.level >= level) headings.pop()
-      headings.push({ level, title: heading[2].trim() })
-      addUnit(line)
+      const parentIds = contextIds()
+      const title = heading[2].trim()
+      const id = nextStructuralId++
+      headings.push({ level, title, id })
+      const structuralLabel = markdownLabel(title)
+      const labels = [...new Set([...structuralLabels(title), structuralLabel])]
+      addUnit(line, labels, parentIds, id, structuralLabel)
       continue
     }
     if (summary?.[1]) {
       flush()
+      const parentIds = contextIds()
       const detail = details.at(-1)
-      if (detail) detail.summary = summary[1].trim()
-      addUnit(line)
+      const id = nextStructuralId++
+      if (detail) detail.summary = { title: summary[1].trim(), id }
+      const structuralLabel = markdownLabel(summary[1])
+      addUnit(line, [structuralLabel], parentIds, id, structuralLabel)
       continue
     }
     if (/^\s*<\/details>\s*$/iu.test(line)) {
@@ -527,11 +638,19 @@ const sourceUnits = (content: string, inheritedContext: readonly string[] = []):
       if (detail) headings.splice(0, headings.length, ...detail.headings)
       continue
     }
+    if (rendererAttribute.test(line)) {
+      flush()
+      continue
+    }
     if (line.trim().length === 0) {
       flush()
-    } else if (/^\s*(?:[-*+]|\d+[.)])\s+/u.test(line) || /^\s*\|.*\|\s*$/u.test(line)) {
+    } else if (/^\s*\|.*\|\s*$/u.test(line)) {
       flush()
       addUnit(line)
+    } else if (/^\s*(?:[-*+]|\d+[.)])\s+/u.test(line)) {
+      flush()
+      const member = line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/u, '')
+      addUnit(line, structuralLabels(member))
     } else {
       block.push(line)
     }
@@ -544,17 +663,15 @@ const markdownSections = (content: string): readonly MarkdownSection[] => {
   const lines = content.split(/\r?\n/u)
   const headings: Array<{ line: number; level: number; title: string; ancestry: readonly string[] }> = []
   const ancestry: Array<{ level: number; title: string }> = []
-  let fence: '`' | '~' | null = null
+  let fence: MarkdownCodeFenceState | null = null
   let detailsDepth = 0
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index] ?? ''
-    const fenceMatch = line.match(/^\s{0,3}(`{3,}|~{3,})/u)
-    if (fenceMatch) {
-      const marker = fenceMatch[1]?.startsWith('`') ? '`' : '~'
-      fence = fence === null ? marker : fence === marker ? null : fence
+    const nextFence = advanceMarkdownCodeFenceState(line, fence)
+    if (fence !== null || nextFence !== null) {
+      fence = nextFence
       continue
     }
-    if (fence !== null) continue
     if (/^\s*<details(?:\s[^>]*)?>\s*$/iu.test(line)) {
       detailsDepth += 1
       continue
@@ -752,10 +869,10 @@ interface ClaimBeforeMarker {
 }
 
 const currentClaim = (prefix: string): string => {
-  let boundary = 0
-  for (const match of prefix.matchAll(/(?:[.!?]\s+|\n{2,})/gu)) {
-    const end = (match.index ?? 0) + match[0].length
-    if (end < prefix.length) boundary = end
+  let boundary = sentenceBoundaryEnds(prefix).at(-1) ?? 0
+  for (const paragraph of prefix.matchAll(/\n{2,}/gu)) {
+    const end = (paragraph.index ?? 0) + paragraph[0].length
+    if (end < prefix.length) boundary = Math.max(boundary, end)
   }
   let value = prefix.slice(boundary)
   const listBoundaries = [...value.matchAll(/(?:^|\n)\s*(?:[-*+]|\d+[.)])\s+/gu)]
@@ -900,13 +1017,8 @@ interface ClauseAssessment {
   readonly terms: readonly string[]
   readonly matchedTerms: readonly string[]
   readonly supported: boolean
+  readonly kind: 'fact' | 'membership'
 }
-
-const claimClauses = (claim: string): readonly string[] =>
-  claim
-    .split(/(?:\s+(?:and|but|while|whereas|then)\s+|;\s*)/iu)
-    .map(value => value.trim())
-    .filter(value => normalizedTerms(value).length > 0)
 
 const orderedSubset = (required: readonly string[], available: readonly string[]): boolean => {
   let availableIndex = 0
@@ -955,12 +1067,137 @@ const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean =
   )
 }
 
+interface StructuralMember {
+  readonly label: string
+  readonly terms: readonly string[]
+  readonly unit: CitationSourceUnit
+}
+
+const structuralTokens = (value: string): readonly string[] =>
+  (value.normalize('NFKC').match(/[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*|[^\s]/gu) ?? []).map(token => token.toLowerCase())
+
+const structuralMembers = (evidence: CitationEvidence): readonly StructuralMember[] =>
+  evidence.sourceUnits.flatMap(unit =>
+    unit.labels.map(label => ({
+      label,
+      terms: structuralTokens(label),
+      unit
+    }))
+  )
+
+const sameTerms = (left: readonly string[], right: readonly string[]): boolean =>
+  left.length === right.length && left.every((term, index) => term === right[index])
+
+const exactStructuralMember = (value: string, members: readonly StructuralMember[]): readonly StructuralMember[] => {
+  const terms = structuralTokens(value)
+  return members.filter(member => sameTerms(member.terms, terms))
+}
+
+const structuralEnumeration = (value: string, members: readonly StructuralMember[]): readonly StructuralMember[] | null => {
+  const tokens = structuralTokens(value)
+  const resolved: StructuralMember[] = []
+  let index = 0
+  while (index < tokens.length) {
+    const matches = members
+      .filter(member => member.terms.length > 0 && member.terms.every((term, offset) => tokens[index + offset] === term))
+      .sort((left, right) => right.terms.length - left.terms.length)
+    const match = matches[0]
+    if (!match || matches.some(candidate => candidate !== match && candidate.terms.length === match.terms.length)) return null
+    resolved.push(match)
+    index += match.terms.length
+    if (index === tokens.length) return resolved
+    if (index === tokens.length - 1 && /^[.!?]$/u.test(tokens[index]!)) return resolved
+    let hasDelimiter = false
+    if (/^[,;]$/u.test(tokens[index]!)) {
+      hasDelimiter = true
+      index++
+    }
+    if (tokens[index] === 'and' || tokens[index] === 'or' || tokens[index] === '&') {
+      hasDelimiter = true
+      index++
+    }
+    if (!hasDelimiter || index >= tokens.length || /^[.!?]$/u.test(tokens[index]!)) return null
+  }
+  return resolved.length > 0 ? resolved : null
+}
+
+const membershipAssessment = (clause: string, evidence: CitationEvidence): ClauseAssessment | null => {
+  const terms = normalizedTerms(clause)
+  const members = structuralMembers(evidence)
+  if (members.length === 0 || /\b(?:each|every)\b/iu.test(clause)) return null
+
+  const passive = clause.match(/^\s*(.+?)\s+(?:is|are)\s+(listed|included|provided)\s*[.!?]?\s*$/iu)
+  if (passive?.[1]) {
+    const matches = exactStructuralMember(passive[1], members)
+    if (matches.length === 1) return { text: clause, terms, matchedTerms: normalizedTerms(matches[0]!.label), supported: true, kind: 'membership' }
+    const subjectTokens = structuralTokens(passive[1])
+    const explicitEnumeration = subjectTokens.some(token => /^[,;]$/u.test(token) || token === 'and' || token === 'or' || token === '&')
+    if (!explicitEnumeration) return null
+    const resolved = structuralEnumeration(passive[1], members)
+    const supported = resolved !== null && resolved.length > 1
+    return {
+      text: clause,
+      terms,
+      matchedTerms: resolved !== null && resolved.length > 1 ? [...new Set(resolved.flatMap(member => normalizedTerms(member.label)))] : [],
+      supported,
+      kind: 'membership'
+    }
+  }
+
+  const presentation = clause.match(/\b(includes?|included|lists?|listed|provides?|provided)\b/iu)
+  const colon = clause.indexOf(':')
+  if (!presentation && colon < 0) return null
+  const boundary = presentation?.index ?? colon
+  const containerText = clause
+    .slice(0, boundary)
+    .replace(/^\s*(?:the|this)\s+/iu, '')
+    .trim()
+  const memberText = clause.slice(presentation ? boundary + presentation[0].length : colon + 1).trim()
+  const genericContainer = /^(?:page|section)$/iu.test(containerText)
+  const containerMatches = genericContainer ? [] : exactStructuralMember(containerText, members).filter(member => member.label === member.unit.structuralLabel)
+  if (!genericContainer && containerMatches.length !== 1)
+    return presentation ? { text: clause, terms, matchedTerms: [], supported: false, kind: 'membership' } : null
+  const containerId = genericContainer ? null : containerMatches[0]!.unit.structuralId
+  const candidates = members.filter(member => {
+    if (genericContainer) return true
+    return containerId !== null && member.unit.containerIds.includes(containerId)
+  })
+  const resolved = structuralEnumeration(memberText, candidates)
+  if (!presentation && resolved === null) return null
+  const supported = resolved !== null && resolved.length > 0
+  return {
+    text: clause,
+    terms,
+    matchedTerms: resolved === null ? [] : [...new Set(resolved.flatMap(member => normalizedTerms(member.label)))],
+    supported,
+    kind: 'membership'
+  }
+}
+
+const factualSegments = (claim: string, evidence: CitationEvidence): readonly string[] => {
+  const segments = claim
+    .split(/;\s*/u)
+    .map(value => value.trim())
+    .filter(value => normalizedTerms(value).length > 0)
+  const members = structuralMembers(evidence)
+  return segments.flatMap(segment => {
+    const shared = segment.match(/^\s*(.+?)\s+and\s+(.+?)\s+((?:has|have|is|are|offers?|provides?|includes?|lists?|maps?|remains?|routes?)\b[\s\S]+)$/iu)
+    if (!shared?.[1] || !shared[2] || !shared[3]) return [segment]
+    const left = exactStructuralMember(shared[1], members)
+    const right = exactStructuralMember(shared[2], members)
+    if (left.length !== 1 || right.length !== 1) return [segment]
+    return [`${shared[1]} ${shared[3]}`, `${shared[2]} ${shared[3]}`]
+  })
+}
+
 const assessClaimClauses = (claim: string, evidence: CitationEvidence): readonly ClauseAssessment[] =>
-  claimClauses(claim).map(text => {
+  factualSegments(claim, evidence).map(text => {
+    const membership = membershipAssessment(text, evidence)
+    if (membership !== null) return membership
     const terms = normalizedTerms(text)
     const candidates = evidence.sourceUnits.filter(unit => unitSupportsClause(text, unit))
     const matchedTerms = terms.filter(term => candidates.some(unit => unit.terms.has(term)))
-    return { text, terms, matchedTerms, supported: candidates.length > 0 }
+    return { text, terms, matchedTerms, supported: candidates.length > 0, kind: 'fact' }
   })
 
 const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvidence>, coverage?: DraftCoverage): DraftAssessment => {
@@ -1129,17 +1366,21 @@ const provenanceData = (accepted: boolean, assessment: DraftAssessment, retrieva
   claims: assessment.claims.slice(0, MAX_ANSWER_CITATIONS).map(({ repairClaim: _repairClaim, ...claim }) => claim),
   finalCitationIds: accepted ? assessment.citationIds.slice(0, MAX_ANSWER_CITATIONS) : []
 })
-const relevantSourceUnits = (fragment: string, evidence: CitationEvidence): readonly CitationSourceUnit[] => {
+const relevantSourceUnits = (fragment: string, evidence: CitationEvidence, assessmentKind: ClauseAssessment['kind']): readonly CitationSourceUnit[] => {
   const terms = normalizedTerms(fragment)
   return evidence.sourceUnits
     .map((unit, index) => ({
       unit,
       index,
       matches: terms.filter(term => unit.terms.has(term)).length,
-      textMatches: terms.filter(term => unit.textTerms.has(term)).length
+      textMatches: terms.filter(term => unit.textTerms.has(term)).length,
+      structuralMatches: assessmentKind === 'membership' ? unit.labels.flatMap(label => normalizedTerms(label)).filter(term => terms.includes(term)).length : 0
     }))
     .filter(candidate => candidate.matches > 0)
-    .sort((left, right) => right.matches - left.matches || right.textMatches - left.textMatches || left.index - right.index)
+    .sort(
+      (left, right) =>
+        right.structuralMatches - left.structuralMatches || right.matches - left.matches || right.textMatches - left.textMatches || left.index - right.index
+    )
     .map(candidate => candidate.unit)
 }
 
@@ -1147,11 +1388,13 @@ const evidenceCorrectionFragments = (assessment: DraftAssessment, registry: Read
   interface FeedbackFragment {
     readonly evidenceId: string
     readonly draftFragment: string
+    readonly kind: ClauseAssessment['kind']
     readonly sourceUnits: Array<{ context: string; text: string }>
   }
   const failedClauses: Array<{
     evidenceId: string
     draftFragment: string
+    kind: ClauseAssessment['kind']
     sourceUnits: readonly CitationSourceUnit[]
   }> = []
   for (const claim of assessment.claims) {
@@ -1163,7 +1406,8 @@ const evidenceCorrectionFragments = (assessment: DraftAssessment, registry: Read
       failedClauses.push({
         evidenceId: claim.evidenceId,
         draftFragment: clause.text.trim(),
-        sourceUnits: relevantSourceUnits(clause.text, evidence).slice(0, 3)
+        kind: clause.kind,
+        sourceUnits: relevantSourceUnits(clause.text, evidence, clause.kind).slice(0, 3)
       })
     }
   }
@@ -1175,6 +1419,7 @@ const evidenceCorrectionFragments = (assessment: DraftAssessment, registry: Read
     const fragment: FeedbackFragment = {
       evidenceId: failed.evidenceId,
       draftFragment: failed.draftFragment,
+      kind: failed.kind,
       sourceUnits: [{ context: unit.context, text: unit.text }]
     }
     if (JSON.stringify([...selected.map(item => item.fragment), fragment]).length > 1_200) continue

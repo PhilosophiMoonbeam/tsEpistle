@@ -295,7 +295,8 @@ describe('Gemini Interactions Google Search grounding', () => {
     }
   })
   it('retains native search and host-tool context across an internal engine turn', async () => {
-    const payloads: Array<{ input: unknown[] }> = []
+    type NativePayload = { input: unknown[]; tools?: unknown[]; generation_config: { tool_choice: unknown } }
+    const payloads: NativePayload[] = []
     const interactions = [
       {
         model,
@@ -325,7 +326,7 @@ describe('Gemini Interactions Google Search grounding', () => {
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       model,
       fetch: (async (_input: URL | RequestInfo, init?: RequestInit) => {
-        payloads.push(JSON.parse(String(init?.body)) as { input: unknown[] })
+        payloads.push(JSON.parse(String(init?.body)) as NativePayload)
         return jsonResponse(interactions.shift())
       }) as typeof globalThis.fetch,
       timeoutMs: 10_000,
@@ -364,7 +365,7 @@ describe('Gemini Interactions Google Search grounding', () => {
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       model,
       fetch: (async (_input: URL | RequestInfo, init?: RequestInit) => {
-        payloads.push(JSON.parse(String(init?.body)) as { input: unknown[] })
+        payloads.push(JSON.parse(String(init?.body)) as NativePayload)
         return jsonResponse({
           model,
           status: 'completed',
@@ -385,6 +386,13 @@ describe('Gemini Interactions Google Search grounding', () => {
       },
       { stream: false }
     )
+
+    expect(payloads[1]).toMatchObject({
+      tools: [{ type: 'google_search' }],
+      generation_config: { tool_choice: 'validated' }
+    })
+    expect(payloads[2]).not.toHaveProperty('tools')
+    expect(payloads[2]).toHaveProperty('generation_config.tool_choice', 'none')
 
     const replay = payloads[2]!.input as Array<Record<string, unknown>>
     expect(replay.map(step => step.type)).toEqual([

@@ -70,6 +70,20 @@ const isClosingFence = (source: string, line: MarkdownLine, marker: '`' | '~', m
   }
   return true
 }
+export interface MarkdownCodeFenceState {
+  readonly marker: '`' | '~'
+  readonly markerLength: number
+}
+
+export const advanceMarkdownCodeFenceState = (line: string, state: MarkdownCodeFenceState | null): MarkdownCodeFenceState | null => {
+  const sourceLine = markdownLineAt(line, 0)
+  if (state !== null) return isClosingFence(line, sourceLine, state.marker, state.markerLength) ? null : state
+  const opening = fenceMarkerAt(line, sourceLine)
+  if (!opening) return null
+  const info = line.slice(opening.rest, sourceLine.end)
+  if (opening.marker === '`' && info.includes('`')) return null
+  return { marker: opening.marker, markerLength: opening.markerLength }
+}
 
 export function* parseMarkdownCodeFences(source: string): Generator<MarkdownCodeFence> {
   let lineStart = 0
