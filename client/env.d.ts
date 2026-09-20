@@ -5,13 +5,13 @@ import type Hammer from 'hammerjs'
 import type { i18n as I18next } from 'i18next'
 import type moment from 'moment-timezone'
 import type { App } from 'vue'
-import type { helpers } from './helpers/index.ts'
-import type boot from './modules/boot.ts'
+import type { PageEditorKey } from '../shared/page-editors.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import type { SiteBannerConfig } from '../shared/site-banner.ts'
 import type { LogoEffectDescriptor } from '../shared/site-logo.ts'
-import type { PageEditorKey } from '../shared/page-editors.ts'
 import type { ThemeColors } from '../shared/theme-colors.ts'
+import type { helpers } from './helpers/index.ts'
+import type boot from './modules/boot.ts'
 
 export type SiteConfig = {
   title: string
@@ -37,6 +37,7 @@ export type SiteConfig = {
   agentSkillsEnabled: boolean
   agentGoalsEnabled: boolean
   agentCsrfToken: string
+  offlineDraftSiteId?: string
   path?: string
   devMode?: boolean
 }
