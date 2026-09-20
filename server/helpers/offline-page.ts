@@ -5,11 +5,11 @@ import {
   OFFLINE_CONTENT_TYPE,
   OFFLINE_HTML_SANITIZER_VERSION,
   OFFLINE_RECORD_BYTES_LIMIT,
-  OfflinePageSnapshotV1Schema,
-  type OfflinePageSnapshotV1
+  type OfflinePageSnapshotV1,
+  OfflinePageSnapshotV1Schema
 } from '../../shared/offline.ts'
-import { canReadPage, pageAuthorizationContext, pageRoute, type PagePrincipal, type PageVisibilityRecord } from './page-access.ts'
 import type { PageRuleAuthority } from './group-access.ts'
+import { canReadPage, type PagePrincipal, type PageVisibilityRecord, pageAuthorizationContext, pageRoute } from './page-access.ts'
 
 const { JSDOM } = jsdomModule
 const domWindow = new JSDOM('').window
@@ -308,7 +308,15 @@ const canonicalAnchorUrl = (value: string, projection: ResolvedOfflinePageLinkPr
   }
   if (url.username || url.password) return null
   if (url.protocol !== 'http:' && url.protocol !== 'https:' && url.protocol !== 'mailto:') return null
-  if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin === projection.origin && reservedSameOriginPath(url.pathname)) return null
+  const sameDocumentFragment =
+    url.hash.length > 1 && url.origin === projection.origin && url.pathname === projection.pageUrl.pathname && url.search === projection.pageUrl.search
+  if (
+    (url.protocol === 'http:' || url.protocol === 'https:') &&
+    url.origin === projection.origin &&
+    reservedSameOriginPath(url.pathname) &&
+    !sameDocumentFragment
+  )
+    return null
   return url.href
 }
 

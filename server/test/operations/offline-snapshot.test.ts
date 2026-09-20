@@ -1,5 +1,5 @@
+import { type AccessPage, evaluateGroupAccess, type PageRuleAuthority } from '../../helpers/group-access.ts'
 import { afterAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
-import { evaluateGroupAccess, type AccessPage, type PageRuleAuthority } from '../../helpers/group-access.ts'
 
 const assertPageUnlocked = vi.fn(async () => {})
 const protectedAssetRequiresUnlock = vi.fn(async () => false)
@@ -215,6 +215,22 @@ describe('offline snapshot admission operations', () => {
       }
     })
     expect(Object.keys(response).sort()).toEqual(['audience', 'context', 'schemaVersion', 'snapshot'])
+  })
+  it('keeps renderer table-of-contents anchors on private snapshots without admitting private navigation', async () => {
+    page.visibility = 'private'
+    page.ownerId = 7
+    page.render = '<h1 id="alpha" class="toc-header"><a class="toc-anchor" href="#alpha">¶</a> Alpha</h1>'
+    const requester = { id: 7, authVersion: 3, permissions: ['read:pages'] }
+
+    const response = await operations.getOfflinePrivateSnapshot({ id: 7, requester })
+
+    expect(response.snapshot.content.html).toContain('href="https://wiki.example.test/_private/en/docs/alpha#alpha"')
+
+    page.render = '<p><a href="/_private/en/docs/other">Other private page</a></p>'
+    await expect(operations.getOfflinePrivateSnapshot({ id: 7, requester })).rejects.toMatchObject({
+      status: 404,
+      code: 'OFFLINE_PAGE_INELIGIBLE'
+    })
   })
 
   it.each([
