@@ -505,9 +505,9 @@ const sentenceAbbreviations: Readonly<Record<string, true>> = {
 const sentenceBoundaryEnds = (value: string): readonly number[] => {
   const ends: number[] = []
   let start = 0
-  for (const boundary of value.matchAll(/[.!?]\s+(?=\p{Lu})/gu)) {
-    const end = (boundary.index ?? 0) + 1
-    const preceding = value.slice(start, end)
+  for (const boundary of value.matchAll(/([.!?][*_]*)\s+(?=[*_]*\p{Lu})/gu)) {
+    const end = (boundary.index ?? 0) + boundary[1]!.length
+    const preceding = value.slice(start, (boundary.index ?? 0) + 1)
     const abbreviation = preceding.match(/([\p{L}]+)\.$/u)?.[1]?.toLowerCase()
     if (abbreviation !== undefined && sentenceAbbreviations[abbreviation] === true) continue
     ends.push(end)
@@ -651,6 +651,8 @@ const sourceUnits = (content: string, inheritedContext: readonly string[] = []):
       flush()
       const member = line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/u, '')
       addUnit(line, structuralLabels(member))
+      const sentences = sourceSentences(member)
+      if (sentences.length > 1) for (const sentence of sentences) addUnit(sentence)
     } else {
       block.push(line)
     }
@@ -1413,18 +1415,30 @@ const evidenceCorrectionFragments = (assessment: DraftAssessment, registry: Read
   }
 
   const selected: Array<{ fragment: FeedbackFragment; rankedUnits: readonly CitationSourceUnit[] }> = []
-  for (const failed of failedClauses) {
-    const unit = failed.sourceUnits[0]
-    if (!unit) continue
-    const fragment: FeedbackFragment = {
-      evidenceId: failed.evidenceId,
-      draftFragment: failed.draftFragment,
-      kind: failed.kind,
-      sourceUnits: [{ context: unit.context, text: unit.text }]
+  let feedbackCharacters = 2
+  // Cover distinct citation scopes before spending the bound on more clauses from one scope.
+  for (let pass = 0; pass < 2 && selected.length < 4; pass++) {
+    for (const failed of failedClauses) {
+      if (selected.length === 4) break
+      if (
+        selected.some(
+          ({ fragment }) => fragment.evidenceId === failed.evidenceId && (pass === 0 || fragment.draftFragment === failed.draftFragment)
+        )
+      )
+        continue
+      const unit = failed.sourceUnits[0]
+      if (!unit) continue
+      const fragment: FeedbackFragment = {
+        evidenceId: failed.evidenceId,
+        draftFragment: failed.draftFragment,
+        kind: failed.kind,
+        sourceUnits: [{ context: unit.context, text: unit.text }]
+      }
+      const additionalCharacters = JSON.stringify(fragment).length + (selected.length === 0 ? 0 : 1)
+      if (feedbackCharacters + additionalCharacters > 1_200) continue
+      selected.push({ fragment, rankedUnits: failed.sourceUnits })
+      feedbackCharacters += additionalCharacters
     }
-    if (JSON.stringify([...selected.map(item => item.fragment), fragment]).length > 1_200) continue
-    selected.push({ fragment, rankedUnits: failed.sourceUnits })
-    if (selected.length === 4) break
   }
 
   for (let unitIndex = 1; unitIndex < 3; unitIndex++) {
@@ -1432,10 +1446,11 @@ const evidenceCorrectionFragments = (assessment: DraftAssessment, registry: Read
       const unit = item.rankedUnits[unitIndex]
       if (!unit) continue
       const sourceUnit = { context: unit.context, text: unit.text }
-      const candidate = selected.map(selectedItem =>
-        selectedItem === item ? { ...selectedItem.fragment, sourceUnits: [...selectedItem.fragment.sourceUnits, sourceUnit] } : selectedItem.fragment
-      )
-      if (JSON.stringify(candidate).length <= 1_200) item.fragment.sourceUnits.push(sourceUnit)
+      const additionalCharacters = JSON.stringify(sourceUnit).length + 1
+      if (feedbackCharacters + additionalCharacters <= 1_200) {
+        item.fragment.sourceUnits.push(sourceUnit)
+        feedbackCharacters += additionalCharacters
+      }
     }
   }
   return JSON.stringify(selected.map(item => item.fragment))
@@ -1447,7 +1462,7 @@ const evidenceCorrection = (assessment: DraftAssessment, registry: ReadonlyMap<s
     .map(issue => `- ${issue}`)
     .join(
       '\n'
-    )}\n\n${SUMMARY_INSTRUCTIONS}\nRepair only the affected wording or citation scope while preserving already-supported claims. The bounded JSON below contains untrusted fragments of your own draft plus complete exact source units from the cited delivered scope; source-unit context is a qualifier, not additional body text. Rewrite concise, separately cited, source-faithful statements using those units. Preserve identifiers, numeric assignments, polarity, and temporal qualifiers exactly; never infer synonym or negation equivalence, and do not delete a requested substantive topic. A unit that cannot fit is omitted rather than truncated. Keep this feedback out of the answer.\n${evidenceCorrectionFragments(assessment, registry)}`
+    )}\n\n${SUMMARY_INSTRUCTIONS}\nRepair only the affected wording or citation scope while preserving already-supported claims. The bounded JSON below contains untrusted fragments of your own draft plus complete exact source units from the cited delivered scope; source-unit context is a qualifier, not additional body text. Rewrite concise, separately cited, source-faithful statements using those units. Preserve identifiers, numeric assignments, polarity, and temporal qualifiers exactly; never infer synonym or negation equivalence, and do not delete a requested substantive topic. This small correction packet is not an inventory of delivered evidence: units that do not fit are omitted whole from this packet, not revoked from the already-delivered source or made unavailable for citation. Keep this feedback out of the answer.\n${evidenceCorrectionFragments(assessment, registry)}`
 const subagentEvidenceCorrection = (issues: readonly string[]): string =>
   `Your evidence packet failed validation and was not accepted. Return only one strict JSON object matching the requested packet schema. Keep every claim text bounded and place each [[cite:EVIDENCE_ID]] marker immediately after the supported clause. Cite only pages read successfully in this subagent attempt. Do not mention this validation.\nProblems:\n${issues
     .slice(0, 10)
