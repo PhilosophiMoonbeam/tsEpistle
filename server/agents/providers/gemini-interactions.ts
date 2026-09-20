@@ -78,7 +78,8 @@ const UsageSchema = z
     tool_use_tokens_by_modality: z.array(z.unknown()).optional(),
     grounding_tool_count: z.array(z.unknown()).optional(),
     raw_prompt_token: z.number().int().nonnegative().optional(),
-    model_invocation_token_counts: ModelInvocationTokenCountsSchema.optional()
+    model_invocation_token_counts: ModelInvocationTokenCountsSchema.optional(),
+    non_grounding_model_invocation_token_counts: ModelInvocationTokenCountsSchema.optional()
   })
   .refine(usage => usage.total_tokens >= usage.total_input_tokens + usage.total_output_tokens, 'total token count is inconsistent')
 const InteractionSchema = z
