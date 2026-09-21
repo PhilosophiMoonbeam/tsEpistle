@@ -370,15 +370,50 @@ const exactQualifierTerms = (value: string): ReadonlySet<string> => {
   return qualifiers
 }
 
+const clauseInitialRegex = /(?:^|[:.!?;\n]|\s+[-–—]\s+)\s*[*_`"'\u201C\u201D\u2018\u2019]*$/u
+
+const genericIdentifierTerms: Readonly<Record<string, true>> = {
+  beginning: true,
+  catalog: true,
+  contact: true,
+  dropbox: true,
+  general: true,
+  increase: true,
+  note: true,
+  notice: true,
+  order: true,
+  picbook: true,
+  price: true,
+  pricer: true,
+  pricing: true,
+  quote: true,
+  spif: true,
+  standard: true,
+  surcharge: true,
+  tariff: true,
+  temporary: true,
+  website: true
+}
+
 const constraintTerms = (value: string): readonly string[] => {
   const constraints: string[] = []
-  const tokens = lexicalTokens(value)
-  for (let index = 0; index < tokens.length; index++) {
-    const token = tokens[index]!
+  const tokenRegex = /[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu
+  let match: RegExpExecArray | null
+  while ((match = tokenRegex.exec(value)) !== null) {
+    const token = match[0]
+    const index = match.index
     const normalized = normalizedToken(token)
     if (insignificantTerms.has(normalized)) continue
-    if ((index > 0 && /^\p{Lu}/u.test(token)) || isShortIdentifier(token) || /\p{N}/u.test(token) || qualifierTerms[normalized] === true)
+    const prefix = value.slice(0, index)
+    const isInitial = clauseInitialRegex.test(prefix)
+    if (
+      (!isInitial && /^\p{Lu}/u.test(token) && genericIdentifierTerms[normalized] !== true) ||
+      isShortIdentifier(token) ||
+      /\p{N}/u.test(token) ||
+      qualifierTerms[normalized] === true
+    ) {
       constraints.push(normalized)
+    }
   }
   return constraints
 }
@@ -387,6 +422,7 @@ const identifierTerms = (value: string): readonly string[] =>
   lexicalTokens(value)
     .filter(token => /^\p{Lu}/u.test(token) || isShortIdentifier(token))
     .map(normalizedToken)
+    .filter(token => genericIdentifierTerms[token] !== true)
 
 const significantTokens = (value: string): readonly string[] =>
   lexicalTokens(value)
@@ -430,7 +466,7 @@ const hasIdentifierSubstitution = (clause: string, unit: CitationSourceUnit): bo
 
 const numericSegments = (value: string): readonly string[] =>
   value
-    .split(/(?:[,;]|\s+\band\b\s+)/iu)
+    .split(/(?:[,;|]|\s+[-–—]\s+|\s+\band\b\s+|:\s+|[()])/iu)
     .map(segment => significantTokens(segment))
     .filter(tokens => tokens.some(token => /^\p{N}/u.test(token)))
     .map(tokens => tokens.join(' '))
@@ -1082,8 +1118,22 @@ const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean =
   const matches = terms.filter(term => unit.terms.has(term))
   const minimumMatches = terms.length <= 2 ? 1 : 2
   const exactPolarity = hasCompatibleMarkerBindings(clause, unit.text, term => negativeTerms[term] === true)
-  const sourceNumericSegments = numericSegments(unit.text)
-  const exactNumbers = numericSegments(clause).every(segment => sourceNumericSegments.includes(segment))
+  const colon = clause.indexOf(':')
+  let exactNumbers: boolean
+  if (colon >= 0) {
+    const idClause = clause.slice(0, colon)
+    const factClause = clause.slice(colon + 1)
+    const contextNumericSegments = numericSegments(unit.context)
+    const idSegments = numericSegments(idClause)
+    const idOk = idSegments.every(seg => contextNumericSegments.some(s => s.includes(seg) || seg.includes(s)) || unit.terms.has(seg))
+    const sourceNumericSegments = numericSegments(unit.text)
+    const factSegments = numericSegments(factClause)
+    const factOk = factSegments.every(seg => sourceNumericSegments.some(s => s.includes(seg) || seg.includes(s)))
+    exactNumbers = idOk && factOk
+  } else {
+    const sourceNumericSegments = numericSegments(unit.text)
+    exactNumbers = numericSegments(clause).every(seg => sourceNumericSegments.some(s => s.includes(seg) || seg.includes(s)))
+  }
   const clauseQualifiers = exactQualifierTerms(clause)
   const authorizedQualifiers = new Set([...unit.qualifiers, ...unit.contextQualifiers])
   const exactQualifiers =
@@ -1092,14 +1142,14 @@ const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean =
     JSON.stringify(markerBindings(clause, term => unit.qualifiers.has(term))) === JSON.stringify(markerBindings(unit.text, term => unit.qualifiers.has(term)))
   const exactConstraints = orderedSubset(constraintTerms(clause), significantTokens(`${unit.context}\n${unit.text}`))
   const exactIdentifiers = !hasIdentifierSubstitution(clause, unit)
-  const colon = clause.indexOf(':')
   const identifyingTerms = colon < 0 ? [] : normalizedTerms(clause.slice(0, colon))
   const identifyingSupport = identifyingTerms.length === 0 || identifyingTerms.filter(term => unit.terms.has(term)).length / identifyingTerms.length >= 0.6
   const factualTerms = colon < 0 ? [] : normalizedTerms(clause.slice(colon + 1))
-  const factualMatches = factualTerms.filter(term => unit.textTerms.has(term))
+  const factualTextMatches = factualTerms.filter(term => unit.textTerms.has(term))
+  const factualAllMatches = factualTerms.filter(term => unit.terms.has(term))
   const factualSupport =
     factualTerms.length === 0 ||
-    (factualMatches.length >= Math.min(factualTerms.length <= 2 ? 1 : 2, factualTerms.length) && factualMatches.length / factualTerms.length >= 0.6)
+    (factualTextMatches.length >= Math.min(factualTerms.length <= 2 ? 1 : 2, factualTerms.length) && factualAllMatches.length / factualTerms.length >= 0.6)
   return (
     exactPolarity &&
     exactNumbers &&
@@ -1190,26 +1240,27 @@ const membershipAssessment = (clause: string, evidence: CitationEvidence): Claus
     }
   }
 
-  const presentation = clause.match(/\b(includes?|included|lists?|listed|provides?|provided)\b/iu)
   const colon = clause.indexOf(':')
+  const presentation = colon >= 0 ? null : clause.match(/\b(includes?|included|lists|listed|provides?|provided)\b/iu)
   if (!presentation && colon < 0) return null
-  const boundary = presentation?.index ?? colon
+  const boundary = colon >= 0 ? colon : (presentation?.index ?? -1)
+  if (boundary < 0) return null
   const containerText = clause
     .slice(0, boundary)
     .replace(/^\s*(?:the|this)\s+/iu, '')
     .trim()
-  const memberText = clause.slice(presentation ? boundary + presentation[0].length : colon + 1).trim()
+  const memberText = clause.slice(colon >= 0 ? colon + 1 : boundary + presentation![0].length).trim()
   const genericContainer = /^(?:page|section)$/iu.test(containerText)
   const containerMatches = genericContainer ? [] : exactStructuralMember(containerText, members).filter(member => member.label === member.unit.structuralLabel)
   if (!genericContainer && containerMatches.length !== 1)
-    return presentation ? { text: clause, terms, matchedTerms: [], supported: false, kind: 'membership' } : null
+    return colon < 0 ? { text: clause, terms, matchedTerms: [], supported: false, kind: 'membership' } : null
   const containerId = genericContainer ? null : containerMatches[0]!.unit.structuralId
   const candidates = members.filter(member => {
     if (genericContainer) return true
     return containerId !== null && member.unit.containerIds.includes(containerId)
   })
   const resolved = structuralEnumeration(memberText, candidates)
-  if (!presentation && resolved === null) return null
+  if (colon >= 0 && resolved === null) return null
   const supported = resolved !== null && resolved.length > 0
   return {
     text: clause,
@@ -1220,11 +1271,25 @@ const membershipAssessment = (clause: string, evidence: CitationEvidence): Claus
   }
 }
 
+const splitTopLevelSemicolons = (text: string): readonly string[] => {
+  const segments: string[] = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '(' || ch === '[' || ch === '{') depth++
+    else if (ch === ')' || ch === ']' || ch === '}') depth = Math.max(0, depth - 1)
+    else if (ch === ';' && depth === 0) {
+      segments.push(text.slice(start, i).trim())
+      start = i + 1
+    }
+  }
+  segments.push(text.slice(start).trim())
+  return segments.filter(s => s.length > 0)
+}
+
 const factualSegments = (claim: string, evidence: CitationEvidence): readonly string[] => {
-  const segments = claim
-    .split(/;\s*/u)
-    .map(value => value.trim())
-    .filter(value => normalizedTerms(value).length > 0)
+  const segments = splitTopLevelSemicolons(claim).filter(value => normalizedTerms(value).length > 0)
   const members = structuralMembers(evidence)
   return segments.flatMap(segment => {
     const shared = segment.match(/^\s*(.+?)\s+and\s+(.+?)\s+((?:has|have|is|are|offers?|provides?|includes?|lists?|maps?|remains?|routes?)\b[\s\S]+)$/iu)
