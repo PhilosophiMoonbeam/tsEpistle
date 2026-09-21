@@ -2865,6 +2865,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     min-height: var(--wiki-control-height);
     padding-inline: var(--wiki-space-1) !important;
   }
+  .inline-agent__panel-actions :deep(.v-btn) {
+    width: 2.25rem !important;
+    padding-inline: 0 !important;
+  }
 
   .inline-agent__body {
     padding: var(--wiki-space-2) var(--wiki-space-3) var(--wiki-space-2);
