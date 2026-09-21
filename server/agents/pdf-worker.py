@@ -45,8 +45,10 @@ def prepare(input_path, part_limit=PART_BYTES):
             raise PreparationError("PDF_EMPTY")
         if page_count > MAX_PAGES:
             raise PreparationError("PDF_TOO_MANY_PAGES")
-        if pdf.check():
-            raise PreparationError("PDF_INVALID")
+        # qpdf check() only reports repairable findings here ("stream will be
+        # re-processed without filtering"); fatal structural damage already
+        # fails the strict attempt_recovery=False open above, so warnings on
+        # real-world documents must not reject an otherwise processable PDF.
         if input_path.stat().st_size <= part_limit:
             return {"pageCount": page_count, "parts": [{"filename": input_path.name, "startPage": 1, "endPage": page_count, "byteLength": input_path.stat().st_size}]}
 
