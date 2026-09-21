@@ -3125,7 +3125,10 @@ export class AgentProductRuntime {
               errorMessage,
               failureStage,
               ...unsettledEventData,
-              ...(providerStatus === undefined ? {} : { providerStatus })
+              ...(providerStatus === undefined ? {} : { providerStatus }),
+              ...(normalizedFailure?.diagnostics === undefined
+                ? {}
+                : { diagnostics: normalizedFailure.diagnostics as Readonly<Record<string, unknown>> })
             },
             quota: {
               consumedTokens,

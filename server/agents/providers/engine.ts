@@ -3239,7 +3239,12 @@ export class AxAgentEngine implements AgentEngine {
       }
     }
     const preliminaryExposure = providerExposureFor(provider, tools, chatPrompt, maxOutputTokens)
-    const preparedMedia = await this.#prepareMediaPrompt(request, chatPrompt, provider.model, preliminaryExposure.serializedRequestBytes, maxOutputTokens)
+    let preparedMedia: { chatPrompt: AxChatRequest['chatPrompt']; mediaTokens: number | null; cleanup: () => Promise<void> }
+    try {
+      preparedMedia = await this.#prepareMediaPrompt(request, chatPrompt, provider.model, preliminaryExposure.serializedRequestBytes, maxOutputTokens)
+    } catch (error) {
+      throw classifyAgentExecutionFailure(error, 'setup')
+    }
     const mediaInputExposure = preliminaryExposure.serializedRequestBytes + (preparedMedia.mediaTokens ?? 0)
     const exposure =
       preparedMedia.mediaTokens !== null
