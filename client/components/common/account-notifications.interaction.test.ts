@@ -2,8 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileTemplate, parse } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
 import { pageHref } from '../../helpers/admin-pages.ts'
 import type { RenderFunction } from 'vue'
 import type { PageApprovalInboxItem, PageWatchNotification } from '../../../shared/site-notifications.ts'
@@ -16,26 +16,10 @@ if (parsed.errors.length > 0 || !descriptor.template || !descriptor.scriptSetup)
   throw new Error(`Could not parse account-notifications.vue: ${parsed.errors.join(', ')}`)
 }
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-  pretendToBeVisual: true,
-  url: 'https://wiki.test/en/home'
-})
-const browserWindow = dom.window
-for (const [name, value] of Object.entries({
-  Element: browserWindow.Element,
-  Event: browserWindow.Event,
-  HTMLElement: browserWindow.HTMLElement,
-  MouseEvent: browserWindow.MouseEvent,
-  Node: browserWindow.Node,
-  SVGElement: browserWindow.SVGElement,
-  document: browserWindow.document,
-  navigator: browserWindow.navigator,
-  window: browserWindow
-})) {
-  Object.defineProperty(globalThis, name, { configurable: true, value, writable: true })
-}
+resetBody()
+setLocation('/en/home')
 
-// Vue is loaded after JSDOM so runtime-dom captures the test document.
+// Vue is loaded after the shared DOM globals so runtime-dom captures the singleton document.
 const Vue = await import('vue')
 const compiledTemplate = compileTemplate({
   source: descriptor.template.content,
@@ -215,7 +199,7 @@ let mountedApp: ReturnType<typeof Vue.createApp> | null = null
 afterEach(() => {
   mountedApp?.unmount()
   mountedApp = null
-  dom.window.document.body.replaceChildren()
+  document.body.replaceChildren()
   vi.clearAllMocks()
 })
 
@@ -225,8 +209,8 @@ const mountNotifications = (store: NotificationStore, navigate = vi.fn()) => {
     setup: () => bindings,
     render: renderNotifications
   })
-  const host = dom.window.document.createElement('div')
-  dom.window.document.body.append(host)
+  const host = document.createElement('div')
+  document.body.append(host)
   mountedApp = Vue.createApp(component)
   mountedApp.component('v-list', VList)
   mountedApp.component('v-list-item', VListItem)

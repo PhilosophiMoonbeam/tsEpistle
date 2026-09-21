@@ -2,32 +2,17 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileScript, compileStyle, compileTemplate, parse } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import type { Component } from 'vue'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
+import { browserWindow, resetBody, setLocation } from '../../test/browser-dom.mts'
 import type { PageBrandingView } from '../../../shared/page-branding.ts'
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-  pretendToBeVisual: true,
-  url: 'http://localhost/wiki/page'
-})
-const browserWindow = dom.window
-const browserGlobals: Record<string, unknown> = {
-  document: browserWindow.document,
-  window: browserWindow,
-  navigator: browserWindow.navigator,
-  Element: browserWindow.Element,
-  Event: browserWindow.Event,
-  HTMLImageElement: browserWindow.HTMLImageElement,
-  HTMLElement: browserWindow.HTMLElement,
-  MutationObserver: browserWindow.MutationObserver,
-  Node: browserWindow.Node,
-  SVGElement: browserWindow.SVGElement,
-  Text: browserWindow.Text
-}
-for (const [name, value] of Object.entries(browserGlobals)) {
-  Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
-}
+resetBody()
+setLocation('/wiki/page')
+
+// The component guards img error events with `instanceof HTMLImageElement`, so expose the singleton window's class.
+Object.defineProperty(globalThis, 'HTMLImageElement', { configurable: true, writable: true, value: browserWindow.HTMLImageElement })
+
 const pagePath = path.join(process.cwd(), 'client/themes/default/components/page.vue')
 const pageSource = fs.readFileSync(pagePath, 'utf8')
 const pageParsed = parse(pageSource, { filename: pagePath })
@@ -45,7 +30,7 @@ const pageStyleElement = browserWindow.document.createElement('style')
 pageStyleElement.textContent = compiledPageStyle.code
 browserWindow.document.head.append(pageStyleElement)
 
-// Vue's runtime-dom captures the document at module evaluation, so import it only after JSDOM globals exist.
+// Vue's runtime-dom captures the document at module evaluation, so import it only after the shared DOM globals exist.
 const VueRuntime = await import('vue')
 const componentPath = path.join(process.cwd(), 'client/components/common/page-branding-mark.vue')
 const componentSource = fs.readFileSync(componentPath, 'utf8')

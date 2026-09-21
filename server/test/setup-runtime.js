@@ -6,6 +6,9 @@ Reflect.set(globalThis, 'vi', vi)
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true, url: 'https://wiki.example.test/' })
 const window = dom.window
+// Exposed so client/test/browser-dom.mts can adopt this window as the shared test DOM
+// (setLocation needs the JSDOM instance for URL reconfiguration).
+Reflect.set(globalThis, '__wikiTestJsdom', dom)
 
 for (const key of Object.getOwnPropertyNames(window)) {
   if (key in globalThis) continue

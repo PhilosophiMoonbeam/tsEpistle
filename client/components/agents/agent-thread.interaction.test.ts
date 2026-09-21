@@ -2,7 +2,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileTemplate, parse } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { RenderFunction } from 'vue'
 import type {
@@ -24,26 +23,11 @@ const parsedSfc = parse(componentSource, { filename: componentPath })
 if (parsedSfc.errors.length > 0) throw new Error(`Could not parse agent-thread.vue: ${parsedSfc.errors.join(', ')}`)
 if (!parsedSfc.descriptor.template || !parsedSfc.descriptor.scriptSetup) throw new Error('AgentThread template and setup script are required')
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-  pretendToBeVisual: true,
-  url: 'https://wiki.test/'
-})
-const browserWindow = dom.window
-const globalValues: Record<string, unknown> = {
-  Element: browserWindow.Element,
-  Event: browserWindow.Event,
-  HTMLDetailsElement: browserWindow.HTMLDetailsElement,
-  HTMLElement: browserWindow.HTMLElement,
-  MouseEvent: browserWindow.MouseEvent,
-  Node: browserWindow.Node,
-  SVGElement: browserWindow.SVGElement,
-  document: browserWindow.document,
-  navigator: browserWindow.navigator,
-  window: browserWindow
-}
-for (const [name, value] of Object.entries(globalValues)) {
-  Object.defineProperty(globalThis, name, { configurable: true, value, writable: true })
-}
+import { browserWindow, setLocation, resetBody } from '../../test/browser-dom.mts'
+setLocation('https://wiki.test/')
+
+resetBody()
+
 
 // Vue must load after JSDOM so runtime-dom captures the test document.
 const Vue = await import('vue')

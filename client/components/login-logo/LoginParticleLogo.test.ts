@@ -2,15 +2,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import { afterEach, beforeEach, describe, expect, it } from '../../../server/test/bun-test.mts'
+import { browserWindow, resetBody, setLocation } from '../../test/browser-dom.mts'
 import type { LogoEffectDescriptor, ParticleContentRect } from './particle-logo.ts'
-
-const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-  pretendToBeVisual: true,
-  url: 'http://localhost/login'
-})
-const browserWindow = dom.window
 
 interface RectInit {
   left: number
@@ -365,7 +359,10 @@ browserWindow.HTMLElement.prototype.getBoundingClientRect = function (): DOMRect
   return nativeGetBoundingClientRect.call(this)
 }
 
-// Vue stays dynamic so runtime-dom captures the JSDOM document initialized above.
+resetBody()
+setLocation('/login')
+
+// Vue stays dynamic so runtime-dom captures the shared DOM document initialized above.
 const Vue = await import('vue')
 
 const componentPath = path.join(process.cwd(), 'client/components/login-logo/LoginParticleLogo.vue')

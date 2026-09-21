@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { JSDOM } from 'jsdom'
+import { resetBody } from '../../test/browser-dom.mts'
 import * as Vue from 'vue'
 import { createSSRApp, defineComponent } from 'vue'
 import type { RenderFunction } from 'vue'
@@ -9,6 +10,8 @@ import { renderToString } from '@vue/server-renderer'
 import { describe, expect, test } from '../../../server/test/bun-test.mts'
 import type { AgentMessageView, AgentToolCallView } from '../../../shared/agents/contracts.ts'
 import { buildAgentThreadPresentation } from './agent-thread-presentation.ts'
+
+resetBody()
 
 const componentPath = join(process.cwd(), 'client/components/agents/agent-thread.vue')
 const source = readFileSync(componentPath, 'utf8')

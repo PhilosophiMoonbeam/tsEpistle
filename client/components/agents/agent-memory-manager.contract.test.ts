@@ -1,58 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { compileScript, parse } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import type { Component } from 'vue'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
+import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 
-const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
-  pretendToBeVisual: true,
-  url: 'http://localhost/agent-memory'
-})
-const browserWindow = dom.window
-Object.defineProperty(browserWindow, 'fetch', { configurable: true, writable: true, value: () => Promise.resolve() })
-Object.defineProperty(browserWindow.Element.prototype, 'scrollIntoView', { configurable: true, value(): void {} })
-const browserGlobals: Record<string, unknown> = {
-  document: browserWindow.document,
-  window: browserWindow,
-  navigator: browserWindow.navigator,
-  Element: browserWindow.Element,
-  Event: browserWindow.Event,
-  HTMLElement: browserWindow.HTMLElement,
-  KeyboardEvent: browserWindow.KeyboardEvent,
-  MouseEvent: browserWindow.MouseEvent,
-  MutationObserver: browserWindow.MutationObserver,
-  Node: browserWindow.Node,
-  SVGElement: browserWindow.SVGElement,
-  Text: browserWindow.Text,
-  cancelAnimationFrame: browserWindow.cancelAnimationFrame.bind(browserWindow),
-  fetch: browserWindow.fetch,
-  getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
-  requestAnimationFrame: browserWindow.requestAnimationFrame.bind(browserWindow)
-}
-for (const [name, value] of Object.entries(browserGlobals)) {
-  Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
-}
+resetBody()
 
-class TestResizeObserver {
-  observe(): void {}
-  unobserve(): void {}
-  disconnect(): void {}
-}
-Object.defineProperty(globalThis, 'ResizeObserver', { configurable: true, writable: true, value: TestResizeObserver })
-Object.defineProperty(browserWindow, 'ResizeObserver', { configurable: true, writable: true, value: TestResizeObserver })
-Object.defineProperty(browserWindow, 'matchMedia', {
-  configurable: true,
-  writable: true,
-  value: (media: string) => ({
-    matches: false,
-    media,
-    addEventListener(): void {},
-    removeEventListener(): void {}
-  })
-})
-
-// Vue and Vuetify must load after the JSDOM globals so runtime-dom captures this document.
+// Vue and Vuetify must load after the shared DOM globals so runtime-dom captures the singleton document.
 const VueRuntime = await import('vue')
 const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')

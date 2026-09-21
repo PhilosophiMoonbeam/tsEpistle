@@ -2,10 +2,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileStyle, compileTemplate, parse } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
+import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 
 interface Ref<T> {
   value: T
@@ -174,76 +174,8 @@ let nextComposerId = 0
 const testUseId = (): string => `agent-composer-test-${++nextComposerId}`
 const descriptor = parse(source, { filename: componentPath }).descriptor
 if (!descriptor.template || descriptor.styles.length === 0) throw new Error('agent-composer.vue template and styles are required')
-const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
-  pretendToBeVisual: true,
-  url: 'http://localhost/'
-})
-const browserWindow = dom.window
-const css = { escape: (value: string) => value, supports: () => false }
-class ObserverStub {
-  observe(): void {}
-  unobserve(): void {}
-  disconnect(): void {}
-}
-const visualViewport = {
-  width: 1024,
-  height: 768,
-  offsetLeft: 0,
-  offsetTop: 0,
-  pageLeft: 0,
-  pageTop: 0,
-  scale: 1,
-  addEventListener: () => undefined,
-  removeEventListener: () => undefined
-}
-Object.defineProperties(browserWindow, {
-  CSS: { configurable: true, value: css },
-  IntersectionObserver: { configurable: true, value: ObserverStub },
-  ResizeObserver: { configurable: true, value: ObserverStub },
-  devicePixelRatio: { configurable: true, value: 1 },
-  matchMedia: {
-    configurable: true,
-    value: (query: string) => ({
-      matches: query.includes('max-width: 639.98px'),
-      media: query,
-      onchange: null,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-      addListener: () => undefined,
-      removeListener: () => undefined,
-      dispatchEvent: () => true
-    })
-  },
-  visualViewport: { configurable: true, value: visualViewport }
-})
-const globalValues: Record<string, unknown> = {
-  CSS: css,
-  Element: browserWindow.Element,
-  Event: browserWindow.Event,
-  HTMLElement: browserWindow.HTMLElement,
-  HTMLButtonElement: browserWindow.HTMLButtonElement,
-  HTMLInputElement: browserWindow.HTMLInputElement,
-  HTMLTextAreaElement: browserWindow.HTMLTextAreaElement,
-  IntersectionObserver: ObserverStub,
-  KeyboardEvent: browserWindow.KeyboardEvent,
-  MouseEvent: browserWindow.MouseEvent,
-  MutationObserver: browserWindow.MutationObserver,
-  Node: browserWindow.Node,
-  ResizeObserver: ObserverStub,
-  SVGElement: browserWindow.SVGElement,
-  Text: browserWindow.Text,
-  cancelAnimationFrame: browserWindow.cancelAnimationFrame.bind(browserWindow),
-  devicePixelRatio: 1,
-  document: browserWindow.document,
-  getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
-  navigator: browserWindow.navigator,
-  requestAnimationFrame: browserWindow.requestAnimationFrame.bind(browserWindow),
-  visualViewport,
-  window: browserWindow
-}
-for (const [name, value] of Object.entries(globalValues)) {
-  Object.defineProperty(globalThis, name, { configurable: true, value, writable: true })
-}
+
+resetBody()
 
 // These test-only imports must wait for the browser globals above; Vuetify snapshots them during module evaluation.
 const Vue = await import('vue')

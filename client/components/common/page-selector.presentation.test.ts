@@ -1,8 +1,8 @@
 import { compileTemplate, parse } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
+import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
 import type { ComponentOptions, PropType, RenderFunction } from 'vue'
 import type { PageTreeRow } from '../../helpers/pages-api.ts'
 
@@ -12,29 +12,9 @@ if (parsed.errors.length > 0 || !parsed.descriptor.template || !parsed.descripto
   throw new Error(`Cannot parse page-selector.vue: ${parsed.errors.join(', ')}`)
 }
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-  pretendToBeVisual: true,
-  url: 'https://wiki.test/en/docs/current'
-})
-const browserWindow = dom.window
-for (const [name, value] of Object.entries({
-  AbortController: globalThis.AbortController,
-  CSS: { escape: (value: string) => value, supports: () => false },
-  Element: browserWindow.Element,
-  Event: browserWindow.Event,
-  HTMLElement: browserWindow.HTMLElement,
-  KeyboardEvent: browserWindow.KeyboardEvent,
-  MouseEvent: browserWindow.MouseEvent,
-  MutationObserver: browserWindow.MutationObserver,
-  Node: browserWindow.Node,
-  SVGElement: browserWindow.SVGElement,
-  document: browserWindow.document,
-  getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
-  navigator: browserWindow.navigator,
-  window: browserWindow
-})) {
-  Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
-}
+resetBody()
+setLocation('/en/docs/current')
+
 const globals = globalThis as typeof globalThis & {
   siteConfig: { lang: string }
   siteLangs: Array<{ code: string; name: string }>
@@ -121,7 +101,7 @@ let rows: PageTreeRow[] = []
 afterEach(() => {
   app?.unmount()
   app = undefined
-  dom.window.document.body.replaceChildren()
+  document.body.replaceChildren()
 })
 
 const settle = async (): Promise<void> => {
@@ -144,8 +124,8 @@ const mountSelector = async (initialRows: PageTreeRow[]) => {
     AsyncState
   ) as ComponentOptions
   mountedSelector.render = render
-  const host = dom.window.document.createElement('div')
-  dom.window.document.body.append(host)
+  const host = document.createElement('div')
+  document.body.append(host)
   app = Vue.createApp(mountedSelector, {
     modelValue: true,
     mode: 'select',

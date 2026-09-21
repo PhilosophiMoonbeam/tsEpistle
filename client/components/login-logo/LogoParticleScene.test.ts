@@ -1,32 +1,16 @@
 import path from 'node:path'
 
 import { compileScript, parse } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import type { WebGPURenderer } from 'three/webgpu'
 import { beforeEach, describe, expect, it } from '../../../server/test/bun-test.mts'
+import { browserWindow, resetBody, setLocation } from '../../test/browser-dom.mts'
 import type { Component } from 'vue'
 import type { ParticleSceneEventFence as ParticleSceneEventFenceClass, ParticleSceneFrame, ParticleSceneResources } from './LogoParticleScene.vue'
 import type { LogoEffectDescriptor, ParsedLogoParticles, ParticleContentRect } from './particle-logo.ts'
 import type { LogoPointerState } from './useLogoPointer.ts'
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-  pretendToBeVisual: true,
-  url: 'http://localhost/login'
-})
-const browserWindow = dom.window
-for (const [name, value] of Object.entries({
-  Element: browserWindow.Element,
-  Event: browserWindow.Event,
-  HTMLCanvasElement: browserWindow.HTMLCanvasElement,
-  HTMLElement: browserWindow.HTMLElement,
-  Node: browserWindow.Node,
-  SVGElement: browserWindow.SVGElement,
-  MutationObserver: browserWindow.MutationObserver,
-  document: browserWindow.document,
-  window: browserWindow
-})) {
-  Object.defineProperty(globalThis, name, { configurable: true, value, writable: true })
-}
+resetBody()
+setLocation('/login')
 
 const componentPath = path.join(process.cwd(), 'client/components/login-logo/LogoParticleScene.vue')
 const componentSource = await Bun.file(componentPath).text()

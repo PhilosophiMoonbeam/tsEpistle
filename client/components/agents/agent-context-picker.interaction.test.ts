@@ -1,5 +1,4 @@
 import { parse, compileTemplate } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import path from 'node:path'
 import fs from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
@@ -14,11 +13,11 @@ const componentSource = fs.readFileSync(componentPath, 'utf8')
 const descriptor = parse(componentSource, { filename: componentPath }).descriptor
 if (!descriptor.template || !descriptor.scriptSetup) throw new Error('agent-context-picker.vue template and setup script are required')
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-  pretendToBeVisual: true,
-  url: 'http://localhost/wiki/en/home'
-})
-const browserWindow = dom.window
+import { browserWindow, setLocation, resetBody } from '../../test/browser-dom.mts'
+
+setLocation('/wiki/en/home')
+
+resetBody()
 
 const visualViewport = {
   width: 1024,
@@ -85,7 +84,7 @@ const globalValues: Record<string, unknown> = {
   navigator: browserWindow.navigator,
   window: browserWindow
 }
-for (const [name, value] of Object.entries(globalValues)) Object.defineProperty(globalThis, name, { configurable: true, value, writable: true })
+
 installVisualViewport()
 
 // Vuetify snapshots browser capabilities during module evaluation, so these test-only imports run after JSDOM globals exist.

@@ -1,30 +1,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import { afterEach, beforeEach, describe, expect, it } from '../../../server/test/bun-test.mts'
+import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-  pretendToBeVisual: true,
-  url: 'http://localhost/'
-})
-const browserWindow = dom.window
-
-const browserGlobals: Record<string, unknown> = {
-  document: browserWindow.document,
-  window: browserWindow,
-  navigator: browserWindow.navigator,
-  Element: browserWindow.Element,
-  Event: browserWindow.Event,
-  HTMLElement: browserWindow.HTMLElement,
-  MutationObserver: browserWindow.MutationObserver,
-  Node: browserWindow.Node,
-  SVGElement: browserWindow.SVGElement,
-  Text: browserWindow.Text
-}
-for (const [name, value] of Object.entries(browserGlobals)) {
-  Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
-}
+resetBody()
 
 // Vue runtime-dom binds to document at evaluation time
 const Vue = await import('vue')
@@ -96,6 +76,40 @@ const mockMatchMedia = (query: string) => ({
 
 const mountedCleanups: Array<() => void> = []
 
+type OverrideKey = 'requestAnimationFrame' | 'cancelAnimationFrame' | 'performance' | 'matchMedia'
+const overrideKeys: OverrideKey[] = ['requestAnimationFrame', 'cancelAnimationFrame', 'performance', 'matchMedia']
+const savedOverrides = new Map<OverrideKey, { global?: PropertyDescriptor; window?: PropertyDescriptor }>()
+
+const applyOverrides = (): void => {
+  for (const key of overrideKeys) {
+    if (savedOverrides.has(key)) continue
+    savedOverrides.set(key, {
+      global: Object.getOwnPropertyDescriptor(globalThis, key),
+      window: Object.getOwnPropertyDescriptor(browserWindow, key)
+    })
+    const value = mockOverrides[key]
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value })
+    Object.defineProperty(browserWindow, key, { configurable: true, writable: true, value })
+  }
+}
+
+const restoreOverrides = (): void => {
+  for (const [key, saved] of savedOverrides) {
+    if (saved.global) Object.defineProperty(globalThis, key, saved.global)
+    else Reflect.deleteProperty(globalThis, key)
+    if (saved.window) Object.defineProperty(browserWindow, key, saved.window)
+    else Reflect.deleteProperty(browserWindow, key)
+  }
+  savedOverrides.clear()
+}
+
+const mockOverrides: Record<OverrideKey, unknown> = {
+  requestAnimationFrame: mockRequestAnimationFrame,
+  cancelAnimationFrame: mockCancelAnimationFrame,
+  performance: { now: () => currentTime },
+  matchMedia: mockMatchMedia
+}
+
 beforeEach(() => {
   scheduledFrames = []
   frameIdSequence = 0
@@ -104,36 +118,13 @@ beforeEach(() => {
   reducedMotionActive = false
   mediaQueryChangeListeners = []
 
-  Object.defineProperty(globalThis, 'requestAnimationFrame', {
-    configurable: true,
-    writable: true,
-    value: mockRequestAnimationFrame
-  })
-  Object.defineProperty(globalThis, 'cancelAnimationFrame', {
-    configurable: true,
-    writable: true,
-    value: mockCancelAnimationFrame
-  })
-  Object.defineProperty(globalThis, 'performance', {
-    configurable: true,
-    writable: true,
-    value: { now: () => currentTime }
-  })
-  Object.defineProperty(browserWindow, 'matchMedia', {
-    configurable: true,
-    writable: true,
-    value: mockMatchMedia
-  })
-  Object.defineProperty(globalThis, 'matchMedia', {
-    configurable: true,
-    writable: true,
-    value: mockMatchMedia
-  })
+  applyOverrides()
 })
 
 afterEach(() => {
   for (const cleanup of mountedCleanups.splice(0)) cleanup()
   browserWindow.document.body.replaceChildren()
+  restoreOverrides()
 })
 
 const mountAnimatedNumber = async (initialProps: { value: number; duration?: number; formatValue?: (v: number) => string | number }) => {

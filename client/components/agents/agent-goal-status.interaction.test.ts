@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import { compileStyle, compileTemplate, parse } from '@vue/compiler-sfc'
 import { JSDOM } from 'jsdom'
+import { resetBody } from '../../test/browser-dom.mts'
 import * as Vue from 'vue'
 import { createSSRApp, defineComponent } from 'vue'
 import type { RenderFunction } from 'vue'
@@ -15,6 +16,8 @@ import type { AgentCompletionIssue, AgentGoalView } from '../../../shared/agents
 interface Ref<T> {
   value: T
 }
+
+resetBody()
 
 type GoalEmit = (event: 'update:expanded', value: boolean) => void
 
