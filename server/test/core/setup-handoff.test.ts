@@ -36,11 +36,13 @@ describe('setup handoff', () => {
       },
       editors: { refreshEditorsFromDisk: method('editors-ready') },
       loggers: { refreshLoggersFromDisk: method('loggers-ready') },
+      pages: { createPage: method('page-created') },
       renderers: { refreshRenderersFromDisk: method('renderers-ready') },
       searchEngines: {
         refreshSearchEnginesFromDisk: method('search-ready'),
         initEngine: method('search-start')
       },
+      users: { getRootUser: method('root-user-loaded') },
       storage: {
         refreshTargetsFromDisk: method('storage-ready'),
         initTargets: method('storage-start')

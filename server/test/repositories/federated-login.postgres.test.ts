@@ -17,7 +17,7 @@ const connection = databaseName.endsWith('_federated_login_test') && password
       database: databaseName
     }
   : null
-const directlyInvoked = process.env.npm_lifecycle_event !== 'test' && process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('federated-login.postgres.test.ts'))
+const directlyInvoked = !String(process.env.npm_lifecycle_event ?? '').startsWith('test') && process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('federated-login.postgres.test.ts'))
 const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
 if (databaseContractRequired && !connection) throw new Error('Explicit federated-login PostgreSQL execution requires a *_federated_login_test database and password.')
 const suite = connection ? describe : describe.skip

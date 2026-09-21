@@ -32,7 +32,7 @@ const connection =
       }
     : null
 const directlyInvoked =
-  process.env.npm_lifecycle_event !== 'test' && process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('search-graph-rank.postgres.test.ts'))
+  !String(process.env.npm_lifecycle_event ?? '').startsWith('test') && process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('search-graph-rank.postgres.test.ts'))
 const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
 
 if (databaseContractRequired && !connection) {

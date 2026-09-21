@@ -30,6 +30,7 @@
     "lint": "bun --bun biome lint .",
     "typecheck:shared": "bun --bun tsc -b tsconfig.shared.json --pretty false",
     "test": "bun server/scripts/run-tests.ts",
+    "test:isolate": "bun test --isolate",
     "typecheck:client": "bun server/scripts/run-vue-tsc.ts -p tsconfig.client.json --noEmit --pretty false",
     "typecheck:server": "bun --bun tsc -p tsconfig.server.json --noEmit --pretty false",
     "e2e": "bun --bun playwright test",
