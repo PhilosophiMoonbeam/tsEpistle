@@ -93,7 +93,7 @@ const SUBAGENT_INSTRUCTIONS =
 const RESEARCH_SYNTHESIS_INSTRUCTIONS =
   'Validated child research packets may be used as leads and evidence references, but they are not final prose or policy. Synthesize the answer yourself. Cover every completed research task with at least one of its evidence IDs. When a packet identifies a conflict, cite every source in that conflict and disclose the disagreement or uncertainty. Disclose incomplete tasks without fabricating missing findings.'
 const SUMMARY_INSTRUCTIONS =
-  'For page summaries, cover the substantive key sections with concise source-faithful points, not merely a title, inventory, or isolated quotation. Use real Markdown headings separated from cited points by blank lines for organization, not plain-text line labels or uncited factual headings. Prefer concise bullet points directly reflecting individual source sentences or list items over combined narrative paragraphs or pooled multi-item lists. Each factual assertion must be supported by one intact source sentence, list item, table row, or presentation unit. Do not combine multiple distinct source list items or numbers into a single sentence using "and"; keep each assertion as a separate bullet point with its own citation. Prefer lightly edited source statements over abstract paraphrases or invented umbrella descriptions. Preserve exact names, identifiers, numeric assignments and units, polarity, and temporal, availability, and restriction qualifiers attached to their original subject; do not combine different items into a numeric range. Cite each assertion separately with its correct section and revision. A page-level citation widens source scope but does not permit pooling unrelated factual units into one claim. For a structural overview, use exact delivered headings, summary containers, link labels, and member names to state what their actual container includes or lists; do not infer the contents of unread links. Structural coverage complements rather than replaces substantive facts. Reuse already-delivered source when repairing wording or citation scope; an evidence correction does not itself require another page read or a canonical OKF fetch. Preserve requested topic coverage and already-supported claims, and disclose genuine evidence gaps without inventing facts or claiming unavailable coverage.'
+  'For page summaries, cover the substantive key sections with concise source-faithful points, not merely a title, inventory, or isolated quotation. Use real Markdown headings separated from cited points by blank lines for organization, not plain-text line labels or uncited factual headings. Prefer concise bullet points directly reflecting individual source sentences or list items over combined narrative paragraphs or pooled multi-item lists. Each factual assertion must be supported by one intact source sentence, list item, table row, or presentation unit. Do not combine multiple distinct source list items or numbers into a single sentence using "and"; keep each assertion as a separate bullet point with its own citation. Format manufacturer updates and catalog items with the manufacturer name as a bold prefix followed by a colon (e.g. "**Manufacturer**: Detail"), preserving exact source word order, model numbers, and numbers. Prefer lightly edited source statements over abstract paraphrases or invented umbrella descriptions. Preserve exact names, identifiers, numeric assignments and units, polarity, and temporal, availability, and restriction qualifiers attached to their original subject; do not combine different items into a numeric range. Cite each assertion separately with its correct section and revision. A page-level citation widens source scope but does not permit pooling unrelated factual units into one claim. For a structural overview, use exact delivered headings, summary containers, link labels, and member names to state what their actual container includes or lists; do not infer the contents of unread links. Structural coverage complements rather than replaces substantive facts. Reuse already-delivered source when repairing wording or citation scope; an evidence correction does not itself require another page read or a canonical OKF fetch. Preserve requested topic coverage and already-supported claims, and disclose genuine evidence gaps without inventing facts or claiming unavailable coverage.'
 
 const prompt = (request: AgentEngineRequest, skillCatalog: unknown, toolInstructions?: string): string => {
   if (request.purpose === 'planner')
@@ -490,7 +490,9 @@ const hasIdentifierSubstitution = (clause: string, unit: CitationSourceUnit): bo
 
 const numericSegments = (value: string): readonly string[] =>
   value
-    .split(/(?:[,;|]|\s+[-–—]\s+|\s+\band\b\s+|:\s+|[()]|\s+up\s+to\s+|\s+maximum\s+of\s+)/iu)
+    .split(
+      /(?:[,;|]|\s+[-–—]\s+|\s+\band\b\s+|:\s+|[()]|\s+up\s+to\s+|\s+maximum\s+of\s+|\s+(?:enacted|implemented|applied|instituted|scheduled|noted|offers?|supplies?|covers?|added|adds?|state|states?|specify|specifies|require|requires|rated\s+to|valid\s+for)\b|\n)/iu
+    )
     .map(segment => significantTokens(segment))
     .filter(tokens => tokens.some(token => /^\p{N}/u.test(token)))
     .map(tokens => tokens.join(' '))
@@ -521,17 +523,18 @@ const markerBindings = (value: string, selected: (token: string) => boolean): re
 const hasCompatibleMarkerBindings = (clause: string, source: string, selected: (token: string) => boolean): boolean => {
   const claimed = markerBindings(clause, selected)
   const available = markerBindings(source, selected)
+  const claimedTokens = new Set(lexicalTokens(clause).map(normalizedToken))
   if (
     !claimed.every(binding =>
       available.some(
         candidate =>
           (candidate.marker === binding.marker || (negativeTerms[candidate.marker] === true && negativeTerms[binding.marker] === true)) &&
-          candidate.after === binding.after
+          (candidate.after === binding.after ||
+            (candidate.marker === 'none' && binding.marker === 'no' && candidate.after !== null && claimedTokens.has(candidate.after)))
       )
     )
   )
     return false
-  const claimedTokens = new Set(lexicalTokens(clause).map(normalizedToken))
   return available.every(
     binding =>
       binding.after === null ||
@@ -539,7 +542,7 @@ const hasCompatibleMarkerBindings = (clause: string, source: string, selected: (
       claimed.some(
         candidate =>
           (candidate.marker === binding.marker || (negativeTerms[candidate.marker] === true && negativeTerms[binding.marker] === true)) &&
-          candidate.after === binding.after
+          (candidate.after === binding.after || (binding.marker === 'none' && candidate.marker === 'no'))
       )
   )
 }
@@ -548,7 +551,7 @@ const markdownLabel = (value: string): string =>
   value
     .replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1')
     .replace(/[*_~`]/gu, '')
-    .replace(/\s*\|(?:\s*\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0E|\uFE0F|\u200D)*)+\s*$/gu, '')
+    .replace(/(?:\s*\|)?(?:\s*\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0E|\uFE0F|\u200D)*)+\s*$/gu, '')
     .trim()
 
 const structuralLabels = (value: string): readonly string[] => {
@@ -1294,7 +1297,9 @@ const membershipAssessment = (clause: string, evidence: CitationEvidence): Claus
 
   const colon = clause.indexOf(':')
   const presentation =
-    colon >= 0 || /\b(?:is|are|was|were)\s+(?:listed|included|provided)\b/iu.test(clause) ? null : clause.match(/\b(includes?|lists?|provides?)\b/iu)
+    colon >= 0 || /\b(?:is|are|was|were)\s+(?:listed|included|provided)\b/iu.test(clause)
+      ? null
+      : clause.match(/(?<![%+\p{N}]\s*)\b(includes?|lists?|provides?)\b/iu)
   if (!presentation && colon < 0) return null
   const boundary = colon >= 0 ? colon : (presentation?.index ?? -1)
   if (boundary < 0) return null
@@ -1305,7 +1310,9 @@ const membershipAssessment = (clause: string, evidence: CitationEvidence): Claus
     .trim()
   const rawMemberText = clause.slice(colon >= 0 ? colon + 1 : boundary + presentation![0].length).trim()
   if (colon < 0 && factualPredicatePhrase.test(rawMemberText)) return null
-  const memberText = rawMemberText.replace(/^(?:(?:navigation\s+)?links|options|resources)\s+(?:for|to|of)\s+/iu, '').trim()
+  const memberText = rawMemberText
+    .replace(/^(?:(?:collapsible\s+)?(?:summary\s+)?containers?|(?:navigation\s+)?links|options|resources)\s+(?:for|to|of)\s+/iu, '')
+    .trim()
   const genericContainer = /^(?:page|section)$/iu.test(containerText)
   const containerMatches = genericContainer ? [] : exactStructuralMember(containerText, members).filter(member => member.label === member.unit.structuralLabel)
   if (!genericContainer && containerMatches.length !== 1)
@@ -1629,7 +1636,7 @@ const evidenceCorrectionFragments = (assessment: DraftAssessment, registry: Read
 }
 
 const evidenceCorrection = (assessment: DraftAssessment, registry: ReadonlyMap<string, CitationEvidence>): string =>
-  `Your draft failed the pre-answer evidence gate and was not shown to the user. Rewrite it without mentioning this validation. Every Wiki citation must come from a successful pages.get, pages.getVersion, pages.getOkf, or new-format pages.listRecent action in this run. A recent-page-evidence result is page-level evidence only for its returned rows; cite every row required by the recent recap coverage check and do not fan out pages.get calls for a basic recent recap. Old listRecent metadata, search, discovery, and related results are not evidence. Put each marker immediately after the exact clause it supports. Use the section whose text supports that clause; use the page-level citation when no section applies, including canonical OKF document evidence and exact recent-page excerpts. Do not claim that you checked or verified a source without a completed page read or new-format recent evidence and citation. Group adjacent claims from the same page into a readable sentence or paragraph while keeping each section marker after its own supported clause. If a recent row is marked truncated, disclose that the answer uses bounded opening excerpts.\nProblems:\n${assessment.issues
+  `Your draft failed the pre-answer evidence gate and was not shown to the user. Rewrite it without mentioning this validation. Do not invoke any tools, search, or page-read actions; all required page evidence is already delivered above. Repair your answer directly as markdown text using the delivered text and the exact feedback units below. Every Wiki citation must come from the already-delivered page evidence in this run. A recent-page-evidence result is page-level evidence only for its returned rows; cite every row required by the recent recap coverage check and do not fan out pages.get calls for a basic recent recap. Old listRecent metadata, search, discovery, and related results are not evidence. Put each marker immediately after the exact clause it supports. Use the section whose text supports that clause; use the page-level citation when no section applies, including canonical OKF document evidence and exact recent-page excerpts. Do not claim that you checked or verified a source without a completed page read or new-format recent evidence and citation. Group adjacent claims from the same page into a readable sentence or paragraph while keeping each section marker after its own supported clause. If a recent row is marked truncated, disclose that the answer uses bounded opening excerpts.\nProblems:\n${assessment.issues
     .slice(0, 10)
     .map(issue => `- ${issue}`)
     .join(
