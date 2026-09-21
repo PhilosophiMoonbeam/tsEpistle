@@ -109,6 +109,37 @@ with pikepdf.Pdf.new() as pdf:
     await expect(prepareAgentPdf(Buffer.from('%PDF-1.7\nnot a PDF\n%%EOF'), new AbortController().signal)).rejects.toMatchObject({ code: 'PDF_INVALID', status: 400 })
   })
 
+  it('prepares a structurally valid PDF whose image stream data is undecodable, like exported real-world documents', async () => {
+    const input = await fixture('plain', 2)
+    python(`
+import pikepdf, sys
+with pikepdf.open(sys.argv[1], allow_overwriting_input=True) as pdf:
+    image = pdf.make_stream(b'\\xff\\xd8 not a decodable JPEG \\xff\\xd9')
+    image.Type = pikepdf.Name('/XObject')
+    image.Subtype = pikepdf.Name('/Image')
+    image.Filter = pikepdf.Name('/DCTDecode')
+    image.Width, image.Height = 100, 100
+    image.ColorSpace = pikepdf.Name('/DeviceRGB')
+    image.BitsPerComponent = 8
+    pdf.pages[0].Resources = pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im=image))
+    pdf.pages[0].Contents = pdf.make_stream(b'q 100 0 0 100 0 0 cm /Im Do Q\\n')
+    pdf.save(sys.argv[1])
+`, [input.path])
+    const check = JSON.parse(python(`
+import pikepdf, json, sys
+with pikepdf.open(sys.argv[1], attempt_recovery=False) as pdf:
+    print(json.dumps({'pages': len(pdf.pages), 'checkWarnings': len(pdf.check())}))
+`, [input.path]))
+    expect(check.pages).toBe(2)
+    expect(check.checkWarnings).toBeGreaterThan(0)
+    const result = await prepareAgentPdf(input.payload, new AbortController().signal)
+    prepared.push(result)
+    expect(result.pageCount).toBe(2)
+    expect(result.parts).toHaveLength(1)
+    expect(result.parts[0]!.byteLength).toBe(input.payload.length)
+    await result.cleanup()
+  })
+
   it('rejects encrypted, empty and over-1000-page PDFs before provider upload', async () => {
     for (const [kind, code] of [['encrypted', 'PDF_ENCRYPTED'], ['empty', 'PDF_EMPTY'], ['many', 'PDF_TOO_MANY_PAGES']] as const) {
       const input = await fixture(kind)
