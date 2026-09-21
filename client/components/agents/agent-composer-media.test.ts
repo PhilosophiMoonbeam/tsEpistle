@@ -7,7 +7,7 @@ const source = fs.readFileSync(new URL('./agent-composer-media.vue', import.meta
 const script = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1]
 if (!script) throw new Error('Media composer script is missing')
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
-const evaluate = new Function('dependencies', `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, generationMenu, recording, transcribing, error }`)
+const evaluate = new Function('dependencies', `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, recording, transcribing, error, dictationError, dictationIntent, seconds }`)
 const sessionId = '00000000-0000-4000-8000-000000000081'
 const mediaId = '00000000-0000-4000-8000-000000000082'
 const runId = '00000000-0000-4000-8000-000000000083'
@@ -73,6 +73,69 @@ describe('Agent media composer lifecycle', () => {
     expect(harness.api.transcribing.value).toBe(false)
     harness.unmount()
   })
+  it('delivers the transcript to a pending send without emitting the review event', async () => {
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, fetch: async (input) => {
+      const path = String(input)
+      if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+      if (path.endsWith('/transcriptions')) return response({ runId })
+      if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Send this sentence.' })
+      throw new Error(`Unexpected request ${path}`)
+    } })
+    await harness.api.startRecording()
+    expect(harness.api.beginDictationSubmit()).toBe(true)
+    const pending = harness.api.waitForDictationTranscript()
+    harness.api.stopRecording()
+    await expect(pending).resolves.toBe('Send this sentence.')
+    expect(harness.events.some(([event]) => event === 'dictation')).toBe(false)
+    expect(harness.api.transcribing.value).toBe(false)
+    harness.unmount()
+  })
+
+  it('resolves a pending send with null and keeps no dictation event when no speech is found', async () => {
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, fetch: async (input) => {
+      const path = String(input)
+      if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+      if (path.endsWith('/transcriptions')) return response({ runId })
+      if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: '   ' })
+      throw new Error(`Unexpected request ${path}`)
+    } })
+    await harness.api.startRecording()
+    expect(harness.api.beginDictationSubmit()).toBe(true)
+    const pending = harness.api.waitForDictationTranscript()
+    harness.api.stopRecording()
+    await expect(pending).resolves.toBeNull()
+    expect(harness.api.dictationError.value).toBe('No speech was found. Try recording again.')
+    harness.unmount()
+  })
+
+  it('resolves a pending send with null when dictation fails and reports the error', async () => {
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, fetch: async (input) => {
+      const path = String(input)
+      if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+      if (path.endsWith('/transcriptions')) return response({ runId })
+      if (path.endsWith('/transcription')) return response({ status: 'failed' })
+      throw new Error(`Unexpected request ${path}`)
+    } })
+    await harness.api.startRecording()
+    expect(harness.api.beginDictationSubmit()).toBe(true)
+    const pending = harness.api.waitForDictationTranscript()
+    harness.api.stopRecording()
+    await expect(pending).resolves.toBeNull()
+    expect(harness.api.dictationError.value).toContain('could not be transcribed')
+    harness.unmount()
+  })
+
+  it('resolves a pending send with null when the recording is canceled', async () => {
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true } })
+    await harness.api.startRecording()
+    expect(harness.api.beginDictationSubmit()).toBe(true)
+    const pending = harness.api.waitForDictationTranscript()
+    harness.api.cancelDictation()
+    await expect(pending).resolves.toBeNull()
+    expect(harness.stopped()).toBe(1)
+    harness.unmount()
+  })
+
   it('cancels an admitted transcription when connection is lost and ignores late text', async () => {
     let resolveResult!: (value: Response) => void
     let cancelled = false
@@ -132,13 +195,13 @@ describe('Agent Wiki asset attachments', () => {
     expect(harness.api.uploading.value).toBe(false)
     harness.api.clear(); harness.unmount()
   })
-  it('restores keyboard focus through the stable controls when the picker closes', async () => {
-    let focused = 0
-    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, focus: () => { focused++ } })
+  it('closes the asset picker without uploading when dismissed', async () => {
+    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false } })
     harness.api.browseAssets()
+    expect(harness.api.assetPickerOpen.value).toBe(true)
     harness.api.closeAssetPicker()
     await nextTick()
-    expect(focused).toBe(1)
+    expect(harness.api.assetPickerOpen.value).toBe(false)
     harness.unmount()
   })
   for (const reason of ['close', 'session', 'disabled', 'offline'] as const) it(`cancels an asset copy on ${reason} and deletes a late private copy`, async () => {
@@ -252,9 +315,7 @@ describe('creation tool selection', () => {
   it('selects all configured tools, allows multiple selections, and preserves choices after sending', async () => {
     const harness = mount({ media: { attachments: true, imageGeneration: true, videoGeneration: true, musicGeneration: true, transcription: false } })
     expect(harness.api.selectedGenerationTools.value).toEqual(['image', 'video', 'music'])
-    harness.api.generationMenu.value = true
     harness.api.toggleGenerationTool('image'); await nextTick()
-    expect(harness.api.generationMenu.value).toBe(true)
     expect(harness.events).toContainEqual(['change', { attachmentIds: [], generationTools: ['video', 'music'] }])
     harness.api.clear(); await nextTick()
     expect(harness.api.selectedGenerationTools.value).toEqual(['video', 'music'])

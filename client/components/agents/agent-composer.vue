@@ -100,6 +100,8 @@
       />
     </div>
 
+    <p v-if="error" class="agent-composer__notice" role="alert">{{ error }}</p>
+
     <AgentComposerMedia
       ref="mediaComposer"
       :csrf-token="csrfToken ?? ''"
@@ -112,7 +114,19 @@
       @busy="mediaBusy = $event"
       @dictation="appendDictation"
       @settled="emit('mediaSettled')"
-    />
+    >
+      <template #attachments="{ attachments, uploading, locked, removeAttachment }">
+        <ul v-if="attachments.length" class="agent-composer__media-attachments" aria-label="Attachments for the next message">
+          <li v-for="item in attachments" :key="item.id">
+            <img v-if="item.mimeType.startsWith('image/')" :src="agentMediaContentUrl(item.id)" alt="" />
+            <v-icon v-else icon="mdi-file-pdf-box" size="24" aria-hidden="true" />
+            <span :title="item.filename">{{ item.filename }}</span>
+            <v-btn icon="mdi-close" size="x-small" variant="text" :aria-label="`Remove ${item.filename}`" :disabled="locked" @click="removeAttachment(item)" />
+          </li>
+        </ul>
+        <span v-if="uploading" class="agent-composer__uploading" role="status">Uploading…</span>
+      </template>
+    </AgentComposerMedia>
 
     <div v-if="selectedSkills.length > 0" class="agent-composer__attachments" role="group" aria-label="Skills attached as context for the next message">
       <span class="agent-composer__attachments-label">
@@ -138,42 +152,90 @@
 
     <div class="agent-composer__actions">
       <div class="agent-composer__context-controls" role="group" aria-label="Conversation context controls">
-        <slot name="context-controls" />
-        <div class="agent-composer__web-search">
-          <label
-            class="agent-composer__web-search-toggle wiki-purpose-control"
-            :class="{ 'wiki-purpose-control--selected': googleSearchEnabled }"
-            :data-state="googleSearchEnabled ? 'selected' : undefined"
-            :title="googleSearchAvailable ? 'Use Google Search for future responses in this conversation' : 'Google Search is unavailable for this provider'"
-          >
-            <input
-              type="checkbox"
-              :checked="googleSearchEnabled"
-              :aria-checked="googleSearchEnabled"
-              :disabled="webSearchDisabled"
-              aria-label="Use Google Search for this conversation"
-              @change="toggleGoogleSearch"
+        <v-menu v-if="attachmentsAvailable" content-class="agent-owned-overlay" location="top start" v-model="attachmentMenuOpen">
+          <template #activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              class="agent-composer__attach wiki-purpose-control"
+              variant="text"
+              rounded="pill"
+              prepend-icon="mdi-paperclip"
+              aria-label="Attach files"
+              title="Attach files"
+              :disabled="attachDisabled"
+              :aria-expanded="attachmentMenuOpen"
+            >Attach</v-btn>
+          </template>
+          <v-list density="compact" aria-label="Attachment source">
+            <v-list-item prepend-icon="mdi-upload" title="Upload files" @click="openFilePicker" />
+            <v-list-item prepend-icon="mdi-folder-outline" title="Browse Wiki assets" @click="openAssetBrowser" />
+          </v-list>
+        </v-menu>
+        <v-menu v-if="createAvailable" content-class="agent-owned-overlay" location="top start">
+          <template #activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              class="agent-composer__create wiki-purpose-control"
+              :variant="selectedGenerationTools.length ? 'tonal' : 'text'"
+              :color="selectedGenerationTools.length ? 'primary' : undefined"
+              :data-state="selectedGenerationTools.length ? 'selected' : undefined"
+              rounded="pill"
+              prepend-icon="mdi-creation-outline"
+              append-icon="mdi-chevron-down"
+              aria-label="Choose creation tools"
+              :title="selectedGenerationTools.length ? `${selectedGenerationTools.length} creation tool${selectedGenerationTools.length === 1 ? '' : 's'} enabled for the assistant` : 'Choose creation tools'"
+              :disabled="attachDisabled"
+            >Create<span v-if="selectedGenerationTools.length" class="agent-composer__create-count">{{ selectedGenerationTools.length }}</span></v-btn>
+          </template>
+          <v-list density="compact" class="agent-composer__tool-menu" aria-label="Creation tools">
+            <v-list-subheader>Available for the assistant to use</v-list-subheader>
+            <v-list-item
+              v-for="option in generationOptions"
+              :key="option.value"
+              :title="option.title"
+              :prepend-icon="option.icon"
+              role="menuitemcheckbox"
+              :aria-checked="selectedGenerationTools.includes(option.value)"
+              :active="selectedGenerationTools.includes(option.value)"
+              :disabled="attachDisabled"
+              @click="toggleGenerationTool(option.value)"
             >
-            <v-icon icon="mdi-web" size="17" aria-hidden="true" />
-            <span>Web search</span>
-          </label>
-          <v-menu content-class="agent-owned-overlay" location="top start" :close-on-content-click="true">
-            <template #activator="{ props: activatorProps }">
-              <v-btn
-                v-bind="activatorProps"
-                class="agent-composer__web-search-info"
-                icon="mdi-information-outline"
-                variant="text"
-                size="x-small"
-                aria-label="About Google Search in Agent conversations"
-              />
-            </template>
-            <v-card class="agent-composer__web-search-help" max-width="330">
-              <v-card-title class="text-body-large">Optional Google Search</v-card-title>
-              <v-card-text>When enabled, search queries and relevant conversation context may be sent to Google Search. Google Search charges are additional to model token charges. Answers and citations remain in your normal conversation history.</v-card-text>
-            </v-card>
-          </v-menu>
-        </div>
+              <template #append><v-icon :icon="selectedGenerationTools.includes(option.value) ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" size="20" aria-hidden="true" /></template>
+            </v-list-item>
+            <p class="agent-composer__tool-menu-note">Ask naturally. The assistant can combine your selected tools in one reply.</p>
+          </v-list>
+        </v-menu>
+        <slot name="context-controls" />
+        <v-chip
+          v-if="goalsEnabled && goalMode"
+          class="agent-composer__goal-chip"
+          color="primary"
+          size="small"
+          variant="tonal"
+          prepend-icon="mdi-target"
+          closable
+          close-label="Turn off goal mode"
+          :disabled="disabled || sendInProgress"
+          title="Goal mode is on. Your next message defines a durable outcome for Wiki Agent."
+          @click:close="goalMode = false"
+        >Goal</v-chip>
+        <label
+          class="agent-composer__web-search-toggle wiki-purpose-control"
+          :class="{ 'wiki-purpose-control--selected': googleSearchEnabled }"
+          :data-state="googleSearchEnabled ? 'selected' : undefined"
+          :title="googleSearchAvailable ? 'Use Google Search for future responses in this conversation. Search queries and relevant context may be sent to Google Search; charges are additional to model token charges.' : 'Google Search is unavailable for this provider'"
+        >
+          <input
+            type="checkbox"
+            :checked="googleSearchEnabled"
+            :aria-checked="googleSearchEnabled ? 'true' : 'false'"
+            :disabled="webSearchDisabled"
+            aria-label="Use Google Search for this conversation"
+            @change="toggleGoogleSearch"
+          >
+          <v-icon icon="mdi-web" size="17" aria-hidden="true" />
+          <span>Web</span>
+        </label>
         <v-menu content-class="agent-owned-overlay agent-composer__skill-menu-content" v-if="skillsEnabled" v-model="skillMenuOpen" :close-on-content-click="false">
           <template #activator="{ props: activatorProps }">
             <v-btn
@@ -266,29 +328,40 @@
             </v-card-actions>
           </v-card>
         </v-menu>
-        <v-btn
-          v-if="goalsEnabled"
-          class="agent-composer__goal-button wiki-purpose-control"
-          :class="{
-            'wiki-purpose-control--active': goalMode,
-            'agent-composer__goal-button--active': goalMode
-          }"
-          data-purpose="info"
-          :data-state="goalMode ? 'active' : undefined"
-          :color="goalMode ? 'primary' : undefined"
-          :variant="goalMode ? 'tonal' : 'text'"
-          prepend-icon="mdi-target"
-          aria-label="Toggle goal mode"
-          :aria-pressed="goalMode"
-          :title="goalMode ? 'Disable durable goal mode' : 'Enable durable goal mode for multi-step tasks'"
-          :disabled="disabled || sendInProgress || mediaBusy || mediaSubmission.attachmentIds.length > 0"
-          @click="goalMode = !goalMode"
-        >
-          <span>Goal</span>
-        </v-btn>
       </div>
 
       <div class="agent-composer__primary-actions" role="group" aria-label="Message actions">
+        <v-menu v-if="moreMenuItems.length > 0" content-class="agent-owned-overlay agent-composer__more-menu-content" v-model="moreMenuOpen" location="top end">
+          <template #activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              class="agent-composer__more-button"
+              icon="mdi-dots-horizontal"
+              variant="text"
+              size="small"
+              rounded="pill"
+              aria-label="More options"
+              aria-haspopup="menu"
+              :aria-expanded="moreMenuOpen"
+              title="More options"
+              :disabled="disabled || sendInProgress"
+            />
+          </template>
+          <v-list density="compact" class="agent-composer__more-menu" aria-label="More composer options">
+            <v-list-item
+              v-for="item in moreMenuItems"
+              :key="item.key"
+              :prepend-icon="item.icon"
+              :title="item.label"
+              :subtitle="item.subtitle"
+              :aria-checked="item.checked"
+              role="menuitemcheckbox"
+              @click="item.run()"
+            >
+              <template #append><v-icon :icon="item.checked ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" size="20" aria-hidden="true" /></template>
+            </v-list-item>
+          </v-list>
+        </v-menu>
         <v-btn
           v-if="canStop"
           class="agent-composer__stop"
@@ -299,16 +372,61 @@
           :disabled="networkBlocked"
           @click="emit('stop')"
         >Stop response</v-btn>
-        <v-btn
-          v-if="!canStop"
-          class="agent-composer__submit"
-          type="submit"
-          color="primary"
-          :prepend-icon="submitIcon"
-          :loading="sendInProgress"
-          :disabled="disabled || sendInProgress || networkBlocked || mediaBusy || (!draft.trim() && !mediaSubmission.attachmentIds.length)"
-          :aria-describedby="composerIds.status"
-        >{{ submitLabel }}</v-btn>
+        <template v-else>
+          <template v-if="dictationAvailable">
+            <span
+              v-if="mediaRecording || mediaTranscribing"
+              class="agent-composer__dictation-status"
+              role="status"
+              aria-live="polite"
+            >{{ mediaRecording ? `${mediaSeconds} / 60s` : 'Transcribing…' }}</span>
+            <v-btn
+              v-else
+              class="agent-composer__mic"
+              icon="mdi-microphone-outline"
+              variant="text"
+              size="small"
+              rounded="pill"
+              aria-label="Start dictation"
+              title="Start dictation"
+              :disabled="disabled || sendInProgress || networkBlocked || mediaBusy"
+              @click="startDictation"
+            />
+          </template>
+          <template v-if="mediaRecording">
+            <v-btn
+              class="agent-composer__mic agent-composer__mic--recording"
+              icon="mdi-stop-circle-outline"
+              variant="tonal"
+              color="error"
+              size="small"
+              rounded="pill"
+              aria-label="Stop dictation and insert text"
+              title="Stop dictation and insert text"
+              :aria-describedby="composerIds.status"
+              @click="stopDictation"
+            />
+            <v-btn
+              class="agent-composer__dictation-cancel"
+              variant="text"
+              size="small"
+              rounded="pill"
+              :disabled="disabled || sendInProgress"
+              title="Cancel recording; keeps your typed message"
+              @click="cancelDictation"
+            >Cancel</v-btn>
+          </template>
+          <v-btn
+            v-if="!canStop"
+            class="agent-composer__submit"
+            type="submit"
+            color="primary"
+            :prepend-icon="submitIcon"
+            :loading="sendInProgress || mediaTranscribing"
+            :disabled="submitDisabled"
+            :aria-describedby="composerIds.status"
+          >{{ submitLabel }}</v-btn>
+        </template>
       </div>
 
     </div>
@@ -319,10 +437,11 @@
 </template>
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
+import type { Ref } from 'vue'
 import AgentComposerMedia from './agent-composer-media.vue'
 import type { AgentMediaSubmission } from '../../helpers/agent-media.ts'
 import type { AgentMediaView, AgentProviderProfileView, AgentThreadState, AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
-import type { VisibleAgentSkill } from '../../helpers/agents-api.ts'
+import { agentMediaContentUrl, type VisibleAgentSkill } from '../../helpers/agents-api.ts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 const props = defineProps<{
@@ -355,10 +474,114 @@ const props = defineProps<{
   networkBlocked?: boolean
 }>()
 const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void, media?: AgentMediaSubmission]; mediaSettled: []; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]]; updateGoogleSearch: [enabled: boolean] }>()
-const mediaComposer = useTemplateRef<{ clear: () => void; addFiles: (files: readonly File[]) => Promise<unknown>; editImage: (media: AgentMediaView) => Promise<boolean>; reattachMedia: (media: AgentMediaView) => Promise<boolean> }>('mediaComposer')
+const mediaComposer = useTemplateRef<{
+  clear: () => void
+  addFiles: (files: readonly File[]) => Promise<unknown>
+  editImage: (media: AgentMediaView) => Promise<boolean>
+  reattachMedia: (media: AgentMediaView) => Promise<boolean>
+  startRecording: () => Promise<void>
+  stopRecording: () => void
+  cancelDictation: () => void
+  beginDictationSubmit: () => boolean
+  waitForDictationTranscript: () => Promise<string | null>
+  recording: Ref<boolean>
+  transcribing: Ref<boolean>
+  seconds: Ref<number>
+  dictationIntent: Ref<'insert' | 'send'>
+  dictationError: Ref<string>
+  chooseUpload: () => void
+  browseAssets: () => void
+  toggleGenerationTool: (tool: 'image' | 'video' | 'music') => void
+  generationOptions: Ref<ReadonlyArray<{ value: 'image' | 'video' | 'music'; title: string; icon: string }>>
+  selectedGenerationTools: Ref<ReadonlyArray<'image' | 'video' | 'music'>>
+}>('mediaComposer')
 const mediaSubmission = ref<AgentMediaSubmission>({ attachmentIds: [] })
 const mediaBusy = ref(false)
-const appendDictation = (text: string) => { draft.value = [draft.value.trimEnd(), text].filter(Boolean).join(' '); void focusInput() }
+// Exposed refs unwrap on a component instance, so accept both the raw ref
+// and its unwrapped value depending on how the media composer is mounted.
+const mediaRecording = computed(() => {
+  const recording = mediaComposer.value?.recording as boolean | Ref<boolean> | undefined
+  return typeof recording === 'object' && recording !== null ? Boolean(recording.value) : Boolean(recording)
+})
+const mediaTranscribing = computed(() => {
+  const transcribing = mediaComposer.value?.transcribing as boolean | Ref<boolean> | undefined
+  return typeof transcribing === 'object' && transcribing !== null ? Boolean(transcribing.value) : Boolean(transcribing)
+})
+const mediaSeconds = computed(() => {
+  const seconds = mediaComposer.value?.seconds as number | Ref<number> | undefined
+  return typeof seconds === 'object' && seconds !== null ? seconds.value : (seconds ?? 0)
+})
+const dictationAvailable = computed(() => Boolean(props.mediaCapabilities?.transcription))
+const attachmentsAvailable = computed(() => Boolean(props.mediaCapabilities?.attachments))
+const attachmentCount = computed(() => {
+  const count = (mediaComposer.value as unknown as { attachments?: unknown } | null)?.attachments
+  return Array.isArray(count) ? count.length : 0
+})
+const attachDisabled = computed(() =>
+  props.disabled || sendInProgress.value || props.networkBlocked === true ||
+  mediaBusy.value || !props.mediaSession || attachmentCount.value >= 4
+)
+interface ComposerGenerationOption { value: 'image' | 'video' | 'music'; title: string; icon: string }
+const generationOptions = computed<ReadonlyArray<ComposerGenerationOption>>(() => {
+  const options = mediaComposer.value?.generationOptions as unknown
+  return Array.isArray(options) ? (options as ReadonlyArray<ComposerGenerationOption>) : []
+})
+const selectedGenerationTools = computed<ReadonlyArray<'image' | 'video' | 'music'>>(() => {
+  const tools = mediaComposer.value?.selectedGenerationTools as unknown
+  return Array.isArray(tools) ? (tools as ReadonlyArray<'image' | 'video' | 'music'>) : []
+})
+const createAvailable = computed(() =>
+  props.generationToolsEnabled !== false && generationOptions.value.length > 0
+)
+const openFilePicker = (): void => {
+  attachmentMenuOpen.value = false
+  if (!attachDisabled.value) mediaComposer.value?.chooseUpload()
+}
+const openAssetBrowser = (): void => {
+  attachmentMenuOpen.value = false
+  if (!attachDisabled.value) mediaComposer.value?.browseAssets()
+}
+const toggleGenerationTool = (tool: 'image' | 'video' | 'music'): void => {
+  if (attachDisabled.value) return
+  mediaComposer.value?.toggleGenerationTool(tool)
+}
+/**
+ * Saved caret anchor for dictated text. Tracked from the textarea's own
+ * selection while the user types or moves the caret; insertion restores the
+ * anchor when it is still valid and otherwise appends, so typing is never
+ * overwritten.
+ */
+const savedCaret = ref<number | null>(null)
+const rememberCaret = (): void => {
+  const textarea = getTextarea()
+  if (!textarea) return
+  savedCaret.value = textarea.selectionStart ?? textarea.value.length
+}
+const insertionAnchor = (): number => {
+  // The anchor is saved from the textarea's selection while the user types or
+  // moves the caret; when it is no longer valid for the current draft the
+  // dictated text appends instead, so typed text is never overwritten.
+  const anchor = savedCaret.value
+  const length = draft.value.length
+  if (anchor === null || !Number.isInteger(anchor) || anchor < 0 || anchor > length) return length
+  return anchor
+}
+const appendDictation = (text: string) => {
+  const anchor = insertionAnchor()
+  const before = draft.value.slice(0, anchor)
+  const after = draft.value.slice(anchor)
+  const prefix = before && !/\s$/.test(before) ? ' ' : ''
+  const suffix = after && !/^\s/.test(after) ? ' ' : ''
+  draft.value = `${before}${prefix}${text}${suffix}${after}`
+  savedCaret.value = anchor + prefix.length + text.length
+  void nextTick(() => {
+    const textarea = getTextarea()
+    if (textarea instanceof HTMLTextAreaElement) {
+      textarea.setSelectionRange(savedCaret.value ?? textarea.value.length, savedCaret.value ?? textarea.value.length)
+      void focusInput()
+    }
+  })
+}
 const handleMediaPaste = (event: ClipboardEvent) => {
   const files = Array.from(event.clipboardData?.files ?? [])
   if (!(props.mediaCapabilities?.attachments) || !files.length) return
@@ -384,6 +607,8 @@ watch(() => props.initialDraft, (value, previous) => {
 })
 const goalMode = ref(props.initialMode === 'goal')
 const skillMenuOpen = ref(false)
+const moreMenuOpen = ref(false)
+const attachmentMenuOpen = ref(false)
 const selectedSkillIds = ref<string[]>([...(props.initialSkillVersionIds ?? [])])
 let syncingComposition = false
 watch([goalMode, selectedSkillIds], () => {
@@ -402,6 +627,7 @@ const dismissedCommandToken = ref<{ start: number; prefix: string } | null>(null
 const activeCommandIndex = ref(0)
 const sendFailed = ref(false)
 const submissionPending = ref(false)
+const error = ref('')
 const sendInProgress = computed(() => props.sending || submissionPending.value)
 const webSearchDisabled = computed(() =>
   props.disabled || sendInProgress.value || props.googleSearchBusy || (!props.googleSearchAvailable && !props.googleSearchEnabled)
@@ -454,6 +680,28 @@ const isPreferred = (versionId: string): boolean => {
   const skillId = skillIdForVersion(versionId)
   return skillId !== undefined && preferredSkillIds.value.has(skillId)
 }
+/**
+ * Lower-priority composer controls move into the More menu. On desktop the
+ * Skills menu stays a direct control; goals, when enabled, move here while
+ * unset. Items present in the context row are excluded automatically.
+ */
+const moreMenuItems = computed(() => {
+  const items: Array<{ key: string; icon: string; label: string; subtitle?: string; checked?: boolean; run: () => void }> = []
+  if (props.goalsEnabled && !goalMode.value) {
+    items.push({
+      key: 'goal',
+      icon: 'mdi-target',
+      label: 'Goal',
+      subtitle: 'Define a durable outcome for multi-step tasks',
+      checked: false,
+      run: () => {
+        if (props.disabled || sendInProgress.value || mediaBusy.value || mediaSubmission.value.attachmentIds.length > 0) return
+        goalMode.value = true
+      }
+    })
+  }
+  return items
+})
 const composerInputLabel = computed(() =>
   goalMode.value
     ? 'Define an outcome for Wiki Agent'
@@ -619,6 +867,7 @@ const resizeInput = (): void => {
   else keepCaretVisible(textarea)
 }
 const handleSelectionChange = (): void => {
+  rememberCaret()
   void nextTick(() => {
     const textarea = getTextarea()
     if (textarea) keepCaretVisible(textarea)
@@ -758,6 +1007,7 @@ watch(
   }
 )
 watch(draft, value => {
+  if (error.value) error.value = ''
   const dismissed = dismissedCommandToken.value
   const candidate = skillCommandCandidate.value
   if (dismissed && (
@@ -813,7 +1063,79 @@ const resetInput = (): void => {
   const textarea = getTextarea()
   if (textarea) textarea.scrollTop = 0
 }
+// Send stays enabled during an active recording: submitting while recording
+// is the stop-and-send flow. It is disabled only while a prior submit is in
+// flight or dictation output is still processing, which prevents duplicates.
+const submitDisabled = computed(() =>
+  props.disabled ||
+  sendInProgress.value ||
+  props.networkBlocked === true ||
+  // Media busy covers uploads and dictation processing, but an active
+  // recording must keep Send available: submitting while recording is the
+  // stop-and-send flow.
+  (mediaBusy.value && !mediaRecording.value) ||
+  mediaTranscribing.value ||
+  (!draft.value.trim() && !mediaSubmission.value.attachmentIds.length && !mediaRecording.value)
+)
+/**
+ * One-shot send during recording: stop capture, await the transcript, and
+ * submit the combined transcript and typed draft exactly once. On failure the
+ * typed draft is preserved and nothing is submitted.
+ */
+const submitDuringRecording = async (): Promise<void> => {
+  const media = mediaComposer.value
+  if (!media?.beginDictationSubmit()) return
+  const typedDraft = draft.value
+  submissionPending.value = true
+  try {
+    media.stopRecording()
+    const transcript = await media.waitForDictationTranscript()
+    if (transcript === null) {
+      // No speech, failure, or cancellation: keep the typed draft for review
+      // and surface the media composer's dictation message in the notice.
+      draft.value = typedDraft
+      const mediaMessage = mediaComposer.value?.dictationError as string | undefined
+      if (!error.value) error.value = mediaMessage || 'No speech was found. Try recording again.'
+      return
+    }
+    const content = [typedDraft.trim(), transcript].filter(Boolean).join(' ')
+    const invokedSkillVersionIds = [...selectedSkillIds.value]
+    const mode = goalMode.value ? 'goal' : 'message'
+    const success = await new Promise<boolean>(resolve => {
+      emit('send', content, invokedSkillVersionIds, mode, (success: boolean) => resolve(success), { attachmentIds: [...mediaSubmission.value.attachmentIds], generationTools: mediaSubmission.value.generationTools })
+    })
+    if (success) {
+      // Mirror the plain-send success path: the submitted draft is gone.
+      // The draft holds only the typed part, so compare against that.
+      if (draft.value === typedDraft || draft.value === content) {
+        draft.value = ''
+        void nextTick(resetInput)
+      }
+      mediaComposer.value?.clear()
+      selectedSkillIds.value = []
+      goalMode.value = false
+    } else {
+      sendFailed.value = true
+    }
+  } finally {
+    submissionPending.value = false
+  }
+}
+const startDictation = (): void => {
+  if (props.disabled || sendInProgress.value || mediaBusy.value) return
+  void mediaComposer.value?.startRecording()
+}
+const stopDictation = (): void => {
+  mediaComposer.value?.stopRecording()
+}
+const cancelDictation = (): void => {
+  mediaComposer.value?.cancelDictation()
+}
 const submit = (): void => {
+  if (mediaRecording.value) {
+    void submitDuringRecording()
+    return
+  }
   if (props.disabled || props.networkBlocked || sendInProgress.value || mediaBusy.value || (!draft.value.trim() && !mediaSubmission.value.attachmentIds.length)) return
   const content = draft.value
   const invokedSkillVersionIds = [...selectedSkillIds.value]
@@ -870,14 +1192,14 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .agent-composer {
-  --agent-composer-control-face-height: max(36px, calc(var(--wiki-control-height) * .9));
+  --agent-composer-control-face-height: clamp(32px, calc(var(--wiki-control-height) * .78), 36px);
   --agent-composer-control-hit-height: max(44px, var(--wiki-control-height));
   --agent-composer-control-hit-inset: calc((var(--agent-composer-control-hit-height) - var(--agent-composer-control-face-height)) / -2);
-  --agent-composer-control-gap: calc(var(--wiki-space-1) * .9);
+  --agent-composer-control-gap: clamp(5px, calc(var(--wiki-space-2) * .8), 8px);
   --agent-composer-control-padding-inline: calc(var(--wiki-space-3) * .9);
   --agent-composer-control-font-size: var(--v-btn-size, .875rem);
-  --agent-composer-control-min-width: calc(var(--wiki-control-height) * .9);
-  --agent-composer-padding: calc(var(--wiki-space-2) * .9);
+  --agent-composer-control-min-width: calc(var(--agent-composer-control-face-height) + var(--wiki-space-1));
+  --agent-composer-padding: calc(var(--wiki-space-2) * .8);
   position: relative;
   display: flex;
   max-height: min(calc(var(--wiki-space-12) * 7), 44dvh);
@@ -929,7 +1251,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
-  padding: var(--wiki-space-1) 0 0;
+  padding: calc(var(--wiki-space-1) * .5) 0 0;
 }
 
 .agent-composer__input :deep(.v-field) {
@@ -938,8 +1260,8 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__input :deep(.v-field__input) {
-  min-height: calc(var(--wiki-space-12) * 1.35);
-  padding: calc(var(--wiki-space-2) * .9) var(--wiki-space-1);
+  min-height: calc(var(--wiki-space-12) * 1.25);
+  padding: calc(var(--wiki-space-1) * .9) var(--wiki-space-1);
 }
 
 .agent-composer__input :deep(textarea) {
@@ -947,7 +1269,7 @@ onBeforeUnmount(() => {
   -webkit-mask-image: none;
   mask-image: none;
   box-sizing: border-box;
-  min-height: calc(var(--wiki-space-12) * 1.35);
+  min-height: calc(var(--wiki-space-12) * 1.25);
   max-height: min(calc(var(--wiki-space-12) * 2.7), 30dvh);
   overflow-y: hidden;
   overscroll-behavior: contain;
@@ -1012,7 +1334,8 @@ onBeforeUnmount(() => {
   gap: var(--agent-composer-control-gap);
   padding: var(--agent-composer-control-gap) 0 0;
   margin-top: var(--agent-composer-control-gap);
-  border-top: 1px solid var(--wiki-surface-border);
+  /* Subtle separation above the action toolbar instead of a hard divider. */
+  border-top: 1px solid color-mix(in srgb, var(--wiki-surface-border) 55%, transparent);
 }
 
 .agent-composer__context-controls,
@@ -1044,8 +1367,9 @@ onBeforeUnmount(() => {
 
 /* Compact action faces retain a 44px effective pointer target through an invisible before-pseudo-element. */
 .agent-composer__skill-button,
-.agent-composer__goal-button,
 .agent-composer__web-search-toggle,
+.agent-composer__mic,
+.agent-composer__more-button,
 .agent-composer__submit,
 .agent-composer__stop {
   position: relative;
@@ -1058,8 +1382,9 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__skill-button::before,
-.agent-composer__goal-button::before,
 .agent-composer__web-search-toggle::before,
+.agent-composer__mic::before,
+.agent-composer__more-button::before,
 .agent-composer__submit::before,
 .agent-composer__stop::before {
   position: absolute;
@@ -1074,8 +1399,7 @@ onBeforeUnmount(() => {
   transform: translateX(-50%);
 }
 
-.agent-composer__skill-button,
-.agent-composer__goal-button {
+.agent-composer__skill-button {
   padding-inline: var(--agent-composer-control-padding-inline);
   font-weight: 500;
   letter-spacing: .01em;
@@ -1129,13 +1453,66 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.agent-composer__web-search-info {
-  min-width: 32px !important;
+.agent-composer__notice {
+  margin: 0 var(--wiki-space-1) var(--wiki-space-1);
+  color: rgb(var(--v-theme-error));
+  font-size: var(--wiki-label-size);
 }
 
-.agent-composer__web-search-help :deep(.v-card-text) {
-  line-height: 1.55;
+.agent-composer__goal-chip {
+  max-width: 100%;
 }
+
+.agent-composer__create-count {
+  margin-inline-start: calc(var(--wiki-space-1) * .5);
+  color: color-mix(in srgb, currentColor 72%, transparent);
+  font-size: var(--wiki-label-size);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-composer__tool-menu {
+  min-width: 264px;
+  max-width: min(320px, calc(100vw - 24px));
+}
+
+.agent-composer__tool-menu-note {
+  margin: 8px 16px 6px;
+  max-width: 250px;
+  font-size: .75rem;
+  line-height: 1.5;
+  opacity: .7;
+}
+
+.agent-composer__more-menu {
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-success)) 24%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-raised);
+}
+
+.agent-composer__dictation-status {
+  min-width: calc(var(--wiki-space-12) * 1.15);
+  color: rgb(var(--v-theme-error));
+  font-size: var(--wiki-label-size);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.agent-composer__mic--recording {
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-error)) 55%, transparent);
+}
+
+.agent-composer__dictation-cancel {
+  height: var(--agent-composer-control-face-height);
+  min-height: var(--agent-composer-control-face-height);
+  border-radius: var(--wiki-radius-pill);
+  font-size: var(--agent-composer-control-font-size);
+}
+
+.agent-composer__actions :deep(.v-icon) {
+  font-size: 18px;
+}
+
 .agent-composer__actions :deep(.v-btn__prepend),
 .agent-composer__actions :deep(.v-btn__append) {
   margin-inline: calc(var(--wiki-space-1) * -.9) calc(var(--wiki-space-2) * .9);
@@ -1341,14 +1718,19 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 599.98px) {
-  .agent-composer__skill-button,
-  .agent-composer__goal-button {
+  .agent-composer {
+    /* Touch layout: control faces grow to meet the 44px touch target so the
+       desktop's compact faces never carry over unchanged. */
+    --agent-composer-control-face-height: max(44px, var(--wiki-control-height));
+    --agent-composer-control-hit-inset: 0px;
+  }
+
+  .agent-composer__skill-button {
     min-width: var(--agent-composer-control-min-width);
     padding-inline: calc(var(--wiki-space-2) * .9);
   }
 
-  .agent-composer__skill-button :deep(.v-btn__prepend),
-  .agent-composer__goal-button :deep(.v-btn__prepend) {
+  .agent-composer__skill-button :deep(.v-btn__prepend) {
     margin: 0;
   }
 }
@@ -1371,8 +1753,8 @@ onBeforeUnmount(() => {
 @media (max-height: 500px) {
   .agent-composer__input :deep(.v-field__input),
   .agent-composer__input :deep(textarea) {
-    min-height: calc(var(--wiki-space-12) * 1.35);
-    max-height: calc(var(--wiki-space-12) * 1.35);
+    min-height: calc(var(--wiki-space-12) * 1.25);
+    max-height: calc(var(--wiki-space-12) * 1.25);
   }
 }
 @media (forced-colors: active) {

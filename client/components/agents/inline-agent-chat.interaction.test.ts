@@ -322,7 +322,28 @@ return {
   focusSkillsTrigger,
   resetInput,
   submit,
-  setDraft
+  setDraft,
+  moreMenuItems,
+  moreMenuOpen,
+  submitDisabled,
+  dictationAvailable,
+  attachmentsAvailable,
+  attachDisabled,
+  generationOptions,
+  selectedGenerationTools,
+  createAvailable,
+  attachmentMenuOpen,
+  openFilePicker,
+  openAssetBrowser,
+  toggleGenerationTool,
+  mediaRecording,
+  mediaTranscribing,
+  mediaSeconds,
+  error,
+  appendDictation,
+  startDictation,
+  stopDictation,
+  cancelDictation
 }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 
@@ -1147,7 +1168,10 @@ describe('Agent workspace action semantics', () => {
     const pin = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
 
     expect(status.textContent?.trim()).toBe('Ready')
-    expect(primary.children).toHaveLength(1)
+    expect(primary.children).toHaveLength(2)
+    const more = primary.querySelector<HTMLButtonElement>('.agent-composer__more-button')
+    expect(more?.getAttribute('aria-label')).toBe('More options')
+    expect(more?.nextElementSibling).toBe(submit)
     expect(submit?.tagName).toBe('BUTTON')
     expect(submit?.textContent?.trim()).toBe('Send')
     expect(primary.querySelector('.agent-composer__stop')).toBeNull()
@@ -1168,10 +1192,11 @@ describe('Agent workspace action semantics', () => {
     const pin = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
 
     expect(status.textContent?.trim()).toBe('Working')
-    expect(primary.children).toHaveLength(1)
+    expect(primary.children).toHaveLength(2)
     expect(stop?.tagName).toBe('BUTTON')
     expect(stop?.textContent?.trim()).toBe('Stop response')
     expect(primary.querySelector('.agent-composer__submit')).toBeNull()
+    expect(primary.querySelector('.agent-composer__more-button')).not.toBeNull()
     expect(pin?.getAttribute('aria-pressed')).toBe('false')
     expect(pin?.hasAttribute('disabled')).toBe(false)
     expect(pin?.closest('.inline-agent__panel-actions')).not.toBeNull()
