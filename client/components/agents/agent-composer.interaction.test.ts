@@ -76,7 +76,6 @@ return {
   syncingComposition,
   composerRoot,
   messageInput,
-  skillsTrigger,
   dismissedCommandToken,
   activeCommandIndex,
   sendFailed,
@@ -749,15 +748,15 @@ describe('Agent composer three-section layout', () => {
     if (!contextRow) throw new Error('Source context row did not render')
     expect(contextRow.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(actions.contains(contextRow)).toBe(false)
-    // More options ends the left control group, before the microphone and Send.
+    // Without skills and with nothing folded, the More menu has no content.
     const more = root.querySelector<HTMLButtonElement>('.agent-composer__more-button')
-    if (!more) throw new Error('More options button did not render')
-    expect(context.contains(more)).toBe(true)
-    expect(primary.contains(more)).toBe(false)
+    expect(more).toBeNull()
     const webToggle = root.querySelector<HTMLElement>('.agent-composer__web-search-toggle')
     if (!webToggle) throw new Error('Web toggle did not render')
-    expect(webToggle.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(more.compareDocumentPosition(mic) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Goal sits between the Web toggle and the action group's end.
+    const goalToggle = root.querySelector<HTMLElement>('.agent-composer__goal-toggle')
+    if (!goalToggle) throw new Error('Goal toggle did not render')
+    expect(webToggle.compareDocumentPosition(goalToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     // The microphone sits immediately before Send in the action row.
     expect(mic.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(mic.getAttribute('aria-label')).toBe('Start dictation')
@@ -772,14 +771,14 @@ describe('Agent composer three-section layout', () => {
     expect(root.querySelector('.agent-composer__web-search-info')).toBeNull()
   })
 
-  it('shows the creation-tool count and routes upload and asset browsing through the media pipeline', async () => {
+  it('labels the Create control without a count and routes upload and asset browsing through the media pipeline', async () => {
     const mounted = mountComposer({ initialDraft: '', mediaCapabilities: { attachments: true, transcription: true }, mediaSession: { id: 'session-1' } })
     await Vue.nextTick()
     selectedTools.value = ['image']
     await Vue.nextTick()
     const create = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__create')
     if (!create) throw new Error('Create control did not render')
-    expect(create.textContent?.trim()).toBe('Create1')
+    expect(create.textContent?.trim()).toBe('Create')
     expect(create.getAttribute('data-state')).toBe('selected')
     // Open the attachment menu through its model, as Vuetify overlay tests do.
     const bindings = lastBindings as unknown as { attachmentMenuOpen: { value: boolean } }
@@ -818,16 +817,21 @@ describe('Agent composer three-section layout', () => {
     expect(mounted.root.querySelector('.agent-composer__web-search-info')).toBeNull()
   })
 
-  it('keeps the skills controls in the context row with the neighboring action controls', () => {
+  it('keeps the Goal control inline where Skills used to sit and moves Skills into the More menu', () => {
     const mounted = mountComposer({ initialDraft: '', skillsEnabled: true })
     const context = mounted.root.querySelector<HTMLElement>('.agent-composer__context-controls')
-    const skillButton = mounted.root.querySelector<HTMLElement>('.agent-composer__skill-button')
+    const goalToggle = mounted.root.querySelector<HTMLElement>('.agent-composer__goal-toggle')
     const webToggle = mounted.root.querySelector<HTMLElement>('.agent-composer__web-search-toggle')
+    const more = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__more-button')
     expect(context).not.toBeNull()
-    expect(skillButton).not.toBeNull()
+    expect(goalToggle).not.toBeNull()
     expect(webToggle).not.toBeNull()
-    expect(context?.contains(skillButton ?? null)).toBe(true)
+    expect(more).not.toBeNull()
+    expect(context?.contains(goalToggle ?? null)).toBe(true)
     expect(context?.contains(webToggle ?? null)).toBe(true)
+    // Skills no longer render as an inline control; they live behind More options.
+    expect(mounted.root.querySelector('.agent-composer__skill-button')).toBeNull()
+    expect(context?.contains(more ?? null)).toBe(true)
   })
 
   it('renders the source context slot and the goal chip in the top context row', async () => {
@@ -866,28 +870,29 @@ describe('Agent composer fit-based folding', () => {
     return harness
   }
 
-  it('folds Skills, then Create, then Web until the left control group fits', async () => {
+  it('folds Create, then Web until the left control group fits', async () => {
     const fold = asFoldHarness(loadComposer())
     // The stub measure models a row that only fits once two controls are folded.
     fold.foldMeasureOverride.value = () => fold.foldedControls.value.length < 2
     await fold.updateFoldState()
-    expect(fold.foldedControls.value).toEqual(['skills', 'create'])
+    expect(fold.foldedControls.value).toEqual(['create', 'web'])
   })
 
   it('never folds past the foldable set, protecting Attach, mic, and Send', async () => {
     const fold = asFoldHarness(loadComposer())
     fold.foldMeasureOverride.value = () => true
     await fold.updateFoldState()
-    expect(fold.foldedControls.value).toEqual(['skills', 'create', 'web'])
+    expect(fold.foldedControls.value).toEqual(['create', 'web', 'goal'])
   })
 
   it('unfolds the last folded control in reverse order when space returns', async () => {
     const fold = asFoldHarness(loadComposer())
-    fold.foldedControls.value = ['skills', 'create', 'web']
-    // Fits once one control returns inline; restoring the second overflows again and stays folded.
-    fold.foldMeasureOverride.value = () => fold.foldedControls.value.length < 2
+    fold.foldedControls.value = ['create', 'web']
+    // The stub only overflows once the group is empty: restoring Create (the
+    // second control) overflows again and stays folded.
+    fold.foldMeasureOverride.value = () => fold.foldedControls.value.length === 0
     await fold.updateFoldState()
-    expect(fold.foldedControls.value).toEqual(['skills', 'create'])
+    expect(fold.foldedControls.value).toEqual(['create'])
 
     fold.foldMeasureOverride.value = () => false
     await fold.updateFoldState()
@@ -896,7 +901,7 @@ describe('Agent composer fit-based folding', () => {
 
   it('keeps an unfolded control restored instead of oscillating', async () => {
     const fold = asFoldHarness(loadComposer())
-    fold.foldedControls.value = ['skills']
+    fold.foldedControls.value = ['web']
     // Plenty of space: everything unfolds and stays unfolded.
     fold.foldMeasureOverride.value = () => false
     await fold.updateFoldState()
@@ -915,7 +920,7 @@ describe('Agent composer fit-based folding', () => {
       moreMenuOpen: { value: boolean }
     }
     await Vue.nextTick()
-    bindings.foldedControls.value = ['skills', 'create', 'web']
+    bindings.foldedControls.value = ['create', 'web']
     await Vue.nextTick()
     // The folded inline controls are removed from the action bar.
     expect(mounted.root.querySelector('.agent-composer__web-search-toggle')).toBeNull()
@@ -929,7 +934,6 @@ describe('Agent composer fit-based folding', () => {
     const moreMenu = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
     if (!moreMenu) throw new Error('More menu did not render')
     const titles = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).map(item => item.querySelector('.v-list-item-title')?.textContent?.trim())
-    expect(titles).toContain('Goal')
     const webItem = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).find(item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Web')
     if (!webItem) throw new Error('Folded Web menu item did not render')
     expect(webItem.getAttribute('role')).toBe('menuitemcheckbox')
@@ -937,6 +941,7 @@ describe('Agent composer fit-based folding', () => {
     expect(webItem.classList.contains('v-list-item--disabled')).toBe(true)
     const createTitles = titles.filter(title => title === 'Images' || title === 'Video')
     expect(createTitles).toEqual(['Images', 'Video'])
+    // Skills always live inside the More menu, folded or not.
     const skillsItem = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).find(item => item.getAttribute('aria-haspopup') === 'dialog')
     if (!skillsItem) throw new Error('Folded Skills submenu item did not render')
     expect(skillsItem.querySelector('.v-list-item-title')?.textContent?.trim()).toBe('Skills')
@@ -948,39 +953,63 @@ describe('Agent composer fit-based folding', () => {
     await Vue.nextTick()
     expect(mounted.root.querySelector('.agent-composer__web-search-toggle')).not.toBeNull()
     expect(mounted.root.querySelector('.agent-composer__create')).not.toBeNull()
-    expect(mounted.root.querySelector('.agent-composer__skill-button')).not.toBeNull()
+    expect(mounted.root.querySelector('.agent-composer__skill-button')).toBeNull()
     bindings.moreMenuOpen.value = true
     await Vue.nextTick()
     await Vue.nextTick()
     const reopened = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
     if (!reopened) throw new Error('Reopened More menu did not render')
     const reopenedTitles = Array.from(reopened.querySelectorAll<HTMLElement>('.v-list-item')).map(item => item.querySelector('.v-list-item-title')?.textContent?.trim())
-    expect(reopenedTitles).toEqual(['Goal'])
+    expect(reopenedTitles).toEqual(['Skills'])
   })
 })
 
 describe('Agent composer goal placement', () => {
-  it('moves Goal into the More menu while unset and exposes the menu item to enable it', () => {
+  it('keeps Goal as a direct inline control while unset', () => {
     const mounted = mountComposer({ initialDraft: '', initialMode: 'message' })
     expect(mounted.root.querySelector('.agent-composer__goal-chip')).toBeNull()
-    const more = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__more-button')
-    if (!more) throw new Error('More options button did not render')
-    expect(more.getAttribute('aria-label')).toBe('More options')
+    const goal = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__goal-toggle')
+    if (!goal) throw new Error('Goal control did not render')
+    expect(goal.textContent?.trim()).toBe('Goal')
+    expect(goal.getAttribute('title')).toContain('durable outcome')
   })
 
-  it('shows an editable Goal context chip when goal mode is on', async () => {
+  it('moves Goal into the More menu only when the fold logic folds it', async () => {
+    const mounted = mountComposer({ initialDraft: '', initialMode: 'message' })
+    await Vue.nextTick()
+    const bindings = lastBindings as unknown as { foldedControls: { value: string[] }, moreMenuOpen: { value: boolean } }
+    bindings.foldedControls.value = ['goal']
+    await Vue.nextTick()
+    await Vue.nextTick()
+    expect(mounted.root.querySelector('.agent-composer__goal-toggle')).toBeNull()
+    const more = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__more-button')
+    if (!more) throw new Error('More options button did not render')
+    bindings.moreMenuOpen.value = true
+    await Vue.nextTick()
+    await Vue.nextTick()
+    await Vue.nextTick()
+    const moreMenu = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
+    if (!moreMenu) throw new Error('More menu did not render')
+    const goalItem = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).find(item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Goal')
+    if (!goalItem) throw new Error('Folded Goal menu item did not render')
+    goalItem.click()
+    await Vue.nextTick()
+    expect(mounted.root.querySelector('.agent-composer__goal-chip')).not.toBeNull()
+  })
+
+  it('shows an editable Goal context chip when goal mode is on and restores the inline control', async () => {
     const mounted = mountComposer({ initialDraft: '', initialMode: 'goal' })
     const chip = mounted.root.querySelector<HTMLElement>('.agent-composer__goal-chip')
     if (!chip) throw new Error('Goal chip did not render')
     expect(chip.textContent?.trim()).toBe('Goal')
-    // While set, Goal leaves the More menu.
-    expect(mounted.root.querySelector('.agent-composer__more-button')).toBeNull()
+    // While set, the inline Goal control yields to the chip.
+    expect(mounted.root.querySelector('.agent-composer__goal-toggle')).toBeNull()
     const close = chip.querySelector<HTMLButtonElement>('.v-chip__close')
     if (!close) throw new Error('Goal chip close control did not render')
     close.click()
     await Vue.nextTick()
     expect(mounted.root.querySelector('.agent-composer__goal-chip')).toBeNull()
-    expect(mounted.root.querySelector('.agent-composer__more-button')).not.toBeNull()
+    expect(mounted.root.querySelector('.agent-composer__goal-toggle')).not.toBeNull()
   })
 })
 

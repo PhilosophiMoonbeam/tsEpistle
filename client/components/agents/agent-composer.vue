@@ -105,7 +105,7 @@
         :aria-autocomplete="skillsEnabled ? 'list' : undefined"
         :aria-haspopup="skillsEnabled ? 'listbox' : undefined"
         :placeholder="composerInputPlaceholder"
-        rows="2"
+        rows="1"
         variant="solo"
         flat
         hide-details
@@ -202,7 +202,7 @@
               aria-label="Choose creation tools"
               :title="selectedGenerationTools.length ? `${selectedGenerationTools.length} creation tool${selectedGenerationTools.length === 1 ? '' : 's'} enabled for the assistant` : 'Choose creation tools'"
               :disabled="attachDisabled"
-            >Create<span v-if="selectedGenerationTools.length" class="agent-composer__create-count">{{ selectedGenerationTools.length }}</span></v-btn>
+            >Create</v-btn>
           </template>
           <v-list density="compact" class="agent-composer__tool-menu" aria-label="Creation tools">
             <v-list-subheader>Available for the assistant to use</v-list-subheader>
@@ -240,53 +240,19 @@
           <v-icon icon="mdi-web" size="17" aria-hidden="true" />
           <span>Web</span>
         </label>
-        <v-menu content-class="agent-owned-overlay agent-composer__skill-menu-content" v-if="skillsEnabled && !isControlFolded('skills')" v-model="skillMenuOpen" :close-on-content-click="false">
-          <template #activator="{ props: activatorProps }">
-            <v-btn
-              :id="composerIds.skillsTrigger"
-              ref="skillsTrigger"
-              v-bind="activatorProps"
-              class="agent-composer__skill-button wiki-purpose-control"
-              :class="{
-                'wiki-purpose-control--open': skillMenuOpen,
-                'wiki-purpose-control--selected': selectedSkills.length > 0,
-                'agent-composer__skill-button--error': Boolean(skillsLoadError)
-              }"
-              data-purpose="success"
-              :data-state="skillMenuOpen ? 'active' : selectedSkills.length > 0 ? 'selected' : undefined"
-              variant="text"
-              :prepend-icon="skillsLoadError ? 'mdi-puzzle-remove-outline' : 'mdi-puzzle-outline'"
-              :color="skillsLoadError ? 'error' : undefined"
-              :disabled="disabled || sendInProgress"
-              :aria-label="skillsLoadError ? `Choose skills; the skill catalog is ${skills.length > 0 ? 'incomplete' : 'unavailable'}` : 'Choose skills for the next message'"
-              aria-haspopup="dialog"
-              :aria-controls="composerIds.skillsDialog"
-              :aria-expanded="skillMenuOpen"
-            >
-              <span>{{ selectedSkills.length > 0 ? `Skills (${selectedSkills.length})` : skillsLoadError ? skills.length > 0 ? 'Skills incomplete' : 'Skills unavailable' : 'Skills' }}</span>
-            </v-btn>
-          </template>
-          <AgentComposerSkillMenu
-            :items="skillMenuItems"
-            :skills-count="skills.length"
-            :skills-loading="skillsLoading"
-            :skills-load-error="skillsLoadError"
-            :skills-partial="skillsPartial"
-            :disabled="disabled"
-            :send-in-progress="sendInProgress"
-            :network-blocked="networkBlocked"
-            :invocation-limit="invocationLimit"
-            :selected-skill-version-ids="selectedSkillIds"
-            :preferred-version-ids="preferredMenuVersionIds"
-            :dialog-id="composerIds.skillsDialog"
-            :heading-id="composerIds.skillsHeading"
-            :description-id="composerIds.skillsDescription"
-            @toggle="toggleSkill"
-            @toggle-preference="togglePreference"
-            @manage-skills="manageSkills"
-            @retry-skills="retrySkills"
-          />
-        </v-menu>
+        <v-btn
+          v-if="goalsEnabled && !goalMode && !isControlFolded('goal')"
+          class="agent-composer__goal-toggle wiki-purpose-control"
+          :class="{ 'wiki-purpose-control--selected': goalMode }"
+          :data-state="goalMode ? 'selected' : undefined"
+          variant="text"
+          rounded="pill"
+          prepend-icon="mdi-target"
+          aria-label="Goal"
+          title="Define a durable outcome for multi-step tasks"
+          :disabled="disabled || sendInProgress || mediaBusy || mediaSubmission.attachmentIds.length > 0"
+          @click="goalMode = true"
+        >Goal</v-btn>
         <v-menu
           v-if="hasMoreMenuContent"
           content-class="agent-owned-overlay agent-composer__more-menu-content"
@@ -323,7 +289,7 @@
               <template #append><v-icon :icon="item.checked ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" size="20" aria-hidden="true" /></template>
             </v-list-item>
             <v-menu
-              v-if="skillsEnabled && isControlFolded('skills')"
+              v-if="skillsEnabled"
               content-class="agent-owned-overlay agent-composer__skill-menu-content"
               v-model="foldedSkillMenuOpen"
               location="end top"
@@ -626,7 +592,6 @@ watch(() => [props.initialMode, props.initialSkillVersionIds] as const, ([mode, 
 const composerRoot = useTemplateRef<{ $el?: HTMLElement } | HTMLElement>('composerRoot')
 const controlsGroup = useTemplateRef<HTMLElement | null>('controlsGroup')
 const messageInput = useTemplateRef<{ focus: () => void; $el?: HTMLElement }>('messageInput')
-const skillsTrigger = useTemplateRef<{ focus?: () => void; $el?: HTMLElement } | HTMLElement>('skillsTrigger')
 const dismissedCommandToken = ref<{ start: number; prefix: string } | null>(null)
 const activeCommandIndex = ref(0)
 const sendFailed = ref(false)
@@ -655,7 +620,6 @@ const composerIds = {
   commandLoading: `${composerId}-command-loading`,
   commandPartial: `${composerId}-command-partial`,
   commandEmpty: `${composerId}-command-empty`,
-  skillsTrigger: `${composerId}-skills-trigger`,
   skillsDialog: `${composerId}-skills-dialog`,
   skillsHeading: `${composerId}-skills-heading`,
   skillsDescription: `${composerId}-skills-description`,
@@ -692,7 +656,7 @@ const isPreferred = (versionId: string): boolean => {
  */
 const moreMenuItems = computed(() => {
   const items: Array<{ key: string; icon: string; label: string; subtitle?: string; checked?: boolean; disabled?: boolean; run: () => void }> = []
-  if (props.goalsEnabled && !goalMode.value) {
+  if (props.goalsEnabled && !goalMode.value && isControlFolded('goal')) {
     items.push({
       key: 'goal',
       icon: 'mdi-target',
@@ -737,19 +701,20 @@ const moreMenuItems = computed(() => {
 /**
  * Fit-based folding of low-priority controls into the More menu. There is no
  * device detection: the left control group is measured, and whenever it
- * overflows its one row the lowest-priority inline control (Skills, then
- * Create, then Web) moves into the More menu; when space returns the last
- * folded control is restored. Attach, the microphone, and Send/Stop never
- * fold, and the action bar never wraps. The fold state is UI-only.
+ * overflows its one row the lowest-priority inline control (Create, then Web)
+ * moves into the More menu; when space returns the last folded control is
+ * restored. Skills always live inside the More menu, and Goal replaces their
+ * former inline slot. Attach, the microphone, and Send/Stop never fold, and
+ * the action bar never wraps. The fold state is UI-only.
  */
-type FoldableControl = 'skills' | 'create' | 'web'
-const FOLDABLE_CONTROLS: readonly FoldableControl[] = ['skills', 'create', 'web']
+type FoldableControl = 'create' | 'web' | 'goal'
+const FOLDABLE_CONTROLS: readonly FoldableControl[] = ['create', 'web', 'goal']
 const foldedControls = ref<FoldableControl[]>([])
 const foldMeasureOverride = ref<(() => boolean) | null>(null)
 let foldResizeObserver: ResizeObserver | null = null
 const isControlFolded = (control: FoldableControl): boolean => foldedControls.value.includes(control)
 const hasMoreMenuContent = computed(() =>
-  moreMenuItems.value.length > 0 || (props.skillsEnabled && isControlFolded('skills'))
+  moreMenuItems.value.length > 0 || props.skillsEnabled
 )
 const measureControlsOverflow = (): boolean => {
   const override = foldMeasureOverride.value
@@ -1134,11 +1099,9 @@ const retrySkills = (): void => {
   emit('retrySkills')
 }
 const focusSkillsTrigger = async (): Promise<void> => {
-  await nextTick()
-  const trigger = skillsTrigger.value
-  if (trigger instanceof HTMLElement) trigger.focus()
-  else if (trigger?.$el instanceof HTMLElement) trigger.$el.focus()
-  else trigger?.focus?.()
+  // The inline Skills control no longer exists (Skills live in the More menu),
+  // so focus returns to the editor after the skill manager closes.
+  await focusInput()
 }
 const resetInput = (): void => {
   resizeInput()
@@ -1284,7 +1247,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .agent-composer {
-  --agent-composer-control-face-height: clamp(32px, calc(var(--wiki-control-height) * .78), 36px);
+  --agent-composer-control-face-height: clamp(28px, calc(var(--wiki-control-height) * .7), 31px);
   --agent-composer-control-hit-height: max(44px, var(--wiki-control-height));
   --agent-composer-control-hit-inset: calc((var(--agent-composer-control-hit-height) - var(--agent-composer-control-face-height)) / -2);
   --agent-composer-control-gap: clamp(5px, calc(var(--wiki-space-2) * .8), 8px);
@@ -1352,7 +1315,8 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__input :deep(.v-field__input) {
-  min-height: calc(var(--wiki-space-12) * 1.25);
+  /* One text line + the field padding: the editor starts as a single line. */
+  min-height: calc(var(--wiki-leading-body) * 1rem + var(--wiki-space-1) * 1.9);
   padding: calc(var(--wiki-space-1) * .9) var(--wiki-space-1);
 }
 
@@ -1361,8 +1325,8 @@ onBeforeUnmount(() => {
   -webkit-mask-image: none;
   mask-image: none;
   box-sizing: border-box;
-  min-height: calc(var(--wiki-space-12) * 1.25);
-  max-height: min(calc(var(--wiki-space-12) * 2.7), 30dvh);
+  min-height: calc(var(--wiki-leading-body) * 1rem);
+  max-height: min(calc(var(--wiki-leading-body) * 6rem), 30dvh);
   overflow-y: hidden;
   overscroll-behavior: contain;
   color: rgb(var(--v-theme-on-surface));
@@ -1477,8 +1441,12 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
 }
 
-/* Compact action faces retain a 44px effective pointer target through an invisible before-pseudo-element. */
-.agent-composer__skill-button,
+/* Uniform action faces: every composer control shares one height, font, and
+   pill shape, and retains a 44px effective pointer target through an invisible
+   before-pseudo-element. */
+.agent-composer__attach,
+.agent-composer__create,
+.agent-composer__goal-toggle,
 .agent-composer__web-search-toggle,
 .agent-composer__mic,
 .agent-composer__more-button,
@@ -1490,10 +1458,16 @@ onBeforeUnmount(() => {
   height: var(--agent-composer-control-face-height);
   min-height: var(--agent-composer-control-face-height);
   border-radius: var(--wiki-radius-pill);
+  font-family: inherit;
   font-size: var(--agent-composer-control-font-size);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: .01em;
 }
 
-.agent-composer__skill-button::before,
+.agent-composer__attach::before,
+.agent-composer__create::before,
+.agent-composer__goal-toggle::before,
 .agent-composer__web-search-toggle::before,
 .agent-composer__mic::before,
 .agent-composer__more-button::before,
@@ -1511,15 +1485,11 @@ onBeforeUnmount(() => {
   transform: translateX(-50%);
 }
 
-.agent-composer__skill-button {
-  padding-inline: var(--agent-composer-control-padding-inline);
-  font-weight: 500;
-  letter-spacing: .01em;
-  transition: background var(--wiki-motion-fast) var(--wiki-motion-ease), color var(--wiki-motion-fast) var(--wiki-motion-ease), border-color var(--wiki-motion-fast) var(--wiki-motion-ease);
-}
-
-.agent-composer__skill-button {
+.agent-composer__attach,
+.agent-composer__create,
+.agent-composer__goal-toggle {
   max-width: 100%;
+  padding-inline: var(--agent-composer-control-padding-inline);
 }
 .agent-composer__web-search {
   display: inline-flex;
@@ -1575,13 +1545,6 @@ onBeforeUnmount(() => {
   max-width: 100%;
 }
 
-.agent-composer__create-count {
-  margin-inline-start: calc(var(--wiki-space-1) * .5);
-  color: color-mix(in srgb, currentColor 72%, transparent);
-  font-size: var(--wiki-label-size);
-  font-variant-numeric: tabular-nums;
-}
-
 .agent-composer__tool-menu {
   min-width: 264px;
   max-width: min(320px, calc(100vw - 24px));
@@ -1635,7 +1598,6 @@ onBeforeUnmount(() => {
 .agent-composer__submit {
   min-width: calc(var(--wiki-space-12) * 1.9);
   box-shadow: var(--wiki-shadow-xs);
-  font-weight: 600;
   transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease), box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
@@ -1676,7 +1638,6 @@ onBeforeUnmount(() => {
 
 .agent-composer__stop {
   min-width: calc(var(--wiki-space-12) * 1.52);
-  font-weight: 600;
 }
 
 
@@ -1800,12 +1761,14 @@ onBeforeUnmount(() => {
     --agent-composer-control-hit-inset: 0px;
   }
 
-  .agent-composer__skill-button {
-    min-width: var(--agent-composer-control-min-width);
+  .agent-composer__attach,
+  .agent-composer__create,
+  .agent-composer__goal-toggle {
     padding-inline: calc(var(--wiki-space-2) * .9);
   }
 
-  .agent-composer__skill-button :deep(.v-btn__prepend) {
+  .agent-composer__attach :deep(.v-btn__prepend),
+  .agent-composer__create :deep(.v-btn__prepend) {
     margin: 0;
   }
 }

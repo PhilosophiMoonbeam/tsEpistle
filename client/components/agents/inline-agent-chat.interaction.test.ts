@@ -210,7 +210,6 @@ return {
   syncingComposition,
   composerRoot,
   messageInput,
-  skillsTrigger,
   dismissedCommandToken,
   activeCommandIndex,
   sendFailed,
@@ -835,14 +834,21 @@ describe('Inline Agent mobile panel controls', () => {
 })
 
 describe('Inline Agent workspace actions', () => {
-  it('keeps History and New chat direct, groups Memory and Pin into More, and labels the temporary state', async () => {
+  it('keeps History (icon-only, upper left) and New chat direct, groups Memory and Pin into More, and labels the temporary state', async () => {
     const mounted = mountInlineAgent(undefined, { isTemporary: true })
-    const actions = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__desktop-panel-btn, .inline-agent__session-action'))
+    const historyToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__history-toggle')
+    const newSession = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__session-action')
+    if (!historyToggle || !newSession) throw new Error('Header action controls did not render')
 
-    expect(actions.map(action => action.getAttribute('aria-label'))).toEqual([
-      'Open agent conversation history',
-      'New chat'
-    ])
+    // History replaced the Wiki Search shortcut with an icon-only toggle.
+    expect(historyToggle.getAttribute('aria-label')).toBe('History')
+    expect(historyToggle.getAttribute('title')).toBe('History')
+    expect(historyToggle.getAttribute('aria-expanded')).toBe('false')
+    expect(historyToggle.getAttribute('aria-controls')).toBe('agent-history-panel')
+    expect(historyToggle.textContent?.trim()).toBe('')
+    expect(newSession.getAttribute('aria-label')).toBe('New chat')
+    // No Wiki Search shortcut remains in the header controls.
+    expect(mounted.root.querySelector('.inline-agent__mobile-return')).toBeNull()
     const temporaryToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__temporary-toggle')
     if (!temporaryToggle) throw new Error('Temporary conversation control did not render')
     expect(temporaryToggle.textContent?.trim()).toBe('Temporary on')
@@ -936,7 +942,7 @@ describe('Inline Agent workspace actions', () => {
     expect(composer).not.toBeNull()
     expect(picker).toHaveLength(1)
     expect(picker?.[0]?.closest('.agent-composer__context-row')).not.toBeNull()
-    expect(mounted.root.querySelector('.inline-agent__session-action')?.textContent?.trim()).toBe('New chat')
+    expect(mounted.root.querySelector('.inline-agent__session-action')?.textContent?.trim()).toBe('New')
     expect(mounted.root.querySelector('.agent-composer__input textarea')).not.toBeNull()
   })
 
@@ -1203,17 +1209,15 @@ describe('Agent workspace action semantics', () => {
 
     expect(status.textContent?.trim()).toBe('Ready')
     expect(primary.children).toHaveLength(1)
-    // More options ends the left control group; the right group keeps only Send.
+    // Without skills and with nothing folded the composer renders no More button.
     const more = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__more-button')
-    expect(more?.getAttribute('aria-label')).toBe('More options')
-    expect(more?.closest('.agent-composer__context-controls')).not.toBeNull()
-    expect(primary.contains(more ?? null)).toBe(false)
+    expect(more).toBeNull()
     expect(submit?.tagName).toBe('BUTTON')
     expect(submit?.textContent?.trim()).toBe('Send')
     expect(primary.querySelector('.agent-composer__stop')).toBeNull()
     // Pin lives in the More menu; the header shows a pin indicator only when pinned.
     expect(mounted.root.querySelector('.inline-agent__chat-pin')).toBeNull()
-    expect(newChat?.textContent?.trim()).toBe('New chat')
+    expect(newChat?.textContent?.trim()).toBe('New')
     expect(newChat?.getAttribute('aria-label')).toBe('New chat')
     expect(moreMenu?.getAttribute('aria-label')).toBe('More agent actions')
     expect(moreMenu?.parentElement).toBe(headerActions)
@@ -1233,8 +1237,8 @@ describe('Agent workspace action semantics', () => {
     expect(stop?.tagName).toBe('BUTTON')
     expect(stop?.textContent?.trim()).toBe('Stop response')
     expect(primary.querySelector('.agent-composer__submit')).toBeNull()
-    // More options lives at the end of the left control group, not in the right group.
-    expect(mounted.root.querySelector('.agent-composer__more-button')).not.toBeNull()
+    // No More options button renders without skills enabled or folded controls.
+    expect(mounted.root.querySelector('.agent-composer__more-button')).toBeNull()
     const items = await openPanelMenu(mounted)
     const pinItem = items[3]
     expect(pinItem?.hasAttribute('disabled')).toBe(false)
