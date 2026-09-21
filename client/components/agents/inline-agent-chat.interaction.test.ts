@@ -590,8 +590,8 @@ const mountInlineAgent = (
     isTemporary: options.isTemporary ?? false,
     temporaryExpiry: '',
     temporaryHint: (options.isTemporary ?? false)
-      ? 'Temporary on. Hidden from history. Personal memory still applies. Turning it off keeps this conversation in history.'
-      : 'Temporary off. Messages save to history. Turning it on starts a new temporary conversation.',
+      ? 'Temporary on. Hidden from history. Personal memory still applies. Turning it off keeps this Temp chat in history.'
+      : 'Temporary off. Messages save to history. Turning it on starts a new Temp chat.',
     sessionNotice: '',
     closePanels: () => {
       historyOpen.value = false
@@ -854,7 +854,7 @@ describe('Inline Agent workspace actions', () => {
     expect(mounted.root.querySelector('.inline-agent__mobile-return')).toBeNull()
     const temporaryToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__temporary-toggle')
     if (!temporaryToggle) throw new Error('Temporary conversation control did not render')
-    expect(temporaryToggle.textContent?.trim()).toBe('Temporary on')
+    expect(temporaryToggle.textContent?.trim()).toBe('Temporary')
     expect(temporaryToggle.getAttribute('role')).toBe('switch')
     expect(temporaryToggle.getAttribute('aria-checked')).toBe('true')
     expect(temporaryToggle.classList.contains('inline-agent__temporary-toggle--active')).toBe(true)
@@ -877,9 +877,9 @@ describe('Inline Agent workspace actions', () => {
     const mounted = mountInlineAgent()
     const temporaryToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__temporary-toggle')
     if (!temporaryToggle) throw new Error('Temporary conversation control did not render')
-    expect(temporaryToggle.textContent?.trim()).toBe('Temporary off')
+    expect(temporaryToggle.textContent?.trim()).toBe('Temporary')
     expect(temporaryToggle.getAttribute('aria-checked')).toBe('false')
-    expect(temporaryToggle.getAttribute('title')).toContain('starts a new temporary conversation')
+    expect(temporaryToggle.getAttribute('title')).toContain('starts a new Temp chat')
     // The toggle drives the transition directly; no popover is rendered.
     expect(mounted.root.querySelector('.inline-agent__temporary-popover')).toBeNull()
 
@@ -892,7 +892,7 @@ describe('Inline Agent workspace actions', () => {
     const mounted = mountInlineAgent(undefined, { isTemporary: true })
     const retention = mounted.root.querySelector<HTMLElement>('.inline-agent__retention')
     expect(retention).not.toBeNull()
-    expect(retention?.textContent).toContain('Temporary conversation')
+    expect(retention?.textContent).toContain('Temp chat')
     expect(Array.from(retention?.querySelectorAll('button') ?? [])).toHaveLength(0)
   })
 
@@ -1218,7 +1218,7 @@ describe('Agent workspace action semantics', () => {
     expect(newChat?.getAttribute('aria-label')).toBe('New chat')
     expect(moreMenu?.getAttribute('aria-label')).toBe('More agent actions')
     expect(moreMenu?.parentElement).toBe(headerActions)
-    expect(temporaryToggle?.textContent?.trim()).toBe('Temporary off')
+    expect(temporaryToggle?.textContent?.trim()).toBe('Temporary')
     expect(pinIndicator).toBeNull()
     expect(composer?.querySelector('.inline-agent__chat-pin')).toBeNull()
     expect(mounted.root.querySelector('.agent-composer__hint')).toBeNull()
