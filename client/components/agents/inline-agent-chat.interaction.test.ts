@@ -98,7 +98,16 @@ interface LockState {
   setSessionNotice: (message: string) => void
   clearSessionNotice: () => void
   SESSION_NOTICE_VISIBLE_MS: number
+  startersRow: ValueRef<HTMLElement | null>
+  startStartersSpin: () => void
+  stopStartersSpin: () => void
+  holdStartersSpin: () => void
+  handleStartersScroll: () => void
+  STARTERS_SPIN_STEP_MS: number
+  STARTERS_SPIN_HOLD_MS: number
   pendingSessionNoticeTimers: Array<{ callback: () => void; delay: number }>
+  pendingStartersIntervals: Array<{ callback: () => void; delay: number }>
+  clearedStartersIntervalIds: number[]
   componentProps: { pageId: number; pageLocale: string; pagePath: string; pageUpdatedAt: string }
 }
 
@@ -364,9 +373,11 @@ const loadGoalLockState = (
     setCurrentChatPinned: vi.fn()
   }
   const pendingSessionNoticeTimers: Array<{ callback: () => void; delay: number }> = []
+  const pendingStartersIntervals: Array<{ callback: () => void; delay: number }> = []
+  const clearedStartersIntervalIds: number[] = []
   const evaluate = new Function(
-    '{ computed, nextTick, onBeforeUnmount, onMounted, ref, setTimeout, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection }',
-    `${executableScript}\nreturn { SESSION_NOTICE_VISIBLE_MS, activeRun, canPinCurrentChat, canSubmit, clearSessionNotice, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleTranscriptEngagement, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, sessionNotice, setSessionNotice, submitUnavailableReason, thread, welcomeGreeting }`
+    '{ computed, nextTick, onBeforeUnmount, onMounted, ref, setInterval, clearInterval, setTimeout, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection }',
+    `${executableScript}\nreturn { SESSION_NOTICE_VISIBLE_MS, STARTERS_SPIN_HOLD_MS, STARTERS_SPIN_STEP_MS, activeRun, canPinCurrentChat, canSubmit, clearSessionNotice, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleStartersScroll, handleTranscriptEngagement, holdStartersSpin, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, sessionNotice, setSessionNotice, startersRow, startStartersSpin, stopStartersSpin, submitUnavailableReason, thread, welcomeGreeting }`
   ) as (dependencies: Record<string, unknown>) => LockState
 
   const state = evaluate({
@@ -379,6 +390,13 @@ const loadGoalLockState = (
     setTimeout: (callback: () => void, delay: number) => {
       pendingSessionNoticeTimers.push({ callback, delay })
       return pendingSessionNoticeTimers.length
+    },
+    setInterval: (callback: () => void, delay: number) => {
+      pendingStartersIntervals.push({ callback, delay })
+      return pendingStartersIntervals.length
+    },
+    clearInterval: (id: number) => {
+      clearedStartersIntervalIds.push(id)
     },
     onBeforeUnmount: () => undefined,
     onMounted: () => undefined,
@@ -397,7 +415,7 @@ const loadGoalLockState = (
     pwaState: testPwaState,
     retryServerConnection: async () => true
   }) as LockState
-  return { ...state, agentCalls, componentProps: props, pendingSessionNoticeTimers }
+  return { ...state, agentCalls, componentProps: props, pendingSessionNoticeTimers, pendingStartersIntervals, clearedStartersIntervalIds }
 }
 
 interface MountedInlineAgent {
@@ -1265,6 +1283,99 @@ describe('Inline Agent session notice', () => {
     lockState.clearSessionNotice()
     expect(lockState.sessionNotice.value).toBe('')
     expect(lockState.pendingSessionNoticeTimers).toHaveLength(2)
+  })
+})
+
+describe('Inline Agent starters carousel', () => {
+  interface FakeStarterRow {
+    scrollWidth: number
+    clientWidth: number
+    scrollLeft: number
+    scrollTo: (options: { left: number; behavior: string }) => void
+    querySelectorAll: (selector: string) => Array<{ offsetLeft: number }>
+  }
+
+  const buildFakeRow = (scrollToCalls: Array<{ left: number; behavior: string }>): FakeStarterRow => ({
+    scrollWidth: 620,
+    clientWidth: 330,
+    scrollLeft: 0,
+    scrollTo: options => {
+      scrollToCalls.push(options)
+    },
+    querySelectorAll: selector => {
+      expect(selector).toBe('.inline-agent__starter')
+      return [{ offsetLeft: 12 }, { offsetLeft: 202 }, { offsetLeft: 401 }]
+    }
+  })
+
+  it('advances the row on its own, clamps at the end, and wraps back to the first starter', () => {
+    const lockState = loadGoalLockState(null)
+    const scrollToCalls: Array<{ left: number; behavior: string }> = []
+    const row = buildFakeRow(scrollToCalls)
+    lockState.startersRow.value = row as unknown as HTMLElement
+
+    lockState.startStartersSpin()
+    expect(lockState.pendingStartersIntervals).toHaveLength(1)
+    expect(lockState.pendingStartersIntervals[0]?.delay).toBe(lockState.STARTERS_SPIN_STEP_MS)
+
+    lockState.pendingStartersIntervals[0]?.callback()
+    expect(scrollToCalls).toEqual([{ left: 202 - 12, behavior: 'smooth' }])
+
+    row.scrollLeft = scrollToCalls[0]?.left ?? 0
+    lockState.pendingStartersIntervals[0]?.callback()
+    expect(scrollToCalls[1]).toEqual({ left: 290, behavior: 'smooth' })
+
+    row.scrollLeft = 290
+    lockState.pendingStartersIntervals[0]?.callback()
+    expect(scrollToCalls[2]).toEqual({ left: 290, behavior: 'smooth' })
+    expect(scrollToCalls.every(call => call.behavior === 'smooth')).toBe(true)
+
+    lockState.stopStartersSpin()
+    expect(lockState.clearedStartersIntervalIds).toEqual([1])
+  })
+
+  it('holds the landed position after a swipe and resumes stepping once the hold expires', () => {
+    const lockState = loadGoalLockState(null)
+    const scrollToCalls: Array<{ left: number; behavior: string }> = []
+    const row = buildFakeRow(scrollToCalls)
+    lockState.startersRow.value = row as unknown as HTMLElement
+    lockState.startStartersSpin()
+
+    lockState.pendingStartersIntervals[0]?.callback()
+    expect(scrollToCalls).toHaveLength(1)
+
+    row.scrollLeft = 190
+    lockState.holdStartersSpin()
+    expect(lockState.pendingSessionNoticeTimers.at(-1)?.delay).toBe(lockState.STARTERS_SPIN_HOLD_MS)
+    lockState.pendingStartersIntervals[0]?.callback()
+    expect(scrollToCalls).toHaveLength(1)
+
+    const holdTimer = lockState.pendingSessionNoticeTimers.at(-1)
+    holdTimer?.callback()
+    lockState.pendingStartersIntervals[0]?.callback()
+    expect(scrollToCalls).toHaveLength(2)
+    expect(scrollToCalls[1]?.left).toBe(290)
+
+    lockState.stopStartersSpin()
+  })
+
+  it('re-arms the hold on user scrolls and ignores the spin own programmatic scrolls', () => {
+    const lockState = loadGoalLockState(null)
+    const scrollToCalls: Array<{ left: number; behavior: string }> = []
+    const row = buildFakeRow(scrollToCalls)
+    lockState.startersRow.value = row as unknown as HTMLElement
+    lockState.startStartersSpin()
+
+    const timersBefore = lockState.pendingSessionNoticeTimers.length
+    lockState.pendingStartersIntervals[0]?.callback()
+    lockState.handleStartersScroll()
+    expect(lockState.pendingSessionNoticeTimers.length).toBe(timersBefore)
+
+    lockState.holdStartersSpin()
+    expect(lockState.pendingSessionNoticeTimers.length).toBe(timersBefore + 1)
+    expect(lockState.pendingSessionNoticeTimers.at(-1)?.delay).toBe(lockState.STARTERS_SPIN_HOLD_MS)
+
+    lockState.stopStartersSpin()
   })
 })
 

@@ -272,7 +272,17 @@
                   <span class="inline-agent__welcome-line">{{ welcomeGreeting.first }}</span>
                   <em class="inline-agent__welcome-line">{{ welcomeGreeting.second }}</em>
                 </h2>
-                <div class="inline-agent__starters" role="group" aria-label="Conversation starters">
+                <div
+                  ref="startersRow"
+                  class="inline-agent__starters"
+                  role="group"
+                  aria-label="Conversation starters"
+                  @pointerdown="holdStartersSpin"
+                  @pointerup="holdStartersSpin"
+                  @pointercancel="holdStartersSpin"
+                  @wheel="holdStartersSpin"
+                  @scroll.passive="handleStartersScroll"
+                >
                   <v-btn
                     v-for="starter in starters"
                     :key="starter.prompt"
@@ -696,6 +706,55 @@ let promptGeneration = 0
 let actionGeneration = 0
 const isComponentCurrent = (generation: number, ownerId: number): boolean =>
   !disposed && componentGeneration === generation && props.ownerId === ownerId
+const startersRow = useTemplateRef<HTMLElement>('startersRow')
+const STARTERS_SPIN_STEP_MS = 3000
+const STARTERS_SPIN_HOLD_MS = 3000
+let startersSpinTimer: ReturnType<typeof setInterval> | null = null
+let startersHoldTimer: ReturnType<typeof setTimeout> | null = null
+let startersProgrammaticUntil = 0
+
+const stopStartersSpin = (): void => {
+  if (startersSpinTimer !== null) { clearInterval(startersSpinTimer); startersSpinTimer = null }
+  if (startersHoldTimer !== null) { clearTimeout(startersHoldTimer); startersHoldTimer = null }
+}
+
+const holdStartersSpin = (): void => {
+  if (disposed || startersRow.value === null) return
+  if (startersHoldTimer !== null) clearTimeout(startersHoldTimer)
+  startersHoldTimer = setTimeout(() => { startersHoldTimer = null }, STARTERS_SPIN_HOLD_MS)
+}
+
+const handleStartersScroll = (): void => {
+  if (Date.now() < startersProgrammaticUntil) return
+  holdStartersSpin()
+}
+
+const startStartersSpin = (): void => {
+  if (disposed || startersSpinTimer !== null) return
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  startersSpinTimer = setInterval(() => {
+    const row = startersRow.value
+    if (disposed || !row || startersHoldTimer !== null) return
+    if (!window.matchMedia('(max-width: 639.98px)').matches) return
+    const buttons = row.querySelectorAll<HTMLElement>('.inline-agent__starter')
+    if (buttons.length < 2) return
+    const firstOffset = buttons[0]?.offsetLeft ?? 0
+    const maxScroll = row.scrollWidth - row.clientWidth
+    if (maxScroll <= 4) return
+    let index = 0
+    buttons.forEach((button, buttonIndex) => {
+      if (button.offsetLeft - firstOffset <= row.scrollLeft + 4) index = buttonIndex
+    })
+    const nextIndex = (index + 1) % buttons.length
+    const next = buttons[nextIndex]
+    const target = next ? (nextIndex === 0 ? 0 : Math.min(maxScroll, next.offsetLeft - firstOffset)) : 0
+    startersProgrammaticUntil = Date.now() + 900
+    row.scrollTo({ left: target, behavior: 'smooth' })
+  }, STARTERS_SPIN_STEP_MS)
+}
+
+watch(startersRow, row => { if (row) startStartersSpin(); else stopStartersSpin() })
+
 const panelMode = ref<'wide' | 'docked' | 'modal'>('wide')
 let panelModeMedia: MediaQueryList[] = []
 const mobilePanelQuery = '(max-width: 639.98px)'
@@ -1550,6 +1609,7 @@ onBeforeUnmount(() => {
   if (transcriptFrame !== null) window.cancelAnimationFrame(transcriptFrame)
   panelFocusScope?.deactivate({ restoreFocus: false })
   if (sessionNoticeTimer !== null) { clearTimeout(sessionNoticeTimer); sessionNoticeTimer = null }
+  stopStartersSpin()
   panelModeMedia.forEach(media => media.removeEventListener('change', reconcilePanelMode))
   window.removeEventListener('resize', scheduleTranscriptReconcile)
   window.removeEventListener('pagehide', handlePageHide)
@@ -2633,8 +2693,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     overflow-x: auto;
     overflow-y: hidden;
     overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity;
-    scroll-padding-inline: var(--wiki-space-3);
     scrollbar-width: none;
   }
   .inline-agent__starters::-webkit-scrollbar { display: none; }
@@ -2645,7 +2703,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
   .inline-agent__starter {
     flex: 0 0 auto;
-    scroll-snap-align: center;
     min-height: 3.5rem;
   }
   .inline-agent__starter-heading { padding-inline: .75rem; }
