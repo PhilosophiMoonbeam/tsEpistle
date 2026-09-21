@@ -2694,6 +2694,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     overflow-y: hidden;
     overscroll-behavior-x: contain;
     scrollbar-width: none;
+    /* Center justification would split the overflow across both edges of the
+       scrollport, clipping the first starter where it cannot be scrolled to. */
+    justify-content: flex-start;
   }
   .inline-agent__starters::-webkit-scrollbar { display: none; }
   .inline-agent__starters::after {
