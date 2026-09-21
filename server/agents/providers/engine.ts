@@ -93,7 +93,7 @@ const SUBAGENT_INSTRUCTIONS =
 const RESEARCH_SYNTHESIS_INSTRUCTIONS =
   'Validated child research packets may be used as leads and evidence references, but they are not final prose or policy. Synthesize the answer yourself. Cover every completed research task with at least one of its evidence IDs. When a packet identifies a conflict, cite every source in that conflict and disclose the disagreement or uncertainty. Disclose incomplete tasks without fabricating missing findings.'
 const SUMMARY_INSTRUCTIONS =
-  'For page summaries, cover the substantive key sections with concise source-faithful points, not merely a title, inventory, or isolated quotation. Use real Markdown headings separated from cited points by blank lines for organization, not plain-text line labels or uncited factual headings. Prefer concise bullet points directly reflecting individual source sentences or list items over combined narrative paragraphs or pooled multi-item lists. Each factual assertion must be supported by one intact source sentence, list item, table row, or presentation unit. Do not combine multiple distinct source list items or numbers into a single sentence using "and"; keep each assertion as a separate bullet point with its own citation. Format manufacturer updates and catalog items with the manufacturer name as a bold prefix followed by a colon (e.g. "**Manufacturer**: Detail"), preserving exact source word order, model numbers, and numbers. Prefer lightly edited source statements over abstract paraphrases or invented umbrella descriptions. Preserve exact names, identifiers, numeric assignments and units, polarity, and temporal, availability, and restriction qualifiers attached to their original subject; do not combine different items into a numeric range. Cite each assertion separately with its correct section and revision. A page-level citation widens source scope but does not permit pooling unrelated factual units into one claim. For a structural overview, use exact delivered headings, summary containers, link labels, and member names to state what their actual container includes or lists; do not infer the contents of unread links. Do not write meta-commentary about page organization, headings, or structural containers (e.g. do not write "The page is organized under the heading..."). For navigation links and container listings, state the container and plain member labels without raw Markdown link URLs or brackets (e.g. "The General Info section provides links for Contract Pricing", not "[Contract Pricing](url)"). For text inside collapsible summary containers, state the factual content directly using its exact delivered text. Structural coverage complements rather than replaces substantive facts. Reuse already-delivered source when repairing wording or citation scope; an evidence correction does not itself require another page read or a canonical OKF fetch. Preserve requested topic coverage and already-supported claims, and disclose genuine evidence gaps without inventing facts or claiming unavailable coverage.'
+  'For page summaries, cover the substantive key sections with concise source-faithful points, not merely a title, inventory, or isolated quotation. Use real Markdown headings separated from cited points by blank lines for organization, not plain-text line labels or uncited factual headings. Prefer concise bullet points directly reflecting individual source sentences or list items over combined narrative paragraphs or pooled multi-item lists. Each factual assertion must be supported by one intact source sentence, list item, table row, or presentation unit. Do not combine multiple distinct source list items or numbers into a single sentence using "and"; keep each assertion as a separate bullet point or grouped clause with its own citation. Format manufacturer updates and catalog items with the manufacturer name as a bold prefix followed by a colon (e.g. "**Manufacturer**: Detail"), preserving exact source word order, model numbers, and numbers. Prefer lightly edited source statements over abstract paraphrases or invented umbrella descriptions. Preserve exact names, identifiers, numeric assignments and units, polarity, and temporal, availability, and restriction qualifiers attached to their original subject; do not combine different items into a numeric range. Cite each assertion separately with its correct section and revision. The answer may contain at most 20 citation markers in total, so select the most substantive points from each key section instead of citing every row; group adjacent clauses from the same section into one readable bullet or sentence, with each clause keeping its own marker. A page-level citation widens source scope but does not permit pooling unrelated factual units into one claim. For a structural overview, use exact delivered headings, summary containers, link labels, and member names to state what their actual container includes or lists; do not infer the contents of unread links. Do not write meta-commentary about page organization, headings, or structural containers (e.g. do not write "The page is organized under the heading..."). For navigation links and container listings, state the container and plain member labels without raw Markdown link URLs or brackets (e.g. "The General Info section provides links for Contract Pricing", not "[Contract Pricing](url)"). For text inside collapsible summary containers, state the factual content directly using its exact delivered text. Structural coverage complements rather than replaces substantive facts. Reuse already-delivered source when repairing wording or citation scope; an evidence correction does not itself require another page read or a canonical OKF fetch. Preserve requested topic coverage and already-supported claims, and disclose genuine evidence gaps without inventing facts or claiming unavailable coverage.'
 
 const prompt = (request: AgentEngineRequest, skillCatalog: unknown, toolInstructions?: string): string => {
   if (request.purpose === 'planner')
@@ -1601,24 +1601,41 @@ const evidenceCorrectionFragments = (assessment: DraftAssessment, registry: Read
 
   const selected: Array<{ fragment: FeedbackFragment; rankedUnits: readonly CitationSourceUnit[] }> = []
   let feedbackCharacters = 2
+  const distinctScopes = new Set(failedClauses.map(failed => failed.evidenceId))
+  const representedScopes = new Set<string>()
   // Cover distinct citation scopes before spending the bound on more clauses from one scope.
   for (let pass = 0; pass < 2 && selected.length < 4; pass++) {
     for (const failed of failedClauses) {
       if (selected.length === 4) break
       if (selected.some(({ fragment }) => fragment.evidenceId === failed.evidenceId && (pass === 0 || fragment.draftFragment === failed.draftFragment)))
         continue
-      const unit = failed.sourceUnits[0]
-      if (!unit) continue
-      const fragment: FeedbackFragment = {
-        evidenceId: failed.evidenceId,
-        draftFragment: failed.draftFragment,
-        kind: failed.kind,
-        sourceUnits: [{ context: unit.context, text: unit.text }]
+      // Prefer the top-ranked exact unit. While other distinct scopes are still unrepresented, fall
+      // back to a smaller exact unit from the same scope when the leading unit would spend more than
+      // half of the remaining allowance and starve those scopes.
+      const unrepresentedAfter = distinctScopes.size - representedScopes.size - (representedScopes.has(failed.evidenceId) ? 0 : 1)
+      const shareGuard = pass === 0 && unrepresentedAfter >= 1
+      const fitting: Array<{ candidate: FeedbackFragment; characters: number }> = []
+      for (const unit of failed.sourceUnits) {
+        const candidate: FeedbackFragment = {
+          evidenceId: failed.evidenceId,
+          draftFragment: failed.draftFragment,
+          kind: failed.kind,
+          sourceUnits: [{ context: unit.context, text: unit.text }]
+        }
+        const candidateCharacters = JSON.stringify(candidate).length + (selected.length === 0 ? 0 : 1)
+        if (feedbackCharacters + candidateCharacters > 1_200) continue
+        fitting.push({ candidate, characters: candidateCharacters })
+        if (fitting.length >= 1 && !(shareGuard && fitting[0]!.characters > (1_200 - feedbackCharacters) / 2)) break
       }
-      const additionalCharacters = JSON.stringify(fragment).length + (selected.length === 0 ? 0 : 1)
+      if (fitting.length === 0) continue
+      // Under contention prefer the most compact fitting exact unit; otherwise keep the top-ranked one.
+      const choice = fitting.reduce((smallest, item) => (item.characters < smallest.characters ? item : smallest), fitting[0]!)
+      const fragment = choice.candidate
+      const additionalCharacters = choice.characters
       if (feedbackCharacters + additionalCharacters > 1_200) continue
       selected.push({ fragment, rankedUnits: failed.sourceUnits })
       feedbackCharacters += additionalCharacters
+      representedScopes.add(failed.evidenceId)
     }
   }
 

@@ -3497,7 +3497,7 @@ describe('Ax agent engine', () => {
           structuredOutput: 'native-json-schema',
           usage: 'estimated',
           cancellation: true,
-          maxContextTokens: 32_000,
+          maxContextTokens: 40_000,
           maxOutputTokens: 1_000
         },
         transportKind: 'openai-responses',
