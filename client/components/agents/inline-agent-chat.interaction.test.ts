@@ -900,12 +900,14 @@ describe('Inline Agent workspace actions', () => {
     const compactTitle = mounted.root.querySelector<HTMLElement>('.inline-agent__workspace-title--compact')
     const sessionTitle = mounted.root.querySelector<HTMLElement>('.inline-agent__session-title')
     const temporaryToggle = mounted.root.querySelector<HTMLElement>('.inline-agent__temporary-toggle')
-    if (!title || !wideTitle || !sessionTitle || !temporaryToggle) throw new Error('Workspace header did not render')
+    if (!title || !sessionTitle || !temporaryToggle) throw new Error('Workspace header did not render')
 
-    expect(wideTitle.textContent?.trim()).toBe('Wiki Agent')
+    expect(title.textContent?.trim()).toBe('Wiki Agent')
     expect(title.getAttribute('aria-label')).toBe('Wiki Agent')
+    expect(wideTitle).toBeNull()
     expect(compactTitle).toBeNull()
     // The conversation name occupies the title slot; the temporary control follows beneath it.
+    expect(sessionTitle.textContent?.trim()).toBe('Release planning')
     expect(sessionTitle.compareDocumentPosition(temporaryToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
