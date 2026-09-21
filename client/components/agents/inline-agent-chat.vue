@@ -50,7 +50,6 @@
             <div class="inline-agent__heading">
               <h2 :id="workspaceTitleId" aria-label="Wiki Agent">
                 <span class="inline-agent__workspace-title--wide">Wiki Agent</span>
-                <span class="inline-agent__workspace-title--compact">Agent</span>
               </h2>
               <div class="inline-agent__session-line">
                 <span class="inline-agent__session-title" :title="sessionTitle">{{ sessionTitle }}</span>
@@ -1765,10 +1764,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   line-height: 1.2;
 }
 
-.inline-agent__workspace-title--compact {
-  display: none;
-}
-
 .inline-agent__session-title {
   min-width: 0;
   max-width: 28rem;
@@ -2799,21 +2794,24 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__toolbar {
-    min-height: calc((var(--wiki-control-height) * 2) + var(--wiki-space-5) + env(safe-area-inset-top));
+    flex-wrap: nowrap;
+    min-height: calc(var(--wiki-control-height) + env(safe-area-inset-top));
     padding-block-start: max(0px, env(safe-area-inset-top));
     padding-inline: var(--wiki-space-2);
   }
   .inline-agent__toolbar :deep(.v-toolbar__content) {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-content: center;
+    align-items: center;
     min-height: inherit;
   }
   .inline-agent__toolbar-main {
-    flex: 1 0 100%;
+    flex: 1 1 auto;
+    min-width: 0;
     min-height: var(--wiki-control-height);
   }
   .inline-agent__progress {
-    inset-block-start: calc((var(--wiki-control-height) * 2) + var(--wiki-space-5) + env(safe-area-inset-top) - var(--wiki-space-1));
+    inset-block-start: calc(var(--wiki-control-height) + env(safe-area-inset-top) - var(--wiki-space-1));
   }
 
   .inline-agent__eyebrow {
@@ -2825,14 +2823,35 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
   .inline-agent__avatar { width: 32px !important; height: 32px !important; }
 
+  /* The brand title drops out of the visual header on phones; the h2 stays
+     only as the accessible label while the conversation name becomes the
+     visible title line. */
   .inline-agent__heading h2 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    border: 0;
+    padding: 0;
     overflow: hidden;
-    margin: 0;
-    text-overflow: ellipsis;
+    clip-path: inset(50%);
     white-space: nowrap;
   }
   .inline-agent__workspace-title--wide { display: none; }
-  .inline-agent__workspace-title--compact { display: inline; }
+
+  .inline-agent__session-line {
+    flex-wrap: wrap;
+    row-gap: 0;
+    margin-top: 0;
+  }
+  .inline-agent__session-title {
+    flex: 0 0 100%;
+    color: rgb(var(--v-theme-on-surface));
+    font-family: var(--wiki-font-heading);
+    font-size: 1rem;
+    font-weight: 720;
+    letter-spacing: -.015em;
+  }
 
 
   .inline-agent__desktop-panel-btn,
@@ -2845,12 +2864,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__panel-actions {
-    flex: 1 0 100%;
+    flex: 0 0 auto;
     min-height: var(--wiki-control-height);
     justify-content: flex-end;
     gap: var(--wiki-space-1);
-    padding-block-start: var(--wiki-space-1);
-    border-top: 1px solid var(--wiki-surface-border);
   }
 
   .inline-agent__toolbar :deep(.v-btn) {
@@ -2957,11 +2974,11 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 @media (max-width: 639.98px) and (max-height: 500px) {
   .inline-agent__toolbar {
-    min-height: calc((var(--wiki-control-height) * 2) + var(--wiki-space-5) + env(safe-area-inset-top));
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-2) + env(safe-area-inset-top));
   }
 
   .inline-agent__progress {
-    inset-block-start: calc((var(--wiki-control-height) * 2) + var(--wiki-space-5) + env(safe-area-inset-top) - var(--wiki-space-1));
+    inset-block-start: calc(var(--wiki-control-height) + var(--wiki-space-2) + env(safe-area-inset-top) - var(--wiki-space-1));
   }
 }
 

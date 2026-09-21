@@ -893,15 +893,20 @@ describe('Inline Agent workspace actions', () => {
     expect(mounted.temporaryMenuOpen.value).toBe(false)
   })
 
-  it('renders distinct desktop and mobile workspace titles', () => {
+  it('keeps the accessible brand label and lets the conversation title lead the header', () => {
     const mounted = mountInlineAgent()
     const title = mounted.root.querySelector<HTMLElement>('.inline-agent__heading h2')
     const wideTitle = mounted.root.querySelector<HTMLElement>('.inline-agent__workspace-title--wide')
     const compactTitle = mounted.root.querySelector<HTMLElement>('.inline-agent__workspace-title--compact')
-    if (!title || !wideTitle || !compactTitle) throw new Error('Responsive workspace title did not render')
+    const sessionTitle = mounted.root.querySelector<HTMLElement>('.inline-agent__session-title')
+    const temporaryToggle = mounted.root.querySelector<HTMLElement>('.inline-agent__temporary-toggle')
+    if (!title || !wideTitle || !sessionTitle || !temporaryToggle) throw new Error('Workspace header did not render')
 
     expect(wideTitle.textContent?.trim()).toBe('Wiki Agent')
-    expect(compactTitle.textContent?.trim()).toBe('Agent')
+    expect(title.getAttribute('aria-label')).toBe('Wiki Agent')
+    expect(compactTitle).toBeNull()
+    // The conversation name occupies the title slot; the temporary control follows beneath it.
+    expect(sessionTitle.compareDocumentPosition(temporaryToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('creates temporary and saved conversations with distinct retention', async () => {
