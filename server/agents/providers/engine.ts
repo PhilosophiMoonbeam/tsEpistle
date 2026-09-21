@@ -3855,11 +3855,10 @@ export class AxAgentEngine implements AgentEngine {
                 new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Agent could not produce source-grounded output', 409),
                 'provider_response'
               )
-            activePrompt.push({
-              role: 'assistant',
-              content: result.content,
-              ...(provider.continuationDialect === 'gemini-interactions-v1' && result.thoughtBlocks.length > 0 ? { thoughtBlocks: result.thoughtBlocks } : {})
-            })
+            // A rejected draft must not re-send its combined interaction state: the encoded blob
+            // duplicates the full prior interaction (delivered tool results and hidden thoughts),
+            // which alone can exceed the serialized-byte admission bound and starve compaction.
+            activePrompt.push({ role: 'assistant', content: result.content })
             activePrompt.push({
               role: 'user',
               content: request.purpose === 'subagent' ? subagentEvidenceCorrection(assessment.issues) : evidenceCorrection(assessment, citationRegistry)
