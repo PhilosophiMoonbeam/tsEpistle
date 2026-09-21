@@ -355,7 +355,7 @@ const props = defineProps<{
   networkBlocked?: boolean
 }>()
 const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void, media?: AgentMediaSubmission]; mediaSettled: []; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]]; updateGoogleSearch: [enabled: boolean] }>()
-const mediaComposer = useTemplateRef<{ clear: () => void; addFiles: (files: readonly File[]) => Promise<unknown>; editImage: (media: AgentMediaView) => Promise<boolean> }>('mediaComposer')
+const mediaComposer = useTemplateRef<{ clear: () => void; addFiles: (files: readonly File[]) => Promise<unknown>; editImage: (media: AgentMediaView) => Promise<boolean>; reattachMedia: (media: AgentMediaView) => Promise<boolean> }>('mediaComposer')
 const mediaSubmission = ref<AgentMediaSubmission>({ attachmentIds: [] })
 const mediaBusy = ref(false)
 const appendDictation = (text: string) => { draft.value = [draft.value.trimEnd(), text].filter(Boolean).join(' '); void focusInput() }
@@ -853,7 +853,8 @@ const editImage = async (media: AgentMediaView) => {
     await focusInput()
   }
 }
-defineExpose({ focusInput, focusSkillsTrigger, setDraft, editImage })
+const reattachMedia = async (media: AgentMediaView): Promise<boolean> => (await mediaComposer.value?.reattachMedia(media)) === true
+defineExpose({ focusInput, focusSkillsTrigger, setDraft, editImage, reattachMedia })
 onMounted(() => {
   mounted = true
   mountCaretMirror()

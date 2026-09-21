@@ -282,6 +282,7 @@
                 :google-search-suggestions="liveGoogleSearchSuggestions"
                 @suggest="preparePrompt"
                 @edit-image="composer?.editImage($event)"
+                @reattach="media => void composer?.reattachMedia(media)"
                 @ask-source="source => preparePrompt(`Help me understand “${source.title}”.`, source)"
                 @decision="handleDecision"
               />
@@ -591,7 +592,7 @@ const agents = useAgentsStore()
 const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, googleSearchSuggestions, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
-const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void> }>('composer')
+const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void>; reattachMedia: (media: AgentMediaView) => Promise<boolean> }>('composer')
 type ComponentRoot = { $el?: unknown }
 const historyTrigger = useTemplateRef<ComponentRoot | HTMLElement>('historyTrigger')
 const memoryTrigger = useTemplateRef<ComponentRoot | HTMLElement>('memoryTrigger')

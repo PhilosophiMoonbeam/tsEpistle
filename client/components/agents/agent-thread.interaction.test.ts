@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from '../../../server/test/bun-test.m
 import type { RenderFunction } from 'vue'
 import type {
   AgentArtifactView,
+  AgentMediaView,
   AgentMessageView,
   AgentProposalView,
   AgentSessionView,
@@ -14,6 +15,7 @@ import type {
   AgentToolCallView
 } from '../../../shared/agents/contracts.ts'
 import { agentLiveAnnouncement, buildAgentThreadPresentation } from './agent-thread-presentation.ts'
+import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import { wikiSourceSelectorFromHref } from '../../../shared/wiki-source.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/agent-thread.vue')
@@ -64,8 +66,9 @@ const evaluateAgentThread = new Function(
   'wikiSourceSelectorFromHref',
   'agentLiveAnnouncement',
   'buildAgentThreadPresentation',
+  'agentMediaContentUrl',
   `${executableScript}
-return { emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, sourceDomId, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel }`
+return { emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, sourceDomId, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel, reattachConfirmId, requestReattach, cancelReattach, confirmReattach, agentMediaContentUrl }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 
 const NullStub = Vue.defineComponent({
@@ -137,6 +140,17 @@ const makeMessage = (overrides: Partial<AgentMessageView> = {}): AgentMessageVie
   citations: [],
   createdAt: '2026-09-03T10:00:00.000Z',
   updatedAt: '2026-09-03T10:00:00.000Z',
+  ...overrides
+})
+
+const makeMedia = (overrides: Partial<AgentMediaView> = {}): AgentMediaView => ({
+  id: 'media-1',
+  kind: 'attachment',
+  filename: 'report.pdf',
+  mimeType: 'application/pdf',
+  byteLength: 2048,
+  available: true,
+  detached: false,
   ...overrides
 })
 
@@ -223,6 +237,7 @@ const mountThread = async (initialThread: AgentThreadState, initialConnection = 
   const thread = Vue.shallowRef(initialThread)
   const connection = Vue.ref(initialConnection)
   const emittedDecisions: unknown[][] = []
+  const emittedReattachments: unknown[][] = []
   const agentThread = Vue.defineComponent({
     name: 'AgentThreadInteractionHarness',
     props: {
@@ -232,7 +247,7 @@ const mountThread = async (initialThread: AgentThreadState, initialConnection = 
       canSubmit: { type: Boolean, default: true },
       networkBlocked: { type: Boolean, default: false }
     },
-    emits: ['askSource', 'suggest', 'decision'],
+    emits: ['askSource', 'suggest', 'decision', 'reattach'],
     setup(props, { emit }) {
       return evaluateAgentThread(
         Vue.computed,
@@ -242,7 +257,8 @@ const mountThread = async (initialThread: AgentThreadState, initialConnection = 
         () => emit,
         wikiSourceSelectorFromHref,
         agentLiveAnnouncement,
-        buildAgentThreadPresentation
+        buildAgentThreadPresentation,
+        agentMediaContentUrl
       )
     },
     render: renderAgentThread
@@ -253,7 +269,8 @@ const mountThread = async (initialThread: AgentThreadState, initialConnection = 
       Vue.h(agentThread, {
         thread: thread.value,
         connection: connection.value,
-        onDecision: (...args: unknown[]) => emittedDecisions.push(args)
+        onDecision: (...args: unknown[]) => emittedDecisions.push(args),
+        onReattach: (...args: unknown[]) => emittedReattachments.push(args)
       })
   })
   const app = Vue.createApp(harness)
@@ -268,7 +285,7 @@ const mountThread = async (initialThread: AgentThreadState, initialConnection = 
     host.remove()
   }
   mountedApps.push(unmount)
-  return { host, thread, connection, emittedDecisions, unmount }
+  return { host, thread, connection, emittedDecisions, emittedReattachments, unmount }
 }
 
 afterEach(() => {
@@ -400,5 +417,67 @@ describe('AgentThread live status and interaction behavior', () => {
     approval?.click()
     await settle()
     expect(mountedApproval.emittedDecisions).toEqual([[proposal.id, proposal.approval?.id, 'approved', undefined]])
+  })
+
+  it('renders detached attachments as muted chips without a download link and keeps unavailable media messaging', async () => {
+    const mounted = await mountThread(
+      makeThread('session-detached', {
+        messages: [
+          makeMessage({
+            status: 'complete',
+            content: 'Report attached.',
+            media: [
+              makeMedia({ detached: true }),
+              makeMedia({ id: 'media-2', filename: 'lost.pdf', available: false }),
+              makeMedia({ id: 'media-3', filename: 'live.pdf' })
+            ]
+          })
+        ]
+      })
+    )
+
+    const figures = mounted.host.querySelectorAll('.agent-message__media figure')
+    expect(figures.length).toBe(3)
+    const detached = figures[0] as HTMLElement
+    expect(detached.querySelector('.agent-message__media-detached')?.textContent).toContain('report.pdf · Detached from context')
+    expect(detached.querySelector('a')).toBeNull()
+    const detachedButtons = Array.from(detached.querySelectorAll('button')).map(button => button.textContent?.trim() ?? '')
+    expect(detachedButtons).toContain('Re-attach')
+    expect(figures[1]?.textContent).toContain('lost.pdf · No longer available')
+    expect(figures[2]?.querySelector('a')?.getAttribute('href')).toBe('/_api/agents/media/media-3/content')
+    expect(figures[2]?.querySelector('.agent-message__media-detached')).toBeNull()
+  })
+
+  it('requires confirmation before emitting re-attach for a detached attachment', async () => {
+    const media = makeMedia({ id: 'media-detach-confirm', detached: true })
+    const mounted = await mountThread(
+      makeThread('session-reattach', {
+        messages: [makeMessage({ status: 'complete', content: 'Summary of the report.', media: [media] })]
+      })
+    )
+
+    const figure = mounted.host.querySelector('.agent-message__media figure') as HTMLElement
+    const buttonWithText = (text: string): HTMLButtonElement =>
+      Array.from(figure.querySelectorAll('button')).find(button => button.textContent?.includes(text)) as HTMLButtonElement
+    expect(buttonWithText('Re-attach')).toBeTruthy()
+
+    buttonWithText('Re-attach')?.click()
+    await settle()
+    expect(mounted.emittedReattachments).toEqual([])
+    expect(buttonWithText('Confirm re-attach?')).toBeTruthy()
+    expect(buttonWithText('Cancel')).toBeTruthy()
+
+    buttonWithText('Cancel')?.click()
+    await settle()
+    expect(mounted.emittedReattachments).toEqual([])
+    expect(buttonWithText('Re-attach')).toBeTruthy()
+    expect(buttonWithText('Confirm re-attach?')).toBeUndefined()
+
+    buttonWithText('Re-attach')?.click()
+    await settle()
+    buttonWithText('Confirm re-attach?')?.click()
+    await settle()
+    expect(mounted.emittedReattachments).toEqual([[media]])
+    expect(buttonWithText('Re-attach')).toBeTruthy()
   })
 })

@@ -885,7 +885,8 @@ describe('Wiki asset attachment client boundary', () => {
       filename: 'report.pdf',
       mimeType: 'application/pdf',
       byteLength: 25,
-      available: true
+      available: true,
+      detached: false
     }
     const signal = new AbortController().signal
     const fetcher = vi.fn(

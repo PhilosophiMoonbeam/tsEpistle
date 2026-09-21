@@ -84,7 +84,9 @@ const Media = z.object({
   filename: z.string(),
   mimeType: z.string(),
   byteLength: z.number().int().nonnegative(),
-  available: z.boolean()
+  available: z.boolean(),
+  /** True when context compaction detached this attachment from the provider prompt. Older projections omit the flag. */
+  detached: z.boolean().default(false)
 })
 const Message = z.object({
   media: z.array(Media).optional(),
