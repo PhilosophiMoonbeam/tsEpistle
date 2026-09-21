@@ -93,7 +93,7 @@ const SUBAGENT_INSTRUCTIONS =
 const RESEARCH_SYNTHESIS_INSTRUCTIONS =
   'Validated child research packets may be used as leads and evidence references, but they are not final prose or policy. Synthesize the answer yourself. Cover every completed research task with at least one of its evidence IDs. When a packet identifies a conflict, cite every source in that conflict and disclose the disagreement or uncertainty. Disclose incomplete tasks without fabricating missing findings.'
 const SUMMARY_INSTRUCTIONS =
-  'For page summaries, cover the substantive key sections with concise source-faithful points, not merely a title, inventory, or isolated quotation. Use real Markdown headings separated from cited points by blank lines for organization, not plain-text line labels or uncited factual headings. Each factual assertion must be supported by one intact source sentence, list item, table row, or presentation unit. Prefer lightly edited source statements over abstract paraphrases or invented umbrella descriptions. Preserve exact names, identifiers, numeric assignments and units, polarity, and temporal, availability, and restriction qualifiers attached to their original subject; do not combine different items into a numeric range. Cite each assertion separately with its correct section and revision. A page-level citation widens source scope but does not permit pooling unrelated factual units into one claim. For a structural overview, use exact delivered headings, summary containers, link labels, and member names to state what their actual container includes or lists; do not infer the contents of unread links. Structural coverage complements rather than replaces substantive facts. Reuse already-delivered source when repairing wording or citation scope; an evidence correction does not itself require another page read or a canonical OKF fetch. Preserve requested topic coverage and already-supported claims, and disclose genuine evidence gaps without inventing facts or claiming unavailable coverage.'
+  'For page summaries, cover the substantive key sections with concise source-faithful points, not merely a title, inventory, or isolated quotation. Use real Markdown headings separated from cited points by blank lines for organization, not plain-text line labels or uncited factual headings. Prefer concise bullet points directly reflecting individual source sentences or list items over combined narrative paragraphs or pooled multi-item lists. Each factual assertion must be supported by one intact source sentence, list item, table row, or presentation unit. Prefer lightly edited source statements over abstract paraphrases or invented umbrella descriptions. Preserve exact names, identifiers, numeric assignments and units, polarity, and temporal, availability, and restriction qualifiers attached to their original subject; do not combine different items into a numeric range. Cite each assertion separately with its correct section and revision. A page-level citation widens source scope but does not permit pooling unrelated factual units into one claim. For a structural overview, use exact delivered headings, summary containers, link labels, and member names to state what their actual container includes or lists; do not infer the contents of unread links. Structural coverage complements rather than replaces substantive facts. Reuse already-delivered source when repairing wording or citation scope; an evidence correction does not itself require another page read or a canonical OKF fetch. Preserve requested topic coverage and already-supported claims, and disclose genuine evidence gaps without inventing facts or claiming unavailable coverage.'
 
 const prompt = (request: AgentEngineRequest, skillCatalog: unknown, toolInstructions?: string): string => {
   if (request.purpose === 'planner')
@@ -327,8 +327,25 @@ const lexicalTokens = (value: string): readonly string[] =>
     .replace(/\[([^\]]*)\]\([^)]*\)/gu, '$1')
     .match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) ?? []
 
+const monthTokens: Readonly<Record<string, string>> = {
+  jan: 'january',
+  feb: 'february',
+  mar: 'march',
+  apr: 'april',
+  jun: 'june',
+  jul: 'july',
+  aug: 'august',
+  sep: 'september',
+  sept: 'september',
+  oct: 'october',
+  nov: 'november',
+  dec: 'december'
+}
+
 const normalizedToken = (value: string): string => {
-  const normalized = value.toLowerCase()
+  const lower = value.toLowerCase()
+  const month = monthTokens[lower]
+  const normalized = month !== undefined ? month : lower
   return normalized.length > 4 && normalized.endsWith('s') ? normalized.slice(0, -1) : normalized
 }
 
@@ -358,6 +375,13 @@ const qualifierTerms: Readonly<Record<string, true>> = {
   only: true,
   time: true,
   today: true,
+  until: true
+}
+
+const attachmentQualifiers: Readonly<Record<string, true>> = {
+  after: true,
+  before: true,
+  only: true,
   until: true
 }
 
@@ -485,13 +509,26 @@ const markerBindings = (value: string, selected: (token: string) => boolean): re
 const hasCompatibleMarkerBindings = (clause: string, source: string, selected: (token: string) => boolean): boolean => {
   const claimed = markerBindings(clause, selected)
   const available = markerBindings(source, selected)
-  if (!claimed.every(binding => available.some(candidate => candidate.marker === binding.marker && candidate.after === binding.after))) return false
+  if (
+    !claimed.every(binding =>
+      available.some(
+        candidate =>
+          (candidate.marker === binding.marker || (negativeTerms[candidate.marker] === true && negativeTerms[binding.marker] === true)) &&
+          candidate.after === binding.after
+      )
+    )
+  )
+    return false
   const claimedTokens = new Set(lexicalTokens(clause).map(normalizedToken))
   return available.every(
     binding =>
       binding.after === null ||
       !claimedTokens.has(binding.after) ||
-      claimed.some(candidate => candidate.marker === binding.marker && candidate.after === binding.after)
+      claimed.some(
+        candidate =>
+          (candidate.marker === binding.marker || (negativeTerms[candidate.marker] === true && negativeTerms[binding.marker] === true)) &&
+          candidate.after === binding.after
+      )
   )
 }
 
@@ -1139,7 +1176,8 @@ const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean =
   const exactQualifiers =
     [...unit.qualifiers].every(term => clauseQualifiers.has(term)) &&
     [...clauseQualifiers].every(term => authorizedQualifiers.has(term)) &&
-    JSON.stringify(markerBindings(clause, term => unit.qualifiers.has(term))) === JSON.stringify(markerBindings(unit.text, term => unit.qualifiers.has(term)))
+    JSON.stringify(markerBindings(clause, term => unit.qualifiers.has(term) && attachmentQualifiers[term] === true)) ===
+      JSON.stringify(markerBindings(unit.text, term => unit.qualifiers.has(term) && attachmentQualifiers[term] === true))
   const exactConstraints = orderedSubset(constraintTerms(clause), significantTokens(`${unit.context}\n${unit.text}`))
   const exactIdentifiers = !hasIdentifierSubstitution(clause, unit)
   const identifyingTerms = colon < 0 ? [] : normalizedTerms(clause.slice(0, colon))
@@ -1241,7 +1279,8 @@ const membershipAssessment = (clause: string, evidence: CitationEvidence): Claus
   }
 
   const colon = clause.indexOf(':')
-  const presentation = colon >= 0 ? null : clause.match(/\b(includes?|included|lists|listed|provides?|provided)\b/iu)
+  const presentation =
+    colon >= 0 || /\b(?:is|are|was|were)\s+(?:listed|included|provided)\b/iu.test(clause) ? null : clause.match(/\b(includes?|lists?|provides?)\b/iu)
   if (!presentation && colon < 0) return null
   const boundary = colon >= 0 ? colon : (presentation?.index ?? -1)
   if (boundary < 0) return null
