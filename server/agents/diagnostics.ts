@@ -492,6 +492,8 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
     const id = String(row.id)
     const timeline = eventsByRun.get(id) ?? []
     const diagnostics = analyzeTools(timeline)
+    const terminalFailure = timeline.find(event => event.type === 'run.failed')
+    const failureContext = terminalFailure === undefined ? undefined : terminalFailure.data.diagnostics
     const run = {
       id,
       userMessageId: row.userMessageId,
@@ -527,6 +529,7 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
               sha256: row.completionAssessmentSha256
             },
       error: row.errorCode === null ? null : { code: row.errorCode, message: row.errorMessage },
+      ...(failureContext === undefined || typeof failureContext !== 'object' ? {} : { failureContext }),
       queuedAt: iso(row.queuedAt as Date | string),
       startedAt: nullableIso(row.startedAt as Date | string | null),
       updatedAt: iso(row.updatedAt as Date | string),
