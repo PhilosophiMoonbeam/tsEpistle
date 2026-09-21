@@ -721,6 +721,8 @@ describe('Ax agent engine', () => {
       '- Northstar ships only 12 crates per order. **Aster freight is rechecked before confirmation.** _Boreal invoices are archived._',
       '- Display only the literal `Banner. _Shipping is free._` as a test string.',
       '- Alpha routing. Orders ship only today.',
+      '### [**2/90 Signs**](/manufacturers/290)',
+      '- General Increase: `+8% LIST` | January 1, 2026',
       '',
       '{unrelated braces remain source content}',
       '',
@@ -779,9 +781,9 @@ describe('Ax agent engine', () => {
       'Fence token Kappa remains literal.[[cite:page:1:revision:9:section:1]]',
       'Chair assignments map om to 250 lb.[[cite:page:1:revision:9:section:1]]',
       'om chairs are provided.[[cite:page:1:revision:9:section:1]]',
-      'Aster freight is rechecked before confirmation.[[cite:page:1:revision:9:section:1]]',
-      'Boreal invoices are archived.[[cite:page:1:revision:9:section:1]]',
+      'Aster freight is rechecked before confirmation; Boreal invoices are archived.[[cite:page:1:revision:9:section:1]]',
       'Orders ship only today.[[cite:page:1:revision:9:section:1]]',
+      '**2/90 Signs**: General Increase: `+8% LIST` | January 1, 2026.[[cite:page:1:revision:9:section:1]]',
       'MFG Directory includes Website, Contact, Quote Form, and Legacy MFGs; MFG Quotes are listed.[[cite:page:1:revision:9:section:2]]',
       'Acme Corporate Office: Indiana orders route through the "Midwest" contact.[[cite:page:1:revision:9:section:4]]',
       'Legacy MFGs: We No Longer Represent.[[cite:page:1:revision:9:section:2]]'
@@ -932,6 +934,8 @@ describe('Ax agent engine', () => {
     ['compound-list qualifier relocation', 'Northstar only ships 12 crates per order.[[cite:page:1:revision:9:section:1]]'],
     ['inline-code literal promotion', 'Shipping is free.[[cite:page:1:revision:9:section:1]]'],
     ['unlabeled fragment membership fallback', 'Alpha routing is listed.[[cite:page:1:revision:9:section:1]]'],
+    ['heading numeric assignment swap', '**2/90 Signs**: General Increase: `+8% LIST` | January 2, 2026.[[cite:page:1:revision:9:section:1]]'],
+    ['heading subject numeric swap', '**3/90 Signs**: General Increase: `+8% LIST` | January 1, 2026.[[cite:page:1:revision:9:section:1]]'],
     [
       'unsupported long prefix',
       `${Array.from({ length: 600 }, (_value, index) => `unsupported${index}`).join(' ')} Terms remain valid for 30 days.[[cite:page:1:revision:9:section:1]]`
@@ -996,6 +1000,8 @@ describe('Ax agent engine', () => {
         '- Northstar ships only 12 crates per order. **Aster freight is rechecked before confirmation.** _Boreal invoices are archived._',
         '- Display only the literal `Banner. _Shipping is free._` as a test string.',
         '- Alpha routing. Orders ship only today.',
+        '### [**2/90 Signs**](/manufacturers/290)',
+        '- General Increase: `+8% LIST` | January 1, 2026',
         '- OM chairs are provided.',
         'discount 10 percent, freight 20 percent.',
         'Terms remain valid for 30 days after delivery.',
