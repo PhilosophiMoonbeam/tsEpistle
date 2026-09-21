@@ -70,45 +70,22 @@
                   role="img"
                   aria-label="Pinned conversation"
                 />
-                <v-menu
-                  v-model="temporaryMenuOpen"
-                  content-class="agent-owned-overlay"
-                  location="bottom start"
-                  attach=".inline-agent"
+                <!-- Direct retention toggle: the tooltip carries the description and
+                     the click itself switches temporary mode (begun conversations are
+                     kept in history; unstarted ones save after the first message). -->
+                <button
+                  class="inline-agent__temporary-toggle"
+                  :class="{ 'inline-agent__temporary-toggle--active': isTemporary }"
+                  type="button"
+                  role="switch"
+                  :aria-checked="isTemporary"
+                  :title="temporaryHint"
+                  :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
+                  @click="isTemporary ? keepConversation() : startTemporaryChat()"
                 >
-                  <template #activator="{ props: temporaryMenuProps }">
-                    <button
-                      v-bind="temporaryMenuProps"
-                      class="inline-agent__temporary-toggle"
-                      :class="{ 'inline-agent__temporary-toggle--active': isTemporary }"
-                      type="button"
-                      :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
-                      :aria-expanded="temporaryMenuOpen"
-                      aria-haspopup="dialog"
-                    >
-                      <v-icon icon="mdi-timer-sand-complete" size="14" aria-hidden="true" />
-                      <span>Temporary {{ isTemporary ? 'on' : 'off' }}</span>
-                      <v-icon icon="mdi-chevron-down" size="14" aria-hidden="true" />
-                    </button>
-                  </template>
-                  <div class="inline-agent__temporary-popover" role="dialog" aria-label="Temporary conversation mode">
-                    <div class="inline-agent__temporary-popover-row">
-                      <span id="inline-agent-temporary-label" class="inline-agent__temporary-popover-title">Temporary conversation</span>
-                      <button
-                        type="button"
-                        class="inline-agent__temporary-switch"
-                        role="switch"
-                        :aria-checked="isTemporary"
-                        aria-labelledby="inline-agent-temporary-label"
-                        :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
-                        @click="isTemporary ? keepConversation() : startTemporaryChat()"
-                      />
-                    </div>
-                    <p class="inline-agent__temporary-popover-copy">Hidden from history<span v-if="temporaryExpiry"> · Expires {{ temporaryExpiry }}</span>. Personal memory still applies.</p>
-                    <p v-if="!isTemporary" class="inline-agent__temporary-popover-copy">Turning it on opens a new conversation. This conversation stays right where it is.</p>
-                    <p v-else class="inline-agent__temporary-popover-copy">Turning it off keeps this conversation in history with its messages.</p>
-                  </div>
-                </v-menu>
+                  <v-icon icon="mdi-timer-sand-complete" size="14" aria-hidden="true" />
+                  <span>Temporary {{ isTemporary ? 'on' : 'off' }}</span>
+                </button>
               </div>
             </div>
           </div>
@@ -211,7 +188,6 @@
             <strong>Temporary conversation</strong>
             <p>Hidden from history<span v-if="temporaryExpiry"> · Expires {{ temporaryExpiry }}</span>. Personal memory still applies.</p>
           </div>
-          <v-btn variant="text" size="small" prepend-icon="mdi-bookmark-outline" :loading="keepingConversation" :disabled="sessionMutationBusy || loading || sending || connectionBlocked || !workspaceReady" :title="connectionBlocked ? connectionRequiredMessage : undefined" @click="keepConversation">Keep conversation</v-btn>
         </div>
         <p v-else-if="sessionNotice" class="inline-agent__session-notice" role="status">{{ sessionNotice }}</p>
         <div class="inline-agent__body">
@@ -622,7 +598,6 @@ const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTr
 type ComponentRoot = { $el?: unknown }
 const historyTrigger = useTemplateRef<ComponentRoot | HTMLElement>('historyTrigger')
 const panelMenuTrigger = useTemplateRef<ComponentRoot | HTMLElement>('panelMenuTrigger')
-const temporaryMenuOpen = ref(false)
 const historyPanel = useTemplateRef<HTMLElement>('historyPanel')
 const memoryPanel = useTemplateRef<HTMLElement>('memoryPanel')
 const panelScrim = useTemplateRef<HTMLElement>('panelScrim')
@@ -856,6 +831,10 @@ const temporaryExpiry = computed(() => {
   return Number.isNaN(date.valueOf()) ? '' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 })
 const sessionTitle = computed(() => thread.value?.session.title || (isTemporary.value ? 'Temporary conversation' : 'New chat'))
+/** Tooltip description for the direct Temporary toggle; the click performs the action. */
+const temporaryHint = computed(() => isTemporary.value
+  ? `Temporary on. Hidden from history${temporaryExpiry.value ? ` · Expires ${temporaryExpiry.value}` : ''}. Personal memory still applies. Turning it off keeps this conversation in history.`
+  : 'Temporary off. Messages save to history. Turning it on starts a new temporary conversation.')
 const connectionLabel = computed(() => connectionBlocked.value
   ? 'Connection required'
   : loading.value
@@ -1188,10 +1167,7 @@ const createSession = async (retention: 'saved' | 'temporary'): Promise<void> =>
   }
 }
 const newTemporarySession = (): Promise<void> => createSession('temporary')
-const startTemporaryChat = async (): Promise<void> => {
-  temporaryMenuOpen.value = false
-  await newTemporarySession()
-}
+const startTemporaryChat = (): Promise<void> => newTemporarySession()
 const newSession = (): Promise<void> => createSession('saved')
 const isVisibleTrigger = (element: HTMLElement | null): element is HTMLElement => {
   if (!element || !element.isConnected || element.getClientRects().length === 0) return false
@@ -1768,7 +1744,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__session-title {
-  flex: 0 1 auto;
+  flex: 0 0 100%;
   min-width: 0;
   max-width: 28rem;
   color: rgb(var(--v-theme-on-surface));
@@ -1855,7 +1831,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__session-line {
   display: flex;
   min-width: 0;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  row-gap: 0;
   align-items: center;
   gap: var(--wiki-space-2);
 }
@@ -1910,83 +1887,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   outline-offset: var(--wiki-focus-offset);
 }
 
-.inline-agent__temporary-popover {
-  display: grid;
-  gap: var(--wiki-space-2);
-  min-width: min(18rem, calc(100vw - var(--wiki-space-8)));
-  max-width: 20rem;
-  padding: var(--wiki-space-3);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-radius-lg, .75rem);
-  background: rgb(var(--v-theme-surface));
-  box-shadow: var(--wiki-shadow-md, 0 .5rem 1rem rgba(0, 0, 0, .12));
-}
-
-.inline-agent__temporary-popover-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--wiki-space-2);
-}
-
-.inline-agent__temporary-popover-title {
-  font-weight: var(--wiki-label-weight);
-  font-size: var(--wiki-label-size);
-}
-
-.inline-agent__temporary-switch {
-  position: relative;
-  flex: 0 0 auto;
-  width: 2.75rem;
-  height: 1.5rem;
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 38%, transparent);
-  border-radius: var(--wiki-radius-pill);
-  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent);
-  cursor: pointer;
-  transition: background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
-}
-
-.inline-agent__temporary-switch::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: .1875rem;
-  width: 1rem;
-  height: 1rem;
-  border-radius: 50%;
-  background: rgb(var(--v-theme-surface));
-  box-shadow: var(--wiki-shadow-xs);
-  transform: translateY(-50%);
-  transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease), background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
-}
-
-.inline-agent__temporary-switch[aria-checked='true'] {
-  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 40%, transparent);
-  background: color-mix(in srgb, var(--wiki-ambient-accent) 55%, transparent);
-}
-
-.inline-agent__temporary-switch[aria-checked='true']::after {
-  transform: translate(1.25rem, -50%);
-  background: rgb(var(--v-theme-surface));
-}
-
-.inline-agent__temporary-switch:focus-visible {
-  outline: .125rem solid var(--wiki-focus-color);
-  outline-offset: var(--wiki-focus-offset);
-}
-
-.inline-agent__temporary-switch:disabled {
-  opacity: .5;
-  cursor: default;
-}
-
-.inline-agent__temporary-popover-copy {
-  margin: 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
-  font-size: var(--wiki-label-size);
-  line-height: 1.45;
-}
-
 .inline-agent__more-menu {
   order: 3;
   min-width: var(--wiki-control-height);
@@ -2035,7 +1935,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 @media (max-width: 639.98px) {
   .inline-agent__retention { flex-wrap: wrap; gap: .5rem; }
   .inline-agent__retention-copy { flex-basis: calc(100% - 2rem); }
-  .inline-agent__retention > .v-btn { margin-inline-start: 1.9rem; }
 }
 
 .inline-agent__body {
@@ -2836,15 +2735,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
   .inline-agent__avatar { width: 28px !important; height: 28px !important; }
 
-  .inline-agent__session-line {
-    flex-wrap: wrap;
-    margin-top: 0;
-  }
-  /* Keep the conversation title on its own full-width row so it never
-     collapses to zero under the temporary toggle on narrow screens. */
-  .inline-agent__session-title {
-    flex: 0 0 100%;
-  }
   /* Keep the full on/off wording visible on the subtitle line by dropping the
      decorative icons that would overflow the narrow identity column. */
   .inline-agent__temporary-toggle :deep(.v-icon) {
