@@ -5,7 +5,7 @@ import { canonicalJson } from '../helpers/canonical-json.ts'
 import { AgentRepositoryError } from './repository.ts'
 
 export const AGENT_COMPACTION_VERSION = 1
-export const AGENT_COMPACTION_MAX_SUMMARY_BYTES = 16_000
+export const AGENT_COMPACTION_MAX_SUMMARY_BYTES = 32_768
 export const AGENT_COMPACTION_OUTCOMES = ['context_compacted', 'context_compaction_rejected'] as const
 export const AGENT_GROUNDED_HISTORY_DAYS = 2 * 365
 
@@ -84,6 +84,7 @@ export interface AgentCompactionPolicy {
   readonly summaryBytes: number
   readonly narrativeTokens: number
   readonly triggerExposureTokens: number
+  readonly turnBoundaryTriggerExposureTokens: number
   readonly targetExposureTokens: number
   readonly recentExposureTokens: number
 }
@@ -94,13 +95,15 @@ export const agentCompactionSha256 = (value: string): string => createHash('sha2
 export const agentCompactionSummaryBytes = (content: string): number => Buffer.byteLength(JSON.stringify(content), 'utf8')
 
 export const agentCompactionPolicy = (contextTokens: number, profileOutputTokens: number, ordinaryOutputTokens: number): AgentCompactionPolicy => {
-  const summaryOutputTokens = Math.max(1, Math.min(4_096, profileOutputTokens, Math.floor(contextTokens / 32)))
-  const triggerExposureTokens = Math.max(0, Math.min(135_000, Math.floor(contextTokens * 0.75), contextTokens - ordinaryOutputTokens - 2 * summaryOutputTokens))
+  const summaryOutputTokens = Math.max(1, Math.min(8_192, profileOutputTokens, Math.floor(contextTokens / 32)))
+  const reserve = Math.max(0, contextTokens - ordinaryOutputTokens - 2 * summaryOutputTokens)
+  const triggerExposureTokens = Math.max(0, Math.min(reserve, Math.floor(contextTokens * 0.9)))
   return {
     summaryOutputTokens,
     summaryBytes: Math.max(1, Math.min(AGENT_COMPACTION_MAX_SUMMARY_BYTES, Math.floor(contextTokens / 8))),
-    narrativeTokens: Math.max(1, Math.min(2_000, Math.floor(summaryOutputTokens / 2))),
+    narrativeTokens: Math.max(1, Math.min(4_096, Math.floor(summaryOutputTokens / 2))),
     triggerExposureTokens,
+    turnBoundaryTriggerExposureTokens: Math.max(0, Math.min(triggerExposureTokens, Math.floor(contextTokens * 0.75))),
     targetExposureTokens: Math.max(0, Math.min(Math.floor(contextTokens * 0.6), triggerExposureTokens - summaryOutputTokens)),
     recentExposureTokens: Math.max(1, Math.min(20_000, Math.floor(contextTokens / 8)))
   }

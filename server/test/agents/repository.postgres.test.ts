@@ -1,4 +1,5 @@
 import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
+import { up as addAgentMediaContextState } from '../../db/migrations/tsepistle-000047-agent-media-context-state.ts'
 import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 
@@ -453,6 +454,7 @@ postgresAdmissionSuite('PostgreSQL agent admission authority', () => {
     secondDb = knexModule({ client: 'pg', connection: connection ?? undefined, searchPath: [admissionSchema], pool: { min: 0, max: 4 } })
     await createAdmissionTables(db)
     await addAgentMedia(db)
+    await addAgentMediaContextState(db)
   })
 
   beforeEach(async () => {

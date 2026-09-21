@@ -138,12 +138,16 @@ export const planAgentContextCompaction = (input: {
   readonly canCompactHistory: boolean
   readonly gemini: boolean
   readonly force?: boolean
+  /** Compact at the relaxed turn-boundary threshold: the agent has finished responding and the user's turn is next. */
+  readonly eager?: boolean
+  /** Restrict planning to the durable history scope (used by post-answer compaction; active state does not survive the run). */
+  readonly scope?: 'all' | 'history'
   readonly ordinaryExposure: (state: AgentCompactionPromptState) => AgentCompactionRequestExposure
   readonly summaryExposure: (prompt: AxChatRequest['chatPrompt']) => AgentCompactionRequestExposure
   readonly cost: (totalTokens: number) => number
 }): AgentCompactionPlan | null => {
   const initial = input.ordinaryExposure(input.state)
-  if (!input.force && initial.totalExposureTokens <= input.policy.triggerExposureTokens) return null
+  if (!input.force && initial.totalExposureTokens <= (input.eager === true ? input.policy.turnBoundaryTriggerExposureTokens : input.policy.triggerExposureTokens)) return null
   let state = input.state
   const windows: AgentCompactionWindow[] = []
   let inputTokens = 0
@@ -151,7 +155,7 @@ export const planAgentContextCompaction = (input: {
   let totalTokens = 0
   let costMicros = 0
 
-  for (const scope of ['history', 'active'] as const) {
+  for (const scope of input.scope === 'history' ? (['history'] as const) : (['history', 'active'] as const)) {
     if (scope === 'history' && !input.canCompactHistory) continue
     while (input.ordinaryExposure(state).totalExposureTokens > input.policy.targetExposureTokens) {
       const messages = scope === 'history' ? state.conversation : state.active

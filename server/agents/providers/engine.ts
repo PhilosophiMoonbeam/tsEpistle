@@ -2302,14 +2302,42 @@ const conversationFor = (
   return { conversation, sourceIndexes, historySummary }
 }
 
+/** Sums measured provider token counts for attachment references; reports whether any reference is still unmeasured. */
+const measuredPromptMediaTokens = (
+  chatPrompt: AxChatRequest['chatPrompt'],
+  measured: ReadonlyMap<string, number>
+): { readonly total: number; readonly unmeasured: boolean } => {
+  let total = 0
+  let unmeasured = false
+  for (const message of chatPrompt) {
+    if (message.role !== 'user' || !Array.isArray(message.content)) continue
+    for (const part of message.content) {
+      if (part.type !== 'file' || !('fileUri' in part) || !part.fileUri.startsWith('wiki-media:')) continue
+      const tokens = measured.get(part.fileUri.slice('wiki-media:'.length))
+      if (tokens === undefined) unmeasured = true
+      else total += tokens
+    }
+  }
+  return { total, unmeasured }
+}
+
 const fullProviderExposureFor = (
   provider: AgentProviderService,
   tools: ProviderTools | null,
   chatPrompt: AxChatRequest['chatPrompt'],
-  maxOutputTokens: number
+  maxOutputTokens: number,
+  measuredMediaTokens?: ReadonlyMap<string, number>
 ): ProviderExposure => {
   const exposure = providerExposureFor(provider, tools, chatPrompt, maxOutputTokens)
-  const inputExposureTokens = Math.max(exposure.inputExposureTokens, exposure.serializedRequestBytes)
+  let inputExposureTokens = Math.max(exposure.inputExposureTokens, exposure.serializedRequestBytes)
+  if (measuredMediaTokens !== undefined) {
+    // Match the dispatch admission formula exactly once every referenced attachment has a measured count.
+    const media = measuredPromptMediaTokens(chatPrompt, measuredMediaTokens)
+    if (!media.unmeasured) {
+      inputExposureTokens = exposure.serializedRequestBytes + media.total
+      return { ...exposure, inputExposureTokens, totalExposureTokens: safeUsageAddition(inputExposureTokens, maxOutputTokens, 'Context exposure') }
+    }
+  }
   return { ...exposure, inputExposureTokens, totalExposureTokens: safeUsageAddition(inputExposureTokens, maxOutputTokens, 'Context exposure') }
 }
 
@@ -2320,7 +2348,10 @@ const compactionPlanFor = (
   state: AgentCompactionPromptState,
   maxOutputTokens: number,
   canCompactHistory: boolean,
-  force = false
+  force = false,
+  measuredMediaTokens?: ReadonlyMap<string, number>,
+  eager = false,
+  scope: 'all' | 'history' = 'all'
 ) => {
   const policy = agentCompactionPolicy(provider.capabilities.maxContextTokens, provider.capabilities.maxOutputTokens, maxOutputTokens)
   return planAgentContextCompaction({
@@ -2329,9 +2360,12 @@ const compactionPlanFor = (
     contextTokens: provider.capabilities.maxContextTokens,
     canCompactHistory,
     force,
+    eager,
+    scope,
     gemini: provider.continuationDialect === 'gemini-interactions-v1',
-    ordinaryExposure: current => fullProviderExposureFor(provider, tools, [systemMessage, ...current.conversation, ...current.active], maxOutputTokens),
-    summaryExposure: chatPrompt => fullProviderExposureFor(provider, null, chatPrompt, policy.summaryOutputTokens),
+    ordinaryExposure: current =>
+      fullProviderExposureFor(provider, tools, [systemMessage, ...current.conversation, ...current.active], maxOutputTokens, measuredMediaTokens),
+    summaryExposure: chatPrompt => fullProviderExposureFor(provider, null, chatPrompt, policy.summaryOutputTokens, measuredMediaTokens),
     cost: tokens => agentProviderCostMicros(provider.pricing, 0, 0, tokens)
   })
 }
@@ -2619,6 +2653,8 @@ export class AxAgentEngine implements AgentEngine {
   readonly #factory: AgentProviderFactory
   readonly #actions: AgentActionSessionProvider | undefined
   readonly #preparePdf: typeof prepareAgentPdf
+  /** Provider-measured prompt tokens per attachment id, kept across runs for compaction planning. */
+  readonly #measuredMediaPromptTokens = new Map<string, number>()
 
   constructor(factory: AgentProviderFactory, actions?: AgentActionSessionProvider, preparePdf: typeof prepareAgentPdf = prepareAgentPdf) {
     this.#factory = factory
@@ -2882,6 +2918,38 @@ export class AxAgentEngine implements AgentEngine {
             }
           }
         )
+      // Persist measured prompt tokens per attachment so later compaction planning uses real media exposure.
+      if (sources.size > 1) {
+        for (const [reference, source] of sources) {
+          const sourceParts = expanded.get(reference) ?? []
+          const sourceContents = sourceParts.map(part =>
+            part.type === 'text'
+              ? part
+              : {
+                  type: part.mimeType === 'application/pdf' ? ('document' as const) : ('image' as const),
+                  uri: part.fileUri,
+                  mime_type: part.mimeType
+                }
+          )
+          const sourceTokens = await provider.transport.countTokens(model, sourceContents, request.signal)
+          this.#measuredMediaPromptTokens.set(source.file.id, sourceTokens)
+          try {
+            await source.file.recordPromptTokens?.(sourceTokens)
+          } catch {
+            /* measured-token persistence is best-effort */
+          }
+        }
+      } else {
+        const only = sources.values().next().value
+        if (only !== undefined) {
+          this.#measuredMediaPromptTokens.set(only.file.id, mediaTokens)
+          try {
+            await only.file.recordPromptTokens?.(mediaTokens)
+          } catch {
+            /* measured-token persistence is best-effort */
+          }
+        }
+      }
       return {
         chatPrompt: chatPrompt.map(message =>
           message.role !== 'user' || typeof message.content === 'string'
@@ -3585,7 +3653,14 @@ export class AxAgentEngine implements AgentEngine {
         activeEnds: activeBatchEnds,
         activeSummary
       })
-      const compactContext = async (turn: number, turnTools: ProviderTools | null, maximumOutputTokens: number, force = false): Promise<void> => {
+      const compactContext = async (
+        turn: number,
+        turnTools: ProviderTools | null,
+        maximumOutputTokens: number,
+        force = false,
+        eager = false,
+        scope: 'all' | 'history' = 'all'
+      ): Promise<void> => {
         if (sequenceForNextTurn !== undefined || request.purpose === 'planner') return
         const system = systemMessageFor(turnTools)
         const canCompactHistory =
@@ -3593,7 +3668,14 @@ export class AxAgentEngine implements AgentEngine {
           request.compaction !== undefined &&
           request.compaction.sourcePrefixSha256.length === request.messages.length &&
           request.messages.every(message => message.canonicalSource !== undefined)
-        const plan = compactionPlanFor(provider, turnTools, system, contextState(), maximumOutputTokens, canCompactHistory, force)
+        const measuredMediaTokens = new Map<string, number>()
+        for (const message of request.messages) {
+          for (const attachment of message.attachments ?? []) {
+            const tokens = this.#measuredMediaPromptTokens.get(attachment.id) ?? (attachment.promptTokens ?? undefined)
+            if (tokens !== undefined) measuredMediaTokens.set(attachment.id, tokens)
+          }
+        }
+        const plan = compactionPlanFor(provider, turnTools, system, contextState(), maximumOutputTokens, canCompactHistory, force, measuredMediaTokens, eager, scope)
         if (!plan || failedCompactions.has(plan.windows[0]!.sourceSha256)) return
         const currentFits = (): boolean =>
           serializedProviderRequestBytes(provider, turnTools, [system, ...conversation, ...activePrompt], maximumOutputTokens) + maximumOutputTokens <=
@@ -3779,7 +3861,9 @@ export class AxAgentEngine implements AgentEngine {
         )
         let bounded: { readonly chatPrompt: AxChatRequest['chatPrompt']; readonly maxOutputTokens: number }
         try {
-          await compactContext(turn + 1, tools, requestedMaxOutputTokens)
+          // First dispatch of a run: the previous run has finished responding and the user's turn is next,
+          // so the relaxed turn-boundary threshold applies.
+          await compactContext(turn + 1, tools, requestedMaxOutputTokens, false, turn === 0)
           remainingTokens = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
           bounded = boundedChatPrompt(provider, tools, systemMessage, conversation, activePrompt, requestedMaxOutputTokens)
         } catch (error) {
@@ -3968,6 +4052,14 @@ export class AxAgentEngine implements AgentEngine {
           )}`
           await presentAcceptedContent(acceptedContent, sink)
           await publishGoogleSearchSuggestions()
+          // The agent has finished responding and the user's turn is next: compact eagerly so the
+          // next dispatch starts lean. The answer is already delivered, so this pass is best-effort;
+          // failures keep the uncompacted history and never fail the completed response.
+          try {
+            await compactContext(turn + 2, null, requestedMaxOutputTokens, false, true, 'history')
+          } catch {
+            /* post-answer compaction is opportunistic; the completed answer stands on its own */
+          }
           const citations = answerCitations(assessment.citationIds, citationRegistry)
           return {
             inputTokens,

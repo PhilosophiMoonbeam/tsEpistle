@@ -241,6 +241,8 @@ export interface AgentMediaView {
   readonly mimeType: string
   readonly byteLength: number
   readonly available: boolean
+  /** True when context compaction detached this attachment from the provider prompt. */
+  readonly detached: boolean
 }
 
 export interface AgentGoogleSearchCitation {

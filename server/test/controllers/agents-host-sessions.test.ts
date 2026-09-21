@@ -25,6 +25,7 @@ import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 import { up as addAgentGoals } from '../../db/migrations/2.5.157.ts'
 import { up as addAgentGoalBudgetTiers } from '../../db/migrations/tsepistle-000042-agent-goal-budget-tiers.ts'
 import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
+import { up as addAgentMediaContextState } from '../../db/migrations/tsepistle-000047-agent-media-context-state.ts'
 import assetHelper from '../../helpers/asset.ts'
 import { createAgentMediaTestDatabase } from '../agents/media-database.ts'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
@@ -593,6 +594,7 @@ describe('ordinary-origin agent session API', () => {
     ;({ db, destroy: destroyDatabase } = await createAgentMediaTestDatabase())
     await createTables(db)
     await addAgentMedia(db)
+    await addAgentMediaContextState(db)
     await db('agentProviderProfileVersions').insert({
       id: '00000000-0000-4000-8000-000000000070',
       policies: JSON.stringify({
@@ -4044,6 +4046,7 @@ describe('ordinary-origin agent API routing', () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
     await createTables(db)
     await addAgentMedia(db)
+    await addAgentMediaContextState(db)
     const app = express()
     app.use(cookieParser())
     app.use(session({ secret: 'ordinary-agent-host-test-secret', resave: false, saveUninitialized: true }))
