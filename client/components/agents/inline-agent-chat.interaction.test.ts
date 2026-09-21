@@ -420,6 +420,8 @@ const mountInlineAgent = (
   const historyOpen = Vue.ref(false)
   const memoryOpen = Vue.ref(false)
   const panelMenuOpen = Vue.ref(false)
+  const temporaryMenuOpen = Vue.ref(false)
+  const temporaryCalls: string[] = []
   const composerFocused = lockState?.composerFocused ?? Vue.ref(false)
   const handleComposerFocusIn =
     lockState?.handleComposerFocusIn ??
@@ -493,6 +495,9 @@ const mountInlineAgent = (
     historyOpen,
     memoryOpen,
     panelMenuOpen,
+    temporaryMenuOpen,
+    isCurrentChatPinned: options.isCurrentChatPinned ?? false,
+    startTemporaryChat: () => undefined,
     memoryMutationBusy: false,
     panelMode: 'modal',
     initializationError: '',
@@ -606,6 +611,14 @@ const mountInlineAgent = (
   ])
     context[method] = () => undefined
 
+  context.keepConversation = () => {
+    temporaryCalls.push('keep')
+  }
+  context.startTemporaryChat = () => {
+    temporaryCalls.push('start')
+    temporaryMenuOpen.value = false
+  }
+
   const componentStub = Vue.defineComponent({
     inheritAttrs: false,
     setup(_props, { attrs }) {
@@ -694,14 +707,14 @@ const mountInlineAgent = (
   app.mount(host)
 
   const root = host.querySelector<HTMLElement>('.inline-agent')
-  const activator = host.querySelector<HTMLElement>('[aria-label="Open Agent panels: conversation history and memory"]')
+  const activator = host.querySelector<HTMLElement>('[aria-label="More agent actions"]')
   if (!root || !activator) throw new Error('Inline Agent mobile panel controls did not render')
   const unmount = (): void => {
     app.unmount()
     host.remove()
   }
   mountedApps.push(unmount)
-  return { activator, composerFocused, historyOpen, memoryOpen, root, transcriptFollowing, unmount }
+  return { activator, composerFocused, historyOpen, memoryOpen, root, temporaryCalls, temporaryMenuOpen, transcriptFollowing, unmount }
 }
 
 const resolveDescribedBy = (control: HTMLElement): HTMLElement[] => {
@@ -753,10 +766,15 @@ const openPanelMenu = async (mounted: MountedInlineAgent): Promise<HTMLElement[]
   expect(list?.getAttribute('role')).toBe('list')
   expect(list?.getAttribute('role')).not.toBe('menu')
   const items = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__panel-menu-item'))
-  expect(items.map(item => item.querySelector<HTMLElement>('.v-list-item-title')?.textContent?.trim())).toEqual(['Conversation history', 'Agent memory'])
+  expect(items.map(item => item.querySelector<HTMLElement>('.v-list-item-title')?.textContent?.trim())).toEqual([
+    'Return to Wiki Search',
+    'Conversation history',
+    'Agent memory',
+    'Pin chat'
+  ])
   expect(items.every(item => item.getAttribute('role') === 'listitem')).toBe(true)
   expect(items.every(item => item.getAttribute('role') !== 'menu')).toBe(true)
-  expect(items.every(item => item.hasAttribute('tabindex'))).toBe(true)
+  expect(items.every(item => item.hasAttribute('tabindex') || item.classList.contains('v-list-item--disabled'))).toBe(true)
   return items
 }
 
@@ -768,8 +786,8 @@ afterEach(() => {
 describe('Inline Agent mobile panel controls', () => {
   it('keeps both History and Memory pointer-activatable and closes the menu', async () => {
     for (const [index, panel] of [
-      [0, 'history'],
-      [1, 'memory']
+      [1, 'history'],
+      [2, 'memory']
     ] as const) {
       const mounted = mountInlineAgent()
       const items = await openPanelMenu(mounted)
@@ -789,26 +807,62 @@ describe('Inline Agent mobile panel controls', () => {
 })
 
 describe('Inline Agent workspace actions', () => {
-  it('keeps History and Memory available and exposes direct New, Pin, and Temporary controls', async () => {
+  it('keeps History and New chat direct, groups Memory and Pin into More, and labels the temporary state', async () => {
     const mounted = mountInlineAgent(undefined, { isTemporary: true })
     const actions = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__desktop-panel-btn, .inline-agent__session-action'))
 
     expect(actions.map(action => action.getAttribute('aria-label'))).toEqual([
       'Open agent conversation history',
-      'Manage agent memory',
-      'New conversation',
-      'Pin conversation',
-      'Temporary conversation'
+      'New chat'
     ])
-    const activeTemporary = mounted.root.querySelector<HTMLElement>('.inline-agent__temporary-session')
-    if (!activeTemporary) throw new Error('Temporary conversation control did not render')
-    expect(activeTemporary.getAttribute('aria-pressed')).toBe('true')
-    expect(activeTemporary.getAttribute('data-state')).toBe('active')
-    expect(activeTemporary.classList.contains('v-btn--variant-text')).toBe(true)
-    expect(activeTemporary.classList.contains('v-btn--variant-tonal')).toBe(false)
-    expect(activeTemporary.getAttribute('title')).toBe('Current temporary conversation')
+    const temporaryToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__temporary-toggle')
+    if (!temporaryToggle) throw new Error('Temporary conversation control did not render')
+    expect(temporaryToggle.textContent?.trim()).toBe('Temporary on')
+    expect(temporaryToggle.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(temporaryToggle.getAttribute('aria-expanded')).toBe('false')
+    expect(temporaryToggle.classList.contains('inline-agent__temporary-toggle--active')).toBe(true)
 
-    await openPanelMenu(mounted)
+    const items = await openPanelMenu(mounted)
+    const pinItem = items[3]
+    if (!pinItem) throw new Error('Pin menu item did not render')
+    expect(pinItem.querySelector<HTMLElement>('.v-list-item-title')?.textContent?.trim()).toBe('Pin chat')
+
+    mounted.temporaryMenuOpen.value = true
+    await settle()
+    const popover = mounted.root.querySelector<HTMLElement>('.inline-agent__temporary-popover')
+    expect(popover?.getAttribute('role')).toBe('dialog')
+    const temporarySwitch = popover?.querySelector<HTMLButtonElement>('.inline-agent__temporary-switch')
+    expect(temporarySwitch?.getAttribute('role')).toBe('switch')
+    expect(temporarySwitch?.getAttribute('aria-checked')).toBe('true')
+    expect(popover?.textContent).toContain('Hidden from history')
+    expect(popover?.textContent).toContain('Personal memory still applies')
+
+    temporarySwitch?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await settle()
+    expect(mounted.temporaryCalls).toEqual(['keep'])
+  })
+
+  it('explains that starting a temporary chat opens a new conversation before switching', async () => {
+    const mounted = mountInlineAgent()
+    const temporaryToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__temporary-toggle')
+    if (!temporaryToggle) throw new Error('Temporary conversation control did not render')
+    expect(temporaryToggle.textContent?.trim()).toBe('Temporary off')
+
+    temporaryToggle.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await settle()
+    expect(temporaryToggle.getAttribute('aria-expanded')).toBe('true')
+    const popover = mounted.root.querySelector<HTMLElement>('.inline-agent__temporary-popover')
+    const temporarySwitch = popover?.querySelector<HTMLButtonElement>('.inline-agent__temporary-switch')
+    expect(temporarySwitch?.getAttribute('aria-checked')).toBe('false')
+    expect(popover?.textContent).toContain('opens a new conversation')
+    expect(popover?.textContent).toContain('stays')
+
+    const startButton = Array.from(popover?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(button => button.textContent?.trim() === 'Start temporary chat')
+    expect(startButton).toBeTruthy()
+    startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await settle()
+    expect(mounted.temporaryCalls).toEqual(['start'])
+    expect(mounted.temporaryMenuOpen.value).toBe(false)
   })
 
   it('renders distinct desktop and mobile workspace titles', () => {
@@ -847,7 +901,7 @@ describe('Inline Agent workspace actions', () => {
     expect(composer).not.toBeNull()
     expect(picker).toHaveLength(1)
     expect(picker?.[0]?.closest('.agent-composer__context-row')).not.toBeNull()
-    expect(mounted.root.querySelector('.inline-agent__session-action')?.textContent?.trim()).toBe('New')
+    expect(mounted.root.querySelector('.inline-agent__session-action')?.textContent?.trim()).toBe('New chat')
     expect(mounted.root.querySelector('.agent-composer__input textarea')).not.toBeNull()
   })
 
@@ -1100,14 +1154,16 @@ describe('Inline Agent latest response dock', () => {
 })
 
 describe('Agent workspace action semantics', () => {
-  it('keeps the accessible live status before Send and places Pin beside New in the header', () => {
+  it('keeps the accessible live status before Send and keeps pin state out of the header row', () => {
     const mounted = mountInlineAgent()
     const { primary, status } = expectComposerActionStructure(mounted)
     const submit = primary.querySelector<HTMLButtonElement>('.agent-composer__submit')
     const composer = mounted.root.querySelector<HTMLElement>('.inline-agent__composer')
     const headerActions = mounted.root.querySelector<HTMLElement>('.inline-agent__panel-actions')
-    const newConversation = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__new-session')
-    const pin = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
+    const newChat = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__new-session')
+    const moreMenu = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__more-menu')
+    const temporaryToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__temporary-toggle')
+    const pinIndicator = mounted.root.querySelector<HTMLElement>('.inline-agent__pin-indicator')
 
     expect(status.textContent?.trim()).toBe('Ready')
     expect(primary.children).toHaveLength(1)
@@ -1119,21 +1175,22 @@ describe('Agent workspace action semantics', () => {
     expect(submit?.tagName).toBe('BUTTON')
     expect(submit?.textContent?.trim()).toBe('Send')
     expect(primary.querySelector('.agent-composer__stop')).toBeNull()
-    expect(pin?.textContent?.trim()).toBe('Pin')
-    expect(pin?.getAttribute('aria-label')).toBe('Pin conversation')
-    expect(pin?.getAttribute('aria-pressed')).toBe('false')
-    expect(pin?.hasAttribute('disabled')).toBe(false)
-    expect(pin?.parentElement).toBe(headerActions)
-    expect(pin?.previousElementSibling).toBe(newConversation)
+    // Pin lives in the More menu; the header shows a pin indicator only when pinned.
+    expect(mounted.root.querySelector('.inline-agent__chat-pin')).toBeNull()
+    expect(newChat?.textContent?.trim()).toBe('New chat')
+    expect(newChat?.getAttribute('aria-label')).toBe('New chat')
+    expect(moreMenu?.getAttribute('aria-label')).toBe('More agent actions')
+    expect(moreMenu?.parentElement).toBe(headerActions)
+    expect(temporaryToggle?.textContent?.trim()).toBe('Temporary off')
+    expect(pinIndicator).toBeNull()
     expect(composer?.querySelector('.inline-agent__chat-pin')).toBeNull()
     expect(mounted.root.querySelector('.agent-composer__hint')).toBeNull()
   })
 
-  it('keeps the accessible Working status before Stop while Pin stays enabled in the header', () => {
+  it('keeps the accessible Working status before Stop with the pin action available in More', async () => {
     const mounted = mountInlineAgent(loadGoalLockState('active'))
     const { primary, status } = expectComposerActionStructure(mounted)
     const stop = primary.querySelector<HTMLButtonElement>('.agent-composer__stop')
-    const pin = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
 
     expect(status.textContent?.trim()).toBe('Working')
     expect(primary.children).toHaveLength(1)
@@ -1142,23 +1199,27 @@ describe('Agent workspace action semantics', () => {
     expect(primary.querySelector('.agent-composer__submit')).toBeNull()
     // More options lives at the end of the left control group, not in the right group.
     expect(mounted.root.querySelector('.agent-composer__more-button')).not.toBeNull()
-    expect(pin?.getAttribute('aria-pressed')).toBe('false')
-    expect(pin?.hasAttribute('disabled')).toBe(false)
-    expect(pin?.closest('.inline-agent__panel-actions')).not.toBeNull()
+    const items = await openPanelMenu(mounted)
+    const pinItem = items[3]
+    expect(pinItem?.hasAttribute('disabled')).toBe(false)
   })
 
-  it('disables Pin only while workspace selection is unsettled', () => {
+  it('disables the pin action only while workspace selection is unsettled', async () => {
     const unsettled = mountInlineAgent(loadGoalLockState(null, false, null, false))
-    const unsettledPin = unsettled.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
-    expect(unsettledPin?.disabled).toBe(true)
+    const disabled = (item?: HTMLElement): boolean => Boolean(item?.hasAttribute('disabled') || item?.getAttribute('aria-disabled') === 'true' || item?.classList.contains('v-list-item--disabled'))
+    const unsettledItems = await openPanelMenu(unsettled)
+    expect(disabled(unsettledItems[3])).toBe(true)
+    unsettled.unmount()
 
     const activeRun = mountInlineAgent(loadGoalLockState(null, false, 'running', true))
-    const activeRunPin = activeRun.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
-    expect(activeRunPin?.disabled).toBe(false)
+    const activeRunItems = await openPanelMenu(activeRun)
+    expect(disabled(activeRunItems[3])).toBe(false)
+    activeRun.unmount()
 
     const activeGoal = mountInlineAgent(loadGoalLockState('active', false, 'running', true))
-    const activeGoalPin = activeGoal.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
-    expect(activeGoalPin?.disabled).toBe(false)
+    const activeGoalItems = await openPanelMenu(activeGoal)
+    expect(disabled(activeGoalItems[3])).toBe(false)
+    activeGoal.unmount()
   })
 
   it('keeps Review needed immediately before Stop while awaiting approval', () => {
@@ -1228,7 +1289,7 @@ describe('Inline Agent goal submission lock', () => {
   it('blocks New and clear-unfiled actions while another session mutation owns the lock', async () => {
     const lockState = loadGoalLockState(null, true)
     const mounted = mountInlineAgent(lockState)
-    const newConversation = mounted.root.querySelector<HTMLButtonElement>('[aria-label="New conversation"]')
+    const newConversation = mounted.root.querySelector<HTMLButtonElement>('[aria-label="New chat"]')
 
     expect(newConversation?.disabled).toBe(true)
 
