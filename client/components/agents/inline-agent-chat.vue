@@ -2835,6 +2835,14 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__session-line {
     margin-top: 0;
   }
+  /* Keep the full on/off wording visible on the subtitle line by dropping the
+     decorative icons that would overflow the narrow identity column. */
+  .inline-agent__temporary-toggle :deep(.v-icon) {
+    display: none;
+  }
+  .inline-agent__temporary-toggle {
+    padding-inline: var(--wiki-space-2);
+  }
 
   .inline-agent__desktop-panel-btn,
   .inline-agent__new-label--wide {
