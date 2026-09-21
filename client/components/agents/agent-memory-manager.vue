@@ -322,7 +322,8 @@ const visibleSections = computed(() => sections.value.map(section => ({
 const memorySearchStatus = computed(() => searchTerm.value ? `${visibleSections.value.reduce((sum, section) => sum + section.entries.length, 0)} matching memories` : 'All saved memories')
 const focusEditor = async (): Promise<void> => {
   await nextTick()
-  memoryEditor.value?.$el.scrollIntoView({ block: 'nearest' })
+  // Optional call: test DOM stubs (and some embedding hosts) may not implement scrollIntoView.
+  memoryEditor.value?.$el?.scrollIntoView?.({ block: 'nearest' })
   memoryEditor.value?.focus()
 }
 const message = (value: unknown, fallback: string): string => value instanceof Error ? value.message : fallback
