@@ -140,6 +140,13 @@ return {
   setDraft,
   moreMenuItems,
   moreMenuOpen,
+  foldedControls,
+  foldMeasureOverride,
+  updateFoldState,
+  isControlFolded,
+  hasMoreMenuContent,
+  foldedSkillMenuOpen,
+  preferredMenuVersionIds,
   submitDisabled,
   savedCaret,
   handleSelectionChange,
@@ -368,6 +375,7 @@ interface MountedComposer {
 }
 
 interface MountedComposerOptions {
+  readonly contextControls?: boolean
   readonly disabled?: boolean
   readonly sending?: boolean
   readonly canStop?: boolean
@@ -482,12 +490,21 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
   })
   const sentMessages: Array<{ content: string; invokedSkillVersionIds: readonly string[]; mode: 'message' | 'goal' }> = []
   sentRecorder = sentMessages
-  const app = Vue.createApp(composerComponent, {
-    ...componentProps,
-    onSend: (content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void) => {
-      sentMessages.push({ content, invokedSkillVersionIds, mode })
-      completion?.(true)
-    }
+  const app = Vue.createApp({
+    name: 'AgentComposerInteractionRoot',
+    render: () => Vue.h(
+      composerComponent,
+      {
+        ...componentProps,
+        onSend: (content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void) => {
+          sentMessages.push({ content, invokedSkillVersionIds, mode })
+          completion?.(true)
+        }
+      },
+      options.contextControls
+        ? { 'context-controls': () => Vue.h('span', { class: 'harness-context-chip' }, 'EN · home') }
+        : undefined
+    )
   })
   const mediaHarness = Vue.defineComponent({
     name: 'AgentComposerMediaHarness',
@@ -529,6 +546,12 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     }
   })
   app.component('AgentComposerMedia', mediaHarness)
+  app.component('AgentComposerSkillMenu', Vue.defineComponent({
+    name: 'AgentComposerSkillMenuHarness',
+    props: ['items', 'skillsCount', 'skillsLoading', 'skillsLoadError', 'skillsPartial', 'disabled', 'sendInProgress', 'networkBlocked', 'invocationLimit', 'selectedSkillVersionIds', 'preferredVersionIds', 'dialogId', 'headingId', 'descriptionId'],
+    emits: ['toggle', 'togglePreference', 'manageSkills', 'retrySkills'],
+    template: '<div class="agent-composer-skill-menu-harness">Skills menu</div>'
+  }))
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.mount(host)
   for (const element of host.querySelectorAll<HTMLElement>('*')) element.setAttribute(composerScopeAttribute, '')
@@ -789,6 +812,20 @@ describe('Agent composer three-section layout', () => {
     expect(actions.contains(primary)).toBe(true)
     expect(primary.contains(mic)).toBe(true)
     expect(primary.contains(submit)).toBe(true)
+    // The source context row sits above the editor, outside the action bar.
+    const contextRow = root.querySelector<HTMLElement>('.agent-composer__context-row')
+    if (!contextRow) throw new Error('Source context row did not render')
+    expect(contextRow.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(actions.contains(contextRow)).toBe(false)
+    // More options ends the left control group, before the microphone and Send.
+    const more = root.querySelector<HTMLButtonElement>('.agent-composer__more-button')
+    if (!more) throw new Error('More options button did not render')
+    expect(context.contains(more)).toBe(true)
+    expect(primary.contains(more)).toBe(false)
+    const webToggle = root.querySelector<HTMLElement>('.agent-composer__web-search-toggle')
+    if (!webToggle) throw new Error('Web toggle did not render')
+    expect(webToggle.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(more.compareDocumentPosition(mic) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     // The microphone sits immediately before Send in the action row.
     expect(mic.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(mic.getAttribute('aria-label')).toBe('Start dictation')
@@ -859,6 +896,134 @@ describe('Agent composer three-section layout', () => {
     expect(webToggle).not.toBeNull()
     expect(context?.contains(skillButton ?? null)).toBe(true)
     expect(context?.contains(webToggle ?? null)).toBe(true)
+  })
+
+  it('renders the source context slot and the goal chip in the top context row', async () => {
+    const mounted = mountComposer({ initialDraft: '', initialMode: 'goal', contextControls: true })
+    const row = mounted.root.querySelector<HTMLElement>('.agent-composer__context-row')
+    const editor = mounted.root.querySelector<HTMLElement>('.agent-composer__editor')
+    const actions = mounted.root.querySelector<HTMLElement>('.agent-composer__actions')
+    if (!row || !editor || !actions) throw new Error('Composer sections did not render')
+    expect(row.querySelector('.harness-context-chip')).not.toBeNull()
+    expect(row.querySelector('.agent-composer__goal-chip')).not.toBeNull()
+    expect(row.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // The source context moved out of the action bar entirely.
+    expect(actions.querySelector('.harness-context-chip')).toBeNull()
+    expect(actions.querySelector('.agent-composer__goal-chip')).toBeNull()
+  })
+
+  it('collapses the context row to nothing when no slot content and no goal chip render', () => {
+    const mounted = mountComposer({ initialDraft: '' })
+    const row = mounted.root.querySelector<HTMLElement>('.agent-composer__context-row')
+    if (!row) throw new Error('Source context row did not render')
+    // Only v-if comment placeholders remain, so the CSS :empty rule can hide the row.
+    expect(row.children).toHaveLength(0)
+  })
+})
+
+describe('Agent composer fit-based folding', () => {
+  interface FoldHarness {
+    readonly foldedControls: { value: string[] }
+    readonly foldMeasureOverride: { value: (() => boolean) | null }
+    readonly updateFoldState: () => Promise<void>
+  }
+
+  const asFoldHarness = (composer: unknown): FoldHarness => {
+    const harness = composer as unknown as FoldHarness
+    if (!harness.foldedControls || !harness.foldMeasureOverride || !harness.updateFoldState) throw new Error('Fold state was not exposed by the composer')
+    return harness
+  }
+
+  it('folds Skills, then Create, then Web until the left control group fits', async () => {
+    const fold = asFoldHarness(loadComposer())
+    // The stub measure models a row that only fits once two controls are folded.
+    fold.foldMeasureOverride.value = () => fold.foldedControls.value.length < 2
+    await fold.updateFoldState()
+    expect(fold.foldedControls.value).toEqual(['skills', 'create'])
+  })
+
+  it('never folds past the foldable set, protecting Attach, mic, and Send', async () => {
+    const fold = asFoldHarness(loadComposer())
+    fold.foldMeasureOverride.value = () => true
+    await fold.updateFoldState()
+    expect(fold.foldedControls.value).toEqual(['skills', 'create', 'web'])
+  })
+
+  it('unfolds the last folded control in reverse order when space returns', async () => {
+    const fold = asFoldHarness(loadComposer())
+    fold.foldedControls.value = ['skills', 'create', 'web']
+    // Fits once one control returns inline; restoring the second overflows again and stays folded.
+    fold.foldMeasureOverride.value = () => fold.foldedControls.value.length < 2
+    await fold.updateFoldState()
+    expect(fold.foldedControls.value).toEqual(['skills', 'create'])
+
+    fold.foldMeasureOverride.value = () => false
+    await fold.updateFoldState()
+    expect(fold.foldedControls.value).toEqual([])
+  })
+
+  it('keeps an unfolded control restored instead of oscillating', async () => {
+    const fold = asFoldHarness(loadComposer())
+    fold.foldedControls.value = ['skills']
+    // Plenty of space: everything unfolds and stays unfolded.
+    fold.foldMeasureOverride.value = () => false
+    await fold.updateFoldState()
+    expect(fold.foldedControls.value).toEqual([])
+  })
+
+  it('shows folded controls as More menu entries and restores the inline controls on unfold', async () => {
+    const mounted = mountComposer({
+      initialDraft: '',
+      skillsEnabled: true,
+      mediaCapabilities: { attachments: true, transcription: true },
+      mediaSession: { id: 'session-1' }
+    })
+    const bindings = lastBindings as unknown as {
+      foldedControls: { value: string[] }
+      moreMenuOpen: { value: boolean }
+    }
+    await Vue.nextTick()
+    bindings.foldedControls.value = ['skills', 'create', 'web']
+    await Vue.nextTick()
+    // The folded inline controls are removed from the action bar.
+    expect(mounted.root.querySelector('.agent-composer__web-search-toggle')).toBeNull()
+    expect(mounted.root.querySelector('.agent-composer__create')).toBeNull()
+    expect(mounted.root.querySelector('.agent-composer__skill-button')).toBeNull()
+    expect(mounted.root.querySelector('.agent-composer__attach')).not.toBeNull()
+
+    bindings.moreMenuOpen.value = true
+    await Vue.nextTick()
+    await Vue.nextTick()
+    const moreMenu = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
+    if (!moreMenu) throw new Error('More menu did not render')
+    const titles = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).map(item => item.querySelector('.v-list-item-title')?.textContent?.trim())
+    expect(titles).toContain('Goal')
+    const webItem = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).find(item => item.querySelector('.v-list-item-title')?.textContent?.trim() === 'Web')
+    if (!webItem) throw new Error('Folded Web menu item did not render')
+    expect(webItem.getAttribute('role')).toBe('menuitemcheckbox')
+    expect(webItem.getAttribute('aria-checked')).toBe('false')
+    expect(webItem.classList.contains('v-list-item--disabled')).toBe(true)
+    const createTitles = titles.filter(title => title === 'Images' || title === 'Video')
+    expect(createTitles).toEqual(['Images', 'Video'])
+    const skillsItem = Array.from(moreMenu.querySelectorAll<HTMLElement>('.v-list-item')).find(item => item.getAttribute('aria-haspopup') === 'dialog')
+    if (!skillsItem) throw new Error('Folded Skills submenu item did not render')
+    expect(skillsItem.querySelector('.v-list-item-title')?.textContent?.trim()).toBe('Skills')
+
+    // Unfolding restores the inline controls and empties the folded menu entries.
+    bindings.moreMenuOpen.value = false
+    await Vue.nextTick()
+    bindings.foldedControls.value = []
+    await Vue.nextTick()
+    expect(mounted.root.querySelector('.agent-composer__web-search-toggle')).not.toBeNull()
+    expect(mounted.root.querySelector('.agent-composer__create')).not.toBeNull()
+    expect(mounted.root.querySelector('.agent-composer__skill-button')).not.toBeNull()
+    bindings.moreMenuOpen.value = true
+    await Vue.nextTick()
+    await Vue.nextTick()
+    const reopened = Array.from(document.body.querySelectorAll<HTMLElement>('.agent-composer__more-menu')).pop()
+    if (!reopened) throw new Error('Reopened More menu did not render')
+    const reopenedTitles = Array.from(reopened.querySelectorAll<HTMLElement>('.v-list-item')).map(item => item.querySelector('.v-list-item-title')?.textContent?.trim())
+    expect(reopenedTitles).toEqual(['Goal'])
   })
 })
 

@@ -78,6 +78,23 @@
       aria-atomic="true"
     >{{ liveStatusLabel }}</span>
 
+    <div class="agent-composer__context-row">
+      <slot name="context-controls" />
+      <v-chip
+        v-if="goalsEnabled && goalMode"
+        class="agent-composer__goal-chip"
+        color="primary"
+        size="small"
+        variant="tonal"
+        prepend-icon="mdi-target"
+        closable
+        close-label="Turn off goal mode"
+        :disabled="disabled || sendInProgress"
+        title="Goal mode is on. Your next message defines a durable outcome for Wiki Agent."
+        @click:close="goalMode = false"
+      >Goal</v-chip>
+    </div>
+
     <div class="agent-composer__editor">
       <v-textarea
         ref="messageInput"
@@ -151,7 +168,7 @@
     </div>
 
     <div class="agent-composer__actions">
-      <div class="agent-composer__context-controls" role="group" aria-label="Conversation context controls">
+      <div ref="controlsGroup" class="agent-composer__context-controls" role="group" aria-label="Message tools">
         <v-menu v-if="attachmentsAvailable" content-class="agent-owned-overlay" location="top start" v-model="attachmentMenuOpen">
           <template #activator="{ props: activatorProps }">
             <v-btn
@@ -171,7 +188,7 @@
             <v-list-item prepend-icon="mdi-folder-outline" title="Browse Wiki assets" @click="openAssetBrowser" />
           </v-list>
         </v-menu>
-        <v-menu v-if="createAvailable" content-class="agent-owned-overlay" location="top start">
+        <v-menu v-if="createAvailable && !isControlFolded('create')" content-class="agent-owned-overlay" location="top start">
           <template #activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
@@ -205,21 +222,8 @@
             <p class="agent-composer__tool-menu-note">Ask naturally. The assistant can combine your selected tools in one reply.</p>
           </v-list>
         </v-menu>
-        <slot name="context-controls" />
-        <v-chip
-          v-if="goalsEnabled && goalMode"
-          class="agent-composer__goal-chip"
-          color="primary"
-          size="small"
-          variant="tonal"
-          prepend-icon="mdi-target"
-          closable
-          close-label="Turn off goal mode"
-          :disabled="disabled || sendInProgress"
-          title="Goal mode is on. Your next message defines a durable outcome for Wiki Agent."
-          @click:close="goalMode = false"
-        >Goal</v-chip>
         <label
+          v-if="!isControlFolded('web')"
           class="agent-composer__web-search-toggle wiki-purpose-control"
           :class="{ 'wiki-purpose-control--selected': googleSearchEnabled }"
           :data-state="googleSearchEnabled ? 'selected' : undefined"
@@ -236,7 +240,7 @@
           <v-icon icon="mdi-web" size="17" aria-hidden="true" />
           <span>Web</span>
         </label>
-        <v-menu content-class="agent-owned-overlay agent-composer__skill-menu-content" v-if="skillsEnabled" v-model="skillMenuOpen" :close-on-content-click="false">
+        <v-menu content-class="agent-owned-overlay agent-composer__skill-menu-content" v-if="skillsEnabled && !isControlFolded('skills')" v-model="skillMenuOpen" :close-on-content-click="false">
           <template #activator="{ props: activatorProps }">
             <v-btn
               :id="composerIds.skillsTrigger"
@@ -262,76 +266,33 @@
               <span>{{ selectedSkills.length > 0 ? `Skills (${selectedSkills.length})` : skillsLoadError ? skills.length > 0 ? 'Skills incomplete' : 'Skills unavailable' : 'Skills' }}</span>
             </v-btn>
           </template>
-          <v-card :id="composerIds.skillsDialog" class="agent-composer__skill-menu" min-width="300" max-width="420" role="dialog" :aria-labelledby="composerIds.skillsHeading" :aria-describedby="composerIds.skillsDescription">
-            <v-card-title :id="composerIds.skillsHeading" class="text-body-large">Skills</v-card-title>
-            <v-card-subtitle :id="composerIds.skillsDescription">Select for the next message or always load in conversations.</v-card-subtitle>
-            <div
-              v-if="skillsPartial"
-              class="agent-composer__skill-load-state"
-              :class="{ 'agent-composer__skill-load-state--error': skillsLoadError }"
-              :role="skillsLoadError ? 'alert' : 'status'"
-              aria-live="polite"
-            >
-              <v-icon :icon="skillsLoadError ? 'mdi-cloud-alert-outline' : 'mdi-cloud-sync-outline'" size="20" aria-hidden="true" />
-              <div>
-                <strong>{{ skillLoadTitle }}</strong>
-                <span>{{ skillLoadMessage }}</span>
-              </div>
-              <v-btn v-if="skillsLoadError" prepend-icon="mdi-refresh" size="small" variant="tonal" :loading="skillsLoading" :disabled="skillsLoading || networkBlocked" @click="retrySkills">
-                Retry
-              </v-btn>
-            </div>
-            <v-progress-linear v-if="skillsLoading" indeterminate color="primary" aria-label="Loading skill catalog" />
-            <v-list v-if="skillMenuItems.length > 0" aria-label="Available skills" density="compact" max-height="320" class="overflow-y-auto">
-              <v-list-item
-                v-for="skill in skillMenuItems"
-                :key="skill.versionId"
-                :active="isSelected(skill.versionId) || isPreferred(skill.versionId)"
-                :disabled="disabled || sendInProgress"
-                @click="toggleSkill(skill.versionId)"
-              >
-                <template #prepend>
-                  <v-checkbox-btn
-                    :model-value="isSelected(skill.versionId) || isPreferred(skill.versionId)"
-                    :aria-label="`${skill.name}: ${isSelected(skill.versionId) || isPreferred(skill.versionId) ? 'selected' : 'not selected'}`"
-                    :disabled="disabled || sendInProgress || isPreferred(skill.versionId) || (!isSelected(skill.versionId) && selectedSkillIds.length >= invocationLimit)"
-                    @click.stop="toggleSkill(skill.versionId)"
-                  />
-                </template>
-                <v-list-item-title>{{ skill.name }}</v-list-item-title>
-                <v-list-item-subtitle>{{ isPreferred(skill.versionId) ? 'Always loaded in conversations' : skill.description }}</v-list-item-subtitle>
-                <template #append>
-                  <div class="d-flex align-center ga-1">
-                    <v-chip v-if="skill.exposureMode === 'owner'" size="x-small" variant="tonal">Mine</v-chip>
-                    <v-btn
-                      class="agent-composer__pin"
-                      :class="{ 'agent-composer__pin--active': isPreferred(skill.versionId) }"
-                      :icon="isPreferred(skill.versionId) ? 'mdi-pin' : 'mdi-pin-outline'"
-                      :color="isPreferred(skill.versionId) ? 'primary' : undefined"
-                      :variant="isPreferred(skill.versionId) ? 'tonal' : 'text'"
-                      size="small"
-                      :disabled="disabled || sendInProgress || networkBlocked || (!isPreferred(skill.versionId) && invocationLimit === 0)"
-                      :aria-label="isPreferred(skill.versionId) ? `Stop always loading ${skill.name}` : `Always load ${skill.name} in conversations`"
-                      :aria-pressed="isPreferred(skill.versionId)"
-                      :title="isPreferred(skill.versionId) ? `Pinned: ${skill.name} always loads` : `Pin ${skill.name} to always load`"
-                      @click.stop="togglePreference(skill.versionId)"
-                    />
-                  </div>
-                </template>
-              </v-list-item>
-            </v-list>
-            <v-card-text v-else-if="!skillsPartial" class="text-medium-emphasis">No skills are available yet.</v-card-text>
-            <v-card-text v-if="invocationLimit === 0" class="pt-0 text-body-small text-medium-emphasis">You have the maximum 8 automatically loaded skills. Remove one to make room.</v-card-text>
-            <v-divider />
-            <v-card-actions>
-              <v-btn prepend-icon="mdi-file-document-edit-outline" variant="text" :disabled="sendInProgress" @click="manageSkills">Manage my skills</v-btn>
-            </v-card-actions>
-          </v-card>
+          <AgentComposerSkillMenu
+            :items="skillMenuItems"
+            :skills-count="skills.length"
+            :skills-loading="skillsLoading"
+            :skills-load-error="skillsLoadError"
+            :skills-partial="skillsPartial"
+            :disabled="disabled"
+            :send-in-progress="sendInProgress"
+            :network-blocked="networkBlocked"
+            :invocation-limit="invocationLimit"
+            :selected-skill-version-ids="selectedSkillIds"
+            :preferred-version-ids="preferredMenuVersionIds"
+            :dialog-id="composerIds.skillsDialog"
+            :heading-id="composerIds.skillsHeading"
+            :description-id="composerIds.skillsDescription"
+            @toggle="toggleSkill"
+            @toggle-preference="togglePreference"
+            @manage-skills="manageSkills"
+            @retry-skills="retrySkills"
+          />
         </v-menu>
-      </div>
-
-      <div class="agent-composer__primary-actions" role="group" aria-label="Message actions">
-        <v-menu v-if="moreMenuItems.length > 0" content-class="agent-owned-overlay agent-composer__more-menu-content" v-model="moreMenuOpen" location="top end">
+        <v-menu
+          v-if="hasMoreMenuContent"
+          content-class="agent-owned-overlay agent-composer__more-menu-content"
+          v-model="moreMenuOpen"
+          location="top end"
+        >
           <template #activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
@@ -354,14 +315,54 @@
               :prepend-icon="item.icon"
               :title="item.label"
               :subtitle="item.subtitle"
+              :disabled="item.disabled"
               :aria-checked="item.checked"
               role="menuitemcheckbox"
               @click="item.run()"
             >
               <template #append><v-icon :icon="item.checked ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" size="20" aria-hidden="true" /></template>
             </v-list-item>
+            <v-menu
+              v-if="skillsEnabled && isControlFolded('skills')"
+              content-class="agent-owned-overlay agent-composer__skill-menu-content"
+              v-model="foldedSkillMenuOpen"
+              location="end top"
+              :close-on-content-click="false"
+            >
+              <template #activator="{ props: submenuProps }">
+                <v-list-item
+                  v-bind="submenuProps"
+                  prepend-icon="mdi-puzzle-outline"
+                  title="Skills"
+                  append-icon="mdi-chevron-right"
+                  aria-haspopup="dialog"
+                  :aria-expanded="foldedSkillMenuOpen"
+                  :disabled="disabled || sendInProgress"
+                />
+              </template>
+              <AgentComposerSkillMenu
+                :items="skillMenuItems"
+                :skills-count="skills.length"
+                :skills-loading="skillsLoading"
+                :skills-load-error="skillsLoadError"
+                :skills-partial="skillsPartial"
+                :disabled="disabled"
+                :send-in-progress="sendInProgress"
+                :network-blocked="networkBlocked"
+                :invocation-limit="invocationLimit"
+                :selected-skill-version-ids="selectedSkillIds"
+                :preferred-version-ids="preferredMenuVersionIds"
+                @toggle="toggleSkill"
+                @toggle-preference="togglePreference"
+                @manage-skills="manageSkills"
+                @retry-skills="retrySkills"
+              />
+            </v-menu>
           </v-list>
         </v-menu>
+      </div>
+
+      <div class="agent-composer__primary-actions" role="group" aria-label="Message actions">
         <v-btn
           v-if="canStop"
           class="agent-composer__stop"
@@ -439,6 +440,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
 import type { Ref } from 'vue'
 import AgentComposerMedia from './agent-composer-media.vue'
+import AgentComposerSkillMenu from './agent-composer-skill-menu.vue'
 import type { AgentMediaSubmission } from '../../helpers/agent-media.ts'
 import type { AgentMediaView, AgentProviderProfileView, AgentThreadState, AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import { agentMediaContentUrl, type VisibleAgentSkill } from '../../helpers/agents-api.ts'
@@ -607,6 +609,7 @@ watch(() => props.initialDraft, (value, previous) => {
 })
 const goalMode = ref(props.initialMode === 'goal')
 const skillMenuOpen = ref(false)
+const foldedSkillMenuOpen = ref(false)
 const moreMenuOpen = ref(false)
 const attachmentMenuOpen = ref(false)
 const selectedSkillIds = ref<string[]>([...(props.initialSkillVersionIds ?? [])])
@@ -621,6 +624,7 @@ watch(() => [props.initialMode, props.initialSkillVersionIds] as const, ([mode, 
   syncingComposition = false
 })
 const composerRoot = useTemplateRef<{ $el?: HTMLElement } | HTMLElement>('composerRoot')
+const controlsGroup = useTemplateRef<HTMLElement | null>('controlsGroup')
 const messageInput = useTemplateRef<{ focus: () => void; $el?: HTMLElement }>('messageInput')
 const skillsTrigger = useTemplateRef<{ focus?: () => void; $el?: HTMLElement } | HTMLElement>('skillsTrigger')
 const dismissedCommandToken = ref<{ start: number; prefix: string } | null>(null)
@@ -676,6 +680,7 @@ const skillMenuItems = computed(() => [
 ])
 const skillIdForVersion = (versionId: string): string | undefined =>
   visibleSkillByVersionId.value.get(versionId)?.id ?? preferredSkillIdByVersionId.value.get(versionId)
+const preferredMenuVersionIds = computed(() => skillMenuItems.value.filter(item => isPreferred(item.versionId)).map(item => item.versionId))
 const isPreferred = (versionId: string): boolean => {
   const skillId = skillIdForVersion(versionId)
   return skillId !== undefined && preferredSkillIds.value.has(skillId)
@@ -686,7 +691,7 @@ const isPreferred = (versionId: string): boolean => {
  * unset. Items present in the context row are excluded automatically.
  */
 const moreMenuItems = computed(() => {
-  const items: Array<{ key: string; icon: string; label: string; subtitle?: string; checked?: boolean; run: () => void }> = []
+  const items: Array<{ key: string; icon: string; label: string; subtitle?: string; checked?: boolean; disabled?: boolean; run: () => void }> = []
   if (props.goalsEnabled && !goalMode.value) {
     items.push({
       key: 'goal',
@@ -700,8 +705,84 @@ const moreMenuItems = computed(() => {
       }
     })
   }
+  if (isControlFolded('web')) {
+    items.push({
+      key: 'web',
+      icon: 'mdi-web',
+      label: 'Web',
+      subtitle: props.googleSearchAvailable ? 'Use Google Search for this conversation' : 'Google Search is unavailable for this provider',
+      checked: props.googleSearchEnabled === true,
+      disabled: webSearchDisabled.value,
+      run: () => {
+        if (webSearchDisabled.value) return
+        emit('updateGoogleSearch', !props.googleSearchEnabled)
+      }
+    })
+  }
+  if (isControlFolded('create') && createAvailable.value) {
+    for (const option of generationOptions.value) {
+      items.push({
+        key: `create-${option.value}`,
+        icon: option.icon,
+        label: option.title,
+        checked: selectedGenerationTools.value.includes(option.value),
+        disabled: attachDisabled.value,
+        run: () => toggleGenerationTool(option.value)
+      })
+    }
+  }
   return items
 })
+
+/**
+ * Fit-based folding of low-priority controls into the More menu. There is no
+ * device detection: the left control group is measured, and whenever it
+ * overflows its one row the lowest-priority inline control (Skills, then
+ * Create, then Web) moves into the More menu; when space returns the last
+ * folded control is restored. Attach, the microphone, and Send/Stop never
+ * fold, and the action bar never wraps. The fold state is UI-only.
+ */
+type FoldableControl = 'skills' | 'create' | 'web'
+const FOLDABLE_CONTROLS: readonly FoldableControl[] = ['skills', 'create', 'web']
+const foldedControls = ref<FoldableControl[]>([])
+const foldMeasureOverride = ref<(() => boolean) | null>(null)
+let foldResizeObserver: ResizeObserver | null = null
+const isControlFolded = (control: FoldableControl): boolean => foldedControls.value.includes(control)
+const hasMoreMenuContent = computed(() =>
+  moreMenuItems.value.length > 0 || (props.skillsEnabled && isControlFolded('skills'))
+)
+const measureControlsOverflow = (): boolean => {
+  const override = foldMeasureOverride.value
+  if (override) return override()
+  const group = controlsGroup.value
+  if (!group) return false
+  return group.scrollWidth > group.clientWidth
+}
+const updateFoldState = async (): Promise<void> => {
+  if (measureControlsOverflow()) {
+    const control = FOLDABLE_CONTROLS.find(candidate => !foldedControls.value.includes(candidate))
+    if (control === undefined) return
+    foldedControls.value = [...foldedControls.value, control]
+    await nextTick()
+    await updateFoldState()
+    return
+  }
+  if (foldedControls.value.length === 0) return
+  const last = foldedControls.value[foldedControls.value.length - 1]
+  foldedControls.value = foldedControls.value.slice(0, -1)
+  await nextTick()
+  if (measureControlsOverflow()) {
+    // Restoring did not fit after all; keep it folded and stop to avoid oscillation.
+    foldedControls.value = [...foldedControls.value, last]
+    await nextTick()
+    return
+  }
+  await updateFoldState()
+}
+const handleFoldResize = (): void => {
+  void updateFoldState()
+}
+
 const composerInputLabel = computed(() =>
   goalMode.value
     ? 'Define an outcome for Wiki Agent'
@@ -1045,6 +1126,7 @@ watch(
 const manageSkills = (): void => {
   if (props.disabled || sendInProgress.value) return
   skillMenuOpen.value = false
+  foldedSkillMenuOpen.value = false
   emit('manageSkills')
 }
 const retrySkills = (): void => {
@@ -1182,10 +1264,20 @@ onMounted(() => {
   mountCaretMirror()
   resizeInput()
   window.addEventListener('resize', resizeInput)
+  if (typeof ResizeObserver !== 'undefined') {
+    foldResizeObserver = new ResizeObserver(handleFoldResize)
+    const group = controlsGroup.value
+    if (group) foldResizeObserver.observe(group)
+    const root = composerRoot.value instanceof HTMLElement ? composerRoot.value : composerRoot.value?.$el
+    if (root instanceof HTMLElement) foldResizeObserver.observe(root)
+    void nextTick(handleFoldResize)
+  }
 })
 onBeforeUnmount(() => {
   mounted = false
   window.removeEventListener('resize', resizeInput)
+  foldResizeObserver?.disconnect()
+  foldResizeObserver = null
   unmountCaretMirror()
 })
 </script>
@@ -1338,6 +1430,21 @@ onBeforeUnmount(() => {
   border-top: 1px solid color-mix(in srgb, var(--wiki-surface-border) 55%, transparent);
 }
 
+.agent-composer__context-row {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--agent-composer-control-gap);
+  margin: 0 0 var(--agent-composer-control-gap);
+}
+
+/* Collapses entirely when the context slot renders nothing and no goal chip is set. */
+.agent-composer__context-row:empty {
+  display: none;
+}
+
 .agent-composer__context-controls,
 .agent-composer__primary-actions {
   display: flex;
@@ -1346,10 +1453,15 @@ onBeforeUnmount(() => {
   gap: var(--agent-composer-control-gap);
 }
 
+/* One action row at any width: overflow is handled by folding controls into
+   the More menu, never by wrapping. */
 .agent-composer__context-controls {
-  flex-wrap: wrap;
-  align-content: center;
+  flex-wrap: nowrap;
   overflow: visible;
+}
+
+.agent-composer__context-controls > * {
+  flex: 0 0 auto;
 }
 
 
@@ -1518,43 +1630,6 @@ onBeforeUnmount(() => {
   margin-inline: calc(var(--wiki-space-1) * -.9) calc(var(--wiki-space-2) * .9);
 }
 
-
-.agent-composer__pin {
-  min-width: max(44px, var(--wiki-control-height));
-  min-height: max(44px, var(--wiki-control-height));
-}
-
-.agent-composer__pin--active {
-  box-shadow: var(--wiki-shadow-inset);
-}
-.agent-composer__skill-load-state {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--wiki-space-2);
-  margin: var(--wiki-space-3);
-  padding: var(--wiki-space-3);
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 28%, var(--wiki-surface-border));
-  border-radius: var(--wiki-control-radius);
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, var(--wiki-surface-raised));
-}
-
-.agent-composer__skill-load-state--error {
-  border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 32%, var(--wiki-surface-border));
-  background: color-mix(in srgb, rgb(var(--v-theme-error)) 8%, var(--wiki-surface-raised));
-  color: rgb(var(--v-theme-error));
-}
-
-.agent-composer__skill-load-state > div {
-  display: grid;
-  gap: 2px;
-}
-
-.agent-composer__skill-load-state span {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
-  font-size: var(--wiki-label-size);
-  overflow-wrap: anywhere;
-}
 
 
 .agent-composer__submit {

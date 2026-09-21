@@ -325,6 +325,13 @@ return {
   setDraft,
   moreMenuItems,
   moreMenuOpen,
+  foldedControls,
+  foldMeasureOverride,
+  updateFoldState,
+  isControlFolded,
+  hasMoreMenuContent,
+  foldedSkillMenuOpen,
+  preferredMenuVersionIds,
   submitDisabled,
   dictationAvailable,
   attachmentsAvailable,
@@ -780,7 +787,7 @@ const expectComposerActionStructure = (mounted: MountedInlineAgent): { primary: 
   if (!context || !primary || !status) throw new Error('Agent composer accessible status or controls did not render')
   expect(actions.children).toHaveLength(2)
   expect(context.getAttribute('role')).toBe('group')
-  expect(context.getAttribute('aria-label')).toBe('Conversation context controls')
+  expect(context.getAttribute('aria-label')).toBe('Message tools')
   expect(status.id).not.toBe('')
   expect(status.matches('.sr-only')).toBe(true)
   expect(status.getAttribute('role')).toBe('status')
@@ -904,7 +911,7 @@ describe('Inline Agent workspace actions', () => {
     const picker = composer?.querySelectorAll('.agent-context')
     expect(composer).not.toBeNull()
     expect(picker).toHaveLength(1)
-    expect(picker?.[0]?.closest('.agent-composer__context-controls')).not.toBeNull()
+    expect(picker?.[0]?.closest('.agent-composer__context-row')).not.toBeNull()
     expect(mounted.root.querySelector('.inline-agent__session-action')?.textContent?.trim()).toBe('New')
     expect(mounted.root.querySelector('.agent-composer__input textarea')).not.toBeNull()
   })
@@ -1168,10 +1175,12 @@ describe('Agent workspace action semantics', () => {
     const pin = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
 
     expect(status.textContent?.trim()).toBe('Ready')
-    expect(primary.children).toHaveLength(2)
-    const more = primary.querySelector<HTMLButtonElement>('.agent-composer__more-button')
+    expect(primary.children).toHaveLength(1)
+    // More options ends the left control group; the right group keeps only Send.
+    const more = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__more-button')
     expect(more?.getAttribute('aria-label')).toBe('More options')
-    expect(more?.nextElementSibling).toBe(submit)
+    expect(more?.closest('.agent-composer__context-controls')).not.toBeNull()
+    expect(primary.contains(more ?? null)).toBe(false)
     expect(submit?.tagName).toBe('BUTTON')
     expect(submit?.textContent?.trim()).toBe('Send')
     expect(primary.querySelector('.agent-composer__stop')).toBeNull()
@@ -1192,11 +1201,12 @@ describe('Agent workspace action semantics', () => {
     const pin = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__chat-pin')
 
     expect(status.textContent?.trim()).toBe('Working')
-    expect(primary.children).toHaveLength(2)
+    expect(primary.children).toHaveLength(1)
     expect(stop?.tagName).toBe('BUTTON')
     expect(stop?.textContent?.trim()).toBe('Stop response')
     expect(primary.querySelector('.agent-composer__submit')).toBeNull()
-    expect(primary.querySelector('.agent-composer__more-button')).not.toBeNull()
+    // More options lives at the end of the left control group, not in the right group.
+    expect(mounted.root.querySelector('.agent-composer__more-button')).not.toBeNull()
     expect(pin?.getAttribute('aria-pressed')).toBe('false')
     expect(pin?.hasAttribute('disabled')).toBe(false)
     expect(pin?.closest('.inline-agent__panel-actions')).not.toBeNull()
