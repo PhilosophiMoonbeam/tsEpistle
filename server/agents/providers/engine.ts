@@ -2870,10 +2870,17 @@ export class AxAgentEngine implements AgentEngine {
       })
       const mediaTokens = await provider.transport.countTokens(model, contents, request.signal)
       if (mediaTokens + textBytes + maxOutputTokens > provider.capabilities.maxContextTokens)
-        throw new AgentRepositoryError(
-          'AGENT_MEDIA_CONTEXT_LIMIT',
-          'The attached files exceed this provider’s context limit. Use smaller files or fewer attachments.',
-          413
+        throw Object.assign(
+          new AgentRepositoryError(
+            'AGENT_MEDIA_CONTEXT_LIMIT',
+            'The attached files exceed this provider’s context limit. Use smaller files or fewer attachments.',
+            413
+          ),
+          {
+            agentDiagnostics: {
+              context: { inputBytes: mediaTokens, candidateBytes: textBytes, limitBytes: provider.capabilities.maxContextTokens }
+            }
+          }
         )
       return {
         chatPrompt: chatPrompt.map(message =>
