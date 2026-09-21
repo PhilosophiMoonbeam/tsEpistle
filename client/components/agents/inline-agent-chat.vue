@@ -85,7 +85,7 @@
                   :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
                   @click="isTemporary ? keepConversation() : startTemporaryChat()"
                 >
-                  <v-icon :icon="isTemporary ? 'mdi-hourglass-empty' : 'mdi-hourglass-full'" size="14" aria-hidden="true" />
+                  <v-icon :icon="isTemporary ? 'mdi-timer-sand-empty' : 'mdi-timer-sand-full'" size="14" aria-hidden="true" />
                   <span>Temporary</span>
                 </button>
               </div>
