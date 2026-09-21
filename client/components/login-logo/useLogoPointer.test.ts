@@ -1,6 +1,9 @@
+import { resetBody } from '../../test/browser-dom.mts'
 import { JSDOM } from 'jsdom'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { LogoPointerState } from './useLogoPointer.ts'
+
+resetBody()
 import { LOGO_POINTER_IMPULSE_CAPACITY, LOGO_POINTER_MAX_SEGMENT_CSS, LogoPointerController, logoPointerInfluenceRadius } from './useLogoPointer.ts'
 import { LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS } from './particle-explosion.ts'
 

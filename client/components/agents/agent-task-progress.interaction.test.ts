@@ -3,36 +3,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileScript, parse } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { AgentTaskView } from '../../../shared/agents/contracts.ts'
 import type { Component } from 'vue'
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-  pretendToBeVisual: true,
-  url: 'http://localhost/'
-})
-const browserWindow = dom.window
-const globalValues: Record<string, unknown> = {
-  Element: browserWindow.Element,
-  Event: browserWindow.Event,
-  HTMLDetailsElement: browserWindow.HTMLDetailsElement,
-  HTMLElement: browserWindow.HTMLElement,
-  KeyboardEvent: browserWindow.KeyboardEvent,
-  MouseEvent: browserWindow.MouseEvent,
-  MutationObserver: browserWindow.MutationObserver,
-  Node: browserWindow.Node,
-  SVGElement: browserWindow.SVGElement,
-  cancelAnimationFrame: browserWindow.cancelAnimationFrame.bind(browserWindow),
-  document: browserWindow.document,
-  getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
-  navigator: browserWindow.navigator,
-  requestAnimationFrame: browserWindow.requestAnimationFrame.bind(browserWindow),
-  window: browserWindow
-}
-for (const [name, value] of Object.entries(globalValues)) {
-  Object.defineProperty(globalThis, name, { configurable: true, value, writable: true })
-}
+import { browserWindow, resetBody } from '../../test/browser-dom.mts'
+
+resetBody()
+
 
 // Vue and Vuetify stay dynamic so runtime-dom captures the JSDOM document initialized above.
 const Vue = await import('vue')

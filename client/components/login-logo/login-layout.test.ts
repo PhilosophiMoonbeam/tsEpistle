@@ -4,9 +4,12 @@ import path from 'node:path'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { renderToString } from '@vue/server-renderer'
 import { JSDOM } from 'jsdom'
+import { resetBody } from '../../test/browser-dom.mts'
 import * as Vue from 'vue'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import { isLogoEffectDescriptor, type LogoEffectDescriptor } from './particle-logo.ts'
+
+resetBody()
 
 const loginPath = path.join(process.cwd(), 'client/components/login.vue')
 const loginSource = fs.readFileSync(loginPath, 'utf8')

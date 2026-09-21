@@ -2,8 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileTemplate, parse } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
+import { document, resetBody, setLocation } from '../test/browser-dom.mts'
 import type { ComponentOptions, RenderFunction } from 'vue'
 import { decodeBase64Json, decodeBase64Text } from '../helpers/base64'
 
@@ -11,21 +11,8 @@ const filename = path.join(process.cwd(), 'client/components/source.vue')
 const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename })
 if (errors.length || !descriptor.template || !descriptor.script) throw new Error(`Cannot parse source.vue: ${errors}`)
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-  pretendToBeVisual: true,
-  url: 'https://wiki.test/en/source'
-})
-for (const [name, value] of Object.entries({
-  window: dom.window,
-  document: dom.window.document,
-  navigator: dom.window.navigator,
-  Element: dom.window.Element,
-  HTMLElement: dom.window.HTMLElement,
-  SVGElement: dom.window.SVGElement,
-  Node: dom.window.Node
-})) {
-  Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
-}
+resetBody()
+setLocation('/en/source')
 
 // Vue's runtime-dom captures the document during module evaluation.
 const Vue = await import('vue')
@@ -56,7 +43,7 @@ let app: { unmount: () => void } | undefined
 afterEach(() => {
   app?.unmount()
   app = undefined
-  dom.window.document.body.replaceChildren()
+  document.body.replaceChildren()
 })
 
 const settle = async () => {
@@ -71,7 +58,7 @@ describe('View Source presentation', () => {
     const content = '\n  # Heading {value}\n\t<safe>&\nΔ終\n'
     const notifications: Record<string, unknown>[] = []
     const writeText = vi.fn(async (_value: string) => undefined)
-    Object.defineProperty(dom.window.navigator, 'clipboard', {
+    Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { writeText }
     })
@@ -122,8 +109,8 @@ describe('View Source presentation', () => {
     app.config.globalProperties.$helpers = { formatMoment: (value: string) => value }
     app.config.globalProperties.$t = (key: string) => key
 
-    const host = dom.window.document.createElement('div')
-    dom.window.document.body.append(host)
+    const host = document.createElement('div')
+    document.body.append(host)
     app.mount(host)
     await settle()
 

@@ -2,14 +2,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
+import { browserWindow, resetBody, setLocation } from '../../test/browser-dom.mts'
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', {
-  pretendToBeVisual: true,
-  url: 'http://localhost/wiki/page'
-})
-const browserWindow = dom.window
+resetBody()
+setLocation('/wiki/page')
+
 const browserGlobals: Record<string, unknown> = {
   document: browserWindow.document,
   window: browserWindow,
@@ -237,13 +235,21 @@ const globals = globalThis as typeof globalThis & {
   __headerWikiStore: typeof wikiStore
   __headerSiteNotifications: typeof siteNotifications
   __headerDestroyAgents: () => void
+  __headerMarkOfflineLogoutPending: (accountId?: number) => boolean
+  __headerOfflineIdentityCleanupFailureMessage: string
   siteConfig: Record<string, unknown>
   siteLangs: Array<{ code: string; name: string }>
 }
+const markOfflineLogoutPendingCalls: Array<number | undefined> = []
 globals.__headerConnection = connection
 globals.__headerWikiStore = wikiStore
 globals.__headerSiteNotifications = siteNotifications
 globals.__headerDestroyAgents = () => { agentDestroyCalls += 1 }
+globals.__headerMarkOfflineLogoutPending = accountId => {
+  markOfflineLogoutPendingCalls.push(accountId)
+  return true
+}
+globals.__headerOfflineIdentityCleanupFailureMessage = 'Offline identity cleanup failed. Reconnect and try again.'
 globals.siteConfig = {
   agentsEnabled: false,
   devMode: false
@@ -296,7 +302,12 @@ const bundle = await Bun.build({
         build.onLoad({ filter: /.*/, namespace: 'header-notifications-stub' }, args => {
           if (args.path === '@/store/index.ts') {
             return {
-              contents: 'export const wikiStore = globalThis.__headerWikiStore; export const invalidateOfflineIdentity = async () => true',
+              contents: [
+                'export const wikiStore = globalThis.__headerWikiStore;',
+                'export const invalidateOfflineIdentity = async () => true;',
+                'export const markOfflineLogoutPending = accountId => (globalThis.__headerMarkOfflineLogoutPending ? globalThis.__headerMarkOfflineLogoutPending(accountId) : false);',
+                'export const OFFLINE_IDENTITY_CLEANUP_FAILURE_MESSAGE = globalThis.__headerOfflineIdentityCleanupFailureMessage'
+              ].join('\n'),
               loader: 'js'
             }
           }

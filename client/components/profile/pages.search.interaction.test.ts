@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
-import { JSDOM } from 'jsdom'
 import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
+import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
 import type { ComponentOptions, PropType, RenderFunction } from 'vue'
 import type { PageListRow } from '../../helpers/pages-api.ts'
 
@@ -10,18 +10,9 @@ const filename = join(process.cwd(), 'client/components/profile/pages.vue')
 const { descriptor, errors } = parse(readFileSync(filename, 'utf8'), { filename })
 if (errors.length || !descriptor.template || !descriptor.script) throw new Error(`Cannot parse pages.vue: ${errors}`)
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://wiki.test/p/pages' })
-for (const [name, value] of Object.entries({
-  window: dom.window,
-  document: dom.window.document,
-  navigator: dom.window.navigator,
-  Element: dom.window.Element,
-  HTMLElement: dom.window.HTMLElement,
-  SVGElement: dom.window.SVGElement,
-  Node: dom.window.Node
-}))
-  Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
-dom.window.fetch = globalThis.fetch
+resetBody()
+setLocation('/p/pages')
+browserWindow.fetch = globalThis.fetch
 
 // Compile the actual Pug and Vue expressions, including translated count interpolation.
 const Vue = await import('vue')
@@ -112,7 +103,7 @@ let app: ReturnType<typeof Vue.createApp> | undefined
 afterEach(() => {
   app?.unmount()
   app = undefined
-  dom.window.document.body.replaceChildren()
+  document.body.replaceChildren()
 })
 const settle = async () => {
   await Promise.resolve()
@@ -133,8 +124,8 @@ const mount = async (rows: PageListRow[], mobile = false) => {
   app.config.globalProperties.$helpers = { formatMoment: (date: string) => date }
   app.config.globalProperties.$t = (key: string, params: Record<string, unknown> = {}) =>
     String(params.defaultValue ?? key).replace(/\{\{(\w+)\}\}/g, (_match, name) => String(params[name] ?? ''))
-  const host = dom.window.document.createElement('div')
-  dom.window.document.body.append(host)
+  const host = document.createElement('div')
+  document.body.append(host)
   app.mount(host)
   await settle()
   return { host, fetchPages }
@@ -156,7 +147,7 @@ const makePage = (id: number, overrides: Partial<PageListRow> = {}): PageListRow
 const search = async (host: HTMLElement, value: string) => {
   const input = host.querySelector('input')!
   input.value = value
-  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+  input.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
   await settle()
 }
 const click = async (host: HTMLElement, label: string) => {

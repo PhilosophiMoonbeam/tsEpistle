@@ -3,9 +3,12 @@ import { join } from 'node:path'
 
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { JSDOM } from 'jsdom'
+import { resetBody } from '../../test/browser-dom.mts'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
+
+resetBody()
 
 const componentPath = join(process.cwd(), 'client/components/agents/agent-search-suggestions.vue')
 const source = readFileSync(componentPath, 'utf8')
