@@ -61,6 +61,21 @@
       "runtimePostconditions": [
         "agent-google-search-consent-admission"
       ]
+    },
+    "tsepistle-000047-agent-media-context-state.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "agent-media-context-state-columns"
+      ],
+      "runtimePostconditions": [
+        "agent-media-context-state-columns"
+      ]
     }
   }
 }

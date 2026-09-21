@@ -238,7 +238,7 @@ make_plan() {
     local probe
     while IFS= read -r probe; do
       case "$probe" in
-        site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection|agent-google-search-grounding-columns|agent-google-search-consent-admission) ;;
+        site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection|agent-google-search-grounding-columns|agent-google-search-consent-admission|agent-media-context-state-columns) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
       esac
     done < <(jq -r '.rehearsalPostconditions[],.runtimePostconditions[]' <<< "$contract")
@@ -433,6 +433,10 @@ verify_postconditions() {
       agent-google-search-consent-admission)
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentRuns\" WHERE \"googleSearchEnabled\" AND (\"transportKind\" <> 'gemini-api' OR model !~ '^gemini-3(\\.[0-9]+)?(-[a-z0-9][a-z0-9._-]*)?$');")"
         [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result incompatible search runs)"
+        ;;
+      agent-media-context-state-columns)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='agentMedia' AND ((column_name='promptTokens' AND data_type='integer' AND is_nullable='YES') OR (column_name='detachedAt' AND data_type='timestamp with time zone' AND is_nullable='YES'));")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe ($result/2 columns)"
         ;;
       *) die "Unsupported named migration postcondition: $probe" ;;
     esac
