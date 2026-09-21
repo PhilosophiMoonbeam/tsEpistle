@@ -794,6 +794,16 @@ const parsedObject = (value: string, code: string): Record<string, unknown> => {
 const runtimeGroundingExpiry = (message: RuntimeMessageRow, inherited: string | null): string | null =>
   agentCompactionMinimumExpiry(message.googleSearchGrounding === null ? null : agentGroundedExpiry(message.createdAt), inherited)
 
+/** True when every attachment on this message was detached from context by history compaction. */
+const messageMediaDetached = (
+  message: RuntimeMessageRow,
+  messageMedia: readonly AgentMediaMetadata[],
+  detachedMediaIds: ReadonlySet<string>
+): boolean =>
+  message.role === 'user' &&
+  messageMedia.length > 0 &&
+  messageMedia.every(item => detachedMediaIds.has(item.id))
+
 const runtimeCanonicalSource = (
   message: RuntimeMessageRow,
   attachments: readonly AgentMediaMetadata[],
@@ -2429,6 +2439,9 @@ export class AgentProductRuntime {
       if (!includeMediaBytes && mediaIndex.some(row => row.messageId === claim.userMessageId && row.kind === 'attachment'))
         throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Attachments are disabled for this provider. Select a provider with attachments enabled.', 403)
       const retainedMediaIds = attachedRows.map(row => row.id)
+      // Attachments dropped from context by history compaction are excluded from prompts; their
+      // canonical sources stay intact so stored compaction digests keep validating.
+      const detachedMediaIds = new Set(attachedRows.filter(row => row.detachedAt !== null).map(row => row.id))
       const messages: AgentEngineMessage[] = messageRows.map((message, index) => {
         const canonicalSource = canonicalSources[index]!
         const expired = canonicalSource.groundedExpiresAt !== null && Date.parse(canonicalSource.groundedExpiresAt) <= nowMilliseconds
@@ -2450,9 +2463,13 @@ export class AgentProductRuntime {
             throw classifyAgentExecutionFailure(error, 'setup')
           }
         }
+        const messageMedia = mediaIndex.filter(item => item.messageId === message.id)
+        const detachedHere = messageMediaDetached(message, messageMedia, detachedMediaIds)
         const attachments = expired
           ? []
-          : attachedRows.filter(row => row.messageId === message.id).map(row => ownedAgentMediaSource(this.#knex, claim.ownerId, claim.sessionId, row))
+          : attachedRows
+              .filter(row => row.messageId === message.id && !detachedMediaIds.has(row.id))
+              .map(row => ownedAgentMediaSource(this.#knex, claim.ownerId, claim.sessionId, row))
         return {
           canonicalSource,
           role: message.role,
@@ -2460,6 +2477,9 @@ export class AgentProductRuntime {
             (expired ? '' : message.content) +
             (!expired && mediaIndex.some(item => item.messageId === message.id && !retainedMediaIds.includes(item.id))
               ? '\n[Attachment content is unavailable in this turn because of the media window or provider configuration. Do not infer its contents.]'
+              : '') +
+            (!expired && detachedHere
+              ? '\n[An attached document was detached from context after context compaction. Its earlier analysis remains in the conversation. Do not infer its contents.]'
               : ''),
           ...(state ? { providerState: state } : {}),
           ...(attachments.length ? { attachments } : {})
@@ -2747,6 +2767,11 @@ export class AgentProductRuntime {
             )
             if (currentExpiry !== metadata.groundedExpiresAt || (currentExpiry !== null && Date.parse(currentExpiry) <= Date.now()))
               throw new AgentRepositoryError('AGENT_COMPACTION_SOURCE_EXPIRED', 'Compaction source expired while summarizing', 409)
+            // Attachments swallowed by this compaction leave the provider context; mark them so the
+            // chat can offer re-attachment. Canonical sources exclude this column, so stored digests stay stable.
+            const detachedMediaIds = currentMedia.filter(item => item.kind === 'attachment').map(item => item.id)
+            if (detachedMediaIds.length > 0)
+              await transaction('agentMedia').whereIn('id', detachedMediaIds).whereNull('detachedAt').update({ detachedAt: new Date() })
             await this.#appendPresentationEventInTransaction(transaction, claim, 'model.turn', receipt as unknown as AgentEventData)
           })
         },

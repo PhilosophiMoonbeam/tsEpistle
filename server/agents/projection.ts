@@ -634,7 +634,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
           'messageId',
           messageRows.map(message => message.id)
         )
-        .select('id', 'kind', 'filename', 'mimeType', 'byteLength', 'messageId', 'expiresAt')
+        .select('id', 'kind', 'filename', 'mimeType', 'byteLength', 'messageId', 'expiresAt', 'detachedAt')
     : []
   const messages: AgentMessageView[] = messageRows.map(message => {
     const grounding = googleSearchGrounding(message.googleSearchGrounding)

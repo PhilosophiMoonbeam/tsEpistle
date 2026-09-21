@@ -28,6 +28,9 @@ export interface AgentMediaSource extends Omit<AgentMediaPayload, 'payload'> {
   readonly payload?: Buffer
   readonly loadPayload?: (signal: AbortSignal) => Promise<Buffer>
   readonly preparePdf?: (signal: AbortSignal) => Promise<PreparedAgentPdf>
+  readonly promptTokens?: number | null | undefined
+  /** Persists a provider-measured prompt token count so compaction planning can use real media exposure. Best-effort. */
+  readonly recordPromptTokens?: (tokens: number) => Promise<void>
 }
 export const loadAgentMediaPayload = async (source: AgentMediaSource, signal: AbortSignal): Promise<Buffer> => {
   signal.throwIfAborted()
@@ -44,14 +47,17 @@ export interface AgentMediaRow extends AgentMediaPayload {
   readonly runId: string | null
   readonly kind: 'attachment' | 'generated-image' | 'generated-video' | 'generated-audio'
   readonly expiresAt: Date | string | null
+  readonly promptTokens: number | null
+  readonly detachedAt: Date | string | null
 }
-export const projectAgentMedia = (row: Pick<AgentMediaRow, 'id' | 'kind' | 'filename' | 'mimeType' | 'byteLength' | 'expiresAt'>): AgentMediaView => ({
+export const projectAgentMedia = (row: Pick<AgentMediaRow, 'id' | 'kind' | 'filename' | 'mimeType' | 'byteLength' | 'expiresAt' | 'detachedAt'>): AgentMediaView => ({
   id: row.id,
   kind: row.kind,
   filename: row.filename,
   mimeType: row.mimeType,
   byteLength: Number(row.byteLength),
-  available: row.expiresAt === null || new Date(row.expiresAt).valueOf() > Date.now()
+  available: row.expiresAt === null || new Date(row.expiresAt).valueOf() > Date.now(),
+  detached: row.detachedAt !== null
 })
 const invalid = (): never => {
   throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Choose a PDF up to 250 MB, or a supported image or audio recording up to 10 MB.', 400)
@@ -199,6 +205,8 @@ export const storeAgentMedia = async (
       sha256: createHash('sha256').update(input.payload).digest('hex'),
       createdAt: now,
       expiresAt: input.messageId ? null : new Date(now.valueOf() + 3600_000),
+      promptTokens: null,
+      detachedAt: null,
       metadata: '{}'
     }
     if (input.runId && input.messageId) {
@@ -248,7 +256,7 @@ export const bindAgentMedia = async (
 }
 
 export type AgentMediaMetadata = Omit<AgentMediaRow, 'payload'>
-export const AGENT_MEDIA_METADATA_COLUMNS = ['id', 'ownerId', 'sessionId', 'messageId', 'runId', 'kind', 'mimeType', 'filename', 'byteLength', 'sha256', 'expiresAt'] as const
+export const AGENT_MEDIA_METADATA_COLUMNS = ['id', 'ownerId', 'sessionId', 'messageId', 'runId', 'kind', 'mimeType', 'filename', 'byteLength', 'sha256', 'expiresAt', 'promptTokens', 'detachedAt'] as const
 export const getOwnedAgentMediaMetadata = async (db: Knex, ownerId: number, id: string): Promise<AgentMediaMetadata> => {
   const row = await db('agentMedia').where({ id, ownerId }).first(...AGENT_MEDIA_METADATA_COLUMNS) as AgentMediaMetadata | undefined
   if (!row || (row.expiresAt !== null && new Date(row.expiresAt).valueOf() <= Date.now())) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Attachment was not found.', 404)
@@ -289,6 +297,11 @@ export const stageOwnedAgentMedia = async (db: Knex, ownerId: number, id: string
 
 export const ownedAgentMediaSource = (db: Knex, ownerId: number, sessionId: string, row: AgentMediaMetadata): AgentMediaSource => ({
   id: row.id, filename: row.filename, mimeType: row.mimeType, byteLength: Number(row.byteLength),
+  promptTokens: row.promptTokens === null ? undefined : Number(row.promptTokens),
+  recordPromptTokens: async tokens => {
+    if (!Number.isSafeInteger(tokens) || tokens < 1 || Number(row.byteLength) < 1) return
+    await db('agentMedia').where({ id: row.id, ownerId, sessionId, sha256: row.sha256, byteLength: Number(row.byteLength) }).update({ promptTokens: tokens })
+  },
   loadPayload: async signal => {
     signal.throwIfAborted()
     if (Number(row.byteLength) > AGENT_ATTACHMENT_MAX_BYTES) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Use document preparation for large PDFs.', 413)

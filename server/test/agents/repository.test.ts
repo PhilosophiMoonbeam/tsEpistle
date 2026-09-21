@@ -37,6 +37,7 @@ import { type AgentAdmissionResolver, type AgentEngine, AgentProductRuntime } fr
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 import { up as addAgentGoalBudgetTiers } from '../../db/migrations/tsepistle-000042-agent-goal-budget-tiers.ts'
 import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
+import { up as addAgentMediaContextState } from '../../db/migrations/tsepistle-000047-agent-media-context-state.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 const sessionId = '00000000-0000-4000-8000-000000000001'
@@ -436,6 +437,7 @@ describe('durable agent repositories', () => {
     await createTables(knex)
     await addAgentGoalBudgetTiers(knex)
     await addAgentMedia(knex)
+    await addAgentMediaContextState(knex)
     await knex('users').insert([{ id: 7 }, { id: 8 }, { id: 9 }])
     await knex('groups').insert([{ id: 1 }])
     await createAgentSession(knex, { id: sessionId, ownerId: 7, title: 'Thread', retention: 'saved', providerProfileId: null, executionMode: 'agent' })

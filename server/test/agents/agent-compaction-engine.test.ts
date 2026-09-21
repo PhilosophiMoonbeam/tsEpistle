@@ -543,10 +543,12 @@ describe('Ax agent engine context compaction', () => {
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 200, completionTokens: 10, totalTokens: 210 } }
       },
       response('First batch established evidence one.', 500, 50),
+      response('Evidence two is authoritative.[[cite:page:2]]', 300, 20),
       response('Evidence two is authoritative.[[cite:page:2]]', 300, 20)
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
       calls.push(input)
+
       return replies.shift()!
     })
     const { factory } = factoryFor(chat)
@@ -584,19 +586,19 @@ describe('Ax agent engine context compaction', () => {
       { commitCompaction, text: async () => undefined, event }
     )
 
-    expect(calls).toHaveLength(4)
-    const summaryRequest = calls[2]!
+    expect(calls).toHaveLength(5)
+    const summaryRequest = calls[3]!
     expect(summaryRequest).not.toHaveProperty('functions')
     expect(JSON.stringify(summaryRequest)).toContain('tool-1')
     expect(JSON.stringify(summaryRequest)).toContain('EVIDENCE_ONE')
-    expect(JSON.stringify(summaryRequest)).not.toContain('tool-2')
-    const followOn = JSON.stringify(calls[3])
+    expect(JSON.stringify(summaryRequest)).toContain('tool-2')
+    expect(JSON.stringify(summaryRequest)).toContain('EVIDENCE_TWO')
+    const followOn = JSON.stringify(calls[4])
     expect(followOn).toContain('First batch established evidence one.')
-    expect(followOn).toContain('tool-2')
-    expect(followOn).toContain('EVIDENCE_TWO')
+    expect(followOn).not.toContain('EVIDENCE_TWO')
     expect(event).toHaveBeenCalledWith(
       'model.turn',
-      expect.objectContaining({ outcome: 'context_compacted', usageVersion: 2, inputTokens: 500, outputTokens: 50, totalTokens: 550 })
+      expect.objectContaining({ outcome: 'context_compacted', usageVersion: 2, inputTokens: 300, outputTokens: 20, totalTokens: 320 })
     )
     expect(commitCompaction).not.toHaveBeenCalled()
     expect(result).toMatchObject({ authoritySha256: 'f'.repeat(64), citations: [expect.objectContaining({ evidenceId: 'page:2' })] })

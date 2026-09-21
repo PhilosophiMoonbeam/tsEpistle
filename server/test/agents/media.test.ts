@@ -6,6 +6,7 @@ import type { Knex } from 'knex'
 import { createAgentMediaTestDatabase } from './media-database.ts'
 import { beforeEach, afterEach, describe, expect, it } from '../bun-test.mts'
 import { up, down } from '../../db/migrations/tsepistle-000044-agent-media.ts'
+import { up as upMediaContextState } from '../../db/migrations/tsepistle-000047-agent-media-context-state.ts'
 import {
   AGENT_MEDIA_MAX_BYTES,
   AGENT_MEDIA_OWNER_MAX_BYTES,
@@ -90,6 +91,7 @@ describe('private Agent media', () => {
       table.text('adapterConfig')
     })
     await up(db)
+    await upMediaContextState(db)
   })
   afterEach(async () => {
     await destroyDatabase()
@@ -122,7 +124,7 @@ describe('private Agent media', () => {
     const media = await upload()
     expect((await getOwnedAgentMedia(db, 7, media.id)).payload).toEqual(png)
     await expect(getOwnedAgentMedia(db, 8, media.id)).rejects.toMatchObject({ status: 404 })
-    expect(Object.keys(projectAgentMedia(media)).sort()).toEqual(['available', 'byteLength', 'filename', 'id', 'kind', 'mimeType'])
+    expect(Object.keys(projectAgentMedia(media)).sort()).toEqual(['available', 'byteLength', 'detached', 'filename', 'id', 'kind', 'mimeType'])
     await db('agentSessions').where({ id: sessionId }).update({ deletedAt: new Date() })
     await expect(getOwnedAgentMedia(db, 7, media.id)).rejects.toMatchObject({ status: 404 })
   })
