@@ -211,4 +211,29 @@ describe('agent continuation resource limits', () => {
     await expect(result).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
     expect(text).not.toHaveBeenCalled()
   })
+
+  it('does not carry rejected-answer interaction state into an evidence repair turn', async () => {
+    const requests: Array<Record<string, unknown>> = []
+    const service = adapter(
+      [
+        interaction('interaction-1', 'Unsupported claim. [[cite:missing]]', 's'.repeat(70_000)),
+        interaction('interaction-2', 'The delivered source does not support that claim.')
+      ],
+      body => requests.push(body as Record<string, unknown>)
+    )
+    const { result, text } = await execute(service.chat.bind(service), false, {
+      limits: { maxTurns: 2, maxToolCalls: 0, maxOutputTokens: 32_768 },
+      run: { ...run, executionMode: 'generation-only' }
+    })
+    const accepted = await result
+    expect(text).toHaveBeenCalledOnce()
+    expect(text).toHaveBeenCalledWith('The delivered source does not support that claim.')
+    expect(requests).toHaveLength(2)
+    const repairInput = requests[1]!['input'] as ReadonlyArray<Record<string, unknown>>
+    expect(repairInput.some(step => step['type'] === 'thought')).toBe(false)
+    expect(repairInput).toHaveLength(3)
+    expect(repairInput.map(step => step['type'])).toEqual(['user_input', 'model_output', 'user_input'])
+    expect(repairInput[1]!['content']).toEqual([{ type: 'text', text: 'Unsupported claim. [[cite:missing]]' }])
+    expect(accepted).toMatchObject({ inputTokens: 6, outputTokens: 4, totalTokens: 10 })
+  })
 })
