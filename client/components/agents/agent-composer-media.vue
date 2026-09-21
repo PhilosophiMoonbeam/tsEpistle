@@ -233,6 +233,30 @@ const editImage = async (media: AgentMediaView): Promise<boolean> => {
   if (added && !selectedGenerationTools.value.includes('image')) selectedGenerationTools.value = ['image', ...selectedGenerationTools.value]
   return added === true
 }
+// Re-attaching a detached attachment downloads the stored copy and re-uploads it as a
+// new pending attachment through the same flow used for freshly chosen files.
+const reattachMedia = async (media: AgentMediaView): Promise<boolean> => {
+  if (locked.value || !props.capabilities?.attachments || !props.session) return false
+  const sessionId = props.session.id
+  error.value = ''
+  uploading.value = true
+  const controller = new AbortController()
+  uploadController = controller
+  let file: File
+  try {
+    const response = await fetcher(agentMediaContentUrl(media.id), { credentials: 'same-origin', signal: controller.signal })
+    if (!response.ok) throw new Error('The attachment copy is no longer available. Try attaching the file again.')
+    const blob = await response.blob()
+    if (disposed || controller.signal.aborted || props.session?.id !== sessionId) return false
+    file = new File([blob], media.filename, { type: media.mimeType })
+  } catch (value) {
+    if (!disposed && !controller.signal.aborted) error.value = value instanceof Error ? value.message : 'The attachment could not be re-attached.'
+    return false
+  } finally {
+    if (uploadController === controller) { uploadController = null; uploading.value = false }
+  }
+  return (await addFiles([file])) === true
+}
 const chooseFiles = (event: Event) => {
   const input = event.target as HTMLInputElement
   void addFiles(Array.from(input.files ?? []))

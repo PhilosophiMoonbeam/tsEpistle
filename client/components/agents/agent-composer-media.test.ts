@@ -7,11 +7,11 @@ const source = fs.readFileSync(new URL('./agent-composer-media.vue', import.meta
 const script = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1]
 if (!script) throw new Error('Media composer script is missing')
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
-const evaluate = new Function('dependencies', `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, addFiles, editImage, clear, cancelDictation, startRecording, stopRecording, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, generationMenu, recording, transcribing, error }`)
+const evaluate = new Function('dependencies', `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, generationMenu, recording, transcribing, error }`)
 const sessionId = '00000000-0000-4000-8000-000000000081'
 const mediaId = '00000000-0000-4000-8000-000000000082'
 const runId = '00000000-0000-4000-8000-000000000083'
-const media = { id: mediaId, kind: 'attachment', filename: 'image.png', mimeType: 'image/png', byteLength: 5, available: true }
+const media = { id: mediaId, kind: 'attachment', filename: 'image.png', mimeType: 'image/png', byteLength: 5, available: true, detached: false }
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } })
 const settle = async () => { for (let step = 0; step < 12; step++) await new Promise(resolve => setTimeout(resolve, 0)) }
 class Recorder {
@@ -186,6 +186,65 @@ describe('Agent Wiki asset attachments', () => {
     harness.api.browseAssets()
     expect(harness.api.assetPickerOpen.value).toBe(false)
     harness.api.clear(); harness.unmount()
+  })
+})
+
+describe('re-attaching a detached attachment', () => {
+  const detachedMedia = { ...media, id: '00000000-0000-4000-8000-000000000084', filename: 'report.pdf', mimeType: 'application/pdf', detached: true }
+
+  it('does not fetch or upload without attachment capabilities', async () => {
+    let requests = 0
+    const harness = mount({ fetch: async () => { requests++; return response({ media }) } })
+    const added = await harness.api.reattachMedia(detachedMedia)
+    expect(added).toBe(false)
+    expect(requests).toBe(0)
+    harness.unmount()
+  })
+
+  it('downloads the stored copy and re-uploads it as a new pending attachment', async () => {
+    const paths: string[] = []
+    let uploadedName = ''
+    const uploaded = { ...detachedMedia, id: '00000000-0000-4000-8000-000000000085', detached: false }
+    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async (input, init) => {
+      const path = String(input); paths.push(path)
+      if (path.endsWith('/content')) return new Response('stored pdf bytes', { headers: { 'content-type': 'application/pdf' } })
+      if (path.endsWith('/media') && init?.method === 'POST') {
+        uploadedName = (init.body as FormData).get('file') instanceof File ? 'file' : 'missing'
+        return response({ media: uploaded })
+      }
+      throw new Error(`Unexpected request ${path}`)
+    } })
+    const added = await harness.api.reattachMedia(detachedMedia)
+    expect(added).toBe(true)
+    expect(paths).toEqual(['/_api/agents/media/00000000-0000-4000-8000-000000000084/content', '/_api/agents/sessions/00000000-0000-4000-8000-000000000081/media'])
+    expect(uploadedName).toBe('file')
+    expect(harness.api.attachments.value.map(item => item.id)).toEqual(['00000000-0000-4000-8000-000000000085'])
+    expect(harness.api.error.value).toBe('')
+    harness.unmount()
+  })
+
+  it('reports an error and does not upload when the stored copy is unavailable', async () => {
+    const paths: string[] = []
+    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async (input) => {
+      const path = String(input); paths.push(path)
+      if (path.endsWith('/content')) return new Response('gone', { status: 404 })
+      throw new Error(`Unexpected request ${path}`)
+    } })
+    const added = await harness.api.reattachMedia(detachedMedia)
+    expect(added).toBe(false)
+    expect(paths).toEqual(['/_api/agents/media/00000000-0000-4000-8000-000000000084/content'])
+    expect(harness.api.attachments.value).toEqual([])
+    expect(harness.api.error.value).toContain('no longer available')
+    harness.unmount()
+  })
+
+  it('rejects re-attachment when the composer already holds four attachments', async () => {
+    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async () => response({ media }) })
+    harness.api.attachments.value = [media, media, media, media]
+    const added = await harness.api.reattachMedia(detachedMedia)
+    expect(added).toBe(false)
+    expect(harness.api.error.value).toContain('up to 4 files')
+    harness.unmount()
   })
 })
 

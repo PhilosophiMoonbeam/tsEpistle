@@ -3,7 +3,7 @@ import { validateAgentAttachment } from './agent-media.ts'
 import { agentMediaContentUrl, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia } from './agents-api.ts'
 const sessionId = '00000000-0000-4000-8000-000000000081'
 const mediaId = '00000000-0000-4000-8000-000000000082'
-const media = { id: mediaId, kind: 'attachment', filename: 'diagram.png', mimeType: 'image/png', byteLength: 3, available: true }
+const media = { id: mediaId, kind: 'attachment', filename: 'diagram.png', mimeType: 'image/png', byteLength: 3, available: true, detached: false }
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } })
 describe('Agent private media boundary', () => {
   it('accepts bounded raster images and PDFs but rejects active or empty content', () => {

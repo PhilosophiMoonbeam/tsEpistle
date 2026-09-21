@@ -95,8 +95,19 @@
                 <video v-if="media.available && media.kind === 'generated-video'" :src="agentMediaContentUrl(media.id)" controls preload="metadata" playsinline :aria-label="media.filename" />
                 <audio v-if="media.available && media.kind === 'generated-audio'" :src="agentMediaContentUrl(media.id)" controls preload="metadata" :aria-label="media.filename" />
                 <figcaption>
-                  <a v-if="media.available" :href="agentMediaContentUrl(media.id)" :download="media.filename">{{ media.filename }} <span>· Download</span></a>
-                  <span v-else>{{ media.filename }} · No longer available</span>
+                  <span v-if="!media.available">{{ media.filename }} · No longer available</span>
+                  <template v-else-if="media.detached && media.kind === 'attachment'">
+                    <span class="agent-message__media-detached">
+                      <v-icon icon="mdi-file-remove-outline" size="16" aria-hidden="true" />
+                      <span>{{ media.filename }} · Detached from context</span>
+                    </span>
+                    <template v-if="reattachConfirmId === media.id">
+                      <v-btn variant="text" size="small" color="warning" @click="confirmReattach(media)">Confirm re-attach?</v-btn>
+                      <v-btn variant="text" size="small" @click="cancelReattach">Cancel</v-btn>
+                    </template>
+                    <v-btn v-else variant="text" size="small" prepend-icon="mdi-paperclip-remove" @click="requestReattach(media)">Re-attach</v-btn>
+                  </template>
+                  <a v-else :href="agentMediaContentUrl(media.id)" :download="media.filename">{{ media.filename }} <span>· Download</span></a>
                   <v-btn v-if="media.kind === 'generated-image' && media.available && imageEditingEnabled" variant="text" size="small" prepend-icon="mdi-image-edit-outline" :disabled="canSubmit === false || networkBlocked" @click="emit('editImage', media)">Edit image</v-btn>
                 </figcaption>
               </figure>
@@ -326,6 +337,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   editImage: [media: AgentMediaView]
+  reattach: [media: AgentMediaView]
   askSource: [source: WikiSource]
   suggest: [prompt: string]
   decision: [proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string]
@@ -337,6 +349,16 @@ const forwardDecision = (
   confirmationPath?: string
 ): void => emit('decision', proposalId, approvalId, decision, confirmationPath)
 
+// Detached attachments keep downloading while the session lives, but re-attaching
+// re-uploads a copy as a new pending composer attachment, so require confirmation.
+const reattachConfirmId = ref<string | null>(null)
+const requestReattach = (media: AgentMediaView): void => { reattachConfirmId.value = media.id }
+const cancelReattach = (): void => { reattachConfirmId.value = null }
+const confirmReattach = (media: AgentMediaView): void => {
+  if (reattachConfirmId.value !== media.id) return
+  reattachConfirmId.value = null
+  emit('reattach', media)
+}
 const previewSelector = ref<WikiSourceSelector | null>(null)
 const previewCitation = (event: MouseEvent, selector: WikiSourceSelector | null): void => {
   if (!selector || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
@@ -529,6 +551,8 @@ watch(
 .agent-message__media audio { display: block; width: min(100%, 440px); }
 .agent-message__media figcaption { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; font-size: .8rem; overflow-wrap: anywhere; }
 .agent-message__media figcaption a { color: rgb(var(--v-theme-primary)); }
+.agent-message__media figcaption .agent-message__media-detached { align-items: center; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent); display: inline-flex; gap: 4px; }
+.agent-message__media figcaption .agent-message__media-reattach { color: rgb(var(--v-theme-on-surface-variant)); }
 
 .agent-thread {
   color: rgb(var(--v-theme-on-surface));
