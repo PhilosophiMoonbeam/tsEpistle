@@ -1931,8 +1931,17 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__more-menu {
+  order: 3;
   min-width: var(--wiki-control-height);
   min-height: var(--wiki-control-height);
+}
+
+.inline-agent__panel-actions > .inline-agent__new-session {
+  order: 2;
+}
+
+.inline-agent__panel-actions > .inline-agent__close-action {
+  order: 4;
 }
 
 .inline-agent__close-action {
@@ -2632,6 +2641,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 @container agent-workspace (max-width: 780px) {
   .inline-agent__desktop-panel-btn { display: none; }
   .inline-agent__new-label--wide { display: none; }
+  .inline-agent__panel-actions > .inline-agent__new-session { order: 1; }
+  .inline-agent__panel-actions > .inline-agent__more-menu { order: 2; }
   .inline-agent__panel-menu-item--compact { display: flex !important; }
   .inline-agent__session-action { min-width: var(--wiki-control-height); padding-inline: var(--wiki-space-2); }
   .inline-agent__session-action :deep(.v-btn__prepend) { margin: 0; }
