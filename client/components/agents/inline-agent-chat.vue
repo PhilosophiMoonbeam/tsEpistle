@@ -2806,7 +2806,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     flex-wrap: nowrap;
     min-height: calc(var(--wiki-control-height) + env(safe-area-inset-top));
     padding-block-start: max(0px, env(safe-area-inset-top));
-    padding-inline: var(--wiki-space-2);
+    padding-inline: var(--wiki-space-1);
   }
   .inline-agent__toolbar :deep(.v-toolbar__content) {
     flex-wrap: nowrap;
@@ -2828,7 +2828,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
   .inline-agent__identity {
     overflow: hidden;
-    gap: .375rem;
+    gap: .25rem;
   }
   .inline-agent__avatar { width: 28px !important; height: 28px !important; }
 
@@ -2863,6 +2863,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__toolbar :deep(.v-btn) {
     min-width: 2.25rem;
     min-height: var(--wiki-control-height);
+    padding-inline: var(--wiki-space-1) !important;
   }
 
   .inline-agent__body {
