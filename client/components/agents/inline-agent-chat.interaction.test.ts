@@ -376,7 +376,7 @@ const loadGoalLockState = (
   const clearedStartersIntervalIds: number[] = []
   const evaluate = new Function(
     '{ computed, nextTick, onBeforeUnmount, onMounted, ref, setInterval, clearInterval, setTimeout, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection }',
-    `${executableScript}\nreturn { SESSION_NOTICE_VISIBLE_MS, STARTERS_SPIN_HOLD_MS, STARTERS_SPIN_STEP_MS, activeRun, canPinCurrentChat, canSubmit, clearSessionNotice, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleStartersScroll, handleTranscriptEngagement, holdStartersSpin, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, sessionNotice, setSessionNotice, startersRow, startStartersSpin, stopStartersSpin, submitUnavailableReason, thread, welcomeGreeting }`
+    `${executableScript}\nreturn { SESSION_NOTICE_VISIBLE_MS, STARTERS_SPIN_HOLD_MS, STARTERS_SPIN_STEP_MS, activeRun, canPinCurrentChat, canSubmit, clearSessionNotice, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleStartersScroll, handleTranscriptEngagement, holdStartersSpin, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, sessionNotice, setSessionNotice, startersRow, startStartersSpin, startTemporaryChat, stopStartersSpin, submitUnavailableReason, temporaryHint, thread, welcomeGreeting }`
   ) as (dependencies: Record<string, unknown>) => LockState
 
   const state = evaluate({
@@ -589,6 +589,9 @@ const mountInlineAgent = (
     keepingConversation: false,
     isTemporary: options.isTemporary ?? false,
     temporaryExpiry: '',
+    temporaryHint: (options.isTemporary ?? false)
+      ? 'Temporary on. Hidden from history. Personal memory still applies. Turning it off keeps this conversation in history.'
+      : 'Temporary off. Messages save to history. Turning it on starts a new temporary conversation.',
     sessionNotice: '',
     closePanels: () => {
       historyOpen.value = false
@@ -852,51 +855,45 @@ describe('Inline Agent workspace actions', () => {
     const temporaryToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__temporary-toggle')
     if (!temporaryToggle) throw new Error('Temporary conversation control did not render')
     expect(temporaryToggle.textContent?.trim()).toBe('Temporary on')
-    expect(temporaryToggle.getAttribute('aria-haspopup')).toBe('dialog')
-    expect(temporaryToggle.getAttribute('aria-expanded')).toBe('false')
+    expect(temporaryToggle.getAttribute('role')).toBe('switch')
+    expect(temporaryToggle.getAttribute('aria-checked')).toBe('true')
     expect(temporaryToggle.classList.contains('inline-agent__temporary-toggle--active')).toBe(true)
+    // The description lives in the tooltip; there is no popover dialog anymore.
+    expect(temporaryToggle.getAttribute('title')).toContain('Hidden from history')
+    expect(mounted.root.querySelector('.inline-agent__temporary-popover')).toBeNull()
 
     const items = await openPanelMenu(mounted)
     const pinItem = items[3]
     if (!pinItem) throw new Error('Pin menu item did not render')
     expect(pinItem.querySelector<HTMLElement>('.v-list-item-title')?.textContent?.trim()).toBe('Pin chat')
 
-    mounted.temporaryMenuOpen.value = true
-    await settle()
-    const popover = mounted.root.querySelector<HTMLElement>('.inline-agent__temporary-popover')
-    expect(popover?.getAttribute('role')).toBe('dialog')
-    const temporarySwitch = popover?.querySelector<HTMLButtonElement>('.inline-agent__temporary-switch')
-    expect(temporarySwitch?.getAttribute('role')).toBe('switch')
-    expect(temporarySwitch?.getAttribute('aria-checked')).toBe('true')
-    expect(popover?.textContent).toContain('Hidden from history')
-    expect(popover?.textContent).toContain('Personal memory still applies')
-
-    temporarySwitch?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    // Clicking the toggle itself keeps the begun conversation in history.
+    temporaryToggle.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     await settle()
     expect(mounted.temporaryCalls).toEqual(['keep'])
   })
 
-  it('explains that starting a temporary chat opens a new conversation before switching', async () => {
+  it('describes the off state in the tooltip and starts a temporary chat on click', async () => {
     const mounted = mountInlineAgent()
     const temporaryToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__temporary-toggle')
     if (!temporaryToggle) throw new Error('Temporary conversation control did not render')
     expect(temporaryToggle.textContent?.trim()).toBe('Temporary off')
+    expect(temporaryToggle.getAttribute('aria-checked')).toBe('false')
+    expect(temporaryToggle.getAttribute('title')).toContain('starts a new temporary conversation')
+    // The toggle drives the transition directly; no popover is rendered.
+    expect(mounted.root.querySelector('.inline-agent__temporary-popover')).toBeNull()
 
     temporaryToggle.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     await settle()
-    expect(temporaryToggle.getAttribute('aria-expanded')).toBe('true')
-    const popover = mounted.root.querySelector<HTMLElement>('.inline-agent__temporary-popover')
-    const temporarySwitch = popover?.querySelector<HTMLButtonElement>('.inline-agent__temporary-switch')
-    expect(temporarySwitch?.getAttribute('aria-checked')).toBe('false')
-    expect(popover?.textContent).toContain('opens a new conversation')
-    expect(popover?.textContent).toContain('stays')
-    // The switch alone drives the transition; no extra confirm button is rendered.
-    expect(Array.from(popover?.querySelectorAll('button') ?? [])).toHaveLength(1)
-
-    temporarySwitch?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    await settle()
     expect(mounted.temporaryCalls).toEqual(['start'])
-    expect(mounted.temporaryMenuOpen.value).toBe(false)
+  })
+
+  it('drops the redundant Keep conversation action from the retention strip', () => {
+    const mounted = mountInlineAgent(undefined, { isTemporary: true })
+    const retention = mounted.root.querySelector<HTMLElement>('.inline-agent__retention')
+    expect(retention).not.toBeNull()
+    expect(retention?.textContent).toContain('Temporary conversation')
+    expect(Array.from(retention?.querySelectorAll('button') ?? [])).toHaveLength(0)
   })
 
   it('keeps the accessible brand label and lets the conversation title lead the header', () => {
