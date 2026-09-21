@@ -48,9 +48,7 @@
               <v-icon icon="mdi-creation-outline" size="20" aria-hidden="true" />
             </v-avatar>
             <div class="inline-agent__heading">
-              <h2 :id="workspaceTitleId" aria-label="Wiki Agent">
-                <span class="inline-agent__workspace-title--wide">Wiki Agent</span>
-              </h2>
+              <h2 :id="workspaceTitleId" aria-label="Wiki Agent">Wiki Agent</h2>
               <div class="inline-agent__session-line">
                 <span class="inline-agent__session-title" :title="sessionTitle">{{ sessionTitle }}</span>
                 <v-icon
@@ -1754,21 +1752,30 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   text-transform: uppercase;
 }
 
+/* The brand name stays only as the accessible label; the conversation name
+   is the visible title on every layout, with the temporary control as its
+   subtitle line. */
 .inline-agent__heading h2 {
-  margin: 0;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  border: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.inline-agent__session-title {
+  flex: 0 0 100%;
+  min-width: 0;
+  max-width: 28rem;
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-heading);
   font-size: 1rem;
   font-weight: 720;
   letter-spacing: -.015em;
-  line-height: 1.2;
-}
-
-.inline-agent__session-title {
-  min-width: 0;
-  max-width: 28rem;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
-  font-size: var(--wiki-label-size);
   line-height: 1.2;
 }
 
@@ -1840,6 +1847,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__session-line {
   display: flex;
   min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 0;
   align-items: center;
   gap: var(--wiki-space-2);
   margin-top: var(--wiki-space-1);
@@ -2785,7 +2794,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
   .inline-agent__mobile-return,
   .inline-agent__close-action {
-    min-width: var(--wiki-control-height) !important;
+    min-width: 2.25rem !important;
     min-height: var(--wiki-control-height) !important;
   }
 
@@ -2821,38 +2830,11 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     overflow: hidden;
     gap: .375rem;
   }
-  .inline-agent__avatar { width: 32px !important; height: 32px !important; }
-
-  /* The brand title drops out of the visual header on phones; the h2 stays
-     only as the accessible label while the conversation name becomes the
-     visible title line. */
-  .inline-agent__heading h2 {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    border: 0;
-    padding: 0;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-  .inline-agent__workspace-title--wide { display: none; }
+  .inline-agent__avatar { width: 28px !important; height: 28px !important; }
 
   .inline-agent__session-line {
-    flex-wrap: wrap;
-    row-gap: 0;
     margin-top: 0;
   }
-  .inline-agent__session-title {
-    flex: 0 0 100%;
-    color: rgb(var(--v-theme-on-surface));
-    font-family: var(--wiki-font-heading);
-    font-size: 1rem;
-    font-weight: 720;
-    letter-spacing: -.015em;
-  }
-
 
   .inline-agent__desktop-panel-btn,
   .inline-agent__new-label--wide {
@@ -2871,7 +2853,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__toolbar :deep(.v-btn) {
-    min-width: var(--wiki-control-height);
+    min-width: 2.25rem;
     min-height: var(--wiki-control-height);
   }
 
