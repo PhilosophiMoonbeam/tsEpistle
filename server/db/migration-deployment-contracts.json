@@ -32,6 +32,37 @@
         "agent-goal-budget-tier-selection"
       ]
     },
+    "tsepistle-000043-agent-daily-token-reset.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "agent-quota-daily-token-reset-credit-column"
+      ],
+      "runtimePostconditions": [
+        "agent-quota-daily-token-reset-credit-column"
+      ]
+    },
+    "tsepistle-000044-agent-media.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "agent-media-table"
+      ],
+      "runtimePostconditions": [
+        "agent-media-table",
+        "agent-runs-media-request-column"
+      ]
+    },
     "tsepistle-000045-agent-goal-budget-policy-v2.js": {
       "persistentState": "stateful",
       "reversible": false,

@@ -21,7 +21,7 @@ const connection =
       }
     : undefined
 const directlyInvoked =
-  process.env.npm_lifecycle_event !== 'test' &&
+  !String(process.env.npm_lifecycle_event ?? '').startsWith('test') &&
   process.argv.some(argument => argument.replaceAll('\\', '/').endsWith('rollback-guards-migration.postgres.integration.test.ts'))
 const databaseContractRequired = directlyInvoked || process.env.WIKI_TEST_POSTGRES_REQUIRED === '1'
 
