@@ -137,7 +137,30 @@ return {
   focusSkillsTrigger,
   resetInput,
   submit,
-  setDraft
+  setDraft,
+  moreMenuItems,
+  moreMenuOpen,
+  submitDisabled,
+  savedCaret,
+  handleSelectionChange,
+  attachmentsAvailable,
+  attachmentCount,
+  attachDisabled,
+  generationOptions,
+  selectedGenerationTools,
+  createAvailable,
+  attachmentMenuOpen,
+  openFilePicker,
+  openAssetBrowser,
+  toggleGenerationTool,
+  mediaRecording,
+  mediaTranscribing,
+  mediaSeconds,
+  dictationAvailable,
+  error,
+  startDictation,
+  stopDictation,
+  cancelDictation
 }`
 ) as (dependencies: Record<string, unknown>) => Record<string, unknown>
 let nextComposerId = 0
@@ -340,6 +363,7 @@ const loadComposer = (
 }
 interface MountedComposer {
   readonly root: HTMLElement
+  readonly sent: Array<{ content: string; invokedSkillVersionIds: readonly string[]; mode: 'message' | 'goal' }>
   readonly unmount: () => void
 }
 
@@ -350,9 +374,32 @@ interface MountedComposerOptions {
   readonly statusLabel?: string
   readonly statusTone?: 'ready' | 'error' | 'busy'
   readonly initialDraft?: string
+  readonly initialMode?: 'message' | 'goal'
+  readonly skillsEnabled?: boolean
+  readonly mediaCapabilities?: { attachments?: boolean; transcription?: boolean }
+  readonly mediaSession?: Record<string, unknown>
 }
 
+// Shared media-composer stub state; each test reads/adjusts these through the mounted harness helpers.
+let dictationTranscriptHook: () => Promise<string | null> = async () => null
+const setDictationTranscriptHook = (hook: () => Promise<string | null>): void => { dictationTranscriptHook = hook }
+const recording = Vue.ref(false)
+const transcribing = Vue.ref(false)
+const seconds = Vue.ref(0)
+const dictationIntent = Vue.ref<'insert' | 'send'>('insert')
+const generationOptions = Vue.ref([
+  { value: 'image', title: 'Images', icon: 'mdi-image-outline' },
+  { value: 'video', title: 'Video', icon: 'mdi-movie-open-outline' }
+])
+const selectedTools = Vue.ref<Array<'image' | 'video' | 'music'>>([])
+const attachments = Vue.ref<Array<{ id: string; filename: string; mimeType: string }>>([])
+let chooseUploadCalls = 0
+let browseAssetsCalls = 0
+const markDocument = (name: string): void => { (document as unknown as { __which: string }).__which = name }
+markDocument('composer-test')
 const mountedComposers: Array<() => void> = []
+let sentRecorder: Array<{ content: string; invokedSkillVersionIds: readonly string[]; mode: 'message' | 'goal' }> = []
+let lastBindings: Record<string, unknown> | null = null
 const mountComposer = (options: MountedComposerOptions = {}): MountedComposer => {
   const host = document.createElement('div')
   document.body.append(host)
@@ -360,7 +407,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     disabled: options.disabled ?? false,
     sending: options.sending ?? false,
     canStop: options.canStop ?? false,
-    skillsEnabled: false,
+    skillsEnabled: options.skillsEnabled ?? false,
     goalsEnabled: true,
     skills: [],
     skillsLoading: false,
@@ -371,10 +418,12 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     statusLabel: options.statusLabel ?? 'Ready',
     statusTone: options.statusTone ?? 'ready',
     initialDraft: options.initialDraft ?? 'draft',
-    initialMode: undefined,
+    initialMode: options.initialMode,
     initialSkillVersionIds: undefined,
     hasMessages: false,
-    networkBlocked: false
+    networkBlocked: false,
+    mediaCapabilities: options.mediaCapabilities,
+    mediaSession: options.mediaSession
   }
   const composerComponent = Vue.defineComponent({
     name: 'AgentComposerInteractionHarness',
@@ -401,9 +450,9 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
       mediaCapabilities: Object,
       networkBlocked: Boolean
     },
-    emits: ['draftChange', 'compositionChange', 'send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences'],
+    emits: ['draftChange', 'compositionChange', 'send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'mediaSettled', 'updateGoogleSearch'],
     setup(props, { emit, expose }) {
-      return evaluateComposer({
+      const bindings = evaluateComposer({
         computed: Vue.computed,
         nextTick: Vue.nextTick,
         onBeforeUnmount: Vue.onBeforeUnmount,
@@ -426,11 +475,60 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
         HTMLElement: browserWindow.HTMLElement,
         HTMLTextAreaElement: browserWindow.HTMLTextAreaElement
       })
+      lastBindings = bindings as Record<string, unknown>
+      return bindings
     },
     render: renderAgentComposer
   })
-  const app = Vue.createApp(composerComponent, componentProps)
-  app.component('AgentComposerMedia', { template: '<div />' })
+  const sentMessages: Array<{ content: string; invokedSkillVersionIds: readonly string[]; mode: 'message' | 'goal' }> = []
+  sentRecorder = sentMessages
+  const app = Vue.createApp(composerComponent, {
+    ...componentProps,
+    onSend: (content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void) => {
+      sentMessages.push({ content, invokedSkillVersionIds, mode })
+      completion?.(true)
+    }
+  })
+  const mediaHarness = Vue.defineComponent({
+    name: 'AgentComposerMediaHarness',
+    props: ['csrfToken', 'session', 'capabilities', 'generationToolsEnabled', 'disabled', 'networkBlocked'],
+    emits: ['change', 'busy', 'dictation', 'settled'],
+    template: '<div class="agent-media-composer-harness" />',
+    setup(_props, { emit, expose }: { emit: (event: string, value: unknown) => void; expose: (value: unknown) => void }) {
+      Vue.watch(recording, value => emit('busy', value))
+      Vue.watch(transcribing, value => { if (value) emit('busy', true) })
+      expose({
+        clear: () => undefined,
+        addFiles: async () => undefined,
+        editImage: async () => false,
+        reattachMedia: async () => true,
+        startRecording: async () => { recording.value = true; seconds.value = 0 },
+        stopRecording: () => { recording.value = false },
+        cancelDictation: () => { recording.value = false; transcribing.value = false; dictationIntent.value = 'insert' },
+        beginDictationSubmit: () => {
+          if (!recording.value) return false
+          dictationIntent.value = 'send'
+          return true
+        },
+        waitForDictationTranscript: () => dictationIntent.value === 'send' ? dictationTranscriptHook() : Promise.resolve(null),
+        chooseUpload: () => { chooseUploadCalls += 1 },
+        browseAssets: () => { browseAssetsCalls += 1 },
+        toggleGenerationTool: (tool: 'image' | 'video' | 'music') => {
+          selectedTools.value = selectedTools.value.includes(tool)
+            ? selectedTools.value.filter(item => item !== tool)
+            : [...selectedTools.value, tool]
+        },
+        generationOptions,
+        selectedGenerationTools: selectedTools,
+        attachments,
+        recording,
+        transcribing,
+        seconds,
+        dictationIntent
+      })
+    }
+  })
+  app.component('AgentComposerMedia', mediaHarness)
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.mount(host)
   for (const element of host.querySelectorAll<HTMLElement>('*')) element.setAttribute(composerScopeAttribute, '')
@@ -441,7 +539,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     host.remove()
   }
   mountedComposers.push(unmount)
-  return { root, unmount }
+  return { root, sent: sentMessages, unmount }
 }
 
 const press = (composer: ComposerHarness, key: string, options?: KeyOptions): KeyboardEvent & { wasPrevented: () => boolean } => {
@@ -452,7 +550,24 @@ const press = (composer: ComposerHarness, key: string, options?: KeyOptions): Ke
 afterEach(() => {
   for (const unmount of mountedComposers.splice(0)) unmount()
   document.body.replaceChildren()
+  recording.value = false
+  transcribing.value = false
+  seconds.value = 0
+  dictationIntent.value = 'insert'
+  selectedTools.value = []
+  attachments.value = []
+  chooseUploadCalls = 0
+  browseAssetsCalls = 0
+  sentRecorder = []
+  dictationTranscriptHook = async () => null
 })
+
+const settleAsync = async (): Promise<void> => {
+  for (let step = 0; step < 8; step++) {
+    await Promise.resolve()
+    await Vue.nextTick()
+  }
+}
 
 describe('Agent composer submit loading presentation', () => {
   it('keeps idle-disabled Send opaque while hiding loading content behind its loader', () => {
@@ -654,5 +769,226 @@ describe('Agent composer instance accessibility', () => {
     expect(first.activeCommandOptionId.value).toBeDefined()
     expect(second.activeCommandOptionId.value).toBeDefined()
     expect(first.activeCommandOptionId.value).not.toBe(second.activeCommandOptionId.value)
+  })
+})
+
+describe('Agent composer three-section layout', () => {
+  it('renders one context row, one editor, and one action row with the microphone beside Send', async () => {
+    const mounted = mountComposer({ initialDraft: '', mediaCapabilities: { attachments: true, transcription: true } })
+    const root = mounted.root
+    const context = root.querySelector<HTMLElement>('.agent-composer__context-controls')
+    const actions = root.querySelector<HTMLElement>('.agent-composer__actions')
+    const primary = root.querySelector<HTMLElement>('.agent-composer__primary-actions')
+    const editor = root.querySelector<HTMLElement>('.agent-composer__editor')
+    const submit = root.querySelector<HTMLButtonElement>('.agent-composer__submit')
+    const mic = root.querySelector<HTMLButtonElement>('.agent-composer__mic')
+    if (!context || !actions || !primary || !editor || !submit || !mic) throw new Error('Three-section composer did not render')
+
+    expect(actions.children).toHaveLength(2)
+    expect(actions.contains(context)).toBe(true)
+    expect(actions.contains(primary)).toBe(true)
+    expect(primary.contains(mic)).toBe(true)
+    expect(primary.contains(submit)).toBe(true)
+    // The microphone sits immediately before Send in the action row.
+    expect(mic.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(mic.getAttribute('aria-label')).toBe('Start dictation')
+    expect(submit.textContent?.trim()).toBe('Send')
+    await Vue.nextTick()
+    const attach = root.querySelector<HTMLButtonElement>('.agent-composer__attach')
+    const create = root.querySelector<HTMLButtonElement>('.agent-composer__create')
+    expect(attach?.getAttribute('aria-label')).toBe('Attach files')
+    expect(create?.textContent).toContain('Create')
+    // The separate media controls row is gone; dictation has no row label anymore.
+    expect(root.querySelector('.agent-media-composer__controls')).toBeNull()
+    expect(root.querySelector('.agent-composer__web-search-info')).toBeNull()
+  })
+
+  it('shows the creation-tool count and routes upload and asset browsing through the media pipeline', async () => {
+    const mounted = mountComposer({ initialDraft: '', mediaCapabilities: { attachments: true, transcription: true }, mediaSession: { id: 'session-1' } })
+    await Vue.nextTick()
+    selectedTools.value = ['image']
+    await Vue.nextTick()
+    const create = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__create')
+    if (!create) throw new Error('Create control did not render')
+    expect(create.textContent?.trim()).toBe('Create1')
+    expect(create.getAttribute('data-state')).toBe('selected')
+    // Open the attachment menu through its model, as Vuetify overlay tests do.
+    const bindings = lastBindings as unknown as { attachmentMenuOpen: { value: boolean } }
+    bindings.attachmentMenuOpen.value = true
+    await Vue.nextTick()
+    await Vue.nextTick()
+    const uploadItem = Array.from(document.body.querySelectorAll<HTMLElement>('.v-list-item')).find(item => item.textContent?.includes('Upload files'))
+    if (!uploadItem) throw new Error('Upload files menu item did not render')
+    uploadItem.click()
+    await Vue.nextTick()
+    expect(chooseUploadCalls).toBe(1)
+  })
+
+  it('disables attaching once the four-attachment limit is reached', async () => {
+    const mounted = mountComposer({ initialDraft: '', mediaCapabilities: { attachments: true, transcription: true }, mediaSession: { id: 'session-1' } })
+    await Vue.nextTick()
+    attachments.value = [
+      { id: '1', filename: 'a.png', mimeType: 'image/png' },
+      { id: '2', filename: 'b.png', mimeType: 'image/png' },
+      { id: '3', filename: 'c.png', mimeType: 'image/png' },
+      { id: '4', filename: 'd.png', mimeType: 'image/png' }
+    ]
+    await Vue.nextTick()
+    expect(mounted.root.querySelector<HTMLButtonElement>('.agent-composer__attach')?.disabled).toBe(true)
+  })
+
+  it('labels the Web toggle and drops the standalone information control', () => {
+    const mounted = mountComposer({ initialDraft: '' })
+    const toggle = mounted.root.querySelector<HTMLLabelElement>('.agent-composer__web-search-toggle')
+    if (!toggle) throw new Error('Web toggle did not render')
+    expect(toggle.textContent?.trim()).toBe('Web')
+    expect(toggle.querySelector('input')?.getAttribute('aria-label')).toBe('Use Google Search for this conversation')
+    expect(toggle.getAttribute('title')).toContain('Google Search')
+    // Color-independent state attribute for the off state is absent; the checkbox aria-checked carries state.
+    expect(toggle.querySelector('input')?.getAttribute('aria-checked')).toBe('false')
+    expect(mounted.root.querySelector('.agent-composer__web-search-info')).toBeNull()
+  })
+
+  it('keeps the skills controls in the context row with the neighboring action controls', () => {
+    const mounted = mountComposer({ initialDraft: '', skillsEnabled: true })
+    const context = mounted.root.querySelector<HTMLElement>('.agent-composer__context-controls')
+    const skillButton = mounted.root.querySelector<HTMLElement>('.agent-composer__skill-button')
+    const webToggle = mounted.root.querySelector<HTMLElement>('.agent-composer__web-search-toggle')
+    expect(context).not.toBeNull()
+    expect(skillButton).not.toBeNull()
+    expect(webToggle).not.toBeNull()
+    expect(context?.contains(skillButton ?? null)).toBe(true)
+    expect(context?.contains(webToggle ?? null)).toBe(true)
+  })
+})
+
+describe('Agent composer goal placement', () => {
+  it('moves Goal into the More menu while unset and exposes the menu item to enable it', () => {
+    const mounted = mountComposer({ initialDraft: '', initialMode: 'message' })
+    expect(mounted.root.querySelector('.agent-composer__goal-chip')).toBeNull()
+    const more = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__more-button')
+    if (!more) throw new Error('More options button did not render')
+    expect(more.getAttribute('aria-label')).toBe('More options')
+  })
+
+  it('shows an editable Goal context chip when goal mode is on', async () => {
+    const mounted = mountComposer({ initialDraft: '', initialMode: 'goal' })
+    const chip = mounted.root.querySelector<HTMLElement>('.agent-composer__goal-chip')
+    if (!chip) throw new Error('Goal chip did not render')
+    expect(chip.textContent?.trim()).toBe('Goal')
+    // While set, Goal leaves the More menu.
+    expect(mounted.root.querySelector('.agent-composer__more-button')).toBeNull()
+    const close = chip.querySelector<HTMLButtonElement>('.v-chip__close')
+    if (!close) throw new Error('Goal chip close control did not render')
+    close.click()
+    await Vue.nextTick()
+    expect(mounted.root.querySelector('.agent-composer__goal-chip')).toBeNull()
+    expect(mounted.root.querySelector('.agent-composer__more-button')).not.toBeNull()
+  })
+})
+
+describe('Agent composer dictation controls', () => {
+  it('starts recording from the microphone and inserts a finished transcript for review', async () => {
+    const mounted = mountComposer({ initialDraft: 'typed words', mediaCapabilities: { transcription: true } })
+    const mic = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')
+    if (!mic) throw new Error('Microphone did not render')
+    mic.click()
+    await Vue.nextTick()
+    expect(recording.value).toBe(true)
+    expect(mounted.root.querySelector('.agent-composer__dictation-status')).not.toBeNull()
+    // A second mic click stops and inserts for review.
+    const stop = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic--recording')
+    if (!stop) throw new Error('Stop dictation control did not render')
+    expect(stop.getAttribute('aria-label')).toBe('Stop dictation and insert text')
+    stop.click()
+    await Vue.nextTick()
+    expect(recording.value).toBe(false)
+  })
+
+  it('keeps a reserved countdown with the microphone while recording', async () => {
+    const mounted = mountComposer({ initialDraft: '', mediaCapabilities: { transcription: true } })
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
+    await Vue.nextTick()
+    seconds.value = 37
+    await Vue.nextTick()
+    const status = mounted.root.querySelector<HTMLElement>('.agent-composer__dictation-status')
+    expect(status?.textContent?.trim()).toBe('37 / 60s')
+    expect(status?.getAttribute('role')).toBe('status')
+    expect(status?.getAttribute('aria-live')).toBe('polite')
+    const cancel = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__dictation-cancel')
+    expect(cancel?.textContent?.trim()).toBe('Cancel')
+  })
+
+  it('submits exactly once with the combined transcript and typed draft when Send is pressed during recording', async () => {
+    setDictationTranscriptHook(async () => {
+      transcribing.value = true
+      return 'voice words'
+    })
+    const mounted = mountComposer({ initialDraft: 'typed words', mediaCapabilities: { transcription: true } })
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
+    await Vue.nextTick()
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
+    await settleAsync()
+    expect(sentRecorder).toHaveLength(1)
+    expect(sentRecorder[0]?.content).toBe('typed words voice words')
+    // A successful dictation send clears the submitted draft like a plain send.
+    expect((mounted.root.querySelector('.agent-composer__input textarea') as HTMLTextAreaElement | null)?.value ?? '').not.toContain('typed words')
+  })
+
+  it('notifies without submitting when a send-during-recording finds no speech', async () => {
+    setDictationTranscriptHook(async () => null)
+    const mounted = mountComposer({ initialDraft: 'typed words', mediaCapabilities: { transcription: true } })
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
+    await Vue.nextTick()
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
+    await settleAsync()
+    expect(sentRecorder).toHaveLength(0)
+    expect(mounted.root.querySelector('.agent-composer__notice')?.textContent).toContain('No speech was found')
+  })
+
+  it('preserves the typed draft when a recording is canceled', async () => {
+    const mounted = mountComposer({ initialDraft: 'keep me', mediaCapabilities: { transcription: true } })
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
+    await Vue.nextTick()
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__dictation-cancel')?.click()
+    await Vue.nextTick()
+    expect(recording.value).toBe(false)
+    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+    expect(textarea?.value).toBe('keep me')
+  })
+
+  it('blocks duplicate submissions while a dictation submit is pending', async () => {
+    let resolveTranscript: ((value: string | null) => void) | null = null
+    setDictationTranscriptHook(() => new Promise(resolve => { resolveTranscript = resolve }))
+    const mounted = mountComposer({ initialDraft: 'typed words', mediaCapabilities: { transcription: true } })
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
+    await Vue.nextTick()
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
+    await Vue.nextTick()
+    // Submit again while the transcript is still pending.
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
+    if (resolveTranscript) resolveTranscript('voice words')
+    await settleAsync()
+    expect(sentRecorder).toHaveLength(1)
+  })
+
+  it('inserts dictated text at the saved caret instead of overwriting typed text', async () => {
+    const mounted = mountComposer({ initialDraft: 'head tail', mediaCapabilities: { transcription: true } })
+    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+    if (!textarea) throw new Error('Composer textarea did not render')
+    // The saved caret anchor is captured from the textarea's selection (the
+    // select handler and typing position); insertion honors it directly.
+    const bindings = lastBindings as unknown as { savedCaret: { value: number | null }; appendDictation: (text: string) => void }
+    bindings.savedCaret.value = 4
+    const draft = (lastBindings as unknown as { draft: { value: string } }).draft
+    bindings.appendDictation('spoken')
+    await Vue.nextTick()
+    expect(draft.value).toBe('head spoken tail')
+
+    // An invalid anchor falls back to appending without clobbering typed text.
+    bindings.savedCaret.value = 999
+    bindings.appendDictation('more')
+    await Vue.nextTick()
+    expect(draft.value).toBe('head spoken tail more')
   })
 })

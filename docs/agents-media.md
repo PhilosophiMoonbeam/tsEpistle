@@ -12,7 +12,7 @@ Enter separate input and output prices for the image and speech model roles, in 
 
 In chat, use **Attach** to choose files, or paste/drop supported files into the composer. Choose **Image** to create or edit an image. Generated images appear in the conversation with download and **Edit image** controls. Editing makes a new attachment and draft, leaving the original image intact. Image mode accepts images, while ordinary chat accepts images and PDFs when configured.
 
-**Dictate** requests microphone access only when clicked. Stop to transcribe, or cancel to discard the recording. Recording stops after 60 seconds in the browser. The microphone is released on cancellation, navigation, a profile change, or loss of connection. Review the transcript before sending.
+**Dictate** requests microphone access only when the circular microphone button beside Send is clicked. Tap it again to stop, transcribe, and insert the transcript for review, or press Send while recording to stop, transcribe, and send the transcript together with any typed text in one message. Cancel discards only the recording; the typed draft is kept. Recording stops after 60 seconds in the browser and inserts the transcript for review without sending. The microphone is released on cancellation, navigation, a profile change, or loss of connection. Review the transcript before sending.
 
 ## Storage and limits
 

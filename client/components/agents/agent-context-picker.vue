@@ -18,35 +18,38 @@
         prepend-icon="mdi-plus"
         :disabled="disabled || connectionBlocked"
         type="button"
+        aria-label="Add sources"
         @click="openSources"
-      >Add sources</v-btn>
+      ><span aria-hidden="true">Sources</span></v-btn>
     </div>
-    <div
+    <!-- One compact source chip for the current page. The chip itself means the
+         page is included, so no separate Included badge is rendered. -->
+    <button
       v-if="currentPage"
-      class="agent-context__page-control"
-      role="group"
-      :aria-label="`Current page context: ${currentPage.locale}/${currentPage.path}`"
+      type="button"
+      class="agent-context__page-chip"
+      :class="{ 'agent-context__page-chip--excluded': !draft.includeCurrentPage }"
+      :disabled="disabled || connectionBlocked"
+      :aria-pressed="draft.includeCurrentPage"
+      :aria-label="draft.includeCurrentPage
+        ? `Current page ${currentPage.locale}/${currentPage.path} is included in the next message; activate to exclude it`
+        : `Current page ${currentPage.locale}/${currentPage.path} is excluded from the next message; activate to include it`"
+      :title="draft.includeCurrentPage ? 'Included in the next message. Activate to exclude this page.' : 'Excluded from the next message. Activate to include this page.'"
+      @click="emit('change', { includeCurrentPage: !draft.includeCurrentPage })"
     >
-      <v-icon icon="mdi-file-link-outline" size="16" aria-hidden="true" />
+      <v-icon icon="mdi-file-link-outline" size="15" aria-hidden="true" />
       <span class="agent-context__page-copy" :title="`${currentPage.locale}/${currentPage.path}`">
         <strong>{{ currentPage.locale.toUpperCase() }}</strong>
         <span aria-hidden="true"> · </span>
         {{ currentPage.path }}
       </span>
-      <v-btn
-        class="agent-context__control agent-context__page-toggle"
-        size="small"
-        :variant="draft.includeCurrentPage ? 'tonal' : 'text'"
-        :color="draft.includeCurrentPage ? 'primary' : undefined"
-        rounded="pill"
-        :disabled="disabled || connectionBlocked"
-        :aria-label="draft.includeCurrentPage ? 'Exclude current page' : 'Include current page'"
-        :aria-pressed="draft.includeCurrentPage"
-        :title="draft.includeCurrentPage ? 'Exclude current page from the next message' : 'Include current page in the next message'"
-        type="button"
-        @click="emit('change', { includeCurrentPage: !draft.includeCurrentPage })"
-      >{{ draft.includeCurrentPage ? 'Included' : 'Include' }}</v-btn>
-    </div>
+      <v-icon
+        class="agent-context__page-state"
+        :icon="draft.includeCurrentPage ? 'mdi-check' : 'mdi-minus'"
+        size="14"
+        aria-hidden="true"
+      />
+    </button>
     <div v-if="draft.sources.length" class="agent-context__sources" aria-label="Pages attached to the next message">
       <v-chip v-for="source in draft.sources" :key="source.id" size="small" closable :disabled="disabled || connectionBlocked" :close-label="`Remove source ${source.title}`" :aria-label="`Preview attached source ${source.title}`" variant="outlined" prepend-icon="mdi-file-document-outline" @click.stop="previewSelector = { id: source.id }" @click:close.stop="removeSource(source.id)"><span class="agent-context__source-label">{{ source.title }}</span></v-chip>
     </div>
@@ -558,23 +561,45 @@ onBeforeUnmount(() => {
   pointer-events: auto;
   transform: translateX(-50%);
 }
-.agent-context__page-control {
-  display: flex;
+.agent-context__page-chip {
+  position: relative;
+  display: inline-flex;
   min-width: 0;
   max-width: 100%;
   flex: 0 1 auto;
   align-items: center;
   gap: var(--wiki-space-1);
   min-height: var(--agent-context-control-face-height);
-  padding: 0 var(--wiki-space-1) 0 var(--wiki-space-2);
+  padding: 0 var(--wiki-space-2);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-radius-pill);
   background: color-mix(in srgb, var(--wiki-surface-raised) 72%, transparent);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 76%, transparent);
+  cursor: pointer;
+  font: inherit;
   font-size: var(--wiki-label-size);
   line-height: 1.25;
 }
-.agent-context__page-control > .v-icon { flex: 0 0 auto; color: var(--wiki-accent-warm); }
+.agent-context__page-chip > .v-icon:first-child { flex: 0 0 auto; color: var(--wiki-accent-warm); }
+.agent-context__page-chip--excluded {
+  border-style: dashed;
+  opacity: .72;
+}
+.agent-context__page-chip--excluded .agent-context__page-copy strong {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+}
+.agent-context__page-chip:focus-visible {
+  outline: 2px solid var(--wiki-focus-color);
+  outline-offset: 2px;
+}
+.agent-context__page-chip:disabled { cursor: default; }
+.agent-context__page-state {
+  flex: 0 0 auto;
+  color: rgb(var(--v-theme-primary));
+}
+.agent-context__page-chip--excluded .agent-context__page-state {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 55%, transparent);
+}
 .agent-context__page-copy {
   min-width: 0;
   overflow: hidden;
@@ -584,10 +609,6 @@ onBeforeUnmount(() => {
 .agent-context__page-copy strong {
   color: rgb(var(--v-theme-on-surface));
   font-weight: var(--wiki-label-weight);
-}
-.agent-context__page-toggle {
-  flex: 0 0 auto;
-  padding-inline: var(--wiki-space-2);
 }
 .agent-context__sources {
   display: flex;
