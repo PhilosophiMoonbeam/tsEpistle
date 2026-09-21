@@ -93,7 +93,7 @@ const SUBAGENT_INSTRUCTIONS =
 const RESEARCH_SYNTHESIS_INSTRUCTIONS =
   'Validated child research packets may be used as leads and evidence references, but they are not final prose or policy. Synthesize the answer yourself. Cover every completed research task with at least one of its evidence IDs. When a packet identifies a conflict, cite every source in that conflict and disclose the disagreement or uncertainty. Disclose incomplete tasks without fabricating missing findings.'
 const SUMMARY_INSTRUCTIONS =
-  'For page summaries, cover the substantive key sections with concise source-faithful points, not merely a title, inventory, or isolated quotation. Use real Markdown headings separated from cited points by blank lines for organization, not plain-text line labels or uncited factual headings. Prefer concise bullet points directly reflecting individual source sentences or list items over combined narrative paragraphs or pooled multi-item lists. Each factual assertion must be supported by one intact source sentence, list item, table row, or presentation unit. Prefer lightly edited source statements over abstract paraphrases or invented umbrella descriptions. Preserve exact names, identifiers, numeric assignments and units, polarity, and temporal, availability, and restriction qualifiers attached to their original subject; do not combine different items into a numeric range. Cite each assertion separately with its correct section and revision. A page-level citation widens source scope but does not permit pooling unrelated factual units into one claim. For a structural overview, use exact delivered headings, summary containers, link labels, and member names to state what their actual container includes or lists; do not infer the contents of unread links. Structural coverage complements rather than replaces substantive facts. Reuse already-delivered source when repairing wording or citation scope; an evidence correction does not itself require another page read or a canonical OKF fetch. Preserve requested topic coverage and already-supported claims, and disclose genuine evidence gaps without inventing facts or claiming unavailable coverage.'
+  'For page summaries, cover the substantive key sections with concise source-faithful points, not merely a title, inventory, or isolated quotation. Use real Markdown headings separated from cited points by blank lines for organization, not plain-text line labels or uncited factual headings. Prefer concise bullet points directly reflecting individual source sentences or list items over combined narrative paragraphs or pooled multi-item lists. Each factual assertion must be supported by one intact source sentence, list item, table row, or presentation unit. Do not combine multiple distinct source list items or numbers into a single sentence using "and"; keep each assertion as a separate bullet point with its own citation. Prefer lightly edited source statements over abstract paraphrases or invented umbrella descriptions. Preserve exact names, identifiers, numeric assignments and units, polarity, and temporal, availability, and restriction qualifiers attached to their original subject; do not combine different items into a numeric range. Cite each assertion separately with its correct section and revision. A page-level citation widens source scope but does not permit pooling unrelated factual units into one claim. For a structural overview, use exact delivered headings, summary containers, link labels, and member names to state what their actual container includes or lists; do not infer the contents of unread links. Structural coverage complements rather than replaces substantive facts. Reuse already-delivered source when repairing wording or citation scope; an evidence correction does not itself require another page read or a canonical OKF fetch. Preserve requested topic coverage and already-supported claims, and disclose genuine evidence gaps without inventing facts or claiming unavailable coverage.'
 
 const prompt = (request: AgentEngineRequest, skillCatalog: unknown, toolInstructions?: string): string => {
   if (request.purpose === 'planner')
@@ -490,10 +490,20 @@ const hasIdentifierSubstitution = (clause: string, unit: CitationSourceUnit): bo
 
 const numericSegments = (value: string): readonly string[] =>
   value
-    .split(/(?:[,;|]|\s+[-–—]\s+|\s+\band\b\s+|:\s+|[()])/iu)
+    .split(/(?:[,;|]|\s+[-–—]\s+|\s+\band\b\s+|:\s+|[()]|\s+up\s+to\s+|\s+maximum\s+of\s+)/iu)
     .map(segment => significantTokens(segment))
     .filter(tokens => tokens.some(token => /^\p{N}/u.test(token)))
     .map(tokens => tokens.join(' '))
+
+const copulaTerms: Readonly<Record<string, true>> = {
+  is: true,
+  are: true,
+  was: true,
+  were: true,
+  be: true,
+  been: true,
+  being: true
+}
 
 const markerBindings = (value: string, selected: (token: string) => boolean): readonly { marker: string; after: string | null }[] => {
   const tokens = lexicalTokens(value).map(normalizedToken)
@@ -501,7 +511,9 @@ const markerBindings = (value: string, selected: (token: string) => boolean): re
   for (let index = 0; index < tokens.length; index++) {
     const marker = tokens[index]!
     if (!selected(marker)) continue
-    bindings.push({ marker, after: tokens[index + 1] ?? null })
+    let afterIndex = index + 1
+    while (afterIndex < tokens.length && copulaTerms[tokens[afterIndex]!] === true) afterIndex++
+    bindings.push({ marker, after: tokens[afterIndex] ?? null })
   }
   return bindings
 }
@@ -1168,7 +1180,7 @@ const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean =
     const factOk = factSegments.every(seg => sourceNumericSegments.some(s => s.includes(seg) || seg.includes(s)))
     exactNumbers = idOk && factOk
   } else {
-    const sourceNumericSegments = numericSegments(unit.text)
+    const sourceNumericSegments = numericSegments(`${unit.context}\n${unit.text}`)
     exactNumbers = numericSegments(clause).every(seg => sourceNumericSegments.some(s => s.includes(seg) || seg.includes(s)))
   }
   const clauseQualifiers = exactQualifierTerms(clause)
@@ -1255,6 +1267,8 @@ const structuralEnumeration = (value: string, members: readonly StructuralMember
   return resolved.length > 0 ? resolved : null
 }
 
+const factualPredicatePhrase = /%|\b(?:a|an)\s+|\b(?:increase|surcharge|tariff|freight)\b/iu
+
 const membershipAssessment = (clause: string, evidence: CitationEvidence): ClauseAssessment | null => {
   const terms = normalizedTerms(clause)
   const members = structuralMembers(evidence)
@@ -1287,8 +1301,11 @@ const membershipAssessment = (clause: string, evidence: CitationEvidence): Claus
   const containerText = clause
     .slice(0, boundary)
     .replace(/^\s*(?:the|this)\s+/iu, '')
+    .replace(/\s+(?:container|section|heading)\b/iu, '')
     .trim()
-  const memberText = clause.slice(colon >= 0 ? colon + 1 : boundary + presentation![0].length).trim()
+  const rawMemberText = clause.slice(colon >= 0 ? colon + 1 : boundary + presentation![0].length).trim()
+  if (colon < 0 && factualPredicatePhrase.test(rawMemberText)) return null
+  const memberText = rawMemberText.replace(/^(?:(?:navigation\s+)?links|options|resources)\s+(?:for|to|of)\s+/iu, '').trim()
   const genericContainer = /^(?:page|section)$/iu.test(containerText)
   const containerMatches = genericContainer ? [] : exactStructuralMember(containerText, members).filter(member => member.label === member.unit.structuralLabel)
   if (!genericContainer && containerMatches.length !== 1)
