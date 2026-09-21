@@ -61,15 +61,17 @@
             <div class="inline-agent__heading">
               <h2 :id="workspaceTitleId" aria-label="Wiki Agent">Wiki Agent</h2>
               <div class="inline-agent__session-line">
-                <span class="inline-agent__session-title" :title="sessionTitle">{{ sessionTitle }}</span>
-                <v-icon
-                  v-if="isCurrentChatPinned"
-                  class="inline-agent__pin-indicator"
-                  icon="mdi-pin"
-                  size="14"
-                  role="img"
-                  aria-label="Pinned conversation"
-                />
+                <span class="inline-agent__session-title" :title="sessionTitle">
+                  {{ sessionTitle }}
+                  <v-icon
+                    v-if="isCurrentChatPinned"
+                    class="inline-agent__pin-indicator"
+                    icon="mdi-pin"
+                    size="14"
+                    role="img"
+                    aria-label="Pinned conversation"
+                  />
+                </span>
                 <!-- Direct retention toggle: the tooltip carries the description and
                      the click itself switches temporary mode (begun conversations are
                      kept in history; unstarted ones save after the first message). -->
@@ -83,8 +85,8 @@
                   :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
                   @click="isTemporary ? keepConversation() : startTemporaryChat()"
                 >
-                  <v-icon icon="mdi-timer-sand-complete" size="14" aria-hidden="true" />
-                  <span>Temporary {{ isTemporary ? 'on' : 'off' }}</span>
+                  <v-icon :icon="isTemporary ? 'mdi-hourglass-empty' : 'mdi-hourglass-full'" size="14" aria-hidden="true" />
+                  <span>Temporary</span>
                 </button>
               </div>
             </div>
@@ -182,10 +184,10 @@
 
       <AgentMcpApproval v-if="approvalId" :csrf-token="csrfToken" :proposal-id="approvalId" :network-blocked="connectionBlocked" />
       <template v-else>
-        <div v-if="isTemporary" class="inline-agent__retention" aria-label="Temporary conversation" role="status">
+        <div v-if="isTemporary" class="inline-agent__retention" aria-label="Temp chat" role="status">
           <v-icon icon="mdi-timer-sand-complete" size="22" aria-hidden="true" />
           <div class="inline-agent__retention-copy">
-            <strong>Temporary conversation</strong>
+            <strong>Temp chat</strong>
             <p>Hidden from history<span v-if="temporaryExpiry"> · Expires {{ temporaryExpiry }}</span>. Personal memory still applies.</p>
           </div>
         </div>
@@ -830,11 +832,11 @@ const temporaryExpiry = computed(() => {
   const date = new Date(value)
   return Number.isNaN(date.valueOf()) ? '' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 })
-const sessionTitle = computed(() => thread.value?.session.title || (isTemporary.value ? 'Temporary conversation' : 'New chat'))
+const sessionTitle = computed(() => thread.value?.session.title || (isTemporary.value ? 'Temp chat' : 'New chat'))
 /** Tooltip description for the direct Temporary toggle; the click performs the action. */
 const temporaryHint = computed(() => isTemporary.value
-  ? `Temporary on. Hidden from history${temporaryExpiry.value ? ` · Expires ${temporaryExpiry.value}` : ''}. Personal memory still applies. Turning it off keeps this conversation in history.`
-  : 'Temporary off. Messages save to history. Turning it on starts a new temporary conversation.')
+  ? `Temporary on. Hidden from history${temporaryExpiry.value ? ` · Expires ${temporaryExpiry.value}` : ''}. Personal memory still applies. Turning it off keeps this Temp chat in history.`
+  : 'Temporary off. Messages save to history. Turning it on starts a new Temp chat.')
 const connectionLabel = computed(() => connectionBlocked.value
   ? 'Connection required'
   : loading.value
@@ -1744,6 +1746,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__session-title {
+  /* Align the name's left edge with the Temporary button's hourglass icon. */
+  margin-inline-start: calc(var(--wiki-space-2) + 1px);
   flex: 0 0 100%;
   min-width: 0;
   max-width: 28rem;
