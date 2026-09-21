@@ -41,7 +41,18 @@
       <v-toolbar class="inline-agent__toolbar" color="transparent" density="comfortable" tag="header">
         <div class="inline-agent__toolbar-main">
           <div class="inline-agent__mobile-navigation">
-            <v-btn class="inline-agent__mobile-return" icon="mdi-magnify" variant="text" aria-label="Return to Wiki Search" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('return-search')" />
+            <v-btn
+              ref="historyTrigger"
+              class="inline-agent__history-toggle"
+              icon="mdi-history"
+              variant="text"
+              aria-label="History"
+              :aria-expanded="historyOpen"
+              aria-controls="agent-history-panel"
+              title="History"
+              :disabled="memoryMutationBusy && memoryOpen && panelMode !== 'wide'"
+              @click="toggleHistory"
+            />
           </div>
           <div class="inline-agent__identity">
             <v-avatar class="inline-agent__avatar" color="primary" size="38" variant="tonal">
@@ -104,18 +115,6 @@
         </div>
 
         <div class="inline-agent__panel-actions" role="group" aria-label="Agent workspace actions">
-          <v-btn
-            class="inline-agent__desktop-panel-btn"
-            ref="historyTrigger"
-            prepend-icon="mdi-history"
-            :color="historyOpen ? 'primary' : undefined"
-            :variant="historyOpen ? 'tonal' : 'text'"
-            :aria-label="historyOpen ? 'Close agent conversation history' : 'Open agent conversation history'"
-            :aria-expanded="historyOpen"
-            aria-controls="agent-history-panel"
-            :disabled="memoryMutationBusy && memoryOpen && panelMode !== 'wide'"
-            @click="toggleHistory"
-          >History</v-btn>
           <v-menu v-model="panelMenuOpen" ref="panelMenu" content-class="agent-owned-overlay" location="bottom end" attach=".inline-agent">
             <template #activator="{ props: menuProps }">
               <v-btn
@@ -175,7 +174,7 @@
             :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
             @click="newSession"
           >
-            <span class="inline-agent__new-label--wide">New chat</span>
+            <span class="inline-agent__new-label--wide">New</span>
           </v-btn>
           <v-btn class="inline-agent__close-action wiki-close-control" icon="mdi-close" variant="text" aria-label="Close chat panel" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('close')" />
         </div>
@@ -856,7 +855,7 @@ const temporaryExpiry = computed(() => {
   const date = new Date(value)
   return Number.isNaN(date.valueOf()) ? '' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 })
-const sessionTitle = computed(() => thread.value?.session.title || (isTemporary.value ? 'Temporary conversation' : 'New conversation'))
+const sessionTitle = computed(() => thread.value?.session.title || (isTemporary.value ? 'Temporary conversation' : 'New chat'))
 const connectionLabel = computed(() => connectionBlocked.value
   ? 'Connection required'
   : loading.value
@@ -1685,7 +1684,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__toolbar {
   display: flex;
-  min-height: calc(var(--wiki-control-height) + var(--wiki-space-6));
+  /* Matches the main wiki header height (64px = control height + space-5). */
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-5));
   flex: 0 0 auto;
   flex-wrap: wrap;
   align-content: center;
@@ -1768,7 +1768,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__session-title {
-  flex: 0 0 100%;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 28rem;
   color: rgb(var(--v-theme-on-surface));
@@ -1784,6 +1784,14 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   flex: 0 0 auto;
   align-items: center;
   gap: var(--wiki-space-1);
+}
+
+/* History replaces the old Wiki Search shortcut in the upper-left corner and
+   keeps the same icon-only footprint on every layout. */
+.inline-agent__history-toggle {
+  flex: 0 0 auto;
+  min-width: var(--wiki-control-height);
+  min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
 }
 
 .inline-agent__mobile-navigation {
@@ -1847,11 +1855,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__session-line {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
-  row-gap: 0;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--wiki-space-2);
-  margin-top: var(--wiki-space-1);
 }
 
 .inline-agent__pin-indicator {
@@ -2719,7 +2725,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 /* A docked panel can make a desktop conversation as narrow as a tablet. */
 @container agent-workspace (max-width: 780px) {
-  .inline-agent__desktop-panel-btn { display: none; }
   .inline-agent__new-label--wide { display: none; }
   .inline-agent__panel-actions > .inline-agent__new-session { order: 1; }
   .inline-agent__panel-actions > .inline-agent__more-menu { order: 2; }
@@ -2733,12 +2738,11 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 @media (min-width: 640px) and (max-width: 1023.98px) {
   .inline-agent__toolbar {
-    min-height: calc(var(--wiki-control-height) + var(--wiki-space-4));
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-5));
     padding-inline: var(--wiki-space-3);
   }
 
   .inline-agent__eyebrow,
-  .inline-agent__desktop-panel-btn,
   .inline-agent__new-label--wide {
     display: none;
   }
@@ -2792,13 +2796,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     border: 0;
   }
 
-  .inline-agent__mobile-return,
+  .inline-agent__history-toggle,
   .inline-agent__close-action {
     min-width: 2.25rem !important;
     min-height: var(--wiki-control-height) !important;
   }
 
-  .inline-agent__mobile-return {
+  .inline-agent__history-toggle {
     padding-inline: var(--wiki-space-2) !important;
   }
 
@@ -2833,7 +2837,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__avatar { width: 28px !important; height: 28px !important; }
 
   .inline-agent__session-line {
+    flex-wrap: wrap;
     margin-top: 0;
+  }
+  /* Keep the conversation title on its own full-width row so it never
+     collapses to zero under the temporary toggle on narrow screens. */
+  .inline-agent__session-title {
+    flex: 0 0 100%;
   }
   /* Keep the full on/off wording visible on the subtitle line by dropping the
      decorative icons that would overflow the narrow identity column. */
@@ -2844,7 +2854,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     padding-inline: var(--wiki-space-2);
   }
 
-  .inline-agent__desktop-panel-btn,
   .inline-agent__new-label--wide {
     display: none;
   }
