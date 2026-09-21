@@ -94,6 +94,11 @@ interface LockState {
   thread: ValueRef<Record<string, unknown> | null>
   sendPrompt: (content: string) => Promise<boolean>
   currentPage: ValueRef<TestPageHint | null>
+  sessionNotice: ValueRef<string>
+  setSessionNotice: (message: string) => void
+  clearSessionNotice: () => void
+  SESSION_NOTICE_VISIBLE_MS: number
+  pendingSessionNoticeTimers: Array<{ callback: () => void; delay: number }>
   componentProps: { pageId: number; pageLocale: string; pagePath: string; pageUpdatedAt: string }
 }
 
@@ -358,9 +363,10 @@ const loadGoalLockState = (
     send: vi.fn(() => Promise.resolve(true)),
     setCurrentChatPinned: vi.fn()
   }
+  const pendingSessionNoticeTimers: Array<{ callback: () => void; delay: number }> = []
   const evaluate = new Function(
-    '{ computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection }',
-    `${executableScript}\nreturn { activeRun, canPinCurrentChat, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleTranscriptEngagement, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, submitUnavailableReason, thread, welcomeGreeting }`
+    '{ computed, nextTick, onBeforeUnmount, onMounted, ref, setTimeout, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection }',
+    `${executableScript}\nreturn { SESSION_NOTICE_VISIBLE_MS, activeRun, canPinCurrentChat, canSubmit, clearSessionNotice, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleTranscriptEngagement, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, sessionNotice, setSessionNotice, submitUnavailableReason, thread, welcomeGreeting }`
   ) as (dependencies: Record<string, unknown>) => LockState
 
   const state = evaluate({
@@ -370,6 +376,10 @@ const loadGoalLockState = (
       }
     }),
     nextTick: () => Promise.resolve(),
+    setTimeout: (callback: () => void, delay: number) => {
+      pendingSessionNoticeTimers.push({ callback, delay })
+      return pendingSessionNoticeTimers.length
+    },
     onBeforeUnmount: () => undefined,
     onMounted: () => undefined,
     ref,
@@ -387,7 +397,7 @@ const loadGoalLockState = (
     pwaState: testPwaState,
     retryServerConnection: async () => true
   }) as LockState
-  return { ...state, agentCalls, componentProps: props }
+  return { ...state, agentCalls, componentProps: props, pendingSessionNoticeTimers }
 }
 
 interface MountedInlineAgent {
@@ -1230,6 +1240,30 @@ describe('Agent workspace action semantics', () => {
     expect(status.textContent?.trim()).toBe('Review needed')
     expect(stop?.textContent?.trim()).toBe('Stop response')
     expect(primary.querySelector('.agent-composer__submit')).toBeNull()
+  })
+})
+
+describe('Inline Agent session notice', () => {
+  it('dismisses the session notice after its visible window and frees the strip', () => {
+    const lockState = loadGoalLockState(null)
+    lockState.setSessionNotice('Conversation kept. It will appear in history after your first message.')
+    expect(lockState.sessionNotice.value).toBe('Conversation kept. It will appear in history after your first message.')
+    expect(lockState.pendingSessionNoticeTimers).toHaveLength(1)
+    expect(lockState.pendingSessionNoticeTimers[0]?.delay).toBe(lockState.SESSION_NOTICE_VISIBLE_MS)
+
+    lockState.pendingSessionNoticeTimers[0]?.callback()
+    expect(lockState.sessionNotice.value).toBe('')
+    expect(lockState.pendingSessionNoticeTimers).toHaveLength(1)
+
+    lockState.setSessionNotice('')
+    expect(lockState.pendingSessionNoticeTimers).toHaveLength(1)
+    expect(lockState.sessionNotice.value).toBe('')
+
+    lockState.setSessionNotice('Conversation kept in history.')
+    expect(lockState.pendingSessionNoticeTimers).toHaveLength(2)
+    lockState.clearSessionNotice()
+    expect(lockState.sessionNotice.value).toBe('')
+    expect(lockState.pendingSessionNoticeTimers).toHaveLength(2)
   })
 })
 

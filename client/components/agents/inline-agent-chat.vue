@@ -638,6 +638,22 @@ const creatingRetention = ref<'saved' | 'temporary' | null>(null)
 const promptSubmissionPending = ref(false)
 const keepingConversation = ref(false)
 const sessionNotice = ref('')
+const SESSION_NOTICE_VISIBLE_MS = 5000
+let sessionNoticeTimer: ReturnType<typeof setTimeout> | null = null
+const clearSessionNotice = (): void => {
+  if (sessionNoticeTimer !== null) { clearTimeout(sessionNoticeTimer); sessionNoticeTimer = null }
+  sessionNotice.value = ''
+}
+const setSessionNotice = (message: string): void => {
+  if (sessionNoticeTimer !== null) { clearTimeout(sessionNoticeTimer); sessionNoticeTimer = null }
+  sessionNotice.value = message
+  if (message) {
+    sessionNoticeTimer = setTimeout(() => {
+      sessionNoticeTimer = null
+      sessionNotice.value = ''
+    }, SESSION_NOTICE_VISIBLE_MS)
+  }
+}
 const historyOpen = ref(false)
 const memoryOpen = ref(false)
 const panelMenuOpen = ref(false)
@@ -1084,7 +1100,7 @@ const keepConversation = async (): Promise<void> => {
   try {
     const kept = await agents.setSessionRetention(sessionId, 'saved')
     if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation || !kept || thread.value?.session.id !== sessionId) return
-    sessionNotice.value = hasConversation.value ? 'Conversation kept in history.' : 'Conversation kept. It will appear in history after your first message.'
+    setSessionNotice(hasConversation.value ? 'Conversation kept in history.' : 'Conversation kept. It will appear in history after your first message.')
   } catch (value) {
     if (isComponentCurrent(generation, ownerId) && actionGeneration === generation)
       agents.error = value instanceof Error ? value.message : 'The conversation could not be kept.'
@@ -1098,7 +1114,7 @@ const createSession = async (retention: 'saved' | 'temporary'): Promise<void> =>
   const generation = actionGeneration
   const ownerId = props.ownerId
   creatingRetention.value = retention
-  sessionNotice.value = ''
+  clearSessionNotice()
   try {
     const initialized = await ensureInitialized()
     if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation || !initialized || sessionMutationBusy.value || !networkActionAllowed()) return
@@ -1473,7 +1489,7 @@ watch([historyOpen, memoryOpen], ([history, memory]) => {
   triggerForPanel(restoreKind)?.focus({ preventScroll: true })
 }, { flush: 'post' })
 watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
-  if (sessionId !== previousSessionId) { goalExpanded.value = false; sessionNotice.value = '' }
+  if (sessionId !== previousSessionId) { goalExpanded.value = false; clearSessionNotice() }
   if (!sessionId || !previousSessionId || sessionId === previousSessionId) return
   const restoreWorkspaceFocus = !clearUnfiledHistoryOpen.value
   if (historyOpen.value) {
@@ -1534,6 +1550,7 @@ onBeforeUnmount(() => {
   transcriptObserver?.disconnect()
   if (transcriptFrame !== null) window.cancelAnimationFrame(transcriptFrame)
   panelFocusScope?.deactivate({ restoreFocus: false })
+  if (sessionNoticeTimer !== null) { clearTimeout(sessionNoticeTimer); sessionNoticeTimer = null }
   panelModeMedia.forEach(media => media.removeEventListener('change', reconcilePanelMode))
   window.removeEventListener('resize', scheduleTranscriptReconcile)
   window.removeEventListener('pagehide', handlePageHide)
