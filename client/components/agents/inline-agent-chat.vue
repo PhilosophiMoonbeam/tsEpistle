@@ -52,7 +52,80 @@
                 <span class="inline-agent__workspace-title--wide">Wiki Agent</span>
                 <span class="inline-agent__workspace-title--compact">Agent</span>
               </h2>
-              <p class="inline-agent__session-title" :title="sessionTitle">{{ sessionTitle }}</p>
+              <div class="inline-agent__session-line">
+                <span class="inline-agent__session-title" :title="sessionTitle">{{ sessionTitle }}</span>
+                <v-icon
+                  v-if="isCurrentChatPinned"
+                  class="inline-agent__pin-indicator"
+                  icon="mdi-pin"
+                  size="14"
+                  role="img"
+                  aria-label="Pinned conversation"
+                />
+                <v-menu
+                  v-model="temporaryMenuOpen"
+                  content-class="agent-owned-overlay"
+                  location="bottom start"
+                  attach=".inline-agent"
+                >
+                  <template #activator="{ props: temporaryMenuProps }">
+                    <button
+                      v-bind="temporaryMenuProps"
+                      class="inline-agent__temporary-toggle"
+                      :class="{ 'inline-agent__temporary-toggle--active': isTemporary }"
+                      type="button"
+                      :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
+                      :aria-expanded="temporaryMenuOpen"
+                      aria-haspopup="dialog"
+                    >
+                      <v-icon icon="mdi-timer-sand-complete" size="14" aria-hidden="true" />
+                      <span>Temporary {{ isTemporary ? 'on' : 'off' }}</span>
+                      <v-icon icon="mdi-chevron-down" size="14" aria-hidden="true" />
+                    </button>
+                  </template>
+                  <div class="inline-agent__temporary-popover" role="dialog" aria-label="Temporary conversation mode">
+                    <div class="inline-agent__temporary-popover-row">
+                      <span id="inline-agent-temporary-label" class="inline-agent__temporary-popover-title">Temporary conversation</span>
+                      <button
+                        type="button"
+                        class="inline-agent__temporary-switch"
+                        role="switch"
+                        :aria-checked="isTemporary"
+                        aria-labelledby="inline-agent-temporary-label"
+                        :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
+                        @click="isTemporary ? keepConversation() : startTemporaryChat()"
+                      />
+                    </div>
+                    <p class="inline-agent__temporary-popover-copy">Hidden from history<span v-if="temporaryExpiry"> · Expires {{ temporaryExpiry }}</span>. Personal memory still applies.</p>
+                    <template v-if="!isTemporary">
+                      <p class="inline-agent__temporary-popover-copy">Starting one opens a new conversation. This conversation stays right where it is.</p>
+                      <v-btn
+                        class="inline-agent__temporary-popover-action"
+                        variant="tonal"
+                        color="primary"
+                        size="small"
+                        prepend-icon="mdi-timer-sand-complete"
+                        :loading="creatingRetention === 'temporary'"
+                        :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
+                        @click="startTemporaryChat"
+                      >Start temporary chat</v-btn>
+                    </template>
+                    <template v-else>
+                      <p class="inline-agent__temporary-popover-copy">Keep it to save the conversation in history with its messages.</p>
+                      <v-btn
+                        class="inline-agent__temporary-popover-action"
+                        variant="tonal"
+                        color="primary"
+                        size="small"
+                        prepend-icon="mdi-bookmark-outline"
+                        :loading="keepingConversation"
+                        :disabled="sessionMutationBusy || loading || sending || connectionBlocked || !workspaceReady"
+                        @click="keepConversation"
+                      >Keep conversation</v-btn>
+                    </template>
+                  </div>
+                </v-menu>
+              </div>
             </div>
           </div>
         </div>
@@ -70,32 +143,28 @@
             :disabled="memoryMutationBusy && memoryOpen && panelMode !== 'wide'"
             @click="toggleHistory"
           >History</v-btn>
-          <v-btn
-            class="inline-agent__desktop-panel-btn"
-            ref="memoryTrigger"
-            prepend-icon="mdi-brain"
-            :color="memoryOpen ? 'primary' : undefined"
-            :variant="memoryOpen ? 'tonal' : 'text'"
-            :aria-label="memoryOpen ? 'Close agent memory' : 'Manage agent memory'"
-            :aria-expanded="memoryOpen"
-            aria-controls="agent-memory-panel"
-            :disabled="memoryMutationBusy"
-            @click="toggleMemory"
-          >Memory</v-btn>
           <v-menu v-model="panelMenuOpen" ref="panelMenu" content-class="agent-owned-overlay" location="bottom end" attach=".inline-agent">
             <template #activator="{ props: menuProps }">
               <v-btn
                 v-bind="menuProps"
                 ref="panelMenuTrigger"
-                class="inline-agent__mobile-panel-menu"
-                prepend-icon="mdi-view-dashboard-outline"
+                class="inline-agent__more-menu"
+                icon="mdi-dots-horizontal"
                 variant="text"
-                aria-label="Open Agent panels: conversation history and memory"
-              >Panels</v-btn>
+                :aria-label="panelMenuOpen ? 'Close agent actions menu' : 'More agent actions'"
+                :aria-expanded="panelMenuOpen"
+              />
             </template>
             <v-list density="compact">
               <v-list-item
-                class="inline-agent__panel-menu-item"
+                class="inline-agent__panel-menu-item inline-agent__panel-menu-item--compact"
+                link
+                prepend-icon="mdi-magnify"
+                title="Return to Wiki Search"
+                @click="emit('return-search')"
+              />
+              <v-list-item
+                class="inline-agent__panel-menu-item inline-agent__panel-menu-item--compact"
                 link
                 prepend-icon="mdi-history"
                 title="Conversation history"
@@ -107,8 +176,17 @@
                 link
                 prepend-icon="mdi-brain"
                 title="Agent memory"
+                :aria-expanded="memoryOpen"
                 :disabled="memoryMutationBusy"
                 @click="toggleMemory"
+              />
+              <v-list-item
+                class="inline-agent__panel-menu-item"
+                link
+                :prepend-icon="isCurrentChatPinned ? 'mdi-pin' : 'mdi-pin-outline'"
+                :title="isCurrentChatPinned ? 'Unpin chat' : 'Pin chat'"
+                :disabled="!canPinCurrentChat"
+                @click="setCurrentChatPinned(!isCurrentChatPinned)"
               />
             </v-list>
           </v-menu>
@@ -120,45 +198,13 @@
             size="small"
             rounded="pill"
             :loading="creatingRetention === 'saved'"
-            aria-label="New conversation"
+            aria-label="New chat"
             :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
             @click="newSession"
           >
-            New
-            <ControlBorderBeam :enabled="!loading && !sending && !sessionMutationBusy && !creatingRetention && !connectionBlocked" :phase-offset-ms="3000" />
+            <span class="inline-agent__new-label--wide">New chat</span>
           </v-btn>
-          <v-btn
-            class="inline-agent__session-action inline-agent__chat-pin"
-            :class="{ 'inline-agent__chat-pin--active': Boolean(thread && pinnedSessionId === thread.session.id) }"
-            :color="thread && pinnedSessionId === thread.session.id ? 'primary' : undefined"
-            :variant="thread && pinnedSessionId === thread.session.id ? 'tonal' : 'text'"
-            :prepend-icon="thread && pinnedSessionId === thread.session.id ? 'mdi-pin' : 'mdi-pin-outline'"
-            size="small"
-            rounded="pill"
-            :aria-label="thread && pinnedSessionId === thread.session.id ? 'Unpin conversation' : 'Pin conversation'"
-            :aria-pressed="Boolean(thread && pinnedSessionId === thread.session.id)"
-            :title="thread && pinnedSessionId === thread.session.id ? 'Unpin; reopen here for 15 minutes after closing' : 'Keep this conversation across pages until unpinned'"
-            :disabled="!canPinCurrentChat"
-            type="button"
-            @click="setCurrentChatPinned(!Boolean(thread && pinnedSessionId === thread.session.id))"
-          >
-            Pin
-          </v-btn>
-          <v-btn
-            class="inline-agent__session-action inline-agent__temporary-session"
-            :class="{ 'inline-agent__temporary-session--active': isTemporary }"
-            icon="mdi-timer-sand-complete"
-            variant="text"
-            rounded="circle"
-            :loading="creatingRetention === 'temporary'"
-            aria-label="Temporary conversation"
-            :aria-pressed="isTemporary"
-            :data-state="isTemporary ? 'active' : undefined"
-            :title="isTemporary ? 'Current temporary conversation' : 'Start a temporary conversation'"
-            :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
-            @click="newTemporarySession"
-          />
-          <v-btn class="inline-agent__mobile-close wiki-close-control" icon="mdi-close" variant="text" aria-label="Close Wiki Agent" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('close')" />
+          <v-btn class="inline-agent__close-action wiki-close-control" icon="mdi-close" variant="text" aria-label="Close chat panel" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('close')" />
         </div>
       </v-toolbar>
 
@@ -532,7 +578,6 @@ import type { AgentMediaSubmission } from '../../helpers/agent-media.ts'
 import type { AgentMediaView, AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import { pwaState, retryServerConnection } from '../../helpers/pwa.ts'
 import { useAgentsStore } from '../../store/agents.ts'
-import ControlBorderBeam from '../common/control-border-beam.vue'
 import AgentComposer from './agent-composer.vue'
 import AgentHistoryPanel from './agent-history-panel.vue'
 import AgentMemoryManager from './agent-memory-manager.vue'
@@ -595,8 +640,8 @@ const transcript = useTemplateRef<HTMLElement>('transcript')
 const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void>; reattachMedia: (media: AgentMediaView) => Promise<boolean> }>('composer')
 type ComponentRoot = { $el?: unknown }
 const historyTrigger = useTemplateRef<ComponentRoot | HTMLElement>('historyTrigger')
-const memoryTrigger = useTemplateRef<ComponentRoot | HTMLElement>('memoryTrigger')
 const panelMenuTrigger = useTemplateRef<ComponentRoot | HTMLElement>('panelMenuTrigger')
+const temporaryMenuOpen = ref(false)
 const historyPanel = useTemplateRef<HTMLElement>('historyPanel')
 const memoryPanel = useTemplateRef<HTMLElement>('memoryPanel')
 const panelScrim = useTemplateRef<HTMLElement>('panelScrim')
@@ -757,6 +802,7 @@ const submitUnavailableReason = computed(() => connectionBlocked.value
 const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
 const invocationLimit = computed(() => Math.max(0, 8 - preferredSkillIds.value.length))
 const isTemporary = computed(() => thread.value?.session.retention === 'temporary' && !thread.value.session.folderId)
+const isCurrentChatPinned = computed(() => Boolean(thread.value && pinnedSessionId.value === thread.value.session.id))
 const temporaryExpiry = computed(() => {
   const value = thread.value?.session.expiresAt
   if (!value) return ''
@@ -1096,6 +1142,10 @@ const createSession = async (retention: 'saved' | 'temporary'): Promise<void> =>
   }
 }
 const newTemporarySession = (): Promise<void> => createSession('temporary')
+const startTemporaryChat = async (): Promise<void> => {
+  temporaryMenuOpen.value = false
+  await newTemporarySession()
+}
 const newSession = (): Promise<void> => createSession('saved')
 const isVisibleTrigger = (element: HTMLElement | null): element is HTMLElement => {
   if (!element || !element.isConnected || element.getClientRects().length === 0) return false
@@ -1107,7 +1157,7 @@ const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLEl
   return component?.$el instanceof HTMLElement ? component.$el : null
 }
 const triggerForPanel = (kind: 'history' | 'memory'): HTMLElement | null => {
-  const direct = componentElement(kind === 'history' ? historyTrigger.value : memoryTrigger.value)
+  const direct = kind === 'history' ? componentElement(historyTrigger.value) : null
   const panels = componentElement(panelMenuTrigger.value)
   const usePanelMenu = window.matchMedia(mobilePanelQuery).matches
   return (usePanelMenu ? [panels, direct] : [direct, panels]).find(isVisibleTrigger) ?? null
@@ -1668,8 +1718,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__session-title {
+  min-width: 0;
   max-width: 28rem;
-  margin-top: var(--wiki-space-1);
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
   font-size: var(--wiki-label-size);
   line-height: 1.2;
@@ -1689,7 +1739,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   border-inline-end: 1px solid var(--wiki-surface-border);
 }
 
-.inline-agent__mobile-panel-menu {
+.inline-agent__panel-menu-item--compact {
   display: none !important;
 }
 
@@ -1740,67 +1790,153 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   color: rgb(var(--v-theme-on-surface)) !important;
   opacity: .38;
 }
-.inline-agent__chat-pin {
-  height: calc(var(--wiki-control-height) - var(--wiki-space-2)) !important;
-  min-height: max(44px, calc(var(--wiki-control-height) - var(--wiki-space-2)));
-  padding-inline: var(--wiki-space-3);
-  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 24%, var(--wiki-surface-border)) !important;
-  border-radius: var(--wiki-radius-pill) !important;
-  background: color-mix(in srgb, var(--wiki-surface-raised) 74%, transparent) !important;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 82%, rgb(var(--v-theme-surface)) 18%) !important;
+.inline-agent__session-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  margin-top: var(--wiki-space-1);
+}
+
+.inline-agent__pin-indicator {
+  flex: 0 0 auto;
+  color: var(--wiki-accent-warm);
+}
+
+.inline-agent__temporary-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: .25rem;
+  min-height: var(--wiki-space-6);
+  padding-inline: var(--wiki-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--wiki-radius-pill);
+  background: transparent;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, rgb(var(--v-theme-surface)) 38%);
+  font-family: var(--wiki-font-ui, inherit);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  line-height: 1.2;
+  cursor: pointer;
   transition:
     border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
     background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
     color var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
-.inline-agent__chat-pin:hover,
-.inline-agent__chat-pin:focus-visible,
-.inline-agent__chat-pin--active {
-  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 38%, var(--wiki-surface-border)) !important;
-  background: color-mix(in srgb, var(--wiki-ambient-accent) 11%, var(--wiki-surface-raised)) !important;
-  color: var(--wiki-accent-ink) !important;
+.inline-agent__temporary-toggle:hover,
+.inline-agent__temporary-toggle:focus-visible {
+  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 24%, transparent);
+  background: color-mix(in srgb, var(--wiki-ambient-accent) 8%, transparent);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, rgb(var(--v-theme-surface)) 22%);
 }
 
-.inline-agent__chat-pin--active {
-  box-shadow: var(--wiki-shadow-inset);
+.inline-agent__temporary-toggle--active {
+  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 34%, transparent);
+  background: color-mix(in srgb, var(--wiki-ambient-accent) 14%, transparent);
+  color: var(--wiki-accent-ink);
 }
 
-.inline-agent__temporary-session {
-  width: var(--wiki-control-height);
-  height: var(--wiki-control-height);
-  min-width: var(--wiki-control-height);
-  min-height: var(--wiki-control-height);
-  padding-inline: 0;
-  border: 1px solid transparent !important;
-  border-radius: 50% !important;
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 72%, transparent) !important;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 80%, rgb(var(--v-theme-surface)) 20%) !important;
+.inline-agent__temporary-toggle:disabled {
+  opacity: .5;
+  cursor: default;
 }
 
-.inline-agent__temporary-session:hover,
-.inline-agent__temporary-session:focus-visible,
-.inline-agent__temporary-session--active {
-  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent) !important;
-  background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent) !important;
-  color: var(--wiki-accent-warm) !important;
-}
-
-.inline-agent__temporary-session--active {
-  box-shadow:
-    inset 0 0 0 .0625rem color-mix(in srgb, var(--wiki-ambient-accent) 28%, transparent),
-    var(--wiki-shadow-inset),
-    0 0 0 .125rem color-mix(in srgb, var(--wiki-ambient-accent) 24%, transparent);
-}
-
-.inline-agent__temporary-session--active:focus-visible {
+.inline-agent__temporary-toggle:focus-visible {
   outline: .125rem solid var(--wiki-focus-color);
   outline-offset: var(--wiki-focus-offset);
-  box-shadow:
-    var(--wiki-focus-ring),
-    inset 0 0 0 .0625rem color-mix(in srgb, var(--wiki-ambient-accent) 28%, transparent),
-    var(--wiki-shadow-inset),
-    0 0 0 .125rem color-mix(in srgb, var(--wiki-ambient-accent) 24%, transparent);
+}
+
+.inline-agent__temporary-popover {
+  display: grid;
+  gap: var(--wiki-space-2);
+  min-width: min(18rem, calc(100vw - var(--wiki-space-8)));
+  max-width: 20rem;
+  padding: var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-radius-lg, .75rem);
+  background: rgb(var(--v-theme-surface));
+  box-shadow: var(--wiki-shadow-md, 0 .5rem 1rem rgba(0, 0, 0, .12));
+}
+
+.inline-agent__temporary-popover-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wiki-space-2);
+}
+
+.inline-agent__temporary-popover-title {
+  font-weight: var(--wiki-label-weight);
+  font-size: var(--wiki-label-size);
+}
+
+.inline-agent__temporary-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 2.75rem;
+  height: 1.5rem;
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 38%, transparent);
+  border-radius: var(--wiki-radius-pill);
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent);
+  cursor: pointer;
+  transition: background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+
+.inline-agent__temporary-switch::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: .1875rem;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: rgb(var(--v-theme-surface));
+  box-shadow: var(--wiki-shadow-xs);
+  transform: translateY(-50%);
+  transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease), background-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+
+.inline-agent__temporary-switch[aria-checked='true'] {
+  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--wiki-ambient-accent) 55%, transparent);
+}
+
+.inline-agent__temporary-switch[aria-checked='true']::after {
+  transform: translate(1.25rem, -50%);
+  background: rgb(var(--v-theme-surface));
+}
+
+.inline-agent__temporary-switch:focus-visible {
+  outline: .125rem solid var(--wiki-focus-color);
+  outline-offset: var(--wiki-focus-offset);
+}
+
+.inline-agent__temporary-switch:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+.inline-agent__temporary-popover-copy {
+  margin: 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  font-size: var(--wiki-label-size);
+  line-height: 1.45;
+}
+
+.inline-agent__temporary-popover-action {
+  justify-self: start;
+  text-transform: none;
+}
+
+.inline-agent__more-menu {
+  min-width: var(--wiki-control-height);
+  min-height: var(--wiki-control-height);
+}
+
+.inline-agent__close-action {
+  margin-inline-start: var(--wiki-space-2);
 }
 .inline-agent__progress {
   position: absolute;
@@ -2495,7 +2631,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 /* A docked panel can make a desktop conversation as narrow as a tablet. */
 @container agent-workspace (max-width: 780px) {
   .inline-agent__desktop-panel-btn { display: none; }
-  .inline-agent__mobile-panel-menu { display: inline-flex !important; }
+  .inline-agent__new-label--wide { display: none; }
+  .inline-agent__panel-menu-item--compact { display: flex !important; }
   .inline-agent__session-action { min-width: var(--wiki-control-height); padding-inline: var(--wiki-space-2); }
   .inline-agent__session-action :deep(.v-btn__prepend) { margin: 0; }
   .inline-agent__notice { display: none; }
@@ -2510,14 +2647,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__eyebrow,
-  .inline-agent__desktop-panel-btn {
+  .inline-agent__desktop-panel-btn,
+  .inline-agent__new-label--wide {
     display: none;
   }
 
-  .inline-agent__mobile-panel-menu {
-    display: inline-flex !important;
-    min-width: auto !important;
-    padding-inline: var(--wiki-space-2) !important;
+  .inline-agent__panel-menu-item--compact {
+    display: flex !important;
   }
 
   .inline-agent__panel-actions {
@@ -2566,7 +2702,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__mobile-return,
-  .inline-agent__mobile-close {
+  .inline-agent__close-action {
     min-width: var(--wiki-control-height) !important;
     min-height: var(--wiki-control-height) !important;
   }
@@ -2612,16 +2748,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__workspace-title--compact { display: inline; }
 
 
-  .inline-agent__desktop-panel-btn {
+  .inline-agent__desktop-panel-btn,
+  .inline-agent__new-label--wide {
     display: none;
   }
 
-  .inline-agent__mobile-panel-menu {
-    display: inline-flex !important;
-    min-width: auto !important;
-    padding-inline: var(--wiki-space-2) !important;
-    letter-spacing: 0;
-    text-transform: none;
+  .inline-agent__panel-menu-item--compact {
+    display: flex !important;
   }
 
   .inline-agent__panel-actions {
