@@ -856,10 +856,10 @@ describe('Inline Agent workspace actions', () => {
     expect(temporarySwitch?.getAttribute('aria-checked')).toBe('false')
     expect(popover?.textContent).toContain('opens a new conversation')
     expect(popover?.textContent).toContain('stays')
+    // The switch alone drives the transition; no extra confirm button is rendered.
+    expect(Array.from(popover?.querySelectorAll('button') ?? [])).toHaveLength(1)
 
-    const startButton = Array.from(popover?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(button => button.textContent?.trim() === 'Start temporary chat')
-    expect(startButton).toBeTruthy()
-    startButton?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    temporarySwitch?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     await settle()
     expect(mounted.temporaryCalls).toEqual(['start'])
     expect(mounted.temporaryMenuOpen.value).toBe(false)

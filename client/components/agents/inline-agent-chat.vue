@@ -97,32 +97,8 @@
                       />
                     </div>
                     <p class="inline-agent__temporary-popover-copy">Hidden from history<span v-if="temporaryExpiry"> · Expires {{ temporaryExpiry }}</span>. Personal memory still applies.</p>
-                    <template v-if="!isTemporary">
-                      <p class="inline-agent__temporary-popover-copy">Starting one opens a new conversation. This conversation stays right where it is.</p>
-                      <v-btn
-                        class="inline-agent__temporary-popover-action"
-                        variant="tonal"
-                        color="primary"
-                        size="small"
-                        prepend-icon="mdi-timer-sand-complete"
-                        :loading="creatingRetention === 'temporary'"
-                        :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
-                        @click="startTemporaryChat"
-                      >Start temporary chat</v-btn>
-                    </template>
-                    <template v-else>
-                      <p class="inline-agent__temporary-popover-copy">Keep it to save the conversation in history with its messages.</p>
-                      <v-btn
-                        class="inline-agent__temporary-popover-action"
-                        variant="tonal"
-                        color="primary"
-                        size="small"
-                        prepend-icon="mdi-bookmark-outline"
-                        :loading="keepingConversation"
-                        :disabled="sessionMutationBusy || loading || sending || connectionBlocked || !workspaceReady"
-                        @click="keepConversation"
-                      >Keep conversation</v-btn>
-                    </template>
+                    <p v-if="!isTemporary" class="inline-agent__temporary-popover-copy">Turning it on opens a new conversation. This conversation stays right where it is.</p>
+                    <p v-else class="inline-agent__temporary-popover-copy">Turning it off keeps this conversation in history with its messages.</p>
                   </div>
                 </v-menu>
               </div>
@@ -1925,11 +1901,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   line-height: 1.45;
 }
 
-.inline-agent__temporary-popover-action {
-  justify-self: start;
-  text-transform: none;
-}
-
 .inline-agent__more-menu {
   order: 3;
   min-width: var(--wiki-control-height);
@@ -1967,7 +1938,14 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__retention-copy { flex: 1; min-width: 0; }
 .inline-agent__retention strong { font-size: .8rem; font-weight: 650; }
 .inline-agent__retention p { margin: .2rem 0 0; font-size: .75rem; line-height: 1.5; color: color-mix(in srgb, currentColor 70%, transparent); }
-.inline-agent__session-notice { margin: 0; padding: .65rem 1.5rem; font-size: .8rem; color: var(--wiki-accent-ink); }
+.inline-agent__session-notice {
+  margin: 0;
+  padding: .65rem clamp(1rem, 3vw, 2rem);
+  border-bottom: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-sunken);
+  font-size: .8rem;
+  color: var(--wiki-accent-ink);
+}
 @media (max-width: 639.98px) {
   .inline-agent__retention { flex-wrap: wrap; gap: .5rem; }
   .inline-agent__retention-copy { flex-basis: calc(100% - 2rem); }
