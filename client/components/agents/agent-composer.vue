@@ -1773,6 +1773,18 @@ onBeforeUnmount(() => {
   }
 }
 
+@media (max-width: 359.98px) {
+  .agent-composer {
+    --agent-composer-control-gap: 4px;
+  }
+
+  .agent-composer__attach,
+  .agent-composer__create,
+  .agent-composer__goal-toggle {
+    padding-inline: calc(var(--wiki-space-2) * .6);
+  }
+}
+
 @media (max-width: 430px) {
   .agent-composer__primary-actions,
   .agent-composer__submit {
