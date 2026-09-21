@@ -286,7 +286,6 @@
                     <span class="inline-agent__starter-heading">
                       <v-icon :icon="starter.icon" size="20" aria-hidden="true" />
                       <strong>{{ starter.label }}</strong>
-                      <v-icon class="inline-agent__starter-arrow" icon="mdi-arrow-right" size="16" aria-hidden="true" />
                     </span>
                     <span class="inline-agent__starter-copy"><small>{{ starter.description }}</small></span>
                   </v-btn>
@@ -2274,10 +2273,11 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__starters {
   display: grid;
-  width: min(90%, calc(var(--agent-conversation-width) - var(--wiki-space-8)));
+  width: min(84%, calc(var(--agent-conversation-width) - var(--wiki-space-8)));
   margin: clamp(1.25rem, 5vh, 3rem) auto 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: .65rem;
+  justify-content: center;
 }
 
 .inline-agent__starter {
@@ -2319,7 +2319,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   gap: .3rem;
   width: 100%;
   box-sizing: border-box;
-  padding-inline: 1.5rem;
+  padding-inline: 1.25rem;
 }
 
 .inline-agent__starter-heading > :deep(.v-icon:first-child) {
@@ -2342,7 +2342,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   min-width: 0;
   grid-column: 1;
   grid-row: 2;
-  padding-inline: 1.5rem;
+  padding-inline: 1.25rem;
   text-align: center;
 }
 
@@ -2352,16 +2352,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   font-size: .73rem;
   font-weight: 400;
   opacity: .7;
-}
-
-.inline-agent__starter-arrow {
-  position: absolute;
-  inset-inline-end: .25rem;
-  top: 50%;
-  transform: translateY(-50%);
-  flex: 0 0 auto;
-  margin: 0;
-  opacity: .5;
 }
 
 .inline-agent__composer {
@@ -2632,6 +2622,37 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 }
 
+/* Compact phones: keep the three starters on one row and let the row scroll
+   horizontally instead of clipping the last button under the composer. */
+@media (max-width: 639.98px) {
+  .inline-agent__starters {
+    display: flex;
+    gap: var(--wiki-space-2);
+    margin-top: var(--wiki-space-5);
+    padding: var(--wiki-space-1) var(--wiki-space-3) var(--wiki-space-2);
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scroll-padding-inline: var(--wiki-space-3);
+    scrollbar-width: none;
+  }
+  .inline-agent__starters::-webkit-scrollbar { display: none; }
+  .inline-agent__starters::after {
+    content: '';
+    display: block;
+    flex: 0 0 1px;
+  }
+  .inline-agent__starter {
+    flex: 0 0 auto;
+    scroll-snap-align: center;
+    min-height: 3.5rem;
+  }
+  .inline-agent__starter-heading { padding-inline: .75rem; }
+  .inline-agent__starter-copy { padding-inline: .75rem; }
+  .inline-agent__starter-copy small { white-space: nowrap; }
+}
+
 /* A docked panel can make a desktop conversation as narrow as a tablet. */
 @container agent-workspace (max-width: 780px) {
   .inline-agent__desktop-panel-btn { display: none; }
@@ -2865,6 +2886,12 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
   .inline-agent__starters {
     margin-top: var(--wiki-space-5);
+  }
+}
+
+@media (max-width: 639.98px) and (max-height: 500px) {
+  .inline-agent__starters {
+    padding-block: var(--wiki-space-1) var(--wiki-space-2);
   }
 }
 
