@@ -562,7 +562,7 @@ describe('Ax agent engine context compaction', () => {
             id,
             title: `Evidence ${id}`,
             contentType: 'markdown',
-            content: `${id === 1 ? 'EVIDENCE_ONE' : 'EVIDENCE_TWO'} ${String(id).repeat(44_000)}`,
+            content: `${id === 1 ? 'EVIDENCE_ONE' : 'EVIDENCE_TWO'} ${String(id).repeat(45200)}`,
             citation: { evidenceId: `page:${id}`, label: `Evidence ${id}`, href: `/en/evidence-${id}` },
             citationSections: []
           }
