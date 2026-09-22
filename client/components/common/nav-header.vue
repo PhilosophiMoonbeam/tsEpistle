@@ -1280,6 +1280,8 @@ export default defineComponent({
 }
 
 .nav-header {
+  --nav-header-agent-icon-color: #4d4dff;
+  --nav-header-edit-icon-color: #ffd700;
   --nav-header-tint: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent));
   --nav-header-surface: var(--wiki-chrome-surface);
   isolation: isolate;
@@ -1604,6 +1606,17 @@ export default defineComponent({
   .nav-header-inner .nav-header-agent .v-icon,
   .nav-header-inner .nav-header-edit-btn .v-icon {
     transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
+  }
+
+  // Fixed, theme-independent icon accents: the Agent spark stays soft neo blue and the
+  // Edit pencil stays soft gold in every theme, while labels and button chrome keep
+  // inheriting the surrounding accent-ink color.
+  .nav-header-inner .nav-header-agent .v-icon {
+    color: var(--nav-header-agent-icon-color) !important;
+  }
+
+  .nav-header-inner .nav-header-edit-btn .v-icon {
+    color: var(--nav-header-edit-icon-color) !important;
   }
 
   .nav-header-inner .nav-header-agent:hover .v-icon,
