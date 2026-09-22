@@ -682,6 +682,67 @@ describe('Ax agent engine', () => {
     ])
   })
 
+  it('accepts exact Markdown-link quotations including link destinations and rejects fabricated destinations', async () => {
+    const invoke = vi.fn(async () => ({
+      id: 6,
+      sourceRevision: '1',
+      title: 'Manufacturer Page Template',
+      contentType: 'markdown',
+      content: '# Manufacturer Page Template\n\nEvery page links [Website]([WEBSITE_URL]) under the heading. 🏟️ Watson Furniture (WAT) ships flat-pack desks. `R2://wiki-qa/falcon-rc2.tar.zst` is the rollback artifact.',
+      citation: { evidenceId: 'page:6:revision:1', label: 'Manufacturer Page Template', href: '/en/template' },
+      citationSections: [{ evidenceId: 'page:6:revision:1:section:1', label: 'Manufacturer Page Template', href: '/en/template#manufacturer-page-template' }]
+    }))
+    const answers = [
+      'Watson Furniture (WAT) ships [flat-pack desks](https://wat.example.test/catalog). [[cite:page:6:revision:1:section:1]]',
+      'Every page links [Website]([WEBSITE_URL]) under the heading. [[cite:page:6:revision:1:section:1]]'
+    ]
+    const responses: AxChatResponse[] = [
+      { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
+      { results: [{ index: 0, content: answers[0]! }] },
+      { results: [{ index: 0, content: answers[1]! }] }
+    ]
+    const chat = vi.fn(async () => responses.shift()!)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn()
+      })
+    }
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+    await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
+
+    expect(chat).toHaveBeenCalledTimes(3)
+    const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    expect(provenance[0]).toMatchObject({ accepted: false })
+    expect(provenance[1]).toMatchObject({ accepted: true })
+    expect(text).toHaveBeenCalledWith(answers[1])
+  })
+
   it('repairs substantive parent and child summaries from exact local source units', async () => {
     const longEvidence = `Long evidence ${'keeps its exact source wording '.repeat(20)}remains authoritative.`
     const source = [
@@ -2579,7 +2640,7 @@ describe('Ax agent engine', () => {
     expect(chat).toHaveBeenCalledTimes(2)
     expect(result).toMatchObject({ inputTokens: 8, outputTokens: 10, totalTokens: 18, outputLimited: true })
     expect(result.citations).toBeUndefined()
-    expect(published).toMatch(/output limit.*explicit follow-up/iu)
+    expect(published).toMatch(/stopped before publishing any visible text.*explicit follow-up/iu)
     expect(published).not.toContain('verified')
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
       expect.objectContaining({ accepted: false }),
@@ -2652,7 +2713,7 @@ describe('Ax agent engine', () => {
       expect(published).toBe('')
       expect(result.citations).toBeUndefined()
     } else if (limited) {
-      expect(published).toMatch(/output limit.*explicit follow-up/iu)
+      expect(published).toMatch(/stopped before publishing any visible text.*explicit follow-up/iu)
       expect(published).not.toContain('Complete answer.')
     } else {
       expect(published).toBe('Complete answer.')

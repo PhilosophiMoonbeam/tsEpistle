@@ -360,7 +360,12 @@ const lexicalTokens = (value: string): readonly string[] =>
   value
     .replace(citationMarker, ' ')
     .replace(/<[^>]*>/gu, ' ')
-    .replace(/\[([^\]]*)\]\([^)]*\)/gu, '$1')
+    // Keep both the label and the destination of a Markdown link: citation validation
+    // compares claimed tokens against source tokens, so the two sides must see the same
+    // text. Dropping destinations here made exact quotations such as
+    // [Website]([WEBSITE_URL]) unprovable because constraint terms still counted the
+    // destination while the source side lost it.
+    .replace(/\[([^\]]*)\]\(([^)]*)\)/gu, '$1 $2')
     .match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) ?? []
 
 const monthTokens: Readonly<Record<string, string>> = {
@@ -1200,6 +1205,9 @@ const orderedSubset = (required: readonly string[], available: readonly string[]
   return true
 }
 
+const claimedLinkDestinations = (value: string): readonly string[] =>
+  [...value.matchAll(/\]\(([^)\s]+)\)/gu)].map(match => match[1]!).filter(destination => destination.length > 0)
+
 const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean => {
   const terms = normalizedTerms(clause)
   if (terms.length === 0) return false
@@ -1230,6 +1238,9 @@ const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean =
     JSON.stringify(markerBindings(clause, term => unit.qualifiers.has(term) && attachmentQualifiers[term] === true)) ===
       JSON.stringify(markerBindings(unit.text, term => unit.qualifiers.has(term) && attachmentQualifiers[term] === true))
   const exactConstraints = orderedSubset(constraintTerms(clause), significantTokens(`${unit.context}\n${unit.text}`))
+  // Markdown link destinations are canonicalized on both sides, so a claimed link must
+  // exist verbatim in the source; fabricated or retyped destinations are rejected here.
+  const exactLinkDestinations = claimedLinkDestinations(clause).every(destination => `${unit.context}\n${unit.text}`.includes(`](${destination})`))
   const exactIdentifiers = !hasIdentifierSubstitution(clause, unit)
   const identifyingTerms = colon < 0 ? [] : normalizedTerms(clause.slice(0, colon))
   const identifyingSupport = identifyingTerms.length === 0 || identifyingTerms.filter(term => unit.terms.has(term)).length / identifyingTerms.length >= 0.6
@@ -1244,6 +1255,7 @@ const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean =
     exactNumbers &&
     exactQualifiers &&
     exactConstraints &&
+    exactLinkDestinations &&
     exactIdentifiers &&
     identifyingSupport &&
     factualSupport &&
@@ -2591,8 +2603,11 @@ const recentExcerptDisclosure = (groups: readonly RecentEvidenceCoverage[]): str
     : ''
 const OUTPUT_LIMIT_DISCLOSURE = 'The provider reached its output limit before completing this response. Submit an explicit follow-up to continue.'
 const THINKING_BUDGET_DISCLOSURE = 'The provider ended this response because its internal thinking budget was exhausted. Submit an explicit follow-up to continue.'
-const outputLimitDisclosureFor = (status: GeminiInteractionStatus | undefined): string =>
-  status === 'budget_exceeded' ? THINKING_BUDGET_DISCLOSURE : OUTPUT_LIMIT_DISCLOSURE
+const CONTINUE_SUGGESTION = { id: 'continue-output-limit', label: 'Continue', prompt: 'Continue the response from where it stopped.' } as const
+const outputLimitDisclosureFor = (status: GeminiInteractionStatus | undefined, publishedAny: boolean): string => {
+  if (!publishedAny) return 'The provider stopped before publishing any visible text this turn. Submit an explicit follow-up to continue.'
+  return status === 'budget_exceeded' ? THINKING_BUDGET_DISCLOSURE : OUTPUT_LIMIT_DISCLOSURE
+}
 const providerResultChatMessage = (mode: 'native' | 'prompt', callId: string, providerName: string, result: unknown, isError = false): ChatPromptMessage =>
   mode === 'native'
     ? { role: 'function', functionId: callId, result: JSON.stringify(result), ...(isError ? { isError: true } : {}) }
@@ -3976,7 +3991,7 @@ export class AxAgentEngine implements AgentEngine {
             if (closeFailure) throw closeFailure
             const structured = request.purpose === 'planner' || request.purpose === 'subagent'
             if (!structured) {
-              const disclosure = outputLimitDisclosureFor(result.providerStatus)
+              const disclosure = outputLimitDisclosureFor(result.providerStatus, publishFragment)
               const publishedContent = publishFragment
                 ? `${result.content}${recentExcerptDisclosure(recentGroups)}${partialCoverageDisclosure(
                     executedOmittedCount(),
@@ -3993,6 +4008,7 @@ export class AxAgentEngine implements AgentEngine {
               totalTokens,
               costMicros,
               outputLimited: true,
+              ...(!structured ? { suggestions: [CONTINUE_SUGGESTION] } : {}),
               ...(citations.length === 0 ? {} : { citations }),
               ...(!publishFragment || result.googleSearchGrounding === undefined
                 ? {}
