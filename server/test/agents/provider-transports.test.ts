@@ -2,7 +2,7 @@ import type { LookupAddress } from 'node:dns'
 import type { AxChatRequest } from '@ax-llm/ax'
 import createKnex, { type Knex } from 'knex'
 import { AgentProviderFactory, agentProviderCostMicros, createGuardedProviderFetch, deriveAgentProviderResourceLimits } from '../../agents/providers/factory.ts'
-import { createGeminiInteractionsService } from '../../agents/providers/gemini-interactions.ts'
+import { createGeminiInteractionsService, geminiInteractionCompactionPrefix } from '../../agents/providers/gemini-interactions.ts'
 import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
@@ -979,6 +979,107 @@ describe('Gemini Interactions protocol validation', () => {
       expect(result.results[0]?.id).toBeUndefined()
       expect(result.results[0]?.functionCalls?.[0]?.id).toBe('valid-call')
     }
+  })
+
+  it('replays authoritative visible history when an intact combined continuation has stale presentation text', async () => {
+    let body: Record<string, unknown> = {}
+    const gemini = service((async (_input: URL | RequestInfo, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return Response.json({
+        model: 'gemini-3.7-flash',
+        status: 'completed',
+        steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Created a draft.' }] }],
+        usage: { total_input_tokens: 3, total_output_tokens: 1, total_tokens: 4 }
+      })
+    }) as typeof fetch)
+    const providerContent = 'Provider answer.'
+    const publishedContent = `${providerContent}\n\nPartial context coverage: one result was omitted.`
+    const combinedState = {
+      data: `wiki.gemini.interactions.v1:${JSON.stringify({
+        steps: [
+          { type: 'user_input', content: [{ type: 'text', text: 'Analyze the template.' }] },
+          { type: 'model_output', content: [{ type: 'text', text: providerContent }] }
+        ],
+        assistantStepStart: 1
+      })}`,
+      encrypted: true
+    }
+    expect(geminiInteractionCompactionPrefix({ role: 'assistant', content: publishedContent, thoughtBlocks: [combinedState] })).toEqual([])
+    await gemini.chat(
+      {
+        chatPrompt: [
+          { role: 'user', content: 'Analyze the template.' },
+          { role: 'assistant', content: publishedContent, thoughtBlocks: [combinedState] },
+          { role: 'user', content: 'Create the updated template as a new page.' }
+        ]
+      },
+      { stream: false }
+    )
+    expect(body.input).toEqual([
+      { type: 'user_input', content: [{ type: 'text', text: 'Analyze the template.' }] },
+      { type: 'model_output', content: [{ type: 'text', text: publishedContent }] },
+      { type: 'user_input', content: [{ type: 'text', text: 'Create the updated template as a new page.' }] }
+    ])
+  })
+
+  it('still rejects a mismatched active-turn continuation before egress', async () => {
+    let called = false
+    const gemini = service((async () => {
+      called = true
+      return Response.json({})
+    }) as typeof fetch)
+    const activeState = {
+      data: `wiki.gemini.interactions.v1:${JSON.stringify({
+        steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Provider answer.' }] }],
+        assistantStepStart: 0
+      })}`,
+      encrypted: true
+    }
+    await expect(
+      gemini.chat(
+        {
+          chatPrompt: [
+            { role: 'user', content: 'Analyze the template.' },
+            { role: 'assistant', content: 'Modified answer.', thoughtBlocks: [activeState] },
+            { role: 'user', content: 'Continue.' }
+          ]
+        },
+        { stream: false }
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_PROVIDER_STATE_CORRUPT' })
+    expect(called).toBe(false)
+  })
+
+  it('does not discard a stale combined continuation when its presentation slice contains an action call', async () => {
+    let called = false
+    const gemini = service((async () => {
+      called = true
+      return Response.json({})
+    }) as typeof fetch)
+    const callBearingState = {
+      data: `wiki.gemini.interactions.v1:${JSON.stringify({
+        steps: [
+          { type: 'user_input', content: [{ type: 'text', text: 'Analyze the template.' }] },
+          { type: 'function_call', id: 'call-1', name: 'wiki_get_page', arguments: { id: 181 } },
+          { type: 'model_output', content: [{ type: 'text', text: 'Visible answer.' }] }
+        ],
+        assistantStepStart: 1
+      })}`,
+      encrypted: true
+    }
+    await expect(
+      gemini.chat(
+        {
+          chatPrompt: [
+            { role: 'user', content: 'Analyze the template.' },
+            { role: 'assistant', content: 'Visible answer.', thoughtBlocks: [callBearingState] },
+            { role: 'user', content: 'Continue.' }
+          ]
+        },
+        { stream: false }
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_PROVIDER_STATE_CORRUPT' })
+    expect(called).toBe(false)
   })
 
   it('rejects corrupted stored Interactions steps before egress', async () => {

@@ -3499,6 +3499,11 @@ describe('Ax agent engine', () => {
   })
   it('keeps an oversized omitted source out of citations and corrects the capacity-limited synthesis', async () => {
     const largePayload = 'Large source payload '.repeat(2_000)
+    const acceptedAnswer = 'Small source is available.[[cite:page:1]]'
+    const finalThoughtBlock: ProviderThoughtBlock = {
+      data: `wiki.gemini.interactions.v1:${canonicalJson([{ type: 'model_output', content: [{ type: 'text', text: acceptedAnswer }] }])}`,
+      encrypted: true
+    }
     const responses: AxChatResponse[] = [
       {
         results: [
@@ -3512,7 +3517,7 @@ describe('Ax agent engine', () => {
         ]
       },
       { results: [{ index: 0, content: 'Large source is authoritative.[[cite:page:2]]' }] },
-      { results: [{ index: 0, content: 'Small source is available.[[cite:page:1]]' }] }
+      { results: [{ index: 0, content: acceptedAnswer, thoughtBlocks: [finalThoughtBlock] }] }
     ]
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
@@ -3564,7 +3569,8 @@ describe('Ax agent engine', () => {
           maxContextTokens: 40_000,
           maxOutputTokens: 1_000
         },
-        transportKind: 'openai-responses',
+        transportKind: 'gemini-api',
+        continuationDialect: 'gemini-interactions-v1',
         model: 'gpt-test',
         capabilityRevision: 'cap-1',
         pricingRevision: 'price-1',
@@ -3592,6 +3598,7 @@ describe('Ax agent engine', () => {
       contextLimit: { reason: 'tool_result_capacity', omittedActionCallIds: ['large'] },
       citations: [{ evidenceId: 'page:1', kind: 'page', label: 'Small source', href: '/en/source/1' }]
     })
+    expect(result.providerState).toBeUndefined()
     const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
     expect(provenance).toEqual([
       expect.objectContaining({
