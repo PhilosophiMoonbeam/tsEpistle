@@ -855,6 +855,7 @@ describe('Inline Agent workspace actions', () => {
     expect(historyToggle.getAttribute('aria-controls')).toBe('agent-history-panel')
     expect(historyToggle.textContent?.trim()).toBe('')
     expect(newSession.getAttribute('aria-label')).toBe('New chat')
+    expect(newSession.getAttribute('title')).toBe('New')
     // No Wiki Search shortcut remains in the header controls.
     expect(mounted.root.querySelector('.inline-agent__mobile-return')).toBeNull()
     // The direct Temporary control is gone from the session line; the chat name stands alone.
@@ -939,7 +940,7 @@ describe('Inline Agent workspace actions', () => {
     expect(composer).not.toBeNull()
     expect(picker).toHaveLength(1)
     expect(picker?.[0]?.closest('.agent-composer__context-row')).not.toBeNull()
-    expect(mounted.root.querySelector('.inline-agent__session-action')?.textContent?.trim()).toBe('New')
+    expect(mounted.root.querySelector('.inline-agent__session-action')?.textContent?.trim()).toBe('')
     expect(mounted.root.querySelector('.agent-composer__input textarea')).not.toBeNull()
   })
 
@@ -1214,8 +1215,10 @@ describe('Agent workspace action semantics', () => {
     expect(primary.querySelector('.agent-composer__stop')).toBeNull()
     // Pin lives in the More menu; the header shows a pin indicator only when pinned.
     expect(mounted.root.querySelector('.inline-agent__chat-pin')).toBeNull()
-    expect(newChat?.textContent?.trim()).toBe('New')
+    // New chat is now icon-only like History, with a native "New" tooltip.
+    expect(newChat?.textContent?.trim()).toBe('')
     expect(newChat?.getAttribute('aria-label')).toBe('New chat')
+    expect(newChat?.getAttribute('title')).toBe('New')
     expect(moreMenu?.getAttribute('aria-label')).toBe('More agent actions')
     expect(moreMenu?.parentElement).toBe(headerActions)
     expect(temporaryToggle).toBeNull()

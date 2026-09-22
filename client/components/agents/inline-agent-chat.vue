@@ -140,18 +140,14 @@
           </v-menu>
           <v-btn
             class="inline-agent__session-action inline-agent__new-session"
-            prepend-icon="mdi-plus"
-            variant="tonal"
-            color="primary"
-            size="small"
-            rounded="pill"
+            icon="mdi-plus-circle-outline"
+            variant="text"
             :loading="creatingRetention === 'saved'"
             aria-label="New chat"
+            title="New"
             :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
             @click="newSession"
-          >
-            <span class="inline-agent__new-label--wide">New</span>
-          </v-btn>
+          />
           <v-btn class="inline-agent__close-action wiki-close-control" icon="mdi-close" variant="text" aria-label="Close chat panel" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('close')" />
         </div>
       </v-toolbar>
@@ -1816,39 +1812,33 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   text-transform: none;
 }
 
+/* New chat mirrors the History toggle: an icon-only text-variant button with
+   a native tooltip, so the two share the same footprint and treatment. */
 .inline-agent__new-session {
-  position: relative;
-  height: calc(var(--wiki-control-height) - var(--wiki-space-2)) !important;
+  flex: 0 0 auto;
+  min-width: var(--wiki-control-height);
   min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
-  isolation: isolate;
-  overflow: hidden;
-  margin-inline-start: var(--wiki-space-1);
-  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 32%, transparent);
-  border-radius: var(--wiki-radius-pill) !important;
-  background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent) !important;
-  color: var(--wiki-accent-ink) !important;
-  transition:
-    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-    background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-    color var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
-.inline-agent__new-session :deep(.v-btn__prepend),
-.inline-agent__new-session :deep(.v-btn__content),
-.inline-agent__new-session :deep(.v-btn__append) {
-  z-index: 1;
+/* Icon-only hover tints: only the icon color changes; the button background
+   stays untouched. Green for New chat, purple for History. The tint token
+   switches to a brighter green on dark surfaces for contrast. */
+.inline-agent__panel-actions {
+  --agent-new-hover-tint: #15803d;
 }
 
-.inline-agent__new-session:hover {
-  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 42%, transparent);
-  background: color-mix(in srgb, var(--wiki-accent-warm) 16%, transparent) !important;
+.v-theme--dark .inline-agent__panel-actions {
+  --agent-new-hover-tint: #4ade80;
 }
 
-.inline-agent__new-session.v-btn--disabled {
-  border-color: transparent;
-  background: transparent !important;
-  color: rgb(var(--v-theme-on-surface)) !important;
-  opacity: .38;
+.inline-agent__new-session:not(.v-btn--disabled):hover,
+.inline-agent__new-session:not(.v-btn--disabled):hover :deep(.v-icon) {
+  color: var(--agent-new-hover-tint) !important;
+}
+
+.inline-agent__history-toggle:not(.v-btn--disabled):hover,
+.inline-agent__history-toggle:not(.v-btn--disabled):hover :deep(.v-icon) {
+  color: #7c3aed !important;
 }
 .inline-agent__session-line {
   display: flex;
@@ -2601,7 +2591,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 /* A docked panel can make a desktop conversation as narrow as a tablet. */
 @container agent-workspace (max-width: 780px) {
-  .inline-agent__new-label--wide { display: none; }
   .inline-agent__panel-actions > .inline-agent__new-session { order: 1; }
   .inline-agent__panel-actions > .inline-agent__more-menu { order: 2; }
   .inline-agent__panel-menu-item--compact { display: flex !important; }
@@ -2618,8 +2607,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     padding-inline: var(--wiki-space-3);
   }
 
-  .inline-agent__eyebrow,
-  .inline-agent__new-label--wide {
+  .inline-agent__eyebrow {
     display: none;
   }
 
@@ -2711,10 +2699,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     gap: .25rem;
   }
   .inline-agent__avatar { width: 28px !important; height: 28px !important; }
-
-  .inline-agent__new-label--wide {
-    display: none;
-  }
 
   .inline-agent__panel-menu-item--compact {
     display: flex !important;
