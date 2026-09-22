@@ -584,7 +584,8 @@ describe('Gemini Interactions protocol validation', () => {
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       model,
       fetch: implementation,
-      timeoutMs: 10_000
+      timeoutMs: 10_000,
+      streamRetryDelayMs: 0
     })
 
   it('accepts the documented initially empty thought signature and waits for terminal usage', async () => {
@@ -680,6 +681,133 @@ describe('Gemini Interactions protocol validation', () => {
         })()
       )
     ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+  })
+
+  it('retries one transient error emitted before an interaction is created', async () => {
+    const error = `event: error\ndata: ${JSON.stringify({ event_type: 'error', error: { code: 'service_unavailable', message: 'retry later' } })}\n\n`
+    const events = [
+      {
+        event_type: 'interaction.created',
+        interaction: { id: 'interaction_retry', model: 'gemini-3.7-flash', status: 'in_progress' }
+      },
+      { event_type: 'step.start', index: 0, step: { type: 'model_output' } },
+      { event_type: 'step.delta', index: 0, delta: { type: 'text', text: 'Recovered' } },
+      { event_type: 'step.stop', index: 0 },
+      {
+        event_type: 'interaction.completed',
+        interaction: {
+          id: 'interaction_retry',
+          status: 'completed',
+          usage: { total_input_tokens: 1, total_output_tokens: 1, total_tokens: 2 }
+        }
+      }
+    ]
+    const success = `${events.map(event => `event: ${event.event_type}\ndata: ${JSON.stringify(event)}`).join('\n\n')}\n\nevent: done\ndata: [DONE]\n\n`
+    const responses = [error, success]
+    const fetchImplementation = vi.fn(async () => new Response(responses.shift(), { headers: { 'content-type': 'text/event-stream' } }))
+    const response = await service(fetchImplementation as typeof fetch).chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected streaming response')
+    const chunks = []
+    for await (const chunk of response) chunks.push(chunk)
+    expect(fetchImplementation).toHaveBeenCalledTimes(2)
+    expect(
+      chunks
+        .flatMap(chunk => chunk.results)
+        .map(result => result.content ?? '')
+        .join('')
+    ).toBe('Recovered')
+  })
+
+  it('returns the classified failure when the single retry also fails', async () => {
+    const error = `event: error\ndata: ${JSON.stringify({ event_type: 'error', error: { code: 'gateway_timeout', message: 'retry later' } })}\n\n`
+    const fetchImplementation = vi.fn(async () => new Response(error, { headers: { 'content-type': 'text/event-stream' } }))
+    const response = await service(fetchImplementation as typeof fetch).chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected streaming response')
+    await expect(
+      Promise.resolve(
+        (async () => {
+          for await (const item of response) void item
+        })()
+      )
+    ).rejects.toMatchObject({
+      code: 'PROVIDER_TIMEOUT',
+      status: 504,
+      agentDiagnostics: { transportKind: 'gemini-api', providerErrorCode: 'gateway_timeout' }
+    })
+    expect(fetchImplementation).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not retry after the response stream is cancelled during backoff', async () => {
+    const error = `event: error\ndata: ${JSON.stringify({ event_type: 'error', error: { code: 'service_unavailable' } })}\n\n`
+    const fetchImplementation = vi.fn(async () => new Response(error, { headers: { 'content-type': 'text/event-stream' } }))
+    const response = await createGeminiInteractionsService({
+      apiKey: 'test-key',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      model: 'gemini-3.7-flash',
+      fetch: fetchImplementation as typeof fetch,
+      timeoutMs: 10_000,
+      streamRetryDelayMs: 60_000
+    }).chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected streaming response')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await response.cancel(new Error('consumer cancelled'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(fetchImplementation).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not retry after the caller aborts during backoff', async () => {
+    const error = `event: error\ndata: ${JSON.stringify({ event_type: 'error', error: { code: 'service_unavailable' } })}\n\n`
+    const fetchImplementation = vi.fn(async () => new Response(error, { headers: { 'content-type': 'text/event-stream' } }))
+    const abortController = new AbortController()
+    const response = await createGeminiInteractionsService({
+      apiKey: 'test-key',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      model: 'gemini-3.7-flash',
+      fetch: fetchImplementation as typeof fetch,
+      timeoutMs: 10_000,
+      streamRetryDelayMs: 60_000
+    }).chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: true, abortSignal: abortController.signal })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected streaming response')
+    const reader = response.getReader()
+    const reading = reader.read()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    abortController.abort(new Error('caller aborted'))
+    await expect(reading).rejects.toThrow('caller aborted')
+    expect(fetchImplementation).toHaveBeenCalledTimes(1)
+  })
+
+  it('classifies nontransient and post-creation stream errors without retrying', async () => {
+    for (const testCase of [
+      { code: 'invalid_request', expectedCode: 'PROVIDER_REQUEST_REJECTED', status: 400, created: false },
+      { code: 'service_unavailable', expectedCode: 'PROVIDER_UNAVAILABLE', status: 503, created: true }
+    ] as const) {
+      const frames = [
+        ...(testCase.created
+          ? [
+              `event: interaction.created\ndata: ${JSON.stringify({
+                event_type: 'interaction.created',
+                interaction: { id: 'interaction_failed', model: 'gemini-3.7-flash', status: 'in_progress' }
+              })}`
+            ]
+          : []),
+        `event: error\ndata: ${JSON.stringify({ event_type: 'error', error: { code: testCase.code, message: 'safe test message' } })}`
+      ]
+      const fetchImplementation = vi.fn(async () => new Response(`${frames.join('\n\n')}\n\n`, { headers: { 'content-type': 'text/event-stream' } }))
+      const response = await service(fetchImplementation as typeof fetch).chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: true })
+      if (!(response instanceof ReadableStream)) throw new Error('Expected streaming response')
+      await expect(
+        Promise.resolve(
+          (async () => {
+            for await (const item of response) void item
+          })()
+        )
+      ).rejects.toMatchObject({
+        code: testCase.expectedCode,
+        status: testCase.status,
+        agentDiagnostics: { transportKind: 'gemini-api', providerErrorCode: testCase.code }
+      })
+      expect(fetchImplementation).toHaveBeenCalledTimes(1)
+    }
   })
 
   it('accepts live stateless empty interaction IDs without manufacturing a remote ID', async () => {

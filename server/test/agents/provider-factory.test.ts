@@ -426,6 +426,16 @@ describe('provider usage accounting', () => {
       current: { outputTokens: 2, totalTokens: 3 },
       context: { inputBytes: 10 }
     })
+
+    const providerError = new AgentRepositoryError('PROVIDER_UNAVAILABLE', 'private upstream message', 503)
+    Object.defineProperty(providerError, 'agentDiagnostics', {
+      value: { transportKind: 'gemini-api', providerErrorCode: 'service_unavailable', arbitrary: 'secret' }
+    })
+    expect(classifyAgentExecutionFailure(providerError, 'provider_stream')).toMatchObject({
+      code: 'PROVIDER_UNAVAILABLE',
+      providerStatus: 503,
+      diagnostics: { transportKind: 'gemini-api', providerErrorCode: 'service_unavailable' }
+    })
   })
 })
 it('normalizes root token budget failures as safe 409 execution errors', () => {
