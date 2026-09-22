@@ -72,22 +72,7 @@
                     aria-label="Pinned conversation"
                   />
                 </span>
-                <!-- Direct retention toggle: the tooltip carries the description and
-                     the click itself switches temporary mode (begun conversations are
-                     kept in history; unstarted ones save after the first message). -->
-                <button
-                  class="inline-agent__temporary-toggle"
-                  :class="{ 'inline-agent__temporary-toggle--active': isTemporary }"
-                  type="button"
-                  role="switch"
-                  :aria-checked="isTemporary"
-                  :title="temporaryHint"
-                  :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
-                  @click="isTemporary ? keepConversation() : startTemporaryChat()"
-                >
-                  <v-icon :icon="isTemporary ? 'mdi-timer-sand-empty' : 'mdi-timer-sand-full'" size="14" aria-hidden="true" />
-                  <span>Temporary</span>
-                </button>
+
               </div>
             </div>
           </div>
@@ -138,6 +123,18 @@
                 :title="isCurrentChatPinned ? 'Unpin chat' : 'Pin chat'"
                 :disabled="!canPinCurrentChat"
                 @click="setCurrentChatPinned(!isCurrentChatPinned)"
+              />
+              <!-- Temporary retention lives in the menu so the chat name can stand
+                   alone in the header; the click switches temporary mode directly
+                   (begun conversations are kept in history; unstarted ones save
+                   after the first message). -->
+              <v-list-item
+                class="inline-agent__panel-menu-item"
+                link
+                :prepend-icon="isTemporary ? 'mdi-timer-sand-complete' : 'mdi-timer-sand-empty'"
+                :title="isTemporary ? 'Keep conversation' : 'Temporary chat'"
+                :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
+                @click="isTemporary ? keepConversation() : startTemporaryChat()"
               />
             </v-list>
           </v-menu>
@@ -833,10 +830,7 @@ const temporaryExpiry = computed(() => {
   return Number.isNaN(date.valueOf()) ? '' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 })
 const sessionTitle = computed(() => thread.value?.session.title || (isTemporary.value ? 'Temp chat' : 'New chat'))
-/** Tooltip description for the direct Temporary toggle; the click performs the action. */
-const temporaryHint = computed(() => isTemporary.value
-  ? `Temporary on. Hidden from history${temporaryExpiry.value ? ` · Expires ${temporaryExpiry.value}` : ''}. Personal memory still applies. Turning it off keeps this Temp chat in history.`
-  : 'Temporary off. Messages save to history. Turning it on starts a new Temp chat.')
+
 const connectionLabel = computed(() => connectionBlocked.value
   ? 'Connection required'
   : loading.value
@@ -1731,8 +1725,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 /* The brand name stays only as the accessible label; the conversation name
-   is the visible title on every layout, with the temporary control as its
-   subtitle line. */
+   is the visible title on every layout, standing alone on the left. */
 .inline-agent__heading h2 {
   position: absolute;
   width: 1px;
@@ -1746,8 +1739,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__session-title {
-  /* Align the name's left edge with the Temporary button's hourglass icon. */
-  margin-inline-start: calc(var(--wiki-space-2) + 1px);
   flex: 0 0 100%;
   min-width: 0;
   max-width: 28rem;
@@ -1844,51 +1835,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__pin-indicator {
   flex: 0 0 auto;
   color: var(--wiki-accent-warm);
-}
-
-.inline-agent__temporary-toggle {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: .25rem;
-  min-height: var(--wiki-space-6);
-  padding-inline: var(--wiki-space-2);
-  border: 1px solid transparent;
-  border-radius: var(--wiki-radius-pill);
-  background: transparent;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, rgb(var(--v-theme-surface)) 38%);
-  font-family: var(--wiki-font-ui, inherit);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  line-height: 1.2;
-  cursor: pointer;
-  transition:
-    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-    background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-    color var(--wiki-motion-fast) var(--wiki-motion-ease);
-}
-
-.inline-agent__temporary-toggle:hover,
-.inline-agent__temporary-toggle:focus-visible {
-  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 24%, transparent);
-  background: color-mix(in srgb, var(--wiki-ambient-accent) 8%, transparent);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, rgb(var(--v-theme-surface)) 22%);
-}
-
-.inline-agent__temporary-toggle--active {
-  border-color: color-mix(in srgb, var(--wiki-ambient-accent) 34%, transparent);
-  background: color-mix(in srgb, var(--wiki-ambient-accent) 14%, transparent);
-  color: var(--wiki-accent-ink);
-}
-
-.inline-agent__temporary-toggle:disabled {
-  opacity: .5;
-  cursor: default;
-}
-
-.inline-agent__temporary-toggle:focus-visible {
-  outline: .125rem solid var(--wiki-focus-color);
-  outline-offset: var(--wiki-focus-offset);
 }
 
 .inline-agent__more-menu {
@@ -2738,10 +2684,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     gap: .25rem;
   }
   .inline-agent__avatar { width: 28px !important; height: 28px !important; }
-
-  .inline-agent__temporary-toggle {
-    padding-inline: var(--wiki-space-2);
-  }
 
   .inline-agent__new-label--wide {
     display: none;

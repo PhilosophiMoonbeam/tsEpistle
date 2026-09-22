@@ -376,7 +376,7 @@ const loadGoalLockState = (
   const clearedStartersIntervalIds: number[] = []
   const evaluate = new Function(
     '{ computed, nextTick, onBeforeUnmount, onMounted, ref, setInterval, clearInterval, setTimeout, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection }',
-    `${executableScript}\nreturn { SESSION_NOTICE_VISIBLE_MS, STARTERS_SPIN_HOLD_MS, STARTERS_SPIN_STEP_MS, activeRun, canPinCurrentChat, canSubmit, clearSessionNotice, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleStartersScroll, handleTranscriptEngagement, holdStartersSpin, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, sessionNotice, setSessionNotice, startersRow, startStartersSpin, startTemporaryChat, stopStartersSpin, submitUnavailableReason, temporaryHint, thread, welcomeGreeting }`
+    `${executableScript}\nreturn { SESSION_NOTICE_VISIBLE_MS, STARTERS_SPIN_HOLD_MS, STARTERS_SPIN_STEP_MS, activeRun, canPinCurrentChat, canSubmit, clearSessionNotice, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleStartersScroll, handleTranscriptEngagement, holdStartersSpin, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, sessionNotice, setSessionNotice, startersRow, startStartersSpin, startTemporaryChat, stopStartersSpin, submitUnavailableReason, thread, welcomeGreeting }`
   ) as (dependencies: Record<string, unknown>) => LockState
 
   const state = evaluate({
@@ -447,7 +447,6 @@ const mountInlineAgent = (
   const historyOpen = Vue.ref(false)
   const memoryOpen = Vue.ref(false)
   const panelMenuOpen = Vue.ref(false)
-  const temporaryMenuOpen = Vue.ref(false)
   const temporaryCalls: string[] = []
   const composerFocused = lockState?.composerFocused ?? Vue.ref(false)
   const handleComposerFocusIn =
@@ -522,7 +521,6 @@ const mountInlineAgent = (
     historyOpen,
     memoryOpen,
     panelMenuOpen,
-    temporaryMenuOpen,
     isCurrentChatPinned: options.isCurrentChatPinned ?? false,
     startTemporaryChat: () => undefined,
     memoryMutationBusy: false,
@@ -589,9 +587,6 @@ const mountInlineAgent = (
     keepingConversation: false,
     isTemporary: options.isTemporary ?? false,
     temporaryExpiry: '',
-    temporaryHint: (options.isTemporary ?? false)
-      ? 'Temporary on. Hidden from history. Personal memory still applies. Turning it off keeps this Temp chat in history.'
-      : 'Temporary off. Messages save to history. Turning it on starts a new Temp chat.',
     sessionNotice: '',
     closePanels: () => {
       historyOpen.value = false
@@ -646,7 +641,6 @@ const mountInlineAgent = (
   }
   context.startTemporaryChat = () => {
     temporaryCalls.push('start')
-    temporaryMenuOpen.value = false
   }
 
   const componentStub = Vue.defineComponent({
@@ -744,7 +738,7 @@ const mountInlineAgent = (
     host.remove()
   }
   mountedApps.push(unmount)
-  return { activator, composerFocused, historyOpen, memoryOpen, root, temporaryCalls, temporaryMenuOpen, transcriptFollowing, unmount }
+  return { activator, composerFocused, historyOpen, memoryOpen, root, temporaryCalls, transcriptFollowing, unmount }
 }
 
 const resolveDescribedBy = (control: HTMLElement): HTMLElement[] => {
@@ -782,7 +776,7 @@ const expectComposerActionStructure = (mounted: MountedInlineAgent): { primary: 
   return { primary, status }
 }
 
-const openPanelMenu = async (mounted: MountedInlineAgent): Promise<HTMLElement[]> => {
+const openPanelMenu = async (mounted: MountedInlineAgent, options: { readonly isTemporary?: boolean } = {}): Promise<HTMLElement[]> => {
   expect(mounted.activator.getAttribute('role')).not.toBe('menu')
   expect(mounted.activator.getAttribute('aria-haspopup')).toBe('menu')
   expect(mounted.activator.getAttribute('aria-expanded')).toBe('false')
@@ -800,7 +794,8 @@ const openPanelMenu = async (mounted: MountedInlineAgent): Promise<HTMLElement[]
     'Return to Wiki Search',
     'Conversation history',
     'Agent memory',
-    'Pin chat'
+    'Pin chat',
+    options.isTemporary ? 'Keep conversation' : 'Temporary chat'
   ])
   expect(items.every(item => item.getAttribute('role') === 'listitem')).toBe(true)
   expect(items.every(item => item.getAttribute('role') !== 'menu')).toBe(true)
@@ -837,7 +832,7 @@ describe('Inline Agent mobile panel controls', () => {
 })
 
 describe('Inline Agent workspace actions', () => {
-  it('keeps History (icon-only, upper left) and New chat direct, groups Memory and Pin into More, and labels the temporary state', async () => {
+  it('keeps History (icon-only, upper left) and New chat direct, groups Memory, Pin, and Temporary into More', async () => {
     const mounted = mountInlineAgent(undefined, { isTemporary: true })
     const historyToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__history-toggle')
     const newSession = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__session-action')
@@ -852,38 +847,34 @@ describe('Inline Agent workspace actions', () => {
     expect(newSession.getAttribute('aria-label')).toBe('New chat')
     // No Wiki Search shortcut remains in the header controls.
     expect(mounted.root.querySelector('.inline-agent__mobile-return')).toBeNull()
-    const temporaryToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__temporary-toggle')
-    if (!temporaryToggle) throw new Error('Temporary conversation control did not render')
-    expect(temporaryToggle.textContent?.trim()).toBe('Temporary')
-    expect(temporaryToggle.getAttribute('role')).toBe('switch')
-    expect(temporaryToggle.getAttribute('aria-checked')).toBe('true')
-    expect(temporaryToggle.classList.contains('inline-agent__temporary-toggle--active')).toBe(true)
-    // The description lives in the tooltip; there is no popover dialog anymore.
-    expect(temporaryToggle.getAttribute('title')).toContain('Hidden from history')
-    expect(mounted.root.querySelector('.inline-agent__temporary-popover')).toBeNull()
+    // The direct Temporary control is gone from the session line; the chat name stands alone.
+    expect(mounted.root.querySelector('.inline-agent__temporary-toggle')).toBeNull()
 
-    const items = await openPanelMenu(mounted)
+    const items = await openPanelMenu(mounted, { isTemporary: true })
     const pinItem = items[3]
-    if (!pinItem) throw new Error('Pin menu item did not render')
+    const temporaryItem = items[4]
+    if (!pinItem || !temporaryItem) throw new Error('Pin and Temporary menu items did not render')
     expect(pinItem.querySelector<HTMLElement>('.v-list-item-title')?.textContent?.trim()).toBe('Pin chat')
+    // A begun temp conversation offers Keep conversation from the menu.
+    expect(temporaryItem.querySelector<HTMLElement>('.v-list-item-title')?.textContent?.trim()).toBe('Keep conversation')
 
-    // Clicking the toggle itself keeps the begun conversation in history.
-    temporaryToggle.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    // Invoking the menu item keeps the begun conversation in history.
+    temporaryItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     await settle()
     expect(mounted.temporaryCalls).toEqual(['keep'])
   })
 
-  it('describes the off state in the tooltip and starts a temporary chat on click', async () => {
+  it('offers Temporary chat in More for a saved conversation and starts one from the menu', async () => {
     const mounted = mountInlineAgent()
-    const temporaryToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__temporary-toggle')
-    if (!temporaryToggle) throw new Error('Temporary conversation control did not render')
-    expect(temporaryToggle.textContent?.trim()).toBe('Temporary')
-    expect(temporaryToggle.getAttribute('aria-checked')).toBe('false')
-    expect(temporaryToggle.getAttribute('title')).toContain('starts a new Temp chat')
-    // The toggle drives the transition directly; no popover is rendered.
-    expect(mounted.root.querySelector('.inline-agent__temporary-popover')).toBeNull()
+    // The saved conversation shows no direct temporary control in the header.
+    expect(mounted.root.querySelector('.inline-agent__temporary-toggle')).toBeNull()
 
-    temporaryToggle.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    const items = await openPanelMenu(mounted)
+    const temporaryItem = items[4]
+    if (!temporaryItem) throw new Error('Temporary menu item did not render')
+    expect(temporaryItem.querySelector<HTMLElement>('.v-list-item-title')?.textContent?.trim()).toBe('Temporary chat')
+
+    temporaryItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     await settle()
     expect(mounted.temporaryCalls).toEqual(['start'])
   })
@@ -902,16 +893,15 @@ describe('Inline Agent workspace actions', () => {
     const wideTitle = mounted.root.querySelector<HTMLElement>('.inline-agent__workspace-title--wide')
     const compactTitle = mounted.root.querySelector<HTMLElement>('.inline-agent__workspace-title--compact')
     const sessionTitle = mounted.root.querySelector<HTMLElement>('.inline-agent__session-title')
-    const temporaryToggle = mounted.root.querySelector<HTMLElement>('.inline-agent__temporary-toggle')
-    if (!title || !sessionTitle || !temporaryToggle) throw new Error('Workspace header did not render')
+    if (!title || !sessionTitle) throw new Error('Workspace header did not render')
 
     expect(title.textContent?.trim()).toBe('Wiki Agent')
     expect(title.getAttribute('aria-label')).toBe('Wiki Agent')
     expect(wideTitle).toBeNull()
     expect(compactTitle).toBeNull()
-    // The conversation name occupies the title slot; the temporary control follows beneath it.
+    // The conversation name occupies the title slot with no temporary control beneath it.
     expect(sessionTitle.textContent?.trim()).toBe('Release planning')
-    expect(sessionTitle.compareDocumentPosition(temporaryToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(mounted.root.querySelector('.inline-agent__temporary-toggle')).toBeNull()
   })
 
   it('creates temporary and saved conversations with distinct retention', async () => {
@@ -1218,7 +1208,7 @@ describe('Agent workspace action semantics', () => {
     expect(newChat?.getAttribute('aria-label')).toBe('New chat')
     expect(moreMenu?.getAttribute('aria-label')).toBe('More agent actions')
     expect(moreMenu?.parentElement).toBe(headerActions)
-    expect(temporaryToggle?.textContent?.trim()).toBe('Temporary')
+    expect(temporaryToggle).toBeNull()
     expect(pinIndicator).toBeNull()
     expect(composer?.querySelector('.inline-agent__chat-pin')).toBeNull()
     expect(mounted.root.querySelector('.agent-composer__hint')).toBeNull()
