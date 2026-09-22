@@ -4356,7 +4356,7 @@ export default defineComponent({
   > .is-page-header > .page-header-control-pair {
     grid-column: 1 / -1;
     grid-row: 3;
-    margin-block-start: var(--wiki-space-2);
+    margin-block-start: calc(var(--wiki-space-1) - 2px);
   }
 
   .page-header-summary {
