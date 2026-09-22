@@ -117,6 +117,11 @@ export const useAgentsStore = defineStore('agents', {
     sending: false,
     sessionMutationTokenCounter: 0,
     sessionMutationToken: null as number | null,
+    /* Lightweight pending state for the Web (Google Search) toggle. It must not
+       consume the session mutation lock: a settings toggle should never flash
+       the whole composer/transcript UI with disable transitions. The value is
+       the optimistic target (true/false) while the request is in flight. */
+    googleSearchPending: null as boolean | null,
     error: '',
     connection: 'idle' as 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed',
     networkPaused: false,
@@ -1057,7 +1062,7 @@ export const useAgentsStore = defineStore('agents', {
     async setGoogleSearchEnabled(enabled: boolean) {
       if (!this.isWorkspaceReady()) return
       const thread = this.thread
-      if (!thread || this.sessionMutationToken !== null) return
+      if (!thread || this.googleSearchPending !== null || this.sessionMutationToken !== null) return
       const run = thread.session.currentRun
       if (run && (run.status === 'queued' || run.status === 'running' || run.status === 'awaiting_approval')) return
       if (thread.goal && (thread.goal.status === 'active' || thread.goal.status === 'paused' || thread.goal.status === 'blocked')) return
@@ -1070,8 +1075,7 @@ export const useAgentsStore = defineStore('agents', {
       const ownerId = this.pinOwnerId
       const ownerGeneration = this.ownerGeneration
       const sessionId = thread.session.id
-      const mutationToken = this.beginSessionMutation()
-      if (mutationToken === null) return
+      this.googleSearchPending = enabled
       try {
         const projected = await updateAgentSession(fetchFromWindow, this.csrfToken, sessionId, {
           expectedSessionVersion: thread.session.version,
@@ -1080,21 +1084,9 @@ export const useAgentsStore = defineStore('agents', {
         this.projectCommittedSessionMutation(workspaceVersion, sessionId, projected, ownerId, ownerGeneration)
         return projected
       } catch (error) {
-        if (
-          !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
-          !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-          !this.isSessionMutationOwned(mutationToken)
-        )
-          return
-        await Promise.allSettled([this.refreshThread(), this.reloadProfiles()])
-        if (
-          this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
-          this.isSessionContextCurrent(workspaceVersion, sessionId) &&
-          this.isSessionMutationOwned(mutationToken)
-        )
-          this.error = error instanceof Error ? error.message : 'The Web search setting changed concurrently.'
+        this.error = error instanceof Error ? error.message : 'The Web search setting changed concurrently.'
       } finally {
-        this.endSessionMutation(mutationToken)
+        this.googleSearchPending = null
       }
     },
     async refreshCommittedMutation(workspaceVersion: number, sessionId: string, message: string): Promise<boolean> {

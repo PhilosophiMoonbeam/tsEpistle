@@ -376,7 +376,7 @@
                       :generation-tools-enabled="thread?.session.executionMode === 'agent'"
                       :google-search-available="googleSearchAvailable"
                       :google-search-enabled="googleSearchEnabled"
-                      :google-search-busy="sessionMutationBusy"
+                      :google-search-busy="googleSearchPending !== null"
                       @media-settled="refreshAfterMedia"
                       :session-id="thread?.session.id ?? offlineSessionId"
                       :initial-draft="thread ? agents.drafts[thread.session.id]?.text ?? offlineComposerDraft : offlineComposerDraft"
@@ -590,7 +590,7 @@ const emit = defineEmits<{
 const welcomeGreeting = welcomeGreetings[Math.floor(Math.random() * welcomeGreetings.length)] ?? welcomeGreetings[0]
 
 const agents = useAgentsStore()
-const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, googleSearchSuggestions, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
+const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, googleSearchPending, googleSearchSuggestions, loading, networkPaused, pinStorageAvailable, pinnedSessionId, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void>; reattachMedia: (media: AgentMediaView) => Promise<boolean> }>('composer')
@@ -747,7 +747,9 @@ const followJumpVisible = computed(() => Boolean(hasConversation.value && transc
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
 const mediaProfile = computed(() => thread.value?.session.providerProfileId ? profiles.value.find(profile => profile.id === thread.value?.session.providerProfileId) : profiles.value.find(profile => profile.isGlobalDefault) ?? (profiles.value.length === 1 ? profiles.value[0] : undefined))
 const googleSearchAvailable = computed(() => Boolean(thread.value && thread.value.session.executionMode === 'agent' && mediaProfile.value?.googleSearchAvailable === true))
-const googleSearchEnabled = computed(() => thread.value?.session.googleSearchEnabled === true)
+/* Optimistic while the Web toggle request is in flight, so the button state
+   is truthful immediately and the global session mutation lock stays free. */
+const googleSearchEnabled = computed(() => googleSearchPending.value !== null ? googleSearchPending.value : thread.value?.session.googleSearchEnabled === true)
 const liveGoogleSearchSuggestions = computed(() => {
   const live = googleSearchSuggestions.value
   const session = thread.value?.session
