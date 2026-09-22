@@ -569,6 +569,8 @@ export interface AgentPriorToolActivity {
   readonly cacheHit: boolean
   readonly duplicateOfActionCallId: string | null
   readonly contextExclusion?: AgentToolContextExclusion
+  /** Set when state is "failed": the stored tool.failed event code. */
+  readonly errorCode?: string
 }
 
 export interface AgentPriorRunActivity {
@@ -578,6 +580,7 @@ export interface AgentPriorRunActivity {
   readonly assistantMessageOrdinal: number
   readonly modelTurns: number
   readonly rejectedEvidenceDrafts: number
+  readonly errorCode: string | null
   readonly tools: readonly AgentPriorToolActivity[]
 }
 
@@ -763,6 +766,7 @@ interface RuntimeSessionRow {
 interface RuntimePriorEventRow {
   runId: string
   status: string
+  errorCode: string | null
   userMessageOrdinal: number
   assistantMessageOrdinal: number
   sequence: number
@@ -779,6 +783,7 @@ interface MutablePriorToolActivity {
   cacheHit: boolean
   duplicateOfActionCallId: string | null
   contextExclusion?: AgentToolContextExclusion
+  errorCode?: string
 }
 
 const parsedObject = (value: string, code: string): Record<string, unknown> => {
@@ -891,6 +896,7 @@ const priorRunActivity = (rows: readonly RuntimePriorEventRow[]): readonly Agent
     string,
     {
       status: string
+      errorCode: string | null
       userMessageOrdinal: number
       assistantMessageOrdinal: number
       modelTurns: number
@@ -904,6 +910,7 @@ const priorRunActivity = (rows: readonly RuntimePriorEventRow[]): readonly Agent
     if (!run) {
       run = {
         status: row.status,
+        errorCode: typeof row.errorCode === 'string' && row.errorCode.length > 0 ? row.errorCode : null,
         userMessageOrdinal: Number(row.userMessageOrdinal),
         assistantMessageOrdinal: Number(row.assistantMessageOrdinal),
         modelTurns: 0,
@@ -956,6 +963,7 @@ const priorRunActivity = (rows: readonly RuntimePriorEventRow[]): readonly Agent
     if (row.type === 'tool.failed') {
       if (exclusion !== undefined) throw new AgentRepositoryError('AGENT_PRIOR_ACTIVITY_CORRUPT', 'Stored failed tool activity has a context exclusion', 500)
       tool.state = 'failed'
+      if (typeof data.errorCode === 'string' && data.errorCode.length > 0) tool.errorCode = data.errorCode
       continue
     }
     if (row.type === 'tool.notExecuted') {
@@ -1001,6 +1009,7 @@ const priorRunActivity = (rows: readonly RuntimePriorEventRow[]): readonly Agent
     return {
       runId,
       status: run.status,
+      errorCode: run.errorCode,
       userMessageOrdinal: run.userMessageOrdinal,
       assistantMessageOrdinal: run.assistantMessageOrdinal,
       modelTurns: run.modelTurns,
@@ -2312,6 +2321,7 @@ export class AgentProductRuntime {
           .select({
             runId: 'runs.id',
             status: 'runs.status',
+            errorCode: 'runs.errorCode',
             userMessageOrdinal: 'userMessages.ordinal',
             assistantMessageOrdinal: 'assistantMessages.ordinal',
             sequence: 'events.sequence',
