@@ -407,31 +407,45 @@ const stepText = (steps: readonly NativeStep[]): string =>
 const stepCalls = (steps: readonly NativeStep[]): readonly z.infer<typeof FunctionCallStepSchema>[] =>
   steps.flatMap(step => (step.type === 'function_call' ? [step] : []))
 
-const assertAssistantStateMatches = (message: Extract<AxChatRequest['chatPrompt'][number], { role: 'assistant' }>, steps: readonly NativeStep[]): void => {
-  if (stepText(steps) !== (message.content ?? '')) throw corruptState()
-  const expected = (message.functionCalls ?? []).map(call => ({
-    id: call.id,
-    name: call.function.name,
-    arguments:
-      typeof call.function.params === 'string'
-        ? (() => {
-            try {
-              return JSON.parse(call.function.params) as unknown
-            } catch {
-              throw corruptState()
-            }
-          })()
-        : (call.function.params ?? {})
-  }))
+const assistantStateMatches = (message: Extract<AxChatRequest['chatPrompt'][number], { role: 'assistant' }>, steps: readonly NativeStep[]): boolean => {
+  if (stepText(steps) !== (message.content ?? '')) return false
+  const expected: Array<{ readonly id: string; readonly name: string; readonly arguments: unknown }> = []
+  for (const call of message.functionCalls ?? []) {
+    let argumentsValue: unknown = call.function.params ?? {}
+    if (typeof argumentsValue === 'string') {
+      try {
+        argumentsValue = JSON.parse(argumentsValue) as unknown
+      } catch {
+        return false
+      }
+    }
+    expected.push({ id: call.id, name: call.function.name, arguments: argumentsValue })
+  }
   const actual = stepCalls(steps).map(call => ({ id: call.id, name: call.name, arguments: call.arguments }))
-  if (canonicalJson(expected) !== canonicalJson(actual)) throw corruptState()
+  try {
+    return canonicalJson(expected) === canonicalJson(actual)
+  } catch {
+    return false
+  }
 }
+
+// A combined cross-turn continuation is optional replay state. If host-authored
+// presentation text made its text-only suffix stale, the visible message wins;
+// active or call-bearing state still fails closed.
+const canReplayVisibleAssistant = (message: Extract<AxChatRequest['chatPrompt'][number], { role: 'assistant' }>, state: DecodedState): boolean =>
+  state.assistantStepStart > 0 && (message.functionCalls?.length ?? 0) === 0 && stepCalls(state.steps.slice(state.assistantStepStart)).length === 0
+
+const visibleAssistantSteps = (message: Extract<AxChatRequest['chatPrompt'][number], { role: 'assistant' }>): readonly NativeStep[] =>
+  message.content === undefined ? [] : [{ type: 'model_output', content: [{ type: 'text', text: message.content }] }]
 
 const assistantSteps = (message: Extract<AxChatRequest['chatPrompt'][number], { role: 'assistant' }>): readonly NativeStep[] => {
   if (message.thoughtBlocks?.length) {
     if (message.thoughtBlocks.length !== 1) throw corruptState()
     const state = decodeState(message.thoughtBlocks[0]!, 'stored')
-    assertAssistantStateMatches(message, state.steps.slice(state.assistantStepStart))
+    if (!assistantStateMatches(message, state.steps.slice(state.assistantStepStart))) {
+      if (canReplayVisibleAssistant(message, state)) return visibleAssistantSteps(message)
+      throw corruptState()
+    }
     return state.steps
   }
   const steps: NativeStep[] = []
@@ -459,7 +473,10 @@ export const geminiInteractionCompactionPrefix = (
   if (!message.thoughtBlocks?.length) return []
   if (message.thoughtBlocks.length !== 1) throw corruptState()
   const state = decodeState(message.thoughtBlocks[0]!, 'stored')
-  assertAssistantStateMatches(message, state.steps.slice(state.assistantStepStart))
+  if (!assistantStateMatches(message, state.steps.slice(state.assistantStepStart))) {
+    if (canReplayVisibleAssistant(message, state)) return []
+    throw corruptState()
+  }
   return state.steps.slice(0, state.assistantStepStart).flatMap((step): Readonly<Record<string, unknown>>[] => {
     if (step.type === 'model_output' || step.type === 'user_input')
       return [{ role: step.type === 'model_output' ? 'assistant' : 'user', content: (step.content ?? []).map(part => part.text).join('') }]

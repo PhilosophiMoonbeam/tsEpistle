@@ -4270,11 +4270,15 @@ export class AxAgentEngine implements AgentEngine {
               'The approved action completed, but its assistant response could not be recovered',
               409
             )
-          const acceptedThoughtBlocks =
-            request.purpose !== 'planner' &&
-            request.purpose !== 'subagent' &&
-            provider.continuationDialect === 'gemini-interactions-v1' &&
-            result.thoughtBlocks.length === 1
+          const acceptedContent = `${result.content}${request.purpose === 'root' ? recentExcerptDisclosure(recentGroups) : ''}${partialCoverageDisclosure(
+            executedOmittedCount(),
+            notExecutedActionCallIds.size
+          )}`
+          // Provider replay state must describe the exact durable assistant message.
+          const continuationEligible = request.purpose !== 'planner' && request.purpose !== 'subagent' && acceptedContent === result.content
+          const acceptedThoughtBlocks = !continuationEligible
+            ? []
+            : provider.continuationDialect === 'gemini-interactions-v1' && result.thoughtBlocks.length === 1
               ? [combineGeminiInteractionState(activeSummary === null ? activePrompt : activePrompt.slice(1), result.thoughtBlocks[0]!)]
               : result.thoughtBlocks
           const acceptedProviderState =
@@ -4286,10 +4290,6 @@ export class AxAgentEngine implements AgentEngine {
             await this.#actions.saveSnapshot(request, await actionSession.snapshot(request.signal))
           const closeFailure = finalizeActionSession()
           if (closeFailure) throw closeFailure
-          const acceptedContent = `${result.content}${request.purpose === 'root' ? recentExcerptDisclosure(recentGroups) : ''}${partialCoverageDisclosure(
-            executedOmittedCount(),
-            notExecutedActionCallIds.size
-          )}`
           await presentAcceptedContent(acceptedContent, sink)
           await publishGoogleSearchSuggestions()
           // The agent has finished responding and the user's turn is next: compact eagerly so the
