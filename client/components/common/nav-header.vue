@@ -44,7 +44,9 @@
             )
             .nav-header-logo-fallback(v-else, aria-hidden='true') {{ logoFallback }}
           v-toolbar-title.nav-header-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp')
-            span {{title}}
+            span.nav-header-title-single {{title}}
+            span.nav-header-title-stacked(ref='navHeaderTitleStacked', :style='navHeaderTitleStackedStyle')
+              span.nav-header-title-line(v-for='(titleLine, titleLineIndex) in titleLines', :key='titleLineIndex') {{ titleLine }}
       v-col.nav-header-search-col(md='4', v-if='$vuetify.display.mdAndUp')
         .nav-header-inner.nav-header-command
           v-tooltip(location="bottom", v-if='!hideSearch')
@@ -648,6 +650,8 @@ export default defineComponent({
       headerActionGeneration: 1,
       searchFocusGeneration: 0,
       logoutPending: false,
+      navHeaderTitleFitScale: 1 as number,
+      navHeaderTitleResizeObserver: null as ResizeObserver | null,
       duplicateOpts: {
         locale: 'en',
         path: 'new-page',
@@ -672,6 +676,28 @@ export default defineComponent({
       return pwa.pwaConnectionPresentation(pwa.pwaState)
     },
     title(): string { return wikiStore.site.title },
+    titleWords(): string[] { return this.title.trim().split(/\s+/u).filter(Boolean) },
+    // Balanced two-line split for small screens: pick the word boundary that
+    // minimizes the longest resulting line so both halves read evenly.
+    titleLines(): string[] {
+      const words = this.titleWords
+      if (words.length <= 1) return words
+      let bestSplit = 1
+      let bestWidest = Number.POSITIVE_INFINITY
+      for (let split = 1; split < words.length; split += 1) {
+        const first = words.slice(0, split).join(' ')
+        const second = words.slice(split).join(' ')
+        const widest = Math.max(first.length, second.length)
+        if (widest < bestWidest) {
+          bestWidest = widest
+          bestSplit = split
+        }
+      }
+      return [words.slice(0, bestSplit).join(' '), words.slice(bestSplit).join(' ')]
+    },
+    navHeaderTitleStackedStyle(): Record<string, string> {
+      return { '--nav-header-title-fit': this.navHeaderTitleFitScale.toFixed(3) }
+    },
     logoUrl(): string { return wikiStore.site.logoUrl },
     logoImageFailed (): boolean { return this.failedLogoUrl === this.logoUrl },
     logoFallback (): string {
@@ -803,6 +829,9 @@ export default defineComponent({
     }
   },
   watch: {
+    title(): void {
+      void this.$nextTick().then(() => this.applyNavHeaderTitleFit())
+    },
     transportVerified(connected: boolean, previous: boolean): void {
       if (connected && previous === false && !wikiStore.authRefreshPending) void wikiStore.refreshAuth()
     },
@@ -857,6 +886,16 @@ export default defineComponent({
     onSearchFocus(this.handleSearchFocusCommand)
     onPageDelete(this.pageDelete)
     this.isDevMode = siteConfig.devMode === true
+    if (typeof ResizeObserver !== 'undefined') {
+      const titleBox = this.$refs.navHeaderTitleStacked as HTMLElement | undefined
+      if (titleBox) {
+        this.navHeaderTitleResizeObserver = markRaw(new ResizeObserver(() => this.applyNavHeaderTitleFit()))
+        this.navHeaderTitleResizeObserver.observe(titleBox)
+      }
+    }
+    if (typeof document !== 'undefined' && typeof document.fonts !== 'undefined' && document.fonts.ready) {
+      void document.fonts.ready.then(() => this.applyNavHeaderTitleFit()).catch(() => {})
+    }
     window.addEventListener('keydown', this.handleSearchShortcut)
     document.addEventListener('visibilitychange', this.handleNotificationVisibility)
     window.addEventListener('focus', this.handleNotificationFocus)
@@ -882,9 +921,36 @@ export default defineComponent({
       window.cancelAnimationFrame(this.pageActionsFocusFrame)
       this.pageActionsFocusFrame = null
     }
+    this.navHeaderTitleResizeObserver?.disconnect()
+    this.navHeaderTitleResizeObserver = null
   },
   methods: {
     mergeProps,
+    // Keeps the workspace title readable on narrow screens: the stacked
+    // two-line variant prefers a balanced word split, and any line that still
+    // cannot fit is scaled down (stateless ratio, so it cannot oscillate).
+    applyNavHeaderTitleFit (): void {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return
+      const box = this.$refs.navHeaderTitleStacked as HTMLElement | undefined
+      if (!box) return
+      const available = box.clientWidth
+      if (available <= 0 || box.getBoundingClientRect().width <= 0) {
+        // Hidden on this breakpoint (the single desktop line owns wide screens).
+        this.navHeaderTitleFitScale = 1
+        return
+      }
+      const lines = Array.from(box.querySelectorAll<HTMLElement>('.nav-header-title-line'))
+      const widest = lines.reduce((max, line) => Math.max(max, line.scrollWidth), 0)
+      if (widest <= 0) return
+      // Stateless ratio: derive the unscaled natural width first so repeated
+      // measurements cannot feed back into themselves and oscillate.
+      const natural = widest / Math.max(this.navHeaderTitleFitScale, 0.05)
+      const ratio = available / natural
+      const next = ratio >= 1
+        ? 1
+        : Math.max(0.55, Math.floor(ratio * 0.98 * 1000) / 1000)
+      this.navHeaderTitleFitScale = Math.round(next * 1000) / 1000
+    },
     handleLogoError (event: Event): void {
       const image = event.currentTarget
       if (!(image instanceof HTMLImageElement)) return
@@ -1421,8 +1487,34 @@ export default defineComponent({
     letter-spacing: -.018em;
     line-height: var(--wiki-leading-heading);
 
-    span {
+    .nav-header-title-single {
       display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    // Small-screen stacked workspace title: multi-word names split onto two
+    // balanced lines; single-word names (and lines that still overflow) shrink
+    // via --nav-header-title-fit, measured by applyNavHeaderTitleFit().
+    .nav-header-title-stacked {
+      display: none;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 0;
+      min-width: 0;
+      max-width: 100%;
+      overflow: hidden;
+      font-size: calc(.8125rem * var(--nav-header-title-fit, 1));
+      letter-spacing: -.012em;
+      line-height: 1.16;
+      padding-block: 2px;
+    }
+
+    .nav-header-title-line {
+      display: block;
+      max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -2078,6 +2170,14 @@ export default defineComponent({
 
     .nav-header-title {
       font-size: .875rem;
+
+      .nav-header-title-single {
+        display: none;
+      }
+
+      .nav-header-title-stacked {
+        display: flex;
+      }
     }
 
     .nav-header-logo {
