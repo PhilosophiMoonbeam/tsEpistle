@@ -1,10 +1,10 @@
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
 import {
+  type AgentCompactionCanonicalSource,
+  type AgentCompactionReceipt,
   agentCompactionSha256,
   agentCompactionSourceDigest,
-  agentCompactionSourcePrefixes,
-  type AgentCompactionCanonicalSource,
-  type AgentCompactionReceipt
+  agentCompactionSourcePrefixes
 } from '../../agents/compaction.ts'
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
@@ -517,7 +517,7 @@ describe('Ax agent engine context compaction', () => {
     expect(budget.consumed()).toBe(0)
   })
 
-  it('compacts only completed same-run tool batches and retains call/result authority pairs', async () => {
+  it('retains completed same-run tool call/result authority pairs through synthesis', async () => {
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const replies: AxChatResponse[] = [
       {
@@ -542,8 +542,6 @@ describe('Ax agent engine context compaction', () => {
         ],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 200, completionTokens: 10, totalTokens: 210 } }
       },
-      response('First batch established evidence one.', 500, 50),
-      response('Evidence two is authoritative.[[cite:page:2]]', 300, 20),
       response('Evidence two is authoritative.[[cite:page:2]]', 300, 20)
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
@@ -586,20 +584,13 @@ describe('Ax agent engine context compaction', () => {
       { commitCompaction, text: async () => undefined, event }
     )
 
-    expect(calls).toHaveLength(5)
-    const summaryRequest = calls[3]!
-    expect(summaryRequest).not.toHaveProperty('functions')
-    expect(JSON.stringify(summaryRequest)).toContain('tool-1')
-    expect(JSON.stringify(summaryRequest)).toContain('EVIDENCE_ONE')
-    expect(JSON.stringify(summaryRequest)).toContain('tool-2')
-    expect(JSON.stringify(summaryRequest)).toContain('EVIDENCE_TWO')
-    const followOn = JSON.stringify(calls[4])
-    expect(followOn).toContain('First batch established evidence one.')
-    expect(followOn).not.toContain('EVIDENCE_TWO')
-    expect(event).toHaveBeenCalledWith(
-      'model.turn',
-      expect.objectContaining({ outcome: 'context_compacted', usageVersion: 2, inputTokens: 300, outputTokens: 20, totalTokens: 320 })
-    )
+    expect(calls).toHaveLength(3)
+    const synthesisRequest = JSON.stringify(calls[2])
+    expect(synthesisRequest).toContain('tool-1')
+    expect(synthesisRequest).toContain('EVIDENCE_ONE')
+    expect(synthesisRequest).toContain('tool-2')
+    expect(synthesisRequest).toContain('EVIDENCE_TWO')
+    expect(event).not.toHaveBeenCalledWith('model.turn', expect.objectContaining({ outcome: 'context_compacted' }))
     expect(commitCompaction).not.toHaveBeenCalled()
     expect(result).toMatchObject({ authoritySha256: 'f'.repeat(64), citations: [expect.objectContaining({ evidenceId: 'page:2' })] })
   })
