@@ -263,9 +263,11 @@
               .comments-main
                 slot(name='comments')
           #page-mobile-metadata.page-mobile-metadata
+          //- No :key here: remounting on breakpoint changes makes deferred
+          //- teleports land in reverse order in the shared rail container
+          //- (Tags jumped above the utilities). `:to` moves content in order.
           Teleport(
             defer
-            :key='isTocMobile ? `mobile-tools` : winWidth < 1280 ? `tablet-tools` : `desktop-tools`'
             :to='isTocMobile ? `#page-mobile-tools` : winWidth < 1280 ? `#page-tablet-tools` : `#page-desktop-rail`'
             :disabled='printView'
           )
@@ -438,9 +440,10 @@
                   v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
                   span.text-body-small {{$t('common:page.noSections')}}
 
+          //- Keep this keyless too so both teleports move as a pair and keep
+          //- their source order (shortcuts/provenance/toc before tags/comments).
           Teleport(
             defer
-            :key='isTocMobile ? `mobile-metadata` : winWidth < 1280 ? `tablet-metadata` : `desktop-metadata`'
             :to='isTocMobile ? `#page-mobile-metadata` : winWidth < 1280 ? `#page-tablet-tools` : `#page-desktop-rail`'
             :disabled='printView'
           )
