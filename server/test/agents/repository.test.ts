@@ -1,7 +1,7 @@
 import createKnex, { type Knex } from 'knex'
 import type { AgentEvent } from '../../../shared/agents/contracts.ts'
 import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../../shared/agents/conversation-folders.ts'
-import { agentCompactionSha256, type AgentCompactionReceipt } from '../../agents/compaction.ts'
+import { type AgentCompactionReceipt, agentCompactionSha256 } from '../../agents/compaction.ts'
 import {
   AgentQuotaSettlementError,
   AgentRunCoordinator,
@@ -19,6 +19,7 @@ import {
 } from '../../agents/coordinator.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
 import { projectAgentThread, reduceAgentEvents } from '../../agents/projection.ts'
+import { AgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import {
   appendAgentEvent,
   appendAgentMessage,
@@ -2021,6 +2022,205 @@ describe('durable agent repositories', () => {
       consumedCostMicros: 21
     })
     expect(await knex('agentEvents').where({ runId }).orderBy('sequence').pluck('type')).toContain('run.partial')
+    expect(await knex('agentMessages').where({ id: assistantMessageId }).first('status', 'content')).toEqual({ status: 'failed', content: '' })
+  })
+
+  it('reports a durably applied page proposal as partial success when only final provider synthesis fails', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    const proposalId = '00000000-0000-4000-8000-000000000073'
+    await knex('agentProposals').insert({
+      id: proposalId,
+      sessionId,
+      runId,
+      sourceKind: 'agent',
+      actionName: 'pages.prepareCreate',
+      risk: 'proposal',
+      status: 'applied',
+      summary: 'Create en/example-page',
+      operation: JSON.stringify({ locale: 'en', path: 'example-page' }),
+      pageId: null,
+      baseSourceRevision: null,
+      authoritySha256: 'a'.repeat(64),
+      inputHash: 'b'.repeat(64),
+      patchSha256: null,
+      resultCanonicalSha256: 'c'.repeat(64),
+      diffSha256: null,
+      diff: null,
+      contentPurgedAt: null,
+      expiresAt: new Date('2026-08-17T00:15:00.000Z'),
+      createdAt: now
+    })
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      sideEffectsStarted: true,
+      availableAt: now,
+      completedAt: null
+    })
+    await reserveAgentRunQuota(
+      knex,
+      runId,
+      7,
+      { tokens: 100, costMicros: 100 },
+      { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      new Date('2026-08-17T00:05:00.000Z'),
+      now
+    )
+    let executions = 0
+    const engine: AgentEngine = {
+      preflight: preflightAgentRequest,
+      async execute(request, sink) {
+        executions += 1
+        await request.dispatchBudget?.reserve({ tokens: 20, costMicros: 30 })
+        await sink.event('model.turn', {
+          turn: 1,
+          outcome: 'answer_rejected',
+          usageVersion: 2,
+          inputTokens: 7,
+          outputTokens: 3,
+          totalTokens: 10,
+          costMicros: 5,
+          content: '',
+          contentTruncated: false,
+          actionCallIds: []
+        })
+        throw new AgentExecutionFailure('INVALID_PROVIDER_RESPONSE', 'provider_stream', undefined, {
+          transportKind: 'gemini-api',
+          providerErrorCode: 'protocol_stream_invalid'
+        })
+      }
+    }
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        },
+        async resolveCurrent() {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      { workerId: 'post-action-provider-failure', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
+
+    expect(await runtime.runOnce()).toBe(true)
+    expect(executions).toBe(1)
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'errorCode', 'inputTokens', 'outputTokens', 'totalTokens')).toEqual({
+      status: 'partial',
+      errorCode: 'INVALID_PROVIDER_RESPONSE',
+      inputTokens: 7,
+      outputTokens: 3,
+      totalTokens: 10
+    })
+    expect(await knex('agentMessages').where({ id: assistantMessageId }).first('status', 'content', 'citations', 'providerStateCiphertext')).toEqual({
+      status: 'complete',
+      content:
+        'The approved Wiki change was applied, but the final assistant response could not be completed. The applied proposal card and any page link below show the authoritative result.',
+      citations: null,
+      providerStateCiphertext: null
+    })
+    expect(await knex('agentQuotaReservations').where({ runId }).first('status', 'consumedTokens', 'consumedCostMicros')).toEqual({
+      status: 'consumed',
+      consumedTokens: 30,
+      consumedCostMicros: 35
+    })
+    expect(await knex('agentProposals').where({ id: proposalId }).first('status', 'summary')).toEqual({
+      status: 'applied',
+      summary: 'Create en/example-page'
+    })
+    const partial = await knex('agentEvents').where({ runId, type: 'run.partial' }).first('data')
+    expect(JSON.parse(String(partial?.data))).toMatchObject({
+      status: 'partial',
+      errorCode: 'INVALID_PROVIDER_RESPONSE',
+      failureStage: 'provider_stream',
+      diagnostics: { transportKind: 'gemini-api', providerErrorCode: 'protocol_stream_invalid' },
+      unsettledExposure: { tokens: 20, costMicros: 30 }
+    })
+  })
+
+  it.each([
+    ['no proposal', null, runId, 'INVALID_PROVIDER_RESPONSE', 'provider_stream'],
+    ['pending proposal', 'pending', runId, 'INVALID_PROVIDER_RESPONSE', 'provider_stream'],
+    ['approved proposal', 'approved', runId, 'INVALID_PROVIDER_RESPONSE', 'provider_stream'],
+    ['denied proposal', 'denied', runId, 'INVALID_PROVIDER_RESPONSE', 'provider_stream'],
+    ['expired proposal', 'expired', runId, 'INVALID_PROVIDER_RESPONSE', 'provider_stream'],
+    ['cancelled proposal', 'cancelled', runId, 'INVALID_PROVIDER_RESPONSE', 'provider_stream'],
+    ['another run applied proposal', 'applied', null, 'INVALID_PROVIDER_RESPONSE', 'provider_stream'],
+    ['applied proposal with authorization failure', 'applied', runId, 'PROVIDER_AUTH_REJECTED', 'provider_request'],
+    ['applied proposal with accounting failure', 'applied', runId, 'PROVIDER_USAGE_INVALID', 'usage_reconciliation']
+  ] as const)('does not mask %s as post-action response recovery', async (_label, proposalStatus, proposalRunId, failureCode, failureStage) => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    if (proposalStatus !== null) {
+      await knex('agentProposals').insert({
+        id: '00000000-0000-4000-8000-000000000074',
+        sessionId,
+        runId: proposalRunId,
+        sourceKind: 'agent',
+        actionName: 'pages.prepareCreate',
+        risk: 'proposal',
+        status: proposalStatus,
+        summary: 'Create en/example-page',
+        operation: JSON.stringify({ locale: 'en', path: 'example-page' }),
+        pageId: null,
+        baseSourceRevision: null,
+        authoritySha256: 'a'.repeat(64),
+        inputHash: 'b'.repeat(64),
+        patchSha256: null,
+        resultCanonicalSha256: 'c'.repeat(64),
+        diffSha256: null,
+        diff: null,
+        contentPurgedAt: null,
+        expiresAt: new Date('2026-08-17T00:15:00.000Z'),
+        createdAt: now
+      })
+    }
+    await knex('agentRuns')
+      .where({ id: runId })
+      .update({
+        status: 'queued',
+        attempts: 0,
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        sideEffectsStarted: proposalStatus === 'applied',
+        availableAt: now,
+        completedAt: null
+      })
+    await reserveAgentRunQuota(
+      knex,
+      runId,
+      7,
+      { tokens: 100, costMicros: 100 },
+      { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      new Date('2026-08-17T00:05:00.000Z'),
+      now
+    )
+    const engine: AgentEngine = {
+      preflight: preflightAgentRequest,
+      async execute() {
+        throw new AgentExecutionFailure(failureCode, failureStage)
+      }
+    }
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        },
+        async resolveCurrent() {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      { workerId: 'non-recoverable-post-action-failure', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
+
+    expect(await runtime.runOnce()).toBe(true)
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'errorCode')).toEqual({ status: 'failed', errorCode: failureCode })
     expect(await knex('agentMessages').where({ id: assistantMessageId }).first('status', 'content')).toEqual({ status: 'failed', content: '' })
   })
 

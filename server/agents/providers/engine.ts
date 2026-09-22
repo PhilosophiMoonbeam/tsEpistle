@@ -2756,6 +2756,17 @@ const notExecutedCapacityResult = (actionCallId: string, actionName: string): Re
     message: 'The action was not executed because provider context capacity was exhausted.'
   })
 
+const pageProposalActions = new Set<AgentActionName>([
+  'pages.prepareCreate',
+  'pages.preparePatch',
+  'pages.prepareMove',
+  'pages.prepareRestore',
+  'pages.prepareDelete'
+])
+
+const isAppliedPageProposalResult = (actionName: AgentActionName, output: unknown): boolean =>
+  pageProposalActions.has(actionName) && asRecord(output)?.status === 'applied'
+
 const isContextLimitFailure = (error: unknown): boolean => error instanceof AgentRepositoryError && error.code === 'AGENT_CONTEXT_TOO_LARGE'
 
 const partialCoverageDisclosure = (omittedCount: number, notExecutedCount: number): string => {
@@ -3453,7 +3464,8 @@ export class AxAgentEngine implements AgentEngine {
     tools: ProviderTools | null,
     request: AgentEngineRequest,
     maxOutputTokens: number,
-    maximumDispatchTokens: number | undefined
+    maximumDispatchTokens: number | undefined,
+    streamResponse = true
   ): Promise<TurnResult> {
     assertCompactionContextFresh(request)
     const limits = deriveAgentProviderResourceLimits(maxOutputTokens)
@@ -3605,7 +3617,7 @@ export class AxAgentEngine implements AgentEngine {
       assertCompactionContextFresh(request)
       providerDispatched = true
       response = await provider.service.chat(providerRequest, {
-        stream: provider.capabilities.streaming,
+        stream: streamResponse && provider.capabilities.streaming,
         abortSignal: dispatchSignal,
         functionCallMode: 'native',
         retry: { maxRetries: 0 }
@@ -3794,6 +3806,11 @@ export class AxAgentEngine implements AgentEngine {
       let activePrompt: ChatPromptMessage[] = []
       let activeBatchEnds: number[] = []
       let activeSummary: string | null = null
+      // Once approval has produced a durable Wiki mutation, later inference is
+      // optional presentation work. Buffer it so transport failure cannot make
+      // a committed change look like an incomplete streamed operation.
+      let durablePageMutationApplied =
+        request.recoveredAction !== undefined && isAppliedPageProposalResult(request.recoveredAction.actionName, request.recoveredAction.output)
       if (request.recoveredAction !== undefined) {
         if (request.purpose !== 'root' || tools === null || actionSession === null)
           throw new AgentRepositoryError('AGENT_ACTION_RECOVERY_REQUIRED', 'The completed action cannot be resumed without provider tools', 409)
@@ -3983,7 +4000,8 @@ export class AxAgentEngine implements AgentEngine {
                 ...(sequence === undefined ? {} : { dispatchBudget: sequence })
               },
               policy.summaryOutputTokens,
-              maxTokens === undefined ? undefined : maxTokens - totalTokens
+              maxTokens === undefined ? undefined : maxTokens - totalTokens,
+              !durablePageMutationApplied
             )
             inputTokens = safeUsageAddition(inputTokens, result.inputTokens, 'Compaction input tokens')
             outputTokens = safeUsageAddition(outputTokens, result.outputTokens, 'Compaction output tokens')
@@ -4125,7 +4143,8 @@ export class AxAgentEngine implements AgentEngine {
             tools,
             sequence === undefined ? request : { ...request, dispatchBudget: sequence },
             bounded.maxOutputTokens,
-            request.dispatchBudget === undefined ? undefined : remainingTokens
+            request.dispatchBudget === undefined ? undefined : remainingTokens,
+            !durablePageMutationApplied
           )
         } finally {
           await sequence?.close()
@@ -4579,6 +4598,9 @@ export class AxAgentEngine implements AgentEngine {
                 costMicros = safeUsageAddition(costMicros, mediaUsage.costMicros, 'Media cost')
                 return { generated: true, count: mediaUsage.imageCount ?? 1 }
               }))
+            // The action kernel validates this output; no earlier proposal state
+            // (pending, approved, denied, expired, or cancelled) crosses the latch.
+            if (isAppliedPageProposalResult(resolved.name, output)) durablePageMutationApplied = true
             const encoded = JSON.stringify(output)
             const summary = toolCompletionSummary(resolved.name, output, cached !== undefined)
             const providerOutput =
