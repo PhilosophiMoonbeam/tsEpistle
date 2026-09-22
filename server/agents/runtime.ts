@@ -7,9 +7,9 @@ import {
   type AgentEventType,
   type AgentExecutionMode,
   type AgentGenerationTool,
-  type AgentGoogleSearchGrounding,
   type AgentGoalBudgetLimitReason,
   type AgentGoalTokenTier,
+  type AgentGoogleSearchGrounding,
   type AgentRunStatus,
   type AgentToolContextExclusion,
   isTerminalAgentRunStatus
@@ -17,18 +17,18 @@ import {
 import { type AgentKnowledgeContext, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import {
-  agentCompactionBindingMatches,
-  agentGroundedExpiry,
-  agentCompactionMinimumExpiry,
-  agentCompactionSha256,
-  agentCompactionSourceDigest,
-  agentCompactionSourcePrefixes,
-  isAgentCompactionOutcome,
   type AgentCompactionCanonicalSource,
   type AgentCompactionCheckpoint,
   type AgentCompactionContext,
   type AgentCompactionExposure,
   type AgentCompactionReceipt,
+  agentCompactionBindingMatches,
+  agentCompactionMinimumExpiry,
+  agentCompactionSha256,
+  agentCompactionSourceDigest,
+  agentCompactionSourcePrefixes,
+  agentGroundedExpiry,
+  isAgentCompactionOutcome,
   readAgentCompactionCheckpoint,
   readAgentCompactionMetadata
 } from './compaction.ts'
@@ -58,8 +58,8 @@ import {
   emitGoalEvent,
   encodedCompletionAssessment,
   getOwnedAgentGoal,
-  isSelectedAgentGoalBudgetPolicyVersion,
   insertAgentGoal,
+  isSelectedAgentGoalBudgetPolicyVersion,
   selectAgentGoalTokenBudget,
   updateGoalStatus
 } from './goals.ts'
@@ -107,9 +107,9 @@ import type {
   AgentGoalBudgetClassifier
 } from './providers/utility.ts'
 import { AgentRepositoryError, appendAgentEvent, validateAgentGoogleSearchGrounding } from './repository.ts'
-import { publishAgentGoogleSearchSuggestions } from './sse.ts'
 import { SkillValidationError } from './skills/parser.ts'
 import { lockSkillAdmissionPrincipal, resolveSelectedSkillVersionIdsInTransaction, validateSelectedSkillVersionIdsInTransaction } from './skills/runtime.ts'
+import { publishAgentGoogleSearchSuggestions } from './sse.ts'
 import {
   type AgentTaskRecord,
   cancelAgentRunTasks,
@@ -143,6 +143,25 @@ interface AgentUsageTotals {
   costMicros: number
 }
 const GOAL_ACCOUNTING_ERROR_MESSAGE = 'Goal quota accounting is incomplete or invalid'
+const POST_ACTION_RESPONSE_FALLBACK =
+  'The approved Wiki change was applied, but the final assistant response could not be completed. The applied proposal card and any page link below show the authoritative result.'
+const POST_ACTION_RECOVERY_STAGES = new Set(['context_admission', 'provider_request', 'provider_stream', 'provider_response'])
+const POST_ACTION_RECOVERY_CODES = new Set([
+  'AGENT_CONTEXT_TOO_LARGE',
+  'INVALID_PROVIDER_REQUEST',
+  'INVALID_PROVIDER_RESPONSE',
+  'PROVIDER_CONTEXT_TOO_LARGE',
+  'PROVIDER_REQUEST_TOO_LARGE',
+  'PROVIDER_TIMEOUT',
+  'PROVIDER_RATE_LIMITED',
+  'PROVIDER_REQUEST_REJECTED',
+  'PROVIDER_UNAVAILABLE',
+  'PROVIDER_REQUEST_FAILED',
+  'UNEXPECTED_PROVIDER_TOOL_CALL'
+])
+
+const isRecoverablePostActionFailure = (failure: AgentExecutionFailure | null): boolean =>
+  failure !== null && POST_ACTION_RECOVERY_STAGES.has(failure.stage) && POST_ACTION_RECOVERY_CODES.has(failure.code)
 
 const goalAccountingFailure = (): never => {
   throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', GOAL_ACCOUNTING_ERROR_MESSAGE, 500)
@@ -800,14 +819,8 @@ const runtimeGroundingExpiry = (message: RuntimeMessageRow, inherited: string | 
   agentCompactionMinimumExpiry(message.googleSearchGrounding === null ? null : agentGroundedExpiry(message.createdAt), inherited)
 
 /** True when every attachment on this message was detached from context by history compaction. */
-const messageMediaDetached = (
-  message: RuntimeMessageRow,
-  messageMedia: readonly AgentMediaMetadata[],
-  detachedMediaIds: ReadonlySet<string>
-): boolean =>
-  message.role === 'user' &&
-  messageMedia.length > 0 &&
-  messageMedia.every(item => detachedMediaIds.has(item.id))
+const messageMediaDetached = (message: RuntimeMessageRow, messageMedia: readonly AgentMediaMetadata[], detachedMediaIds: ReadonlySet<string>): boolean =>
+  message.role === 'user' && messageMedia.length > 0 && messageMedia.every(item => detachedMediaIds.has(item.id))
 
 const runtimeCanonicalSource = (
   message: RuntimeMessageRow,
@@ -3073,12 +3086,28 @@ export class AgentProductRuntime {
           : (normalizedFailure?.message ?? 'Agent inference failed')
       let ownsActiveRun = false
       let ownedStatus: string | undefined
+      let appliedProposalCount = 0
       try {
         const owned = (await this.#knex('agentRuns')
           .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
-          .first('status')) as { status: string } | undefined
+          .first('status', 'cancelRequestedAt')) as { status: string; cancelRequestedAt: Date | string | null } | undefined
         ownedStatus = owned?.status
         ownsActiveRun = ownedStatus === 'running' || ownedStatus === 'awaiting_approval'
+        if (
+          ownsActiveRun &&
+          ownedStatus === 'running' &&
+          owned?.cancelRequestedAt === null &&
+          !signal.aborted &&
+          isRecoverablePostActionFailure(normalizedFailure)
+        ) {
+          // The durable proposal ledger, not the in-memory action result or the
+          // side-effect fence, is authoritative after a provider failure.
+          const applied = await this.#knex('agentProposals')
+            .where({ runId: claim.id, sourceKind: 'agent', status: 'applied' })
+            .count<{ count: number | string }[]>({ count: '*' })
+            .first()
+          appliedProposalCount = Number(applied?.count ?? 0)
+        }
       } catch {
         /* the retention reconciler owns unavailable reservations */
       }
@@ -3149,21 +3178,30 @@ export class AgentProductRuntime {
               consumedTokens,
               consumedCostMicros
             })
+          const postActionResponseIncomplete = appliedProposalCount > 0
+          const partialFailure = recoveryRequired || postActionResponseIncomplete
           const terminalized = await terminalizeAgentRun(this.#knex, {
             runId: claim.id,
             ownerId: claim.ownerId,
             expected: { statuses: ['running', 'awaiting_approval'], leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken },
-            status: recoveryRequired ? 'partial' : 'failed',
-            assistant: { status: 'failed' },
+            status: partialFailure ? 'partial' : 'failed',
+            assistant: postActionResponseIncomplete
+              ? {
+                  status: 'complete',
+                  content: POST_ACTION_RESPONSE_FALLBACK,
+                  citations: null,
+                  googleSearchGrounding: null,
+                  providerStateCiphertext: null,
+                  providerStateSha256: null
+                }
+              : { status: 'failed' },
             eventData: {
               errorCode,
               errorMessage,
               failureStage,
               ...unsettledEventData,
               ...(providerStatus === undefined ? {} : { providerStatus }),
-              ...(normalizedFailure?.diagnostics === undefined
-                ? {}
-                : { diagnostics: normalizedFailure.diagnostics as Readonly<Record<string, unknown>> })
+              ...(normalizedFailure?.diagnostics === undefined ? {} : { diagnostics: normalizedFailure.diagnostics as Readonly<Record<string, unknown>> })
             },
             quota: {
               consumedTokens,
@@ -3180,7 +3218,7 @@ export class AgentProductRuntime {
             errorMessage
           })
           quotaReconciled = true
-          if (terminalized.status === (recoveryRequired ? 'partial' : 'failed'))
+          if (terminalized.status === (partialFailure ? 'partial' : 'failed'))
             this.#logTerminalFailure(claim, normalizedFailure, errorCode, failureStage, providerStatus, unsettledExposure)
         }
       } catch (settlementError) {
@@ -3188,7 +3226,7 @@ export class AgentProductRuntime {
         throw settlementError
       }
       if (signal.aborted) throw error
-      if (recoveryRequired)
+      if (recoveryRequired || appliedProposalCount > 0)
         return {
           status: 'partial',
           errorCode,

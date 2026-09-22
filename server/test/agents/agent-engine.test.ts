@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
-import type { AgentEvent } from '../../../shared/agents/contracts.ts'
+import { AGENT_TOOL_NAMES, type AgentActionName, type AgentEvent } from '../../../shared/agents/contracts.ts'
 import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
 import type { ActionHandler, ActionHandlerContext, ActionKernel } from '../../agents/actions/kernel.ts'
 import { registerMemoryAction } from '../../agents/actions/memory.ts'
@@ -87,6 +87,93 @@ const request = (signal: AbortSignal): AgentEngineRequest => ({
 })
 
 describe('Ax agent engine', () => {
+  const postProposalStreams = async (actionName: AgentActionName, status: string): Promise<readonly boolean[]> => {
+    const definition = ACTION_CATALOG[actionName]
+    const responses: AxChatResponse[] = [
+      {
+        results: [
+          {
+            index: 0,
+            functionCalls: [{ id: 'enable-authoring', type: 'function', function: { name: 'wiki_enable_tools', params: { category: 'authoring' } } }]
+          }
+        ]
+      },
+      {
+        results: [
+          {
+            index: 0,
+            functionCalls: [{ id: 'proposal-call', type: 'function', function: { name: AGENT_TOOL_NAMES[actionName], params: {} } }]
+          }
+        ]
+      },
+      { results: [{ index: 0, content: 'The requested Wiki change is ready.' }] }
+    ]
+    const streams: boolean[] = []
+    const chat = vi.fn(async (_input: Readonly<AxChatRequest<unknown>>, options?: { readonly stream?: boolean }) => {
+      streams.push(options?.stream === true)
+      return responses.shift()!
+    })
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: true,
+          toolCalling: 'native' as const,
+          parallelToolCalls: false,
+          structuredOutput: 'native-json-schema' as const,
+          usage: 'estimated' as const,
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'gemini-api' as const,
+        model: 'gemini-3.8-flash',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => ({ status, summary: 'Apply the requested Wiki change' }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          {
+            name: actionName,
+            title: definition.descriptor.title,
+            description: definition.descriptor.description,
+            parameters: { type: 'object', properties: {} },
+            risk: definition.descriptor.risk,
+            group: definition.group
+          }
+        ],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: 'd'.repeat(64)
+      })
+    }
+    await new AxAgentEngine(factory, actions).execute(
+      { ...request(new AbortController().signal), limits: { maxTurns: 4, maxToolCalls: 3, maxOutputTokens: 512 } },
+      { text: async () => {}, event: async () => {} }
+    )
+    expect(invoke).toHaveBeenCalledOnce()
+    return streams
+  }
+
+  it.each(['pages.prepareCreate', 'pages.preparePatch', 'pages.prepareMove', 'pages.prepareRestore', 'pages.prepareDelete'] as const)(
+    'buffers every provider turn after %s returns a durable applied result',
+    async actionName => {
+      expect(await postProposalStreams(actionName, 'applied')).toEqual([true, true, false])
+    }
+  )
+
+  it.each(['pending', 'approved', 'denied', 'expired', 'cancelled'] as const)(
+    'does not treat a %s page proposal result as an applied mutation',
+    async status => {
+      expect(await postProposalStreams('pages.prepareCreate', status)).toEqual([true, true, true])
+    }
+  )
+
   it('settles rejected grounding metadata only after genuine EOF, preserving exposure on a later stream failure', async () => {
     for (const reachesEof of [true, false]) {
       const native = createGeminiInteractionsService({
