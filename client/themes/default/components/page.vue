@@ -48,36 +48,6 @@
       ref='content'
       :aria-busy='navigationPending ? `true` : undefined'
     )
-      template(v-if='path !== `home`')
-        v-toolbar.page-breadcrumb-bar(color='surface', flat, density="compact")
-          //- v-btn.pl-0(v-if='$vuetify.display.xsOnly', variant='flat', @click='toggleNavigation')
-          //-   v-icon(color='grey-darken-2', start) menu
-          v-breadcrumbs.breadcrumbs-nav.pl-0(
-            :items='breadcrumbs'
-            divider='/'
-            role='navigation'
-            :aria-label='$t(`common:header.breadcrumb`)'
-          )
-            template(v-slot:item='props')
-              v-btn.ma-0(
-                v-if='props.item.href === "/"'
-                :href='props.item.href'
-                size="small"
-                variant="text"
-                :aria-label='$t(`common:header.home`)'
-              )
-                v-icon(aria-hidden='true', size="small") mdi-home
-              v-btn.ma-0(
-                v-else
-                :href='props.item.href'
-                size="small"
-                variant="text"
-                :aria-current='props.item.href === breadcrumbs[breadcrumbs.length - 1].href ? `page` : undefined'
-              ) {{props.item.title}}
-          template(v-if='!isPublished')
-            v-spacer
-            .text-body-small.text-warning {{$t('common:page.unpublished')}}
-            status-indicator.ml-3(negative, pulse)
       v-container.page-hero(
         ref='pageHero'
         fluid
@@ -109,6 +79,34 @@
             .page-header-control-pair(
               v-if='!printView || (editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn))'
             )
+              nav.page-header-path(
+                v-if='!printView && path !== `home`'
+                role='navigation'
+                :aria-label='$t(`common:header.breadcrumb`)'
+              )
+                v-breadcrumbs.breadcrumbs-nav.breadcrumbs-nav--inline.pl-0(
+                  :items='breadcrumbs'
+                  divider='/'
+                )
+                  template(v-slot:item='props')
+                    v-btn.ma-0(
+                      v-if='props.item.href === "/"'
+                      :href='props.item.href'
+                      size="small"
+                      variant="text"
+                      :aria-label='$t(`common:header.home`)'
+                    )
+                      v-icon(aria-hidden='true', size="small") mdi-home
+                    v-btn.ma-0(
+                      v-else
+                      :href='props.item.href'
+                      size="small"
+                      variant="text"
+                      :aria-current='props.item.href === breadcrumbs[breadcrumbs.length - 1].href ? `page` : undefined'
+                    ) {{props.item.title}}
+              template(v-if='!isPublished')
+                .text-body-small.text-warning.page-header-unpublished {{$t('common:page.unpublished')}}
+                status-indicator.ml-3(negative, pulse)
               .page-header-offline(v-if='!printView')
                 v-tooltip(location="bottom")
                   template(v-slot:activator='{ props }')
@@ -4235,20 +4233,6 @@ export default defineComponent({
   }
 }
 
-.page-breadcrumb-bar {
-  min-height: var(--wiki-control-height);
-  border-bottom: 0;
-  background: transparent !important;
-  box-shadow: none;
-
-  .v-toolbar__content {
-    width: min(100%, var(--wiki-shell-max));
-    min-width: 0;
-    margin-inline: auto;
-    padding-inline: var(--wiki-page-gutter);
-  }
-}
-
 .breadcrumbs-nav {
   min-width: 0;
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
@@ -4285,6 +4269,35 @@ export default defineComponent({
 
   .v-breadcrumbs-divider:nth-child(2) {
     padding-inline-start: var(--wiki-space-3);
+  }
+}
+
+.page-header-path {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  margin-inline-end: auto;
+  align-items: center;
+}
+
+.breadcrumbs-nav--inline {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  padding-block: 0;
+  margin-block: 0;
+  align-self: center;
+  overflow-x: auto;
+  overflow-inline: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar { display: none; }
+
+  // Pull the first crumb's glyph flush with the page-description text start.
+  .v-btn:first-child,
+  .v-btn:first-of-type {
+    margin-inline-start: -12px;
   }
 }
 
@@ -4359,6 +4372,7 @@ export default defineComponent({
   > .is-page-header > .page-header-control-pair {
     grid-column: 1 / -1;
     grid-row: 3;
+    margin-inline-start: 0;
     margin-block-start: calc(var(--wiki-space-1) - 2px);
   }
 
@@ -5356,39 +5370,17 @@ export default defineComponent({
 }
 
 @media (max-width: 599px) {
-  .page-breadcrumb-bar {
-    min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
-  }
-
-  .page-breadcrumb-bar .v-toolbar__content {
-    gap: var(--wiki-space-2);
-    overflow: hidden;
-    padding-inline: var(--wiki-space-2);
-  }
-
-  .page-breadcrumb-bar .breadcrumbs-nav {
-    flex: 1 1 auto;
-    overflow-x: auto;
-    overflow-inline: auto;
-    white-space: nowrap;
-  }
-
-  .page-breadcrumb-bar .breadcrumbs-nav.v-breadcrumbs {
-    flex-wrap: nowrap;
-  }
-
-  .page-breadcrumb-bar .v-spacer,
-  .page-breadcrumb-bar .text-warning,
-  .page-breadcrumb-bar .status-indicator {
-    flex: 0 0 auto;
-  }
-
-  .page-breadcrumb-bar .v-spacer {
-    display: none;
-  }
-
   .breadcrumbs-nav {
     font-size: .75rem;
+  }
+
+  .page-header-path {
+    flex-basis: 100%;
+    margin-inline-end: 0;
+  }
+
+  .page-header-unpublished {
+    flex: 0 0 auto;
   }
 
   .page-hero,
@@ -5572,7 +5564,7 @@ export default defineComponent({
 @media print {
   .page-navigation,
   .page-nav-toggle,
-  .page-breadcrumb-bar,
+  .page-header-path,
   .page-edit-shortcuts,
   .page-edit-fab,
   .page-return-top,
