@@ -1,7 +1,7 @@
 import type { AxChatResponse, AxChatResponseResult, AxFunctionJSONSchema } from '@ax-llm/ax'
 import { z } from 'zod'
 import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
-import { combineGeminiInteractionState, createGeminiInteractionsService, readGeminiGoogleSearchGrounding } from '../../agents/providers/gemini-interactions.ts'
+import { combineGeminiInteractionState, createGeminiInteractionsService, readGeminiGoogleSearchGrounding, readGeminiInteractionStatus } from '../../agents/providers/gemini-interactions.ts'
 import { readAgentProviderUsage } from '../../agents/providers/usage.ts'
 import { describe, expect, it } from '../bun-test.mts'
 
@@ -58,6 +58,21 @@ const resultOf = (response: AxChatResponse | ReadableStream<AxChatResponse>): Ax
 }
 
 describe('Gemini Interactions Google Search grounding', () => {
+  it('preserves the raw interaction status so truncated turns stay diagnosable', async () => {
+    const textInteraction = { model, status: 'budget_exceeded', usage, steps: [{ type: 'model_output', content: [{ type: 'text', text: 'The poem so far' }] }] }
+    const service = createGeminiInteractionsService({
+      apiKey: 'key',
+      baseUrl: 'https://gemini.example.test',
+      model,
+      timeoutMs: 5_000,
+      fetch: (async () => jsonResponse(textInteraction)) as typeof globalThis.fetch
+    })
+    const response = await service.chat({ chatPrompt: [{ role: 'user' as const, content: 'Write a poem' }] }, { stream: false })
+    const result = resultOf(response as AxChatResponse)
+    expect(result.finishReason).toBe('length')
+    expect(readGeminiInteractionStatus(result)).toBe('budget_exceeded')
+  })
+
   it('defaults search off and uses validated mixed-tool choice only when explicitly enabled', async () => {
     const payloads: Record<string, unknown>[] = []
     const fetch = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {

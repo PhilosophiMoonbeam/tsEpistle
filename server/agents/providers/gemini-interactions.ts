@@ -175,6 +175,9 @@ export interface GeminiGoogleSearchGrounding extends AgentGoogleSearchGrounding 
 type GroundingSidecar = { readonly grounding?: GeminiGoogleSearchGrounding; readonly error?: AgentRepositoryError }
 const groundingSidecars = new WeakMap<AxChatResponseResult, GroundingSidecar>()
 
+export type GeminiInteractionStatus = 'completed' | 'requires_action' | 'incomplete' | 'failed' | 'cancelled' | 'budget_exceeded'
+const interactionStatusSidecars = new WeakMap<AxChatResponseResult, GeminiInteractionStatus>()
+
 const safeCitationUrl = (value: string): boolean => {
   if (value.length < 1 || value.length > MAX_CITATION_URL_CHARACTERS || containsControlCharacter(value)) return false
   try {
@@ -579,8 +582,17 @@ const responseResult = (
     finishReason: calls.length > 0 ? 'function_call' : status === 'incomplete' || status === 'budget_exceeded' ? 'length' : 'stop'
   }
   groundingSidecars.set(result, native.groundingSidecar)
+  interactionStatusSidecars.set(result, status)
   return result
 }
+
+/**
+ * The provider's raw interaction status, preserved before it is collapsed into a
+ * generic finishReason so truncated turns stay diagnosable (for example,
+ * `budget_exceeded` is Google's per-interaction thinking budget, not our
+ * `max_output_tokens` setting).
+ */
+export const readGeminiInteractionStatus = (result: AxChatResponseResult): GeminiInteractionStatus | undefined => interactionStatusSidecars.get(result)
 
 const readBoundedResponseBytes = async (response: Response): Promise<Uint8Array | null> => {
   const body = response.body
