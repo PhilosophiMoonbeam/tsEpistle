@@ -199,7 +199,7 @@ describe('additional provider transports', () => {
     expect(JSON.stringify(requests[1]?.body)).toContain('toolu_1')
   })
 
-  it('streams Gemini Interactions tools with stateless exact-step continuation', async () => {
+  it('buffers Gemini Interactions action turns atomically with stateless exact-step continuation', async () => {
     const id = '00000000-0000-4000-8000-000000000015'
     await insert({ id, transportKind: 'gemini-api', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', authMode: 'google-api-key' })
     await db('agentProviderProfileVersions')
@@ -223,42 +223,19 @@ describe('additional provider transports', () => {
       { type: 'function_call', id: 'call_2', name: 'wiki_list_tags', arguments: {} }
     ]
     const finalSteps = [{ type: 'model_output', content: [{ type: 'text', text: 'gemini' }] }]
-    const stream = (interactionId: string, steps: readonly Record<string, unknown>[], usage: Record<string, number>): string => {
-      const frames: string[] = [
-        `event: interaction.created\ndata: ${JSON.stringify({ event_type: 'interaction.created', interaction: { id: interactionId, model: 'gemini-3.7-flash', status: 'in_progress' } })}`
-      ]
-      steps.forEach((step, index) => {
-        if (step.type === 'thought') {
-          frames.push(
-            `event: step.start\ndata: ${JSON.stringify({ event_type: 'step.start', index, step: { type: 'thought' } })}`,
-            `event: step.delta\ndata: ${JSON.stringify({ event_type: 'step.delta', index, delta: { type: 'thought_signature', signature: step.signature } })}`
-          )
-        } else if (step.type === 'function_call') {
-          frames.push(
-            `event: step.start\ndata: ${JSON.stringify({ event_type: 'step.start', index, step: { type: 'function_call', id: step.id, name: step.name } })}`,
-            `event: step.delta\ndata: ${JSON.stringify({ event_type: 'step.delta', index, delta: { type: 'arguments_delta', arguments: JSON.stringify(step.arguments) } })}`
-          )
-        } else {
-          frames.push(
-            `event: step.start\ndata: ${JSON.stringify({ event_type: 'step.start', index, step: { type: 'model_output' } })}`,
-            `event: step.delta\ndata: ${JSON.stringify({ event_type: 'step.delta', index, delta: { type: 'text', text: 'gemini' } })}`
-          )
-        }
-        frames.push(`event: step.stop\ndata: ${JSON.stringify({ event_type: 'step.stop', index })}`)
-      })
-      frames.push(
-        `event: interaction.completed\ndata: ${JSON.stringify({ event_type: 'interaction.completed', interaction: { id: interactionId, model: 'gemini-3.7-flash', status: 'completed', steps, usage } })}`,
-        'event: done\ndata: [DONE]'
-      )
-      return `${frames.join('\n\n')}\n\n`
-    }
     const responses = [
-      stream('interaction_1', firstSteps, { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5 }),
-      stream('interaction_2', finalSteps, { total_input_tokens: 6, total_output_tokens: 1, total_tokens: 7 })
+      {
+        id: '',
+        model: 'gemini-3.7-flash',
+        status: 'requires_action',
+        steps: firstSteps,
+        usage: { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5 }
+      },
+      { id: '', model: 'gemini-3.7-flash', status: 'completed', steps: finalSteps, usage: { total_input_tokens: 6, total_output_tokens: 1, total_tokens: 7 } }
     ]
     const fetchImplementation = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       requests.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) as Record<string, unknown> })
-      return new Response(responses.shift(), { headers: { 'content-type': 'text/event-stream' } })
+      return Response.json(responses.shift())
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'gemini-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
     const definitions: NonNullable<AxChatRequest['functions']> = [
@@ -266,10 +243,8 @@ describe('additional provider transports', () => {
       { name: 'wiki_list_tags', description: 'List tags', parameters: { type: 'object', properties: {} } }
     ]
     const consume = async (value: Awaited<ReturnType<typeof provider.service.chat>>) => {
-      if (!(value instanceof ReadableStream)) throw new Error('Expected a streaming Gemini Interactions response')
-      const items = []
-      for await (const item of value) items.push(item)
-      return items
+      if (value instanceof ReadableStream) throw new Error('Expected an atomic Gemini Interactions action response')
+      return [value]
     }
     const first = await consume(
       await provider.service.chat(
@@ -326,7 +301,7 @@ describe('additional provider transports', () => {
     expect(requests[0]?.body).toMatchObject({
       model: 'gemini-3.7-flash',
       store: false,
-      stream: true,
+      stream: false,
       system_instruction: 'Use Wiki actions.',
       input: [{ type: 'user_input', content: [{ type: 'text', text: 'hello' }] }],
       tools: [
@@ -680,7 +655,10 @@ describe('Gemini Interactions protocol validation', () => {
           for await (const item of response) void item
         })()
       )
-    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    ).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE',
+      agentDiagnostics: { transportKind: 'gemini-api', providerErrorCode: 'protocol_stream_missing_terminal' }
+    })
   })
 
   it('retries one transient error emitted before an interaction is created', async () => {
@@ -848,7 +826,7 @@ describe('Gemini Interactions protocol validation', () => {
     expect(response.results[0]?.content).toBe('Hello')
   })
 
-  it('accepts live non-grounding invocation metadata for buffered and streamed native tool responses', async () => {
+  it('accepts live non-grounding invocation metadata while forcing native action turns to be atomic', async () => {
     const model = 'gemini-3.8-flash'
     const usage = {
       total_input_tokens: 47,
@@ -911,31 +889,24 @@ describe('Gemini Interactions protocol validation', () => {
     expect(buffered.results[0]?.functionCalls).toEqual(expectedToolCall)
     expect(buffered.modelUsage?.tokens).toEqual(expectedTokens)
 
-    const events = [
-      {
-        event_type: 'interaction.created',
-        interaction: { id: 'interaction_tool', model, status: 'in_progress', object: 'interaction' }
-      },
-      { event_type: 'interaction.status_update', interaction_id: 'interaction_tool', status: 'in_progress' },
-      { event_type: 'step.start', index: 0, step: { type: 'thought' } },
-      { event_type: 'step.delta', index: 0, delta: { type: 'thought_signature', signature: 'streamed-signature' } },
-      { event_type: 'step.stop', index: 0 },
-      { event_type: 'step.start', index: 1, step: { type: 'function_call', id: 'wiki-call', name: 'wiki_get_page' } },
-      { event_type: 'step.delta', index: 1, delta: { type: 'arguments_delta', arguments: '{"id":42}' } },
-      { event_type: 'step.stop', index: 1 },
-      {
-        event_type: 'interaction.completed',
-        interaction: { id: 'interaction_tool', model, status: 'requires_action', usage }
-      }
-    ]
-    const body = `${events.map(event => `event: ${event.event_type}\ndata: ${JSON.stringify(event)}`).join('\n\n')}\n\nevent: done\ndata: [DONE]\n\n`
-    const streamedGemini = service((async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } })) as typeof fetch, model)
-    const streamed = await streamedGemini.chat(request, { stream: true })
-    if (!(streamed instanceof ReadableStream)) throw new Error('Expected streaming response')
-    const chunks = []
-    for await (const chunk of streamed) chunks.push(chunk)
-    expect(chunks.find(chunk => chunk.results[0]?.functionCalls)?.results[0]?.functionCalls).toEqual(expectedToolCall)
-    expect(chunks.at(-1)?.modelUsage?.tokens).toEqual(expectedTokens)
+    let requestedStream: unknown
+    const atomicGemini = service(
+      (async (_input, init) => {
+        requestedStream = JSON.parse(String(init?.body)).stream
+        return Response.json({
+          model,
+          status: 'requires_action',
+          steps: [{ type: 'thought', signature: 'atomic-signature' }, toolStep],
+          usage
+        })
+      }) as typeof fetch,
+      model
+    )
+    const atomic = await atomicGemini.chat(request, { stream: true })
+    if (atomic instanceof ReadableStream) throw new Error('Expected an atomic action response')
+    expect(requestedStream).toBe(false)
+    expect(atomic.results[0]?.functionCalls).toEqual(expectedToolCall)
+    expect(atomic.modelUsage?.tokens).toEqual(expectedTokens)
   })
 
   it('rejects oversized non-grounding invocation metadata', async () => {
