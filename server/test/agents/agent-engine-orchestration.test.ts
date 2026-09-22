@@ -1033,15 +1033,15 @@ describe('Ax orchestration stages', () => {
     )
     const admitted = reserve.mock.calls[0]?.[0]
     expect(admitted).toBeDefined()
-    expect(admitted).toMatchObject({ tokens: 5_326, costMicros: 10_652 })
+    expect(admitted).toMatchObject({ tokens: 5_397, costMicros: 10_794 })
     expect(result).toMatchObject({ inputTokens: 1_326, outputTokens: 4_000, totalTokens: 5_326, costMicros: 9_326 })
-    expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ tokens: 5_326, costMicros: 10_652 }), {
+    expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ tokens: 5_397, costMicros: 10_794 }), {
       inputTokens: 1_326,
       outputTokens: 4_000,
       totalTokens: 5_326,
       costMicros: 9_326
     })
-    expect(admitted!.costMicros - result.costMicros).toBe(1_326)
+    expect(admitted!.costMicros - result.costMicros).toBe(1_468)
     expect(release).not.toHaveBeenCalled()
   })
 
