@@ -621,6 +621,7 @@ describe('Ax agent engine', () => {
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
       { results: [{ index: 0, content: 'Amber Falcon.' }] },
+      { results: [{ index: 0, content: 'Deployment is safe. Amber Falcon is a synthetic incident. [[cite:page:6:revision:1:section:1]]' }] },
       { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident. [[cite:page:6:revision:1:section:1]]' }] }
     ]
     const chat = vi.fn(async () => responses.shift()!)
@@ -667,12 +668,16 @@ describe('Ax agent engine', () => {
     })
     await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
 
-    expect(chat).toHaveBeenCalledTimes(3)
+    expect(chat).toHaveBeenCalledTimes(4)
     expect(text).toHaveBeenCalledWith('Amber Falcon is a synthetic incident. [[cite:page:6:revision:1:section:1]]')
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
       expect.objectContaining({
         accepted: false,
         issues: ['A final answer following a successful page read must include at least one citation.']
+      }),
+      expect.objectContaining({
+        accepted: false,
+        issues: ['Every substantive answer statement must have its own immediately following Wiki citation.']
       }),
       expect.objectContaining({
         accepted: true,
@@ -682,24 +687,48 @@ describe('Ax agent engine', () => {
     ])
   })
 
-  it('accepts exact Markdown-link quotations including link destinations and rejects fabricated destinations', async () => {
+  it('binds every rendered Markdown link to exact cited evidence without treating destinations as factual prose', async () => {
     const invoke = vi.fn(async () => ({
       id: 6,
       sourceRevision: '1',
       title: 'Manufacturer Page Template',
       contentType: 'markdown',
-      content: '# Manufacturer Page Template\n\nEvery page links [Website]([WEBSITE_URL]) under the heading. 🏟️ Watson Furniture (WAT) ships flat-pack desks. `R2://wiki-qa/falcon-rc2.tar.zst` is the rollback artifact.',
+      content: [
+        '# Manufacturer Page Template',
+        '',
+        'Every page links [Website]([WEBSITE_URL]) under the heading.',
+        '[Portal](https://admin.example/approved) is listed.',
+        'The nested catalog is [Nested](https://good.test/a_(v1)trusted "Catalog").',
+        'The safe reference is https://safe.example/docs.',
+        '🏟️ Watson Furniture (WAT) ships flat-pack desks.',
+        '`R2://wiki-qa/falcon-rc2.tar.zst` is the rollback artifact.',
+        '',
+        '### Product Info',
+        '<details>',
+        '<summary>Materials |🌳</summary>',
+        '</details>',
+        '<details>',
+        '<summary>Finishing Process |🎨</summary>',
+        '</details>'
+      ].join('\n'),
       citation: { evidenceId: 'page:6:revision:1', label: 'Manufacturer Page Template', href: '/en/template' },
       citationSections: [{ evidenceId: 'page:6:revision:1:section:1', label: 'Manufacturer Page Template', href: '/en/template#manufacturer-page-template' }]
     }))
     const answers = [
       'Watson Furniture (WAT) ships [flat-pack desks](https://wat.example.test/catalog). [[cite:page:6:revision:1:section:1]]',
-      'Every page links [Website]([WEBSITE_URL]) under the heading. [[cite:page:6:revision:1:section:1]]'
+      'Admin access is approved. [[cite:page:6:revision:1:section:1]]',
+      'The nested catalog is [Nested](https://good.test/a_(v1)evil "Catalog"). [[cite:page:6:revision:1:section:1]]',
+      'Every page links [Website]([WEBSITE_URL]) under the heading and <https://evil.example>. [[cite:page:6:revision:1:section:1]]',
+      'Every page links [Website]([WEBSITE_URL]) under the heading. [[cite:page:6:revision:1:section:1]]\n\n<https://evil.example>',
+      '`Every page links [Website]([WEBSITE_EVIL]) under the heading.` [[cite:page:6:revision:1:section:1]]',
+      [
+        '`Every page links [Website]([WEBSITE_URL]) under the heading.` [[cite:page:6:revision:1:section:1]]',
+        '`### Product Info` lists Materials |🌳 and Finishing Process |🎨. [[cite:page:6:revision:1:section:1]]'
+      ].join('\n\n')
     ]
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
-      { results: [{ index: 0, content: answers[0]! }] },
-      { results: [{ index: 0, content: answers[1]! }] }
+      ...answers.map(content => ({ results: [{ index: 0, content }] }))
     ]
     const chat = vi.fn(async () => responses.shift()!)
     const factory = {
@@ -736,11 +765,11 @@ describe('Ax agent engine', () => {
     })
     await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
 
-    expect(chat).toHaveBeenCalledTimes(3)
+    expect(chat).toHaveBeenCalledTimes(answers.length + 1)
     const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
-    expect(provenance[0]).toMatchObject({ accepted: false })
-    expect(provenance[1]).toMatchObject({ accepted: true })
-    expect(text).toHaveBeenCalledWith(answers[1])
+    expect(provenance.slice(0, -1).every(item => (item as { accepted?: boolean }).accepted === false)).toBe(true)
+    expect(provenance.at(-1)).toMatchObject({ accepted: true })
+    expect(text).toHaveBeenCalledWith(answers.at(-1))
   })
 
   it('repairs substantive parent and child summaries from exact local source units', async () => {

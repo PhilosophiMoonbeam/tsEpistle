@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 import type { AxChatRequest, AxChatResponse, AxChatResponseResult, AxFunctionJSONSchema } from '@ax-llm/ax'
+import type { MarkdownIt, MarkdownItOptions, Token } from 'markdown-it'
+import * as markdownItModule from 'markdown-it'
 import {
   AGENT_TOOL_NAMES,
   type AgentActionName,
@@ -58,9 +60,9 @@ import {
 } from './factory.ts'
 import {
   combineGeminiInteractionState,
+  type GeminiInteractionStatus,
   readGeminiGoogleSearchGrounding,
-  readGeminiInteractionStatus,
-  type GeminiInteractionStatus
+  readGeminiInteractionStatus
 } from './gemini-interactions.ts'
 import { agentVideoCostMicros } from './media-pricing.ts'
 import {
@@ -213,6 +215,8 @@ interface CitationEvidence {
   readonly sourceActionCallId: string
   readonly sourceActionName: 'pages.get' | 'pages.getVersion' | 'pages.getOkf' | 'pages.listRecent'
   readonly sourceUnits: readonly CitationSourceUnit[]
+  readonly renderedLinks: ReadonlySet<string>
+  readonly source: string
   readonly section: boolean
   readonly authoritativeTitle: string | null
   readonly pageId: number | null
@@ -255,6 +259,7 @@ interface DraftAssessment {
 interface MarkdownSection {
   readonly title: string
   readonly ancestry: readonly string[]
+  readonly content: string
   readonly sourceUnits: readonly CitationSourceUnit[]
 }
 
@@ -356,17 +361,90 @@ const pageCitation = (value: unknown): PageCitation | null => {
   return { evidenceId: citation.evidenceId, kind: 'page', label: citation.label, href: citation.href }
 }
 
-const lexicalTokens = (value: string): readonly string[] =>
-  value
-    .replace(citationMarker, ' ')
-    .replace(/<[^>]*>/gu, ' ')
-    // Keep both the label and the destination of a Markdown link: citation validation
-    // compares claimed tokens against source tokens, so the two sides must see the same
-    // text. Dropping destinations here made exact quotations such as
-    // [Website]([WEBSITE_URL]) unprovable because constraint terms still counted the
-    // destination while the source side lost it.
-    .replace(/\[([^\]]*)\]\(([^)]*)\)/gu, '$1 $2')
-    .match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) ?? []
+type MarkdownItFactory = (options?: MarkdownItOptions) => MarkdownIt
+
+const markdownItFactory = (value: unknown): MarkdownItFactory => {
+  if (typeof value === 'function') return value as MarkdownItFactory
+  if (typeof value === 'object' && value !== null && 'default' in value && typeof value.default === 'function') return value.default as MarkdownItFactory
+  throw new TypeError('markdown-it does not export a callable parser')
+}
+
+// Keep this aligned with client/helpers/safe-markdown.ts. The evidence gate must
+// reason about the links the user will actually see, including reference links,
+// autolinks, and linkified bare URLs.
+const evidenceMarkdown = markdownItFactory(markdownItModule)({ breaks: true, html: false, linkify: true, typographer: false })
+
+const inlineTokenText = (tokens: readonly Token[], start: number): { readonly text: string; readonly end: number } => {
+  let text = ''
+  let depth = 1
+  for (let index = start; index < tokens.length; index += 1) {
+    const token = tokens[index]!
+    if (token.type === 'link_open') depth += 1
+    if (token.type === 'link_close') {
+      depth -= 1
+      if (depth === 0) return { text: text.replace(/\s+/gu, ' ').trim(), end: index }
+    }
+    if (token.type === 'text' || token.type === 'code_inline') text += `${text ? ' ' : ''}${token.content}`
+    else if (token.type === 'softbreak' || token.type === 'hardbreak') text += ' '
+  }
+  return { text: text.replace(/\s+/gu, ' ').trim(), end: tokens.length }
+}
+
+const markdownInlineTokens = (value: string): readonly Token[] =>
+  evidenceMarkdown.parse(value.replace(citationMarker, ' '), {}).flatMap(token => (token.type === 'inline' && token.children ? token.children : []))
+
+const renderedLinkSignatures = (value: string): readonly string[] => {
+  const signatures: string[] = []
+  const tokens = markdownInlineTokens(value)
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!
+    if (token.type !== 'link_open') continue
+    const destination = token.attrGet('href')
+    const label = inlineTokenText(tokens, index + 1)
+    index = label.end
+    if (destination !== null) signatures.push(JSON.stringify({ kind: 'link', label: label.text, destination }))
+  }
+  return signatures
+}
+
+const linkLookingCodeLiterals = (value: string): readonly string[] =>
+  markdownInlineTokens(value)
+    .filter(token => token.type === 'code_inline' && renderedLinkSignatures(token.content).length > 0)
+    .map(token => token.content)
+
+const semanticInlineText = (tokens: readonly Token[]): string => {
+  let text = ''
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!
+    if (token.type === 'link_open') {
+      const label = inlineTokenText(tokens, index + 1)
+      index = label.end
+      // Autolink and linkify labels are the destination itself. They establish a
+      // reference but must never contribute factual vocabulary.
+      if (token.markup !== 'autolink' && token.info !== 'auto' && label.text) text += ` ${label.text}`
+      continue
+    }
+    if (token.type === 'text') text += ` ${token.content}`
+    else if (token.type === 'code_inline') {
+      const projected = renderedLinkSignatures(token.content).length > 0 ? semanticMarkdownText(token.content) : token.content
+      text += ` ${projected}`
+    } else if (token.type === 'softbreak' || token.type === 'hardbreak') text += ' '
+  }
+  return text.trim()
+}
+
+const semanticMarkdownText = (value: string): string =>
+  evidenceMarkdown
+    .parse(value.replace(citationMarker, ' ').replace(/<[^>]*>/gu, ' '), {})
+    .flatMap(token => {
+      if (token.type === 'inline' && token.children) return [semanticInlineText(token.children)]
+      if (token.type === 'fence' || token.type === 'code_block') return [token.content]
+      return []
+    })
+    .join(' ')
+    .trim()
+
+const lexicalTokens = (value: string): readonly string[] => semanticMarkdownText(value).match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) ?? []
 
 const monthTokens: Readonly<Record<string, string>> = {
   jan: 'january',
@@ -463,13 +541,14 @@ const genericIdentifierTerms: Readonly<Record<string, true>> = {
 const constraintTerms = (value: string): readonly string[] => {
   const constraints: string[] = []
   const tokenRegex = /[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu
+  const semantic = semanticMarkdownText(value)
   let match: RegExpExecArray | null
-  while ((match = tokenRegex.exec(value)) !== null) {
+  while ((match = tokenRegex.exec(semantic)) !== null) {
     const token = match[0]
     const index = match.index
     const normalized = normalizedToken(token)
     if (insignificantTerms.has(normalized)) continue
-    const prefix = value.slice(0, index)
+    const prefix = semantic.slice(0, index)
     const isInitial = clauseInitialRegex.test(prefix)
     if (
       (!isInitial && /^\p{Lu}/u.test(token) && genericIdentifierTerms[normalized] !== true) ||
@@ -869,6 +948,7 @@ const markdownSections = (content: string): readonly MarkdownSection[] => {
     return {
       title: heading.title,
       ancestry: heading.ancestry,
+      content: text,
       sourceUnits: sourceUnits(text, heading.ancestry.slice(0, -1))
     }
   })
@@ -970,6 +1050,8 @@ const collectPageEvidence = (
         citation: page,
         pageEvidenceId: page.evidenceId,
         sourceUnits: units,
+        renderedLinks: new Set(renderedLinkSignatures(content)),
+        source: content,
         sourceActionCallId: actionCallId,
         sourceActionName: 'pages.listRecent',
         section: false,
@@ -1004,6 +1086,8 @@ const collectPageEvidence = (
     citation: page,
     pageEvidenceId: page.evidenceId,
     sourceUnits: pageUnits,
+    renderedLinks: new Set(renderedLinkSignatures(content)),
+    source: content,
     sourceActionCallId: actionCallId,
     sourceActionName,
     section: false,
@@ -1022,6 +1106,8 @@ const collectPageEvidence = (
       sourceActionCallId: actionCallId,
       sourceActionName,
       sourceUnits: units,
+      renderedLinks: new Set(renderedLinkSignatures(section?.content ?? '')),
+      source: section?.content ?? '',
       section: true,
       authoritativeTitle: null,
       pageId,
@@ -1041,28 +1127,54 @@ interface ClaimBeforeMarker {
   readonly assessmentClaim: string
   readonly titleClaim: string | null
   readonly titleClaimTooLong: boolean
+  readonly unboundPrefix: string
 }
 
-const currentClaim = (prefix: string): string => {
+const currentClaimSlice = (prefix: string): { readonly claim: string; readonly start: number } => {
   let boundary = sentenceBoundaryEnds(prefix).at(-1) ?? 0
   for (const paragraph of prefix.matchAll(/\n{2,}/gu)) {
     const end = (paragraph.index ?? 0) + paragraph[0].length
     if (end < prefix.length) boundary = Math.max(boundary, end)
   }
-  let value = prefix.slice(boundary)
+  let start = boundary
+  let value = prefix.slice(start)
   const listBoundaries = [...value.matchAll(/(?:^|\n)\s*(?:[-*+]|\d+[.)])\s+/gu)]
   const lastList = listBoundaries.at(-1)
-  if (lastList && (lastList.index ?? 0) > 0) value = value.slice((lastList.index ?? 0) + lastList[0].lastIndexOf('\n') + 1)
-  value = value.replace(/^(?:\s{0,3}#{1,6}\s+[^\n]+\n+)+/u, '').replace(/^\s*(?:[-*+]|\d+[.)])\s+/u, '')
-  return value
-    .replace(/\s+/gu, ' ')
-    .replace(/^[,;\s]+/u, '')
-    .trim()
+  if (lastList && (lastList.index ?? 0) > 0) {
+    const offset = (lastList.index ?? 0) + lastList[0].lastIndexOf('\n') + 1
+    start += offset
+    value = value.slice(offset)
+  }
+  const headings = value.match(/^(?:\s{0,3}#{1,6}\s+[^\n]+\n+)+/u)?.[0] ?? ''
+  start += headings.length
+  value = value.slice(headings.length)
+  const listMarker = value.match(/^\s*(?:[-*+]|\d+[.)])\s+/u)?.[0] ?? ''
+  start += listMarker.length
+  value = value.slice(listMarker.length)
+  return {
+    claim: value
+      .replace(/\s+/gu, ' ')
+      .replace(/^[,;\s]+/u, '')
+      .trim(),
+    start
+  }
+}
+
+const currentClaim = (prefix: string): string => currentClaimSlice(prefix).claim
+
+const substantiveUnboundText = (value: string): boolean => {
+  const presentationStripped = value
+    .replace(/^\s{0,3}#{1,6}\s+[^\n]+$/gmu, ' ')
+    .replace(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/gmu, ' ')
+    .replace(citationMarker, ' ')
+  return normalizedTerms(presentationStripped).length > 0
 }
 
 const claimBeforeMarker = (content: string, markerIndex: number, previousMarkerEnd: number): ClaimBeforeMarker => {
   const prefix = content.slice(previousMarkerEnd, markerIndex).trimEnd()
-  const assessmentClaim = currentClaim(prefix)
+  const current = currentClaimSlice(prefix)
+  const assessmentClaim = current.claim
+  const unboundPrefix = prefix.slice(0, current.start)
   const compactPrefix = prefix.replace(/\s+/gu, ' ').trim()
   if (TITLE_LOOKING_CLAIM.test(compactPrefix) || SEMANTIC_TITLE_CLAIM.test(compactPrefix)) {
     const structuralClaim = prefix.trim()
@@ -1070,14 +1182,19 @@ const claimBeforeMarker = (content: string, markerIndex: number, previousMarkerE
       claim: compactPrefix.slice(-MAX_CLAIM_TELEMETRY_CHARACTERS),
       assessmentClaim,
       titleClaim: structuralClaim.length <= MAX_TITLE_ASSERTION_CHARACTERS ? structuralClaim : null,
-      titleClaimTooLong: structuralClaim.length > MAX_TITLE_ASSERTION_CHARACTERS
+      titleClaimTooLong: structuralClaim.length > MAX_TITLE_ASSERTION_CHARACTERS,
+      // Title assertions are deliberately parsed from the complete structural
+      // claim because legitimate titles may themselves contain sentence
+      // punctuation (for example, "Hello. World").
+      unboundPrefix: ''
     }
   }
   return {
     claim: assessmentClaim.slice(-MAX_CLAIM_TELEMETRY_CHARACTERS),
     assessmentClaim,
     titleClaim: null,
-    titleClaimTooLong: false
+    titleClaimTooLong: false,
+    unboundPrefix
   }
 }
 interface TitleAssertion {
@@ -1205,9 +1322,6 @@ const orderedSubset = (required: readonly string[], available: readonly string[]
   return true
 }
 
-const claimedLinkDestinations = (value: string): readonly string[] =>
-  [...value.matchAll(/\]\(([^)\s]+)\)/gu)].map(match => match[1]!).filter(destination => destination.length > 0)
-
 const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean => {
   const terms = normalizedTerms(clause)
   if (terms.length === 0) return false
@@ -1238,9 +1352,6 @@ const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean =
     JSON.stringify(markerBindings(clause, term => unit.qualifiers.has(term) && attachmentQualifiers[term] === true)) ===
       JSON.stringify(markerBindings(unit.text, term => unit.qualifiers.has(term) && attachmentQualifiers[term] === true))
   const exactConstraints = orderedSubset(constraintTerms(clause), significantTokens(`${unit.context}\n${unit.text}`))
-  // Markdown link destinations are canonicalized on both sides, so a claimed link must
-  // exist verbatim in the source; fabricated or retyped destinations are rejected here.
-  const exactLinkDestinations = claimedLinkDestinations(clause).every(destination => `${unit.context}\n${unit.text}`.includes(`](${destination})`))
   const exactIdentifiers = !hasIdentifierSubstitution(clause, unit)
   const identifyingTerms = colon < 0 ? [] : normalizedTerms(clause.slice(0, colon))
   const identifyingSupport = identifyingTerms.length === 0 || identifyingTerms.filter(term => unit.terms.has(term)).length / identifyingTerms.length >= 0.6
@@ -1255,7 +1366,6 @@ const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean =
     exactNumbers &&
     exactQualifiers &&
     exactConstraints &&
-    exactLinkDestinations &&
     exactIdentifiers &&
     identifyingSupport &&
     factualSupport &&
@@ -1270,8 +1380,17 @@ interface StructuralMember {
   readonly unit: CitationSourceUnit
 }
 
+const structuralClaimText = (value: string): string => markdownLabel(value.replace(/^\s*[*_~`]*#{1,6}\s+/u, '').replace(/[*_~`]/gu, ''))
+
 const structuralTokens = (value: string): readonly string[] =>
-  (value.normalize('NFKC').match(/[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*|[^\s]/gu) ?? []).map(token => token.toLowerCase())
+  (
+    structuralClaimText(value)
+      .normalize('NFKC')
+      .match(/[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*|[^\s]/gu) ?? []
+  ).map(token => token.toLowerCase())
+
+const decorativeStructuralToken = (value: string): boolean =>
+  value === '|' || /^(?:\p{Extended_Pictographic}|\p{Emoji_Modifier}|\uFE0E|\uFE0F|\u200D)+$/u.test(value)
 
 const structuralMembers = (evidence: CitationEvidence): readonly StructuralMember[] =>
   evidence.sourceUnits.flatMap(unit =>
@@ -1302,6 +1421,7 @@ const structuralEnumeration = (value: string, members: readonly StructuralMember
     if (!match || matches.some(candidate => candidate !== match && candidate.terms.length === match.terms.length)) return null
     resolved.push(match)
     index += match.terms.length
+    while (index < tokens.length && decorativeStructuralToken(tokens[index]!)) index += 1
     if (index === tokens.length) return resolved
     if (index === tokens.length - 1 && /^[.!?]$/u.test(tokens[index]!)) return resolved
     let hasDelimiter = false
@@ -1364,7 +1484,10 @@ const membershipAssessment = (clause: string, evidence: CitationEvidence): Claus
     .replace(/^(?:(?:collapsible\s+)?(?:summary\s+)?containers?|(?:navigation\s+)?links|options|resources)\s+(?:for|to|of)\s+/iu, '')
     .trim()
   const genericContainer = /^(?:page|section)$/iu.test(containerText)
-  const containerMatches = genericContainer ? [] : exactStructuralMember(containerText, members).filter(member => member.label === member.unit.structuralLabel)
+  const normalizedContainerText = structuralClaimText(containerText)
+  const containerMatches = genericContainer
+    ? []
+    : exactStructuralMember(normalizedContainerText, members).filter(member => member.label === member.unit.structuralLabel)
   if (!genericContainer && containerMatches.length !== 1)
     return colon < 0 ? { text: clause, terms, matchedTerms: [], supported: false, kind: 'membership' } : null
   const containerId = genericContainer ? null : containerMatches[0]!.unit.structuralId
@@ -1435,17 +1558,28 @@ const assessClaimClauses = (claim: string, evidence: CitationEvidence): readonly
     return { text, terms, matchedTerms, supported: candidates.length > 0, kind: 'fact' }
   })
 
+const incrementCounts = (counts: Map<string, number>, values: readonly string[]): void => {
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1)
+}
+
 const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvidence>, coverage?: DraftCoverage): DraftAssessment => {
   const issues: string[] = []
   const claims: ClaimProvenance[] = []
   const citationIds: string[] = []
   const seenCitationIds = new Set<string>()
+  const citationBoundLinks = new Map<string, number>()
   let previousMarkerEnd = 0
   for (const match of content.matchAll(citationMarker)) {
     const evidenceId = match[1] ?? ''
     const extractedClaim = claimBeforeMarker(content, match.index ?? 0, previousMarkerEnd)
     const claim = extractedClaim.claim
     const assessmentClaim = extractedClaim.assessmentClaim
+    if (
+      substantiveUnboundText(extractedClaim.unboundPrefix) &&
+      !issues.includes('Every substantive answer statement must have its own immediately following Wiki citation.')
+    ) {
+      issues.push('Every substantive answer statement must have its own immediately following Wiki citation.')
+    }
     const titleAssertion = extractedClaim.titleClaim === null ? null : parseTitleAssertion(extractedClaim.titleClaim)
     const titleAssertionRecognized = extractedClaim.titleClaim !== null || extractedClaim.titleClaimTooLong
     previousMarkerEnd = (match.index ?? 0) + match[0].length
@@ -1467,9 +1601,13 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
       })
       continue
     }
+    const claimLinks = renderedLinkSignatures(assessmentClaim)
+    incrementCounts(citationBoundLinks, claimLinks)
+    const exactLinks = claimLinks.every(link => evidence.renderedLinks.has(link))
+    const exactCodeLinkLiterals = linkLookingCodeLiterals(assessmentClaim).every(literal => evidence.source.includes(literal))
     const clauseAssessments = assessClaimClauses(assessmentClaim, evidence)
     const matchedTerms = [...new Set(clauseAssessments.flatMap(clause => clause.matchedTerms))]
-    const lexicalSupported = clauseAssessments.length > 0 && clauseAssessments.every(clause => clause.supported)
+    const lexicalSupported = clauseAssessments.length > 0 && clauseAssessments.every(clause => clause.supported) && exactLinks && exactCodeLinkLiterals
     const supported = !titleAssertionRecognized
       ? lexicalSupported
       : titleAssertion !== null && supportsTitleAssertion(titleAssertion, evidence, coverage?.currentPage)
@@ -1497,6 +1635,14 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
   }
   if (registry.size > 0 && claims.length === 0 && content.trim().length > 0) {
     issues.push('A final answer following a successful page read must include at least one citation.')
+  }
+  if (claims.length > 0 && substantiveUnboundText(content.slice(previousMarkerEnd))) {
+    issues.push('Every substantive answer statement must have its own immediately following Wiki citation.')
+  }
+  const answerLinks = new Map<string, number>()
+  incrementCounts(answerLinks, renderedLinkSignatures(content))
+  if ([...answerLinks].some(([link, count]) => count > (citationBoundLinks.get(link) ?? 0))) {
+    issues.push('Every rendered link in a source-grounded answer must be inside the exact clause immediately followed by its supporting Wiki citation.')
   }
   if (claims.length > MAX_ANSWER_CITATIONS) issues.push(`Answers may contain at most ${MAX_ANSWER_CITATIONS} citation markers.`)
   if (verificationLanguage.test(content) && !claims.some(claim => claim.supported && verificationLanguage.test(claim.claim))) {
@@ -2602,7 +2748,8 @@ const recentExcerptDisclosure = (groups: readonly RecentEvidenceCoverage[]): str
     ? '\n\nRecent page content is shown as bounded opening excerpts; one or more excerpts were truncated.'
     : ''
 const OUTPUT_LIMIT_DISCLOSURE = 'The provider reached its output limit before completing this response. Submit an explicit follow-up to continue.'
-const THINKING_BUDGET_DISCLOSURE = 'The provider ended this response because its internal thinking budget was exhausted. Submit an explicit follow-up to continue.'
+const THINKING_BUDGET_DISCLOSURE =
+  'The provider ended this response because its internal thinking budget was exhausted. Submit an explicit follow-up to continue.'
 const CONTINUE_SUGGESTION = { id: 'continue-output-limit', label: 'Continue', prompt: 'Continue the response from where it stopped.' } as const
 const outputLimitDisclosureFor = (status: GeminiInteractionStatus | undefined, publishedAny: boolean): string => {
   if (!publishedAny) return 'The provider stopped before publishing any visible text this turn. Submit an explicit follow-up to continue.'
@@ -3731,11 +3878,22 @@ export class AxAgentEngine implements AgentEngine {
         const measuredMediaTokens = new Map<string, number>()
         for (const message of request.messages) {
           for (const attachment of message.attachments ?? []) {
-            const tokens = this.#measuredMediaPromptTokens.get(attachment.id) ?? (attachment.promptTokens ?? undefined)
+            const tokens = this.#measuredMediaPromptTokens.get(attachment.id) ?? attachment.promptTokens ?? undefined
             if (tokens !== undefined) measuredMediaTokens.set(attachment.id, tokens)
           }
         }
-        const plan = compactionPlanFor(provider, turnTools, system, contextState(), maximumOutputTokens, canCompactHistory, force, measuredMediaTokens, eager, scope)
+        const plan = compactionPlanFor(
+          provider,
+          turnTools,
+          system,
+          contextState(),
+          maximumOutputTokens,
+          canCompactHistory,
+          force,
+          measuredMediaTokens,
+          eager,
+          scope
+        )
         if (!plan || failedCompactions.has(plan.windows[0]!.sourceSha256)) return
         const currentFits = (): boolean =>
           serializedProviderRequestBytes(provider, turnTools, [system, ...conversation, ...activePrompt], maximumOutputTokens) + maximumOutputTokens <=
@@ -4045,14 +4203,7 @@ export class AxAgentEngine implements AgentEngine {
               let prospectiveFits = prospectiveTools !== null
               if (prospectiveFits) {
                 try {
-                  boundedChatPrompt(
-                    provider,
-                    prospectiveTools,
-                    systemMessageFor(prospectiveTools),
-                    conversation,
-                    activePrompt,
-                    requestedMaxOutputTokens
-                  )
+                  boundedChatPrompt(provider, prospectiveTools, systemMessageFor(prospectiveTools), conversation, activePrompt, requestedMaxOutputTokens)
                 } catch (error) {
                   if (!isContextLimitFailure(error)) throw error
                   prospectiveFits = false
