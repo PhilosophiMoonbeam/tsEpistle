@@ -4236,7 +4236,12 @@ export class AxAgentEngine implements AgentEngine {
               { error: { code: 'AGENT_BUDGET_LIMITED', message: 'Action was not executed because the action budget was exhausted.' } },
               true
             )
-            await sink.event('tool.failed', { actionCallId, actionName: logicalName, errorCode: 'AGENT_BUDGET_LIMITED' })
+            await sink.event('tool.failed', {
+              actionCallId,
+              actionName: logicalName,
+              errorCode: 'AGENT_BUDGET_LIMITED',
+              summary: 'Action was not executed because the action budget was exhausted.'
+            })
             continue
           }
           if (inputErrorCode !== undefined) {
@@ -4248,7 +4253,7 @@ export class AxAgentEngine implements AgentEngine {
               { error: { code: inputErrorCode, message: 'Action input was invalid.' } },
               true
             )
-            await sink.event('tool.failed', { actionCallId, actionName: logicalName, errorCode: inputErrorCode })
+            await sink.event('tool.failed', { actionCallId, actionName: logicalName, errorCode: inputErrorCode, summary: 'Action input was invalid.' })
             continue
           }
           const resolved = resolveToolDiscoveryCall(activeDiscoveryTurn, logicalName, input)
@@ -4261,7 +4266,12 @@ export class AxAgentEngine implements AgentEngine {
               { error: { code: 'ACTION_NOT_OFFERED', message: 'Provider requested an unavailable action.' } },
               true
             )
-            await sink.event('tool.failed', { actionCallId, actionName: logicalName, errorCode: 'ACTION_NOT_OFFERED' })
+            await sink.event('tool.failed', {
+              actionCallId,
+              actionName: logicalName,
+              errorCode: 'ACTION_NOT_OFFERED',
+              summary: 'Provider requested an unavailable action.'
+            })
             continue
           }
           try {
@@ -4273,7 +4283,7 @@ export class AxAgentEngine implements AgentEngine {
                 ? String(Reflect.get(error, 'code'))
                 : 'AGENT_BUDGET_LIMITED'
             providerResultMessage(activePrompt, mode, call.id, call.providerName, { error: { code, message: 'Action was not executed.' } }, true)
-            await sink.event('tool.failed', { actionCallId, actionName: logicalName, errorCode: code })
+            await sink.event('tool.failed', { actionCallId, actionName: logicalName, errorCode: code, summary: 'Action was not executed.' })
             continue
           }
           if (resolved.kind === 'control') {
@@ -4301,7 +4311,8 @@ export class AxAgentEngine implements AgentEngine {
                 await sink.event('tool.notExecuted', {
                   actionCallId,
                   actionName: TOOL_DISCOVERY_CONTROL_NAME,
-                  contextExclusion: capacityContextExclusion('not_executed')
+                  contextExclusion: capacityContextExclusion('not_executed'),
+                  summary: `Enabling ${resolved.category} tools was not applied: the resulting tool set did not fit the response context capacity.`
                 })
                 continue
               }
@@ -4323,8 +4334,17 @@ export class AxAgentEngine implements AgentEngine {
                 typeof error === 'object' && error !== null && typeof Reflect.get(error, 'code') === 'string'
                   ? String(Reflect.get(error, 'code'))
                   : 'ACTION_FAILED'
-              providerResultMessage(activePrompt, mode, call.id, call.providerName, { error: { code, message: 'Action failed.' } }, true)
-              await sink.event('tool.failed', { actionCallId, actionName: TOOL_DISCOVERY_CONTROL_NAME, errorCode: code })
+              const reason =
+                typeof error === 'object' && error !== null && typeof Reflect.get(error, 'message') === 'string'
+                  ? String(Reflect.get(error, 'message'))
+                  : 'Action failed.'
+              providerResultMessage(activePrompt, mode, call.id, call.providerName, { error: { code, message: reason } }, true)
+              await sink.event('tool.failed', {
+                actionCallId,
+                actionName: TOOL_DISCOVERY_CONTROL_NAME,
+                errorCode: code,
+                summary: `Enabling ${resolved.category} tools failed: ${code}. ${reason}`
+              })
             }
             continue
           }
@@ -4338,7 +4358,12 @@ export class AxAgentEngine implements AgentEngine {
               { error: { code: 'ACTION_NOT_OFFERED', message: 'Provider requested an unavailable action.' } },
               true
             )
-            await sink.event('tool.failed', { actionCallId, actionName: resolved.name, errorCode: 'ACTION_NOT_OFFERED' })
+            await sink.event('tool.failed', {
+              actionCallId,
+              actionName: resolved.name,
+              errorCode: 'ACTION_NOT_OFFERED',
+              summary: 'Provider requested an unavailable action.'
+            })
             continue
           }
           const pageReadKey = resolved.name === 'pages.get' || resolved.name === 'pages.getVersion' ? `${resolved.name}:${inputJson}` : null
@@ -4400,8 +4425,17 @@ export class AxAgentEngine implements AgentEngine {
               typeof error === 'object' && error !== null && typeof Reflect.get(error, 'code') === 'string'
                 ? String(Reflect.get(error, 'code'))
                 : 'ACTION_FAILED'
-            providerResultMessage(activePrompt, mode, call.id, call.providerName, { error: { code, message: 'Action failed' } }, true)
-            await sink.event('tool.failed', { actionCallId, actionName: resolved.name, errorCode: code })
+            const reason =
+              typeof error === 'object' && error !== null && typeof Reflect.get(error, 'message') === 'string'
+                ? String(Reflect.get(error, 'message'))
+                : 'Action failed'
+            providerResultMessage(activePrompt, mode, call.id, call.providerName, { error: { code, message: reason } }, true)
+            await sink.event('tool.failed', {
+              actionCallId,
+              actionName: resolved.name,
+              errorCode: code,
+              summary: `${code}: ${reason}`
+            })
           }
         }
         activeBatchEnds.push(activePrompt.length)
