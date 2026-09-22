@@ -1349,6 +1349,12 @@ export default defineComponent({
   border-radius: inherit;
 }
 
+/* The Agent entry button keeps the shared focus outline but semi-transparent:
+   40% of the neutral focus color instead of the fully opaque default. */
+.nav-header-agent:focus-visible {
+  outline-color: color-mix(in srgb, var(--wiki-focus-color) 40%, transparent);
+}
+
 .nav-header {
   --nav-header-agent-icon-color: #00bfff;
   --nav-header-edit-icon-color: #ffd700;

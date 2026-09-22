@@ -1335,7 +1335,8 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer:has(textarea:focus-visible) {
-  outline: 2px solid var(--wiki-focus-color);
+  /* Semi-transparent focus outline: 40% of the neutral focus color. */
+  outline: 2px solid color-mix(in srgb, var(--wiki-focus-color) 40%, transparent);
   outline-offset: 2px;
 }
 .agent-composer__input :deep(.v-field:has(:focus-visible)) {
