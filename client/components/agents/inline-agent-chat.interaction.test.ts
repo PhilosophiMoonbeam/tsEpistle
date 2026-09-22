@@ -292,8 +292,13 @@ return {
   openAssetBrowser,
   toggleGenerationTool,
   mediaRecording,
+  mediaRequesting,
   mediaTranscribing,
   mediaSeconds,
+  dictationStatusLabel,
+  dictationTimerLabel,
+  dictationEnding,
+  readDictationLevel,
   error,
   appendDictation,
   startDictation,
@@ -728,6 +733,7 @@ const mountInlineAgent = (
   )
   app.component('AgentComposer', composerComponent)
   app.component('AgentComposerMedia', { template: '<div />' })
+  app.component('AgentDictationWaveform', { template: '<canvas class="agent-dictation-waveform" />' })
   app.mount(host)
 
   const root = host.querySelector<HTMLElement>('.inline-agent')

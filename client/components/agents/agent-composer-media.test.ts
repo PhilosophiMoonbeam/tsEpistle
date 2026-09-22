@@ -105,6 +105,24 @@ describe('Agent media composer lifecycle', () => {
     harness.api.stopRecording()
     await expect(pending).resolves.toBeNull()
     expect(harness.api.dictationError.value).toBe('No speech was found. Try recording again.')
+    // The send path resolves silently; the review path emits the failure for
+    // the composer notice. No dictationFailed event on the send path.
+    expect(harness.events.some(([event]) => event === 'dictationFailed')).toBe(false)
+    harness.unmount()
+  })
+
+  it('emits dictationFailed for the review path when no speech is found', async () => {
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, fetch: async (input) => {
+      const path = String(input)
+      if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+      if (path.endsWith('/transcriptions')) return response({ runId })
+      if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: '   ' })
+      throw new Error(`Unexpected request ${path}`)
+    } })
+    await harness.api.startRecording()
+    harness.api.stopRecording()
+    await settle()
+    expect(harness.events).toContainEqual(['dictationFailed', 'No speech was found. Try recording again.'])
     harness.unmount()
   })
 
