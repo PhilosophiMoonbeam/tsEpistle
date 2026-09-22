@@ -1267,6 +1267,10 @@ export default defineComponent({
   isolation: isolate;
   flex: 0 0 auto;
   margin-inline: 0;
+  // The spark beam sweeping the button border shares the Agent icon's Capri accent,
+  // overriding the global warm/spectral beam palette for this control only.
+  --wiki-beam-violet: var(--nav-header-agent-icon-color);
+  --wiki-beam-cool: color-mix(in srgb, var(--nav-header-agent-icon-color) 62%, white);
 }
 .nav-header-agent .v-btn__prepend,
 .nav-header-agent .v-btn__append {
@@ -1280,7 +1284,7 @@ export default defineComponent({
 }
 
 .nav-header {
-  --nav-header-agent-icon-color: #4d4dff;
+  --nav-header-agent-icon-color: #00bfff;
   --nav-header-edit-icon-color: #ffd700;
   --nav-header-tint: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent));
   --nav-header-surface: var(--wiki-chrome-surface);
@@ -1613,6 +1617,27 @@ export default defineComponent({
   // inheriting the surrounding accent-ink color.
   .nav-header-inner .nav-header-agent .v-icon {
     color: var(--nav-header-agent-icon-color) !important;
+    animation: nav-header-agent-spark-shimmer 7s ease-in-out infinite;
+  }
+
+  // Periodic sparkle: the spark rests for most of each 7s cycle, then glows and
+  // brightens briefly around the 90% mark before settling again.
+  @keyframes nav-header-agent-spark-shimmer {
+    0%, 84%, 100% {
+      filter: none;
+      opacity: 1;
+    }
+    88% {
+      filter: brightness(1.35) drop-shadow(0 0 7px color-mix(in srgb, var(--nav-header-agent-icon-color) 70%, transparent));
+      opacity: 1;
+    }
+    91% {
+      opacity: .6;
+    }
+    95% {
+      filter: brightness(1.15) drop-shadow(0 0 3px color-mix(in srgb, var(--nav-header-agent-icon-color) 45%, transparent));
+      opacity: 1;
+    }
   }
 
   .nav-header-inner .nav-header-edit-btn .v-icon {
@@ -2131,6 +2156,9 @@ export default defineComponent({
   .navHeaderSearch-leave-active,
   .nav-header-menu .v-list-item {
     transition-duration: .01ms !important;
+  }
+  .nav-header .nav-header-inner .nav-header-agent .v-icon {
+    animation: none !important;
   }
   .nav-header .nav-header-inner .nav-header-agent:hover .v-icon,
   .nav-header .nav-header-inner .nav-header-agent:focus-visible .v-icon,
