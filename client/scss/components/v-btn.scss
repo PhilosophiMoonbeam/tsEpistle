@@ -182,7 +182,8 @@
 }
 
 @media (hover: hover) {
-  .v-btn.wiki-purpose-control:hover:not(.v-btn--disabled):not(.v-btn--loading):not([aria-disabled='true']) {
+  /* Selected controls keep their state styling under hover (see base.scss). */
+.v-btn.wiki-purpose-control:hover:not(.v-btn--disabled):not(.v-btn--loading):not([aria-disabled='true']):not([aria-pressed='true']):not([aria-selected='true']):not([aria-current='true']):not([data-state='active']):not([data-state='selected']):not(.is-active):not(.is-selected):not(.v-btn--active) {
     border-color: var(--wiki-purpose-control-edge);
     background-color: var(--wiki-purpose-control-fill);
     color: var(--wiki-purpose-control-ink);

@@ -350,7 +350,7 @@
                 >
                   <div class="inline-agent__composer-inner">
                     <p
-                      v-if="openGoal || sessionMutationBusy"
+                      v-if="composerLockVisible"
                       id="agent-composer-lock-reason"
                       class="inline-agent__composer-lock"
                       role="status"
@@ -389,7 +389,7 @@
                       :network-blocked="connectionBlocked"
                       :can-stop="Boolean(activeRun?.canCancel)"
                       :disabled="composerDisabled || mediaRefreshing"
-                      :external-description-id="openGoal || sessionMutationBusy ? 'agent-composer-lock-reason' : undefined"
+                      :external-description-id="composerLockVisible ? 'agent-composer-lock-reason' : undefined"
                       :skills-enabled="skillsEnabled"
                       :goals-enabled="goalsEnabled"
                       :skills="skills"
@@ -800,6 +800,30 @@ const goalSubmitUnavailableReason = computed(() => !openGoal.value
   : openGoal.value.status === 'paused'
     ? 'Resume or cancel the current goal before sending a message'
     : 'Finish or cancel the current goal before sending a message')
+/* The session-mutation lock message is delayed briefly: a quick mutation
+   (Web search toggle, temporary toggle) resolves within the delay and never
+   flashes "Wait for the current conversation update to finish". Longer
+   mutations keep the normal immediate disable behavior; only the message
+   waits. */
+const mutationLockMessageVisible = ref(false)
+let mutationLockMessageTimer: ReturnType<typeof setTimeout> | null = null
+watch(sessionMutationBusy, busy => {
+  if (busy) {
+    if (mutationLockMessageTimer === null) {
+      mutationLockMessageTimer = setTimeout(() => {
+        mutationLockMessageTimer = null
+        mutationLockMessageVisible.value = true
+      }, 300)
+    }
+  } else {
+    if (mutationLockMessageTimer !== null) {
+      clearTimeout(mutationLockMessageTimer)
+      mutationLockMessageTimer = null
+    }
+    mutationLockMessageVisible.value = false
+  }
+}, { immediate: true })
+const composerLockVisible = computed(() => Boolean(openGoal.value) || mutationLockMessageVisible.value)
 const submitUnavailableReason = computed(() => connectionBlocked.value
   ? connectionRequiredMessage.value
   : !providerAvailable.value
@@ -1577,6 +1601,7 @@ onBeforeUnmount(() => {
   if (transcriptFrame !== null) window.cancelAnimationFrame(transcriptFrame)
   panelFocusScope?.deactivate({ restoreFocus: false })
   if (sessionNoticeTimer !== null) { clearTimeout(sessionNoticeTimer); sessionNoticeTimer = null }
+  if (mutationLockMessageTimer !== null) { clearTimeout(mutationLockMessageTimer); mutationLockMessageTimer = null }
   stopStartersSpin()
   panelModeMedia.forEach(media => media.removeEventListener('change', reconcilePanelMode))
   window.removeEventListener('resize', scheduleTranscriptReconcile)

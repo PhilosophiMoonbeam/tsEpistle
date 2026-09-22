@@ -254,7 +254,11 @@ body {
 }
 
 @media (hover: hover) {
-  .wiki-purpose-control:hover:not(:disabled):not([aria-disabled='true']):not(.v-btn--disabled) {
+  /* A control in its selected/active state keeps that look under hover; the
+   selected:hover rule below adds the hover glow on top. Without this
+   exclusion the hover rule (higher specificity) would repaint a
+   component-styled selected control back to its neutral face. */
+.wiki-purpose-control:hover:not(:disabled):not([aria-disabled='true']):not(.v-btn--disabled):not([aria-pressed='true']):not([aria-selected='true']):not([aria-current='true']):not([data-state='active']):not([data-state='selected']):not(.is-active):not(.is-selected):not(.v-btn--active) {
     border-color: var(--wiki-purpose-control-edge);
     background-color: var(--wiki-purpose-control-fill);
     color: var(--wiki-purpose-control-ink);

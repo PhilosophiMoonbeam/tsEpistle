@@ -1579,7 +1579,8 @@ onBeforeUnmount(() => {
   user-select: none;
 }
 
-.agent-composer__web-search-toggle:has(input:checked) {
+.agent-composer__web-search-toggle:has(input:checked),
+.agent-composer__web-search-toggle[data-state='selected'] {
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 13%, transparent);
   color: rgb(var(--v-theme-primary));
 }
