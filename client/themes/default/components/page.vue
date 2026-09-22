@@ -3952,6 +3952,7 @@ export default defineComponent({
   justify-content: flex-end;
   gap: var(--wiki-space-2);
   margin-inline-start: auto;
+  margin-block-start: calc(var(--wiki-space-1) - 2px);
 }
 
 .page-header-offline {
@@ -4020,6 +4021,10 @@ export default defineComponent({
   &:hover:not(:disabled) {
     border-color: color-mix(in srgb, var(--wiki-accent-ink) 44%, var(--wiki-surface-border)) !important;
     background: color-mix(in srgb, var(--wiki-accent-ink) 14%, transparent) !important;
+  }
+
+  .v-icon {
+    font-size: 1.3125rem !important;
   }
 
   &--saved,
@@ -4334,7 +4339,7 @@ export default defineComponent({
     align-items: start;
     align-content: start;
     padding:
-      var(--wiki-space-4)
+      calc(var(--wiki-space-2) + 2px)
       var(--wiki-page-gutter) !important;
   }
 
@@ -4360,7 +4365,7 @@ export default defineComponent({
     flex-wrap: wrap;
     gap: var(--wiki-space-2) var(--wiki-space-4);
     min-width: 0;
-    margin-block-start: var(--wiki-space-2);
+    margin-block-start: var(--wiki-space-1);
 
     .page-description { flex: 1 1 18rem; margin: 0; }
   }
@@ -4463,7 +4468,7 @@ export default defineComponent({
     overflow: visible;
 
     .v-btn {
-      min-height: calc(var(--wiki-control-height) * .85);
+      min-height: 2rem;
       padding-inline: var(--wiki-space-3);
       border: 1px solid var(--wiki-surface-border) !important;
       border-radius: var(--wiki-radius-md) !important;
@@ -5767,12 +5772,19 @@ export default defineComponent({
 .is-rtl .page-position-fill { transform-origin: right; }
 
 .page-focus-control {
+  /* Match the offline cloud control so both header actions read as one row. */
+  height: 2rem;
+  min-height: 2rem;
   margin-inline-start: var(--wiki-space-1);
   border-inline-start: 1px solid var(--wiki-surface-border);
   padding-inline-start: var(--wiki-space-3);
   border-radius: 0;
   color: var(--wiki-accent-ink);
   letter-spacing: 0;
+
+  .v-icon {
+    font-size: 1.3125rem !important;
+  }
 }
 
 
