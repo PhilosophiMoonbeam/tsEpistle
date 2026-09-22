@@ -1,5 +1,5 @@
+import { AGENT_PDF_ERRORS, type AgentPdfErrorCode, AgentPdfPreparationError } from '../pdf-preparation.ts'
 import { AgentRepositoryError } from '../repository.ts'
-import { AgentPdfPreparationError, AGENT_PDF_ERRORS, type AgentPdfErrorCode } from '../pdf-preparation.ts'
 import { AgentProviderAttemptError } from './factory.ts'
 import type { AgentProviderTransportKind } from './registry.ts'
 
@@ -80,6 +80,7 @@ export interface AgentExecutionFailureDiagnostics {
   readonly context?: AgentExecutionFailureContextDiagnostics
   readonly providerTurn?: number
   readonly transportKind?: AgentProviderTransportKind
+  readonly providerErrorCode?: string
 }
 const SAFE_REPOSITORY_CODES: Readonly<Record<string, true>> = {
   AGENT_MEDIA_WINDOW_LIMIT: true,
@@ -93,6 +94,11 @@ const SAFE_REPOSITORY_CODES: Readonly<Record<string, true>> = {
   AGENT_PROVIDER_STATE_CORRUPT: true,
   PROVIDER_USAGE_INVALID: true,
   PROVIDER_EGRESS_DENIED: true,
+  PROVIDER_AUTH_REJECTED: true,
+  PROVIDER_TIMEOUT: true,
+  PROVIDER_RATE_LIMITED: true,
+  PROVIDER_REQUEST_REJECTED: true,
+  PROVIDER_UNAVAILABLE: true,
   AGENT_TURN_LIMIT: true,
   AGENT_EVIDENCE_INVALID: true,
   AGENT_BUDGET_LIMITED: true,
@@ -119,6 +125,13 @@ const SAFE_CODES: Readonly<Record<string, true>> = {
   PROVIDER_UNAVAILABLE: true,
   PROVIDER_REQUEST_FAILED: true
 }
+const UPSTREAM_REPOSITORY_CODES: Readonly<Record<string, true>> = {
+  PROVIDER_AUTH_REJECTED: true,
+  PROVIDER_TIMEOUT: true,
+  PROVIDER_RATE_LIMITED: true,
+  PROVIDER_REQUEST_REJECTED: true,
+  PROVIDER_UNAVAILABLE: true
+}
 const SAFE_STAGES: Readonly<Record<string, true>> = {
   setup: true,
   context_admission: true,
@@ -133,7 +146,8 @@ const SAFE_STAGES: Readonly<Record<string, true>> = {
 
 const SAFE_MESSAGE = 'Agent inference failed'
 const MEDIA_MESSAGES: Readonly<Record<string, string>> = {
-  AGENT_MEDIA_WINDOW_LIMIT: 'This conversation exceeds the attachment window of 16 files or 1 GB. Start a new conversation with the files needed for this request.',
+  AGENT_MEDIA_WINDOW_LIMIT:
+    'This conversation exceeds the attachment window of 16 files or 1 GB. Start a new conversation with the files needed for this request.',
   ...Object.fromEntries(Object.entries(AGENT_PDF_ERRORS).map(([code, detail]) => [code, detail.message])),
   AGENT_PDF_PAGE_LIMIT: 'The PDFs in this conversation exceed Google’s 1,000-page request limit. Start a new conversation with fewer pages.',
   AGENT_MEDIA_PART_LIMIT: 'The attachments require too many document parts. Start a new conversation with fewer or smaller files.',
@@ -213,6 +227,7 @@ export const normalizeAgentExecutionFailureDiagnostics = (value: unknown): Agent
     context?: AgentExecutionFailureContextDiagnostics
     providerTurn?: number
     transportKind?: AgentProviderTransportKind
+    providerErrorCode?: string
   } = {}
   const usageIssue = safeEnum(safeProperty(value, 'usageIssue'), AGENT_USAGE_ISSUES)
   if (usageIssue !== undefined) diagnostics.usageIssue = usageIssue
@@ -229,6 +244,8 @@ export const normalizeAgentExecutionFailureDiagnostics = (value: unknown): Agent
   const transportKind = safeProperty(value, 'transportKind')
   if (typeof transportKind === 'string' && SAFE_TRANSPORT_KINDS[transportKind as AgentProviderTransportKind] === true)
     diagnostics.transportKind = transportKind as AgentProviderTransportKind
+  const providerErrorCode = safeProperty(value, 'providerErrorCode')
+  if (typeof providerErrorCode === 'string' && /^[a-z0-9_]{1,64}$/u.test(providerErrorCode)) diagnostics.providerErrorCode = providerErrorCode
   return Object.keys(diagnostics).length > 0 ? diagnostics : undefined
 }
 export class AgentExecutionFailure extends Error {
@@ -294,7 +311,8 @@ export const classifyAgentExecutionFailure = (error: unknown, stage: AgentExecut
     if (current.value instanceof AgentPdfPreparationError) return new AgentExecutionFailure(current.value.code, stage)
     if (current.value instanceof AgentRepositoryError) {
       const code = SAFE_REPOSITORY_CODES[current.value.code] === true ? (current.value.code as AgentExecutionFailureCode) : 'PROVIDER_REQUEST_FAILED'
-      return new AgentExecutionFailure(code, stage, undefined, attachedDiagnostics(current.value))
+      const providerStatus = UPSTREAM_REPOSITORY_CODES[code] === true ? safeProviderStatus(current.value.status) : undefined
+      return new AgentExecutionFailure(code, stage, providerStatus, attachedDiagnostics(current.value))
     }
     if (current.value instanceof AgentProviderAttemptError) {
       const providerStatus = safeProviderStatus(current.value.status)

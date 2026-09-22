@@ -4,6 +4,7 @@ import type { AgentGoogleSearchCitation, AgentGoogleSearchGrounding } from '../.
 
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { AgentRepositoryError } from '../repository.ts'
+import type { AgentExecutionFailureCode } from './execution-failure.ts'
 import type { AgentProviderFetch } from './factory.ts'
 
 const MAX_RESPONSE_BYTES = 4 * 1_024 * 1_024
@@ -749,6 +750,91 @@ const ErrorEventSchema = z.strictObject({
   error: z.object({ code: z.string().optional(), message: z.string().optional() }).passthrough().optional()
 })
 
+const GEMINI_ERROR_STATUS: Readonly<Record<string, number>> = {
+  invalid_request: 400,
+  failed_precondition: 400,
+  parameter_unknown: 400,
+  authentication: 401,
+  payment_required: 402,
+  permission_denied: 403,
+  not_found: 404,
+  model_not_found: 404,
+  aborted: 409,
+  out_of_range: 416,
+  rate_limit_exceeded: 429,
+  quota_exceeded: 429,
+  too_many_requests: 429,
+  cancelled: 499,
+  api_error: 500,
+  unimplemented: 501,
+  service_unavailable: 503,
+  deadline_exceeded: 504,
+  gateway_timeout: 504,
+  resource_exhausted: 429,
+  unavailable: 503,
+  internal: 500
+}
+const TRANSIENT_GEMINI_ERROR_CODES = new Set([
+  'aborted',
+  'rate_limit_exceeded',
+  'too_many_requests',
+  'api_error',
+  'service_unavailable',
+  'deadline_exceeded',
+  'gateway_timeout'
+])
+
+class GeminiStreamProviderError extends Error {
+  readonly providerErrorCode: string
+  readonly beforeInteractionCreated: boolean
+
+  constructor(providerErrorCode: string, beforeInteractionCreated: boolean) {
+    super('Gemini Interactions stream reported an error')
+    this.name = 'GeminiStreamProviderError'
+    this.providerErrorCode = providerErrorCode
+    this.beforeInteractionCreated = beforeInteractionCreated
+  }
+}
+
+const geminiExecutionFailure = (error: GeminiStreamProviderError): AgentRepositoryError => {
+  const providerStatus = GEMINI_ERROR_STATUS[error.providerErrorCode]
+  let code: AgentExecutionFailureCode = 'INVALID_PROVIDER_RESPONSE'
+  if (providerStatus === 401 || providerStatus === 403) code = 'PROVIDER_AUTH_REJECTED'
+  else if (providerStatus === 408 || providerStatus === 504) code = 'PROVIDER_TIMEOUT'
+  else if (providerStatus === 429) code = 'PROVIDER_RATE_LIMITED'
+  else if (providerStatus !== undefined && providerStatus >= 500) code = 'PROVIDER_UNAVAILABLE'
+  else if (providerStatus !== undefined && providerStatus >= 400) code = 'PROVIDER_REQUEST_REJECTED'
+  const failure = new AgentRepositoryError(code, 'Gemini Interactions stream reported an error', providerStatus ?? 502)
+  Object.defineProperty(failure, 'agentDiagnostics', {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: { transportKind: 'gemini-api', providerErrorCode: error.providerErrorCode }
+  })
+  return failure
+}
+
+const waitForRetry = async (milliseconds: number, signal?: AbortSignal): Promise<void> => {
+  signal?.throwIfAborted()
+  if (milliseconds === 0) return
+  await new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout>
+    const cleanup = (): void => signal?.removeEventListener('abort', aborted)
+    const completed = (): void => {
+      cleanup()
+      resolve()
+    }
+    const aborted = (): void => {
+      clearTimeout(timer)
+      cleanup()
+      reject(signal?.reason ?? new Error('Gemini Interactions retry was cancelled'))
+    }
+    timer = setTimeout(completed, milliseconds)
+    signal?.addEventListener('abort', aborted, { once: true })
+  })
+  signal?.throwIfAborted()
+}
+
 interface ActiveStreamStep {
   readonly start: z.infer<typeof StreamStartStepSchema>
   content: z.infer<typeof TextContentSchema>[]
@@ -790,6 +876,15 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
       throw invalidResponse('stream contains an invalid created event')
     state.interactionId = parsed.data.interaction.id
     return []
+  }
+  if (eventType === 'error') {
+    const parsed = ErrorEventSchema.safeParse(value)
+    if (!parsed.success) throw invalidResponse('stream contains an invalid error event')
+    const providerErrorCode = parsed.data.error?.code
+    throw new GeminiStreamProviderError(
+      typeof providerErrorCode === 'string' && /^[a-z0-9_]{1,64}$/u.test(providerErrorCode) ? providerErrorCode : 'unknown_error',
+      state.interactionId === null
+    )
   }
   if (state.interactionId === null || state.completed) throw invalidResponse('stream event is out of order')
   if (eventType === 'interaction.status_update') {
@@ -951,10 +1046,6 @@ const processStreamEvent = (value: unknown, state: StreamState): readonly AxChat
     state.completed = true
     return [streamedChunk(state, responseResult(state.interactionId, parsed.data.interaction.status, steps, false), parsed.data.interaction.usage)]
   }
-  if (eventType === 'error') {
-    if (!ErrorEventSchema.safeParse(value).success) throw invalidResponse('stream contains an invalid error event')
-    throw invalidResponse('stream reported an error')
-  }
   throw invalidResponse('stream contains an unknown event type')
 }
 
@@ -1043,6 +1134,61 @@ const streamingResponse = (response: Response, expectedModel: string, googleSear
   )
 }
 
+const retryingStreamingResponse = (
+  initialResponse: Response,
+  retryRequest: () => Promise<Response>,
+  expectedModel: string,
+  googleSearchEnabled: boolean,
+  signal: AbortSignal | undefined,
+  cancellation: AbortController,
+  retryDelayMs: number
+): ReadableStream<AxChatResponse> => {
+  let activeReader: ReadableStreamDefaultReader<AxChatResponse> | null = null
+  return new ReadableStream<AxChatResponse>({
+    async start(controller) {
+      let response = initialResponse
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          activeReader = streamingResponse(response, expectedModel, googleSearchEnabled).getReader()
+          while (true) {
+            const item = await activeReader.read()
+            if (item.done) break
+            controller.enqueue(item.value)
+          }
+          controller.close()
+          return
+        } catch (error) {
+          const retryable =
+            error instanceof GeminiStreamProviderError &&
+            error.beforeInteractionCreated &&
+            TRANSIENT_GEMINI_ERROR_CODES.has(error.providerErrorCode) &&
+            attempt === 0 &&
+            signal?.aborted !== true
+          if (!retryable) {
+            controller.error(error instanceof GeminiStreamProviderError ? geminiExecutionFailure(error) : error)
+            return
+          }
+          await activeReader?.cancel().catch(() => {})
+          await waitForRetry(retryDelayMs, signal)
+          signal?.throwIfAborted()
+          response = await retryRequest()
+        } finally {
+          try {
+            activeReader?.releaseLock()
+          } catch {
+            /* The stream already owns terminal failure semantics. */
+          }
+          activeReader = null
+        }
+      }
+    },
+    async cancel(reason) {
+      cancellation.abort(reason)
+      await activeReader?.cancel(reason).catch(() => {})
+    }
+  })
+}
+
 export interface GeminiInteractionsServiceOptions {
   readonly apiKey: string
   readonly baseUrl: string
@@ -1051,6 +1197,7 @@ export interface GeminiInteractionsServiceOptions {
   readonly timeoutMs: number
   readonly thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high'
   readonly googleSearchEnabled?: boolean
+  readonly streamRetryDelayMs?: number
 }
 
 export const createGeminiInteractionsService = (config: GeminiInteractionsServiceOptions): Pick<AxAIService, 'chat'> => ({
@@ -1092,15 +1239,30 @@ export const createGeminiInteractionsService = (config: GeminiInteractionsServic
       ...(request.responseFormat === undefined ? {} : { response_format: responseFormat(request.responseFormat) }),
       generation_config: generationConfig
     }
-    const signals = [AbortSignal.timeout(config.timeoutMs), ...(options?.abortSignal === undefined ? [] : [options.abortSignal])]
-    const response = await config.fetch(`${config.baseUrl.replace(/\/$/u, '')}/interactions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: stream ? 'text/event-stream' : 'application/json', 'x-goog-api-key': config.apiKey },
-      body: JSON.stringify(body),
-      signal: AbortSignal.any(signals)
-    })
+    const cancellation = new AbortController()
+    const requestSignal = AbortSignal.any([
+      AbortSignal.timeout(config.timeoutMs),
+      cancellation.signal,
+      ...(options?.abortSignal === undefined ? [] : [options.abortSignal])
+    ])
+    const fetchResponse = (): Promise<Response> =>
+      config.fetch(`${config.baseUrl.replace(/\/$/u, '')}/interactions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: stream ? 'text/event-stream' : 'application/json', 'x-goog-api-key': config.apiKey },
+        body: JSON.stringify(body),
+        signal: requestSignal
+      })
+    const response = await fetchResponse()
     return stream
-      ? streamingResponse(response, config.model, config.googleSearchEnabled === true)
+      ? retryingStreamingResponse(
+          response,
+          fetchResponse,
+          config.model,
+          config.googleSearchEnabled === true,
+          requestSignal,
+          cancellation,
+          config.streamRetryDelayMs ?? 1_000
+        )
       : await bufferedResponse(response, config.model, config.googleSearchEnabled === true)
   }
 })
