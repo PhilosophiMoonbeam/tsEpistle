@@ -165,7 +165,28 @@ interface DecodedState {
 type Usage = z.infer<typeof UsageSchema>
 type ThoughtBlock = NonNullable<AxChatResponseResult['thoughtBlocks']>[number]
 
-const invalidResponse = (detail: string): AgentRepositoryError => new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', `Gemini Interactions ${detail}`, 502)
+const protocolIssue = (detail: string): string => {
+  if (detail.includes('terminal marker')) return 'protocol_stream_missing_terminal'
+  if (detail.includes('not valid UTF-8')) return 'protocol_stream_invalid_utf8'
+  if (detail.includes('invalid SSE frame')) return 'protocol_stream_invalid_sse'
+  if (detail.includes('event data is not valid JSON')) return 'protocol_stream_invalid_json'
+  if (detail.includes('action arguments are not valid JSON')) return 'protocol_action_arguments_invalid'
+  if (detail.includes('continuation')) return 'protocol_continuation_invalid'
+  if (detail.includes('Google Search') || detail.includes('native search')) return 'protocol_grounding_invalid'
+  if (detail.includes('stream')) return 'protocol_stream_invalid'
+  if (detail.includes('response') || detail.includes('interaction')) return 'protocol_buffered_invalid'
+  return 'protocol_invalid'
+}
+const invalidResponse = (detail: string): AgentRepositoryError => {
+  const error = new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', `Gemini Interactions ${detail}`, 502)
+  Object.defineProperty(error, 'agentDiagnostics', {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: { transportKind: 'gemini-api', providerErrorCode: protocolIssue(detail) }
+  })
+  return error
+}
 const corruptState = (): AgentRepositoryError =>
   new AgentRepositoryError('AGENT_PROVIDER_STATE_CORRUPT', 'Stored Gemini Interactions continuation is invalid', 500)
 
@@ -1222,9 +1243,13 @@ export const createGeminiInteractionsService = (config: GeminiInteractionsServic
     options?.abortSignal?.throwIfAborted()
     assertSupportedModelConfig(request.modelConfig)
     const { systemInstruction, input } = requestParts(request.chatPrompt)
-    const stream = options?.stream === true
     const level = config.thinkingLevel
     const functions = request.functions ?? []
+    // Native action turns are not useful to the caller until the complete,
+    // validated argument object is available. Request them atomically so a
+    // truncated SSE frame cannot discard an otherwise recoverable action turn.
+    // Text-only synthesis remains streamed to preserve visible responsiveness.
+    const stream = options?.stream === true && functions.length === 0
     const tools = [
       ...(config.googleSearchEnabled === true ? [{ type: 'google_search' as const }] : []),
       ...functions.map(fn => ({
