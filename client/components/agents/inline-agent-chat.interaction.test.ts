@@ -507,6 +507,7 @@ const mountInlineAgent = (
     sending: false,
     promptSubmissionPending: false,
     sessionMutationBusy: lockState?.sessionMutationBusy.value ?? false,
+    googleSearchPending: null as boolean | null,
     composerLockVisible: Boolean(lockState?.openGoal.value) || (lockState?.sessionMutationBusy.value ?? false),
     connection: 'connected',
     error: '',

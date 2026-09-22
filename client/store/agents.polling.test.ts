@@ -431,6 +431,63 @@ describe('Agent store initialization', () => {
     expect(store.profiles).toEqual([])
   })
 
+  it('applies the Web toggle optimistically without consuming the session mutation lock', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const baseThread = threadForSession('00000000-0000-4000-8000-000000000072', '00000000-0000-4000-8000-000000000073')
+    const thread: AgentThreadState = { ...baseThread, session: { ...baseThread.session, currentRun: null } }
+    store.thread = thread
+    store.sessions = [summaryForThread(thread)]
+    markWorkspaceReady(store)
+    store.profiles = [{
+      id: '00000000-0000-4000-8000-000000000074',
+      name: 'Default',
+      media: undefined,
+      googleSearchAvailable: true,
+      googleSearchSuggestionLimit: 5,
+      inputTokens: 0,
+      outputTokens: 0,
+      contextWindowTokens: 400_000,
+      capabilityRevision: 'v1',
+      policyVersion: 1,
+      isGlobalDefault: true
+    } satisfies AgentProviderProfileView]
+    const patchResponse = deferred<Response>()
+    const patchBodies: unknown[] = []
+    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${thread.session.id}` && method === 'PATCH') {
+        patchBodies.push(JSON.parse(String(init?.body)))
+        return Promise.resolve(Response.json({
+          ...thread,
+          session: { ...thread.session, googleSearchEnabled: true, version: 2, updatedAt: '2026-08-23T00:05:00.000Z' }
+        }))
+      }
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    // The toggle is applied optimistically and does NOT flip the session
+    // mutation lock that disables the composer, starters, and New button.
+    const toggling = store.setGoogleSearchEnabled(true)
+    expect(store.googleSearchPending).toBe(true)
+    expect(store.sessionMutationBusy).toBe(false)
+    await expect(toggling).resolves.toBeDefined()
+    expect(store.googleSearchPending).toBe(null)
+    expect(store.sessionMutationBusy).toBe(false)
+    expect(patchBodies).toEqual([{ expectedSessionVersion: 1, googleSearchEnabled: true }])
+    expect(store.thread?.session.googleSearchEnabled).toBe(true)
+    expect(store.thread?.session.version).toBe(2)
+
+    // A failed request reverts the optimistic state and surfaces the error.
+    vi.spyOn(window, 'fetch').mockRejectedValue(new TypeError('Offline'))
+    await expect(store.setGoogleSearchEnabled(false)).resolves.toBeUndefined()
+    expect(store.googleSearchPending).toBe(null)
+    expect(store.sessionMutationBusy).toBe(false)
+    expect(store.thread?.session.googleSearchEnabled).toBe(true)
+    expect(store.error).toContain('Offline')
+  })
+
   it('blocks folder mutations until the initial authoritative folders have loaded', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
