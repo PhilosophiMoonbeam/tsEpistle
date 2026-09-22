@@ -97,6 +97,7 @@
 
     <div class="agent-composer__editor">
       <v-textarea
+        v-if="!mediaRecording || draft.trim().length > 0"
         ref="messageInput"
         v-model="draft"
         class="agent-composer__input"
@@ -115,6 +116,28 @@
         @select="handleSelectionChange"
         @keydown="handleKeydown"
       />
+
+      <!-- Recording feedback lives in the input area: one coral dot for the
+           active microphone, a real-input waveform, and a reserved timer.
+           An existing typed draft stays visible above the feedback row. -->
+      <div
+        v-if="dictationAvailable && (mediaRecording || mediaTranscribing)"
+        class="agent-composer__dictation"
+      >
+        <span class="agent-composer__dictation-dot" aria-hidden="true" />
+        <span class="agent-composer__dictation-label" role="status" aria-live="polite">{{ dictationStatusLabel }}</span>
+        <AgentDictationWaveform
+          v-if="mediaRecording"
+          class="agent-composer__dictation-wave"
+          :active="mediaRecording"
+          :source="readDictationLevel"
+        />
+        <span
+          v-if="mediaRecording"
+          class="agent-composer__dictation-timer"
+          :class="{ 'agent-composer__dictation-timer--ending': dictationEnding }"
+        >{{ dictationTimerLabel }}</span>
+      </div>
     </div>
 
     <p v-if="error" class="agent-composer__notice" role="alert">{{ error }}</p>
@@ -130,6 +153,7 @@
       @change="mediaSubmission = $event"
       @busy="mediaBusy = $event"
       @dictation="appendDictation"
+      @dictation-failed="receiveDictationFailure"
       @settled="emit('mediaSettled')"
     >
       <template #attachments="{ attachments, uploading, locked, removeAttachment }">
@@ -168,7 +192,28 @@
     </div>
 
     <div class="agent-composer__actions">
-      <div ref="controlsGroup" class="agent-composer__context-controls" role="group" aria-label="Message tools">
+      <!-- Recording replaces the unrelated message tools: discard sits at the
+           opposite end from the completion controls to prevent mis-clicks. -->
+      <div
+        v-if="dictationAvailable && mediaRecording"
+        class="agent-composer__context-controls agent-composer__dictation-actions-left"
+        role="group"
+        aria-label="Recording actions"
+      >
+        <span v-if="mediaRequesting" class="agent-composer__dictation-requesting">Microphone access…</span>
+        <v-btn
+          class="agent-composer__dictation-discard"
+          icon="mdi-close"
+          variant="text"
+          size="small"
+          rounded="pill"
+          aria-label="Discard recording; keeps your typed message"
+          title="Discard recording; keeps your typed message"
+          :disabled="disabled || sendInProgress"
+          @click="cancelDictation"
+        />
+      </div>
+      <div v-else ref="controlsGroup" class="agent-composer__context-controls" role="group" aria-label="Message tools">
         <v-menu v-if="attachmentsAvailable" content-class="agent-owned-overlay" location="top start" v-model="attachmentMenuOpen">
           <template #activator="{ props: activatorProps }">
             <v-btn
@@ -340,15 +385,22 @@
           @click="emit('stop')"
         >Stop response</v-btn>
         <template v-else>
-          <template v-if="dictationAvailable">
-            <span
-              v-if="mediaRecording || mediaTranscribing"
-              class="agent-composer__dictation-status"
-              role="status"
-              aria-live="polite"
-            >{{ mediaRecording ? `${mediaSeconds} / 60s` : 'Transcribing…' }}</span>
+          <template v-if="dictationAvailable && mediaRecording">
+            <!-- Stop and review: outlined neutral control; red belongs to the
+                 status dot, not to the completion actions. -->
             <v-btn
-              v-else
+              class="agent-composer__dictation-review"
+              variant="outlined"
+              prepend-icon="mdi-stop"
+              aria-label="Stop dictation and review the transcript"
+              title="Stop and put the transcript into the editor"
+              :aria-describedby="composerIds.status"
+              @click="stopDictation"
+            >Review</v-btn>
+          </template>
+          <template v-else-if="dictationAvailable">
+            <v-btn
+              v-if="!mediaTranscribing"
               class="agent-composer__mic"
               icon="mdi-microphone-outline"
               variant="text"
@@ -360,29 +412,6 @@
               @click="startDictation"
             />
           </template>
-          <template v-if="mediaRecording">
-            <v-btn
-              class="agent-composer__mic agent-composer__mic--recording"
-              icon="mdi-stop-circle-outline"
-              variant="tonal"
-              color="error"
-              size="small"
-              rounded="pill"
-              aria-label="Stop dictation and insert text"
-              title="Stop dictation and insert text"
-              :aria-describedby="composerIds.status"
-              @click="stopDictation"
-            />
-            <v-btn
-              class="agent-composer__dictation-cancel"
-              variant="text"
-              size="small"
-              rounded="pill"
-              :disabled="disabled || sendInProgress"
-              title="Cancel recording; keeps your typed message"
-              @click="cancelDictation"
-            >Cancel</v-btn>
-          </template>
           <v-btn
             v-if="!canStop"
             class="agent-composer__submit"
@@ -392,6 +421,7 @@
             :loading="sendInProgress || mediaTranscribing"
             :disabled="submitDisabled"
             :aria-describedby="composerIds.status"
+            :title="mediaRecording ? 'Send without reviewing' : undefined"
           >{{ submitLabel }}</v-btn>
         </template>
       </div>
@@ -407,6 +437,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplate
 import type { Ref } from 'vue'
 import AgentComposerMedia from './agent-composer-media.vue'
 import AgentComposerSkillMenu from './agent-composer-skill-menu.vue'
+import AgentDictationWaveform from './agent-dictation-waveform.vue'
 import type { AgentMediaSubmission } from '../../helpers/agent-media.ts'
 import type { AgentMediaView, AgentProviderProfileView, AgentThreadState, AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import { agentMediaContentUrl, type VisibleAgentSkill } from '../../helpers/agents-api.ts'
@@ -453,10 +484,12 @@ const mediaComposer = useTemplateRef<{
   beginDictationSubmit: () => boolean
   waitForDictationTranscript: () => Promise<string | null>
   recording: Ref<boolean>
+  requesting: Ref<boolean>
   transcribing: Ref<boolean>
   seconds: Ref<number>
   dictationIntent: Ref<'insert' | 'send'>
   dictationError: Ref<string>
+  getAudioLevel: () => number
   chooseUpload: () => void
   browseAssets: () => void
   toggleGenerationTool: (tool: 'image' | 'video' | 'music') => void
@@ -479,6 +512,25 @@ const mediaSeconds = computed(() => {
   const seconds = mediaComposer.value?.seconds as number | Ref<number> | undefined
   return typeof seconds === 'object' && seconds !== null ? seconds.value : (seconds ?? 0)
 })
+const mediaRequesting = computed(() => {
+  const requesting = mediaComposer.value?.requesting as boolean | Ref<boolean> | undefined
+  return typeof requesting === 'object' && requesting !== null ? Boolean(requesting.value) : Boolean(requesting)
+})
+const readDictationLevel = (): number => {
+  const read = mediaComposer.value?.getAudioLevel
+  return typeof read === 'function' ? read() : 0
+}
+/** Recording feedback states. Announce state changes, not timer ticks. */
+const dictationStatusLabel = computed(() => {
+  if (mediaTranscribing.value) return 'Transcribing…'
+  if (mediaRequesting.value) return 'Requesting microphone…'
+  return 'Listening…'
+})
+const dictationTimerLabel = computed(() => {
+  const total = Math.min(mediaSeconds.value, 60)
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')} / 01:00`
+})
+const dictationEnding = computed(() => mediaSeconds.value >= 50)
 const dictationAvailable = computed(() => Boolean(props.mediaCapabilities?.transcription))
 const attachmentsAvailable = computed(() => Boolean(props.mediaCapabilities?.attachments))
 const attachmentCount = computed(() => {
@@ -769,6 +821,8 @@ const composerInputPlaceholder = computed(() => {
   return props.hasMessages ? 'Ask a follow-up' : 'Ask a question or search query'
 })
 const liveStatusLabel = computed(() => {
+  if (mediaTranscribing.value) return 'Transcribing your recording'
+  if (mediaRecording.value) return mediaRequesting.value ? 'Requesting microphone access' : 'Recording. Listening for speech.'
   if (sendFailed.value) return 'Message failed to send. Retry is available.'
   const label = props.statusLabel.trim()
   if (sendInProgress.value || props.canStop) {
@@ -1128,6 +1182,9 @@ const submitDisabled = computed(() =>
  * typed draft is preserved and nothing is submitted.
  */
 const submitDuringRecording = async (): Promise<void> => {
+  // One-shot guard: a double-click or the 60-second auto-stop cannot start a
+  // second stop-and-transcribe submit while the first is still pending.
+  if (submissionPending.value) return
   const media = mediaComposer.value
   if (!media?.beginDictationSubmit()) return
   const typedDraft = draft.value
@@ -1175,6 +1232,11 @@ const stopDictation = (): void => {
 }
 const cancelDictation = (): void => {
   mediaComposer.value?.cancelDictation()
+}
+/** A failed review-path transcription returns to editing with a short notice. */
+const receiveDictationFailure = (message: string): void => {
+  if (error.value) return
+  error.value = message
 }
 const submit = (): void => {
   if (mediaRecording.value) {
@@ -1435,7 +1497,8 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__primary-actions > .agent-composer__submit,
-.agent-composer__primary-actions > .agent-composer__stop {
+.agent-composer__primary-actions > .agent-composer__stop,
+.agent-composer__primary-actions > .agent-composer__dictation-review {
   width: 100%;
   min-width: 0;
   flex: 1 1 auto;
@@ -1449,6 +1512,8 @@ onBeforeUnmount(() => {
 .agent-composer__goal-toggle,
 .agent-composer__web-search-toggle,
 .agent-composer__mic,
+.agent-composer__dictation-discard,
+.agent-composer__dictation-review,
 .agent-composer__more-button,
 .agent-composer__submit,
 .agent-composer__stop {
@@ -1470,6 +1535,8 @@ onBeforeUnmount(() => {
 .agent-composer__goal-toggle::before,
 .agent-composer__web-search-toggle::before,
 .agent-composer__mic::before,
+.agent-composer__dictation-discard::before,
+.agent-composer__dictation-review::before,
 .agent-composer__more-button::before,
 .agent-composer__submit::before,
 .agent-composer__stop::before {
@@ -1564,24 +1631,62 @@ onBeforeUnmount(() => {
   background: var(--wiki-surface-raised);
 }
 
-.agent-composer__dictation-status {
-  min-width: calc(var(--wiki-space-12) * 1.15);
-  color: rgb(var(--v-theme-error));
+/* Recording feedback row inside the input area. Red is reserved for the
+   noninteractive status dot; actions stay neutral/amber. The row reserves its
+   height so the composer never resizes between states. */
+.agent-composer__dictation {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  min-height: 28px;
+  padding: 2px var(--wiki-space-1);
+}
+
+.agent-composer__dictation-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 72%, #fff);
+  animation: agent-composer-dictation-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes agent-composer-dictation-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .45; }
+}
+
+.agent-composer__dictation-label {
+  flex: 0 0 auto;
+  color: rgb(var(--v-theme-on-surface), .82);
   font-size: var(--wiki-label-size);
-  font-variant-numeric: tabular-nums;
-  text-align: center;
+  font-weight: var(--wiki-label-weight);
   white-space: nowrap;
 }
 
-.agent-composer__mic--recording {
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-error)) 55%, transparent);
+.agent-composer__dictation-wave {
+  flex: 1 1 auto;
+  min-width: 24px;
 }
 
-.agent-composer__dictation-cancel {
-  height: var(--agent-composer-control-face-height);
-  min-height: var(--agent-composer-control-face-height);
-  border-radius: var(--wiki-radius-pill);
-  font-size: var(--agent-composer-control-font-size);
+.agent-composer__dictation-timer {
+  flex: 0 0 auto;
+  color: rgb(var(--v-theme-on-surface), .72);
+  font-size: var(--wiki-label-size);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.agent-composer__dictation-timer--ending {
+  color: rgb(var(--v-theme-error));
+  font-weight: 600;
+}
+
+.agent-composer__dictation-requesting {
+  color: rgb(var(--v-theme-on-surface), .62);
+  font-size: var(--wiki-label-size);
+  white-space: nowrap;
 }
 
 .agent-composer__actions :deep(.v-icon) {
@@ -1817,6 +1922,10 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .agent-composer {
     transition: none;
+    animation: none;
+  }
+
+  .agent-composer__dictation-dot {
     animation: none;
   }
 }

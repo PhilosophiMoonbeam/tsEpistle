@@ -160,10 +160,16 @@ return {
   openAssetBrowser,
   toggleGenerationTool,
   mediaRecording,
+  mediaRequesting,
   mediaTranscribing,
   mediaSeconds,
   dictationAvailable,
+  dictationStatusLabel,
+  dictationTimerLabel,
+  dictationEnding,
+  readDictationLevel,
   error,
+  receiveDictationFailure,
   startDictation,
   stopDictation,
   cancelDictation
@@ -323,6 +329,7 @@ interface MountedComposerOptions {
 let dictationTranscriptHook: () => Promise<string | null> = async () => null
 const setDictationTranscriptHook = (hook: () => Promise<string | null>): void => { dictationTranscriptHook = hook }
 const recording = Vue.ref(false)
+const requesting = Vue.ref(false)
 const transcribing = Vue.ref(false)
 const seconds = Vue.ref(0)
 const dictationIntent = Vue.ref<'insert' | 'send'>('insert')
@@ -470,6 +477,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
         selectedGenerationTools: selectedTools,
         attachments,
         recording,
+        requesting,
         transcribing,
         seconds,
         dictationIntent
@@ -477,6 +485,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     }
   })
   app.component('AgentComposerMedia', mediaHarness)
+  app.component('AgentDictationWaveform', { template: '<canvas class="agent-dictation-waveform" />' })
   app.component('AgentComposerSkillMenu', Vue.defineComponent({
     name: 'AgentComposerSkillMenuHarness',
     props: ['items', 'skillsCount', 'skillsLoading', 'skillsLoadError', 'skillsPartial', 'disabled', 'sendInProgress', 'networkBlocked', 'invocationLimit', 'selectedSkillVersionIds', 'preferredVersionIds', 'dialogId', 'headingId', 'descriptionId'],
@@ -1014,35 +1023,75 @@ describe('Agent composer goal placement', () => {
 })
 
 describe('Agent composer dictation controls', () => {
-  it('starts recording from the microphone and inserts a finished transcript for review', async () => {
+  it('starts recording from the microphone and stops for review with a labeled outlined control', async () => {
     const mounted = mountComposer({ initialDraft: 'typed words', mediaCapabilities: { transcription: true } })
     const mic = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')
     if (!mic) throw new Error('Microphone did not render')
     mic.click()
     await Vue.nextTick()
     expect(recording.value).toBe(true)
-    expect(mounted.root.querySelector('.agent-composer__dictation-status')).not.toBeNull()
-    // A second mic click stops and inserts for review.
-    const stop = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic--recording')
-    if (!stop) throw new Error('Stop dictation control did not render')
-    expect(stop.getAttribute('aria-label')).toBe('Stop dictation and insert text')
-    stop.click()
+    // The recording indicator is a noninteractive status dot, not a red target.
+    const dot = mounted.root.querySelector<HTMLElement>('.agent-composer__dictation-dot')
+    expect(dot).not.toBeNull()
+    expect(dot?.querySelector('button')).toBeNull()
+    const label = mounted.root.querySelector<HTMLElement>('.agent-composer__dictation-label')
+    expect(label?.textContent?.trim()).toBe('Listening…')
+    expect(label?.getAttribute('role')).toBe('status')
+    // Recording feedback keeps the typed draft visible in the editor.
+    expect(mounted.root.querySelector('.agent-composer__input textarea')).not.toBeNull()
+    expect(mounted.root.querySelector('.agent-composer__dictation-wave')).not.toBeNull()
+    // The red nested stop control is gone; Review is an outlined labeled button.
+    expect(mounted.root.querySelector('.agent-composer__mic--recording')).toBeNull()
+    const review = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__dictation-review')
+    if (!review) throw new Error('Review control did not render')
+    expect(review.textContent?.trim()).toBe('Review')
+    expect(review.getAttribute('aria-label')).toBe('Stop dictation and review the transcript')
+    // Discard is separated at the opposite end of the action row.
+    const discard = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__dictation-discard')
+    if (!discard) throw new Error('Discard control did not render')
+    expect(discard.getAttribute('aria-label')).toBe('Discard recording; keeps your typed message')
+    const leftGroup = mounted.root.querySelector<HTMLElement>('.agent-composer__dictation-actions-left')
+    if (!leftGroup) throw new Error('Discard group did not render')
+    expect(leftGroup.contains(discard)).toBe(true)
+    expect(leftGroup.contains(review)).toBe(false)
+    expect(leftGroup.contains(mounted.root.querySelector('.agent-composer__submit'))).toBe(false)
+    // Review stops capture and inserts the transcript for editing.
+    review.click()
     await Vue.nextTick()
     expect(recording.value).toBe(false)
   })
 
-  it('keeps a reserved countdown with the microphone while recording', async () => {
+  it('keeps a reserved tabular countdown with a static red-free status label while recording', async () => {
     const mounted = mountComposer({ initialDraft: '', mediaCapabilities: { transcription: true } })
     mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
     await Vue.nextTick()
     seconds.value = 37
     await Vue.nextTick()
-    const status = mounted.root.querySelector<HTMLElement>('.agent-composer__dictation-status')
-    expect(status?.textContent?.trim()).toBe('37 / 60s')
-    expect(status?.getAttribute('role')).toBe('status')
-    expect(status?.getAttribute('aria-live')).toBe('polite')
-    const cancel = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__dictation-cancel')
-    expect(cancel?.textContent?.trim()).toBe('Cancel')
+    const timer = mounted.root.querySelector<HTMLElement>('.agent-composer__dictation-timer')
+    expect(timer?.textContent?.trim()).toBe('00:37 / 01:00')
+    expect(timer?.classList.contains('agent-composer__dictation-timer--ending')).toBe(false)
+    const label = mounted.root.querySelector<HTMLElement>('.agent-composer__dictation-label')
+    expect(label?.textContent?.trim()).toBe('Listening…')
+    // Nothing in the recording row is styled as the old red action control.
+    expect(mounted.root.querySelector('.agent-composer__dictation-status')).toBeNull()
+    // The last ten seconds emphasize the timer.
+    seconds.value = 53
+    await Vue.nextTick()
+    expect(mounted.root.querySelector('.agent-composer__dictation-timer')?.classList.contains('agent-composer__dictation-timer--ending')).toBe(true)
+  })
+
+  it('announces the permission request separately from listening', async () => {
+    const mounted = mountComposer({ initialDraft: '', mediaCapabilities: { transcription: true } })
+    requesting.value = true
+    recording.value = true
+    await Vue.nextTick()
+    const label = mounted.root.querySelector<HTMLElement>('.agent-composer__dictation-label')
+    expect(label?.textContent?.trim()).toBe('Requesting microphone…')
+    requesting.value = false
+    await Vue.nextTick()
+    expect(mounted.root.querySelector('.agent-composer__dictation-label')?.textContent?.trim()).toBe('Listening…')
+    requesting.value = false
+    recording.value = false
   })
 
   it('submits exactly once with the combined transcript and typed draft when Send is pressed during recording', async () => {
@@ -1072,11 +1121,11 @@ describe('Agent composer dictation controls', () => {
     expect(mounted.root.querySelector('.agent-composer__notice')?.textContent).toContain('No speech was found')
   })
 
-  it('preserves the typed draft when a recording is canceled', async () => {
+  it('preserves the typed draft when a recording is discarded', async () => {
     const mounted = mountComposer({ initialDraft: 'keep me', mediaCapabilities: { transcription: true } })
     mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
     await Vue.nextTick()
-    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__dictation-cancel')?.click()
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__dictation-discard')?.click()
     await Vue.nextTick()
     expect(recording.value).toBe(false)
     const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
@@ -1096,6 +1145,21 @@ describe('Agent composer dictation controls', () => {
     if (resolveTranscript) resolveTranscript('voice words')
     await settleAsync()
     expect(sentRecorder).toHaveLength(1)
+  })
+
+  it('returns to editing with a short notice when a review-path transcription fails', async () => {
+    const mounted = mountComposer({ initialDraft: 'typed words', mediaCapabilities: { transcription: true } })
+    const bindings = lastBindings as unknown as { receiveDictationFailure: (message: string) => void }
+    bindings.receiveDictationFailure('No speech was found. Try recording again.')
+    await Vue.nextTick()
+    const notice = mounted.root.querySelector('.agent-composer__notice')
+    expect(notice?.textContent).toContain('No speech was found')
+    // The typed draft survives a failed transcription.
+    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+    expect(textarea?.value).toBe('typed words')
+    // The notice never clobbers a higher-priority message.
+    bindings.receiveDictationFailure('Transcription failed')
+    expect(mounted.root.querySelector('.agent-composer__notice')?.textContent).toContain('No speech was found')
   })
 
   it('inserts dictated text at the saved caret instead of overwriting typed text', async () => {

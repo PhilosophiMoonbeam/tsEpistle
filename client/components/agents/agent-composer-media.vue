@@ -31,7 +31,7 @@ const props = defineProps<{
   disabled: boolean
   networkBlocked: boolean
 }>()
-const emit = defineEmits<{ change: [value: AgentMediaSubmission]; busy: [value: boolean]; dictation: [text: string]; settled: [] }>()
+const emit = defineEmits<{ change: [value: AgentMediaSubmission]; busy: [value: boolean]; dictation: [text: string]; dictationFailed: [message: string]; settled: [] }>()
 const fileInput = useTemplateRef<HTMLInputElement>('fileInput')
 const assetPickerOpen = ref(false)
 const attachments = ref<AgentMediaView[]>([])
@@ -51,6 +51,8 @@ const error = ref('')
 const dictationError = ref('')
 const uploading = ref(false)
 const recording = ref(false)
+/** True while microphone permission is still being requested. */
+const requesting = ref(false)
 const transcribing = ref(false)
 const seconds = ref(0)
 /**
@@ -72,6 +74,11 @@ let recorder: MediaRecorder | null = null
 let stream: MediaStream | null = null
 let timer: ReturnType<typeof setInterval> | null = null
 let transcriptionRunId: string | null = null
+// Live microphone feedback for the recording waveform. Created per capture;
+// never connected to the output destination.
+let levelContext: AudioContext | null = null
+let levelAnalyser: AnalyserNode | null = null
+let levelData: Float32Array<ArrayBuffer> | null = null
 watch([attachments, selectedGenerationTools, () => props.generationToolsEnabled], () => emit('change', { attachmentIds: attachments.value.map(item => item.id), generationTools: props.generationToolsEnabled === false ? [] : [...selectedGenerationTools.value] }), { deep: true, immediate: true })
 watch([uploading, recording, transcribing], () => emit('busy', uploading.value || recording.value || transcribing.value), { flush: 'sync' })
 const releaseMicrophone = () => {
@@ -79,6 +86,48 @@ const releaseMicrophone = () => {
   timer = null
   stream?.getTracks().forEach(track => track.stop())
   stream = null
+  levelAnalyser = null
+  levelData = null
+  if (levelContext) {
+    const context = levelContext
+    levelContext = null
+    void context.close().catch(() => {})
+  }
+}
+/**
+ * Current microphone level from 0 (silence) to 1 (loud), for the recording
+ * waveform. Returns 0 whenever capture is inactive or the audio graph is
+ * unavailable; the waveform treats that as an honest flat line.
+ */
+const getAudioLevel = (): number => {
+  if (!levelAnalyser || !levelData || typeof levelAnalyser.getFloatTimeDomainData !== 'function') return 0
+  try {
+    levelAnalyser.getFloatTimeDomainData(levelData)
+  } catch {
+    return 0
+  }
+  let sum = 0
+  for (let index = 0; index < levelData.length; index += 1) sum += levelData[index] ** 2
+  return Math.min(1, Math.sqrt(sum / levelData.length) * 3)
+}
+/** Attaches an analyser to the live stream so the waveform can show real input. */
+const startAudioFeedback = (microphone: MediaStream): void => {
+  try {
+    const contextCtor = window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (typeof contextCtor !== 'function') return
+    const context = new contextCtor()
+    const source = context.createMediaStreamSource(microphone)
+    const analyser = context.createAnalyser()
+    analyser.fftSize = 512
+    source.connect(analyser)
+    levelContext = context
+    levelAnalyser = analyser
+    levelData = new Float32Array(analyser.fftSize)
+  } catch {
+    // Waveform feedback is decorative; capture continues without it.
+    levelAnalyser = null
+    levelData = null
+  }
 }
 const cancelDictation = () => {
   generation += 1
@@ -278,6 +327,7 @@ const startRecording = async () => {
   const current = ++generation
   const session = props.session
   const csrfToken = props.csrfToken
+  requesting.value = true
   recording.value = true
   seconds.value = 0
   dictationIntent.value = 'insert'
@@ -286,8 +336,17 @@ const startRecording = async () => {
   let byteLength = 0
   try {
     const microphone = await navigator.mediaDevices.getUserMedia({ audio: true })
-    if (disposed || current !== generation || props.networkBlocked) { microphone.getTracks().forEach(track => track.stop()); return }
+    if (disposed || current !== generation || props.networkBlocked) {
+      microphone.getTracks().forEach(track => track.stop())
+      if (current === generation) {
+        recording.value = false
+        requesting.value = false
+      }
+      return
+    }
+    requesting.value = false
     stream = microphone
+    startAudioFeedback(microphone)
     const mimeType = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus'].find(type => MediaRecorder.isTypeSupported(type))
     recorder = mimeType ? new MediaRecorder(microphone, { mimeType }) : new MediaRecorder(microphone)
     recorder.ondataavailable = event => {
@@ -309,6 +368,7 @@ const startRecording = async () => {
     recorder.start(1000)
     timer = setInterval(() => { seconds.value += 1; if (seconds.value >= 60) stopRecording() }, 1000)
   } catch (value) {
+    requesting.value = false
     if (current === generation && !disposed) { error.value = value instanceof Error ? value.message : 'Microphone access was not available.'; cancelDictation() }
   }
 }
@@ -342,6 +402,7 @@ const transcribe = async (file: File, session: AgentThreadState['session'], csrf
         } else {
           dictationError.value = 'No speech was found. Try recording again.'
           if (dictationIntent.value === 'send') dictationSendResolve?.(null)
+          else emit('dictationFailed', dictationError.value)
         }
         dictationIntent.value = 'insert'
         dictationSendResolve = null
@@ -357,7 +418,10 @@ const transcribe = async (file: File, session: AgentThreadState['session'], csrf
     }
     if (!controller.signal.aborted) throw new Error('Transcription took too long. Please try again.')
   } catch (value) {
-    if (!disposed && current === generation && !controller.signal.aborted) dictationError.value = value instanceof Error ? value.message : 'Dictation could not be transcribed.'
+    if (!disposed && current === generation && !controller.signal.aborted) {
+      dictationError.value = value instanceof Error ? value.message : 'Dictation could not be transcribed.'
+      emit('dictationFailed', dictationError.value)
+    }
     if (current === generation && dictationSendResolve) {
       dictationSendResolve(null)
       dictationSendResolve = null
@@ -399,7 +463,7 @@ onBeforeUnmount(() => {
   uploadController?.abort()
   for (const item of attachments.value) void deleteAgentMedia(fetcher, props.csrfToken, item.id).catch(() => {})
 })
-defineExpose({ clear, addFiles, editImage, startRecording, stopRecording, cancelDictation, beginDictationSubmit, waitForDictationTranscript, recording, transcribing, seconds, dictationIntent, dictationError, chooseUpload, browseAssets, toggleGenerationTool, generationOptions, selectedGenerationTools })
+defineExpose({ clear, addFiles, editImage, startRecording, stopRecording, cancelDictation, beginDictationSubmit, waitForDictationTranscript, recording, requesting, transcribing, seconds, dictationIntent, dictationError, getAudioLevel, chooseUpload, browseAssets, toggleGenerationTool, generationOptions, selectedGenerationTools })
 </script>
 <style scoped>
 .agent-media-composer { min-width: 0; }
