@@ -63,7 +63,9 @@ interface LockState {
   composerFocused: ValueRef<boolean>
   invocationLimit: ValueRef<number>
   connectionLabel: ValueRef<string>
+  composerLockVisible: ValueRef<boolean>
   connectionTone: ValueRef<string>
+  mutationLockMessageVisible: ValueRef<boolean>
   welcomeGreeting: { readonly first: string; readonly second: string }
   handleComposerFocusIn: () => void
   handleComposerFocusOut: (event: FocusEvent) => void
@@ -381,7 +383,7 @@ const loadGoalLockState = (
   const clearedStartersIntervalIds: number[] = []
   const evaluate = new Function(
     '{ computed, nextTick, onBeforeUnmount, onMounted, ref, setInterval, clearInterval, setTimeout, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection }',
-    `${executableScript}\nreturn { SESSION_NOTICE_VISIBLE_MS, STARTERS_SPIN_HOLD_MS, STARTERS_SPIN_STEP_MS, activeRun, canPinCurrentChat, canSubmit, clearSessionNotice, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleStartersScroll, handleTranscriptEngagement, holdStartersSpin, invocationLimit, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, sessionNotice, setSessionNotice, startersRow, startStartersSpin, startTemporaryChat, stopStartersSpin, submitUnavailableReason, thread, welcomeGreeting }`
+    `${executableScript}\nreturn { SESSION_NOTICE_VISIBLE_MS, STARTERS_SPIN_HOLD_MS, STARTERS_SPIN_STEP_MS, activeRun, canPinCurrentChat, canSubmit, clearSessionNotice, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, composerLockVisible, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleStartersScroll, handleTranscriptEngagement, holdStartersSpin, invocationLimit, mutationLockMessageVisible, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, sessionNotice, setSessionNotice, startersRow, startStartersSpin, startTemporaryChat, stopStartersSpin, submitUnavailableReason, thread, welcomeGreeting }`
   ) as (dependencies: Record<string, unknown>) => LockState
 
   const state = evaluate({
@@ -407,7 +409,7 @@ const loadGoalLockState = (
     ref,
     useTemplateRef: () => ref(null),
     useId: () => 'agent-test',
-    watch: () => undefined,
+    watch: Vue.watch,
     storeToRefs: () => storeRefs,
     defineEmits: () => () => undefined,
     defineProps: () => props,
@@ -505,6 +507,7 @@ const mountInlineAgent = (
     sending: false,
     promptSubmissionPending: false,
     sessionMutationBusy: lockState?.sessionMutationBusy.value ?? false,
+    composerLockVisible: Boolean(lockState?.openGoal.value) || (lockState?.sessionMutationBusy.value ?? false),
     connection: 'connected',
     error: '',
     pinStorageAvailable: true,
@@ -1434,6 +1437,33 @@ describe('Inline Agent goal submission lock', () => {
     const unlockedTextarea = unlocked.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
     expect(unlocked.root.querySelector('.inline-agent__composer-lock')).toBeNull()
     expect(unlockedTextarea?.disabled).toBe(false)
+  })
+
+  it('delays the mutation lock message so quick toggles never flash it', async () => {
+    const lockState = loadGoalLockState(null, false)
+    expect(lockState.composerLockVisible.value).toBe(false)
+
+    // A short mutation: busy flips true then back before the delay elapses.
+    lockState.sessionMutationBusy.value = true
+    await Vue.nextTick()
+    const lockTimers = lockState.pendingSessionNoticeTimers
+    expect(lockTimers.at(-1)?.delay).toBe(300)
+    expect(lockState.composerLockVisible.value).toBe(false)
+    lockState.sessionMutationBusy.value = false
+    await Vue.nextTick()
+    expect(lockState.composerLockVisible.value).toBe(false)
+    // The pending timer was cancelled and the message never shows.
+    expect(lockState.mutationLockMessageVisible.value).toBe(false)
+
+    // A sustained mutation shows the message once the delay elapses.
+    lockState.sessionMutationBusy.value = true
+    await Vue.nextTick()
+    const sustainedTimer = lockState.pendingSessionNoticeTimers.at(-1)
+    sustainedTimer?.callback()
+    expect(lockState.composerLockVisible.value).toBe(true)
+    lockState.sessionMutationBusy.value = false
+    await Vue.nextTick()
+    expect(lockState.composerLockVisible.value).toBe(false)
   })
 
   it('blocks New and clear-unfiled actions while another session mutation owns the lock', async () => {
