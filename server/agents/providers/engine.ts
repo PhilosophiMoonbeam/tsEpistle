@@ -56,7 +56,12 @@ import {
   deriveAgentProviderResourceLimits,
   encodeAgentProviderContinuation
 } from './factory.ts'
-import { combineGeminiInteractionState, readGeminiGoogleSearchGrounding } from './gemini-interactions.ts'
+import {
+  combineGeminiInteractionState,
+  readGeminiGoogleSearchGrounding,
+  readGeminiInteractionStatus,
+  type GeminiInteractionStatus
+} from './gemini-interactions.ts'
 import { agentVideoCostMicros } from './media-pricing.ts'
 import {
   type PromptToolCategoryIndex,
@@ -1673,6 +1678,7 @@ interface TurnResult extends AgentTokenUsage {
   readonly thoughtBlocks: NonNullable<AxChatResponseResult['thoughtBlocks']>
   readonly costMicros: number
   readonly finishReason?: AxChatResponseResult['finishReason']
+  readonly providerStatus?: GeminiInteractionStatus
   readonly googleSearchGrounding?: AgentGoogleSearchGrounding & { readonly searchSuggestions: readonly string[] }
 }
 const MAX_DIAGNOSTIC_TURN_CHARACTERS = 32_000
@@ -1687,7 +1693,8 @@ const modelTurnData = (turn: number, result: TurnResult, outcome: 'tool_calls' |
   content: result.content.slice(0, MAX_DIAGNOSTIC_TURN_CHARACTERS),
   contentTruncated: result.content.length > MAX_DIAGNOSTIC_TURN_CHARACTERS,
   actionCallIds: result.calls.map(call => call.id),
-  ...(result.finishReason === undefined ? {} : { finishReason: result.finishReason })
+  ...(result.finishReason === undefined ? {} : { finishReason: result.finishReason }),
+  ...(result.providerStatus === undefined ? {} : { providerStatus: result.providerStatus })
 })
 
 export interface AgentActionSessionProvider {
@@ -1718,6 +1725,7 @@ interface ProviderResponseAccumulator {
   argumentFragments: number
   thoughtFragments: number
   finishReason?: AxChatResponseResult['finishReason']
+  providerStatus?: GeminiInteractionStatus
 }
 
 const invalidProviderResponse = (message: string): never => {
@@ -2551,6 +2559,9 @@ const recentExcerptDisclosure = (groups: readonly RecentEvidenceCoverage[]): str
     ? '\n\nRecent page content is shown as bounded opening excerpts; one or more excerpts were truncated.'
     : ''
 const OUTPUT_LIMIT_DISCLOSURE = 'The provider reached its output limit before completing this response. Submit an explicit follow-up to continue.'
+const THINKING_BUDGET_DISCLOSURE = 'The provider ended this response because its internal thinking budget was exhausted. Submit an explicit follow-up to continue.'
+const outputLimitDisclosureFor = (status: GeminiInteractionStatus | undefined): string =>
+  status === 'budget_exceeded' ? THINKING_BUDGET_DISCLOSURE : OUTPUT_LIMIT_DISCLOSURE
 const providerResultChatMessage = (mode: 'native' | 'prompt', callId: string, providerName: string, result: unknown, isError = false): ChatPromptMessage =>
   mode === 'native'
     ? { role: 'function', functionId: callId, result: JSON.stringify(result), ...(isError ? { isError: true } : {}) }
@@ -3293,6 +3304,8 @@ export class AxAgentEngine implements AgentEngine {
           accumulator.googleSearchGrounding = googleSearchGrounding
         }
         observeFinishReason(result.finishReason)
+        const providerStatus = readGeminiInteractionStatus(result)
+        if (providerStatus !== undefined && accumulator.providerStatus === undefined) accumulator.providerStatus = providerStatus
         if (result.content !== undefined) {
           if (typeof result.content !== 'string') invalidProviderResponse('Provider returned invalid response content')
           const contentLimit = provider.transportKind === 'legacy-completions' ? 128_000 : limits.fragmentBytes
@@ -3501,6 +3514,7 @@ export class AxAgentEngine implements AgentEngine {
         totalTokens,
         costMicros,
         ...(accumulator.finishReason === undefined ? {} : { finishReason: accumulator.finishReason }),
+        ...(accumulator.providerStatus === undefined ? {} : { providerStatus: accumulator.providerStatus }),
         ...(accumulator.googleSearchGrounding === undefined ? {} : { googleSearchGrounding: accumulator.googleSearchGrounding })
       }
     } catch (error) {
@@ -3931,12 +3945,13 @@ export class AxAgentEngine implements AgentEngine {
             if (closeFailure) throw closeFailure
             const structured = request.purpose === 'planner' || request.purpose === 'subagent'
             if (!structured) {
+              const disclosure = outputLimitDisclosureFor(result.providerStatus)
               const publishedContent = publishFragment
                 ? `${result.content}${recentExcerptDisclosure(recentGroups)}${partialCoverageDisclosure(
                     executedOmittedCount(),
                     notExecutedActionCallIds.size
-                  )}\n\n${OUTPUT_LIMIT_DISCLOSURE}`
-                : OUTPUT_LIMIT_DISCLOSURE
+                  )}\n\n${disclosure}`
+                : disclosure
               await presentAcceptedContent(publishedContent, sink)
             }
             if (publishFragment && !structured) await publishGoogleSearchSuggestions()
