@@ -508,40 +508,52 @@
                     span.account-menu__profile-label {{ onlineActionReady ? `Profile` : `Account` }}
                     | {{name}}
                   v-list-item-subtitle {{ onlineActionReady ? email : `Last verified account · Reconnect for account actions` }}
-                  template(v-slot:append): v-icon(color='secondary') mdi-face-profile
                 v-divider
-                AccountNotifications.account-menu__notifications(v-if='onlineActionReady && !siteNotifications.identityStale')
+                .account-menu__tabs(role='group', aria-label='Account menu sections')
+                  v-btn.account-menu__tab(
+                    v-for='tab in accountMenuTabs'
+                    :key='tab.id'
+                    size='small'
+                    variant='text'
+                    :class='{ "account-menu__tab--active": accountMenuTab === tab.id }'
+                    :aria-pressed='accountMenuTab === tab.id'
+                    @click='accountMenuTab = tab.id'
+                  ) {{ tab.label }}
+                .account-menu__panels
+                  .account-menu__panel(v-show='accountMenuTab === `notifications`')
+                    AccountNotifications.account-menu__notifications(v-if='onlineActionReady && !siteNotifications.identityStale')
+                  .account-menu__panel(v-show='accountMenuTab === `appearance`')
+                    section.account-menu__preferences(role='region', aria-label='Appearance settings')
+                      appearance-selector
+                  .account-menu__panel(v-show='accountMenuTab === `offline`')
+                    account-offline-summary
                 v-divider
-              v-list-item.account-menu__offline(href='/p/offline', aria-label='Connection and offline access')
-                template(v-slot:prepend)
-                  v-icon(:icon='connectionPresentation.icon', :color='connectionPresentation.tone')
-                v-list-item-title Offline access
-                v-list-item-subtitle {{ connectionPresentation.label }} · Saved pages and device settings
-                template(v-slot:append): v-icon(size='18', aria-hidden='true') mdi-chevron-right
-              v-divider
-              template(v-if='isAuthenticated')
-                section.account-menu__preferences(role='region' aria-label='Appearance settings')
-                  appearance-selector
-                v-divider
-                form(action='/logout', method='post', :aria-busy='logoutPending ? `true` : undefined', @submit='clearAgentChatPinOnLogout')
+                form.account-menu__session(action='/logout', method='post', :aria-busy='logoutPending ? `true` : undefined', @submit='clearAgentChatPinOnLogout')
                   v-list-item(tag='button', type='submit', link, :disabled='logoutPending || !onlineActionReady', :title='!onlineActionReady ? `Reconnect to sign out` : undefined')
                     template(v-slot:append): v-icon(color='error') mdi-logout
                     v-list-item-title.text-error {{ logoutPending ? `Signing out…` : $t('common:header.logout') }}
+              template(v-else)
+                v-list-item.account-menu__offline(href='/p/offline', aria-label='Connection and offline access')
+                  template(v-slot:prepend)
+                    v-icon(:icon='connectionPresentation.icon', :color='connectionPresentation.tone')
+                  v-list-item-title Offline access
+                  v-list-item-subtitle {{ connectionPresentation.label }} · Saved pages and device settings
+                  template(v-slot:append): v-icon(size='18', aria-hidden='true') mdi-chevron-right
                 v-divider
-              template(v-else-if='verifiedAnonymous')
-                v-list-item(
-                  role='button'
-                  link
-                  href='/login'
-                  data-no-wiki-navigation
-                  aria-label='Sign in'
-                )
-                  template(v-slot:prepend): v-icon(color='primary') mdi-login
-                  v-list-item-title Sign in
-              v-list-item.account-menu__unverified(v-else, role='status')
-                template(v-slot:prepend): v-icon mdi-account-clock-outline
-                v-list-item-title {{ accountVerificationTitle }}
-                v-list-item-subtitle {{ accountVerificationDetail }}
+                template(v-if='verifiedAnonymous')
+                  v-list-item(
+                    role='button'
+                    link
+                    href='/login'
+                    data-no-wiki-navigation
+                    aria-label='Sign in'
+                  )
+                    template(v-slot:prepend): v-icon(color='primary') mdi-login
+                    v-list-item-title Sign in
+                v-list-item.account-menu__unverified(v-else, role='status')
+                  template(v-slot:prepend): v-icon mdi-account-clock-outline
+                  v-list-item-title {{ accountVerificationTitle }}
+                  v-list-item-subtitle {{ accountVerificationDetail }}
     page-selector(mode='create', v-model='newPageModal', :open-handler='pageNewCreate', :locale='locale')
     page-selector(mode='move', v-model='movePageModal', :open-handler='pageMoveRename', :path='path', :locale='locale')
     page-selector(mode='create', v-model='duplicateOpts.modal', :open-handler='pageDuplicateHandle', :path='duplicateOpts.path', :locale='duplicateOpts.locale')
@@ -564,6 +576,7 @@ import {
   wikiStore
 } from '@/store/index.ts'
 import AccountNotifications from './account-notifications.vue'
+import AccountOfflineSummary from './account-offline-summary.vue'
 import ControlBorderBeam from './control-border-beam.vue'
 import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
 import { useAgentsStore } from '../../store/agents.ts'
@@ -608,6 +621,7 @@ export default defineComponent({
     AccountNotifications,
     ControlBorderBeam,
     AppearanceSelector: defineAsyncComponent(() => import('./appearance-selector.vue')),
+    AccountOfflineSummary,
     PageDelete: defineAsyncComponent(() => import('./page-delete.vue')),
     PageConvert: defineAsyncComponent(() => import('./page-convert.vue'))
   },
@@ -644,6 +658,7 @@ export default defineComponent({
       isDevMode: false,
       failedLogoUrl: null as string | null,
       pageActionsAreOpen: false,
+      accountMenuTab: 'notifications' as 'notifications' | 'appearance' | 'offline',
       pageActionsFocusFrame: null as number | null,
       notificationIdentityRecovery: null as Promise<void> | null,
       notificationIdentityRecoveryGeneration: 0,
@@ -774,6 +789,13 @@ export default defineComponent({
     },
     accountMenuLabel(): string {
       return 'Account menu'
+    },
+    accountMenuTabs(): { id: 'notifications' | 'appearance' | 'offline', label: string }[] {
+      return [
+        { id: 'notifications', label: 'Notifications' },
+        { id: 'appearance', label: 'Appearance' },
+        { id: 'offline', label: 'Offline' }
+      ]
     },
     permissions(): string[] { return wikiStore.user.permissions },
     searchInputLabel(): string { return this.searchMode === 'ask' ? this.$t('common:header.askPlaceholder') : this.$t('common:header.search') },
@@ -1941,6 +1963,40 @@ export default defineComponent({
 .account-menu__notifications {
   min-height: 0;
   scrollbar-gutter: stable;
+}
+
+.account-menu__tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--wiki-space-1);
+  padding: var(--wiki-space-1) var(--wiki-space-2);
+}
+
+.account-menu__tab {
+  min-width: 0;
+  text-transform: none;
+
+  .v-btn__content {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.account-menu__tab--active {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 14%, transparent);
+  color: rgb(var(--v-theme-primary));
+}
+
+.account-menu__panels {
+  min-width: 0;
+}
+
+.account-menu__session {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: 1;
+  background: rgb(var(--v-theme-surface));
 }
 
 .account-menu__preferences {

@@ -3,27 +3,20 @@ section.appearance-selector(:aria-busy='saving ? `true` : `false`')
   .appearance-selector__heading
     .text-label-large {{ label }}
     .text-body-small.text-medium-emphasis(:id='descriptionId') {{ description }}
-  v-btn-toggle(
-    :model-value='selectedAppearance'
-    class='appearance-selector__options'
-    role='group'
-    mandatory
-    divided
-    density='compact'
+  v-btn.appearance-selector__toggle(
+    block
+    density='comfortable'
     variant='outlined'
+    color='primary'
     :disabled='saving'
-    :aria-label='label'
+    :aria-label='toggleAriaLabel'
     :aria-describedby='descriptionId'
-    @update:model-value='selectAppearance'
+    :aria-pressed='selectedAppearance !== `system`'
+    @click='toggleAppearance'
   )
-    v-btn(
-      v-for='option in appearanceOptions'
-      :key='option.value'
-      :value='option.value'
-      :aria-pressed='selectedAppearance === option.value'
-    )
-      v-icon(start, size='18') {{ option.icon }}
-      span {{ option.label }}
+    v-icon(start, size='18') {{ effectiveTheme === `dark` ? `mdi-weather-night` : `mdi-white-balance-sunny` }}
+    span.appearance-selector__toggle-label {{ effectiveTheme === `dark` ? `Dark` : `Light` }}
+    span.appearance-selector__toggle-note {{ selectedAppearance === `system` ? `· follows device` : `· override` }}
   v-progress-linear(
     v-if='saving'
     indeterminate
@@ -50,15 +43,9 @@ import { resolveThemeName, type WikiThemeName } from '../../helpers/theme.ts'
 
 type Appearance = Extract<WikiThemeName, 'system' | 'light' | 'dark'>
 
-type AppearanceOption = {
-  value: Appearance
-  label: string
-  icon: string
-}
-
 const {
   label = 'Appearance',
-  description = 'System follows your device until Light or Dark is chosen.'
+  description = 'One toggle: it shows your current theme and switches to the other. Matching your device returns you to System.'
 } = defineProps<{
   label?: string
   description?: string
@@ -66,25 +53,41 @@ const {
 
 const theme = useTheme()
 const selectedAppearance = computed<Appearance>(() => normalizeAppearance(wikiStore.user.appearance))
+const effectiveTheme = computed<'light' | 'dark'>(() => theme.name.value === 'dark' ? 'dark' : 'light')
 const saving = computed(() => (wikiStore.loadingCounts['profile-preferences-save'] ?? 0) > 0)
 const descriptionId = useId()
 const statusMessage = ref('')
-const appearanceOptions: readonly AppearanceOption[] = [
-  { value: 'system', label: 'System', icon: 'mdi-theme-light-dark' },
-  { value: 'light', label: 'Light', icon: 'mdi-white-balance-sunny' },
-  { value: 'dark', label: 'Dark', icon: 'mdi-weather-night' }
-]
 
-function normalizeAppearance(value: string | null | undefined): Appearance {
+const systemPrefersDark = (): boolean => {
+  try {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches
+  } catch {
+    return false
+  }
+}
+
+const toggleAriaLabel = computed(() => {
+  const next = effectiveTheme.value === 'dark' ? 'light' : 'dark'
+  const system = systemPrefersDark() ? 'dark' : 'light'
+  const restore = next === system ? ' This returns you to your device preference.' : ''
+  return `Switch to ${next} theme.${restore}`
+})
+
+function normalizeAppearance (value: string | null | undefined): Appearance {
   return resolveThemeName(value, siteConfig.darkMode)
 }
 
-async function selectAppearance (next: Appearance): Promise<void> {
-  if (saving.value || next === selectedAppearance.value) return
-  const selectedOption = appearanceOptions.find(option => option.value === next)
-  if (!selectedOption) return
+async function toggleAppearance (): Promise<void> {
+  if (saving.value) return
+  const nextEffective: Appearance = effectiveTheme.value === 'dark' ? 'light' : 'dark'
+  // When the requested theme already matches the device preference, keep the
+  // stored value on `system` so the profile keeps tracking device changes.
+  const next: Appearance = nextEffective === (systemPrefersDark() ? 'dark' : 'light')
+    ? 'system'
+    : nextEffective
+  const nextLabel = nextEffective === 'dark' ? 'Dark' : 'Light'
 
-  statusMessage.value = `Saving ${selectedOption.label.toLowerCase()} appearance.`
+  statusMessage.value = `Saving ${nextEffective.toLowerCase()} appearance.`
 
   const previousAppearance = selectedAppearance.value
   const previousStoreAppearance = wikiStore.user.appearance
@@ -101,7 +104,7 @@ async function selectAppearance (next: Appearance): Promise<void> {
     await wikiStore.refreshAuth()
     const effectiveAppearance = normalizeAppearance(wikiStore.user.appearance)
     await theme.change(effectiveAppearance, false)
-    statusMessage.value = `${selectedOption.label} appearance saved.`
+    statusMessage.value = `${nextEffective} appearance saved.`
   } catch (error) {
     wikiStore.user.appearance = previousStoreAppearance
     await theme.change(resolveThemeName(previousAppearance, siteConfig.darkMode), false)
@@ -124,15 +127,12 @@ async function selectAppearance (next: Appearance): Promise<void> {
     gap: 2px;
   }
 
-  &__options {
-    justify-content: flex-start;
-    width: 100%;
+  &__toggle {
+    text-transform: none;
 
-    :deep(.v-btn) {
-      flex: 1 1 0;
-      min-width: 0;
-      padding-inline: var(--wiki-space-2);
-      text-transform: none;
+    .appearance-selector__toggle-note {
+      color: rgb(var(--v-theme-on-surface-variant));
+      font-size: .8125rem;
     }
   }
 
