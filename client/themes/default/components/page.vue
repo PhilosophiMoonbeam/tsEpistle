@@ -1135,7 +1135,7 @@ const PageTocTree = defineComponent({
             {
               class: ['page-toc-item-title', titleClass]
             },
-            node.title
+            [h('span', { class: 'page-toc-item-title-text' }, node.title)]
           )
         ]
       )
@@ -1145,7 +1145,7 @@ const PageTocTree = defineComponent({
         {
           class: 'page-toc-row',
           style: {
-            '--toc-indent': `${visualDepth * 14}px`
+            '--toc-indent': `${visualDepth * 10}px`
           }
         },
         [disclosureControl, link]
@@ -2934,6 +2934,32 @@ export default defineComponent({
         this.tocScrollBound = true
       }
     },
+    applyTocActiveMarquee (active: HTMLElement | null): void {
+      if (typeof window === 'undefined') return
+      const root = this.$el as HTMLElement
+      if (!root) return
+      for (const el of [...root.querySelectorAll<HTMLElement>('.page-toc-item-title--marquee')]) {
+        if (active && el.parentElement === active) continue
+        el.classList.remove('page-toc-item-title--marquee')
+        el.style.removeProperty('--toc-marquee-shift')
+        el.style.removeProperty('--toc-marquee-duration')
+      }
+      if (!active) return
+      const title = active.querySelector<HTMLElement>('.page-toc-item-title')
+      if (!title) return
+      const overflow = title.scrollWidth - title.clientWidth
+      if (overflow <= 2) return
+      const rtl = getComputedStyle(title).direction === 'rtl'
+      const desiredShift = `${rtl ? overflow : -overflow}px`
+      // Keep the running animation untouched when re-measured with the same
+      // values; re-adding the class would restart the oscillation.
+      if (title.classList.contains('page-toc-item-title--marquee')
+        && title.style.getPropertyValue('--toc-marquee-shift') === desiredShift) return
+      title.classList.add('page-toc-item-title--marquee')
+      title.style.setProperty('--toc-marquee-shift', desiredShift)
+      const duration = Math.min(8, Math.max(2.5, 2 + overflow / 24))
+      title.style.setProperty('--toc-marquee-duration', `${duration.toFixed(2)}s`)
+    },
     ensureActiveTocVisible(): void {
       if (this.tocUserScrollAt && performance.now() - this.tocUserScrollAt < 900) return
       if (this.tocRevealRafId !== null || !this.$el) return
@@ -2944,6 +2970,7 @@ export default defineComponent({
         const visible = (item: HTMLElement): boolean => item.getClientRects().length > 0
         let active = links.find(item => item.getAttribute('aria-current') === 'location' && visible(item))
         if (!active) active = links.find(item => item.classList.contains('page-toc-item--descendant-active') && visible(item))
+        this.applyTocActiveMarquee(active ?? null)
         if (!active) return
         const row = active.closest('.page-toc-row') as HTMLElement | null
         if (!row) return
@@ -4844,6 +4871,7 @@ export default defineComponent({
     min-height: 0;
     max-height: none;
     overflow-y: auto;
+    overflow-x: clip;
     overscroll-behavior: contain;
   }
 
@@ -4936,8 +4964,9 @@ export default defineComponent({
 .page-toc-content .page-toc-list {
   max-height: calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - max(var(--v-layout-bottom, 0px), var(--wiki-footer-height)) - var(--wiki-space-12));
   overflow-y: auto;
+  overflow-x: clip;
   overscroll-behavior: contain;
-  padding: var(--wiki-space-1) var(--wiki-space-2) var(--wiki-space-2);
+  padding: var(--wiki-space-1) var(--wiki-space-1) var(--wiki-space-2);
 }
 
 .page-toc-node {
@@ -5003,7 +5032,7 @@ export default defineComponent({
   flex: 1 1 auto;
   min-width: 0;
   min-height: calc(var(--wiki-control-height) - var(--wiki-space-2)) !important;
-  padding: 2px var(--wiki-space-2);
+  padding: 2px var(--wiki-space-1);
   border-inline-start: 2px solid transparent;
   border-radius: var(--wiki-radius-xs);
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
@@ -5068,7 +5097,36 @@ export default defineComponent({
   padding-inline: 0 !important;
   font-size: .8125rem;
   line-height: 1.4;
-  overflow-wrap: break-word;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+// Long active headings oscillate: the text starts clipped at its end, eases
+// left until the beginning is clipped, then eases back and repeats. Runs
+// unconditionally so the behavior does not depend on the reduced-motion
+// media query.
+// The animated span slides out of the clipped title box (whole box would
+// leave the highlight), so the oscillation targets an inner text span while
+// the title box itself stretches across the full highlight width; the clip
+// edge then coincides with the highlight's own left/right edges.
+.page-toc-item-title--marquee {
+  margin-inline: calc(var(--wiki-space-1) * -1);
+  padding-inline: var(--wiki-space-1) !important;
+  text-overflow: clip;
+}
+
+.page-toc-item-title--marquee .page-toc-item-title-text {
+  display: inline-block;
+  animation: page-toc-marquee var(--toc-marquee-duration, 4s) ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes page-toc-marquee {
+  0%, 32% { transform: translateX(0); }
+  62%, 84% { transform: translateX(var(--toc-marquee-shift, 0px)); }
+  100% { transform: translateX(0); }
 }
 
 .page-toc-item-title--depth-0 {
@@ -5545,6 +5603,7 @@ export default defineComponent({
     min-height: 0;
     max-height: none;
     overflow-y: auto;
+    overflow-x: clip;
     overscroll-behavior: contain;
   }
   .page-col-content:not(.is-page-header),
