@@ -149,7 +149,8 @@
             :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || connectionBlocked || !workspaceReady"
             @click="newSession"
           />
-          <v-btn class="inline-agent__close-action wiki-close-control" icon="mdi-close" variant="text" aria-label="Close chat panel" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('close')" />
+          <div class="inline-agent__actions-divider" aria-hidden="true" />
+          <v-btn class="inline-agent__close-action wiki-close-control" icon="mdi-close" variant="text" aria-label="Close chat panel" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : 'Close'" :disabled="memoryMutationBusy" @click="emit('close')" />
         </div>
       </v-toolbar>
 
@@ -1785,6 +1786,15 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   flex: 0 0 auto;
   align-items: center;
   gap: var(--wiki-space-1);
+}
+
+/* Vertical divider matching the left side's History/name separator. */
+.inline-agent__actions-divider {
+  order: 3;
+  align-self: stretch;
+  width: 1px;
+  margin-inline: var(--wiki-space-2);
+  background: var(--wiki-surface-border);
 }
 
 /* History replaces the old Wiki Search shortcut in the upper-left corner and
