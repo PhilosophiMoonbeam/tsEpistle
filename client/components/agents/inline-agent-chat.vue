@@ -1694,10 +1694,16 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   box-shadow: none;
   -webkit-backdrop-filter: var(--wiki-chrome-blur);
   backdrop-filter: var(--wiki-chrome-blur);
-  transition: background-color var(--wiki-motion-slow) var(--wiki-motion-ease);
+  transition:
+    background-color var(--wiki-motion-slow) var(--wiki-motion-ease),
+    padding-inline-start var(--wiki-motion-slow) var(--wiki-motion-ease);
 }
 .inline-agent--contextual .inline-agent__toolbar {
   background: var(--wiki-chrome-surface) !important;
+}
+/* Conversations panel open: the identity block slides flush against the panel. */
+.inline-agent--history .inline-agent__toolbar {
+  padding-inline-start: 0;
 }
 .inline-agent__toolbar :deep(.v-toolbar__content) {
   flex-wrap: inherit;
@@ -1794,6 +1800,47 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   margin-inline-end: var(--wiki-space-3);
   padding-inline-end: var(--wiki-space-3);
   border-inline-end: 1px solid var(--wiki-surface-border);
+  transition:
+    margin-inline-end var(--wiki-motion-fast) var(--wiki-motion-ease),
+    padding-inline-end var(--wiki-motion-fast) var(--wiki-motion-ease),
+    border-inline-end-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+
+/* With the Conversations panel open the History toggle collapses so the
+   avatar and conversation name slide left against the panel; closing the
+   panel lets the toggle slide back in. The button stays mounted so focus
+   restoration keeps working (visibility, not display, hides it). */
+.inline-agent--history .inline-agent__mobile-navigation {
+  margin-inline-end: 0;
+  padding-inline-end: 0;
+  border-inline-end-color: transparent;
+}
+
+.inline-agent--history .inline-agent__history-toggle {
+  width: 0;
+  min-width: 0 !important;
+  padding-inline: 0 !important;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.inline-agent__history-toggle {
+  transition:
+    width var(--wiki-motion-fast) var(--wiki-motion-ease),
+    min-width var(--wiki-motion-fast) var(--wiki-motion-ease),
+    padding-inline var(--wiki-motion-fast) var(--wiki-motion-ease),
+    opacity var(--wiki-motion-fast) var(--wiki-motion-ease),
+    visibility 0s linear 0s;
+}
+
+.inline-agent--history .inline-agent__history-toggle {
+  transition:
+    width var(--wiki-motion-fast) var(--wiki-motion-ease),
+    min-width var(--wiki-motion-fast) var(--wiki-motion-ease),
+    padding-inline var(--wiki-motion-fast) var(--wiki-motion-ease),
+    opacity var(--wiki-motion-fast) var(--wiki-motion-ease),
+    visibility 0s linear var(--wiki-motion-fast);
 }
 
 .inline-agent__panel-menu-item--compact {
