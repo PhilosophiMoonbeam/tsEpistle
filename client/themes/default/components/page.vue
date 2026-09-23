@@ -947,6 +947,7 @@ function decodePageAnchor (anchor: string): string {
 Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment) => {
   let linkCopy = document.createElement('button')
   linkCopy.textContent = i18next.t('page.copyCode', { ns: 'common' })
+  linkCopy.setAttribute('aria-label', i18next.t('page.copyCode', { ns: 'common' }))
 
   const clip = new ClipboardJS(linkCopy, {
     text: () => env.code || ''
@@ -954,10 +955,12 @@ Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment
 
   clip.on('success', () => {
     linkCopy.textContent = i18next.t('page.codeCopied', { ns: 'common' })
+    linkCopy.dataset.copyState = 'success'
     resetClipboardText()
   })
   clip.on('error', () => {
     linkCopy.textContent = i18next.t('page.copyCodeShortcut', { ns: 'common' })
+    linkCopy.dataset.copyState = 'error'
     resetClipboardText()
   })
 
@@ -966,6 +969,8 @@ Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment
   function resetClipboardText() {
     setTimeout(() => {
       linkCopy.textContent = i18next.t('page.copyCode', { ns: 'common' })
+      linkCopy.setAttribute('aria-label', i18next.t('page.copyCode', { ns: 'common' }))
+      linkCopy.removeAttribute('data-copy-state')
     }, 5000)
   }
 })

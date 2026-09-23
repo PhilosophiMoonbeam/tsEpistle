@@ -700,6 +700,92 @@
     }
   }
 
+  // ---------------------------------
+  // CODE BLOCK COPY BUTTON
+  // ---------------------------------
+  // Prism's toolbar plugin emits `<div class="toolbar">` after the `pre`
+  // inside the `.code-toolbar` wrapper it creates. Prism's own toolbar CSS is
+  // not loaded, so without these rules the copy button renders as a static
+  // full-width row below the block. Instead it floats inside the block's
+  // upper corner: small, out of the scroll flow, and tinted entirely through
+  // theme tokens so light/dark adapt automatically.
+  .code-toolbar {
+    position: relative;
+
+    > .toolbar {
+      position: absolute;
+      top: var(--wiki-space-2, .5rem);
+      inset-inline-end: var(--wiki-space-2, .5rem);
+      z-index: 4;
+      display: block;
+      opacity: .72;
+      transition: opacity .18s ease;
+
+      &:hover,
+      &:focus-within {
+        opacity: 1;
+      }
+    }
+
+    .toolbar-item {
+      display: inline-block;
+    }
+
+    .toolbar button {
+      position: relative;
+      overflow: hidden;
+      display: inline-flex;
+      align-items: center;
+      padding: .1875rem .55rem;
+      border: 1px solid var(--wiki-surface-border);
+      border-radius: var(--wiki-radius-xs, .375rem);
+      background: color-mix(in srgb, var(--wiki-surface-raised) 86%, transparent);
+      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+      font-family: var(--wiki-font-mono);
+      font-size: .6875rem;
+      font-weight: 600;
+      letter-spacing: .04em;
+      line-height: 1.45;
+      cursor: pointer;
+      appearance: none;
+      backdrop-filter: blur(3px);
+      transition: color .15s ease, border-color .15s ease, background .15s ease, box-shadow .15s ease;
+
+      &:hover,
+      &:focus-visible {
+        border-color: color-mix(in srgb, var(--wiki-accent-warm) 55%, var(--wiki-surface-border-strong));
+        color: var(--wiki-accent-ink);
+        background: color-mix(in srgb, var(--wiki-surface-raised) 94%, transparent);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
+        outline: none;
+      }
+
+      // Attractor: a soft accent sweep crossing the button roughly every 9s,
+      // idle the rest of the time. Kept unconditionally (site-owner wants
+      // ambient effects ungated) and kept subtle so it stays out of the way.
+      &::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 24%, transparent) 50%, transparent 60%);
+        transform: translateX(-130%);
+        animation: wiki-code-copy-shimmer 9s ease-in-out infinite;
+        pointer-events: none;
+      }
+
+      &[data-copy-state='success'] {
+        border-color: color-mix(in srgb, var(--wiki-purpose-success-edge, var(--wiki-accent-warm)) 60%, var(--wiki-surface-border-strong));
+        color: var(--wiki-purpose-success-ink, var(--wiki-accent-ink));
+      }
+
+      &[data-copy-state='error'] {
+        border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 55%, var(--wiki-surface-border-strong));
+        color: rgb(var(--v-theme-error));
+      }
+    }
+  }
+
   mark {
     &.pen-red {
       background-color: initial;
@@ -1588,6 +1674,10 @@
     color: #000;
     background-color: #FFF;
 
+    .code-toolbar > .toolbar {
+      display: none !important;
+    }
+
     pre,
     .prismjs,
     .table-container,
@@ -1934,4 +2024,10 @@
   .page-edit-shortcuts {
     display: none;
   }
+}
+
+// Soft accent sweep for the code-block copy button: crosses once, then idles.
+@keyframes wiki-code-copy-shimmer {
+  0%, 6% { transform: translateX(-130%); }
+  14%, 100% { transform: translateX(130%); }
 }
