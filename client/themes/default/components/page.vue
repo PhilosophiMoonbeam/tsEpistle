@@ -975,6 +975,91 @@ Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment
   }
 })
 
+// ---------------------------------------------------------------------------
+// Code-block copy button shimmer scheduler
+//
+// The attractor sweep is JS-scheduled so it can react to the reader: the
+// first time a code block is hovered the sweep fires immediately, then the
+// ambient randomized cadence resumes after a short pause. Never-hovered
+// blocks keep the ambient cadence from mount.
+// ---------------------------------------------------------------------------
+
+const COPY_SHIMMER_SWEEP_MS = 1_900
+const COPY_SHIMMER_RESUME_DELAY_MS = 3_000
+const COPY_SHIMMER_AMBIENT_MIN_MS = 9_000
+const COPY_SHIMMER_AMBIENT_MAX_MS = 18_000
+
+const copyShimmerStates = new WeakMap<HTMLElement, { timer?: number; everHovered: boolean }>()
+const copyShimmerWired = new WeakSet<HTMLElement>()
+
+const copyShimmerAmbientDelay = (): number => COPY_SHIMMER_AMBIENT_MIN_MS + Math.floor(Math.random() * (COPY_SHIMMER_AMBIENT_MAX_MS - COPY_SHIMMER_AMBIENT_MIN_MS))
+
+function triggerCopyShimmerSweep (toolbar: HTMLElement): void {
+  const button = toolbar.querySelector<HTMLButtonElement>('.toolbar button')
+  if (!button) return
+  button.classList.remove('wiki-copy-shimmer-run')
+  // Force a style flush so a sweep can restart from its beginning even if
+  // one was already mid-flight.
+  void button.offsetWidth
+  button.classList.add('wiki-copy-shimmer-run')
+  button.addEventListener('animationend', () => {
+    button.classList.remove('wiki-copy-shimmer-run')
+  }, { once: true })
+}
+
+function scheduleCopyShimmer (toolbar: HTMLElement, delayMs: number): void {
+  const state = copyShimmerStates.get(toolbar)
+  if (!state) return
+  if (state.timer !== undefined) clearTimeout(state.timer)
+  state.timer = window.setTimeout(() => {
+    const fresh = copyShimmerStates.get(toolbar)
+    if (!fresh || !toolbar.isConnected) return
+    triggerCopyShimmerSweep(toolbar)
+    scheduleCopyShimmer(toolbar, copyShimmerAmbientDelay())
+  }, delayMs)
+}
+
+function handleCopyToolbarFirstHover (toolbar: HTMLElement): void {
+  let state = copyShimmerStates.get(toolbar)
+  if (!state) {
+    state = { everHovered: false }
+    copyShimmerStates.set(toolbar, state)
+  }
+  state.everHovered = true
+  // Drop any pending ambient sweep: the hover sweep fires now and the
+  // randomized cadence only resumes after the sweep plus a short pause.
+  if (state.timer !== undefined) {
+    clearTimeout(state.timer)
+    state.timer = undefined
+  }
+  triggerCopyShimmerSweep(toolbar)
+  // The randomized cadence resumes only after the sweep has completed and
+  // the deliberate post-hover pause has elapsed.
+  scheduleCopyShimmer(toolbar, COPY_SHIMMER_SWEEP_MS + COPY_SHIMMER_RESUME_DELAY_MS + copyShimmerAmbientDelay())
+}
+
+function setupCodeCopyShimmer (container: HTMLElement): void {
+  for (const toolbar of container.querySelectorAll<HTMLElement>('.code-toolbar')) {
+    if (!copyShimmerStates.has(toolbar)) {
+      copyShimmerStates.set(toolbar, { everHovered: false })
+      scheduleCopyShimmer(toolbar, copyShimmerAmbientDelay())
+    }
+  }
+  if (copyShimmerWired.has(container)) return
+  copyShimmerWired.add(container)
+  container.addEventListener('mouseover', (event: MouseEvent) => {
+    const target = event.target instanceof Element ? event.target : null
+    if (!target) return
+    const toolbar = target.closest<HTMLElement>('.code-toolbar')
+    if (!toolbar || !container.contains(toolbar)) return
+    // Only genuine entries into the block, not movement between its children.
+    if (event.relatedTarget instanceof Node && toolbar.contains(event.relatedTarget)) return
+    const state = copyShimmerStates.get(toolbar)
+    if (!state || state.everHovered) return
+    handleCopyToolbarFirstHover(toolbar)
+  })
+}
+
 const PAGE_MERMAID_ERROR_CLASS = 'content-extension-diagram__error'
 const PAGE_MERMAID_ERROR_MESSAGE = 'Diagram could not be rendered locally. Its source remains available below.'
 const PAGE_MERMAID_LIMIT_NOTICE_CLASS = 'content-extension-diagram__limit-notice'
@@ -3023,6 +3108,7 @@ export default defineComponent({
         })
       const mermaidHosts = selectMermaidRenderHosts(mermaidCandidates)
       Prism.highlightAllUnder(container)
+      setupCodeCopyShimmer(container)
       void renderPageMermaidDiagrams(
         container,
         this.$vuetify.theme.current.dark ? 'dark' : 'default',
