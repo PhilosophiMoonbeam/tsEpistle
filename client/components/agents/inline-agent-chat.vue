@@ -1934,8 +1934,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   order: 4;
 }
 
+/* No extra inline-start margin: the divider's own margins keep the same
+   spacing rhythm as the other header controls on both mobile and desktop. */
 .inline-agent__close-action {
-  margin-inline-start: var(--wiki-space-2);
   /* Match the square icon-only controls in this header (Vuetify's icon
      button radius); the shared wiki-close-control class stays circular
      for its other usages. */
