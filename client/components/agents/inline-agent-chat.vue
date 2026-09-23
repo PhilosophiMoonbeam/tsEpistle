@@ -1484,6 +1484,20 @@ const handlePageHide = (): void => { agents.closeWorkspace() }
 const handlePageShow = (event: PageTransitionEvent): void => {
   if (event.persisted) void ensureInitialized({ forceFresh: true })
 }
+// A screen sleep/wake (or browser process restore) while the composer is focused
+// can drop the keyboard pan and shift the document, hiding the input behind the
+// keyboard again. Re-anchor the composer and the transcript once visible.
+const handleComposerWake = (): void => {
+  if (document.visibilityState !== 'visible' || !composerFocused.value) return
+  scheduleTranscriptReconcile()
+  void nextTick(() => {
+    const composerEl = inlineAgentRoot.value instanceof HTMLElement
+      ? inlineAgentRoot.value.querySelector<HTMLElement>('.inline-agent__composer')
+      : null
+    composerEl?.scrollIntoView({ block: 'end', behavior: 'auto' })
+  })
+}
+document.addEventListener('visibilitychange', handleComposerWake)
 watch(skillManagerOpen, (open, wasOpen) => {
   if (!open && wasOpen) void nextTick(() => composer.value?.focusSkillsTrigger())
 })
@@ -1570,6 +1584,7 @@ onMounted(() => {
   window.addEventListener('pagehide', handlePageHide)
   window.addEventListener('pageshow', handlePageShow)
   window.visualViewport?.addEventListener('resize', scheduleTranscriptReconcile)
+  document.addEventListener('visibilitychange', handleComposerWake)
   void ensureInitialized()
 })
 onBeforeUnmount(() => {
@@ -1592,6 +1607,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pagehide', handlePageHide)
   window.removeEventListener('pageshow', handlePageShow)
   window.visualViewport?.removeEventListener('resize', scheduleTranscriptReconcile)
+  document.removeEventListener('visibilitychange', handleComposerWake)
   agents.closeWorkspace()
 })
 defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scrollToLatest })
