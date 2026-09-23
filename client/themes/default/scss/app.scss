@@ -766,9 +766,9 @@
         outline: none;
       }
 
-      // Attractor: a soft accent sweep crossing the button roughly every 9s,
-      // idle the rest of the time. Kept unconditionally (site-owner wants
-      // ambient effects ungated) and kept subtle so it stays out of the way.
+      // Attractor: a soft accent sweep. Scheduled from page.vue so the first
+      // hover of a block fires it immediately and the ambient cadence resumes
+      // on a randomized timer afterwards; idle otherwise, kept out of the way.
       &::after {
         content: '';
         position: absolute;
@@ -776,8 +776,11 @@
         border-radius: inherit;
         background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 24%, transparent) 50%, transparent 60%);
         transform: translateX(-130%);
-        animation: wiki-code-copy-shimmer 13.5s ease-in-out infinite;
         pointer-events: none;
+      }
+
+      &.wiki-copy-shimmer-run::after {
+        animation: wiki-code-copy-shimmer-sweep 1.9s ease-in-out 1 both;
       }
 
       &[data-copy-state='success'] {
@@ -2032,9 +2035,9 @@
   }
 }
 
-// Soft accent sweep for the code-block copy button: crosses once (~1.9s),
-// then idles for the remainder of the 13.5s cycle.
-@keyframes wiki-code-copy-shimmer {
-  0%, 5% { transform: translateX(-130%); }
-  19%, 100% { transform: translateX(130%); }
+// Single attractor sweep for the code-block copy button; scheduling lives in
+// page.vue (first-hover trigger + randomized ambient cadence).
+@keyframes wiki-code-copy-shimmer-sweep {
+  from { transform: translateX(-130%); }
+  to { transform: translateX(130%); }
 }
