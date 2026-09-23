@@ -1323,7 +1323,7 @@ export default defineComponent({
       tocExpanded: initialWidth >= 1280,
       tocQuery: '',
       tocUserScrollAt: 0,
-      tocProgrammaticScrollUntil: 0,
+      tocProgrammaticScroll: null as { top: number; at: number } | null,
       tocScrollBound: false,
       expandedAnchors: new Set<string>(),
       collapsedByUser: new Set<string>(),
@@ -2918,14 +2918,22 @@ export default defineComponent({
       // active-section repositioning for a short grace period.
       if (!this.tocScrollBound) {
         list.addEventListener('scroll', () => {
-          if (performance.now() < this.tocProgrammaticScrollUntil) return
+          // Scroll events for programmatic repositioning can be dispatched well
+          // after the frame that applied the delta, so suppression cannot rely
+          // on a short time window: tag the exact scroll position we set and
+          // only treat the event as manual when it does not match it.
+          const programmatic = this.tocProgrammaticScroll
+          if (programmatic && performance.now() - programmatic.at < 1000 && Math.abs(list.scrollTop - programmatic.top) <= 2) return
+          // A small drift (e.g. scroll anchoring or scrollbar layout clamp) is
+          // not deliberate manual scrolling and must not trigger the grace.
+          if (programmatic && performance.now() - programmatic.at < 1000 && Math.abs(list.scrollTop - programmatic.top) < 8) return
           this.tocUserScrollAt = performance.now()
         }, { passive: true })
         this.tocScrollBound = true
       }
     },
     ensureActiveTocVisible(): void {
-      if (this.tocUserScrollAt && performance.now() - this.tocUserScrollAt < 1500) return
+      if (this.tocUserScrollAt && performance.now() - this.tocUserScrollAt < 900) return
       if (this.tocRevealRafId !== null || !this.$el) return
       this.tocRevealRafId = requestAnimationFrame(() => {
         this.tocRevealRafId = null
@@ -2961,8 +2969,9 @@ export default defineComponent({
           delta = rowBounds.bottom - viewportBottom
         }
         if (delta !== 0) {
-          this.tocProgrammaticScrollUntil = performance.now() + 250
-          list.scrollTop += delta
+          const target = list.scrollTop + delta
+          list.scrollTop = target
+          this.tocProgrammaticScroll = { top: target, at: performance.now() }
         }
       })
     },
