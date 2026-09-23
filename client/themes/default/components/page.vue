@@ -15,7 +15,7 @@
       tag='nav'
       color='surface'
       :mobile-breakpoint='1280'
-      :width='$vuetify.display.width >= 1280 ? 281.6 : 256'
+      :width='$vuetify.display.width >= 1280 ? 269.6 : 244'
       v-model='navigationOpen'
       :aria-label='$t(`common:sidebar.mainMenu`)'
       @update:model-value='navigationVisibilityChanged'
