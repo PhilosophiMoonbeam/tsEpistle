@@ -1060,6 +1060,128 @@ function setupCodeCopyShimmer (container: HTMLElement): void {
   })
 }
 
+// ---------------------------------------------------------------------------
+// Inline-code copy + shimmer attractor
+//
+// Backtick-enclosed chips (`:not(pre) > code`) become click-to-copy: clicking
+// anywhere on the chip copies its text, with a short success/error tint plus
+// an extra sweep as the interaction acknowledgment. The shimmer shares the
+// code-block copy button's cadence: the first hover fires the sweep
+// immediately, then the randomized ambient cadence resumes after the
+// post-hover pause.
+// ---------------------------------------------------------------------------
+
+const INLINE_COPY_FEEDBACK_MS = 1_400
+
+const inlineShimmerStates = new WeakMap<HTMLElement, { timer?: number; everHovered: boolean }>()
+const inlineCopyWired = new WeakSet<HTMLElement>()
+
+function isStandaloneInlineCode (element: Element | null): element is HTMLElement {
+  return element instanceof HTMLElement && !element.closest('pre') && !element.closest('.code-toolbar')
+}
+
+function triggerInlineShimmerSweep (codeEl: HTMLElement): void {
+  codeEl.classList.remove('wiki-inline-shimmer-run')
+  // Force a style flush so a sweep can restart from its beginning even if
+  // one was already mid-flight.
+  void codeEl.offsetWidth
+  codeEl.classList.add('wiki-inline-shimmer-run')
+  codeEl.addEventListener('animationend', () => {
+    codeEl.classList.remove('wiki-inline-shimmer-run')
+  }, { once: true })
+}
+
+function scheduleInlineShimmer (codeEl: HTMLElement, delayMs: number): void {
+  const state = inlineShimmerStates.get(codeEl)
+  if (!state) return
+  if (state.timer !== undefined) clearTimeout(state.timer)
+  state.timer = window.setTimeout(() => {
+    const fresh = inlineShimmerStates.get(codeEl)
+    if (!fresh || !codeEl.isConnected) return
+    triggerInlineShimmerSweep(codeEl)
+    scheduleInlineShimmer(codeEl, copyShimmerAmbientDelay())
+  }, delayMs)
+}
+
+function handleInlineCodeFirstHover (codeEl: HTMLElement): void {
+  const state = inlineShimmerStates.get(codeEl)
+  if (!state) return
+  state.everHovered = true
+  // Drop any pending ambient sweep: the hover sweep fires now and the
+  // randomized cadence only resumes after the sweep plus a short pause.
+  if (state.timer !== undefined) {
+    clearTimeout(state.timer)
+    state.timer = undefined
+  }
+  triggerInlineShimmerSweep(codeEl)
+  scheduleInlineShimmer(codeEl, COPY_SHIMMER_SWEEP_MS + COPY_SHIMMER_RESUME_DELAY_MS + copyShimmerAmbientDelay())
+}
+
+function setInlineCopyFeedback (codeEl: HTMLElement, state: 'success' | 'error'): void {
+  codeEl.dataset.inlineCopyState = state
+  window.setTimeout(() => {
+    if (codeEl.isConnected && codeEl.dataset.inlineCopyState === state) delete codeEl.dataset.inlineCopyState
+  }, INLINE_COPY_FEEDBACK_MS)
+}
+
+async function copyInlineCodeText (codeEl: HTMLElement): Promise<boolean> {
+  const text = codeEl.textContent || ''
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch { /* fall through to the legacy path */ }
+  // Legacy fallback for non-secure or permission-denied contexts.
+  const helper = codeEl.ownerDocument.createElement('textarea')
+  helper.value = text
+  helper.setAttribute('readonly', '')
+  helper.style.position = 'fixed'
+  helper.style.opacity = '0'
+  document.body.appendChild(helper)
+  helper.select()
+  let copied = false
+  try {
+    copied = document.execCommand('copy')
+  } catch { copied = false }
+  helper.remove()
+  return copied
+}
+
+function setupInlineCodeCopy (container: HTMLElement): void {
+  for (const codeEl of container.querySelectorAll<HTMLElement>('code')) {
+    if (!isStandaloneInlineCode(codeEl)) continue
+    if (inlineShimmerStates.has(codeEl)) continue
+    inlineShimmerStates.set(codeEl, { everHovered: false })
+    if (!codeEl.hasAttribute('title')) codeEl.setAttribute('title', i18next.t('page.copyCode', { ns: 'common' }))
+    scheduleInlineShimmer(codeEl, copyShimmerAmbientDelay())
+  }
+  if (inlineCopyWired.has(container)) return
+  inlineCopyWired.add(container)
+  container.addEventListener('mouseover', (event: MouseEvent) => {
+    const target = event.target instanceof Element ? event.target : null
+    if (!target) return
+    const codeEl = target.closest<HTMLElement>('code')
+    if (!isStandaloneInlineCode(codeEl) || !container.contains(codeEl)) return
+    // Only genuine entries into the chip, not movement between its children.
+    if (event.relatedTarget instanceof Node && codeEl.contains(event.relatedTarget)) return
+    const state = inlineShimmerStates.get(codeEl)
+    if (!state || state.everHovered) return
+    handleInlineCodeFirstHover(codeEl)
+  })
+  container.addEventListener('click', (event: MouseEvent) => {
+    const target = event.target instanceof Element ? event.target : null
+    if (!target) return
+    const codeEl = target.closest<HTMLElement>('code')
+    if (!isStandaloneInlineCode(codeEl) || !container.contains(codeEl)) return
+    void copyInlineCodeText(codeEl).then(copied => {
+      setInlineCopyFeedback(codeEl, copied ? 'success' : 'error')
+      // The attractor acknowledges the interaction with its own sweep.
+      triggerInlineShimmerSweep(codeEl)
+    })
+  })
+}
+
 const PAGE_MERMAID_ERROR_CLASS = 'content-extension-diagram__error'
 const PAGE_MERMAID_ERROR_MESSAGE = 'Diagram could not be rendered locally. Its source remains available below.'
 const PAGE_MERMAID_LIMIT_NOTICE_CLASS = 'content-extension-diagram__limit-notice'
@@ -3109,6 +3231,7 @@ export default defineComponent({
       const mermaidHosts = selectMermaidRenderHosts(mermaidCandidates)
       Prism.highlightAllUnder(container)
       setupCodeCopyShimmer(container)
+      setupInlineCodeCopy(container)
       void renderPageMermaidDiagrams(
         container,
         this.$vuetify.theme.current.dark ? 'dark' : 'default',
