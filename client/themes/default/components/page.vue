@@ -366,79 +366,103 @@
                       v-btn(icon, rounded='lg', v-bind='props', @click='print', :aria-label='$t(`common:page.printFormat`)')
                         v-icon mdi-printer
                     span {{$t('common:page.printFormat')}}
-              .page-tools-card__utilities.page-tools-card__utilities--menu(v-else)
-                v-menu(location='top', min-width='280')
+              //- Mobile mirrors the desktop utilities as an inline icon row so
+              //- Share/Print/etc. are one tap away instead of buried in a
+              //- second "Page actions" three-dot menu below the header's own.
+              .page-tools-card__utilities.page-tools-card__utilities--inline(v-else)
+                v-menu(location='top end', min-width='300')
                   template(v-slot:activator='{ props: menuProps }')
-                    v-btn.page-actions-menu-btn(
-                      block
+                    v-btn(
+                      icon
                       rounded='lg'
-                      variant='text'
+                      size='small'
                       v-bind='menuProps'
-                      :aria-label='$t(`common:header.pageActions`)'
+                      :aria-label='$t(`common:page.share`)'
+                    ): v-icon mdi-share-variant
+                  social-sharing(
+                    :url='pageUrl'
+                    :title='title'
+                    :description='description'
+                  )
+                v-btn(
+                  icon
+                  rounded='lg'
+                  size='small'
+                  v-if='isAuthenticated'
+                  :loading='pageWatchLoading'
+                  :disabled='pageWatchLoading || !pageOnlineActionReady || !pageWatchAuthorityReady'
+                  :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : !pageWatchAuthorityReady ? `Refresh page watch state before changing it.` : undefined'
+                  :aria-pressed='pageWatched'
+                  :aria-label='pageWatched ? $t(`common:page.stopWatchingPage`) : $t(`common:page.watchPage`)'
+                  @click='togglePageWatch'
+                )
+                  v-icon {{ pageWatched ? 'mdi-bell-ring' : 'mdi-bell-outline' }}
+                v-menu(v-if='pageWatched', location='top end', :close-on-content-click='false', min-width='260')
+                  template(v-slot:activator='{ props: menuProps }')
+                    v-btn(
+                      icon
+                      rounded='lg'
+                      size='small'
+                      v-bind='menuProps'
+                      :aria-label='$t(`common:page.watchSettings`)'
                     )
-                      v-icon(start, aria-hidden='true') mdi-dots-horizontal
-                      span {{$t('common:header.pageActions')}}
-                  v-list(density='compact', nav)
-                    v-menu(location='end', min-width='300')
-                      template(v-slot:activator='{ props: shareProps }')
-                        v-list-item(prepend-icon='mdi-share-variant', v-bind='shareProps', :title='$t(`common:page.share`)')
-                      social-sharing(
-                        :url='pageUrl'
-                        :title='title'
-                        :description='description'
+                      v-icon mdi-tune
+                  v-card
+                    v-card-title.text-body-large {{$t('common:page.watchSettings')}}
+                    v-card-text
+                      v-switch(
+                        v-model='pageWatchEmailEnabled'
+                        :label='$t(`common:page.emailNotifications`)'
+                        color='primary'
+                        density='compact'
+                        hide-details
+                        :disabled='pageWatchLoading || !pageWatchActionReady'
+                        :title='!pageWatchActionReady ? pageOnlineActionUnavailableReason || `Refresh page watch state before changing it.` : undefined'
+                        @update:model-value='savePageWatchSettings'
                       )
-                    v-list-item.page-actions-item(
-                      v-if='isAuthenticated'
-                      :prepend-icon='pageWatched ? `mdi-bell-ring` : `mdi-bell-outline`'
-                      :title='pageWatched ? $t(`common:page.stopWatchingPage`) : $t(`common:page.watchPage`)'
-                      :disabled='pageWatchLoading || !pageOnlineActionReady || !pageWatchAuthorityReady'
-                      :class='pageWatched ? `page-actions-item--active` : ``'
-                      @click='togglePageWatch'
-                    )
-                    v-menu(v-if='pageWatched', location='end', :close-on-content-click='false', min-width='260')
-                      template(v-slot:activator='{ props: watchProps }')
-                        v-list-item(prepend-icon='mdi-tune', v-bind='watchProps', :title='$t(`common:page.watchSettings`)')
-                      v-card
-                        v-card-text
-                          v-switch(
-                            v-model='pageWatchEmailEnabled'
-                            :label='$t(`common:page.emailNotifications`)'
-                            color='primary'
-                            density='compact'
-                            hide-details
-                            :disabled='pageWatchLoading || !pageWatchActionReady'
-                            @update:model-value='savePageWatchSettings'
-                          )
-                          v-switch(
-                            v-model='pageWatchInAppEnabled'
-                            :label='$t(`common:page.inAppNotifications`)'
-                            color='primary'
-                            density='compact'
-                            hide-details
-                            :disabled='pageWatchLoading || !pageWatchActionReady'
-                            @update:model-value='savePageWatchSettings'
-                          )
-                    v-list-item.page-actions-item(
-                      v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)'
-                      :prepend-icon='pageApproval ? `mdi-check-decagram` : `mdi-check-decagram-outline`'
-                      :title='$t(`common:page.approvalWorkflow`)'
-                      :disabled='!pageOnlineActionReady'
-                      :class='pageApproval ? `page-actions-item--active` : ``'
-                      @click='openApprovalWorkflow'
-                    )
-                    v-list-item.page-actions-item(
-                      v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)'
-                      :prepend-icon='pageProtection.protected ? `mdi-lock` : `mdi-lock-open-outline`'
-                      :title='$t(`common:page.pagePasswordProtection`)'
-                      :disabled='!pageProtectionActionReady || protectionInitialLoading'
-                      :class='pageProtection.protected ? `page-actions-item--active` : ``'
-                      @click='openPageProtection'
-                    )
-                    v-list-item.page-actions-item(
-                      :prepend-icon='`mdi-printer`'
-                      :title='$t(`common:page.printFormat`)'
-                      @click='print'
-                    )
+                      v-switch(
+                        v-model='pageWatchInAppEnabled'
+                        :label='$t(`common:page.inAppNotifications`)'
+                        color='primary'
+                        density='compact'
+                        hide-details
+                        :disabled='pageWatchLoading || !pageWatchActionReady'
+                        :title='!pageWatchActionReady ? pageOnlineActionUnavailableReason || `Refresh page watch state before changing it.` : undefined'
+                        @update:model-value='savePageWatchSettings'
+                      )
+                v-btn(
+                  icon
+                  rounded='lg'
+                  size='small'
+                  v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)'
+                  :disabled='!pageOnlineActionReady'
+                  :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : undefined'
+                  @click='openApprovalWorkflow'
+                  :aria-label='$t(`common:page.approvalWorkflow`)'
+                  :aria-pressed='Boolean(pageApproval)'
+                )
+                  v-icon {{ pageApproval ? 'mdi-check-decagram' : 'mdi-check-decagram-outline' }}
+                v-btn(
+                  icon
+                  rounded='lg'
+                  size='small'
+                  v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)'
+                  :disabled='!pageProtectionActionReady || protectionInitialLoading'
+                  :title='!pageProtectionActionReady ? pageOnlineActionUnavailableReason || `Refresh page protection before changing it.` : undefined'
+                  @click='openPageProtection'
+                  :aria-label='$t(`common:page.pagePasswordProtection`)'
+                  :aria-pressed='pageProtection.protected'
+                )
+                  v-icon {{ pageProtection.protected ? 'mdi-lock' : 'mdi-lock-open-outline' }}
+                v-btn(
+                  icon
+                  rounded='lg'
+                  size='small'
+                  v-bind='undefined'
+                  @click='print'
+                  :aria-label='$t(`common:page.printFormat`)'
+                )
+                  v-icon mdi-printer
               v-divider.page-tools-card__divider(v-if='updatedAt || hasAuthor || canViewHistory')
               .page-tools-card__provenance(v-if='updatedAt || hasAuthor || canViewHistory')
                 .page-document-provenance
@@ -5504,20 +5528,31 @@ export default defineComponent({
     }
   }
 
-  .page-actions-menu-btn {
-    width: 100% !important;
-    max-width: 100% !important;
-    min-height: 40px !important;
-    height: 40px !important;
-    flex: 1 1 100% !important;
-    justify-content: flex-start;
-    font-weight: 550;
-    letter-spacing: 0;
-  }
+  /* Mobile utilities: same icon row as desktop, sized for a narrow card.
+     Buttons distribute across the full row (first at the start, last at the
+     end, the rest evenly between) like the desktop rail toolbar. */
+  .page-tools-card__utilities--inline {
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    padding-inline: var(--wiki-space-1);
 
-  .page-actions-item--active {
-    .v-list-item__prepend .v-icon {
-      color: rgb(var(--v-theme-primary));
+    .v-btn--icon.v-btn--size-small {
+      width: 36px;
+      height: 36px;
+      min-width: 36px;
+      min-height: 36px;
+      border-radius: var(--wiki-control-radius, .75rem);
+      color: var(--wiki-accent-ink);
+
+      .v-icon {
+        font-size: 20px;
+      }
+
+      &[aria-pressed='true'] {
+        color: rgb(var(--v-theme-primary));
+      }
     }
   }
 
