@@ -1679,24 +1679,16 @@ export default defineComponent({
       transform: none;
     }
   }
-  // Agent + Edit share the transparent square chrome of the other header
-  // controls (.nav-header-inner .v-btn above); only their hover/focus cast
-  // differs, tinted by each control's own fixed icon accent instead of the
-  // ambient accent ink.
+  // Agent + Edit share the transparent square chrome AND the standard theme
+  // hover cast of the other header controls (.nav-header-inner .v-btn above);
+  // only their border tint follows each control's own fixed icon accent.
   .nav-header-inner .nav-header-agent:hover,
   .nav-header-inner .nav-header-agent:focus-visible {
     border-color: color-mix(in srgb, var(--nav-header-agent-icon-color) 48%, transparent) !important;
-    background: color-mix(in srgb, var(--nav-header-agent-icon-color) 12%, transparent) !important;
   }
   .nav-header-inner .nav-header-edit-btn:hover,
   .nav-header-inner .nav-header-edit-btn:focus-visible {
     border-color: color-mix(in srgb, var(--nav-header-edit-icon-color) 48%, transparent) !important;
-    background: color-mix(in srgb, var(--nav-header-edit-icon-color) 12%, transparent) !important;
-  }
-  // Silence the Vuetify overlay so the cast stays purely icon-colored.
-  .nav-header-inner .nav-header-agent .v-btn__overlay,
-  .nav-header-inner .nav-header-edit-btn .v-btn__overlay {
-    background: transparent !important;
   }
 
   .nav-header-inner .nav-header-agent .v-icon,
