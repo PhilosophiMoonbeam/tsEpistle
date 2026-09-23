@@ -2733,9 +2733,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     display: flex;
     align-items: center;
     gap: 0;
-    margin-inline-end: .4rem;
-    padding: 0;
-    border: 0;
+    /* Keep the History divider on mobile; spacing shrinks to the mobile rhythm. */
+    margin-inline-end: var(--wiki-space-2);
+    padding-inline-end: var(--wiki-space-2);
+    border-inline-end: 1px solid var(--wiki-surface-border);
   }
 
   .inline-agent__history-toggle,
