@@ -94,21 +94,6 @@
             </template>
             <v-list density="compact">
               <v-list-item
-                class="inline-agent__panel-menu-item inline-agent__panel-menu-item--compact"
-                link
-                prepend-icon="mdi-magnify"
-                title="Return to Wiki Search"
-                @click="emit('return-search')"
-              />
-              <v-list-item
-                class="inline-agent__panel-menu-item inline-agent__panel-menu-item--compact"
-                link
-                prepend-icon="mdi-history"
-                title="Conversation history"
-                :disabled="memoryMutationBusy && memoryOpen && panelMode !== 'wide'"
-                @click="toggleHistory"
-              />
-              <v-list-item
                 class="inline-agent__panel-menu-item"
                 link
                 prepend-icon="mdi-brain"
@@ -582,7 +567,6 @@ const props = defineProps<{
   pageUpdatedAt: string
 }>()
 const emit = defineEmits<{
-  (event: 'return-search'): void
   (event: 'close'): void
 }>()
 const welcomeGreeting = welcomeGreetings[Math.floor(Math.random() * welcomeGreetings.length)] ?? welcomeGreetings[0]
@@ -1852,10 +1836,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     visibility 0s linear var(--wiki-motion-fast);
 }
 
-.inline-agent__panel-menu-item--compact {
-  display: none !important;
-}
-
 .inline-agent__panel-menu-item {
   min-block-size: 44px;
   justify-content: flex-start;
@@ -2668,7 +2648,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 @container agent-workspace (max-width: 780px) {
   .inline-agent__panel-actions > .inline-agent__new-session { order: 1; }
   .inline-agent__panel-actions > .inline-agent__more-menu { order: 2; }
-  .inline-agent__panel-menu-item--compact { display: flex !important; }
   .inline-agent__session-action { min-width: var(--wiki-control-height); padding-inline: var(--wiki-space-2); }
   .inline-agent__session-action :deep(.v-btn__prepend) { margin: 0; }
   .inline-agent__notice { display: none; }
@@ -2684,10 +2663,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
   .inline-agent__eyebrow {
     display: none;
-  }
-
-  .inline-agent__panel-menu-item--compact {
-    display: flex !important;
   }
 
   .inline-agent__panel-actions {
@@ -2737,12 +2712,17 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
   .inline-agent__history-toggle,
   .inline-agent__close-action {
+    width: 2.25rem !important;
     min-width: 2.25rem !important;
     min-height: var(--wiki-control-height) !important;
   }
 
   .inline-agent__history-toggle {
-    padding-inline: var(--wiki-space-2) !important;
+    padding-inline: 0 !important;
+  }
+
+  .inline-agent__actions-divider {
+    margin-inline: var(--wiki-space-1);
   }
 
   .inline-agent__toolbar {
@@ -2774,10 +2754,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     gap: .25rem;
   }
   .inline-agent__avatar { width: 28px !important; height: 28px !important; }
-
-  .inline-agent__panel-menu-item--compact {
-    display: flex !important;
-  }
 
   .inline-agent__panel-actions {
     flex: 0 0 auto;
