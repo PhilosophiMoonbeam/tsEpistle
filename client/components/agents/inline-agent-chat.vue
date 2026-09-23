@@ -55,9 +55,10 @@
             />
           </div>
           <div class="inline-agent__identity">
-            <v-avatar class="inline-agent__avatar" color="primary" size="38" variant="tonal">
+            <span class="inline-agent__agent-mark" aria-hidden="true">
               <v-icon icon="mdi-creation-outline" size="20" aria-hidden="true" />
-            </v-avatar>
+              <ControlBorderBeam :enabled="true" :phase-offset-ms="0" />
+            </span>
             <div class="inline-agent__heading">
               <h2 :id="workspaceTitleId" aria-label="Wiki Agent">Wiki Agent</h2>
               <div class="inline-agent__session-line">
@@ -529,6 +530,8 @@ import { emptyAgentDraft, type AgentDraft, type AgentSearchScope } from '../../h
 import type { WikiSource } from '../../../shared/wiki-source.ts'
 import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './agent-thread-presentation.ts'
 import { activeOwnedOverlayRoots, createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
+// Wiki header Agent-button border beam, shared for workspace continuity.
+import ControlBorderBeam from '../common/control-border-beam.vue'
 
 const welcomeGreetings = [
   { first: 'Pipeline looks healthy.', second: 'Budget feels nervous.' },
@@ -1626,6 +1629,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 <style scoped>
 .inline-agent {
+  /* Shared with the Wiki header Agent button (.nav-header-agent): same fixed
+     Capri spark accent so the header entry point and the workspace header
+     identity mark read as one continuous control family. */
+  --inline-agent-spark-color: #00bfff;
   --agent-conversation-width: 49rem;
   --inline-agent-workspace-base: color-mix(in srgb, var(--wiki-surface-raised) 76%, rgb(var(--v-theme-background)));
   position: relative;
@@ -1738,11 +1745,47 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   gap: var(--wiki-space-3);
 }
 
-.inline-agent__avatar {
+.inline-agent__agent-mark {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
   flex: 0 0 auto;
-  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
-  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised)) !important;
-  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent);
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 72%, transparent);
+  /* The beam sweeping the mark mirrors the Wiki header Agent button: the
+     global warm/spectral palette is overridden with the shared Capri accent. */
+  --wiki-beam-violet: var(--inline-agent-spark-color);
+  --wiki-beam-cool: color-mix(in srgb, var(--inline-agent-spark-color) 62%, white);
+
+  > .v-icon {
+    color: var(--inline-agent-spark-color) !important;
+    animation: inline-agent-spark-shimmer 7s ease-in-out infinite;
+  }
+}
+
+/* Periodic sparkle, matching the header button's cadence: the spark rests for
+   most of each 7s cycle, then glows and brightens briefly before settling. */
+@keyframes inline-agent-spark-shimmer {
+  0%, 84%, 100% {
+    filter: none;
+    opacity: 1;
+  }
+  88% {
+    filter: brightness(1.35) drop-shadow(0 0 7px color-mix(in srgb, var(--inline-agent-spark-color) 70%, transparent));
+    opacity: 1;
+  }
+  91% {
+    opacity: .6;
+  }
+  95% {
+    filter: brightness(1.15) drop-shadow(0 0 3px color-mix(in srgb, var(--inline-agent-spark-color) 45%, transparent));
+    opacity: 1;
+  }
 }
 
 .inline-agent__heading {
@@ -2782,7 +2825,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     overflow: hidden;
     gap: .25rem;
   }
-  .inline-agent__avatar { width: 28px !important; height: 28px !important; }
+  .inline-agent__agent-mark { width: 28px; height: 28px; }
 
   .inline-agent__panel-actions {
     flex: 0 0 auto;

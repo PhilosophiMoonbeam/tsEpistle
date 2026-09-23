@@ -963,7 +963,7 @@ describe('Inline Agent workspace actions', () => {
     ])
     expect(mounted.root.querySelector('.inline-agent__welcome-mark')).toBeNull()
     expect(mounted.root.querySelector('.inline-agent__welcome-index')).toBeNull()
-    expect(mounted.root.querySelector('.inline-agent__avatar .mdi-creation-outline')).not.toBeNull()
+    expect(mounted.root.querySelector('.inline-agent__agent-mark .mdi-creation-outline')).not.toBeNull()
     expect(starters.every(starter => !starter.querySelector('.inline-agent__starter-arrow'))).toBe(true)
   })
   it('keeps the selected two-line greeting stable for one visit', async () => {
