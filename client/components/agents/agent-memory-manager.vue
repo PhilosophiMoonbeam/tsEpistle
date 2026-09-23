@@ -1,6 +1,17 @@
 <template>
   <v-card class="agent-memory" elevation="0" rounded="xl" :aria-busy="loading || Boolean(actionBusy)">
     <AgentPanelHeader ref="memoryHeading" title="Agent memory" icon="mdi-brain" close-label="Close agent memory" :heading-id="headingId" :description-id="descriptionId" :busy="Boolean(actionBusy)" @close="requestClose">
+      <template #actions>
+        <v-btn
+          class="agent-memory__clear"
+          icon="mdi-delete-sweep-outline"
+          variant="text"
+          aria-label="Clear all memory"
+          title="Clear all memory"
+          :disabled="Boolean(clearMemoryDisabledReason) || Boolean(actionBusy) || networkBlocked"
+          @click="beginClear($event)"
+        />
+      </template>
       <p class="agent-memory__intro">Preferences and facts carried into your conversations.</p>
       <span v-if="loaded" class="agent-memory__count" role="status" aria-live="polite" aria-atomic="true">{{ memoryCountLabel }}</span>
     </AgentPanelHeader>
@@ -140,16 +151,6 @@
     </v-card-text>
 
     <v-divider />
-    <v-card-actions class="agent-memory__footer">
-      <v-menu content-class="agent-owned-overlay" location="top start">
-        <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" icon="mdi-dots-horizontal" variant="text" aria-label="Memory options" :disabled="Boolean(actionBusy)" /></template>
-        <v-list density="compact"><v-list-item link prepend-icon="mdi-delete-sweep-outline" title="Clear all memory" :disabled="Boolean(clearMemoryDisabledReason) || Boolean(actionBusy) || networkBlocked" :subtitle="networkBlocked ? networkRequiredMessage : undefined" @click="beginClear($event)" /></v-list>
-      </v-menu>
-      <v-spacer />
-      <v-btn color="primary" prepend-icon="mdi-plus" variant="flat" :disabled="!canAddMemory || Boolean(actionBusy)" :title="addMemoryDisabledReason" @click="beginAdd()">
-        Add memory
-      </v-btn>
-    </v-card-actions>
   </v-card>
 
   <v-dialog content-class="agent-owned-overlay" :model-value="open && Boolean(removing)" max-width="30rem" :persistent="open && actionBusy === 'remove'" :aria-labelledby="removeDialogTitleId" :aria-describedby="removeDialogDescriptionId" @update:model-value="value => { if (open && !value && actionBusy !== 'remove') cancelRemove() }">
@@ -915,7 +916,6 @@ onBeforeUnmount(() => {
 }
 
 .agent-memory__entry-actions .v-btn,
-.agent-memory__footer .v-btn,
 .agent-memory__editor-actions .v-btn {
   min-height: var(--wiki-control-height);
   border-radius: var(--wiki-control-radius);
@@ -950,14 +950,6 @@ onBeforeUnmount(() => {
 .agent-memory__safety > .v-icon {
   flex: 0 0 auto;
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
-}
-
-.agent-memory__footer {
-  justify-content: space-between;
-  flex: 0 0 auto;
-  gap: var(--wiki-space-2);
-  padding: var(--wiki-space-3) var(--wiki-space-4);
-  background: var(--wiki-surface-raised);
 }
 
 .agent-memory__dialog {
@@ -1003,8 +995,7 @@ onBeforeUnmount(() => {
     border-radius: 0 !important;
   }
 
-  .agent-memory__body,
-  .agent-memory__footer {
+  .agent-memory__body {
     padding-inline: var(--wiki-space-4) !important;
   }
 
@@ -1036,14 +1027,6 @@ onBeforeUnmount(() => {
 
   .agent-memory__shortcut {
     width: 100%;
-  }
-
-  .agent-memory__footer {
-    flex-wrap: wrap;
-  }
-
-  .agent-memory__footer .v-spacer {
-    display: none;
   }
 
 

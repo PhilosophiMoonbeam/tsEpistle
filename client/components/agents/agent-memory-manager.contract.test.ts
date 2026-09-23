@@ -160,7 +160,7 @@ const mountManager = async () => {
     host.remove()
   })
 
-  const addMemory = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.includes('Add memory'))
+  const addMemory = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.includes('Add detail'))
   if (!addMemory) throw new Error('The mounted memory manager did not expose its add action')
   addMemory.click()
   await settle()
