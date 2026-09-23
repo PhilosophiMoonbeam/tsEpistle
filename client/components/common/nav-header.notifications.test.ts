@@ -335,6 +335,13 @@ const bundle = await Bun.build({
               loader: 'js'
             }
           }
+          if (args.path.endsWith('account-offline-summary.vue')) {
+            return {
+              contents:
+                "import { defineComponent, h } from 'vue'; export default defineComponent({ name: 'AccountOfflineSummaryStub', setup: () => () => h('section', { class: 'account-offline-summary' }, [h('a', { class: 'account-offline-summary__manage', href: '/p/offline', 'aria-label': 'Manage offline access' })]) })",
+              loader: 'js'
+            }
+          }
           if (args.path.endsWith('/control-border-beam.vue')) {
             return {
               contents: "import { defineComponent } from 'vue'; export default defineComponent({ name: 'ControlBorderBeamStub', setup: () => () => null })",
@@ -624,13 +631,18 @@ describe('account menu containment', () => {
     const preferences = mounted.host.querySelector('.account-menu__preferences')
     const logoutForm = mounted.host.querySelector('form[action="/logout"][method="post"]')
 
+    const offlineManage = mounted.host.querySelector('.account-offline-summary__manage')
+
     expect(accountMenus).toHaveLength(1)
-    expect(offlinePanels).toHaveLength(1)
+    expect(offlinePanels).toHaveLength(0)
     expect(accountMenu?.getAttribute('aria-label')).toBe('Account menu')
     expect(profileLink?.closest('.account-menu')).toBe(accountMenu)
-    expect(offlinePanel?.closest('.account-menu')).toBe(accountMenu)
-    expect(offlinePanel?.getAttribute('href')).toBe('/p/offline')
-    expect(offlinePanel?.getAttribute('aria-label')).toBe('Connection and offline access')
+    expect(offlineManage?.closest('.account-menu')).toBe(accountMenu)
+    expect(offlineManage?.getAttribute('href')).toBe('/p/offline')
+    expect(mounted.host.querySelector('.account-menu__tabs')).not.toBeNull()
+    expect(mounted.host.querySelectorAll('.account-menu__tab')).toHaveLength(3)
+    expect(mounted.host.querySelectorAll('.account-menu__tab--active')).toHaveLength(1)
+    expect(mounted.host.querySelector('.account-offline-summary')).not.toBeNull()
     expect(mounted.host.querySelector('.pwa-status-panel')).toBeNull()
     expect(notifications?.closest('.account-menu')).toBe(accountMenu)
     expect(preferences?.closest('.account-menu')).toBe(accountMenu)
