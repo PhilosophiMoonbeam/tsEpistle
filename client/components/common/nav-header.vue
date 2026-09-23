@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-app-bar.nav-header(:height='dense ? 56 : 64', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', style='backdrop-filter: var(--wiki-chrome-blur);')
+  v-app-bar.nav-header(:height='dense ? 48 : 52', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', :style='{ "--v-toolbar-height": dense ? \'48px\' : \'52px\', "backdrop-filter": "var(--wiki-chrome-blur)" }')
     template(v-slot:extension)
       v-toolbar.nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search', flat, style='backdrop-filter: var(--wiki-chrome-blur);')
         v-text-field.nav-header-search-control(
@@ -1549,7 +1549,7 @@ export default defineComponent({
     max-width: 34rem;
 
     .v-field {
-      min-height: var(--wiki-control-height);
+      min-height: var(--wiki-search-field-height, 2.25rem);
       overflow: hidden;
       border: 1px solid var(--wiki-glass-border, var(--wiki-surface-border-strong));
       border-radius: var(--wiki-control-radius);
@@ -1571,7 +1571,7 @@ export default defineComponent({
     }
 
     .v-field__input {
-      min-height: var(--wiki-control-height);
+      min-height: var(--wiki-search-field-height, 2.25rem);
       padding-block: 0;
       font-size: .875rem;
       font-weight: 560;
@@ -1579,8 +1579,13 @@ export default defineComponent({
       opacity: 1 !important;
     }
 
-    .v-field__input input {
+    /* Vuetify puts .v-field__input ON the native input here, so the text row
+       needs the height on the input itself: a full-height line box makes the
+       text caret span the whole field instead of hovering mid-field with dead
+       space above and below. */
+    input.v-field__input {
       opacity: 1 !important;
+      line-height: var(--wiki-search-field-height, 2.25rem);
     }
 
     .v-field__prepend-inner {

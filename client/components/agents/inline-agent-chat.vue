@@ -38,7 +38,7 @@
     </div>
 
     <v-card class="inline-agent__card" elevation="0">
-      <v-toolbar class="inline-agent__toolbar" color="transparent" density="comfortable" tag="header">
+      <v-toolbar class="inline-agent__toolbar" color="transparent" density="compact" tag="header">
         <div class="inline-agent__toolbar-main">
           <div class="inline-agent__mobile-navigation">
             <v-btn
@@ -1699,8 +1699,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__toolbar {
   display: flex;
-  /* Matches the main wiki header height (64px = control height + space-5). */
-  min-height: calc(var(--wiki-control-height) + var(--wiki-space-5));
+  /* Matches the main wiki header height (shared chrome-height token). */
+  min-height: var(--wiki-chrome-height, 3.25rem);
   flex: 0 0 auto;
   flex-wrap: wrap;
   align-content: center;
@@ -1840,6 +1840,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   flex: 0 0 auto;
   align-items: center;
   gap: var(--wiki-space-1);
+}
+
+/* Toolbar buttons ride the control height so the chrome bar can stay at the
+   shared --wiki-chrome-height without the default 48px icon buttons forcing
+   it taller than the main Wiki header. */
+.inline-agent__toolbar :deep(.v-btn) {
+  height: var(--wiki-control-height, 2.75rem);
 }
 
 /* Vertical divider matching the left side's History/name separator. */
@@ -2000,7 +2007,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__progress {
   position: absolute;
   z-index: 3;
-  inset-block-start: calc(var(--wiki-control-height) + var(--wiki-space-6) - var(--wiki-space-1));
+  inset-block-start: calc(var(--wiki-chrome-height, 3.25rem) + var(--wiki-space-1));
   inset-inline: 0;
   pointer-events: none;
 }
