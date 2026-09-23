@@ -361,7 +361,12 @@ export function trackPageOutline(
 
     let anchor = navigationAnchor ?? ''
     if (anchor === '') {
-      const index = activeOutlineIndex(activationPositions, window.scrollY)
+      let index = activeOutlineIndex(activationPositions, window.scrollY)
+      // Before the first heading reaches its activation threshold the outline
+      // has no active entry yet. As soon as the article is on screen the first
+      // section is the honest highlight, so scrolling up never drops the
+      // active row before it snaps back in.
+      if (index === -1 && headings.length > 0 && window.scrollY + viewportHeight > articleTop) index = 0
       anchor = headings[index]?.anchor ?? ''
     }
     if (anchor !== lastAnchor) {
