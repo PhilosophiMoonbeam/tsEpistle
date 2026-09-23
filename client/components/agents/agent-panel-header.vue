@@ -13,7 +13,8 @@ defineProps<{ title: string; icon: string; closeLabel: string; headingId: string
 const emit = defineEmits<{ close: [] }>()
 </script>
 <style scoped>
-.agent-panel-header { flex: 0 0 auto; padding: 1.25rem 1.25rem 1rem; border-bottom: 1px solid var(--wiki-surface-border); outline: none; }
+/* Top padding centers the title row with the agent header controls (64px toolbar). */
+.agent-panel-header { flex: 0 0 auto; padding: .5rem 1.25rem 1rem; border-bottom: 1px solid var(--wiki-surface-border); outline: none; }
 .agent-panel-header:focus-visible { box-shadow: inset var(--wiki-focus-ring); }
 .agent-panel-header__title-row { display: flex; align-items: center; gap: .6rem; }
 /* The panel close button mirrors the agent header's close control: square,

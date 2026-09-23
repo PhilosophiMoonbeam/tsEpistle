@@ -1811,9 +1811,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
    panel lets the toggle slide back in. The button stays mounted so focus
    restoration keeps working (visibility, not display, hides it). */
 .inline-agent--history .inline-agent__mobile-navigation {
-  margin-inline-end: 0;
+  margin-inline-end: var(--wiki-space-3);
   padding-inline-end: 0;
-  border-inline-end-color: transparent;
 }
 
 .inline-agent--history .inline-agent__history-toggle {
