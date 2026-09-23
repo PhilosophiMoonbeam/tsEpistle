@@ -694,7 +694,11 @@ export default defineComponent({
 }
 
 .nav-sidebar-switcher {
-  min-height: calc(var(--wiki-control-height) + (var(--wiki-space-3) * 2));
+  // Switcher controls are ~20% shorter than the standard control height; the
+  // Home button and the Main Menu / Browse modes container share the same
+  // overall height so the two mode buttons sit slightly smaller inside it.
+  --nav-switcher-control: 2.625rem;
+  min-height: calc(var(--nav-switcher-control) + (var(--wiki-space-3) * 2));
   align-items: center;
   padding: var(--wiki-space-3);
   background:
@@ -705,7 +709,7 @@ export default defineComponent({
     );
 
   .v-btn {
-    min-height: var(--wiki-control-height);
+    min-height: var(--nav-switcher-control);
     border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 16%, transparent);
     border-radius: var(--wiki-control-radius);
     font-weight: 650;
@@ -727,14 +731,14 @@ export default defineComponent({
   }
 
   .nav-sidebar-home {
-    flex: 0 0 var(--wiki-control-height);
-    width: var(--wiki-control-height);
-    min-width: var(--wiki-control-height);
+    flex: 0 0 var(--nav-switcher-control);
+    width: var(--nav-switcher-control);
+    min-width: var(--nav-switcher-control);
     padding: 0;
   }
   .nav-sidebar-home:not(.nav-sidebar-home--static) {
-    height: calc(var(--wiki-control-height) + var(--wiki-space-2));
-    min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
+    height: var(--nav-switcher-control);
+    min-height: var(--nav-switcher-control);
     position: relative;
     border-color: transparent !important;
     background: transparent !important;
@@ -808,7 +812,8 @@ export default defineComponent({
     display: flex;
     flex: 1 1 auto;
     min-width: 0;
-    min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
+    min-height: var(--nav-switcher-control);
+    height: var(--nav-switcher-control);
     gap: var(--wiki-space-1);
     margin-inline-start: var(--wiki-space-2);
     align-items: stretch;
@@ -826,7 +831,9 @@ export default defineComponent({
     flex: 1 1 0;
     min-width: 0;
     height: auto;
-    min-height: 0;
+    // Fill the container's inset ring: container height minus its 3px
+    // padding and 1px border on each side, so the sunken box stays visible.
+    min-height: calc(var(--nav-switcher-control) - 8px);
     padding: var(--wiki-space-1) var(--wiki-space-2);
     border: 1px solid var(--wiki-surface-border);
     border-radius: calc(var(--wiki-control-radius) - 3px);
