@@ -3953,13 +3953,19 @@ export default defineComponent({
 
       let railRect = railEl.getBoundingClientRect()
       if (window.scrollY <= 1 && (isResize || this.railAlignmentDirty)) {
-        const titleEl = this.getPageTitleElement()
-        const titleRect = titleEl?.getBoundingClientRect()
-        if (titleRect && titleRect.height > 0 && railRect.height > 0) {
+        const heroEl = this.getPageHeaderElement()
+        const toolsEl = railEl.querySelector('.page-tools-card')
+        const heroRect = heroEl?.getBoundingClientRect()
+        const toolsRect = toolsEl?.getBoundingClientRect()
+        if (heroRect && toolsRect && toolsRect.height > 0 && railRect.height > 0) {
           const inlineOffset = parseFloat(railEl.style.getPropertyValue('--page-desktop-rail-align-offset'))
           const currentOffset = this.lastRailAlignmentOffset ?? (Number.isFinite(inlineOffset) ? inlineOffset : 0)
-          const titleMidpoint = titleRect.top + titleRect.height / 2
-          const nextOffset = currentOffset + titleMidpoint - railRect.top
+          // The seam between the utilities/metadata card and the page contents
+          // card rests on the boundary between the page header (hero) and the
+          // page reader area. The card gap is space-4, so the seam midpoint
+          // sits railSpacingGap (space-2) below the utilities card bottom.
+          const currentSeam = toolsRect.bottom + this.railSpacingGap
+          const nextOffset = currentOffset + heroRect.bottom - currentSeam
           if (Number.isFinite(nextOffset)) {
             if (this.lastRailAlignmentOffset === null || Math.abs(nextOffset - currentOffset) >= 0.25) {
               this.lastRailAlignmentOffset = nextOffset
