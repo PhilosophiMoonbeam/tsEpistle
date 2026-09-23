@@ -714,10 +714,11 @@
 
     > .toolbar {
       position: absolute;
-      top: var(--wiki-space-2, .5rem);
-      inset-inline-end: var(--wiki-space-2, .5rem);
+      top: 0;
+      inset-inline-end: 0;
       z-index: 4;
       display: block;
+      line-height: 0;
       opacity: .72;
       transition: opacity .18s ease;
 
@@ -736,27 +737,32 @@
       overflow: hidden;
       display: inline-flex;
       align-items: center;
-      padding: .1875rem .55rem;
-      border: 1px solid var(--wiki-surface-border);
-      border-radius: var(--wiki-radius-xs, .375rem);
-      background: color-mix(in srgb, var(--wiki-surface-raised) 86%, transparent);
-      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+      padding: .25rem .625rem;
+      // Attached-tab silhouette: flush against the block's top-inline corner.
+      // The outer corner radius matches the block's own radius (minus its 1px
+      // border) so the button reads as part of the block boundary rather than
+      // a separate floating pill; the two inner edges carry a hairline seam.
+      border: 0;
+      border-start-end-radius: calc(var(--wiki-panel-radius, 1rem) - 1px);
+      border-end-start-radius: var(--wiki-radius-sm, .75rem);
+      background: color-mix(in srgb, var(--wiki-surface-raised) 88%, transparent);
+      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
       font-family: var(--wiki-font-mono);
-      font-size: .6875rem;
+      font-size: .75rem;
       font-weight: 600;
-      letter-spacing: .04em;
-      line-height: 1.45;
+      letter-spacing: .05em;
+      line-height: 1.5;
       cursor: pointer;
       appearance: none;
       backdrop-filter: blur(3px);
-      transition: color .15s ease, border-color .15s ease, background .15s ease, box-shadow .15s ease;
+      box-shadow: inset 1px 0 0 var(--wiki-surface-border), inset 0 -1px 0 var(--wiki-surface-border);
+      transition: color .15s ease, background .15s ease, box-shadow .15s ease;
 
       &:hover,
       &:focus-visible {
-        border-color: color-mix(in srgb, var(--wiki-accent-warm) 55%, var(--wiki-surface-border-strong));
         color: var(--wiki-accent-ink);
-        background: color-mix(in srgb, var(--wiki-surface-raised) 94%, transparent);
-        box-shadow: 0 0 0 3px color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
+        background: color-mix(in srgb, var(--wiki-accent-warm) 14%, var(--wiki-surface-raised) 86%);
+        box-shadow: inset 1px 0 0 color-mix(in srgb, var(--wiki-accent-warm) 45%, var(--wiki-surface-border-strong)), inset 0 -1px 0 color-mix(in srgb, var(--wiki-accent-warm) 45%, var(--wiki-surface-border-strong));
         outline: none;
       }
 
@@ -770,18 +776,18 @@
         border-radius: inherit;
         background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 24%, transparent) 50%, transparent 60%);
         transform: translateX(-130%);
-        animation: wiki-code-copy-shimmer 9s ease-in-out infinite;
+        animation: wiki-code-copy-shimmer 13.5s ease-in-out infinite;
         pointer-events: none;
       }
 
       &[data-copy-state='success'] {
-        border-color: color-mix(in srgb, var(--wiki-purpose-success-edge, var(--wiki-accent-warm)) 60%, var(--wiki-surface-border-strong));
-        color: var(--wiki-purpose-success-ink, var(--wiki-accent-ink));
+        color: var(--wiki-purpose-success-ink);
+        background: color-mix(in srgb, var(--wiki-purpose-success-edge) 12%, var(--wiki-surface-raised) 88%);
       }
 
       &[data-copy-state='error'] {
-        border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 55%, var(--wiki-surface-border-strong));
         color: rgb(var(--v-theme-error));
+        background: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, var(--wiki-surface-raised) 90%);
       }
     }
   }
@@ -2026,8 +2032,9 @@
   }
 }
 
-// Soft accent sweep for the code-block copy button: crosses once, then idles.
+// Soft accent sweep for the code-block copy button: crosses once (~1.9s),
+// then idles for the remainder of the 13.5s cycle.
 @keyframes wiki-code-copy-shimmer {
-  0%, 6% { transform: translateX(-130%); }
-  14%, 100% { transform: translateX(130%); }
+  0%, 5% { transform: translateX(-130%); }
+  19%, 100% { transform: translateX(130%); }
 }
