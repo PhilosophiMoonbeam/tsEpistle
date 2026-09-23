@@ -164,8 +164,15 @@
               )
                 v-icon mdi-tag-outline
             span {{$t('common:header.browseTags')}}
-          .nav-header-slot-actions(v-if='$vuetify.display.mdAndUp || mobileActions')
+          .nav-header-slot-actions(v-if='($vuetify.display.mdAndUp || mobileActions) && $slots.actions')
             slot(name='actions')
+          //- Divider between the authoring cluster (Agent / Edit) and the
+            global page + account controls; only when the left cluster exists.
+          v-divider(
+            v-if='$vuetify.display.mdAndUp && (canEnterAgent || (hasWritePagesPermission && path && mode !== `edit`))'
+            vertical
+            aria-hidden='true'
+          )
           //- LANGUAGES
 
           template(v-if='mode === `view` && locales.length > 0 && $vuetify.display.mdAndUp')
@@ -1761,7 +1768,8 @@ export default defineComponent({
     align-self: center;
     height: var(--wiki-space-6);
     max-height: var(--wiki-space-6);
-    margin-inline: var(--wiki-space-1);
+    // The actions row's flex gap already spaces the divider 8px per side.
+    margin-inline: 0;
     border-color: var(--wiki-surface-border);
     opacity: 1;
   }
