@@ -752,9 +752,11 @@ export default defineComponent({
 
     &::before {
       position: absolute;
-      inset: 4px;
+      // Fill the full control height so the visible Home tile matches the
+      // overall modes container; the mode buttons inside it stay smaller.
+      inset: 0;
       border: 1px solid var(--wiki-surface-border);
-      border-radius: calc(var(--wiki-control-radius) - 3px);
+      border-radius: var(--wiki-control-radius);
       background: color-mix(in srgb, var(--wiki-surface-raised) 70%, transparent);
       box-shadow: none;
       content: '';
