@@ -619,6 +619,44 @@
     overflow-wrap: anywhere;
   }
 
+  // ---------------------------------
+  // INLINE CODE ATTRACTOR CHIP
+  // ---------------------------------
+  // Backtick-enclosed chips are click-to-copy (page.vue) and carry the same
+  // hover-triggered shimmer sweep as the code-block copy button. The sweep
+  // rides the chip's own background (band parked at the 100% position of a
+  // 300%-wide gradient) rather than an absolutely-positioned pseudo-element,
+  // because absolute insets on wrapped inline elements are unreliable.
+  :not(pre) > code {
+    cursor: copy;
+    background-image: linear-gradient(100deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 22%, transparent) 50%, transparent 60%);
+    background-size: 300% 100%;
+    background-repeat: no-repeat;
+    background-position: 100% 0;
+    transition: color .15s ease, background-color .15s ease, border-color .15s ease, box-shadow .15s ease;
+
+    &:hover {
+      border-color: color-mix(in srgb, var(--wiki-accent-warm) 45%, var(--wiki-surface-border));
+      background-color: color-mix(in srgb, var(--wiki-accent-spectral) 10%, var(--wiki-surface-sunken));
+    }
+
+    &.wiki-inline-shimmer-run {
+      animation: wiki-inline-code-shimmer-sweep 1.9s ease-in-out 1 both;
+    }
+
+    &[data-inline-copy-state='success'] {
+      color: var(--wiki-purpose-success-ink);
+      border-color: color-mix(in srgb, var(--wiki-purpose-success-edge) 45%, var(--wiki-surface-border));
+      background-color: color-mix(in srgb, var(--wiki-purpose-success-edge) 12%, var(--wiki-surface-sunken));
+    }
+
+    &[data-inline-copy-state='error'] {
+      color: rgb(var(--v-theme-error));
+      border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 40%, var(--wiki-surface-border));
+      background-color: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, var(--wiki-surface-sunken));
+    }
+  }
+
   kbd {
     border-bottom-color: var(--wiki-surface-border-strong);
     box-shadow: 0 .125rem 0 var(--wiki-surface-border);
@@ -2040,4 +2078,13 @@
 @keyframes wiki-code-copy-shimmer-sweep {
   from { transform: translateX(-130%); }
   to { transform: translateX(130%); }
+}
+
+// Inline-code chip attractor: the band rides the chip's own 300%-wide
+// background gradient. Background-position percentages interpolate smoothly,
+// so 100% parks the band fully off the left edge and 0% fully off the right;
+// scheduling lives in page.vue, shared with the copy button cadence.
+@keyframes wiki-inline-code-shimmer-sweep {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
 }
