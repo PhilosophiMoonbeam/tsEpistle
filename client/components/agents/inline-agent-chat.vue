@@ -1627,7 +1627,7 @@ onBeforeUnmount(() => {
 defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scrollToLatest })
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .inline-agent {
   /* Shared with the Wiki header Agent button (.nav-header-agent): same fixed
      Capri spark accent so the header entry point and the workspace header
