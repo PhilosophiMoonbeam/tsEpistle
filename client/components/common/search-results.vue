@@ -31,7 +31,6 @@
         :page-locale='agentPageLocale'
         :page-path='agentPagePath'
         :page-updated-at='agentPageUpdatedAt'
-        @return-search='returnToSearch'
         @close='closeSearch'
       )
       WikiSourcePreview(
@@ -720,7 +719,9 @@ export default defineComponent({
       this.pendingAskRestoreTarget = null
       this.modalFocusScope = focusScope
       const inlineAgent = this.$refs.inlineAgent as InlineAgentChatRef | undefined
-      await inlineAgent?.focusComposer()
+      // Mobile: auto-focusing the composer opens the soft keyboard and shifts the
+      // whole agent UI; keep the panel still until the user taps the input.
+      if (!window.matchMedia('(max-width: 639.98px)').matches) await inlineAgent?.focusComposer()
       this.retireResumeAfterSelection()
       if (this.modalFocusScope === focusScope && !focusScope.containsFocus()) focusScope.focusFirst()
     },

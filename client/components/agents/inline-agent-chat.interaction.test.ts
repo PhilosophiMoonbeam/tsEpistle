@@ -801,8 +801,6 @@ const openPanelMenu = async (mounted: MountedInlineAgent, options: { readonly is
   expect(list?.getAttribute('role')).not.toBe('menu')
   const items = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__panel-menu-item'))
   expect(items.map(item => item.querySelector<HTMLElement>('.v-list-item-title')?.textContent?.trim())).toEqual([
-    'Return to Wiki Search',
-    'Conversation history',
     'Agent memory',
     'Pin chat',
     options.isTemporary ? 'Keep conversation' : 'Temporary chat'
@@ -821,8 +819,7 @@ afterEach(() => {
 describe('Inline Agent mobile panel controls', () => {
   it('keeps both History and Memory pointer-activatable and closes the menu', async () => {
     for (const [index, panel] of [
-      [1, 'history'],
-      [2, 'memory']
+      [0, 'memory']
     ] as const) {
       const mounted = mountInlineAgent()
       const items = await openPanelMenu(mounted)
@@ -862,8 +859,8 @@ describe('Inline Agent workspace actions', () => {
     expect(mounted.root.querySelector('.inline-agent__temporary-toggle')).toBeNull()
 
     const items = await openPanelMenu(mounted, { isTemporary: true })
-    const pinItem = items[3]
-    const temporaryItem = items[4]
+    const pinItem = items[1]
+    const temporaryItem = items[2]
     if (!pinItem || !temporaryItem) throw new Error('Pin and Temporary menu items did not render')
     expect(pinItem.querySelector<HTMLElement>('.v-list-item-title')?.textContent?.trim()).toBe('Pin chat')
     // A begun temp conversation offers Keep conversation from the menu.
@@ -881,7 +878,7 @@ describe('Inline Agent workspace actions', () => {
     expect(mounted.root.querySelector('.inline-agent__temporary-toggle')).toBeNull()
 
     const items = await openPanelMenu(mounted)
-    const temporaryItem = items[4]
+    const temporaryItem = items[2]
     if (!temporaryItem) throw new Error('Temporary menu item did not render')
     expect(temporaryItem.querySelector<HTMLElement>('.v-list-item-title')?.textContent?.trim()).toBe('Temporary chat')
 
@@ -1241,7 +1238,7 @@ describe('Agent workspace action semantics', () => {
     // No More options button renders without skills enabled or folded controls.
     expect(mounted.root.querySelector('.agent-composer__more-button')).toBeNull()
     const items = await openPanelMenu(mounted)
-    const pinItem = items[3]
+    const pinItem = items[1]
     expect(pinItem?.hasAttribute('disabled')).toBe(false)
   })
 
@@ -1249,12 +1246,12 @@ describe('Agent workspace action semantics', () => {
     const unsettled = mountInlineAgent(loadGoalLockState(null, false, null, false))
     const disabled = (item?: HTMLElement): boolean => Boolean(item?.hasAttribute('disabled') || item?.getAttribute('aria-disabled') === 'true' || item?.classList.contains('v-list-item--disabled'))
     const unsettledItems = await openPanelMenu(unsettled)
-    expect(disabled(unsettledItems[3])).toBe(true)
+    expect(disabled(unsettledItems[1])).toBe(true)
     unsettled.unmount()
 
     const activeRun = mountInlineAgent(loadGoalLockState(null, false, 'running', true))
     const activeRunItems = await openPanelMenu(activeRun)
-    expect(disabled(activeRunItems[3])).toBe(false)
+    expect(disabled(activeRunItems[1])).toBe(false)
     activeRun.unmount()
 
     const activeGoal = mountInlineAgent(loadGoalLockState('active', false, 'running', true))
