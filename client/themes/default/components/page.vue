@@ -4098,10 +4098,10 @@ export default defineComponent({
 }
 
 .page-offline-control {
-  width: 32px !important;
-  height: 32px !important;
-  min-width: 32px !important;
-  min-height: 32px !important;
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px !important;
+  min-height: 26px !important;
   padding: 0 !important;
   border: 1px solid color-mix(in srgb, var(--wiki-accent-ink) 24%, var(--wiki-surface-border)) !important;
   background: color-mix(in srgb, var(--wiki-accent-ink) 8%, transparent) !important;
@@ -4117,7 +4117,7 @@ export default defineComponent({
   }
 
   .v-icon {
-    font-size: 1.3125rem !important;
+    font-size: .875rem !important;
   }
 
   &--saved,
@@ -4139,11 +4139,15 @@ export default defineComponent({
 }
 
 .page-offline-retry-control {
-  width: 32px !important;
-  height: 32px !important;
-  min-width: 32px !important;
-  min-height: 32px !important;
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px !important;
+  min-height: 26px !important;
   padding: 0 !important;
+
+  .v-icon {
+    font-size: .875rem !important;
+  }
 }
 
 .page-document-row {
@@ -4389,6 +4393,11 @@ export default defineComponent({
   overflow-inline: auto;
   scrollbar-width: none;
 
+  .v-btn {
+    height: 1.625rem;
+    min-height: 1.625rem;
+  }
+
   &::-webkit-scrollbar { display: none; }
 
   // Pull the first crumb's glyph flush with the page-description text start.
@@ -4582,7 +4591,8 @@ export default defineComponent({
     overflow: visible;
 
     .v-btn {
-      min-height: 2rem;
+      height: 1.625rem;
+      min-height: 1.625rem;
       padding-inline: var(--wiki-space-3);
       border: 1px solid var(--wiki-surface-border) !important;
       border-radius: var(--wiki-radius-md) !important;
@@ -5997,17 +6007,17 @@ export default defineComponent({
 
 .page-focus-control {
   /* Match the offline cloud control so both header actions read as one row. */
-  height: 2rem;
-  min-height: 2rem;
+  height: 1.625rem;
+  min-height: 1.625rem;
   margin-inline-start: var(--wiki-space-1);
   border-inline-start: 1px solid var(--wiki-surface-border);
-  padding-inline-start: var(--wiki-space-3);
+  padding-inline-start: var(--wiki-space-2);
   border-radius: 0;
   color: var(--wiki-accent-ink);
   letter-spacing: 0;
 
   .v-icon {
-    font-size: 1.3125rem !important;
+    font-size: .875rem !important;
   }
 }
 
