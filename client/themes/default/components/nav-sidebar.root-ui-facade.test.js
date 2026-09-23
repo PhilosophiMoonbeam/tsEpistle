@@ -113,8 +113,12 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
     expect(script).toContain("return this.items.filter(item => item.k !== 'link' || item.y !== 'home')")
   })
   test('aligns Home with the mode group and gives Browse quiet hierarchy cues', () => {
-    expect(source).toContain('height: calc(var(--wiki-control-height) + var(--wiki-space-2));')
-    expect(source).toContain('min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));')
+    // Home button and the Main Menu / Browse modes container share the same
+    // overall switcher height; the mode buttons sit slightly smaller inside.
+    expect(source).toContain('--nav-switcher-control: 2.625rem;')
+    expect(source).toContain('height: var(--nav-switcher-control);')
+    expect(source).toContain('min-height: var(--nav-switcher-control);')
+    expect(source).toContain('min-height: calc(var(--nav-switcher-control) - 8px);')
     expect(source).toMatch(/\.nav-sidebar-home\[aria-current='page'\] \.v-icon\s*\{[\s\S]*?color:\s*var\(--wiki-accent-ink\);[\s\S]*?opacity:\s*1;/)
     expect(source).toContain('.nav-sidebar-ancestor-trail')
     expect(source).toContain('max-height: min(12rem, 32vh);')
