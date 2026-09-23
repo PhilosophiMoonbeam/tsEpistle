@@ -741,7 +741,7 @@ const mountInlineAgent = (
   app.mount(host)
 
   const root = host.querySelector<HTMLElement>('.inline-agent')
-  const activator = host.querySelector<HTMLElement>('[aria-label="More agent actions"]')
+  const activator = host.querySelector<HTMLElement>('[aria-label="Settings"]')
   if (!root || !activator) throw new Error('Inline Agent mobile panel controls did not render')
   const unmount = (): void => {
     app.unmount()
@@ -1219,7 +1219,8 @@ describe('Agent workspace action semantics', () => {
     expect(newChat?.textContent?.trim()).toBe('')
     expect(newChat?.getAttribute('aria-label')).toBe('New chat')
     expect(newChat?.getAttribute('title')).toBe('New')
-    expect(moreMenu?.getAttribute('aria-label')).toBe('More agent actions')
+    expect(moreMenu?.getAttribute('aria-label')).toBe('Settings')
+    expect(moreMenu?.getAttribute('title')).toBe('Settings')
     expect(moreMenu?.parentElement).toBe(headerActions)
     expect(temporaryToggle).toBeNull()
     expect(pinIndicator).toBeNull()

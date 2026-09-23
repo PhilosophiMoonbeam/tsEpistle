@@ -85,9 +85,10 @@
                 v-bind="menuProps"
                 ref="panelMenuTrigger"
                 class="inline-agent__more-menu"
-                icon="mdi-dots-horizontal"
+                icon="mdi-dots-vertical"
                 variant="text"
-                :aria-label="panelMenuOpen ? 'Close agent actions menu' : 'More agent actions'"
+                aria-label="Settings"
+                title="Settings"
                 :aria-expanded="panelMenuOpen"
               />
             </template>
@@ -1825,10 +1826,12 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
    switches to a brighter green on dark surfaces for contrast. */
 .inline-agent__panel-actions {
   --agent-new-hover-tint: #15803d;
+  --agent-close-hover-tint: #dc2626;
 }
 
 .v-theme--dark .inline-agent__panel-actions {
   --agent-new-hover-tint: #4ade80;
+  --agent-close-hover-tint: #f87171;
 }
 
 .inline-agent__new-session:not(.v-btn--disabled):hover,
@@ -1870,6 +1873,22 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__close-action {
   margin-inline-start: var(--wiki-space-2);
+  /* Match the square icon-only controls in this header (Vuetify's icon
+     button radius); the shared wiki-close-control class stays circular
+     for its other usages. */
+  border-radius: 8px;
+  /* Hover glows red around the icon instead of filling the button. */
+  background-color: transparent;
+}
+
+.inline-agent__close-action:is(:hover, :active) {
+  /* Identical hover treatment to the other header icon controls: the same
+     Vuetify overlay fill, no glow, no scale, and a crisp red icon tint
+     matching the tint palette of the New/History hovers. */
+  color: var(--agent-close-hover-tint, #dc2626);
+  background-color: transparent;
+  transform: none;
+  box-shadow: none;
 }
 .inline-agent__progress {
   position: absolute;
