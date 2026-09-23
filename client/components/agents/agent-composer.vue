@@ -1907,7 +1907,9 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-height: 500px) {
+/* Landscape-only: an Android keyboard shrinks a portrait layout viewport below
+   500px, and clamping the input there would force two blank lines on mobile. */
+@media (max-height: 500px) and (orientation: landscape) {
   .agent-composer__input :deep(.v-field__input),
   .agent-composer__input :deep(textarea) {
     min-height: calc(var(--wiki-space-12) * 1.25);

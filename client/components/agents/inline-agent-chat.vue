@@ -326,7 +326,7 @@
                 <footer
                   class="inline-agent__composer"
                   :class="{ 'inline-agent__composer--scrolled': !transcriptFollowing, 'inline-agent__composer--focused': composerFocused }"
-                  :style="{ '--agent-composer-opacity': 1 - 0.8 * transcriptReadingProgress }"
+                  :style="{ '--agent-composer-opacity': 1 - 0.8 * (composerFocused ? 0 : transcriptReadingProgress) }"
                   @focusin="handleComposerFocusIn"
                   @focusout="handleComposerFocusOut"
                   @keydown="handleComposerFocusIn"
@@ -1362,10 +1362,15 @@ const jumpToApproval = async (): Promise<void> => {
 }
 const transcriptIsNearBottom = (element: HTMLElement | null): boolean =>
   Boolean(element && element.scrollHeight - element.scrollTop - element.clientHeight < 160)
+let transcriptScrollTopMemory = 0
 const handleTranscriptScroll = (): void => {
   const container = transcript.value
   const distance = container ? Math.max(0, container.scrollHeight - container.scrollTop - container.clientHeight) : 0
-  if (distance > transcriptBottomDistance.value + 1) composerFocused.value = false
+  const scrollTop = container?.scrollTop ?? 0
+  // Only a downward scroll (reading away) drops composer focus. A keyboard-open
+  // viewport shrink raises the bottom distance without moving scrollTop.
+  if (scrollTop > transcriptScrollTopMemory + 1 && distance > transcriptBottomDistance.value + 1) composerFocused.value = false
+  transcriptScrollTopMemory = scrollTop
   transcriptBottomDistance.value = distance
   const following = transcriptIsNearBottom(transcript.value)
   transcriptFollowing.value = following
@@ -1376,7 +1381,13 @@ const reconcileTranscriptGrowth = async (shouldFollow: boolean): Promise<void> =
   await nextTick()
   if (disposed) return
   if (!hasConversation.value && transcript.value) {
-    transcript.value.scrollTo({ top: 0, behavior: 'auto' })
+    // With a mobile keyboard open, slide the starters up above the composer
+    // instead of pinning the greeting at the top of the shrunken scrollport.
+    if (window.matchMedia(mobilePanelQuery).matches && composerFocused.value) {
+      transcript.value.scrollTo({ top: transcript.value.scrollHeight, behavior: 'auto' })
+    } else {
+      transcript.value.scrollTo({ top: 0, behavior: 'auto' })
+    }
     transcriptFollowing.value = true
   } else if (shouldFollow && transcript.value) {
     transcript.value.scrollTo({ top: transcript.value.scrollHeight, behavior: 'auto' })
