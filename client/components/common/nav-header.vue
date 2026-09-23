@@ -103,39 +103,32 @@
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2', aria-label='Page loading')
           v-btn.nav-header-agent(
             v-if='canEnterAgent && $vuetify.display.mdAndUp'
-            prepend-icon='mdi-creation-outline'
+            icon
+            rounded='lg'
             aria-label='Open Wiki Agent'
             title='Wiki Agent · Ctrl/⌘ + Shift + A'
-            variant='tonal'
-            color='primary'
-            size='small'
             data-search-modal-action
             @click='openAgent'
           )
-            span.nav-header-agent-label Agent
+            v-icon(icon='mdi-creation-outline')
             ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
           template(v-if='hasWritePagesPermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
             v-btn.nav-header-edit-btn(
-              variant='tonal'
-              color='primary'
-              size='small'
+              icon
               rounded='lg'
-              prepend-icon='mdi-pencil'
               :disabled='!onlineActionReady'
               :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
               @click='pageEdit'
               :aria-label='$t(`common:header.edit`)'
             )
-              span.nav-header-edit-label.font-weight-medium {{$t('common:header.edit')}}
+              v-icon(icon='mdi-pencil')
 
           v-btn.nav-header-agent(
             v-if='canEnterAgent && $vuetify.display.smAndDown'
             icon
+            rounded='lg'
             aria-label='Open Wiki Agent'
             title='Wiki Agent · Ctrl/⌘ + Shift + A'
-            variant='tonal'
-            color='primary'
-            size='small'
             data-search-modal-action
             @click='openAgent'
           )
@@ -1338,17 +1331,6 @@ export default defineComponent({
   --wiki-beam-violet: var(--nav-header-agent-icon-color);
   --wiki-beam-cool: color-mix(in srgb, var(--nav-header-agent-icon-color) 62%, white);
 }
-.nav-header-agent .v-btn__prepend,
-.nav-header-agent .v-btn__append {
-  position: relative;
-  z-index: 1;
-}
-
-.nav-header-agent .v-btn__content {
-  position: static;
-  border-radius: inherit;
-}
-
 /* The Agent entry button keeps the shared focus outline but semi-transparent:
    40% of the neutral focus color instead of the fully opaque default. */
 .nav-header-agent:focus-visible {
@@ -1690,19 +1672,24 @@ export default defineComponent({
       transform: none;
     }
   }
-  .nav-header-inner .nav-header-agent,
-  .nav-header-inner .nav-header-edit-btn {
-    border-color: color-mix(in srgb, var(--wiki-ambient-accent) 32%, transparent);
-    background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent) !important;
-    color: var(--wiki-accent-ink) !important;
-  }
+  // Agent + Edit share the transparent square chrome of the other header
+  // controls (.nav-header-inner .v-btn above); only their hover/focus cast
+  // differs, tinted by each control's own fixed icon accent instead of the
+  // ambient accent ink.
   .nav-header-inner .nav-header-agent:hover,
-  .nav-header-inner .nav-header-agent:focus-visible,
+  .nav-header-inner .nav-header-agent:focus-visible {
+    border-color: color-mix(in srgb, var(--nav-header-agent-icon-color) 48%, transparent) !important;
+    background: color-mix(in srgb, var(--nav-header-agent-icon-color) 12%, transparent) !important;
+  }
   .nav-header-inner .nav-header-edit-btn:hover,
   .nav-header-inner .nav-header-edit-btn:focus-visible {
-    border-color: color-mix(in srgb, var(--wiki-ambient-accent) 48%, transparent);
-    background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent) !important;
-    color: color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 88%, var(--wiki-accent-warm) 12%) !important;
+    border-color: color-mix(in srgb, var(--nav-header-edit-icon-color) 48%, transparent) !important;
+    background: color-mix(in srgb, var(--nav-header-edit-icon-color) 12%, transparent) !important;
+  }
+  // Silence the Vuetify overlay so the cast stays purely icon-colored.
+  .nav-header-inner .nav-header-agent .v-btn__overlay,
+  .nav-header-inner .nav-header-edit-btn .v-btn__overlay {
+    background: transparent !important;
   }
 
   .nav-header-inner .nav-header-agent .v-icon,
@@ -1761,22 +1748,12 @@ export default defineComponent({
     min-width: var(--wiki-control-height);
   }
   @media (min-width: 960px) {
-    .nav-header-inner .nav-header-agent,
-    .nav-header-inner .nav-header-browse,
-    .nav-header-inner .nav-header-edit-btn {
+    .nav-header-inner .nav-header-browse {
       min-height: 36px;
       height: 36px !important;
-      border-radius: var(--wiki-radius-pill) !important;
-    }
-
-    .nav-header-inner .nav-header-agent,
-    .nav-header-inner .nav-header-edit-btn {
-      padding-inline: var(--wiki-space-3);
-    }
-
-    .nav-header-inner .nav-header-browse {
       width: 36px;
       min-width: 36px;
+      border-radius: var(--wiki-radius-pill) !important;
     }
   }
 
@@ -2100,23 +2077,6 @@ export default defineComponent({
       height: calc(var(--wiki-control-height) - var(--wiki-space-2)) !important;
       padding-inline: var(--wiki-space-2);
     }
-    .nav-header-agent-label,
-    .nav-header-edit-label {
-      display: none;
-    }
-
-    .nav-header-actions .nav-header-agent,
-    .nav-header-actions .nav-header-edit-btn {
-      width: calc(var(--wiki-control-height) - var(--wiki-space-2));
-      min-width: calc(var(--wiki-control-height) - var(--wiki-space-2));
-      padding-inline: 0;
-    }
-
-    .nav-header-actions .nav-header-agent .v-btn__prepend,
-    .nav-header-actions .nav-header-edit-btn .v-btn__prepend {
-      margin-inline: 0;
-    }
-
     .nav-header-actions .v-divider {
       margin-inline: 0;
     }
