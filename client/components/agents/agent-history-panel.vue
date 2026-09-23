@@ -6,6 +6,17 @@
     :aria-busy="loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || savingFolder || deleting || sessionMutationBusy || openingSessionIds.size > 0 || movingSessionIds.size > 0"
   >
     <AgentPanelHeader ref="historyCloseButton" title="Conversations" icon="mdi-history" close-label="Close chat history" :heading-id="headingId" :description-id="descriptionId" @close="closeHistory">
+    <template #actions>
+      <v-btn
+        class="agent-history__clear"
+        icon="mdi-delete-sweep-outline"
+        variant="text"
+        aria-label="Clear Unsaved History"
+        title="Clear Unsaved History"
+        :disabled="clearHistoryDisabled"
+        @click="requestClear"
+      />
+    </template>
       {{ archiveCountDescription }}
     </AgentPanelHeader>
 
@@ -270,13 +281,6 @@
       </template>
 
     </div>
-    <footer class="agent-history__footer">
-      <p>Keep a temporary chat to find it here.</p>
-      <v-menu content-class="agent-owned-overlay" location="top end">
-        <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" icon="mdi-dots-horizontal" size="small" variant="text" aria-label="Conversation history options" /></template>
-        <v-list density="compact"><v-list-item link prepend-icon="mdi-delete-sweep-outline" title="Clear Recent history" subtitle="Saved folders are preserved" :disabled="clearHistoryDisabled" @click="requestClear" /></v-list>
-      </v-menu>
-    </footer>
   </v-card>
 
   <v-dialog content-class="agent-owned-overlay" v-model="folderEditorOpen" max-width="28rem" aria-labelledby="agent-history-folder-editor-title" :persistent="savingFolder">
@@ -1392,8 +1396,8 @@ onBeforeUnmount(() => {
   padding: var(--wiki-space-8);
   text-align: center;
 }
-.agent-history__footer { display: flex; align-items: center; gap: .5rem; padding: .65rem 1.25rem; border-top: 1px solid var(--wiki-surface-border); }
-.agent-history__footer p { flex: 1; margin: 0; font-size: .7rem; line-height: 1.5; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent); }
+
+
 .agent-history__folder-icon { color: color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, rgb(var(--v-theme-on-surface))); }
 .agent-history__new-folder { flex: 0 0 auto; color: color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, rgb(var(--v-theme-on-surface))); }
 .agent-history__folder-input :deep(.v-field__input) {

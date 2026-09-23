@@ -3,7 +3,10 @@
     <div class="agent-panel-header__title-row">
       <v-icon :icon="icon" size="20" class="agent-panel-header__icon" aria-hidden="true" />
       <h2 :id="headingId">{{ title }}</h2>
-      <v-btn class="agent-panel-header__close wiki-close-control" :icon="'mdi-close'" variant="text" :aria-label="closeLabel" :disabled="busy" @click="emit('close')" />
+      <div class="agent-panel-header__actions">
+        <v-btn class="agent-panel-header__close wiki-close-control" :icon="'mdi-close'" variant="text" :aria-label="closeLabel" :disabled="busy" @click="emit('close')" />
+        <slot name="actions" />
+      </div>
     </div>
     <div :id="descriptionId" class="agent-panel-header__description"><slot /></div>
   </header>
@@ -17,6 +20,12 @@ const emit = defineEmits<{ close: [] }>()
 .agent-panel-header { flex: 0 0 auto; padding: .5rem 1.25rem 1rem; border-bottom: 1px solid var(--wiki-surface-border); outline: none; }
 .agent-panel-header:focus-visible { box-shadow: inset var(--wiki-focus-ring); }
 .agent-panel-header__title-row { display: flex; align-items: center; gap: .6rem; }
+/* Stacked panel controls (close on top, optional panel action below), sized
+   so the header keeps its proportions. */
+.agent-panel-header__actions { display: flex; flex-direction: column; align-items: center; gap: .25rem; }
+.agent-panel-header__actions :deep(.v-btn) { width: 2rem; min-width: 2rem; height: 2rem; border-radius: 8px; }
+.agent-panel-header__actions :deep(.v-btn) :deep(.v-icon),
+.agent-panel-header__actions :deep(.v-btn .v-icon) { font-size: 1.125rem; }
 /* The panel close button mirrors the agent header's close control: square,
    the same height, no glow or scale, and a crisp red icon hover. */
 .agent-panel-header { --agent-panel-close-hover-tint: #dc2626; }
