@@ -4736,8 +4736,11 @@ export default defineComponent({
   z-index: 3;
   width: min(100%, var(--page-reader-shell-max));
   margin-inline: auto;
+  // Block-start padding is deliberately compact: the page hero already closes
+  // with its own divider, so the body starts close beneath it and the reader
+  // meets the first heading without a wide empty band.
   padding:
-    var(--wiki-space-8)
+    var(--wiki-space-4)
     var(--wiki-page-gutter)
     var(--wiki-space-12) !important;
 }
@@ -5387,7 +5390,7 @@ export default defineComponent({
 }
 
 .page-col-content > .contents {
-  --page-reader-surface-padding: var(--wiki-space-4);
+  --page-reader-surface-padding: var(--wiki-space-3);
 
   min-height: calc(var(--wiki-grid-size) * 3);
   scroll-margin-block-start: calc(var(--v-layout-top, 64px) + 24px);
