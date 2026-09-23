@@ -4,7 +4,7 @@
       <v-icon :icon="icon" size="20" class="agent-panel-header__icon" aria-hidden="true" />
       <h2 :id="headingId">{{ title }}</h2>
       <div class="agent-panel-header__actions">
-        <v-btn class="agent-panel-header__close wiki-close-control" :icon="'mdi-close'" variant="text" :aria-label="closeLabel" :disabled="busy" @click="emit('close')" />
+        <v-btn class="agent-panel-header__close wiki-close-control" :icon="'mdi-close'" variant="text" :aria-label="closeLabel" title="Close" :disabled="busy" @click="emit('close')" />
         <slot name="actions" />
       </div>
     </div>
