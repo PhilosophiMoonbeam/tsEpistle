@@ -269,131 +269,194 @@
             :to='isTocMobile ? `#page-mobile-tools` : winWidth < 1280 ? `#page-tablet-tools` : `#page-desktop-rail`'
             :disabled='printView'
           )
-            v-card.page-shortcuts-card.mb-4(flat)
-              v-toolbar(color='surface', flat, density="compact")
-                v-spacer
-                //- v-tooltip(bottom)
-                //-   template(v-slot:activator='{ props }')
-                //-     v-btn(icon, rounded='lg', v-bind='props', :aria-label='$t(`common:page.bookmark`)'): v-icon(color='grey') mdi-bookmark
-                //-   span {{$t('common:page.bookmark')}}
-                v-menu(location="bottom", min-width='300')
-                  template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(location="bottom")
-                      template(v-slot:activator='{ props: tooltipProps }')
-                        v-btn(icon, rounded='lg', v-bind='mergeProps(menuProps, tooltipProps)', :aria-label='$t(`common:page.share`)'): v-icon(color='grey') mdi-share-variant
-                      span {{$t('common:page.share')}}
-                  social-sharing(
-                    :url='pageUrl'
-                    :title='title'
-                    :description='description'
-                  )
-                v-tooltip(location="bottom", v-if='isAuthenticated')
-                  template(v-slot:activator='{ props }')
-                    v-btn(
-                      icon
-                      rounded='lg'
-                      v-bind='props'
-                      :loading='pageWatchLoading'
-                      :disabled='pageWatchLoading || !pageOnlineActionReady || !pageWatchAuthorityReady'
-                      :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : !pageWatchAuthorityReady ? `Refresh page watch state before changing it.` : undefined'
-                      @click='togglePageWatch'
-                      :aria-label='pageWatched ? $t(`common:page.stopWatchingPage`) : $t(`common:page.watchPage`)'
+            v-card.page-tools-card.mb-4(flat, role='group', :aria-label='$t(`common:page.pageTools`)')
+              .page-tools-card__utilities(v-if='!isTocMobile')
+                v-toolbar(color='transparent', flat, density='compact')
+                  v-menu(location='bottom', min-width='300')
+                    template(v-slot:activator='{ props: menuProps }')
+                      v-tooltip(location='bottom')
+                        template(v-slot:activator='{ props: tooltipProps }')
+                          v-btn(icon, rounded='lg', v-bind='mergeProps(menuProps, tooltipProps)', :aria-label='$t(`common:page.share`)'): v-icon mdi-share-variant
+                        span {{$t('common:page.share')}}
+                    social-sharing(
+                      :url='pageUrl'
+                      :title='title'
+                      :description='description'
                     )
-                      v-icon(:color='pageWatched ? `primary` : `grey`') {{ pageWatched ? 'mdi-bell-ring' : 'mdi-bell-outline' }}
-                  span {{ pageWatched ? $t('common:page.stopWatchingPage') : $t('common:page.watchPage') }}
-                v-menu(v-if='pageWatched', location="bottom", :close-on-content-click='false', min-width='260')
-                  template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(location="bottom")
-                      template(v-slot:activator='{ props: tooltipProps }')
-                        v-btn(
-                          icon
-                          rounded='lg'
-                          v-bind='mergeProps(menuProps, tooltipProps)'
-                          :aria-label='$t(`common:page.watchSettings`)'
+                  v-tooltip(location='bottom', v-if='isAuthenticated')
+                    template(v-slot:activator='{ props }')
+                      v-btn(
+                        icon
+                        rounded='lg'
+                        v-bind='props'
+                        :loading='pageWatchLoading'
+                        :disabled='pageWatchLoading || !pageOnlineActionReady || !pageWatchAuthorityReady'
+                        :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : !pageWatchAuthorityReady ? `Refresh page watch state before changing it.` : undefined'
+                        :aria-pressed='pageWatched'
+                        @click='togglePageWatch'
+                        :aria-label='pageWatched ? $t(`common:page.stopWatchingPage`) : $t(`common:page.watchPage`)'
+                      )
+                        v-icon {{ pageWatched ? 'mdi-bell-ring' : 'mdi-bell-outline' }}
+                    span {{ pageWatched ? $t('common:page.stopWatchingPage') : $t('common:page.watchPage') }}
+                  v-menu(v-if='pageWatched', location='bottom', :close-on-content-click='false', min-width='260')
+                    template(v-slot:activator='{ props: menuProps }')
+                      v-tooltip(location='bottom')
+                        template(v-slot:activator='{ props: tooltipProps }')
+                          v-btn(
+                            icon
+                            rounded='lg'
+                            v-bind='mergeProps(menuProps, tooltipProps)'
+                            :aria-label='$t(`common:page.watchSettings`)'
+                          )
+                            v-icon mdi-tune
+                        span {{$t('common:page.watchSettings')}}
+                    v-card
+                      v-card-title.text-body-large {{$t('common:page.watchSettings')}}
+                      v-card-text
+                        v-switch(
+                          v-model='pageWatchEmailEnabled'
+                          :label='$t(`common:page.emailNotifications`)'
+                          color='primary'
+                          density='compact'
+                          hide-details
+                          :disabled='pageWatchLoading || !pageWatchActionReady'
+                          :title='!pageWatchActionReady ? pageOnlineActionUnavailableReason || `Refresh page watch state before changing it.` : undefined'
+                          @update:model-value='savePageWatchSettings'
                         )
-                          v-icon(color='grey') mdi-tune
-                      span {{$t('common:page.watchSettings')}}
-                  v-card
-                    v-card-title.text-body-large {{$t('common:page.watchSettings')}}
-                    v-card-text
-                      v-switch(
-                        v-model='pageWatchEmailEnabled'
-                        :label='$t(`common:page.emailNotifications`)'
-                        color='primary'
-                        density='compact'
-                        hide-details
-                        :disabled='pageWatchLoading || !pageWatchActionReady'
-                        :title='!pageWatchActionReady ? pageOnlineActionUnavailableReason || `Refresh page watch state before changing it.` : undefined'
-                        @update:model-value='savePageWatchSettings'
+                        v-switch(
+                          v-model='pageWatchInAppEnabled'
+                          :label='$t(`common:page.inAppNotifications`)'
+                          color='primary'
+                          density='compact'
+                          hide-details
+                          :disabled='pageWatchLoading || !pageWatchActionReady'
+                          :title='!pageWatchActionReady ? pageOnlineActionUnavailableReason || `Refresh page watch state before changing it.` : undefined'
+                          @update:model-value='savePageWatchSettings'
+                        )
+                  v-tooltip(location='bottom', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                    template(v-slot:activator='{ props }')
+                      v-btn(
+                        icon
+                        rounded='lg'
+                        v-bind='props'
+                        :disabled='!pageOnlineActionReady'
+                        :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : undefined'
+                        @click='openApprovalWorkflow'
+                        :aria-label='$t(`common:page.approvalWorkflow`)'
+                        :aria-pressed='Boolean(pageApproval)'
                       )
-                      v-switch(
-                        v-model='pageWatchInAppEnabled'
-                        :label='$t(`common:page.inAppNotifications`)'
-                        color='primary'
-                        density='compact'
-                        hide-details
-                        :disabled='pageWatchLoading || !pageWatchActionReady'
-                        :title='!pageWatchActionReady ? pageOnlineActionUnavailableReason || `Refresh page watch state before changing it.` : undefined'
-                        @update:model-value='savePageWatchSettings'
+                        v-icon {{ pageApproval ? 'mdi-check-decagram' : 'mdi-check-decagram-outline' }}
+                    span {{$t('common:page.approvalWorkflow')}}
+                  v-tooltip(location='bottom', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                    template(v-slot:activator='{ props }')
+                      v-btn(
+                        icon
+                        rounded='lg'
+                        v-bind='props'
+                        :disabled='!pageProtectionActionReady || protectionInitialLoading'
+                        :title='!pageProtectionActionReady ? pageOnlineActionUnavailableReason || `Refresh page protection before changing it.` : undefined'
+                        @click='openPageProtection'
+                        :aria-label='$t(`common:page.pagePasswordProtection`)'
+                        :aria-pressed='pageProtection.protected'
                       )
-                v-tooltip(location="bottom", v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
-                  template(v-slot:activator='{ props }')
-                    v-btn(
-                      icon
+                        v-icon {{ pageProtection.protected ? 'mdi-lock' : 'mdi-lock-open-outline' }}
+                    span {{$t('common:page.pagePasswordProtection')}}
+                  v-tooltip(location='bottom')
+                    template(v-slot:activator='{ props }')
+                      v-btn(icon, rounded='lg', v-bind='props', @click='print', :aria-label='$t(`common:page.printFormat`)')
+                        v-icon mdi-printer
+                    span {{$t('common:page.printFormat')}}
+              .page-tools-card__utilities.page-tools-card__utilities--menu(v-else)
+                v-menu(location='top', min-width='280')
+                  template(v-slot:activator='{ props: menuProps }')
+                    v-btn.page-actions-menu-btn(
+                      block
                       rounded='lg'
-                      v-bind='props'
+                      variant='text'
+                      v-bind='menuProps'
+                      :aria-label='$t(`common:header.pageActions`)'
+                    )
+                      v-icon(start, aria-hidden='true') mdi-dots-horizontal
+                      span {{$t('common:header.pageActions')}}
+                  v-list(density='compact', nav)
+                    v-menu(location='end', min-width='300')
+                      template(v-slot:activator='{ props: shareProps }')
+                        v-list-item(prepend-icon='mdi-share-variant', v-bind='shareProps', :title='$t(`common:page.share`)')
+                      social-sharing(
+                        :url='pageUrl'
+                        :title='title'
+                        :description='description'
+                      )
+                    v-list-item.page-actions-item(
+                      v-if='isAuthenticated'
+                      :prepend-icon='pageWatched ? `mdi-bell-ring` : `mdi-bell-outline`'
+                      :title='pageWatched ? $t(`common:page.stopWatchingPage`) : $t(`common:page.watchPage`)'
+                      :disabled='pageWatchLoading || !pageOnlineActionReady || !pageWatchAuthorityReady'
+                      :class='pageWatched ? `page-actions-item--active` : ``'
+                      @click='togglePageWatch'
+                    )
+                    v-menu(v-if='pageWatched', location='end', :close-on-content-click='false', min-width='260')
+                      template(v-slot:activator='{ props: watchProps }')
+                        v-list-item(prepend-icon='mdi-tune', v-bind='watchProps', :title='$t(`common:page.watchSettings`)')
+                      v-card
+                        v-card-text
+                          v-switch(
+                            v-model='pageWatchEmailEnabled'
+                            :label='$t(`common:page.emailNotifications`)'
+                            color='primary'
+                            density='compact'
+                            hide-details
+                            :disabled='pageWatchLoading || !pageWatchActionReady'
+                            @update:model-value='savePageWatchSettings'
+                          )
+                          v-switch(
+                            v-model='pageWatchInAppEnabled'
+                            :label='$t(`common:page.inAppNotifications`)'
+                            color='primary'
+                            density='compact'
+                            hide-details
+                            :disabled='pageWatchLoading || !pageWatchActionReady'
+                            @update:model-value='savePageWatchSettings'
+                          )
+                    v-list-item.page-actions-item(
+                      v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)'
+                      :prepend-icon='pageApproval ? `mdi-check-decagram` : `mdi-check-decagram-outline`'
+                      :title='$t(`common:page.approvalWorkflow`)'
                       :disabled='!pageOnlineActionReady'
-                      :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : undefined'
+                      :class='pageApproval ? `page-actions-item--active` : ``'
                       @click='openApprovalWorkflow'
-                      :aria-label='$t(`common:page.approvalWorkflow`)'
                     )
-                      v-icon(:color='pageApproval ? `primary` : `grey`') mdi-check-decagram-outline
-                  span {{$t('common:page.approvalWorkflow')}}
-                v-tooltip(location="bottom", v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
-                  template(v-slot:activator='{ props }')
-                    v-btn(
-                      icon
-                      rounded='lg'
-                      v-bind='props'
+                    v-list-item.page-actions-item(
+                      v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)'
+                      :prepend-icon='pageProtection.protected ? `mdi-lock` : `mdi-lock-open-outline`'
+                      :title='$t(`common:page.pagePasswordProtection`)'
                       :disabled='!pageProtectionActionReady || protectionInitialLoading'
-                      :title='!pageProtectionActionReady ? pageOnlineActionUnavailableReason || `Refresh page protection before changing it.` : undefined'
+                      :class='pageProtection.protected ? `page-actions-item--active` : ``'
                       @click='openPageProtection'
-                      :aria-label='$t(`common:page.pagePasswordProtection`)'
                     )
-                      v-icon(:color='pageProtection.protected ? `primary` : `grey`') {{ pageProtection.protected ? 'mdi-lock' : 'mdi-lock-open-outline' }}
-                  span {{$t('common:page.pagePasswordProtection')}}
-                v-tooltip(location="bottom")
-                  template(v-slot:activator='{ props }')
-                    v-btn(icon, rounded='lg', v-bind='props', @click='print', :aria-label='$t(`common:page.printFormat`)')
-                      v-icon(:color='printView ? `primary` : `grey`') mdi-printer
-                  span {{$t('common:page.printFormat')}}
-                v-spacer
-            v-card.page-provenance-card.mb-4(
-              v-if='updatedAt || hasAuthor'
-              flat
-              role='group'
-            )
-              .page-provenance-card__content
+                    v-list-item.page-actions-item(
+                      :prepend-icon='`mdi-printer`'
+                      :title='$t(`common:page.printFormat`)'
+                      @click='print'
+                    )
+              v-divider.page-tools-card__divider(v-if='updatedAt || hasAuthor || canViewHistory')
+              .page-tools-card__provenance(v-if='updatedAt || hasAuthor || canViewHistory')
                 .page-document-provenance
                   .page-document-row.page-document-row--date(v-if='updatedAt')
-                    v-tooltip(location='top', v-if='canViewHistory')
-                      template(v-slot:activator='{ props }')
-                        v-btn.page-history-btn(
-                          v-bind='props'
-                          :href='pageHistoryUrl'
-                          @click='historyLinkClicked($event)'
-                          :aria-label='$t(`common:page.viewHistory`)'
-                          icon='mdi-history'
-                          variant='text'
-                          size='x-small'
-                          density='compact'
-                        )
-                      span {{ $t('common:page.viewHistory') }}
                     time(:datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt, interpolation: { escapeValue: false } }) }}
                   .page-document-row.page-document-row--author(v-if='hasAuthor')
                     span.page-document-author
                       | {{ $t('common:page.byAuthor', { author: '' }) }}
                       bdi.page-provenance-author {{ authorName }}
+                  a.page-tools-history-link(
+                    v-if='canViewHistory'
+                    :href='pageHistoryUrl'
+                    @click='historyLinkClicked($event)'
+                    :aria-label='$t(`common:page.viewHistory`)'
+                  )
+                    v-icon(size='x-small', aria-hidden='true') mdi-history
+                    span {{$t('common:page.viewHistory')}}
+                    v-icon.page-tools-history-link__arrow(size='x-small', aria-hidden='true') mdi-arrow-right
             v-card.page-toc-card.mb-4(v-if='tocPosition !== `off` && !talkActive', tag='nav', :aria-label='$t(`common:page.toc`)')
               v-btn.page-toc-toggle.text-none(
                 variant='text'
@@ -402,11 +465,12 @@
                 aria-controls='page-toc-content'
                 @click='toggleToc'
               )
-                span.page-toc-toggle-label.text-label-small {{$t('common:page.toc')}}
+                span.page-toc-toggle-label.text-label-small {{ isTocMobile ? $t(`common:page.onThisPage`) : $t(`common:page.toc`) }}
                 v-icon(size='small', aria-hidden='true') {{ tocDisclosureExpanded ? `mdi-chevron-up` : `mdi-chevron-down` }}
               .text-label-small.page-toc-heading
                 span {{$t('common:page.toc')}}
-                span.page-toc-count {{ tocFlattened.length }}
+                span.page-toc-count(aria-hidden='true') {{ tocFlattened.length }}
+                span.d-sr-only {{ $t('common:page.sectionsCount', { count: tocFlattened.length }) }}
 
               div#page-toc-content.page-toc-content(
                 v-show='tocDisclosureExpanded'
@@ -436,6 +500,7 @@
                   )
                 .page-toc-empty(v-else)
                   v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
+                  span.text-body-small {{$t('common:page.noSections')}}
                   span.text-body-small {{$t('common:page.noSections')}}
 
           //- Keep this keyless too so both teleports move as a pair and keep
@@ -1258,6 +1323,9 @@ export default defineComponent({
       navShown: initialWidth >= 1280,
       tocExpanded: initialWidth >= 1280,
       tocQuery: '',
+      tocUserScrollAt: 0,
+      tocProgrammaticScrollUntil: 0,
+      tocScrollBound: false,
       expandedAnchors: new Set<string>(),
       collapsedByUser: new Set<string>(),
       preSearchExpanded: null as Set<string> | null,
@@ -2847,8 +2915,18 @@ export default defineComponent({
       const content = list.closest('.page-toc-content')
       if (content && content !== list) observer.observe(content)
       this.tocResizeObserver = observer
+      // Manual scrolling of the ToC must not be overridden by the automatic
+      // active-section repositioning for a short grace period.
+      if (!this.tocScrollBound) {
+        list.addEventListener('scroll', () => {
+          if (performance.now() < this.tocProgrammaticScrollUntil) return
+          this.tocUserScrollAt = performance.now()
+        }, { passive: true })
+        this.tocScrollBound = true
+      }
     },
     ensureActiveTocVisible(): void {
+      if (this.tocUserScrollAt && performance.now() - this.tocUserScrollAt < 1500) return
       if (this.tocRevealRafId !== null || !this.$el) return
       this.tocRevealRafId = requestAnimationFrame(() => {
         this.tocRevealRafId = null
@@ -2883,7 +2961,10 @@ export default defineComponent({
         } else if (rowBounds.bottom > viewportBottom) {
           delta = rowBounds.bottom - viewportBottom
         }
-        if (delta !== 0) list.scrollTop += delta
+        if (delta !== 0) {
+          this.tocProgrammaticScrollUntil = performance.now() + 250
+          list.scrollTop += delta
+        }
       })
     },
     refreshPageContent(): void {
@@ -4069,22 +4150,13 @@ export default defineComponent({
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
 }
 
-.page-history-btn {
-  width: 32px !important;
-  height: 32px !important;
-  min-width: 32px !important;
-  min-height: 32px !important;
-  padding: 0 !important;
-  color: var(--wiki-accent-ink) !important;
-  margin-inline-end: 2px;
-
-  .v-icon {
-    font-size: 18px !important;
-  }
+.page-tools-history-link {
+  padding: 2px 4px;
+  min-height: 32px;
 }
 
 @media (pointer: coarse) {
-  .page-history-btn,
+  .page-tools-history-link,
   .page-offline-control,
   .page-offline-retry-control {
     width: 44px !important;
@@ -4098,18 +4170,32 @@ export default defineComponent({
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: rgb(var(--v-theme-on-surface));
-  font-family: var(--wiki-font-newsreader);
-  font-size: 1rem;
-  font-weight: 550 !important;
-  letter-spacing: -.02em !important;
-  text-transform: none;
+  color: var(--wiki-accent-ink);
+  font-family: var(--wiki-font-body);
+  font-size: .8125rem;
+  font-weight: var(--wiki-label-weight) !important;
+  letter-spacing: .09em !important;
+  text-transform: uppercase;
 }
 
 .page-toc-count {
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 65%, transparent);
   font-family: var(--wiki-font-mono);
   font-size: .6875rem;
+}
+
+// Accessible clarification of the section count, hidden visually.
+.page-toc-heading .d-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .page-toc-filter {
@@ -4693,8 +4779,7 @@ export default defineComponent({
     min-height: 0;
   }
 
-  .page-shortcuts-card,
-  .page-provenance-card {
+  .page-tools-card {
     flex: 0 0 auto;
   }
 
@@ -4766,12 +4851,34 @@ export default defineComponent({
   display: flex;
   min-height: var(--page-toc-empty-height);
   flex-direction: column;
+  border: 1px solid var(--wiki-surface-border) !important;
+  border-radius: var(--wiki-panel-radius);
+  background:
+    linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--wiki-accent-warm) 6%, transparent),
+      transparent 34%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 5%, transparent)
+    ),
+    color-mix(in srgb, var(--wiki-surface-raised) 88%, transparent) !important;
+  box-shadow: var(--wiki-shadow-xs);
+
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    backdrop-filter: var(--wiki-chrome-blur);
+    -webkit-backdrop-filter: var(--wiki-chrome-blur);
+    border-color: var(--wiki-glass-border) !important;
+  }
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    background: var(--wiki-surface-raised) !important;
+  }
 
   > .page-toc-heading {
     padding:
       var(--wiki-space-4)
       var(--wiki-space-4)
       var(--wiki-space-2) !important;
+    font-family: var(--wiki-font-body);
   }
 
   .page-toc-toggle {
@@ -4780,24 +4887,16 @@ export default defineComponent({
 
   .page-toc-toggle-label {
     color: var(--wiki-accent-ink);
-    font-family: var(--wiki-font-newsreader);
-    font-size: 1rem;
-    font-weight: 550 !important;
-    letter-spacing: -.02em !important;
-    text-transform: none;
+    font-family: var(--wiki-font-body);
+    font-size: .8125rem;
+    font-weight: var(--wiki-label-weight) !important;
+    letter-spacing: .09em !important;
+    text-transform: uppercase;
   }
-
 
   .page-toc-content {
     min-width: 0;
   }
-}
-.page-col-sd .page-toc-heading,
-.page-col-sd .page-toc-toggle-label {
-  font-family: var(--wiki-font-newsreader);
-  font-weight: 550 !important;
-  letter-spacing: -.02em !important;
-  text-transform: none;
 }
 
 .page-toc-list,
@@ -4870,6 +4969,8 @@ export default defineComponent({
 }
 
 .page-toc-item {
+  position: relative;
+  isolation: isolate;
   display: flex;
   align-items: center;
   flex: 1 1 auto;
@@ -4878,13 +4979,31 @@ export default defineComponent({
   padding: 2px var(--wiki-space-2);
   border-inline-start: 2px solid transparent;
   border-radius: var(--wiki-radius-xs);
-  color: rgb(var(--v-theme-on-surface));
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
   text-decoration: none;
   transition:
-    background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-    color var(--wiki-motion-fast) var(--wiki-motion-ease),
-    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
+    background-color 180ms var(--wiki-motion-ease),
+    border-color 180ms var(--wiki-motion-ease),
+    color 180ms var(--wiki-motion-ease);
+
+  // Faint amber glow behind the active row. Each row owns its glow (it fades
+  // in and out in place instead of sliding across the list) and it is clipped
+  // by the card's rounded overflow box. Text and icons stay sharp above it.
+  &::after {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    inset: -7px -10px;
+    border-radius: var(--wiki-radius-sm);
+    background: radial-gradient(
+      62% 95% at 32% 50%,
+      color-mix(in srgb, var(--wiki-accent-warm) 26%, transparent),
+      transparent 76%
+    );
+    opacity: 0;
+    transition: opacity 180ms var(--wiki-motion-ease);
+    pointer-events: none;
+  }
 
   &:hover {
     background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
@@ -4902,14 +5021,20 @@ export default defineComponent({
     background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
     color: var(--wiki-accent-ink);
     font-weight: 600;
-    box-shadow:
-      0 .16rem .4rem color-mix(in srgb, var(--wiki-accent-ink) 13%, transparent),
-      0 0 .55rem color-mix(in srgb, var(--wiki-accent-ink) 8%, transparent);
+
+    &::after {
+      opacity: 1;
+    }
   }
 
   &.page-toc-item--descendant-active {
     border-inline-start-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 40%, transparent);
   }
+}
+
+// Nested entries stay visually subordinate to top-level sections.
+.page-toc-sublist .page-toc-item {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
 }
 
 .page-toc-item-title {
@@ -4920,7 +5045,7 @@ export default defineComponent({
 }
 
 .page-toc-item-title--depth-0 {
-  font-weight: 700;
+  font-weight: 650;
 }
 
 .page-toc-item-title--depth-1 {
@@ -4961,107 +5086,200 @@ export default defineComponent({
     border-radius: var(--wiki-control-radius);
   }
 }
+.page-tools-card {
+  --page-shortcut-target: 36px;
 
-.page-provenance-card {
-  min-height: 32px;
-  overflow: hidden !important;
   border: 1px solid var(--wiki-surface-border) !important;
+  overflow: hidden !important;
   border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised) !important;
+  background:
+    linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--wiki-accent-warm) 6%, transparent),
+      transparent 34%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 5%, transparent)
+    ),
+    color-mix(in srgb, var(--wiki-surface-raised) 88%, transparent) !important;
   box-shadow: var(--wiki-shadow-xs);
 
-  &__content {
-    display: flex;
-    min-width: 0;
-    min-height: 32px;
-    align-items: center;
-    justify-content: center;
-    padding: 3px var(--wiki-space-3);
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    backdrop-filter: var(--wiki-chrome-blur);
+    -webkit-backdrop-filter: var(--wiki-chrome-blur);
+    border-color: var(--wiki-glass-border) !important;
   }
 
-  .page-document-provenance {
-    flex: 1 1 auto;
-    align-items: center;
-    justify-content: center;
-    column-gap: var(--wiki-space-3);
-    font-size: .75rem;
-    line-height: 1.35;
-    text-align: center;
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    background: var(--wiki-surface-raised) !important;
   }
 
-}
+  &__utilities {
+    .v-toolbar {
+      height: auto !important;
+      min-height: var(--page-shortcut-target);
+      background: transparent !important;
+      overflow: visible !important;
+      padding: var(--wiki-space-1) var(--wiki-space-2) !important;
+    }
 
-.page-shortcuts-card {
-  --page-shortcut-target: 28px;
-
-  border: 1px solid var(--wiki-surface-border) !important;
-  overflow: visible !important;
-  min-height: 32px;
-  height: auto;
-
-  .v-toolbar {
-    height: auto !important;
-    min-height: 32px;
-    background: transparent !important;
-    overflow: visible !important;
-    padding: 2px 4px !important;
-  }
-
-  .v-toolbar__content {
-    display: flex;
-    height: auto !important;
-    min-height: 28px;
-    flex-wrap: wrap;
-    column-gap: var(--wiki-space-1);
-    row-gap: var(--wiki-space-1);
-    justify-content: space-between;
-    > :not(.v-spacer) {
+    .v-toolbar__content {
       display: flex;
-      min-width: 0;
-      flex: 1 1 0;
-      justify-content: center;
+      height: auto !important;
+      min-height: var(--page-shortcut-target);
+      flex-wrap: wrap;
+      column-gap: var(--wiki-space-1);
+      row-gap: var(--wiki-space-1);
+      justify-content: space-between;
+      > :not(.v-spacer) {
+        display: flex;
+        min-width: 0;
+        flex: 1 1 0;
+        justify-content: center;
+      }
+      align-items: center;
+      padding: 0 !important;
+      overflow: visible !important;
     }
-    align-items: center;
-    padding: 0 !important;
-    overflow: visible !important;
 
-  }
-
-  .v-spacer {
-    display: none;
-  }
-
-  .v-badge {
-    display: inline-flex;
-    flex: 0 0 auto;
-    overflow: visible;
-
-    .v-badge__wrapper {
+    .v-badge {
+      display: inline-flex;
+      flex: 0 0 auto;
       overflow: visible;
+
+      .v-badge__wrapper {
+        overflow: visible;
+      }
     }
   }
 
+  &__utilities--menu {
+    padding: var(--wiki-space-1) var(--wiki-space-2);
+  }
+
+  &__divider {
+    opacity: 1;
+    border-color: var(--wiki-surface-border);
+  }
+
+  &__provenance {
+    padding: var(--wiki-space-3) var(--wiki-space-4);
+  }
+
+  // Neutral resting icons at a readable contrast; active toggles stay amber
+  // with a glyph change as the non-color cue.
   .v-btn {
-    width: 28px !important;
-    min-width: 28px !important;
-    max-width: 28px !important;
-    height: 28px !important;
-    min-height: 28px !important;
-    max-height: 28px !important;
+    width: var(--page-shortcut-target) !important;
+    min-width: var(--page-shortcut-target) !important;
+    max-width: var(--page-shortcut-target) !important;
+    height: var(--page-shortcut-target) !important;
+    min-height: var(--page-shortcut-target) !important;
+    max-height: var(--page-shortcut-target) !important;
     padding: 0 !important;
     border-radius: var(--wiki-radius-xs) !important;
-    flex: 0 0 28px !important;
+    flex: 0 0 var(--page-shortcut-target) !important;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 84%, transparent);
 
     .v-icon {
-      font-size: 18px !important;
-      width: 18px !important;
-      height: 18px !important;
+      font-size: 20px !important;
+      width: 20px !important;
+      height: 20px !important;
     }
 
     &:hover {
-      background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
+      background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
+      color: var(--wiki-accent-ink);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--wiki-focus-color, var(--wiki-accent-ink));
+      outline-offset: 2px;
+      box-shadow: var(--wiki-focus-ring);
     }
   }
+
+  .page-actions-menu-btn {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: 40px !important;
+    height: 40px !important;
+    flex: 1 1 100% !important;
+    justify-content: flex-start;
+    font-weight: 550;
+    letter-spacing: 0;
+  }
+
+  .page-actions-item--active {
+    .v-list-item__prepend .v-icon {
+      color: rgb(var(--v-theme-primary));
+    }
+  }
+
+  .page-document-provenance {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: flex-start;
+    row-gap: 2px;
+    column-gap: var(--wiki-space-3);
+    font-size: .75rem;
+    line-height: 1.35;
+    text-align: start;
+  }
+
+  .page-tools-history-link {
+    display: inline-flex;
+    align-items: center;
+    margin-top: 2px;
+    border-radius: var(--wiki-radius-xs);
+    color: var(--wiki-accent-ink);
+    font-size: .75rem;
+    font-weight: 550;
+    text-decoration: none;
+
+    &:hover span {
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--wiki-focus-color, var(--wiki-accent-ink));
+      outline-offset: 2px;
+    }
+
+    .v-icon {
+      color: var(--wiki-accent-ink);
+    }
+
+    &__arrow {
+      transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease);
+    }
+
+    &:hover .page-tools-history-link__arrow {
+      transform: translateX(2px);
+    }
+
+    [dir='rtl'] & {
+      .page-tools-history-link__arrow {
+        transform: scaleX(-1);
+      }
+
+      &:hover .page-tools-history-link__arrow {
+        transform: scaleX(-1) translateX(2px);
+      }
+    }
+  }
+}
+
+.v-theme--dark .page-tools-card {
+  // Neutral charcoal: keep the warm cast restrained so the surface never
+  // reads brown in dark mode.
+  background:
+    linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--wiki-accent-warm) 3%, transparent),
+      transparent 34%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 3%, transparent)
+    ),
+    color-mix(in srgb, var(--wiki-surface-raised) 92%, transparent) !important;
 }
 
 .page-col-content:not(.is-page-header) {
@@ -5211,12 +5429,6 @@ export default defineComponent({
     min-height: var(--wiki-control-height);
     max-height: calc(var(--wiki-grid-size) * 5);
   }
-  .page-toc-card {
-    border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 32%, var(--wiki-surface-border-strong)) !important;
-    border-radius: var(--wiki-control-radius);
-    background: color-mix(in srgb, var(--wiki-accent-spectral) 5%, var(--wiki-surface-raised));
-    box-shadow: var(--wiki-shadow-xs);
-  }
 
   .page-toc-card .page-toc-toggle {
     border: 1px solid transparent;
@@ -5302,21 +5514,16 @@ export default defineComponent({
   .page-col-content--toc-right:not(.is-page-header) {
     padding-inline: 0;
   }
-  .v-theme--dark .page-toc-card {
-    border-color: color-mix(in srgb, var(--wiki-accent-spectral) 42%, var(--wiki-surface-border-strong)) !important;
-    background: color-mix(in srgb, var(--wiki-accent-spectral) 9%, var(--wiki-surface-raised));
-  }
-
   .v-theme--dark .page-toc-card .page-toc-toggle {
-    background: color-mix(in srgb, var(--wiki-accent-spectral) 12%, var(--wiki-surface-sunken)) !important;
+    background: color-mix(in srgb, var(--wiki-surface-sunken) 90%, transparent) !important;
 
     &[aria-expanded='true'] {
-      border-color: color-mix(in srgb, var(--wiki-accent-spectral) 52%, var(--wiki-surface-border-strong));
+      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 48%, var(--wiki-surface-border-strong));
       background:
         linear-gradient(
           90deg,
-          color-mix(in srgb, var(--wiki-accent-warm) 16%, var(--wiki-surface-raised)),
-          color-mix(in srgb, var(--wiki-accent-spectral) 13%, var(--wiki-surface-raised))
+          color-mix(in srgb, var(--wiki-accent-warm) 14%, var(--wiki-surface-raised)),
+          color-mix(in srgb, var(--wiki-accent-spectral) 8%, var(--wiki-surface-raised))
         ) !important;
     }
   }
@@ -5331,8 +5538,7 @@ export default defineComponent({
     gap: var(--wiki-space-4);
   }
 
-  .page-tablet-tools > .page-shortcuts-card,
-  .page-tablet-tools > .page-provenance-card,
+  .page-tablet-tools > .page-tools-card,
   .page-tablet-tools > .page-toc-card,
   .page-tablet-tools > .page-tags-card,
   .page-tablet-tools > .page-comments-card {
@@ -5459,8 +5665,7 @@ export default defineComponent({
     margin-bottom: 0 !important;
   }
 
-  .page-mobile-tools > .page-shortcuts-card,
-  .page-mobile-tools > .page-provenance-card,
+  .page-mobile-tools > .page-tools-card,
   .page-mobile-tools > .page-toc-card {
     width: 100%;
     max-width: 100%;
@@ -5573,16 +5778,16 @@ export default defineComponent({
   .page-tablet-tools,
   .page-mobile-metadata,
   .page-col-sd,
-  .page-shortcuts-card,
+  .page-tools-card__utilities,
+  .page-tools-card__divider,
+  .page-tools-history-link,
   .page-toc-card,
   .page-tags-card,
   .page-comments-card,
-  .page-history-btn,
   .comments-container {
     display: none !important;
   }
-  .page-provenance-card {
-    display: flex !important;
+  .page-tools-card {
     width: 100%;
     min-height: 0;
     margin: 0 0 var(--wiki-space-4) !important;
@@ -5591,18 +5796,20 @@ export default defineComponent({
     border-radius: 0;
     background: transparent !important;
     box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
   }
 
-  .page-provenance-card__content {
+  .page-tools-card__provenance {
     min-height: 0;
-    padding: 0 0 var(--wiki-space-2);
+    padding: 0 0 var(--wiki-space-2) !important;
     color: CanvasText;
   }
 
-  .page-provenance-card .page-document-row--date,
-  .page-provenance-card .page-document-row--author,
-  .page-provenance-card .page-document-author,
-  .page-provenance-card time {
+  .page-tools-card .page-document-row--date,
+  .page-tools-card .page-document-row--author,
+  .page-tools-card .page-document-author,
+  .page-tools-card time {
     color: CanvasText;
   }
 
@@ -5732,7 +5939,8 @@ export default defineComponent({
   .page-edit-fab,
   .page-nav-toggle,
   .page-header-section .page-edit-shortcuts .v-btn,
-  .page-toc-item {
+  .page-toc-item,
+  .page-toc-item::after {
     transition-duration: .001ms !important;
   }
 
@@ -5838,7 +6046,7 @@ export default defineComponent({
   .page-tablet-tools,
   .page-mobile-metadata,
   .page-body > .v-row > .v-card,
-  .page-provenance-card,
+  .page-tools-card,
   .page-edit-shortcuts,
   .page-edit-fab { display: none !important; }
 
@@ -5899,7 +6107,6 @@ export default defineComponent({
 @media print {
   .page-position,
   .page-focus-control,
-  .page-history-btn,
   .page-reading-dock { display: none !important; }
 }
 

@@ -3,6 +3,9 @@
     "page": {
       "id": "ID {{id}}",
       "toc": "Page Contents",
+      "onThisPage": "On this page",
+      "pageTools": "Page tools",
+      "sectionsCount": "{{count}} sections",
       "tags": "Tags",
       "share": "Share",
       "delete": "Delete Page",
