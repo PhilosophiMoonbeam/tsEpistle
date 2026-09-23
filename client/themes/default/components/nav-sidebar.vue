@@ -459,15 +459,19 @@ export default defineComponent({
   padding-block-end: calc(var(--wiki-space-8) + env(safe-area-inset-bottom));
   color: rgb(var(--v-theme-on-surface));
 
-  .nav-sidebar-edge,
   .nav-sidebar-section-divider {
     margin-inline: var(--wiki-space-3);
     border-color: var(--wiki-surface-border);
     opacity: 1;
   }
 
+  .nav-sidebar-edge {
+    border-color: var(--wiki-surface-border);
+    opacity: 1;
+  }
+
   .nav-sidebar-list {
-    padding-inline: var(--wiki-space-3);
+    padding-inline: calc(var(--wiki-space-3) / 2);
     background: transparent;
   }
 
@@ -700,7 +704,7 @@ export default defineComponent({
   --nav-switcher-control: 2.625rem;
   min-height: calc(var(--nav-switcher-control) + (var(--wiki-space-3) * 2));
   align-items: center;
-  padding: var(--wiki-space-3);
+  padding: var(--wiki-space-3) calc(var(--wiki-space-3) / 2);
   background:
     linear-gradient(
       135deg,
