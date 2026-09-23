@@ -448,15 +448,14 @@
                     span.page-document-author
                       | {{ $t('common:page.byAuthor', { author: '' }) }}
                       bdi.page-provenance-author {{ authorName }}
-                  a.page-tools-history-link(
-                    v-if='canViewHistory'
-                    :href='pageHistoryUrl'
-                    @click='historyLinkClicked($event)'
-                    :aria-label='$t(`common:page.viewHistory`)'
-                  )
-                    v-icon(size='x-small', aria-hidden='true') mdi-history
-                    span {{$t('common:page.viewHistory')}}
-                    v-icon.page-tools-history-link__arrow(size='x-small', aria-hidden='true') mdi-arrow-right
+                a.page-tools-history-link(
+                  v-if='canViewHistory'
+                  :href='pageHistoryUrl'
+                  @click='historyLinkClicked($event)'
+                  :aria-label='$t(`common:page.viewHistory`)'
+                )
+                  span {{$t('common:page.viewHistory')}}
+                  v-icon.page-tools-history-link__arrow(size='x-small', aria-hidden='true') mdi-arrow-right
             v-card.page-toc-card.mb-4(v-if='tocPosition !== `off` && !talkActive', tag='nav', :aria-label='$t(`common:page.toc`)')
               v-btn.page-toc-toggle.text-none(
                 variant='text'
@@ -3004,7 +3003,10 @@ export default defineComponent({
       this.outlineCleanup?.dispose()
       this.outlineCleanup = trackPageOutline(container, this.tocFlattened, anchor => {
         this.activeAnchor = anchor
-        this.ensureActiveTocVisible()
+        // Reveal after Vue has applied the new aria-current, so the ToC list
+        // follows the row that is actually active instead of trailing one
+        // highlight behind during fast scrolls.
+        this.$nextTick(() => this.ensureActiveTocVisible())
       }, progress => { this.readingProgress = progress })
       this.setupTocResizeObserver()
       boot.notify('page-ready')
@@ -5161,7 +5163,13 @@ export default defineComponent({
   }
 
   &__provenance {
-    padding: var(--wiki-space-3) var(--wiki-space-4);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    column-gap: var(--wiki-space-2);
+    row-gap: var(--wiki-space-1);
+    flex-wrap: wrap;
+    padding: var(--wiki-space-2) var(--wiki-space-3);
   }
 
   // Neutral resting icons at a readable contrast; active toggles stay amber
@@ -5215,7 +5223,8 @@ export default defineComponent({
 
   .page-document-provenance {
     display: flex;
-    flex: 1 1 auto;
+    flex: 0 1 auto;
+    min-width: 0;
     flex-direction: column;
     align-items: flex-start;
     row-gap: 2px;
@@ -5226,9 +5235,12 @@ export default defineComponent({
   }
 
   .page-tools-history-link {
+    flex: 0 0 auto;
+  }
+
+  .page-tools-history-link {
     display: inline-flex;
     align-items: center;
-    margin-top: 2px;
     border-radius: var(--wiki-radius-xs);
     color: var(--wiki-accent-ink);
     font-size: .75rem;
