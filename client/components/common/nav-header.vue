@@ -1901,14 +1901,8 @@ export default defineComponent({
   line-height: 1;
 }
 
-.nav-header .nav-header-inner .nav-header-edit-btn {
-  flex: 0 0 auto;
-  min-height: 36px;
-  height: 36px !important;
-  padding-inline: var(--wiki-space-3);
-  font-weight: 600;
-  border-radius: var(--wiki-radius-pill) !important;
-}
+// The Edit control now shares the transparent square chrome of the other
+// header buttons (.nav-header-inner .v-btn); no pill sizing of its own.
 
 .account-menu__notification-indicator {
   position: absolute;
