@@ -1947,14 +1947,20 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   --agent-close-hover-tint: #f87171;
 }
 
-.inline-agent__new-session:not(.v-btn--disabled):hover,
-.inline-agent__new-session:not(.v-btn--disabled):hover :deep(.v-icon) {
-  color: var(--agent-new-hover-tint) !important;
-}
+/* Hover tints are guarded so a touch tap can't latch :hover (mobile
+   browsers keep the hover state until the user taps elsewhere, which made
+   the green New chat tint linger after the tap). Touch feedback comes from
+   the button's own :active/ripple instead. */
+@media (hover: hover) {
+  .inline-agent__new-session:not(.v-btn--disabled):hover,
+  .inline-agent__new-session:not(.v-btn--disabled):hover :deep(.v-icon) {
+    color: var(--agent-new-hover-tint) !important;
+  }
 
-.inline-agent__history-toggle:not(.v-btn--disabled):hover,
-.inline-agent__history-toggle:not(.v-btn--disabled):hover :deep(.v-icon) {
-  color: #7c3aed !important;
+  .inline-agent__history-toggle:not(.v-btn--disabled):hover,
+  .inline-agent__history-toggle:not(.v-btn--disabled):hover :deep(.v-icon) {
+    color: #7c3aed !important;
+  }
 }
 .inline-agent__session-line {
   display: flex;
@@ -1995,14 +2001,18 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   background-color: transparent;
 }
 
-.inline-agent__close-action:is(:hover, :active) {
-  /* Identical hover treatment to the other header icon controls: the same
-     Vuetify overlay fill, no glow, no scale, and a crisp red icon tint
-     matching the tint palette of the New/History hovers. */
+/* :active stays unguarded so a touch tap flashes red once; :hover is
+   guarded so the tint can't latch on touch devices. */
+.inline-agent__close-action:active {
   color: var(--agent-close-hover-tint, #dc2626);
   background-color: transparent;
   transform: none;
   box-shadow: none;
+}
+@media (hover: hover) {
+  .inline-agent__close-action:hover {
+    color: var(--agent-close-hover-tint, #dc2626);
+  }
 }
 .inline-agent__progress {
   position: absolute;

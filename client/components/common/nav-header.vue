@@ -1675,11 +1675,17 @@ export default defineComponent({
       color: currentColor !important;
     }
 
-    &:hover {
-      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent);
-      background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent);
-      color: var(--wiki-accent-warm);
-      transform: none;
+    // Hover-only chrome cast: guarded so touch taps can't latch :hover
+    // (mobile browsers keep the hover state until the user taps elsewhere,
+    // which made the tint linger after opening the Agent). Touch feedback
+    // stays with the button's own :active/ripple.
+    @media (hover: hover) {
+      &:hover {
+        border-color: color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent);
+        background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent);
+        color: var(--wiki-accent-warm);
+        transform: none;
+      }
     }
 
     &:focus-visible {
@@ -1709,11 +1715,19 @@ export default defineComponent({
   // Agent + Edit share the transparent square chrome AND the standard theme
   // hover cast of the other header controls (.nav-header-inner .v-btn above);
   // only their border tint follows each control's own fixed icon accent.
-  .nav-header-inner .nav-header-agent:hover,
+  // Hover-only border tint is guarded so touch taps can't latch :hover
+  // (mobile browsers keep hover until the next tap elsewhere).
+  @media (hover: hover) {
+    .nav-header-inner .nav-header-agent:hover {
+      border-color: color-mix(in srgb, var(--nav-header-agent-icon-color) 48%, transparent) !important;
+    }
+    .nav-header-inner .nav-header-edit-btn:hover {
+      border-color: color-mix(in srgb, var(--nav-header-edit-icon-color) 48%, transparent) !important;
+    }
+  }
   .nav-header-inner .nav-header-agent:focus-visible {
     border-color: color-mix(in srgb, var(--nav-header-agent-icon-color) 48%, transparent) !important;
   }
-  .nav-header-inner .nav-header-edit-btn:hover,
   .nav-header-inner .nav-header-edit-btn:focus-visible {
     border-color: color-mix(in srgb, var(--nav-header-edit-icon-color) 48%, transparent) !important;
   }
@@ -1755,9 +1769,13 @@ export default defineComponent({
     color: var(--nav-header-edit-icon-color) !important;
   }
 
-  .nav-header-inner .nav-header-agent:hover .v-icon,
+  @media (hover: hover) {
+    .nav-header-inner .nav-header-agent:hover .v-icon,
+    .nav-header-inner .nav-header-edit-btn:hover .v-icon {
+      transform: translateY(-1px);
+    }
+  }
   .nav-header-inner .nav-header-agent:focus-visible .v-icon,
-  .nav-header-inner .nav-header-edit-btn:hover .v-icon,
   .nav-header-inner .nav-header-edit-btn:focus-visible .v-icon {
     transform: translateY(-1px);
   }
