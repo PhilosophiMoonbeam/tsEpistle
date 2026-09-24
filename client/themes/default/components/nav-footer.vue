@@ -65,6 +65,12 @@ export default defineComponent({
 .nav-footer {
   position: relative;
   --nav-footer-accent-direction: 90deg;
+  // Vuetify's stock .v-footer uses flex: 1 1 auto, which makes the footer a
+  // growing flex child of .v-application__wrap (min-height 100dvh): on short
+  // pages it stretches to fill the whole viewport remainder (giant footer).
+  // Keep it thin, pinned to the bottom of the shell instead.
+  flex: none;
+  margin-top: auto;
   overflow: visible;
   height: auto;
   min-height: var(--wiki-footer-height);
