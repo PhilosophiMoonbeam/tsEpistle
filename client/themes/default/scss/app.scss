@@ -752,6 +752,10 @@
   // theme tokens so light/dark adapt automatically.
   .code-toolbar {
     position: relative;
+    // Clip the copy-click flash band to the block: the sweep pseudo-element
+    // translates across (and past) the wrapper, so without this the band is
+    // visible straying outside the block's start edge.
+    overflow: hidden;
 
     > .toolbar {
       position: absolute;
@@ -847,7 +851,7 @@
       border-radius: var(--wiki-panel-radius, 12px);
       background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent) 50%, transparent 60%);
       pointer-events: none;
-      animation: wiki-code-block-copy-sweep 1.9s ease-in-out 1 both;
+      animation: wiki-code-block-copy-sweep .95s ease-in-out 1 both;
     }
   }
 
@@ -861,7 +865,7 @@
     border-radius: var(--wiki-panel-radius, 12px);
     background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent) 50%, transparent 60%);
     pointer-events: none;
-    animation: wiki-code-block-copy-sweep 1.9s ease-in-out 1 both;
+    animation: wiki-code-block-copy-sweep .95s ease-in-out 1 both;
   }
 
   mark {
