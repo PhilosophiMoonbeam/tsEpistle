@@ -3,7 +3,7 @@
     a.page-skip-link(:href='talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='talkActive ? goToComments() : focusArticle()') Skip to content
     nav-header(v-if='!printView', reserve-actions)
     .page-position(v-if='!printView', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100')
-      .page-position-fill(:style='{ transform: `scaleX(${readingProgress / 100})`, opacity: readingProgressOpacity }')
+      .page-position-fill(:style='{ transform: `scaleX(${readingProgress / 100})` }')
     .page-reading-dock(v-if='readerFocus && !printView && !talkActive', role='region', :aria-label='$t(`common:page.focusReading`)', style='backdrop-filter: var(--wiki-chrome-blur);')
       v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
       span.page-reading-dock-title {{ title }}
@@ -1665,10 +1665,6 @@ export default defineComponent({
     navigationOpen: {
       get (): boolean { return (this.talkActive || !this.readerFocus) && this.navShown },
       set (value: boolean) { if (!this.readerFocus || this.talkActive) this.navShown = value }
-    },
-    readingProgressOpacity (): number {
-      const progress = Math.max(0, Math.min(100, Number(this.readingProgress) || 0)) / 100
-      return .60 + .24 * progress
     },
     pageArticleId (): string {
       return `wiki-page-shell-${this.pageId}-article`
@@ -6306,21 +6302,33 @@ export default defineComponent({
 }
 .page-position {
   position: fixed;
-  inset-block-start: var(--v-layout-top, 64px);
+  /* The Wiki header is a 52px chrome bar (48px dense) plus a 1px bottom
+     border; --v-layout-top is not emitted for it, so anchor to the shared
+     chrome token and sit flush under the border. */
+  inset-block-start: calc(var(--wiki-chrome-height, 3.25rem) + 1px);
   inset-inline: 0;
   z-index: 1004;
   height: 2px;
   pointer-events: none;
 }
 
+.nav-header--dense + .page-position {
+  inset-block-start: calc(var(--wiki-chrome-height-dense, 3rem) + 1px);
+}
+
 .page-position-fill {
   width: 100%;
   height: 100%;
-  background: color-mix(in srgb, var(--wiki-accent-ink) 52%, transparent);
+  /* Reading-position wash: very faint at the reading start, strengthening
+     along the scroll direction up to a strong accent at the leading edge. */
+  background: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-ink) 25%, transparent), color-mix(in srgb, var(--wiki-accent-ink) 85%, transparent));
   transform-origin: left;
 }
 
-.is-rtl .page-position-fill { transform-origin: right; }
+.is-rtl .page-position-fill {
+  transform-origin: right;
+  background: linear-gradient(270deg, color-mix(in srgb, var(--wiki-accent-ink) 25%, transparent), color-mix(in srgb, var(--wiki-accent-ink) 85%, transparent));
+}
 
 .page-focus-control {
   /* Match the offline cloud control so both header actions read as one row. */
