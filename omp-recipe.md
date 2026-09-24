@@ -1,6 +1,6 @@
 # OMP Robust-Rapid Development Recipe
 
-Configure OMP for fast, reliable development across small and very large projects. Keep **32-worker capacity**, delegate real independent work, and spend reasoning and verification where they reduce defects or rework. This is an evidence-based starting configuration, not a claim that one model/effort combination is optimal for every project.
+Configure OMP for fast, reliable development across small and very large projects. Keep **32-worker capacity**, actively decompose substantial implementation into concurrently runnable ownership units, and budget an integration pass for their combined result. Spend reasoning and verification where they reduce defects or rework. This is an evidence-based starting configuration, not a claim that one model/effort combination is optimal for every project.
 
 **This recipe configures the harness; it does not authorize application changes, credential changes, dependency installation, OMP upgrades, commits, deployment, or remote Git operations.** Subsequent development follows the user's task authorization and the repository's active operating mode.
 
@@ -8,7 +8,7 @@ Configure OMP for fast, reliable development across small and very large project
 
 - Identify the installed OMP version, effective settings, active configuration layers, discovered agents, and registered provider/model selectors. Reuse current evidence instead of repeatedly auditing the same configuration.
 - Read applicable repository rules. Preserve user changes, unrelated settings, existing hard spending/time/request limits, and security/data-preservation boundaries.
-- Verify keys and model effort levels against the installed schema/source or matching documentation. The mappings below were assessed against OMP 18.2.6; another version must be checked for relevant differences.
+- Verify keys and model effort levels against the installed schema/source or matching documentation. The mappings below were assessed against OMP 18.2.6 and the implementation routing against 18.3.0; another version must be checked for relevant differences.
 - Before editing configuration, retain a recoverable copy of only the files being changed and record any newly created paths. No release records, attestation packages, or broad backup ceremony for ordinary configuration edits.
 - Prefer the narrowest appropriate configuration scope. `omp config set` normally writes global settings; project settings and CLI/runtime overrides can take precedence. Never dump credentials into reports or backups with permissive access.
 - Apply supported improvements independently. A missing optional agent or model should leave that assignment unchanged, not block unrelated work or trigger an unapproved substitution.
@@ -32,7 +32,7 @@ Use exact provider-qualified selectors. The assessed installation registers the 
 | Function | Agent / routing | Starting model and effort | Use |
 |---|---|---|---|
 | Main | `modelRoles.default` | `openai-codex/gpt-6-sol:medium` | Own requirements, decomposition, integration, and delivery; implement small cohesive changes directly |
-| Implementation | Existing `task`; `modelRoles.task` | `openai-codex/gpt-6-sol:high` | Investigate and implement a complete bounded ownership unit |
+| Implementation | Existing `task`; `modelRoles.task` | `openai-codex/gpt-6-luna:max` | Decompose substantial work into bounded independent code-writing units, implement concurrently in isolated worktrees, and integrate the combined result |
 | Architecture | Custom `planner` defined below; `modelRoles.plan` | `openai-codex/gpt-6-astra:high` | Material architecture, shared contracts, schema/data transitions, or trust-boundary decisions |
 | Discovery | Existing `scout` | `openai-codex/gpt-6-luna:medium` | Unmapped subsystems, independent research, exact source/tool evidence |
 | Mechanical work | Existing `sonic` | `openai-codex/gpt-6-luna:medium` | Substantial mechanical batches; run already-known commands directly without an extra agent |
@@ -41,7 +41,7 @@ Use exact provider-qualified selectors. The assessed installation registers the 
 | Documentation | Optional `docwriter` | `openai-codex/gpt-6-sol:low` | Large independent documentation work; small updates remain with the implementer |
 | Independent review | Existing `reviewer` / `security-reviewer` | `openai-codex/gpt-6-sol:high` | Risk-selected correctness/security review; use `xhigh` for genuinely difficult high-risk changes |
 
-These are starting assignments, not mandatory participants in every task. Raise effort when evidence warrants it; do not automatically run every reviewer at maximum effort. The optional tester's existing `gpt-5.6-sol:high` assignment is unchanged; the clarified `gpt-6-astra:low` replacement applies to **Debug escalation**, not Implementation or tester. Luna can handle bounded routine test work, but high effort alone does not establish suitability for difficult semantic diagnosis.
+These are starting assignments, not mandatory participants in every task. Implementation uses Luna at `max`; reserve `gpt-6-astra:low` for **Debug escalation**, not routine implementation or the optional tester. Raise other roles' effort when evidence warrants it; do not automatically run every reviewer at maximum effort. The optional tester's existing `gpt-5.6-sol:high` assignment is unchanged. Difficult semantic diagnosis can still require escalation despite Luna's maximum effort.
 
 - Reuse bundled agents and intentionally maintained custom definitions. `planner` is **not bundled**: install the definition below on a fresh setup. Keep that name as the recipe's stable dispatch identifier; its description and instructions narrow it to architectural decisions, while Main owns ordinary planning. Do not also create an `architect` alias or force every project to maintain six custom agents.
 - Keep routing centralized through `modelRoles` and quoted aliases such as `"@plan"`, referenced by agent frontmatter or `task.agentModelOverrides`. Model roles alone do not create agents or guarantee that bundled agents use those roles.
@@ -55,7 +55,7 @@ For the current recipe assignments, merge these role and dispatch routes into th
 ```yaml
 modelRoles:
   default: openai-codex/gpt-6-sol:medium
-  task: openai-codex/gpt-6-sol:high
+  task: openai-codex/gpt-6-luna:max
   plan: openai-codex/gpt-6-astra:high
   discovery: openai-codex/gpt-6-luna:medium
   slow: openai-codex/gpt-6-astra:low
@@ -209,9 +209,9 @@ lsp:
 - Keep `task.maxConcurrency` at **32**. Do not lower it to 8 or another arbitrary ceiling, reserve idle slots by policy, or manufacture workers merely to fill capacity.
 - Main owns a flat work queue and keeps up to 32 useful delegated workers active when independent work exists. Workers do not spawn or manage other workers. Depth 2 is a backstop, not an instruction to introduce nested delegation; preserve stricter repository restrictions.
 - `task.maxConcurrency` is not a process-wide semaphore: task sessions have separate limits, workpools have per-pool limits, and eval `agent()` does not acquire the TaskTool semaphore. Main must account for all active workers across launch surfaces rather than multiplying capacity through nested sessions or extra pools.
-- Dispatch independent ready packets together. Launch the next ready packet when its prerequisites are met; do not wait for unrelated workers to finish an entire phase.
+- Before implementing a substantial task, identify independently writable ownership units, their shared contract, and the integration owner. Favor concurrent `task` implementers over serializing separable work merely to avoid an integration pass; keep small cohesive tasks inline and avoid contrived micro-slices.
+- Dispatch independent ready packets together and keep the queue moving as prerequisites clear. Main integrates completed deltas against the evolving candidate, including an explicit cross-slice integration pass when interfaces or behavior meet; do not wait for unrelated workers to finish an entire phase.
 - Parallelize by ownership and dependency, not file count alone. Disjoint files can still share an API, generated output, database, test fixture, or service. Decide shared interfaces before dispatch and give shared mutations one owner.
-- Do not run 32 competing builds or tests against the same ports, database, or output directories. Keep agent capacity at 32 while scheduling resource-conflicting commands safely.
 
 ### Budgets and lifecycle
 
@@ -223,12 +223,12 @@ lsp:
 
 ## 4. Isolate parallel writers without creating a merge bureaucracy
 
-- Main can edit a bounded cohesive task inline in the normal checkout. Do not create an integration branch/worktree for every small change.
+- Main can edit a bounded cohesive task inline in the normal checkout. For substantial implementation, first seek independent ownership units that can be coded concurrently; an eventual integration pass is a normal cost, not a reason to serialize all code writing.
 - Every delegated write-enabled worker uses `isolated: true` and an explicit ownership scope. Read-only research does not need checkout isolation.
 - `task.isolation.enabled` only enables the option; omitting `isolated: true` leaves the worker non-isolated. Verify the dispatch, not just the setting.
-- OMP provides an isolated checkout/workspace using available copy-on-write, snapshot, overlay, or copy backends. Do not promise a literal Git worktree or an OS security sandbox.
+- OMP 18.3.0 names the isolated checkout a task worktree and captures its baseline/delta; the selected isolation backend may materialize it through copy-on-write, overlay, or a Git-worktree fallback. Require a separate isolated working tree for every code writer, but do not imply all backends are literally `git worktree add` or that checkout isolation is an OS security sandbox.
 - Keep task auto-application disabled so completion order does not mutate Main's checkout unexpectedly. For an isolated eval `agent()` invocation, explicitly pass **`apply: false`** as well: its default is not governed by `task.isolation.apply`.
-- Main is the integration owner. Accept worker deltas against their actual baseline, then apply compatible changes to the working candidate as dependencies become ready. This local patch integration is not authorization to commit, merge a protected branch, push, or deploy.
+- Main is the integration owner. Accept worker deltas against their actual baseline, then apply compatible changes to the working candidate as dependencies become ready. Integrate shared interfaces and cross-slice behavior before combined validation. This local patch integration is not authorization to commit, merge a protected branch, push, or deploy.
 - Use a dedicated integration workspace only when concurrent WIP, branch policy, or the change's risk benefits from it. Do not require a separate branch merely to collect disjoint patches.
 - A base commit does not identify uncommitted user changes. Preserve the starting dirty state and identify the worker delta with its patch/artifact reference; never reset, force-overwrite, or discard unrelated work to make a patch apply.
 - Resolve conflicts against current source and the agreed interface; do not blindly retry application. Revalidate affected behavior after integration. Successful worker checks do not establish correctness of combined changes.
@@ -279,9 +279,9 @@ Reject schema-invalid results, but preserve evidence for recovery. Schema validi
 
 ## 6. Execute the shortest sufficient development path
 
-1. **Scope inline.** Main identifies the affected surface, governing mode, and acceptance criteria. Small cohesive changes stay with Main.
+1. **Scope and decompose inline.** Main identifies the affected surface, governing mode, acceptance criteria, and independent implementation units. Keep small cohesive changes with Main; for substantial work, define shared interfaces and an integration owner before dispatch.
 2. **Consult only at material decision points.** Use the custom planner defined in section 2 for architecture, shared-contract, schema/data, trust-boundary, or substantial ownership decisions. Reconsult only when evidence invalidates that decision, not for implementation-local failures.
-3. **Delegate real independent units.** Let implementers investigate and edit their own slices in one pass. Add scouts only for genuinely unmapped or separately useful research. Do not require a scout → coder → tester → docwriter chain.
+3. **Implement concurrently where useful.** Dispatch independent code-writing units together in isolated worktrees; let implementers investigate and edit their own slices in one pass. Budget an integration pass rather than serializing separable slices to avoid one. Add scouts only for genuinely unmapped or separately useful research. Do not require a scout → coder → tester → docwriter chain.
 4. **Keep the queue moving.** Dispatch ready work up to full capacity, integrate completed dependencies, and continue useful Main work. Do not poll agents or repeatedly request status when completion is delivered automatically.
 5. **Debug from evidence.** The owner reproduces the failure, tests a concrete hypothesis, and changes course or escalates when it fails. Do not repeat the same attempt with more ceremony or a new agent name.
 6. **Validate the candidate once per relevant boundary.** Workers do not run formatters, linters, builds, or test suites while a concurrent editing batch is in flight. Main owns combined validation after integration. Once an affected candidate is stable, an explicitly assigned focused check can run alongside unrelated work only when resources and ownership are independent.
@@ -304,6 +304,6 @@ Retain native shell execution and useful context maintenance. Not every external
 - If activation fails, restore only the recipe's changes from the retained copies and remove only its own newly created files. If another actor has edited a touched file since backup, reconcile the specific changes instead of blindly restoring over their work.
 - Report changed files, effective routing/capacity, focused check results, limitations, and the recovery location/procedure in a short factual response. No standalone evidence document is required.
 
-**Recovery:** original setup copies of `config.yml`, `agents/planner.md`, and `AGENTS.md` are in `~/.omp/recipe-backups/2026-09-20T02-22-47-807Z/`. Pre-routing-repair `config.yml` is in `~/.omp/recipe-backups/2026-09-24-routing/`; the pre-plan/review-adjustment copy is in `~/.omp/recipe-backups/2026-09-24-plan-review/`. The planner definition immediately before this schema validation is in `~/.omp/recipe-backups/2026-09-24-validation/planner.md`. Restore only the affected file if routing fails, reconciling any intervening edits first.
+**Recovery:** original setup copies of `config.yml`, `agents/planner.md`, and `AGENTS.md` are in `~/.omp/recipe-backups/2026-09-20T02-22-47-807Z/`. Pre-routing-repair `config.yml` is in `~/.omp/recipe-backups/2026-09-24-routing/`; the pre-plan/review-adjustment copy is in `~/.omp/recipe-backups/2026-09-24-plan-review/`. The planner definition immediately before this schema validation is in `~/.omp/recipe-backups/2026-09-24-validation/planner.md`. Pre-Luna implementation copies of `config.yml`, `AGENTS.md`, and `omp-recipe.md` are in `~/.omp/recipe-backups/2026-09-24-luna-implementation/`. Restore only the affected file if routing fails, reconciling any intervening edits first.
 
 During normal development, compare accepted-change quality, end-to-end latency, total model usage/cost, rework, conflicts, budget stops, and human interventions. Tune routing or effort when repeated evidence warrants it; change one policy dimension at a time when attribution matters. Keep **32-worker capacity** while improving packet sizing and scheduling. Optimize for reliable completed work per unit time and cost—not the fewest tokens, the most agents, or the most process steps.
