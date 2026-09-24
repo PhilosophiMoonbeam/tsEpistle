@@ -752,10 +752,6 @@
   // theme tokens so light/dark adapt automatically.
   .code-toolbar {
     position: relative;
-    // Clip the copy-click flash band to the block: the sweep pseudo-element
-    // translates across (and past) the wrapper, so without this the band is
-    // visible straying outside the block's start edge.
-    overflow: hidden;
 
     > .toolbar {
       position: absolute;
@@ -839,30 +835,26 @@
       }
     }
 
-    // Whole-block copy acknowledgment: the class is applied to this wrapper
-    // (or to the enclosing .codeblock-framed, which gets the same treatment
-    // below) only at the moment the Copy button is clicked. Idle otherwise —
-    // no timers, no hover triggers on the block itself.
-    &.wiki-code-copy-flash-run::after {
-      content: '';
-      position: absolute;
-      inset: 0;
-      z-index: 3;
-      border-radius: var(--wiki-panel-radius, 12px);
-      background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent) 50%, transparent 60%);
-      pointer-events: none;
-      animation: wiki-code-block-copy-sweep .95s ease-in-out 1 both;
-    }
   }
 
-  // Framed blocks (titled code cards): the flash rides the whole frame,
-  // title bar included, so the sweep reads as one gesture over the card.
+  // Whole-block copy acknowledgment: applied to the block's own pre (or to
+  // the enclosing .codeblock-framed for titled cards) only at the moment the
+  // Copy button is clicked. Idle otherwise — no timers, no hover triggers on
+  // the block itself. The pre is used rather than the .code-toolbar wrapper
+  // so the sweep stays flush with the panel and is clipped by the pre's own
+  // overflow instead of straying past the block's start edge.
+  .code-toolbar > pre.wiki-code-copy-flash-run,
+  .codeblock-framed.wiki-code-copy-flash-run {
+    position: relative;
+  }
+
+  .code-toolbar > pre.wiki-code-copy-flash-run::after,
   .codeblock-framed.wiki-code-copy-flash-run::after {
     content: '';
     position: absolute;
     inset: 0;
     z-index: 3;
-    border-radius: var(--wiki-panel-radius, 12px);
+    border-radius: inherit;
     background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent) 50%, transparent 60%);
     pointer-events: none;
     animation: wiki-code-block-copy-sweep .95s ease-in-out 1 both;
