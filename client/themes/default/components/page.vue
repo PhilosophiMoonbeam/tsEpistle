@@ -4449,13 +4449,30 @@ export default defineComponent({
 }
 
 @media (pointer: coarse) {
-  .page-tools-history-link,
-  .page-offline-control,
-  .page-offline-retry-control {
+  .page-tools-history-link {
     width: 44px !important;
     height: 44px !important;
     min-width: 44px !important;
     min-height: 44px !important;
+  }
+
+  .page-offline-control,
+  .page-offline-retry-control,
+  .page-focus-control {
+    height: 32px !important;
+    min-height: 32px !important;
+  }
+
+  .page-offline-control,
+  .page-offline-retry-control {
+    width: 32px !important;
+    min-width: 32px !important;
+  }
+
+  .page-focus-control {
+    min-width: 32px !important;
+    padding-inline-end: var(--wiki-space-2);
+    padding-block-end: 0 !important;
   }
 }
 
