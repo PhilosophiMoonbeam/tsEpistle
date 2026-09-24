@@ -708,6 +708,7 @@
   }
 
   .codeblock-framed {
+    position: relative;
     overflow: hidden;
     margin: var(--wiki-space-6, 1.5rem) 0;
     border: 1px solid var(--wiki-surface-border);
@@ -831,6 +832,34 @@
         background: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, var(--wiki-surface-raised) 90%);
       }
     }
+
+    // Whole-block copy acknowledgment: the class is applied to this wrapper
+    // (or to the enclosing .codeblock-framed, which gets the same treatment
+    // below) only at the moment the Copy button is clicked. Idle otherwise —
+    // no timers, no hover triggers on the block itself.
+    &.wiki-code-copy-flash-run::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      border-radius: var(--wiki-panel-radius, 12px);
+      background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent) 50%, transparent 60%);
+      pointer-events: none;
+      animation: wiki-code-block-copy-sweep 1.9s ease-in-out 1 both;
+    }
+  }
+
+  // Framed blocks (titled code cards): the flash rides the whole frame,
+  // title bar included, so the sweep reads as one gesture over the card.
+  .codeblock-framed.wiki-code-copy-flash-run::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    border-radius: var(--wiki-panel-radius, 12px);
+    background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent) 50%, transparent 60%);
+    pointer-events: none;
+    animation: wiki-code-block-copy-sweep 1.9s ease-in-out 1 both;
   }
 
   mark {
@@ -2076,6 +2105,15 @@
 // Single attractor sweep for the code-block copy button; scheduling lives in
 // page.vue (first-hover trigger + randomized ambient cadence).
 @keyframes wiki-code-copy-shimmer-sweep {
+  from { transform: translateX(-130%); }
+  to { transform: translateX(130%); }
+}
+
+// Whole-block acknowledgment sweep: fired only when the code block's Copy
+// button is clicked (page.vue wires it alongside the clipboard action), so
+// the entire block lights up the same way an inline backtick chip does when
+// the user clicks it to copy.
+@keyframes wiki-code-block-copy-sweep {
   from { transform: translateX(-130%); }
   to { transform: translateX(130%); }
 }

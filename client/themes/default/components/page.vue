@@ -978,6 +978,16 @@ Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment
     text: () => env.code || ''
   })
 
+  // The whole block acknowledges the copy with the same attractor sweep the
+  // inline backtick chips use on their click-to-copy: a single soft accent
+  // band rides the block boundary. Fires on the click itself, not on the
+  // clipboard outcome.
+  linkCopy.addEventListener('click', () => {
+    const toolbar = linkCopy.closest<HTMLElement>('.code-toolbar')
+    if (!toolbar) return
+    flashCodeBlockCopy(toolbar.closest<HTMLElement>('.codeblock-framed') ?? toolbar)
+  })
+
   clip.on('success', () => {
     linkCopy.textContent = i18next.t('page.codeCopied', { ns: 'common' })
     linkCopy.dataset.copyState = 'success'
@@ -1063,6 +1073,28 @@ function handleCopyToolbarFirstHover (toolbar: HTMLElement): void {
   scheduleCopyShimmer(toolbar, COPY_SHIMMER_SWEEP_MS + COPY_SHIMMER_RESUME_DELAY_MS + copyShimmerAmbientDelay())
 }
 
+// Single whole-block sweep acknowledging a code-block copy click. The band
+// rides the block's boundary (::after on the block container) so every line
+// of code lights up together, matching the inline chip's click sweep.
+const BLOCK_COPY_FLASH_CLASS = 'wiki-code-copy-flash-run'
+const BLOCK_COPY_SWEEP_NAME = 'wiki-code-block-copy-sweep'
+
+function flashCodeBlockCopy (block: HTMLElement): void {
+  block.classList.remove(BLOCK_COPY_FLASH_CLASS)
+  // Force a style flush so the sweep restarts from its beginning even if a
+  // previous one was still mid-flight.
+  void block.offsetWidth
+  block.classList.add(BLOCK_COPY_FLASH_CLASS)
+  block.addEventListener('animationend', (event: Event) => {
+    // Only our own band's animation ends on the block; the toolbar button's
+    // shimmer sweep bubbles its animationend through the same subtree.
+    const anim = event as AnimationEvent
+    if (anim.animationName === BLOCK_COPY_SWEEP_NAME) {
+      block.classList.remove(BLOCK_COPY_FLASH_CLASS)
+    }
+  }, { once: true })
+}
+
 function setupCodeCopyShimmer (container: HTMLElement): void {
   for (const toolbar of container.querySelectorAll<HTMLElement>('.code-toolbar')) {
     if (!copyShimmerStates.has(toolbar)) {
@@ -1086,19 +1118,16 @@ function setupCodeCopyShimmer (container: HTMLElement): void {
 }
 
 // ---------------------------------------------------------------------------
-// Inline-code copy + shimmer attractor
+// Inline-code copy + click-acknowledgment sweep
 //
 // Backtick-enclosed chips (`:not(pre) > code`) become click-to-copy: clicking
 // anywhere on the chip copies its text, with a short success/error tint plus
-// an extra sweep as the interaction acknowledgment. The shimmer shares the
-// code-block copy button's cadence: the first hover fires the sweep
-// immediately, then the randomized ambient cadence resumes after the
-// post-hover pause.
+// the sweep as the interaction acknowledgment. The sweep fires only on the
+// click that performs the copy — never on a timer, never on hover.
 // ---------------------------------------------------------------------------
 
 const INLINE_COPY_FEEDBACK_MS = 1_400
 
-const inlineShimmerStates = new WeakMap<HTMLElement, { timer?: number; everHovered: boolean }>()
 const inlineCopyWired = new WeakSet<HTMLElement>()
 
 function isStandaloneInlineCode (element: Element | null): element is HTMLElement {
@@ -1114,32 +1143,6 @@ function triggerInlineShimmerSweep (codeEl: HTMLElement): void {
   codeEl.addEventListener('animationend', () => {
     codeEl.classList.remove('wiki-inline-shimmer-run')
   }, { once: true })
-}
-
-function scheduleInlineShimmer (codeEl: HTMLElement, delayMs: number): void {
-  const state = inlineShimmerStates.get(codeEl)
-  if (!state) return
-  if (state.timer !== undefined) clearTimeout(state.timer)
-  state.timer = window.setTimeout(() => {
-    const fresh = inlineShimmerStates.get(codeEl)
-    if (!fresh || !codeEl.isConnected) return
-    triggerInlineShimmerSweep(codeEl)
-    scheduleInlineShimmer(codeEl, copyShimmerAmbientDelay())
-  }, delayMs)
-}
-
-function handleInlineCodeFirstHover (codeEl: HTMLElement): void {
-  const state = inlineShimmerStates.get(codeEl)
-  if (!state) return
-  state.everHovered = true
-  // Drop any pending ambient sweep: the hover sweep fires now and the
-  // randomized cadence only resumes after the sweep plus a short pause.
-  if (state.timer !== undefined) {
-    clearTimeout(state.timer)
-    state.timer = undefined
-  }
-  triggerInlineShimmerSweep(codeEl)
-  scheduleInlineShimmer(codeEl, COPY_SHIMMER_SWEEP_MS + COPY_SHIMMER_RESUME_DELAY_MS + copyShimmerAmbientDelay())
 }
 
 function setInlineCopyFeedback (codeEl: HTMLElement, state: 'success' | 'error'): void {
@@ -1176,24 +1179,10 @@ async function copyInlineCodeText (codeEl: HTMLElement): Promise<boolean> {
 function setupInlineCodeCopy (container: HTMLElement): void {
   for (const codeEl of container.querySelectorAll<HTMLElement>('code')) {
     if (!isStandaloneInlineCode(codeEl)) continue
-    if (inlineShimmerStates.has(codeEl)) continue
-    inlineShimmerStates.set(codeEl, { everHovered: false })
     if (!codeEl.hasAttribute('title')) codeEl.setAttribute('title', i18next.t('page.copyCode', { ns: 'common' }))
-    scheduleInlineShimmer(codeEl, copyShimmerAmbientDelay())
   }
   if (inlineCopyWired.has(container)) return
   inlineCopyWired.add(container)
-  container.addEventListener('mouseover', (event: MouseEvent) => {
-    const target = event.target instanceof Element ? event.target : null
-    if (!target) return
-    const codeEl = target.closest<HTMLElement>('code')
-    if (!isStandaloneInlineCode(codeEl) || !container.contains(codeEl)) return
-    // Only genuine entries into the chip, not movement between its children.
-    if (event.relatedTarget instanceof Node && codeEl.contains(event.relatedTarget)) return
-    const state = inlineShimmerStates.get(codeEl)
-    if (!state || state.everHovered) return
-    handleInlineCodeFirstHover(codeEl)
-  })
   container.addEventListener('click', (event: MouseEvent) => {
     const target = event.target instanceof Element ? event.target : null
     if (!target) return

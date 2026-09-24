@@ -43,3 +43,36 @@ describe('page.vue breadcrumb-path structure contract', () => {
     expect(style.includes('.page-header-path {')).toBe(true)
   })
 })
+
+describe('page.vue code copy attractor contract', () => {
+  const script = source.slice(source.indexOf('<script'), source.indexOf('</script>'))
+  const stylesheet = fs.readFileSync(
+    path.join(import.meta.dir, '..', 'scss', 'app.scss'),
+    'utf8'
+  )
+
+  it('fires the inline-code sweep only on the click-to-copy interaction', () => {
+    // No ambient timer and no hover trigger for inline chips.
+    expect(script.includes('scheduleInlineShimmer')).toBe(false)
+    expect(script.includes('handleInlineCodeFirstHover')).toBe(false)
+    expect(script.includes('inlineShimmerStates')).toBe(false)
+    // The click handler acknowledges the copy with the sweep.
+    expect(script.includes('triggerInlineShimmerSweep(codeEl)')).toBe(true)
+  })
+
+  it('keeps the code-block copy button shimmer scheduler intact', () => {
+    expect(script.includes('function scheduleCopyShimmer')).toBe(true)
+    expect(script.includes('function handleCopyToolbarFirstHover')).toBe(true)
+    expect(script.includes('copyShimmerAmbientDelay')).toBe(true)
+  })
+
+  it('flashes the whole code block when its Copy button is clicked', () => {
+    expect(script.includes('function flashCodeBlockCopy')).toBe(true)
+    expect(script.includes("linkCopy.addEventListener('click'")).toBe(true)
+    expect(script.includes("'wiki-code-copy-flash-run'")).toBe(true)
+    expect(script.includes('.codeblock-framed')).toBe(true)
+    expect(stylesheet.includes('wiki-code-block-copy-sweep')).toBe(true)
+    expect(stylesheet.includes('&.wiki-code-copy-flash-run::after')).toBe(true)
+    expect(stylesheet.includes('.codeblock-framed.wiki-code-copy-flash-run::after')).toBe(true)
+  })
+})
