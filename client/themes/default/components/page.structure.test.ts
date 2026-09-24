@@ -72,6 +72,9 @@ describe('page.vue code copy attractor contract', () => {
     // The sweep travels exactly edge-to-edge: with 300% background-size and
     // 40%/60% stops, positions 90% -> 10% touch the block's start and far
     // edges with the band's leading/trailing edges — no dead travel.
+    // The band rides above the toolbar button (z-index 4) so the final
+    // stretch of the sweep is not hidden underneath the Copy button.
+    expect(stylesheet.includes('z-index: 5;')).toBe(true)
     expect(stylesheet.includes('from { background-position: 90% 0; }')).toBe(true)
     expect(stylesheet.includes('to { background-position: 10% 0; }')).toBe(true)
   })

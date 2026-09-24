@@ -853,7 +853,10 @@
     content: '';
     position: absolute;
     inset: 0;
-    z-index: 3;
+    // Above the toolbar button (z-index 4): the band must ride over the Copy
+    // button too, or the final stretch of the sweep hides underneath it and
+    // the gesture reads as dying at the button instead of reaching the edge.
+    z-index: 5;
     border-radius: inherit;
     // The band lives on a 300%-wide background whose position slides from
     // 100% (band's leading tail parked at the block's start edge — no dead
