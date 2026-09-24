@@ -69,7 +69,11 @@ describe('page.vue code copy attractor contract', () => {
     // transform), so it never grows the pre's scrollable overflow or flashes
     // a horizontal scrollbar, and starts at the block's edge without lag.
     expect(stylesheet.includes('background-size: 300% 100%')).toBe(true)
-    expect(stylesheet.includes('from { background-position: 100% 0; }')).toBe(true)
+    // The sweep travels exactly edge-to-edge: with 300% background-size and
+    // 40%/60% stops, positions 90% -> 10% touch the block's start and far
+    // edges with the band's leading/trailing edges — no dead travel.
+    expect(stylesheet.includes('from { background-position: 90% 0; }')).toBe(true)
+    expect(stylesheet.includes('to { background-position: 10% 0; }')).toBe(true)
   })
 
   it('keeps the code-block copy button shimmer scheduler intact', () => {
