@@ -230,30 +230,38 @@
                 <div
                   ref="startersRow"
                   class="inline-agent__starters"
+                  :class="{ 'inline-agent__starters--marquee': startersMarqueeActive && startersMarqueePeriod > 0 }"
                   role="group"
                   aria-label="Conversation starters"
-                  @pointerdown="holdStartersSpin"
-                  @pointerup="holdStartersSpin"
-                  @pointercancel="holdStartersSpin"
-                  @wheel="holdStartersSpin"
-                  @scroll.passive="handleStartersScroll"
+                  @pointerdown="onStartersPointerDown"
+                  @pointermove="onStartersPointerMove"
+                  @pointerup="onStartersPointerUp"
+                  @pointercancel="onStartersPointerCancel"
+                  @wheel.passive="onStartersWheel"
+                  @focusin="pauseStartersMarquee"
+                  @focusout="resumeStartersMarquee"
+                  @click.capture="onStartersClickCapture"
                 >
-                  <v-btn
-                    v-for="starter in starters"
-                    :key="starter.prompt"
-                    class="inline-agent__starter"
-                    color="primary"
-                    variant="text"
-                    :disabled="!canSubmit || promptSubmissionPending"
-                    :title="!canSubmit ? submitUnavailableReason : undefined"
-                    @click="sendPrompt(starter.prompt)"
-                  >
-                    <span class="inline-agent__starter-heading">
-                      <v-icon :icon="starter.icon" size="20" aria-hidden="true" />
-                      <strong>{{ starter.label }}</strong>
-                    </span>
-                    <span class="inline-agent__starter-copy"><small>{{ starter.description }}</small></span>
-                  </v-btn>
+                  <div ref="startersStrip" class="inline-agent__starters-strip">
+                    <v-btn
+                      v-for="(starter, starterIndex) in startersMarqueeList"
+                      :key="`${starter.prompt}#${starterIndex}`"
+                      class="inline-agent__starter"
+                      color="primary"
+                      variant="text"
+                      :disabled="!canSubmit || promptSubmissionPending"
+                      :title="!canSubmit ? submitUnavailableReason : undefined"
+                      :aria-hidden="starterIndex >= starters.length || undefined"
+                      :tabindex="starterIndex >= starters.length ? -1 : undefined"
+                      @click="sendPrompt(starter.prompt)"
+                    >
+                      <span class="inline-agent__starter-heading">
+                        <v-icon :icon="starter.icon" size="20" aria-hidden="true" />
+                        <strong>{{ starter.label }}</strong>
+                      </span>
+                      <span class="inline-agent__starter-copy"><small>{{ starter.description }}</small></span>
+                    </v-btn>
+                  </div>
                 </div>
               </section>
 
@@ -662,53 +670,242 @@ let actionGeneration = 0
 const isComponentCurrent = (generation: number, ownerId: number): boolean =>
   !disposed && componentGeneration === generation && props.ownerId === ownerId
 const startersRow = useTemplateRef<HTMLElement>('startersRow')
-const STARTERS_SPIN_STEP_MS = 3000
-const STARTERS_SPIN_HOLD_MS = 3000
-let startersSpinTimer: ReturnType<typeof setInterval> | null = null
-let startersHoldTimer: ReturnType<typeof setTimeout> | null = null
-let startersProgrammaticUntil = 0
+const startersStrip = useTemplateRef<HTMLElement>('startersStrip')
+// Suggested-prompts marquee: the starter chips drift continuously toward the
+// right, wrap seamlessly (exit the right edge, re-enter on the left), and the
+// user can drag or fling the row in either direction. A fling decelerates
+// exponentially, then velocity relaxes back to the resting rightward drift.
+const STARTERS_MARQUEE_SPEED = 26 // resting drift, px/s toward the right
+const STARTERS_MARQUEE_RELAX_MS = 900 // time constant for momentum decay + ramp back to drift
+const STARTERS_FLICK_MAX = 1600 // px/s clamp on fling velocity
+const STARTERS_DRAG_SUPPRESS_PX = 8 // drags past this swallow the trailing click
+const STARTERS_VELOCITY_WINDOW_MS = 140 // sampling window for fling velocity
+const startersMarqueeActive = ref(false)
+const startersMarqueePeriod = ref(0)
+const startersMarqueeState = {
+  pos: 0, // rightward displacement of the strip, kept within [0, period)
+  vel: 0, // px/s, positive = rightward
+  dragging: false,
+  paused: false,
+  suppressClick: false,
+  dragStartX: 0,
+  lastX: 0,
+  dragDistance: 0,
+  lastPointerDown: 0,
+  lastFrame: 0,
+  samples: [] as Array<{ t: number; x: number }>
+}
+let startersMarqueeFrame: number | null = null
+let startersResizeObserver: ResizeObserver | null = null
+let startersMobileMedia: MediaQueryList | null = null
+let startersMotionMedia: MediaQueryList | null = null
+const startersMarqueeList = computed(() =>
+  startersMarqueeActive.value && startersMarqueePeriod.value > 0
+    ? [...starters.value, ...starters.value, ...starters.value]
+    : starters.value
+)
 
-const stopStartersSpin = (): void => {
-  if (startersSpinTimer !== null) { clearInterval(startersSpinTimer); startersSpinTimer = null }
-  if (startersHoldTimer !== null) { clearTimeout(startersHoldTimer); startersHoldTimer = null }
+const startersMarqueeWanted = (): boolean =>
+  startersRow.value !== null &&
+  startersStrip.value !== null &&
+  (startersMobileMedia ??= window.matchMedia('(max-width: 639.98px)')).matches &&
+  !(startersMotionMedia ??= window.matchMedia('(prefers-reduced-motion: reduce)')).matches
+
+const measureStartersPeriod = (): number => {
+  const strip = startersStrip.value
+  if (strip === null) return 0
+  const chips = strip.querySelectorAll<HTMLElement>('.inline-agent__starter')
+  const setStart = Math.floor(chips.length / 3)
+  if (setStart < 1) return 0
+  const period = chips[setStart].getBoundingClientRect().left - chips[0].getBoundingClientRect().left
+  return period > 0 ? period : 0
 }
 
-const holdStartersSpin = (): void => {
-  if (disposed || startersRow.value === null) return
-  if (startersHoldTimer !== null) clearTimeout(startersHoldTimer)
-  startersHoldTimer = setTimeout(() => { startersHoldTimer = null }, STARTERS_SPIN_HOLD_MS)
+const applyStartersTransform = (): void => {
+  const strip = startersStrip.value
+  if (strip === null) return
+  const period = startersMarqueePeriod.value
+  strip.style.transform = period > 0
+    ? `translate3d(${(startersMarqueeState.pos - period).toFixed(2)}px, 0, 0)`
+    : ''
 }
 
-const handleStartersScroll = (): void => {
-  if (Date.now() < startersProgrammaticUntil) return
-  holdStartersSpin()
+const wrapStartersPos = (): void => {
+  const period = startersMarqueePeriod.value
+  if (period > 0) startersMarqueeState.pos = ((startersMarqueeState.pos % period) + period) % period
 }
 
-const startStartersSpin = (): void => {
-  if (disposed || startersSpinTimer !== null) return
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-  startersSpinTimer = setInterval(() => {
-    const row = startersRow.value
-    if (disposed || !row || startersHoldTimer !== null) return
-    if (!window.matchMedia('(max-width: 639.98px)').matches) return
-    const buttons = row.querySelectorAll<HTMLElement>('.inline-agent__starter')
-    if (buttons.length < 2) return
-    const firstOffset = buttons[0]?.offsetLeft ?? 0
-    const maxScroll = row.scrollWidth - row.clientWidth
-    if (maxScroll <= 4) return
-    let index = 0
-    buttons.forEach((button, buttonIndex) => {
-      if (button.offsetLeft - firstOffset <= row.scrollLeft + 4) index = buttonIndex
+const stepStartersMarquee = (now: number): void => {
+  if (!startersMarqueeActive.value || startersStrip.value === null || document.hidden) return
+  if (startersMarqueePeriod.value <= 0) {
+    startersMarqueePeriod.value = measureStartersPeriod()
+    if (startersMarqueePeriod.value <= 0) return
+  }
+  const last = startersMarqueeState.lastFrame || now
+  startersMarqueeState.lastFrame = now
+  const dt = Math.min(Math.max(now - last, 0), 64)
+  if (!startersMarqueeState.dragging && !startersMarqueeState.paused) {
+    // Momentum decays exponentially, then velocity relaxes back up to the
+    // resting rightward drift with the same time constant.
+    startersMarqueeState.vel = STARTERS_MARQUEE_SPEED +
+      (startersMarqueeState.vel - STARTERS_MARQUEE_SPEED) * Math.exp(-dt / STARTERS_MARQUEE_RELAX_MS)
+    if (Math.abs(startersMarqueeState.vel - STARTERS_MARQUEE_SPEED) < 0.4) startersMarqueeState.vel = STARTERS_MARQUEE_SPEED
+    startersMarqueeState.pos += (startersMarqueeState.vel * dt) / 1000
+    wrapStartersPos()
+    applyStartersTransform()
+  }
+}
+
+const startersMarqueeLoop = (now: number): void => {
+  startersMarqueeFrame = null
+  stepStartersMarquee(now)
+  if (startersMarqueeActive.value && !disposed) startersMarqueeFrame = requestAnimationFrame(startersMarqueeLoop)
+}
+
+const startStartersMarquee = (): void => {
+  if (disposed || startersMarqueeActive.value || !startersMarqueeWanted()) return
+  startersMarqueeActive.value = true
+  startersMarqueeState.pos = 0
+  startersMarqueeState.vel = 0
+  startersMarqueeState.lastFrame = 0
+  startersMarqueeState.paused = false
+  startersMarqueePeriod.value = measureStartersPeriod()
+  const row = startersRow.value
+  if (row !== null && typeof ResizeObserver !== 'undefined') {
+    startersResizeObserver ??= new ResizeObserver(() => {
+      startersMarqueePeriod.value = measureStartersPeriod()
+      wrapStartersPos()
+      applyStartersTransform()
     })
-    const nextIndex = (index + 1) % buttons.length
-    const next = buttons[nextIndex]
-    const target = next ? (nextIndex === 0 ? 0 : Math.min(maxScroll, next.offsetLeft - firstOffset)) : 0
-    startersProgrammaticUntil = Date.now() + 900
-    row.scrollTo({ left: target, behavior: 'smooth' })
-  }, STARTERS_SPIN_STEP_MS)
+    startersResizeObserver.observe(row)
+  }
+  startersMarqueeFrame = requestAnimationFrame(startersMarqueeLoop)
 }
 
-watch(startersRow, row => { if (row) startStartersSpin(); else stopStartersSpin() })
+const stopStartersMarquee = (): void => {
+  if (!startersMarqueeActive.value && startersMarqueeFrame === null) {
+    startersResizeObserver?.disconnect()
+    startersResizeObserver = null
+    return
+  }
+  startersMarqueeActive.value = false
+  startersMarqueePeriod.value = 0
+  if (startersMarqueeFrame !== null) { cancelAnimationFrame(startersMarqueeFrame); startersMarqueeFrame = null }
+  startersResizeObserver?.disconnect()
+  startersResizeObserver = null
+  startersMarqueeState.pos = 0
+  startersMarqueeState.vel = 0
+  startersMarqueeState.dragging = false
+  startersMarqueeState.paused = false
+  startersMarqueeState.lastFrame = 0
+  startersMarqueeState.samples = []
+  const strip = startersStrip.value
+  if (strip !== null) strip.style.transform = ''
+}
+
+const syncStartersMarquee = (): void => {
+  if (startersMarqueeWanted()) startStartersMarquee()
+  else stopStartersMarquee()
+}
+
+const onStartersPointerDown = (event: PointerEvent): void => {
+  if (!startersMarqueeActive.value || startersMarqueePeriod.value <= 0 || !event.isPrimary) return
+  startersMarqueeState.dragging = true
+  startersMarqueeState.paused = false
+  startersMarqueeState.vel = 0
+  startersMarqueeState.dragStartX = event.clientX
+  startersMarqueeState.lastX = event.clientX
+  startersMarqueeState.dragDistance = 0
+  startersMarqueeState.suppressClick = false
+  startersMarqueeState.samples = [{ t: event.timeStamp, x: event.clientX }]
+  startersMarqueeState.lastPointerDown = Date.now()
+  try { startersRow.value?.setPointerCapture(event.pointerId) } catch { /* capture is best-effort */ }
+}
+
+const onStartersPointerMove = (event: PointerEvent): void => {
+  if (!startersMarqueeState.dragging || !event.isPrimary || startersStrip.value === null) return
+  startersMarqueeState.pos += event.clientX - startersMarqueeState.lastX
+  startersMarqueeState.lastX = event.clientX
+  startersMarqueeState.dragDistance = Math.max(startersMarqueeState.dragDistance, Math.abs(event.clientX - startersMarqueeState.dragStartX))
+  startersMarqueeState.samples.push({ t: event.timeStamp, x: event.clientX })
+  const cutoff = event.timeStamp - STARTERS_VELOCITY_WINDOW_MS
+  while (startersMarqueeState.samples.length > 2 && startersMarqueeState.samples[0].t < cutoff) startersMarqueeState.samples.shift()
+  wrapStartersPos()
+  applyStartersTransform()
+}
+
+const onStartersPointerUp = (event: PointerEvent): void => {
+  if (!startersMarqueeState.dragging) return
+  startersMarqueeState.dragging = false
+  startersMarqueeState.suppressClick = startersMarqueeState.dragDistance > STARTERS_DRAG_SUPPRESS_PX
+  const samples = startersMarqueeState.samples
+  let flick = 0
+  if (samples.length >= 2) {
+    const first = samples[0] as { t: number; x: number }
+    const last = samples[samples.length - 1] as { t: number; x: number }
+    const span = last.t - first.t
+    if (span >= 30) flick = ((last.x - first.x) / span) * 1000
+  }
+  startersMarqueeState.vel = Math.max(-STARTERS_FLICK_MAX, Math.min(STARTERS_FLICK_MAX, flick))
+  startersMarqueeState.samples = []
+  startersMarqueeState.lastFrame = 0
+}
+
+const onStartersPointerCancel = (): void => {
+  startersMarqueeState.dragging = false
+  startersMarqueeState.suppressClick = false
+  startersMarqueeState.vel = 0
+  startersMarqueeState.samples = []
+}
+
+/* Trackpad/other wheel input nudges the row with a flick-like impulse; the
+   shared decay then settles it back into the resting drift. */
+const onStartersWheel = (event: WheelEvent): void => {
+  if (!startersMarqueeActive.value || startersMarqueePeriod.value <= 0) return
+  /* Only horizontal wheel intent moves the row; vertical wheel keeps
+     scrolling the page normally. */
+  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : 0
+  if (!delta) return
+  startersMarqueeState.vel = Math.max(-STARTERS_FLICK_MAX, Math.min(STARTERS_FLICK_MAX, startersMarqueeState.vel + delta * 6))
+}
+
+/* Keep the focused chip in place while keyboard users read it. Pointer
+   focus (click/tap) must not pause the row: a focusin within a moment of a
+   pointerdown is pointer focus, anything later is keyboard focus. */
+const pauseStartersMarquee = (): void => {
+  if (!startersMarqueeActive.value || startersMarqueeState.dragging) return
+  if (Date.now() - startersMarqueeState.lastPointerDown < 600) return
+  startersMarqueeState.paused = true
+}
+
+const resumeStartersMarquee = (event: FocusEvent): void => {
+  if (!startersMarqueeState.paused) return
+  const row = startersRow.value
+  const next = event.relatedTarget
+  if (row instanceof HTMLElement && next instanceof Node && row.contains(next)) return
+  startersMarqueeState.paused = false
+}
+
+const onStartersClickCapture = (event: MouseEvent): void => {
+  if (!startersMarqueeState.suppressClick) return
+  startersMarqueeState.suppressClick = false
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+watch(startersRow, row => {
+  if (row !== null) {
+    startersMobileMedia ??= window.matchMedia('(max-width: 639.98px)')
+    startersMotionMedia ??= window.matchMedia('(prefers-reduced-motion: reduce)')
+    startersMobileMedia.addEventListener('change', syncStartersMarquee)
+    startersMotionMedia.addEventListener('change', syncStartersMarquee)
+    syncStartersMarquee()
+  } else {
+    startersMobileMedia?.removeEventListener('change', syncStartersMarquee)
+    startersMotionMedia?.removeEventListener('change', syncStartersMarquee)
+    stopStartersMarquee()
+  }
+})
 
 const panelMode = ref<'wide' | 'docked' | 'modal'>('wide')
 let panelModeMedia: MediaQueryList[] = []
@@ -1615,7 +1812,7 @@ onBeforeUnmount(() => {
   panelFocusScope?.deactivate({ restoreFocus: false })
   if (sessionNoticeTimer !== null) { clearTimeout(sessionNoticeTimer); sessionNoticeTimer = null }
   if (mutationLockMessageTimer !== null) { clearTimeout(mutationLockMessageTimer); mutationLockMessageTimer = null }
-  stopStartersSpin()
+  stopStartersMarquee()
   panelModeMedia.forEach(media => media.removeEventListener('change', reconcilePanelMode))
   window.removeEventListener('resize', scheduleTranscriptReconcile)
   window.removeEventListener('pagehide', handlePageHide)
@@ -2359,6 +2556,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   justify-content: center;
 }
 
+/* The strip wraps the chips so the marquee can translate it as one unit.
+   Outside the marquee (desktop grid, reduced-motion scroll row) it dissolves
+   into its parent via display: contents. */
+.inline-agent__starters-strip {
+  display: contents;
+}
+
 .inline-agent__starter {
   height: auto !important;
   min-height: 4.05rem;
@@ -2709,6 +2913,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     gap: var(--wiki-space-2);
     margin-top: var(--wiki-space-5);
     padding: var(--wiki-space-1) var(--wiki-space-3) var(--wiki-space-2);
+    /* Native horizontal scroll remains the reduced-motion / pre-measure
+       fallback; the marquee state below takes over once the strip measures. */
     overflow-x: auto;
     overflow-y: hidden;
     overscroll-behavior-x: contain;
@@ -2730,6 +2936,24 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__starter-heading { padding-inline: .75rem; }
   .inline-agent__starter-copy { padding-inline: .75rem; }
   .inline-agent__starter-copy small { white-space: nowrap; }
+
+  /* Marquee mode: the row is a seamless wrap-around strip driven by JS
+     (drift right + drag/fling), not a native scrollport. Vertical page
+     scrolling stays native; horizontal gestures belong to the marquee. */
+  .inline-agent__starters--marquee {
+    overflow: hidden;
+    touch-action: pan-y;
+    cursor: grab;
+  }
+  .inline-agent__starters--marquee:active {
+    cursor: grabbing;
+  }
+  .inline-agent__starters--marquee .inline-agent__starters-strip {
+    display: flex;
+    width: max-content;
+    gap: var(--wiki-space-2);
+    will-change: transform;
+  }
 }
 
 /* A docked panel can make a desktop conversation as narrow as a tablet. */
