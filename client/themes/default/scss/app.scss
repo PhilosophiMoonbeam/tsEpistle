@@ -640,8 +640,10 @@
       background-color: color-mix(in srgb, var(--wiki-accent-spectral) 10%, var(--wiki-surface-sunken));
     }
 
+    // Twice the rate of the code-block sweeps: the chip is a small target and
+    // the click acknowledgment should read snappier than the block gestures.
     &.wiki-inline-shimmer-run {
-      animation: wiki-inline-code-shimmer-sweep 1.9s ease-in-out 1 both;
+      animation: wiki-inline-code-shimmer-sweep .95s ease-in-out 1 both;
     }
 
     &[data-inline-copy-state='success'] {
@@ -2121,7 +2123,8 @@
 // Inline-code chip attractor: the band rides the chip's own 300%-wide
 // background gradient. Background-position percentages interpolate smoothly,
 // so 100% parks the band fully off the left edge and 0% fully off the right;
-// scheduling lives in page.vue, shared with the copy button cadence.
+// fires only from the click-to-copy interaction (page.vue) and runs at twice
+// the code-block sweeps' rate: the chip acknowledgment should read snappier.
 @keyframes wiki-inline-code-shimmer-sweep {
   from { background-position: 100% 0; }
   to { background-position: 0% 0; }
