@@ -65,6 +65,11 @@ describe('page.vue code copy attractor contract', () => {
     expect(stylesheet.match(/wiki-code-copy-shimmer-sweep 1\.9s/g)?.length).toBeGreaterThan(0)
     // The block flash is clipped to the block bounds.
     expect(stylesheet.includes('animation: wiki-code-block-copy-sweep 1.9s')).toBe(false)
+    // The block sweep rides background-position on a stationary band (no
+    // transform), so it never grows the pre's scrollable overflow or flashes
+    // a horizontal scrollbar, and starts at the block's edge without lag.
+    expect(stylesheet.includes('background-size: 300% 100%')).toBe(true)
+    expect(stylesheet.includes('from { background-position: 100% 0; }')).toBe(true)
   })
 
   it('keeps the code-block copy button shimmer scheduler intact', () => {
