@@ -985,7 +985,11 @@ Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment
   linkCopy.addEventListener('click', () => {
     const toolbar = linkCopy.closest<HTMLElement>('.code-toolbar')
     if (!toolbar) return
-    flashCodeBlockCopy(toolbar.closest<HTMLElement>('.codeblock-framed') ?? toolbar)
+    // Flash the block's own pre (or the framed card) so the sweep stays
+    // clipped inside the panel instead of straying past its start edge.
+    const block = toolbar.closest<HTMLElement>('.codeblock-framed') ?? toolbar.querySelector<HTMLElement>('pre')
+    if (!block) return
+    flashCodeBlockCopy(block)
   })
 
   clip.on('success', () => {
