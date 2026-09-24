@@ -2,7 +2,7 @@
   v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive }]')
     a.page-skip-link(:href='talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='talkActive ? goToComments() : focusArticle()') Skip to content
     nav-header(v-if='!printView', reserve-actions)
-    .page-position(v-if='!printView', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100')
+    .page-position(v-if='!printView', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100', :style='{ insetInlineStart: pagePositionInsetStart }')
       .page-position-fill(:style='{ transform: `scaleX(${readingProgress / 100})` }')
     .page-reading-dock(v-if='readerFocus && !printView && !talkActive', role='region', :aria-label='$t(`common:page.focusReading`)', style='backdrop-filter: var(--wiki-chrome-blur);')
       v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
@@ -15,7 +15,7 @@
       tag='nav'
       color='surface'
       :mobile-breakpoint='1280'
-      :width='$vuetify.display.width >= 1280 ? 269.6 : 244'
+      :width='navDrawerWidth'
       v-model='navigationOpen'
       :aria-label='$t(`common:sidebar.mainMenu`)'
       @update:model-value='navigationVisibilityChanged'
@@ -1665,6 +1665,17 @@ export default defineComponent({
     navigationOpen: {
       get (): boolean { return (this.talkActive || !this.readerFocus) && this.navShown },
       set (value: boolean) { if (!this.readerFocus || this.talkActive) this.navShown = value }
+    },
+    navDrawerWidth (): number {
+      return this.$vuetify.display.width >= 1280 ? 269.6 : 244
+    },
+    // Below 1280 the drawer floats over the content, so the reading bar keeps
+    // its full width; docked, it starts where the sidebar ends.
+    pagePositionInsetStart (): string {
+      const docked = this.navMode !== 'NONE' &&
+        this.$vuetify.display.width >= 1280 &&
+        this.navigationOpen
+      return docked ? `${this.navDrawerWidth}px` : '0px'
     },
     pageArticleId (): string {
       return `wiki-page-shell-${this.pageId}-article`
@@ -6302,6 +6313,7 @@ export default defineComponent({
 }
 .page-position {
   position: fixed;
+  transition: inset-inline-start var(--wiki-motion-fast, .15s) var(--wiki-motion-ease, ease);
   /* The Wiki header is a 52px chrome bar (48px dense) plus a 1px bottom
      border; --v-layout-top is not emitted for it, so anchor to the shared
      chrome token and sit flush under the border. */
