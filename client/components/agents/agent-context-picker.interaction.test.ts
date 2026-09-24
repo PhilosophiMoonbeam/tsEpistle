@@ -253,9 +253,7 @@ const selectResult = async (index = 0): Promise<void> => {
   await settle()
 }
 const addButton = (): HTMLButtonElement => {
-  const button = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.agent-context__dialog-actions button')).find(candidate =>
-    candidate.textContent?.includes('and return')
-  )
+  const button = document.body.querySelector<HTMLButtonElement>('.agent-context__dialog-confirm')
   if (!button) throw new Error('Add sources primary action did not render')
   return button
 }
@@ -286,7 +284,8 @@ describe('Agent context source transaction', () => {
     await settle()
 
     expect(document.body.querySelectorAll('.agent-context__pending-list .v-chip')).toHaveLength(2)
-    expect(addButton().textContent?.trim()).toBe('Add 2 sources and return')
+    expect(addButton().getAttribute('aria-label')).toBe('Add 2 selected sources')
+    expect(addButton().disabled).toBe(false)
     addButton().click()
     await settle()
     await waitForSourcesAdded(mounted)
@@ -334,9 +333,7 @@ describe('Agent context source transaction', () => {
     await settle()
     addButton().click()
     await settle()
-    const cancel = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.agent-context__dialog-actions button')).find(
-      button => button.textContent?.trim() === 'Cancel'
-    )
+    const cancel = document.body.querySelector<HTMLButtonElement>('.agent-context__dialog-close')
     if (!cancel) throw new Error('Cancel action did not render')
     cancel.click()
     hydration.resolve(source(31))
@@ -365,7 +362,7 @@ describe('Agent context source transaction', () => {
     const ninth = resultCheckboxes()[0]
     expect(ninth?.disabled).toBe(true)
     expect(document.body.querySelectorAll('.agent-context__pending-list .v-chip')).toHaveLength(1)
-    expect(addButton().textContent?.trim()).toBe('Add 1 source and return')
+    expect(addButton().getAttribute('aria-label')).toBe('Add 1 selected source')
     addButton().click()
     await settle()
 
@@ -445,6 +442,31 @@ describe('Agent context source debounce', () => {
   })
 })
 
+describe('Agent context picker chrome', () => {
+  it('renders the streamlined chrome: terse guidance, single-line search, header actions, no footer', async () => {
+    const mounted = mountPicker(vi.fn(async () => result([row(61)])), vi.fn(async (selector: { id: number }) => source(selector.id)))
+    await openPicker(mounted)
+    await search(mounted, 'chrome')
+
+    const guidance = document.body.querySelector('.agent-context__dialog-guidance')
+    expect(guidance?.textContent).toContain('Select up to eight pages')
+    expect(guidance?.textContent).toContain('Ticked picks stay while you keep searching')
+
+    const searchInput = document.body.querySelector<HTMLInputElement>('.agent-context__search input')
+    expect(searchInput?.placeholder).toBe('Search pages (select up to 8)')
+    expect(document.body.querySelector('.agent-context__search .v-label')).toBeNull()
+
+    expect(document.body.querySelector('.agent-context__dialog-actions')).toBeNull()
+    expect(document.body.querySelector('.agent-context__dialog-close')).not.toBeNull()
+    expect(document.body.querySelector('.agent-context__dialog-confirm')).not.toBeNull()
+    expect(addButton().disabled).toBe(true)
+
+    await selectResult()
+    expect(addButton().disabled).toBe(false)
+    expect(addButton().getAttribute('aria-label')).toBe('Add 1 selected source')
+  })
+})
+
 describe('Agent context source cancellation', () => {
   it('ignores a stale search completion after the dialog is cancelled', async () => {
     const pending = deferred<PageSearchResult>()
@@ -455,7 +477,7 @@ describe('Agent context source cancellation', () => {
     )
     await openPicker(mounted)
     await search(mounted, 'stale')
-    const cancel = document.body.querySelector<HTMLButtonElement>('.agent-context__dialog-actions button')
+    const cancel = document.body.querySelector<HTMLButtonElement>('.agent-context__dialog-close')
     if (!cancel) throw new Error('Cancel action did not render')
     cancel.click()
     pending.resolve(result([row(41)]))

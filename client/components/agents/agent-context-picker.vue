@@ -72,12 +72,31 @@
           <span class="agent-context__dialog-mark" aria-hidden="true"><v-icon icon="mdi-file-multiple-outline" size="22" /></span>
           <div>
             <h2 :id="`${sourceDialogId}-title`">Add sources</h2>
-            <p :id="`${sourceDialogId}-description`">Search All Wiki to attach pages. This does not change the Agent search scope.</p>
           </div>
-          <v-btn icon="mdi-close" variant="text" aria-label="Cancel adding sources" type="button" @click="cancelSources" />
+          <div class="agent-context__dialog-corner">
+            <v-btn
+              class="agent-context__dialog-close"
+              icon="mdi-close"
+              variant="text"
+              aria-label="Cancel adding sources"
+              type="button"
+              @click="cancelSources"
+            />
+            <v-btn
+              class="agent-context__dialog-confirm"
+              icon="mdi-check"
+              variant="text"
+              color="primary"
+              :aria-label="selectedRows.length ? `Add ${selectedRows.length} selected source${selectedRows.length === 1 ? '' : 's'}` : 'No pages selected yet'"
+              :loading="addingSources"
+              :disabled="!selectedRows.length || addingSources || disabled || connectionBlocked"
+              type="button"
+              @click="addSources"
+            />
+          </div>
         </header>
         <v-card-text class="agent-context__dialog-body">
-          <p class="agent-context__dialog-guidance">Select up to eight pages to attach to this conversation. Your pending selections stay here while you search or load more results.</p>
+          <p :id="`${sourceDialogId}-description`" class="agent-context__dialog-guidance">Select up to eight pages. Ticked picks stay while you keep searching.</p>
           <v-alert v-if="connectionBlocked" class="agent-context__connection-alert" type="warning" variant="tonal" density="compact" role="status">
             <span>Connection required to search or attach sources.</span>
             <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" type="button" @click="emit('retry-connection')">Retry connection</v-btn>
@@ -86,8 +105,8 @@
             ref="sourceSearchInput"
             v-model="sourceQuery"
             class="agent-context__search"
-            label="Search pages"
-            placeholder="Search titles, paths, or page content"
+            variant="outlined"
+            placeholder="Search pages (select up to 8)"
             prepend-inner-icon="mdi-magnify"
             clearable
             hide-details="auto"
@@ -152,13 +171,6 @@
             @click="loadMoreSources"
           >More results</v-btn>
         </v-card-text>
-        <v-card-actions class="agent-context__dialog-actions">
-          <v-btn variant="text" type="button" @click="cancelSources">Cancel</v-btn>
-          <v-spacer />
-          <v-btn color="primary" variant="flat" :loading="addingSources" :disabled="!selectedRows.length || addingSources || disabled || connectionBlocked" type="button" @click="addSources">
-            {{ selectedRows.length ? `Add ${selectedRows.length} source${selectedRows.length === 1 ? '' : 's'} and return` : 'Add sources and return' }}
-          </v-btn>
-        </v-card-actions>
       </v-card>
     </v-dialog>
   </div>
@@ -637,7 +649,8 @@ onBeforeUnmount(() => {
 .agent-context__dialog-header { display: flex; align-items: flex-start; gap: var(--wiki-space-3); padding: var(--wiki-space-5) var(--wiki-space-5) var(--wiki-space-3); border-bottom: 1px solid var(--wiki-surface-border); }
 .agent-context__dialog-mark { display: grid; flex: 0 0 auto; width: 2.25rem; height: 2.25rem; place-items: center; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); }
 .agent-context__dialog-header h2 { margin: 0; color: rgb(var(--v-theme-on-surface)); font-family: var(--wiki-font-display); font-size: 1.45rem; font-weight: 500; letter-spacing: -.025em; line-height: 1.15; }
-.agent-context__dialog-header p { max-width: 34rem; margin: .3rem 0 0; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent); font-size: .78rem; line-height: 1.45; }
+.agent-context__dialog-corner { display: grid; flex: 0 0 auto; margin-inline-start: auto; justify-items: center; gap: .1rem; }
+.agent-context__dialog-corner .v-btn--loading { flex: 0 0 auto; }
 .agent-context__dialog-body { max-height: min(68vh, 38rem); padding: var(--wiki-space-4) var(--wiki-space-5) var(--wiki-space-2); }
 .agent-context__dialog-guidance { margin: 0 0 var(--wiki-space-3); color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 74%, transparent); font-size: .82rem; line-height: 1.5; }
 .agent-context__search { margin-bottom: .15rem; }
@@ -651,7 +664,7 @@ onBeforeUnmount(() => {
 .agent-context__pending-list { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .5rem; }
 .agent-context__pending-label { display: inline-flex; max-width: 16rem; flex-direction: column; min-width: 0; overflow: hidden; text-align: start; }
 .agent-context__pending-label small { overflow: hidden; color: color-mix(in srgb, currentColor 64%, transparent); font-size: .66rem; text-overflow: ellipsis; white-space: nowrap; }
-.agent-context__results { min-height: 7rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: color-mix(in srgb, var(--wiki-surface-sunken) 42%, transparent); }
+.agent-context__results { --agent-context-results-rows: 6; min-height: 7rem; max-height: calc(var(--agent-context-results-rows) * 3.65rem + 1px); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: color-mix(in srgb, var(--wiki-surface-sunken) 42%, transparent); }
 .agent-context__results-state { display: flex; min-height: 7rem; align-items: center; justify-content: center; gap: .55rem; padding: 1rem; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent); font-size: .8rem; text-align: center; }
 .agent-context__result-list { display: grid; margin: 0; padding: 0; list-style: none; }
 .agent-context__result + .agent-context__result { border-top: 1px solid var(--wiki-surface-border); }
@@ -670,13 +683,10 @@ onBeforeUnmount(() => {
 .agent-context__window-note { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent); }
 .agent-context__more-error { color: rgb(var(--v-theme-error)); }
 .agent-context__more { margin-top: .35rem; }
-.agent-context__dialog-actions { min-height: 4rem; padding: .75rem var(--wiki-space-5) max(.75rem, env(safe-area-inset-bottom)); border-top: 1px solid var(--wiki-surface-border); background: var(--wiki-surface-raised); }
 @media (max-width: 639.98px) {
+  .agent-context__results { --agent-context-results-rows: 3.5; }
   .agent-context__dialog-header { padding: var(--wiki-space-4) var(--wiki-space-3) var(--wiki-space-2); }
   .agent-context__dialog-body { max-height: 66vh; padding-inline: var(--wiki-space-3); }
-  .agent-context__dialog-actions { flex-wrap: wrap; gap: .35rem; padding-inline: var(--wiki-space-3); }
-  .agent-context__dialog-actions :deep(.v-spacer) { display: none; }
-  .agent-context__dialog-actions .v-btn:last-child { width: 100%; }
   .agent-context__result-label { padding-inline: .55rem; }
 }
 </style>
