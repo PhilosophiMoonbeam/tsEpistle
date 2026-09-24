@@ -101,15 +101,38 @@ interface LockState {
   clearSessionNotice: () => void
   SESSION_NOTICE_VISIBLE_MS: number
   startersRow: ValueRef<HTMLElement | null>
-  startStartersSpin: () => void
-  stopStartersSpin: () => void
-  holdStartersSpin: () => void
-  handleStartersScroll: () => void
-  STARTERS_SPIN_STEP_MS: number
-  STARTERS_SPIN_HOLD_MS: number
+  startersStrip: ValueRef<HTMLElement | null>
+  startersMarqueeActive: ValueRef<boolean>
+  startersMarqueePeriod: ValueRef<number>
+  startersMarqueeState: {
+    pos: number
+    vel: number
+    dragging: boolean
+    paused: boolean
+    suppressClick: boolean
+    dragStartX: number
+    lastX: number
+    dragDistance: number
+    lastFrame: number
+    samples: Array<{ t: number; x: number }>
+  }
+  startStartersMarquee: () => void
+  stopStartersMarquee: () => void
+  stepStartersMarquee: (now: number) => void
+  measureStartersPeriod: () => number
+  applyStartersTransform: () => void
+  onStartersPointerDown: (event: { isPrimary?: boolean; pointerId?: number; clientX: number; timeStamp: number }) => void
+  onStartersPointerMove: (event: { isPrimary?: boolean; clientX: number; timeStamp: number }) => void
+  onStartersPointerUp: (event: { isPrimary?: boolean; clientX: number; timeStamp: number }) => void
+  onStartersPointerCancel: (event: { isPrimary?: boolean }) => void
+  onStartersWheel: (event: { deltaX: number; deltaY: number }) => void
+  onStartersClickCapture: (event: { preventDefault: () => void; stopPropagation: () => void }) => void
+  pauseStartersMarquee: () => void
+  resumeStartersMarquee: (event: { relatedTarget: EventTarget | null }) => void
+  STARTERS_MARQUEE_SPEED: number
   pendingSessionNoticeTimers: Array<{ callback: () => void; delay: number }>
-  pendingStartersIntervals: Array<{ callback: () => void; delay: number }>
-  clearedStartersIntervalIds: number[]
+  pendingStartersFrames: Array<{ callback: (now: number) => void }>
+  clearedStartersFrameIds: number[]
   componentProps: { pageId: number; pageLocale: string; pagePath: string; pageUpdatedAt: string }
 }
 
@@ -379,11 +402,11 @@ const loadGoalLockState = (
     setCurrentChatPinned: vi.fn()
   }
   const pendingSessionNoticeTimers: Array<{ callback: () => void; delay: number }> = []
-  const pendingStartersIntervals: Array<{ callback: () => void; delay: number }> = []
-  const clearedStartersIntervalIds: number[] = []
+  const pendingStartersFrames: Array<{ callback: (now: number) => void }> = []
+  const clearedStartersFrameIds: number[] = []
   const evaluate = new Function(
-    '{ computed, nextTick, onBeforeUnmount, onMounted, ref, setInterval, clearInterval, setTimeout, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection }',
-    `${executableScript}\nreturn { SESSION_NOTICE_VISIBLE_MS, STARTERS_SPIN_HOLD_MS, STARTERS_SPIN_STEP_MS, activeRun, canPinCurrentChat, canSubmit, clearSessionNotice, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, composerLockVisible, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleStartersScroll, handleTranscriptEngagement, holdStartersSpin, invocationLimit, mutationLockMessageVisible, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, retryInitialization, sendPrompt, sessionMutationBusy, sessionNotice, setSessionNotice, startersRow, startStartersSpin, startTemporaryChat, stopStartersSpin, submitUnavailableReason, thread, welcomeGreeting }`
+    '{ computed, nextTick, onBeforeUnmount, onMounted, ref, setTimeout, requestAnimationFrame, cancelAnimationFrame, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection }',
+    `${executableScript}\nreturn { SESSION_NOTICE_VISIBLE_MS, STARTERS_MARQUEE_SPEED, activeRun, canPinCurrentChat, canSubmit, clearSessionNotice, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, composerLockVisible, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleTranscriptEngagement, invocationLimit, mutationLockMessageVisible, newSession, newTemporarySession, onStartersClickCapture, onStartersPointerCancel, onStartersPointerDown, onStartersPointerMove, onStartersPointerUp, onStartersWheel, openGoal, openClearUnfiledHistory, pauseStartersMarquee, recoverClearUnfiledHistory, retryInitialization, resumeStartersMarquee, sendPrompt, sessionMutationBusy, sessionNotice, setSessionNotice, startersMarqueeActive, startersMarqueePeriod, startersMarqueeState, startersRow, startersStrip, startStartersMarquee, startTemporaryChat, stepStartersMarquee, stopStartersMarquee, measureStartersPeriod, applyStartersTransform, submitUnavailableReason, thread, welcomeGreeting }`
   ) as (dependencies: Record<string, unknown>) => LockState
 
   const state = evaluate({
@@ -397,12 +420,12 @@ const loadGoalLockState = (
       pendingSessionNoticeTimers.push({ callback, delay })
       return pendingSessionNoticeTimers.length
     },
-    setInterval: (callback: () => void, delay: number) => {
-      pendingStartersIntervals.push({ callback, delay })
-      return pendingStartersIntervals.length
+    requestAnimationFrame: (callback: (now: number) => void) => {
+      pendingStartersFrames.push({ callback })
+      return pendingStartersFrames.length
     },
-    clearInterval: (id: number) => {
-      clearedStartersIntervalIds.push(id)
+    cancelAnimationFrame: (id: number) => {
+      clearedStartersFrameIds.push(id)
     },
     onBeforeUnmount: () => undefined,
     onMounted: () => undefined,
@@ -421,7 +444,7 @@ const loadGoalLockState = (
     pwaState: testPwaState,
     retryServerConnection: async () => true
   }) as LockState
-  return { ...state, agentCalls, componentProps: props, pendingSessionNoticeTimers, pendingStartersIntervals, clearedStartersIntervalIds }
+  return { ...state, agentCalls, componentProps: props, pendingSessionNoticeTimers, pendingStartersFrames, clearedStartersFrameIds }
 }
 
 interface MountedInlineAgent {
@@ -482,6 +505,26 @@ const mountInlineAgent = (
   const goal = lockState?.openGoal.value ?? null
   const thread = lockState?.thread.value ?? null
   const page = options.page ?? lockState?.currentPage.value ?? null
+  const startersList = [
+    {
+      label: 'Explore the Wiki',
+      description: 'Find a place to begin',
+      prompt: 'Give me an overview of the main topics in the Wiki, with links to useful starting pages.',
+      icon: 'mdi-compass-outline'
+    },
+    {
+      label: 'Connect the Dots',
+      description: 'Discover related knowledge',
+      prompt: 'Help me explore connections between topics in the Wiki. Ask me which topic I want to start with.',
+      icon: 'mdi-vector-link'
+    },
+    {
+      label: 'Catch Up',
+      description: 'See what changed recently',
+      prompt: 'Summarize the 10 most recently updated Wiki pages I can access. Give each page a brief summary with a source.',
+      icon: 'mdi-history'
+    }
+  ]
   const context: Record<string, unknown> = {
     csrfToken: 'csrf',
     mediaProfile: undefined,
@@ -568,26 +611,17 @@ const mountInlineAgent = (
     connectionLabel: lockState?.connectionLabel.value ?? 'Ready',
     connectionTone: lockState?.connectionTone.value ?? 'ready',
     welcomeGreeting: lockState?.welcomeGreeting ?? { first: 'Stacks of possibilities.', second: 'Zero overdue fees.' },
-    starters: [
-      {
-        label: 'Explore the Wiki',
-        description: 'Find a place to begin',
-        prompt: 'Give me an overview of the main topics in the Wiki, with links to useful starting pages.',
-        icon: 'mdi-compass-outline'
-      },
-      {
-        label: 'Connect the Dots',
-        description: 'Discover related knowledge',
-        prompt: 'Help me explore connections between topics in the Wiki. Ask me which topic I want to start with.',
-        icon: 'mdi-vector-link'
-      },
-      {
-        label: 'Catch Up',
-        description: 'See what changed recently',
-        prompt: 'Summarize the 10 most recently updated Wiki pages I can access. Give each page a brief summary with a source.',
-        icon: 'mdi-history'
-      }
-    ],
+    starters: startersList,    startersMarqueeActive: Vue.ref(false),
+    startersMarqueePeriod: Vue.ref(0),
+    startersMarqueeList: Vue.computed(() => startersList),
+    onStartersPointerDown: () => undefined,
+    onStartersPointerMove: () => undefined,
+    onStartersPointerUp: () => undefined,
+    onStartersPointerCancel: () => undefined,
+    onStartersWheel: () => undefined,
+    onStartersClickCapture: () => undefined,
+    pauseStartersMarquee: () => undefined,
+    resumeStartersMarquee: () => undefined,
     sendPrompt: lockState?.sendPrompt ?? (async () => false),
     emit: () => undefined,
     agents: { drafts: {}, setDraft: () => undefined },
@@ -1295,96 +1329,161 @@ describe('Inline Agent session notice', () => {
   })
 })
 
-describe('Inline Agent starters carousel', () => {
-  interface FakeStarterRow {
-    scrollWidth: number
-    clientWidth: number
-    scrollLeft: number
-    scrollTo: (options: { left: number; behavior: string }) => void
-    querySelectorAll: (selector: string) => Array<{ offsetLeft: number }>
+describe('Inline Agent starters marquee', () => {
+  const PERIOD = 600
+  interface LockStateWithFakes extends LockState {
+    pendingStartersFrames: Array<{ callback: (now: number) => void }>
+    clearedStartersFrameIds: number[]
   }
 
-  const buildFakeRow = (scrollToCalls: Array<{ left: number; behavior: string }>): FakeStarterRow => ({
-    scrollWidth: 620,
-    clientWidth: 330,
-    scrollLeft: 0,
-    scrollTo: options => {
-      scrollToCalls.push(options)
-    },
-    querySelectorAll: selector => {
-      expect(selector).toBe('.inline-agent__starter')
-      return [{ offsetLeft: 12 }, { offsetLeft: 202 }, { offsetLeft: 401 }]
+  const buildMarqueeFixtures = (): { row: HTMLElement; strip: HTMLElement; stripStyle: { transform: string }; setPointerCapture: ReturnType<typeof vi.fn> } => {
+    const stripStyle = { transform: '' }
+    const chipLefts = [0, 195, 390, PERIOD, PERIOD + 195, PERIOD + 390, 2 * PERIOD, 2 * PERIOD + 195, 2 * PERIOD + 390]
+    const setPointerCapture = vi.fn()
+    const strip = {
+      style: stripStyle,
+      querySelectorAll: (selector: string) => {
+        expect(selector).toBe('.inline-agent__starter')
+        return chipLefts.map(left => ({ getBoundingClientRect: () => ({ left }) }))
+      }
+    } as unknown as HTMLElement
+    const row = {
+      setPointerCapture,
+      contains: () => false
+    } as unknown as HTMLElement
+    return { row, strip, stripStyle, setPointerCapture }
+  }
+
+  const startMarquee = (lockState: LockStateWithFakes, row: HTMLElement, strip: HTMLElement): void => {
+    lockState.startersRow.value = row
+    lockState.startersStrip.value = strip
+    lockState.startStartersMarquee()
+    // First frame only measures the period; dt is zero on the first tick.
+    lockState.pendingStartersFrames[0]?.callback(1_000)
+  }
+
+  it('measures the wrap period, drifts toward the right, and wraps the offset', () => {
+    const lockState = loadGoalLockState(null) as LockStateWithFakes
+    const { row, strip, stripStyle } = buildMarqueeFixtures()
+    startMarquee(lockState, row, strip)
+
+    expect(lockState.startersMarqueeActive.value).toBe(true)
+    expect(lockState.startersMarqueePeriod.value).toBe(PERIOD)
+    expect(lockState.pendingStartersFrames).toHaveLength(2)
+    expect(lockState.startersMarqueeState.pos).toBe(0)
+
+    // One second later the strip has drifted rightward toward its resting speed.
+    lockState.pendingStartersFrames.at(-1)?.callback(2_000)
+    expect(lockState.startersMarqueeState.pos).toBeGreaterThan(0)
+    expect(lockState.startersMarqueeState.pos).toBeLessThan(lockState.STARTERS_MARQUEE_SPEED)
+
+    // Keep stepping: velocity relaxes fully to the resting drift (per-frame
+    // dt is clamped to one 64ms frame, so step frame by frame).
+    let last = 2_000
+    for (let step = 0; step < 60; step += 1) {
+      last += 64
+      lockState.pendingStartersFrames.at(-1)?.callback(last)
     }
+    expect(lockState.startersMarqueeState.vel).toBe(lockState.STARTERS_MARQUEE_SPEED)
+
+    // The offset wraps seamlessly inside [0, period) and never escapes it.
+    lockState.startersMarqueeState.pos = PERIOD - 1
+    lockState.pendingStartersFrames.at(-1)?.callback(last + 64)
+    expect(lockState.startersMarqueeState.pos).toBeLessThan(PERIOD)
+    expect(lockState.startersMarqueeState.pos).toBeGreaterThanOrEqual(0)
+    expect(stripStyle.transform).toMatch(/translate3d\(-\d+\.\d\dpx, 0, 0\)/)
+
+    lockState.stopStartersMarquee()
+    expect(lockState.startersMarqueeActive.value).toBe(false)
+    expect(lockState.clearedStartersFrameIds).toHaveLength(1)
+    expect(stripStyle.transform).toBe('')
   })
 
-  it('advances the row on its own, clamps at the end, and wraps back to the first starter', () => {
-    const lockState = loadGoalLockState(null)
-    const scrollToCalls: Array<{ left: number; behavior: string }> = []
-    const row = buildFakeRow(scrollToCalls)
-    lockState.startersRow.value = row as unknown as HTMLElement
+  it('coasts after a leftward fling, decelerates to a stop, then ramps back toward the right', () => {
+    const lockState = loadGoalLockState(null) as LockStateWithFakes
+    const { row, strip } = buildMarqueeFixtures()
+    startMarquee(lockState, row, strip)
+    lockState.pendingStartersFrames[0]?.callback(1_000)
+    lockState.startersMarqueeState.vel = -800
+    lockState.startersMarqueeState.pos = 300
 
-    lockState.startStartersSpin()
-    expect(lockState.pendingStartersIntervals).toHaveLength(1)
-    expect(lockState.pendingStartersIntervals[0]?.delay).toBe(lockState.STARTERS_SPIN_STEP_MS)
+    const positions: number[] = []
+    let last = 1_000
+    for (let step = 1; step <= 60; step += 1) {
+      last += 64
+      lockState.pendingStartersFrames.at(-1)?.callback(last)
+      positions.push(lockState.startersMarqueeState.pos)
+    }
+    // Early frames drift leftward (fling momentum), then the row turns around.
+    expect(positions[0]).toBeLessThan(300)
+    expect(positions[positions.length - 1]).toBeGreaterThan(positions[positions.length - 2])
+    expect(lockState.startersMarqueeState.vel).toBeGreaterThan(0)
+    expect(lockState.startersMarqueeState.vel).toBeLessThan(lockState.STARTERS_MARQUEE_SPEED)
 
-    lockState.pendingStartersIntervals[0]?.callback()
-    expect(scrollToCalls).toEqual([{ left: 202 - 12, behavior: 'smooth' }])
-
-    row.scrollLeft = scrollToCalls[0]?.left ?? 0
-    lockState.pendingStartersIntervals[0]?.callback()
-    expect(scrollToCalls[1]).toEqual({ left: 290, behavior: 'smooth' })
-
-    row.scrollLeft = 290
-    lockState.pendingStartersIntervals[0]?.callback()
-    expect(scrollToCalls[2]).toEqual({ left: 290, behavior: 'smooth' })
-    expect(scrollToCalls.every(call => call.behavior === 'smooth')).toBe(true)
-
-    lockState.stopStartersSpin()
-    expect(lockState.clearedStartersIntervalIds).toEqual([1])
+    lockState.stopStartersMarquee()
   })
 
-  it('holds the landed position after a swipe and resumes stepping once the hold expires', () => {
-    const lockState = loadGoalLockState(null)
-    const scrollToCalls: Array<{ left: number; behavior: string }> = []
-    const row = buildFakeRow(scrollToCalls)
-    lockState.startersRow.value = row as unknown as HTMLElement
-    lockState.startStartersSpin()
+  it('drags with the pointer, flings on release, and swallows the trailing click only after a real drag', () => {
+    const lockState = loadGoalLockState(null) as LockStateWithFakes
+    const { row, strip, stripStyle, setPointerCapture } = buildMarqueeFixtures()
+    startMarquee(lockState, row, strip)
+    lockState.pendingStartersFrames[0]?.callback(1_000)
 
-    lockState.pendingStartersIntervals[0]?.callback()
-    expect(scrollToCalls).toHaveLength(1)
+    lockState.onStartersPointerDown({ isPrimary: true, pointerId: 7, clientX: 300, timeStamp: 1_000 })
+    expect(setPointerCapture).toHaveBeenCalledWith(7)
 
-    row.scrollLeft = 190
-    lockState.holdStartersSpin()
-    expect(lockState.pendingSessionNoticeTimers.at(-1)?.delay).toBe(lockState.STARTERS_SPIN_HOLD_MS)
-    lockState.pendingStartersIntervals[0]?.callback()
-    expect(scrollToCalls).toHaveLength(1)
+    lockState.onStartersPointerMove({ isPrimary: true, clientX: 240, timeStamp: 1_050 })
+    expect(lockState.startersMarqueeState.pos).toBe(PERIOD - 60)
+    expect(stripStyle.transform).toBe('translate3d(-60.00px, 0, 0)')
 
-    const holdTimer = lockState.pendingSessionNoticeTimers.at(-1)
-    holdTimer?.callback()
-    lockState.pendingStartersIntervals[0]?.callback()
-    expect(scrollToCalls).toHaveLength(2)
-    expect(scrollToCalls[1]?.left).toBe(290)
+    lockState.onStartersPointerMove({ isPrimary: true, clientX: 240, timeStamp: 1_100 })
+    lockState.onStartersPointerUp({ isPrimary: true, clientX: 240, timeStamp: 1_100 })
+    // (240 - 300) px over 100ms -> -600 px/s fling
+    expect(lockState.startersMarqueeState.vel).toBeCloseTo(-600, 0)
+    expect(lockState.startersMarqueeState.suppressClick).toBe(true)
 
-    lockState.stopStartersSpin()
+    const clickEvent = { preventDefault: vi.fn(), stopPropagation: vi.fn() }
+    lockState.onStartersClickCapture(clickEvent)
+    expect(clickEvent.preventDefault).toHaveBeenCalledTimes(1)
+    expect(clickEvent.stopPropagation).toHaveBeenCalledTimes(1)
+    expect(lockState.startersMarqueeState.suppressClick).toBe(false)
+
+    // A nudge that never becomes a drag keeps the tap clickable.
+    lockState.onStartersPointerDown({ isPrimary: true, pointerId: 8, clientX: 300, timeStamp: 2_000 })
+    lockState.onStartersPointerMove({ isPrimary: true, clientX: 303, timeStamp: 2_020 })
+    lockState.onStartersPointerUp({ isPrimary: true, clientX: 303, timeStamp: 2_020 })
+    expect(lockState.startersMarqueeState.suppressClick).toBe(false)
+    const plainClick = { preventDefault: vi.fn(), stopPropagation: vi.fn() }
+    lockState.onStartersClickCapture(plainClick)
+    expect(plainClick.preventDefault).not.toHaveBeenCalled()
+
+    lockState.stopStartersMarquee()
   })
 
-  it('re-arms the hold on user scrolls and ignores the spin own programmatic scrolls', () => {
-    const lockState = loadGoalLockState(null)
-    const scrollToCalls: Array<{ left: number; behavior: string }> = []
-    const row = buildFakeRow(scrollToCalls)
-    lockState.startersRow.value = row as unknown as HTMLElement
-    lockState.startStartersSpin()
+  it('nudges velocity on horizontal wheel input and holds still for keyboard focus', () => {
+    const lockState = loadGoalLockState(null) as LockStateWithFakes
+    const { row, strip } = buildMarqueeFixtures()
+    startMarquee(lockState, row, strip)
+    lockState.pendingStartersFrames[0]?.callback(1_000)
 
-    const timersBefore = lockState.pendingSessionNoticeTimers.length
-    lockState.pendingStartersIntervals[0]?.callback()
-    lockState.handleStartersScroll()
-    expect(lockState.pendingSessionNoticeTimers.length).toBe(timersBefore)
+    lockState.onStartersWheel({ deltaX: 40, deltaY: 0 })
+    expect(lockState.startersMarqueeState.vel).toBe(240)
 
-    lockState.holdStartersSpin()
-    expect(lockState.pendingSessionNoticeTimers.length).toBe(timersBefore + 1)
-    expect(lockState.pendingSessionNoticeTimers.at(-1)?.delay).toBe(lockState.STARTERS_SPIN_HOLD_MS)
+    // Vertical wheel intent leaves the row alone.
+    lockState.startersMarqueeState.vel = 0
+    lockState.onStartersWheel({ deltaX: 0, deltaY: 120 })
+    expect(lockState.startersMarqueeState.vel).toBe(0)
 
-    lockState.stopStartersSpin()
+    lockState.pauseStartersMarquee()
+    lockState.pendingStartersFrames.at(-1)?.callback(2_000)
+    const pausedPos = lockState.startersMarqueeState.pos
+    lockState.pendingStartersFrames.at(-1)?.callback(3_000)
+    expect(lockState.startersMarqueeState.pos).toBe(pausedPos)
+
+    lockState.resumeStartersMarquee({ relatedTarget: null })
+    expect(lockState.startersMarqueeState.paused).toBe(false)
+
+    lockState.stopStartersMarquee()
   })
 })
 
