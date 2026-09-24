@@ -74,25 +74,37 @@
             <h2 :id="`${sourceDialogId}-title`">Add sources</h2>
           </div>
           <div class="agent-context__dialog-corner">
-            <v-btn
-              class="agent-context__dialog-close"
-              icon="mdi-close"
-              variant="text"
-              aria-label="Cancel adding sources"
-              type="button"
-              @click="cancelSources"
-            />
-            <v-btn
-              class="agent-context__dialog-confirm"
-              icon="mdi-check"
-              variant="text"
-              color="primary"
-              :aria-label="selectedRows.length ? `Add ${selectedRows.length} selected source${selectedRows.length === 1 ? '' : 's'}` : 'No pages selected yet'"
-              :loading="addingSources"
-              :disabled="!selectedRows.length || addingSources || disabled || connectionBlocked"
-              type="button"
-              @click="addSources"
-            />
+            <v-tooltip location="bottom" content-class="agent-owned-overlay">
+              <template #activator="{ props: confirmTip }">
+                <v-btn
+                  v-bind="confirmTip"
+                  class="agent-context__dialog-confirm"
+                  icon="mdi-check"
+                  variant="text"
+                  color="success"
+                  :aria-label="selectedRows.length ? `Add ${selectedRows.length} selected source${selectedRows.length === 1 ? '' : 's'}` : 'No pages selected yet'"
+                  :loading="addingSources"
+                  :disabled="!selectedRows.length || addingSources || disabled || connectionBlocked"
+                  type="button"
+                  @click="addSources"
+                />
+              </template>
+              <span>Add selected pages</span>
+            </v-tooltip>
+            <v-tooltip location="bottom" content-class="agent-owned-overlay">
+              <template #activator="{ props: closeTip }">
+                <v-btn
+                  v-bind="closeTip"
+                  class="agent-context__dialog-close"
+                  icon="mdi-close"
+                  variant="text"
+                  aria-label="Cancel adding sources"
+                  type="button"
+                  @click="cancelSources"
+                />
+              </template>
+              <span>Cancel</span>
+            </v-tooltip>
           </div>
         </header>
         <v-card-text class="agent-context__dialog-body">
@@ -649,7 +661,8 @@ onBeforeUnmount(() => {
 .agent-context__dialog-header { display: flex; align-items: flex-start; gap: var(--wiki-space-3); padding: var(--wiki-space-5) var(--wiki-space-5) var(--wiki-space-3); border-bottom: 1px solid var(--wiki-surface-border); }
 .agent-context__dialog-mark { display: grid; flex: 0 0 auto; width: 2.25rem; height: 2.25rem; place-items: center; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); }
 .agent-context__dialog-header h2 { margin: 0; color: rgb(var(--v-theme-on-surface)); font-family: var(--wiki-font-display); font-size: 1.45rem; font-weight: 500; letter-spacing: -.025em; line-height: 1.15; }
-.agent-context__dialog-corner { display: grid; flex: 0 0 auto; margin-inline-start: auto; justify-items: center; gap: .1rem; }
+.agent-context__dialog-corner { display: flex; flex: 0 0 auto; margin-inline-start: auto; align-items: center; gap: .1rem; }
+.agent-context__dialog-corner .v-btn--icon { align-self: center; }
 .agent-context__dialog-corner .v-btn--loading { flex: 0 0 auto; }
 .agent-context__dialog-body { max-height: min(68vh, 38rem); padding: var(--wiki-space-4) var(--wiki-space-5) var(--wiki-space-2); }
 .agent-context__dialog-guidance { margin: 0 0 var(--wiki-space-3); color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 74%, transparent); font-size: .82rem; line-height: 1.5; }
