@@ -855,7 +855,14 @@
     inset: 0;
     z-index: 3;
     border-radius: inherit;
-    background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent) 50%, transparent 60%);
+    // The band lives on a 300%-wide background whose position slides from
+    // 100% (band's leading tail parked at the block's start edge — no dead
+    // lag) to 0% (tail exits at the far edge). Nothing ever transforms, so
+    // the pre's scrollable overflow never grows and no horizontal scrollbar
+    // appears during the sweep.
+    background: linear-gradient(105deg, transparent 25%, color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent) 50%, transparent 75%);
+    background-size: 300% 100%;
+    background-repeat: no-repeat;
     pointer-events: none;
     animation: wiki-code-block-copy-sweep .95s ease-in-out 1 both;
   }
@@ -2110,10 +2117,14 @@
 // Whole-block acknowledgment sweep: fired only when the code block's Copy
 // button is clicked (page.vue wires it alongside the clipboard action), so
 // the entire block lights up the same way an inline backtick chip does when
-// the user clicks it to copy.
+// the user clicks it to copy. Rides background-position on a stationary
+// full-inset band (the chip's pattern) rather than a transform: a transform
+// would drag the pseudo's bounds past the pre's edges, growing the
+// scrollable overflow and flashing a horizontal scrollbar, and the clipped
+// off-block start read as lag before the band became visible.
 @keyframes wiki-code-block-copy-sweep {
-  from { transform: translateX(-130%); }
-  to { transform: translateX(130%); }
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
 }
 
 // Inline-code chip attractor: the band rides the chip's own 300%-wide
