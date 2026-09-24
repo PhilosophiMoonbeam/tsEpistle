@@ -58,6 +58,9 @@ describe('page.vue code copy attractor contract', () => {
     expect(script.includes('inlineShimmerStates')).toBe(false)
     // The click handler acknowledges the copy with the sweep.
     expect(script.includes('triggerInlineShimmerSweep(codeEl)')).toBe(true)
+    // The chip sweep runs at twice the code-block sweeps' rate (.95s vs 1.9s).
+    expect(stylesheet.includes('animation: wiki-inline-code-shimmer-sweep .95s ease-in-out 1 both')).toBe(true)
+    expect(stylesheet.match(/wiki-code-copy-shimmer-sweep 1\.9s/g)?.length).toBeGreaterThan(0)
   })
 
   it('keeps the code-block copy button shimmer scheduler intact', () => {
