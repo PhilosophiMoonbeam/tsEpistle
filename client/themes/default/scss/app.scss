@@ -860,7 +860,7 @@
     // lag) to 0% (tail exits at the far edge). Nothing ever transforms, so
     // the pre's scrollable overflow never grows and no horizontal scrollbar
     // appears during the sweep.
-    background: linear-gradient(105deg, transparent 25%, color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent) 50%, transparent 75%);
+    background: linear-gradient(105deg, transparent 37.5%, color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent) 50%, transparent 62.5%);
     background-size: 300% 100%;
     background-repeat: no-repeat;
     pointer-events: none;
