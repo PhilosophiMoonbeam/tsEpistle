@@ -24,7 +24,6 @@ const emit = defineEmits<{ close: [] }>()
    so the header keeps its proportions. */
 .agent-panel-header__actions { display: flex; flex-direction: column; align-items: center; gap: .25rem; }
 .agent-panel-header__actions :deep(.v-btn) { width: 2rem; min-width: 2rem; height: 2rem; border-radius: 8px; }
-.agent-panel-header__actions :deep(.v-btn) :deep(.v-icon),
 .agent-panel-header__actions :deep(.v-btn .v-icon) { font-size: 1.125rem; }
 /* The panel close button mirrors the agent header's close control: square,
    the same height, no glow or scale, and a crisp red icon hover. */
