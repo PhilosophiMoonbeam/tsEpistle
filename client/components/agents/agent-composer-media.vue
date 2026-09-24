@@ -79,11 +79,32 @@ let transcriptionRunId: string | null = null
 let levelContext: AudioContext | null = null
 let levelAnalyser: AnalyserNode | null = null
 let levelData: Float32Array<ArrayBuffer> | null = null
+
+// Speech-activity endpointing: the 60s countdown starts when sustained voice
+// is first detected (pre-roll does not consume the timer), sustained silence
+// after speech auto-stops into the review path, and a pre-roll with no
+// speech at all is canceled so a stray recording never sits open.
+const SPEECH_ONSET_LEVEL = 0.06
+const SILENCE_FLOOR_LEVEL = 0.035
+const SPEECH_ONSET_TICKS = 2
+const ENDPOINT_SILENCE_MS = 2_500
+const PRE_SPEECH_LIMIT_MS = 10_000
+const SPEECH_TICK_MS = 100
+const speechDetected = ref(false)
+let speechMonitor: ReturnType<typeof setInterval> | null = null
+let speechVotes = 0
+let lastVoiceAt = 0
+let preRollStartedAt = 0
 watch([attachments, selectedGenerationTools, () => props.generationToolsEnabled], () => emit('change', { attachmentIds: attachments.value.map(item => item.id), generationTools: props.generationToolsEnabled === false ? [] : [...selectedGenerationTools.value] }), { deep: true, immediate: true })
 watch([uploading, recording, transcribing], () => emit('busy', uploading.value || recording.value || transcribing.value), { flush: 'sync' })
 const releaseMicrophone = () => {
   if (timer !== null) clearInterval(timer)
   timer = null
+  if (speechMonitor !== null) clearInterval(speechMonitor)
+  speechMonitor = null
+  speechDetected.value = false
+  speechVotes = 0
+  lastVoiceAt = 0
   stream?.getTracks().forEach(track => track.stop())
   stream = null
   levelAnalyser = null
@@ -95,21 +116,28 @@ const releaseMicrophone = () => {
   }
 }
 /**
- * Current microphone level from 0 (silence) to 1 (loud), for the recording
- * waveform. Returns 0 whenever capture is inactive or the audio graph is
- * unavailable; the waveform treats that as an honest flat line.
+ * One read of the live microphone: `level` is the visual amplitude from 0
+ * (silence) to 1 (loudest) for the recording waveform, and `db` is the same
+ * RMS expressed in dBFS (0 = digital full scale) for tone thresholds.
+ * Returns honest zeros whenever capture is inactive or the audio graph is
+ * unavailable; the waveform treats that as a flat line.
  */
-const getAudioLevel = (): number => {
-  if (!levelAnalyser || !levelData || typeof levelAnalyser.getFloatTimeDomainData !== 'function') return 0
+const readAudioSample = (): { level: number; db: number } => {
+  if (!levelAnalyser || !levelData || typeof levelAnalyser.getFloatTimeDomainData !== 'function') return { level: 0, db: -96 }
   try {
     levelAnalyser.getFloatTimeDomainData(levelData)
   } catch {
-    return 0
+    return { level: 0, db: -96 }
   }
   let sum = 0
   for (let index = 0; index < levelData.length; index += 1) sum += levelData[index] ** 2
-  return Math.min(1, Math.sqrt(sum / levelData.length) * 3)
+  const rms = Math.sqrt(sum / levelData.length)
+  return { level: Math.min(1, rms * 3), db: rms > 0 ? 20 * Math.log10(rms) : -96 }
 }
+
+const getAudioLevel = (): number => readAudioSample().level
+
+const getAudioLevelDb = (): number => readAudioSample().db
 /** Attaches an analyser to the live stream so the waveform can show real input. */
 const startAudioFeedback = (microphone: MediaStream): void => {
   try {
@@ -317,6 +345,35 @@ const beginDictationSubmit = (): boolean => {
   dictationIntent.value = 'send'
   return true
 }
+/** Speech-activity tick: starts the countdown on voice, endpoints on silence. */
+const monitorSpeech = () => {
+  if (!recording.value || recorder === null) return
+  const now = Date.now()
+  const level = getAudioLevel()
+  if (!speechDetected.value) {
+    if (level >= SPEECH_ONSET_LEVEL) {
+      speechVotes += 1
+      if (speechVotes < SPEECH_ONSET_TICKS) return
+      speechDetected.value = true
+      lastVoiceAt = now
+      seconds.value = 0
+      timer = setInterval(() => { seconds.value += 1; if (seconds.value >= 60) stopRecording() }, 1000)
+      return
+    }
+    speechVotes = 0
+    if (now - preRollStartedAt >= PRE_SPEECH_LIMIT_MS) {
+      cancelDictation()
+      dictationError.value = 'No speech was detected. Dictation was canceled.'
+    }
+    return
+  }
+  if (level >= SILENCE_FLOOR_LEVEL) {
+    lastVoiceAt = now
+    return
+  }
+  if (now - lastVoiceAt >= ENDPOINT_SILENCE_MS) stopRecording()
+}
+
 const startRecording = async () => {
   if (locked.value || !props.session || !props.capabilities?.transcription) return
   dictationError.value = ''
@@ -366,7 +423,8 @@ const startRecording = async () => {
       void transcribe(file, session, csrfToken, current)
     }
     recorder.start(1000)
-    timer = setInterval(() => { seconds.value += 1; if (seconds.value >= 60) stopRecording() }, 1000)
+    preRollStartedAt = Date.now()
+    speechMonitor = setInterval(monitorSpeech, SPEECH_TICK_MS)
   } catch (value) {
     requesting.value = false
     if (current === generation && !disposed) { error.value = value instanceof Error ? value.message : 'Microphone access was not available.'; cancelDictation() }
@@ -463,7 +521,7 @@ onBeforeUnmount(() => {
   uploadController?.abort()
   for (const item of attachments.value) void deleteAgentMedia(fetcher, props.csrfToken, item.id).catch(() => {})
 })
-defineExpose({ clear, addFiles, editImage, startRecording, stopRecording, cancelDictation, beginDictationSubmit, waitForDictationTranscript, recording, requesting, transcribing, seconds, dictationIntent, dictationError, getAudioLevel, chooseUpload, browseAssets, toggleGenerationTool, generationOptions, selectedGenerationTools })
+defineExpose({ clear, addFiles, editImage, startRecording, stopRecording, cancelDictation, beginDictationSubmit, waitForDictationTranscript, recording, requesting, transcribing, seconds, speechDetected, dictationIntent, dictationError, getAudioLevel, getAudioLevelDb, chooseUpload, browseAssets, toggleGenerationTool, generationOptions, selectedGenerationTools })
 </script>
 <style scoped>
 .agent-media-composer { min-width: 0; }

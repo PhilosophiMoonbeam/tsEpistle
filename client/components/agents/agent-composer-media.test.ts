@@ -7,7 +7,7 @@ const source = fs.readFileSync(new URL('./agent-composer-media.vue', import.meta
 const script = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1]
 if (!script) throw new Error('Media composer script is missing')
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
-const evaluate = new Function('dependencies', `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, recording, transcribing, error, dictationError, dictationIntent, seconds }`)
+const evaluate = new Function('dependencies', `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, recording, transcribing, error, dictationError, dictationIntent, seconds, speechDetected }`)
 const sessionId = '00000000-0000-4000-8000-000000000081'
 const mediaId = '00000000-0000-4000-8000-000000000082'
 const runId = '00000000-0000-4000-8000-000000000083'
@@ -24,14 +24,39 @@ class Recorder {
   start() { this.state = 'recording' }
   stop() { this.state = 'inactive'; this.ondataavailable?.({ data: new Blob(['voice'], { type: this.mimeType }) }); this.onstop?.() }
 }
-const mount = (options: { media?: { attachments: boolean; imageGeneration: boolean; videoGeneration?: boolean; musicGeneration?: boolean; transcription: boolean }; fetch?: typeof fetch; microphone?: () => Promise<unknown>; focus?: () => void; generationToolsEnabled?: boolean } = {}) => {
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+/**
+ * Fake analyser graph: every getFloatTimeDomainData read fills the buffer
+ * with `level.value`, so tests drive speech detection by mutating the ref.
+ */
+const mountAudio = (level: { value: number }) => {
+  class Analyser {
+    fftSize = 512
+    getFloatTimeDomainData(target: Float32Array): void { target.fill(level.value) }
+  }
+  return class {
+    createMediaStreamSource() { return { connect: () => undefined } }
+    createAnalyser() { return new Analyser() }
+    close() { return Promise.resolve() }
+  }
+}
+
+const withTimeOffset = (run: () => Promise<void>) => {
+  const realNow = Date.now
+  let offset = 0
+  Date.now = () => realNow() + offset
+  return run().finally(() => { Date.now = realNow })
+}
+
+const mount = (options: { media?: { attachments: boolean; imageGeneration: boolean; videoGeneration?: boolean; musicGeneration?: boolean; transcription: boolean }; fetch?: typeof fetch; microphone?: () => Promise<unknown>; focus?: () => void; generationToolsEnabled?: boolean; level?: { value: number } } = {}) => {
   const props = reactive({ csrfToken: 'csrf', session: { id: sessionId, version: 3, profileResolutionToken: 'resolved' }, capabilities: options.media, generationToolsEnabled: options.generationToolsEnabled, disabled: false, networkBlocked: false })
   const events: Array<[string, unknown]> = []
   const cleanup: Array<() => void> = []
   let stopped = 0
   let microphoneCalls = 0
   const scope = effectScope()
-  const api = scope.run(() => evaluate({ computed, nextTick, ref, watch, useTemplateRef: (key: string) => ref(key === 'mediaControls' && options.focus ? { querySelector: () => ({ focus: options.focus, isConnected: true, disabled: false }) } : null), onBeforeUnmount: (fn: () => void) => cleanup.push(fn), defineProps: () => props, defineEmits: () => (event: string, value: unknown) => events.push([event, value]), defineExpose: () => {}, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator: { mediaDevices: { getUserMedia: async () => { microphoneCalls++; return options.microphone ? options.microphone() : { getTracks: () => [{ stop: () => { stopped++ } }] } } } }, MediaRecorder: Recorder, window: { requestAnimationFrame: (callback: () => void) => callback(), fetch: options.fetch ?? (async () => response({ media })) } }))
+  const api = scope.run(() => evaluate({ computed, nextTick, ref, watch, useTemplateRef: (key: string) => ref(key === 'mediaControls' && options.focus ? { querySelector: () => ({ focus: options.focus, isConnected: true, disabled: false }) } : null), onBeforeUnmount: (fn: () => void) => cleanup.push(fn), defineProps: () => props, defineEmits: () => (event: string, value: unknown) => events.push([event, value]), defineExpose: () => {}, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator: { mediaDevices: { getUserMedia: async () => { microphoneCalls++; return options.microphone ? options.microphone() : { getTracks: () => [{ stop: () => { stopped++ } }] } } } }, MediaRecorder: Recorder, window: { requestAnimationFrame: (callback: () => void) => callback(), fetch: options.fetch ?? (async () => response({ media })), AudioContext: options.level ? mountAudio(options.level) : undefined } }))
   return { api, props, events, stopped: () => stopped, microphoneCalls: () => microphoneCalls, unmount: () => { cleanup.forEach(fn => { fn() }); scope.stop() } }
 }
 describe('Agent media composer lifecycle', () => {
@@ -73,6 +98,59 @@ describe('Agent media composer lifecycle', () => {
     expect(harness.api.transcribing.value).toBe(false)
     harness.unmount()
   })
+  it('starts the countdown only after detected speech and auto-stops into review after sustained silence', async () => {
+    const level = { value: 0 }
+    const paths: string[] = []
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, level, fetch: async (input) => {
+      const path = String(input); paths.push(path)
+      if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+      if (path.endsWith('/transcriptions')) return response({ runId })
+      if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Auto stopped.' })
+      throw new Error(`Unexpected request ${path}`)
+    } })
+    await harness.api.startRecording()
+    // Pre-roll: no countdown and no speech flag until sustained voice shows up.
+    expect(harness.api.speechDetected.value).toBe(false)
+    expect(harness.api.seconds.value).toBe(0)
+    level.value = 0.2
+    await sleep(320)
+    expect(harness.api.speechDetected.value).toBe(true)
+    expect(harness.api.seconds.value).toBeLessThanOrEqual(1)
+    // Sustained silence after speech ends the recording into the review path.
+    level.value = 0
+    await withTimeOffset(async () => {
+      Date.now()
+      // Simulate 3s of silence by offsetting the monitor's clock.
+      const realNow = Date.now
+      Date.now = () => realNow() + 3_000
+      await sleep(250)
+      Date.now = realNow
+    })
+    await settle()
+    expect(harness.events).toContainEqual(['dictation', 'Auto stopped.'])
+    expect(harness.api.recording.value).toBe(false)
+    expect(harness.api.transcribing.value).toBe(false)
+    expect(harness.api.speechDetected.value).toBe(false)
+    harness.unmount()
+  })
+
+  it('cancels the recording when no speech is detected during the pre-roll', async () => {
+    const level = { value: 0 }
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, level, fetch: async () => response({ media }) })
+    await harness.api.startRecording()
+    await withTimeOffset(async () => {
+      const realNow = Date.now
+      Date.now = () => realNow() + 11_000
+      await sleep(250)
+      Date.now = realNow
+    })
+    expect(harness.api.recording.value).toBe(false)
+    expect(harness.api.dictationError.value).toBe('No speech was detected. Dictation was canceled.')
+    expect(harness.stopped()).toBe(1)
+    expect(harness.events.some(([event]) => event === 'dictation')).toBe(false)
+    harness.unmount()
+  })
+
   it('delivers the transcript to a pending send without emitting the review event', async () => {
     const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, fetch: async (input) => {
       const path = String(input)

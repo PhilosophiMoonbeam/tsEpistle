@@ -26,7 +26,17 @@ const compiledTemplate = compileTemplate({
 })
 
 const compiledComponent = `${compiledScript.content}\n${compiledTemplate.code}\n__sfc__.render = render\nexport default __sfc__`
-const transpiled = new Bun.Transpiler({ loader: 'ts' }).transformSync(compiledComponent)
+// The SFC imports the shared tone helper relatively; a data-URL module cannot
+// resolve that, so the helper is transpiled and spliced in as its own data URL.
+const toneModulePath = path.join(process.cwd(), 'client/components/agents/agent-dictation-tone.ts')
+const toneUrl = 'data:text/javascript;base64,' + Buffer.from(
+  new Bun.Transpiler({ loader: 'ts' }).transformSync(fs.readFileSync(toneModulePath, 'utf8'))
+).toString('base64')
+const inlinedComponent = compiledComponent.replace(
+  /(['"])\.\/agent-dictation-tone\.ts\1/g,
+  () => JSON.stringify(toneUrl)
+)
+const transpiled = new Bun.Transpiler({ loader: 'ts' }).transformSync(inlinedComponent)
 const mod = await import('data:text/javascript;base64,' + Buffer.from(transpiled).toString('base64'))
 const DictationWaveform = mod.default
 

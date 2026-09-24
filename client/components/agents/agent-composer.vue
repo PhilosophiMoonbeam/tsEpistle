@@ -131,6 +131,7 @@
           class="agent-composer__dictation-wave"
           :active="mediaRecording"
           :source="readDictationLevel"
+          :db-source="readDictationDb"
         />
         <span
           v-if="mediaRecording"
@@ -487,9 +488,11 @@ const mediaComposer = useTemplateRef<{
   requesting: Ref<boolean>
   transcribing: Ref<boolean>
   seconds: Ref<number>
+  speechDetected?: Ref<boolean> | boolean
   dictationIntent: Ref<'insert' | 'send'>
   dictationError: Ref<string>
   getAudioLevel: () => number
+  getAudioLevelDb?: () => number
   chooseUpload: () => void
   browseAssets: () => void
   toggleGenerationTool: (tool: 'image' | 'video' | 'music') => void
@@ -520,10 +523,25 @@ const readDictationLevel = (): number => {
   const read = mediaComposer.value?.getAudioLevel
   return typeof read === 'function' ? read() : 0
 }
+const readDictationDb = (): number => {
+  const read = mediaComposer.value?.getAudioLevelDb
+  return typeof read === 'function' ? read() : Number.NaN
+}
+/**
+ * Whether voice has been detected for the active recording. Media composers
+ * that do not expose the flag (harnesses, older builds) are treated as
+ * already speaking so the recording row keeps its listening presentation.
+ */
+const mediaSpeechDetected = computed(() => {
+  const detected = mediaComposer.value?.speechDetected as boolean | Ref<boolean> | undefined
+  if (detected === undefined) return true
+  return typeof detected === 'object' && detected !== null ? Boolean(detected.value) : Boolean(detected)
+})
 /** Recording feedback states. Announce state changes, not timer ticks. */
 const dictationStatusLabel = computed(() => {
   if (mediaTranscribing.value) return 'Transcribing…'
   if (mediaRequesting.value) return 'Requesting microphone…'
+  if (mediaRecording.value && !mediaSpeechDetected.value) return 'Waiting for speech…'
   return 'Listening…'
 })
 const dictationTimerLabel = computed(() => {
