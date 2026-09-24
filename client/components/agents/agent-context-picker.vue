@@ -667,6 +667,7 @@ onBeforeUnmount(() => {
 .agent-context__dialog-body { max-height: min(68vh, 38rem); padding: var(--wiki-space-4) var(--wiki-space-5) var(--wiki-space-2); }
 .agent-context__dialog-guidance { margin: 0 0 var(--wiki-space-3); color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 74%, transparent); font-size: .82rem; line-height: 1.5; }
 .agent-context__search { margin-bottom: .15rem; }
+.agent-context__search :deep(.v-field) { touch-action: pan-y; }
 .agent-context__search-scope { display: flex; align-items: center; gap: .35rem; margin: .25rem 0 0; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent); font-size: .72rem; line-height: 1.4; }
 .agent-context__status { min-height: 1.15rem; margin: .5rem 0 .35rem; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent); font-size: .74rem; line-height: 1.4; }
 .agent-context__error { margin: .45rem 0; }
@@ -677,11 +678,11 @@ onBeforeUnmount(() => {
 .agent-context__pending-list { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .5rem; }
 .agent-context__pending-label { display: inline-flex; max-width: 16rem; flex-direction: column; min-width: 0; overflow: hidden; text-align: start; }
 .agent-context__pending-label small { overflow: hidden; color: color-mix(in srgb, currentColor 64%, transparent); font-size: .66rem; text-overflow: ellipsis; white-space: nowrap; }
-.agent-context__results { --agent-context-results-rows: 6; min-height: 4.7rem; max-height: calc(var(--agent-context-results-rows) * 3.65rem + 1px); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: color-mix(in srgb, var(--wiki-surface-sunken) 42%, transparent); }
+.agent-context__results { --agent-context-results-rows: 6; min-height: 4.7rem; max-height: calc(var(--agent-context-results-rows) * 3.65rem + 1px); overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; overscroll-behavior-y: auto; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: color-mix(in srgb, var(--wiki-surface-sunken) 42%, transparent); }
 .agent-context__results-state { display: flex; min-height: 4.7rem; align-items: center; justify-content: center; gap: .55rem; padding: 1rem; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent); font-size: .8rem; text-align: center; }
 .agent-context__result-list { display: grid; margin: 0; padding: 0; list-style: none; }
 .agent-context__result + .agent-context__result { border-top: 1px solid var(--wiki-surface-border); }
-.agent-context__result-label { display: flex; min-height: 3.65rem; align-items: center; gap: .7rem; padding: .6rem .75rem; cursor: pointer; }
+.agent-context__result-label { display: flex; min-height: 3.65rem; align-items: center; gap: .7rem; padding: .6rem .75rem; cursor: pointer; touch-action: pan-y; }
 .agent-context__result-label:hover { background: color-mix(in srgb, var(--wiki-accent-ink, rgb(var(--v-theme-primary))) 5%, transparent); }
 .agent-context__result-label:focus-within { outline: 2px solid var(--wiki-accent-ink, rgb(var(--v-theme-primary))); outline-offset: -2px; }
 .agent-context__result-label--disabled { cursor: not-allowed; opacity: .68; }
