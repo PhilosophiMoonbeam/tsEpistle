@@ -33,13 +33,13 @@ Use exact provider-qualified selectors. The assessed installation registers the 
 |---|---|---|---|
 | Main | `modelRoles.default` | `openai-codex/gpt-6-sol:medium` | Own requirements, decomposition, integration, and delivery; implement small cohesive changes directly |
 | Implementation | Existing `task`; `modelRoles.task` | `openai-codex/gpt-6-sol:high` | Investigate and implement a complete bounded ownership unit |
-| Architecture | Custom `planner` defined below; `modelRoles.plan` | `openai-codex/gpt-6-astra:medium` | Material architecture, shared contracts, schema/data transitions, or trust-boundary decisions |
+| Architecture | Custom `planner` defined below; `modelRoles.plan` | `openai-codex/gpt-6-astra:high` | Material architecture, shared contracts, schema/data transitions, or trust-boundary decisions |
 | Discovery | Existing `scout` | `openai-codex/gpt-6-luna:medium` | Unmapped subsystems, independent research, exact source/tool evidence |
 | Mechanical work | Existing `sonic` | `openai-codex/gpt-6-luna:medium` | Substantial mechanical batches; run already-known commands directly without an extra agent |
 | Debug escalation | Existing implementation owner; `modelRoles.slow` if used | `openai-codex/gpt-6-astra:low` | Semantic failures, contradictory evidence, or a concrete failed hypothesis requiring deeper reasoning |
 | Test specialist | Optional `tester` | `openai-codex/gpt-5.6-sol:high` | Difficult behavioral test design or failure analysis; routine tests remain with the implementer |
 | Documentation | Optional `docwriter` | `openai-codex/gpt-6-sol:low` | Large independent documentation work; small updates remain with the implementer |
-| Independent review | Existing `reviewer` / `security-reviewer` | `openai-codex/gpt-6-astra:high` | Risk-selected correctness/security review; use `xhigh` for genuinely difficult high-risk changes |
+| Independent review | Existing `reviewer` / `security-reviewer` | `openai-codex/gpt-6-sol:high` | Risk-selected correctness/security review; use `xhigh` for genuinely difficult high-risk changes |
 
 These are starting assignments, not mandatory participants in every task. Raise effort when evidence warrants it; do not automatically run every reviewer at maximum effort. The optional tester's existing `gpt-5.6-sol:high` assignment is unchanged; the clarified `gpt-6-astra:low` replacement applies to **Debug escalation**, not Implementation or tester. Luna can handle bounded routine test work, but high effort alone does not establish suitability for difficult semantic diagnosis.
 
@@ -56,10 +56,10 @@ For the current recipe assignments, merge these role and dispatch routes into th
 modelRoles:
   default: openai-codex/gpt-6-sol:medium
   task: openai-codex/gpt-6-sol:high
-  plan: openai-codex/gpt-6-astra:medium
+  plan: openai-codex/gpt-6-astra:high
   discovery: openai-codex/gpt-6-luna:medium
   slow: openai-codex/gpt-6-astra:low
-  review: openai-codex/gpt-6-astra:high
+  review: openai-codex/gpt-6-sol:high
 task:
   agentModelOverrides:
     task: "@task"
@@ -107,6 +107,8 @@ output:
         type: string
     checks:
       type: array
+      items:
+        type: string
       maxItems: 0
     blockers:
       type: array
@@ -166,7 +168,7 @@ Merge the following routing into the chosen configuration scope; preserve other 
 
 ```yaml
 modelRoles:
-  plan: openai-codex/gpt-6-astra:medium
+  plan: openai-codex/gpt-6-astra:high
 task:
   agentModelOverrides:
     planner: "@plan"
@@ -302,6 +304,6 @@ Retain native shell execution and useful context maintenance. Not every external
 - If activation fails, restore only the recipe's changes from the retained copies and remove only its own newly created files. If another actor has edited a touched file since backup, reconcile the specific changes instead of blindly restoring over their work.
 - Report changed files, effective routing/capacity, focused check results, limitations, and the recovery location/procedure in a short factual response. No standalone evidence document is required.
 
-**Recovery:** original setup copies of `config.yml`, `agents/planner.md`, and `AGENTS.md` are in `~/.omp/recipe-backups/2026-09-20T02-22-47-807Z/`. The pre-routing-repair `config.yml` is in `~/.omp/recipe-backups/2026-09-24-routing/`; restore only the affected file if the new routing fails, reconciling any intervening edits first.
+**Recovery:** original setup copies of `config.yml`, `agents/planner.md`, and `AGENTS.md` are in `~/.omp/recipe-backups/2026-09-20T02-22-47-807Z/`. Pre-routing-repair `config.yml` is in `~/.omp/recipe-backups/2026-09-24-routing/`; the pre-plan/review-adjustment copy is in `~/.omp/recipe-backups/2026-09-24-plan-review/`. Restore only the affected file if routing fails, reconciling any intervening edits first.
 
 During normal development, compare accepted-change quality, end-to-end latency, total model usage/cost, rework, conflicts, budget stops, and human interventions. Tune routing or effort when repeated evidence warrants it; change one policy dimension at a time when attribution matters. Keep **32-worker capacity** while improving packet sizing and scheduling. Optimize for reliable completed work per unit time and cost—not the fewest tokens, the most agents, or the most process steps.
