@@ -860,7 +860,7 @@
     // lag) to 0% (tail exits at the far edge). Nothing ever transforms, so
     // the pre's scrollable overflow never grows and no horizontal scrollbar
     // appears during the sweep.
-    background: linear-gradient(105deg, transparent 37.5%, color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent) 50%, transparent 62.5%);
+    background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent) 50%, transparent 60%);
     background-size: 300% 100%;
     background-repeat: no-repeat;
     pointer-events: none;
@@ -2122,9 +2122,17 @@
 // would drag the pseudo's bounds past the pre's edges, growing the
 // scrollable overflow and flashing a horizontal scrollbar, and the clipped
 // off-block start read as lag before the band became visible.
+//
+// Position arithmetic: with background-size 300% and gradient stops at
+// 40%/60% (band = image coords [1.2W, 1.8W]), the image offset is
+// (W - 3W) * p. The band's right edge touches the block's start edge at
+// position 90% and its left edge touches the block's far edge at position
+// 10%, so sweeping 90% -> 10% travels the band exactly edge-to-edge with
+// zero dead travel on either end: never visible while off-block, never
+// stalling short of the far edge.
 @keyframes wiki-code-block-copy-sweep {
-  from { background-position: 100% 0; }
-  to { background-position: 0% 0; }
+  from { background-position: 90% 0; }
+  to { background-position: 10% 0; }
 }
 
 // Inline-code chip attractor: the band rides the chip's own 300%-wide
