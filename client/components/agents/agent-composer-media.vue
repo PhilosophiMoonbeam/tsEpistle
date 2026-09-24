@@ -72,6 +72,37 @@ let uploadController: AbortController | null = null
 let dictationController: AbortController | null = null
 let recorder: MediaRecorder | null = null
 let stream: MediaStream | null = null
+// Screen Wake Lock while dictating: keeps the screen awake so mobile browsers
+// do not mute or kill the microphone capture when the page loses visibility.
+interface WakeLockSentinelLike {
+  release: () => Promise<void>
+  addEventListener?: (type: 'release', listener: () => void) => void
+}
+type WakeLockManager = { request: (type: 'screen') => Promise<WakeLockSentinelLike> }
+let wakeLock: WakeLockSentinelLike | null = null
+let wakeLockPending = false
+const acquireWakeLock = async () => {
+  const manager = (navigator as Navigator & { wakeLock?: WakeLockManager }).wakeLock
+  if (wakeLockPending || wakeLock !== null || disposed || !recording.value) return
+  wakeLockPending = true
+  try {
+    const sentinel = await manager.request('screen')
+    wakeLock = sentinel
+    // The browser releases the lock on its own when the page hides; clear the
+    // handle so the visibilitychange listener can re-acquire when visible again.
+    sentinel.addEventListener?.('release', () => { if (wakeLock === sentinel) wakeLock = null })
+  } catch { /* Wake lock is best-effort: unsupported, denied, or page hidden. */ } finally {
+    wakeLockPending = false
+  }
+}
+const releaseWakeLock = () => {
+  const lock = wakeLock
+  wakeLock = null
+  void lock?.release().catch(() => {})
+}
+const handleWakeLockVisibility = () => {
+  if (document.visibilityState === 'visible') void acquireWakeLock()
+}
 let timer: ReturnType<typeof setInterval> | null = null
 let transcriptionRunId: string | null = null
 // Live microphone feedback for the recording waveform. Created per capture;
@@ -98,6 +129,8 @@ let preRollStartedAt = 0
 watch([attachments, selectedGenerationTools, () => props.generationToolsEnabled], () => emit('change', { attachmentIds: attachments.value.map(item => item.id), generationTools: props.generationToolsEnabled === false ? [] : [...selectedGenerationTools.value] }), { deep: true, immediate: true })
 watch([uploading, recording, transcribing], () => emit('busy', uploading.value || recording.value || transcribing.value), { flush: 'sync' })
 const releaseMicrophone = () => {
+  document.removeEventListener('visibilitychange', handleWakeLockVisibility)
+  releaseWakeLock()
   if (timer !== null) clearInterval(timer)
   timer = null
   if (speechMonitor !== null) clearInterval(speechMonitor)
@@ -425,6 +458,8 @@ const startRecording = async () => {
     recorder.start(1000)
     preRollStartedAt = Date.now()
     speechMonitor = setInterval(monitorSpeech, SPEECH_TICK_MS)
+    document.addEventListener('visibilitychange', handleWakeLockVisibility)
+    void acquireWakeLock()
   } catch (value) {
     requesting.value = false
     if (current === generation && !disposed) { error.value = value instanceof Error ? value.message : 'Microphone access was not available.'; cancelDictation() }

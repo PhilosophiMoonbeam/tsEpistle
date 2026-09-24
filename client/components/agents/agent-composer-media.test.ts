@@ -7,7 +7,39 @@ const source = fs.readFileSync(new URL('./agent-composer-media.vue', import.meta
 const script = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1]
 if (!script) throw new Error('Media composer script is missing')
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
-const evaluate = new Function('dependencies', `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, recording, transcribing, error, dictationError, dictationIntent, seconds, speechDetected }`)
+const evaluate = new Function('dependencies', `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window, document } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, recording, transcribing, error, dictationError, dictationIntent, seconds, speechDetected }`)
+interface WakeLockSentinelStub {
+  release: () => Promise<void>
+  addEventListener?: (type: 'release', listener: () => void) => void
+}
+interface WakeLockManagerStub {
+  request: (type: 'screen') => Promise<WakeLockSentinelStub>
+}
+const makeFakeWakeLock = () => {
+  const requests: string[] = []
+  let current: WakeLockSentinelStub & { listeners: Array<() => void> } | null = null
+  const manager: WakeLockManagerStub = {
+    request: async (type: 'screen') => {
+      requests.push(type)
+      const sentinel: WakeLockSentinelStub & { listeners: Array<() => void> } = {
+        listeners: [],
+        release: async () => {
+          if (current === sentinel) current = null
+          const fired = sentinel.listeners
+          sentinel.listeners = []
+          for (const listener of fired) listener()
+        },
+        addEventListener: (type: 'release', listener: () => void) => { sentinel.listeners.push(listener) }
+      }
+      current = sentinel
+      return sentinel
+    }
+  }
+  // Simulates the browser releasing the lock on its own when the page hides.
+  const releaseActive = () => void current?.release()
+  return { manager, requests, releaseActive }
+}
+
 const sessionId = '00000000-0000-4000-8000-000000000081'
 const mediaId = '00000000-0000-4000-8000-000000000082'
 const runId = '00000000-0000-4000-8000-000000000083'
@@ -49,15 +81,29 @@ const withTimeOffset = (run: () => Promise<void>) => {
   return run().finally(() => { Date.now = realNow })
 }
 
-const mount = (options: { media?: { attachments: boolean; imageGeneration: boolean; videoGeneration?: boolean; musicGeneration?: boolean; transcription: boolean }; fetch?: typeof fetch; microphone?: () => Promise<unknown>; focus?: () => void; generationToolsEnabled?: boolean; level?: { value: number } } = {}) => {
+const makeDocumentStub = () => {
+  const listeners: Record<string, Array<() => void>> = {}
+  const stub = {
+    visibilityState: 'visible',
+    addEventListener: (type: string, listener: () => void) => { (listeners[type] ??= []).push(listener) },
+    removeEventListener: (type: string, listener: () => void) => { listeners[type] = (listeners[type] ?? []).filter(entry => entry !== listener) }
+  }
+  return {
+    stub,
+    visibility: (state: string) => { stub.visibilityState = state; for (const listener of listeners['visibilitychange'] ?? []) listener() }
+  }
+}
+
+const mount = (options: { media?: { attachments: boolean; imageGeneration: boolean; videoGeneration?: boolean; musicGeneration?: boolean; transcription: boolean }; fetch?: typeof fetch; microphone?: () => Promise<unknown>; focus?: () => void; generationToolsEnabled?: boolean; level?: { value: number }; wakeLock?: WakeLockManagerStub } = {}) => {
   const props = reactive({ csrfToken: 'csrf', session: { id: sessionId, version: 3, profileResolutionToken: 'resolved' }, capabilities: options.media, generationToolsEnabled: options.generationToolsEnabled, disabled: false, networkBlocked: false })
   const events: Array<[string, unknown]> = []
   const cleanup: Array<() => void> = []
   let stopped = 0
   let microphoneCalls = 0
+  const documentStub = makeDocumentStub()
   const scope = effectScope()
-  const api = scope.run(() => evaluate({ computed, nextTick, ref, watch, useTemplateRef: (key: string) => ref(key === 'mediaControls' && options.focus ? { querySelector: () => ({ focus: options.focus, isConnected: true, disabled: false }) } : null), onBeforeUnmount: (fn: () => void) => cleanup.push(fn), defineProps: () => props, defineEmits: () => (event: string, value: unknown) => events.push([event, value]), defineExpose: () => {}, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator: { mediaDevices: { getUserMedia: async () => { microphoneCalls++; return options.microphone ? options.microphone() : { getTracks: () => [{ stop: () => { stopped++ } }] } } } }, MediaRecorder: Recorder, window: { requestAnimationFrame: (callback: () => void) => callback(), fetch: options.fetch ?? (async () => response({ media })), AudioContext: options.level ? mountAudio(options.level) : undefined } }))
-  return { api, props, events, stopped: () => stopped, microphoneCalls: () => microphoneCalls, unmount: () => { cleanup.forEach(fn => { fn() }); scope.stop() } }
+  const api = scope.run(() => evaluate({ computed, nextTick, ref, watch, useTemplateRef: (key: string) => ref(key === 'mediaControls' && options.focus ? { querySelector: () => ({ focus: options.focus, isConnected: true, disabled: false }) } : null), onBeforeUnmount: (fn: () => void) => cleanup.push(fn), defineProps: () => props, defineEmits: () => (event: string, value: unknown) => events.push([event, value]), defineExpose: () => {}, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator: { mediaDevices: { getUserMedia: async () => { microphoneCalls++; return options.microphone ? options.microphone() : { getTracks: () => [{ stop: () => { stopped++ } }] } } }, wakeLock: options.wakeLock }, MediaRecorder: Recorder, document: documentStub.stub, window: { requestAnimationFrame: (callback: () => void) => callback(), fetch: options.fetch ?? (async () => response({ media })), AudioContext: options.level ? mountAudio(options.level) : undefined } }))
+  return { api, props, events, stopped: () => stopped, microphoneCalls: () => microphoneCalls, visibility: documentStub.visibility, unmount: () => { cleanup.forEach(fn => { fn() }); scope.stop() } }
 }
 describe('Agent media composer lifecycle', () => {
   it('does not upload or request microphone access without configured capabilities', async () => {
@@ -430,6 +476,60 @@ describe('creation tool selection', () => {
     expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: [] }])
     harness.api.toggleGenerationTool('image')
     expect(harness.api.selectedGenerationTools.value).toEqual(['image'])
+    harness.unmount()
+  })
+})
+
+describe('Agent media composer wake lock', () => {
+  it('requests a screen wake lock while recording and releases it when recording stops', async () => {
+    const wakeLock = makeFakeWakeLock()
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, wakeLock: wakeLock.manager })
+    await harness.api.startRecording()
+    await settle()
+    expect(wakeLock.requests).toEqual(['screen'])
+    harness.api.stopRecording()
+    expect(harness.api.recording.value).toBe(false)
+    // Stopping recording removes the visibilitychange listener, so a later
+    // visibility flip cannot re-acquire the released lock.
+    harness.visibility('hidden')
+    harness.visibility('visible')
+    await settle()
+    expect(wakeLock.requests).toEqual(['screen'])
+    harness.unmount()
+  })
+
+  it('re-acquires the wake lock when the page becomes visible again mid-recording', async () => {
+    const wakeLock = makeFakeWakeLock()
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, wakeLock: wakeLock.manager })
+    await harness.api.startRecording()
+    await settle()
+    expect(wakeLock.requests).toEqual(['screen'])
+    // The browser auto-releases the lock when the page hides; the sentinel's
+    // release event clears the component's handle.
+    harness.visibility('hidden')
+    wakeLock.releaseActive()
+    await settle()
+    expect(wakeLock.requests).toEqual(['screen'])
+    harness.visibility('visible')
+    await settle()
+    expect(wakeLock.requests).toEqual(['screen', 'screen'])
+    harness.unmount()
+  })
+
+  it('releases the wake lock when dictation is canceled and without one when unsupported', async () => {
+    const wakeLock = makeFakeWakeLock()
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, wakeLock: wakeLock.manager })
+    await harness.api.startRecording()
+    await settle()
+    harness.api.cancelDictation()
+    await settle()
+    expect(wakeLock.requests).toEqual(['screen'])
+    // An environment without wakeLock support must not break dictation.
+    const plain = mount({ media: { attachments: false, imageGeneration: false, transcription: true } })
+    await plain.api.startRecording()
+    await settle()
+    expect(plain.api.recording.value).toBe(true)
+    plain.unmount()
     harness.unmount()
   })
 })
