@@ -136,7 +136,8 @@
       "approvalTransitionError": "Approval transition failed",
       "pageWatchRequestError": "Page watch request failed ({{status}})",
       "pageWatchSettingsRequestError": "Page watch settings request failed ({{status}})",
-      "pageNotificationsRequestError": "Page notifications request failed ({{status}})"
+      "pageNotificationsRequestError": "Page notifications request failed ({{status}})",
+      "view": "View"
     },
     "accountNotifications": {
       "title": "Notifications",
