@@ -117,6 +117,110 @@ describe('agent event SSE lifecycle', () => {
     expect(connections.has(7)).toBe(false)
   })
 
+  it('resumes owner-scoped stored events from Last-Event-ID and closes without replaying them again', async () => {
+    await knex('agentRuns').insert({ id: 'run-reconnect', ownerId: 7, status: 'partial', eventSequence: 3 })
+    await knex('agentEvents').insert(
+      [1, 2, 3].map(sequence => {
+        const data = JSON.stringify({ sequence })
+        return {
+          id: `event-${sequence}`,
+          runId: 'run-reconnect',
+          sequence,
+          type: 'run.partial',
+          attempt: 1,
+          schemaVersion: 1,
+          dataSha256: sha256(data),
+          data,
+          createdAt: new Date('2026-08-17T12:00:00.000Z')
+        }
+      })
+    )
+
+    const connections = new Map<number, number>()
+    const firstWriteStarted = Promise.withResolvers<void>()
+    let holdFirstWrite = true
+    const firstResponse = Object.assign(new EventEmitter(), {
+      status: vi.fn(),
+      set: vi.fn(),
+      flushHeaders: vi.fn(),
+      write: vi.fn((_chunk: string) => {
+        if (!holdFirstWrite) return true
+        holdFirstWrite = false
+        firstWriteStarted.resolve()
+        return false
+      }),
+      end: vi.fn()
+    })
+    firstResponse.status.mockReturnValue(firstResponse)
+    firstResponse.set.mockReturnValue(firstResponse)
+    const firstRequest = {
+      get: (name: string) => (name === 'last-event-id' ? '1' : undefined),
+      query: { after: '2' }
+    } satisfies AgentSseRequest
+
+    const firstStream = streamOwnedAgentEvents(knex, firstRequest, firstResponse as unknown as Response, 7, 'run-reconnect', connections, {
+      maximumConnectionsPerUser: 1,
+      keepaliveMilliseconds: 60_000
+    })
+    await firstWriteStarted.promise
+    expect(connections.get(7)).toBe(1)
+    firstResponse.emit('drain')
+    await firstStream
+
+    expect(firstResponse.write.mock.calls.map(([chunk]) => chunk.match(/^id: (\d+)\n/)?.[1])).toEqual(['2', '3'])
+    expect(firstResponse.end).toHaveBeenCalledOnce()
+    expect(connections.has(7)).toBe(false)
+
+    const secondHeadersFlushed = Promise.withResolvers<void>()
+    const secondResponse = Object.assign(new EventEmitter(), {
+      status: vi.fn(),
+      set: vi.fn(),
+      flushHeaders: vi.fn(() => secondHeadersFlushed.resolve()),
+      write: vi.fn(() => true),
+      end: vi.fn()
+    })
+    secondResponse.status.mockReturnValue(secondResponse)
+    secondResponse.set.mockReturnValue(secondResponse)
+    const secondRequest = {
+      get: (name: string) => (name === 'last-event-id' ? '3' : undefined),
+      query: { after: '0' }
+    } satisfies AgentSseRequest
+
+    const secondStream = streamOwnedAgentEvents(knex, secondRequest, secondResponse as unknown as Response, 7, 'run-reconnect', connections, {
+      maximumConnectionsPerUser: 1,
+      keepaliveMilliseconds: 60_000
+    })
+    await secondHeadersFlushed.promise
+    expect(connections.get(7)).toBe(1)
+    await secondStream
+
+    expect(secondResponse.write).not.toHaveBeenCalled()
+    expect(secondResponse.end).toHaveBeenCalledOnce()
+    expect(connections.has(7)).toBe(false)
+
+    const wrongOwnerResponse = Object.assign(new EventEmitter(), {
+      status: vi.fn(),
+      set: vi.fn(),
+      flushHeaders: vi.fn(),
+      write: vi.fn(() => true),
+      end: vi.fn()
+    })
+    wrongOwnerResponse.status.mockReturnValue(wrongOwnerResponse)
+    wrongOwnerResponse.set.mockReturnValue(wrongOwnerResponse)
+    const wrongOwnerRequest = {
+      get: () => '0',
+      query: { after: '0' }
+    } satisfies AgentSseRequest
+
+    await expect(
+      streamOwnedAgentEvents(knex, wrongOwnerRequest, wrongOwnerResponse as unknown as Response, 8, 'run-reconnect', connections, {
+        maximumConnectionsPerUser: 1
+      })
+    ).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND' })
+    expect(wrongOwnerResponse.write).not.toHaveBeenCalled()
+    expect(connections.has(8)).toBe(false)
+  })
+
   it('removes attached lifecycle listeners and releases accounting once when request and response both close', async () => {
     await knex('agentRuns').insert({ id: 'run-aborted', ownerId: 7, status: 'running', eventSequence: 0 })
 

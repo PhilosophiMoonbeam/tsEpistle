@@ -4,6 +4,7 @@ import createKnex, { type Knex } from 'knex'
 import { AgentProviderFactory, agentProviderCostMicros, createGuardedProviderFetch, deriveAgentProviderResourceLimits } from '../../agents/providers/factory.ts'
 import { createGeminiInteractionsService, geminiInteractionCompactionPrefix } from '../../agents/providers/gemini-interactions.ts'
 import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
+import { parsePromptToolCall, promptToolInstructions, promptToolResultMessage } from '../../agents/providers/prompt-tools.ts'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
@@ -55,9 +56,12 @@ describe('additional provider transports', () => {
     })
   }
 
-  it('runs OpenResponses through the storage-off Responses protocol', async () => {
-    const id = '00000000-0000-4000-8000-000000000011'
-    await insert({ id, transportKind: 'openresponses', baseUrl: 'https://openresponses.example.test/v1', authMode: 'bearer' })
+  it.each([
+    ['openai-responses', '00000000-0000-4000-8000-000000000017', 'responses.example.test'],
+    ['openresponses', '00000000-0000-4000-8000-000000000011', 'openresponses.example.test']
+  ] as const)('runs %s through the storage-off Responses protocol with a no-tools native final', async (transportKind, id, host) => {
+    const baseUrl = `https://${host}/v1`
+    await insert({ id, transportKind, baseUrl, authMode: 'bearer' })
     await db('agentProviderProfileVersions')
       .where({ id })
       .update({
@@ -65,10 +69,13 @@ describe('additional provider transports', () => {
         capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true })
       })
     let payload: Record<string, unknown> = {}
+    const payloads: Record<string, unknown>[] = []
     const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       payload = JSON.parse(String(init?.body)) as Record<string, unknown>
+      payloads.push(payload)
+      const actionTurn = payloads.length === 1
       return Response.json({
-        id: 'resp_1',
+        id: actionTurn ? 'resp_1' : 'resp_2',
         object: 'response',
         created_at: 1,
         status: 'completed',
@@ -79,7 +86,9 @@ describe('additional provider transports', () => {
         model: 'model-test',
         parallel_tool_calls: false,
         previous_response_id: null,
-        output: [{ type: 'message', id: 'msg_1', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: 'open', annotations: [] }] }],
+        output: actionTurn
+          ? [{ type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'wiki_get_page', arguments: '{"id":42}', status: 'completed' }]
+          : [{ type: 'message', id: 'msg_1', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: 'open', annotations: [] }] }],
         usage: {
           input_tokens: 2,
           input_tokens_details: { cached_tokens: 0 },
@@ -99,15 +108,30 @@ describe('additional provider transports', () => {
       },
       { stream: false }
     )
-    expect(response).not.toBeInstanceOf(ReadableStream)
-    expect(payload).toMatchObject({
+    if (response instanceof ReadableStream) throw new Error('Expected a buffered Responses action response')
+    const call = response.results[0]?.functionCalls?.[0]
+    expect(call).toMatchObject({ id: 'call_1', function: { name: 'wiki_get_page' } })
+    if (!call) throw new Error('Responses did not return the native action call')
+    expect(payloads[0]).toMatchObject({
       store: false,
       previous_response_id: null,
       parallel_tool_calls: true,
       reasoning: { effort: 'xhigh' },
       tools: [{ type: 'function', name: 'wiki_get_page', strict: false }]
     })
-    expect(payload.include).toContain('reasoning.encrypted_content')
+    expect(payloads[0]?.include).toContain('reasoning.encrypted_content')
+    await provider.service.chat(
+      {
+        chatPrompt: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', functionCalls: [call] },
+          { role: 'function', functionId: call.id, result: '{"id":42}' }
+        ]
+      },
+      { stream: false }
+    )
+    expect(payload).not.toHaveProperty('tools')
+    expect(payload.input).toContainEqual(expect.objectContaining({ type: 'function_call_output', call_id: call.id }))
     const firstContinuation = provider.preserveThoughtBlock('rs_1', { data: 'encrypted-reasoning', encrypted: true })
     const secondContinuation = provider.preserveThoughtBlock('rs_2', { data: 'encrypted-reasoning-2', encrypted: true })
     if (!firstContinuation || !secondContinuation) throw new Error('OpenResponses continuation state was not preserved')
@@ -186,8 +210,7 @@ describe('additional provider transports', () => {
           { role: 'user', content: 'hello' },
           { role: 'assistant', functionCalls: call ? [call] : [] },
           { role: 'function', functionId: 'toolu_1', result: '{"id":42}' }
-        ],
-        functions: [definition]
+        ]
       },
       { stream: false }
     )
@@ -195,6 +218,7 @@ describe('additional provider transports', () => {
     expect(requests[0]?.headers.get('x-api-key')).toBe('anthropic-key')
     expect(requests[0]?.headers.get('anthropic-version')).toBeTruthy()
     expect(requests[0]?.body).toMatchObject({ output_config: { effort: 'high' }, tools: [{ name: 'wiki_get_page', input_schema: { type: 'object' } }] })
+    expect(requests[1]?.body).not.toHaveProperty('tools')
     expect(JSON.stringify(requests[1]?.body)).toContain('tool_result')
     expect(JSON.stringify(requests[1]?.body)).toContain('toolu_1')
   })
@@ -222,20 +246,30 @@ describe('additional provider transports', () => {
       { type: 'function_call', id: 'call_1', name: 'wiki_get_page', arguments: { id: 42 } },
       { type: 'function_call', id: 'call_2', name: 'wiki_list_tags', arguments: {} }
     ]
-    const finalSteps = [{ type: 'model_output', content: [{ type: 'text', text: 'gemini' }] }]
-    const responses = [
+    const firstResponse = {
+      id: '',
+      model: 'gemini-3.7-flash',
+      status: 'requires_action',
+      steps: firstSteps,
+      usage: { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5 }
+    }
+    const finalEvents = [
+      { event_type: 'interaction.created', interaction: { id: 'interaction_final', model: 'gemini-3.7-flash', status: 'in_progress', object: 'interaction' } },
+      { event_type: 'step.start', index: 0, step: { type: 'model_output', content: [{ type: 'text', text: 'gemini' }] } },
+      { event_type: 'step.stop', index: 0 },
       {
-        id: '',
-        model: 'gemini-3.7-flash',
-        status: 'requires_action',
-        steps: firstSteps,
-        usage: { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5 }
-      },
-      { id: '', model: 'gemini-3.7-flash', status: 'completed', steps: finalSteps, usage: { total_input_tokens: 6, total_output_tokens: 1, total_tokens: 7 } }
+        event_type: 'interaction.completed',
+        interaction: {
+          id: 'interaction_final',
+          status: 'completed',
+          usage: { total_input_tokens: 6, total_output_tokens: 1, total_tokens: 7 }
+        }
+      }
     ]
+    const finalBody = `${finalEvents.map(event => `event: ${event.event_type}\ndata: ${JSON.stringify(event)}`).join('\n\n')}\n\nevent: done\ndata: [DONE]\n\n`
     const fetchImplementation = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       requests.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) as Record<string, unknown> })
-      return Response.json(responses.shift())
+      return requests.length === 1 ? Response.json(firstResponse) : new Response(finalBody, { headers: { 'content-type': 'text/event-stream' } })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'gemini-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
     const definitions: NonNullable<AxChatRequest['functions']> = [
@@ -271,20 +305,19 @@ describe('additional provider transports', () => {
     if (!rawState) throw new Error('Gemini Interactions did not return its continuation state')
     const continuation = provider.preserveThoughtBlock('', rawState)
     if (!continuation) throw new Error('Gemini Interactions continuation state was not preserved')
-    const final = await consume(
-      await provider.service.chat(
-        {
-          chatPrompt: [
-            { role: 'user', content: 'hello' },
-            { role: 'assistant', functionCalls: calls, thoughtBlocks: [continuation] },
-            { role: 'function', functionId: 'call_1', result: '{"id":42}' },
-            { role: 'function', functionId: 'call_2', result: '[]' }
-          ],
-          functions: definitions
-        },
-        { stream: true }
-      )
+    const finalResponse = await provider.service.chat(
+      {
+        chatPrompt: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', functionCalls: calls, thoughtBlocks: [continuation] },
+          { role: 'function', functionId: 'call_1', result: '{"id":42}' },
+          { role: 'function', functionId: 'call_2', result: '[]' }
+        ]
+      },
+      { stream: true }
     )
+    if (!(finalResponse instanceof ReadableStream)) throw new Error('Expected a streaming Gemini Interactions no-tools final')
+    const final = await Array.fromAsync(finalResponse)
     expect(
       final
         .flatMap(item => item.results)
@@ -323,6 +356,8 @@ describe('additional provider transports', () => {
         { type: 'function_result', call_id: 'call_2', name: 'wiki_list_tags' }
       ]
     })
+    expect(requests[1]?.body).not.toHaveProperty('tools')
+    expect(requests[1]?.body).toMatchObject({ generation_config: { tool_choice: 'none' } })
   })
 
   it('rejects a stored pre-3.x Gemini model before provider egress', async () => {
@@ -396,8 +431,7 @@ describe('additional provider transports', () => {
           { role: 'user', content: 'hello' },
           { role: 'assistant', functionCalls: call ? [call] : [] },
           { role: 'function', functionId: 'call_1', result: '{"id":42}' }
-        ],
-        functions: [definition]
+        ]
       },
       { stream: false }
     )
@@ -407,17 +441,22 @@ describe('additional provider transports', () => {
       tools: [{ type: 'function', function: { name: 'wiki_get_page' } }]
     })
     expect(payloads[1]).toMatchObject({ messages: expect.arrayContaining([{ role: 'tool', tool_call_id: 'call_1', content: '{"id":42}' }]) })
+    expect(payloads[1]).not.toHaveProperty('tools')
   })
 
-  it('keeps legacy completions buffered for prompt-emulated tools', async () => {
+  it('keeps legacy completions buffered for single-call prompt tool rounds without native functions', async () => {
     const id = '00000000-0000-4000-8000-000000000013'
     await insert({ id, transportKind: 'legacy-completions', baseUrl: 'https://legacy.example.test/v1', authMode: 'api-key-header' })
-    let payload: Record<string, unknown> = {}
+    const payloads: Record<string, unknown>[] = []
     let headers = new Headers()
     const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
-      payload = JSON.parse(String(init?.body)) as Record<string, unknown>
+      const payload = JSON.parse(String(init?.body)) as Record<string, unknown>
+      payloads.push(payload)
       headers = new Headers(init?.headers)
-      return Response.json({ choices: [{ text: 'legacy' }], usage: { prompt_tokens: 4, completion_tokens: 2 } })
+      let text = 'ACKNOWLEDGED receipt-42'
+      if (payloads.length === 1) text = 'legacy'
+      else if (payloads.length === 2) text = '<wiki-tool-call>{"name":"wiki_get_page","arguments":{"id":42}}</wiki-tool-call>'
+      return Response.json({ choices: [{ text }], usage: { prompt_tokens: 4, completion_tokens: 2 } })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'legacy-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
     const response = await provider.service.chat(
@@ -430,13 +469,49 @@ describe('additional provider transports', () => {
       { stream: true }
     )
     expect(response).not.toBeInstanceOf(ReadableStream)
-    expect(payload).toMatchObject({ model: 'model-test', prompt: 'system: system\n\nuser: hello', stream: false })
+    expect(payloads[0]).toMatchObject({ model: 'model-test', prompt: 'system: system\n\nuser: hello', stream: false })
     expect(headers.get('x-api-key')).toBe('legacy-key')
     if (!(response instanceof ReadableStream))
       expect(response).toMatchObject({ results: [{ content: 'legacy' }], modelUsage: { tokens: { promptTokens: 4, completionTokens: 2, totalTokens: 6 } } })
+
+    const definition = {
+      name: 'wiki_get_page',
+      description: 'Read a page',
+      parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } }
+    }
+    const toolTurn = await provider.service.chat(
+      {
+        chatPrompt: [
+          { role: 'system', content: promptToolInstructions([definition]) },
+          { role: 'user', content: 'Call wiki_get_page with ID 42.' }
+        ]
+      },
+      { stream: true }
+    )
+    if (toolTurn instanceof ReadableStream) throw new Error('Legacy completions unexpectedly streamed prompt tools')
+    const call = parsePromptToolCall(toolTurn.results[0]?.content ?? '', new Set([definition.name]))
+    expect(call).toEqual({ name: 'wiki_get_page', params: { id: 42 } })
+    if (!call) throw new Error('Legacy completions did not return the prompt action')
+    const final = await provider.service.chat(
+      {
+        chatPrompt: [
+          { role: 'system', content: 'No actions are available for this final response.' },
+          { role: 'user', content: 'Use the action result and reply with its receipt.' },
+          { role: 'assistant', content: toolTurn.results[0]?.content ?? '' },
+          { role: 'user', content: promptToolResultMessage('legacy-call', call.name, { receipt: 'receipt-42' }) }
+        ]
+      },
+      { stream: true }
+    )
+    expect(final).not.toBeInstanceOf(ReadableStream)
+    expect(payloads[2]).toMatchObject({ model: 'model-test', stream: false })
+    expect(payloads[2]?.prompt).toContain('<wiki-tool-result>')
+    expect(payloads[2]?.prompt).not.toContain('Available action catalog')
+    expect(final).toMatchObject({ results: [{ content: 'ACKNOWLEDGED receipt-42' }] })
     await expect(
       Promise.resolve(provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [{ name: 'pages.get', description: 'read' }] }))
     ).rejects.toMatchObject({ code: 'INVALID_LEGACY_PROMPT' })
+    expect(payloads).toHaveLength(3)
   })
 })
 

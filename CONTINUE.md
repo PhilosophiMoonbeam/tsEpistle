@@ -1,5 +1,7 @@
 # Homepage cited-summary repair — paused by user
 
+> Historical handoff from the 2026-09-20 user-requested pause. A later user instruction resumed implementation: the source-local repair was committed as `973ea53e`, and the provider/MCP and measured performance work is being integrated separately. The three failed live runs, their settled accounting and the original user's run remain preserved. **The exact deployed homepage starter has not passed**; do not send that page to a provider or deploy the agent change until a confidential content owner validates and rotates/restricts the anonymously readable credential-like material, including copies/history. Current code and verification status belong to `docs/wiki-agent-architecture-plan.md`, not the historical uncommitted-file snapshot below.
+
 ## Standalone goal and acceptance criteria
 
 **This file is the complete task handoff. No previous chat, agent memory, active goal record, or persistent Eval kernel is required.** Read this goal first, then the concrete state and evidence below. Follow the repository's governing instructions when resuming.

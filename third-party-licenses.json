@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "e12bcce130839b7e7faabf6fc0a2ae717cb32efdee103ce9f948a9755168f3b3",
+    "sha256": "1d2b2bc5e24eeb84fa6eed465ac7af6f8439200d04ce088b6855b0c90623a80d",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -1282,7 +1282,7 @@
     {
       "name": "@modelcontextprotocol/core",
       "versions": [
-        "2.0.0"
+        "2.1.0"
       ],
       "license": "MIT",
       "author": "Anthropic, PBC (https://anthropic.com)",
@@ -1291,7 +1291,7 @@
     {
       "name": "@modelcontextprotocol/express",
       "versions": [
-        "2.0.0"
+        "2.0.1"
       ],
       "license": "MIT",
       "author": "Anthropic, PBC (https://anthropic.com)",
@@ -1300,7 +1300,7 @@
     {
       "name": "@modelcontextprotocol/node",
       "versions": [
-        "2.0.0"
+        "2.1.0"
       ],
       "license": "MIT",
       "author": "Anthropic, PBC (https://anthropic.com)",
@@ -1309,7 +1309,7 @@
     {
       "name": "@modelcontextprotocol/server",
       "versions": [
-        "2.0.0"
+        "2.1.0"
       ],
       "license": "MIT",
       "author": "Anthropic, PBC (https://anthropic.com)",

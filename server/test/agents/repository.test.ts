@@ -3444,6 +3444,254 @@ describe('durable agent repositories', () => {
     })
   })
 
+  it('recovers only eligible owner-local leases and settles usage once', async () => {
+    const now = new Date('2026-08-17T00:02:00.000Z')
+    const recoveryNow = new Date('2026-08-17T00:02:02.000Z')
+    const quotaExpiry = new Date('2026-08-17T00:10:00.000Z')
+    const ownerEightRunId = '00000000-0000-4000-8000-000000000101'
+    const sameOwnerRunId = '00000000-0000-4000-8000-000000000102'
+    const freshEventId = '00000000-0000-4000-8000-000000000103'
+    const template = await knex('agentRuns').where({ id: runId }).first()
+    if (!template) throw new Error('expected fixture run')
+
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      eventSequence: 0,
+      availableAt: now,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      cancelRequestedAt: null,
+      sideEffectsStarted: false,
+      queuedAt: now,
+      startedAt: null,
+      updatedAt: now,
+      completedAt: null
+    })
+    const queuedRun = (
+      id: string,
+      ownerId: number,
+      clientRequestId: string,
+      userMessageId: string,
+      assistantMessageId: string,
+      sessionId: string,
+      queuedAt: Date
+    ) => ({
+      ...template,
+      id,
+      ownerId,
+      clientRequestId,
+      userMessageId,
+      assistantMessageId,
+      sessionId,
+      status: 'queued',
+      attempts: 0,
+      eventSequence: 0,
+      availableAt: now,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      cancelRequestedAt: null,
+      sideEffectsStarted: false,
+      queuedAt,
+      startedAt: null,
+      updatedAt: now,
+      completedAt: null
+    })
+    await knex('agentRuns').insert([
+      queuedRun(
+        ownerEightRunId,
+        8,
+        '00000000-0000-4000-8000-000000000104',
+        '00000000-0000-4000-8000-000000000105',
+        '00000000-0000-4000-8000-000000000106',
+        '00000000-0000-4000-8000-000000000107',
+        new Date(now.getTime() + 200)
+      ),
+      queuedRun(
+        sameOwnerRunId,
+        7,
+        '00000000-0000-4000-8000-000000000108',
+        '00000000-0000-4000-8000-000000000109',
+        '00000000-0000-4000-8000-000000000110',
+        '00000000-0000-4000-8000-000000000111',
+        new Date(now.getTime() + 100)
+      )
+    ])
+    await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 200 }, { dailyTokens: 1_000, dailyCostMicros: 1_000 }, quotaExpiry, now)
+    await reserveAgentRunQuota(knex, ownerEightRunId, 8, { tokens: 100, costMicros: 200 }, { dailyTokens: 1_000, dailyCostMicros: 1_000 }, quotaExpiry, now)
+
+    const ownerSevenClaim = await claimAgentRun(knex, {
+      workerId: 'worker-owner-seven',
+      globalConcurrency: 2,
+      perUserConcurrency: 1,
+      leaseMilliseconds: 1_000,
+      now
+    })
+    const ownerEightClaim = await claimAgentRun(knex, {
+      workerId: 'worker-owner-eight',
+      globalConcurrency: 2,
+      perUserConcurrency: 1,
+      leaseMilliseconds: 1_000,
+      now
+    })
+    expect(ownerSevenClaim).toMatchObject({ id: runId, ownerId: 7, leaseOwner: 'worker-owner-seven' })
+    expect(ownerEightClaim).toMatchObject({ id: ownerEightRunId, ownerId: 8, leaseOwner: 'worker-owner-eight' })
+    if (!ownerSevenClaim || !ownerEightClaim) throw new Error('expected both owner-local claims')
+    expect(
+      await claimAgentRun(knex, {
+        workerId: 'worker-at-capacity',
+        globalConcurrency: 2,
+        perUserConcurrency: 1,
+        leaseMilliseconds: 1_000,
+        now
+      })
+    ).toBeNull()
+
+    const ownerEightDailyBeforeIntent = await knex('agentQuotaDaily').where({ ownerId: 8, day: '2026-08-17' }).first()
+    await persistAgentRunQuotaSettlementIntent(knex, {
+      runId: ownerEightRunId,
+      ownerId: 8,
+      expected: {
+        statuses: ['running'],
+        eventSequence: ownerEightClaim.eventSequence,
+        leaseOwner: ownerEightClaim.leaseOwner,
+        leaseToken: ownerEightClaim.leaseToken
+      },
+      consumedTokens: 40,
+      consumedCostMicros: 50,
+      now
+    })
+
+    const recoveredClaim = await claimAgentRun(knex, {
+      workerId: 'worker-recovery',
+      globalConcurrency: 2,
+      perUserConcurrency: 1,
+      leaseMilliseconds: 1_000,
+      now: recoveryNow
+    })
+    expect(recoveredClaim).toMatchObject({ id: runId, ownerId: 7, attempts: 2, leaseOwner: 'worker-recovery' })
+    if (!recoveredClaim) throw new Error('expected eligible lease recovery')
+    expect(recoveredClaim.leaseToken).not.toBe(ownerSevenClaim.leaseToken)
+    expect(await knex('agentRuns').where({ id: ownerEightRunId }).first('status', 'leaseOwner', 'leaseToken')).toMatchObject({
+      status: 'running',
+      leaseOwner: ownerEightClaim.leaseOwner,
+      leaseToken: ownerEightClaim.leaseToken
+    })
+    expect(await knex('agentRuns').where({ id: sameOwnerRunId }).first('status')).toEqual({ status: 'queued' })
+    expect(
+      await claimAgentRun(knex, {
+        workerId: 'worker-recovery-at-capacity',
+        globalConcurrency: 2,
+        perUserConcurrency: 1,
+        leaseMilliseconds: 1_000,
+        now: recoveryNow
+      })
+    ).toBeNull()
+
+    const ownerSevenDailyBeforeStaleWrites = await knex('agentQuotaDaily').where({ ownerId: 7, day: '2026-08-17' }).first()
+    const ownerSevenReservationBeforeStaleWrites = await knex('agentQuotaReservations').where({ runId }).first()
+    await expect(
+      appendAgentEvent(knex, {
+        id: freshEventId,
+        runId,
+        ownerId: 7,
+        type: 'tool.started',
+        attempt: ownerSevenClaim.attempts,
+        data: { actionCallId: 'stale-call', actionName: 'pages.get', title: 'Stale read', risk: 'read' },
+        leaseToken: ownerSevenClaim.leaseToken
+      })
+    ).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND', status: 404 })
+    await expect(transitionAgentRun(knex, { claim: ownerSevenClaim, from: 'running', to: 'failed', now: recoveryNow })).rejects.toMatchObject({
+      code: 'RUN_LEASE_LOST',
+      status: 409
+    })
+    await expect(
+      persistAgentRunQuotaSettlementIntent(knex, {
+        runId,
+        ownerId: 7,
+        expected: {
+          statuses: ['running'],
+          eventSequence: ownerSevenClaim.eventSequence,
+          leaseOwner: ownerSevenClaim.leaseOwner,
+          leaseToken: ownerSevenClaim.leaseToken
+        },
+        consumedTokens: 80,
+        consumedCostMicros: 150,
+        now: recoveryNow
+      })
+    ).rejects.toMatchObject({ code: 'RUN_LEASE_LOST', status: 409 })
+    expect(await knex('agentEvents').where({ runId })).toEqual([])
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7, day: '2026-08-17' }).first()).toEqual(ownerSevenDailyBeforeStaleWrites)
+    expect(await knex('agentQuotaReservations').where({ runId }).first()).toEqual(ownerSevenReservationBeforeStaleWrites)
+
+    await appendAgentEvent(knex, {
+      id: freshEventId,
+      runId,
+      ownerId: 7,
+      type: 'tool.started',
+      attempt: recoveredClaim.attempts,
+      data: { actionCallId: 'fresh-call', actionName: 'pages.get', title: 'Fresh read', risk: 'read' },
+      leaseToken: recoveredClaim.leaseToken
+    })
+    await persistAgentRunQuotaSettlementIntent(knex, {
+      runId,
+      ownerId: 7,
+      expected: {
+        statuses: ['running'],
+        eventSequence: recoveredClaim.eventSequence + 1,
+        leaseOwner: recoveredClaim.leaseOwner,
+        leaseToken: recoveredClaim.leaseToken
+      },
+      consumedTokens: 80,
+      consumedCostMicros: 150,
+      now: recoveryNow
+    })
+    await reconcileAgentRunQuota(knex, {
+      runId,
+      ownerId: 7,
+      consumedTokens: 80,
+      consumedCostMicros: 150,
+      status: 'consumed',
+      now: recoveryNow
+    })
+    await reconcileAgentRunQuota(knex, {
+      runId,
+      ownerId: 7,
+      consumedTokens: 80,
+      consumedCostMicros: 150,
+      status: 'consumed',
+      now: recoveryNow
+    })
+
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'leaseOwner', 'leaseToken', 'eventSequence')).toMatchObject({
+      status: 'running',
+      leaseOwner: 'worker-recovery',
+      leaseToken: recoveredClaim.leaseToken,
+      eventSequence: 1
+    })
+    expect(await knex('agentEvents').where({ runId }).select('type', 'attempt')).toEqual([{ type: 'tool.started', attempt: 2 }])
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7, day: '2026-08-17' }).first()).toMatchObject({
+      reservedTokens: 0,
+      consumedTokens: 80,
+      reservedCostMicros: 0,
+      consumedCostMicros: 150
+    })
+    expect(await knex('agentQuotaReservations').where({ runId }).first()).toMatchObject({
+      status: 'consumed',
+      consumedTokens: 80,
+      consumedCostMicros: 150
+    })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 8, day: '2026-08-17' }).first()).toEqual(ownerEightDailyBeforeIntent)
+    expect(await knex('agentQuotaReservations').where({ runId: ownerEightRunId }).first()).toMatchObject({
+      status: 'reserved',
+      consumedTokens: 40,
+      consumedCostMicros: 50,
+      reconciledAt: null
+    })
+  })
+
   it('claims, fences, heartbeats, cancels, and refuses replay after side effects', async () => {
     const now = new Date('2026-08-17T00:02:00.000Z')
     const claim = await claimAgentRun(knex, { workerId: 'worker-b', globalConcurrency: 4, perUserConcurrency: 1, now })

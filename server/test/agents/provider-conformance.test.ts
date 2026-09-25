@@ -6,14 +6,34 @@ import { AgentProviderConformanceRunner } from '../../agents/providers/conforman
 import { AgentRepositoryError } from '../../agents/repository.ts'
 
 const usage = { ai: 'test', model: 'model-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
-const successfulPromptResponse = (input: Readonly<AxChatRequest>): AxChatResponse => {
+const readProbeToken = (input: Readonly<AxChatRequest>): string | undefined => {
   const request = [...input.chatPrompt].reverse().find(message => message.role === 'user')?.content
   const text = typeof request === 'string' ? request : ''
-  const token =
-    /^Call wiki_conformance_echo exactly once with token ([0-9a-f-]+)\. After receiving the action result, reply with exactly ACKNOWLEDGED and do not call any action again\.$/u.exec(
-      text
-    )?.[1]
-  const content = token ? `<wiki-tool-call>{"name":"wiki_conformance_echo","arguments":{"token":"${token}"}}</wiki-tool-call>` : 'ok'
+  return /^Call wiki_conformance_echo exactly once with token ([0-9a-f-]+)\. After receiving the action result, reply with exactly ACKNOWLEDGED followed by the receipt from that result\. Do not call any action again\.$/u.exec(
+    text
+  )?.[1]
+}
+const readResultReceipt = (input: Readonly<AxChatRequest>): string | undefined => {
+  const functionResult = input.chatPrompt.find(message => message.role === 'function')
+  if (functionResult) {
+    const result = JSON.parse(functionResult.result) as { receipt?: unknown }
+    return typeof result.receipt === 'string' ? result.receipt : undefined
+  }
+  const promptResult = input.chatPrompt.find(
+    message => message.role === 'user' && typeof message.content === 'string' && message.content.includes('<wiki-tool-result>')
+  )
+  if (!promptResult || typeof promptResult.content !== 'string') return undefined
+  const match = /<wiki-tool-result>([\s\S]*?)<\/wiki-tool-result>/u.exec(promptResult.content)
+  if (!match?.[1]) return undefined
+  const envelope = JSON.parse(match[1]) as { result?: { receipt?: unknown } }
+  return typeof envelope.result?.receipt === 'string' ? envelope.result.receipt : undefined
+}
+const successfulPromptResponse = (input: Readonly<AxChatRequest>): AxChatResponse => {
+  const receipt = readResultReceipt(input)
+  const token = readProbeToken(input)
+  let content = 'ok'
+  if (receipt) content = `ACKNOWLEDGED ${receipt}`
+  else if (token) content = `<wiki-tool-call>{"name":"wiki_conformance_echo","arguments":{"token":"${token}"}}</wiki-tool-call>`
   return { results: [{ index: 0, content }], modelUsage: usage }
 }
 const service = (
@@ -69,7 +89,18 @@ describe('provider conformance runner', () => {
 
   it('marks only the current profile settings conformed and retains bounded evidence', async () => {
     const setConformed = vi.fn(async () => {})
-    const factory = { create: vi.fn(async () => service(async input => successfulPromptResponse(input))) } as unknown as AgentProviderFactory
+    let finalRequest: Readonly<AxChatRequest> | undefined
+    const factory = {
+      create: vi.fn(async () =>
+        service(async input => {
+          if (
+            input.chatPrompt.some(message => message.role === 'user' && typeof message.content === 'string' && message.content.includes('<wiki-tool-result>'))
+          )
+            finalRequest = input
+          return successfulPromptResponse(input)
+        })
+      )
+    } as unknown as AgentProviderFactory
     const runner = new AgentProviderConformanceRunner(db, factory, { setConformed } as never)
     const report = await runner.run('00000000-0000-4000-8000-000000000001', 7)
     expect(report).toMatchObject({
@@ -85,6 +116,14 @@ describe('provider conformance runner', () => {
         { name: 'prompt-tool-round-trip', passed: true }
       ]
     })
+    expect(finalRequest).toBeDefined()
+    expect(finalRequest?.functions).toBeUndefined()
+    expect(finalRequest?.functionCall).toBeUndefined()
+    const finalSystem = finalRequest?.chatPrompt.find(message => message.role === 'system')?.content
+    expect(finalSystem).toContain('No actions are available')
+    expect(finalSystem).not.toContain('Available action catalog')
+    if (!finalRequest) throw new Error('Prompt conformance did not send its no-tools final request')
+    expect(readResultReceipt(finalRequest)).toMatch(/^[0-9a-f-]{36}$/u)
     expect(factory.create).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000002', { requireConformed: false })
     expect(setConformed).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', true, 7)
     expect(await runner.list('00000000-0000-4000-8000-000000000001')).toEqual([report])
@@ -212,16 +251,15 @@ describe('provider conformance runner', () => {
     expect(report).toMatchObject({ status: 'passed', checks: expect.arrayContaining([{ name: 'utility-model-text-output', passed: true }]) })
     expect(factory.create).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000002', { requireConformed: false, purpose: 'utility' })
   })
-  it('verifies a native function call and result round trip', async () => {
+  it('verifies a native function call and no-tools result round trip', async () => {
     const setConformed = vi.fn(async () => {})
+    let finalRequest: Readonly<AxChatRequest> | undefined
     const factory = {
       create: async () =>
         service(
           async input => {
-            const forced = typeof input.functionCall === 'object'
-            if (forced) {
-              const prompt = input.chatPrompt.find(message => message.role === 'user')?.content
-              const token = typeof prompt === 'string' ? /token ([0-9a-f-]+)/u.exec(prompt)?.[1] : undefined
+            if (typeof input.functionCall === 'object') {
+              const token = readProbeToken(input)
               return {
                 results: [
                   {
@@ -232,6 +270,11 @@ describe('provider conformance runner', () => {
                 modelUsage: usage
               }
             }
+            const receipt = readResultReceipt(input)
+            if (receipt) {
+              finalRequest = input
+              return { results: [{ index: 0, content: `ACKNOWLEDGED ${receipt}` }], modelUsage: usage }
+            }
             return { results: [{ index: 0, content: 'ok' }], modelUsage: usage }
           },
           { toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'tool-result' }
@@ -241,20 +284,56 @@ describe('provider conformance runner', () => {
     const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
 
     expect(report).toMatchObject({ status: 'passed', checks: expect.arrayContaining([{ name: 'native-tool-round-trip', passed: true }]) })
+    expect(finalRequest).toBeDefined()
+    expect(finalRequest?.functions).toBeUndefined()
+    expect(finalRequest?.functionCall).toBeUndefined()
+    if (!finalRequest) throw new Error('Native conformance did not send its no-tools final request')
+    expect(readResultReceipt(finalRequest)).toMatch(/^[0-9a-f-]{36}$/u)
+  })
+  it('rejects malformed native action arguments before a result turn', async () => {
+    const setConformed = vi.fn(async () => {})
+    let requests = 0
+    const factory = {
+      create: async () =>
+        service(
+          async input => {
+            requests++
+            if (typeof input.functionCall === 'object') {
+              return {
+                results: [
+                  {
+                    index: 0,
+                    functionCalls: [{ id: 'native-call-1', type: 'function', function: { name: 'wiki_conformance_echo', params: 'not-json' } }]
+                  }
+                ],
+                modelUsage: usage
+              }
+            }
+            return { results: [{ index: 0, content: 'ok' }], modelUsage: usage }
+          },
+          { toolCalling: 'native' }
+        )
+    } as unknown as AgentProviderFactory
+    const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
+    expect(report).toMatchObject({
+      status: 'failed',
+      errorCode: 'CONFORMANCE_TOOL_INVALID',
+      message: 'Provider returned invalid conformance action JSON'
+    })
+    expect(requests).toBe(2)
   })
 
-  it('replays encrypted Gemini Interactions step state during native conformance', async () => {
+  it('replays encrypted Gemini Interactions state through a no-tools final', async () => {
     const setConformed = vi.fn(async () => {})
     let continuationObserved = false
+    let finalRequest: Readonly<AxChatRequest> | undefined
     const interactionState = 'wiki.gemini.interactions.v1:[{"signature":"opaque-signature","type":"thought"}]'
     const factory = {
       create: async () => ({
         ...service(
           async input => {
-            if (!input.functions?.length) return { results: [{ index: 0, content: 'ok' }], modelUsage: usage }
             if (typeof input.functionCall === 'object') {
-              const prompt = input.chatPrompt.find(message => message.role === 'user')?.content
-              const token = typeof prompt === 'string' ? /token ([0-9a-f-]+)/u.exec(prompt)?.[1] : undefined
+              const token = readProbeToken(input)
               return {
                 results: [
                   {
@@ -267,9 +346,14 @@ describe('provider conformance runner', () => {
               }
             }
             const assistant = input.chatPrompt.find(message => message.role === 'assistant')
-            continuationObserved =
-              assistant?.thoughtBlocks?.some(block => block.data === interactionState && block.encrypted && block.signature === undefined) === true
-            return { results: [{ index: 0, content: 'ACKNOWLEDGED' }], modelUsage: usage }
+            if (assistant?.functionCalls?.length) {
+              finalRequest = input
+              continuationObserved =
+                assistant.thoughtBlocks?.some(block => block.data === interactionState && block.encrypted && block.signature === undefined) === true
+              const receipt = readResultReceipt(input)
+              return { results: [{ index: 0, content: receipt ? `ACKNOWLEDGED ${receipt}` : 'ACKNOWLEDGED' }], modelUsage: usage }
+            }
+            return { results: [{ index: 0, content: 'ok' }], modelUsage: usage }
           },
           { toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'stream' }
         ),
@@ -283,6 +367,60 @@ describe('provider conformance runner', () => {
 
     expect(report).toMatchObject({ status: 'passed', checks: expect.arrayContaining([{ name: 'native-tool-round-trip', passed: true }]) })
     expect(continuationObserved).toBe(true)
+    expect(finalRequest).toBeDefined()
+    expect(finalRequest?.functions).toBeUndefined()
+    expect(finalRequest?.functionCall).toBeUndefined()
+    const finalSystem = finalRequest?.chatPrompt.find(message => message.role === 'system')?.content
+    expect(finalSystem).toContain('No actions are available')
+    expect(finalSystem).not.toContain('Available action catalog')
+    if (!finalRequest) throw new Error('Gemini conformance did not send its no-tools final request')
+    expect(readResultReceipt(finalRequest)).toMatch(/^[0-9a-f-]{36}$/u)
+  })
+  it.each(['native', 'prompt'] as const)('rejects a %s final that does not use its action result', async toolCalling => {
+    const setConformed = vi.fn(async () => {})
+    let finalRequest: Readonly<AxChatRequest> | undefined
+    const factory = {
+      create: async () =>
+        service(
+          async input => {
+            const token = readProbeToken(input)
+            if (toolCalling === 'native' && typeof input.functionCall === 'object') {
+              return {
+                results: [
+                  {
+                    index: 0,
+                    functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'wiki_conformance_echo', params: JSON.stringify({ token }) } }]
+                  }
+                ],
+                modelUsage: usage
+              }
+            }
+            if (toolCalling === 'prompt' && token)
+              return {
+                results: [{ index: 0, content: `<wiki-tool-call>{"name":"wiki_conformance_echo","arguments":{"token":"${token}"}}</wiki-tool-call>` }],
+                modelUsage: usage
+              }
+            if (readResultReceipt(input)) {
+              finalRequest = input
+              return { results: [{ index: 0, content: 'ACKNOWLEDGED' }], modelUsage: usage }
+            }
+            return { results: [{ index: 0, content: 'ok' }], modelUsage: usage }
+          },
+          {
+            toolCalling,
+            parallelToolCalls: toolCalling === 'native',
+            structuredOutput: toolCalling === 'native' ? 'tool-result' : 'prompt-only'
+          }
+        )
+    } as unknown as AgentProviderFactory
+    const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
+    expect(report).toMatchObject({
+      status: 'failed',
+      errorCode: 'CONFORMANCE_TOOL_INVALID',
+      message: 'Provider did not incorporate the conformance action result in its final answer'
+    })
+    expect(finalRequest?.functions).toBeUndefined()
+    expect(finalRequest?.functionCall).toBeUndefined()
   })
 
   it('reports when a native provider omits its final answer after the action result', async () => {
@@ -291,10 +429,11 @@ describe('provider conformance runner', () => {
       create: async () =>
         service(
           async input => {
+            if (!input.functions?.length && input.chatPrompt.some(message => message.role === 'function'))
+              return { results: [{ index: 0, content: '' }], modelUsage: usage }
             if (!input.functions?.length) return { results: [{ index: 0, content: 'ok' }], modelUsage: usage }
             if (typeof input.functionCall === 'object') {
-              const prompt = input.chatPrompt.find(message => message.role === 'user')?.content
-              const token = typeof prompt === 'string' ? /token ([0-9a-f-]+)/u.exec(prompt)?.[1] : undefined
+              const token = readProbeToken(input)
               return {
                 results: [
                   {
@@ -348,6 +487,26 @@ describe('provider conformance runner', () => {
     })
   })
 
+  it('recognizes an Ax-wrapped abort cause without dispatching the cancelled request', async () => {
+    const setConformed = vi.fn(async () => {})
+    let dispatched = 0
+    const factory = {
+      create: async () => ({
+        ...service(async input => successfulPromptResponse(input)),
+        service: {
+          chat: async (input: Readonly<AxChatRequest>, options?: { abortSignal?: AbortSignal }) => {
+            if (options?.abortSignal?.aborted) throw Object.assign(new Error('Provider request failed'), { originalError: options.abortSignal.reason })
+            dispatched++
+            return successfulPromptResponse(input)
+          }
+        }
+      })
+    } as unknown as AgentProviderFactory
+    const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
+    expect(report).toMatchObject({ status: 'passed', checks: expect.arrayContaining([{ name: 'pre-dispatch-cancellation', passed: true }]) })
+    expect(dispatched).toBe(3)
+  })
+
   it('rejects a profile whose transport ignores pre-dispatch cancellation', async () => {
     const setConformed = vi.fn(async () => {})
     const factory = {
@@ -358,6 +517,33 @@ describe('provider conformance runner', () => {
     } as unknown as AgentProviderFactory
     const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
     expect(report).toMatchObject({ status: 'failed', errorCode: 'CONFORMANCE_CANCELLATION_IGNORED' })
+  })
+  it.each([
+    ['plain error', new Error('provider request failed')],
+    ['unrelated abort error', new DOMException('independent network abort', 'AbortError')],
+    ['unrelated abort code', Object.assign(new Error('independent error'), { code: 'ERR_ABORTED' })]
+  ])('does not accept a %s as honoring pre-dispatch cancellation', async (_name, failure) => {
+    const setConformed = vi.fn(async () => {})
+    let dispatched = 0
+    const factory = {
+      create: async () => ({
+        ...service(async () => ({ results: [{ index: 0, content: 'ok' }], modelUsage: usage })),
+        service: {
+          chat: async (_input: Readonly<AxChatRequest>, options?: { abortSignal?: AbortSignal }) => {
+            if (options?.abortSignal?.aborted) throw failure
+            dispatched++
+            return { results: [{ index: 0, content: 'ok' }], modelUsage: usage }
+          }
+        }
+      })
+    } as unknown as AgentProviderFactory
+    const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
+    expect(report).toMatchObject({
+      status: 'failed',
+      errorCode: 'CONFORMANCE_CANCELLATION_INVALID',
+      message: 'Provider returned a non-cancellation error for an aborted request'
+    })
+    expect(dispatched).toBe(0)
   })
 
   it('consumes declared streaming output and records the capability-specific gate', async () => {
@@ -387,6 +573,30 @@ describe('provider conformance runner', () => {
         { name: 'prompt-tool-round-trip', passed: true }
       ])
     })
+  })
+  it.each([
+    ['stream', true],
+    ['terminal', false]
+  ] as const)('requires declared %s usage before accepting EOF', async (usageMode, streaming) => {
+    const setConformed = vi.fn(async () => {})
+    const factory = {
+      create: async () =>
+        service(
+          async () => {
+            const response: AxChatResponse = { results: [{ index: 0, content: 'usable answer' }] }
+            if (!streaming) return response
+            return new ReadableStream<AxChatResponse>({
+              start(controller) {
+                controller.enqueue(response)
+                controller.close()
+              }
+            })
+          },
+          { usage: usageMode, streaming }
+        )
+    } as unknown as AgentProviderFactory
+    const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
+    expect(report).toMatchObject({ status: 'failed', errorCode: 'CONFORMANCE_USAGE_MISSING' })
   })
 
   it.each([
