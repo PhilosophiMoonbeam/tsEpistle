@@ -16,7 +16,13 @@ async function main() {
   const failures = []
   let reducedMotionTeardownStarted = false
   page.on('pageerror', error => failures.push(`pageerror: ${error.message}`))
-  page.on('requestfailed', request => failures.push(`requestfailed: ${request.url()} ${request.failure()?.errorText ?? ''}`))
+  page.on('requestfailed', request => {
+    const failure = request.failure()?.errorText ?? ''
+    // Switching to reduced motion retires the particle scene and may cancel
+    // an asset request that was still in flight at teardown.
+    if (reducedMotionTeardownStarted && failure === 'net::ERR_ABORTED' && new URL(request.url()).pathname.endsWith('/particle.bin')) return
+    failures.push(`requestfailed: ${request.url()} ${failure}`)
+  })
   page.on('console', message => {
     if (message.type() !== 'error') return
     const url = message.location().url || 'unknown-url'
