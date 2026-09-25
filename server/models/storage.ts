@@ -4,6 +4,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createStorageRuntimeQueue } from '../helpers/storage-runtime-queue.ts'
 import { storageConfigurationKey } from '../helpers/storage-configuration-key.ts'
+import { storageTargetPausedOffline } from '../helpers/storage-offline-policy.ts'
 import type { StorageRuntimeTarget } from '../operations/storage-actions.ts'
 import fs from 'fs-extra'
 import _ from 'lodash'
@@ -169,7 +170,7 @@ interface StorageLogger {
 
 interface StorageWikiRuntime {
   SERVERPATH: string
-  config?: { offline?: boolean }
+  config?: { offline?: boolean; allowGitSyncWhileOffline?: boolean }
   data: {
     storage?: StorageDefinition[]
   }
@@ -511,7 +512,7 @@ export default class Storage extends Model {
       for (const target of this.targets) {
         const scheduled: StorageJob[] = []
         try {
-          if (wiki.config?.offline && target.key !== 'disk') {
+          if (storageTargetPausedOffline(wiki.config, target.key)) {
             await recordTargetState(target, 'paused', 'Remote storage is paused in offline mode.')
             continue
           }
@@ -590,7 +591,7 @@ export default class Storage extends Model {
   private static async dispatchPageEvent(payload: StoragePageEvent): Promise<void> {
     const wiki = getWiki()
     for (const target of this.activeTargets) {
-      if (wiki.config?.offline && target.key !== 'disk') continue
+      if (storageTargetPausedOffline(wiki.config, target.key)) continue
       try {
         switch (payload.event) {
           case 'created':
@@ -625,7 +626,7 @@ export default class Storage extends Model {
   private static async dispatchAssetEvent(payload: StorageAssetEvent): Promise<void> {
     const wiki = getWiki()
     for (const target of this.activeTargets) {
-      if (wiki.config?.offline && target.key !== 'disk') continue
+      if (storageTargetPausedOffline(wiki.config, target.key)) continue
       try {
         switch (payload.event) {
           case 'uploaded':
@@ -654,7 +655,7 @@ export default class Storage extends Model {
       if (!input.targetKey || !input.targetConfigurationRevision) throw new Error('Asset relocation target identity is invalid')
       const target = this.activeTargets.find(candidate => candidate.key === input.targetKey)
       if (!target) throw new Error(`Asset relocation target ${input.targetKey} is not active`)
-      if (getWiki().config?.offline && target.key !== 'disk') throw new Error('Remote asset relocation is paused in offline mode')
+      if (storageTargetPausedOffline(getWiki().config, target.key)) throw new Error('Remote asset relocation is paused in offline mode')
       if (storageConfigurationKey(target) !== input.targetConfigurationRevision) {
         throw new Error(`Asset relocation target ${input.targetKey} configuration changed`)
       }
@@ -702,7 +703,7 @@ export default class Storage extends Model {
       generation: target.runtimeGeneration || '',
       configurationKey: storageConfigurationKey(target),
       active: this.activeTargets.includes(target),
-      paused: Boolean(getWiki().config?.offline && target.key !== 'disk')
+      paused: storageTargetPausedOffline(getWiki().config, target.key)
     }))
   }
 
@@ -712,7 +713,7 @@ export default class Storage extends Model {
       generation: target.runtimeGeneration || '',
       configurationKey: storageConfigurationKey(target),
       active: this.activeTargets.includes(target),
-      paused: Boolean(getWiki().config?.offline && target.key !== 'disk'),
+      paused: storageTargetPausedOffline(getWiki().config, target.key),
       supportsAssetRelocation: typeof target.fn?.assetRelocated === 'function'
     }))
   }
@@ -742,7 +743,7 @@ export default class Storage extends Model {
     return this.runtimeQueue.run(async () => {
       const target = this.activeTargets.find(candidate => candidate.key === targetKey && candidate.runtimeGeneration === generation)
       if (!target || !isStorageAction(target.fn.sync)) return false
-      if (getWiki().config?.offline && target.key !== 'disk') return false
+      if (storageTargetPausedOffline(getWiki().config, target.key)) return false
       try {
         await target.fn.sync.call(target.fn)
         await recordTargetState(target, 'operational', '', undefined, true)
@@ -760,7 +761,7 @@ export default class Storage extends Model {
 
   private static async dispatchAction(targetKey: string, handler: string): Promise<StorageActionSummary> {
     const wiki = getWiki()
-    if (wiki.config?.offline && targetKey !== 'disk') throw new Error('Remote storage is paused in offline mode.')
+    if (storageTargetPausedOffline(wiki.config, targetKey)) throw new Error('Remote storage is paused in offline mode.')
     const target = this.targets.find(candidate => candidate.key === targetKey)
     if (!target) {
       throw new Error('Invalid or Inactive Storage Target')

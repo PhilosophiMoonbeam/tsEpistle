@@ -634,8 +634,9 @@ export class OfflineSyncCoordinator {
   ): Promise<OfflineSyncPassResult> {
     const privateStorageHandle = currentPrivateHandle(this.options, this.options.siteId)
     const policySiteId = privateStorageHandle?.context.siteId ?? this.options.siteId
-    const currentAccount = this.options.getCurrentAccount?.()
-    if (currentAccount?.verified === true && !privateStorageHandle) throw new OfflineSyncInvalidatedError()
+    // A verified account can still save public pages before private reading is
+    // set up or while its vault is locked. This branch uses only the Guest
+    // snapshot endpoint and the public policy; private pages require a handle.
     const storageOptions = <T extends Record<string, unknown>>(options: T): T & { readonly readingHandle?: OfflineReadingHandleV1 } =>
       privateStorageHandle ? { ...options, readingHandle: privateStorageHandle } : options
     const generation = policy.sessionGeneration

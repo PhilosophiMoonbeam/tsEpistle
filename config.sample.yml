@@ -118,6 +118,9 @@ logFormat: default
 # download the offline files for sideloading.
 
 offline: false
+# Allow only the Git storage target to synchronize while other offline-mode
+# outbound integrations remain paused. Review its remote before enabling.
+allowGitSyncWhileOffline: false
 
 # ---------------------------------------------------------------------
 # High-Availability

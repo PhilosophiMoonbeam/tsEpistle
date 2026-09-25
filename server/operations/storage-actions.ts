@@ -25,7 +25,7 @@ interface Dependencies {
   db: Knex
   configuration: ReturnType<typeof createStorageConfigurationStore>
   runtime(): StorageRuntimeTarget[]
-  offline(): boolean
+  offline(targetKey: string | null): boolean
   isExecuting?(id: string): boolean
   now?(): Date
 }
@@ -153,7 +153,7 @@ export const createStorageActionStore = (deps: Dependencies) => {
         const action = definition?.actions.find(action => action.handler === draft.handler)
         if (!activation && (!target?.isEnabled || !definition?.isAvailable || !action))
           return fail('Choose an enabled target and one of its available actions.')
-        if (!activation && deps.offline() && draft.targetKey !== 'disk') return fail('Remote storage operations are paused in offline mode.', 409)
+        if (!activation && draft.targetKey !== 'disk' && deps.offline(draft.targetKey)) return fail('Remote storage operations are paused in offline mode.', 409)
         const observed = deps.runtime().find(row => row.key === draft.targetKey)
         if (!activation && (!target || !observed?.active || observed.configurationKey !== storageConfigurationKey(target)))
           return fail('Apply the saved settings successfully before running a target action.', 409)
@@ -219,7 +219,7 @@ export const createStorageActionStore = (deps: Dependencies) => {
             observed.configurationKey !== storageConfigurationKey(target))
         )
           return fail('The target runtime changed or became unavailable before execution.', 409)
-        if (!activation && deps.offline() && row.targetKey !== 'disk') return fail('Remote storage operations are paused in offline mode.', 409)
+        if (!activation && row.targetKey !== 'disk' && deps.offline(row.targetKey)) return fail('Remote storage operations are paused in offline mode.', 409)
         await tx('storageOperations').where('id', row.id).update({ state: 'running', startedAt: now() })
         return {
           id: row.id,

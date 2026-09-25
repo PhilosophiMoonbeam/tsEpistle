@@ -18,6 +18,7 @@ interface AppConfig {
   title?: string
   logoUrl?: string
   offlineDraftSiteId?: string
+  allowGitSyncWhileOffline?: boolean
 }
 
 interface AppData {
@@ -118,6 +119,7 @@ function hasSigningConfiguration(config: Record<string, unknown>): boolean {
 
 function isAppConfig(value: unknown): value is AppConfig {
   if (!isRecord(value) || !isRecord(value.db) || !isRecord(value.flags)) return false
+  if (Object.hasOwn(value, 'allowGitSyncWhileOffline') && typeof value.allowGitSyncWhileOffline !== 'boolean') return false
   if (
     Object.hasOwn(value, OFFLINE_DRAFT_SITE_ID_CONFIG_KEY) &&
     (typeof value[OFFLINE_DRAFT_SITE_ID_CONFIG_KEY] !== 'string' ||

@@ -257,6 +257,91 @@ const readyMessage = (overrides: Record<string, unknown> = {}): Record<string, u
 })
 
 describe('PWA helper lifecycle', () => {
+  it('prepares an update already waiting when the page opens', async () => {
+    const harness = await createHarness()
+    try {
+      const waiting = createWorker(new EventHub())
+      waiting.state = 'installed'
+      harness.registration.waiting = waiting
+      await harness.module.registerPwa()
+      await vi.waitFor(() => expect(waiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(true))
+      expect(waiting.replies.filter(reply => reply.type === 'PWA_PREPARE_UPDATE')).toHaveLength(1)
+    } finally { harness.restore() }
+  })
+
+  it('restarts preparation after a page resumes with its previous reply port closed', async () => {
+    const harness = await createHarness()
+    try {
+      const waiting = createWorker(new EventHub())
+      waiting.state = 'installed'
+      harness.registration.waiting = waiting
+      await harness.module.registerPwa()
+      await vi.waitFor(() => expect(waiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(true))
+      const previousPort = waiting.replies.findLast(reply => reply.type === 'PWA_PREPARE_UPDATE')!.port
+      harness.windowHub.emit('pagehide', { persisted: true })
+      expect(previousPort.peer.closed).toBe(true)
+      harness.windowHub.emit('pageshow', { persisted: true })
+      await vi.waitFor(() => expect(waiting.replies.filter(reply => reply.type === 'PWA_PREPARE_UPDATE')).toHaveLength(2))
+    } finally { harness.restore() }
+  })
+
+  it('starts preparation automatically when a new worker is waiting', async () => {
+    const harness = await createHarness()
+    try {
+      await harness.module.registerPwa()
+      const waitingHub = new EventHub()
+      const waiting = createWorker(waitingHub)
+      waiting.state = 'installing'
+      harness.registration.installing = waiting
+      harness.workerHub.emit('updatefound')
+      waiting.state = 'installed'
+      harness.registration.waiting = waiting
+      waitingHub.emit('statechange')
+      await vi.waitFor(() => expect(waiting.messages.some(message =>
+        (message as { message: { type: string } }).message.type === 'PWA_PREPARE_UPDATE'
+      )).toBe(true))
+      expect(harness.module.pwaState.updateReady).toBe(true)
+      expect(waiting.messages.filter(message =>
+        (message as { message: { type: string } }).message.type === 'PWA_PREPARE_UPDATE'
+      )).toHaveLength(1)
+    } finally { harness.restore() }
+  })
+
+  it('retries a deferred automatic update after unsafe editor work becomes safe', async () => {
+    const harness = await createHarness()
+    try {
+      await harness.module.registerPwa()
+      const waitingHub = new EventHub()
+      const waiting = createWorker(waitingHub)
+      waiting.state = 'installing'
+      harness.registration.installing = waiting
+      harness.workerHub.emit('updatefound')
+      waiting.state = 'installed'
+      harness.registration.waiting = waiting
+      waitingHub.emit('statechange')
+      await vi.waitFor(() => expect(waiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(true))
+
+      harness.module.setReloadSafetyProvider(() => ({ safe: false, revision: 'editor-dirty' }))
+      waiting.replies.findLast(reply => reply.type === 'PWA_PREPARE_UPDATE')!.port.postMessage({
+        type: 'PWA_RELOAD_SAFETY_REQUEST', workerId: 'worker', release: RELEASE, roundNonce: 'round'
+      })
+      await vi.waitFor(() => expect(waiting.messages.some(message =>
+        (message as { message: { type: string; safe?: boolean } }).message.type === 'PWA_RELOAD_SAFETY' &&
+        (message as { message: { safe?: boolean } }).message.safe === false
+      )).toBe(true))
+      waiting.replies.findLast(reply => reply.type === 'PWA_PREPARE_UPDATE')!.port.postMessage({
+        type: 'PWA_UPDATE_DEFERRED', workerId: 'worker', release: RELEASE, roundNonce: 'round', reason: 'preparation-deadline'
+      })
+      expect(harness.module.pwaState.preparation).toBe('deferred')
+      const firstAttempts = waiting.replies.filter(reply => reply.type === 'PWA_PREPARE_UPDATE').length
+      await Promise.resolve()
+      expect(waiting.replies.filter(reply => reply.type === 'PWA_PREPARE_UPDATE')).toHaveLength(firstAttempts)
+
+      harness.module.setReloadSafetyProvider(() => ({ safe: true, revision: 'editor-saved' }))
+      await vi.waitFor(() => expect(waiting.replies.filter(reply => reply.type === 'PWA_PREPARE_UPDATE')).toHaveLength(firstAttempts + 1))
+    } finally { harness.restore() }
+  })
+
   it('uses the new envelope and drops pending replies across pagehide and BFCache restoration', async () => {
     const harness = await createHarness()
     try {

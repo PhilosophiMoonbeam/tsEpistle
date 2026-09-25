@@ -62,21 +62,23 @@ section.pwa-status-panel(
         @click='retryConnection'
       ) {{ isRetrying ? `Checking…` : `Check connection` }}
       v-btn(
-        v-if='pwaState.updateReady'
+        v-if='pwaState.updateReady && (pwaState.preparation === `deferred` || pwaState.preparation === `error`)'
         color='primary'
         variant='tonal'
         prepend-icon='mdi-update'
         :loading='isUpdating'
         :disabled='isUpdating || pwaState.reloadSafe === false'
         @click='applyUpdate'
-      ) {{ isUpdating ? `Applying…` : `Apply app update` }}
+      ) {{ isUpdating ? `Retrying…` : `Retry app update` }}
 
-    p.pwa-status-panel__note(v-if='pwaState.updateReady && pwaState.reloadSafe === false', role='status')
-      | Update ready. Finish your current work before updating.
-    p.pwa-status-panel__note(v-else-if='pwaState.updateReady', role='status')
-      | An app update is ready. Applying it may reload this page.
-    p.pwa-status-panel__note(v-else-if='pwaState.reloadNeeded', role='status')
+    p.pwa-status-panel__note(v-if='pwaState.reloadNeeded', role='status')
       | The app has updated. This page will reload when your current work is safe.
+    p.pwa-status-panel__note(v-else-if='pwaState.updateReady && pwaState.reloadSafe === false', role='status')
+      | Update ready. It will apply automatically after your current work is safe.
+    p.pwa-status-panel__note(v-else-if='pwaState.updateReady && pwaState.preparation === `deferred`', role='status')
+      | The update is waiting for all open pages to respond safely. Return to or close older tabs, then retry if needed.
+    p.pwa-status-panel__note(v-else-if='pwaState.updateReady', role='status')
+      | The app update is being prepared automatically and may reload this page when all open pages are safe.
     p.pwa-status-panel__note(v-else-if='pwaState.updateState === `checking` || pwaState.updateState === `activating`', role='status')
       | Checking the app update without interrupting this page.
 

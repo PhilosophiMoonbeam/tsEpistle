@@ -82,7 +82,9 @@
         type="info"
         variant="tonal"
         class="mb-6"
-      >Offline mode pauses new remote storage work. Local disk remains available. Work already in progress may finish.</v-alert>
+      >{{ saved.gitSyncAllowedWhileOffline
+          ? 'Offline mode pauses other remote storage targets. Git synchronization is allowed. Work already in progress may finish.'
+          : 'Offline mode pauses new remote storage work. Local disk remains available. Work already in progress may finish.' }}</v-alert>
       <div
         v-if="activeOperation"
         class="storage-running"
@@ -1033,7 +1035,7 @@ function canRun(key: string) {
     !actionLocked.value &&
     Boolean(saved.value?.targets.find(target => target.key === key)?.isEnabled) &&
     Boolean(observation(key)?.matchesSaved && observation(key)?.active) &&
-    (!saved.value?.offline || key === 'disk')
+    (!saved.value?.offline || key === 'disk' || (key === 'git' && saved.value?.gitSyncAllowedWhileOffline === true))
   )
 }
 function reset() {

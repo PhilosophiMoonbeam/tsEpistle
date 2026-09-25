@@ -37,7 +37,9 @@ export const createStorageActionHandler =
               outcome: failures === 0 ? 'succeeded' : failures === targets.length ? 'failed' : 'partial',
               message: failures
                 ? 'Some targets could not initialize. Review their configuration before applying again.'
-                : 'Saved settings applied. Remote targets remain paused while offline mode is enabled.',
+                : targets.some(target => target.paused)
+                  ? 'Saved settings applied. Remote targets without an offline exception remain paused.'
+                  : 'Saved settings applied. Enabled targets are available.',
               counts: null,
               items: [],
               targets

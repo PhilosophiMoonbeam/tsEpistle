@@ -704,6 +704,13 @@ const handleUpdateDeferred = (
   state.updateError = null
 }
 
+const retryDeferredPreparationWhenSafe = (): void => {
+  if (pageSuspended || state.mode === 'retirement' || state.preparation !== 'deferred') return
+  void reportReloadSafety().then(safe => {
+    if (safe && !pageSuspended && state.preparation === 'deferred' && registrationReference?.waiting) void requestPwaUpdate()
+  })
+}
+
 const observeWorker = (registration: ServiceWorkerRegistration, worker: ServiceWorker | null): void => {
   if (!worker || typeof worker.addEventListener !== 'function' || observedWorkers.has(worker)) return
   observedWorkers.add(worker)
@@ -757,6 +764,12 @@ const markUpdateReady = (registration: ServiceWorkerRegistration): void => {
   } catch {
     // Lifecycle callbacks are observers and must not break registration.
   }
+  // A waiting worker can remain idle indefinitely without this request. The
+  // worker still requires a current safe vote from every open page before it
+  // calls skipWaiting(), so starting preparation cannot discard editor work.
+  queueMicrotask(() => {
+    if (!pageSuspended && registrationReference === registration && registration.waiting === waiting) void requestPwaUpdate()
+  })
 }
 
 const attachRegistrationListeners = (registration: ServiceWorkerRegistration): void => {
@@ -987,6 +1000,13 @@ const attachWindowListeners = (): void => {
     const waiting = registrationReference?.waiting
     if (waiting) postToWorker(waiting, { type: 'PWA_CONNECT' })
     retryDeferredReload()
+    if (waiting && state.preparation !== 'deferred' && state.preparation !== 'activating' && state.preparation !== 'activated') {
+      // A pagehide can close the preparation port before the worker replies.
+      // Rejoin or restart that round when this document becomes active again.
+      void requestPwaUpdate()
+    } else {
+      retryDeferredPreparationWhenSafe()
+    }
   })
   window.addEventListener(INSTALL_EVENT, captureInstallPrompt as EventListener)
   window.addEventListener(INSTALLED_EVENT, markInstalled as EventListener)
@@ -999,6 +1019,7 @@ const attachWindowListeners = (): void => {
     resumeConnection()
     requestOfflineReadiness()
     retryDeferredReload()
+    retryDeferredPreparationWhenSafe()
   })
   const displayMedia = window.matchMedia?.('(display-mode: standalone)')
   displayMedia?.addEventListener?.('change', updateStandaloneState)
@@ -1179,13 +1200,16 @@ export async function promptPwaInstall(): Promise<PwaInstallOutcome | null> {
 
 export function notifyReloadSafetyChanged(): void {
   safetySequence += 1
-  void reportReloadSafety()
+  let safetyReport = reportReloadSafety()
   const request = activeSafetyRequest
   if (request && registrationReference && workerTargets(registrationReference).includes(request.target as ServiceWorker)) {
-    void reportReloadSafety(request.context, request.target)
+    safetyReport = reportReloadSafety(request.context, request.target)
   } else if (request) {
     activeSafetyRequest = null
   }
+  void safetyReport.then(safe => {
+    if (safe && !pageSuspended && state.preparation === 'deferred' && registrationReference?.waiting) void requestPwaUpdate()
+  })
   retryDeferredReload()
 }
 
