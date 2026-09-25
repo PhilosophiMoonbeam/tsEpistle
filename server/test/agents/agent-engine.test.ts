@@ -14,7 +14,7 @@ import { reduceAgentEvents } from '../../agents/projection.ts'
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/providers/factory.ts'
 import { createGeminiInteractionsService } from '../../agents/providers/gemini-interactions.ts'
-import type { AgentEngineRequest } from '../../agents/runtime.ts'
+import type { AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
 import { WIKI_AGENT_SOUL } from '../../agents/soul.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
@@ -409,6 +409,9 @@ describe('Ax agent engine', () => {
     } as unknown as AgentProviderFactory
     const invoke = vi.fn(async () => ({
       id: 42,
+      locale: 'en',
+      path: 'guide',
+      sourceRevision: '1',
       title: 'Guide',
       contentType: 'markdown',
       content: '# Guide\n\n## Install\nThe install steps are documented.',
@@ -642,6 +645,9 @@ describe('Ax agent engine', () => {
               }
             : {
                 id: 42,
+                locale: 'en',
+                path: 'budget-guide',
+                sourceRevision: '1',
                 title: 'Budget Guide',
                 contentType: 'markdown',
                 content: `# Budget Guide\n\n## Evidence\n${'Budget evidence remains available. '.repeat(1_200)}`,
@@ -765,6 +771,8 @@ describe('Ax agent engine', () => {
   it('binds every rendered Markdown link to exact cited evidence without treating destinations as factual prose', async () => {
     const invoke = vi.fn(async () => ({
       id: 6,
+      locale: 'en',
+      path: 'template',
       sourceRevision: '1',
       title: 'Manufacturer Page Template',
       contentType: 'markdown',
@@ -1244,6 +1252,8 @@ describe('Ax agent engine', () => {
     ['wrong revision', 'Terms remain valid for 30 days.[[cite:page:1:revision:8:section:1]]'],
     ['source-local paraphrase', 'OM chairs are supplied.[[cite:page:1:revision:9:section:1]]'],
     ['source-local listing paraphrase', 'Contract pricing includes discount schedules.[[cite:page:1:revision:9:section:2]]'],
+    ['faithful numeric punctuation', 'Discount: 10 percent; freight: 20 percent.[[cite:page:1:revision:9:section:1]]'],
+    ['faithful numeric reordered subjects', 'Freight: 20 percent; discount: 10 percent.[[cite:page:1:revision:9:section:1]]'],
     ['source-local listing substitution', 'Contract pricing includes rebate schedules.[[cite:page:1:revision:9:section:2]]'],
     ['numeric swap', 'Terms remain valid for 90 days.[[cite:page:1:revision:9:section:1]]'],
     ['short identifier assignment swap', 'Chair assignments map IU to 250 lb and OM to 300 lb.[[cite:page:1:revision:9:section:1]]'],
@@ -1403,7 +1413,12 @@ describe('Ax agent engine', () => {
       },
       { text, event }
     )
-    if (caseName === 'source-local paraphrase' || caseName === 'source-local listing paraphrase') {
+    if (
+      caseName === 'source-local paraphrase' ||
+      caseName === 'source-local listing paraphrase' ||
+      caseName === 'faithful numeric punctuation' ||
+      caseName === 'faithful numeric reordered subjects'
+    ) {
       await expect(execution).resolves.toBeDefined()
       expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
       const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
@@ -1412,7 +1427,7 @@ describe('Ax agent engine', () => {
         accepted: true,
         issues: [],
         claims: expect.arrayContaining([expect.objectContaining({ supported: true })]),
-        finalCitationIds: [caseName === 'source-local paraphrase' ? 'page:1:revision:9:section:1' : 'page:1:revision:9:section:2']
+        finalCitationIds: [caseName === 'source-local listing paraphrase' ? 'page:1:revision:9:section:2' : 'page:1:revision:9:section:1']
       })
     } else {
       await expect(execution).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
@@ -1448,7 +1463,11 @@ describe('Ax agent engine', () => {
       { results: [{ index: 0, functionCalls: [{ id: 'get-2', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
       { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident.[[cite:page:6:revision:1:section:1]]' }] }
     ]
-    const chat = vi.fn(async () => responses.shift()!)
+    const requests: Readonly<AxChatRequest<unknown>>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      requests.push(input)
+      return responses.shift()!
+    })
     const factory = {
       create: async () => ({
         service: { chat },
@@ -1471,6 +1490,8 @@ describe('Ax agent engine', () => {
     } as unknown as AgentProviderFactory
     const page = {
       id: 6,
+      locale: 'en',
+      path: 'runbook',
       sourceRevision: '1',
       title: 'Incident Runbook',
       contentType: 'markdown',
@@ -1484,7 +1505,8 @@ describe('Ax agent engine', () => {
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
         snapshot: async () => ({}),
-        close: vi.fn()
+        close: vi.fn(),
+        validatePageEvidence: async () => true
       })
     }
     const event = vi.fn(async (...args: [string, Record<string, unknown>]) => {
@@ -1493,6 +1515,9 @@ describe('Ax agent engine', () => {
     await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text: async () => {}, event })
 
     expect(invoke).toHaveBeenCalledOnce()
+    const reusedResult = requests[2]?.chatPrompt.find(message => message.role === 'function' && message.functionId === 'get-2')
+    expect(reusedResult?.role === 'function' ? reusedResult.result : '').toContain('"status":"reused"')
+    expect(reusedResult?.role === 'function' ? reusedResult.result : '').not.toContain('Amber Falcon is a synthetic incident.')
     expect(event.mock.calls.filter(([type]) => type === 'tool.started').map(([, data]) => data)).toEqual([
       expect.objectContaining({ actionCallId: 'get-1', turn: 1, input: '{"id":6}' }),
       expect.objectContaining({ actionCallId: 'get-2', turn: 2, input: '{"id":6}' })
@@ -1570,6 +1595,9 @@ describe('Ax agent engine', () => {
           }
         : {
             id: 6,
+            locale: 'en',
+            path: 'agent-shakedown/incident-runbook',
+            sourceRevision: '1',
             title: 'Incident Runbook',
             contentType: 'markdown',
             content: '# Incident Runbook\n\nAmber Falcon is a synthetic incident drill.\n\n## Response sequence\nConfirm the alert and freeze deployments.',
@@ -1662,7 +1690,7 @@ describe('Ax agent engine', () => {
     ])
   })
 
-  it('retains revision-scoped evidence for current, historical, and canonical OKF reads', async () => {
+  it('retains revision- and representation-bound evidence for current, historical, and canonical OKF reads', async () => {
     const responses: AxChatResponse[] = [
       {
         results: [
@@ -1673,12 +1701,12 @@ describe('Ax agent engine', () => {
               {
                 id: 'get-history',
                 type: 'function',
-                function: { name: 'wiki_get_page_version', params: '{"id":42,"versionId":"version-amber"}' }
+                function: { name: 'wiki_get_page_version', params: '{"id":42,"versionId":10}' }
               },
               {
                 id: 'get-okf',
                 type: 'function',
-                function: { name: 'wiki_get_page_okf', params: '{"id":42,"versionId":"version-quartz"}' }
+                function: { name: 'wiki_get_page_okf', params: '{"pageId":42,"versionId":20}' }
               }
             ]
           }
@@ -1690,7 +1718,7 @@ describe('Ax agent engine', () => {
           {
             index: 0,
             content:
-              'Current Cobalt rollout is active.[[cite:page:42:revision:30:section:1]] Historical Amber rollback is archived.[[cite:page:42:revision:10:section:1]] Quartz migration was approved.[[cite:page:42:revision:20]]'
+              'Current Cobalt rollout is active.[[cite:page:42:revision:30:section:1]] Historical Amber rollback is archived.[[cite:page:42:version:10:revision:10:section:1]] Quartz migration was approved.[[cite:page:42:version:20:revision:20]]'
           }
         ]
       }
@@ -1720,6 +1748,8 @@ describe('Ax agent engine', () => {
       if (name === 'pages.get') {
         return {
           id: 42,
+          locale: 'en',
+          path: 'guide',
           sourceRevision: '30',
           title: 'Guide',
           contentType: 'markdown',
@@ -1731,34 +1761,36 @@ describe('Ax agent engine', () => {
       if (name === 'pages.getVersion') {
         return {
           id: 42,
-          versionId: 'version-amber',
+          locale: 'en',
+          path: 'guide',
+          versionId: 10,
           sourceRevision: '10',
           title: 'Guide',
           contentType: 'markdown',
           content: '# Guide\n\n## Historical\nAmber rollback is archived.',
-          citation: { evidenceId: 'page:42:revision:10', label: 'Guide', href: '/en/guide?version=version-amber' },
+          citation: { evidenceId: 'page:42:version:10:revision:10', label: 'Guide', href: '/en/guide?v=10' },
           citationSections: [
             {
-              evidenceId: 'page:42:revision:10:section:1',
+              evidenceId: 'page:42:version:10:revision:10:section:1',
               label: 'Guide › Historical',
-              href: '/en/guide?version=version-amber#historical'
+              href: '/en/guide?v=10#historical'
             }
           ]
         }
       }
       return {
         pageId: 42,
-        versionId: 'version-quartz',
+        versionId: 20,
         sourceRevision: '20',
-        resourceUri: 'wiki://pages/42/versions/version-quartz/revisions/20/okf',
+        resourceUri: 'wiki://pages/42/versions/20/revisions/20/okf',
         conceptId: 'wiki-page-42',
-        filePath: 'guide.md',
+        filePath: 'en/guide.md',
         sha256: 'b'.repeat(64),
         mediaType: 'text/markdown',
         document: '---\ntitle: Guide\n---\n# Guide\n\nQuartz migration was approved.',
         authority: { state: 'valid', metadata: { title: 'Guide' }, trust: { verified: true } },
         knowledge: null,
-        citation: { evidenceId: 'page:42:revision:20', label: 'Guide', href: '/en/guide?version=version-quartz' }
+        citation: { evidenceId: 'page:42:version:20:revision:20', label: 'Guide', href: '/en/guide?v=20' }
       }
     })
     const actions: AgentActionSessionProvider = {
@@ -1796,7 +1828,7 @@ describe('Ax agent engine', () => {
     expect(text).toHaveBeenCalledOnce()
     expect(text).not.toHaveBeenCalledWith('Quartz migration was approved.[[cite:page:42:revision:30]]')
     expect(text).toHaveBeenCalledWith(
-      'Current Cobalt rollout is active.[[cite:page:42:revision:30:section:1]] Historical Amber rollback is archived.[[cite:page:42:revision:10:section:1]] Quartz migration was approved.[[cite:page:42:revision:20]]'
+      'Current Cobalt rollout is active.[[cite:page:42:revision:30:section:1]] Historical Amber rollback is archived.[[cite:page:42:version:10:revision:10:section:1]] Quartz migration was approved.[[cite:page:42:version:20:revision:20]]'
     )
     const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
     expect(provenance).toHaveLength(2)
@@ -1810,20 +1842,20 @@ describe('Ax agent engine', () => {
       issues: [],
       claims: expect.arrayContaining([
         expect.objectContaining({ evidenceId: 'page:42:revision:30:section:1', sourceActionName: 'pages.get', supported: true }),
-        expect.objectContaining({ evidenceId: 'page:42:revision:10:section:1', sourceActionName: 'pages.getVersion', supported: true }),
-        expect.objectContaining({ evidenceId: 'page:42:revision:20', sourceActionName: 'pages.getOkf', supported: true })
+        expect.objectContaining({ evidenceId: 'page:42:version:10:revision:10:section:1', sourceActionName: 'pages.getVersion', supported: true }),
+        expect.objectContaining({ evidenceId: 'page:42:version:20:revision:20', sourceActionName: 'pages.getOkf', supported: true })
       ]),
-      finalCitationIds: ['page:42:revision:30:section:1', 'page:42:revision:10:section:1', 'page:42:revision:20']
+      finalCitationIds: ['page:42:revision:30:section:1', 'page:42:version:10:revision:10:section:1', 'page:42:version:20:revision:20']
     })
     expect(result.citations).toEqual([
       { evidenceId: 'page:42:revision:30:section:1', kind: 'page', label: 'Guide › Current', href: '/en/guide#current' },
       {
-        evidenceId: 'page:42:revision:10:section:1',
+        evidenceId: 'page:42:version:10:revision:10:section:1',
         kind: 'page',
         label: 'Guide › Historical',
-        href: '/en/guide?version=version-amber#historical'
+        href: '/en/guide?v=10#historical'
       },
-      { evidenceId: 'page:42:revision:20', kind: 'page', label: 'Guide', href: '/en/guide?version=version-quartz' }
+      { evidenceId: 'page:42:version:20:revision:20', kind: 'page', label: 'Guide', href: '/en/guide?v=20' }
     ])
   })
   it('requires exact field-bound Unicode title proof and rejects altered or mismatched assertions', async () => {
@@ -1835,7 +1867,11 @@ describe('Ax agent engine', () => {
       readonly citationId?: string
       readonly citationSections?: readonly Readonly<Record<string, string>>[]
     }) => {
-      const citationId = input.citationId ?? `page:42:revision:${input.sourceRevision}`
+      const versionId = 9
+      const citationId =
+        input.citationId ??
+        (input.actionName === 'pages.getVersion' ? `page:42:version:${versionId}:revision:${input.sourceRevision}` : `page:42:revision:${input.sourceRevision}`)
+      const citationHref = input.actionName === 'pages.getVersion' ? `/en/home?v=${versionId}` : '/en/home'
       const providerName = input.actionName === 'pages.get' ? 'wiki_get_page' : 'wiki_get_page_version'
       const responses: AxChatResponse[] = [
         {
@@ -1879,11 +1915,12 @@ describe('Ax agent engine', () => {
         id: 42,
         locale: 'en',
         path: 'home',
+        ...(input.actionName === 'pages.getVersion' ? { versionId } : {}),
         sourceRevision: input.sourceRevision,
         title: input.title,
         contentType: 'markdown',
         content: `# ${input.title}\n\nThe page is available.`,
-        citation: { evidenceId: citationId, label: input.title, href: '/en/home' },
+        citation: { evidenceId: citationId, label: input.title, href: citationHref },
         citationSections: input.citationSections ?? []
       }))
       const close = vi.fn()
@@ -1966,7 +2003,7 @@ describe('Ax agent engine', () => {
       answer: 'The page’s title is “Archive |📦”.'
     })
     expect(historical.error).toBeUndefined()
-    expect(historical.text).toHaveBeenCalledWith('The page’s title is “Archive |📦”.[[cite:page:42:revision:6]]')
+    expect(historical.text).toHaveBeenCalledWith('The page’s title is “Archive |📦”.[[cite:page:42:version:9:revision:6]]')
     const semanticCurrent = await runTitleCase({
       actionName: 'pages.get',
       title: 'Homepage |🏘️',
@@ -2104,6 +2141,9 @@ describe('Ax agent engine', () => {
     } as unknown as AgentProviderFactory
     const invoke = vi.fn(async () => ({
       id: 6,
+      locale: 'en',
+      path: 'runbook',
+      sourceRevision: '1',
       title: 'Incident Runbook',
       contentType: 'markdown',
       content:
@@ -2792,6 +2832,9 @@ describe('Ax agent engine', () => {
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke: async () => ({
           id: 42,
+          locale: 'en',
+          path: 'guide',
+          sourceRevision: '1',
           title: 'Guide',
           contentType: 'markdown',
           content: '# Guide\n\n## Install\nThe install steps are documented.',
@@ -3519,7 +3562,9 @@ describe('Ax agent engine', () => {
     const packet = JSON.stringify({
       taskId,
       outcome: 'completed',
-      claims: [{ text: 'Alpha is ready. [[cite:page:1]]', evidenceIds: ['page:1'], sourceRevisionIds: ['rev-1'], confidence: 'high' }],
+      claims: [
+        { text: 'Alpha is ready. [[cite:page:1:revision:rev-1]]', evidenceIds: ['page:1:revision:rev-1'], sourceRevisionIds: ['rev-1'], confidence: 'high' }
+      ],
       conflicts: [],
       unanswered: [],
       recommendedFollowups: []
@@ -3574,11 +3619,13 @@ describe('Ax agent engine', () => {
     ])
     const invoke = vi.fn(async () => ({
       id: 1,
+      locale: 'en',
+      path: 'alpha',
       sourceRevision: 'rev-1',
       title: 'Alpha',
       contentType: 'markdown',
       content: 'Alpha is ready.',
-      citation: { evidenceId: 'page:1', label: 'Alpha', href: '/en/alpha' },
+      citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
       citationSections: []
     }))
     const actions: AgentActionSessionProvider = {
@@ -3790,7 +3837,7 @@ describe('Ax agent engine', () => {
   })
   it('keeps an oversized omitted source out of citations and corrects the capacity-limited synthesis', async () => {
     const largePayload = 'Large source payload '.repeat(2_000)
-    const acceptedAnswer = 'Small source is available.[[cite:page:1]]'
+    const acceptedAnswer = 'Small source is available.[[cite:page:1:revision:rev-1]]'
     const finalThoughtBlock: ProviderThoughtBlock = {
       data: `wiki.gemini.interactions.v1:${canonicalJson([{ type: 'model_output', content: [{ type: 'text', text: acceptedAnswer }] }])}`,
       encrypted: true
@@ -3807,7 +3854,7 @@ describe('Ax agent engine', () => {
           }
         ]
       },
-      { results: [{ index: 0, content: 'Large source is authoritative.[[cite:page:2]]' }] },
+      { results: [{ index: 0, content: 'Large source is authoritative.[[cite:page:2:revision:rev-2]]' }] },
       { results: [{ index: 0, content: acceptedAnswer, thoughtBlocks: [finalThoughtBlock] }] }
     ]
     const calls: Readonly<AxChatRequest<unknown>>[] = []
@@ -3819,10 +3866,17 @@ describe('Ax agent engine', () => {
       const id = typeof input === 'object' && input !== null && typeof Reflect.get(input, 'id') === 'number' ? Number(Reflect.get(input, 'id')) : 0
       return {
         id,
+        locale: 'en',
+        path: `source/${id}`,
+        sourceRevision: `rev-${id}`,
         title: id === 1 ? 'Small source' : 'Large source',
         contentType: 'markdown',
         content: id === 1 ? 'Small source is available.' : largePayload,
-        citation: { evidenceId: `page:${id}`, label: id === 1 ? 'Small source' : 'Large source', href: `/en/source/${id}` },
+        citation: {
+          evidenceId: `page:${id}:revision:rev-${id}`,
+          label: id === 1 ? 'Small source' : 'Large source',
+          href: `/en/source/${id}`
+        },
         citationSections: []
       }
     })
@@ -3878,7 +3932,7 @@ describe('Ax agent engine', () => {
     )
     expect(text).toHaveBeenCalledOnce()
     expect(text).toHaveBeenCalledWith(
-      'Small source is available.[[cite:page:1]]\n\nPartial context coverage: 1 executed result omitted; 0 action calls not executed because provider context capacity was exhausted. The available evidence may be incomplete.'
+      'Small source is available.[[cite:page:1:revision:rev-1]]\n\nPartial context coverage: 1 executed result omitted; 0 action calls not executed because provider context capacity was exhausted. The available evidence may be incomplete.'
     )
     expect(chat).toHaveBeenCalledTimes(3)
     expect(calls[1]?.chatPrompt).toContainEqual(
@@ -3887,17 +3941,499 @@ describe('Ax agent engine', () => {
     expect(calls[2]?.chatPrompt).not.toContainEqual(expect.objectContaining({ content: expect.stringContaining('Large source payload') }))
     expect(result).toMatchObject({
       contextLimit: { reason: 'tool_result_capacity', omittedActionCallIds: ['large'] },
-      citations: [{ evidenceId: 'page:1', kind: 'page', label: 'Small source', href: '/en/source/1' }]
+      citations: [{ evidenceId: 'page:1:revision:rev-1', kind: 'page', label: 'Small source', href: '/en/source/1' }]
     })
     expect(result.providerState).toBeUndefined()
     const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
     expect(provenance).toEqual([
       expect.objectContaining({
         accepted: false,
-        issues: [expect.stringContaining('page:2 was not produced by a successful page read')]
+        issues: [expect.stringContaining('page:2:revision:rev-2 was not produced by a successful page read')]
       }),
-      expect.objectContaining({ accepted: true, finalCitationIds: ['page:1'] })
+      expect.objectContaining({ accepted: true, finalCitationIds: ['page:1:revision:rev-1'] })
     ])
+  })
+  it('keeps page-read evidence bound to canonical identity and section scope', async () => {
+    const run = async (scenario: {
+      readonly reads: readonly { readonly callId: string; readonly actionName: AgentActionName; readonly params: string }[]
+      readonly outputs: readonly unknown[]
+      readonly drafts: readonly string[]
+      readonly validatePageEvidence?: (actionName: AgentActionName, output: unknown, signal: AbortSignal) => Promise<boolean>
+    }) => {
+      const responses: AxChatResponse[] = [
+        {
+          results: [
+            {
+              index: 0,
+              functionCalls: scenario.reads.map(read => ({
+                id: read.callId,
+                type: 'function' as const,
+                function: { name: AGENT_TOOL_NAMES[read.actionName], params: read.params }
+              }))
+            }
+          ]
+        },
+        ...scenario.drafts.map(content => ({ results: [{ index: 0, content }] }))
+      ]
+      const calls: Readonly<AxChatRequest<unknown>>[] = []
+      const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+        calls.push(input)
+        return responses.shift()!
+      })
+      const outputs = [...scenario.outputs]
+      const invoke = vi.fn(async () => outputs.shift())
+      const actionNames = [...new Set(scenario.reads.map(read => read.actionName))]
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: actionNames.map(name => ({
+            name,
+            title: 'Read page',
+            description: 'Read page evidence',
+            parameters: { type: 'object', properties: {} },
+            risk: 'read' as const,
+            group: 'core' as const
+          })),
+          invoke,
+          snapshot: async () => ({}),
+          close: vi.fn(),
+          authoritySha256: null,
+          ...(scenario.validatePageEvidence === undefined ? {} : { validatePageEvidence: scenario.validatePageEvidence })
+        })
+      }
+      const event = vi.fn(async (...args: [string, unknown]) => {
+        void args
+      })
+      const factory = {
+        create: async () => ({
+          service: { chat },
+          capabilities: {
+            streaming: false,
+            toolCalling: 'native',
+            parallelToolCalls: true,
+            structuredOutput: 'native-json-schema',
+            usage: 'estimated',
+            cancellation: true,
+            maxContextTokens: 40_000,
+            maxOutputTokens: 4_000
+          },
+          transportKind: 'gemini-api',
+          continuationDialect: 'gemini-interactions-v1',
+          model: 'gpt-test',
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          pricing
+        })
+      } as unknown as AgentProviderFactory
+      const text = vi.fn(async (_delta: string) => {})
+      let result: AgentEngineResult | null = null
+      let error: unknown
+      try {
+        result = await new AxAgentEngine(factory, actions).execute(
+          {
+            ...request(new AbortController().signal),
+            limits: { maxTurns: scenario.drafts.length + 1, maxToolCalls: scenario.reads.length, maxOutputTokens: 4_000 }
+          },
+          { text, event }
+        )
+      } catch (caught) {
+        error = caught
+      }
+      return { calls, event, error, result, text }
+    }
+
+    const historicalEvidenceId = 'page:42:version:9:revision:10'
+    const historical = {
+      id: 42,
+      locale: 'en',
+      path: 'guide',
+      versionId: 9,
+      sourceRevision: '10',
+      title: 'Archive',
+      contentType: 'markdown',
+      content: '# Archive\n\nAmber workflow is approved.',
+      citation: { evidenceId: historicalEvidenceId, label: 'Archive', href: '/en/guide?v=9' },
+      citationSections: []
+    }
+    const historicalConflict = await run({
+      reads: [
+        { callId: 'history-first', actionName: 'pages.getVersion', params: '{"id":42,"versionId":9}' },
+        { callId: 'history-conflict', actionName: 'pages.getVersion', params: '{"id":42,"versionId":9,"purpose":"conflict"}' }
+      ],
+      outputs: [historical, { ...historical, content: '# Archive\n\nCobalt workflow is rejected.' }],
+      drafts: [`Cobalt workflow is rejected.[[cite:${historicalEvidenceId}]]`, `Amber workflow is approved.[[cite:${historicalEvidenceId}]]`]
+    })
+    expect(historicalConflict.error).toBeUndefined()
+    expect(historicalConflict.result?.citations).toEqual([{ evidenceId: historicalEvidenceId, kind: 'page', label: 'Archive', href: '/en/guide?v=9' }])
+    const publishedHistory = historicalConflict.text.mock.calls.map(([delta]) => delta).join('')
+    expect(publishedHistory).toContain('Amber workflow is approved.')
+    expect(publishedHistory).not.toContain('Cobalt workflow is rejected.')
+    const historicalConflictResult = historicalConflict.calls[1]?.chatPrompt.find(
+      message => message.role === 'function' && message.functionId === 'history-conflict'
+    )
+    expect(historicalConflictResult?.role === 'function' ? historicalConflictResult.result : '').toContain('evidenceLimitation')
+    expect(historicalConflictResult?.role === 'function' ? historicalConflictResult.result : '').not.toContain('Cobalt workflow')
+    const historicalCorrection = historicalConflict.calls[2]?.chatPrompt.find(
+      message => message.role === 'user' && typeof message.content === 'string' && message.content.includes('Evidence limitation:')
+    )
+    expect(historicalCorrection?.role === 'user' ? historicalCorrection.content : '').toContain('Amber workflow is approved.')
+    const historicalProvenance = historicalConflict.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]
+    expect(historicalProvenance).toMatchObject({
+      accepted: true,
+      finalCitationIds: [historicalEvidenceId],
+      claims: [
+        expect.objectContaining({
+          evidenceId: historicalEvidenceId,
+          sourceActionCallId: 'history-first',
+          readReceipts: [{ actionCallId: 'history-first', actionName: 'pages.getVersion' }]
+        })
+      ]
+    })
+
+    const identicalRead = await run({
+      reads: [
+        { callId: 'identical-first', actionName: 'pages.getVersion', params: '{"id":42,"versionId":9}' },
+        { callId: 'identical-repeat', actionName: 'pages.getVersion', params: '{"id":42,"versionId":9,"purpose":"receipt"}' }
+      ],
+      outputs: [historical, historical],
+      drafts: [`Amber workflow is approved.[[cite:${historicalEvidenceId}]]`]
+    })
+    expect(identicalRead.error).toBeUndefined()
+    expect(identicalRead.result?.citations).toEqual([{ evidenceId: historicalEvidenceId, kind: 'page', label: 'Archive', href: '/en/guide?v=9' }])
+    const identicalProvenance = identicalRead.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]
+    expect(identicalProvenance).toMatchObject({
+      accepted: true,
+      finalCitationIds: [historicalEvidenceId],
+      claims: [
+        expect.objectContaining({
+          evidenceId: historicalEvidenceId,
+          sourceActionCallId: 'identical-first',
+          readReceipts: [
+            { actionCallId: 'identical-first', actionName: 'pages.getVersion' },
+            { actionCallId: 'identical-repeat', actionName: 'pages.getVersion' }
+          ]
+        })
+      ]
+    })
+
+    const changedTarget = await run({
+      reads: [
+        { callId: 'target-first', actionName: 'pages.getVersion', params: '{"id":42,"versionId":9}' },
+        { callId: 'target-conflict', actionName: 'pages.getVersion', params: '{"id":42,"versionId":9,"purpose":"target"}' }
+      ],
+      outputs: [
+        historical,
+        {
+          ...historical,
+          path: 'manual',
+          citation: { ...historical.citation, href: '/en/manual?v=9' }
+        }
+      ],
+      drafts: [`Amber workflow is approved.[[cite:${historicalEvidenceId}]]`]
+    })
+    expect(changedTarget.error).toBeUndefined()
+    expect(changedTarget.result?.citations).toEqual([{ evidenceId: historicalEvidenceId, kind: 'page', label: 'Archive', href: '/en/guide?v=9' }])
+    const changedTargetRead = changedTarget.calls[1]?.chatPrompt.find(message => message.role === 'function' && message.functionId === 'target-conflict')
+    expect(changedTargetRead?.role === 'function' ? changedTargetRead.result : '').toContain('evidenceLimitation')
+    expect(changedTargetRead?.role === 'function' ? changedTargetRead.result : '').not.toContain('Amber workflow is approved.')
+    const changedTargetProvenance = changedTarget.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]
+    expect(changedTargetProvenance).toMatchObject({
+      accepted: true,
+      claims: [
+        expect.objectContaining({
+          evidenceId: historicalEvidenceId,
+          sourceActionCallId: 'target-first',
+          readReceipts: [{ actionCallId: 'target-first', actionName: 'pages.getVersion' }]
+        })
+      ]
+    })
+
+    const currentEvidenceId = 'page:42:revision:30'
+    const excerpt = '# Guide\n\nRelease window is staged.'
+    const completeSource = `${excerpt}\n\n## Rollout\nThe protected rollout begins after audit.`
+    const currentCitation = { evidenceId: currentEvidenceId, label: 'Guide', href: '/en/guide' }
+    const currentRow = {
+      id: 42,
+      locale: 'en',
+      path: 'guide',
+      title: 'Guide',
+      contentType: 'markdown',
+      sourceRevision: '30',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      content: excerpt,
+      sourceContentCharacters: completeSource.length,
+      contentTruncated: true,
+      citation: currentCitation
+    }
+    const representationConflict = await run({
+      reads: [
+        { callId: 'recent-read', actionName: 'pages.listRecent', params: '{"locale":"en","limit":1}' },
+        { callId: 'full-read', actionName: 'pages.get', params: '{"id":42}' },
+        { callId: 'okf-read', actionName: 'pages.getOkf', params: '{"id":42}' }
+      ],
+      outputs: [
+        { kind: 'recent-page-evidence', requestedLimit: 1, exhausted: true, pages: [currentRow] },
+        {
+          id: 42,
+          locale: 'en',
+          path: 'guide',
+          sourceRevision: '30',
+          title: 'Guide',
+          contentType: 'markdown',
+          content: completeSource,
+          citation: currentCitation,
+          citationSections: []
+        },
+        {
+          id: 42,
+          versionId: null,
+          sourceRevision: '30',
+          resourceUri: 'wiki://pages/42/current/revision/30/okf',
+          filePath: 'en/guide.md',
+          mediaType: 'text/markdown',
+          document: '---\ntitle: Guide\n---\n\n## Emergency\nEmergency route is closed.',
+          citation: currentCitation
+        }
+      ],
+      drafts: [`Emergency route is closed.[[cite:${currentEvidenceId}]]`, `Release window is staged.[[cite:${currentEvidenceId}]]`]
+    })
+    expect(representationConflict.error).toBeUndefined()
+    expect(representationConflict.result?.citations).toEqual([{ evidenceId: currentEvidenceId, kind: 'page', label: 'Guide', href: '/en/guide' }])
+    const publishedRepresentation = representationConflict.text.mock.calls.map(([delta]) => delta).join('')
+    expect(publishedRepresentation).toContain('Release window is staged.')
+    expect(publishedRepresentation).not.toContain('Emergency route')
+    for (const callId of ['okf-read']) {
+      const safeResult = representationConflict.calls[1]?.chatPrompt.find(message => message.role === 'function' && message.functionId === callId)
+      expect(safeResult?.role === 'function' ? safeResult.result : '').toContain('evidenceLimitation')
+      expect(safeResult?.role === 'function' ? safeResult.result : '').not.toContain('Emergency route')
+    }
+    const representationProvenance = representationConflict.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]
+    expect(representationProvenance).toMatchObject({
+      accepted: true,
+      finalCitationIds: [currentEvidenceId],
+      claims: [
+        expect.objectContaining({
+          evidenceId: currentEvidenceId,
+          supported: true
+        })
+      ]
+    })
+    const rolloutSectionId = `${currentEvidenceId}:section:1`
+    const fullPage = {
+      id: 42,
+      locale: 'en',
+      path: 'guide',
+      sourceRevision: '30',
+      title: 'Guide',
+      contentType: 'markdown',
+      content: completeSource,
+      citation: currentCitation,
+      citationSections: [{ evidenceId: rolloutSectionId, label: 'Guide › Rollout', href: '/en/guide#rollout' }]
+    }
+    const rolloutClaim = `The protected rollout begins after audit.[[cite:${rolloutSectionId}]]`
+    const promoted = await run({
+      reads: [
+        { callId: 'recent-first', actionName: 'pages.listRecent', params: '{"locale":"en","limit":1}' },
+        { callId: 'full-read', actionName: 'pages.get', params: '{"id":42}' }
+      ],
+      outputs: [{ kind: 'recent-page-evidence', requestedLimit: 1, exhausted: true, pages: [currentRow] }, fullPage],
+      drafts: [rolloutClaim]
+    })
+    expect(promoted.error).toBeUndefined()
+    expect(promoted.text).toHaveBeenCalledWith(rolloutClaim)
+    expect(promoted.result?.citations).toEqual([{ evidenceId: rolloutSectionId, kind: 'page', label: 'Guide › Rollout', href: '/en/guide#rollout' }])
+    const promotedFullRead = promoted.calls[1]?.chatPrompt.find(message => message.role === 'function' && message.functionId === 'full-read')
+    expect(promotedFullRead?.role === 'function' ? (JSON.parse(promotedFullRead.result) as { content: string }).content : null).toBe(completeSource)
+    expect(promoted.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({
+      accepted: true,
+      finalCitationIds: [rolloutSectionId],
+      claims: [
+        expect.objectContaining({
+          evidenceId: rolloutSectionId,
+          sourceActionCallId: 'full-read',
+          sourceActionName: 'pages.get',
+          readReceipts: [{ actionCallId: 'full-read', actionName: 'pages.get' }]
+        })
+      ]
+    })
+
+    const reversed = await run({
+      reads: [
+        { callId: 'full-first', actionName: 'pages.get', params: '{"id":42}' },
+        { callId: 'recent-later', actionName: 'pages.listRecent', params: '{"locale":"en","limit":1}' }
+      ],
+      outputs: [fullPage, { kind: 'recent-page-evidence', requestedLimit: 1, exhausted: true, pages: [currentRow] }],
+      drafts: [rolloutClaim]
+    })
+    expect(reversed.error).toBeUndefined()
+    expect(reversed.text).toHaveBeenCalledWith(rolloutClaim)
+    expect(reversed.result?.citations).toEqual([{ evidenceId: rolloutSectionId, kind: 'page', label: 'Guide › Rollout', href: '/en/guide#rollout' }])
+    expect(reversed.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({
+      accepted: true,
+      claims: [expect.objectContaining({ sourceActionCallId: 'full-first', sourceActionName: 'pages.get' })]
+    })
+
+    const oversizedFullContent = `${excerpt}\n\n## Rollout\n${'The protected rollout begins after audit. '.repeat(1_500)}`
+    const oversizedFullPage = { ...fullPage, content: oversizedFullContent, citationSections: [] }
+    const oversizedRecentRow = { ...currentRow, sourceContentCharacters: oversizedFullContent.length }
+    const omittedPromotion = await run({
+      reads: [
+        { callId: 'recent-resident', actionName: 'pages.listRecent', params: '{"locale":"en","limit":1}' },
+        { callId: 'full-omitted', actionName: 'pages.get', params: '{"id":42}' }
+      ],
+      outputs: [{ kind: 'recent-page-evidence', requestedLimit: 1, exhausted: true, pages: [oversizedRecentRow] }, oversizedFullPage],
+      drafts: [`The protected rollout begins after audit.[[cite:${currentEvidenceId}]]`, `Release window is staged.[[cite:${currentEvidenceId}]]`]
+    })
+    expect(omittedPromotion.error).toBeUndefined()
+    expect(omittedPromotion.text).toHaveBeenCalledOnce()
+    expect(omittedPromotion.text.mock.calls.map(([delta]) => delta).join('')).toContain('Release window is staged.')
+    expect(omittedPromotion.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('The protected rollout begins after audit.')
+    expect(omittedPromotion.result?.citations).toEqual([{ evidenceId: currentEvidenceId, kind: 'page', label: 'Guide', href: '/en/guide' }])
+    const omittedPrompt = omittedPromotion.calls[2]?.chatPrompt ?? []
+    expect(
+      omittedPrompt.some(message => message.role === 'function' && message.functionId === 'full-omitted' && message.result.includes(oversizedFullContent))
+    ).toBe(false)
+    expect(
+      omittedPrompt.some(
+        message =>
+          message.role === 'user' &&
+          typeof message.content === 'string' &&
+          message.content.startsWith('<wiki-evidence-context>') &&
+          message.content.includes(oversizedFullContent)
+      )
+    ).toBe(false)
+
+    const nonPrefixExcerpt = '# Guide\n\nThe opening note confirms a staged release.'
+    const nonPrefixFull = '# Guide\n\nThe emergency route is closed after audit and verification.'
+    const nonPrefix = await run({
+      reads: [
+        { callId: 'non-prefix-recent', actionName: 'pages.listRecent', params: '{"locale":"en","limit":1}' },
+        { callId: 'non-prefix-full', actionName: 'pages.get', params: '{"id":42}' }
+      ],
+      outputs: [
+        {
+          kind: 'recent-page-evidence',
+          requestedLimit: 1,
+          exhausted: true,
+          pages: [{ ...currentRow, content: nonPrefixExcerpt, sourceContentCharacters: nonPrefixFull.length }]
+        },
+        { ...fullPage, content: nonPrefixFull, citationSections: [] }
+      ],
+      drafts: [
+        `The emergency route is closed after audit.[[cite:${currentEvidenceId}]]`,
+        `The opening note confirms a staged release.[[cite:${currentEvidenceId}]]`
+      ]
+    })
+    expect(nonPrefix.error).toBeUndefined()
+    expect(nonPrefix.text.mock.calls.map(([delta]) => delta).join('')).toContain('The opening note confirms a staged release.')
+    expect(nonPrefix.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('The emergency route is closed')
+    const staleCacheValidator = vi.fn(async () => false)
+    const staleCachedRead = await run({
+      reads: [
+        { callId: 'cached-first', actionName: 'pages.get', params: '{"id":42}' },
+        { callId: 'cached-again', actionName: 'pages.get', params: '{"id":42}' }
+      ],
+      outputs: [fullPage],
+      drafts: [
+        `The protected rollout begins after audit.[[cite:${currentEvidenceId}]]`,
+        'I recommend re-reading the page before relying on its current status.'
+      ],
+      validatePageEvidence: staleCacheValidator
+    })
+    expect(staleCachedRead.error).toBeUndefined()
+    expect(staleCachedRead.text).toHaveBeenCalledOnce()
+    expect(staleCachedRead.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('The protected rollout begins after audit.')
+    expect(staleCachedRead.result?.citations).toBeUndefined()
+    const cachedAgainResult = staleCachedRead.calls[1]?.chatPrompt.find(message => message.role === 'function' && message.functionId === 'cached-again')
+    expect(cachedAgainResult?.role === 'function' ? cachedAgainResult.result : '').toContain('"code":"AGENT_EVIDENCE_UNAVAILABLE"')
+    expect(cachedAgainResult?.role === 'function' ? cachedAgainResult.result : '').not.toContain(completeSource)
+    const wrongVersionEvidenceId = 'page:42:version:10:revision:10'
+    const wrongVersion = await run({
+      reads: [{ callId: 'requested-version', actionName: 'pages.getVersion', params: '{"pageId":42,"versionId":9}' }],
+      outputs: [
+        {
+          ...historical,
+          versionId: 10,
+          content: '# Archive\n\nCobalt workflow is rejected.',
+          citation: { ...historical.citation, evidenceId: wrongVersionEvidenceId, href: '/en/guide?v=10' }
+        }
+      ],
+      drafts: [`Cobalt workflow is rejected.[[cite:${wrongVersionEvidenceId}]]`, 'The requested historical version was not available.']
+    })
+    expect(wrongVersion.error).toBeUndefined()
+    expect(wrongVersion.result?.citations ?? []).toEqual([])
+    expect(wrongVersion.text).toHaveBeenCalledOnce()
+    expect(wrongVersion.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(wrongVersionEvidenceId)
+    const rejectedVersionProvenance = wrongVersion.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]
+    expect(rejectedVersionProvenance).toMatchObject({
+      accepted: false,
+      finalCitationIds: [],
+      claims: [
+        expect.objectContaining({
+          evidenceId: wrongVersionEvidenceId,
+          pageEvidenceId: null,
+          supported: false,
+          sourceActionCallId: null,
+          readReceipts: []
+        })
+      ]
+    })
+
+    const sectionEvidenceId = 'page:42:revision:31'
+    const firstSectionId = `${sectionEvidenceId}:section:1`
+    const wrongSectionId = `${sectionEvidenceId}:section:2`
+    const wrongSection = await run({
+      reads: [{ callId: 'section-read', actionName: 'pages.get', params: '{"id":42}' }],
+      outputs: [
+        {
+          id: 42,
+          locale: 'en',
+          path: 'guide',
+          sourceRevision: '31',
+          title: 'Guide',
+          contentType: 'markdown',
+          content: '# Guide\n\n## Warranty\nShipping is free.\n\n## Returns\nReturns are accepted.',
+          citation: { evidenceId: sectionEvidenceId, label: 'Guide', href: '/en/guide' },
+          citationSections: [
+            { evidenceId: firstSectionId, label: 'Guide › Warranty', href: '/en/guide#warranty' },
+            { evidenceId: wrongSectionId, label: 'Guide › Returns', href: '/en/guide#returns' }
+          ]
+        }
+      ],
+      drafts: [`Shipping is free.[[cite:${wrongSectionId}]]`, `Shipping is free.[[cite:${firstSectionId}]]`]
+    })
+    expect(wrongSection.error).toBeUndefined()
+    expect(wrongSection.result?.citations).toEqual([{ evidenceId: firstSectionId, kind: 'page', label: 'Guide › Warranty', href: '/en/guide#warranty' }])
+    expect(wrongSection.text).toHaveBeenCalledWith(`Shipping is free.[[cite:${firstSectionId}]]`)
+
+    const incompletePage = await run({
+      reads: [{ callId: 'metadata-only', actionName: 'pages.get', params: '{"id":42}' }],
+      outputs: [
+        {
+          id: 42,
+          locale: 'en',
+          path: 'guide',
+          title: 'Guide',
+          contentType: 'markdown',
+          content: 'Evidence line available.',
+          citation: { evidenceId: 'page:42:revision:32', label: 'Guide', href: '/en/guide' },
+          citationSections: []
+        }
+      ],
+      drafts: ['Evidence line available.[[cite:page:42:revision:32]]', 'Evidence line available.[[cite:page:42:revision:32]]']
+    })
+    expect(incompletePage.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+    expect(incompletePage.text).not.toHaveBeenCalled()
+    const incompleteProvenance = incompletePage.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]
+    expect(incompleteProvenance).toMatchObject({
+      accepted: false,
+      claims: [
+        expect.objectContaining({
+          evidenceId: 'page:42:revision:32',
+          sourceActionCallId: null,
+          readReceipts: []
+        })
+      ]
+    })
   })
 })
 

@@ -254,6 +254,183 @@ describe('Ax agent engine context compaction', () => {
     expect(result).toMatchObject({ inputTokens: 2_100, outputTokens: 130, totalTokens: 2_230 })
     expect(budget.consumed()).toBe(2_230)
   })
+  it('delivers only relevant exact child page units instead of oversized background', async () => {
+    const history = canonicalMessages([{ role: 'user', content: 'What does Alpha require before release?' }])
+    const sourceUnit = 'Alpha release depends on a verified staging receipt.'
+    const background = 'Neutral operational background remains unchanged. '.repeat(900)
+    const alphaContent = `# Alpha\n\n${sourceUnit}\n\n${background}`
+    const betaContent = `# Beta\n\n${'Beta background remains unchanged. '.repeat(850)}`
+    const alphaEvidenceId = 'page:1:revision:rev-1'
+    const betaEvidenceId = 'page:2:revision:rev-2'
+    const evidenceSeeds = [
+      {
+        taskId: '00000000-0000-4000-8000-000000000021',
+        subagentRunId: '00000000-0000-4000-8000-000000000031',
+        actionCallId: 'child-alpha-read',
+        actionName: 'pages.get' as const,
+        output: {
+          id: 1,
+          locale: 'en',
+          path: 'alpha',
+          title: 'Alpha',
+          contentType: 'markdown',
+          sourceRevision: 'rev-1',
+          content: alphaContent,
+          citation: { evidenceId: alphaEvidenceId, label: 'Alpha', href: '/en/alpha' },
+          citationSections: []
+        }
+      },
+      {
+        taskId: '00000000-0000-4000-8000-000000000022',
+        subagentRunId: '00000000-0000-4000-8000-000000000032',
+        actionCallId: 'child-beta-read',
+        actionName: 'pages.get' as const,
+        output: {
+          id: 2,
+          locale: 'en',
+          path: 'beta',
+          title: 'Beta',
+          contentType: 'markdown',
+          sourceRevision: 'rev-2',
+          content: betaContent,
+          citation: { evidenceId: betaEvidenceId, label: 'Beta', href: '/en/beta' },
+          citationSections: []
+        }
+      }
+    ]
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return calls.length === 1
+        ? response(`Alpha release does not require a verified staging receipt. [[cite:${alphaEvidenceId}]]`, 200, 20)
+        : response(`${sourceUnit} [[cite:${alphaEvidenceId}]]`, 300, 30)
+    })
+    const { factory } = factoryFor(chat)
+    const validatePageEvidence = vi.fn(async () => true)
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          {
+            name: 'pages.get',
+            title: 'Read page',
+            description: 'Read canonical page evidence',
+            parameters: { type: 'object', properties: {} },
+            risk: 'read',
+            group: 'core'
+          }
+        ],
+        invoke: async () => {
+          throw new Error('No direct page read was expected')
+        },
+        snapshot: async () => ({}),
+        close: () => undefined,
+        authoritySha256: null,
+        validatePageEvidence
+      })
+    }
+    const text = vi.fn(async () => undefined)
+    const result = await new AxAgentEngine(factory, actions).execute(
+      {
+        ...engineRequest(history.messages),
+        run: { ...engineRequest(history.messages).run, executionMode: 'agent' },
+        research: { packets: [], incompleteTasks: [], evidenceSeeds },
+        compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null }
+      },
+      { text, event: async () => undefined }
+    )
+
+    expect(calls).toHaveLength(2)
+    expect(calls[0]?.chatPrompt.some(message => message.role === 'user' && typeof message.content === 'string' && message.content.includes(sourceUnit))).toBe(
+      true
+    )
+    const deliveredAlpha = calls[0]?.chatPrompt.find(
+      message => message.role === 'user' && typeof message.content === 'string' && message.content.includes('"actionCallId":"child-alpha-read"')
+    )
+    expect(deliveredAlpha?.role === 'user' ? deliveredAlpha.content : '').toContain(sourceUnit)
+    expect(deliveredAlpha?.role === 'user' ? deliveredAlpha.content : '').toContain('<wiki-evidence-context>')
+    expect(deliveredAlpha?.role === 'user' ? deliveredAlpha.content : '').not.toContain(background)
+    expect(calls[1]?.chatPrompt.some(message => message.role === 'user' && typeof message.content === 'string' && message.content.includes(sourceUnit))).toBe(
+      true
+    )
+    expect(JSON.stringify(calls[0]?.chatPrompt)).not.toContain('Beta background remains unchanged.')
+    expect(text).toHaveBeenCalledWith(`${sourceUnit} [[cite:${alphaEvidenceId}]]`)
+    expect(result.citations).toEqual([{ evidenceId: alphaEvidenceId, kind: 'page', label: 'Alpha', href: '/en/alpha' }])
+    expect(validatePageEvidence).toHaveBeenCalledWith('pages.get', evidenceSeeds[0]!.output, expect.any(AbortSignal))
+  })
+
+  it('revalidates rejected page evidence before replaying it to the provider', async () => {
+    const history = canonicalMessages([{ role: 'user', content: 'What does Alpha require before release?' }])
+    const sourceUnit = 'Alpha release depends on a verified staging receipt.'
+    const evidenceId = 'page:1:revision:rev-1'
+    const seed = {
+      taskId: '00000000-0000-4000-8000-000000000021',
+      subagentRunId: '00000000-0000-4000-8000-000000000031',
+      actionCallId: 'child-alpha-read',
+      actionName: 'pages.get' as const,
+      output: {
+        id: 1,
+        locale: 'en',
+        path: 'alpha',
+        title: 'Alpha',
+        contentType: 'markdown',
+        sourceRevision: 'rev-1',
+        content: `# Alpha
+
+${sourceUnit}`,
+        citation: { evidenceId, label: 'Alpha', href: '/en/alpha' },
+        citationSections: []
+      }
+    }
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return calls.length === 1
+        ? response(`Alpha release does not require a staging receipt. [[cite:${evidenceId}]]`, 200, 20)
+        : response('I cannot verify Alpha’s release requirement now.', 300, 30)
+    })
+    const { factory } = factoryFor(chat)
+    let validationCount = 0
+    const validatePageEvidence = vi.fn(async () => ++validationCount === 1)
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          {
+            name: 'pages.get',
+            title: 'Read page',
+            description: 'Read canonical page evidence',
+            parameters: { type: 'object', properties: {} },
+            risk: 'read',
+            group: 'core'
+          }
+        ],
+        invoke: async () => {
+          throw new Error('No direct page read was expected')
+        },
+        snapshot: async () => ({}),
+        close: () => undefined,
+        authoritySha256: null,
+        validatePageEvidence
+      })
+    }
+    const text = vi.fn(async () => undefined)
+    const result = await new AxAgentEngine(factory, actions).execute(
+      {
+        ...engineRequest(history.messages),
+        run: { ...engineRequest(history.messages).run, executionMode: 'agent' },
+        research: { packets: [], incompleteTasks: [], evidenceSeeds: [seed] }
+      },
+      { text, event: async () => undefined }
+    )
+
+    expect(calls).toHaveLength(2)
+    expect(calls[0]?.chatPrompt.some(message => message.role === 'user' && typeof message.content === 'string' && message.content.includes(sourceUnit))).toBe(
+      true
+    )
+    expect(calls[1]?.chatPrompt.every(message => typeof message.content !== 'string' || !message.content.includes(sourceUnit))).toBe(true)
+    expect(text).toHaveBeenCalledWith('I cannot verify Alpha’s release requirement now.')
+    expect(result.citations).toBeUndefined()
+    expect(validatePageEvidence).toHaveBeenCalledWith('pages.get', seed.output, expect.any(AbortSignal))
+  })
 
   it('reuses an exact durable checkpoint without another summary call or charge', async () => {
     const history = oversizedHistory()
@@ -542,7 +719,7 @@ describe('Ax agent engine context compaction', () => {
         ],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 200, completionTokens: 10, totalTokens: 210 } }
       },
-      response('Evidence two is authoritative.[[cite:page:2]]', 300, 20)
+      response('EVIDENCE_TWO is present.[[cite:page:2:revision:2]]', 300, 20)
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
       calls.push(input)
@@ -558,10 +735,13 @@ describe('Ax agent engine context compaction', () => {
           const id = input.id
           return {
             id,
+            locale: 'en',
+            path: `evidence-${id}`,
+            sourceRevision: String(id),
             title: `Evidence ${id}`,
             contentType: 'markdown',
             content: `${id === 1 ? 'EVIDENCE_ONE' : 'EVIDENCE_TWO'} ${String(id).repeat(45200)}`,
-            citation: { evidenceId: `page:${id}`, label: `Evidence ${id}`, href: `/en/evidence-${id}` },
+            citation: { evidenceId: `page:${id}:revision:${id}`, label: `Evidence ${id}`, href: `/en/evidence-${id}` },
             citationSections: []
           }
         },
@@ -592,6 +772,6 @@ describe('Ax agent engine context compaction', () => {
     expect(synthesisRequest).toContain('EVIDENCE_TWO')
     expect(event).not.toHaveBeenCalledWith('model.turn', expect.objectContaining({ outcome: 'context_compacted' }))
     expect(commitCompaction).not.toHaveBeenCalled()
-    expect(result).toMatchObject({ authoritySha256: 'f'.repeat(64), citations: [expect.objectContaining({ evidenceId: 'page:2' })] })
+    expect(result).toMatchObject({ authoritySha256: 'f'.repeat(64), citations: [expect.objectContaining({ evidenceId: 'page:2:revision:2' })] })
   })
 })

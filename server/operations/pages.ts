@@ -192,6 +192,7 @@ interface QueryBuilder {
   andWhere(callback: (builder: QueryBuilder) => void): QueryBuilder
   whereNotNull(column: string): QueryBuilder
   whereRaw(sql: string, bindings: unknown[]): QueryBuilder
+  orWhereRaw(sql: string, bindings: unknown[]): QueryBuilder
   limit(value: number): QueryBuilder
   offset(value: number): QueryBuilder
   orderBy(column: unknown, direction?: string): QueryBuilder
@@ -309,13 +310,82 @@ interface WikiPageOperations {
   }
 }
 
+export type PageOperationScope =
+  | { kind: 'all' }
+  | { kind: 'selected'; pageIds: readonly number[] }
+  | { kind: 'locale'; locale: string }
+  | { kind: 'section'; locale: string; path: string }
+
 export interface PageOperationInput extends Record<string, unknown> {
   requester?: Express.User
   authority?: PageRuleAuthority
+  agentScope?: PageOperationScope
   sessionId?: string
   readonly [OKF_PRODUCER_CONTEXT]?: string
 }
 type OperationInput = PageOperationInput
+const scopePathContains = (scopePath: string, candidatePath: string): boolean => candidatePath === scopePath || candidatePath.startsWith(`${scopePath}/`)
+const pageMatchesAgentScope = (
+  page: { id?: unknown; localeCode?: unknown; locale?: unknown; path?: unknown },
+  scope: PageOperationScope | undefined
+): boolean => {
+  if (scope === undefined || scope.kind === 'all') return true
+  if (scope.kind === 'selected') {
+    const pageId = Number(page.id)
+    return Number.isSafeInteger(pageId) && pageId > 0 && Array.isArray(scope.pageIds) && scope.pageIds.includes(pageId)
+  }
+  const locale = typeof page.localeCode === 'string' ? page.localeCode : page.locale
+  if (scope.kind === 'locale') return typeof scope.locale === 'string' && scope.locale.length > 0 && locale === scope.locale
+  if (scope.kind === 'section') {
+    return (
+      typeof scope.locale === 'string' &&
+      scope.locale.length > 0 &&
+      typeof scope.path === 'string' &&
+      scope.path.length > 0 &&
+      !scope.path.startsWith('/') &&
+      !scope.path.endsWith('/') &&
+      !scope.path.includes('//') &&
+      locale === scope.locale &&
+      typeof page.path === 'string' &&
+      scopePathContains(scope.path, page.path)
+    )
+  }
+  return false
+}
+const applyAgentScope = (query: QueryBuilder | Knex.QueryBuilder, scope: PageOperationScope | undefined, table = 'pages'): void => {
+  const builder = query as QueryBuilder
+  if (scope === undefined || scope.kind === 'all') return
+  if (scope.kind === 'selected') {
+    const pageIds = Array.isArray(scope.pageIds) ? scope.pageIds.filter(id => Number.isSafeInteger(id) && id > 0) : []
+    builder.whereIn(`${table}.id`, pageIds)
+    return
+  }
+  if (scope.kind === 'locale') {
+    if (typeof scope.locale === 'string' && scope.locale.length > 0) builder.where(`${table}.localeCode`, scope.locale)
+    else builder.whereRaw('1 = 0', [])
+    return
+  }
+  if (scope.kind === 'section') {
+    if (
+      typeof scope.locale !== 'string' ||
+      scope.locale.length === 0 ||
+      typeof scope.path !== 'string' ||
+      scope.path.length === 0 ||
+      scope.path.startsWith('/') ||
+      scope.path.endsWith('/') ||
+      scope.path.includes('//')
+    ) {
+      builder.whereRaw('1 = 0', [])
+      return
+    }
+    builder
+      .where(`${table}.localeCode`, scope.locale)
+      .andWhere(section => section.where(`${table}.path`, scope.path).orWhereRaw('starts_with(??, ?)', [`${table}.path`, `${scope.path}/`]))
+    return
+  }
+  builder.whereRaw('1 = 0', [])
+}
+
 const authorityFor = async (input: OperationInput, transaction?: Knex.Transaction): Promise<PageRuleAuthority> => {
   if (!transaction && input.authority !== undefined && input.authority.requester === input.requester) return input.authority
   return wiki.auth.loadPageRuleAuthority(input.requester, transaction)
@@ -790,6 +860,7 @@ const discover = async (input: OperationInput) => {
     limit: PAGE_INDEX_CANDIDATE_LIMIT,
     scope: query => {
       scopePageQuery(query, requester, { table: 'pages', includeAllForSystemManager: true })
+      applyAgentScope(query, input.agentScope)
     }
   })
   if (candidates.length >= PAGE_INDEX_CANDIDATE_LIMIT) {
@@ -797,7 +868,7 @@ const discover = async (input: OperationInput) => {
   }
   const prefix = path.length > 0 ? `${path}/` : ''
   const pages = candidates.filter(page => {
-    if (!page.path.startsWith(prefix)) return false
+    if (!pageMatchesAgentScope(page, input.agentScope) || !page.path.startsWith(prefix)) return false
     const relativePath = page.path.slice(prefix.length)
     const pageTags = page.tags.map(tag => tag.tag.trim().toLocaleLowerCase())
     return (
@@ -830,21 +901,30 @@ const discover = async (input: OperationInput) => {
   }
 }
 
-const listTags = async (requester?: Express.User, suppliedAuthority?: PageRuleAuthority) => {
-  const authorityInput: OperationInput = {
-    ...(requester === undefined ? {} : { requester }),
-    ...(suppliedAuthority === undefined ? {} : { authority: suppliedAuthority })
-  }
-  const authority = await authorityFor(authorityInput)
+const listTags = async (inputOrRequester?: OperationInput | Express.User, suppliedAuthority?: PageRuleAuthority) => {
+  const operationInput: OperationInput =
+    inputOrRequester !== undefined &&
+    typeof inputOrRequester === 'object' &&
+    ('requester' in inputOrRequester || 'authority' in inputOrRequester || 'agentScope' in inputOrRequester)
+      ? (inputOrRequester as OperationInput)
+      : {
+          ...(inputOrRequester === undefined ? {} : { requester: inputOrRequester as Express.User }),
+          ...(suppliedAuthority === undefined ? {} : { authority: suppliedAuthority })
+        }
+  const requester = operationInput.requester
+  const authority = await authorityFor(operationInput)
   const pages = await wiki.models.pages
     .query()
     .column(['path', { locale: 'localeCode' }, 'visibility', 'ownerId'])
     .modify(queryBuilder => {
       scopePageQuery(queryBuilder, requester, { table: 'pages' })
+      applyAgentScope(queryBuilder, operationInput.agentScope)
       queryBuilder.where('pages.isSearchable', true)
     })
     .withGraphJoined('tags')
-  const tags = pages.filter(page => canReadPage(requester, page, authority)).flatMap(page => page.tags)
+  const tags = pages
+    .filter(page => pageMatchesAgentScope(page, operationInput.agentScope) && canReadPage(requester, page, authority))
+    .flatMap(page => page.tags)
   return _.orderBy(_.uniqBy(tags, 'id'), ['tag'], ['asc'])
 }
 
@@ -946,6 +1026,7 @@ const listRecent = async (input: OperationInput): Promise<RecentPageEvidenceResu
       ])
       .modify(queryBuilder => {
         scopePageQuery(queryBuilder, requester, { table: 'pages' })
+        applyAgentScope(queryBuilder, input.agentScope)
         queryBuilder.where('pages.isSearchable', true)
         if (locale !== undefined) queryBuilder.where('pages.localeCode', locale)
         if (cursor !== null) {
@@ -981,6 +1062,7 @@ const listRecent = async (input: OperationInput): Promise<RecentPageEvidenceResu
     for (const candidate of candidates) {
       const candidateId = Number(candidate.id)
       if (!Number.isSafeInteger(candidateId) || candidateId < 1 || !candidate.updatedAt) continue
+      if (!pageMatchesAgentScope(candidate, input.agentScope)) continue
       cursor = { updatedAt: candidate.updatedAt, id: candidateId }
       if (!canReadPage(requester, candidate, authority) || !canAccessCurrentPageSource(requester, candidate, authority)) continue
       if (
@@ -1028,6 +1110,7 @@ const searchTags = async (input: OperationInput) => {
     })
     .modify(queryBuilder => {
       scopePageQuery(queryBuilder, requester, { table: 'pages' })
+      applyAgentScope(queryBuilder, input.agentScope)
       queryBuilder.where('pages.isSearchable', true)
       queryBuilder.whereExists(builder => {
         builder
@@ -1040,7 +1123,7 @@ const searchTags = async (input: OperationInput) => {
     })
   return _.uniq(
     pages
-      .filter(page => canReadPage(requester, page, authority))
+      .filter(page => pageMatchesAgentScope(page, input.agentScope) && canReadPage(requester, page, authority))
       .flatMap(page => page.tags)
       .map(tag => tag.tag)
       .filter(tag => tag.toLowerCase().includes(normalizedQuery))
@@ -1129,7 +1212,11 @@ const getSource = async (
     ...(brandingAssignment === undefined ? {} : { brandingAssignment })
   }
 }
-const graphEligiblePages = async (requester: Express.User | undefined, suppliedAuthority?: PageRuleAuthority): Promise<Map<number, PageRecord>> => {
+const graphEligiblePages = async (
+  requester: Express.User | undefined,
+  suppliedAuthority?: PageRuleAuthority,
+  agentScope?: PageOperationScope
+): Promise<Map<number, PageRecord>> => {
   const authorityInput: OperationInput = {
     ...(requester === undefined ? {} : { requester }),
     ...(suppliedAuthority === undefined ? {} : { authority: suppliedAuthority })
@@ -1160,13 +1247,16 @@ const graphEligiblePages = async (requester: Express.User | undefined, suppliedA
       })
       .modify(builder => {
         builder.where({ 'pages.visibility': 'public', 'pages.isPublished': true, 'pages.isSearchable': true })
+        applyAgentScope(builder, agentScope)
       }),
     protectedPageIds()
   ])
   const pages = rawPages.map(normalizePageBooleans)
   return new Map<number, PageRecord>(
     pages
-      .filter(page => publicationWindowOpen(page) && canReadPage(requester, page, authority) && !protectedIds.has(page.id))
+      .filter(
+        page => pageMatchesAgentScope(page, agentScope) && publicationWindowOpen(page) && canReadPage(requester, page, authority) && !protectedIds.has(page.id)
+      )
       .map(page => [page.id, page] as const)
   )
 }
@@ -1204,7 +1294,7 @@ const listLinks = async (input: OperationInput) => {
   const requester = input.requester
   const authority = await authorityFor(input)
   const locale = stringValue(input.locale, 'locale')
-  const pagesById = await graphEligiblePages(requester, authority)
+  const pagesById = await graphEligiblePages(requester, authority, input.agentScope)
   // Do not list an edge if either endpoint became protected after the metadata snapshot.
   for (const protectedId of await protectedPageIds()) pagesById.delete(protectedId)
   const pagesByRoute = new Map<string, PageRecord>([...pagesById.values()].map(page => [`${page.localeCode}/${page.path}`, page] as const))
@@ -1221,23 +1311,28 @@ const listLinks = async (input: OperationInput) => {
     { targetPath: 'target.path' },
     { targetLocale: 'target.localeCode' }
   ]
-  const [rows, receiptKeys] = await Promise.all([
-    wiki.models
-      .knex('pages')
-      .column(...columns)
-      .fullOuterJoin('pageLinks', 'pages.id', 'pageLinks.pageId')
-      .leftJoin('pages as target', function () {
-        this.on('target.localeCode', '=', 'pageLinks.localeCode').andOn('target.path', '=', 'pageLinks.path')
-      })
-      .where({ 'pages.localeCode': locale, 'pages.visibility': 'public', 'pages.isPublished': true, 'pages.isSearchable': true }),
-    succeededLinkReceiptKeys()
-  ])
+  const rowsQuery = wiki.models
+    .knex('pages')
+    .column(...columns)
+    .fullOuterJoin('pageLinks', 'pages.id', 'pageLinks.pageId')
+    .leftJoin('pages as target', function () {
+      this.on('target.localeCode', '=', 'pageLinks.localeCode').andOn('target.path', '=', 'pageLinks.path')
+    })
+    .where({ 'pages.localeCode': locale, 'pages.visibility': 'public', 'pages.isPublished': true, 'pages.isSearchable': true })
+  applyAgentScope(rowsQuery, input.agentScope, 'pages')
+  applyAgentScope(rowsQuery, input.agentScope, 'target')
+  const [rows, receiptKeys] = await Promise.all([rowsQuery, succeededLinkReceiptKeys()])
 
   return _.reduce<LinkRow, LinkResult[]>(
     rows as LinkRow[],
     (result, value) => {
       const source = pagesById.get(Number(value.id))
-      if (!source || !graphPageSnapshotMatches(value.id, value.sourceRevision, value.path, value.sourceLocale, source)) return result
+      if (
+        !source ||
+        !pageMatchesAgentScope(source, input.agentScope) ||
+        !graphPageSnapshotMatches(value.id, value.sourceRevision, value.path, value.sourceLocale, source)
+      )
+        return result
       const target = typeof value.link === 'string' && typeof value.locale === 'string' ? pagesByRoute.get(`${value.locale}/${value.link}`) : undefined
       const sourceRevision = currentSourceRevision(value.sourceRevision)
       const targetId = Number(value.targetId)
@@ -1245,6 +1340,7 @@ const listLinks = async (input: OperationInput) => {
         sourceRevision !== undefined &&
         receiptKeys.has(currentLinkReceiptKey(source.id, sourceRevision)) &&
         target !== undefined &&
+        pageMatchesAgentScope(target, input.agentScope) &&
         graphPageSnapshotMatches(value.targetId, value.targetRevision, value.targetPath, value.targetLocale, target) &&
         targetId === target.id &&
         value.locale === target.localeCode &&
@@ -1280,16 +1376,18 @@ const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> =
     throw new ApplicationError('offset and limit exceed the safe traversal range', { code: 'INVALID_INPUT', status: 400 })
   if (maxDepth !== undefined && maxDepth > 32) throw new ApplicationError('maxDepth must not exceed 32', { code: 'INVALID_INPUT', status: 400 })
 
+  if (input.agentScope?.kind === 'selected' && !pageMatchesAgentScope({ id: pageId }, input.agentScope))
+    return { pages: [], truncated: false, nextOffset: null }
   const source = await get({ ...input, id: pageId }, authority)
-  if (source.visibility !== 'public' || source.isPublished === false || !source.isSearchable) return { pages: [], truncated: false, nextOffset: null }
-  const pagesById = await graphEligiblePages(requester, authority)
-  if (!pagesById.has(pageId)) return { pages: [], truncated: false, nextOffset: null }
+  if (!pageMatchesAgentScope(source, input.agentScope) || source.visibility !== 'public' || source.isPublished === false || !source.isSearchable)
+    return { pages: [], truncated: false, nextOffset: null }
+  const pagesById = await graphEligiblePages(requester, authority, input.agentScope)
 
   // Exclude pages protected after the metadata snapshot before their edges can enter the traversal.
   for (const protectedId of await protectedPageIds()) pagesById.delete(protectedId)
   if (!pagesById.has(pageId)) return { pages: [], truncated: false, nextOffset: null }
 
-  const rawEdges = (await wiki.models
+  const edgeQuery = wiki.models
     .knex('pageLinks as links')
     .join('pages as source', 'source.id', 'links.pageId')
     .join('pages as target', function () {
@@ -1303,16 +1401,18 @@ const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> =
       'target.isPublished': true,
       'target.isSearchable': true
     })
-    .select({
-      sourceId: 'source.id',
-      sourceRevision: 'source.sourceRevision',
-      sourcePath: 'source.path',
-      sourceLocale: 'source.localeCode',
-      targetId: 'target.id',
-      targetRevision: 'target.sourceRevision',
-      targetPath: 'target.path',
-      targetLocale: 'target.localeCode'
-    })) as PageGraphEdgeRow[]
+  applyAgentScope(edgeQuery, input.agentScope, 'source')
+  applyAgentScope(edgeQuery, input.agentScope, 'target')
+  const rawEdges = (await edgeQuery.select({
+    sourceId: 'source.id',
+    sourceRevision: 'source.sourceRevision',
+    sourcePath: 'source.path',
+    sourceLocale: 'source.localeCode',
+    targetId: 'target.id',
+    targetRevision: 'target.sourceRevision',
+    targetPath: 'target.path',
+    targetLocale: 'target.localeCode'
+  })) as PageGraphEdgeRow[]
   const receiptKeys = await succeededLinkReceiptKeys()
 
   const adjacency = new Map<number, Map<number, number>>()
@@ -1331,6 +1431,8 @@ const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> =
     if (
       sourcePage === undefined ||
       targetPage === undefined ||
+      !pageMatchesAgentScope(sourcePage, input.agentScope) ||
+      !pageMatchesAgentScope(targetPage, input.agentScope) ||
       sourceRevision === undefined ||
       !receiptKeys.has(currentLinkReceiptKey(sourceId, sourceRevision)) ||
       !graphPageSnapshotMatches(edge.sourceId, edge.sourceRevision, edge.sourcePath, edge.sourceLocale, sourcePage) ||
@@ -1442,15 +1544,8 @@ const getVersion = async (input: OperationInput): Promise<PageVersionProjection 
   const authority = await authorityFor(input)
   const pageId = positiveInteger(input.pageId, 'pageId')
   const versionId = positiveInteger(input.versionId, 'versionId')
-  const page = await wiki.models.pages
-    .query()
-    .select('path', 'localeCode', 'visibility', 'ownerId')
-    .withGraphJoined('tags')
-    .modifyGraph('tags', builder => {
-      builder.select('tag')
-    })
-    .findById(pageId)
-  if (!page || (page.visibility === 'private' && !canReadPage(requester, page, authority))) throw new wiki.Error.PageNotFound()
+  const page = await loadPageFromDb(pageId)
+  if (!page || !canAccessCurrentPageSource(requester, page, authority)) throw new wiki.Error.PageNotFound()
   await assertUnlocked(input, pageId)
   if (
     page.visibility === 'public' &&
@@ -1849,14 +1944,51 @@ const matchesKnowledgeFilter = (knowledge: KnowledgeProjectionView, filter: Know
   (filter.stale === undefined || knowledge.lifecycle.stale === filter.stale) &&
   (filter.conceptType === undefined || knowledge.conceptType?.toLocaleLowerCase() === filter.conceptType.toLocaleLowerCase())
 
+interface SearchScopeIntersection {
+  locale: string | undefined
+  path: string | undefined
+  pageIds: readonly number[] | undefined
+  impossible: boolean
+}
+
+const intersectSearchScope = (
+  scope: PageOperationScope | undefined,
+  locale: string | undefined,
+  path: string | undefined,
+  pageIds: readonly number[] | undefined
+): SearchScopeIntersection => {
+  if (scope === undefined || scope.kind === 'all') return { locale, path, pageIds, impossible: false }
+  if (scope.kind === 'selected') {
+    const ids = Array.isArray(scope.pageIds) ? [...new Set(scope.pageIds.filter(id => Number.isSafeInteger(id) && id > 0))] : []
+    const allowed = new Set(ids)
+    const selected = pageIds === undefined ? ids : pageIds.filter(id => allowed.has(id))
+    return { locale, path, pageIds: selected, impossible: selected.length === 0 }
+  }
+  if (scope.kind === 'locale' || scope.kind === 'section') {
+    if (typeof scope.locale !== 'string' || scope.locale.length === 0 || (locale !== undefined && locale !== scope.locale)) {
+      return { locale, path, pageIds, impossible: true }
+    }
+    if (scope.kind === 'locale') return { locale: scope.locale, path, pageIds, impossible: false }
+    if (typeof scope.path !== 'string' || scope.path.length === 0 || scope.path.startsWith('/') || scope.path.endsWith('/') || scope.path.includes('//')) {
+      return { locale, path, pageIds, impossible: true }
+    }
+    if (path === undefined) return { locale: scope.locale, path: scope.path, pageIds, impossible: false }
+    if (path.length === 0) return { locale, path, pageIds, impossible: true }
+    if (scopePathContains(scope.path, path)) return { locale: scope.locale, path, pageIds, impossible: false }
+    if (scopePathContains(path, scope.path)) return { locale: scope.locale, path: scope.path, pageIds, impossible: false }
+    return { locale, path, pageIds, impossible: true }
+  }
+  return { locale, path, pageIds, impossible: true }
+}
+
 const search = async (input: OperationInput) => {
   const requester = input.requester
   const authority = await authorityFor(input)
   const query = stringValue(input.query, 'query')
-  const locale = input.locale === undefined ? undefined : stringValue(input.locale, 'locale')
-  const path = input.path === undefined ? undefined : stringValue(input.path, 'path')
+  const inputLocale = input.locale === undefined ? undefined : stringValue(input.locale, 'locale')
+  const inputPath = input.path === undefined ? undefined : stringValue(input.path, 'path')
   const requestedLimit = input.limit === undefined ? undefined : Math.min(1001, positiveInteger(input.limit, 'limit'))
-  const selectedPageIds =
+  const inputPageIds =
     input.pageIds === undefined
       ? undefined
       : Array.isArray(input.pageIds) && input.pageIds.length <= 8
@@ -1864,6 +1996,8 @@ const search = async (input: OperationInput) => {
         : (() => {
             throw new ApplicationError('Invalid selected pages', { code: 'INVALID_INPUT' })
           })()
+  const scopeIntersection = intersectSearchScope(input.agentScope, inputLocale, inputPath, inputPageIds)
+  const { locale, path, pageIds: selectedPageIds } = scopeIntersection
   const filter = knowledgeFilter(input.knowledge)
   const privateOwnerId = principalId(requester)
   const canSearchAllPrivatePages = requester !== undefined && managesSystem(requester)
@@ -1884,6 +2018,15 @@ const search = async (input: OperationInput) => {
     }
   }
 
+  if (scopeIntersection.impossible) {
+    return {
+      results: [],
+      suggestions: [],
+      totalHits: 0,
+      windowLimit,
+      windowTruncated: false
+    }
+  }
   const initialProtectedPageIds = await protectedPageIds()
   // Public authorization, publication, selected scope, and metadata-only protection are resolved before either bounded backend runs.
   const eligiblePublicPages = (
@@ -1909,6 +2052,7 @@ const search = async (input: OperationInput) => {
       })
       .modify(builder => {
         builder.where({ visibility: 'public', isPublished: true, isSearchable: true })
+        applyAgentScope(builder, input.agentScope)
         if (locale !== undefined) builder.andWhere('pages.localeCode', locale)
         if (path !== undefined) {
           builder.andWhere(scope => {
@@ -1917,7 +2061,9 @@ const search = async (input: OperationInput) => {
         }
         if (selectedPageIds !== undefined) builder.whereIn('pages.id', selectedPageIds)
       })
-  ).map(normalizePageBooleans)
+  )
+    .filter(page => pageMatchesAgentScope(page, input.agentScope))
+    .map(normalizePageBooleans)
   const metadataEligibleProtectedIds = await matchingProtectedMetadataIds(
     query,
     eligiblePublicPages.filter(page => initialProtectedPageIds.has(page.id)).map(page => page.id)
@@ -1944,6 +2090,7 @@ const search = async (input: OperationInput) => {
           }),
           knowledgeRepository.filterVisibleCurrentIds({
             requester,
+            ...(selectedPageIds === undefined ? {} : { pageIds: selectedPageIds }),
             authorizedPageIds: authorizedPublicIds,
             filter,
             authority
@@ -2016,8 +2163,16 @@ const search = async (input: OperationInput) => {
           })
           .modify(builder => {
             builder.whereIn('pages.id', candidatePageIds)
+            applyAgentScope(builder, input.agentScope)
+            if (locale !== undefined) builder.andWhere('pages.localeCode', locale)
+            if (path !== undefined) {
+              builder.andWhere(scope => {
+                scope.where('pages.path', path).orWhere('pages.path', 'LIKE', `${escapeLikePattern(path)}/%`)
+              })
+            }
+            if (selectedPageIds !== undefined) builder.whereIn('pages.id', selectedPageIds)
           })
-  const livePages = rawLivePages.map(normalizePageBooleans)
+  const livePages = rawLivePages.filter(page => pageMatchesAgentScope(page, input.agentScope)).map(normalizePageBooleans)
   const livePagesById = new Map(livePages.map(page => [page.id, page]))
   const currentProtectedPageIds = await protectedPageIds()
   const currentProtectedMetadataIds = await matchingProtectedMetadataIds(
@@ -2035,6 +2190,7 @@ const search = async (input: OperationInput) => {
     const liveRevision = currentSourceRevision(page?.sourceRevision)
     if (
       !page ||
+      !pageMatchesAgentScope(page, input.agentScope) ||
       indexedRevision === undefined ||
       liveRevision === undefined ||
       page.visibility !== 'public' ||
@@ -2069,6 +2225,7 @@ const search = async (input: OperationInput) => {
     const metadataOnly = currentProtectedPageIds.has(page.id)
     if (
       sourceRevision === undefined ||
+      !pageMatchesAgentScope(page, input.agentScope) ||
       !page.isSearchable ||
       (metadataOnly && !currentPrivateMetadataIds.has(page.id)) ||
       !canReadPage(requester, page, authority)
@@ -2093,6 +2250,7 @@ const search = async (input: OperationInput) => {
     if (
       !page ||
       pageRevision === undefined ||
+      !pageMatchesAgentScope(page, input.agentScope) ||
       page.visibility !== candidate.visibility ||
       page.localeCode !== candidate.locale ||
       page.path !== candidate.path ||
@@ -2165,7 +2323,12 @@ const search = async (input: OperationInput) => {
   const privateContributionTruncated = privateCandidates.length > PRIVATE_SEARCH_WINDOW_LIMIT
   return {
     ...publicResponse,
-    suggestions: publicResults.length === publicResponse.results.length ? publicResponse.suggestions : [],
+    suggestions:
+      input.agentScope !== undefined && input.agentScope.kind !== 'all'
+        ? []
+        : publicResults.length === publicResponse.results.length
+          ? publicResponse.suggestions
+          : [],
     results,
     totalHits: results.length,
     windowLimit,

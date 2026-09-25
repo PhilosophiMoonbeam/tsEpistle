@@ -19,6 +19,7 @@ import {
   type AgentProposalView,
   type AgentPageActionLink,
   type AgentRunView,
+  type AgentRunWorkingPhase,
   type AgentSessionSkillView,
   type AgentSessionView,
   type AgentThreadState,
@@ -126,6 +127,34 @@ const contextExclusionFor = (data: AgentEvent['data']): AgentToolContextExclusio
   const parsed = contextExclusionSchema.safeParse(data.contextExclusion)
   if (!parsed.success) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool context exclusion is invalid', 500)
   return parsed.data
+}
+const agentRunWorkingPhase = (events: readonly AgentEvent[], run: ProjectAgentRunInput): AgentRunWorkingPhase | undefined => {
+  if (run.status !== 'running') return undefined
+
+  let rejectedTurnNeedsAssessment = false
+  let correcting = false
+  for (const event of events) {
+    if (event.runId !== run.id || event.attempt !== run.attempts) continue
+    if (event.type === 'model.turn') {
+      if (event.data.outcome === 'answer_rejected') {
+        rejectedTurnNeedsAssessment = true
+      } else if (event.data.outcome === 'tool_calls') {
+        if (!correcting) rejectedTurnNeedsAssessment = false
+      } else {
+        rejectedTurnNeedsAssessment = false
+        correcting = false
+      }
+    } else if (event.type === 'evidence.provenance') {
+      if (event.data.accepted === true) {
+        rejectedTurnNeedsAssessment = false
+        correcting = false
+      } else if (event.data.accepted === false && rejectedTurnNeedsAssessment) {
+        rejectedTurnNeedsAssessment = false
+        correcting = true
+      }
+    }
+  }
+  return correcting ? 'correcting' : undefined
 }
 
 export interface ReducedAgentEvents {
@@ -257,12 +286,13 @@ export interface ProjectAgentRunInput {
   readonly errorMessage: string | null
 }
 
-export const projectAgentRun = (row: ProjectAgentRunInput): AgentRunView => {
+export const projectAgentRun = (row: ProjectAgentRunInput, workingPhase?: AgentRunWorkingPhase): AgentRunView => {
   const status = runStatusSchema.parse(row.status)
   return {
     id: row.id,
     sessionId: row.sessionId,
     status,
+    ...(status === 'running' && workingPhase !== undefined ? { workingPhase } : {}),
     attempt: row.attempts,
     eventSequence: row.eventSequence,
     canCancel: status === 'queued' || status === 'running' || status === 'awaiting_approval',
@@ -610,10 +640,11 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
         )
   options.signal?.throwIfAborted()
 
-  const runs = runRows.map(projectAgentRun)
+  const events = eventPages.flat()
+  const runs = runRows.map(row => projectAgentRun(row, agentRunWorkingPhase(events, row)))
   const currentRun = runs.find(run => run.canCancel) ?? null
   const goal = latestGoal === null ? null : projectAgentGoal(latestGoal, latestGoalRun?.id ?? null)
-  const reduced = reduceAgentEvents(eventPages.flat(), runRows[0]?.id ?? null)
+  const reduced = reduceAgentEvents(events, runRows[0]?.id ?? null)
   const approvals = new Map(approvalRows.map(row => [row.proposalId, approvalView(row)]))
   const sourceContexts = new Map<string, AgentKnowledgeContext>()
   for (const row of sourceContextRows) {

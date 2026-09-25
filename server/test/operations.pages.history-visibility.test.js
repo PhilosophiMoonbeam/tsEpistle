@@ -134,6 +134,39 @@ describe('page history visibility boundaries', () => {
       authority: expect.objectContaining({ requester })
     }))
   })
+  it('requires current-page and history access before returning public versions', async () => {
+    const page = canonicalPage({ isPublished: true })
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue(page)
+    const publicProjectionQuery = {
+      select: vi.fn(() => publicProjectionQuery),
+      withGraphJoined: vi.fn(() => publicProjectionQuery),
+      modifyGraph: vi.fn((_relation, callback) => { callback({ select: vi.fn() }); return publicProjectionQuery }),
+      findById: vi.fn().mockResolvedValue(page)
+    }
+    global.WIKI.models.pages.query.mockReturnValue(publicProjectionQuery)
+    global.WIKI.models.pageHistory.getVersion.mockResolvedValue({ content: 'historical content', extra: {} })
+    const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
+
+    const historyOnly = { id: 8, permissions: ['read:history'] }
+    await expect(Promise.resolve(operations.getVersion({ requester: historyOnly, pageId: page.id, versionId: 42 }))).rejects.toBeInstanceOf(PageNotFound)
+    expect(global.WIKI.models.pageHistory.getVersion).not.toHaveBeenCalled()
+
+    const pageReaderOnly = { id: 8, permissions: ['read:pages'] }
+    await expect(Promise.resolve(operations.getVersion({ requester: pageReaderOnly, pageId: page.id, versionId: 42 }))).rejects.toBeInstanceOf(PageHistoryForbidden)
+    expect(global.WIKI.models.pageHistory.getVersion).not.toHaveBeenCalled()
+
+    const authorized = { id: 8, permissions: ['read:pages', 'read:history'] }
+    await expect(Promise.resolve(operations.getVersion({ requester: authorized, pageId: page.id, versionId: 42 }))).resolves.toMatchObject({
+      content: 'historical content',
+      extra: {}
+    })
+    expect(global.WIKI.models.pageHistory.getVersion).toHaveBeenCalledWith(expect.objectContaining({
+      pageId: page.id,
+      versionId: 42,
+      requester: authorized
+    }))
+  })
+
   it('cannot restore a hidden private revision after the page is published', async () => {
     const requester = { id: 8, permissions: ['read:pages', 'write:pages'] }
     global.WIKI.models.pages.getPageFromDb.mockResolvedValue(canonicalPage({ sourceRevision: '8' }))

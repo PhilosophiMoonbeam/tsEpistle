@@ -361,6 +361,8 @@ export interface AgentSessionView {
   readonly expiresAt: string | null
 }
 
+export type AgentRunWorkingPhase = 'correcting'
+
 export interface AgentRunView {
   readonly id: string
   readonly sessionId: string
@@ -368,6 +370,7 @@ export interface AgentRunView {
   readonly attempt: number
   readonly eventSequence: number
   readonly canCancel: boolean
+  readonly workingPhase?: AgentRunWorkingPhase
   readonly createdAt: string
   readonly startedAt: string | null
   readonly completedAt: string | null

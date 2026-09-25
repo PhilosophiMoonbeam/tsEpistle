@@ -720,6 +720,118 @@ describe('durable agent repositories', () => {
     expect(projected.messages.map(message => message.content)).toEqual(['Question', ''])
   })
 
+  it('projects only safe current-attempt correction phases and resets on accepted completion', async () => {
+    const projectionOptions = {
+      profileResolutionToken: (session: { readonly id: string; readonly version: number }) => `profile:${session.id}:${session.version}`,
+      now: new Date('2026-08-17T00:00:00.000Z')
+    }
+    expect((await projectAgentThread(knex, 7, sessionId, projectionOptions)).session.currentRun).not.toHaveProperty('workingPhase')
+
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000023',
+      runId,
+      ownerId: 7,
+      type: 'model.turn',
+      attempt: 1,
+      data: { turn: 1, outcome: 'tool_calls', content: 'PRIVATE NON-CORRECTION DRAFT' }
+    })
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000024',
+      runId,
+      ownerId: 7,
+      type: 'evidence.provenance',
+      attempt: 1,
+      data: { accepted: false, issues: ['PRIVATE NON-CORRECTION ISSUE'] }
+    })
+    expect((await projectAgentThread(knex, 7, sessionId, projectionOptions)).session.currentRun).not.toHaveProperty('workingPhase')
+
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000025',
+      runId,
+      ownerId: 7,
+      type: 'model.turn',
+      attempt: 1,
+      data: { turn: 2, outcome: 'answer_rejected', content: 'PRIVATE REJECTED DRAFT' }
+    })
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000026',
+      runId,
+      ownerId: 7,
+      type: 'evidence.provenance',
+      attempt: 1,
+      data: {
+        accepted: false,
+        issues: ['PRIVATE REJECTION ISSUE'],
+        claims: [{ claim: 'PRIVATE REJECTED CLAIM TEXT' }]
+      }
+    })
+    const correcting = await projectAgentThread(knex, 7, sessionId, projectionOptions)
+    expect(correcting.session.currentRun).toMatchObject({ id: runId, workingPhase: 'correcting' })
+    expect(JSON.stringify(correcting)).not.toContain('PRIVATE REJECTED DRAFT')
+    expect(JSON.stringify(correcting)).not.toContain('PRIVATE REJECTION ISSUE')
+    expect(JSON.stringify(correcting)).not.toContain('PRIVATE REJECTED CLAIM TEXT')
+    expect((await projectAgentThread(knex, 7, sessionId, projectionOptions)).session.currentRun).toEqual(correcting.session.currentRun)
+
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000027',
+      runId,
+      ownerId: 7,
+      type: 'model.turn',
+      attempt: 1,
+      data: { turn: 3, outcome: 'answer_accepted', content: 'Accepted response' }
+    })
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000028',
+      runId,
+      ownerId: 7,
+      type: 'evidence.provenance',
+      attempt: 1,
+      data: { accepted: true, claims: [{ claim: 'Accepted claim text' }] }
+    })
+    const accepted = await projectAgentThread(knex, 7, sessionId, projectionOptions)
+    expect(accepted.session.currentRun).toMatchObject({ id: runId, status: 'running' })
+    expect(accepted.session.currentRun).not.toHaveProperty('workingPhase')
+
+    const completedAt = new Date('2026-08-17T00:02:00.000Z')
+    await knex('agentRuns').where({ id: runId }).update({ status: 'succeeded', completedAt })
+    await knex('agentMessages').where({ id: assistantMessageId }).update({ status: 'complete', content: 'Accepted response', updatedAt: completedAt })
+    expect((await projectAgentThread(knex, 7, sessionId, projectionOptions)).session.currentRun).toBeNull()
+  })
+
+  it('does not carry a correction phase into a restarted attempt', async () => {
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000029',
+      runId,
+      ownerId: 7,
+      type: 'model.turn',
+      attempt: 1,
+      data: { turn: 1, outcome: 'answer_rejected' }
+    })
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000030',
+      runId,
+      ownerId: 7,
+      type: 'evidence.provenance',
+      attempt: 1,
+      data: { accepted: false, claims: [{ claim: 'Private rejected claim' }] }
+    })
+    const correcting = await projectAgentThread(knex, 7, sessionId, { profileResolutionToken: () => 'token' })
+    expect(correcting.session.currentRun).toMatchObject({ workingPhase: 'correcting' })
+
+    await knex('agentRuns').where({ id: runId }).update({ attempts: 2 })
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000031',
+      runId,
+      ownerId: 7,
+      type: 'run.attemptStarted',
+      attempt: 2,
+      data: { attempt: 2 }
+    })
+    const restarted = await projectAgentThread(knex, 7, sessionId, { profileResolutionToken: () => 'token' })
+    expect(restarted.session.currentRun).toMatchObject({ id: runId, attempt: 2, status: 'running' })
+    expect(restarted.session.currentRun).not.toHaveProperty('workingPhase')
+  })
+
   it('reduces each run to its latest attempt while keeping suggestions from the latest run', () => {
     const runA = '00000000-0000-4000-8000-000000000071'
     const runB = '00000000-0000-4000-8000-000000000072'

@@ -2,8 +2,9 @@ import type { AgentKnowledgeContext } from '../../../shared/agents/knowledge-con
 import { describe, expect, it, vi } from '../bun-test.mts'
 
 import { AGENT_FEATURE_FLAG_KEYS, type AgentActionName, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
-import { ActionKernel, createActionAuthority, type ActionAdmissionSnapshot } from '../../agents/actions/kernel.ts'
-import { registerPageReadActions } from '../../agents/actions/page-reads.ts'
+import { ActionKernel, createActionAuthority, type ActionAdmissionSnapshot, type ActionAuthority } from '../../agents/actions/kernel.ts'
+import { actionDefinition } from '../../agents/actions/catalog.ts'
+import { createPageEvidenceValidator, registerPageReadActions } from '../../agents/actions/page-reads.ts'
 import type { KnowledgeProjectionView } from '../../knowledge/projection.ts'
 import { parseOkfDocument } from '../../okf/format.ts'
 
@@ -106,7 +107,8 @@ const setup = (
     listLinks: (input: Record<string, unknown>) => Promise<unknown>
     listRelated: (input: Record<string, unknown>) => Promise<unknown>
   }> = {},
-  knowledge?: KnowledgeDependency
+  knowledge?: KnowledgeDependency,
+  resolveRequesterOverride?: (authority: ActionAuthority) => Promise<Express.User>
 ) => {
   const operations = {
     search: vi.fn(async () => ({ results: [], suggestions: [], totalHits: 0, windowLimit: 150, windowTruncated: false })),
@@ -122,9 +124,16 @@ const setup = (
     listRelated: vi.fn(async () => ({ pages: [], truncated: false, nextOffset: null })),
     ...overrides
   }
-  const resolveRequester = vi.fn(async () => principal)
+  const resolveRequester = vi.fn(resolveRequesterOverride ?? (async () => principal))
   const kernel = new ActionKernel()
-  registerPageReadActions(kernel, { operations, resolveRequester, snapshotSigningSecret: Buffer.alloc(32, 3), ...(knowledge ? { knowledge } : {}) })
+  const pageReadDependencies = {
+    operations,
+    resolveRequester,
+    snapshotSigningSecret: Buffer.alloc(32, 3),
+    ...(knowledge ? { knowledge } : {})
+  }
+  registerPageReadActions(kernel, pageReadDependencies)
+  const validatePageEvidence = createPageEvidenceValidator(pageReadDependencies)
   const execute = (name: AgentActionName, input: unknown, knowledgeContext?: AgentKnowledgeContext) =>
     kernel.execute({
       authority: createActionAuthority(name, requestId, auth, admission),
@@ -134,7 +143,22 @@ const setup = (
       signal: new AbortController().signal,
       refreshAdmission: async () => admission
     })
-  return { execute, operations, resolveRequester }
+  const validateEvidence = (
+    name: AgentActionName,
+    output: unknown,
+    knowledgeContext?: AgentKnowledgeContext,
+    userId = 7,
+    signal = new AbortController().signal
+  ) => {
+    const validationAuth = {
+      kind: 'user' as const,
+      userId,
+      ownershipUserId: userId,
+      principal: userId === 7 ? principal : ({ id: userId, permissions, groups: [3] } as Express.User)
+    }
+    return validatePageEvidence(createActionAuthority(name, requestId, validationAuth, admission), knowledgeContext, name, output, signal)
+  }
+  return { execute, operations, resolveRequester, validateEvidence }
 }
 
 describe('permission-safe page read actions', () => {
@@ -151,7 +175,200 @@ describe('permission-safe page read actions', () => {
       { query: 'guide', limit: 5, offset: 0 },
       { scope: { kind: 'selected' }, sources: [{ id: 42, locale: 'en', path: 'docs/start', title: 'Start', visibility: 'public', sourceRevision: '8' }] }
     )
-    expect(operations.search).toHaveBeenLastCalledWith(expect.objectContaining({ pageIds: [42] }))
+    expect(operations.search).toHaveBeenLastCalledWith(expect.objectContaining({ pageIds: [42], agentScope: { kind: 'selected', pageIds: [42] } }))
+  })
+  it('rechecks selected, locale, and section scope across direct and candidate page reads', async () => {
+    const cases: readonly {
+      readonly context: AgentKnowledgeContext
+      readonly expectedScope: Record<string, unknown>
+      readonly excludedLocale: string
+      readonly excludedPath: string
+      readonly linkTarget: string
+    }[] = [
+      {
+        context: {
+          scope: { kind: 'selected' },
+          sources: [{ id: 42, locale: 'en', path: 'docs/start', title: 'Start', visibility: 'public', sourceRevision: '8' }]
+        },
+        expectedScope: { kind: 'selected', pageIds: [42] },
+        excludedLocale: 'en',
+        excludedPath: 'docs/secret',
+        linkTarget: 'en/docs/secret'
+      },
+      {
+        context: { scope: { kind: 'section', locale: 'en', path: 'docs' }, sources: [] },
+        expectedScope: { kind: 'section', locale: 'en', path: 'docs' },
+        excludedLocale: 'en',
+        excludedPath: 'docs-private/secret',
+        linkTarget: 'en/docs-private/secret'
+      },
+      {
+        context: { scope: { kind: 'locale', locale: 'en' }, sources: [] },
+        expectedScope: { kind: 'locale', locale: 'en' },
+        excludedLocale: 'fr',
+        excludedPath: 'docs/secret',
+        linkTarget: 'fr/docs/secret'
+      }
+    ]
+
+    for (const scenario of cases) {
+      const secretContent = 'SECRET PAGE'
+      const excludedPage = (overrides: Record<string, unknown> = {}) =>
+        page({
+          id: 43,
+          localeCode: scenario.excludedLocale,
+          path: scenario.excludedPath,
+          title: 'Secret Page',
+          content: secretContent,
+          ...overrides
+        })
+      const { execute, operations } = setup({
+        search: vi.fn(async () => ({
+          results: [
+            {
+              id: 43,
+              sourceRevision: '8',
+              path: scenario.excludedPath,
+              locale: scenario.excludedLocale,
+              visibility: 'public',
+              tags: ['secret-tag'],
+              score: 10,
+              matchedFields: ['title']
+            }
+          ],
+          suggestions: ['secret-suggestion'],
+          totalHits: 1,
+          windowLimit: 100,
+          windowTruncated: true
+        })),
+        discover: vi.fn(async () => ({
+          pages: [
+            {
+              id: 43,
+              locale: scenario.excludedLocale,
+              path: scenario.excludedPath,
+              title: 'Secret Page',
+              description: 'SECRET DESCRIPTION',
+              updatedAt: new Date('2026-08-17T00:00:00.000Z'),
+              tags: ['secret-tag']
+            }
+          ],
+          totalInWindow: 1,
+          windowLimit: 100,
+          nextOffset: 1
+        })),
+        listRecent: vi.fn(async () => ({
+          kind: 'recent-page-evidence',
+          requestedLimit: 2,
+          exhausted: false,
+          pages: [
+            {
+              id: 43,
+              locale: scenario.excludedLocale,
+              path: scenario.excludedPath,
+              title: 'Secret Page',
+              contentType: 'markdown',
+              sourceRevision: '8',
+              updatedAt: '2026-08-17T00:00:00.000Z',
+              content: secretContent,
+              sourceContentCharacters: secretContent.length,
+              contentTruncated: false,
+              citation: {
+                evidenceId: 'page:43:revision:8',
+                label: 'Secret Page',
+                href: `/${scenario.excludedLocale}/${scenario.excludedPath}`
+              }
+            }
+          ]
+        })),
+        listRelated: vi.fn(async () => ({
+          pages: [
+            excludedPage({
+              distance: 1,
+              direction: 'outgoing',
+              viaPageId: 42
+            })
+          ],
+          truncated: true,
+          nextOffset: 1
+        })),
+        listLinks: vi.fn(async () => [{ id: 42, links: [scenario.linkTarget] }]),
+        get: vi.fn(async input => (Number(input.id) === 42 ? page() : excludedPage())),
+        getByPath: vi.fn(async input => excludedPage({ localeCode: input.locale, path: input.path })),
+        getVersion: vi.fn(async () => excludedPage({ id: undefined, pageId: 43, versionId: 9, versionDate: '2026-08-16T00:00:00.000Z' }))
+      })
+
+      await expect(execute('pages.get', { id: 43 }, scenario.context)).rejects.toMatchObject({
+        code: 'PAGE_NOT_FOUND',
+        message: 'Page is unavailable'
+      })
+      await expect(execute('pages.get', { path: scenario.excludedPath, locale: scenario.excludedLocale }, scenario.context)).rejects.toMatchObject({
+        code: 'PAGE_NOT_FOUND',
+        message: 'Page is unavailable'
+      })
+      await expect(execute('pages.getOkf', { pageId: 43, versionId: 9 }, scenario.context)).rejects.toMatchObject({
+        code: 'PAGE_NOT_FOUND',
+        message: 'Page is unavailable'
+      })
+      await expect(execute('pages.getOkf', { id: 43 }, scenario.context)).rejects.toMatchObject({
+        code: 'PAGE_NOT_FOUND',
+        message: 'Page is unavailable'
+      })
+      await expect(execute('pages.getVersion', { pageId: 43, versionId: 9 }, scenario.context)).rejects.toMatchObject({
+        code: 'PAGE_NOT_FOUND',
+        message: 'Page is unavailable'
+      })
+      await expect(execute('pages.readForPatch', { pageId: 43 }, scenario.context)).rejects.toMatchObject({
+        code: 'PAGE_NOT_FOUND',
+        message: 'Page is unavailable'
+      })
+      await expect(execute('pages.listHistory', { pageId: 43, limit: 5 }, scenario.context)).rejects.toMatchObject({
+        code: 'PAGE_NOT_FOUND',
+        message: 'Page is unavailable'
+      })
+      await expect(execute('pages.listLinks', { pageId: 43, limit: 5 }, scenario.context)).rejects.toMatchObject({
+        code: 'PAGE_NOT_FOUND',
+        message: 'Page is unavailable'
+      })
+
+      expect(await execute('pages.search', { query: 'secret', limit: 5, offset: 0 }, scenario.context)).toEqual({
+        results: [],
+        suggestions: [],
+        totalInWindow: 0,
+        windowLimit: 100,
+        windowTruncated: false,
+        nextOffset: null
+      })
+      expect(await execute('pages.discover', { locale: 'en', path: 'docs', tags: [], limit: 5, offset: 0 }, scenario.context)).toEqual({
+        pages: [],
+        totalInWindow: 0,
+        windowLimit: 100,
+        nextOffset: null
+      })
+      expect(await execute('pages.listRecent', { limit: 2 }, scenario.context)).toMatchObject({
+        pages: [],
+        exhausted: true
+      })
+      expect(await execute('pages.related', { pageId: 42, limit: 5, cursor: null }, scenario.context)).toEqual({
+        pages: [],
+        nextCursor: null
+      })
+      expect(await execute('pages.listLinks', { pageId: 42, limit: 5 }, scenario.context)).toEqual({
+        links: [],
+        truncated: false
+      })
+      expect(await execute('pages.searchTags', { query: 'secret', limit: 3 }, scenario.context)).toEqual({ tags: [] })
+      expect(await execute('pages.listTags', { limit: 3, offset: 0 }, scenario.context)).toEqual({ tags: [], nextOffset: null })
+
+      expect(operations.searchTags).toHaveBeenCalledWith(expect.objectContaining({ agentScope: scenario.expectedScope }))
+      expect(operations.listTags).toHaveBeenCalledWith(expect.objectContaining({ agentScope: scenario.expectedScope }))
+
+      expect(operations.search).toHaveBeenCalledWith(expect.objectContaining({ agentScope: scenario.expectedScope }))
+      expect(operations.discover).toHaveBeenCalledWith(expect.objectContaining({ agentScope: scenario.expectedScope }))
+      expect(operations.listRecent).toHaveBeenCalledWith(expect.objectContaining({ agentScope: scenario.expectedScope }))
+      expect(operations.listRelated).toHaveBeenCalledWith(expect.objectContaining({ agentScope: scenario.expectedScope }))
+      expect(operations.listLinks).toHaveBeenCalledWith(expect.objectContaining({ agentScope: scenario.expectedScope }))
+    }
   })
 
   it('returns bounded current search candidates without protected model fields', async () => {
@@ -185,7 +402,9 @@ describe('permission-safe page read actions', () => {
       })),
       get: async input => {
         if (input.id === 44) throw new PageNotFound()
-        return input.id === 43 ? page({ id: 43, path: 'private/notes', visibility: 'private', ownerId: 7, sourceRevision: 2 }) : page()
+        return input.id === 43
+          ? page({ id: 43, path: 'private/notes', visibility: 'private', ownerId: 7, sourceRevision: 2 })
+          : page({ tags: [{ tag: 'Runbook' }] })
       }
     })
     expect(await execute('pages.search', { query: 'notes', path: 'docs', limit: 3, offset: 0 })).toEqual({
@@ -362,7 +581,8 @@ describe('permission-safe page read actions', () => {
         totalInWindow: 1,
         windowLimit: 5_000,
         nextOffset: null
-      }))
+      })),
+      get: async () => page({ tags: [{ tag: 'Runbook' }] })
     })
     expect(await execute('pages.discover', { locale: 'en', path: 'docs', tags: ['runbook'], limit: 10, offset: 0 })).toEqual({
       pages: [
@@ -423,7 +643,7 @@ describe('permission-safe page read actions', () => {
       }),
       get: async input => {
         if (input.id === 42) throw locked
-        return page({ id: 43, path: 'docs/visible' })
+        return page({ id: 43, path: 'docs/visible', title: 'Visible', content: '# Visible' })
       }
     })
 
@@ -496,7 +716,7 @@ describe('permission-safe page read actions', () => {
       document: string
       authority: unknown
       knowledge: KnowledgeProjectionView | null
-      citation: { evidenceId: string }
+      citation: { evidenceId: string; href: string }
     }
 
     const current = (await execute('pages.getOkf', { id: 42 })) as OkfResult
@@ -518,7 +738,7 @@ describe('permission-safe page read actions', () => {
         }
       },
       knowledge: currentProjection,
-      citation: { evidenceId: 'page:42:revision:8' }
+      citation: { evidenceId: 'page:42:revision:8', href: '/en/docs/start' }
     })
     const parsedCurrent = parseOkfDocument(current.document)
     expect(parsedCurrent.metadata).toMatchObject({
@@ -547,7 +767,7 @@ describe('permission-safe page read actions', () => {
       resourceUri: 'wiki://pages/42/versions/9/revisions/6/okf',
       authority: { state: 'valid', metadata: validOkfMetadata },
       knowledge: historicalProjection,
-      citation: { evidenceId: 'page:42:revision:6' }
+      citation: { evidenceId: 'page:42:version:9:revision:6', href: '/en/docs/start?v=9' }
     })
     const parsedHistorical = parseOkfDocument(historical.document)
     expect(parsedHistorical.metadata['x-wiki']).toEqual({
@@ -756,17 +976,104 @@ describe('permission-safe page read actions', () => {
       content: '# Start',
       authority: { state: 'missing', metadata: null, trust: null },
       okfResourceUri: 'wiki://pages/42/versions/9/revisions/6/okf',
-      citation: { evidenceId: 'page:42:revision:6', label: 'Start', href: '/en/docs/start?v=9' }
+      citation: { evidenceId: 'page:42:version:9:revision:6', label: 'Start', href: '/en/docs/start?v=9' }
     })
+  })
+  it('keeps historical citations and section links distinct across versions sharing one revision', async () => {
+    const { execute } = setup({
+      getVersion: async input =>
+        page({
+          id: undefined,
+          pageId: 42,
+          versionId: Number(input.versionId),
+          sourceRevision: '6',
+          versionDate: '2026-08-16T00:00:00.000Z',
+          toc: [{ title: 'Start', anchor: '#start' }]
+        })
+    })
+    const version9 = (await execute('pages.getVersion', { pageId: 42, versionId: 9 })) as {
+      citation: { evidenceId: string; href: string }
+      citationSections: Array<{ evidenceId: string; href: string }>
+    }
+    const version10 = (await execute('pages.getVersion', { pageId: 42, versionId: 10 })) as typeof version9
+    const version11 = (await execute('pages.getVersion', { pageId: 42, versionId: 11 })) as typeof version9
+
+    expect([version9.citation.evidenceId, version10.citation.evidenceId, version11.citation.evidenceId]).toEqual([
+      'page:42:version:9:revision:6',
+      'page:42:version:10:revision:6',
+      'page:42:version:11:revision:6'
+    ])
+    expect(version9.citation.href).toBe('/en/docs/start?v=9')
+    expect(version9.citationSections).toEqual([{ evidenceId: 'page:42:version:9:revision:6:section:1', label: 'Start', href: '/en/docs/start?v=9#start' }])
+    expect(new Set([version9.citation.evidenceId, version10.citation.evidenceId, version11.citation.evidenceId]).size).toBe(3)
+  })
+
+  it('checks moved historical pages against their canonical current location before scoped reads', async () => {
+    const historical = page({
+      id: undefined,
+      pageId: 42,
+      localeCode: 'en',
+      path: 'docs/start',
+      title: 'Archived Start',
+      sourceRevision: '6',
+      versionId: 9,
+      versionDate: '2026-08-16T00:00:00.000Z',
+      content: '# Archived Start\n\nArchived instructions.\n',
+      extra: { okf: validOkfMetadata }
+    })
+    const scenarios = [
+      {
+        context: { scope: { kind: 'locale', locale: 'en' }, sources: [] } satisfies AgentKnowledgeContext,
+        current: page({ localeCode: 'fr', path: 'docs/start' })
+      },
+      {
+        context: { scope: { kind: 'section', locale: 'en', path: 'docs' }, sources: [] } satisfies AgentKnowledgeContext,
+        current: page({ localeCode: 'en', path: 'archive/start' })
+      }
+    ]
+
+    for (const { context: knowledgeContext, current } of scenarios) {
+      const { execute, operations } = setup({
+        get: vi.fn(async () => current),
+        getVersion: vi.fn(async () => historical)
+      })
+
+      await expect(execute('pages.getVersion', { pageId: 42, versionId: 9 }, knowledgeContext)).rejects.toMatchObject({
+        code: 'PAGE_NOT_FOUND',
+        message: 'Page is unavailable'
+      })
+      await expect(execute('pages.getOkf', { pageId: 42, versionId: 9 }, knowledgeContext)).rejects.toMatchObject({
+        code: 'PAGE_NOT_FOUND',
+        message: 'Page is unavailable'
+      })
+      expect(operations.getVersion).not.toHaveBeenCalled()
+
+      expect(await execute('pages.getVersion', { pageId: 42, versionId: 9 })).toMatchObject({
+        id: 42,
+        locale: 'en',
+        path: 'docs/start',
+        versionId: 9,
+        sourceRevision: '6',
+        content: '# Archived Start\n\nArchived instructions.\n'
+      })
+      const okf = (await execute('pages.getOkf', { pageId: 42, versionId: 9 })) as {
+        pageId: number
+        versionId: number
+        citation: { href: string }
+        document: string
+      }
+      expect(okf).toMatchObject({ pageId: 42, versionId: 9, citation: { href: '/en/docs/start?v=9' } })
+      expect(parseOkfDocument(okf.document).body).toContain('Archived instructions.')
+    }
   })
 
   it('lists only bounded authorized link rows for the requested page', async () => {
     const { execute } = setup({
-      listLinks: async () => [{ id: 42, links: ['en/docs/next', 'https://example.test/reference'] }]
+      listLinks: async () => [{ id: 42, links: ['en/docs/next', 'https://example.test/reference', 'en/docs/\u0000secret'] }]
     })
     expect(await execute('pages.listLinks', { pageId: 42, limit: 1 })).toEqual({
       links: [{ label: 'en/docs/next', target: 'en/docs/next', kind: 'page' }],
-      truncated: true
+      truncated: false
     })
   })
 
@@ -834,7 +1141,8 @@ describe('permission-safe page read actions', () => {
     const getCurrentMany = vi.fn(async () => new Map([[43, knowledgeProjection({ sourceRevision: '8' })]]))
     const { execute } = setup(
       {
-        get: async () => {
+        get: async input => {
+          if (Number(input.id) === 42) return page()
           throw new PageLocked()
         },
         listRelated: async () => ({
@@ -863,7 +1171,7 @@ describe('permission-safe page read actions', () => {
     const getCurrentMany = vi.fn(async () => new Map([[43, knowledgeProjection({ sourceRevision: '9' })]]))
     const { execute } = setup(
       {
-        get: async () => page({ id: 43, path: 'docs/next', title: 'Next', sourceRevision: '9' }),
+        get: async input => (Number(input.id) === 42 ? page() : page({ id: 43, path: 'docs/next', title: 'Next', sourceRevision: '9' })),
         listRelated: async () => ({
           pages: [
             page({
@@ -885,5 +1193,163 @@ describe('permission-safe page read actions', () => {
 
     expect(await execute('pages.related', { pageId: 42, limit: 1, cursor: null })).toEqual({ pages: [], nextCursor: null })
     expect(getCurrentMany).toHaveBeenCalledWith([])
+  })
+})
+
+describe('live page evidence validation', () => {
+  it('accepts exact current and version-bound receipts only after reloading their source', async () => {
+    const historical = page({
+      id: undefined,
+      pageId: 42,
+      versionId: 9,
+      sourceRevision: '6',
+      versionDate: '2026-08-16T00:00:00.000Z',
+      content: '# Historical',
+      extra: { okf: validOkfMetadata }
+    })
+    const { execute, validateEvidence } = setup({
+      get: async () => page({ extra: { okf: validOkfMetadata } }),
+      getVersion: async () => historical
+    })
+
+    const current = await execute('pages.get', { id: 42 })
+    expect(await validateEvidence('pages.get', current)).toBe(true)
+    const currentOkf = await execute('pages.getOkf', { id: 42 })
+    expect(await validateEvidence('pages.getOkf', currentOkf)).toBe(true)
+    const historic = await execute('pages.getVersion', { pageId: 42, versionId: 9 })
+    expect(await validateEvidence('pages.getVersion', historic)).toBe(true)
+    const historicalOkf = await execute('pages.getOkf', { pageId: 42, versionId: 9 })
+    expect(await validateEvidence('pages.getOkf', historicalOkf)).toBe(true)
+
+    const changed = { ...historic, content: '# Spoofed historic content' }
+    expect(await validateEvidence('pages.getVersion', changed)).toBe(false)
+  })
+
+  it('rejects live receipts outside selected, locale, and section scope', async () => {
+    const { execute, validateEvidence } = setup()
+    const output = await execute('pages.get', { id: 42 })
+
+    expect(
+      await validateEvidence('pages.get', output, {
+        scope: { kind: 'selected' },
+        sources: [{ id: 43, locale: 'en', path: 'docs/other', title: 'Other', visibility: 'public', sourceRevision: '8' }]
+      })
+    ).toBe(false)
+    expect(
+      await validateEvidence('pages.get', output, {
+        scope: { kind: 'locale', locale: 'fr' },
+        sources: []
+      })
+    ).toBe(false)
+    expect(
+      await validateEvidence('pages.get', output, {
+        scope: { kind: 'section', locale: 'en', path: 'other' },
+        sources: []
+      })
+    ).toBe(false)
+  })
+
+  it('rejects receipts after current revision or canonical location changes', async () => {
+    let currentPage = page()
+    const { execute, validateEvidence } = setup({ get: async () => currentPage })
+    const output = await execute('pages.get', { id: 42 })
+
+    currentPage = page({ sourceRevision: '9' })
+    expect(await validateEvidence('pages.get', output)).toBe(false)
+    currentPage = page({ path: 'archive/start' })
+    expect(await validateEvidence('pages.get', output)).toBe(false)
+  })
+
+  it('rechecks the live principal and does not accept another owner’s output-shaped receipt', async () => {
+    let hasReadPermission = true
+    const requester = async (authority: ActionAuthority): Promise<Express.User> => {
+      const userId = authority.requester.kind === 'user' ? authority.requester.userId : 0
+      return { id: userId, permissions: hasReadPermission ? ['read:pages'] : [] } as Express.User
+    }
+    const { execute, validateEvidence } = setup(
+      {
+        get: async input => {
+          const rawRequester = input.requester
+          const userId = typeof rawRequester === 'object' && rawRequester !== null ? Number(Reflect.get(rawRequester, 'id')) : 0
+          if (!hasReadPermission) throw new PageNotFound()
+          return page({ sourceRevision: userId === 7 ? '8' : '9' })
+        }
+      },
+      undefined,
+      requester
+    )
+    const output = await execute('pages.get', { id: 42 })
+
+    hasReadPermission = false
+    expect(await validateEvidence('pages.get', output)).toBe(false)
+    hasReadPermission = true
+    expect(await validateEvidence('pages.get', output, undefined, 8)).toBe(false)
+  })
+
+  it('requires recent excerpts to remain an exact prefix with matching truncation and source length', async () => {
+    const content = `# Recent\n\n${'x'.repeat(3_000)}`
+    const currentPage = page({ content })
+    const { execute, validateEvidence } = setup({
+      get: async () => currentPage,
+      listRecent: async () => ({
+        kind: 'recent-page-evidence',
+        requestedLimit: 1,
+        exhausted: true,
+        pages: [
+          {
+            id: 42,
+            locale: 'en',
+            path: 'docs/start',
+            title: 'Start',
+            contentType: 'markdown',
+            sourceRevision: '8',
+            updatedAt: '2026-08-17T00:00:00.000Z',
+            content: content.slice(0, 2_048),
+            sourceContentCharacters: content.length,
+            contentTruncated: true,
+            citation: { evidenceId: 'page:42:revision:8', label: 'Start', href: '/en/docs/start' }
+          }
+        ]
+      })
+    })
+    const output = actionDefinition('pages.listRecent').output.parse(await execute('pages.listRecent', { limit: 1 }))
+
+    expect(await validateEvidence('pages.listRecent', output)).toBe(true)
+    const excerpt = output.pages[0]
+    expect(excerpt).toBeDefined()
+    if (!excerpt) return
+    expect(
+      await validateEvidence('pages.listRecent', {
+        ...output,
+        pages: [{ ...excerpt, content: `!${excerpt.content.slice(1)}` }]
+      })
+    ).toBe(false)
+    expect(
+      await validateEvidence('pages.listRecent', {
+        ...output,
+        pages: [{ ...excerpt, contentTruncated: false }]
+      })
+    ).toBe(false)
+    expect(
+      await validateEvidence('pages.listRecent', {
+        ...output,
+        pages: [{ ...excerpt, sourceContentCharacters: excerpt.sourceContentCharacters + 1 }]
+      })
+    ).toBe(false)
+  })
+
+  it('checks patch snapshots against the exact authorized current Markdown source', async () => {
+    const { execute, validateEvidence } = setup()
+    const snapshot = actionDefinition('pages.readForPatch').output.parse(await execute('pages.readForPatch', { pageId: 42 }))
+
+    expect(await validateEvidence('pages.readForPatch', snapshot)).toBe(true)
+    const spoofed = {
+      ...snapshot,
+      disclosed: [{ startLine: 1, endLine: 1, lines: [{ number: 1, tag: '000000000000', text: '# Spoofed' }] }]
+    }
+    expect(await validateEvidence('pages.readForPatch', spoofed)).toBe(false)
+    const aborted = new AbortController()
+    aborted.abort()
+    expect(await validateEvidence('pages.readForPatch', snapshot, undefined, 7, aborted.signal)).toBe(false)
   })
 })

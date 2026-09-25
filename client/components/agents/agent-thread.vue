@@ -417,7 +417,8 @@ const threadPresentationCache = computed<CachedThreadPresentation>(previous => {
       props.thread.tools,
       props.thread.tasks,
       props.thread.proposals,
-      previous?.sessionId === sessionId ? previous.presentation : undefined
+      previous?.sessionId === sessionId ? previous.presentation : undefined,
+      props.thread.session.currentRun
     )
   }
 })
@@ -525,7 +526,7 @@ const currentLiveAnnouncement = computed(() => {
   if (props.connection === 'reconnecting') {
     return { key: 'connection:reconnecting', message: 'Connection interrupted. Reconnecting.' }
   }
-  return agentLiveAnnouncement(props.thread.messages, props.thread.tools)
+  return agentLiveAnnouncement(props.thread.messages, props.thread.tools, props.thread.session.currentRun)
 })
 const liveSummary = ref('')
 const liveSummaryRevision = ref(0)

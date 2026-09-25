@@ -64,9 +64,7 @@ export const pageAuthority = (extra: unknown): PageAuthority => {
   if (typeof extra !== 'object' || extra === null || Array.isArray(extra) || !Object.hasOwn(extra, 'okf'))
     return { state: 'missing', metadata: null, trust: null }
   const validated = validateStoredOkfMetadata((extra as Record<string, unknown>).okf)
-  return validated === null
-    ? { state: 'invalid', metadata: null, trust: null }
-    : { state: 'valid', metadata: validated.metadata, trust: validated.trust }
+  return validated === null ? { state: 'invalid', metadata: null, trust: null } : { state: 'valid', metadata: validated.metadata, trust: validated.trust }
 }
 
 const canonicalMetadata = (input: CanonicalOkfPageInput): OkfMetadata => {
@@ -86,7 +84,9 @@ const canonicalMetadata = (input: CanonicalOkfPageInput): OkfMetadata => {
   return metadata
 }
 
-export const renderCanonicalOkfDocument = (input: CanonicalOkfPageInput): {
+export const renderCanonicalOkfDocument = (
+  input: CanonicalOkfPageInput
+): {
   readonly document: string
   readonly sha256: string
   readonly metadata: OkfMetadata
@@ -109,7 +109,16 @@ export const serializeCanonicalOkfPage = (input: CanonicalOkfPageInput): Canonic
   const rendered = renderCanonicalOkfDocument(input)
   const resourceUri = okfResourceUri(input.pageId, input.versionId, sourceRevision)
   const filePath = okfFilePath(input.locale, input.path)
-  const citationHref = `${input.visibility === 'private' ? '/_private' : ''}/${input.locale}/${input.path}`
+  const rawCitationHref = `${input.visibility === 'private' ? '/_private' : ''}/${input.locale}/${input.path}`
+  const anchorIndex = rawCitationHref.indexOf('#')
+  const citationHref =
+    input.versionId === null
+      ? rawCitationHref
+      : anchorIndex < 0
+        ? `${rawCitationHref}?v=${input.versionId}`
+        : `${rawCitationHref.slice(0, anchorIndex)}?v=${input.versionId}${rawCitationHref.slice(anchorIndex)}`
+  const evidenceId =
+    input.versionId === null ? `page:${input.pageId}:revision:${sourceRevision}` : `page:${input.pageId}:version:${input.versionId}:revision:${sourceRevision}`
   return {
     pageId: input.pageId,
     versionId: input.versionId,
@@ -123,7 +132,7 @@ export const serializeCanonicalOkfPage = (input: CanonicalOkfPageInput): Canonic
     authority: input.authority,
     knowledge: input.knowledge,
     citation: {
-      evidenceId: `page:${input.pageId}:revision:${sourceRevision}`,
+      evidenceId,
       kind: 'page',
       label: input.title.trim() || input.path,
       href: citationHref

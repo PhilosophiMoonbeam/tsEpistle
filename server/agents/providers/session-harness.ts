@@ -24,6 +24,7 @@ export interface AxActionSession {
   readonly authoritySha256: string | null
   readonly functions: readonly AxHarnessFunction[]
   invoke(name: string, input: unknown, signal: AbortSignal, actionCallId: string): Promise<unknown>
+  validatePageEvidence?(actionName: AgentActionName, output: unknown, signal: AbortSignal): Promise<boolean>
   snapshot(signal: AbortSignal): Promise<Readonly<Record<string, unknown>>>
   close(): void
 }
@@ -31,6 +32,7 @@ export interface AxActionSession {
 export interface AxSessionHarnessOptions {
   readonly timeoutMilliseconds?: number
   readonly execute: (action: OfferedAction, input: unknown, signal: AbortSignal, actionCallId: string) => Promise<unknown>
+  readonly validatePageEvidence?: (actionName: AgentActionName, output: unknown, signal: AbortSignal) => Promise<boolean>
 }
 
 const boundedJson = (value: unknown, maxBytes: number, code: string): string => {
@@ -47,9 +49,11 @@ const boundedJson = (value: unknown, maxBytes: number, code: string): string => 
 export class AxSessionHarness {
   readonly #runtime: AxJSRuntime
   readonly #execute: AxSessionHarnessOptions['execute']
+  readonly #validatePageEvidence: AxSessionHarnessOptions['validatePageEvidence']
 
   constructor(options: AxSessionHarnessOptions) {
     this.#execute = options.execute
+    this.#validatePageEvidence = options.validatePageEvidence
     this.#runtime = new AxJSRuntime({
       timeout: options.timeoutMilliseconds ?? 30_000,
       permissions: [],
@@ -139,6 +143,15 @@ export class AxSessionHarness {
           invocationActionCallId = undefined
         }
       },
+      ...(this.#validatePageEvidence
+        ? {
+            validatePageEvidence: async (actionName: AgentActionName, output: unknown, signal: AbortSignal): Promise<boolean> => {
+              if (signal.aborted) return false
+              const valid = await this.#validatePageEvidence?.(actionName, output, signal)
+              return valid === true && !signal.aborted
+            }
+          }
+        : {}),
       snapshot: async signal => {
         assertOpen()
         if (!session.snapshotGlobals) return {}

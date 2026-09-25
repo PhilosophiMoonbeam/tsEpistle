@@ -3,7 +3,7 @@ import { AGENT_ACTION_BY_TOOL_NAME, type AgentActionName, type AgentToolName } f
 import pageOperations from '../../operations/pages.ts'
 import { ACTION_CATALOG } from '../actions/catalog.ts'
 import { ActionKernel, type ActionAdmissionSnapshot, type ActionAuthority } from '../actions/kernel.ts'
-import { registerPageReadActions } from '../actions/page-reads.ts'
+import { createPageEvidenceValidator, registerPageReadActions } from '../actions/page-reads.ts'
 import { registerMemoryAction } from '../actions/memory.ts'
 import { registerPageProposalActions } from '../actions/page-proposals.ts'
 import { registerSkillReadActions } from '../actions/skill-reads.ts'
@@ -20,7 +20,10 @@ import { PageKnowledgeRepository } from '../../knowledge/lifecycle.ts'
 
 const SUBAGENT_READ_ACTION_SET: ReadonlySet<AgentActionName> = new Set(SUBAGENT_READ_ACTIONS)
 
-interface GroupLike { id?: number; permissions?: unknown }
+interface GroupLike {
+  id?: number
+  permissions?: unknown
+}
 interface UserLike extends Express.User {
   isActive?: boolean
   groups?: GroupLike[]
@@ -33,7 +36,9 @@ interface UserQuery {
     }
   }
 }
-interface WikiUserRuntime { models: { users: { query(): UserQuery } } }
+interface WikiUserRuntime {
+  models: { users: { query(): UserQuery } }
+}
 
 export interface WikiActionSessionConfig {
   readonly enabled: boolean
@@ -53,7 +58,13 @@ export interface WikiActionSessionConfig {
 
 const loadUser = async (ownerId: number): Promise<UserLike> => {
   const wiki = WIKI as unknown as WikiUserRuntime
-  const user = await wiki.models.users.query().findById(ownerId).withGraphFetched('groups').modifyGraph('groups', builder => { builder.select('groups.id', 'permissions') })
+  const user = await wiki.models.users
+    .query()
+    .findById(ownerId)
+    .withGraphFetched('groups')
+    .modifyGraph('groups', builder => {
+      builder.select('groups.id', 'permissions')
+    })
   if (!user || user.isActive === false) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Agent user is unavailable', 401)
   return user
 }
@@ -61,9 +72,7 @@ export const loadWikiAgentUser = (userId: number): Promise<Express.User> => load
 
 const permissionsFor = async (user: UserLike): Promise<readonly string[]> => {
   const direct = await user.getGlobalPermissions?.()
-  const permissions = Array.isArray(direct)
-    ? direct
-    : (user.groups ?? []).flatMap(group => Array.isArray(group.permissions) ? group.permissions : [])
+  const permissions = Array.isArray(direct) ? direct : (user.groups ?? []).flatMap(group => (Array.isArray(group.permissions) ? group.permissions : []))
   return [...new Set(permissions.filter((permission): permission is string => typeof permission === 'string'))].sort()
 }
 
@@ -74,15 +83,23 @@ export const assertWikiAgentMediaAccess = async (ownerId: number, flags: { reado
     throw new AgentRepositoryError('AGENT_PERMISSION_REVOKED', 'Wiki Agent access is no longer permitted.', 403)
 }
 
-const groupIdsFor = (user: UserLike): readonly number[] => [...new Set((user.groups ?? []).map(group => group.id).filter((id): id is number => Number.isSafeInteger(id) && id! > 0))].sort((left, right) => left - right)
+const groupIdsFor = (user: UserLike): readonly number[] =>
+  [...new Set((user.groups ?? []).map(group => group.id).filter((id): id is number => Number.isSafeInteger(id) && id! > 0))].sort((left, right) => left - right)
 
 const allowedActionsFor = async (knex: Knex, runId: string): Promise<readonly AgentActionName[] | undefined> => {
-  const rows = await knex('agentRunSkills').join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId').where('agentRunSkills.runId', runId).select('agentSkillVersions.frontmatter') as { frontmatter: string }[]
+  const rows = (await knex('agentRunSkills')
+    .join('agentSkillVersions', 'agentSkillVersions.id', 'agentRunSkills.skillVersionId')
+    .where('agentRunSkills.runId', runId)
+    .select('agentSkillVersions.frontmatter')) as { frontmatter: string }[]
   if (rows.length === 0) return undefined
   const allowed = new Set<AgentActionName>(['skills.list', 'skills.read', 'memory.manage'])
   for (const row of rows) {
     let value: unknown
-    try { value = JSON.parse(row.frontmatter) } catch { throw new AgentRepositoryError('SKILL_VERSION_CORRUPT', 'Loaded skill metadata is invalid', 500) }
+    try {
+      value = JSON.parse(row.frontmatter)
+    } catch {
+      throw new AgentRepositoryError('SKILL_VERSION_CORRUPT', 'Loaded skill metadata is invalid', 500)
+    }
     const tools = typeof value === 'object' && value !== null ? Reflect.get(value, 'allowed-tools') : undefined
     if (!Array.isArray(tools) || tools.length === 0) return undefined
     for (const tool of tools) {
@@ -95,36 +112,61 @@ const allowedActionsFor = async (knex: Knex, runId: string): Promise<readonly Ag
   return [...allowed].sort()
 }
 
-export const createWikiActionSessionProvider = (knex: Knex, config: WikiActionSessionConfig, browserClient?: BrowserWorkerClient): KernelActionSessionProvider => {
+export const createWikiActionSessionProvider = (
+  knex: Knex,
+  config: WikiActionSessionConfig,
+  browserClient?: BrowserWorkerClient
+): KernelActionSessionProvider => {
   const kernel = new ActionKernel()
   const requester = async (authority: ActionAuthority): Promise<Express.User> => {
     if (authority.requester.kind !== 'user') throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Agent page actions require a user principal', 401)
     return loadUser(authority.requester.userId)
   }
-  registerPageReadActions(kernel, { operations: pageOperations, resolveRequester: requester, snapshotSigningSecret: config.snapshotSigningSecret, knowledge: new PageKnowledgeRepository(knex) })
-  registerPageProposalActions(kernel, { knex, operations: pageOperations, resolveRequester: requester, resolveApprover: loadWikiAgentUser, snapshotSigningSecret: config.snapshotSigningSecret })
+  const pageReadDependencies = {
+    operations: pageOperations,
+    resolveRequester: requester,
+    snapshotSigningSecret: config.snapshotSigningSecret,
+    knowledge: new PageKnowledgeRepository(knex)
+  }
+  registerPageReadActions(kernel, pageReadDependencies)
+  const validatePageEvidence = createPageEvidenceValidator(pageReadDependencies)
+  registerPageProposalActions(kernel, {
+    knex,
+    operations: pageOperations,
+    resolveRequester: requester,
+    resolveApprover: loadWikiAgentUser,
+    snapshotSigningSecret: config.snapshotSigningSecret
+  })
   registerSkillReadActions(kernel, new SkillRuntime(knex))
   registerMemoryAction(kernel, new AgentMemoryRepository(knex))
   if (config.browserEnabled && browserClient) new BrowserActionService(knex, browserClient).register(kernel)
   const resolveAdmission = async (request: AgentEngineRequest): Promise<ActionAdmissionSnapshot> => {
-    if (request.purpose === 'subagent' && (request.actionAllowlist === undefined || request.actionAllowlist.some(action => !SUBAGENT_READ_ACTION_SET.has(action)))) {
+    if (
+      request.purpose === 'subagent' &&
+      (request.actionAllowlist === undefined || request.actionAllowlist.some(action => !SUBAGENT_READ_ACTION_SET.has(action)))
+    ) {
       throw new AgentRepositoryError('INVALID_SUBAGENT_AUTHORITY', 'Subagent action authority exceeds the read-only specialist profile', 500)
     }
     const user = await loadUser(request.run.ownerId)
-    const version = await knex('agentProviderProfileVersions').where({ id: request.run.providerProfileVersionId, conformed: true }).first('capabilities') as { capabilities: string } | undefined
+    const version = (await knex('agentProviderProfileVersions').where({ id: request.run.providerProfileVersionId, conformed: true }).first('capabilities')) as
+      | { capabilities: string }
+      | undefined
     if (!version) throw new AgentRepositoryError('PROFILE_VERSION_UNAVAILABLE', 'Provider profile version is unavailable', 409)
     let supportsTools: boolean
     try {
       const capabilities = AgentProviderCapabilitiesSchema.parse(JSON.parse(version.capabilities) as unknown)
       supportsTools = capabilities.toolCalling === 'native' || capabilities.toolCalling === 'prompt'
-    } catch { throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider capabilities are invalid', 500) }
+    } catch {
+      throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider capabilities are invalid', 500)
+    }
     const skillAllowedActions = await allowedActionsFor(knex, request.run.id)
     const requestedActions = request.purpose === 'subagent' && !config.orchestrationEnabled ? [] : request.actionAllowlist
-    const allowedActions = requestedActions === undefined
-      ? skillAllowedActions
-      : skillAllowedActions === undefined
-        ? [...requestedActions]
-        : requestedActions.filter(action => skillAllowedActions.includes(action))
+    const allowedActions =
+      requestedActions === undefined
+        ? skillAllowedActions
+        : skillAllowedActions === undefined
+          ? [...requestedActions]
+          : requestedActions.filter(action => skillAllowedActions.includes(action))
     return {
       transport: 'agent',
       executionMode: request.run.executionMode === 'agent' ? 'agent' : 'generation-only',
@@ -149,5 +191,13 @@ export const createWikiActionSessionProvider = (knex: Knex, config: WikiActionSe
       ...(allowedActions === undefined ? {} : { allowedActions })
     }
   }
-  return new KernelActionSessionProvider({ knex, kernel, resolveAdmission, refreshAdmission: resolveAdmission, timeoutMilliseconds: 16 * 60_000 })
+  return new KernelActionSessionProvider({
+    knex,
+    kernel,
+    resolveAdmission,
+    refreshAdmission: resolveAdmission,
+    validatePageEvidence: (request, authority, actionName, output, signal) =>
+      validatePageEvidence(authority, request.knowledgeContext, actionName, output, signal),
+    timeoutMilliseconds: 16 * 60_000
+  })
 }

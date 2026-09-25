@@ -52,7 +52,23 @@ const installSearchWiki = ({
     where: vi.fn().mockReturnThis(),
     whereIn: vi.fn().mockReturnThis(),
     andWhere: vi.fn(function (value) {
-      if (typeof value === 'function') value({ where: vi.fn().mockReturnThis(), orWhere: vi.fn().mockReturnThis() })
+      if (typeof value === 'function') {
+        value({
+          where: vi.fn().mockReturnThis(),
+          orWhere: vi.fn().mockReturnThis(),
+          andWhere: vi.fn().mockReturnThis(),
+          orWhereRaw: vi.fn().mockReturnThis()
+        })
+      }
+      return this
+    }),
+    whereExists: vi.fn(function (callback) {
+      callback({
+        select: vi.fn().mockReturnThis(),
+        from: vi.fn().mockReturnThis(),
+        join: vi.fn().mockReturnThis(),
+        whereRaw: vi.fn().mockReturnThis()
+      })
       return this
     })
   }
@@ -68,8 +84,9 @@ const installSearchWiki = ({
         }),
         modify: vi.fn(callback => {
           callback(where)
-          return Promise.resolve(queries.shift() ?? [])
-        })
+          return query
+        }),
+        then: resolve => Promise.resolve(queries.shift() ?? []).then(resolve)
       }
       return query
     })
@@ -97,7 +114,7 @@ const installSearchWiki = ({
     data: { searchEngine: { supportsPageFilters: true, query } },
     models: { knex, pages }
   }
-  return { pages, query, where }
+  return { pages, query, where, knex }
 }
 
 const loadOperations = () => vi.importFresh('../operations/pages.ts', import.meta.url).then(module => module.default)
@@ -448,4 +465,119 @@ describe('page search visibility', () => {
     await expect(operations.search({ requester: { id: 7 }, query: 'revisioned' })).resolves.toMatchObject({ results: [], totalHits: 0 })
   })
 
+  it('intersects host-selected IDs before public and knowledge windows and drops unscoped suggestions', async () => {
+    const selected = page({ id: 88, path: 'ops/rotation', title: 'Rotation Selected', tags: [{ tag: 'selected-tag' }] })
+    const outside = page({ id: 89, path: 'outside/rotation', title: 'Rotation Outside', tags: [{ tag: 'outside-tag' }] })
+    searchVisible.mockResolvedValueOnce([{
+      id: outside.id,
+      sourceRevision: outside.sourceRevision,
+      locale: outside.localeCode,
+      path: outside.path,
+      visibility: 'public',
+      score: 7,
+      matchedFields: ['knowledge'],
+      knowledge: {}
+    }])
+    const { query } = installSearchWiki({
+      pageResults: [[selected, outside], [selected, outside]],
+      engineResponse: {
+        results: [selected, outside].map(candidate => ({
+          id: candidate.id,
+          sourceRevision: candidate.sourceRevision,
+          locale: candidate.localeCode,
+          path: candidate.path,
+          score: 3,
+          matchedFields: ['title']
+        })),
+        suggestions: ['outside-tag'],
+        totalHits: 2
+      }
+    })
+    const operations = await loadOperations()
+
+    const result = await operations.search({
+      query: 'rotation',
+      pageIds: [88, 89],
+      agentScope: { kind: 'selected', pageIds: [88] }
+    })
+
+    expect(result.results.map(candidate => candidate.id)).toEqual([88])
+    expect(result.results[0].tags).toEqual(['selected-tag'])
+    expect(result.suggestions).toEqual([])
+    expect(result.totalHits).toBe(1)
+    expect(query).toHaveBeenCalledWith('rotation', expect.objectContaining({ pageIds: [88] }))
+    expect(searchVisible).toHaveBeenCalledWith(expect.objectContaining({ pageIds: [88] }))
+  })
+
+  it('keeps private candidate windows owner-scoped even when the host selection spans two owners', async () => {
+    const ownedPage = page({ id: 91, sourceRevision: '3', visibility: 'private', ownerId: 7, path: 'private/owner-seven', title: 'Needle Seven' })
+    const otherOwnerPage = page({ id: 92, sourceRevision: '4', visibility: 'private', ownerId: 8, path: 'private/owner-eight', title: 'Needle Eight' })
+    const { knex } = installSearchWiki({
+      pageResults: [[], [ownedPage, otherOwnerPage]],
+      privateRanks: [
+        { id: ownedPage.id, sourceRevision: ownedPage.sourceRevision, score: 2 },
+        { id: otherOwnerPage.id, sourceRevision: otherOwnerPage.sourceRevision, score: 2 }
+      ]
+    })
+    const operations = await loadOperations()
+
+    const result = await operations.search({
+      requester: { id: 7 },
+      query: 'needle',
+      pageIds: [91, 92],
+      agentScope: { kind: 'selected', pageIds: [91, 92] }
+    })
+
+    expect(result.results.map(candidate => candidate.id)).toEqual([91])
+    expect(result.results[0].ownerId).toBe(7)
+    const [privateSql, privateBindings] = knex.raw.mock.calls[0]
+    expect(privateSql).toContain('page."ownerId" = ?')
+    expect(privateSql).toContain('page.id = ANY(?::int[])')
+    expect(privateBindings).toEqual(expect.arrayContaining([7, [91, 92]]))
+  })
+
+  it('checks exact locale and section segment boundaries before the public search window', async () => {
+    const candidates = [
+      page({ id: 101, path: 'docs/runbook', title: 'Root' }),
+      page({ id: 102, path: 'docs/runbook/child', title: 'Child' }),
+      page({ id: 103, path: 'docs/runbook-extra', title: 'Sibling' }),
+      page({ id: 104, localeCode: 'fr', path: 'docs/runbook/foreign', title: 'Foreign locale' })
+    ]
+    const { query } = installSearchWiki({
+      pageResults: [candidates, candidates],
+      engineResponse: {
+        results: candidates.map(candidate => ({
+          id: candidate.id,
+          sourceRevision: candidate.sourceRevision,
+          locale: candidate.localeCode,
+          path: candidate.path,
+          score: 1,
+          matchedFields: ['title']
+        })),
+        suggestions: ['unproved'],
+        totalHits: candidates.length
+      }
+    })
+    const operations = await loadOperations()
+
+    const result = await operations.search({
+      query: 'runbook',
+      agentScope: { kind: 'section', locale: 'en', path: 'docs/runbook' }
+    })
+
+    expect(result.results.map(candidate => candidate.id).sort()).toEqual([101, 102])
+    expect(result.suggestions).toEqual([])
+    expect(query).toHaveBeenCalledWith('runbook', expect.objectContaining({ pageIds: [101, 102] }))
+  })
+  it('scopes page-derived tag search and tag listings', async () => {
+    const selected = page({ id: 111, tags: [{ id: 1, tag: 'scoped-tag' }] })
+    const outside = page({ id: 112, path: 'private/unrelated', tags: [{ id: 2, tag: 'scope-leak' }] })
+    const { where } = installSearchWiki({ pageResults: [[selected, outside], [selected, outside]] })
+    const operations = await loadOperations()
+    const scope = { kind: 'selected', pageIds: [111] }
+
+    await expect(operations.searchTags({ requester: { id: 7 }, query: 'scope', agentScope: scope })).resolves.toEqual(['scoped-tag'])
+    await expect(operations.listTags({ requester: { id: 7 }, agentScope: scope })).resolves.toEqual([{ id: 1, tag: 'scoped-tag' }])
+    expect(where.whereIn).toHaveBeenCalledWith('pages.id', [111])
+  })
 })
