@@ -19,8 +19,8 @@ export const offlineSelectionSources = (input: {
 
 export const offlinePrivateAccessStatus = (state: OfflinePageAccessState): string =>
   state === 'setup-required'
-    ? 'Offline saving for this private page needs one-time account setup.'
-    : 'Offline saving for this private page is locked. Unlock your account to continue.'
+    ? 'This page needs one-time account setup for private reading before it can be saved offline.'
+    : 'Private offline reading is locked. Unlock your account to save this page.'
 
 export const offlineIneligibilityIsQuiet = (input: {
   serverDenied: boolean

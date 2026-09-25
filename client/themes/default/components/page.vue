@@ -1867,8 +1867,8 @@ export default defineComponent({
       return 'Retry offline sync'
     },
     offlineControlTitle (): string {
+      if (this.offlineAccessState !== null) return offlinePrivateAccessStatus(this.offlineAccessState)
       if (this.offlineSelected) return `${this.offlineControlLabel} · ${this.offlineHasValidBody ? this.offlineSelectionSources : 'Copy not saved'}`
-      if (this.offlinePrivatePath && this.offlineAccessState !== null) return offlinePrivateAccessStatus(this.offlineAccessState)
       const localReason = this.offlineLocalIneligibilityReason
       if (localReason) return localReason
       if (this.offlineState === 'checking') return 'Checking offline availability.'
@@ -1878,7 +1878,7 @@ export default defineComponent({
       return this.offlineControlLabel
     },
     offlineControlDisabled (): boolean {
-      if (this.offlinePrivatePath && (this.offlineState === 'setup-required' || this.offlineState === 'locked')) return false
+      if (this.offlineState === 'setup-required' || this.offlineState === 'locked') return false
       if (!Number.isSafeInteger(this.pageId) || this.pageId < 1 || !this.offlineSelector()) return true
       if (this.offlineOwnedOperationId !== null || this.offlineActionLoading || this.offlineState === 'checking') return true
       if (this.offlineState === 'ineligible' && !this.offlineSelected && !this.offlinePolicy?.excluded) return true
@@ -1904,7 +1904,7 @@ export default defineComponent({
       return 'mdi-cloud-outline'
     },
     offlineStatusLabel (): string {
-      if (this.offlinePrivatePath && this.offlineAccessState !== null) return offlinePrivateAccessStatus(this.offlineAccessState)
+      if (this.offlineAccessState !== null) return offlinePrivateAccessStatus(this.offlineAccessState)
       const sources = this.offlineSelectionSources
       const selected = this.offlineSelected
       const selectedDetail = selected ? `Included via ${sources}.` : 'Not included in offline sync.'
@@ -2448,8 +2448,18 @@ export default defineComponent({
       this.offlineGeneration = null
       this.offlinePolicyRevision = null
       if (this.offlinePrivatePath && !this.offlinePrivateHandle()) {
-        this.offlineAccessState = 'locked'
-        this.offlineState = 'locked'
+        try {
+          const storage = await this.offlineStorageForOperation(operationId)
+          if (!storage || !this.isCurrentOfflineOperation(operationId, pageId)) return
+          const vault = await storage.getReadingVault()
+          if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+          this.offlineAccessState = vault ? 'locked' : 'setup-required'
+          this.offlineState = this.offlineAccessState
+        } catch {
+          if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+          this.offlineState = 'unavailable'
+          this.offlineAvailabilityError = 'Private offline reading is unavailable on this device.'
+        }
         return
       }
       if (!Number.isSafeInteger(pageId) || pageId < 1 || !this.offlineSelector()) {
@@ -2484,6 +2494,13 @@ export default defineComponent({
         this.offlineExpiresAt = existing?.snapshot.expiresAt ?? null
         if (this.offlineLocalIneligibilityReason) {
           this.offlineState = 'ineligible'
+        } else if (!this.offlinePrivatePath && this.isAuthenticated && pagePolicy?.availability === 'ineligible' && !pagePolicy.excluded && !existing) {
+          // A public page may be readable to this account but denied to Guest.
+          // Keep the Guest copy private: saving it requires the encrypted reading vault.
+          const vault = await storage.getReadingVault()
+          if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+          this.offlineAccessState = vault ? 'locked' : 'setup-required'
+          this.offlineState = this.offlineAccessState
         } else if (pagePolicy?.excluded || pagePolicy?.availability === 'ineligible') {
           this.offlineState = 'ineligible'
         } else if (existing) {
@@ -2685,6 +2702,15 @@ export default defineComponent({
         await this.refreshOfflinePageState()
         if (!isCurrentPage() || this.offlineOperationId !== authoritativeRefreshOperationId) return
 
+        if (this.offlineAccessState !== null) {
+          showNotification(wikiStore, {
+            style: 'warning',
+            message: offlinePrivateAccessStatus(this.offlineAccessState),
+            icon: 'alert'
+          })
+          this.offlinePassiveRefreshPending = false
+          return
+        }
         const refreshedOfflineState = widenOfflinePageState(this.offlineState)
         const pageFailed = Boolean(this.offlineAvailabilityError) || ['stale', 'sync-pending', 'error', 'unavailable', 'ineligible'].includes(refreshedOfflineState)
         if (pageFailed) {
@@ -2924,7 +2950,7 @@ export default defineComponent({
       this.offlineUnlockError = ''
     },
     async unlockPrivateOfflinePage (): Promise<void> {
-      if (!this.offlinePrivatePath || this.offlineState !== 'locked' || this.offlineUnlockBusy || !this.offlineUnlockSecret) return
+      if (!this.isAuthenticated || this.offlineState !== 'locked' || this.offlineAccessState !== 'locked' || this.offlineUnlockBusy || !this.offlineUnlockSecret) return
       const entered = this.offlineUnlockSecret
       this.offlineUnlockSecret = ''
       this.offlineUnlockError = ''
