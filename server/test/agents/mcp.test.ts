@@ -419,6 +419,31 @@ describe('Wiki MCP transport', () => {
     expect(legacyNames).not.toContain('wiki_apply_page_proposal')
   })
 
+  it('rejects modern requests when the protocol-version header is missing', async () => {
+    const port = (server.address() as AddressInfo).port
+    let omitProtocolVersion = false
+    let missingHeaderResponse: { status: number; body: unknown } | undefined
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+      authProvider: { token: async () => 'test-api-token' },
+      fetch: async (input, init) => {
+        if (!omitProtocolVersion) return fetch(input, init)
+        const headers = new Headers(init?.headers)
+        headers.delete('MCP-Protocol-Version')
+        const response = await fetch(input, { ...init, headers })
+        missingHeaderResponse = { status: response.status, body: await response.clone().json() }
+        return response
+      }
+    })
+    client = new Client({ name: 'wiki-mcp-missing-version-header-test', version: '1.0.0' }, { capabilities: {}, versionNegotiation: { mode: 'auto' } })
+    await client.connect(transport)
+    expect(client.getProtocolEra()).toBe('modern')
+
+    omitProtocolVersion = true
+    const result = await client.listTools().catch((error: unknown) => error)
+    expect(result).toBeInstanceOf(Error)
+    expect(missingHeaderResponse).toMatchObject({ status: 400, body: { error: { code: -32020 } } })
+  })
+
   it('does not authenticate a rejected guest MCP request twice', async () => {
     authenticate.mockImplementation((req, _res, next) => {
       Reflect.set(req, 'authContext', { kind: 'guest', userId: 2, ownershipUserId: null, principal: null })

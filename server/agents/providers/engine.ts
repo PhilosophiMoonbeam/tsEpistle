@@ -1565,11 +1565,16 @@ const assessClaimClauses = (claim: string, evidence: CitationEvidence): readonly
     }
     const terms = normalizedTerms(text)
     const passivePredicate = text.match(/^\s*(.+?)\s+(?:is|are)\s+(listed|included|provided)\s*[.!?]?\s*$/iu)?.[2]?.toLowerCase()
-    const candidates = evidence.sourceUnits.filter(
-      unit =>
+    const minimumMatches = Math.max(terms.length <= 2 ? 1 : 2, Math.ceil(terms.length * 0.6))
+    const candidates = evidence.sourceUnits.filter(unit => {
+      let matches = 0
+      for (const term of terms) if (unit.terms.has(term)) matches++
+      return (
+        matches >= minimumMatches &&
         (passivePredicate === undefined || passivePredicateTerms[passivePredicate]?.some(term => unit.textTerms.has(term)) === true) &&
         unitSupportsClause(text, unit)
-    )
+      )
+    })
     const matchedTerms = terms.filter(term => candidates.some(unit => unit.terms.has(term)))
     return { text, terms, matchedTerms, supported: candidates.length > 0, kind: 'fact' }
   })
@@ -1578,10 +1583,9 @@ const incrementCounts = (counts: Map<string, number>, values: readonly string[])
   for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1)
 }
 
-const hasSourceAffinity = (claim: string, evidence: CitationEvidence): boolean => {
+const hasSourceAffinity = (claim: string, sourceTerms: ReadonlySet<string>): boolean => {
   const terms = [...new Set(normalizedTerms(claim).filter(term => !/\d/u.test(term)))]
   if (terms.length === 0) return false
-  const sourceTerms = new Set(normalizedTerms(evidence.source))
   const matches = terms.filter(term => sourceTerms.has(term)).length
   return matches >= Math.min(2, terms.length) && matches / terms.length >= 0.5
 }
@@ -1593,6 +1597,7 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
   const citationIds: string[] = []
   const seenCitationIds = new Set<string>()
   const citationBoundLinks = new Map<string, number>()
+  const sourceLexicons = new Map<CitationEvidence, { readonly terms: ReadonlySet<string>; readonly numbers: readonly string[] }>()
   let previousMarkerEnd = 0
   for (const match of content.matchAll(citationMarker)) {
     const evidenceId = match[1] ?? ''
@@ -1630,10 +1635,14 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
     incrementCounts(citationBoundLinks, claimLinks)
     const exactLinks = claimLinks.every(link => evidence.renderedLinks.has(link))
     const exactCodeLinkLiterals = linkLookingCodeLiterals(assessmentClaim).every(literal => evidence.source.includes(literal))
-    const sourceNumbers = numericSegments(evidence.source)
+    let sourceLexicon = sourceLexicons.get(evidence)
+    if (!sourceLexicon) {
+      sourceLexicon = { terms: new Set(normalizedTerms(evidence.source)), numbers: numericSegments(evidence.source) }
+      sourceLexicons.set(evidence, sourceLexicon)
+    }
     const exactNumbers =
-      !hasSourceAffinity(assessmentClaim, evidence) ||
-      numericSegments(assessmentClaim).every(segment => sourceNumbers.some(source => source.includes(segment) || segment.includes(source)))
+      !hasSourceAffinity(assessmentClaim, sourceLexicon.terms) ||
+      numericSegments(assessmentClaim).every(segment => sourceLexicon.numbers.some(source => source.includes(segment) || segment.includes(source)))
     const clauseAssessments = assessClaimClauses(assessmentClaim, evidence)
     const matchedTerms = [...new Set(clauseAssessments.flatMap(clause => clause.matchedTerms))]
     const sourceLocalSupported = clauseAssessments.length > 0 && clauseAssessments.every(clause => clause.supported)
