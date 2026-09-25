@@ -1,5 +1,14 @@
 # Deployment issues: offline access and Git storage
 
+## Repair status (2026-09-25)
+
+- **Git storage:** The deployed app now permits the Git target to sync while server offline mode remains enabled. The Git target reports `operational`; startup fetched `master`, completed its pull and push, and retained the persistent verified SSH host keys. The working copy and remote are still at `b5a3457` until the administrator reviews **Add Untracked Changes** and **Force Sync**. Those two catch-up actions and verification of the resulting remote revision remain pending.
+- **App updates:** A waiting service worker now starts the existing safe-update protocol automatically. Unsafe editor work and tabs that do not approve activation still defer the update. Focused service-worker and PWA lifecycle tests passed; an authenticated deployed browser update has not yet been observed.
+- **Offline page snapshots:** A signed-in user without a private reading vault now reaches the normal offline sync path. The focused browser regression passed; an authenticated deployed browser check of saved pages and offline draft review remains pending.
+- **Deployment:** App image `local/tsepistle:0.1.0-alpha.1-3aa23a7f` is healthy on the maintained tailnet. The PostgreSQL container was preserved. A paired database and wiki-data recovery copy was captured at `/opt/tsepistle-wiki/backups/git-resume-20260925T024803Z` before resuming Git storage.
+
+The sections below record the original investigation and its evidence before the repair.
+
 Investigated 2026-09-25 against `https://wiki.timoneilassociates.com/`, the running `tsepistle-wiki-app-1` container (`local/tsepistle:0.1.0-alpha.1-70aa95c4`), its mounted configuration, its Git worktree, and read-only database queries. The public site and `/sw.js` respond, but authenticated browser state was not available for a live offline workflow test. No runtime configuration, database rows, application code, or Git storage contents were changed.
 
 ## 1. Git two-way storage is paused by deployment-wide offline mode
