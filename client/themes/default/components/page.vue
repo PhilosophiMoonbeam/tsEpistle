@@ -1794,6 +1794,7 @@ export default defineComponent({
       return new URL(`${scope}${locale}/${this.path}`, window.location.origin).href
     },
     offlinePrivatePath (): boolean {
+      void this.offlineReadingStateVersion
       return this.visibility === 'private' || this.offlinePrivateHandle() !== null
     },
     offlineStatusId (): string {
