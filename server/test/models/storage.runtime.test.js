@@ -5,6 +5,7 @@ const template = Object.fromEntries(
 )
 vi.mockModule('../../modules/storage/disk/storage.ts', import.meta.url, () => ({ default: template }))
 vi.mockModule('../../modules/storage/sftp/storage.ts', import.meta.url, () => ({ default: template }))
+vi.mockModule('../../modules/storage/git/storage.ts', import.meta.url, () => ({ default: template }))
 describe('Storage runtime replacement and synchronization', () => {
   let Storage, rows, scheduler
   const row = (value = 'first') => ({
@@ -220,6 +221,28 @@ describe('Storage runtime replacement and synchronization', () => {
     expect(Storage.activeTargets.map(target => target.key)).toEqual(['disk'])
     expect(Storage.runtimeTargets().find(target => target.key === 'sftp')).toMatchObject({ active: false, paused: true })
     expect(rows[1].state.status).toBe('paused')
+  })
+  it('allows only Git through the explicit offline exception and revokes it immediately', async () => {
+    global.WIKI.config = { offline: true, allowGitSyncWhileOffline: true }
+    global.WIKI.data.storage.push(
+      { key: 'git', isAvailable: true, props: {}, schedule: 'PT30M', actions: [{ handler: 'dump' }] },
+      { key: 'sftp', isAvailable: true, props: {}, schedule: false, actions: [{ handler: 'dump' }] }
+    )
+    rows.push({ ...row('git-repo'), key: 'git', syncInterval: 'PT30M' }, { ...row('remote'), key: 'sftp' })
+    await Storage.initTargets()
+    expect(Storage.activeTargets.map(target => target.key)).toEqual(['disk', 'git'])
+    expect(Storage.runtimeTargets().find(target => target.key === 'git')).toMatchObject({ active: true, paused: false })
+    expect(Storage.runtimeTargets().find(target => target.key === 'sftp')).toMatchObject({ active: false, paused: true })
+    const git = Storage.activeTargets.find(target => target.key === 'git')
+    expect(scheduler.registerJob).toHaveBeenCalledWith(
+      { name: 'sync-storage', immediate: false, schedule: 'PT30M', repeat: true },
+      { targetKey: 'git', generation: git.runtimeGeneration }
+    )
+    expect(await Storage.syncTarget('git', git.runtimeGeneration)).toBe(true)
+    global.WIKI.config.allowGitSyncWhileOffline = false
+    expect(Storage.runtimeTargets().find(target => target.key === 'git')).toMatchObject({ paused: true })
+    expect(await Storage.syncTarget('git', git.runtimeGeneration)).toBe(false)
+    await expect(Storage.executeAction('git', 'dump')).rejects.toThrow('paused in offline mode')
   })
   it('stops new remote effects immediately when offline policy changes', async () => {
     global.WIKI.config = { offline: false }

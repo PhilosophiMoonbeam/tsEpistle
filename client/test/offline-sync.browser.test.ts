@@ -237,7 +237,7 @@ export async function run(operation, payload = {}) {
       if ((kind === 'refill' || kind === 'refill-locales') && pageId === 1) return json({ message: 'Snapshot not found.' }, 404);
       if (kind === 'refill-locales' && pageId === 2) return json({ message: 'Snapshot not found.' }, 404);
       if (kind === 'transient' && pageId === 1) return json({ message: 'Temporary failure.' }, 503);
-      const allowed = fatalSibling ? [1, 2] : retryScenario || lifecycleScenario || kind === 'manual' || kind === 'reselect-denied' || kind === 'fence' || kind === 'dispose' || kind === 'dispose-commit' || kind.startsWith('private-manual') || kind.startsWith('private-public-') || kind.startsWith('private-retirement') || kind.startsWith('private-denied-') || kind === 'private-strict-context'
+      const allowed = fatalSibling ? [1, 2] : retryScenario || lifecycleScenario || kind === 'manual' || kind === 'authenticated-public-manual' || kind === 'reselect-denied' || kind === 'fence' || kind === 'dispose' || kind === 'dispose-commit' || kind.startsWith('private-manual') || kind.startsWith('private-public-') || kind.startsWith('private-retirement') || kind.startsWith('private-denied-') || kind === 'private-strict-context'
         ? [1]
         : kind === 'automatic' || kind === 'private-automatic'
           ? Array.from({ length: 10 }, (_value, index) => index + 1)
@@ -318,7 +318,7 @@ export async function run(operation, payload = {}) {
         }
         return await originalPutSnapshot(siteId, snapshot, options);
       };
-    } else if (retryScenario || lifecycleScenario || kind === 'manual' || kind === 'reselect-denied' || kind === 'denied-manual') {
+    } else if (retryScenario || lifecycleScenario || kind === 'manual' || kind === 'authenticated-public-manual' || kind === 'reselect-denied' || kind === 'denied-manual') {
       await storage.setManualOfflineIntent(selector(1), true);
     } else if (kind === 'automatic') {
       await storage.setAutomaticSavingEnabled(true);
@@ -486,7 +486,9 @@ export async function run(operation, payload = {}) {
             getReadingHandle: () => privateHandle
           }
         : {
-            getCurrentAccount: () => null,
+            getCurrentAccount: () => kind === 'authenticated-public-manual'
+              ? ({ accountId: PRIVATE_ACCOUNT_ID, authVersion: PRIVATE_AUTH_VERSION, verified: true })
+              : null,
             getReadingHandle: () => null
           })
     });
@@ -987,6 +989,14 @@ describe('foreground offline sync coordinator', () => {
   })
   test('keeps the public Guest path unchanged without an account or reading handle', async () => {
     const run = await runScenario('manual')
+    expect(run.result.status).toBe('complete')
+    expect(run.result.saved).toBe(1)
+    expect(snapshotRequests(run)).toEqual([1])
+    expect(run.privateRecords).toBeUndefined()
+  })
+
+  test('syncs selected public pages for a verified account without a private reading handle', async () => {
+    const run = await runScenario('authenticated-public-manual')
     expect(run.result.status).toBe('complete')
     expect(run.result.saved).toBe(1)
     expect(snapshotRequests(run)).toEqual([1])

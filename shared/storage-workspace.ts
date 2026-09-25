@@ -67,6 +67,7 @@ export interface StorageConfigurationEvent {
 export interface StorageConfigurationWorkspace {
   targets: StorageTargetView[]
   offline: boolean
+  gitSyncAllowedWhileOffline?: boolean
   fingerprint: string
   revision: string
   observedAt: string

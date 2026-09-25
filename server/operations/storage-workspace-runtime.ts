@@ -7,9 +7,10 @@ import { executingStorageOperations } from '../helpers/storage-active-operations
 import { storageRecord, storageModuleDefinition } from '../repositories/storage-configuration.ts'
 import { createStorageConfigurationStore } from './storage-configuration.ts'
 import { createStorageActionStore } from './storage-actions.ts'
+import { storageTargetPausedOffline } from '../helpers/storage-offline-policy.ts'
 interface Runtime {
   models: { knex: Knex; storage: typeof Storage }
-  config: { sessionSecret: string; offline?: boolean }
+  config: { sessionSecret: string; offline?: boolean; allowGitSyncWhileOffline?: boolean }
   data: { storage: unknown[] }
 }
 let database: Knex | undefined, store: ReturnType<typeof createStorageWorkspaceStore> | undefined
@@ -24,7 +25,7 @@ export const createStorageWorkspaceStore = (wiki: Runtime) => {
     db: wiki.models.knex,
     configuration,
     runtime: () => wiki.models.storage.runtimeTargets(),
-    offline: () => wiki.config.offline === true,
+    offline: key => key !== null && storageTargetPausedOffline(wiki.config, key),
     isExecuting: id => executingStorageOperations.has(id)
   })
   return {
@@ -52,6 +53,7 @@ export const createStorageWorkspaceStore = (wiki: Runtime) => {
           runtime = wiki.models.storage.runtimeTargets()
         const result = {
           ...configuration.presentState(saved),
+          gitSyncAllowedWhileOffline: wiki.config.offline === true && wiki.config.allowGitSyncWhileOffline === true,
           operations,
           runtime: saved.rows.map(row =>
             storageTargetObservation(

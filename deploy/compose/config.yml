@@ -18,6 +18,8 @@ ssl:
 logLevel: info
 logFormat: default
 offline: true
+# Git storage is reviewed separately; keep other outbound integrations paused.
+allowGitSyncWhileOffline: true
 ha: false
 dataPath: /wiki/data
 
