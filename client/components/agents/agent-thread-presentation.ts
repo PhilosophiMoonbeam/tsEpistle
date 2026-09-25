@@ -5,6 +5,8 @@ import type {
   AgentPageActionLink,
   AgentProposalStatus,
   AgentProposalView,
+  AgentRunView,
+  AgentRunWorkingPhase,
   AgentTaskView,
   AgentToolCallView
 } from '../../../shared/agents/contracts.ts'
@@ -153,6 +155,7 @@ export interface AgentRunPresentation extends AgentRunTools {
   readonly tasks: readonly AgentTaskView[]
   readonly pageLinks: readonly AgentPageActionLink[]
   readonly activityLabel: string
+  readonly workingPhase?: AgentRunWorkingPhase
 }
 
 export interface AgentMessageRecovery {
@@ -239,7 +242,7 @@ const cachedAgentCitationGroups = (citations: readonly AgentCitation[], cached: 
   return preservedOrder ? cached : canonicalGroups
 }
 
-const messageStatusLabel = (message: AgentMessageView): string => {
+const messageStatusLabel = (message: AgentMessageView, run: AgentRunPresentation | null): string => {
   if (message.status === 'complete') return ''
   if (message.role === 'user') {
     if (message.status === 'failed') return 'Send failed'
@@ -248,6 +251,7 @@ const messageStatusLabel = (message: AgentMessageView): string => {
   }
   if (message.status === 'failed') return 'Response failed'
   if (message.status === 'cancelled') return 'Response stopped'
+  if (run?.workingPhase === 'correcting') return 'Checking and correcting a response'
   return 'Preparing a response'
 }
 
@@ -270,7 +274,8 @@ export const buildAgentThreadPresentation = (
   tools: readonly AgentToolCallView[],
   tasks: readonly AgentTaskView[],
   proposals: readonly AgentProposalView[],
-  previous?: AgentThreadPresentation
+  previous?: AgentThreadPresentation,
+  currentRun?: AgentRunView | null
 ): AgentThreadPresentation => {
   const groupedTools = groupAgentToolsByRun(tools, proposals)
   const mutableRuns = new Map<string, MutableRunPresentation>()
@@ -293,18 +298,21 @@ export const buildAgentThreadPresentation = (
 
   const runPresentations = new Map<string, AgentRunPresentation>()
   for (const [runId, run] of mutableRuns) {
+    const workingPhase = currentRun?.id === runId && currentRun.status === 'running' ? currentRun.workingPhase : undefined
     const cached = previous?.runs.get(runId)
     if (
       cached &&
       hasSameSemanticSignature(run.activity, cached.activity) &&
       hasSameSemanticSignature(run.proposals, cached.proposals) &&
-      hasSameSemanticSignature(run.tasks, cached.tasks)
+      hasSameSemanticSignature(run.tasks, cached.tasks) &&
+      cached.workingPhase === workingPhase
     ) {
       runPresentations.set(runId, cached)
       continue
     }
     runPresentations.set(runId, {
       ...run,
+      ...(workingPhase === undefined ? {} : { workingPhase }),
       pageLinks: agentAppliedPageLinks(run.proposals),
       activityLabel: agentActivityLabel(run.activity)
     })
@@ -330,7 +338,7 @@ export const buildAgentThreadPresentation = (
       continue
     }
 
-    const statusLabel = messageStatusLabel(canonicalMessage)
+    const statusLabel = messageStatusLabel(canonicalMessage, run)
     orderedMessages.push({
       message: canonicalMessage,
       run,
@@ -345,7 +353,7 @@ export const buildAgentThreadPresentation = (
   return { runs: runPresentations, messages: messagePresentations, orderedMessages }
 }
 
-export type AgentLiveAnnouncementKind = 'preparing' | 'approval' | 'complete' | 'stopped' | 'failed'
+export type AgentLiveAnnouncementKind = 'preparing' | 'correcting' | 'approval' | 'complete' | 'stopped' | 'failed'
 
 export interface AgentLiveAnnouncement {
   readonly key: string
@@ -356,13 +364,18 @@ export interface AgentLiveAnnouncement {
 
 const liveAnnouncementCopy: Record<AgentLiveAnnouncementKind, string> = {
   preparing: 'Preparing a response.',
+  correcting: 'Checking and correcting a response.',
   approval: 'Review needed before the response can continue.',
   complete: 'Response complete.',
   stopped: 'Response stopped.',
   failed: 'Response failed.'
 }
 
-export const agentLiveAnnouncement = (messages: readonly AgentMessageView[], tools: readonly AgentToolCallView[]): AgentLiveAnnouncement | null => {
+export const agentLiveAnnouncement = (
+  messages: readonly AgentMessageView[],
+  tools: readonly AgentToolCallView[],
+  currentRun?: AgentRunView | null
+): AgentLiveAnnouncement | null => {
   let latestAssistant: AgentMessageView | undefined
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
@@ -380,7 +393,8 @@ export const agentLiveAnnouncement = (messages: readonly AgentMessageView[], too
   else {
     const runId = latestAssistant.runId
     const awaitingApproval = runId !== null && tools.some(tool => tool.runId === runId && tool.state === 'awaitingApproval')
-    kind = awaitingApproval ? 'approval' : 'preparing'
+    const correcting = currentRun?.status === 'running' && currentRun.id === runId && currentRun.workingPhase === 'correcting'
+    kind = awaitingApproval ? 'approval' : correcting ? 'correcting' : 'preparing'
   }
   return {
     key: `${latestAssistant.id}:${kind}`,

@@ -94,6 +94,12 @@ When an otherwise substantive summary fails this gate, an existing evidence-corr
 
 When genuine provider capacity is exhausted, synthesis remains tool-free, the answer receives a bounded coverage notice, and the run retains the existing partial/non-retryable `AGENT_CONTEXT_TOO_LARGE` assessment. It must not cite omitted material, fabricate missing findings, or repeat the same collection automatically. This generic fail-closed path is separate from intentional, truthfully disclosed excerpt bounds.
 
+### Scoped Wiki evidence and run metrics
+
+The admitted action session applies the frozen source scope separately from live requester permissions across current and historical page reads, OKF, discovery and other page-bearing results. Current citations retain `page:<id>:revision:<revision>`; historical citations add `version:<versionId>` before the revision and cannot collide with another historical version at that revision. Reused, recovered and child page evidence requires fresh owner/scope/revision verification before provider delivery. Page metadata is not read evidence. The engine admits exact canonical source units only when delivered to that provider request; bounded child-unit context and post-compaction reentry do not authorize an unread unit. If a read becomes unavailable, provider history receives a generic unavailable result rather than the stale source. Neither a summary nor a model-planned task grants authority.
+
+The current-attempt correction phase is derived from persisted `model.turn` and `evidence.provenance` events; the client shows it without exposing the rejected draft. Numeric `model.turn.performance` and `usage.updated.performance` fields measure local monotonic stages; `tool.completed.actionElapsedMs` covers action invocation. `dispatchToFirstChunkMs` is null for buffered responses; `firstPersistedDeltaAfterAcceptanceMs` measures durable publication, not arrival at the browser. Provider-reported tokens are separate from conservative reserved exposure and are null for estimated-usage providers. Review latency and cost against a fixed corpus/profile before changing concurrency or context caps.
+
 ### Development Sprint local-tailnet deployment and rollback
 
 Use this path for routine code-only feature and fix deployment to the maintained local tailnet:

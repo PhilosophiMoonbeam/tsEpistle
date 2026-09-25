@@ -2688,6 +2688,10 @@ export class AgentProductRuntime {
         if (effectiveGroundedExpiresAt !== null && Date.parse(effectiveGroundedExpiresAt) <= Date.now())
           throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'Retained source context has expired; restart this turn from available history', 413)
       }
+      let acceptedTurnCommittedAt: number | null = null
+      let modelTurnPersistenceMs = 0
+      let firstDeltaAfterAcceptanceMs: number | null = null
+      let firstDeltaPersistenceMs: number | null = null
       const sink: AgentEngineSink = {
         commitCompaction: async receipt => {
           executionSignal.throwIfAborted()
@@ -2824,8 +2828,13 @@ export class AgentProductRuntime {
           assertGroundedContextFresh()
           if (typeof delta !== 'string' || delta.length === 0 || delta.length > 16_000 || content.length + delta.length > 128_000)
             throw new AgentRepositoryError('INVALID_ENGINE_DELTA', 'Inference engine emitted an invalid text delta', 500)
+          const persistenceStartedAt = performance.now()
           content += delta
           await this.#appendPresentationEvent(claim, 'message.delta', { messageId: claim.assistantMessageId, delta }, { status: 'streaming', content })
+          if (firstDeltaPersistenceMs === null) {
+            firstDeltaPersistenceMs = performance.now() - persistenceStartedAt
+            if (acceptedTurnCommittedAt !== null) firstDeltaAfterAcceptanceMs = performance.now() - acceptedTurnCommittedAt
+          }
         },
         event: async (type, data) => {
           if (executionSignal.aborted) throw executionSignal.reason
@@ -2841,7 +2850,12 @@ export class AgentProductRuntime {
               ...(groundedExpiresAt !== null && Date.parse(groundedExpiresAt) <= Date.now() ? { content: '', contentPurged: true } : {})
             }
           }
+          const persistenceStartedAt = performance.now()
           await this.#appendPresentationEvent(claim, type, persisted)
+          if (type === 'model.turn') {
+            modelTurnPersistenceMs += performance.now() - persistenceStartedAt
+            if (data.outcome === 'answer_accepted') acceptedTurnCommittedAt = performance.now()
+          }
         },
         googleSearchSuggestions: async suggestions => {
           if (executionSignal.aborted) throw executionSignal.reason
@@ -2959,6 +2973,12 @@ export class AgentProductRuntime {
                   totalTokens: goalBudgetClassification.totalTokens,
                   costMicros: goalBudgetClassification.costMicros
                 }
+        },
+        performance: {
+          queueWaitMs: claim.startedAt === null ? null : Math.max(0, Date.parse(claim.startedAt) - Date.parse(claim.queuedAt)),
+          modelTurnPersistenceMs,
+          firstPersistedDeltaAfterAcceptanceMs: firstDeltaAfterAcceptanceMs,
+          firstDeltaPersistenceMs
         }
       })
       if (result.suggestions !== undefined) await this.#appendPresentationEvent(claim, 'suggestions.updated', { suggestions: result.suggestions })

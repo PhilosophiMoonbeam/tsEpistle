@@ -86,6 +86,29 @@ const factoryFor = (
       preserveThoughtBlock: options.preserveThoughtBlock
     })
   }) as unknown as AgentProviderFactory
+const pageEvidenceActions = (
+  validatePageEvidence?: (actionName: string, output: unknown, signal: AbortSignal) => Promise<boolean>
+): AgentActionSessionProvider =>
+  ({
+    open: async () => ({
+      functions: [
+        {
+          name: 'pages.get',
+          title: 'Read page',
+          description: 'Read canonical page evidence',
+          parameters: { type: 'object', properties: {} },
+          risk: 'read'
+        }
+      ],
+      invoke: async () => {
+        throw new Error('No direct page read was expected')
+      },
+      snapshot: async () => ({}),
+      close: () => undefined,
+      authoritySha256: null,
+      ...(validatePageEvidence === undefined ? {} : { validatePageEvidence })
+    })
+  }) as unknown as AgentActionSessionProvider
 const utf8Chunks = (value: string, maximumBytes: number): readonly string[] => {
   const chunks: string[] = []
   let current = ''
@@ -396,7 +419,14 @@ describe('Ax orchestration stages', () => {
             content: JSON.stringify({
               taskId,
               outcome: 'completed',
-              claims: [{ text: 'Alpha requires review. [[cite:page:1]]', evidenceIds: ['page:1'], sourceRevisionIds: ['rev-1'], confidence: 'high' }],
+              claims: [
+                {
+                  text: 'Alpha requires review. [[cite:page:1:revision:rev-1]]',
+                  evidenceIds: ['page:1:revision:rev-1'],
+                  sourceRevisionIds: ['rev-1'],
+                  confidence: 'high'
+                }
+              ],
               conflicts: [],
               unanswered: [],
               recommendedFollowups: []
@@ -408,11 +438,13 @@ describe('Ax orchestration stages', () => {
     const chat = vi.fn(async () => responses.shift()!)
     const invoke = vi.fn(async () => ({
       id: 1,
+      locale: 'en',
+      path: 'alpha',
       sourceRevision: 'rev-1',
       title: 'Alpha',
       contentType: 'markdown',
       content: 'Alpha requires review.',
-      citation: { evidenceId: 'page:1', label: 'Alpha', href: '/en/alpha' },
+      citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
       citationSections: []
     }))
     const authoritySha256 = 'b'.repeat(64)
@@ -582,10 +614,14 @@ describe('Ax orchestration stages', () => {
 
   it('rejects root synthesis until every completed task has cited coverage', async () => {
     const responses: AxChatResponse[] = [
-      { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1]]' }] },
-      { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1]] Beta requires audit. [[cite:page:2]]' }] }
+      { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1:revision:rev-1]]' }] },
+      { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1:revision:rev-1]] Beta requires audit. [[cite:page:2:revision:rev-2]]' }] }
     ]
-    const chat = vi.fn(async () => responses.shift()!)
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return responses.shift()!
+    })
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
@@ -610,7 +646,7 @@ describe('Ax orchestration stages', () => {
               unanswered: [],
               recommendedFollowups: []
             },
-            evidenceIds: ['page:1'],
+            evidenceIds: ['page:1:revision:rev-1'],
             conflictEvidenceGroups: []
           },
           {
@@ -630,7 +666,7 @@ describe('Ax orchestration stages', () => {
               unanswered: [],
               recommendedFollowups: []
             },
-            evidenceIds: ['page:2'],
+            evidenceIds: ['page:2:revision:rev-2'],
             conflictEvidenceGroups: []
           }
         ],
@@ -642,9 +678,14 @@ describe('Ax orchestration stages', () => {
             actionCallId: 'alpha-read',
             actionName: 'pages.get',
             output: {
+              id: 1,
+              locale: 'en',
+              path: 'alpha',
+              title: 'Alpha',
+              contentType: 'markdown',
               sourceRevision: 'rev-1',
               content: 'Alpha requires review.',
-              citation: { evidenceId: 'page:1', label: 'Alpha', href: '/en/alpha' },
+              citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
               citationSections: []
             }
           },
@@ -654,9 +695,14 @@ describe('Ax orchestration stages', () => {
             actionCallId: 'beta-read',
             actionName: 'pages.get',
             output: {
+              id: 2,
+              locale: 'en',
+              path: 'beta',
+              title: 'Beta',
+              contentType: 'markdown',
               sourceRevision: 'rev-2',
               content: 'Beta requires audit.',
-              citation: { evidenceId: 'page:2', label: 'Beta', href: '/en/beta' },
+              citation: { evidenceId: 'page:2:revision:rev-2', label: 'Beta', href: '/en/beta' },
               citationSections: []
             }
           }
@@ -664,15 +710,64 @@ describe('Ax orchestration stages', () => {
       }
     }
     const text = vi.fn(async () => {})
+    const validatePageEvidence = vi.fn(async () => true)
 
-    await new AxAgentEngine(factoryFor(chat)).execute(request, { text, event })
+    await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(validatePageEvidence)).execute(request, { text, event })
 
     expect(chat).toHaveBeenCalledTimes(2)
+    expect(
+      calls[0]?.chatPrompt.some(message => message.role === 'user' && typeof message.content === 'string' && message.content.includes('Alpha requires review.'))
+    ).toBe(true)
+    expect(
+      calls[0]?.chatPrompt.some(message => message.role === 'user' && typeof message.content === 'string' && message.content.includes('Beta requires audit.'))
+    ).toBe(true)
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
       expect.objectContaining({ accepted: false, issues: expect.arrayContaining([expect.stringContaining('Review beta')]) }),
-      expect.objectContaining({ accepted: true, finalCitationIds: ['page:1', 'page:2'] })
+      expect.objectContaining({ accepted: true, finalCitationIds: ['page:1:revision:rev-1', 'page:2:revision:rev-2'] })
     ])
-    expect(text).toHaveBeenCalledWith('Alpha requires review. [[cite:page:1]] Beta requires audit. [[cite:page:2]]')
+    expect(text).toHaveBeenCalledWith('Alpha requires review. [[cite:page:1:revision:rev-1]] Beta requires audit. [[cite:page:2:revision:rev-2]]')
+  })
+  it('does not trust child evidence seeds without a host page validator', async () => {
+    const evidence = {
+      id: 1,
+      locale: 'en',
+      path: 'alpha',
+      title: 'Alpha',
+      contentType: 'markdown',
+      sourceRevision: 'rev-1',
+      content: 'Alpha requires review.',
+      citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
+      citationSections: []
+    }
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1:revision:rev-1]]' }] }
+    })
+    const text = vi.fn(async () => {})
+    const request: AgentEngineRequest = {
+      ...baseRequest(new AbortController().signal),
+      limits: { maxTurns: 1, maxToolCalls: 1, maxOutputTokens: 256 },
+      research: {
+        packets: [],
+        incompleteTasks: [],
+        evidenceSeeds: [
+          {
+            taskId: '00000000-0000-4000-8000-000000000021',
+            subagentRunId: '00000000-0000-4000-8000-000000000031',
+            actionCallId: 'alpha-read',
+            actionName: 'pages.get',
+            output: evidence
+          }
+        ]
+      }
+    }
+
+    await expect(new AxAgentEngine(factoryFor(chat), pageEvidenceActions()).execute(request, { text, event: async () => {} })).rejects.toMatchObject({
+      code: 'AGENT_EVIDENCE_INVALID'
+    })
+    expect(calls[0]?.chatPrompt.some(message => message.role === 'user' && message.content === 'Alpha requires review.')).toBe(false)
+    expect(text).not.toHaveBeenCalled()
   })
 
   it('accepts conflict-only specialist packets after two owned page reads', async () => {
@@ -685,7 +780,7 @@ describe('Ax orchestration stages', () => {
       conflicts: [
         {
           claim: 'The alpha and beta runbooks prescribe different review requirements.',
-          evidenceIds: ['page:1', 'page:2'],
+          evidenceIds: ['page:1:revision:rev-1', 'page:2:revision:rev-2'],
           explanation: 'Alpha requires review while beta requires audit.'
         }
       ],
@@ -712,11 +807,13 @@ describe('Ax orchestration stages', () => {
       const id = input.id
       return {
         id,
+        locale: 'en',
+        path: id === 1 ? 'alpha' : 'beta',
         sourceRevision: `rev-${id}`,
         title: id === 1 ? 'Alpha' : 'Beta',
         contentType: 'markdown',
         content: id === 1 ? 'Alpha requires review.' : 'Beta requires audit.',
-        citation: { evidenceId: `page:${id}`, label: id === 1 ? 'Alpha' : 'Beta', href: `/en/${id === 1 ? 'alpha' : 'beta'}` },
+        citation: { evidenceId: `page:${id}:revision:rev-${id}`, label: id === 1 ? 'Alpha' : 'Beta', href: `/en/${id === 1 ? 'alpha' : 'beta'}` },
         citationSections: []
       }
     })
@@ -759,8 +856,8 @@ describe('Ax orchestration stages', () => {
 
   it('rejects root synthesis until validated conflicts are explicitly disclosed', async () => {
     const responses: AxChatResponse[] = [
-      { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1]] Beta requires audit. [[cite:page:2]]' }] },
-      { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1]] However, beta requires audit. [[cite:page:2]]' }] }
+      { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1:revision:rev-1]] Beta requires audit. [[cite:page:2:revision:rev-2]]' }] },
+      { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1:revision:rev-1]] However, beta requires audit. [[cite:page:2:revision:rev-2]]' }] }
     ]
     const chat = vi.fn(async () => responses.shift()!)
     const event = vi.fn(async (...args: [string, unknown]) => {
@@ -787,15 +884,15 @@ describe('Ax orchestration stages', () => {
               conflicts: [
                 {
                   claim: 'The runbooks prescribe different review requirements.',
-                  evidenceIds: ['page:1', 'page:2'],
+                  evidenceIds: ['page:1:revision:rev-1', 'page:2:revision:rev-2'],
                   explanation: 'Alpha requires review while beta requires audit.'
                 }
               ],
               unanswered: [],
               recommendedFollowups: []
             },
-            evidenceIds: ['page:1', 'page:2'],
-            conflictEvidenceGroups: [['page:1', 'page:2']]
+            evidenceIds: ['page:1:revision:rev-1', 'page:2:revision:rev-2'],
+            conflictEvidenceGroups: [['page:1:revision:rev-1', 'page:2:revision:rev-2']]
           }
         ],
         incompleteTasks: [],
@@ -806,9 +903,14 @@ describe('Ax orchestration stages', () => {
             actionCallId: 'alpha-read',
             actionName: 'pages.get',
             output: {
+              id: 1,
+              locale: 'en',
+              path: 'alpha',
+              title: 'Alpha',
+              contentType: 'markdown',
               sourceRevision: 'rev-1',
               content: 'Alpha requires review.',
-              citation: { evidenceId: 'page:1', label: 'Alpha', href: '/en/alpha' },
+              citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
               citationSections: []
             }
           },
@@ -818,9 +920,14 @@ describe('Ax orchestration stages', () => {
             actionCallId: 'beta-read',
             actionName: 'pages.get',
             output: {
+              id: 2,
+              locale: 'en',
+              path: 'beta',
+              title: 'Beta',
+              contentType: 'markdown',
               sourceRevision: 'rev-2',
               content: 'Beta requires audit.',
-              citation: { evidenceId: 'page:2', label: 'Beta', href: '/en/beta' },
+              citation: { evidenceId: 'page:2:revision:rev-2', label: 'Beta', href: '/en/beta' },
               citationSections: []
             }
           }
@@ -829,14 +936,17 @@ describe('Ax orchestration stages', () => {
     }
     const text = vi.fn(async () => {})
 
-    await new AxAgentEngine(factoryFor(chat)).execute(request, { text, event })
+    await new AxAgentEngine(
+      factoryFor(chat),
+      pageEvidenceActions(async () => true)
+    ).execute(request, { text, event })
 
     expect(chat).toHaveBeenCalledTimes(2)
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
       expect.objectContaining({ accepted: false, issues: expect.arrayContaining([expect.stringContaining('explicitly disclosing')]) }),
-      expect.objectContaining({ accepted: true, finalCitationIds: ['page:1', 'page:2'] })
+      expect.objectContaining({ accepted: true, finalCitationIds: ['page:1:revision:rev-1', 'page:2:revision:rev-2'] })
     ])
-    expect(text).toHaveBeenCalledWith('Alpha requires review. [[cite:page:1]] However, beta requires audit. [[cite:page:2]]')
+    expect(text).toHaveBeenCalledWith('Alpha requires review. [[cite:page:1:revision:rev-1]] However, beta requires audit. [[cite:page:2:revision:rev-2]]')
   })
   it('keeps a post-dispatch reservation unsettled when rejecting a post-response capability violation', async () => {
     const response = {

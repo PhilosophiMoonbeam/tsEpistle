@@ -1,5 +1,5 @@
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
-import type { AgentCitation, AgentMessageView, AgentProposalView, AgentTaskView, AgentToolCallView } from '../../../shared/agents/contracts.ts'
+import type { AgentCitation, AgentMessageView, AgentProposalView, AgentRunView, AgentTaskView, AgentToolCallView } from '../../../shared/agents/contracts.ts'
 import { formatAgentCitationMarkers } from './agent-citations.ts'
 import {
   agentActivityLabel,
@@ -60,6 +60,21 @@ const message = (input: Partial<AgentMessageView> & Pick<AgentMessageView, 'id' 
   citations: [],
   createdAt: '2026-08-23T20:00:00.000Z',
   updatedAt: '2026-08-23T20:00:00.000Z',
+  ...input
+})
+
+const runView = (input: Partial<AgentRunView> = {}): AgentRunView => ({
+  id: 'run',
+  sessionId: 'session',
+  status: 'running',
+  attempt: 1,
+  eventSequence: 1,
+  canCancel: true,
+  createdAt: '2026-08-23T20:00:00.000Z',
+  startedAt: '2026-08-23T20:00:00.000Z',
+  completedAt: null,
+  errorCode: null,
+  errorMessage: null,
   ...input
 })
 
@@ -241,7 +256,7 @@ describe('Agent thread presentation', () => {
     })
   })
 
-  it('presents meaningful live transitions from the latest assistant message', () => {
+  it('announces correction progress while preserving approval and terminal priority', () => {
     const preparing = message({ id: 'assistant-1', role: 'assistant', status: 'streaming' })
     expect(agentLiveAnnouncement([preparing], [])).toEqual({
       key: 'assistant-1:preparing',
@@ -249,25 +264,55 @@ describe('Agent thread presentation', () => {
       message: 'Preparing a response.',
       tone: 'neutral'
     })
-    expect(agentLiveAnnouncement([{ ...preparing, content: 'Another streamed token' }], [])?.key).toBe('assistant-1:preparing')
-    expect(agentLiveAnnouncement([preparing], [tool({ id: 'approval-1', runId: 'run', state: 'awaitingApproval' })])).toMatchObject({
+    const correctingRun = runView({ workingPhase: 'correcting' })
+    expect(agentLiveAnnouncement([preparing], [], correctingRun)).toEqual({
+      key: 'assistant-1:correcting',
+      kind: 'correcting',
+      message: 'Checking and correcting a response.',
+      tone: 'neutral'
+    })
+    expect(agentLiveAnnouncement([{ ...preparing, content: 'Another streamed token' }], [], correctingRun)?.key).toBe('assistant-1:correcting')
+    expect(agentLiveAnnouncement([preparing], [], runView({ id: 'other-run', workingPhase: 'correcting' }))).toMatchObject({
+      kind: 'preparing',
+      message: 'Preparing a response.'
+    })
+    expect(agentLiveAnnouncement([preparing], [tool({ id: 'approval-1', runId: 'run', state: 'awaitingApproval' })], correctingRun)).toMatchObject({
       key: 'assistant-1:approval',
       message: 'Review needed before the response can continue.'
     })
-    expect(agentLiveAnnouncement([preparing, message({ id: 'assistant-2', role: 'assistant', status: 'complete' })], [])).toMatchObject({
+    expect(agentLiveAnnouncement([message({ id: 'assistant-2', role: 'assistant', status: 'complete' })], [], correctingRun)).toMatchObject({
       kind: 'complete',
       message: 'Response complete.'
     })
-    expect(agentLiveAnnouncement([message({ id: 'assistant-2', role: 'assistant', status: 'cancelled' })], [])).toMatchObject({
+    expect(agentLiveAnnouncement([message({ id: 'assistant-2', role: 'assistant', status: 'cancelled' })], [], correctingRun)).toMatchObject({
       kind: 'stopped',
       message: 'Response stopped.',
       tone: 'neutral'
     })
-    expect(agentLiveAnnouncement([message({ id: 'assistant-2', role: 'assistant', status: 'failed' })], [])).toMatchObject({
+    expect(agentLiveAnnouncement([message({ id: 'assistant-2', role: 'assistant', status: 'failed' })], [], correctingRun)).toMatchObject({
       kind: 'failed',
       message: 'Response failed.',
       tone: 'error'
     })
+  })
+
+  it('updates only live status when a persisted run phase changes', () => {
+    const preparing = message({ id: 'assistant-1', role: 'assistant', status: 'streaming' })
+    const initial = buildAgentThreadPresentation([preparing], [], [], [])
+    expect(initial.messages.get('assistant-1')?.statusLabel).toBe('Preparing a response')
+
+    const correcting = buildAgentThreadPresentation([preparing], [], [], [], initial, runView({ workingPhase: 'correcting' }))
+    expect(correcting.messages.get('assistant-1')).toMatchObject({
+      statusLabel: 'Checking and correcting a response',
+      run: { workingPhase: 'correcting' }
+    })
+    expect(correcting.messages.get('assistant-1')?.message).toBe(initial.messages.get('assistant-1')?.message)
+    expect(correcting.messages.get('assistant-1')?.citationGroups).toBe(initial.messages.get('assistant-1')?.citationGroups)
+
+    const accepted = message({ id: 'assistant-1', role: 'assistant', status: 'complete', content: 'The accepted response.' })
+    const completed = buildAgentThreadPresentation([accepted], [], [], [], correcting, null)
+    expect(completed.messages.get('assistant-1')).toMatchObject({ statusLabel: '', message: { content: 'The accepted response.' } })
+    expect(agentLiveAnnouncement([accepted], [], null)).toMatchObject({ kind: 'complete', message: 'Response complete.' })
   })
 
   it('keeps routine activity compact while surfacing current and failed states', () => {
