@@ -1331,7 +1331,7 @@ const unitSupportsClause = (clause: string, unit: CitationSourceUnit): boolean =
   const matches = terms.filter(term => unit.terms.has(term))
   const minimumMatches = terms.length <= 2 ? 1 : 2
   const exactPolarity = hasCompatibleMarkerBindings(clause, unit.text, term => negativeTerms[term] === true)
-  const colon = clause.indexOf(':')
+  const colon = clause.search(/:(?=\s|$)/u)
   let exactNumbers: boolean
   if (colon >= 0) {
     const idClause = clause.slice(0, colon)
@@ -1466,7 +1466,7 @@ const membershipAssessment = (clause: string, evidence: CitationEvidence): Claus
     }
   }
 
-  const colon = clause.indexOf(':')
+  const colon = clause.search(/:(?=\s|$)/u)
   const presentation =
     colon >= 0 || /\b(?:is|are|was|were)\s+(?:listed|included|provided)\b/iu.test(clause)
       ? null
@@ -1545,11 +1545,24 @@ const passivePredicateTerms: Readonly<Record<string, readonly string[]>> = {
   included: ['included', 'include'],
   provided: ['provided', 'provide']
 }
+const listingPredicateTerms: Readonly<Record<string, true>> = { include: true, list: true, provide: true }
 
 const assessClaimClauses = (claim: string, evidence: CitationEvidence): readonly ClauseAssessment[] =>
   factualSegments(claim, evidence).map(text => {
     const membership = membershipAssessment(text, evidence)
-    if (membership !== null) return membership
+    if (membership !== null) {
+      if (membership.supported) return membership
+      const factualTerms = membership.terms.filter(term => listingPredicateTerms[term] !== true)
+      const source = evidence.sourceUnits.find(
+        unit =>
+          factualTerms.length > 0 &&
+          factualTerms.every(term => unit.textTerms.has(term)) &&
+          (unit.textTerms.has('include') || unit.textTerms.has('list') || unit.textTerms.has('provide')) &&
+          unitSupportsClause(text, unit)
+      )
+      if (source) return { ...membership, kind: 'fact', supported: true, matchedTerms: factualTerms }
+      return membership
+    }
     const terms = normalizedTerms(text)
     const passivePredicate = text.match(/^\s*(.+?)\s+(?:is|are)\s+(listed|included|provided)\s*[.!?]?\s*$/iu)?.[2]?.toLowerCase()
     const candidates = evidence.sourceUnits.filter(
@@ -1623,7 +1636,8 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
       numericSegments(assessmentClaim).every(segment => sourceNumbers.some(source => source.includes(segment) || segment.includes(source)))
     const clauseAssessments = assessClaimClauses(assessmentClaim, evidence)
     const matchedTerms = [...new Set(clauseAssessments.flatMap(clause => clause.matchedTerms))]
-    const lexicalSupported = clauseAssessments.length > 0 && clauseAssessments.every(clause => clause.supported) && exactLinks && exactCodeLinkLiterals
+    const sourceLocalSupported = clauseAssessments.length > 0 && clauseAssessments.every(clause => clause.supported)
+    const lexicalSupported = sourceLocalSupported && exactLinks && exactCodeLinkLiterals
     const integritySupported = titleAssertionRecognized
       ? titleAssertion !== null && supportsTitleAssertion(titleAssertion, evidence, coverage?.currentPage)
       : exactLinks && exactCodeLinkLiterals && exactNumbers
@@ -1648,8 +1662,9 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
           ? titleAssertionIssue(evidenceId)
           : `Citation ${evidenceId} changes an exact link, code literal, or numeric value from its immediately preceding claim.`
       )
-    else if (!lexicalSupported && !titleAssertionRecognized)
-      groundingWarnings.push(`Citation ${evidenceId} has weak lexical alignment with its immediately preceding claim.`)
+    // A weakly aligned cited fact is a publication failure, not an advisory warning.
+    if (!titleAssertionRecognized && !sourceLocalSupported)
+      issues.push(`Citation ${evidenceId} does not support every factual clause from a single source unit in its cited scope.`)
     if (!seenCitationIds.has(evidenceId)) {
       seenCitationIds.add(evidenceId)
       citationIds.push(evidenceId)
@@ -1772,22 +1787,46 @@ const provenanceData = (accepted: boolean, assessment: DraftAssessment, retrieva
   claims: assessment.claims.slice(0, MAX_ANSWER_CITATIONS).map(({ repairClaim: _repairClaim, ...claim }) => claim),
   finalCitationIds: accepted ? assessment.citationIds.slice(0, MAX_ANSWER_CITATIONS) : []
 })
-const relevantSourceUnits = (fragment: string, evidence: CitationEvidence, assessmentKind: ClauseAssessment['kind']): readonly CitationSourceUnit[] => {
+const relevantSourceUnits = (fragment: string, evidence: CitationEvidence): readonly CitationSourceUnit[] => {
   const terms = normalizedTerms(fragment)
-  return evidence.sourceUnits
-    .map((unit, index) => ({
-      unit,
-      index,
-      matches: terms.filter(term => unit.terms.has(term)).length,
-      textMatches: terms.filter(term => unit.textTerms.has(term)).length,
-      structuralMatches: assessmentKind === 'membership' ? unit.labels.flatMap(label => normalizedTerms(label)).filter(term => terms.includes(term)).length : 0
-    }))
+  const termSet = new Set(terms)
+  const ranked = evidence.sourceUnits
+    .map((unit, index) => {
+      let matches = 0
+      let textMatches = 0
+      for (const term of terms) {
+        if (unit.terms.has(term)) matches++
+        if (unit.textTerms.has(term)) textMatches++
+      }
+      let structuralMatches = 0
+      for (const label of unit.labels) for (const term of normalizedTerms(label)) if (termSet.has(term)) structuralMatches++
+      return {
+        unit,
+        index,
+        matches,
+        textMatches,
+        structuralMatches,
+        serializedLength: JSON.stringify({ context: unit.context, text: unit.text }).length
+      }
+    })
     .filter(candidate => candidate.matches > 0)
     .sort(
       (left, right) =>
-        right.structuralMatches - left.structuralMatches || right.textMatches - left.textMatches || right.matches - left.matches || left.index - right.index
+        right.textMatches - left.textMatches ||
+        right.structuralMatches - left.structuralMatches ||
+        right.matches - left.matches ||
+        left.serializedLength - right.serializedLength ||
+        left.index - right.index
     )
-    .map(candidate => candidate.unit)
+
+  // A broad page citation can leave one failed sentence relevant to several
+  // sections. Put each section's best intact unit near the front so one dense
+  // section cannot crowd every other local context out of the bounded packet.
+  const contextBest = new Map<string, (typeof ranked)[number]>()
+  for (const candidate of ranked) if (!contextBest.has(candidate.unit.context)) contextBest.set(candidate.unit.context, candidate)
+  const distinctContexts = [...contextBest.values()].slice(0, 3)
+  const distinctIndexes = new Set(distinctContexts.map(candidate => candidate.index))
+  return [...distinctContexts, ...ranked.filter(candidate => !distinctIndexes.has(candidate.index))].map(candidate => candidate.unit)
 }
 
 const evidenceCorrectionFragments = (assessment: DraftAssessment, registry: ReadonlyMap<string, CitationEvidence>): string => {
@@ -1801,7 +1840,10 @@ const evidenceCorrectionFragments = (assessment: DraftAssessment, registry: Read
     evidenceId: string
     draftFragment: string
     kind: ClauseAssessment['kind']
+    scopeKey: string
     sourceUnits: readonly CitationSourceUnit[]
+    candidateCharacters: readonly number[]
+    smallestCandidateCharacters: number
   }> = []
   for (const claim of assessment.claims) {
     if (claim.supported || claim.titleAssertion) continue
@@ -1809,65 +1851,146 @@ const evidenceCorrectionFragments = (assessment: DraftAssessment, registry: Read
     if (!evidence) continue
     for (const clause of assessClaimClauses(claim.repairClaim ?? claim.claim, evidence)) {
       if (clause.supported) continue
-      failedClauses.push({
-        evidenceId: claim.evidenceId,
-        draftFragment: clause.text.trim(),
-        kind: clause.kind,
-        sourceUnits: relevantSourceUnits(clause.text, evidence, clause.kind).slice(0, 3)
-      })
+      const unitsByContext = new Map<string, CitationSourceUnit[]>()
+      for (const unit of relevantSourceUnits(clause.text, evidence)) {
+        const contextUnits = unitsByContext.get(unit.context)
+        if (contextUnits) contextUnits.push(unit)
+        else unitsByContext.set(unit.context, [unit])
+      }
+      for (const [context, units] of unitsByContext) {
+        const draftFragment = clause.text.trim()
+        const sourceUnits = units.slice(0, 3)
+        const candidateCharacters = sourceUnits.map(
+          unit =>
+            JSON.stringify({
+              evidenceId: claim.evidenceId,
+              draftFragment,
+              kind: clause.kind,
+              sourceUnits: [{ context: unit.context, text: unit.text }]
+            }).length
+        )
+        const smallestCharacters = candidateCharacters.reduce((smallest, characters) => Math.min(smallest, characters), Number.POSITIVE_INFINITY)
+        failedClauses.push({
+          evidenceId: claim.evidenceId,
+          draftFragment,
+          kind: clause.kind,
+          scopeKey: JSON.stringify([claim.evidenceId, context]),
+          sourceUnits,
+          candidateCharacters,
+          smallestCandidateCharacters: smallestCharacters
+        })
+      }
     }
   }
 
-  const selected: Array<{ fragment: FeedbackFragment; rankedUnits: readonly CitationSourceUnit[] }> = []
+  const smallestCandidateByScope = (scopeKey: (failed: (typeof failedClauses)[number]) => string): readonly [string, number][] => {
+    const minimums = new Map<string, number>()
+    for (const failed of failedClauses) {
+      const scope = scopeKey(failed)
+      const previous = minimums.get(scope)
+      if (previous === undefined || failed.smallestCandidateCharacters < previous) minimums.set(scope, failed.smallestCandidateCharacters)
+    }
+    return [...minimums.entries()].sort((left, right) => left[1] - right[1])
+  }
+  const citationMinimums = smallestCandidateByScope(failed => failed.evidenceId)
+  const unitScopeMinimums = smallestCandidateByScope(failed => failed.scopeKey)
+  const reserveMinimumCharacters = (
+    minimums: readonly [string, number][],
+    represented: ReadonlySet<string>,
+    currentScope: string,
+    futureSlots: number
+  ): number => {
+    if (futureSlots === 0) return 0
+    let reservedCharacters = 0
+    let reservedScopes = 0
+    for (const [scope, characters] of minimums) {
+      if (scope === currentScope || represented.has(scope)) continue
+      reservedCharacters += characters + 1
+      if (++reservedScopes === futureSlots) break
+    }
+    return reservedCharacters
+  }
+  const compactFirst = [...failedClauses].sort((left, right) => left.smallestCandidateCharacters - right.smallestCandidateCharacters)
+  const selected: Array<{
+    fragment: FeedbackFragment
+    scopeKey: string
+    rankedUnits: readonly CitationSourceUnit[]
+    selectedUnitIndexes: Set<number>
+  }> = []
   let feedbackCharacters = 2
   const distinctScopes = new Set(failedClauses.map(failed => failed.evidenceId))
+  const distinctUnitScopes = new Set(failedClauses.map(failed => failed.scopeKey))
   const representedScopes = new Set<string>()
-  // Cover distinct citation scopes before spending the bound on more clauses from one scope.
-  for (let pass = 0; pass < 2 && selected.length < 4; pass++) {
-    for (const failed of failedClauses) {
+  const representedUnitScopes = new Set<string>()
+
+  // Reserve the smallest intact candidates for later distinct scopes instead
+  // of dividing the budget evenly. This keeps a strong local unit when it and
+  // the later scopes all fit within the exact serialized packet limit.
+  for (let pass = 0; pass < 4 && selected.length < 4; pass++) {
+    const passClauses = pass === 1 ? compactFirst : failedClauses
+    for (const failed of passClauses) {
       if (selected.length === 4) break
-      if (selected.some(({ fragment }) => fragment.evidenceId === failed.evidenceId && (pass === 0 || fragment.draftFragment === failed.draftFragment)))
+      const duplicate = selected.some(item => item.scopeKey === failed.scopeKey && item.fragment.draftFragment === failed.draftFragment)
+      if (
+        (pass === 0 && representedScopes.has(failed.evidenceId)) ||
+        (pass === 1 && representedScopes.has(failed.evidenceId)) ||
+        (pass === 2 && representedUnitScopes.has(failed.scopeKey)) ||
+        (pass === 3 && duplicate)
+      )
         continue
-      // Prefer the top-ranked exact unit. While other distinct scopes are still unrepresented, fall
-      // back to a smaller exact unit from the same scope when the leading unit would spend more than
-      // half of the remaining allowance and starve those scopes.
-      const unrepresentedAfter = distinctScopes.size - representedScopes.size - (representedScopes.has(failed.evidenceId) ? 0 : 1)
-      const shareGuard = pass === 0 && unrepresentedAfter >= 1
-      const fitting: Array<{ candidate: FeedbackFragment; characters: number }> = []
-      for (const unit of failed.sourceUnits) {
+
+      let reservedCharacters = 0
+      if (pass === 0) {
+        const futureCitationSlots = Math.min(3 - selected.length, distinctScopes.size - representedScopes.size - 1)
+        reservedCharacters = reserveMinimumCharacters(citationMinimums, representedScopes, failed.evidenceId, futureCitationSlots)
+      } else if (pass === 2) {
+        const futureUnitScopeSlots = Math.min(3 - selected.length, distinctUnitScopes.size - representedUnitScopes.size - 1)
+        reservedCharacters = reserveMinimumCharacters(unitScopeMinimums, representedUnitScopes, failed.scopeKey, futureUnitScopeSlots)
+      }
+      const candidateLimit = 1_200 - feedbackCharacters - reservedCharacters
+      let choice: { candidate: FeedbackFragment; characters: number; unitIndex: number } | undefined
+      for (let unitIndex = 0; unitIndex < failed.sourceUnits.length; unitIndex++) {
+        const unit = failed.sourceUnits[unitIndex]!
+        const candidateCharacters = failed.candidateCharacters[unitIndex]! + (selected.length === 0 ? 0 : 1)
+        if (candidateCharacters > candidateLimit) continue
         const candidate: FeedbackFragment = {
           evidenceId: failed.evidenceId,
           draftFragment: failed.draftFragment,
           kind: failed.kind,
           sourceUnits: [{ context: unit.context, text: unit.text }]
         }
-        const candidateCharacters = JSON.stringify(candidate).length + (selected.length === 0 ? 0 : 1)
-        if (feedbackCharacters + candidateCharacters > 1_200) continue
-        fitting.push({ candidate, characters: candidateCharacters })
-        if (fitting.length >= 1 && !(shareGuard && fitting[0]!.characters > (1_200 - feedbackCharacters) / 2)) break
+        if (pass === 0) {
+          choice = { candidate, characters: candidateCharacters, unitIndex }
+          break
+        }
+        if (!choice || candidateCharacters < choice.characters) choice = { candidate, characters: candidateCharacters, unitIndex }
       }
-      if (fitting.length === 0) continue
-      // Under contention prefer the most compact fitting exact unit; otherwise keep the top-ranked one.
-      const choice = fitting.reduce((smallest, item) => (item.characters < smallest.characters ? item : smallest), fitting[0]!)
-      const fragment = choice.candidate
-      const additionalCharacters = choice.characters
-      if (feedbackCharacters + additionalCharacters > 1_200) continue
-      selected.push({ fragment, rankedUnits: failed.sourceUnits })
-      feedbackCharacters += additionalCharacters
+      if (!choice) continue
+      selected.push({
+        fragment: choice.candidate,
+        scopeKey: failed.scopeKey,
+        rankedUnits: failed.sourceUnits,
+        selectedUnitIndexes: new Set([choice.unitIndex])
+      })
+      feedbackCharacters += choice.characters
       representedScopes.add(failed.evidenceId)
+      representedUnitScopes.add(failed.scopeKey)
     }
   }
 
-  for (let unitIndex = 1; unitIndex < 3; unitIndex++) {
-    for (const item of selected) {
-      const unit = item.rankedUnits[unitIndex]
-      if (!unit) continue
+  // Add at most two more complete units per fragment after all distinct scopes
+  // have had a chance to fit. The grouped candidates above keep these units in
+  // the same local context as their fragment.
+  for (const item of selected) {
+    for (let unitIndex = 0; unitIndex < item.rankedUnits.length && item.fragment.sourceUnits.length < 3; unitIndex++) {
+      if (item.selectedUnitIndexes.has(unitIndex)) continue
+      const unit = item.rankedUnits[unitIndex]!
       const sourceUnit = { context: unit.context, text: unit.text }
       const additionalCharacters = JSON.stringify(sourceUnit).length + 1
-      if (feedbackCharacters + additionalCharacters <= 1_200) {
-        item.fragment.sourceUnits.push(sourceUnit)
-        feedbackCharacters += additionalCharacters
-      }
+      if (feedbackCharacters + additionalCharacters > 1_200) continue
+      item.fragment.sourceUnits.push(sourceUnit)
+      item.selectedUnitIndexes.add(unitIndex)
+      feedbackCharacters += additionalCharacters
     }
   }
   return JSON.stringify(selected.map(item => item.fragment))
