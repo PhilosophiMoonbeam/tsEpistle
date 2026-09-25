@@ -36,8 +36,10 @@ import {
 import {
   currentOfflineReadingEpoch,
   currentOfflineReadingHandle,
+  decodeOfflineReadingSecret,
   isCurrentOfflineReadingHandle,
   OFFLINE_READING_STATE_EVENT,
+  unlockOfflineReading,
   type OfflineReadingHandleV1
 } from '../../helpers/offline-session.ts'
 
@@ -112,6 +114,10 @@ const policyError = ref('')
 const sessionGeneration = ref<number | null>(null)
 const readingHandle = shallowRef<OfflineReadingHandleV1 | null>(null)
 const readingEpoch = ref(currentOfflineReadingEpoch())
+const readingVaultLocked = ref(false)
+const unlockSecret = ref('')
+const unlockBusy = ref(false)
+const unlockError = ref('')
 const publicPolicyRevision = ref<number | null>(null)
 const privatePolicyRevision = ref<number | null>(null)
 const hasCorpus = ref(false)
@@ -354,6 +360,42 @@ const isReadingCurrent = (handle: OfflineReadingHandleV1 | null, epoch: number):
   return handle === null ? current === null : current === handle && isCurrentOfflineReadingHandle(handle)
 }
 
+const refreshReadingVault = async (): Promise<void> => {
+  const storage = props.storage
+  if (!storage || props.storageState !== 'available') {
+    readingVaultLocked.value = false
+    return
+  }
+  try {
+    const vault = await storage.getReadingVault()
+    if (props.storage !== storage) return
+    const handle = currentOfflineReadingHandle()
+    readingVaultLocked.value = Boolean(vault && (!handle || !isCurrentOfflineReadingHandle(handle)))
+  } catch {
+    if (props.storage === storage) readingVaultLocked.value = false
+  }
+}
+
+const unlockSavedPages = async (): Promise<void> => {
+  const storage = props.storage
+  if (!storage || unlockBusy.value || !readingVaultLocked.value) return
+  const entered = unlockSecret.value
+  unlockSecret.value = ''
+  unlockBusy.value = true
+  unlockError.value = ''
+  let secret: Uint8Array | null = null
+  try {
+    secret = decodeOfflineReadingSecret(entered)
+    await unlockOfflineReading(storage, secret)
+    await refreshReadingVault()
+  } catch {
+    unlockError.value = 'The private offline vault could not be unlocked.'
+  } finally {
+    secret?.fill(0)
+    unlockBusy.value = false
+  }
+}
+
 
 const searchDetail = computed(() => {
   if (storageChecking.value || loading.value || !hasCorpus.value) return 'Checking saved pages on this device.'
@@ -364,7 +406,7 @@ const searchDetail = computed(() => {
     const more = searchHasMore.value ? ' More matches are available.' : ''
     return `${resultRecords.value.length} matching saved page${resultRecords.value.length === 1 ? '' : 's'}.${more}`
   }
-  if (!activeRecords.value.length) return 'No saved pages yet.'
+  if (!activeRecords.value.length) return readingVaultLocked.value ? 'Unlock private reading to see pages saved for your account.' : 'No saved pages yet.'
   const more = searchHasMore.value ? ' Showing the first 50.' : ''
   return `${activeRecords.value.length} saved page${activeRecords.value.length === 1 ? '' : 's'} on this device.${more}`
 })
@@ -1457,6 +1499,7 @@ const handlePopState = (): void => {
 }
 const handleReadingStateChange = (): void => {
   invalidateLocalProjection()
+  void refreshReadingVault()
   void loadRecords()
 }
 const handleSavedPageOpen = (event: Event): void => {
@@ -1491,6 +1534,7 @@ watch(searchQuery, () => {
 watch(
   () => [props.storage, props.storageState, props.refreshToken],
   () => {
+    void refreshReadingVault()
     void loadRecords()
   }
 )
@@ -1511,6 +1555,7 @@ watch(clock, () => {
 })
 
 onMounted(() => {
+  void refreshReadingVault()
   clockTimer = window.setInterval(() => { clock.value = Date.now() }, 60_000)
   window.addEventListener('popstate', handlePopState)
   window.addEventListener(OFFLINE_READING_STATE_EVENT, handleReadingStateChange)
@@ -1553,6 +1598,14 @@ onBeforeUnmount(() => {
     </div>
 
     <p v-if="!selectedRecord" class="scope-note">Pages available on this device. Your saved copies stay available while the connection is interrupted.</p>
+    <form v-if="!selectedRecord && readingVaultLocked" class="reading-unlock" @submit.prevent="unlockSavedPages">
+      <strong>Private saved pages are locked</strong>
+      <p>Enter this device’s private reading secret to see your saved pages, even while offline.</p>
+      <label for="saved-pages-unlock-secret">Private reading secret</label>
+      <input id="saved-pages-unlock-secret" v-model="unlockSecret" type="password" autocomplete="off" spellcheck="false" :disabled="unlockBusy" />
+      <button class="secondary-button" type="submit" :disabled="unlockBusy || !unlockSecret">{{ unlockBusy ? 'Unlocking…' : 'Unlock private pages' }}</button>
+      <p v-if="unlockError" role="alert">{{ unlockError }}</p>
+    </form>
     <div v-if="!selectedRecord" class="search-field">
       <label for="downloaded-pages-search">Search saved pages</label>
       <input
@@ -1729,7 +1782,7 @@ onBeforeUnmount(() => {
 
     <div v-else-if="!resultRecords.length" class="library-message" role="status" aria-live="polite">
       <span class="empty-rule" aria-hidden="true"></span>
-      <h3>{{ searchQuery.trim() ? 'No matching saved pages' : 'No saved pages yet' }}</h3>
+      <h3>{{ searchQuery.trim() ? 'No matching saved pages' : readingVaultLocked ? 'Private saved pages are locked' : 'No saved pages yet' }}</h3>
       <p v-if="storageUnavailable || loadError" class="library-inline-error" role="alert">
         <span>{{ storageUnavailable ? libraryMessage : loadError }}</span>
         <button class="text-button" type="button" @click="retryStorage">Retry saved pages</button>
@@ -1848,6 +1901,21 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
   font-size: .75rem;
   line-height: 1.5;
 }
+.reading-unlock {
+  display: grid;
+  gap: .55rem;
+  max-width: 32rem;
+  margin-block: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--offline-border-strong);
+  border-radius: var(--offline-radius);
+  background: var(--offline-paper-raised);
+}
+.reading-unlock p { margin: 0; color: var(--offline-muted); }
+.reading-unlock label { font-weight: 600; }
+.reading-unlock input { min-height: 44px; padding: .55rem .7rem; border: 1px solid var(--offline-border-strong); border-radius: 8px; color: var(--offline-ink); background: var(--offline-paper); }
+.reading-unlock button { justify-self: start; }
+.reading-unlock [role="alert"] { color: rgb(var(--v-theme-error)); }
 .offline-policy {
   display: grid;
   gap: .8rem;

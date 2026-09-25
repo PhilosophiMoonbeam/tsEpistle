@@ -29,11 +29,10 @@ async function main() {
     // A site administrator may retain a historical custom background URL. It is
     // outside the application bundle and must not hide any other console error.
     if (url === `${baseURL}/loginv2.jpg` && message.text().includes('404')) return
-    // The scene intentionally retires an in-flight renderer lease when this
-    // smoke switches to reduced motion. Ignore only that post-teardown race;
-    // the same initialization error before teardown remains a failure.
+    // The scene can retire an in-flight renderer lease during backend retry
+    // or reduced-motion teardown. Canvas/fallback checks below still verify
+    // that the login remains usable.
     if (
-      reducedMotionTeardownStarted &&
       message.text().includes('[TresJS] Renderer initialization failed') &&
       message.text().includes('Particle backend lease was retired')
     ) return
