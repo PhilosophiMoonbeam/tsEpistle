@@ -971,6 +971,17 @@ describe('Ax agent engine', () => {
           }
         ]
       },
+      {
+        results: [
+          {
+            index: 0,
+            content: [
+              'General Info lists Contract Pricing, Quick Ship, and SPIFs.[[cite:page:1:revision:9:section:1]]',
+              'MFG Directory includes Website, Contact, and Quote Form.[[cite:page:1:revision:9:section:2]]'
+            ].join('\n\n')
+          }
+        ]
+      },
       { results: [{ index: 0, content: corrected }] }
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
@@ -1069,6 +1080,7 @@ describe('Ax agent engine', () => {
     )
     expect(JSON.stringify(feedback).length).toBeLessThanOrEqual(1_200)
     expect(feedback.flatMap(item => item.sourceUnits.map(unit => unit.text))).not.toContain('California orders route through the "West" contact.')
+    expect(String(calls[3]?.chatPrompt.at(-1)?.content)).toContain('must cite at least one source-local factual detail')
     expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
     expect(result.citations).toEqual([
       expect.objectContaining({ evidenceId: 'page:1:revision:9' }),
@@ -1077,6 +1089,7 @@ describe('Ax agent engine', () => {
       expect.objectContaining({ evidenceId: 'page:1:revision:9:section:4' })
     ])
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false }),
       expect.objectContaining({ accepted: false }),
       expect.objectContaining({ accepted: true })
     ])
