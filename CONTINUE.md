@@ -1,6 +1,8 @@
 # Homepage cited-summary repair — historical handoff
 
-> Historical handoff from the 2026-09-20 user-requested pause. A later user instruction resumed implementation: the source-local repair was committed as `973ea53e`, and provider/MCP portability and measured performance work as `8acad1c2`. All 551 isolated test files, shared/server/client typechecks, dependency and license checks, and the application build passed for the committed candidate. The three failed live runs, their settled accounting and the original user's run remain preserved. **The exact deployed homepage starter has not passed**; do not send that page to a provider or deploy the agent change until a confidential content owner validates and rotates/restricts the anonymously readable credential-like material, including copies/history. Current code and verification status belong to `docs/wiki-agent-architecture-plan.md`, not the historical uncommitted-file snapshot below.
+> Historical handoff from the 2026-09-20 user-requested pause. The numbered acceptance criteria below remain the goal, but historical observations and next-step instructions describe the state at that pause, not the current deployment. The subsequent user attested that the homepage is synthetic and explicitly authorized reading it directly. The deployed application source revision is `94888b97577d697e3c2f7e2e9d0fa474703fcdd0`; the corrected starter passed its authenticated tailnet UI smoke on 2026-09-25. Never reproduce credential-like page content in this handoff.
+
+**Current deployed result (2026-09-25):** The first fresh temporary conversation on `553bf989` submitted the exact starter once, but its successful run `f8172b77-5dd6-4122-911a-6cd1d6b98fdf` was an unacceptable heading/link inventory (135526 consumed tokens / 151204 µcost). `94888b97` added a regression-tested page-summary body-fact gate and prompt guidance; a second fresh temporary conversation submitted the exact starter once and run `a4b198c8-49cb-4ef2-9da8-4f8598dc2c7a` succeeded. Its rendered answer cited concrete General Info terms and distinct Geiger, Hickory Contract and Montisa discount/terms facts, with four current-page section links; clicking one opened the source-excerpt dialog with an Open page link. There was one `pages.get`, seven rejected drafts followed by one accepted draft, no hidden replay; final run accounting reconciled **267063 tokens / 326658 µcost**. High correction cost remains a performance risk. The two owned temporary conversations were deleted through the authenticated API (204 then 404); automatic cleanup purged their per-run records/reservations, while the durable daily aggregate retained **402589 consumed tokens / 477862 µcost**, exactly the sum of both runs. Owned smoke account 23 was deactivated, password erased, admin membership removed and auth version advanced; its prior browser session returned 401. The privately held auth fixture and screenshot were removed; data recovery archives were retained. On initial database inspection **before these interventions**, the original user run `ea14fa18-9724-4b39-b3c9-3e29cbd7a8db` and all three historical failed runs/sessions were already absent, contrary to the 2026-09-20 handoff. They were not modified or restored by this work; do not claim they remain preserved. Account 22 had also independently changed to an inactive user with different name/auth version; it was untouched. Only the application service was rebuilt/redeployed, PostgreSQL ID/start time, env, mounts, network, ports and mounted data remained unchanged. Current backup: `/home/bbferko/.local/state/wiki-tailnet/before-homepage-94888b97-20260925/wiki-data.tar` (SHA256 `05ba91db615370d159891ea8a7e8d6a2106b52b7289941a865c6f170e5d3b72e`).
 
 ## Standalone goal and acceptance criteria
 
@@ -18,7 +20,7 @@
 
 Resume implementation and useful worker orchestration where independent ownership warrants it. Keep work bounded to this goal; do not add speculative infrastructure, broad parser rewrites, release certification, unrelated refactors, or a replacement summary feature. If no goal record exists in the new session, initialize one from this standalone objective rather than inventing a different scope.
 
-**NOT COMPLETE. Do not report the homepage flow fixed.** Three deployed candidates have failed the original live request. The latest local source correction passes its narrow reproduction but has two concrete, unresolved security-review counterexamples. The user explicitly requested this pause and `CONTINUE.md`; no further implementation or deployment was performed during handoff.
+**Historical status at 2026-09-20 pause, superseded by the current result above:** Three deployed candidates had failed the original live request. The then-latest local source correction passed its narrow reproduction but had two unresolved security-review counterexamples; no further implementation or deployment was performed during that handoff.
 
 Repo: `/home/bbferko/repos/tsEpistle`. Development Sprint rules in the loaded AGENTS.md apply. Use graph-first discovery (`graft ask ... --source`, exact source ranges), LSP for symbol work, existing patterns, proportional checks. No Enterprise Release ceremony, cap changes, model switches, migrations, remote push, or PostgreSQL recreation.
 
@@ -195,7 +197,7 @@ Runner detail: `bun run test server/test/agents shared/markdown-code-fence.test.
 
 ## Live runs and accounting — preserve failures honestly
 
-**Original user run MUST survive:** `ea14fa18-9724-4b39-b3c9-3e29cbd7a8db`.
+**Historical preservation requirement:** Original user run `ea14fa18-9724-4b39-b3c9-3e29cbd7a8db` was recorded at pause, but was already absent when current database inspection began on 2026-09-25. No current restore source for that record has been verified.
 
 Owned temporary smoke sessions/runs:
 1. Session `c809d774-6812-4a6b-a0cb-9f46480b6e53`, run `70041e88-8e29-4e21-ba90-88a124c0893c`, image 3b32: `UNEXPECTED_PROVIDER_TOOL_CALL`. Reservation consumed/reconciled 227991 tokens / 389386 micros.
@@ -204,7 +206,7 @@ Owned temporary smoke sessions/runs:
 
 Each starter was submitted once, accepted HTTP 202. Latest run went through repeated answer rejection/compaction, not an unexpected no-tools call. A transient diagnostic GET failed; it was retried read-only, never resubmitted.
 
-Do not zero/reset failed reservations or replay provider calls outside accounting. Sessions are still retained for diagnosis; delete only these owned sessions and later owned smoke sessions after final proof. Do not delete the original user session/run.
+Do not zero/reset failed reservations or replay provider calls outside accounting. At this historical pause the sessions were still retained for diagnosis; at the later 2026-09-25 inspection they and the original user run were already absent before any new smoke. The two later owned temporary sessions were removed after proof; do not delete unrelated user sessions/runs.
 
 ## Provider and architecture constraints
 
@@ -263,7 +265,7 @@ All under `/home/bbferko/.local/state/wiki-tailnet/`, with compose backups. No P
 - Browser managed tab released; supervised process **homepage-repair-browser** stopped, exit 143.
 - Profile directory `/tmp/wiki-homepage-repair-resumed-chrome` remains for later owned cleanup; existing cookies are revoked. No temporary password was written into this handoff.
 
-For next smoke, activate fixture 22 again only with guarded current state, fresh random strong credentials / bcrypt 12, authVersion increment, fresh adminRevision, sessionsRevokedAt, group 1; preserve baseline user count. Revoke it again afterwards, including on another pause.
+**Superseded historical next-smoke instruction:** Do not reactivate user 22. By 2026-09-25 it had independently changed identity and auth state; this work used a separate newly owned user 23, now inactive with password erased and admin access removed.
 
 Use system `/usr/bin/google-chrome` headless-new with sandbox intact, dedicated profile, CDP 127.0.0.1:9225, supervised with hub; do not use sandbox-disable flags. Open real origin via browser. Explicitly set actual viewport to 1365x900; a prior browser metadata/actual viewport mismatch occurred.
 
@@ -279,7 +281,7 @@ Flow:
 
 Authenticated mutation API uses same-origin browser credentials plus `x-wiki-csrf` from `window.siteConfig.agentCsrfToken`. Never send authenticated mutations to localhost. Routes: GET session/run, GET `/_api/agents/admin/sessions/:id/diagnostics.json`, DELETE owned session then verify 404. Diagnostics toolCalls contain full private source; print only bounded outcomes/counts. `tool.completed.data.result` is a JSON string and must be parsed before evidence collection.
 
-## Todo continuity
+## Historical todo continuity at the 2026-09-20 pause (superseded)
 
 Earlier diagnosis/implementation/deployment tasks were completed for previous candidates, not overall success. Remaining tasks are blocked for the explicit user-requested pause; unblock the implementation tasks when authorized to resume:
 - Correct sentence-local evidence in compound list items — paused, previously in progress.
@@ -287,4 +289,4 @@ Earlier diagnosis/implementation/deployment tasks were completed for previous ca
 - Verify and deploy the sentence-local correction — paused, previously pending.
 - Prove the original cited homepage request succeeds — blocked on above corrections.
 
-Do not mark the active goal complete. Resume from the concrete remaining work, reuse valid evidence, and do not restart a broad audit or re-run the user's reported failures merely to confirm them.
+The old paused todos above were superseded by the deployed result at the top of this file; do not re-run those reported failures just to confirm them. The older user-run record was absent before the current intervention and cannot be claimed preserved.
