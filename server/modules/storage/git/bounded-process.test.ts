@@ -1,7 +1,11 @@
 import { describe, expect, it } from '../../../test/bun-test.mts'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
 import {
   BoundedProcessError,
+  observeDirectoryTree,
   runBoundedProcess
 } from './bounded-process.ts'
 
@@ -14,6 +18,17 @@ const runNode = (script: string, options: Partial<Parameters<typeof runBoundedPr
 })
 
 describe('bounded Git process execution', () => {
+  it('observes a nested tree without closing an already exhausted directory', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'git-observe-'))
+    try {
+      await mkdir(path.join(root, 'nested'))
+      await writeFile(path.join(root, 'nested', 'page.md'), 'wiki')
+      expect(await observeDirectoryTree(root, { maxEntries: 3, maxBytes: 4 })).toEqual({ entries: 2, bytes: 4 })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('quarantines asynchronous spawn failures instead of leaking child errors', async () => {
     let failure: unknown
     try {
