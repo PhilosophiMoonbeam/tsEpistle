@@ -448,7 +448,10 @@ const plugin: GitStoragePlugin = {
     try {
       await mkdir(this.repoPath, { recursive: true, mode: 0o700 })
       this.root = await openStorageRoot(this.repoPath)
-      this.git = simpleGit(this.repoPath, { maxConcurrentProcesses: 1 })
+      this.git = simpleGit(this.repoPath, {
+        maxConcurrentProcesses: 1,
+        ...(this.config.authType === 'ssh' ? { unsafe: { allowUnsafeSshCommand: true } } : {})
+      })
 
       // Set custom binary path
       if (!_.isEmpty(this.config.gitBinaryPath)) {
