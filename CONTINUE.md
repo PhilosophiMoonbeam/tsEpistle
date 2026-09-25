@@ -197,7 +197,7 @@ Runner detail: `bun run test server/test/agents shared/markdown-code-fence.test.
 
 ## Live runs and accounting — preserve failures honestly
 
-**Historical preservation requirement:** Original user run `ea14fa18-9724-4b39-b3c9-3e29cbd7a8db` was recorded at pause, but was already absent when current database inspection began on 2026-09-25. No current restore source for that record has been verified.
+**Historical preservation requirement:** Original user run `ea14fa18-9724-4b39-b3c9-3e29cbd7a8db` was recorded at pause, but was already absent when current database inspection began on 2026-09-25. A private, read-only ID check found it in none of 46 retained later SQL snapshots or the 2026-09-20 00:54 and 06:02 PostgreSQL custom dumps; the latter two also predate the last failed run. PostgreSQL reports `archive_mode=off`. No verified pre-deletion restore source is available; never synthesize its run/accounting records or roll back unrelated data to satisfy this historical requirement.
 
 Owned temporary smoke sessions/runs:
 1. Session `c809d774-6812-4a6b-a0cb-9f46480b6e53`, run `70041e88-8e29-4e21-ba90-88a124c0893c`, image 3b32: `UNEXPECTED_PROVIDER_TOOL_CALL`. Reservation consumed/reconciled 227991 tokens / 389386 micros.
