@@ -704,7 +704,7 @@ describe('Ax agent engine', () => {
       citations: [{ evidenceId: 'page:42:revision:1:section:1', kind: 'page', label: 'Budget Guide › Evidence', href: '/en/budget-guide#evidence' }]
     })
   })
-  it('publishes uncited recommendation prose while recording an advisory grounding signal', async () => {
+  it('publishes uncited recommendation prose after reading cited evidence', async () => {
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
       { results: [{ index: 0, content: 'Recommendation: Add an incident owner.' }] },
@@ -758,12 +758,7 @@ describe('Ax agent engine', () => {
     expect(chat).toHaveBeenCalledTimes(2)
     expect(text).toHaveBeenCalledWith('Recommendation: Add an incident owner.')
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
-      expect.objectContaining({
-        accepted: true,
-        issues: [],
-        groundingWarnings: ['The answer used Wiki page context without an inline citation.'],
-        claims: []
-      })
+      expect.objectContaining({ accepted: true, issues: [], claims: [] })
     ])
   })
 
@@ -801,10 +796,8 @@ describe('Ax agent engine', () => {
       'Every page links [Website]([WEBSITE_URL]) under the heading. [[cite:page:6:revision:1:section:1]]\n\n<https://evil.example>',
       '`Every page links [Website]([WEBSITE_EVIL]) under the heading.` [[cite:page:6:revision:1:section:1]]',
       [
-        '`Every page links [Website]([WEBSITE_URL]) under the heading.` [[cite:page:6:revision:1:section:1]]',
-        '`### Product Info` lists Materials |🌳 and Finishing Process |🎨. [[cite:page:6:revision:1:section:1]]',
-        '**Formalize page naming conventions**: Standardize title formats across manufacturer pages, matching Watson Furniture (WAT) 📤. [[cite:page:6:revision:1:section:1]]',
-        'Recommendation: Move branding and navigation into a consistent top section.'
+        '[Portal](https://admin.example/approved) is listed. [[cite:page:6:revision:1:section:1]]',
+        'Recommendation: Standardize manufacturer page title formats for easier navigation.'
       ].join('\n\n')
     ]
     const responses: AxChatResponse[] = [
@@ -849,7 +842,11 @@ describe('Ax agent engine', () => {
     expect(chat).toHaveBeenCalledTimes(answers.length + 1)
     const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
     expect(provenance.slice(0, -1).every(item => (item as { accepted?: boolean }).accepted === false)).toBe(true)
-    expect(provenance.at(-1)).toMatchObject({ accepted: true })
+    expect(provenance.at(-1)).toMatchObject({
+      accepted: true,
+      claims: expect.arrayContaining([expect.objectContaining({ evidenceId: 'page:6:revision:1:section:1', supported: true })]),
+      finalCitationIds: ['page:6:revision:1:section:1']
+    })
     expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(answers.at(-1))
   })
 
@@ -1084,20 +1081,166 @@ describe('Ax agent engine', () => {
       expect.objectContaining({ accepted: true })
     ])
   })
+  it('keeps exact source units from distinct long and later scopes in a substantive cited summary', async () => {
+    const longSection = 'Supplier Eligibility and Regional Ordering Conditions '.repeat(3).trim()
+    const longSubsection = 'Annual Account Planning Requirements and Review Procedures '.repeat(2).trim()
+    const planningFact = 'Every new account receives a 12-week planning window before its annual review.'
+    const supplierFact = 'Qualifying suppliers may use Net 30 terms.'
+    const indianaFact = 'Indiana orders route through the Midwest contact.'
+    const californiaFact = 'California orders route through the Central contact.'
+    const source = [
+      '# General Info',
+      `## ${longSection}`,
+      `### ${longSubsection}`,
+      planningFact,
+      supplierFact,
+      '# MFG Directory',
+      '## Acme',
+      indianaFact,
+      californiaFact
+    ].join('\n\n')
+    const initialDraft = [
+      'Every new account receives a 12-day planning window before its annual review.[[cite:page:1:revision:1:section:1]]',
+      'For Acme, Indiana orders route through the East contact.[[cite:page:1:revision:1:section:5]]'
+    ].join('\n\n')
+    const corrected = [
+      'For General Info, every new account receives a 12-week planning window before its annual review.[[cite:page:1:revision:1:section:1]]',
+      'Qualifying suppliers may use Net 30 terms.[[cite:page:1:revision:1:section:1]]',
+      'For Acme, Indiana orders route through the Midwest contact.[[cite:page:1:revision:1:section:5]]',
+      'California orders route through the Central contact.[[cite:page:1:revision:1:section:5]]'
+    ].join('\n\n')
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const responses: AxChatResponse[] = [
+      { results: [{ index: 0, functionCalls: [{ id: 'homepage', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }] },
+      { results: [{ index: 0, content: initialDraft }] },
+      { results: [{ index: 0, content: corrected }] }
+    ]
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return responses.shift()!
+    })
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => ({
+      id: 1,
+      locale: 'en',
+      path: 'home',
+      sourceRevision: '1',
+      title: 'Homepage',
+      contentType: 'markdown',
+      content: source,
+      citation: { evidenceId: 'page:1:revision:1', label: 'Homepage', href: '/en/home' },
+      citationSections: [
+        { evidenceId: 'page:1:revision:1:section:1', label: 'Homepage › General Info', href: '/en/home#general-info' },
+        {
+          evidenceId: 'page:1:revision:1:section:2',
+          label: `Homepage › General Info › ${longSection}`,
+          href: '/en/home#supplier-conditions'
+        },
+        {
+          evidenceId: 'page:1:revision:1:section:3',
+          label: `Homepage › General Info › ${longSection} › ${longSubsection}`,
+          href: '/en/home#account-planning'
+        },
+        { evidenceId: 'page:1:revision:1:section:4', label: 'Homepage › MFG Directory', href: '/en/home#mfg-directory' },
+        { evidenceId: 'page:1:revision:1:section:5', label: 'Homepage › MFG Directory › Acme', href: '/en/home#acme' }
+      ]
+    }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn()
+      })
+    }
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+    const result = await new AxAgentEngine(factory, actions).execute(
+      {
+        ...request(new AbortController().signal),
+        messages: [{ role: 'user', content: 'Summarize planning terms and manufacturer routing.' }]
+      },
+      { text, event }
+    )
+
+    expect(chat).toHaveBeenCalledTimes(3)
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+    const correctionPrompt = String(calls[2]?.chatPrompt.at(-1)?.content)
+    const feedback = JSON.parse(correctionPrompt.split('\n').at(-1)!) as Array<{
+      evidenceId: string
+      draftFragment: string
+      sourceUnits: Array<{ context: string; text: string }>
+    }>
+    const planningContext = `General Info › ${longSection} › ${longSubsection}`
+    expect(planningContext.length).toBeGreaterThan(250)
+    expect(feedback.length).toBeLessThanOrEqual(4)
+    expect(new Set(feedback.map(item => item.evidenceId))).toEqual(new Set(['page:1:revision:1:section:1', 'page:1:revision:1:section:5']))
+    expect(feedback.flatMap(item => item.sourceUnits)).toContainEqual({ context: planningContext, text: planningFact })
+    expect(feedback.flatMap(item => item.sourceUnits)).toContainEqual({ context: 'MFG Directory › Acme', text: indianaFact })
+    const sourceLines = source.split(/\r?\n/u)
+    expect(feedback.flatMap(item => item.sourceUnits).every(unit => sourceLines.includes(unit.text))).toBe(true)
+    expect(feedback.flatMap(item => item.sourceUnits.map(unit => unit.text))).not.toContain(
+      'Every new account receives a 12-day planning window before its annual review.'
+    )
+    expect(JSON.stringify(feedback).length).toBeLessThanOrEqual(1_200)
+
+    const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    expect(provenance).toHaveLength(2)
+    expect(provenance[0]).toMatchObject({ accepted: false, finalCitationIds: [] })
+    expect(provenance[1]).toMatchObject({
+      accepted: true,
+      issues: [],
+      claims: [
+        expect.objectContaining({ evidenceId: 'page:1:revision:1:section:1', supported: true }),
+        expect.objectContaining({ evidenceId: 'page:1:revision:1:section:1', supported: true }),
+        expect.objectContaining({ evidenceId: 'page:1:revision:1:section:5', supported: true }),
+        expect.objectContaining({ evidenceId: 'page:1:revision:1:section:5', supported: true })
+      ],
+      finalCitationIds: ['page:1:revision:1:section:1', 'page:1:revision:1:section:5']
+    })
+    expect(result.citations).toEqual([
+      { evidenceId: 'page:1:revision:1:section:1', kind: 'page', label: 'Homepage › General Info', href: '/en/home#general-info' },
+      { evidenceId: 'page:1:revision:1:section:5', kind: 'page', label: 'Homepage › MFG Directory › Acme', href: '/en/home#acme' }
+    ])
+  })
 
   it.each([
     ['unsupported predicate', 'Contract pricing guarantees free installation.[[cite:page:1:revision:9:section:2]]'],
     ['wrong section', 'Contract pricing lists discount schedules.[[cite:page:1:revision:9:section:3]]'],
     ['wrong revision', 'Terms remain valid for 30 days.[[cite:page:1:revision:8:section:1]]'],
+    ['source-local paraphrase', 'OM chairs are supplied.[[cite:page:1:revision:9:section:1]]'],
+    ['source-local listing paraphrase', 'Contract pricing includes discount schedules.[[cite:page:1:revision:9:section:2]]'],
+    ['source-local listing substitution', 'Contract pricing includes rebate schedules.[[cite:page:1:revision:9:section:2]]'],
     ['numeric swap', 'Terms remain valid for 90 days.[[cite:page:1:revision:9:section:1]]'],
     ['short identifier assignment swap', 'Chair assignments map IU to 250 lb and OM to 300 lb.[[cite:page:1:revision:9:section:1]]'],
-    ['numeric assignments swapped', 'Chair assignments map OM to 300 lb, IU to 250 lb.[[cite:page:1:revision:9:section:1]]'],
     ['mixed-digit and range substitution', 'Model A3 covers range 10-25 units.[[cite:page:1:revision:9:section:1]]'],
     ['temporal strengthening', 'Supply Disruptions: None.[[cite:page:1:revision:9:section:1]]'],
     ['case-folded heading identity substitution', 'california orders route through the west contact.[[cite:page:1:revision:9:section:1]]'],
     ['case-folded short identifier substitution', 'iu chairs are provided.[[cite:page:1:revision:9:section:1]]'],
     ['unsupported identifying prefix', 'Beta: Indiana orders route through the Midwest contact.[[cite:page:1:revision:9:section:1]]'],
     ['lowercase numeric assignments swapped', 'freight 10 percent, discount 20 percent.[[cite:page:1:revision:9:section:1]]'],
+    ['numeric assignments swapped', 'Discount is 20 percent; freight is 10 percent.[[cite:page:1:revision:9:section:1]]'],
     ['temporal relation substitution', 'Terms remain valid for 30 days before delivery.[[cite:page:1:revision:9:section:1]]'],
     ['negation attachment swap', 'The office approves pickups, not deliveries.[[cite:page:1:revision:9:section:1]]'],
     ['negation removal', 'Weekend deliveries are available.[[cite:page:1:revision:9:section:1]]'],
@@ -1124,9 +1267,9 @@ describe('Ax agent engine', () => {
     ['table polarity stays with its row', 'Status Directory lists Aster, can ship, Birch, and cannot ship.[[cite:page:1:revision:9]]'],
     ['embedded link labels are not containers', 'Fjord includes Harbor.[[cite:page:1:revision:9]]'],
     ['same-name containers cannot pool members', 'Promotions Archive includes Acme and Beta.[[cite:page:1:revision:9]]'],
-    ['shared factual predicate preserved', 'Acme and Beta have pricing starting Jan. 1, 2026.[[cite:page:1:revision:9]]'],
+    ['separate entity-to-date assignment overclaim', 'Acme and Beta have pricing starting Jan. 1, 2026.[[cite:page:1:revision:9:section:1]]'],
     ['ambiguous repeated heading', 'Beta catalog only.[[cite:page:1:revision:9:section:4]]']
-  ] as const)('classifies %s as a hard integrity failure or advisory grounding signal', async (caseName, answer) => {
+  ] as const)('requires source-local support before publishing citation-bound claims (%s)', async (caseName, answer) => {
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }] },
       { results: [{ index: 0, content: answer }] }
@@ -1247,29 +1390,42 @@ describe('Ax agent engine', () => {
       },
       { text, event }
     )
-    const hardFailures = new Set<string>([
-      'wrong revision',
-      'numeric swap',
-      'short identifier assignment swap',
-      'numeric assignments swapped',
-      'mixed-digit and range substitution',
-      'lowercase numeric assignments swapped',
-      'compound-list qualifier removal',
-      'compound-list qualifier relocation',
-      'heading subject numeric swap',
-      'date assignment swapped'
-    ])
-    if (hardFailures.has(caseName)) {
-      await expect(execution).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
-      expect(text).not.toHaveBeenCalled()
-    } else {
+    if (caseName === 'source-local paraphrase' || caseName === 'source-local listing paraphrase') {
       await expect(execution).resolves.toBeDefined()
       expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
-      expect(event.mock.calls.find(([type]) => type === 'evidence.provenance')?.[1]).toMatchObject({
+      const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+      expect(provenance).toHaveLength(1)
+      expect(provenance[0]).toMatchObject({
         accepted: true,
         issues: [],
-        groundingWarnings: [expect.stringContaining('weak lexical alignment')]
+        claims: expect.arrayContaining([expect.objectContaining({ supported: true })]),
+        finalCitationIds: [caseName === 'source-local paraphrase' ? 'page:1:revision:9:section:1' : 'page:1:revision:9:section:2']
       })
+    } else {
+      await expect(execution).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+      expect(text).not.toHaveBeenCalled()
+      const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+      expect(provenance).toHaveLength(1)
+      expect(provenance[0]).toMatchObject({
+        accepted: false,
+        finalCitationIds: []
+      })
+      if (
+        ![
+          'numeric assignments swapped',
+          'lowercase numeric assignments swapped',
+          'short identifier assignment swap',
+          'mixed-digit and range substitution',
+          'heading numeric assignment swap',
+          'heading subject numeric swap',
+          'date assignment swapped',
+          'separate entity-to-date assignment overclaim'
+        ].includes(caseName)
+      ) {
+        expect(provenance[0]).toMatchObject({
+          claims: expect.arrayContaining([expect.objectContaining({ supported: false })])
+        })
+      }
     }
   })
 
@@ -1622,25 +1778,40 @@ describe('Ax agent engine', () => {
     })
     const result = await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
 
-    expect(chat).toHaveBeenCalledTimes(2)
+    expect(chat).toHaveBeenCalledTimes(3)
     expect(invoke.mock.calls.map(([name]) => name)).toEqual(['pages.get', 'pages.getVersion', 'pages.getOkf'])
-    expect(text).toHaveBeenCalledWith('Quartz migration was approved.[[cite:page:42:revision:30]]')
+    expect(text).toHaveBeenCalledOnce()
+    expect(text).not.toHaveBeenCalledWith('Quartz migration was approved.[[cite:page:42:revision:30]]')
+    expect(text).toHaveBeenCalledWith(
+      'Current Cobalt rollout is active.[[cite:page:42:revision:30:section:1]] Historical Amber rollback is archived.[[cite:page:42:revision:10:section:1]] Quartz migration was approved.[[cite:page:42:revision:20]]'
+    )
     const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
-    expect(provenance).toHaveLength(1)
+    expect(provenance).toHaveLength(2)
     expect(provenance[0]).toMatchObject({
+      accepted: false,
+      finalCitationIds: [],
+      claims: [expect.objectContaining({ evidenceId: 'page:42:revision:30', sourceActionName: 'pages.get', supported: false })]
+    })
+    expect(provenance[1]).toMatchObject({
       accepted: true,
       issues: [],
-      groundingWarnings: [expect.stringContaining('weak lexical alignment')],
-      claims: [
-        expect.objectContaining({
-          evidenceId: 'page:42:revision:30',
-          pageEvidenceId: 'page:42:revision:30',
-          sourceActionName: 'pages.get',
-          supported: false
-        })
-      ]
+      claims: expect.arrayContaining([
+        expect.objectContaining({ evidenceId: 'page:42:revision:30:section:1', sourceActionName: 'pages.get', supported: true }),
+        expect.objectContaining({ evidenceId: 'page:42:revision:10:section:1', sourceActionName: 'pages.getVersion', supported: true }),
+        expect.objectContaining({ evidenceId: 'page:42:revision:20', sourceActionName: 'pages.getOkf', supported: true })
+      ]),
+      finalCitationIds: ['page:42:revision:30:section:1', 'page:42:revision:10:section:1', 'page:42:revision:20']
     })
-    expect(result.citations).toEqual([{ evidenceId: 'page:42:revision:30', kind: 'page', label: 'Guide', href: '/en/guide' }])
+    expect(result.citations).toEqual([
+      { evidenceId: 'page:42:revision:30:section:1', kind: 'page', label: 'Guide › Current', href: '/en/guide#current' },
+      {
+        evidenceId: 'page:42:revision:10:section:1',
+        kind: 'page',
+        label: 'Guide › Historical',
+        href: '/en/guide?version=version-amber#historical'
+      },
+      { evidenceId: 'page:42:revision:20', kind: 'page', label: 'Guide', href: '/en/guide?version=version-quartz' }
+    ])
   })
   it('requires exact field-bound Unicode title proof and rejects altered or mismatched assertions', async () => {
     const runTitleCase = async (input: {
@@ -1875,7 +2046,7 @@ describe('Ax agent engine', () => {
     expect(sectionCitation.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
   })
 
-  it('publishes a hard-safe cross-section synthesis while recording weak grounding', async () => {
+  it('withholds cross-section claims until each fact is tied to its supporting scope', async () => {
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
       {
@@ -1887,7 +2058,15 @@ describe('Ax agent engine', () => {
           }
         ]
       },
-      { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident drill.[[cite:page:6:revision:1:section:1]]' }] }
+      {
+        results: [
+          {
+            index: 0,
+            content:
+              'Amber Falcon is a synthetic incident drill.[[cite:page:6:revision:1:section:1]] Confirm alerts, freeze deployments, and drain the queue.[[cite:page:6:revision:1:section:2]]'
+          }
+        ]
+      }
     ]
     const chat = vi.fn(async () => responses.shift()!)
     const factory = {
@@ -1936,20 +2115,32 @@ describe('Ax agent engine', () => {
     })
     const result = await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
 
-    expect(chat).toHaveBeenCalledTimes(2)
+    expect(chat).toHaveBeenCalledTimes(3)
     expect(text).toHaveBeenCalledOnce()
-    expect(text).toHaveBeenCalledWith(
+    expect(text).not.toHaveBeenCalledWith(
       'Amber Falcon is a synthetic incident and its response sequence confirms alerts, freezes deployments, and drains the queue.[[cite:page:6:revision:1:section:2]]'
     )
-    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
-      expect.objectContaining({
-        accepted: true,
-        issues: [],
-        groundingWarnings: [expect.stringContaining('weak lexical alignment')],
-        claims: [expect.objectContaining({ evidenceId: 'page:6:revision:1:section:2', supported: false })]
-      })
-    ])
+    expect(text).toHaveBeenCalledWith(
+      'Amber Falcon is a synthetic incident drill.[[cite:page:6:revision:1:section:1]] Confirm alerts, freeze deployments, and drain the queue.[[cite:page:6:revision:1:section:2]]'
+    )
+    const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    expect(provenance).toHaveLength(2)
+    expect(provenance[0]).toMatchObject({
+      accepted: false,
+      finalCitationIds: [],
+      claims: [expect.objectContaining({ evidenceId: 'page:6:revision:1:section:2', supported: false })]
+    })
+    expect(provenance[1]).toMatchObject({
+      accepted: true,
+      issues: [],
+      claims: expect.arrayContaining([
+        expect.objectContaining({ evidenceId: 'page:6:revision:1:section:1', supported: true }),
+        expect.objectContaining({ evidenceId: 'page:6:revision:1:section:2', supported: true })
+      ]),
+      finalCitationIds: ['page:6:revision:1:section:1', 'page:6:revision:1:section:2']
+    })
     expect(result.citations).toEqual([
+      { evidenceId: 'page:6:revision:1:section:1', kind: 'page', label: 'Incident Runbook', href: '/en/runbook#incident-runbook' },
       {
         evidenceId: 'page:6:revision:1:section:2',
         kind: 'page',
@@ -1996,8 +2187,8 @@ describe('Ax agent engine', () => {
     expect(text).toHaveBeenCalledWith('I do not have read evidence for that claim.')
     expect(text).not.toHaveBeenCalledWith(expect.stringContaining('I verified it'))
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
-      expect.objectContaining({ accepted: false, issues: ['Source-verification language requires a successful page read and an associated citation.'] }),
-      expect.objectContaining({ accepted: true, issues: [] })
+      expect.objectContaining({ accepted: false }),
+      expect.objectContaining({ accepted: true })
     ])
   })
 
