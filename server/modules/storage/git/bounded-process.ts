@@ -1,6 +1,5 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process'
 import { lstat, opendir } from 'node:fs/promises'
-import type { Dir } from 'node:fs'
 import { Readable } from 'node:stream'
 import path from 'node:path'
 
@@ -299,30 +298,26 @@ export async function observeDirectoryTree (
     checkObservationDeadline(options.deadlineAt)
     const listed = await lstat(directoryPath)
     if (!listed.isDirectory()) throw new BoundedProcessError('monitor', `Git observation encountered a non-directory: ${prefix || '.'}`)
-    let directory: Dir | undefined
-    try {
-      directory = await opendir(directoryPath, { bufferSize: 32 })
-      for await (const entry of directory) {
-        checkObservationDeadline(options.deadlineAt)
-        const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
-        if (options.shouldSkip?.(relativePath)) continue
-        entries += 1
-        if (entries > options.maxEntries) throw new BoundedProcessError('monitor', `Git observation exceeded its ${options.maxEntries}-entry limit`)
-        const childPath = path.join(directoryPath, entry.name)
-        const child = await lstat(childPath)
-        if (child.isSymbolicLink()) throw new BoundedProcessError('monitor', `Git observation encountered a symbolic link: ${relativePath}`)
-        if (child.isDirectory()) {
-          await observe(childPath, relativePath)
-          continue
-        }
-        if (!child.isFile() || !Number.isSafeInteger(child.size) || child.size < 0) {
-          throw new BoundedProcessError('monitor', `Git observation encountered an uninspectable entry: ${relativePath}`)
-        }
-        bytes += child.size
-        if (bytes > options.maxBytes) throw new BoundedProcessError('monitor', `Git observation exceeded its ${options.maxBytes}-byte limit`)
+    const directory = await opendir(directoryPath, { bufferSize: 32 })
+    // The async iterator closes the directory when iteration ends, including on errors.
+    for await (const entry of directory) {
+      checkObservationDeadline(options.deadlineAt)
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
+      if (options.shouldSkip?.(relativePath)) continue
+      entries += 1
+      if (entries > options.maxEntries) throw new BoundedProcessError('monitor', `Git observation exceeded its ${options.maxEntries}-entry limit`)
+      const childPath = path.join(directoryPath, entry.name)
+      const child = await lstat(childPath)
+      if (child.isSymbolicLink()) throw new BoundedProcessError('monitor', `Git observation encountered a symbolic link: ${relativePath}`)
+      if (child.isDirectory()) {
+        await observe(childPath, relativePath)
+        continue
       }
-    } finally {
-      if (directory !== undefined) await directory.close()
+      if (!child.isFile() || !Number.isSafeInteger(child.size) || child.size < 0) {
+        throw new BoundedProcessError('monitor', `Git observation encountered an uninspectable entry: ${relativePath}`)
+      }
+      bytes += child.size
+      if (bytes > options.maxBytes) throw new BoundedProcessError('monitor', `Git observation exceeded its ${options.maxBytes}-byte limit`)
     }
   }
 
