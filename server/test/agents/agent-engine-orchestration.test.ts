@@ -148,6 +148,18 @@ const responseStream = (responses: readonly AxChatResponse[], cancel?: (reason: 
 }
 
 describe('Ax orchestration stages', () => {
+  it('uses the same bounded root output exposure for preflight and actual generation on large provider profiles', async () => {
+    const chat = vi.fn(async () => ({ results: [{ index: 0, content: "I couldn't verify this from the available sources." }] }) satisfies AxChatResponse)
+    const engine = new AxAgentEngine(factoryFor(chat, { maxOutputTokens: 32_768 }))
+    const request = baseRequest(new AbortController().signal)
+    const preflight = await engine.preflight(request)
+    const result = await engine.execute(request, { text: async () => {}, event: async () => {} })
+
+    expect(preflight).toMatchObject({ admissible: true, outputExposureTokens: 16_384 })
+    expect(chat.mock.calls[0]?.[0].modelConfig).toMatchObject({ maxTokens: 16_384 })
+    expect(result.executionLimit).toBeUndefined()
+  })
+
   it('classifies wrapped request, stream, and response failures at their engine boundaries', async () => {
     const wrappedRequest = Object.assign(new Error('provider request secret'), {
       cause: Object.assign(new Error('sdk wrapper secret'), {
@@ -698,6 +710,53 @@ describe('Ax orchestration stages', () => {
     expect(resizeUndispatched).toHaveBeenCalled()
     expect(reserveSequence).toHaveBeenCalledOnce()
     expect(close).toHaveBeenCalled()
+  })
+
+  it('never publishes a citation-free model analysis of its own correction after a Wiki page was read', async () => {
+    let turn = 0
+    const draft = 'The provider reached its final turn. The sourceUnits show Alpha requires review, but I will now discuss validator behavior.'
+    const chat = vi.fn(async () => ({
+      results: [
+        ++turn === 1
+          ? { index: 0, functionCalls: [{ id: 'read-alpha', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }
+          : { index: 0, content: draft }
+      ]
+    }) satisfies AxChatResponse)
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke: async () => ({
+          id: 1,
+          locale: 'en',
+          path: 'alpha',
+          title: 'Alpha',
+          contentType: 'markdown',
+          sourceRevision: 'rev-1',
+          content: 'Alpha requires review.',
+          citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
+          citationSections: []
+        }),
+        validateObservation: async () => true,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async () => {})
+    const result = await new AxAgentEngine(factoryFor(chat), actions).execute(
+      {
+        ...baseRequest(new AbortController().signal),
+        limits: { maxTokens: 40_000, maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 512 }
+      },
+      { text, event }
+    )
+
+    expect(result).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
+    expect(result.citations).toBeUndefined()
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain("I couldn't complete a source-verified answer")
+    expect(text.mock.calls.map(([delta]) => delta).join('')).not.toContain('sourceUnits')
+    expect(event.mock.calls).toContainEqual(['evidence.provenance', expect.objectContaining({ accepted: false })])
   })
 
   it('does not dispatch actions when the reserved synthesis quota is unavailable', async () => {
