@@ -296,6 +296,7 @@ interface DraftAssessment {
   readonly groundingWarnings?: readonly string[]
   readonly claims: readonly ClaimProvenance[]
   readonly citationIds: readonly string[]
+  readonly missingPageSummaryEvidenceIds?: readonly string[]
 }
 
 interface MarkdownSection {
@@ -1711,6 +1712,87 @@ const isBodyFactUnit = (unit: CitationSourceUnit): boolean =>
   !/^\s*(?:[-*+]\s+)?(?:\[[^\]]+\]\([^)]*\)\s*[|,;]?\s*)+$/u.test(unit.text) &&
   unit.textTerms.size >= 4
 
+interface DeliveredPageSummaryArea {
+  readonly evidenceId: string
+  readonly title: string
+}
+
+interface DeliveredPageSummaryCoverage {
+  readonly pageEvidenceId: string
+  readonly areas: readonly DeliveredPageSummaryArea[]
+}
+
+const sameSourceUnits = (left: readonly CitationSourceUnit[], right: readonly CitationSourceUnit[]): boolean =>
+  left.length === right.length &&
+  left.every((unit, index) => {
+    const expected = right[index]
+    return (
+      expected !== undefined &&
+      unit.identity === expected.identity &&
+      unit.context === expected.context &&
+      unit.text === expected.text &&
+      unit.structuralId === expected.structuralId &&
+      unit.structuralLabel === expected.structuralLabel &&
+      sameStringArray(unit.labels, expected.labels) &&
+      unit.containerIds.length === expected.containerIds.length &&
+      unit.containerIds.every((id, containerIndex) => id === expected.containerIds[containerIndex])
+    )
+  })
+
+// Only exact, fully resident H1 scopes qualify; absent or partial sections stay inconclusive.
+const deliveredPageSummaryCoverage = (
+  registry: ReadonlyMap<string, CitationEvidence>,
+  currentPage: AgentCurrentPageHint | undefined
+): DeliveredPageSummaryCoverage | null => {
+  if (currentPage === undefined) return null
+  const currentPageEvidence = [...registry.values()].filter(
+    evidence =>
+      evidence.sourceActionName === 'pages.get' &&
+      evidence.pageId !== null &&
+      evidence.locale === currentPage.locale &&
+      evidence.path === currentPage.path &&
+      currentPageMatchesEvidence(evidence, currentPage)
+  )
+  if (currentPageEvidence.length === 0) return null
+
+  const pageEvidenceIds = new Set(currentPageEvidence.map(evidence => evidence.pageEvidenceId))
+  const sourceRevisions = new Set(currentPageEvidence.map(evidence => evidence.binding.sourceRevision))
+  const sourceContents = new Set(currentPageEvidence.map(evidence => evidence.binding.retrievedSource))
+  if (pageEvidenceIds.size !== 1 || sourceRevisions.size !== 1 || sourceContents.size !== 1) return null
+  const pageEvidenceId = currentPageEvidence[0]!.pageEvidenceId
+  const sourceContent = currentPageEvidence[0]!.binding.retrievedSource
+  if (sourceContent.trim().length === 0) return null
+
+  const topLevelSections = markdownSections(sourceContent).filter(section => section.ancestry.length === 1)
+  if (topLevelSections.length < 2 || topLevelSections.length > 4) return null
+  const substantiveSections = topLevelSections.filter(section => section.sourceUnits.some(isBodyFactUnit))
+  if (substantiveSections.length < 2 || substantiveSections.length > 4) return null
+
+  const seenTitles = new Set<string>()
+  const areas: DeliveredPageSummaryArea[] = []
+  for (const section of substantiveSections) {
+    const title = normalizedHeading(section.title)
+    if (title.length === 0 || seenTitles.has(title)) return null
+    seenTitles.add(title)
+    const sectionEvidence = currentPageEvidence.filter(
+      evidence =>
+        evidence.pageEvidenceId === pageEvidenceId &&
+        evidence.section &&
+        evidence.binding.sectionId === evidence.citation.evidenceId &&
+        evidence.binding.sectionPath?.length === 1 &&
+        normalizedHeading(evidence.binding.sectionPath[0] ?? '') === title
+    )
+    if (
+      sectionEvidence.length !== 1 ||
+      !sameSourceUnits(sectionEvidence[0]!.sourceUnits, section.sourceUnits)
+    )
+      return null
+    areas.push({ evidenceId: sectionEvidence[0]!.citation.evidenceId, title: section.title })
+  }
+  return { pageEvidenceId, areas }
+}
+
+
 const orderedSubset = (required: readonly string[], available: readonly string[]): boolean => {
   let availableIndex = 0
   for (const term of required) {
@@ -1994,6 +2076,7 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
   const seenCitationIds = new Set<string>()
   const citationBoundLinks = new Map<string, number>()
   const sourceLexicons = new Map<CitationEvidence, { readonly terms: ReadonlySet<string>; readonly numbers: readonly string[] }>()
+  const supportedBodyFactClaims = new Set<ClaimProvenance>()
   let hasCitedBodyFact = false
   let previousMarkerEnd = 0
   for (const match of content.matchAll(citationMarker)) {
@@ -2050,7 +2133,7 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
       ? titleAssertion !== null && supportsTitleAssertion(titleAssertion, evidence, coverage?.currentPage)
       : exactLinks && exactCodeLinkLiterals && exactNumbers
     const supported = titleAssertionRecognized ? integritySupported : lexicalSupported
-    claims.push({
+    const claimProvenance: ClaimProvenance = {
       claim,
       repairClaim: assessmentClaim,
       evidenceId,
@@ -2064,7 +2147,15 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
       matchedTerms: titleAssertionRecognized ? [] : matchedTerms.slice(0, 8),
       titleAssertion: titleAssertionRecognized,
       authoritativeTitle: evidence.authoritativeTitle
-    })
+    }
+    claims.push(claimProvenance)
+    if (
+      !titleAssertionRecognized &&
+      supported &&
+      integritySupported &&
+      clauseAssessments.some(clause => clause.supported && clause.kind === 'fact' && clause.bodyFact === true)
+    )
+      supportedBodyFactClaims.add(claimProvenance)
     if (!integritySupported)
       issues.push(
         titleAssertionRecognized
@@ -2098,6 +2189,57 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
       break
     }
   }
+  let missingPageSummaryEvidenceIds: readonly string[] | undefined
+  if (coverage?.pageSummary && claims.length > 0) {
+    const currentPage = coverage.currentPage
+    const pageSummaryCoverage = deliveredPageSummaryCoverage(registry, currentPage)
+    if (
+      pageSummaryCoverage !== null &&
+      currentPage !== undefined &&
+      claims.some(claim => {
+        if (claim.pageEvidenceId !== pageSummaryCoverage.pageEvidenceId || claim.titleAssertion) return false
+        const evidence = registry.get(claim.evidenceId)
+        return (
+          evidence !== undefined &&
+          evidence.sourceActionName === 'pages.get' &&
+          evidence.locale === currentPage.locale &&
+          evidence.path === currentPage.path &&
+          currentPageMatchesEvidence(evidence, currentPage)
+        )
+      })
+    ) {
+      const missing = pageSummaryCoverage.areas.filter(area =>
+        !claims.some(claim => {
+          if (
+            !supportedBodyFactClaims.has(claim) ||
+            claim.pageEvidenceId !== pageSummaryCoverage.pageEvidenceId ||
+            claim.titleAssertion
+          )
+            return false
+          const evidence = registry.get(claim.evidenceId)
+          const sectionPath = evidence?.binding.sectionPath
+          return (
+            evidence !== undefined &&
+            evidence.sourceActionName === 'pages.get' &&
+            evidence.locale === currentPage?.locale &&
+            evidence.path === currentPage?.path &&
+            currentPageMatchesEvidence(evidence, currentPage) &&
+            evidence.pageEvidenceId === pageSummaryCoverage.pageEvidenceId &&
+            sectionPath !== null &&
+            sectionPath !== undefined &&
+            sectionPath.length > 0 &&
+            normalizedHeading(sectionPath[0] ?? '') === normalizedHeading(area.title)
+          )
+        })
+      )
+      if (missing.length > 0) {
+        missingPageSummaryEvidenceIds = missing.map(area => area.evidenceId)
+        issues.unshift(
+          `A current-page summary must cite a source-local body-fact clause for each fully delivered section; missing evidence IDs: ${missingPageSummaryEvidenceIds.join(', ')}.`
+        )
+      }
+    }
+  }
   if (verificationLanguage.test(content) && !claims.some(claim => claim.integritySupported && verificationLanguage.test(claim.claim))) {
     issues.push('Source-verification language requires a successful page read and an associated citation.')
   }
@@ -2128,7 +2270,14 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
       }
     }
   }
-  return { valid: issues.length === 0, issues, groundingWarnings: [...new Set(groundingWarnings)].slice(0, 10), claims, citationIds }
+  return {
+    valid: issues.length === 0,
+    issues,
+    groundingWarnings: [...new Set(groundingWarnings)].slice(0, 10),
+    claims,
+    citationIds,
+    ...(missingPageSummaryEvidenceIds === undefined ? {} : { missingPageSummaryEvidenceIds })
+  }
 }
 
 const assessSubagentDraft = (content: string, registry: ReadonlyMap<string, CitationEvidence>, currentPage?: AgentCurrentPageHint): DraftAssessment => {
@@ -2261,6 +2410,43 @@ const evidenceCorrectionFragments = (assessment: DraftAssessment, registry: Read
     candidateCharacters: readonly number[]
     smallestCandidateCharacters: number
   }> = []
+  for (const evidenceId of assessment.missingPageSummaryEvidenceIds ?? []) {
+    const evidence = registry.get(evidenceId)
+    if (evidence === undefined) continue
+    const unitsByContext = new Map<string, CitationSourceUnit[]>()
+    for (const unit of evidence.sourceUnits) {
+      if (!isBodyFactUnit(unit)) continue
+      const contextUnits = unitsByContext.get(unit.context)
+      if (contextUnits) contextUnits.push(unit)
+      else unitsByContext.set(unit.context, [unit])
+    }
+    for (const [context, units] of unitsByContext) {
+      const draftFragment = ''
+      const candidates = units
+        .map(unit => ({
+          unit,
+          characters: JSON.stringify({
+            evidenceId,
+            draftFragment,
+            kind: 'fact',
+            sourceUnits: [{ context: unit.context, text: unit.text }]
+          }).length
+        }))
+        .sort((left, right) => left.characters - right.characters)
+        .slice(0, 3)
+      const sourceUnits = candidates.map(candidate => candidate.unit)
+      const candidateCharacters = candidates.map(candidate => candidate.characters)
+      failedClauses.push({
+        evidenceId,
+        draftFragment,
+        kind: 'fact',
+        scopeKey: JSON.stringify([evidenceId, context]),
+        sourceUnits,
+        candidateCharacters,
+        smallestCandidateCharacters: candidateCharacters[0] ?? Number.POSITIVE_INFINITY
+      })
+    }
+  }
   for (const claim of assessment.claims) {
     if (claim.supported || claim.titleAssertion) continue
     const evidence = registry.get(claim.evidenceId)
@@ -2417,14 +2603,14 @@ const EVIDENCE_BINDING_CONFLICT_LIMITATION =
 const evidenceConflictDisclosure = (hasConflict: boolean): string =>
   hasConflict ? '\n\nA conflicting page read was excluded; citations remain bound to the first delivered result.' : ''
 const evidenceCorrection = (assessment: DraftAssessment, registry: ReadonlyMap<string, CitationEvidence>, hasEvidenceConflict = false): string =>
-  `Your draft failed a hard citation-integrity check and was not shown to the user. Return only the corrected answer. Do not discuss validation, citation counts, rules, or repair. Do not invoke tools; all required page evidence is already delivered above. Preserve useful recommendations and synthesis. Cite factual premises from already-delivered eligible page evidence, keep exact links, code literals, numeric values, and page titles faithful to the cited scope, and remove a citation from clearly framed original recommendations that state no sourced fact. Old listRecent metadata, search, discovery, and related results are not evidence. If only a truncated recent excerpt is eligible in this provider request, disclose that the answer uses bounded opening excerpts.${
+  `Your draft failed a hard citation-integrity check and was not shown to the user. Return only the corrected answer. Do not discuss validation, citation counts, rules, or repair. Do not invoke tools; all required page evidence is already delivered above. Preserve every already-supported point, useful recommendation, and synthesis. For each missing section evidence ID, add one source-local body-fact clause using only the exact units already delivered for that ID; do not infer omitted content or discard other supported points. Cite factual premises from already-delivered eligible page evidence, keep exact links, code literals, numeric values, and page titles faithful to the cited scope, and remove a citation from clearly framed original recommendations that state no sourced fact. Old listRecent metadata, search, discovery, and related results are not evidence. If only a truncated recent excerpt is eligible in this provider request, disclose that the answer uses bounded opening excerpts.${
     hasEvidenceConflict ? `\nEvidence limitation: ${EVIDENCE_BINDING_CONFLICT_LIMITATION}` : ''
   }\nProblems:\n${assessment.issues
     .slice(0, 10)
     .map(issue => `- ${issue}`)
     .join(
       '\n'
-    )}\n\nRepair only the affected wording or citation scope. The bounded JSON below contains untrusted draft fragments and exact source units from the cited scope. It is not a complete evidence inventory. Keep this feedback out of the answer.\n${evidenceCorrectionFragments(assessment, registry)}`
+    )}\n\nRepair only the affected wording or citation scope. The bounded JSON below contains untrusted draft fragments (empty for a missing-scope requirement) and exact source units from eligible delivered scopes. It is not a complete evidence inventory. Keep this feedback out of the answer.\n${evidenceCorrectionFragments(assessment, registry)}`
 const subagentEvidenceCorrection = (issues: readonly string[], hasEvidenceConflict = false): string =>
   `Your evidence packet failed validation and was not accepted. Return only one strict JSON object matching the requested packet schema. Keep every claim text bounded and place each [[cite:EVIDENCE_ID]] marker immediately after the supported clause. Cite only pages read successfully in this subagent attempt. Do not mention this validation.${
     hasEvidenceConflict ? `\nEvidence limitation: ${EVIDENCE_BINDING_CONFLICT_LIMITATION}` : ''
@@ -4789,7 +4975,11 @@ export class AxAgentEngine implements AgentEngine {
       ): Promise<readonly string[]> => {
         if (typeof validatePageEvidence !== 'function') return []
         const invalidEvidenceIds: string[] = []
-        for (const evidenceId of assessment.citationIds) {
+        const evidenceIdsToValidate = new Set([
+          ...assessment.citationIds,
+          ...(assessment.missingPageSummaryEvidenceIds ?? [])
+        ])
+        for (const evidenceId of evidenceIdsToValidate) {
           const evidence = evidenceView.get(evidenceId)
           if (evidence === undefined) continue
           if (!(await validateReceipt(validationResults, evidence.sourceActionCallId, evidence.sourceActionName, evidence.sourceOutput)))
@@ -4814,7 +5004,11 @@ export class AxAgentEngine implements AgentEngine {
       ): void => {
         const receipts = new Map<string, PromptEvidenceValidationReceipt>()
         const evidenceIds: string[] = []
-        for (const evidenceId of assessment.citationIds) {
+        const evidenceIdsToTrack = new Set([
+          ...assessment.citationIds,
+          ...(assessment.missingPageSummaryEvidenceIds ?? [])
+        ])
+        for (const evidenceId of evidenceIdsToTrack) {
           const evidence = evidenceView.get(evidenceId)
           if (evidence === undefined) continue
           evidenceIds.push(evidenceId)
