@@ -140,6 +140,8 @@ export const planAgentContextCompaction = (input: {
   readonly force?: boolean
   /** Compact at the relaxed turn-boundary threshold: the agent has finished responding and the user's turn is next. */
   readonly eager?: boolean
+  /** Defer opportunistic turn-boundary summaries while the provider may reuse the unchanged prefix. */
+  readonly preserveCachePrefix?: boolean
   /** Restrict planning to the durable history scope (used by post-answer compaction; active state does not survive the run). */
   readonly scope?: 'all' | 'history'
   readonly ordinaryExposure: (state: AgentCompactionPromptState) => AgentCompactionRequestExposure
@@ -147,7 +149,14 @@ export const planAgentContextCompaction = (input: {
   readonly cost: (totalTokens: number) => number
 }): AgentCompactionPlan | null => {
   const initial = input.ordinaryExposure(input.state)
-  if (!input.force && initial.totalExposureTokens <= (input.eager === true ? input.policy.turnBoundaryTriggerExposureTokens : input.policy.triggerExposureTokens)) return null
+  if (
+    !input.force &&
+    initial.totalExposureTokens <=
+      (input.eager === true && input.preserveCachePrefix !== true
+        ? input.policy.turnBoundaryTriggerExposureTokens
+        : input.policy.triggerExposureTokens)
+  )
+    return null
   let state = input.state
   const windows: AgentCompactionWindow[] = []
   let inputTokens = 0
