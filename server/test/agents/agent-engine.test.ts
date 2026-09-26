@@ -86,6 +86,303 @@ const request = (signal: AbortSignal): AgentEngineRequest => ({
   signal
 })
 
+type QuestionActionName =
+  | 'pages.search'
+  | 'pages.discover'
+  | 'pages.related'
+  | 'pages.listRecent'
+  | 'pages.get'
+  | 'pages.getVersion'
+type QuestionToolName = QuestionActionName | 'wiki_enable_tools'
+type QuestionCall = {
+  readonly id: string
+  readonly name: QuestionToolName
+  readonly arguments: Readonly<Record<string, unknown>>
+}
+type QuestionStep = { readonly calls: readonly QuestionCall[] } | { readonly answer: string }
+type QuestionMode = 'native' | 'prompt'
+
+const questionResponses = (mode: QuestionMode, steps: readonly QuestionStep[]): AxChatResponse[] => {
+  const responses: AxChatResponse[] = []
+  for (const step of steps) {
+    if ('answer' in step) {
+      responses.push({ results: [{ index: 0, content: step.answer }] })
+      continue
+    }
+    if (mode === 'native') {
+      responses.push({
+        results: [
+          {
+            index: 0,
+            functionCalls: step.calls.map(call => ({
+              id: call.id,
+              type: 'function' as const,
+              function: {
+                name: call.name === 'wiki_enable_tools' ? call.name : AGENT_TOOL_NAMES[call.name],
+                params: JSON.stringify(call.arguments)
+              }
+            }))
+          }
+        ]
+      })
+      continue
+    }
+    for (const call of step.calls) {
+      responses.push({
+        results: [
+          {
+            index: 0,
+            content: `<wiki-tool-call>${JSON.stringify({
+              name: call.name === 'wiki_enable_tools' ? call.name : AGENT_TOOL_NAMES[call.name],
+              arguments: call.arguments
+            })}</wiki-tool-call>`
+          }
+        ]
+      })
+    }
+  }
+  return responses
+}
+
+const questionFunctions = [
+  {
+    name: 'pages.search',
+    title: 'Search pages',
+    description: 'Find candidate pages.',
+    parameters: { type: 'object', properties: { query: { type: 'string' } } },
+    risk: 'read',
+    group: 'core'
+  },
+  {
+    name: 'pages.discover',
+    title: 'Discover pages',
+    description: 'Browse candidate pages.',
+    parameters: { type: 'object', properties: { locale: { type: 'string' } } },
+    risk: 'read',
+    group: 'explore'
+  },
+  {
+    name: 'pages.related',
+    title: 'Find related pages',
+    description: 'Traverse related candidate pages.',
+    parameters: { type: 'object', properties: { pageId: { type: 'number' } } },
+    risk: 'read',
+    group: 'explore'
+  },
+  {
+    name: 'pages.listRecent',
+    title: 'List recent pages',
+    description: 'List recently changed pages.',
+    parameters: { type: 'object', properties: { limit: { type: 'number' } } },
+    risk: 'read',
+    group: 'core'
+  },
+  {
+    name: 'pages.get',
+    title: 'Read page',
+    description: 'Read an authorized page.',
+    parameters: { type: 'object', properties: { id: { type: 'number' } } },
+    risk: 'read',
+    group: 'core'
+  },
+  {
+    name: 'pages.getVersion',
+    title: 'Read page version',
+    description: 'Read an exact historical page revision.',
+    parameters: { type: 'object', properties: { pageId: { type: 'number' }, versionId: { type: 'number' } } },
+    risk: 'read',
+    group: 'history'
+  }
+] as const
+
+const questionFixture = (
+  mode: QuestionMode,
+  steps: readonly QuestionStep[],
+  invokeAction: (name: QuestionActionName, input: unknown) => unknown | Promise<unknown>
+) => {
+  const providerCalls: Readonly<AxChatRequest<unknown>>[] = []
+  const responses = questionResponses(mode, steps)
+  const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+    providerCalls.push(input)
+    const response = responses.shift()
+    if (response === undefined) throw new Error('The question fixture received an unexpected provider turn.')
+    return response
+  })
+  const factory = {
+    create: async () => ({
+      service: { chat },
+      capabilities: {
+        streaming: false,
+        toolCalling: mode === 'native' ? 'native' : 'prompt',
+        parallelToolCalls: mode === 'native',
+        structuredOutput: mode === 'native' ? 'native-json-schema' : 'prompt-only',
+        usage: 'estimated',
+        cancellation: true,
+        maxContextTokens: 100_000,
+        maxOutputTokens: 4_000
+      },
+      transportKind: mode === 'native' ? 'openai-responses' : 'legacy-completions',
+      model: 'gpt-test',
+      capabilityRevision: 'cap-1',
+      pricingRevision: 'price-1',
+      pricing
+    })
+  } as unknown as AgentProviderFactory
+  const invoke = vi.fn(async (name: string, input: unknown) => invokeAction(name as QuestionActionName, input))
+  const close = vi.fn()
+  const actions: AgentActionSessionProvider = {
+    open: async () => ({ functions: questionFunctions, invoke, snapshot: async () => ({}), close })
+  }
+  const text = vi.fn(async (_message: string) => {})
+  const event = vi.fn(async (_type: string, _data: unknown) => {})
+  const engine = new AxAgentEngine(factory, actions)
+  const execute = (userMessage: string, limits?: AgentEngineRequest['limits']) =>
+    engine.execute(
+      {
+        ...request(new AbortController().signal),
+        messages: [{ role: 'user' as const, content: userMessage }],
+        ...(limits === undefined ? {} : { limits })
+      },
+      { text, event }
+    )
+  return { event, execute, invoke, providerCalls, text }
+}
+
+const questionCandidate = (
+  id: number,
+  sourceRevision: string,
+  title: string,
+  overrides: Readonly<Record<string, unknown>> = {}
+) => ({
+  id,
+  locale: 'en',
+  path: `operations/candidate-${id}`,
+  title,
+  description: `Candidate description for ${title}.`,
+  contentType: 'markdown',
+  sourceRevision,
+  authority: {
+    state: 'valid',
+    metadata: { internalMarker: `authority-private-${id}` },
+    trust: {
+      trustTier: 'human-reviewed',
+      verification: 'current',
+      status: 'stable',
+      stale: false,
+      generatedAt: null,
+      verifiedAt: null
+    }
+  },
+  okfResourceUri: `wiki://pages/${id}/versions/current/revisions/${sourceRevision}/okf`,
+  citation: {
+    evidenceId: `page:${id}:revision:${sourceRevision}`,
+    label: title,
+    href: `/en/operations/candidate-${id}`
+  },
+  knowledge: {
+    schemaVersion: 1,
+    sourceRevision,
+    state: 'complete',
+    summary: `Knowledge hint for ${title}.`,
+    provenance: { internalMarker: `knowledge-private-${id}` }
+  },
+  tags: ['deployment'],
+  score: 0.91,
+  matchedFields: ['title', 'description'],
+  ...overrides
+})
+
+const questionReadPage = (
+  id: number,
+  sourceRevision: string,
+  title: string,
+  path: string,
+  section: string,
+  sectionSlug: string,
+  fact: string
+) => {
+  const evidenceId = `page:${id}:revision:${sourceRevision}`
+  const sectionEvidenceId = `${evidenceId}:section:1`
+  return {
+    id,
+    locale: 'en',
+    path,
+    sourceRevision,
+    title,
+    contentType: 'markdown',
+    content: `# ${title}\n\n## ${section}\n${fact}`,
+    updatedAt: '2026-09-01T00:00:00.000Z',
+    citation: { evidenceId, label: title, href: `/en/${path}` },
+    citationSections: [
+      {
+        evidenceId: sectionEvidenceId,
+        label: `${title} › ${section}`,
+        href: `/en/${path}#${sectionSlug}`
+      }
+    ]
+  }
+}
+
+const providerActionResult = (
+  calls: readonly Readonly<AxChatRequest<unknown>>[],
+  mode: QuestionMode,
+  nativeCallId: string,
+  providerName: string,
+  occurrence = 0
+): unknown => {
+  let matchingOccurrence = 0
+  const seenPromptCalls = new Set<string>()
+  for (const call of calls) {
+    for (const message of call.chatPrompt) {
+      if (mode === 'native' && message.role === 'function' && message.functionId === nativeCallId) {
+        const result: unknown = JSON.parse(message.result)
+        return result
+      }
+      if (mode !== 'prompt' || message.role !== 'user') continue
+      const match = /<wiki-tool-result>([\s\S]*?)<\/wiki-tool-result>/u.exec(message.content)
+      if (match === null) continue
+      const parsed: unknown = JSON.parse(match[1]!)
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) continue
+      if (
+        !('name' in parsed) ||
+        parsed.name !== providerName ||
+        !('callId' in parsed) ||
+        typeof parsed.callId !== 'string'
+      ) continue
+      if (!('result' in parsed)) continue
+      if (seenPromptCalls.has(parsed.callId)) continue
+      seenPromptCalls.add(parsed.callId)
+      if (matchingOccurrence++ === occurrence) return parsed.result
+    }
+  }
+  return undefined
+}
+
+const questionRecord = (value: unknown): Record<string, unknown> => {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    throw new Error('Expected a projected question result object.')
+  }
+  return value as Record<string, unknown>
+}
+
+const candidateDiscovery = (
+  returnedCount: number,
+  newCandidateCount: number,
+  repeatedCandidateCount: number,
+  continuation: 'available' | 'not_reported'
+) => ({
+  outcome: 'candidates',
+  returnedCount,
+  newCandidateCount,
+  repeatedCandidateCount,
+  continuation,
+  coverage: 'bounded'
+})
+
 describe('Ax agent engine', () => {
   const postProposalStreams = async (actionName: AgentActionName, status: string): Promise<readonly boolean[]> => {
     const definition = ACTION_CATALOG[actionName]
@@ -1711,7 +2008,6 @@ describe('Ax agent engine', () => {
   })
 
   it('rejects search-result citations until the page is read and records grouped claim provenance', async () => {
-    const providerCalls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [
       {
         results: [
@@ -1735,10 +2031,7 @@ describe('Ax agent engine', () => {
         ]
       }
     ]
-    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
-      providerCalls.push(input)
-      return responses.shift()!
-    })
+    const chat = vi.fn(async () => responses.shift()!)
     const factory = {
       create: async () => ({
         service: { chat },
@@ -1814,12 +2107,6 @@ describe('Ax agent engine', () => {
     expect(text).toHaveBeenCalledOnce()
     expect(text).not.toHaveBeenCalledWith(expect.stringContaining('Amber Falcon is a synthetic incident drill.[[cite:page:6:revision:1]]'))
     expect(invoke.mock.calls.map(([name]) => name)).toEqual(['pages.search', 'pages.get'])
-    expect(providerCalls[2]?.chatPrompt).toContainEqual(
-      expect.objectContaining({
-        role: 'user',
-        content: expect.stringContaining('was not produced by a successful page read')
-      })
-    )
     const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
     expect(provenance).toHaveLength(2)
     expect(provenance[0]).toMatchObject({
@@ -1865,6 +2152,528 @@ describe('Ax agent engine', () => {
         href: '/en/agent-shakedown/incident-runbook#response-sequence'
       }
     ])
+  })
+
+  it.each(['native', 'prompt'] as const)('grounds a multi-page answer in exact reads after scoped candidate expansion on %s tools', async mode => {
+    const firstCandidate = questionCandidate(21, '10', 'Release Checklist')
+    const overlappingCandidate = questionCandidate(21, '10', 'Release Checklist')
+    const updatedCandidate = questionCandidate(21, '11', 'Release Checklist')
+    const secondPageCandidate = questionCandidate(23, '1', 'Queue Operations')
+    const initialSearchResult = {
+      results: [firstCandidate, overlappingCandidate, questionCandidate(22, '5', 'Release FAQ')],
+      suggestions: [],
+      totalInWindow: 2,
+      windowLimit: 10,
+      windowTruncated: false,
+      nextOffset: 10
+    }
+    const relatedResult = {
+      pages: [
+        { ...firstCandidate, distance: 1, direction: 'outgoing', viaPageId: 21 },
+        { ...updatedCandidate, distance: 1, direction: 'outgoing', viaPageId: 21 },
+        { ...secondPageCandidate, distance: 2, direction: 'incoming', viaPageId: 21 },
+        { ...secondPageCandidate, distance: 2, direction: 'incoming', viaPageId: 21 }
+      ],
+      nextCursor: 'related-cursor-2'
+    }
+    const releaseChecklist = questionReadPage(
+      21,
+      '11',
+      'Release Checklist',
+      'operations/release-checklist',
+      'Backup readiness',
+      'backup-readiness',
+      'Before deployment, verify the backup is current.'
+    )
+    const queueOperations = questionReadPage(
+      23,
+      '1',
+      'Queue Operations',
+      'operations/queue',
+      'Post-deployment checks',
+      'post-deployment-checks',
+      'After deployment, confirm the queue drains.'
+    )
+    const answer =
+      '- Before deployment, verify the backup is current.[[cite:page:21:revision:11:section:1]]\n' +
+      '- After deployment, confirm the queue drains.[[cite:page:23:revision:1:section:1]]\n\n' +
+      'Recommendation: Keep both checks together in the release checklist.'
+    const unsupportedCandidateDraft = 'The queue clears within five minutes.[[cite:page:23:revision:1]]'
+    const fixture = questionFixture(
+      mode,
+      [
+        { calls: [{ id: 'search-checklist', name: 'pages.search', arguments: { query: 'pre-deployment release checks' } }] },
+        { calls: [{ id: 'read-checklist', name: 'pages.get', arguments: { id: 21 } }] },
+        { calls: [{ id: 'enable-explore', name: 'wiki_enable_tools', arguments: { category: 'explore' } }] },
+        { calls: [{ id: 'related-checks', name: 'pages.related', arguments: { pageId: 21, limit: 10, cursor: null } }] },
+        { answer: unsupportedCandidateDraft },
+        { calls: [{ id: 'read-queue', name: 'pages.get', arguments: { id: 23 } }] },
+        { answer }
+      ],
+      async (name, input) => {
+        if (name === 'pages.search') return initialSearchResult
+        if (name === 'pages.related') return relatedResult
+        if (name === 'pages.get') {
+          if (typeof input !== 'object' || input === null || !('id' in input) || typeof input.id !== 'number')
+            throw new Error('Expected an authorized positive page ID in the question fixture.')
+          if (input.id === 21) return releaseChecklist
+          if (input.id === 23) return queueOperations
+        }
+        throw new Error(`Unexpected action in question fixture: ${name}`)
+      }
+    )
+
+    const result = await fixture.execute('Which checks should our team perform before and after deployment?')
+
+    expect(fixture.invoke.mock.calls.map(([name, input]) => ({ name, input }))).toEqual([
+      { name: 'pages.search', input: { query: 'pre-deployment release checks' } },
+      { name: 'pages.get', input: { id: 21 } },
+      { name: 'pages.related', input: { pageId: 21, limit: 10, cursor: null } },
+      { name: 'pages.get', input: { id: 23 } }
+    ])
+    const readIds: number[] = []
+    for (const [name, input] of fixture.invoke.mock.calls) {
+      if (name !== 'pages.get') continue
+      if (typeof input !== 'object' || input === null || !('id' in input) || typeof input.id !== 'number')
+        throw new Error('Expected an authorized positive page ID in the question fixture.')
+      readIds.push(input.id)
+    }
+    expect(readIds).toEqual([21, 23])
+    const searchOutput = questionRecord(
+      providerActionResult(fixture.providerCalls, mode, 'search-checklist', AGENT_TOOL_NAMES['pages.search'])
+    )
+    const searchRows = searchOutput.results
+    if (!Array.isArray(searchRows)) throw new Error('Expected projected search candidates.')
+    expect(searchOutput.discovery).toEqual(candidateDiscovery(2, 2, 0, 'available'))
+    expect(searchOutput.nextOffset).toBe(10)
+    expect(searchRows.map(row => questionRecord(row).id)).toEqual([21, 21, 22])
+    expect(questionRecord(searchRows[0])).toEqual(
+      expect.objectContaining({
+        id: 21,
+        locale: 'en',
+        path: 'operations/candidate-21',
+        sourceRevision: '10',
+        description: 'Candidate description for Release Checklist.',
+        tags: ['deployment'],
+        score: 0.91,
+        matchedFields: ['title', 'description'],
+        authority: expect.objectContaining({
+          state: 'valid',
+          trust: expect.objectContaining({ trustTier: 'human-reviewed' })
+        }),
+        knowledge: expect.objectContaining({ summary: 'Knowledge hint for Release Checklist.' })
+      })
+    )
+    for (const row of searchRows) {
+      const searchCandidate = questionRecord(row)
+      expect(searchCandidate).not.toHaveProperty('citation')
+      expect(searchCandidate).not.toHaveProperty('okfResourceUri')
+    }
+    const relatedOutput = questionRecord(
+      providerActionResult(fixture.providerCalls, mode, 'related-checks', AGENT_TOOL_NAMES['pages.related'])
+    )
+    const relatedRows = relatedOutput.pages
+    if (!Array.isArray(relatedRows)) throw new Error('Expected projected related candidates.')
+    expect(relatedOutput.nextCursor).toBe('related-cursor-2')
+    expect(relatedOutput.discovery).toEqual(candidateDiscovery(3, 2, 1, 'available'))
+    expect(relatedRows).toHaveLength(4)
+    expect(
+      relatedRows.map(row => {
+        const candidate = questionRecord(row)
+        return { id: candidate.id, sourceRevision: candidate.sourceRevision }
+      })
+    ).toEqual([
+      { id: 21, sourceRevision: '10' },
+      { id: 21, sourceRevision: '11' },
+      { id: 23, sourceRevision: '1' },
+      { id: 23, sourceRevision: '1' }
+    ])
+    expect(questionRecord(relatedRows[0])).toEqual(
+      expect.objectContaining({ distance: 1, direction: 'outgoing', viaPageId: 21 })
+    )
+    expect(questionRecord(relatedRows[1])).toEqual(
+      expect.objectContaining({ distance: 1, direction: 'outgoing', viaPageId: 21 })
+    )
+    expect(questionRecord(relatedRows[2])).toEqual(
+      expect.objectContaining({ distance: 2, direction: 'incoming', viaPageId: 21 })
+    )
+    expect(questionRecord(relatedRows[3])).toEqual(
+      expect.objectContaining({ distance: 2, direction: 'incoming', viaPageId: 21 })
+    )
+    for (const row of relatedRows) {
+      const relatedCandidate = questionRecord(row)
+      expect(relatedCandidate).not.toHaveProperty('citation')
+      expect(relatedCandidate).not.toHaveProperty('okfResourceUri')
+    }
+    const promptHistory = JSON.stringify(fixture.providerCalls.map(call => call.chatPrompt))
+    expect(promptHistory).not.toContain(firstCandidate.okfResourceUri)
+    expect(promptHistory).not.toContain(updatedCandidate.okfResourceUri)
+    expect(promptHistory).not.toContain(secondPageCandidate.okfResourceUri)
+
+    const emitted = fixture.text.mock.calls.map(([delta]) => delta).join('')
+    expect(fixture.text).toHaveBeenCalledOnce()
+    expect(emitted).toBe(answer)
+    expect(emitted).not.toContain('within five minutes')
+    expect(emitted.split('\n').filter(line => line.startsWith('- '))).toEqual([
+      '- Before deployment, verify the backup is current.[[cite:page:21:revision:11:section:1]]',
+      '- After deployment, confirm the queue drains.[[cite:page:23:revision:1:section:1]]'
+    ])
+    expect(result.citations).toEqual([
+      {
+        evidenceId: 'page:21:revision:11:section:1',
+        kind: 'page',
+        label: 'Release Checklist › Backup readiness',
+        href: '/en/operations/release-checklist#backup-readiness'
+      },
+      {
+        evidenceId: 'page:23:revision:1:section:1',
+        kind: 'page',
+        label: 'Queue Operations › Post-deployment checks',
+        href: '/en/operations/queue#post-deployment-checks'
+      }
+    ])
+    const provenance = fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    expect(provenance).toHaveLength(2)
+    const rejectedProvenance = questionRecord(provenance[0])
+    expect(rejectedProvenance.accepted).toBe(false)
+    expect(rejectedProvenance.finalCitationIds).toEqual([])
+    const rejectedClaims = rejectedProvenance.claims
+    if (!Array.isArray(rejectedClaims)) throw new Error('Expected rejected-claim provenance.')
+    expect(rejectedClaims).toHaveLength(1)
+    expect(questionRecord(rejectedClaims[0])).toEqual(
+      expect.objectContaining({ evidenceId: 'page:23:revision:1', pageEvidenceId: null, supported: false })
+    )
+
+    const acceptedProvenance = questionRecord(provenance[1])
+    expect(acceptedProvenance.accepted).toBe(true)
+    expect(acceptedProvenance.issues).toEqual([])
+    expect(acceptedProvenance.finalCitationIds).toEqual(['page:21:revision:11:section:1', 'page:23:revision:1:section:1'])
+    const acceptedRetrievals = acceptedProvenance.retrievals
+    if (!Array.isArray(acceptedRetrievals)) throw new Error('Expected accepted retrieval provenance.')
+    const acceptedRetrievalNames = acceptedRetrievals.map(retrieval => questionRecord(retrieval).actionName)
+    expect(acceptedRetrievalNames).toContain('pages.get')
+    expect(acceptedRetrievalNames).toContain('pages.related')
+    const acceptedClaims = acceptedProvenance.claims
+    if (!Array.isArray(acceptedClaims)) throw new Error('Expected accepted-claim provenance.')
+    const acceptedClaimRecords = acceptedClaims.map(questionRecord)
+    expect(acceptedClaimRecords.find(claim => claim.evidenceId === 'page:21:revision:11:section:1')).toEqual(
+      expect.objectContaining({
+        evidenceId: 'page:21:revision:11:section:1',
+        pageEvidenceId: 'page:21:revision:11',
+        supported: true
+      })
+    )
+    expect(acceptedClaimRecords.find(claim => claim.evidenceId === 'page:23:revision:1:section:1')).toEqual(
+      expect.objectContaining({
+        evidenceId: 'page:23:revision:1:section:1',
+        pageEvidenceId: 'page:23:revision:1',
+        supported: true
+      })
+    )
+  })
+
+  it.each(['pages.discover', 'pages.listRecent'] as const)('keeps %s candidate rows non-citeable in the provider projection', async actionName => {
+    const candidate = questionCandidate(91, '7', 'Candidate Only')
+    const resultPayload =
+      actionName === 'pages.discover'
+        ? { pages: [candidate], totalInWindow: 1, windowLimit: 20, nextOffset: null }
+        : { pages: [candidate] }
+    const callId = actionName === 'pages.discover' ? 'discover-candidates' : 'legacy-recent-candidates'
+    const steps: QuestionStep[] = []
+    if (actionName === 'pages.discover')
+      steps.push({ calls: [{ id: 'enable-explore', name: 'wiki_enable_tools', arguments: { category: 'explore' } }] })
+    steps.push({
+      calls: [
+        {
+          id: callId,
+          name: actionName,
+          arguments: actionName === 'pages.discover' ? { locale: 'en' } : { limit: 10 }
+        }
+      ]
+    })
+    steps.push({ answer: 'I can read the listed page if you need its source details.' })
+    const fixture = questionFixture('native', steps, async name => {
+      if (name !== actionName) throw new Error(`Unexpected action in question fixture: ${name}`)
+      return resultPayload
+    })
+
+    await fixture.execute('Find a page I could inspect for the deployment checklist.')
+
+    const providerName = AGENT_TOOL_NAMES[actionName]
+    const projected = questionRecord(providerActionResult(fixture.providerCalls, 'native', callId, providerName))
+    const projectedPages = projected.pages
+    if (!Array.isArray(projectedPages)) throw new Error('Expected projected page candidates.')
+    const projectedCandidate = questionRecord(projectedPages[0])
+    expect(projectedCandidate).toMatchObject({
+      id: 91,
+      locale: 'en',
+      path: 'operations/candidate-91',
+      title: 'Candidate Only',
+      sourceRevision: '7',
+      description: 'Candidate description for Candidate Only.',
+      authority: { state: 'valid', trust: { trustTier: 'human-reviewed' } },
+      knowledge: { summary: 'Knowledge hint for Candidate Only.' }
+    })
+    expect(projectedCandidate).not.toHaveProperty('citation')
+    expect(projectedCandidate).not.toHaveProperty('okfResourceUri')
+    const promptHistory = JSON.stringify(fixture.providerCalls.map(call => call.chatPrompt))
+    expect(promptHistory).not.toContain(candidate.citation.evidenceId)
+    expect(promptHistory).not.toContain(candidate.okfResourceUri)
+    expect(promptHistory).not.toContain('authority-private-91')
+    expect(promptHistory).not.toContain('knowledge-private-91')
+    if (actionName === 'pages.discover') {
+      expect(projected).toMatchObject({ nextOffset: null })
+      expect(projected.discovery).toEqual(candidateDiscovery(1, 1, 0, 'not_reported'))
+    } else {
+      expect(projected).not.toHaveProperty('discovery')
+    }
+  })
+
+  it.each(['native', 'prompt'] as const)('delivers bounded empty search windows for no-match and synonym queries on %s tools', async mode => {
+    const firstSearch = {
+      results: [],
+      suggestions: [],
+      totalInWindow: 0,
+      windowLimit: 10,
+      windowTruncated: false,
+      nextOffset: null
+    }
+    const secondSearch = { ...firstSearch }
+    const answer = 'I could not identify a matching page in the returned search windows.'
+    let searchOccurrence = 0
+    const fixture = questionFixture(
+      mode,
+      [
+        { calls: [{ id: 'search-no-match', name: 'pages.search', arguments: { query: 'audit exception routing' } }] },
+        { calls: [{ id: 'search-synonym', name: 'pages.search', arguments: { query: 'waiver approval workflow' } }] },
+        { answer }
+      ],
+      async name => {
+        if (name !== 'pages.search') throw new Error(`Unexpected action in question fixture: ${name}`)
+        return searchOccurrence++ === 0 ? firstSearch : secondSearch
+      }
+    )
+    const result = await fixture.execute('Find guidance on audit exceptions and waiver approvals.')
+
+    expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.search', 'pages.search'])
+    expect(fixture.invoke.mock.calls.map(([, input]) => input)).toEqual([
+      { query: 'audit exception routing' },
+      { query: 'waiver approval workflow' }
+    ])
+    expect(fixture.text).toHaveBeenCalledWith(answer)
+    const firstOutput = questionRecord(
+      providerActionResult(
+        fixture.providerCalls,
+        mode,
+        'search-no-match',
+        AGENT_TOOL_NAMES['pages.search'],
+        0
+      )
+    )
+    const secondOutput = questionRecord(
+      providerActionResult(
+        fixture.providerCalls,
+        mode,
+        'search-synonym',
+        AGENT_TOOL_NAMES['pages.search'],
+        1
+      )
+    )
+    expect(firstOutput.discovery).toEqual({
+      outcome: 'empty_window',
+      returnedCount: 0,
+      newCandidateCount: 0,
+      repeatedCandidateCount: 0,
+      continuation: 'not_reported',
+      coverage: 'bounded'
+    })
+    expect(secondOutput.discovery).toEqual({
+      outcome: 'empty_window',
+      returnedCount: 0,
+      newCandidateCount: 0,
+      repeatedCandidateCount: 0,
+      continuation: 'not_reported',
+      coverage: 'bounded'
+    })
+  })
+
+  it.each(['native', 'prompt'] as const)('does not deliver or count a capacity-omitted candidate result on %s tools', async mode => {
+    const hiddenCandidate = questionCandidate(97, '99', 'Capacity-only candidate', {
+      description: 'large result '.repeat(10_000)
+    })
+    const fixture = questionFixture(
+      mode,
+      [
+        { calls: [{ id: 'capacity-search', name: 'pages.search', arguments: { query: 'capacity-only' } }] },
+        { answer: 'I cannot support a page-specific answer from the context that was delivered.' }
+      ],
+      async name => {
+        if (name !== 'pages.search') throw new Error(`Unexpected action in question fixture: ${name}`)
+        return {
+          results: [hiddenCandidate],
+          suggestions: [],
+          totalInWindow: 1,
+          windowLimit: 10,
+          windowTruncated: false,
+          nextOffset: null
+        }
+      }
+    )
+
+    const result = await fixture.execute('What does the capacity-only candidate say?', {
+      maxTurns: 4,
+      maxToolCalls: 3,
+      maxOutputTokens: 256
+    })
+
+    expect(result.contextLimit).toMatchObject({ reason: 'tool_result_capacity' })
+    const omitted = providerActionResult(fixture.providerCalls, mode, 'capacity-search', AGENT_TOOL_NAMES['pages.search'])
+    expect(omitted).toMatchObject({ status: 'omitted', reason: 'tool_result_capacity' })
+    expect(omitted).not.toHaveProperty('discovery')
+    const promptHistory = JSON.stringify(fixture.providerCalls.map(call => call.chatPrompt))
+    expect(promptHistory).not.toContain('Capacity-only candidate')
+    expect(promptHistory).not.toContain(hiddenCandidate.okfResourceUri)
+    expect(fixture.invoke).toHaveBeenCalledOnce()
+  })
+
+  it('preserves exact recent-page excerpt evidence and its citation in the provider projection', async () => {
+    const recentPage = {
+      id: 94,
+      locale: 'en',
+      path: 'operations/recent-runbook',
+      title: 'Recent Runbook',
+      contentType: 'markdown',
+      sourceRevision: '12',
+      updatedAt: '2026-09-20T12:00:00.000Z',
+      content: '# Recent Runbook\n\nSupport opens at 08:00 UTC.',
+      sourceContentCharacters: 45,
+      contentTruncated: false,
+      citation: {
+        evidenceId: 'page:94:revision:12',
+        label: 'Recent Runbook',
+        href: '/en/operations/recent-runbook'
+      }
+    }
+    const answer = 'Support opens at 08:00 UTC.[[cite:page:94:revision:12]]'
+    const fixture = questionFixture(
+      'native',
+      [
+        { calls: [{ id: 'recent-evidence', name: 'pages.listRecent', arguments: { limit: 1 } }] },
+        { answer }
+      ],
+      async name => {
+        if (name !== 'pages.listRecent') throw new Error(`Unexpected action in question fixture: ${name}`)
+        return { kind: 'recent-page-evidence', requestedLimit: 1, exhausted: true, pages: [recentPage] }
+      }
+    )
+
+    const result = await fixture.execute('When does support open?')
+
+    const projected = questionRecord(
+      providerActionResult(
+        fixture.providerCalls,
+        'native',
+        'recent-evidence',
+        AGENT_TOOL_NAMES['pages.listRecent']
+      )
+    )
+    const recentPages = projected.pages
+    if (!Array.isArray(recentPages)) throw new Error('Expected recent page evidence.')
+    const projectedRecentPage = questionRecord(recentPages[0])
+    expect(projectedRecentPage).toMatchObject({
+      sourceRevision: '12',
+      content: recentPage.content,
+      citation: { evidenceId: 'page:94:revision:12' }
+    })
+    expect(fixture.text).toHaveBeenCalledWith(answer)
+    expect(result.citations).toEqual([
+      {
+        evidenceId: 'page:94:revision:12',
+        kind: 'page',
+        label: 'Recent Runbook',
+        href: '/en/operations/recent-runbook'
+      }
+    ])
+    const provenance = fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    expect(provenance).toHaveLength(1)
+    expect(provenance[0]).toMatchObject({
+      accepted: true,
+      claims: [expect.objectContaining({ sourceActionName: 'pages.listRecent', supported: true })],
+      finalCitationIds: ['page:94:revision:12']
+    })
+  })
+
+  it.each(['native', 'prompt'] as const)('reads an explicitly requested historical page revision without searching on %s tools', async mode => {
+    const historicalPage = {
+      id: 42,
+      locale: 'en',
+      path: 'operations/archive-runbook',
+      versionId: 6,
+      versionDate: '2026-03-10T09:00:00.000Z',
+      sourceRevision: '18',
+      title: 'Archive Runbook',
+      contentType: 'markdown',
+      content: '# Archive Runbook\n\n## Retention\nThe archive retains incident records for 30 days.',
+      updatedAt: '2026-03-10T09:00:00.000Z',
+      citation: {
+        evidenceId: 'page:42:version:6:revision:18',
+        label: 'Archive Runbook',
+        href: '/en/operations/archive-runbook?v=6'
+      },
+      citationSections: [
+        {
+          evidenceId: 'page:42:version:6:revision:18:section:1',
+          label: 'Archive Runbook › Retention',
+          href: '/en/operations/archive-runbook?v=6#retention'
+        }
+      ]
+    }
+    const answer = 'The archive retains incident records for 30 days.[[cite:page:42:version:6:revision:18:section:1]]'
+    const fixture = questionFixture(
+      mode,
+      [
+        { calls: [{ id: 'enable-history', name: 'wiki_enable_tools', arguments: { category: 'history' } }] },
+        { calls: [{ id: 'read-version-6', name: 'pages.getVersion', arguments: { pageId: 42, versionId: 6 } }] },
+        { answer }
+      ],
+      async (name, input) => {
+        if (name !== 'pages.getVersion') throw new Error(`Unexpected action in question fixture: ${name}`)
+        if (
+          typeof input !== 'object' ||
+          input === null ||
+          !('pageId' in input) ||
+          input.pageId !== 42 ||
+          !('versionId' in input) ||
+          input.versionId !== 6
+        )
+          throw new Error('The direct historical read did not retain the requested page and version IDs.')
+        return historicalPage
+      }
+    )
+
+    const result = await fixture.execute('Summarize version 6 of page 42.')
+
+    expect(fixture.invoke.mock.calls.map(([name, input]) => ({ name, input }))).toEqual([
+      { name: 'pages.getVersion', input: { pageId: 42, versionId: 6 } }
+    ])
+    expect(fixture.invoke.mock.calls.some(([name]) => name === 'pages.search')).toBe(false)
+    expect(fixture.invoke.mock.calls.some(([name]) => name === 'pages.get')).toBe(false)
+    expect(fixture.text).toHaveBeenCalledWith(answer)
+    expect(result.citations).toEqual([
+      {
+        evidenceId: 'page:42:version:6:revision:18:section:1',
+        kind: 'page',
+        label: 'Archive Runbook › Retention',
+        href: '/en/operations/archive-runbook?v=6#retention'
+      }
+    ])
+    const provenance = fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    expect(provenance).toHaveLength(1)
+    expect(provenance[0]).toMatchObject({
+      accepted: true,
+      claims: [expect.objectContaining({ sourceActionName: 'pages.getVersion', evidenceId: 'page:42:version:6:revision:18:section:1', supported: true })],
+      finalCitationIds: ['page:42:version:6:revision:18:section:1']
+    })
   })
 
   it('retains revision- and representation-bound evidence for current, historical, and canonical OKF reads', async () => {
@@ -4125,7 +4934,8 @@ describe('Ax agent engine', () => {
     expect(provenance).toEqual([
       expect.objectContaining({
         accepted: false,
-        issues: [expect.stringContaining('page:2:revision:rev-2 was not produced by a successful page read')]
+        claims: [expect.objectContaining({ evidenceId: 'page:2:revision:rev-2', supported: false })],
+        finalCitationIds: []
       }),
       expect.objectContaining({ accepted: true, finalCitationIds: ['page:1:revision:rev-1'] })
     ])

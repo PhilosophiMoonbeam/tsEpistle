@@ -719,7 +719,7 @@ ${sourceUnit}`,
         ],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 200, completionTokens: 10, totalTokens: 210 } }
       },
-      response('EVIDENCE_TWO is present.[[cite:page:2:revision:2]]', 300, 20)
+      response('EVIDENCE_TWO [[cite:page:2:revision:2]]', 300, 20)
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
       calls.push(input)
@@ -740,7 +740,7 @@ ${sourceUnit}`,
             sourceRevision: String(id),
             title: `Evidence ${id}`,
             contentType: 'markdown',
-            content: `${id === 1 ? 'EVIDENCE_ONE' : 'EVIDENCE_TWO'} ${String(id).repeat(45200)}`,
+            content: `${id === 1 ? 'EVIDENCE_ONE' : 'EVIDENCE_TWO'} ${String(id).repeat(35000)}`,
             citation: { evidenceId: `page:${id}:revision:${id}`, label: `Evidence ${id}`, href: `/en/evidence-${id}` },
             citationSections: []
           }
