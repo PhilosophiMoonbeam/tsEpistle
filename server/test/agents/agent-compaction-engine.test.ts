@@ -8,6 +8,7 @@ import {
 } from '../../agents/compaction.ts'
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
+import { createGeminiInteractionsService } from '../../agents/providers/gemini-interactions.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentDispatchBudget, AgentDispatchBudgetReservation, AgentEngineMessage, AgentEngineRequest } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
@@ -261,6 +262,112 @@ describe('Ax agent engine context compaction', () => {
     expect(history.messages).toEqual(original)
     expect(result).toMatchObject({ inputTokens: 2_100, outputTokens: 130, totalTokens: 2_230 })
     expect(budget.consumed()).toBe(2_230)
+  })
+  it('preserves an eligible Gemini root prefix until the normal capacity-reserving trigger', async () => {
+    const history = canonicalMessages([
+      { role: 'user', content: `EARLIER_USER:${'a'.repeat(38_000)}` },
+      { role: 'assistant', content: `EARLIER_REPLY:${'b'.repeat(38_000)}` },
+      { role: 'user', content: `RECENT_USER:${'c'.repeat(7_000)}` },
+      { role: 'assistant', content: `RECENT_REPLY:${'d'.repeat(7_000)}` },
+      { role: 'user', content: 'Answer the current question.' }
+    ])
+    const original = structuredClone(history.messages)
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return response('Done.', 100, 10)
+    })
+    const factory = {
+      create: vi.fn(async () => ({ ...profile, continuationDialect: 'gemini-interactions-v1' as const, service: { chat } }))
+    } as unknown as AgentProviderFactory
+    const engine = new AxAgentEngine(factory)
+    const engineInput = {
+      ...engineRequest(history.messages),
+      compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null }
+    }
+    const preflight = await engine.preflight(engineInput)
+    const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
+    const result = await engine.execute(engineInput, { commitCompaction, text: async () => {}, event: async () => {} })
+
+    expect(preflight.admissible).toBe(true)
+    expect(preflight.compactionExposure).toBeUndefined()
+    expect(calls).toHaveLength(1)
+    expect(JSON.stringify(calls[0])).toContain('EARLIER_USER')
+    expect(JSON.stringify(calls[0])).toContain('Answer the current question.')
+    expect(commitCompaction).not.toHaveBeenCalled()
+    expect(result.totalTokens).toBe(110)
+    expect(history.messages).toEqual(original)
+  })
+  it('still compacts a Gemini root above the normal trigger with its original safe follow-on', async () => {
+    const history = oversizedHistory()
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return calls.length === 1 ? response('Earlier constraint and decision remain.', 100, 10) : response('Done.', 80, 5)
+    })
+    const factory = {
+      create: vi.fn(async () => ({ ...profile, continuationDialect: 'gemini-interactions-v1' as const, service: { chat } }))
+    } as unknown as AgentProviderFactory
+    const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
+    const result = await new AxAgentEngine(factory).execute(
+      { ...engineRequest(history.messages), compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null } },
+      { commitCompaction, text: async () => {}, event: async () => {} }
+    )
+    expect(calls).toHaveLength(2)
+    expect(JSON.stringify(calls[0])).toContain('OLDEST_USER_CONSTRAINT')
+    expect(JSON.stringify(calls[1])).toContain('Earlier constraint and decision remain.')
+    expect(commitCompaction).toHaveBeenCalledWith(
+      expect.objectContaining({ performance: { cachedInputTokensReported: null }, inputTokens: 100, totalTokens: 110 })
+    )
+    expect(result.totalTokens).toBe(195)
+  })
+  it('retains reported Gemini cache tokens on a committed summary and its follow-on answer', async () => {
+    const history = oversizedHistory()
+    let dispatch = 0
+    const native = createGeminiInteractionsService({
+      apiKey: 'test-key',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      model: 'gemini-3.8-flash',
+      timeoutMs: 10_000,
+      fetch: (async () => {
+        const summary = dispatch++ === 0
+        return Response.json({
+          model: 'gemini-3.8-flash',
+          status: 'completed',
+          usage: { total_input_tokens: 4, total_output_tokens: 2, total_tokens: 6, total_cached_tokens: summary ? 2 : 3 },
+          steps: [{ type: 'model_output', content: [{ type: 'text', text: summary ? 'Earlier constraint and decision remain.' : 'Done.' }] }]
+        })
+      }) as typeof fetch
+    })
+    const factory = {
+      create: vi.fn(async () => ({
+        ...profile,
+        model: 'gemini-3.8-flash',
+        transportKind: 'gemini-api' as const,
+        continuationDialect: 'gemini-interactions-v1' as const,
+        service: native
+      }))
+    } as unknown as AgentProviderFactory
+    const original = engineRequest(history.messages)
+    const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
+    const event = vi.fn(async () => {})
+    const result = await new AxAgentEngine(factory).execute(
+      {
+        ...original,
+        run: { ...original.run, model: 'gemini-3.8-flash', transportKind: 'gemini-api' },
+        compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null }
+      },
+      { commitCompaction, text: async () => {}, event }
+    )
+    expect(dispatch).toBe(2)
+    expect(commitCompaction).toHaveBeenCalledWith(
+      expect.objectContaining({ inputTokens: 4, totalTokens: 6, performance: { cachedInputTokensReported: 2 } })
+    )
+    expect(event).toHaveBeenCalledWith(
+      'model.turn',
+      expect.objectContaining({ performance: expect.objectContaining({ cachedInputTokensReported: 3 }) })
+    )
+    expect(result).toMatchObject({ totalTokens: 12, costMicros: 16 })
   })
   it('delivers only relevant exact child page units instead of oversized background', async () => {
     const history = canonicalMessages([{ role: 'user', content: 'What does Alpha require before release?' }])

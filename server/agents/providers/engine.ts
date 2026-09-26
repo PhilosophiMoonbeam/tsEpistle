@@ -60,6 +60,7 @@ import {
 } from './factory.ts'
 import {
   combineGeminiInteractionState,
+  readGeminiCachedInputTokens,
   type GeminiInteractionStatus,
   readGeminiGoogleSearchGrounding,
   readGeminiInteractionStatus
@@ -2673,6 +2674,7 @@ interface TurnResult extends AgentTokenUsage {
     readonly settlementMs: number
     readonly providerUsageReported: boolean
     readonly inputTokensReported: number | null
+    readonly cachedInputTokensReported: number | null
     readonly totalTokensReported: number | null
   }
 }
@@ -3355,7 +3357,8 @@ const compactionPlanFor = (
   force = false,
   measuredMediaTokens?: ReadonlyMap<string, number>,
   eager = false,
-  scope: 'all' | 'history' = 'all'
+  scope: 'all' | 'history' = 'all',
+  preserveCachePrefix = false
 ) => {
   const policy = agentCompactionPolicy(provider.capabilities.maxContextTokens, provider.capabilities.maxOutputTokens, maxOutputTokens)
   return planAgentContextCompaction({
@@ -3365,6 +3368,7 @@ const compactionPlanFor = (
     canCompactHistory,
     force,
     eager,
+    preserveCachePrefix,
     scope,
     gemini: provider.continuationDialect === 'gemini-interactions-v1',
     ordinaryExposure: current =>
@@ -4523,7 +4527,12 @@ export class AxAgentEngine implements AgentEngine {
         systemMessage,
         state,
         requestedMaxOutputTokens,
-        request.compaction !== undefined && request.messages.every(message => message.canonicalSource !== undefined)
+        request.compaction !== undefined && request.messages.every(message => message.canonicalSource !== undefined),
+        false,
+        undefined,
+        false,
+        'all',
+        (request.purpose ?? 'root') === 'root' && provider.continuationDialect === 'gemini-interactions-v1'
       )
       const original = fullProviderExposureFor(provider, tools, [systemMessage, ...conversation], requestedMaxOutputTokens)
       const originalFits = original.serializedRequestBytes + requestedMaxOutputTokens <= provider.capabilities.maxContextTokens
@@ -4671,6 +4680,8 @@ export class AxAgentEngine implements AgentEngine {
     let completeUsage: AgentTokenUsage | undefined
     let observedUsage: AgentTokenUsage | undefined
     let terminalPresentationFailure: unknown
+    let previousCachedInputTokens: number | undefined
+    let reportedCachedInputTokens: number | null = null
     let responseAccepted = false
     const observeFinishReason = (finishReason: AxChatResponseResult['finishReason']): void => {
       if (finishReason === undefined || accumulator.finishReason === 'length') return
@@ -4693,6 +4704,11 @@ export class AxAgentEngine implements AgentEngine {
         inputTokens = nextInputTokens
         outputTokens = nextOutputTokens
         totalTokens = nextTotalTokens
+        const cachedInputTokens = readGeminiCachedInputTokens(response)
+        if (cachedInputTokens !== undefined && previousCachedInputTokens !== undefined && cachedInputTokens < previousCachedInputTokens)
+          throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider returned regressing cumulative cached token usage', 502)
+        if (cachedInputTokens !== undefined) previousCachedInputTokens = cachedInputTokens
+        reportedCachedInputTokens = cachedInputTokens ?? null
         observedUsage = { inputTokens, outputTokens, totalTokens }
       }
       appendCalls(accumulator, response.results, tools?.actionNames, limits)
@@ -4950,6 +4966,7 @@ export class AxAgentEngine implements AgentEngine {
           settlementMs: settledAt - providerEndedAt,
           providerUsageReported: !estimatedUsage,
           inputTokensReported: estimatedUsage ? null : inputTokens,
+          cachedInputTokensReported: estimatedUsage ? null : reportedCachedInputTokens,
           totalTokensReported: estimatedUsage ? null : totalTokens
         },
         ...(accumulator.finishReason === undefined ? {} : { finishReason: accumulator.finishReason }),
@@ -5543,7 +5560,8 @@ export class AxAgentEngine implements AgentEngine {
           force,
           measuredMediaTokens,
           eager,
-          scope
+          scope,
+          (request.purpose ?? 'root') === 'root' && provider.continuationDialect === 'gemini-interactions-v1'
         )
         if (!plan || failedCompactions.has(plan.windows[0]!.sourceSha256)) return
         const currentFits = (): boolean =>
@@ -5689,6 +5707,7 @@ export class AxAgentEngine implements AgentEngine {
               outputTokens: result.outputTokens,
               totalTokens: result.totalTokens,
               costMicros: result.costMicros,
+              performance: { cachedInputTokensReported: result.performance?.cachedInputTokensReported ?? null },
               content: result.content,
               contentTruncated: false,
               actionCallIds: [],

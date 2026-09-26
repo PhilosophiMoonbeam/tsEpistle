@@ -146,6 +146,12 @@ const UsageSchema = z
     non_grounding_model_invocation_token_counts: ModelInvocationTokenCountsSchema.optional()
   })
   .refine(usage => usage.total_tokens >= usage.total_input_tokens + usage.total_output_tokens, 'total token count is inconsistent')
+  .refine(
+    usage =>
+      usage.total_cached_tokens === undefined ||
+      (Number.isSafeInteger(usage.total_cached_tokens) && usage.total_cached_tokens <= usage.total_input_tokens),
+    'cached token count is inconsistent'
+  )
 const InteractionSchema = z
   .object({
     id: InteractionIdentifierSchema.optional(),
@@ -199,6 +205,10 @@ const groundingSidecars = new WeakMap<AxChatResponseResult, GroundingSidecar>()
 
 export type GeminiInteractionStatus = 'completed' | 'requires_action' | 'incomplete' | 'failed' | 'cancelled' | 'budget_exceeded'
 const interactionStatusSidecars = new WeakMap<AxChatResponseResult, GeminiInteractionStatus>()
+const cachedInputTokens = new WeakMap<NonNullable<AxChatResponse['modelUsage']>, number>()
+
+export const readGeminiCachedInputTokens = (response: AxChatResponse): number | undefined =>
+  response.modelUsage === undefined ? undefined : cachedInputTokens.get(response.modelUsage)
 
 const safeCitationUrl = (value: string): boolean => {
   if (value.length < 1 || value.length > MAX_CITATION_URL_CHARACTERS || containsControlCharacter(value)) return false
@@ -589,15 +599,19 @@ const assertSupportedModelConfig = (config: AxChatRequest['modelConfig']): void 
   }
 }
 
-const usageResponse = (model: string, usage: Usage): NonNullable<AxChatResponse['modelUsage']> => ({
-  ai: 'google-gemini-interactions',
-  model,
-  tokens: {
-    promptTokens: usage.total_input_tokens,
-    completionTokens: usage.total_output_tokens,
-    totalTokens: usage.total_tokens
+const usageResponse = (model: string, usage: Usage): NonNullable<AxChatResponse['modelUsage']> => {
+  const result: NonNullable<AxChatResponse['modelUsage']> = {
+    ai: 'google-gemini-interactions',
+    model,
+    tokens: {
+      promptTokens: usage.total_input_tokens,
+      completionTokens: usage.total_output_tokens,
+      totalTokens: usage.total_tokens
+    }
   }
-})
+  if (usage.total_cached_tokens !== undefined) cachedInputTokens.set(result, usage.total_cached_tokens)
+  return result
+}
 
 const responseResult = (
   id: string,

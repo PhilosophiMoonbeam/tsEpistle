@@ -1,7 +1,13 @@
 import type { AxChatResponse, AxChatResponseResult, AxFunctionJSONSchema } from '@ax-llm/ax'
 import { z } from 'zod'
 import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
-import { combineGeminiInteractionState, createGeminiInteractionsService, readGeminiGoogleSearchGrounding, readGeminiInteractionStatus } from '../../agents/providers/gemini-interactions.ts'
+import {
+  combineGeminiInteractionState,
+  createGeminiInteractionsService,
+  readGeminiCachedInputTokens,
+  readGeminiGoogleSearchGrounding,
+  readGeminiInteractionStatus
+} from '../../agents/providers/gemini-interactions.ts'
 import { readAgentProviderUsage } from '../../agents/providers/usage.ts'
 import { describe, expect, it } from '../bun-test.mts'
 
@@ -71,6 +77,47 @@ describe('Gemini Interactions Google Search grounding', () => {
     const result = resultOf(response as AxChatResponse)
     expect(result.finishReason).toBe('length')
     expect(readGeminiInteractionStatus(result)).toBe('budget_exceeded')
+  })
+
+  it('exposes only valid provider-reported cached input counts without changing charged token usage', async () => {
+    for (const cached of [undefined, 0, 2]) {
+      const service = createGeminiInteractionsService({
+        apiKey: 'key',
+        baseUrl: 'https://gemini.example.test',
+        model,
+        timeoutMs: 5_000,
+        fetch: (async () =>
+          jsonResponse({
+            model,
+            status: 'completed',
+            usage: { ...usage, ...(cached === undefined ? {} : { total_cached_tokens: cached }) },
+            steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Grounded answer' }] }]
+          })) as typeof globalThis.fetch
+      })
+      const response = await service.chat({ chatPrompt: [{ role: 'user', content: 'Question' }] }, { stream: false })
+      if (response instanceof ReadableStream) throw new Error('Expected buffered response')
+      expect(readGeminiCachedInputTokens(response)).toBe(cached)
+      expect(readAgentProviderUsage(response)).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 })
+      expect(response.modelUsage).not.toHaveProperty('cachedInputTokens')
+    }
+    for (const cached of [-1, 0.5, '2', 4, Number.MAX_SAFE_INTEGER + 1]) {
+      const service = createGeminiInteractionsService({
+        apiKey: 'key',
+        baseUrl: 'https://gemini.example.test',
+        model,
+        timeoutMs: 5_000,
+        fetch: (async () =>
+          jsonResponse({
+            model,
+            status: 'completed',
+            usage: { ...usage, total_cached_tokens: cached },
+            steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Grounded answer' }] }]
+          })) as typeof globalThis.fetch
+      })
+      await expect(service.chat({ chatPrompt: [{ role: 'user', content: 'Question' }] }, { stream: false })).rejects.toMatchObject({
+        code: 'INVALID_PROVIDER_RESPONSE'
+      })
+    }
   })
 
   it('defaults search off and uses validated mixed-tool choice only when explicitly enabled', async () => {
@@ -260,7 +307,7 @@ describe('Gemini Interactions Google Search grounding', () => {
       ['step.delta', { index: 2, delta: { text: 'Alpha', type: 'text' }, event_type: 'step.delta' }],
       ['step.delta', { index: 2, delta: { annotations: [annotation], type: 'text_annotation_delta' }, event_type: 'step.delta' }],
       ['step.stop', { index: 2, event_type: 'step.stop' }],
-      ['interaction.completed', { interaction: { id: '', model, status: 'completed', usage }, event_type: 'interaction.completed' }]
+      ['interaction.completed', { interaction: { id: '', model, status: 'completed', usage: { ...usage, total_cached_tokens: 2 } }, event_type: 'interaction.completed' }]
     ] as const
     const wire = `${events.map(([name, value]) => `event: ${name}\ndata: ${JSON.stringify(value)}`).join('\n\n')}\n\nevent: done\ndata: [DONE]\n\n`
     const service = createGeminiInteractionsService({
@@ -278,6 +325,8 @@ describe('Gemini Interactions Google Search grounding', () => {
     const terminal = chunks.at(-1)!
     expect(chunks.flatMap(chunk => chunk.results).some(result => (result.functionCalls?.length ?? 0) > 0)).toBe(false)
     expect(readAgentProviderUsage(terminal)).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 })
+    expect(chunks.slice(0, -1).every(chunk => readGeminiCachedInputTokens(chunk) === undefined)).toBe(true)
+    expect(readGeminiCachedInputTokens(terminal)).toBe(2)
     expect(readGeminiGoogleSearchGrounding(terminal.results[0]!)).toEqual({
       citations: [{ url: 'https://grounding.example.test/source', title: 'Example source', startIndex: 0, endIndex: 5 }],
       searchSuggestions: ['<a>query</a>']

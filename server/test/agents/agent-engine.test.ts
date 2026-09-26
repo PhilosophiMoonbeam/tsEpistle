@@ -486,7 +486,7 @@ describe('Ax agent engine', () => {
           Response.json({
             model: 'gemini-3.8-flash',
             status: 'completed',
-            usage: { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5 },
+            usage: { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5, total_cached_tokens: 2 },
             steps: [
               {
                 type: 'model_output',
@@ -559,15 +559,144 @@ describe('Ax agent engine', () => {
           pricing
         })
       } as unknown as AgentProviderFactory
+      const event = vi.fn(async () => {})
       await expect(
         new AxAgentEngine(factory).execute(
           { ...request(new AbortController().signal), purpose: 'planner', dispatchBudget },
-          { text: async () => {}, event: async () => {} }
+          { text: async () => {}, event }
         )
       ).rejects.toThrow()
+      expect(event).not.toHaveBeenCalledWith('model.turn', expect.anything())
       expect(chargedTokens).toBe(reachesEof ? 5 : 0)
       if (reachesEof) expect(heldTokens).toBe(0)
       else expect(heldTokens).toBeGreaterThan(5)
+    }
+  })
+  it('records terminal Gemini cached input only as numeric telemetry, not a discount to settled usage', async () => {
+    for (const cached of [undefined, 0, 2]) {
+      const native = createGeminiInteractionsService({
+        apiKey: 'test-key',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        model: 'gemini-3.8-flash',
+        timeoutMs: 10_000,
+        fetch: (async () =>
+          Response.json({
+            model: 'gemini-3.8-flash',
+            status: 'completed',
+            usage: { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5, ...(cached === undefined ? {} : { total_cached_tokens: cached }) },
+            steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Answer.' }] }]
+          })) as typeof fetch
+      })
+      const factory = {
+        create: async () => ({
+          service: native,
+          capabilities: {
+            streaming: false,
+            toolCalling: 'native',
+            parallelToolCalls: true,
+            structuredOutput: 'native-json-schema',
+            usage: 'terminal',
+            cancellation: true,
+            maxContextTokens: 100_000,
+            maxOutputTokens: 4_000
+          },
+          transportKind: 'gemini-api',
+          model: 'gemini-3.8-flash',
+          continuationDialect: 'gemini-interactions-v1',
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          pricing
+        })
+      } as unknown as AgentProviderFactory
+      const event = vi.fn(async () => {})
+      const result = await new AxAgentEngine(factory).execute(
+        { ...request(new AbortController().signal), purpose: 'planner' },
+        { text: async () => {}, event }
+      )
+      expect(result).toMatchObject({ inputTokens: 3, outputTokens: 2, totalTokens: 5, costMicros: 7 })
+      expect(event).toHaveBeenCalledWith(
+        'model.turn',
+        expect.objectContaining({
+          performance: expect.objectContaining({ cachedInputTokensReported: cached ?? null, providerUsageReported: true })
+        })
+      )
+    }
+  })
+  it('uses the last complete cumulative cache snapshot, not a sum or an earlier partial report', async () => {
+    for (const [snapshots, expected] of [
+      [[1, 2], 2],
+      [[1, undefined], null],
+      [[1, 0], 'invalid']
+    ] as const) {
+      let next = 0
+      const native = createGeminiInteractionsService({
+        apiKey: 'test-key',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        model: 'gemini-3.8-flash',
+        timeoutMs: 10_000,
+        fetch: (async () =>
+          Response.json({
+            model: 'gemini-3.8-flash',
+            status: 'completed',
+            usage: {
+              total_input_tokens: 3,
+              total_output_tokens: 2,
+              total_tokens: 5,
+              ...(snapshots[next] === undefined ? {} : { total_cached_tokens: snapshots[next] })
+            },
+            steps: [{ type: 'model_output', content: [{ type: 'text', text: next++ === 0 ? 'A' : 'B' }] }]
+          })) as typeof fetch
+      })
+      const factory = {
+        create: async () => ({
+          service: {
+            chat: async (input: AxChatRequest) => {
+              const first = await native.chat(input, { stream: false })
+              const second = await native.chat(input, { stream: false })
+              if (first instanceof ReadableStream || second instanceof ReadableStream) throw new Error('Expected buffered receipts')
+              return new ReadableStream<AxChatResponse>({
+                start(controller) {
+                  controller.enqueue(first)
+                  controller.enqueue(second)
+                  controller.close()
+                }
+              })
+            }
+          },
+          capabilities: {
+            streaming: true,
+            toolCalling: 'native',
+            parallelToolCalls: true,
+            structuredOutput: 'native-json-schema',
+            usage: 'stream',
+            cancellation: true,
+            maxContextTokens: 100_000,
+            maxOutputTokens: 4_000
+          },
+          transportKind: 'gemini-api',
+          model: 'gemini-3.8-flash',
+          continuationDialect: 'gemini-interactions-v1',
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          pricing
+        })
+      } as unknown as AgentProviderFactory
+      const event = vi.fn(async () => {})
+      const execution = new AxAgentEngine(factory).execute(
+        { ...request(new AbortController().signal), purpose: 'planner' },
+        { text: async () => {}, event }
+      )
+      if (expected === 'invalid') {
+        await expect(execution).rejects.toMatchObject({ code: 'PROVIDER_USAGE_INVALID' })
+        expect(event).not.toHaveBeenCalledWith('model.turn', expect.anything())
+      } else {
+        const result = await execution
+        expect(result).toMatchObject({ inputTokens: 3, outputTokens: 2, totalTokens: 5, costMicros: 7 })
+        expect(event).toHaveBeenCalledWith(
+          'model.turn',
+          expect.objectContaining({ performance: expect.objectContaining({ cachedInputTokensReported: expected }) })
+        )
+      }
     }
   })
   it('accepts an independent provider total from a completed response', async () => {
