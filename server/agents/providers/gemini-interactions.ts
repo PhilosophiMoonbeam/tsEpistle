@@ -118,7 +118,8 @@ const NativeStepSchema = z.discriminatedUnion('type', [
   FunctionResultStepSchema
 ])
 const NativeStepsSchema = z.array(NativeStepSchema).max(MAX_STEPS)
-const ModalityTokenCountsSchema = z.array(z.object({ modality: z.string().min(1).max(32), tokens: z.number().int().nonnegative() })).max(16)
+const SafeTokenCountSchema = z.number().int().nonnegative().refine(Number.isSafeInteger)
+const ModalityTokenCountsSchema = z.array(z.object({ modality: z.string().min(1).max(32), tokens: SafeTokenCountSchema })).max(16)
 const ModelInvocationTokenCountsSchema = z
   .array(
     z.object({
@@ -130,26 +131,29 @@ const ModelInvocationTokenCountsSchema = z
   .max(64)
 const UsageSchema = z
   .strictObject({
-    total_input_tokens: z.number().int().nonnegative(),
-    total_output_tokens: z.number().int().nonnegative(),
-    total_tokens: z.number().int().nonnegative(),
-    total_thought_tokens: z.number().int().nonnegative().optional(),
-    total_tool_use_tokens: z.number().int().nonnegative().optional(),
-    total_cached_tokens: z.number().int().nonnegative().optional(),
+    total_input_tokens: SafeTokenCountSchema,
+    total_output_tokens: SafeTokenCountSchema,
+    total_tokens: SafeTokenCountSchema,
+    total_thought_tokens: SafeTokenCountSchema.optional(),
+    total_tool_use_tokens: SafeTokenCountSchema.optional(),
+    total_cached_tokens: SafeTokenCountSchema.optional(),
     input_tokens_by_modality: z.array(z.unknown()).optional(),
     output_tokens_by_modality: z.array(z.unknown()).optional(),
     cached_tokens_by_modality: z.array(z.unknown()).optional(),
     tool_use_tokens_by_modality: z.array(z.unknown()).optional(),
     grounding_tool_count: z.array(z.unknown()).optional(),
-    raw_prompt_token: z.number().int().nonnegative().optional(),
+    raw_prompt_token: SafeTokenCountSchema.optional(),
     model_invocation_token_counts: ModelInvocationTokenCountsSchema.optional(),
     non_grounding_model_invocation_token_counts: ModelInvocationTokenCountsSchema.optional()
   })
-  .refine(usage => usage.total_tokens >= usage.total_input_tokens + usage.total_output_tokens, 'total token count is inconsistent')
   .refine(
     usage =>
-      usage.total_cached_tokens === undefined ||
-      (Number.isSafeInteger(usage.total_cached_tokens) && usage.total_cached_tokens <= usage.total_input_tokens),
+      usage.total_output_tokens <= Number.MAX_SAFE_INTEGER - usage.total_input_tokens &&
+      usage.total_tokens >= usage.total_input_tokens + usage.total_output_tokens,
+    'total token count is inconsistent'
+  )
+  .refine(
+    usage => usage.total_cached_tokens === undefined || usage.total_cached_tokens <= usage.total_input_tokens,
     'cached token count is inconsistent'
   )
 const InteractionSchema = z
@@ -205,10 +209,6 @@ const groundingSidecars = new WeakMap<AxChatResponseResult, GroundingSidecar>()
 
 export type GeminiInteractionStatus = 'completed' | 'requires_action' | 'incomplete' | 'failed' | 'cancelled' | 'budget_exceeded'
 const interactionStatusSidecars = new WeakMap<AxChatResponseResult, GeminiInteractionStatus>()
-const cachedInputTokens = new WeakMap<NonNullable<AxChatResponse['modelUsage']>, number>()
-
-export const readGeminiCachedInputTokens = (response: AxChatResponse): number | undefined =>
-  response.modelUsage === undefined ? undefined : cachedInputTokens.get(response.modelUsage)
 
 const safeCitationUrl = (value: string): boolean => {
   if (value.length < 1 || value.length > MAX_CITATION_URL_CHARACTERS || containsControlCharacter(value)) return false
@@ -606,10 +606,10 @@ const usageResponse = (model: string, usage: Usage): NonNullable<AxChatResponse[
     tokens: {
       promptTokens: usage.total_input_tokens,
       completionTokens: usage.total_output_tokens,
-      totalTokens: usage.total_tokens
+      totalTokens: usage.total_tokens,
+      ...(usage.total_cached_tokens === undefined ? {} : { cacheReadTokens: usage.total_cached_tokens })
     }
   }
-  if (usage.total_cached_tokens !== undefined) cachedInputTokens.set(result, usage.total_cached_tokens)
   return result
 }
 

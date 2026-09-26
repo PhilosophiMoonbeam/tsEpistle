@@ -34,6 +34,7 @@ describe('agent utility model', () => {
     const create = vi.fn(async () => ({
       service: { chat },
       model: 'model-mini',
+      transportKind: 'openai-responses',
       capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
       pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
     }))
@@ -70,6 +71,7 @@ describe('agent utility model', () => {
     const create = vi.fn(async () => ({
       service: { chat },
       model: 'model-mini',
+      transportKind: 'openai-responses',
       capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
       pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
     }))
@@ -121,6 +123,7 @@ describe('agent utility model', () => {
     const create = vi.fn(async () => ({
       service: { chat },
       model: 'model-mini',
+      transportKind: 'openai-responses',
       capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
       pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
     }))
@@ -152,6 +155,7 @@ describe('agent utility model', () => {
     const create = vi.fn(async () => ({
       service: { chat: vi.fn(async () => ({ results: [] })) },
       model: 'model-mini',
+      transportKind: 'openai-responses',
       capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
       pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
     }))
@@ -218,6 +222,7 @@ describe('agent utility model', () => {
       create: vi.fn(async () => ({
         service: { chat },
         model: 'model-mini',
+        transportKind: 'openai-responses',
         capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
         pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
       }))
@@ -265,6 +270,7 @@ describe('agent utility model', () => {
     const create = vi.fn(async () => ({
       service: { chat },
       model: 'model-mini',
+      transportKind: 'openai-responses',
       capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
       pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
     }))
@@ -286,6 +292,7 @@ describe('agent utility model', () => {
       create: vi.fn(async () => ({
         service: { chat },
         model: 'model-mini',
+        transportKind: 'openai-responses',
         capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
         pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
       }))
@@ -305,6 +312,7 @@ describe('agent utility model', () => {
       create: vi.fn(async () => ({
         service: { chat },
         model: 'model-mini',
+        transportKind: 'openai-responses',
         capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
         pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
       }))
@@ -340,6 +348,7 @@ describe('agent utility model', () => {
       create: vi.fn(async () => ({
         service: { chat },
         model: 'model-mini',
+        transportKind: 'openai-responses',
         capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
         pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
       }))
@@ -373,6 +382,7 @@ describe('agent utility model', () => {
           })
         },
         model: 'model-mini',
+        transportKind: 'openai-responses',
         capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
         pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
       }))
@@ -415,6 +425,7 @@ describe('agent utility model', () => {
       create: vi.fn(async () => ({
         service: { chat: vi.fn(async () => stream) },
         model: 'model-mini',
+        transportKind: 'openai-responses',
         capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
         pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
       }))
@@ -437,7 +448,7 @@ describe('agent utility model', () => {
     expect(release).not.toHaveBeenCalled()
   })
 
-  it('uses cumulative maxima only after a streaming response reaches EOF', async () => {
+  it('accepts increasing cumulative usage only after a streaming response reaches EOF', async () => {
     const stream = new ReadableStream({
       start(controller) {
         controller.enqueue({
@@ -455,6 +466,7 @@ describe('agent utility model', () => {
       create: vi.fn(async () => ({
         service: { chat: vi.fn(async () => stream) },
         model: 'model-mini',
+        transportKind: 'openai-responses',
         capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
         pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
       }))
@@ -467,6 +479,34 @@ describe('agent utility model', () => {
       totalTokens: 4_580
     })
   })
+
+  it('rejects regressing cumulative usage from utility response streams', async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue({
+          results: [{ index: 0, content: 'Partial title' }],
+          modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 100, totalTokens: 1_000 } }
+        })
+        controller.enqueue({
+          results: [{ index: 0, content: 'Final title' }],
+          modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 99, totalTokens: 999 } }
+        })
+        controller.close()
+      }
+    })
+    const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({
+        service: { chat: vi.fn(async () => stream) },
+        model: 'model-mini',
+        transportKind: 'openai-responses',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
+
+    await expect(utility.generateConversationTitle(request)).rejects.toMatchObject({ code: 'PROVIDER_USAGE_INVALID' })
+  })
+
 
   it('propagates post-attempt reconciliation failures', async () => {
     const reconcile = vi.fn(async () => {
@@ -481,6 +521,7 @@ describe('agent utility model', () => {
       create: vi.fn(async () => ({
         service: { chat },
         model: 'model-mini',
+        transportKind: 'openai-responses',
         capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
         pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
       }))
@@ -522,6 +563,7 @@ describe('agent utility model', () => {
     const create = vi.fn(async () => ({
       service: { chat },
       model: 'model-mini',
+      transportKind: 'openai-responses',
       capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 }
     }))
     const utility = new AgentUtilityModel({ create } as unknown as AgentProviderFactory)
@@ -565,7 +607,12 @@ describe('agent utility model', () => {
       ]
     }))
     const utility = new AgentUtilityModel({
-      create: vi.fn(async () => ({ service: { chat }, model: 'model-mini', capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 } }))
+      create: vi.fn(async () => ({
+        service: { chat },
+        model: 'model-mini',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        transportKind: 'openai-responses'
+      }))
     } as unknown as AgentProviderFactory)
 
     await expect(
@@ -599,7 +646,12 @@ describe('agent utility model', () => {
       modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 0, totalTokens: 3 } }
     }))
     const utility = new AgentUtilityModel({
-      create: vi.fn(async () => ({ service: { chat }, model: 'model-mini', capabilities: { maxContextTokens: 2_000, maxOutputTokens: 8 } }))
+      create: vi.fn(async () => ({
+        service: { chat },
+        model: 'model-mini',
+        capabilities: { maxContextTokens: 2_000, maxOutputTokens: 8 },
+        transportKind: 'openai-responses'
+      }))
     } as unknown as AgentProviderFactory)
 
     await utility.enrichKnowledge({

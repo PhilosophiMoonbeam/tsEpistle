@@ -331,12 +331,12 @@ describe('guarded provider fetch', () => {
 describe('provider usage accounting', () => {
   it('preserves independent provider totals and conservatively prices residual tokens', () => {
     expect(
-      readAgentProviderUsage({
+      readAgentProviderUsage('legacy-completions', {
         results: [],
         modelUsage: { ai: 'test', model: 'model-test', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 4_580 } }
       })
     ).toEqual({ inputTokens: 3, outputTokens: 309, totalTokens: 4_580 })
-    expect(readAgentProviderUsage({ results: [] })).toBeNull()
+    expect(readAgentProviderUsage('legacy-completions', { results: [] })).toBeNull()
     expect(readAgentUsageEvent({ usageVersion: 2, inputTokens: 3, outputTokens: 309, totalTokens: 4_580, costMicros: 9 })).toEqual({
       inputTokens: 3,
       outputTokens: 309,
@@ -347,11 +347,25 @@ describe('provider usage accounting', () => {
       7
     )
     expect(agentProviderCostMicros({ revision: 'rounding', inputMicrosPerMillionTokens: 1_000_001, outputMicrosPerMillionTokens: 1_000_000 }, 0, 0, 1)).toBe(2)
+    const premium = { revision: 'cached-write', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000, cacheWritePremium: true }
+    expect(agentProviderCostMicros(premium, 1, 0, 1)).toBe(2)
+    expect(agentProviderCostMicros(premium, 1, 0, 2)).toBe(4)
+    expect(
+      agentProviderCostMicros(
+        { ...premium, inputMicrosPerMillionTokens: 2_000_000, outputMicrosPerMillionTokens: 1_000_000 },
+        1,
+        1,
+        4
+      )
+    ).toBe(9)
+    expect(() => agentProviderCostMicros(premium, Number.MAX_SAFE_INTEGER, 0, Number.MAX_SAFE_INTEGER)).toThrow(
+      'Provider usage cost exceeds the supported range'
+    )
   })
 
   it('rejects totals below a safe directional sum and unsafe accounting', () => {
     expect(() =>
-      readAgentProviderUsage({
+      readAgentProviderUsage('legacy-completions', {
         results: [],
         modelUsage: { ai: 'test', model: 'model-test', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 311 } }
       })
@@ -363,7 +377,7 @@ describe('provider usage accounting', () => {
       'Stored agent usage event data is invalid'
     )
     expect(() =>
-      readAgentProviderUsage({
+      readAgentProviderUsage('legacy-completions', {
         results: [],
         modelUsage: {
           ai: 'test',
@@ -383,7 +397,7 @@ describe('provider usage accounting', () => {
   it('classifies usage diagnostics without retaining malformed values', () => {
     const missing = (() => {
       try {
-        readAgentProviderUsage({ results: [], modelUsage: { tokens: { promptTokens: 3, completionTokens: 2 } } })
+        readAgentProviderUsage('legacy-completions', { results: [], modelUsage: { tokens: { promptTokens: 3, completionTokens: 2 } } })
       } catch (error) {
         return error
       }
@@ -396,7 +410,7 @@ describe('provider usage accounting', () => {
 
     const unsafe = (() => {
       try {
-        readAgentProviderUsage({
+        readAgentProviderUsage('legacy-completions', {
           results: [],
           modelUsage: { tokens: { promptTokens: Number.MAX_SAFE_INTEGER + 1, completionTokens: 2, totalTokens: Number.MAX_SAFE_INTEGER + 1 } }
         })
@@ -683,12 +697,16 @@ describe('Ax provider factory', () => {
     const firstItems = []
     for await (const item of first) firstItems.push(item)
     expect(firstItems.some(item => item.results.some(result => result.functionCalls?.some(call => call.id === 'call_1')))).toBe(true)
-    expect(readAgentProviderUsage(firstItems.at(-1)!)).toEqual({ inputTokens: 3, outputTokens: 412, totalTokens: 25_133 })
+    expect(readAgentProviderUsage('openai-responses', firstItems.at(-1)!)).toEqual({ inputTokens: 3, outputTokens: 412, totalTokens: 25_133 })
     const second = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'Independent request' }], model: provider.model }, { stream: true })
     if (!(second instanceof ReadableStream)) throw new Error('Expected second request to stream')
     const secondItems = []
     for await (const item of second) secondItems.push(item)
-    expect(secondItems.map(readAgentProviderUsage).filter((usage): usage is NonNullable<typeof usage> => usage !== null)).toEqual([
+    expect(
+      secondItems
+        .map(item => readAgentProviderUsage('openai-responses', item))
+        .filter((usage): usage is NonNullable<typeof usage> => usage !== null)
+    ).toEqual([
       { inputTokens: 3, outputTokens: 20, totalTokens: 43 }
     ])
   })

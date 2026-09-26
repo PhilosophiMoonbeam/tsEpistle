@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto'
 import type { AxChatResponse } from '@ax-llm/ax'
-import { type AgentGoalTokenTier, type AgentTokenUsage } from '../../../shared/agents/contracts.ts'
+import type { AgentGoalTokenTier } from '../../../shared/agents/contracts.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { KnowledgeUtilityResultSchema, type KnowledgeGap, type KnowledgeUtilityResult } from '../../knowledge/projection.ts'
 import { AgentProviderFactory, agentProviderCostMicros } from './factory.ts'
-import { assertAgentTokenUsage, readAgentProviderUsage } from './usage.ts'
+import { acceptCumulativeAgentProviderUsage, readAgentProviderUsage, type AgentProviderUsage } from './usage.ts'
+import type { AgentProviderTransportKind } from './registry.ts'
 import type { AgentDispatchBudget, AgentDispatchBudgetReservation } from '../runtime.ts'
 import { AgentRepositoryError } from '../repository.ts'
 
@@ -146,27 +147,23 @@ const boundedTranscript = (messages: readonly AgentConversationTitleMessage[]): 
 const invalidProviderUsage = (): AgentRepositoryError =>
   new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider returned incomplete or invalid token usage', 502)
 
-const mergedUsage = (current: AgentTokenUsage | null, next: AgentTokenUsage): AgentTokenUsage => {
-  const inputTokens = current === null ? next.inputTokens : Math.max(current.inputTokens, next.inputTokens)
-  const outputTokens = current === null ? next.outputTokens : Math.max(current.outputTokens, next.outputTokens)
-  const totalTokens = current === null ? next.totalTokens : Math.max(current.totalTokens, next.totalTokens)
-  assertAgentTokenUsage(inputTokens, outputTokens, totalTokens)
-  return { inputTokens, outputTokens, totalTokens }
-}
+const mergedUsage = (current: AgentProviderUsage | null, next: AgentProviderUsage): AgentProviderUsage =>
+  acceptCumulativeAgentProviderUsage(current, next)
 
 const consumeUtilityResponse = async (
   response: AxChatResponse | ReadableStream<AxChatResponse>,
   maximumBytes: number,
-  outputLimitMessage: string
-): Promise<{ content: string; usage: AgentTokenUsage }> => {
+  outputLimitMessage: string,
+  transportKind: AgentProviderTransportKind
+): Promise<{ content: string; usage: AgentProviderUsage }> => {
   let content = ''
-  let usage: AgentTokenUsage | null = null
+  let usage: AgentProviderUsage | null = null
   const accept = (value: AxChatResponse): void => {
     for (const result of value.results) {
       if (result.content) content += result.content
       if (Buffer.byteLength(content, 'utf8') > maximumBytes) throw new Error(outputLimitMessage)
     }
-    const receipt = readAgentProviderUsage(value)
+    const receipt = readAgentProviderUsage(transportKind, value)
     if (receipt !== null) usage = mergedUsage(usage, receipt)
   }
   if (response instanceof ReadableStream) {
@@ -205,11 +202,17 @@ const consumeUtilityResponse = async (
   return { content, usage }
 }
 
-const consumeTitleResponse = async (response: AxChatResponse | ReadableStream<AxChatResponse>): Promise<{ content: string; usage: AgentTokenUsage }> =>
-  consumeUtilityResponse(response, TITLE_MAXIMUM_PROVIDER_BYTES, 'Utility model title exceeded its output limit')
+const consumeTitleResponse = async (
+  response: AxChatResponse | ReadableStream<AxChatResponse>,
+  transportKind: AgentProviderTransportKind
+): Promise<{ content: string; usage: AgentProviderUsage }> =>
+  consumeUtilityResponse(response, TITLE_MAXIMUM_PROVIDER_BYTES, 'Utility model title exceeded its output limit', transportKind)
 
-const consumeKnowledgeResponse = async (response: AxChatResponse | ReadableStream<AxChatResponse>): Promise<{ content: string; usage: AgentTokenUsage }> =>
-  consumeUtilityResponse(response, KNOWLEDGE_MAXIMUM_PROVIDER_BYTES, 'Utility model knowledge output exceeded its limit')
+const consumeKnowledgeResponse = async (
+  response: AxChatResponse | ReadableStream<AxChatResponse>,
+  transportKind: AgentProviderTransportKind
+): Promise<{ content: string; usage: AgentProviderUsage }> =>
+  consumeUtilityResponse(response, KNOWLEDGE_MAXIMUM_PROVIDER_BYTES, 'Utility model knowledge output exceeded its limit', transportKind)
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 
@@ -324,7 +327,12 @@ export class AgentUtilityModel implements AgentConversationTitleGenerator, Agent
       }
       providerCallStarted = true
       const response = await provider.service.chat(providerRequest, { stream: false, abortSignal: signal })
-      const consumed = await consumeUtilityResponse(response, GOAL_BUDGET_MAXIMUM_PROVIDER_BYTES, 'Utility model goal classification exceeded its output limit')
+      const consumed = await consumeUtilityResponse(
+        response,
+        GOAL_BUDGET_MAXIMUM_PROVIDER_BYTES,
+        'Utility model goal classification exceeded its output limit',
+        provider.transportKind
+      )
       if (consumed.usage.outputTokens > maximumOutputTokens) throw new Error('Utility model goal classification exceeded its token limit')
       accountingAttempted = true
       const costMicros = agentProviderCostMicros(provider.pricing, consumed.usage.inputTokens, consumed.usage.outputTokens, consumed.usage.totalTokens)
@@ -416,7 +424,7 @@ export class AgentUtilityModel implements AgentConversationTitleGenerator, Agent
       attempted = true
       const response = await provider.service.chat(providerRequest, { stream: false, abortSignal: signal })
       usageValidationAttempted = true
-      const consumed = await consumeTitleResponse(response)
+      const consumed = await consumeTitleResponse(response, provider.transportKind)
       accountingAttempted = true
       const costMicros = agentProviderCostMicros(provider.pricing, consumed.usage.inputTokens, consumed.usage.outputTokens, consumed.usage.totalTokens)
       if (dispatchReservation && dispatchBudget) {
@@ -503,7 +511,7 @@ export class AgentUtilityModel implements AgentConversationTitleGenerator, Agent
       throw new Error('Utility model knowledge prompt exceeds its context limit')
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(KNOWLEDGE_TIMEOUT_MILLISECONDS)])
     const response = await provider.service.chat(providerRequest, { stream: false, abortSignal: signal })
-    const consumed = await consumeKnowledgeResponse(response)
+    const consumed = await consumeKnowledgeResponse(response, provider.transportKind)
     if (consumed.usage.outputTokens > maximumOutputTokens) throw new Error('Utility model knowledge output exceeded its configured token limit')
     const decoded: unknown = JSON.parse(consumed.content.trim())
     const value = KnowledgeUtilityResultSchema.parse(decoded)

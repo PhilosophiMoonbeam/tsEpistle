@@ -27,6 +27,7 @@ const profile = {
   },
   transportKind: 'openai-responses' as const,
   model: 'gpt-test',
+  preserveCachePrefix: false,
   capabilityRevision: 'cap-1',
   pricingRevision: 'price-1',
   pricing
@@ -263,7 +264,7 @@ describe('Ax agent engine context compaction', () => {
     expect(result).toMatchObject({ inputTokens: 2_100, outputTokens: 130, totalTokens: 2_230 })
     expect(budget.consumed()).toBe(2_230)
   })
-  it('preserves an eligible Gemini root prefix until the normal capacity-reserving trigger', async () => {
+  const preservesPrefix = async (transportKind: 'gemini-api' | 'openai-responses' | 'anthropic-messages') => {
     const history = canonicalMessages([
       { role: 'user', content: `EARLIER_USER:${'a'.repeat(38_000)}` },
       { role: 'assistant', content: `EARLIER_REPLY:${'b'.repeat(38_000)}` },
@@ -278,7 +279,12 @@ describe('Ax agent engine context compaction', () => {
       return response('Done.', 100, 10)
     })
     const factory = {
-      create: vi.fn(async () => ({ ...profile, continuationDialect: 'gemini-interactions-v1' as const, service: { chat } }))
+      create: vi.fn(async () => ({
+        ...profile,
+        transportKind,
+        preserveCachePrefix: true,
+        service: { chat }
+      }))
     } as unknown as AgentProviderFactory
     const engine = new AxAgentEngine(factory)
     const engineInput = {
@@ -297,7 +303,11 @@ describe('Ax agent engine context compaction', () => {
     expect(commitCompaction).not.toHaveBeenCalled()
     expect(result.totalTokens).toBe(110)
     expect(history.messages).toEqual(original)
-  })
+  }
+  it.each(['gemini-api', 'openai-responses', 'anthropic-messages'] as const)(
+    'preserves an eligible %s root prefix until the normal capacity-reserving trigger',
+    preservesPrefix
+  )
   it('still compacts a Gemini root above the normal trigger with its original safe follow-on', async () => {
     const history = oversizedHistory()
     const calls: Readonly<AxChatRequest<unknown>>[] = []
@@ -306,7 +316,7 @@ describe('Ax agent engine context compaction', () => {
       return calls.length === 1 ? response('Earlier constraint and decision remain.', 100, 10) : response('Done.', 80, 5)
     })
     const factory = {
-      create: vi.fn(async () => ({ ...profile, continuationDialect: 'gemini-interactions-v1' as const, service: { chat } }))
+      create: vi.fn(async () => ({ ...profile, preserveCachePrefix: true, continuationDialect: 'gemini-interactions-v1' as const, service: { chat } }))
     } as unknown as AgentProviderFactory
     const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
     const result = await new AxAgentEngine(factory).execute(
@@ -317,7 +327,11 @@ describe('Ax agent engine context compaction', () => {
     expect(JSON.stringify(calls[0])).toContain('OLDEST_USER_CONSTRAINT')
     expect(JSON.stringify(calls[1])).toContain('Earlier constraint and decision remain.')
     expect(commitCompaction).toHaveBeenCalledWith(
-      expect.objectContaining({ performance: { cachedInputTokensReported: null }, inputTokens: 100, totalTokens: 110 })
+      expect.objectContaining({
+        performance: { cachedInputTokensReported: null, cacheCreationInputTokensReported: null },
+        inputTokens: 100,
+        totalTokens: 110
+      })
     )
     expect(result.totalTokens).toBe(195)
   })
@@ -342,6 +356,7 @@ describe('Ax agent engine context compaction', () => {
     const factory = {
       create: vi.fn(async () => ({
         ...profile,
+        preserveCachePrefix: true,
         model: 'gemini-3.8-flash',
         transportKind: 'gemini-api' as const,
         continuationDialect: 'gemini-interactions-v1' as const,
@@ -361,7 +376,11 @@ describe('Ax agent engine context compaction', () => {
     )
     expect(dispatch).toBe(2)
     expect(commitCompaction).toHaveBeenCalledWith(
-      expect.objectContaining({ inputTokens: 4, totalTokens: 6, performance: { cachedInputTokensReported: 2 } })
+      expect.objectContaining({
+        inputTokens: 4,
+        totalTokens: 6,
+        performance: { cachedInputTokensReported: 2, cacheCreationInputTokensReported: null }
+      })
     )
     expect(event).toHaveBeenCalledWith(
       'model.turn',

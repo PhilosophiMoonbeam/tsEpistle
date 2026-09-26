@@ -396,6 +396,7 @@ export interface AgentProviderPricing {
   readonly revision: string
   readonly inputMicrosPerMillionTokens: number
   readonly outputMicrosPerMillionTokens: number
+  readonly cacheWritePremium?: boolean
 }
 
 export const parseAgentProviderPricing = (value: string): AgentProviderPricing => {
@@ -416,16 +417,27 @@ export const agentProviderCostMicros = (pricing: AgentProviderPricing, inputToke
     !Number.isSafeInteger(pricing.inputMicrosPerMillionTokens) ||
     pricing.inputMicrosPerMillionTokens < 0 ||
     !Number.isSafeInteger(pricing.outputMicrosPerMillionTokens) ||
-    pricing.outputMicrosPerMillionTokens < 0
+    pricing.outputMicrosPerMillionTokens < 0 ||
+    (pricing.cacheWritePremium !== undefined && typeof pricing.cacheWritePremium !== 'boolean')
   )
     throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider pricing is invalid', 502)
-  const residualTokens = totalTokens - inputTokens - outputTokens
-  const maximumRate = Math.max(pricing.inputMicrosPerMillionTokens, pricing.outputMicrosPerMillionTokens)
-  const numerator =
-    BigInt(inputTokens) * BigInt(pricing.inputMicrosPerMillionTokens) +
-    BigInt(outputTokens) * BigInt(pricing.outputMicrosPerMillionTokens) +
-    BigInt(residualTokens) * BigInt(maximumRate)
-  const cost = (numerator + 999_999n) / 1_000_000n
+
+  const inputRate = BigInt(pricing.inputMicrosPerMillionTokens)
+  const outputRate = BigInt(pricing.outputMicrosPerMillionTokens)
+  const input = BigInt(inputTokens)
+  const output = BigInt(outputTokens)
+  const residual = BigInt(totalTokens - inputTokens - outputTokens)
+  let numerator: bigint
+  let denominator: bigint
+  if (pricing.cacheWritePremium === true) {
+    numerator = 5n * input * inputRate + 4n * output * outputRate + residual * (5n * inputRate > 4n * outputRate ? 5n * inputRate : 4n * outputRate)
+    denominator = 4_000_000n
+  } else {
+    const maximumRate = inputRate > outputRate ? inputRate : outputRate
+    numerator = input * inputRate + output * outputRate + residual * maximumRate
+    denominator = 1_000_000n
+  }
+  const cost = (numerator + denominator - 1n) / denominator
   if (cost > BigInt(Number.MAX_SAFE_INTEGER)) throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider usage cost exceeds the supported range', 502)
   return Number(cost)
 }
@@ -439,6 +451,7 @@ export interface AgentProviderService {
   readonly capabilityRevision: string
   readonly pricingRevision: string
   readonly pricing: AgentProviderPricing
+  readonly preserveCachePrefix: boolean
   readonly mediaConfig?: NonNullable<ReturnType<typeof AgentProviderAdapterConfigSchema.parse>['media']>
   readonly preserveThoughtBlock: (resultId: string, block: ProviderThoughtBlock) => ProviderThoughtBlock | null
 }
@@ -698,6 +711,29 @@ const pinnedProviderDispatcher = (resolve: typeof lookup): Agent => {
   return dispatcher
 }
 type ProviderEndpoint = '/responses' | '/chat/completions' | '/messages' | '/completions' | '/interactions' | 'gemini-media'
+const exactProviderBase = (base: URL, origin: string, path: string): boolean =>
+  base.protocol === 'https:' &&
+  base.origin === origin &&
+  base.pathname === path &&
+  !base.search &&
+  !base.hash &&
+  !base.username &&
+  !base.password
+
+const isOpenAIGpt56OrLater = (model: string): boolean => {
+  const match = /^gpt-(\d+)(?:\.(\d+))?(?:[-.]|$)/u.exec(model)
+  if (!match) return false
+  const major = Number(match[1])
+  const minor = Number(match[2] ?? 0)
+  return major > 5 || (major === 5 && minor >= 6)
+}
+
+const isOpenAICacheCapableModel = (model: string): boolean =>
+  isOpenAIGpt56OrLater(model) || /^(?:gpt-(?:5(?:\.\d+)?|4\.1|4o)|o[134])(?:[-.]|$)/u.test(model)
+
+const isNonnegativeSafeTokenCount = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+
 
 const geminiMediaEndpointAllowed = (base: URL, url: URL, init?: RequestInit): boolean => {
   if (base.origin !== 'https://generativelanguage.googleapis.com' || !['/v1beta', '/v1beta/'].includes(base.pathname)) return false
@@ -801,8 +837,12 @@ export const createGuardedProviderFetch = (
   )
 }
 
-const createAnthropicEffortFetch = (implementation: AgentProviderFetch, effort: AgentReasoningEffort | undefined): AgentProviderFetch => {
-  if (effort === undefined) return implementation
+const createAnthropicEffortFetch = (
+  implementation: AgentProviderFetch,
+  effort: AgentReasoningEffort | undefined,
+  automaticCaching: boolean
+): AgentProviderFetch => {
+  if (effort === undefined && !automaticCaching) return implementation
   return Object.assign(
     async (input: Parameters<AgentProviderFetch>[0], init?: Parameters<AgentProviderFetch>[1]): Promise<Response> => {
       if (typeof init?.body !== 'string') throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Anthropic request body is invalid', 500)
@@ -815,17 +855,26 @@ const createAnthropicEffortFetch = (implementation: AgentProviderFetch, effort: 
         throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Anthropic request body is invalid', 500)
       }
       const existing = body.output_config
-      if (existing !== undefined && (typeof existing !== 'object' || existing === null || Array.isArray(existing))) {
+      if (
+        effort !== undefined &&
+        existing !== undefined &&
+        (typeof existing !== 'object' || existing === null || Array.isArray(existing))
+      ) {
         throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Anthropic output configuration is invalid', 500)
       }
       return implementation(input, {
         ...init,
         body: JSON.stringify({
           ...body,
-          output_config: {
-            ...(existing as Readonly<Record<string, unknown>> | undefined),
-            effort
-          }
+          ...(automaticCaching ? { cache_control: { type: 'ephemeral' } } : {}),
+          ...(effort === undefined
+            ? {}
+            : {
+                output_config: {
+                  ...(existing as Readonly<Record<string, unknown>> | undefined),
+                  effort
+                }
+              })
         })
       })
     },
@@ -891,26 +940,34 @@ const createLegacyCompletionService = (
     const text = typeof first === 'object' && first !== null ? Reflect.get(first, 'text') : undefined
     if (typeof text !== 'string' || text.length > 128_000)
       throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider returned an invalid completion', 502)
-    const rawUsage: unknown = Reflect.get(payload, 'usage')
-    const promptTokens =
-      typeof rawUsage === 'object' && rawUsage !== null && Number.isSafeInteger(Reflect.get(rawUsage, 'prompt_tokens'))
-        ? Number(Reflect.get(rawUsage, 'prompt_tokens'))
-        : 0
-    const completionTokens =
-      typeof rawUsage === 'object' && rawUsage !== null && Number.isSafeInteger(Reflect.get(rawUsage, 'completion_tokens'))
-        ? Number(Reflect.get(rawUsage, 'completion_tokens'))
-        : 0
-    return {
-      results: [{ index: 0, content: text, finishReason: 'stop' }],
-      modelUsage: {
+    let modelUsage: AxChatResponse['modelUsage']
+    if (Object.hasOwn(payload, 'usage')) {
+      const rawUsage: unknown = Reflect.get(payload, 'usage')
+      if (typeof rawUsage !== 'object' || rawUsage === null || Array.isArray(rawUsage))
+        throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider returned incomplete or invalid token usage', 502)
+      const promptTokens: unknown = Reflect.get(rawUsage, 'prompt_tokens')
+      const completionTokens: unknown = Reflect.get(rawUsage, 'completion_tokens')
+      const totalTokens: unknown = Reflect.get(rawUsage, 'total_tokens')
+      if (
+        !isNonnegativeSafeTokenCount(promptTokens) ||
+        !isNonnegativeSafeTokenCount(completionTokens) ||
+        !isNonnegativeSafeTokenCount(totalTokens)
+      )
+        throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider returned incomplete or invalid token usage', 502)
+      assertAgentTokenUsage(promptTokens, completionTokens, totalTokens)
+      modelUsage = {
         ai: 'legacy-completions',
         model: row.model,
         tokens: {
           promptTokens,
           completionTokens,
-          totalTokens: promptTokens + completionTokens
+          totalTokens
         }
       }
+    }
+    return {
+      results: [{ index: 0, content: text, finishReason: 'stop' }],
+      ...(modelUsage === undefined ? {} : { modelUsage })
     }
   }
 })
@@ -1042,10 +1099,25 @@ export class AgentProviderFactory {
     if (!row || !row.secretReference) throw new AgentRepositoryError('PROFILE_VERSION_UNAVAILABLE', 'Provider profile version is unavailable', 409)
     const secret = await this.#secrets.get(row.secretReference)
     if (!secret) throw new AgentRepositoryError('PROFILE_SECRET_UNAVAILABLE', 'Provider profile secret is unavailable', 503)
-    const pricing = parseAgentProviderPricing(row.pricingRevision)
     const model = loadOptions.purpose === 'utility' ? (row.utilityModel ?? row.model) : row.model
     if (row.transportKind === 'gemini-api' && !isGeminiInteractionsModel(model))
       throw new AgentRepositoryError('INVALID_PROVIDER_MODEL', 'Gemini Interactions requires a Gemini 3.x model ID', 400)
+    const providerBase = new URL(row.baseUrl)
+    const officialOpenAIEndpoint =
+      (row.transportKind === 'openai-responses' || row.transportKind === 'openai-chat') &&
+      exactProviderBase(providerBase, 'https://api.openai.com', '/v1')
+    const automaticAnthropicCaching =
+      row.transportKind === 'anthropic-messages' && exactProviderBase(providerBase, 'https://api.anthropic.com', '/v1')
+    const officialGeminiInteractions =
+      row.transportKind === 'gemini-api' &&
+      exactProviderBase(providerBase, 'https://generativelanguage.googleapis.com', '/v1beta') &&
+      isGeminiInteractionsModel(model)
+    const pricing = {
+      ...parseAgentProviderPricing(row.pricingRevision),
+      ...(automaticAnthropicCaching || (officialOpenAIEndpoint && isOpenAIGpt56OrLater(model)) ? { cacheWritePremium: true } : {})
+    }
+    const preserveCachePrefix =
+      automaticAnthropicCaching || officialGeminiInteractions || (officialOpenAIEndpoint && isOpenAICacheCapableModel(model))
     let adapterConfig: ReturnType<typeof AgentProviderAdapterConfigSchema.parse>
     let capabilities: AgentProviderCapabilities
     try {
@@ -1155,7 +1227,7 @@ export class AgentProviderFactory {
     } else if (row.transportKind === 'anthropic-messages') {
       service = createRequestScopedService(capabilities.maxOutputTokens, scope => {
         const transportFetch = createTransportFetch(scope)
-        const anthropicFetch = createAnthropicEffortFetch(transportFetch, reasoningEffort)
+        const anthropicFetch = createAnthropicEffortFetch(transportFetch, reasoningEffort, automaticAnthropicCaching)
         return new AxAIAnthropic({
           apiKey: secret,
           config: {
@@ -1196,6 +1268,7 @@ export class AgentProviderFactory {
       capabilityRevision: row.capabilityRevision,
       pricingRevision: row.pricingRevision,
       pricing,
+      preserveCachePrefix,
       ...(row.transportKind === 'gemini-api' && adapterConfig.media ? { mediaConfig: adapterConfig.media } : {}),
       preserveThoughtBlock:
         row.transportKind === 'openai-responses' || row.transportKind === 'openresponses'

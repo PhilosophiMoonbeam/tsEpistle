@@ -4,7 +4,6 @@ import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
 import {
   combineGeminiInteractionState,
   createGeminiInteractionsService,
-  readGeminiCachedInputTokens,
   readGeminiGoogleSearchGrounding,
   readGeminiInteractionStatus
 } from '../../agents/providers/gemini-interactions.ts'
@@ -96,9 +95,15 @@ describe('Gemini Interactions Google Search grounding', () => {
       })
       const response = await service.chat({ chatPrompt: [{ role: 'user', content: 'Question' }] }, { stream: false })
       if (response instanceof ReadableStream) throw new Error('Expected buffered response')
-      expect(readGeminiCachedInputTokens(response)).toBe(cached)
-      expect(readAgentProviderUsage(response)).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 })
-      expect(response.modelUsage).not.toHaveProperty('cachedInputTokens')
+      expect(readAgentProviderUsage('gemini-api', response)).toEqual({
+        inputTokens: 3,
+        outputTokens: 2,
+        totalTokens: 5,
+        ...(cached === undefined ? {} : { cachedInputTokens: cached })
+      })
+      expect(response.modelUsage?.tokens).not.toHaveProperty('cachedInputTokens')
+      if (cached === undefined) expect(response.modelUsage?.tokens).not.toHaveProperty('cacheReadTokens')
+      else expect(response.modelUsage?.tokens).toHaveProperty('cacheReadTokens', cached)
     }
     for (const cached of [-1, 0.5, '2', 4, Number.MAX_SAFE_INTEGER + 1]) {
       const service = createGeminiInteractionsService({
@@ -324,9 +329,13 @@ describe('Gemini Interactions Google Search grounding', () => {
     for await (const chunk of response) chunks.push(chunk)
     const terminal = chunks.at(-1)!
     expect(chunks.flatMap(chunk => chunk.results).some(result => (result.functionCalls?.length ?? 0) > 0)).toBe(false)
-    expect(readAgentProviderUsage(terminal)).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 })
-    expect(chunks.slice(0, -1).every(chunk => readGeminiCachedInputTokens(chunk) === undefined)).toBe(true)
-    expect(readGeminiCachedInputTokens(terminal)).toBe(2)
+    expect(readAgentProviderUsage('gemini-api', terminal)).toEqual({
+      inputTokens: 3,
+      outputTokens: 2,
+      totalTokens: 5,
+      cachedInputTokens: 2
+    })
+    expect(chunks.slice(0, -1).every(chunk => chunk.modelUsage === undefined)).toBe(true)
     expect(readGeminiGoogleSearchGrounding(terminal.results[0]!)).toEqual({
       citations: [{ url: 'https://grounding.example.test/source', title: 'Example source', startIndex: 0, endIndex: 5 }],
       searchSuggestions: ['<a>query</a>']
@@ -371,7 +380,7 @@ describe('Gemini Interactions Google Search grounding', () => {
       })
       const response = await service.chat({ chatPrompt: [{ role: 'user', content: 'search' }], model }, { stream: false })
       if (response instanceof ReadableStream) throw new Error('Expected buffered response')
-      expect(readAgentProviderUsage(response)).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 })
+      expect(readAgentProviderUsage('gemini-api', response)).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 })
       expect(() => readGeminiGoogleSearchGrounding(response.results[0]!)).toThrow()
     }
   })
