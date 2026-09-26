@@ -2656,6 +2656,7 @@ interface TurnResult extends AgentTokenUsage {
   readonly calls: readonly ToolCall[]
   readonly thoughtBlocks: NonNullable<AxChatResponseResult['thoughtBlocks']>
   readonly costMicros: number
+  readonly deniedToolCall?: true
   readonly finishReason?: AxChatResponseResult['finishReason']
   readonly providerStatus?: GeminiInteractionStatus
   readonly googleSearchGrounding?: AgentGoogleSearchGrounding & { readonly searchSuggestions: readonly string[] }
@@ -4643,7 +4644,8 @@ export class AxAgentEngine implements AgentEngine {
     request: AgentEngineRequest,
     maxOutputTokens: number,
     maximumDispatchTokens: number | undefined,
-    streamResponse = true
+    streamResponse = true,
+    allowDeniedToolCall = false
   ): Promise<TurnResult> {
     const admissionStartedAt = performance.now()
     assertCompactionContextFresh(request)
@@ -4905,16 +4907,19 @@ export class AxAgentEngine implements AgentEngine {
       } else if (tools === null && provider.capabilities.toolCalling === 'prompt') {
         parsePromptToolCall(content, new Set())
       }
-      if (tools === null && accumulator.calls.size > 0)
+      const deniedToolCall = tools === null && accumulator.calls.size > 0
+      if (deniedToolCall && !allowDeniedToolCall)
         throw new AgentRepositoryError('UNEXPECTED_PROVIDER_TOOL_CALL', 'Provider requested an action without an action session', 502)
       if (tools && !provider.capabilities.parallelToolCalls && accumulator.calls.size > 1)
         throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider emitted parallel action calls contrary to its capability profile', 502)
-      const calls = [...accumulator.calls.values()].map(call => ({
-        id: call.id,
-        name: call.name,
-        providerName: call.providerName,
-        params: typeof call.params === 'string' ? call.stringFragments.join('') : call.params
-      }))
+      const calls = deniedToolCall
+        ? []
+        : [...accumulator.calls.values()].map(call => ({
+            id: call.id,
+            name: call.name,
+            providerName: call.providerName,
+            params: typeof call.params === 'string' ? call.stringFragments.join('') : call.params
+          }))
       const thoughtBlocks = [...accumulator.thoughtBlocks.values()].map(entry => entry.block)
       const costMicros = estimatedUsage ? admittedCostMicros : agentProviderCostMicros(provider.pricing, inputTokens, outputTokens, totalTokens)
       if (streamReleaseFailed) throw classifyAgentExecutionFailure(streamReleaseFailure, 'provider_stream')
@@ -4926,8 +4931,9 @@ export class AxAgentEngine implements AgentEngine {
       }
       const settledAt = performance.now()
       return {
-        content,
+        content: deniedToolCall ? '' : content,
         calls,
+        ...(deniedToolCall ? { deniedToolCall: true as const } : {}),
         thoughtBlocks,
         inputTokens,
         outputTokens,
@@ -5844,7 +5850,8 @@ export class AxAgentEngine implements AgentEngine {
               : sequence === finalizationSequence && finalizationExposureTokens !== undefined
                 ? Math.min(remainingTokens, finalizationExposureTokens)
                 : remainingTokens,
-            !durablePageMutationApplied
+            !durablePageMutationApplied,
+            tools === null && totalToolCalls > 0 && (request.purpose ?? 'root') === 'root'
           )
         } catch (error) {
           if (
@@ -5880,6 +5887,10 @@ export class AxAgentEngine implements AgentEngine {
             'Agent token budget was exhausted',
             409
           )
+        if (result.deniedToolCall) {
+          await sink.event('model.turn', modelTurnData(turn + 1, result, 'answer_rejected'))
+          return await publishExecutionLimit('tools')
+        }
         if (result.calls.length === 0) {
           const assessmentStartedAt = performance.now()
           const assessableContent = assessableActionStatusContent(result.content, deliveredAttributedLines, deliveredBrowserAttributions)

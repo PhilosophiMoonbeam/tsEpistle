@@ -575,6 +575,58 @@ describe('Ax orchestration stages', () => {
     expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('could not complete the remaining page read')
     expect(invoke).toHaveBeenCalledTimes(1)
   })
+  it('settles a tool-free provider call after a read without dispatching it or publishing an unverified answer', async () => {
+    let turns = 0
+    const chat = vi.fn(async () => {
+      turns++
+      return {
+        results: [
+          {
+            index: 0,
+            content: turns === 1 ? undefined : 'The second page confirms an unsupported conclusion.',
+            functionCalls: [
+              {
+                id: turns === 1 ? 'first-read' : 'denied-read',
+                type: 'function',
+                function: { name: 'wiki_get_page', params: `{"id":${turns}}` }
+              }
+            ]
+          }
+        ],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+      } satisfies AxChatResponse
+    })
+    const invoke = vi.fn(async () => ({ id: 1, title: 'Alpha', content: 'Alpha' }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async () => {})
+    const result = await new AxAgentEngine(factoryFor(chat), actions).execute(
+      {
+        ...baseRequest(new AbortController().signal),
+        limits: { maxTokens: 100, maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 10 }
+      },
+      { text, event }
+    )
+
+    expect(chat).toHaveBeenCalledTimes(2)
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(result).toMatchObject({ totalTokens: 4, executionLimit: { reason: 'tools', publication: 'inability' } })
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain("I couldn't complete a source-verified answer")
+    expect(text.mock.calls.map(([delta]) => delta).join('')).not.toContain('unsupported conclusion')
+    expect(event.mock.calls).toContainEqual([
+      'model.turn',
+      expect.objectContaining({ outcome: 'answer_rejected', turn: 2, totalTokens: 2 })
+    ])
+  })
+
   it('does not dispatch actions when the reserved synthesis quota is unavailable', async () => {
     const invoke = vi.fn(async () => ({ id: 1, title: 'Unverified', content: 'Must not be read' }))
     const actions: AgentActionSessionProvider = {
