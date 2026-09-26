@@ -191,7 +191,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'pages.search',
       'Search pages',
-      `Find visible Wiki pages using distinctive subject or entity terms or a natural-language query; rank by source authority, lexical and projected-knowledge relevance, declared gaps, and links. Optional locale, path, lifecycle, or trust filters narrow results but may hide relevant or historical pages. Scores, matched fields, spelling suggestions, and lifecycle data are bounded navigation hints, not factual read evidence, authorization, or proof that no other page exists. Read promising candidates with ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}) before answering or repeating broad synonym searches merely to increase the result count; expand for a specific unresolved question. Copy only the exact positive numeric result.id, never a path, locale, href, citation/evidenceId, okfResourceUri, sourceRevision, title, or history versionId as its substitute. A user-supplied raw stored path with a separate locale is a distinct direct lookup. A direct read reauthorizes current content; disclose omitted or not_executed reads without automatic retries or inferred access.`,
+      `Find visible candidate pages using distinctive subject/entity terms or a natural-language query. Optional locale, path, lifecycle, trust, or knowledge filters can hide relevant or historical pages. Scores, matches, summaries, trust, and lifecycle are bounded navigation hints, not answer evidence, authorization, or proof of absence. Read relevant candidates with ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}) before broadening; search again for an unresolved question, not to increase the result count. Use only an exact positive numeric result.id for candidate reads, never a path, href, citation, URI, revision, title, or version ID. A user-supplied raw stored path plus locale is a separate direct lookup. Reads reauthorize current content; disclose omitted or not_executed results without inferred access or automatic retries.`,
       'read',
       ['read:pages'],
       both,
@@ -250,7 +250,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'pages.discover',
       'Discover pages',
-      `Browse visible pages within a known locale, descendant path, exact-tag, lifecycle, or trust slice when its structure addresses a specific unresolved need; this is not an automatic fallback after a successful search. Knowledge filters use a bounded 100-page candidate window; narrow the path when that window is too broad. Results are candidate metadata, not read evidence, authorization, or proof of absence. Read chosen pages with ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}), copying the exact positive numeric ID, not the path, locale, href, citation/evidenceId, okfResourceUri, revision, title, or versionId. Use path and locale for direct lookup only when supplied as a raw stored path by the user. Direct reads reauthorize current content; disclose omitted or not_executed reads without automatic retries or inferred access.`,
+      `Browse a known locale, descendant path, exact-tag, lifecycle, or trust slice for a specific unresolved need; this is not an automatic search fallback. Knowledge filters cover a bounded 100-page candidate window, so narrow an overly broad path. Rows are navigation metadata, not answer evidence or proof of absence. Read chosen pages with ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}), using only an exact positive numeric ID, never a displayed path, URI, citation, revision, title, or version ID. A direct path lookup needs the user's raw stored path and separate locale; reads reauthorize current content. Omitted or not_executed reads do not establish absence or access.`,
       'read',
       ['read:pages'],
       both,
@@ -279,7 +279,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'pages.get',
       'Get page',
-      `Read one visible current Wiki page by exact positive numeric ID, or by a user-supplied raw stored path with separate locale. After search, discovery, recent, or related results, copy exactly the positive numeric result.id into ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}); listed paths, locales, hrefs, citation/evidenceIds, okfResourceUri, revisions, titles, and history versionIds are not identity-preserving substitutes. The direct read reauthorizes current content; candidate metadata is not evidence or durable access. Reuse a delivered read for wording repairs, not as proof after the source changes or permission is lost. Disclose omitted or not_executed reads, synthesize only from delivered evidence, and do not retry automatically.`,
+      `Read a visible current Wiki page by exact positive numeric ID, or a user-supplied raw stored path with separate locale. From search, discovery, recent, or related results use ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}), not a displayed path, locale, href, citation, URI, revision, title, or history version ID. The read reauthorizes current content; reuse delivered evidence for wording repairs only while its source and access remain valid. Omitted or not_executed reads supply no evidence; do not infer access or retry automatically.`,
       'read',
       ['read:pages'],
       both,

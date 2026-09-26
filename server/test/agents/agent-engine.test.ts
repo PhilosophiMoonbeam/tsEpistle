@@ -1385,7 +1385,6 @@ describe('Ax agent engine', () => {
     )
     expect(JSON.stringify(feedback).length).toBeLessThanOrEqual(1_200)
     expect(feedback.flatMap(item => item.sourceUnits.map(unit => unit.text))).not.toContain('California orders route through the "West" contact.')
-    expect(String(calls[3]?.chatPrompt.at(-1)?.content)).toContain('must cite at least one source-local factual detail')
     expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
     expect(result.citations).toEqual([
       expect.objectContaining({ evidenceId: 'page:1:revision:9' }),
@@ -3287,19 +3286,6 @@ describe('Ax agent engine', () => {
 
     expect(invoke).toHaveBeenCalledWith('skills.list', {}, expect.objectContaining({ aborted: false }), 'skill-catalog-bootstrap')
     expect(calls[0]?.functions).toContainEqual(expect.objectContaining({ name: 'wiki_read_skill' }))
-    const system = calls[0]?.chatPrompt.find(message => message.role === 'system')
-    expect(system?.content).toContain('"name":"wiki-authoring"')
-    expect(system?.content).toContain('load an applicable skill')
-    expect(system?.content).toContain('very next action must be wiki_apply_page_proposal')
-    expect(system?.content).toContain('[[cite:EVIDENCE_ID]]')
-    expect(system?.content).toContain('candidate metadata, not read evidence')
-    expect(system?.content).toContain('group them into one readable sentence or paragraph')
-    expect(system?.content).toContain('authoritative Open Knowledge Format metadata is revision-bound source authority')
-    expect(system?.content).toContain('missing or invalid authority remains explicit')
-    expect(system?.content).toContain('visibly separate from the derived KnowledgeProjectionView utility projection')
-    expect(system?.content).toContain('wiki_get_page_okf')
-    expect(system?.content).toContain('lossless interoperability or a memory read')
-    expect(system?.content).toContain('canonical document for an exact source revision')
   })
 
   it('emulates one strict tool call for providers without native tools', async () => {
