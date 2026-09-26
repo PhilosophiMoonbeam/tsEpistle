@@ -1007,7 +1007,7 @@ describe('Ax agent engine', () => {
       citations: [{ evidenceId: 'page:42:revision:1:section:1', kind: 'page', label: 'Budget Guide › Evidence', href: '/en/budget-guide#evidence' }]
     })
   })
-  it('publishes uncited recommendation prose after reading cited evidence', async () => {
+  it('accepts standalone uncited advice after reading cited evidence', async () => {
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
       { results: [{ index: 0, content: 'Recommendation: Add an incident owner.' }] },
@@ -1155,40 +1155,42 @@ describe('Ax agent engine', () => {
     return { chat, event, result, settledUsage, text }
   }
 
+  const hotDogMembers = [
+    {
+      name: 'Chicago-style',
+      claim: 'Chicago-style hot dogs include mustard, relish, chopped onion, tomato, a pickle spear, sport peppers, and celery salt.'
+    },
+    { name: 'New York–style', claim: 'New York–style hot dogs use sauerkraut and spicy brown mustard.' },
+    { name: 'Chili cheese', claim: 'Chili cheese hot dogs pair chili with melted cheese.' },
+    {
+      name: 'Sonoran-inspired',
+      claim: 'Sonoran-inspired hot dogs wrap the frank in bacon and add pinto beans, onion, tomato, and jalapeño sauce.'
+    }
+  ]
+  const hotDogEvidenceIds = hotDogMembers.map((_, index) => `page:42:revision:1:section:${index + 2}`)
+  const hotDogCitationSections = [
+    { evidenceId: 'page:42:revision:1:section:1', label: 'Hot Dog Flavors', href: '/en/hot-dog-flavors' },
+    ...hotDogMembers.map(({ name }, index) => ({
+      evidenceId: hotDogEvidenceIds[index]!,
+      label: `Hot Dog Flavors › ${name}`,
+      href: `/en/hot-dog-flavors#${name.toLowerCase().replaceAll(' ', '-')}`
+    }))
+  ]
+  const hotDogContent = ['# Hot Dog Flavors', ...hotDogMembers.flatMap(({ name, claim }) => [`## ${name}`, claim])].join('\n\n')
+
   it('rejects an uncited corpus opening and retains every requested regional combination in the repair', async () => {
-    const members = [
-      {
-        name: 'Chicago-style',
-        claim: 'Chicago-style hot dogs include mustard, relish, chopped onion, tomato, a pickle spear, sport peppers, and celery salt.'
-      },
-      { name: 'New York–style', claim: 'New York–style hot dogs use sauerkraut and spicy brown mustard.' },
-      { name: 'Chili cheese', claim: 'Chili cheese hot dogs pair chili with melted cheese.' },
-      {
-        name: 'Sonoran-inspired',
-        claim: 'Sonoran-inspired hot dogs wrap the frank in bacon and add pinto beans, onion, tomato, and jalapeño sauce.'
-      }
-    ]
-    const evidenceIds = members.map((_, index) => `page:42:revision:1:section:${index + 2}`)
-    const citationSections = [
-      { evidenceId: 'page:42:revision:1:section:1', label: 'Hot Dog Flavors', href: '/en/hot-dog-flavors' },
-      ...members.map(({ name }, index) => ({
-        evidenceId: evidenceIds[index]!,
-        label: `Hot Dog Flavors › ${name}`,
-        href: `/en/hot-dog-flavors#${name.toLowerCase().replaceAll(' ', '-')}`
-      }))
-    ]
     const opening = 'The page lists four regional-inspired hot dog combinations:'
     const rejectedDraft = [
       opening,
       '',
-      ...members.map(({ claim }, index) => `- ${claim}[[cite:${evidenceIds[index]}]]`)
+      ...hotDogMembers.map(({ claim }, index) => `- ${claim}[[cite:${hotDogEvidenceIds[index]}]]`)
     ].join('\n')
-    const correctedDraft = members.map(({ claim }, index) => `- ${claim}[[cite:${evidenceIds[index]}]]`).join('\n')
+    const correctedDraft = hotDogMembers.map(({ claim }, index) => `- ${claim}[[cite:${hotDogEvidenceIds[index]}]]`).join('\n')
     const run = await runEvidenceCorrection({
       title: 'Hot Dog Flavors',
       path: 'hot-dog-flavors',
-      content: ['# Hot Dog Flavors', ...members.flatMap(({ name, claim }) => [`## ${name}`, claim])].join('\n\n'),
-      citationSections,
+      content: hotDogContent,
+      citationSections: hotDogCitationSections,
       rejectedDraft,
       correctedDraft
     })
@@ -1197,8 +1199,8 @@ describe('Ax agent engine', () => {
     expect(run.chat).toHaveBeenCalledTimes(3)
     expect(provenance).toHaveLength(2)
     expect(provenance[0]).toMatchObject({ accepted: false })
-    expect(provenance[1]).toMatchObject({ accepted: true, finalCitationIds: evidenceIds })
-    expect(run.result.citations?.map(({ evidenceId }) => evidenceId)).toEqual(evidenceIds)
+    expect(provenance[1]).toMatchObject({ accepted: true, finalCitationIds: hotDogEvidenceIds })
+    expect(run.result.citations?.map(({ evidenceId }) => evidenceId)).toEqual(hotDogEvidenceIds)
     expect(published).toBe(correctedDraft)
     expect(published).toContain('Chicago-style')
     expect(published).toContain('New York–style')
@@ -1210,6 +1212,59 @@ describe('Ax agent engine', () => {
     expect(run.settledUsage).toHaveLength(3)
     expect(run.settledUsage.reduce((total, usage) => total + usage.totalTokens, 0)).toBe(run.result.totalTokens)
     expect(run.settledUsage.reduce((total, usage) => total + usage.costMicros, 0)).toBe(run.result.costMicros)
+  })
+
+  it('rejects uncited factual comparison text after a cited four-member inventory and repairs both sides', async () => {
+    const inventory = hotDogMembers.map(({ claim }, index) => `- ${claim}[[cite:${hotDogEvidenceIds[index]}]]`)
+    const comparison = [
+      'Chicago-style hot dogs use a different topping combination from Sonoran-inspired dogs.',
+      '- Chicago-style hot dogs include a pickle spear and sport peppers.',
+      '- Sonoran-inspired hot dogs add pinto beans and jalapeño sauce.'
+    ].join('\n')
+    const rejectedDraft = `${inventory.join('\n')}\n\n${comparison}`
+    const correctedDraft = [
+      inventory.join('\n'),
+      '### Chicago-style and Sonoran-inspired',
+      `${hotDogMembers[0]!.claim}[[cite:${hotDogEvidenceIds[0]}]]`,
+      `${hotDogMembers[3]!.claim}[[cite:${hotDogEvidenceIds[3]}]]`
+    ].join('\n\n')
+    const run = await runEvidenceCorrection({
+      title: 'Hot Dog Flavors',
+      path: 'hot-dog-flavors',
+      content: hotDogContent,
+      citationSections: hotDogCitationSections,
+      rejectedDraft,
+      correctedDraft
+    })
+    const provenance = run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    const published = run.text.mock.calls.map(([delta]) => delta).join('')
+
+    expect(run.chat).toHaveBeenCalledTimes(3)
+    expect(provenance).toHaveLength(2)
+    expect(provenance[0]).toMatchObject({ accepted: false, finalCitationIds: [] })
+    expect(provenance[1]).toMatchObject({ accepted: true, finalCitationIds: hotDogEvidenceIds })
+    expect(run.result.citations).toEqual(
+      hotDogCitationSections.slice(1).map(section => ({
+        evidenceId: section.evidenceId,
+        kind: 'page',
+        label: section.label,
+        href: section.href
+      }))
+    )
+    expect(published).toBe(correctedDraft)
+    expect(published).toContain(hotDogMembers[0]!.name)
+    expect(published).toContain(hotDogMembers[1]!.name)
+    expect(published).toContain(hotDogMembers[2]!.name)
+    expect(published).toContain(hotDogMembers[3]!.name)
+    expect(published).toContain(hotDogMembers[0]!.claim + `[[cite:${hotDogEvidenceIds[0]}]]`)
+    expect(published).toContain(hotDogMembers[3]!.claim + `[[cite:${hotDogEvidenceIds[3]}]]`)
+    expect(published).not.toContain(comparison)
+    expect(run.result).toMatchObject({ inputTokens: 34, outputTokens: 9, totalTokens: 43, costMicros: 52 })
+    expect(run.settledUsage).toEqual([
+      { inputTokens: 10, outputTokens: 2, totalTokens: 12, costMicros: 14 },
+      { inputTokens: 11, outputTokens: 3, totalTokens: 14, costMicros: 17 },
+      { inputTokens: 13, outputTokens: 4, totalTokens: 17, costMicros: 21 }
+    ])
   })
 
   it('rejects a factual uncited introduction between independently supported sections', async () => {
@@ -1264,12 +1319,12 @@ describe('Ax agent engine', () => {
     expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(correctedDraft)
   })
 
-  it('moves an uncited original recommendation after its cited fact during evidence repair', async () => {
+  it('moves an uncited original recommendation before its cited fact into a terminal Recommendations section', async () => {
     const evidenceId = 'page:42:revision:1:section:2'
     const recommendation = 'I recommend keeping the checksum report beside the case record.'
     const fact = 'The first safety check compares the archive checksum against the manifest.'
     const rejectedDraft = `${recommendation}\n\n${fact}[[cite:${evidenceId}]]`
-    const correctedDraft = `${fact}[[cite:${evidenceId}]]\n\n${recommendation}`
+    const correctedDraft = `${fact}[[cite:${evidenceId}]]\n\n## Recommendations\n\n${recommendation}`
     const run = await runEvidenceCorrection({
       title: 'Checksum Procedure',
       path: 'checksum-procedure',
@@ -1290,6 +1345,132 @@ describe('Ax agent engine', () => {
     expect(run.result.citations?.map(({ evidenceId: citedId }) => citedId)).toEqual([evidenceId])
     expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(correctedDraft)
     expect(run.text.mock.calls.map(([delta]) => delta).join('')).toContain(recommendation)
+  })
+
+  it('repairs unframed trailing advice into Recommendations without losing the original words', async () => {
+    const evidenceId = 'page:42:revision:1:section:2'
+    const recommendation = 'I recommend keeping the checksum report beside the case record.'
+    const fact = 'The first safety check compares the archive checksum against the manifest.'
+    const rejectedDraft = `${fact}[[cite:${evidenceId}]]\n\n${recommendation}`
+    const correctedDraft = `${fact}[[cite:${evidenceId}]]\n\n## Recommendations\n\n${recommendation}`
+    const run = await runEvidenceCorrection({
+      title: 'Checksum Procedure',
+      path: 'checksum-procedure',
+      content: ['# Checksum Procedure', '## Archive review', fact].join('\n\n'),
+      citationSections: [
+        { evidenceId: 'page:42:revision:1:section:1', label: 'Checksum Procedure', href: '/en/checksum-procedure' },
+        { evidenceId, label: 'Checksum Procedure › Archive review', href: '/en/checksum-procedure#archive-review' }
+      ],
+      rejectedDraft,
+      correctedDraft
+    })
+    const provenance = run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    const published = run.text.mock.calls.map(([delta]) => delta).join('')
+
+    expect(run.chat).toHaveBeenCalledTimes(3)
+    expect(provenance).toHaveLength(2)
+    expect(provenance[0]).toMatchObject({ accepted: false, finalCitationIds: [] })
+    expect(provenance[1]).toMatchObject({ accepted: true, finalCitationIds: [evidenceId] })
+    expect(published).toBe(correctedDraft)
+    expect(published).toContain(recommendation)
+  })
+
+  it('requires cited factual body text before the Recommendations heading', async () => {
+    const evidenceId = 'page:42:revision:1:section:2'
+    const citedFact = 'Amber Falcon is a synthetic incident.'
+    const uncitedFact = 'Deployment freeze is step two.'
+    const recommendation = 'I recommend keeping the incident owner beside the runbook.'
+    const rejectedDraft = [
+      `${citedFact}[[cite:${evidenceId}]]`,
+      uncitedFact,
+      '## Recommendations',
+      recommendation
+    ].join('\n\n')
+    const correctedDraft = `${citedFact}[[cite:${evidenceId}]]\n\n## Recommendations\n\n${recommendation}`
+    const run = await runEvidenceCorrection({
+      title: 'Incident Runbook',
+      path: 'incident-runbook',
+      content: ['# Incident Runbook', '## Response sequence', citedFact, uncitedFact].join('\n\n'),
+      citationSections: [
+        { evidenceId: 'page:42:revision:1:section:1', label: 'Incident Runbook', href: '/en/incident-runbook' },
+        { evidenceId, label: 'Incident Runbook › Response sequence', href: '/en/incident-runbook#response-sequence' }
+      ],
+      rejectedDraft,
+      correctedDraft
+    })
+    const provenance = run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+
+    expect(provenance).toHaveLength(2)
+    expect(provenance[0]).toMatchObject({ accepted: false, finalCitationIds: [] })
+    expect(provenance[1]).toMatchObject({ accepted: true, finalCitationIds: [evidenceId] })
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(correctedDraft)
+  })
+
+  it.each([
+    ['fenced', '```md\n## Recommendations\n```'],
+    ['blockquote', '> ## Recommendations'],
+    ['list item', '- ## Recommendations'],
+    ['inline code', '`## Recommendations`']
+  ] as const)('does not let a %s fake heading exempt an uncited factual ending', async (_shape, fakeHeading) => {
+    const evidenceId = 'page:42:revision:1:section:2'
+    const citedFact = 'Amber Falcon is a synthetic incident.'
+    const trailingFact = 'Deployment freeze is step two.'
+    const rejectedDraft = `${citedFact}[[cite:${evidenceId}]]\n\n${fakeHeading}\n\n${trailingFact}`
+    const correctedDraft = `${citedFact}[[cite:${evidenceId}]]`
+    const run = await runEvidenceCorrection({
+      title: 'Incident Runbook',
+      path: 'incident-runbook',
+      content: ['# Incident Runbook', '## Response sequence', citedFact, trailingFact].join('\n\n'),
+      citationSections: [
+        { evidenceId: 'page:42:revision:1:section:1', label: 'Incident Runbook', href: '/en/incident-runbook' },
+        { evidenceId, label: 'Incident Runbook › Response sequence', href: '/en/incident-runbook#response-sequence' }
+      ],
+      rejectedDraft,
+      correctedDraft
+    })
+    const provenance = run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    const published = run.text.mock.calls.map(([delta]) => delta).join('')
+
+    expect(provenance).toHaveLength(2)
+    expect(provenance[0]).toMatchObject({ accepted: false, finalCitationIds: [] })
+    expect(provenance[1]).toMatchObject({ accepted: true, finalCitationIds: [evidenceId] })
+    expect(published).toBe(correctedDraft)
+    expect(published).not.toContain(trailingFact)
+  })
+
+  it('ends the Recommendations exemption at a later sibling heading', async () => {
+    const evidenceId = 'page:42:revision:1:section:2'
+    const citedFact = 'Amber Falcon is a synthetic incident.'
+    const recommendation = 'I recommend keeping the incident owner beside the runbook.'
+    const trailingFact = 'Deployment freeze is step two.'
+    const rejectedDraft = [
+      `${citedFact}[[cite:${evidenceId}]]`,
+      '## Recommendations',
+      recommendation,
+      '## Summary',
+      trailingFact
+    ].join('\n\n')
+    const correctedDraft = `${citedFact}[[cite:${evidenceId}]]\n\n## Recommendations\n\n${recommendation}`
+    const run = await runEvidenceCorrection({
+      title: 'Incident Runbook',
+      path: 'incident-runbook',
+      content: ['# Incident Runbook', '## Response sequence', citedFact, trailingFact].join('\n\n'),
+      citationSections: [
+        { evidenceId: 'page:42:revision:1:section:1', label: 'Incident Runbook', href: '/en/incident-runbook' },
+        { evidenceId, label: 'Incident Runbook › Response sequence', href: '/en/incident-runbook#response-sequence' }
+      ],
+      rejectedDraft,
+      correctedDraft
+    })
+    const provenance = run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    const published = run.text.mock.calls.map(([delta]) => delta).join('')
+
+    expect(provenance).toHaveLength(2)
+    expect(provenance[0]).toMatchObject({ accepted: false, finalCitationIds: [] })
+    expect(provenance[1]).toMatchObject({ accepted: true, finalCitationIds: [evidenceId] })
+    expect(published).toBe(correctedDraft)
+    expect(published).toContain(recommendation)
+    expect(published).not.toContain(trailingFact)
   })
 
   it('binds every rendered Markdown link to exact cited evidence without treating destinations as factual prose', async () => {
@@ -1329,6 +1510,7 @@ describe('Ax agent engine', () => {
       '`Every page links [Website]([WEBSITE_EVIL]) under the heading.` [[cite:page:6:revision:1:section:1]]',
       [
         '[Portal](https://admin.example/approved) is listed. [[cite:page:6:revision:1:section:1]]',
+        '## Recommendations',
         'Recommendation: Standardize manufacturer page title formats for easier navigation.'
       ].join('\n\n')
     ]
@@ -1950,6 +2132,7 @@ describe('Ax agent engine', () => {
     ['unsupported predicate', 'Contract pricing guarantees free installation.[[cite:page:1:revision:9:section:2]]'],
     ['wrong section', 'Contract pricing lists discount schedules.[[cite:page:1:revision:9:section:3]]'],
     ['wrong revision', 'Terms remain valid for 30 days.[[cite:page:1:revision:8:section:1]]'],
+    ['wrong source', 'Contract pricing lists discount schedules.[[cite:page:2:revision:9:section:2]]'],
     ['source-local paraphrase', 'OM chairs are supplied.[[cite:page:1:revision:9:section:1]]'],
     ['source-local listing paraphrase', 'Contract pricing includes discount schedules.[[cite:page:1:revision:9:section:2]]'],
     ['faithful numeric punctuation', 'Discount: 10 percent; freight: 20 percent.[[cite:page:1:revision:9:section:1]]'],
@@ -2423,7 +2606,7 @@ describe('Ax agent engine', () => {
     const answer =
       '- Before deployment, verify the backup is current.[[cite:page:21:revision:11:section:1]]\n' +
       '- After deployment, confirm the queue drains.[[cite:page:23:revision:1:section:1]]\n\n' +
-      'Recommendation: Keep both checks together in the release checklist.'
+      '## Recommendations\n\nRecommendation: Keep both checks together in the release checklist.'
     const unsupportedCandidateDraft = 'The queue clears within five minutes.[[cite:page:23:revision:1]]'
     const fixture = questionFixture(
       mode,
@@ -2537,7 +2720,6 @@ describe('Ax agent engine', () => {
     expect(promptHistory).not.toContain(secondPageCandidate.okfResourceUri)
 
     const emitted = fixture.text.mock.calls.map(([delta]) => delta).join('')
-    expect(fixture.text).toHaveBeenCalledOnce()
     expect(emitted).toBe(answer)
     expect(emitted).not.toContain('within five minutes')
     expect(emitted.split('\n').filter(line => line.startsWith('- '))).toEqual([

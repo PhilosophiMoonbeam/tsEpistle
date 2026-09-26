@@ -111,11 +111,11 @@ Retrieval. Read an exact current page or historical version directly with the ad
 Evidence boundary. Search, discover, related, and old listRecent results are candidate metadata, not page evidence; read pages with ${AGENT_TOOL_NAMES['pages.get']} before relying on their content. Discovery feedback is observational: counts describe distinct candidates in delivered bounded results, and novelty does not imply relevance or authority. empty_window means no candidate in that window, not no Wiki information; continuation='not_reported' is not exhaustive. New-format ${AGENT_TOOL_NAMES['pages.listRecent']} output is bounded current-source evidence for a basic recap. Use ${AGENT_TOOL_NAMES['pages.getOkf']} only when lossless interoperability or a memory read needs the canonical document for an exact source revision; keep its authority state separate from any projection.
 
 Authoring. Do not copy readily discoverable Wiki facts into personal memory. Before proposing a create or patch, search for duplicates and genuinely related pages, read promising candidates, and add canonical internal links and precise tags only when the authored content supports them. Never manufacture links or tags to influence retrieval. Open Knowledge Format is an interoperability-boundary representation, not a separate knowledge store or the default for ordinary page operations.`
-const EVIDENCE_INSTRUCTIONS = `A new-format ${AGENT_TOOL_NAMES['pages.listRecent']} result with kind recent-page-evidence is page-level read evidence: each row's citation identifies the exact current source revision, and its content is only the opening excerpt. For a basic recap, cite every returned row. Do not cite an old listRecent result without that kind, and do not substitute metadata from search, discover, or related results; those are candidate metadata, not read evidence, and their citation IDs are not eligible for an answer. Read every other cited page this run with ${AGENT_TOOL_NAMES['pages.get']} or ${AGENT_TOOL_NAMES['pages.getVersion']}, or ${AGENT_TOOL_NAMES['pages.getOkf']} when the canonical exact-revision document is the needed evidence.
+const EVIDENCE_INSTRUCTIONS = `A new-format ${AGENT_TOOL_NAMES['pages.listRecent']} result with kind recent-page-evidence is page-level read evidence: each row's citation identifies the exact current source revision, and its content is only the opening excerpt. For a basic recap, cite every returned row. Do not cite an old listRecent result without that kind, and do not substitute metadata from search, discover, or related results; those are candidate metadata, not page evidence, and their citation IDs are not eligible for an answer. Read every other cited page this run with ${AGENT_TOOL_NAMES['pages.get']} or ${AGENT_TOOL_NAMES['pages.getVersion']}, or ${AGENT_TOOL_NAMES['pages.getOkf']} when the canonical exact-revision document is the needed evidence.
 
 For legitimate Wiki content questions, answer directly and concisely from delivered source evidence. Cover each requested facet at its requested granularity: for an inventory, list relevant named members supported by examined sources with one exact local citation per point; add descriptions only when requested or necessary to distinguish members, and ground them in the same source unit. For summaries and comparisons, retain the requested substantive details, both sides, and dimensions. Do not enumerate every fact on every retrieved page or imply exhaustive Wiki coverage. Do not equate a bounded zero-hit or empty window with absence from the Wiki. State only what evidence supports; candidly distinguish absent evidence, ambiguity, scope limits, historical uncertainty, truncation, denial, and partial or omitted coverage. Keep the user's selected scope; do not silently broaden it. For a past date or revision, use evidence for that time when available and never treat a current read as proof of an earlier state.
 
-Evidence-local composition. State each Wiki-derived factual point as an independently supported clause or sentence, immediately followed by its exact [[cite:EVIDENCE_ID]]; use the most specific citationSections entry, and page-level evidence only when no section applies. Prefer separate sentences or bullets for facts from different source units, even within one page or section; never merge them into a new factual relationship. Apply this to factual openings and closings, headings, examples, nested bullets, and table cells. Preserve each unit's subject, action, polarity, exact names, identifiers, code literals, numbers and units, links, membership, time, qualifiers, and scope; paraphrase faithfully. Put all requested Wiki-derived factual points in independently cited body clauses before any original uncited recommendation or synthesis. Use only nonassertive headings for organization; do not front-load an uncited factual overview. Cite or split each retained factual point; omit a redundant overview only if the cited body preserves requested coverage. Move genuinely original recommendations and synthesis after the last citation, uncited unless they state a sourced fact. Clearly framed original recommendations, questions, synthesis, organization, and reasoning need no citation unless they state a sourced fact. A section marker supports only claims grounded in that section. Never invent or alter an evidence ID, cite metadata or a page you did not read, or claim to have verified/read a source unless its read (or new-format recent evidence) completed in this run and the statement carries its citation.`
+Evidence-local composition. State each Wiki-derived factual point as an independently supported clause or sentence, immediately followed by its exact [[cite:EVIDENCE_ID]]; use the most specific citationSections entry, and page-level evidence only when no section applies. Prefer separate sentences or bullets for facts from different source units, even within one page or section; never merge them into a new factual relationship. Apply this to factual openings and closings, headings, examples, nested bullets, and table cells. Preserve each unit's subject, action, polarity, exact names, identifiers, code literals, numbers and units, links, membership, time, qualifiers, and scope; paraphrase faithfully. Put all requested Wiki-derived factual points in independently cited body clauses before original advice. Keep comparisons, summaries, inventories, and factual conclusions in the cited body; for comparisons, state each requested side as an independently supported source-local clause with its own immediate citation, and never infer an unsupported comparative or exhaustive relationship. Use only nonassertive headings for organization; do not front-load an uncited factual overview. Cite or split each retained factual point; omit a redundant overview only if the cited body preserves requested coverage. In an answer containing citations, put genuinely original recommendations, preferences, and questions under a terminal top-level ## Recommendations heading after the cited body; keep factual premises in cited clauses. Such original advice remains uncited unless it states a sourced fact, and the heading is not evidence. An answer without citations may retain ordinary uncited advice. A section marker supports only claims grounded in that section. Never invent or alter an evidence ID, cite metadata or a page you did not read, or claim to have verified/read a source unless its read (or new-format recent evidence) completed in this run and the statement carries its citation.`
 const PLANNER_INSTRUCTIONS =
   'You are the Wiki Agent task-planning stage. Produce only the strict JSON plan requested by the user message. Do not answer the underlying request, call tools, expose reasoning, or invent authorization.'
 const SUBAGENT_INSTRUCTIONS =
@@ -293,7 +293,10 @@ interface DraftAssessment {
 
 interface MarkdownSection {
   readonly title: string
+  readonly level: number
   readonly ancestry: readonly string[]
+  readonly startOffset: number
+  readonly endOffset: number
   readonly content: string
   readonly sourceUnits: readonly CitationSourceUnit[]
 }
@@ -989,13 +992,13 @@ const sourceUnits = (content: string, inheritedContext: readonly string[] = []):
   return units
 }
 
-const markdownSections = (content: string): readonly MarkdownSection[] => {
+const markdownHeadings = (content: string) => {
   const lines = content.split(/\r?\n/u)
-  const headings: Array<{ line: number; level: number; title: string; ancestry: readonly string[] }> = []
+  const headings: Array<{ line: number; level: number; title: string; ancestry: readonly string[]; startOffset: number }> = []
   const ancestry: Array<{ level: number; title: string }> = []
   let fence: MarkdownCodeFenceState | null = null
   let detailsDepth = 0
-  for (let index = 0; index < lines.length; index++) {
+  for (let index = 0, lineOffset = 0; index < lines.length; index++, lineOffset = content.indexOf('\n', lineOffset) + 1) {
     const line = lines[index] ?? ''
     const nextFence = advanceMarkdownCodeFenceState(line, fence)
     if (fence !== null || nextFence !== null) {
@@ -1016,14 +1019,31 @@ const markdownSections = (content: string): readonly MarkdownSection[] => {
     const level = heading[1].length
     while (ancestry.at(-1) && ancestry.at(-1)!.level >= level) ancestry.pop()
     ancestry.push({ level, title: heading[2].trim() })
-    headings.push({ line: index, level, title: heading[2].trim(), ancestry: ancestry.map(item => item.title) })
+    headings.push({ line: index, level, title: heading[2].trim(), ancestry: ancestry.map(item => item.title), startOffset: lineOffset })
   }
-  return headings.map((heading, index) => {
-    const next = headings.slice(index + 1).find(candidate => candidate.level <= heading.level)
-    const text = lines.slice(heading.line, next?.line ?? lines.length).join('\n')
+  return {
+    lines,
+    headings: headings.map((heading, index) => {
+      const next = headings.slice(index + 1).find(candidate => candidate.level <= heading.level)
+      return {
+        ...heading,
+        endLine: next?.line ?? lines.length,
+        endOffset: next?.startOffset ?? content.length
+      }
+    })
+  }
+}
+
+const markdownSections = (content: string): readonly MarkdownSection[] => {
+  const parsed = markdownHeadings(content)
+  return parsed.headings.map(heading => {
+    const text = parsed.lines.slice(heading.line, heading.endLine).join('\n')
     return {
       title: heading.title,
+      level: heading.level,
       ancestry: heading.ancestry,
+      startOffset: heading.startOffset,
+      endOffset: heading.endOffset,
       content: text,
       sourceUnits: sourceUnits(text, heading.ancestry.slice(0, -1))
     }
@@ -1553,6 +1573,20 @@ const substantiveUnboundText = (value: string): boolean => {
     .replace(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/gmu, ' ')
     .replace(citationMarker, ' ')
   return normalizedTerms(presentationStripped).length > 0
+}
+
+const citedSuffixIsOnlyRecommendations = (content: string, suffixStart: number): boolean => {
+  const parsed = markdownHeadings(content)
+  return parsed.headings.some(
+    section =>
+      section.level === 2 &&
+      section.ancestry.length === 1 &&
+      section.title === 'Recommendations' &&
+      /^ {0,3}##[ \t]+Recommendations(?:[ \t]+#+)?[ \t]*$/u.test(parsed.lines[section.line] ?? '') &&
+      section.startOffset >= suffixStart &&
+      !substantiveUnboundText(content.slice(suffixStart, section.startOffset)) &&
+      !substantiveUnboundText(content.slice(section.endOffset))
+  )
 }
 
 const claimBeforeMarker = (content: string, markerIndex: number, previousMarkerEnd: number): ClaimBeforeMarker => {
@@ -2164,8 +2198,13 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
   if (registry.size > 0 && claims.length === 0 && content.trim().length > 0) {
     groundingWarnings.push('The answer used Wiki page context without an inline citation.')
   }
-  if (claims.length > 0 && substantiveUnboundText(content.slice(previousMarkerEnd))) {
+  const trailingText = content.slice(previousMarkerEnd)
+  if (claims.length > 0 && substantiveUnboundText(trailingText)) {
     groundingWarnings.push('Substantive prose appears outside an immediately cited factual clause.')
+    if (!citedSuffixIsOnlyRecommendations(content, previousMarkerEnd)) {
+      const issue = 'Substantive prose after the final citation must be cited in the body or limited to original advice in a terminal top-level ## Recommendations section.'
+      if (!issues.includes(issue)) issues.push(issue)
+    }
   }
   const answerLinks = new Map<string, number>()
   incrementCounts(answerLinks, renderedLinkSignatures(content))
@@ -2594,7 +2633,7 @@ const EVIDENCE_BINDING_CONFLICT_LIMITATION =
 const evidenceConflictDisclosure = (hasConflict: boolean): string =>
   hasConflict ? '\n\nA conflicting page read was excluded; citations remain bound to the first delivered result.' : ''
 const evidenceCorrection = (assessment: DraftAssessment, registry: ReadonlyMap<string, CitationEvidence>, hasEvidenceConflict = false): string =>
-  `Your draft failed a hard citation-integrity check and was not shown to the user. Return only the corrected answer. Do not discuss validation, citation counts, rules, or repair. Do not invoke tools; use only eligible evidence already delivered above. Preserve supported requested points, relevant examined inventory members, useful recommendations, and synthesis. If a factual opening appears before a later citation, cite each retained factual point with its own eligible marker, splitting it into source-local points as needed; omit a redundant overview only if the cited body still covers the requested information. If eligible evidence does not support an assertion, correct it or disclose the actual gap. Move genuinely original recommendations to the uncited ending, never falsely cite them. For each missing section evidence ID, add a source-local body-fact clause only when its exact eligible delivered unit supports one; never infer omitted content. Split rejected compound factual claims into separately cited source-local points using eligible delivered units before dropping any supported part; do not reduce requested coverage merely to pass validation. If a relevant point genuinely lacks eligible support, correct it or disclose the unresolved gap rather than fabricating support. Keep exact links, code literals, numeric values, and page titles faithful to the cited scope. Old listRecent metadata, search, discovery, and related results are not evidence. If only a truncated recent excerpt is eligible in this provider request, disclose that the answer uses bounded opening excerpts.${
+  `Your draft failed a hard citation-integrity check and was not shown to the user. Return only the corrected answer. Do not discuss validation, citation counts, rules, or repair. Do not invoke tools; use only eligible evidence already delivered above. Preserve supported requested points, relevant examined inventory members, and genuine advice. For requested comparisons, retain both sides and dimensions, with each side in its own source-local factual clause immediately followed by its own eligible citation; do not state unsupported comparative, shared-only, exclusive, or exhaustive relationships. Keep comparisons, summaries, inventories, and factual conclusions in independently cited body clauses. Keep genuine original advice; in an answer with citations, place it under a terminal top-level ## Recommendations heading after the factual citations, separating any factual premises into cited body clauses. The heading is not evidence, and advice may be reorganized without losing its substance. An answer without citations may retain ordinary uncited advice. If a factual opening appears before a later citation, cite each retained factual point with its own eligible marker, splitting it into source-local points as needed; omit a redundant overview only if the cited body still covers the requested information. If eligible evidence does not support an assertion, correct it or disclose the actual gap. For each missing section evidence ID, add a source-local body-fact clause only when its exact eligible delivered unit supports one; never infer omitted content. Split rejected compound factual claims into separately cited source-local points using eligible delivered units before dropping any supported part; do not reduce requested coverage merely to pass validation. If a relevant point genuinely lacks eligible support, correct it or disclose the unresolved gap rather than fabricating support. Keep exact links, code literals, numeric values, and page titles faithful to the cited scope. Old listRecent metadata, search, discovery, and related results are not evidence. If only a truncated recent excerpt is eligible in this provider request, disclose that the answer uses bounded opening excerpts.${
     hasEvidenceConflict ? `\nEvidence limitation: ${EVIDENCE_BINDING_CONFLICT_LIMITATION}` : ''
   }\nProblems:\n${assessment.issues
     .slice(0, 10)
