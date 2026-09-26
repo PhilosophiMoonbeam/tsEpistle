@@ -580,7 +580,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'memory.manage',
       'Manage personal memory',
-      'Curate bounded user-specific memory for future conversations. Save durable user preferences to target user and stable environment, project, or workflow facts to target agent. Skip secrets, easily rediscovered facts, raw data, and conversation-only details. Use a unique oldText substring to replace or remove an entry.',
+      'Curate bounded user-specific memory for future conversations. To add a durable user preference call with {"action":"add","target":"user","content":"..."}; use target agent for stable environment, project or workflow facts. For replace or remove supply a unique oldText substring instead of content when removing. Never use text or newText argument keys. Skip secrets, easily rediscovered facts, raw data, and conversation-only details.',
       'reversible-write',
       [],
       agentOnly,

@@ -1580,7 +1580,7 @@ describe('durable agent repositories', () => {
     await restarted.shutdown()
   })
 
-  it('holds a dispatch sequence once, splits it concurrently, and retains uncertain child exposure on close', async () => {
+  it('resizes undispatched quota around active provider work and retains uncertain child exposure on close', async () => {
     const now = new Date('2026-08-17T00:00:00.000Z')
     await knex('agentRuns').where({ id: runId }).update({
       status: 'queued',
@@ -1603,17 +1603,43 @@ describe('durable agent repositories', () => {
       now
     )
     let heldDuringDispatch: { reservedTokens: number; reservedCostMicros: number } | undefined
+    let heldAfterGrowth: { reservedTokens: number; reservedCostMicros: number } | undefined
     const engine: AgentEngine = {
       preflight: preflightAgentRequest,
       async execute(request) {
         if (!request.dispatchBudget?.reserveSequence) throw new Error('dispatch sequence missing')
         const sequence = await request.dispatchBudget.reserveSequence({ tokens: 180, costMicros: 180 })
-        const [uncertain, settled] = await Promise.all([sequence.reserve({ tokens: 80, costMicros: 80 }), sequence.reserve({ tokens: 70, costMicros: 70 })])
         heldDuringDispatch = await knex('agentQuotaReservations').where({ runId }).first('reservedTokens', 'reservedCostMicros')
+
+        const uncertain = await sequence.reserve({ tokens: 80, costMicros: 80 })
+        const uncertainSnapshot = { ...uncertain }
+        await sequence.resizeUndispatched({ tokens: 220, costMicros: 220 })
+        heldAfterGrowth = await knex('agentQuotaReservations').where({ runId }).first('reservedTokens', 'reservedCostMicros')
+        expect(sequence.unsettledExposure).toEqual({ tokens: 300, costMicros: 300 })
+        expect(uncertain).toEqual(uncertainSnapshot)
+
+        await sequence.resizeUndispatched({ tokens: 60, costMicros: 60 })
+        expect(sequence.unsettledExposure).toEqual({ tokens: 140, costMicros: 140 })
+        await expect(sequence.reserve({ tokens: 61, costMicros: 61 })).rejects.toMatchObject({ code: 'DISPATCH_RESERVATION_EXCEEDED' })
+        await expect(sequence.resizeUndispatched({ tokens: 1_000, costMicros: 1_000 })).rejects.toMatchObject({
+          code: 'AGENT_QUOTA_EXHAUSTED',
+          status: 429
+        })
+        expect(sequence.unsettledExposure).toEqual({ tokens: 140, costMicros: 140 })
+        expect(uncertain).toEqual(uncertainSnapshot)
+
+        const settled = await sequence.reserve({ tokens: 60, costMicros: 60 })
         await sequence.reconcile(settled, { inputTokens: 40, outputTokens: 20, totalTokens: 60, costMicros: 60 })
-        expect(sequence.unsettledExposure).toEqual({ tokens: 110, costMicros: 110 })
+        expect(sequence.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
+        await expect(sequence.resizeUndispatched({ tokens: 900, costMicros: 900 })).rejects.toMatchObject({
+          code: 'AGENT_QUOTA_EXHAUSTED',
+          status: 429
+        })
+        expect(sequence.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
         await sequence.close()
+        expect(sequence.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
         expect(request.dispatchBudget.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
+        await expect(sequence.resizeUndispatched({ tokens: 1, costMicros: 1 })).rejects.toMatchObject({ code: 'DISPATCH_RESERVATION_INVALID' })
         throw new Error('provider outcome uncertain')
       }
     }
@@ -1633,6 +1659,7 @@ describe('durable agent repositories', () => {
 
     expect(await runtime.runOnce()).toBe(true)
     expect(heldDuringDispatch).toEqual({ reservedTokens: 180, reservedCostMicros: 180 })
+    expect(heldAfterGrowth).toEqual({ reservedTokens: 300, reservedCostMicros: 300 })
     expect(await knex('agentQuotaReservations').where({ runId }).first('status', 'consumedTokens', 'consumedCostMicros')).toEqual({
       status: 'consumed',
       consumedTokens: 140,

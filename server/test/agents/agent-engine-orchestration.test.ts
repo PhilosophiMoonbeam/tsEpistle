@@ -627,6 +627,79 @@ describe('Ax orchestration stages', () => {
     ])
   })
 
+  it('delivers a full authorized page into a protected one-slot synthesis instead of omitting it for hypothetical correction', async () => {
+    const page = {
+      id: 1,
+      locale: 'en',
+      path: 'alpha',
+      title: 'Alpha',
+      contentType: 'markdown',
+      sourceRevision: 'rev-1',
+      content: `Alpha requires review.\n${'Background details. '.repeat(140)}`,
+      citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
+      citationSections: []
+    }
+    let turns = 0
+    const chat = vi.fn(async () => {
+      turns++
+      return {
+        results: [
+          turns === 1
+            ? { index: 0, functionCalls: [{ id: 'read-alpha', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }
+            : { index: 0, content: 'Alpha requires review. [[cite:page:1:revision:rev-1]]' }
+        ],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+      } satisfies AxChatResponse
+    })
+    const invoke = vi.fn(async () => page)
+    const resizeUndispatched = vi.fn(async () => {})
+    const close = vi.fn(async () => {})
+    const reserveSequence = vi.fn(async () => ({
+      reserve: async (maximum: { tokens: number; costMicros: number }) => ({ id: 99, ...maximum }),
+      reconcile: async () => {},
+      release: async () => {},
+      resizeUndispatched,
+      close,
+      consumeTool: async () => {},
+      unsettledExposure: { tokens: 0, costMicros: 0 }
+    }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        validateObservation: async () => true,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async () => {})
+    const result = await new AxAgentEngine(factoryFor(chat), actions).execute(
+      {
+        ...baseRequest(new AbortController().signal),
+        limits: { maxTokens: 60_000, maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 512 },
+        dispatchBudget: {
+          reserveSequence,
+          reserve: async maximum => ({ id: 100, ...maximum }),
+          reconcile: async () => {},
+          release: async () => {},
+          consumeTool: async () => {},
+          unsettledExposure: { tokens: 0, costMicros: 0 }
+        }
+      },
+      { text, event }
+    )
+
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(chat).toHaveBeenCalledTimes(2)
+    expect(chat.mock.calls[1]?.[0].chatPrompt).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'function', result: expect.stringContaining('Alpha requires review.') })]))
+    expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:1:revision:rev-1' })])
+    expect(resizeUndispatched).toHaveBeenCalled()
+    expect(reserveSequence).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalled()
+  })
+
   it('does not dispatch actions when the reserved synthesis quota is unavailable', async () => {
     const invoke = vi.fn(async () => ({ id: 1, title: 'Unverified', content: 'Must not be read' }))
     const actions: AgentActionSessionProvider = {
