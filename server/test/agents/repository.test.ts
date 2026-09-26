@@ -2770,6 +2770,137 @@ describe('durable agent repositories', () => {
     await runtime.shutdown()
   })
 
+  it('publishes execution-limited goal output as a blocked partial without losing applied effects or settled charges', async () => {
+    const goalSessionId = '00000000-0000-4000-8000-000000000191'
+    const goalId = '00000000-0000-4000-8000-000000000192'
+    const proposalId = '00000000-0000-4000-8000-000000000193'
+    await knex('agentRuns').where({ id: runId }).delete()
+    await createAgentSession(knex, { id: goalSessionId, ownerId: 7, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
+    const session = await getOwnedAgentSession(knex, 7, goalSessionId)
+    const admission = {
+      profileResolutionSha256: 'd'.repeat(64),
+      googleSearchEnabled: false,
+      providerProfileVersionId: '00000000-0000-4000-8000-000000000194',
+      transportKind: 'test',
+      model: 'test',
+      executionMode: 'agent',
+      profilePolicyVersion: 1,
+      defaultGeneration: 1,
+      capabilityRevision: 'v1',
+      pricingRevision: 'v1',
+      promptVersion: 1,
+      quota: { tokens: 100, costMicros: 100 },
+      quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      reservationMilliseconds: 60_000
+    } as const
+    const execute = vi.fn(async (_request: Parameters<AgentEngine['execute']>[0], sink: Parameters<AgentEngine['execute']>[1]) => {
+      await sink.text('The page change was applied, but the remaining evidence review could not be completed.')
+      return {
+        inputTokens: 7,
+        outputTokens: 3,
+        totalTokens: 10,
+        costMicros: 5,
+        executionLimit: { reason: 'tools', publication: 'partial' } as const,
+        providerState: { schemaVersion: 1, continuationDialect: 'gemini-interactions-v1', thoughtBlocks: [] } as const
+      }
+    })
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          return admission
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          return admission
+        }
+      },
+      { preflight: preflightAgentRequest, execute },
+      {
+        workerId: 'goal-execution-limited',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        goals: { enabled: true, maxContinuations: 2, maxTokens: 100, maxToolCalls: 10, maxDurationMilliseconds: 60_000 }
+      }
+    )
+    const admitted = await runtime.createGoal({
+      ownerId: 7,
+      sessionId: goalSessionId,
+      profileResolutionToken: 'token',
+      clientRequestId: '00000000-0000-4000-8000-000000000195',
+      expectedSessionVersion: session.version,
+      objective: 'Complete the requested page update.',
+      goalId
+    })
+    await knex('agentProposals').insert({
+      id: proposalId,
+      sessionId: goalSessionId,
+      runId: admitted.run.id,
+      sourceKind: 'agent',
+      actionName: 'pages.prepareCreate',
+      risk: 'proposal',
+      status: 'applied',
+      summary: 'Create en/example-page',
+      operation: JSON.stringify({ locale: 'en', path: 'example-page' }),
+      pageId: null,
+      baseSourceRevision: null,
+      authoritySha256: 'a'.repeat(64),
+      inputHash: 'b'.repeat(64),
+      patchSha256: null,
+      resultCanonicalSha256: 'c'.repeat(64),
+      diffSha256: null,
+      diff: null,
+      contentPurgedAt: null,
+      expiresAt: new Date('2026-08-17T00:15:00.000Z'),
+      createdAt: new Date('2026-08-17T00:00:00.000Z')
+    })
+    await knex('agentRuns').where({ id: admitted.run.id }).update({ sideEffectsStarted: true })
+
+    expect(await runtime.runOnce()).toBe(true)
+    expect(execute).toHaveBeenCalledOnce()
+    const finishedRun = await knex('agentRuns')
+      .where({ id: admitted.run.id })
+      .first('status', 'errorCode', 'completionOutcome', 'completionAssessment', 'inputTokens', 'outputTokens', 'totalTokens', 'estimatedCostMicros')
+    expect(finishedRun).toMatchObject({
+      status: 'partial',
+      errorCode: null,
+      completionOutcome: 'blocked',
+      inputTokens: 7,
+      outputTokens: 3,
+      totalTokens: 10,
+      estimatedCostMicros: 5
+    })
+    const completionAssessment = JSON.parse(String(finishedRun?.completionAssessment))
+    expect(completionAssessment).toMatchObject({
+      outcome: 'blocked',
+      issues: [{ code: 'AGENT_BUDGET_LIMITED', retryable: false }]
+    })
+    expect(completionAssessment.issues).toHaveLength(1)
+    expect(await knex('agentMessages').where({ id: admitted.run.assistantMessageId }).first('status', 'content', 'providerStateCiphertext')).toEqual({
+      status: 'complete',
+      content: 'The page change was applied, but the remaining evidence review could not be completed.',
+      providerStateCiphertext: null
+    })
+    expect(await knex('agentQuotaReservations').where({ runId: admitted.run.id }).first('status', 'consumedTokens', 'consumedCostMicros')).toEqual({
+      status: 'consumed',
+      consumedTokens: 10,
+      consumedCostMicros: 5
+    })
+    expect(await knex('agentProposals').where({ id: proposalId }).first('status', 'summary')).toEqual({
+      status: 'applied',
+      summary: 'Create en/example-page'
+    })
+    expect(await knex('agentGoals').where({ id: goalId }).first('status', 'errorCode', 'completionOutcome')).toMatchObject({
+      status: 'blocked',
+      errorCode: 'GOAL_BLOCKED',
+      completionOutcome: 'blocked'
+    })
+    expect(await runtime.runOnce()).toBe(false)
+    expect(execute).toHaveBeenCalledOnce()
+    await runtime.shutdown()
+
+  })
+
+
   it('titles the first successful exchange with utility usage included in the run', async () => {
     const titledSessionId = '00000000-0000-4000-8000-000000000090'
     const profileVersionId = '00000000-0000-4000-8000-000000000091'

@@ -1,7 +1,7 @@
 import { AxJSRuntime, type AxCodeSession } from '@ax-llm/ax'
 import { z } from 'zod'
 import type { AgentActionName } from '../../../shared/agents/contracts.ts'
-import type { ActionGroup } from '../actions/catalog.ts'
+import type { ActionCapability, ActionGroup } from '../actions/catalog.ts'
 import type { OfferedAction } from '../actions/kernel.ts'
 import { AgentRepositoryError } from '../repository.ts'
 
@@ -18,13 +18,19 @@ export interface AxHarnessFunction {
   readonly parameters: Record<string, unknown>
   readonly risk: string
   readonly group: ActionGroup
+  /** Trusted catalog classification; kernel-offered functions always supply it. */
+  readonly capability?: ActionCapability
 }
 
 export interface AxActionSession {
   readonly authoritySha256: string | null
   readonly functions: readonly AxHarnessFunction[]
+  /** Effective request and loaded-skill restriction; absent means no action-name restriction. */
+  readonly allowedActions?: readonly AgentActionName[]
+  /** Refreshes those restrictions before a synthetic action bypasses kernel.execute. */
+  authorizeSyntheticAction?(name: AgentActionName, signal: AbortSignal): Promise<boolean>
   invoke(name: string, input: unknown, signal: AbortSignal, actionCallId: string): Promise<unknown>
-  validatePageEvidence?(actionName: AgentActionName, output: unknown, signal: AbortSignal): Promise<boolean>
+  validateObservation?(actionName: AgentActionName, output: unknown, signal: AbortSignal): Promise<boolean>
   snapshot(signal: AbortSignal): Promise<Readonly<Record<string, unknown>>>
   close(): void
 }
@@ -32,7 +38,7 @@ export interface AxActionSession {
 export interface AxSessionHarnessOptions {
   readonly timeoutMilliseconds?: number
   readonly execute: (action: OfferedAction, input: unknown, signal: AbortSignal, actionCallId: string) => Promise<unknown>
-  readonly validatePageEvidence?: (actionName: AgentActionName, output: unknown, signal: AbortSignal) => Promise<boolean>
+  readonly validateObservation?: (actionName: AgentActionName, output: unknown, signal: AbortSignal) => Promise<boolean>
 }
 
 const boundedJson = (value: unknown, maxBytes: number, code: string): string => {
@@ -49,11 +55,11 @@ const boundedJson = (value: unknown, maxBytes: number, code: string): string => 
 export class AxSessionHarness {
   readonly #runtime: AxJSRuntime
   readonly #execute: AxSessionHarnessOptions['execute']
-  readonly #validatePageEvidence: AxSessionHarnessOptions['validatePageEvidence']
+  readonly #validateObservation: AxSessionHarnessOptions['validateObservation']
 
   constructor(options: AxSessionHarnessOptions) {
+    this.#validateObservation = options.validateObservation
     this.#execute = options.execute
-    this.#validatePageEvidence = options.validatePageEvidence
     this.#runtime = new AxJSRuntime({
       timeout: options.timeoutMilliseconds ?? 30_000,
       permissions: [],
@@ -117,7 +123,8 @@ export class AxSessionHarness {
         description: action.definition.descriptor.description,
         parameters: z.toJSONSchema(action.definition.input) as Record<string, unknown>,
         risk: action.definition.descriptor.risk,
-        group: action.definition.group
+        group: action.definition.group,
+        capability: action.definition.capability
       })),
       invoke: async (name, input, signal, actionCallId) => {
         assertOpen()
@@ -143,11 +150,11 @@ export class AxSessionHarness {
           invocationActionCallId = undefined
         }
       },
-      ...(this.#validatePageEvidence
+      ...(this.#validateObservation
         ? {
-            validatePageEvidence: async (actionName: AgentActionName, output: unknown, signal: AbortSignal): Promise<boolean> => {
+            validateObservation: async (actionName: AgentActionName, output: unknown, signal: AbortSignal): Promise<boolean> => {
               if (signal.aborted) return false
-              const valid = await this.#validatePageEvidence?.(actionName, output, signal)
+              const valid = await this.#validateObservation?.(actionName, output, signal)
               return valid === true && !signal.aborted
             }
           }

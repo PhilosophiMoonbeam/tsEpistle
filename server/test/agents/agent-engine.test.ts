@@ -13,6 +13,7 @@ import { prepareAgentPdf } from '../../agents/pdf-preparation.ts'
 import { reduceAgentEvents } from '../../agents/projection.ts'
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/providers/factory.ts'
+import type { AxHarnessFunction } from '../../agents/providers/session-harness.ts'
 import { createGeminiInteractionsService } from '../../agents/providers/gemini-interactions.ts'
 import type { AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
 import { WIKI_AGENT_SOUL } from '../../agents/soul.ts'
@@ -93,6 +94,8 @@ type QuestionActionName =
   | 'pages.listRecent'
   | 'pages.get'
   | 'pages.getVersion'
+  | 'memory.manage'
+  | 'browser.observe'
 type QuestionToolName = QuestionActionName | 'wiki_enable_tools'
 type QuestionCall = {
   readonly id: string
@@ -198,7 +201,8 @@ const questionFunctions = [
 const questionFixture = (
   mode: QuestionMode,
   steps: readonly QuestionStep[],
-  invokeAction: (name: QuestionActionName, input: unknown) => unknown | Promise<unknown>
+  invokeAction: (name: QuestionActionName, input: unknown) => unknown | Promise<unknown>,
+  extraFunctions: readonly AxHarnessFunction[] = []
 ) => {
   const providerCalls: Readonly<AxChatRequest<unknown>>[] = []
   const responses = questionResponses(mode, steps)
@@ -231,7 +235,7 @@ const questionFixture = (
   const invoke = vi.fn(async (name: string, input: unknown) => invokeAction(name as QuestionActionName, input))
   const close = vi.fn()
   const actions: AgentActionSessionProvider = {
-    open: async () => ({ functions: questionFunctions, invoke, snapshot: async () => ({}), close })
+    open: async () => ({ functions: [...questionFunctions, ...extraFunctions], invoke, snapshot: async () => ({}), close })
   }
   const text = vi.fn(async (_message: string) => {})
   const event = vi.fn(async (_type: string, _data: unknown) => {})
@@ -629,23 +633,24 @@ describe('Ax agent engine', () => {
       })
     } as unknown as AgentProviderFactory
     const reserve = vi.fn(async () => ({ id: 1, tokens: 1, costMicros: 1 }))
-    await expect(
-      new AxAgentEngine(factory).execute(
-        {
-          ...request(new AbortController().signal),
-          purpose: 'root',
-          limits: { maxTokens: 1, maxTurns: 1, maxToolCalls: 0, maxOutputTokens: 1 },
-          dispatchBudget: {
-            reserve,
-            reconcile: vi.fn(async () => {}),
-            release: vi.fn(async () => {}),
-            consumeTool: vi.fn(async () => {}),
-            unsettledExposure: { tokens: 0, costMicros: 0 }
-          }
-        },
-        { text: async () => {}, event: async () => {} }
-      )
-    ).rejects.toMatchObject({ code: 'AGENT_TOKEN_BUDGET_LIMITED', status: 409, stage: 'dispatch_admission' })
+    const text = vi.fn(async () => {})
+    const result = await new AxAgentEngine(factory).execute(
+      {
+        ...request(new AbortController().signal),
+        purpose: 'root',
+        limits: { maxTokens: 1, maxTurns: 1, maxToolCalls: 0, maxOutputTokens: 1 },
+        dispatchBudget: {
+          reserve,
+          reconcile: vi.fn(async () => {}),
+          release: vi.fn(async () => {}),
+          consumeTool: vi.fn(async () => {}),
+          unsettledExposure: { tokens: 0, costMicros: 0 }
+        }
+      },
+      { text, event: async () => {} }
+    )
+    expect(result).toMatchObject({ executionLimit: { reason: 'tokens', publication: 'inability' }, totalTokens: 0 })
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('token allowance')
     expect(chat).not.toHaveBeenCalled()
     expect(reserve).not.toHaveBeenCalled()
   })
@@ -2313,8 +2318,10 @@ describe('Ax agent engine', () => {
         finalCitationIds: [caseName === 'source-local listing paraphrase' ? 'page:1:revision:9:section:2' : 'page:1:revision:9:section:1']
       })
     } else {
-      await expect(execution).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
-      expect(text).not.toHaveBeenCalled()
+      expect(await execution).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
+      const published = text.mock.calls.map(([delta]) => delta).join('')
+      expect(published).toContain("couldn't complete a source-verified answer")
+      expect(published).not.toContain(answer)
       const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
       expect(provenance).toHaveLength(1)
       expect(provenance[0]).toMatchObject({
@@ -2389,7 +2396,7 @@ describe('Ax agent engine', () => {
         invoke,
         snapshot: async () => ({}),
         close: vi.fn(),
-        validatePageEvidence: async () => true
+        validateObservation: async () => true
       })
     }
     const event = vi.fn(async (...args: [string, Record<string, unknown>]) => {
@@ -2409,10 +2416,277 @@ describe('Ax agent engine', () => {
       expect.objectContaining({ actionCallId: 'get-1', cacheHit: false, reusedActionCallId: null, summary: 'Incident Runbook' }),
       expect.objectContaining({ actionCallId: 'get-2', cacheHit: true, reusedActionCallId: 'get-1', summary: 'Incident Runbook · Reused earlier read' })
     ])
+    const toolCompletions = event.mock.calls.filter(([type]) => type === 'tool.completed').map(([, data]) => data)
+    const reusedProjection = toolCompletions[1]?.projection as { canonicalBytes: number; providerBytes: number; savedBytes: number }
+    expect(reusedProjection.canonicalBytes).toBeGreaterThan(reusedProjection.providerBytes)
+    expect(reusedProjection.savedBytes).toBe(reusedProjection.canonicalBytes - reusedProjection.providerBytes)
     expect(event.mock.calls.filter(([type]) => type === 'model.turn').map(([, data]) => data)).toEqual([
       expect.objectContaining({ turn: 1, outcome: 'tool_calls', actionCallIds: ['get-1'] }),
       expect.objectContaining({ turn: 2, outcome: 'tool_calls', actionCallIds: ['get-2'] }),
       expect.objectContaining({ turn: 3, outcome: 'answer_accepted', actionCallIds: [] })
+    ])
+    const finalTurn = event.mock.calls.filter(([type]) => type === 'model.turn').at(-1)?.[1]
+    expect(finalTurn?.performance).toMatchObject({ cacheHitCount: 1, rejectedDraftCount: 0, invalidatedEvidenceCount: 0 })
+  })
+
+  it.each(['native', 'prompt'] as const)('accepts only the delivered memory state beside a Wiki-cited fact on %s', async mode => {
+    const evidenceId = 'page:6:revision:1'
+    const page = {
+      id: 6,
+      locale: 'en',
+      path: 'runbook',
+      sourceRevision: '1',
+      title: 'Incident Runbook',
+      contentType: 'markdown',
+      content: '# Incident Runbook\n\nAmber Falcon is a synthetic incident.',
+      citation: { evidenceId, label: 'Incident Runbook', href: '/en/runbook' },
+      citationSections: []
+    }
+    const memoryInput = { action: 'add', target: 'user', content: 'Prefers concise answers.' }
+    const memoryAction: AxHarnessFunction = {
+      name: 'memory.manage',
+      title: 'Manage memory',
+      description: 'Manage scoped memory',
+      parameters: { type: 'object', properties: { action: { type: 'string' } } },
+      risk: 'reversible-write',
+      group: 'core',
+      capability: ACTION_CATALOG['memory.manage'].capability
+    }
+    const fact = `Amber Falcon is a synthetic incident.[[cite:${evidenceId}]]`
+    const calls: QuestionCall[] = [
+      { id: 'read-runbook', name: 'pages.get', arguments: { id: 6 } },
+      { id: 'save-preference', name: 'memory.manage', arguments: memoryInput }
+    ]
+    const build = (changed: boolean, answers: readonly string[]) =>
+      questionFixture(
+        mode,
+        [{ calls }, ...answers.map(answer => ({ answer }))],
+        async name =>
+          name === 'pages.get'
+            ? page
+            : { changed, message: changed ? 'Preference saved.' : 'Already present.', target: 'user', entries: ['Prefers concise answers.'], characters: 24, limit: 2200 },
+        [memoryAction]
+      )
+
+    const accepted = build(true, [`${fact}\nMemory operation changed user memory.`])
+    const result = await accepted.execute('Read the runbook and remember my preference for concise answers.')
+    expect(result.citations).toEqual([{ evidenceId, kind: 'page', label: 'Incident Runbook', href: '/en/runbook' }])
+    expect(accepted.text.mock.calls.map(([delta]) => delta).join('')).toContain('Memory operation changed user memory.')
+    expect(accepted.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
+    expect(accepted.providerCalls.some(call =>
+      call.chatPrompt.some(message =>
+        message.role === 'function' &&
+        message.functionId === 'save-preference' &&
+        message.result.includes('"kind":"receipt"') &&
+        message.result.includes('"status":"applied"')
+      )
+    )).toBe(mode === 'native')
+
+    const rejected = build(false, [`${fact}\nMemory operation changed user memory.`, `${fact}\nMemory operation made no change to user memory.`])
+    await rejected.execute('Read the runbook and remember my preference for concise answers.')
+    expect(rejected.text.mock.calls.map(([delta]) => delta).join('')).toContain('Memory operation made no change to user memory.')
+    expect(rejected.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Memory operation changed user memory.')
+    expect(rejected.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false }),
+      expect.objectContaining({ accepted: true })
+    ])
+  })
+
+  it.each(['native', 'prompt'] as const)('reports exact time-scoped browser observations beside Wiki evidence on %s', async mode => {
+    const evidenceId = 'page:6:revision:1'
+    const observedAt = '2026-09-25T12:30:00.000Z'
+    const browserUrl = 'https://example.org/status'
+    const observationLine = `At ${observedAt}, browser page ${JSON.stringify(browserUrl)} displayed: "The bulletin shows amber."`
+    const fact = `Amber Falcon is a synthetic incident.[[cite:${evidenceId}]]`
+    const page = {
+      id: 6,
+      locale: 'en',
+      path: 'runbook',
+      sourceRevision: '1',
+      title: 'Incident Runbook',
+      contentType: 'markdown',
+      content: '# Incident Runbook\n\nAmber Falcon is a synthetic incident.',
+      citation: { evidenceId, label: 'Incident Runbook', href: '/en/runbook' },
+      citationSections: []
+    }
+    const browser = {
+      contextId: 'browser-context-1',
+      documentEpoch: 'epoch-3',
+      url: browserUrl,
+      title: 'Public bulletin',
+      text: 'The bulletin shows amber.',
+      refs: [],
+      observedAt
+    }
+    const browserAction: AxHarnessFunction = {
+      name: 'browser.observe',
+      title: 'Observe public page',
+      description: 'Observe public browser page',
+      parameters: { type: 'object', properties: {} },
+      risk: 'open-world-read',
+      group: 'browser',
+      capability: ACTION_CATALOG['browser.observe'].capability
+    }
+    const calls: QuestionCall[] = [
+      { id: 'read-runbook', name: 'pages.get', arguments: { id: 6 } },
+      { id: 'observe-public', name: 'browser.observe', arguments: {} }
+    ]
+    const accepted = questionFixture(
+      mode,
+      [{ calls }, { answer: `${fact}\n${observationLine}` }],
+      async name => name === 'pages.get' ? page : browser,
+      [browserAction]
+    )
+    const result = await accepted.execute('Browse the public web and compare its status bulletin with the runbook.')
+    expect(result.citations).toEqual([{ evidenceId, kind: 'page', label: 'Incident Runbook', href: '/en/runbook' }])
+    expect(accepted.text.mock.calls.map(([delta]) => delta).join('')).toContain(observationLine)
+    expect(accepted.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
+    expect(accepted.event.mock.calls.filter(([type]) => type === 'model.turn').at(-1)?.[1]).toMatchObject({
+      performance: { facetCoverage: { requested: 1, supported: 1, unavailable: 0, unread: 0 } }
+    })
+
+    const rejected = questionFixture(
+      mode,
+      [{ calls }, { answer: `${fact}\nAt ${observedAt}, browser page ${JSON.stringify(browserUrl)} displayed: "The bulletin shows green."` }, { answer: `${fact}\n${observationLine}` }],
+      async name => name === 'pages.get' ? page : browser,
+      [browserAction]
+    )
+    await rejected.execute('Browse the public web and compare its status bulletin with the runbook.')
+    expect(rejected.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('"The bulletin shows green."')
+    expect(rejected.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false }),
+      expect.objectContaining({ accepted: true })
+    ])
+  })
+  it.each(['native', 'prompt'] as const)('accepts every delivered browser text unit but never its generated references on %s', async mode => {
+    const observedAt = '2026-09-25T12:30:00.000Z'
+    const browserUrl = 'https://example.org/status'
+    const text = [...Array.from({ length: 16 }, (_, index) => `Status row ${index + 1}`), 'Reference: this is actual page text', 'Status row 18'].join('\n')
+    const acceptedLine = `At ${observedAt}, browser page ${JSON.stringify(browserUrl)} displayed: "Status row 18"`
+    const referenceLookingLine = `At ${observedAt}, browser page ${JSON.stringify(browserUrl)} displayed: "Reference: this is actual page text"`
+    const evidenceId = 'page:6:revision:1'
+    const fact = `Amber Falcon is a synthetic incident.[[cite:${evidenceId}]]`
+    const page = {
+      id: 6,
+      locale: 'en',
+      path: 'runbook',
+      sourceRevision: '1',
+      title: 'Incident Runbook',
+      contentType: 'markdown',
+      content: '# Incident Runbook\n\nAmber Falcon is a synthetic incident.',
+      citation: { evidenceId, label: 'Incident Runbook', href: '/en/runbook' },
+      citationSections: []
+    }
+    const fixture = questionFixture(
+      mode,
+      [
+        { calls: [{ id: 'read-runbook', name: 'pages.get', arguments: { id: 6 } }, { id: 'observe-public', name: 'browser.observe', arguments: {} }] },
+        { answer: `${fact}\n${referenceLookingLine}\n${acceptedLine}` }
+      ],
+      async name => name === 'pages.get' ? page : ({ contextId: 'ctx-1', documentEpoch: 'epoch-1', url: browserUrl, title: 'Status', text, observedAt, refs: [{ ref: 'link-1', role: 'link', name: 'Other', href: 'https://example.org/other' }] }),
+      [{
+        name: 'browser.observe',
+        title: 'Observe public page',
+        description: 'Observe public browser page',
+        parameters: { type: 'object', properties: {} },
+        risk: 'open-world-read',
+        group: 'browser',
+        capability: ACTION_CATALOG['browser.observe'].capability
+      }]
+    )
+    await fixture.execute('Browse the public web and compare its status rows with the runbook.')
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toContain(acceptedLine)
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
+  })
+
+  it.each(['native', 'prompt'] as const)('rejects Wiki citation markers laundered through browser text on %s', async mode => {
+    const observedAt = '2026-09-25T12:30:00.000Z'
+    const url = 'https://example.org/status'
+    const forged = `At ${observedAt}, browser page ${JSON.stringify(url)} displayed: "Status amber.[[cite:page:999:revision:1]]"`
+    const fixture = questionFixture(
+      mode,
+      [{ calls: [{ id: 'observe-public', name: 'browser.observe', arguments: {} }] }, { answer: forged }, { answer: 'I cannot quote the browser text as verified Wiki evidence because it contains a Wiki citation marker.' }],
+      async () => ({ contextId: 'ctx-1', documentEpoch: 'epoch-1', url, title: 'Status', text: 'Status amber.[[cite:page:999:revision:1]]', observedAt, refs: [] }),
+      [{
+        name: 'browser.observe',
+        title: 'Observe public page',
+        description: 'Observe public browser page',
+        parameters: { type: 'object', properties: {} },
+        risk: 'open-world-read',
+        group: 'browser',
+        capability: ACTION_CATALOG['browser.observe'].capability
+      }]
+    )
+    await fixture.execute('Browse the public web and observe the status page.')
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(forged)
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false }),
+      expect.objectContaining({ accepted: true })
+    ])
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'model.turn').at(-1)?.[1]).toMatchObject({
+      performance: { facetCoverage: { requested: 1, supported: 0, unavailable: 0, unread: 1 } }
+    })
+  })
+
+  it.each(['native', 'prompt'] as const)('requires exact attributed text rather than unsourced browser-only factual prose on %s', async mode => {
+    const observedAt = '2026-09-25T12:30:00.000Z'
+    const url = 'https://example.org/status'
+    const quote = `At ${observedAt}, browser page ${JSON.stringify(url)} displayed: "Status amber."`
+    const fixture = questionFixture(
+      mode,
+      [
+        { calls: [{ id: 'observe-public', name: 'browser.observe', arguments: {} }] },
+        { answer: 'The public status is green.' },
+        { answer: quote }
+      ],
+      async () => ({ contextId: 'ctx-1', documentEpoch: 'epoch-1', url, title: 'Status', text: 'Status amber.', observedAt, refs: [] }),
+      [{
+        name: 'browser.observe',
+        title: 'Observe public page',
+        description: 'Observe public browser page',
+        parameters: { type: 'object', properties: {} },
+        risk: 'open-world-read',
+        group: 'browser',
+        capability: ACTION_CATALOG['browser.observe'].capability
+      }]
+    )
+    await fixture.execute('Browse the public web and report the status page.')
+    expect(fixture.text).toHaveBeenCalledWith(quote)
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('green')
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false }),
+      expect.objectContaining({ accepted: true })
+    ])
+  })
+
+  it.each(['native', 'prompt'] as const)('omits a large wholly rejected draft while retaining clause-local correction on %s', async mode => {
+    const evidenceId = 'page:6:revision:1'
+    const page = {
+      id: 6,
+      locale: 'en',
+      path: 'runbook',
+      sourceRevision: '1',
+      title: 'Incident Runbook',
+      contentType: 'markdown',
+      content: '# Incident Runbook\n\nAmber Falcon is a synthetic incident.',
+      citation: { evidenceId, label: 'Incident Runbook', href: '/en/runbook' },
+      citationSections: []
+    }
+    const rejected = `The runbook says the incident is closed and cannot be reopened.${' Unsupported explanation.'.repeat(300)}[[cite:page:999:revision:1]]`
+    const corrected = `Amber Falcon is a synthetic incident.[[cite:${evidenceId}]]`
+    const fixture = questionFixture(
+      mode,
+      [{ calls: [{ id: 'read-runbook', name: 'pages.get', arguments: { id: 6 } }] }, { answer: rejected }, { answer: corrected }],
+      async () => page
+    )
+    await fixture.execute('What does the runbook say about Amber Falcon?')
+    expect(fixture.text).toHaveBeenCalledWith(corrected)
+    const correctionPrompt = JSON.stringify(fixture.providerCalls.at(-1)?.chatPrompt)
+    expect(correctionPrompt).toContain('Rejected draft omitted')
+    expect(correctionPrompt).not.toContain('Unsupported explanation. Unsupported explanation. Unsupported explanation.')
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false }),
+      expect.objectContaining({ accepted: true })
     ])
   })
 
@@ -3067,6 +3341,9 @@ describe('Ax agent engine', () => {
     expect(fixture.invoke.mock.calls.some(([name]) => name === 'pages.search')).toBe(false)
     expect(fixture.invoke.mock.calls.some(([name]) => name === 'pages.get')).toBe(false)
     expect(fixture.text).toHaveBeenCalledWith(answer)
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'model.turn').at(-1)?.[1]).toMatchObject({
+      performance: { temporalTarget: 'historical', facetCoverage: { requested: 1, supported: 1, unavailable: 0, unread: 0 } }
+    })
     expect(result.citations).toEqual([
       {
         evidenceId: 'page:42:version:6:revision:18:section:1',
@@ -3381,13 +3658,9 @@ describe('Ax agent engine', () => {
       oversizedTailAttack
     ]) {
       const rejected = await runTitleCase({ actionName: 'pages.get', title: 'Homepage |🏘️', sourceRevision: '7', answer })
-      expect(rejected.error).toMatchObject({
-        code: 'AGENT_EVIDENCE_INVALID',
-        stage: 'provider_response',
-        status: 409,
-        message: 'Agent inference failed'
-      })
-      expect(rejected.text).not.toHaveBeenCalled()
+      expect(rejected.error).toBeUndefined()
+      expect(rejected.result).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
+      expect(rejected.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(answer)
     }
 
     const historical = await runTitleCase({
@@ -3420,7 +3693,7 @@ describe('Ax agent engine', () => {
       sourceRevision: '14',
       answer: 'The current page is titled Homepage |🏠.'
     })
-    expect(semanticWrongEmoji.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+    expect(semanticWrongEmoji.result).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
 
     const semanticHistorical = await runTitleCase({
       actionName: 'pages.getVersion',
@@ -3436,7 +3709,7 @@ describe('Ax agent engine', () => {
       sourceRevision: '15',
       answer: 'The current page is named Archive |📦.'
     })
-    expect(semanticHistoricalAsCurrent.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+    expect(semanticHistoricalAsCurrent.result).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
 
     const punctuation = await runTitleCase({
       actionName: 'pages.get',
@@ -3450,7 +3723,7 @@ describe('Ax agent engine', () => {
       sourceRevision: '9',
       answer: 'The page title is Alpha   Beta.'
     })
-    expect(collapsedWhitespace.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+    expect(collapsedWhitespace.result).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
 
     const repeatedWhitespace = await runTitleCase({
       actionName: 'pages.get',
@@ -3466,7 +3739,7 @@ describe('Ax agent engine', () => {
       ['What?', 'The page title is What?!']
     ] as const) {
       const rejected = await runTitleCase({ actionName: 'pages.get', title, sourceRevision: '11', answer })
-      expect(rejected.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+      expect(rejected.result).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
     }
     expect(punctuation.error).toBeUndefined()
     expect(punctuation.text).toHaveBeenCalledWith('The page title is "Runbook v2.0 — Hello. World".[[cite:page:42:revision:8]]')
@@ -3477,7 +3750,7 @@ describe('Ax agent engine', () => {
       sourceRevision: '6',
       answer: 'The current page title is Archive |📦.'
     })
-    expect(historicalAsCurrent.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+    expect(historicalAsCurrent.result).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
 
     const sectionCitation = await runTitleCase({
       actionName: 'pages.get',
@@ -3487,7 +3760,7 @@ describe('Ax agent engine', () => {
       citationId: 'page:42:revision:7:section:1',
       citationSections: [{ evidenceId: 'page:42:revision:7:section:1', label: 'Homepage', href: '/en/home#homepage' }]
     })
-    expect(sectionCitation.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', stage: 'provider_response' })
+    expect(sectionCitation.result).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
   })
 
   it('withholds cross-section claims until each fact is tied to its supporting scope', async () => {
@@ -4682,12 +4955,13 @@ describe('Ax agent engine', () => {
     expect(calls).toHaveLength(3)
     if (mode === 'native') {
       expect(calls[0]?.functions?.map(functionCall => functionCall.name)).toEqual(['wiki_get_page', 'wiki_enable_tools'])
-      expect(calls[1]?.functions?.map(functionCall => functionCall.name)).toEqual(['wiki_get_page', 'wiki_search_tags', 'wiki_enable_tools'])
+      expect(calls[1]?.functions?.map(functionCall => functionCall.name)).toEqual(['wiki_get_page', 'wiki_search_tags'])
     } else {
       expect(calls[0]).not.toHaveProperty('functions')
       expect(calls[1]).not.toHaveProperty('functions')
       expect(calls[0]?.chatPrompt[0]).toEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('wiki_enable_tools') }))
       expect(calls[1]?.chatPrompt[0]).toEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('wiki_search_tags') }))
+      expect(calls[1]?.chatPrompt[0]).toEqual(expect.objectContaining({ role: 'system', content: expect.not.stringContaining('"name":"wiki_enable_tools"') }))
     }
   })
   it.each(['native', 'prompt'] as const)(
@@ -5340,7 +5614,7 @@ describe('Ax agent engine', () => {
       readonly reads: readonly { readonly callId: string; readonly actionName: AgentActionName; readonly params: string }[]
       readonly outputs: readonly unknown[]
       readonly drafts: readonly string[]
-      readonly validatePageEvidence?: (actionName: AgentActionName, output: unknown, signal: AbortSignal) => Promise<boolean>
+      readonly validateObservation?: (actionName: AgentActionName, output: unknown, signal: AbortSignal) => Promise<boolean>
     }) => {
       const responses: AxChatResponse[] = [
         {
@@ -5379,7 +5653,7 @@ describe('Ax agent engine', () => {
           snapshot: async () => ({}),
           close: vi.fn(),
           authoritySha256: null,
-          ...(scenario.validatePageEvidence === undefined ? {} : { validatePageEvidence: scenario.validatePageEvidence })
+          ...(scenario.validateObservation === undefined ? {} : { validateObservation: scenario.validateObservation })
         })
       }
       const event = vi.fn(async (...args: [string, unknown]) => {
@@ -5666,7 +5940,7 @@ describe('Ax agent engine', () => {
       drafts: [`The protected rollout begins after audit.[[cite:${currentEvidenceId}]]`, `Release window is staged.[[cite:${currentEvidenceId}]]`]
     })
     expect(omittedPromotion.error).toBeUndefined()
-    expect(omittedPromotion.text).toHaveBeenCalledOnce()
+    expect(omittedPromotion.text).toHaveBeenCalled()
     expect(omittedPromotion.text.mock.calls.map(([delta]) => delta).join('')).toContain('Release window is staged.')
     expect(omittedPromotion.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('The protected rollout begins after audit.')
     expect(omittedPromotion.result?.citations).toEqual([{ evidenceId: currentEvidenceId, kind: 'page', label: 'Guide', href: '/en/guide' }])
@@ -5719,7 +5993,7 @@ describe('Ax agent engine', () => {
         `The protected rollout begins after audit.[[cite:${currentEvidenceId}]]`,
         'I recommend re-reading the page before relying on its current status.'
       ],
-      validatePageEvidence: staleCacheValidator
+      validateObservation: staleCacheValidator
     })
     expect(staleCachedRead.error).toBeUndefined()
     expect(staleCachedRead.text).toHaveBeenCalledOnce()
@@ -5728,6 +6002,34 @@ describe('Ax agent engine', () => {
     const cachedAgainResult = staleCachedRead.calls[1]?.chatPrompt.find(message => message.role === 'function' && message.functionId === 'cached-again')
     expect(cachedAgainResult?.role === 'function' ? cachedAgainResult.result : '').toContain('"code":"AGENT_EVIDENCE_UNAVAILABLE"')
     expect(cachedAgainResult?.role === 'function' ? cachedAgainResult.result : '').not.toContain(completeSource)
+    const refreshedEvidenceId = 'page:42:revision:31'
+    const refreshedSectionId = `${refreshedEvidenceId}:section:1`
+    const refreshedPage = {
+      ...fullPage,
+      sourceRevision: '31',
+      content: '# Guide\n\n## Rollout\nThe protected rollout begins after verification.',
+      citation: { ...currentCitation, evidenceId: refreshedEvidenceId },
+      citationSections: [{ evidenceId: refreshedSectionId, label: 'Guide › Rollout', href: '/en/guide#rollout' }]
+    }
+    const refreshedRead = await run({
+      reads: [
+        { callId: 'stale-first', actionName: 'pages.get', params: '{"id":42}' },
+        { callId: 'fresh-second', actionName: 'pages.get', params: '{"id":42}' }
+      ],
+      outputs: [fullPage, refreshedPage],
+      drafts: [`The protected rollout begins after verification.[[cite:${refreshedSectionId}]]`],
+      validateObservation: async (_name, output) =>
+        typeof output === 'object' && output !== null && 'sourceRevision' in output && output.sourceRevision === '31'
+    })
+    expect(refreshedRead.error).toBeUndefined()
+    const completions = refreshedRead.event.mock.calls.filter(([type]) => type === 'tool.completed').map(([, data]) => data)
+    expect(completions).toEqual([
+      expect.objectContaining({ actionCallId: 'stale-first', cacheHit: false }),
+      expect.objectContaining({ actionCallId: 'fresh-second', cacheHit: false, reusedActionCallId: null })
+    ])
+    expect(refreshedRead.calls[1]?.chatPrompt.some(message => message.role === 'function' && message.functionId === 'fresh-second' && message.result.includes('after verification'))).toBe(true)
+    expect(refreshedRead.result?.citations).toEqual([{ evidenceId: refreshedSectionId, kind: 'page', label: 'Guide › Rollout', href: '/en/guide#rollout' }])
+    expect(refreshedRead.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(`[[cite:${rolloutSectionId}]]`)
     const wrongVersionEvidenceId = 'page:42:version:10:revision:10'
     const wrongVersion = await run({
       reads: [{ callId: 'requested-version', actionName: 'pages.getVersion', params: '{"pageId":42,"versionId":9}' }],
@@ -5803,8 +6105,8 @@ describe('Ax agent engine', () => {
       ],
       drafts: ['Evidence line available.[[cite:page:42:revision:32]]', 'Evidence line available.[[cite:page:42:revision:32]]']
     })
-    expect(incompletePage.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
-    expect(incompletePage.text).not.toHaveBeenCalled()
+    expect(incompletePage.result).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
+    expect(incompletePage.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Evidence line available.')
     const incompleteProvenance = incompletePage.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]
     expect(incompleteProvenance).toMatchObject({
       accepted: false,
@@ -6204,6 +6506,89 @@ describe('Agent media execution', () => {
             enabled && (generationTools === undefined || (generationTools as readonly string[]).includes(kind))
           )
       }
+  })
+  it('never exposes chargeable media tools excluded by request or loaded-skill action restrictions', async () => {
+    for (const restrictBy of ['request', 'skill'] as const) {
+      let offered: readonly { name: string }[] = []
+      const factory = {
+        create: async () => ({
+          service: {
+            chat: async (input: AxChatRequest) => {
+              offered = input.functions ?? []
+              return {
+                results: [{ index: 0, content: 'No media generation was requested.' }],
+                modelUsage: { ai: 'gemini', model: 'test', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
+              }
+            }
+          },
+          capabilities,
+          model: 'test',
+          transportKind: 'gemini-api',
+          capabilityRevision: 'test',
+          pricingRevision: 'test',
+          pricing,
+          mediaConfig: { imageGeneration: {} }
+        })
+      } as unknown as AgentProviderFactory
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          authoritySha256: null,
+          functions: [],
+          ...(restrictBy === 'skill' ? { allowedActions: ['pages.get' as const] } : {}),
+          invoke: async () => null,
+          snapshot: async () => ({}),
+          close: () => {}
+        })
+      }
+      await new AxAgentEngine(factory, actions).execute(
+        {
+          ...request(new AbortController().signal),
+          generationTools: ['image'],
+          ...(restrictBy === 'request' ? { actionAllowlist: ['pages.get' as const] } : {}),
+          messages: [{ role: 'user', content: 'Hello' }]
+        },
+        { text: async () => {}, event: async () => {} }
+      )
+      expect(offered.some(tool => tool.name === 'wiki_generate_image')).toBe(false)
+    }
+  })
+  it('rechecks synthetic media admission immediately before any provider charge', async () => {
+    const createMedia = vi.fn()
+    let turn = 0
+    const factory = {
+      create: async () => ({
+        service: {
+          chat: async () => ({
+            results: [
+              ++turn === 1
+                ? { index: 0, functionCalls: [{ id: 'make-image', type: 'function', function: { name: 'wiki_generate_image', params: '{"prompt":"Create a diagram"}' } }] }
+                : { index: 0, content: 'The image was not generated because access changed.' }
+            ],
+            modelUsage: { ai: 'gemini', model: 'test', tokens: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } }
+          })
+        },
+        capabilities,
+        model: 'test',
+        transportKind: 'gemini-api',
+        capabilityRevision: 'test',
+        pricingRevision: 'test',
+        pricing,
+        mediaConfig: { imageGeneration: {} }
+      }),
+      createMedia
+    } as unknown as AgentProviderFactory
+    const authorizeSyntheticAction = vi.fn(async () => false)
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({ authoritySha256: null, functions: [], authorizeSyntheticAction, invoke: async () => null, snapshot: async () => ({}), close: () => {} })
+    }
+    const event = vi.fn(async () => {})
+    await new AxAgentEngine(factory, actions).execute(
+      { ...request(new AbortController().signal), generationTools: ['image'], dispatchBudget: budget(), messages: [{ role: 'user', content: 'Generate an image.' }] },
+      { text: async () => {}, event }
+    )
+    expect(authorizeSyntheticAction).toHaveBeenCalledTimes(1)
+    expect(createMedia).not.toHaveBeenCalled()
+    expect(event.mock.calls).toContainEqual(['tool.failed', expect.objectContaining({ errorCode: 'ACTION_NOT_OFFERED' })])
   })
   it('rejects generation disabled by the request before loading or charging a media provider', async () => {
     const createMedia = vi.fn()

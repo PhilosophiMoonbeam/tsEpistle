@@ -65,6 +65,7 @@ export interface ToolDiscoveryTurn {
 
 export interface ToolDiscoveryOptions {
   readonly child?: boolean
+  readonly initialCategories?: readonly ToolDiscoveryCategory[]
 }
 
 export interface ToolDiscoveryController {
@@ -131,12 +132,13 @@ const viewFor = (
   enabledCategories: ReadonlySet<ToolDiscoveryCategory>
 ): ToolDiscoveryTurn => {
   const active = activeFunctions(actions, enabledCategories)
+  const alternatives = Object.freeze(categoryIndex.filter(entry => !enabledCategories.has(entry.category)))
   const visibleNames = Object.freeze(active.map(action => action.name))
-  const control = controlFor(categoryIndex.map(entry => entry.category))
+  const control = controlFor(alternatives.map(entry => entry.category))
   const functions: ToolDiscoveryFunction[] = active.map(action => Object.freeze({ kind: 'action' as const, action }))
   if (control) functions.push(control)
   return Object.freeze({
-    categoryIndex,
+    categoryIndex: alternatives,
     activeFunctions: active,
     functions: Object.freeze(functions),
     visibleNames,
@@ -159,6 +161,10 @@ class EphemeralToolDiscoveryController implements ToolDiscoveryController {
   constructor(actions: readonly AxHarnessFunction[], options: ToolDiscoveryOptions) {
     this.#actions = admittedFunctions(actions, options)
     this.#categoryIndex = deriveCategoryIndex(this.#actions)
+    const admittedCategories = new Set(this.#categoryIndex.map(entry => entry.category))
+    for (const category of options.initialCategories ?? []) {
+      if (admittedCategories.has(category)) this.#enabledCategories.add(category)
+    }
   }
 
   get categoryIndex(): readonly ToolDiscoveryCategoryIndex[] {
