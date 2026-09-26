@@ -148,6 +148,14 @@ const sequencedBudget = (availableTokens: number): AgentDispatchBudget & { reado
     let closed = false
     const sequenceActive = new Map<number, AgentDispatchBudgetReservation>()
     return {
+      resizeUndispatched: async (maximum: { readonly tokens: number; readonly costMicros: number }) => {
+        if (closed) throw new Error('sequence closed')
+        const additional = maximum.tokens - sequenceRemaining
+        if (additional > remaining) throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Sequence resize exceeds remaining tokens', 409)
+        remaining -= additional
+        sequenceRemaining = maximum.tokens
+        active.set(held.id, { ...held, tokens: held.tokens + additional, costMicros: maximum.costMicros })
+      },
       reserve: async (maximum: { readonly tokens: number; readonly costMicros: number }) => {
         if (closed || maximum.tokens > sequenceRemaining) throw new Error('sequence envelope exhausted')
         sequenceRemaining -= maximum.tokens

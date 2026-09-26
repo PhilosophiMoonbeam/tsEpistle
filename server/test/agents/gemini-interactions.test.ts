@@ -113,6 +113,7 @@ describe('Gemini Interactions Google Search grounding', () => {
     const requestSchema = z.object({
       tools: z.array(z.object({ type: z.string(), parameters: z.unknown().optional() }))
     })
+    let offeredMemoryParameters: unknown
     const service = createGeminiInteractionsService({
       apiKey: 'test-key',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
@@ -124,22 +125,38 @@ describe('Gemini Interactions Google Search grounding', () => {
         // Gemini validated mode rejects root anyOf/oneOf schemas without an explicit object type.
         if (request.tools.some(tool => tool.type === 'function' && !z.object({ type: z.literal('object') }).safeParse(tool.parameters).success))
           return Response.json({ error: { code: 'invalid_request' } }, { status: 400 })
+        offeredMemoryParameters = request.tools[2]?.parameters
         return jsonResponse(groundedInteraction())
       }) as typeof globalThis.fetch
     })
     // Ax's parameter type omits the valid root unions produced by the action catalog.
     const parameters = z.toJSONSchema(ACTION_CATALOG['pages.get'].input) as AxFunctionJSONSchema
+    const memoryParameters = z.toJSONSchema(ACTION_CATALOG['memory.manage'].input) as AxFunctionJSONSchema
     const result = resultOf(
       await service.chat(
         {
           model,
           chatPrompt: [{ role: 'user', content: 'Look up this page and verify its release date on the web.' }],
-          functions: [{ name: 'wiki_get_page', description: 'Read a Wiki page by ID or path.', parameters }],
+          functions: [
+            { name: 'wiki_get_page', description: 'Read a Wiki page by ID or path.', parameters },
+            { name: 'wiki_manage_memory', description: 'Manage personal memory', parameters: memoryParameters }
+          ],
           functionCall: 'auto'
         },
         { stream: false }
       )
     )
+    expect(offeredMemoryParameters).toMatchObject({
+      type: 'object',
+      required: ['action', 'target'],
+      properties: {
+        action: { type: 'string', enum: ['add', 'replace', 'remove'] },
+        target: { type: 'string', enum: ['agent', 'user'] },
+        content: { type: 'string' },
+        oldText: { type: 'string' }
+      }
+    })
+    expect(z.object({ oneOf: z.array(z.object({ additionalProperties: z.literal(false) })).length(3) }).safeParse(offeredMemoryParameters).success).toBe(true)
     expect(result.content).toBe('Alpha 🔍Beta')
     expect(readGeminiGoogleSearchGrounding(result)?.citations.map(citation => citation.url)).toEqual([
       'https://grounding.example.test/source',

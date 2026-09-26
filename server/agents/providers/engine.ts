@@ -5710,31 +5710,19 @@ export class AxAgentEngine implements AgentEngine {
           if (!transferred) await sequence?.close()
         }
       }
+      const finalizationMaxOutputTokens = Math.min(request.limits?.maxOutputTokens ?? provider.capabilities.maxOutputTokens, provider.capabilities.maxOutputTokens, 4_096)
       let reservedFinalizationTokens = 0
       if ((request.purpose ?? 'root') === 'root' && request.dispatchBudget?.reserveSequence !== undefined) {
-        const maximumOutput = Math.min(request.limits?.maxOutputTokens ?? provider.capabilities.maxOutputTokens, provider.capabilities.maxOutputTokens)
-        const reservePrompt = [
-          ...activePrompt,
-          { role: 'user' as const, content: 'x'.repeat(12_000) },
-          { role: 'assistant' as const, content: 'x'.repeat(SYNTHESIS_RESERVE_CHARACTERS) },
-          { role: 'user' as const, content: evidenceCorrection({ valid: false, issues: [], claims: [], citationIds: [] }, new Map()) + ' '.repeat(1_200) }
-        ]
+        const reservePrompt = [...activePrompt, { role: 'user' as const, content: 'x'.repeat(12_000) }]
         try {
-          const reserveSystem = systemMessageFor(null)
-          const boundedReserve = boundedChatPrompt(provider, null, reserveSystem, conversation, reservePrompt, maximumOutput)
+          const boundedReserve = boundedChatPrompt(provider, null, systemMessageFor(null), conversation, reservePrompt, finalizationMaxOutputTokens)
           const reserveExposure = providerExposureFor(provider, null, boundedReserve.chatPrompt, boundedReserve.maxOutputTokens)
-          const slotCount = Math.min(2, Math.max(1, maxTurns - 1))
-          const tokens = safeUsageAddition(
-            reserveExposure.totalExposureTokens,
-            slotCount === 2 ? reserveExposure.totalExposureTokens : 0,
-            'Finalization token reservation'
-          )
-          const perCallCost = agentProviderCostMicros(provider.pricing, 0, 0, reserveExposure.totalExposureTokens)
-          const costMicros = safeUsageAddition(perCallCost, slotCount === 2 ? perCallCost : 0, 'Finalization cost reservation')
+          const tokens = reserveExposure.totalExposureTokens
+          const costMicros = agentProviderCostMicros(provider.pricing, 0, 0, tokens)
           if (maxTokens !== undefined && tokens > maxTokens) phase = 'synthesizing'
           else {
             finalizationSequence = await request.dispatchBudget.reserveSequence({ tokens, costMicros })
-            finalizationExposureTokens = reserveExposure.totalExposureTokens
+            finalizationExposureTokens = tokens
             reservedFinalizationTokens = tokens
           }
         } catch (error) {
@@ -5798,6 +5786,10 @@ export class AxAgentEngine implements AgentEngine {
           phase = 'synthesizing'
           discoveryTurn = null
         }
+        if (phase === 'collecting' && finalizationSequence !== undefined && remainingTokens <= reservedFinalizationTokens) {
+          phase = 'synthesizing'
+          discoveryTurn = null
+        }
         if (phase === 'collecting' && discovery !== null && actionSession !== null) {
           if (turn > 0 || discoveryTurn === null) discoveryTurn = discovery.beginTurn()
           tools = providerTools(actionSession, provider.capabilities.toolCalling, discoveryTurn)
@@ -5806,7 +5798,9 @@ export class AxAgentEngine implements AgentEngine {
         }
         const systemMessage = systemMessageFor(tools)
         const requestedMaxOutputTokens = Math.min(
-          request.limits?.maxOutputTokens ?? provider.capabilities.maxOutputTokens,
+          tools === null && (request.purpose ?? 'root') === 'root'
+            ? finalizationMaxOutputTokens
+            : (request.limits?.maxOutputTokens ?? provider.capabilities.maxOutputTokens),
           provider.capabilities.maxOutputTokens,
           remainingTokens
         )
@@ -5824,7 +5818,48 @@ export class AxAgentEngine implements AgentEngine {
           if (error instanceof AgentExecutionFailure) throw error
           throw classifyAgentExecutionFailure(error, 'context_admission')
         }
-        bounded = boundedAttemptWithinBudget(provider, tools, systemMessage, conversation, activePrompt, bounded, remainingTokens)
+        try {
+          bounded = boundedAttemptWithinBudget(
+            provider,
+            tools,
+            systemMessage,
+            conversation,
+            activePrompt,
+            bounded,
+            remainingTokens - (tools === null ? 0 : reservedFinalizationTokens)
+          )
+        } catch (error) {
+          if (
+            tools !== null &&
+            finalizationSequence !== undefined &&
+            error instanceof AgentRepositoryError &&
+            error.code === 'AGENT_TOKEN_BUDGET_LIMITED'
+          ) {
+            phase = 'synthesizing'
+            discoveryTurn = null
+            turn--
+            continue
+          }
+          throw error
+        }
+        if (tools === null && finalizationSequence !== undefined) {
+          const exposure = providerExposureFor(provider, null, bounded.chatPrompt, bounded.maxOutputTokens)
+          try {
+            await finalizationSequence.resizeUndispatched({
+              tokens: exposure.totalExposureTokens,
+              costMicros: agentProviderCostMicros(provider.pricing, 0, 0, exposure.totalExposureTokens)
+            })
+          } catch (error) {
+            if (
+              request.run.goalId === null &&
+              error instanceof AgentRepositoryError &&
+              (error.code === 'AGENT_TOKEN_BUDGET_LIMITED' || error.code === 'AGENT_QUOTA_EXHAUSTED')
+            ) return await publishExecutionLimit(error.code === 'AGENT_QUOTA_EXHAUSTED' ? 'quota' : 'tokens')
+            throw error
+          }
+          finalizationExposureTokens = exposure.totalExposureTokens
+          reservedFinalizationTokens = exposure.totalExposureTokens
+        }
         const dispatchEvidence = evidenceSnapshotForPrompt(citationRegistry, bounded.chatPrompt, trackedEvidenceMessages, excludedEvidenceIds)
         const deliveredAttributedLines = new Set<string>()
         const deliveredBrowserAttributions: BrowserAttribution[] = []
@@ -6224,15 +6259,44 @@ export class AxAgentEngine implements AgentEngine {
             const nextActionCallId = actionCallIdFor(request, nextCall.id)
             return providerResultChatMessage(mode, nextCall.id, nextCall.providerName, notExecutedCapacityResult(nextActionCallId, nextCall.name), true)
           })
-        const fitsSynthesisWithCandidate = (
+        const fitsSynthesisWithCandidate = async (
           candidate: ChatPromptMessage,
           fromIndex: number,
           candidateTools: ProviderTools,
           candidateSystem: ChatPromptMessage
-        ): boolean => {
+        ): Promise<boolean> => {
           const additional = [candidate, ...capacityMessagesFor(fromIndex), { role: 'user' as const, content: 'x'.repeat(MAX_COVERAGE_NOTICE_CHARACTERS) }]
-          if (
-            !fitsSynthesisReserve(
+          if (finalizationSequence !== undefined) {
+            try {
+              const boundedFinalization = boundedChatPrompt(
+                provider,
+                null,
+                systemMessageFor(null),
+                conversation,
+                [...activePrompt, ...additional],
+                finalizationMaxOutputTokens
+              )
+              const exposure = providerExposureFor(provider, null, boundedFinalization.chatPrompt, boundedFinalization.maxOutputTokens)
+              if (maxTokens !== undefined && totalTokens + exposure.totalExposureTokens > maxTokens) return false
+              if (exposure.totalExposureTokens !== finalizationExposureTokens) {
+                await finalizationSequence.resizeUndispatched({
+                  tokens: exposure.totalExposureTokens,
+                  costMicros: agentProviderCostMicros(provider.pricing, 0, 0, exposure.totalExposureTokens)
+                })
+                finalizationExposureTokens = exposure.totalExposureTokens
+                reservedFinalizationTokens = exposure.totalExposureTokens
+              }
+              return true
+            } catch (error) {
+              if (
+                isContextLimitFailure(error) ||
+                (error instanceof AgentRepositoryError && (error.code === 'AGENT_QUOTA_EXHAUSTED' || error.code === 'AGENT_TOKEN_BUDGET_LIMITED'))
+              ) return false
+              throw error
+            }
+          }
+          return (
+            fitsSynthesisReserve(
               provider,
               candidateSystem,
               conversation,
@@ -6241,8 +6305,8 @@ export class AxAgentEngine implements AgentEngine {
               Math.max(0, maxToolCalls - totalToolCalls),
               additional,
               candidateTools
-            ) ||
-            !fitsSynthesisReserve(
+            ) &&
+            fitsSynthesisReserve(
               provider,
               systemMessageFor(null),
               conversation,
@@ -6251,25 +6315,6 @@ export class AxAgentEngine implements AgentEngine {
               Math.max(0, maxToolCalls - totalToolCalls),
               additional
             )
-          )
-            return false
-          if (finalizationExposureTokens === undefined) return true
-          const boundedFinalization = boundedChatPrompt(
-            provider,
-            null,
-            systemMessageFor(null),
-            conversation,
-            [
-              ...activePrompt,
-              ...additional,
-              { role: 'assistant', content: 'x'.repeat(SYNTHESIS_RESERVE_CHARACTERS) },
-              { role: 'user', content: evidenceCorrection({ valid: false, issues: [], claims: [], citationIds: [] }, new Map()) + ' '.repeat(1_200) }
-            ],
-            requestedMaxOutputTokens
-          )
-          return (
-            providerExposureFor(provider, null, boundedFinalization.chatPrompt, boundedFinalization.maxOutputTokens).totalExposureTokens <=
-            finalizationExposureTokens
           )
         }
         for (let callIndex = 0; callIndex < result.calls.length; callIndex++) {
@@ -6388,8 +6433,9 @@ export class AxAgentEngine implements AgentEngine {
               if (prospectiveTools === null) throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Provider tools are unavailable', 403)
               const prospectiveSystem = systemMessageFor(prospectiveTools)
               const delivered =
-                fitsSynthesisWithCandidate(candidate, callIndex + 1, prospectiveTools, prospectiveSystem) &&
-                fitsProviderResult(provider, prospectiveTools, prospectiveSystem, conversation, activePrompt, candidate, requestedMaxOutputTokens)
+                (await fitsSynthesisWithCandidate(candidate, callIndex + 1, prospectiveTools, prospectiveSystem)) &&
+                (finalizationSequence !== undefined ||
+                  fitsProviderResult(provider, prospectiveTools, prospectiveSystem, conversation, activePrompt, candidate, requestedMaxOutputTokens))
               if (!delivered) {
                 notExecutedActionCallIds.add(actionCallId)
                 omittedActionCallIds.add(actionCallId)
@@ -6515,8 +6561,9 @@ export class AxAgentEngine implements AgentEngine {
             const delivered =
               cached?.delivered === false
                 ? false
-                : fitsSynthesisWithCandidate(candidate, callIndex + 1, prospectiveTools, prospectiveSystem) &&
-                  fitsProviderResult(provider, prospectiveTools, prospectiveSystem, conversation, activePrompt, candidate, requestedMaxOutputTokens)
+                : (await fitsSynthesisWithCandidate(candidate, callIndex + 1, prospectiveTools, prospectiveSystem)) &&
+                  (finalizationSequence !== undefined ||
+                    fitsProviderResult(provider, prospectiveTools, prospectiveSystem, conversation, activePrompt, candidate, requestedMaxOutputTokens))
             if (pageReadKey !== null && cached === undefined && typeof validateObservation === 'function')
               pageReadCache.set(pageReadKey, { actionCallId, output, delivered })
             const evidenceCollection =
@@ -6618,6 +6665,7 @@ export class AxAgentEngine implements AgentEngine {
           discoveryTurn = null
           tools = null
         } else if (
+          finalizationSequence === undefined &&
           !fitsSynthesisReserve(
             provider,
             systemMessageFor(null),

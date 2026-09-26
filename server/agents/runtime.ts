@@ -200,6 +200,8 @@ export interface AgentDispatchBudget {
 }
 
 export interface AgentDispatchBudgetSequence extends AgentDispatchBudget {
+  /** Replace only unused sequence capacity; dispatched reservations remain accountable. */
+  resizeUndispatched(maximum: AgentQuotaRequest): Promise<void>
   /** Release only undispatched sequence capacity; in-flight reservations remain accountable. */
   close(): Promise<void>
 }
@@ -306,11 +308,44 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
         children.add(child.id)
         return child
       })
+    const resizeUndispatched = async (maximum: AgentQuotaRequest): Promise<void> =>
+      this.#exclusive(async () => {
+        if (closed) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is closed', 500)
+        if (!this.#active.has(parent.id))
+          throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is not active', 500)
+        const tokens = nonNegativeUsage(maximum.tokens, 'Dispatch token exposure')
+        const costMicros = nonNegativeUsage(maximum.costMicros, 'Dispatch cost exposure')
+        let activeTokens = 0
+        let activeCostMicros = 0
+        for (const [id, exposure] of this.#active) {
+          if (id === parent.id) continue
+          activeTokens = safeUsageSum(activeTokens, exposure.tokens, 'Active dispatch token exposure')
+          activeCostMicros = safeUsageSum(activeCostMicros, exposure.costMicros, 'Active dispatch cost exposure')
+        }
+        const target = {
+          tokens: safeUsageSum(this.#consumedTotalTokens, safeUsageSum(activeTokens, tokens, 'Dispatch token exposure'), 'Dispatch token target'),
+          costMicros: safeUsageSum(this.#consumedCostMicros, safeUsageSum(activeCostMicros, costMicros, 'Dispatch cost exposure'), 'Dispatch cost target')
+        }
+        if (this.#maximumTokens !== undefined && target.tokens > this.#maximumTokens) {
+          throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
+        }
+        if (target.tokens > this.#heldTokens || target.costMicros > this.#heldCostMicros) {
+          const limits = this.#limits
+          const expiresAt = this.#expiresAt
+          if (!limits || !expiresAt) throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent dispatch quota was not initialized', 500)
+          await ensureAgentRunQuota(this.#knex, this.#runId, this.#ownerId, target, limits, expiresAt)
+          this.#heldTokens = Math.max(this.#heldTokens, target.tokens)
+          this.#heldCostMicros = Math.max(this.#heldCostMicros, target.costMicros)
+        }
+        this.#active.set(parent.id, { tokens, costMicros })
+      })
+
     const assertChild = (reservation: AgentDispatchBudgetReservation): void => {
       if (!children.has(reservation.id))
         throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch reservation does not belong to this sequence', 500)
     }
     return {
+      resizeUndispatched,
       reserve,
       reconcile: async (reservation, actual) => {
         if (closed) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is closed', 500)

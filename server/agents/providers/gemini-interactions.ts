@@ -1238,6 +1238,37 @@ export interface GeminiInteractionsServiceOptions {
   readonly streamRetryDelayMs?: number
 }
 
+const nativeFunctionParameters = (parameters: Record<string, unknown>): Record<string, unknown> => {
+  const union = parameters.oneOf
+  if (!Array.isArray(union) || union.length === 0) return parameters.type === undefined ? { ...parameters, type: 'object' } : parameters
+  const variants = union.filter(
+    (branch): branch is { readonly type: 'object'; readonly properties: Record<string, unknown>; readonly required?: readonly string[] } =>
+      typeof branch === 'object' &&
+      branch !== null &&
+      branch.type === 'object' &&
+      typeof branch.properties === 'object' &&
+      branch.properties !== null &&
+      !Array.isArray(branch.properties)
+  )
+  if (variants.length !== union.length) return parameters.type === undefined ? { ...parameters, type: 'object' } : parameters
+  const properties: Record<string, unknown> = {}
+  for (const variant of variants) {
+    for (const [key, value] of Object.entries(variant.properties)) {
+      const previous = properties[key]
+      if (previous === undefined) properties[key] = value
+      else if (typeof previous === 'object' && previous !== null && typeof value === 'object' && value !== null) {
+        const oldConst = Reflect.get(previous, 'const')
+        const oldEnum: unknown = Reflect.get(previous, 'enum')
+        const newConst = Reflect.get(value, 'const')
+        if (typeof newConst === 'string' && (typeof oldConst === 'string' || (Array.isArray(oldEnum) && oldEnum.every(entry => typeof entry === 'string'))))
+          properties[key] = { type: 'string', enum: [...new Set([...(Array.isArray(oldEnum) ? oldEnum : [oldConst]), newConst])] }
+      }
+    }
+  }
+  const required = variants[0]!.required?.filter(key => variants.every(variant => variant.required?.includes(key))) ?? []
+  return { ...parameters, type: 'object', properties, required }
+}
+
 export const createGeminiInteractionsService = (config: GeminiInteractionsServiceOptions): Pick<AxAIService, 'chat'> => ({
   chat: async (request: Readonly<AxChatRequest<unknown>>, options?: Readonly<AxAIServiceOptions>): Promise<AxChatResponse | ReadableStream<AxChatResponse>> => {
     options?.abortSignal?.throwIfAborted()
@@ -1259,8 +1290,9 @@ export const createGeminiInteractionsService = (config: GeminiInteractionsServic
         ...(fn.parameters === undefined
           ? {}
           : {
-              // Validated tool combinations require an explicit object root, including object unions.
-              parameters: fn.parameters.type === undefined ? { ...fn.parameters, type: 'object' } : fn.parameters
+              // Preserve the union's exact branches and surface common object fields at the root
+              // so native tool planners can see required discriminator and content arguments.
+              parameters: nativeFunctionParameters(fn.parameters as Record<string, unknown>)
             })
       }))
     ]
