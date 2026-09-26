@@ -6,12 +6,93 @@ import { KnowledgeProjectionViewSchema } from '../../knowledge/projection.ts'
 
 export type ActionGroup = 'core' | 'explore' | 'history' | 'canonical' | 'authoring' | 'browser'
 
+export type ActionOperationRole = 'locate' | 'enumerate' | 'read' | 'observe' | 'prepare' | 'apply' | 'generate' | 'manage'
+export type ActionCapabilityOutputKind = 'candidate-lead' | 'verified-source' | 'transient-observation' | 'operation-receipt' | 'artifact'
+export type ActionProviderPresentationFamily =
+  | 'wiki.page-candidates'
+  | 'wiki.taxonomy'
+  | 'wiki.page'
+  | 'wiki.okf'
+  | 'wiki.patch-snapshot'
+  | 'wiki.recent-source'
+  | 'wiki.history'
+  | 'wiki.historical-page'
+  | 'wiki.links'
+  | 'wiki.proposal'
+  | 'skills.catalog'
+  | 'skills.resource'
+  | 'memory'
+  | 'media.image'
+  | 'media.video'
+  | 'media.audio'
+  | 'browser.document'
+  | 'browser.extracted-text'
+  | 'browser.screenshot'
+  | 'structured-observation'
+  | 'unclassified'
+export type ActionCapabilityFreshnessKind =
+  | 'candidate-metadata'
+  | 'historical-candidate-metadata'
+  | 'request-scoped-structured-observation'
+  | 'revision-bound-current-source'
+  | 'revision-bound-current-or-historical-source'
+  | 'revision-bound-historical-source'
+  | 'immutable-approved-resource'
+  | 'volatile-browser-document'
+  | 'volatile-browser-extraction'
+  | 'captured-artifact'
+  | 'operation-lifecycle-status'
+  | 'generated-artifact'
+  | 'computed-unverified'
+  | 'unknown'
+export type ActionCapabilityReuseEligibility =
+  | 'never'
+  | 'same-revision-and-live-authorization'
+  | 'same-historical-version-and-live-authorization'
+  | 'same-source-snapshot-only'
+  | 'same-immutable-resource-identity'
+export type ActionCapabilityEffectStatus =
+  | 'none'
+  | 'isolated-browser-state-change'
+  | 'approval-continuation-may-apply'
+  | 'approved-proposal-application'
+  | 'persistent-memory-write'
+  | 'external-provider-generation'
+export type ActionCapabilityChargeableWork = 'none' | 'potential-provider-charge'
+
+/**
+ * Trusted catalog metadata for evidence shaping and provider presentation only.
+ * ActionKernel admission still comes exclusively from the action descriptor,
+ * required flags, and live authorization; this capability grants no authority.
+ */
+export interface ActionCapability {
+  readonly operationRole: ActionOperationRole
+  readonly outputKinds: readonly ActionCapabilityOutputKind[]
+  readonly providerPresentationFamily: ActionProviderPresentationFamily
+  readonly freshnessKind: ActionCapabilityFreshnessKind
+  readonly reuseEligibility: ActionCapabilityReuseEligibility
+  readonly effectStatus: ActionCapabilityEffectStatus
+  readonly chargeableWork: ActionCapabilityChargeableWork
+}
+
+/** Fail closed for unclassified outputs: observations are neither evidence nor auto-reusable. */
+export const UNKNOWN_ACTION_CAPABILITY = {
+  operationRole: 'observe',
+  outputKinds: ['transient-observation'],
+  providerPresentationFamily: 'unclassified',
+  freshnessKind: 'unknown',
+  reuseEligibility: 'never',
+  effectStatus: 'none',
+  chargeableWork: 'none'
+} as const satisfies ActionCapability
+
 export interface ActionDefinition {
   readonly group: ActionGroup
   readonly descriptor: AgentActionDescriptor
   readonly input: z.ZodType
   readonly output: z.ZodType
   readonly requiredFlags: readonly AgentFeatureFlagKey[]
+  readonly capability: ActionCapability
 }
 
 const strict = z.strictObject
@@ -185,6 +266,23 @@ const baseFlags = ['agents.enabled'] as const
 const skillFlags = ['agents.enabled', 'agents.skills.enabled'] as const
 const browserFlags = ['agents.enabled', 'agents.browser.enabled'] as const
 const proposalFlags = ['agents.enabled', 'agents.proposals.enabled', 'agents.writes.enabled'] as const
+const defineActionCapability = (
+  operationRole: ActionOperationRole,
+  outputKind: ActionCapabilityOutputKind,
+  providerPresentationFamily: ActionProviderPresentationFamily,
+  freshnessKind: ActionCapabilityFreshnessKind,
+  reuseEligibility: ActionCapabilityReuseEligibility,
+  effectStatus: ActionCapabilityEffectStatus,
+  chargeableWork: ActionCapabilityChargeableWork
+): ActionCapability => ({
+  operationRole,
+  outputKinds: [outputKind],
+  providerPresentationFamily,
+  freshnessKind,
+  reuseEligibility,
+  effectStatus,
+  chargeableWork
+})
 
 export const ACTION_CATALOG = {
   'pages.search': {
@@ -214,7 +312,8 @@ export const ACTION_CATALOG = {
       windowTruncated: z.boolean(),
       nextOffset: z.number().int().nonnegative().nullable()
     }),
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('locate', 'candidate-lead', 'wiki.page-candidates', 'candidate-metadata', 'never', 'none', 'none')
   },
   'pages.searchTags': {
     descriptor: descriptor(
@@ -229,7 +328,8 @@ export const ACTION_CATALOG = {
     group: 'explore',
     input: strict({ query: z.string().min(1).max(255), limit: z.number().int().min(1).max(20).default(5) }),
     output: strict({ tags: z.array(z.string().min(1).max(255)).max(20) }),
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('locate', 'candidate-lead', 'wiki.taxonomy', 'request-scoped-structured-observation', 'never', 'none', 'none')
   },
   'pages.listTags': {
     descriptor: descriptor(
@@ -244,7 +344,8 @@ export const ACTION_CATALOG = {
     group: 'explore',
     input: strict({ limit: z.number().int().min(1).max(100).default(50), offset: z.number().int().min(0).max(5_000).default(0) }),
     output: strict({ tags: z.array(TagSummary).max(100), nextOffset: z.number().int().nonnegative().nullable() }),
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('enumerate', 'candidate-lead', 'wiki.taxonomy', 'request-scoped-structured-observation', 'never', 'none', 'none')
   },
   'pages.discover': {
     descriptor: descriptor(
@@ -273,7 +374,8 @@ export const ACTION_CATALOG = {
       windowLimit: z.number().int().positive(),
       nextOffset: z.number().int().nonnegative().nullable()
     }),
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('enumerate', 'candidate-lead', 'wiki.page-candidates', 'candidate-metadata', 'never', 'none', 'none')
   },
   'pages.get': {
     descriptor: descriptor(
@@ -288,7 +390,8 @@ export const ACTION_CATALOG = {
     group: 'core',
     input: PageSelector,
     output: PageResult,
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('read', 'verified-source', 'wiki.page', 'revision-bound-current-source', 'same-revision-and-live-authorization', 'none', 'none')
   },
   'pages.getOkf': {
     descriptor: descriptor(
@@ -303,7 +406,8 @@ export const ACTION_CATALOG = {
     group: 'canonical',
     input: OkfPageSelector,
     output: OkfPageResult,
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('read', 'verified-source', 'wiki.okf', 'revision-bound-current-or-historical-source', 'same-revision-and-live-authorization', 'none', 'none')
   },
   'pages.readForPatch': {
     descriptor: descriptor(
@@ -333,7 +437,8 @@ export const ACTION_CATALOG = {
         )
     }),
     output: WikiLineSnapshotV1Schema,
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('read', 'verified-source', 'wiki.patch-snapshot', 'revision-bound-current-source', 'same-source-snapshot-only', 'none', 'none')
   },
   'pages.listRecent': {
     descriptor: descriptor(
@@ -353,7 +458,8 @@ export const ACTION_CATALOG = {
       exhausted: z.boolean(),
       pages: z.array(RecentPageEvidence).max(20)
     }),
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('enumerate', 'verified-source', 'wiki.recent-source', 'revision-bound-current-source', 'never', 'none', 'none')
   },
   'pages.listHistory': {
     descriptor: descriptor(
@@ -381,7 +487,8 @@ export const ACTION_CATALOG = {
         )
         .max(20)
     }),
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('enumerate', 'candidate-lead', 'wiki.history', 'historical-candidate-metadata', 'never', 'none', 'none')
   },
   'pages.getVersion': {
     descriptor: descriptor(
@@ -396,7 +503,8 @@ export const ACTION_CATALOG = {
     group: 'history',
     input: strict({ pageId: PositiveId, versionId: PositiveId }),
     output: PageResult.extend({ versionId: PositiveId, versionDate: z.string().max(32) }),
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('read', 'verified-source', 'wiki.historical-page', 'revision-bound-historical-source', 'same-historical-version-and-live-authorization', 'none', 'none')
   },
   'pages.listLinks': {
     descriptor: descriptor(
@@ -411,7 +519,8 @@ export const ACTION_CATALOG = {
     group: 'explore',
     input: strict({ pageId: PositiveId, limit: z.number().int().min(1).max(100).default(50) }),
     output: strict({ links: z.array(strict({ label: BoundedPathLike, target: BoundedPathLike, kind: z.literal('page') })).max(100), truncated: z.boolean() }),
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('enumerate', 'candidate-lead', 'wiki.links', 'candidate-metadata', 'never', 'none', 'none')
   },
   'pages.related': {
     descriptor: descriptor(
@@ -431,7 +540,8 @@ export const ACTION_CATALOG = {
       maxDepth: z.number().int().min(1).max(32).optional()
     }),
     output: strict({ pages: z.array(RelatedPageSummary).max(100), nextCursor: z.string().min(1).max(4_096).nullable() }),
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('enumerate', 'candidate-lead', 'wiki.page-candidates', 'candidate-metadata', 'never', 'none', 'none')
   },
   'skills.list': {
     descriptor: descriptor('skills.list', 'List approved skills', 'List approved skills visible to the current principal.', 'read', [], both, readAnnotations),
@@ -440,7 +550,8 @@ export const ACTION_CATALOG = {
     output: strict({
       skills: z.array(strict({ name: z.string().max(64), description: BoundedDescription, versionId: Uuid, contentHash: ContentHash })).max(100)
     }),
-    requiredFlags: skillFlags
+    requiredFlags: skillFlags,
+    capability: defineActionCapability('enumerate', 'candidate-lead', 'skills.catalog', 'candidate-metadata', 'never', 'none', 'none')
   },
   'skills.read': {
     descriptor: descriptor(
@@ -462,7 +573,8 @@ export const ACTION_CATALOG = {
       contentHash: ContentHash,
       content: BoundedPageContent
     }),
-    requiredFlags: skillFlags
+    requiredFlags: skillFlags,
+    capability: defineActionCapability('read', 'verified-source', 'skills.resource', 'immutable-approved-resource', 'same-immutable-resource-identity', 'none', 'none')
   },
   'memory.manage': {
     descriptor: descriptor(
@@ -481,7 +593,8 @@ export const ACTION_CATALOG = {
       strict({ action: z.literal('remove'), target: MemoryTarget, oldText: z.string().min(1).max(2_200) })
     ]),
     output: MemoryResult,
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('manage', 'operation-receipt', 'memory', 'operation-lifecycle-status', 'never', 'persistent-memory-write', 'none')
   },
   'media.generateImage': {
     descriptor: descriptor(
@@ -496,21 +609,24 @@ export const ACTION_CATALOG = {
     group: 'core',
     input: strict({ prompt: z.string().trim().min(1).max(16_000), attachmentIds: z.array(Uuid).max(4).optional() }),
     output: strict({ generated: z.literal(true), count: z.number().int().min(1).max(4) }),
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('generate', 'artifact', 'media.image', 'generated-artifact', 'never', 'external-provider-generation', 'potential-provider-charge')
   },
   'media.generateVideo': {
     descriptor: descriptor('media.generateVideo', 'Create a video', 'Generate one short landscape video from a complete prompt and optional image attachment IDs. Use only when the user requests video generation. The clip appears directly in chat. Do not claim to edit or extend an existing video.', 'read', [], agentOnly, readAnnotations),
     group: 'core',
     input: strict({ prompt: z.string().trim().min(1).max(16_000), attachmentIds: z.array(Uuid).max(4).optional() }),
     output: strict({ generated: z.literal(true), count: z.literal(1) }),
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('generate', 'artifact', 'media.video', 'generated-artifact', 'never', 'external-provider-generation', 'potential-provider-charge')
   },
   'media.generateMusic': {
     descriptor: descriptor('media.generateMusic', 'Create music', 'Generate one new song or instrumental composition from a complete musical prompt and optional image attachment IDs. Use only when the user requests music generation. Include requested lyrics in the prompt. Audio appears directly in chat; editing existing audio is not supported.', 'read', [], agentOnly, readAnnotations),
     group: 'core',
     input: strict({ prompt: z.string().trim().min(1).max(16_000), attachmentIds: z.array(Uuid).max(4).optional() }),
     output: strict({ generated: z.literal(true), count: z.literal(1) }),
-    requiredFlags: baseFlags
+    requiredFlags: baseFlags,
+    capability: defineActionCapability('generate', 'artifact', 'media.audio', 'generated-artifact', 'never', 'external-provider-generation', 'potential-provider-charge')
   },
   'browser.navigate': {
     descriptor: descriptor(
@@ -525,7 +641,8 @@ export const ACTION_CATALOG = {
     group: 'browser',
     input: strict({ url: z.url() }),
     output: BrowserObservation,
-    requiredFlags: browserFlags
+    requiredFlags: browserFlags,
+    capability: defineActionCapability('observe', 'transient-observation', 'browser.document', 'volatile-browser-document', 'never', 'isolated-browser-state-change', 'none')
   },
   'browser.observe': {
     descriptor: descriptor(
@@ -540,7 +657,8 @@ export const ACTION_CATALOG = {
     group: 'browser',
     input: EmptyInput,
     output: BrowserObservation,
-    requiredFlags: browserFlags
+    requiredFlags: browserFlags,
+    capability: defineActionCapability('observe', 'transient-observation', 'browser.document', 'volatile-browser-document', 'never', 'none', 'none')
   },
   'browser.act': {
     descriptor: descriptor(
@@ -555,7 +673,8 @@ export const ACTION_CATALOG = {
     group: 'browser',
     input: strict({ action: z.enum(['scrollIntoView', 'followLink']), ref: z.string().regex(/^e[1-9]\d{0,3}$/), documentEpoch: z.string().min(1).max(128) }),
     output: BrowserObservation,
-    requiredFlags: browserFlags
+    requiredFlags: browserFlags,
+    capability: defineActionCapability('observe', 'transient-observation', 'browser.document', 'volatile-browser-document', 'never', 'isolated-browser-state-change', 'none')
   },
   'browser.extract': {
     descriptor: descriptor(
@@ -570,7 +689,8 @@ export const ACTION_CATALOG = {
     group: 'browser',
     input: strict({ maxCharacters: z.number().int().min(1).max(20_000).default(8_000) }),
     output: strict({ url: z.url(), text: z.string().max(20_000), truncated: z.boolean() }),
-    requiredFlags: browserFlags
+    requiredFlags: browserFlags,
+    capability: defineActionCapability('observe', 'transient-observation', 'browser.extracted-text', 'volatile-browser-extraction', 'never', 'none', 'none')
   },
   'browser.screenshot': {
     descriptor: descriptor(
@@ -590,7 +710,8 @@ export const ACTION_CATALOG = {
       width: z.number().int().positive().max(16_384),
       height: z.number().int().positive().max(16_384)
     }),
-    requiredFlags: browserFlags
+    requiredFlags: browserFlags,
+    capability: defineActionCapability('observe', 'artifact', 'browser.screenshot', 'captured-artifact', 'never', 'none', 'none')
   },
   'pages.prepareCreate': {
     descriptor: descriptor(
@@ -617,7 +738,8 @@ export const ACTION_CATALOG = {
       tags: z.array(z.string().max(255)).max(100).default([])
     }),
     output: ProposalResult,
-    requiredFlags: [...proposalFlags, 'agents.writes.create.enabled']
+    requiredFlags: [...proposalFlags, 'agents.writes.create.enabled'],
+    capability: defineActionCapability('prepare', 'operation-receipt', 'wiki.proposal', 'operation-lifecycle-status', 'never', 'approval-continuation-may-apply', 'none')
   },
   'pages.preparePatch': {
     descriptor: descriptor(
@@ -632,7 +754,8 @@ export const ACTION_CATALOG = {
     group: 'authoring',
     input: strict({ patch: WikiLinePatchV1Schema }),
     output: ProposalResult,
-    requiredFlags: [...proposalFlags, 'agents.writes.patch.enabled']
+    requiredFlags: [...proposalFlags, 'agents.writes.patch.enabled'],
+    capability: defineActionCapability('prepare', 'operation-receipt', 'wiki.proposal', 'operation-lifecycle-status', 'never', 'approval-continuation-may-apply', 'none')
   },
   'pages.prepareMove': {
     descriptor: descriptor(
@@ -647,7 +770,8 @@ export const ACTION_CATALOG = {
     group: 'authoring',
     input: strict({ pageId: PositiveId, sourceRevision: z.string().max(64), destinationPath: Path, destinationLocale: Locale }),
     output: ProposalResult,
-    requiredFlags: [...proposalFlags, 'agents.writes.move.enabled']
+    requiredFlags: [...proposalFlags, 'agents.writes.move.enabled'],
+    capability: defineActionCapability('prepare', 'operation-receipt', 'wiki.proposal', 'operation-lifecycle-status', 'never', 'approval-continuation-may-apply', 'none')
   },
   'pages.prepareRestore': {
     descriptor: descriptor(
@@ -662,7 +786,8 @@ export const ACTION_CATALOG = {
     group: 'authoring',
     input: strict({ pageId: PositiveId, versionId: PositiveId, sourceRevision: z.string().max(64) }),
     output: ProposalResult,
-    requiredFlags: [...proposalFlags, 'agents.writes.restore.enabled']
+    requiredFlags: [...proposalFlags, 'agents.writes.restore.enabled'],
+    capability: defineActionCapability('prepare', 'operation-receipt', 'wiki.proposal', 'operation-lifecycle-status', 'never', 'approval-continuation-may-apply', 'none')
   },
   'pages.prepareDelete': {
     descriptor: descriptor(
@@ -677,7 +802,8 @@ export const ACTION_CATALOG = {
     group: 'authoring',
     input: strict({ pageId: PositiveId, sourceRevision: z.string().max(64), confirmationPath: Path }),
     output: ProposalResult,
-    requiredFlags: [...proposalFlags, 'agents.writes.delete.enabled']
+    requiredFlags: [...proposalFlags, 'agents.writes.delete.enabled'],
+    capability: defineActionCapability('prepare', 'operation-receipt', 'wiki.proposal', 'operation-lifecycle-status', 'never', 'approval-continuation-may-apply', 'none')
   },
   'pages.applyProposal': {
     descriptor: descriptor(
@@ -692,7 +818,8 @@ export const ACTION_CATALOG = {
     group: 'authoring',
     input: strict({ proposalId: Uuid, approvalId: Uuid }),
     output: strict({ proposalId: Uuid, status: z.literal('applied'), resultHash: ContentHash, page: AppliedPageSummary.nullable() }),
-    requiredFlags: proposalFlags
+    requiredFlags: proposalFlags,
+    capability: defineActionCapability('apply', 'operation-receipt', 'wiki.proposal', 'operation-lifecycle-status', 'never', 'approved-proposal-application', 'none')
   }
 } as const satisfies Record<AgentActionName, ActionDefinition>
 

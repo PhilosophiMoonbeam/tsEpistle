@@ -3,7 +3,7 @@ import { describe, expect, it } from '../bun-test.mts'
 import { TOOL_DISCOVERY_CONTROL_NAME, type AgentActionName } from '../../../shared/agents/contracts.ts'
 import type { ActionGroup } from '../../agents/actions/catalog.ts'
 import type { AxHarnessFunction } from '../../agents/providers/session-harness.ts'
-import { createToolDiscovery, deriveToolDiscovery, resolveToolDiscoveryCall } from '../../agents/providers/tool-discovery.ts'
+import { createToolDiscovery, deriveToolDiscovery, resolveToolDiscoveryCall, type ToolDiscoveryCategory } from '../../agents/providers/tool-discovery.ts'
 
 const action = (name: AgentActionName, group: ActionGroup): AxHarnessFunction => ({
   name,
@@ -63,6 +63,57 @@ describe('flat Wiki tool discovery', () => {
     })
   })
 
+  it('pre-enables an admitted initial category on the first turn while retaining the full fallback index', () => {
+    const discovery = createToolDiscovery(allActions, { initialCategories: ['history'] })
+    const turn = discovery.beginTurn()
+
+    expect(turn.activeFunctions.map(item => item.name)).toContain('pages.listHistory')
+    expect(turn.activeFunctions.map(item => item.name)).toContain('pages.getVersion')
+    expect(resolveToolDiscoveryCall(turn, 'pages.listHistory', {})).toEqual({ kind: 'action', name: 'pages.listHistory' })
+    expect(discovery.categoryIndex.map(entry => entry.category)).toEqual(['explore', 'history', 'canonical', 'authoring', 'browser'])
+    expect(turn.categoryIndex.map(entry => entry.category)).toEqual(['explore', 'canonical', 'authoring', 'browser'])
+    expect(turn.control?.parameters).toMatchObject({
+      properties: { category: { enum: ['explore', 'canonical', 'authoring', 'browser'] } }
+    })
+    expect(turn.activeFunctions.map(item => item.name)).not.toContain('pages.searchTags')
+  })
+
+  it('ignores initial categories not present in admitted actions', () => {
+    const actions = [action('pages.search', 'core'), action('pages.listHistory', 'history')]
+    const discovery = createToolDiscovery(actions, {
+      initialCategories: ['history', 'authoring', 'unknown'] as unknown as readonly ToolDiscoveryCategory[]
+    })
+    const turn = discovery.beginTurn()
+
+    expect(turn.activeFunctions.map(item => item.name)).toEqual(['pages.search', 'pages.listHistory'])
+    expect(turn.categoryIndex).toEqual([])
+    expect(turn.control).toBeNull()
+    expect(discovery.enable('authoring')).toBeNull()
+    expect(resolveToolDiscoveryCall(turn, 'pages.prepareCreate', {})).toBeNull()
+  })
+
+  it('filters initial categories through child read-only admission', () => {
+    const discovery = createToolDiscovery(allActions, {
+      child: true,
+      initialCategories: ['explore', 'history', 'canonical', 'authoring', 'browser']
+    })
+    const turn = discovery.beginTurn()
+
+    expect(turn.activeFunctions.map(item => item.name)).toEqual([
+      'pages.search',
+      'pages.get',
+      'pages.searchTags',
+      'pages.listTags',
+      'pages.listHistory',
+      'pages.getVersion'
+    ])
+    expect(turn.categoryIndex).toEqual([])
+    expect(resolveToolDiscoveryCall(turn, 'pages.getOkf', {})).toBeNull()
+    expect(resolveToolDiscoveryCall(turn, 'pages.prepareCreate', {})).toBeNull()
+    expect(resolveToolDiscoveryCall(turn, 'browser.navigate', {})).toBeNull()
+    expect(resolveToolDiscoveryCall(turn, TOOL_DISCOVERY_CONTROL_NAME, { category: 'authoring' })).toBeNull()
+  })
+
   it('applies a successful category enable on the next turn and returns only admitted tools', () => {
     const discovery = createToolDiscovery(allActions)
     const firstTurn = discovery.beginTurn()
@@ -82,11 +133,8 @@ describe('flat Wiki tool discovery', () => {
     const nextTurn = discovery.beginTurn()
     expect(nextTurn.activeFunctions.map(item => item.name)).toContain('pages.searchTags')
     expect(resolveToolDiscoveryCall(nextTurn, 'pages.searchTags', {})).toEqual({ kind: 'action', name: 'pages.searchTags' })
-    expect(resolveToolDiscoveryCall(nextTurn, TOOL_DISCOVERY_CONTROL_NAME, { category: 'explore' })).toEqual({
-      kind: 'control',
-      name: TOOL_DISCOVERY_CONTROL_NAME,
-      category: 'explore'
-    })
+    expect(nextTurn.categoryIndex.map(entry => entry.category)).not.toContain('explore')
+    expect(resolveToolDiscoveryCall(nextTurn, TOOL_DISCOVERY_CONTROL_NAME, { category: 'explore' })).toBeNull()
   })
 
   it('omits empty or revoked categories and does not let selected-skill admission broaden them', () => {

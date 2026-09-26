@@ -4,6 +4,7 @@ import { AgentChildBudgetReservations, type AgentOrchestrationLimits } from '../
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import { AgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import { AgentProviderAttemptError, type AgentProviderFactory, type AgentProviderService } from '../../agents/providers/factory.ts'
+import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
@@ -87,7 +88,7 @@ const factoryFor = (
     })
   }) as unknown as AgentProviderFactory
 const pageEvidenceActions = (
-  validatePageEvidence?: (actionName: string, output: unknown, signal: AbortSignal) => Promise<boolean>
+  validateObservation?: (actionName: string, output: unknown, signal: AbortSignal) => Promise<boolean>
 ): AgentActionSessionProvider =>
   ({
     open: async () => ({
@@ -106,7 +107,7 @@ const pageEvidenceActions = (
       snapshot: async () => ({}),
       close: () => undefined,
       authoritySha256: null,
-      ...(validatePageEvidence === undefined ? {} : { validatePageEvidence })
+      ...(validateObservation === undefined ? {} : { validateObservation })
     })
   }) as unknown as AgentActionSessionProvider
 const utf8Chunks = (value: string, maximumBytes: number): readonly string[] => {
@@ -534,21 +535,24 @@ describe('Ax orchestration stages', () => {
   })
 
   it('dispatches only the covered action when the root tool budget is one', async () => {
-    const chat = vi.fn(
-      async () =>
-        ({
-          results: [
-            {
-              index: 0,
-              functionCalls: [
-                { id: 'first', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
-                { id: 'second', type: 'function', function: { name: 'wiki_get_page', params: '{"id":2}' } }
-              ]
-            }
-          ],
-          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
-        }) satisfies AxChatResponse
-    )
+    let calls = 0
+    const chat = vi.fn(async () => {
+      calls++
+      return {
+        results: [
+          calls === 1
+            ? {
+                index: 0,
+                functionCalls: [
+                  { id: 'first', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
+                  { id: 'second', type: 'function', function: { name: 'wiki_get_page', params: '{"id":2}' } }
+                ]
+              }
+            : { index: 0, content: 'I could not complete the remaining page read.' }
+        ],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+      } satisfies AxChatResponse
+    })
     const invoke = vi.fn(async () => ({ id: 1, title: 'Alpha', content: 'Alpha' }))
     const actions: AgentActionSessionProvider = {
       open: async () => ({
@@ -560,19 +564,60 @@ describe('Ax orchestration stages', () => {
       })
     }
 
-    await expect(
-      Promise.resolve(
-        new AxAgentEngine(factoryFor(chat), actions).execute(
-          {
-            ...baseRequest(new AbortController().signal),
-            limits: { maxTokens: 100, maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 10 }
-          },
-          { text: async () => {}, event: async () => {} }
-        )
-      )
-    ).rejects.toMatchObject({ code: 'AGENT_BUDGET_LIMITED' })
+    const text = vi.fn(async () => {})
+    const response = await new AxAgentEngine(factoryFor(chat), actions).execute(
+      {
+        ...baseRequest(new AbortController().signal),
+        limits: { maxTokens: 100, maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 10 }
+      },
+      { text, event: async () => {} }
+    )
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('could not complete the remaining page read')
     expect(invoke).toHaveBeenCalledTimes(1)
   })
+  it('does not dispatch actions when the reserved synthesis quota is unavailable', async () => {
+    const invoke = vi.fn(async () => ({ id: 1, title: 'Unverified', content: 'Must not be read' }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+    const reserveSequence = vi.fn(async () => {
+      throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'Daily quota is exhausted', 409)
+    })
+    const reserve = vi.fn(async (amount: { tokens: number; costMicros: number }) => ({ id: 1, ...amount }))
+    const text = vi.fn(async () => {})
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      expect(input.functions).toBeUndefined()
+      return { results: [{ index: 0, content: 'I cannot verify either page within the available quota.' }] } satisfies AxChatResponse
+    })
+    const result = await new AxAgentEngine(factoryFor(chat), actions).execute(
+      {
+        ...baseRequest(new AbortController().signal),
+        limits: { maxTurns: 3, maxToolCalls: 2, maxOutputTokens: 128 },
+        dispatchBudget: {
+          reserveSequence,
+          reserve,
+          reconcile: vi.fn(async () => {}),
+          release: vi.fn(async () => {}),
+          consumeTool: vi.fn(async () => {}),
+          unsettledExposure: { tokens: 0, costMicros: 0 }
+        }
+      },
+      { text, event: async () => {} }
+    )
+    expect(reserveSequence).toHaveBeenCalledOnce()
+    expect(invoke).not.toHaveBeenCalled()
+    expect(chat).toHaveBeenCalledOnce()
+    expect(reserve).toHaveBeenCalledOnce()
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('cannot verify either page')
+    expect(result.citations).toBeUndefined()
+  })
+
 
   it('does not dispatch actions from the final available model turn', async () => {
     const chat = vi.fn(
@@ -608,7 +653,7 @@ describe('Ax orchestration stages', () => {
           { text: async () => {}, event: async () => {} }
         )
       )
-    ).rejects.toMatchObject({ code: 'AGENT_TURN_LIMIT' })
+    ).rejects.toMatchObject({ code: 'UNEXPECTED_PROVIDER_TOOL_CALL', stage: 'provider_response' })
     expect(invoke).not.toHaveBeenCalled()
   })
 
@@ -710,9 +755,9 @@ describe('Ax orchestration stages', () => {
       }
     }
     const text = vi.fn(async () => {})
-    const validatePageEvidence = vi.fn(async () => true)
+    const validateObservation = vi.fn(async () => true)
 
-    await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(validatePageEvidence)).execute(request, { text, event })
+    await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(validateObservation)).execute(request, { text, event })
 
     expect(chat).toHaveBeenCalledTimes(2)
     expect(
@@ -763,11 +808,10 @@ describe('Ax orchestration stages', () => {
       }
     }
 
-    await expect(new AxAgentEngine(factoryFor(chat), pageEvidenceActions()).execute(request, { text, event: async () => {} })).rejects.toMatchObject({
-      code: 'AGENT_EVIDENCE_INVALID'
-    })
+    const response = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions()).execute(request, { text, event: async () => {} })
+    expect(response).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
     expect(calls[0]?.chatPrompt.some(message => message.role === 'user' && message.content === 'Alpha requires review.')).toBe(false)
-    expect(text).not.toHaveBeenCalled()
+    expect(text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Alpha requires review.')
   })
 
   it('accepts conflict-only specialist packets after two owned page reads', async () => {

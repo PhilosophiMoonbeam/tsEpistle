@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
+import type { ActionCapability, ActionCapabilityOutputKind, ActionProviderPresentationFamily } from '../actions/catalog.ts'
 import type { AgentActionName, AgentFeatureFlags, RequestAuthContext } from '../../../shared/agents/contracts.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { ActionKernel, type ActionAdmissionSnapshot, type ActionAuthority } from '../actions/kernel.ts'
@@ -18,7 +19,7 @@ export interface KernelActionSessionDependencies {
   readonly kernel: ActionKernel
   readonly resolveAdmission: (request: AgentEngineRequest) => Promise<ActionAdmissionSnapshot>
   readonly refreshAdmission: (request: AgentEngineRequest) => Promise<ActionAdmissionSnapshot>
-  readonly validatePageEvidence?: (
+  readonly validateObservation?: (
     request: AgentEngineRequest,
     authority: ActionAuthority,
     actionName: AgentActionName,
@@ -31,6 +32,78 @@ const isAdmissionRejection = (error: unknown): boolean => {
   if (typeof error !== 'object' || error === null) return false
   const status = Reflect.get(error, 'status')
   return Number.isInteger(status) && Number(status) >= 400 && Number(status) < 500
+}
+
+const WIKI_PAGE_SOURCE_CAPABILITIES: Readonly<
+  Partial<
+    Record<
+      AgentActionName,
+      { readonly providerPresentationFamily: ActionProviderPresentationFamily; readonly outputKind: ActionCapabilityOutputKind }
+    >
+  >
+> = {
+  'pages.get': { providerPresentationFamily: 'wiki.page', outputKind: 'verified-source' },
+  'pages.getOkf': { providerPresentationFamily: 'wiki.okf', outputKind: 'verified-source' },
+  'pages.readForPatch': { providerPresentationFamily: 'wiki.patch-snapshot', outputKind: 'verified-source' },
+  'pages.listRecent': { providerPresentationFamily: 'wiki.recent-source', outputKind: 'verified-source' },
+  'pages.listHistory': { providerPresentationFamily: 'wiki.history', outputKind: 'candidate-lead' },
+  'pages.getVersion': { providerPresentationFamily: 'wiki.historical-page', outputKind: 'verified-source' }
+}
+
+const hasRecentPageSourceEvidenceRow = (value: unknown): boolean => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const row = value as Record<string, unknown>
+  const citation = row.citation
+  if (typeof citation !== 'object' || citation === null || Array.isArray(citation)) return false
+  const citationRow = citation as Record<string, unknown>
+  return (
+    typeof row.id === 'number' &&
+    Number.isSafeInteger(row.id) &&
+    row.id > 0 &&
+    typeof row.locale === 'string' &&
+    row.locale.length > 0 &&
+    typeof row.path === 'string' &&
+    row.path.length > 0 &&
+    typeof row.contentType === 'string' &&
+    row.contentType === 'markdown' &&
+    typeof row.sourceRevision === 'string' &&
+    row.sourceRevision.length > 0 &&
+    typeof row.updatedAt === 'string' &&
+    Number.isFinite(Date.parse(row.updatedAt)) &&
+    typeof row.content === 'string' &&
+    typeof row.sourceContentCharacters === 'number' &&
+    Number.isSafeInteger(row.sourceContentCharacters) &&
+    row.sourceContentCharacters >= row.content.length &&
+    typeof row.contentTruncated === 'boolean' &&
+    row.contentTruncated === (row.content.length < row.sourceContentCharacters) &&
+    typeof citationRow.evidenceId === 'string' &&
+    citationRow.evidenceId === `page:${row.id}:revision:${row.sourceRevision}` &&
+    typeof citationRow.label === 'string' &&
+    citationRow.label.length > 0 &&
+    typeof citationRow.href === 'string' &&
+    citationRow.href.length > 0
+  )
+}
+
+
+const hasWikiPageSourceCapability = (actionName: AgentActionName, capability: ActionCapability | undefined): boolean => {
+  const expected = WIKI_PAGE_SOURCE_CAPABILITIES[actionName]
+  return (
+    capability !== undefined &&
+    expected !== undefined &&
+    capability.providerPresentationFamily === expected.providerPresentationFamily &&
+    capability.outputKinds.length === 1 &&
+    capability.outputKinds[0] === expected.outputKind
+  )
+}
+
+const hasWikiPageSourceOutput = (actionName: AgentActionName, output: unknown): boolean => {
+  if (actionName === 'pages.listHistory') return false
+  if (actionName !== 'pages.listRecent') return true
+  if (typeof output !== 'object' || output === null || Array.isArray(output)) return false
+  if (Reflect.get(output, 'kind') !== 'recent-page-evidence') return false
+  const rows = Reflect.get(output, 'pages')
+  return Array.isArray(rows) && rows.some(hasRecentPageSourceEvidenceRow)
 }
 
 const decodeSnapshot = (value: Uint8Array | null): Readonly<Record<string, unknown>> | undefined => {
@@ -70,6 +143,42 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
       .where({ id: request.run.id, ownerId: request.run.ownerId, leaseOwner: request.run.leaseOwner, leaseToken: request.run.leaseToken })
       .first('runtimeStateCiphertext')) as RuntimeSnapshotRow | undefined
     if (!row) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost before opening its action session', 409)
+    const revalidateObservation = this.#dependencies.validateObservation
+      ? async (actionName: AgentActionName, output: unknown, signal: AbortSignal): Promise<boolean> => {
+          const originalAction = offered.find(action => action.definition.descriptor.name === actionName)
+          if (
+            signal.aborted ||
+            !originalAction ||
+            !hasWikiPageSourceCapability(actionName, originalAction.definition.capability) ||
+            !hasWikiPageSourceOutput(actionName, output)
+          )
+            return false
+          let currentAdmission: ActionAdmissionSnapshot
+          try {
+            currentAdmission = await this.#dependencies.refreshAdmission(request)
+          } catch (error: unknown) {
+            if (signal.aborted || isAdmissionRejection(error)) return false
+            throw error
+          }
+          if (signal.aborted || currentAdmission.transport !== admission.transport) return false
+          try {
+            const currentAction = this.#dependencies.kernel
+              .offer(authFor(request), currentAdmission, request.run.id)
+              .find(action => action.definition.descriptor.name === actionName)
+            if (
+              !currentAction ||
+              signal.aborted ||
+              !hasWikiPageSourceCapability(actionName, currentAction.definition.capability)
+            )
+              return false
+            const valid = await this.#dependencies.validateObservation?.(request, currentAction.authority, actionName, output, signal)
+            return valid === true && !signal.aborted
+          } catch (error: unknown) {
+            if (signal.aborted || isAdmissionRejection(error)) return false
+            throw error
+          }
+        }
+      : undefined
     const harness = new AxSessionHarness({
       ...(this.#dependencies.timeoutMilliseconds === undefined ? {} : { timeoutMilliseconds: this.#dependencies.timeoutMilliseconds }),
       execute: (action, input, signal, actionCallId) =>
@@ -82,30 +191,10 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
           refreshAdmission: () => this.#dependencies.refreshAdmission(request),
           fenceSideEffect: () => markAgentRunSideEffectsStarted(this.#dependencies.knex, request.run)
         }),
-      ...(this.#dependencies.validatePageEvidence
+      ...(revalidateObservation
         ? {
-            validatePageEvidence: async (actionName: AgentActionName, output: unknown, signal: AbortSignal): Promise<boolean> => {
-              if (signal.aborted || !offered.some(action => action.definition.descriptor.name === actionName)) return false
-              let currentAdmission: ActionAdmissionSnapshot
-              try {
-                currentAdmission = await this.#dependencies.refreshAdmission(request)
-              } catch (error: unknown) {
-                if (signal.aborted || isAdmissionRejection(error)) return false
-                throw error
-              }
-              if (signal.aborted || currentAdmission.transport !== admission.transport) return false
-              try {
-                const currentAction = this.#dependencies.kernel
-                  .offer(authFor(request), currentAdmission, request.run.id)
-                  .find(action => action.definition.descriptor.name === actionName)
-                if (!currentAction || signal.aborted) return false
-                const valid = await this.#dependencies.validatePageEvidence?.(request, currentAction.authority, actionName, output, signal)
-                return valid === true && !signal.aborted
-              } catch (error: unknown) {
-                if (signal.aborted || isAdmissionRejection(error)) return false
-                throw error
-              }
-            }
+            validateObservation: (actionName: AgentActionName, output: unknown, signal: AbortSignal) =>
+              revalidateObservation(actionName, output, signal)
           }
         : {})
     })
@@ -119,7 +208,22 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
         )
       )
       .digest('hex')
-    return { ...session, authoritySha256 }
+    return {
+      ...session,
+      authoritySha256,
+      ...(admission.allowedActions === undefined ? {} : { allowedActions: admission.allowedActions }),
+      authorizeSyntheticAction: async (name: AgentActionName, signal: AbortSignal): Promise<boolean> => {
+        if (signal.aborted) return false
+        let current: ActionAdmissionSnapshot
+        try {
+          current = await this.#dependencies.refreshAdmission(request)
+        } catch (error: unknown) {
+          if (signal.aborted || isAdmissionRejection(error)) return false
+          throw error
+        }
+        return !signal.aborted && current.supportsTools && (current.allowedActions === undefined || current.allowedActions.includes(name))
+      }
+    }
   }
 
   async saveSnapshot(request: AgentEngineRequest, snapshot: Readonly<Record<string, unknown>>): Promise<void> {

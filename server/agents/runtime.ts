@@ -669,6 +669,10 @@ export interface AgentEngineResult {
     readonly reason: 'tool_result_capacity'
     readonly omittedActionCallIds: readonly string[]
   }
+  readonly executionLimit?: {
+    readonly reason: 'turns' | 'tokens' | 'quota' | 'tools' | 'evidence'
+    readonly publication: 'partial' | 'inability'
+  }
 }
 
 export interface AgentEnginePreflight {
@@ -898,6 +902,66 @@ const validatedContextLimit = (value: unknown): NonNullable<AgentEngineResult['c
     throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine emitted an invalid context limit', 500)
   }
   return { reason, omittedActionCallIds: [...omittedActionCallIds] }
+}
+
+type AgentExecutionLimitReason = NonNullable<AgentEngineResult['executionLimit']>['reason']
+
+const executionLimitIssueCode: Record<AgentExecutionLimitReason, string> = {
+  turns: 'AGENT_TURN_LIMIT',
+  tokens: 'AGENT_TOKEN_BUDGET_LIMITED',
+  quota: 'AGENT_QUOTA_EXHAUSTED',
+  tools: 'AGENT_BUDGET_LIMITED',
+  evidence: 'AGENT_EVIDENCE_INVALID'
+}
+
+const executionLimitIssueMessage: Record<AgentExecutionLimitReason, string> = {
+  turns: 'The root agent reached its turn allowance before the requested work could be completed.',
+  tokens: 'The root agent reached its token allowance before the requested work could be completed.',
+  quota: 'The root agent reached its quota allowance before the requested work could be completed.',
+  tools: 'The root agent reached its tool allowance before the requested work could be completed.',
+  evidence: 'The evidence-validation opportunity ended before the requested work could be completed.'
+}
+
+const validatedExecutionLimit = (value: unknown): NonNullable<AgentEngineResult['executionLimit']> | undefined => {
+  if (value === undefined) return undefined
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine emitted an invalid execution limit', 500)
+  }
+  let keys: PropertyKey[]
+  let reasonDescriptor: PropertyDescriptor | undefined
+  let publicationDescriptor: PropertyDescriptor | undefined
+  try {
+    keys = Reflect.ownKeys(value)
+    reasonDescriptor = Reflect.getOwnPropertyDescriptor(value, 'reason')
+    publicationDescriptor = Reflect.getOwnPropertyDescriptor(value, 'publication')
+  } catch {
+    throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine emitted an invalid execution limit', 500)
+  }
+  if (
+    keys.length !== 2 ||
+    keys.some(key => key !== 'reason' && key !== 'publication') ||
+    reasonDescriptor === undefined ||
+    publicationDescriptor === undefined ||
+    !Object.hasOwn(reasonDescriptor, 'value') ||
+    !Object.hasOwn(publicationDescriptor, 'value')
+  ) {
+    throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine emitted an invalid execution limit', 500)
+  }
+  const reason: unknown = reasonDescriptor.value
+  const publication: unknown = publicationDescriptor.value
+  if (
+    reason !== 'turns' &&
+    reason !== 'tokens' &&
+    reason !== 'quota' &&
+    reason !== 'tools' &&
+    reason !== 'evidence'
+  ) {
+    throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine emitted an invalid execution limit', 500)
+  }
+  if (publication !== 'partial' && publication !== 'inability') {
+    throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine emitted an invalid execution limit', 500)
+  }
+  return { reason, publication }
 }
 
 const safeLogNonNegativeInteger = (value: unknown): number => (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0)
@@ -2879,6 +2943,7 @@ export class AgentProductRuntime {
               Promise.reject(
                 new AgentRepositoryError('AGENT_ACTION_CONTINUATION_UNSUPPORTED', 'Inference engine cannot resume durable action continuations', 500)
               ))
+      const executionLimit = validatedExecutionLimit(result.executionLimit)
       const resultModelUsage = {
         inputTokens: nonNegativeUsage(result.inputTokens, 'Model input tokens'),
         outputTokens: nonNegativeUsage(result.outputTokens, 'Model output tokens'),
@@ -2894,7 +2959,7 @@ export class AgentProductRuntime {
       }
       assertGroundedContextFresh()
       const titleUsage =
-        continuation === null && mediaRequest?.kind !== 'transcription'
+        continuation === null && mediaRequest?.kind !== 'transcription' && executionLimit === undefined
           ? await this.#generateConversationTitle(claim, sessionRow, messages, content, executionSignal, dispatchBudget)
           : { title: '', source: 'fallback' as const, inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
       assertAgentTokenUsage(titleUsage.inputTokens, titleUsage.outputTokens, titleUsage.totalTokens)
@@ -2945,7 +3010,8 @@ export class AgentProductRuntime {
         decodeAgentProviderContinuation(result.providerState, 'gemini-interactions-v1') === undefined
       )
         throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Inference engine returned invalid Gemini continuation state', 500)
-      const providerStateJson = outputLimited === true || result.providerState === undefined ? null : canonicalJson(result.providerState)
+      const providerStateJson =
+        outputLimited === true || executionLimit !== undefined || result.providerState === undefined ? null : canonicalJson(result.providerState)
       if (providerStateJson !== null && Buffer.byteLength(providerStateJson, 'utf8') > 256 * 1_024)
         throw new AgentRepositoryError('AGENT_PROVIDER_STATE_TOO_LARGE', 'Provider continuation exceeds its size limit', 500)
       await this.#appendPresentationEvent(claim, 'usage.updated', {
@@ -3009,8 +3075,15 @@ export class AgentProductRuntime {
           retryable: false
         })
       }
+      if (executionLimit !== undefined) {
+        completionIssues.push({
+          code: executionLimitIssueCode[executionLimit.reason],
+          message: executionLimitIssueMessage[executionLimit.reason],
+          retryable: false
+        })
+      }
       const completion =
-        contextLimit === undefined && outputLimited === undefined
+        contextLimit === undefined && outputLimited === undefined && executionLimit === undefined
           ? assessedCompletion
           : {
               outcome: 'blocked' as const,

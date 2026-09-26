@@ -306,7 +306,7 @@ describe('Ax agent engine context compaction', () => {
         : response(`${sourceUnit} [[cite:${alphaEvidenceId}]]`, 300, 30)
     })
     const { factory } = factoryFor(chat)
-    const validatePageEvidence = vi.fn(async () => true)
+    const validateObservation = vi.fn(async () => true)
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [
@@ -325,7 +325,7 @@ describe('Ax agent engine context compaction', () => {
         snapshot: async () => ({}),
         close: () => undefined,
         authoritySha256: null,
-        validatePageEvidence
+        validateObservation
       })
     }
     const text = vi.fn(async () => undefined)
@@ -355,7 +355,7 @@ describe('Ax agent engine context compaction', () => {
     expect(JSON.stringify(calls[0]?.chatPrompt)).not.toContain('Beta background remains unchanged.')
     expect(text).toHaveBeenCalledWith(`${sourceUnit} [[cite:${alphaEvidenceId}]]`)
     expect(result.citations).toEqual([{ evidenceId: alphaEvidenceId, kind: 'page', label: 'Alpha', href: '/en/alpha' }])
-    expect(validatePageEvidence).toHaveBeenCalledWith('pages.get', evidenceSeeds[0]!.output, expect.any(AbortSignal))
+    expect(validateObservation).toHaveBeenCalledWith('pages.get', evidenceSeeds[0]!.output, expect.any(AbortSignal))
   })
 
   it('revalidates rejected page evidence before replaying it to the provider', async () => {
@@ -390,7 +390,7 @@ ${sourceUnit}`,
     })
     const { factory } = factoryFor(chat)
     let validationCount = 0
-    const validatePageEvidence = vi.fn(async () => ++validationCount === 1)
+    const validateObservation = vi.fn(async () => ++validationCount === 1)
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [
@@ -409,7 +409,7 @@ ${sourceUnit}`,
         snapshot: async () => ({}),
         close: () => undefined,
         authoritySha256: null,
-        validatePageEvidence
+        validateObservation
       })
     }
     const text = vi.fn(async () => undefined)
@@ -429,7 +429,7 @@ ${sourceUnit}`,
     expect(calls[1]?.chatPrompt.every(message => typeof message.content !== 'string' || !message.content.includes(sourceUnit))).toBe(true)
     expect(text).toHaveBeenCalledWith('I cannot verify Alpha’s release requirement now.')
     expect(result.citations).toBeUndefined()
-    expect(validatePageEvidence).toHaveBeenCalledWith('pages.get', seed.output, expect.any(AbortSignal))
+    expect(validateObservation).toHaveBeenCalledWith('pages.get', seed.output, expect.any(AbortSignal))
   })
 
   it('reuses an exact durable checkpoint without another summary call or charge', async () => {
@@ -576,8 +576,8 @@ ${sourceUnit}`,
       const budget = sequencedBudget(250_000)
       const chat = vi.fn(async () => response('This must not be requested.', 10, 1))
       const { factory } = factoryFor(chat)
-      const reserve = vi.fn(async (maximum: { tokens: number; costMicros: number }) => {
-        const held = await budget.reserve(maximum)
+      const reserveSequence = vi.fn(async (maximum: { tokens: number; costMicros: number }) => {
+        const held = await budget.reserveSequence!(maximum)
         vi.setSystemTime(new Date(expiry))
         return held
       })
@@ -586,12 +586,12 @@ ${sourceUnit}`,
           {
             ...engineRequest([{ role: 'user', content: 'Use the retained source.' }]),
             compaction: { sourcePrefixSha256: [], groundedExpiresAt: expiry },
-            dispatchBudget: { ...budget, reserve }
+            dispatchBudget: { ...budget, reserveSequence }
           },
           { text: async () => undefined, event: async () => undefined }
         )
       ).rejects.toMatchObject({ code: 'AGENT_CONTEXT_TOO_LARGE' })
-      expect(reserve).toHaveBeenCalledOnce()
+      expect(reserveSequence).toHaveBeenCalledOnce()
       expect(chat).not.toHaveBeenCalled()
       expect(budget.unsettledExposure.tokens).toBe(0)
       expect(budget.consumed()).toBe(0)
@@ -680,16 +680,17 @@ ${sourceUnit}`,
     const { factory } = factoryFor(chat)
     const budget = sequencedBudget(10_000)
 
-    await expect(
-      new AxAgentEngine(factory).execute(
-        {
-          ...engineRequest(history.messages),
-          compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null },
-          dispatchBudget: budget
-        },
-        { commitCompaction: async () => undefined, text: async () => undefined, event: async () => undefined }
-      )
-    ).rejects.toMatchObject({ code: 'AGENT_TOKEN_BUDGET_LIMITED', status: 409 })
+    const text = vi.fn(async () => undefined)
+    const result = await new AxAgentEngine(factory).execute(
+      {
+        ...engineRequest(history.messages),
+        compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null },
+        dispatchBudget: budget
+      },
+      { commitCompaction: async () => undefined, text, event: async () => undefined }
+    )
+    expect(result).toMatchObject({ executionLimit: { reason: 'tokens', publication: 'inability' } })
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('token allowance')
     expect(chat).not.toHaveBeenCalled()
     expect(budget.consumed()).toBe(0)
   })
@@ -740,7 +741,7 @@ ${sourceUnit}`,
             sourceRevision: String(id),
             title: `Evidence ${id}`,
             contentType: 'markdown',
-            content: `${id === 1 ? 'EVIDENCE_ONE' : 'EVIDENCE_TWO'} ${String(id).repeat(35000)}`,
+            content: `${id === 1 ? 'EVIDENCE_ONE' : 'EVIDENCE_TWO'} ${String(id).repeat(500)}`,
             citation: { evidenceId: `page:${id}:revision:${id}`, label: `Evidence ${id}`, href: `/en/evidence-${id}` },
             citationSections: []
           }
