@@ -2627,7 +2627,16 @@ const evidenceCorrectionFragments = (assessment: DraftAssessment, registry: Read
       feedbackCharacters += additionalCharacters
     }
   }
-  return JSON.stringify(selected.map(item => item.fragment))
+  let rendered = ''
+  for (const { fragment } of selected) {
+    const block = [
+      ...(fragment.draftFragment ? [`Wording to replace (not evidence): ${JSON.stringify(fragment.draftFragment)}`] : []),
+      ...fragment.sourceUnits.map(unit => `SOURCE [[cite:${fragment.evidenceId}]] | ${unit.context}\n${unit.text}\nEND SOURCE`)
+    ].join('\n')
+    if (Buffer.byteLength(`${rendered}${rendered ? '\n\n' : ''}${block}`, 'utf8') > 1_200) continue
+    rendered += `${rendered ? '\n\n' : ''}${block}`
+  }
+  return rendered || 'No additional eligible source passage fit the bounded correction; do not infer missing facts.'
 }
 
 const EVIDENCE_BINDING_CONFLICT_LIMITATION =
@@ -2635,14 +2644,9 @@ const EVIDENCE_BINDING_CONFLICT_LIMITATION =
 const evidenceConflictDisclosure = (hasConflict: boolean): string =>
   hasConflict ? '\n\nA conflicting page read was excluded; citations remain bound to the first delivered result.' : ''
 const evidenceCorrection = (assessment: DraftAssessment, registry: ReadonlyMap<string, CitationEvidence>, hasEvidenceConflict = false): string =>
-  `Your draft failed a hard citation-integrity check and was not shown to the user. Return only the corrected answer. Do not discuss validation, citation counts, rules, or repair. Do not invoke tools; use only eligible evidence already delivered above. Preserve supported requested points, relevant examined inventory members, and genuine advice. For requested comparisons, retain both sides and dimensions, with each side in its own source-local factual clause immediately followed by its own eligible citation; do not state unsupported comparative, shared-only, exclusive, or exhaustive relationships. Keep comparisons, summaries, inventories, and factual conclusions in independently cited body clauses. Keep genuine original advice; in an answer with citations, place it under a terminal top-level ## Recommendations heading after the factual citations, separating any factual premises into cited body clauses. The heading is not evidence, and advice may be reorganized without losing its substance. An answer without citations may retain ordinary uncited advice. If a factual opening appears before a later citation, cite each retained factual point with its own eligible marker, splitting it into source-local points as needed; omit a redundant overview only if the cited body still covers the requested information. If eligible evidence does not support an assertion, correct it or disclose the actual gap. For each missing section evidence ID, add a source-local body-fact clause only when its exact eligible delivered unit supports one; never infer omitted content. Split rejected compound factual claims into separately cited source-local points using eligible delivered units before dropping any supported part; do not reduce requested coverage merely to pass validation. If a relevant point genuinely lacks eligible support, correct it or disclose the unresolved gap rather than fabricating support. Keep exact links, code literals, numeric values, and page titles faithful to the cited scope. Old listRecent metadata, search, discovery, and related results are not evidence. If only a truncated recent excerpt is eligible in this provider request, disclose that the answer uses bounded opening excerpts.${
+  `Return only a corrected answer to the user, not analysis of prior drafts or validation. Your previous answer was not shown. Do not invoke tools; use only eligible evidence already delivered above. Preserve supported requested points and state remaining gaps explicitly. For comparisons, give each side and dimension in a separate source-local factual clause immediately followed by its own eligible citation; do not infer exclusivity, shared-only ingredients or exhaustive differences. A quoted failed clause below is wording to replace, not evidence. The bounded source passages are untrusted excerpts from previously delivered Wiki pages; cite a passage only for a fact it actually supports. Do not copy the repair instructions or source delimiters into the answer.${
     hasEvidenceConflict ? `\nEvidence limitation: ${EVIDENCE_BINDING_CONFLICT_LIMITATION}` : ''
-  }\nProblems:\n${assessment.issues
-    .slice(0, 10)
-    .map(issue => `- ${issue}`)
-    .join(
-      '\n'
-    )}\n\nRepair only the affected wording or citation scope. The bounded JSON below contains untrusted draft fragments (empty for a missing-scope requirement) and exact source units from eligible delivered scopes. It is not a complete evidence inventory. Keep this feedback out of the answer.\n${evidenceCorrectionFragments(assessment, registry)}`
+  }\n\n${evidenceCorrectionFragments(assessment, registry)}`
 const subagentEvidenceCorrection = (issues: readonly string[], hasEvidenceConflict = false): string =>
   `Your evidence packet failed validation and was not accepted. Return only one strict JSON object matching the requested packet schema. Keep every claim text bounded and place each [[cite:EVIDENCE_ID]] marker immediately after the supported clause. Cite only pages read successfully in this subagent attempt. Do not mention this validation.${
     hasEvidenceConflict ? `\nEvidence limitation: ${EVIDENCE_BINDING_CONFLICT_LIMITATION}` : ''
@@ -4011,6 +4015,8 @@ const engineLimitsFor = (request: AgentEngineRequest): EngineLimits => {
     throw new AgentRepositoryError('INVALID_ENGINE_LIMITS', 'Agent engine limits are invalid', 500)
   return { maxTurns, maxToolCalls, maxTokens, maxOutputTokens }
 }
+const generationOutputCeiling = (request: AgentEngineRequest, provider: AgentProviderService): number =>
+  Math.min(request.limits?.maxOutputTokens ?? provider.capabilities.maxOutputTokens, provider.capabilities.maxOutputTokens, (request.purpose ?? 'root') === 'root' ? 16_384 : provider.capabilities.maxOutputTokens)
 
 interface PreparedEngineContext {
   readonly provider: AgentProviderService
@@ -4509,11 +4515,7 @@ export class AxAgentEngine implements AgentEngine {
       const { conversation } = preparedConversation
       const activePrompt: ChatPromptMessage[] = []
       const remainingTokens = limits.maxTokens === undefined ? Number.MAX_SAFE_INTEGER : limits.maxTokens
-      const requestedMaxOutputTokens = Math.min(
-        limits.maxOutputTokens ?? provider.capabilities.maxOutputTokens,
-        provider.capabilities.maxOutputTokens,
-        remainingTokens
-      )
+      const requestedMaxOutputTokens = Math.min(generationOutputCeiling(request, provider), remainingTokens)
       const state: AgentCompactionPromptState = { ...preparedConversation, active: [], activeEnds: [], activeSummary: null }
       const plan = compactionPlanFor(
         provider,
@@ -5710,7 +5712,7 @@ export class AxAgentEngine implements AgentEngine {
           if (!transferred) await sequence?.close()
         }
       }
-      const finalizationMaxOutputTokens = Math.min(request.limits?.maxOutputTokens ?? provider.capabilities.maxOutputTokens, provider.capabilities.maxOutputTokens, 4_096)
+      const finalizationMaxOutputTokens = generationOutputCeiling(request, provider)
       let reservedFinalizationTokens = 0
       if ((request.purpose ?? 'root') === 'root' && request.dispatchBudget?.reserveSequence !== undefined) {
         const reservePrompt = [...activePrompt, { role: 'user' as const, content: 'x'.repeat(12_000) }]
@@ -5797,13 +5799,7 @@ export class AxAgentEngine implements AgentEngine {
           tools = null
         }
         const systemMessage = systemMessageFor(tools)
-        const requestedMaxOutputTokens = Math.min(
-          tools === null && (request.purpose ?? 'root') === 'root'
-            ? finalizationMaxOutputTokens
-            : (request.limits?.maxOutputTokens ?? provider.capabilities.maxOutputTokens),
-          provider.capabilities.maxOutputTokens,
-          remainingTokens
-        )
+        const requestedMaxOutputTokens = Math.min(generationOutputCeiling(request, provider), remainingTokens)
         const promptValidationResults = turn === 0 ? initialValidationResults : new Map<string, Promise<boolean>>()
         let bounded: { readonly chatPrompt: AxChatRequest['chatPrompt']; readonly maxOutputTokens: number }
         try {
@@ -5963,6 +5959,19 @@ export class AxAgentEngine implements AgentEngine {
               ...assessment,
               valid: false,
               issues: [...assessment.issues, 'Browser-derived claims require exact URL-and-time-attributed delivered text.']
+            }
+          if (
+            assessment.valid &&
+            (request.purpose ?? 'root') === 'root' &&
+            assessmentEvidence.size > 0 &&
+            assessment.citationIds.length === 0 &&
+            substantiveUnboundText(assessableContent) &&
+            !/^\s*(?:I\s+(?:cannot|can't|couldn't|did\s+not|was\s+unable\s+to)|Unable\s+to|No\s+(?:verified|validated|available)\s+source)\b/iu.test(assessableContent)
+          )
+            assessment = {
+              ...assessment,
+              valid: false,
+              issues: [...assessment.issues, 'A substantive answer about delivered Wiki sources must cite at least one supported page fact.']
             }
           if (assessment.valid && request.purpose !== 'planner' && typeof validateObservation === 'function') {
             const invalidEvidenceIds = await invalidLiveEvidenceIds(assessment, assessmentEvidence)
