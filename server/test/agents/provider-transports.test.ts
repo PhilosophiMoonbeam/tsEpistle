@@ -5,6 +5,7 @@ import { AgentProviderFactory, agentProviderCostMicros, createGuardedProviderFet
 import { createGeminiInteractionsService, geminiInteractionCompactionPrefix } from '../../agents/providers/gemini-interactions.ts'
 import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
 import { parsePromptToolCall, promptToolInstructions, promptToolResultMessage } from '../../agents/providers/prompt-tools.ts'
+import { readAgentProviderUsage } from '../../agents/providers/usage.ts'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
@@ -43,10 +44,10 @@ describe('additional provider transports', () => {
   })
   afterEach(async () => db.destroy())
 
-  const insert = async (values: { id: string; transportKind: string; baseUrl: string; authMode: string }): Promise<void> => {
+  const insert = async (values: { id: string; transportKind: string; baseUrl: string; authMode: string; model?: string }): Promise<void> => {
     await db('agentProviderProfileVersions').insert({
       ...values,
-      model: 'model-test',
+      model: values.model ?? 'model-test',
       secretReference: 'env:TRANSPORT_TEST_KEY',
       adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {} }),
       capabilities: JSON.stringify(capabilities),
@@ -195,6 +196,8 @@ describe('additional provider transports', () => {
           })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'anthropic-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
+    expect(provider.preserveCachePrefix).toBe(true)
+    expect(provider.pricing.cacheWritePremium).toBe(true)
     const definition = {
       name: 'wiki_get_page',
       description: 'Read a page',
@@ -217,10 +220,150 @@ describe('additional provider transports', () => {
     expect(requests[0]?.url).toBe('https://api.anthropic.com/v1/messages')
     expect(requests[0]?.headers.get('x-api-key')).toBe('anthropic-key')
     expect(requests[0]?.headers.get('anthropic-version')).toBeTruthy()
-    expect(requests[0]?.body).toMatchObject({ output_config: { effort: 'high' }, tools: [{ name: 'wiki_get_page', input_schema: { type: 'object' } }] })
+    expect(requests[0]?.body).toMatchObject({
+      cache_control: { type: 'ephemeral' },
+      output_config: { effort: 'high' },
+      tools: [{ name: 'wiki_get_page', input_schema: { type: 'object' } }]
+    })
     expect(requests[1]?.body).not.toHaveProperty('tools')
     expect(JSON.stringify(requests[1]?.body)).toContain('tool_result')
     expect(JSON.stringify(requests[1]?.body)).toContain('toolu_1')
+  })
+  it('enables cache-aware prefix retention and write pricing only for recognized official transports', async () => {
+    const profiles = [
+      {
+        id: '00000000-0000-4000-8000-000000000021',
+        transportKind: 'openai-responses',
+        baseUrl: 'https://api.openai.com/v1',
+        authMode: 'bearer',
+        model: 'gpt-5.6-terra',
+        preserveCachePrefix: true,
+        cacheWritePremium: true
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000022',
+        transportKind: 'openai-chat',
+        baseUrl: 'https://api.openai.com/v1',
+        authMode: 'bearer',
+        model: 'gpt-5.5',
+        preserveCachePrefix: true,
+        cacheWritePremium: false
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000023',
+        transportKind: 'openresponses',
+        baseUrl: 'https://api.openai.com/v1',
+        authMode: 'bearer',
+        model: 'gpt-5.6-terra',
+        preserveCachePrefix: false,
+        cacheWritePremium: false
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000024',
+        transportKind: 'openai-responses',
+        baseUrl: 'https://openai.compat.test/v1',
+        authMode: 'bearer',
+        model: 'gpt-5.6-terra',
+        preserveCachePrefix: false,
+        cacheWritePremium: false
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000025',
+        transportKind: 'legacy-completions',
+        baseUrl: 'https://api.openai.com/v1',
+        authMode: 'bearer',
+        model: 'gpt-5.6-terra',
+        preserveCachePrefix: false,
+        cacheWritePremium: false
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000026',
+        transportKind: 'gemini-api',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        authMode: 'google-api-key',
+        model: 'gemini-3.8-flash',
+        preserveCachePrefix: true,
+        cacheWritePremium: false
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000027',
+        transportKind: 'gemini-api',
+        baseUrl: 'https://gemini.compat.test/v1beta',
+        authMode: 'google-api-key',
+        model: 'gemini-3.8-flash',
+        preserveCachePrefix: false,
+        cacheWritePremium: false
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000028',
+        transportKind: 'anthropic-messages',
+        baseUrl: 'https://api.anthropic.com/proxy/v1',
+        authMode: 'anthropic-api-key',
+        model: 'claude-test',
+        preserveCachePrefix: false,
+        cacheWritePremium: false
+      }
+    ] as const
+    const factory = new AgentProviderFactory(db, { get: () => 'transport-key' }, undefined, publicResolver as never)
+    for (const profile of profiles) {
+      const { preserveCachePrefix, cacheWritePremium, ...settings } = profile
+      await insert(settings)
+      const provider = await factory.create(profile.id)
+      expect(provider.preserveCachePrefix).toBe(preserveCachePrefix)
+      expect(provider.pricing.cacheWritePremium).toBe(cacheWritePremium ? true : undefined)
+    }
+  })
+  it('keeps official Responses caching implicit without adding cache extension fields', async () => {
+    const id = '00000000-0000-4000-8000-000000000031'
+    await insert({
+      id,
+      transportKind: 'openai-responses',
+      baseUrl: 'https://api.openai.com/v1',
+      authMode: 'bearer',
+      model: 'gpt-5.6-terra'
+    })
+    let requestBody: Record<string, unknown> | undefined
+    let cachedTokenCount: number | undefined = 0
+    const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return Response.json({
+        id: 'resp_implicit',
+        object: 'response',
+        created_at: 1,
+        status: 'completed',
+        error: null,
+        incomplete_details: null,
+        instructions: null,
+        max_output_tokens: null,
+        model: 'gpt-5.6-terra',
+        parallel_tool_calls: false,
+        previous_response_id: null,
+        output: [{ type: 'message', id: 'msg_implicit', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: 'implicit', annotations: [] }] }],
+        usage: {
+          input_tokens: 2,
+          input_tokens_details: cachedTokenCount === undefined ? {} : { cached_tokens: cachedTokenCount },
+          output_tokens: 1,
+          output_tokens_details: { reasoning_tokens: 0 },
+          total_tokens: 3
+        }
+      })
+    }
+    const provider = await new AgentProviderFactory(db, { get: () => 'openai-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
+    const usage = async () => {
+      const response = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: false })
+      if (response instanceof ReadableStream) throw new Error('Expected buffered Responses output')
+      return readAgentProviderUsage('openai-responses', response)
+    }
+    expect(await usage()).toEqual({ inputTokens: 2, outputTokens: 1, totalTokens: 3 })
+    cachedTokenCount = undefined
+    expect(await usage()).toEqual({ inputTokens: 2, outputTokens: 1, totalTokens: 3 })
+    cachedTokenCount = 1
+    expect(await usage()).toEqual({ inputTokens: 2, outputTokens: 1, totalTokens: 3, cachedInputTokens: 1 })
+    expect(provider.preserveCachePrefix).toBe(true)
+    expect(provider.pricing.cacheWritePremium).toBe(true)
+    expect(requestBody).not.toHaveProperty('prompt_cache_options')
+    expect(requestBody).not.toHaveProperty('prompt_cache_key')
+    expect(requestBody).not.toHaveProperty('prompt_cache_retention')
   })
 
   it('buffers Gemini Interactions action turns atomically with stateless exact-step continuation', async () => {
@@ -456,7 +599,7 @@ describe('additional provider transports', () => {
       let text = 'ACKNOWLEDGED receipt-42'
       if (payloads.length === 1) text = 'legacy'
       else if (payloads.length === 2) text = '<wiki-tool-call>{"name":"wiki_get_page","arguments":{"id":42}}</wiki-tool-call>'
-      return Response.json({ choices: [{ text }], usage: { prompt_tokens: 4, completion_tokens: 2 } })
+      return Response.json({ choices: [{ text }], usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'legacy-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
     const response = await provider.service.chat(
@@ -512,6 +655,27 @@ describe('additional provider transports', () => {
       Promise.resolve(provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [{ name: 'pages.get', description: 'read' }] }))
     ).rejects.toMatchObject({ code: 'INVALID_LEGACY_PROMPT' })
     expect(payloads).toHaveLength(3)
+  })
+  it('preserves legacy reported totals and does not fabricate usage for absent or malformed receipts', async () => {
+    const id = '00000000-0000-4000-8000-000000000030'
+    await insert({ id, transportKind: 'legacy-completions', baseUrl: 'https://legacy.example.test/v1', authMode: 'api-key-header' })
+    const replies: Array<{ readonly usage?: unknown }> = [
+      { usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 99 } },
+      {},
+      { usage: { prompt_tokens: 4, completion_tokens: '2', total_tokens: 6 } }
+    ]
+    const fetchImplementation = async (): Promise<Response> => {
+      const reply = replies.shift()
+      if (!reply) throw new Error('No legacy test response remains')
+      return Response.json({ choices: [{ text: 'legacy' }], ...(reply.usage === undefined ? {} : { usage: reply.usage }) })
+    }
+    const provider = await new AgentProviderFactory(db, { get: () => 'legacy-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
+    const request = { chatPrompt: [{ role: 'user' as const, content: 'hello' }] }
+    const reported = await provider.service.chat(request, { stream: false })
+    expect(reported).toMatchObject({ modelUsage: { tokens: { promptTokens: 4, completionTokens: 2, totalTokens: 99 } } })
+    const missing = await provider.service.chat(request, { stream: false })
+    expect(missing).not.toHaveProperty('modelUsage')
+    await expect(Promise.resolve(provider.service.chat(request, { stream: false }))).rejects.toMatchObject({ code: 'PROVIDER_USAGE_INVALID' })
   })
 })
 
@@ -929,7 +1093,7 @@ describe('Gemini Interactions protocol validation', () => {
     }
     const toolStep = { type: 'function_call', id: 'wiki-call', name: 'wiki_get_page', arguments: { id: 42 } }
     const expectedToolCall = [{ id: 'wiki-call', type: 'function', function: { name: 'wiki_get_page', params: { id: 42 } } }]
-    const expectedTokens = { promptTokens: 47, completionTokens: 14, totalTokens: 108 }
+    const expectedTokens = { promptTokens: 47, completionTokens: 14, totalTokens: 108, cacheReadTokens: 0 }
     const request: AxChatRequest = {
       chatPrompt: [{ role: 'user', content: 'Look up the page' }],
       functions: [

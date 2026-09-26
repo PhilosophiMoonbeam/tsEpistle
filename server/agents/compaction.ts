@@ -65,7 +65,7 @@ export interface AgentCompactionReceipt {
   readonly outputTokens: number
   readonly totalTokens: number
   readonly costMicros: number
-  readonly performance?: { readonly cachedInputTokensReported: number | null }
+  readonly performance?: { readonly cachedInputTokensReported: number | null; readonly cacheCreationInputTokensReported: number | null }
   readonly content: string
   readonly contentTruncated: false
   readonly actionCallIds: readonly string[]

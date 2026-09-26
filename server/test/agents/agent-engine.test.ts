@@ -622,6 +622,116 @@ describe('Ax agent engine', () => {
       )
     }
   })
+  it.each(['openai-responses', 'openresponses', 'openai-chat', 'anthropic-messages'] as const)(
+    'settles %s cache reads and writes within full reported input, without discounting token quotas',
+    async transportKind => {
+      const reconciled: { inputTokens: number; outputTokens: number; totalTokens: number; costMicros: number }[] = []
+      const dispatchBudget = {
+        reserve: async (maximum: { tokens: number; costMicros: number }) => ({ id: 1, ...maximum }),
+        reconcile: async (_reservation: unknown, actual: (typeof reconciled)[number]) => {
+          reconciled.push(actual)
+        },
+        release: async () => {},
+        consumeTool: async () => {},
+        unsettledExposure: { tokens: 0, costMicros: 0 }
+      }
+      const factory = {
+        create: async () => ({
+          service: {
+            chat: async (): Promise<AxChatResponse> => ({
+              results: [{ index: 0, content: 'Answer.' }],
+              modelUsage: {
+                ai: 'test',
+                model: 'cache-model',
+                tokens: { promptTokens: 2, cacheReadTokens: 3, cacheCreationTokens: 1, completionTokens: 1, totalTokens: 7 }
+              }
+            })
+          },
+          capabilities: {
+            streaming: false,
+            toolCalling: 'native',
+            parallelToolCalls: true,
+            structuredOutput: 'native-json-schema',
+            usage: 'terminal',
+            cancellation: true,
+            maxContextTokens: 100_000,
+            maxOutputTokens: 4_000
+          },
+          transportKind,
+          model: 'cache-model',
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          pricing: { ...pricing, cacheWritePremium: true }
+        })
+      } as unknown as AgentProviderFactory
+      const event = vi.fn(async () => {})
+      const result = await new AxAgentEngine(factory).execute(
+        { ...request(new AbortController().signal), purpose: 'planner', dispatchBudget },
+        { text: async () => {}, event }
+      )
+      expect(result).toMatchObject({ inputTokens: 6, outputTokens: 1, totalTokens: 7, costMicros: 10 })
+      expect(reconciled).toEqual([{ inputTokens: 6, outputTokens: 1, totalTokens: 7, costMicros: 10 }])
+      expect(event).toHaveBeenCalledWith(
+        'model.turn',
+        expect.objectContaining({
+          performance: expect.objectContaining({
+            inputTokensReported: 6,
+            cachedInputTokensReported: 3,
+            cacheCreationInputTokensReported: 1
+          })
+        })
+      )
+    }
+  )
+  it('keeps the eligible root history prefix unchanged when run-scoped navigation context changes', async () => {
+    const calls: AxChatRequest[] = []
+    const factory = {
+      create: async () => ({
+        service: {
+          chat: async (input: AxChatRequest): Promise<AxChatResponse> => {
+            calls.push(input)
+            return { results: [{ index: 0, content: 'Done.' }] }
+          }
+        },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        preserveCachePrefix: true,
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const history = [
+      { role: 'user' as const, content: 'Earlier request.' },
+      { role: 'assistant' as const, content: 'Earlier answer.' },
+      { role: 'user' as const, content: 'Continue.' }
+    ]
+    for (const page of [
+      { id: 42, locale: 'en', path: 'guide', observedUpdatedAt: '2026-08-17T00:00:00.000Z' },
+      { id: 43, locale: 'en', path: 'operations', observedUpdatedAt: '2026-08-17T00:00:00.000Z' }
+    ]) {
+      const base = request(new AbortController().signal)
+      await new AxAgentEngine(factory).execute(
+        { ...base, run: { ...base.run, executionMode: 'generation-only' }, messages: history, currentPage: page },
+        { text: async () => {}, event: async () => {} }
+      )
+    }
+    expect(calls).toHaveLength(2)
+    expect(calls[0]!.chatPrompt.slice(0, 4)).toEqual(calls[1]!.chatPrompt.slice(0, 4))
+    expect(calls[0]!.chatPrompt[0]).toMatchObject({ role: 'system', content: expect.not.stringContaining('"path":"guide"') })
+    expect(calls[0]!.chatPrompt[4]).toMatchObject({ role: 'user', content: expect.stringContaining('"path":"guide"') })
+    expect(calls[1]!.chatPrompt[4]).toMatchObject({ role: 'user', content: expect.stringContaining('"path":"operations"') })
+  })
   it('uses the last complete cumulative cache snapshot, not a sum or an earlier partial report', async () => {
     for (const [snapshots, expected] of [
       [[1, 2], 2],
