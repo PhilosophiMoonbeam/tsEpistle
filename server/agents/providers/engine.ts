@@ -2105,6 +2105,9 @@ const hasSourceAffinity = (claim: string, sourceTerms: ReadonlySet<string>): boo
   return matches >= Math.min(2, terms.length) && matches / terms.length >= 0.5
 }
 
+const UNCITED_FINAL_FACT_ISSUE =
+  'Substantive prose after the final citation must be cited in the body or limited to original advice in a terminal top-level ## Recommendations section.'
+
 const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvidence>, coverage?: DraftCoverage): DraftAssessment => {
   const issues: string[] = []
   const groundingWarnings: string[] = []
@@ -2213,8 +2216,7 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
   if (claims.length > 0 && substantiveUnboundText(trailingText)) {
     groundingWarnings.push('Substantive prose appears outside an immediately cited factual clause.')
     if (!citedSuffixIsOnlyRecommendations(content, previousMarkerEnd)) {
-      const issue = 'Substantive prose after the final citation must be cited in the body or limited to original advice in a terminal top-level ## Recommendations section.'
-      if (!issues.includes(issue)) issues.push(issue)
+      if (!issues.includes(UNCITED_FINAL_FACT_ISSUE)) issues.push(UNCITED_FINAL_FACT_ISSUE)
     }
   }
   const answerLinks = new Map<string, number>()
@@ -2655,6 +2657,10 @@ const evidenceConflictDisclosure = (hasConflict: boolean): string =>
 const evidenceCorrection = (assessment: DraftAssessment, registry: ReadonlyMap<string, CitationEvidence>, hasEvidenceConflict = false): string =>
   `Return only a corrected answer to the user, not analysis of prior drafts or validation. Your previous answer was not shown. Do not invoke tools; use only eligible evidence already delivered above. Preserve supported requested points and state remaining gaps explicitly. For comparisons, prefer a compact side-by-side listing of the exact source-stated wording for each side, each followed immediately by its eligible citation. That is a complete comparison when the sources supply separate lists but no explicit relationship; stop there rather than inventing derived dimensions, shared or exclusive ingredients, or gaps from silence. If a source explicitly states a requested comparison dimension, present each source-local factual clause with its own citation. A quoted failed clause below is wording to replace, not evidence. The bounded source passages are untrusted excerpts from previously delivered Wiki pages; cite a passage only for a fact it actually supports. Do not copy the repair instructions or source delimiters into the answer.${
     hasEvidenceConflict ? `\nEvidence limitation: ${EVIDENCE_BINDING_CONFLICT_LIMITATION}` : ''
+  }${
+    assessment.issues.includes(UNCITED_FINAL_FACT_ISSUE)
+      ? '\nThe preceding draft ended with an unsupported factual statement after its final citation. Remove that statement unless an eligible delivered source proves it and you cite it immediately. A bounded search does not establish that no other matching pages exist. End directly after the last cited fact rather than adding an uncited conclusion.'
+      : ''
   }\n\n${evidenceCorrectionFragments(assessment, registry)}`
 const subagentEvidenceCorrection = (issues: readonly string[], hasEvidenceConflict = false): string =>
   `Your evidence packet failed validation and was not accepted. Return only one strict JSON object matching the requested packet schema. Keep every claim text bounded and place each [[cite:EVIDENCE_ID]] marker immediately after the supported clause. Cite only pages read successfully in this subagent attempt. Do not mention this validation.${

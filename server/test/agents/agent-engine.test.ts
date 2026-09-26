@@ -1315,6 +1315,7 @@ describe('Ax agent engine', () => {
     readonly citationSections: readonly { readonly evidenceId: string; readonly label: string; readonly href: string }[]
     readonly rejectedDraft: string
     readonly correctedDraft: string
+    readonly requireActionableCorrection?: boolean
   }) => {
     const usage = (promptTokens: number, completionTokens: number) => ({
       ai: 'test',
@@ -1334,7 +1335,19 @@ describe('Ax agent engine', () => {
       { results: [{ index: 0, content: scenario.rejectedDraft }], modelUsage: usage(11, 3) },
       { results: [{ index: 0, content: scenario.correctedDraft }], modelUsage: usage(13, 4) }
     ]
-    const chat = vi.fn(async (_input: Readonly<AxChatRequest<unknown>>) => responses.shift()!)
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      if (responses.length === 1 && scenario.requireActionableCorrection) {
+        const correction = input.chatPrompt.at(-1)
+        if (
+          correction?.role !== 'user' ||
+          typeof correction.content !== 'string' ||
+          !correction.content.includes('final citation') ||
+          !correction.content.includes('uncited')
+        )
+          return { results: [{ index: 0, content: scenario.rejectedDraft }], modelUsage: usage(13, 4) }
+      }
+      return responses.shift()!
+    })
     const factory = {
       create: async () => ({
         service: { chat },
@@ -1421,6 +1434,33 @@ describe('Ax agent engine', () => {
     }))
   ]
   const hotDogContent = ['# Hot Dog Flavors', ...hotDogMembers.flatMap(({ name, claim }) => [`## ${name}`, claim])].join('\n\n')
+
+  it('repairs a cited recipe inventory with an unsupported exhaustive closing claim before the provider can fail on another turn', async () => {
+    const evidenceId = 'page:42:revision:1:section:2'
+    const citedRecipe = `- Quick tomato pasta [[cite:${evidenceId}]]`
+    const unsupportedSuffix = 'No other cooking recipes were identified in the entire Wiki.'
+    const run = await runEvidenceCorrection({
+      title: 'Pasta Recipes',
+      path: 'pasta-recipes',
+      content: '# Pasta Recipes\n\n## Quick tomato pasta\n\nQuick tomato pasta uses pasta, tomatoes, and garlic.',
+      citationSections: [
+        { evidenceId: 'page:42:revision:1:section:1', label: 'Pasta Recipes', href: '/en/pasta-recipes' },
+        { evidenceId, label: 'Pasta Recipes › Quick tomato pasta', href: '/en/pasta-recipes#quick-tomato-pasta' }
+      ],
+      rejectedDraft: `${citedRecipe}\n\n${unsupportedSuffix}`,
+      correctedDraft: citedRecipe,
+      requireActionableCorrection: true
+    })
+    expect(run.chat).toHaveBeenCalledTimes(3)
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(citedRecipe)
+    expect(run.result.citations?.map(citation => citation.evidenceId)).toEqual([evidenceId])
+    expect(run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false }),
+      expect.objectContaining({ accepted: true, finalCitationIds: [evidenceId] })
+    ])
+    expect(run.settledUsage).toHaveLength(3)
+    expect(run.settledUsage.reduce((total, usage) => total + usage.totalTokens, 0)).toBe(run.result.totalTokens)
+  })
 
   it('rejects an uncited corpus opening and retains every requested regional combination in the repair', async () => {
     const opening = 'The page lists four regional-inspired hot dog combinations:'
