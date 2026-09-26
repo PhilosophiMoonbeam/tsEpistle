@@ -1245,6 +1245,183 @@ describe('Ax agent engine', () => {
       { evidenceId: 'page:1:revision:1:section:5', kind: 'page', label: 'Homepage › MFG Directory › Acme', href: '/en/home#acme' }
     ])
   })
+  it('rejects a supported current-page summary that omits a substantive top-level section', async () => {
+    const source = ['# General Info', 'The Wiki tracks regional dealer eligibility.', '# MFG Directory', 'Acme supplies catalog furniture.'].join('\n\n')
+    const singleSectionDraft = 'Acme supplies catalog furniture.[[cite:page:42:revision:9:section:2]]'
+    const completeSummary = [
+      'The Wiki tracks regional dealer eligibility.[[cite:page:42:revision:9:section:1]]',
+      'Acme supplies catalog furniture.[[cite:page:42:revision:9:section:2]]'
+    ].join('\n\n')
+    const responses: AxChatResponse[] = [
+      { results: [{ index: 0, functionCalls: [{ id: 'homepage', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }] }] },
+      { results: [{ index: 0, content: singleSectionDraft }] },
+      { results: [{ index: 0, content: completeSummary }] }
+    ]
+    const chat = vi.fn(async () => responses.shift()!)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => ({
+      id: 42,
+      locale: 'en',
+      path: 'guide',
+      sourceRevision: '9',
+      title: 'Current page',
+      contentType: 'markdown',
+      content: source,
+      citation: { evidenceId: 'page:42:revision:9', label: 'Current page', href: '/en/guide' },
+      citationSections: [
+        { evidenceId: 'page:42:revision:9:section:1', label: 'Current page › General Info', href: '/en/guide#general-info' },
+        { evidenceId: 'page:42:revision:9:section:2', label: 'Current page › MFG Directory', href: '/en/guide#mfg-directory' }
+      ]
+    }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn()
+      })
+    }
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+    const result = await new AxAgentEngine(factory, actions).execute(
+      {
+        ...request(new AbortController().signal),
+        messages: [{ role: 'user', content: 'Summarize the current Wiki page and cite the key sections.' }]
+      },
+      { text, event }
+    )
+
+    expect(chat).toHaveBeenCalledTimes(3)
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(completeSummary)
+    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toMatchObject([
+      {
+        accepted: false,
+        claims: [expect.objectContaining({ evidenceId: 'page:42:revision:9:section:2', supported: true })]
+      },
+      { accepted: true, finalCitationIds: ['page:42:revision:9:section:1', 'page:42:revision:9:section:2'] }
+    ])
+    expect(result.citations).toEqual([
+      { evidenceId: 'page:42:revision:9:section:1', kind: 'page', label: 'Current page › General Info', href: '/en/guide#general-info' },
+      { evidenceId: 'page:42:revision:9:section:2', kind: 'page', label: 'Current page › MFG Directory', href: '/en/guide#mfg-directory' }
+    ])
+  })
+
+  it('accepts a cited summary without requiring navigation-only top-level sections', async () => {
+    const source = [
+      '# Receiving',
+      'Carriers must email dispatch 36 hours before arrival.',
+      '# Returns',
+      'Approved hardware returns must ship within 14 days.',
+      '# Quick Links',
+      '[Dock calendar](/calendar)',
+      '[Return portal](/returns)'
+    ].join('\n\n')
+    const completeSummary = [
+      'Carriers must email dispatch 36 hours before arrival.[[cite:page:43:revision:10:section:1]]',
+      'Approved hardware returns must ship within 14 days.[[cite:page:43:revision:10:section:2]]'
+    ].join('\n\n')
+    const responses: AxChatResponse[] = [
+      { results: [{ index: 0, functionCalls: [{ id: 'homepage', type: 'function', function: { name: 'wiki_get_page', params: '{"id":43}' } }] }] },
+      { results: [{ index: 0, content: completeSummary }] }
+    ]
+    const chat = vi.fn(async () => responses.shift()!)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => ({
+      id: 43,
+      locale: 'en',
+      path: 'operations',
+      sourceRevision: '10',
+      title: 'Operations Guide',
+      contentType: 'markdown',
+      content: source,
+      citation: { evidenceId: 'page:43:revision:10', label: 'Operations Guide', href: '/en/operations' },
+      citationSections: [
+        { evidenceId: 'page:43:revision:10:section:1', label: 'Operations Guide › Receiving', href: '/en/operations#receiving' },
+        { evidenceId: 'page:43:revision:10:section:2', label: 'Operations Guide › Returns', href: '/en/operations#returns' },
+        { evidenceId: 'page:43:revision:10:section:3', label: 'Operations Guide › Quick Links', href: '/en/operations#quick-links' }
+      ]
+    }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn()
+      })
+    }
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+    const result = await new AxAgentEngine(factory, actions).execute(
+      {
+        ...request(new AbortController().signal),
+        currentPage: { id: 43, locale: 'en', path: 'operations', observedUpdatedAt: '2026-08-17T00:00:00.000Z' },
+        messages: [{ role: 'user', content: 'Summarize the substantive operating requirements and cite each section.' }]
+      },
+      { text, event }
+    )
+
+    expect(chat).toHaveBeenCalledTimes(2)
+    expect(invoke).toHaveBeenCalledWith('pages.get', { id: 43 }, expect.objectContaining({ aborted: false }), 'homepage')
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(completeSummary)
+    const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    expect(provenance).toHaveLength(1)
+    expect(provenance[0]).toMatchObject({
+      accepted: true,
+      issues: [],
+      claims: [
+        expect.objectContaining({ evidenceId: 'page:43:revision:10:section:1', supported: true }),
+        expect.objectContaining({ evidenceId: 'page:43:revision:10:section:2', supported: true })
+      ],
+      finalCitationIds: ['page:43:revision:10:section:1', 'page:43:revision:10:section:2']
+    })
+    expect(result.citations).toEqual([
+      { evidenceId: 'page:43:revision:10:section:1', kind: 'page', label: 'Operations Guide › Receiving', href: '/en/operations#receiving' },
+      { evidenceId: 'page:43:revision:10:section:2', kind: 'page', label: 'Operations Guide › Returns', href: '/en/operations#returns' }
+    ])
+  })
 
   it.each([
     ['unsupported predicate', 'Contract pricing guarantees free installation.[[cite:page:1:revision:9:section:2]]'],
