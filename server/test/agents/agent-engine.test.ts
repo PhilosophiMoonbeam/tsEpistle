@@ -1064,6 +1064,233 @@ describe('Ax agent engine', () => {
       expect.objectContaining({ accepted: true, issues: [], claims: [] })
     ])
   })
+  const runEvidenceCorrection = async (scenario: {
+    readonly title: string
+    readonly path: string
+    readonly content: string
+    readonly citationSections: readonly { readonly evidenceId: string; readonly label: string; readonly href: string }[]
+    readonly rejectedDraft: string
+    readonly correctedDraft: string
+  }) => {
+    const usage = (promptTokens: number, completionTokens: number) => ({
+      ai: 'test',
+      model: 'gpt-test',
+      tokens: { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens }
+    })
+    const responses: AxChatResponse[] = [
+      {
+        results: [
+          {
+            index: 0,
+            functionCalls: [{ id: 'read-source', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }]
+          }
+        ],
+        modelUsage: usage(10, 2)
+      },
+      { results: [{ index: 0, content: scenario.rejectedDraft }], modelUsage: usage(11, 3) },
+      { results: [{ index: 0, content: scenario.correctedDraft }], modelUsage: usage(13, 4) }
+    ]
+    const chat = vi.fn(async (_input: Readonly<AxChatRequest<unknown>>) => responses.shift()!)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => ({
+      id: 42,
+      locale: 'en',
+      path: scenario.path,
+      sourceRevision: '1',
+      title: scenario.title,
+      contentType: 'markdown',
+      content: scenario.content,
+      citation: { evidenceId: 'page:42:revision:1', label: scenario.title, href: `/en/${scenario.path}` },
+      citationSections: scenario.citationSections
+    }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn()
+      })
+    }
+    const settledUsage: { readonly inputTokens: number; readonly outputTokens: number; readonly totalTokens: number; readonly costMicros: number }[] = []
+    let reservationId = 0
+    const dispatchBudget = {
+      reserve: async (maximum: { readonly tokens: number; readonly costMicros: number }) => ({ id: ++reservationId, ...maximum }),
+      reconcile: async (
+        _reservation: { readonly id: number; readonly tokens: number; readonly costMicros: number },
+        actual: { readonly inputTokens: number; readonly outputTokens: number; readonly totalTokens: number; readonly costMicros: number }
+      ) => {
+        settledUsage.push(actual)
+      },
+      release: async (_reservation: { readonly id: number; readonly tokens: number; readonly costMicros: number }) => undefined,
+      consumeTool: async () => undefined,
+      unsettledExposure: { tokens: 0, costMicros: 0 }
+    } satisfies NonNullable<AgentEngineRequest['dispatchBudget']>
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+    const result = await new AxAgentEngine(factory, actions).execute(
+      { ...request(new AbortController().signal), dispatchBudget },
+      { text, event }
+    )
+    return { chat, event, result, settledUsage, text }
+  }
+
+  it('rejects an uncited corpus opening and retains every requested regional combination in the repair', async () => {
+    const members = [
+      {
+        name: 'Chicago-style',
+        claim: 'Chicago-style hot dogs include mustard, relish, chopped onion, tomato, a pickle spear, sport peppers, and celery salt.'
+      },
+      { name: 'New York–style', claim: 'New York–style hot dogs use sauerkraut and spicy brown mustard.' },
+      { name: 'Chili cheese', claim: 'Chili cheese hot dogs pair chili with melted cheese.' },
+      {
+        name: 'Sonoran-inspired',
+        claim: 'Sonoran-inspired hot dogs wrap the frank in bacon and add pinto beans, onion, tomato, and jalapeño sauce.'
+      }
+    ]
+    const evidenceIds = members.map((_, index) => `page:42:revision:1:section:${index + 2}`)
+    const citationSections = [
+      { evidenceId: 'page:42:revision:1:section:1', label: 'Hot Dog Flavors', href: '/en/hot-dog-flavors' },
+      ...members.map(({ name }, index) => ({
+        evidenceId: evidenceIds[index]!,
+        label: `Hot Dog Flavors › ${name}`,
+        href: `/en/hot-dog-flavors#${name.toLowerCase().replaceAll(' ', '-')}`
+      }))
+    ]
+    const opening = 'The page lists four regional-inspired hot dog combinations:'
+    const rejectedDraft = [
+      opening,
+      '',
+      ...members.map(({ claim }, index) => `- ${claim}[[cite:${evidenceIds[index]}]]`)
+    ].join('\n')
+    const correctedDraft = members.map(({ claim }, index) => `- ${claim}[[cite:${evidenceIds[index]}]]`).join('\n')
+    const run = await runEvidenceCorrection({
+      title: 'Hot Dog Flavors',
+      path: 'hot-dog-flavors',
+      content: ['# Hot Dog Flavors', ...members.flatMap(({ name, claim }) => [`## ${name}`, claim])].join('\n\n'),
+      citationSections,
+      rejectedDraft,
+      correctedDraft
+    })
+    const provenance = run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    const published = run.text.mock.calls.map(([delta]) => delta).join('')
+    expect(run.chat).toHaveBeenCalledTimes(3)
+    expect(provenance).toHaveLength(2)
+    expect(provenance[0]).toMatchObject({ accepted: false })
+    expect(provenance[1]).toMatchObject({ accepted: true, finalCitationIds: evidenceIds })
+    expect(run.result.citations?.map(({ evidenceId }) => evidenceId)).toEqual(evidenceIds)
+    expect(published).toBe(correctedDraft)
+    expect(published).toContain('Chicago-style')
+    expect(published).toContain('New York–style')
+    expect(published).toContain('Chili cheese')
+    expect(published).toContain('Sonoran-inspired')
+    expect(published).not.toContain(opening)
+    expect(published).not.toContain(rejectedDraft)
+    expect(run.result).toMatchObject({ inputTokens: 34, outputTokens: 9, totalTokens: 43, costMicros: 52 })
+    expect(run.settledUsage).toHaveLength(3)
+    expect(run.settledUsage.reduce((total, usage) => total + usage.totalTokens, 0)).toBe(run.result.totalTokens)
+    expect(run.settledUsage.reduce((total, usage) => total + usage.costMicros, 0)).toBe(run.result.costMicros)
+  })
+
+  it('rejects a factual uncited introduction between independently supported sections', async () => {
+    const sections = [
+      {
+        evidenceId: 'page:42:revision:1:section:2',
+        label: 'Maintenance Cycle › Prepare',
+        href: '/en/maintenance-cycle#prepare'
+      },
+      {
+        evidenceId: 'page:42:revision:1:section:3',
+        label: 'Maintenance Cycle › Records',
+        href: '/en/maintenance-cycle#records'
+      },
+      {
+        evidenceId: 'page:42:revision:1:section:4',
+        label: 'Maintenance Cycle › Close',
+        href: '/en/maintenance-cycle#close'
+      }
+    ]
+    const first = 'Verify the pressure gauge is at zero before service.'
+    const middle = 'Record the equipment serial number before adding lubricant.'
+    const last = 'A visual inspection completes each service cycle.'
+    const rejectedDraft = [
+      `${first}[[cite:${sections[0]!.evidenceId}]]`,
+      middle,
+      `${last}[[cite:${sections[2]!.evidenceId}]]`
+    ].join('\n\n')
+    const correctedDraft = [
+      `${first}[[cite:${sections[0]!.evidenceId}]]`,
+      `${middle}[[cite:${sections[1]!.evidenceId}]]`,
+      `${last}[[cite:${sections[2]!.evidenceId}]]`
+    ].join('\n\n')
+    const run = await runEvidenceCorrection({
+      title: 'Maintenance Cycle',
+      path: 'maintenance-cycle',
+      content: ['# Maintenance Cycle', '## Prepare', first, '## Records', middle, '## Close', last].join('\n\n'),
+      citationSections: [
+        { evidenceId: 'page:42:revision:1:section:1', label: 'Maintenance Cycle', href: '/en/maintenance-cycle' },
+        ...sections
+      ],
+      rejectedDraft,
+      correctedDraft
+    })
+    const provenance = run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+
+    expect(run.chat).toHaveBeenCalledTimes(3)
+    expect(provenance).toHaveLength(2)
+    expect(provenance[0]).toMatchObject({ accepted: false })
+    expect(provenance[1]).toMatchObject({ accepted: true, finalCitationIds: sections.map(({ evidenceId }) => evidenceId) })
+    expect(run.result.citations?.map(({ evidenceId }) => evidenceId)).toEqual(sections.map(({ evidenceId }) => evidenceId))
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(correctedDraft)
+  })
+
+  it('moves an uncited original recommendation after its cited fact during evidence repair', async () => {
+    const evidenceId = 'page:42:revision:1:section:2'
+    const recommendation = 'I recommend keeping the checksum report beside the case record.'
+    const fact = 'The first safety check compares the archive checksum against the manifest.'
+    const rejectedDraft = `${recommendation}\n\n${fact}[[cite:${evidenceId}]]`
+    const correctedDraft = `${fact}[[cite:${evidenceId}]]\n\n${recommendation}`
+    const run = await runEvidenceCorrection({
+      title: 'Checksum Procedure',
+      path: 'checksum-procedure',
+      content: ['# Checksum Procedure', '## Archive review', fact].join('\n\n'),
+      citationSections: [
+        { evidenceId: 'page:42:revision:1:section:1', label: 'Checksum Procedure', href: '/en/checksum-procedure' },
+        { evidenceId, label: 'Checksum Procedure › Archive review', href: '/en/checksum-procedure#archive-review' }
+      ],
+      rejectedDraft,
+      correctedDraft
+    })
+    const provenance = run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+
+    expect(run.chat).toHaveBeenCalledTimes(3)
+    expect(provenance).toHaveLength(2)
+    expect(provenance[0]).toMatchObject({ accepted: false })
+    expect(provenance[1]).toMatchObject({ accepted: true, finalCitationIds: [evidenceId] })
+    expect(run.result.citations?.map(({ evidenceId: citedId }) => citedId)).toEqual([evidenceId])
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(correctedDraft)
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toContain(recommendation)
+  })
 
   it('binds every rendered Markdown link to exact cited evidence without treating destinations as factual prose', async () => {
     const invoke = vi.fn(async () => ({
