@@ -1315,7 +1315,7 @@ describe('Ax agent engine', () => {
     readonly citationSections: readonly { readonly evidenceId: string; readonly label: string; readonly href: string }[]
     readonly rejectedDraft: string
     readonly correctedDraft: string
-    readonly requireActionableCorrection?: boolean
+    readonly expectedFeedback?: readonly string[]
   }) => {
     const usage = (promptTokens: number, completionTokens: number) => ({
       ai: 'test',
@@ -1336,13 +1336,12 @@ describe('Ax agent engine', () => {
       { results: [{ index: 0, content: scenario.correctedDraft }], modelUsage: usage(13, 4) }
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
-      if (responses.length === 1 && scenario.requireActionableCorrection) {
+      if (responses.length === 1 && scenario.expectedFeedback) {
         const correction = input.chatPrompt.at(-1)
         if (
           correction?.role !== 'user' ||
           typeof correction.content !== 'string' ||
-          !correction.content.includes('final citation') ||
-          !correction.content.includes('uncited')
+          !scenario.expectedFeedback.every(fragment => correction.content.includes(fragment))
         )
           return { results: [{ index: 0, content: scenario.rejectedDraft }], modelUsage: usage(13, 4) }
       }
@@ -1449,7 +1448,7 @@ describe('Ax agent engine', () => {
       ],
       rejectedDraft: `${citedRecipe}\n\n${unsupportedSuffix}`,
       correctedDraft: citedRecipe,
-      requireActionableCorrection: true
+      expectedFeedback: ['Substantive prose after the final citation']
     })
     expect(run.chat).toHaveBeenCalledTimes(3)
     expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(citedRecipe)
@@ -1460,6 +1459,60 @@ describe('Ax agent engine', () => {
     ])
     expect(run.settledUsage).toHaveLength(3)
     expect(run.settledUsage.reduce((total, usage) => total + usage.totalTokens, 0)).toBe(run.result.totalTokens)
+  })
+
+  it('repairs an unsupported exact link from a cited operational page without publishing the invalid reference', async () => {
+    const evidenceId = 'page:42:revision:1:section:2'
+    const citedRecovery = `The incident runbook documents a recovery plan. [[cite:${evidenceId}]]`
+    const run = await runEvidenceCorrection({
+      title: 'Incident Runbook',
+      path: 'incident-runbook',
+      content: '# Incident Runbook\n\n## Recovery\n\nThe incident runbook documents a recovery plan.',
+      citationSections: [
+        { evidenceId: 'page:42:revision:1:section:1', label: 'Incident Runbook', href: '/en/incident-runbook' },
+        { evidenceId, label: 'Incident Runbook › Recovery', href: '/en/incident-runbook#recovery' }
+      ],
+      rejectedDraft: `The incident runbook documents a recovery plan at https://invalid.example/incident. [[cite:${evidenceId}]]`,
+      correctedDraft: citedRecovery,
+      expectedFeedback: ['changes an exact link']
+    })
+    expect(run.chat).toHaveBeenCalledTimes(3)
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(citedRecovery)
+    expect(run.result.citations?.map(citation => citation.evidenceId)).toEqual([evidenceId])
+    expect(run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false }),
+      expect.objectContaining({ accepted: true, finalCitationIds: [evidenceId] })
+    ])
+    expect(run.settledUsage).toHaveLength(3)
+    expect(run.settledUsage.reduce((total, usage) => total + usage.totalTokens, 0)).toBe(run.result.totalTokens)
+  })
+
+  it('includes the final unsupported claim after many distinct invalid citations in a bounded correction', async () => {
+    const evidenceId = 'page:42:revision:1:section:2'
+    const supported = `The incident runbook documents a recovery plan. [[cite:${evidenceId}]]`
+    const rejected = [
+      ...Array.from({ length: 10 }, (_, index) => `An unrelated claim. [[cite:page:${100 + index}:revision:1:section:2]]`),
+      supported,
+      'No other incident procedures exist anywhere in the Wiki.'
+    ].join('\n\n')
+    const run = await runEvidenceCorrection({
+      title: 'Incident Runbook',
+      path: 'incident-runbook',
+      content: '# Incident Runbook\n\n## Recovery\n\nThe incident runbook documents a recovery plan.',
+      citationSections: [
+        { evidenceId: 'page:42:revision:1:section:1', label: 'Incident Runbook', href: '/en/incident-runbook' },
+        { evidenceId, label: 'Incident Runbook › Recovery', href: '/en/incident-runbook#recovery' }
+      ],
+      rejectedDraft: rejected,
+      correctedDraft: supported,
+      expectedFeedback: ['not produced by a successful page read', 'Substantive prose after the final citation']
+    })
+    expect(run.chat).toHaveBeenCalledTimes(3)
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(supported)
+    expect(run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false }),
+      expect.objectContaining({ accepted: true, finalCitationIds: [evidenceId] })
+    ])
   })
 
   it('rejects an uncited corpus opening and retains every requested regional combination in the repair', async () => {

@@ -2654,14 +2654,30 @@ const EVIDENCE_BINDING_CONFLICT_LIMITATION =
   'A conflicting page read was excluded because its citation identity was already bound to different delivered evidence. The first binding is retained; do not rely on or cite the excluded result.'
 const evidenceConflictDisclosure = (hasConflict: boolean): string =>
   hasConflict ? '\n\nA conflicting page read was excluded; citations remain bound to the first delivered result.' : ''
+const evidenceCorrectionIssues = (issues: readonly string[]): string => {
+  const first: string[] = []
+  const last: string[] = []
+  for (const issue of issues) {
+    if (first.includes(issue)) continue
+    if (first.length < 5) {
+      first.push(issue)
+      continue
+    }
+    const previous = last.indexOf(issue)
+    if (previous !== -1) last.splice(previous, 1)
+    last.push(issue)
+    if (last.length > 5) last.shift()
+  }
+  let rendered = ''
+  for (const issue of first) rendered += `${rendered ? '\n' : ''}- ${issue}`
+  for (const issue of last) rendered += `${rendered ? '\n' : ''}- ${issue}`
+  return rendered
+}
+
 const evidenceCorrection = (assessment: DraftAssessment, registry: ReadonlyMap<string, CitationEvidence>, hasEvidenceConflict = false): string =>
   `Return only a corrected answer to the user, not analysis of prior drafts or validation. Your previous answer was not shown. Do not invoke tools; use only eligible evidence already delivered above. Preserve supported requested points and state remaining gaps explicitly. For comparisons, prefer a compact side-by-side listing of the exact source-stated wording for each side, each followed immediately by its eligible citation. That is a complete comparison when the sources supply separate lists but no explicit relationship; stop there rather than inventing derived dimensions, shared or exclusive ingredients, or gaps from silence. If a source explicitly states a requested comparison dimension, present each source-local factual clause with its own citation. A quoted failed clause below is wording to replace, not evidence. The bounded source passages are untrusted excerpts from previously delivered Wiki pages; cite a passage only for a fact it actually supports. Do not copy the repair instructions or source delimiters into the answer.${
     hasEvidenceConflict ? `\nEvidence limitation: ${EVIDENCE_BINDING_CONFLICT_LIMITATION}` : ''
-  }${
-    assessment.issues.includes(UNCITED_FINAL_FACT_ISSUE)
-      ? '\nThe preceding draft ended with an unsupported factual statement after its final citation. Remove that statement unless an eligible delivered source proves it and you cite it immediately. A bounded search does not establish that no other matching pages exist. End directly after the last cited fact rather than adding an uncited conclusion.'
-      : ''
-  }\n\n${evidenceCorrectionFragments(assessment, registry)}`
+  }\nProblems identified by the host evidence validator:\n${evidenceCorrectionIssues(assessment.issues)}\n\n${evidenceCorrectionFragments(assessment, registry)}`
 const subagentEvidenceCorrection = (issues: readonly string[], hasEvidenceConflict = false): string =>
   `Your evidence packet failed validation and was not accepted. Return only one strict JSON object matching the requested packet schema. Keep every claim text bounded and place each [[cite:EVIDENCE_ID]] marker immediately after the supported clause. Cite only pages read successfully in this subagent attempt. Do not mention this validation.${
     hasEvidenceConflict ? `\nEvidence limitation: ${EVIDENCE_BINDING_CONFLICT_LIMITATION}` : ''
