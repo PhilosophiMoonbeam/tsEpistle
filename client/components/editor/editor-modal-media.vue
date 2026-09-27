@@ -381,7 +381,7 @@
             role='status'
             aria-live='polite'
           )
-            .text-body-small New asset #{{resizeReceipt.assetId}}: {{resizeReceipt.destinationPath}}
+            .text-body-small New asset ID {{resizeReceipt.assetId}}: {{resizeReceipt.destinationPath}}
             .text-caption {{resizeReceipt.width}} × {{resizeReceipt.height}} px · {{resizeReceipt.format.toUpperCase()}} · {{prettyBytes(resizeReceipt.fileSize)}}
           v-alert.mt-2(v-if='resizeError', type='error', variant='tonal', density='compact', role='alert')
             .text-body-small {{resizeError}}
