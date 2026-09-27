@@ -221,7 +221,9 @@ const inspectIdentity = async (tx: Knex.Transaction, page: PageRow, revision: st
   const localeCode = page.localeCode
   const path = page.path
   const visibility = page.visibility
-  const ownerValid = page.ownerId === null || (Number.isSafeInteger(page.ownerId) && page.ownerId > 0)
+  const ownerValid = visibility === 'public'
+    ? page.ownerId === null
+    : visibility === 'private' && typeof page.ownerId === 'number' && Number.isSafeInteger(page.ownerId) && page.ownerId > 0
   const publicationValid = normalizedBoolean(page.isPublished) !== null && normalizedBoolean(page.isSearchable) !== null
   const routeValid =
     validLocale(localeCode) &&
@@ -237,8 +239,11 @@ const inspectIdentity = async (tx: Knex.Transaction, page: PageRow, revision: st
   }
   const locale = await tx('locales').where({ code: localeCode }).first('code')
   if (!locale) return finding(page.id, revision, 'PAGE_IDENTITY', 'Restore a valid installed locale assignment through the native page administration.', 'error')
-  const duplicate = await tx('pages').where({ localeCode, path }).whereNot('id', page.id).first('id')
-  if (duplicate) return finding(page.id, revision, 'PAGE_IDENTITY', 'Resolve the duplicate locale-and-path identity using the native page move workflow.', 'error')
+  const duplicate = await tx('pages')
+    .where({ localeCode, path, visibility, ownerId: page.ownerId })
+    .whereNot('id', page.id)
+    .first('id')
+  if (duplicate) return finding(page.id, revision, 'PAGE_IDENTITY', 'Resolve the duplicate page identity using the native page move workflow.', 'error')
   return healthy(page.id, revision, 'PAGE_IDENTITY')
 }
 

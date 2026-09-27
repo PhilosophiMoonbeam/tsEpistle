@@ -2,6 +2,7 @@ import { assertSavedPassword } from '../helpers/password-policy.ts'
 import { newPasswordIssue } from '../../shared/security-policy.ts'
 import { loadEnrollmentPolicy } from '../helpers/authentication-provisioning.ts'
 import { resolveUserPresentation } from '../helpers/user-presentation.ts'
+import type { MailOptions } from '../core/mail.ts'
 /* global WIKI */
 
 import { randomUUID } from 'node:crypto'
@@ -88,20 +89,6 @@ interface PassportService {
   ): (request: AuthenticationContext['req'], response: unknown, next: () => void) => void
 }
 
-interface MailMessage {
-  template: string
-  to: string
-  subject: string
-  data: {
-    preheadertext: string
-    title: string
-    content: string
-    buttonLink: string
-    buttonText: string
-  }
-  text: string
-}
-
 interface UsersWikiContext extends Record<string, unknown> {
   Error: {
     AuthAccountAlreadyExists: new () => Error
@@ -139,7 +126,7 @@ interface UsersWikiContext extends Record<string, unknown> {
     error(message: string): void
     warn(value: unknown): void
   }
-  mail: { send(message: MailMessage): Promise<void> }
+  mail: { send(message: MailOptions): Promise<unknown> }
   models: {
     assets: typeof Asset
     authentication: typeof Authentication
@@ -1023,18 +1010,10 @@ export default class User extends Model {
     })
 
     await wiki.mail.send({
-      template: 'accountResetPwd',
+      template: 'account-reset-pwd',
       to: email,
-      subject: `Password Reset Request`,
-      data: {
-        preheadertext: `A password reset was requested for ${wiki.config.title}`,
-        title: `A password reset was requested for ${wiki.config.title}`,
-        content: `Click the button below to reset your password. If you didn't request this password reset, simply discard this email.`,
-        buttonLink: `${wiki.config.host}/login-reset/${resetToken}`,
-        buttonText: 'Reset Password'
-      },
-      text: `A password reset was requested for wiki ${wiki.config.title}. Open the following link to proceed: ${wiki.config.host}/login-reset/${resetToken}`
-    })
+      data: { buttonLink: `${wiki.config.host}/login-reset/${resetToken}` }
+    } satisfies MailOptions)
   }
 
   /**
@@ -1090,18 +1069,10 @@ export default class User extends Model {
     if (expectedEmail !== undefined && usr.email !== expectedEmail)
       throw new wiki.Error.InputInvalid('The account email changed. Reload before sending a welcome message.')
     await wiki.mail.send({
-      template: 'accountWelcome',
+      template: 'account-welcome',
       to: usr.email,
-      subject: `Welcome to the wiki ${wiki.config.title}`,
-      data: {
-        preheadertext: `You've been invited to the wiki ${wiki.config.title}`,
-        title: `You've been invited to the wiki ${wiki.config.title}`,
-        content: 'Click the button below to access the wiki.',
-        buttonLink: `${wiki.config.host}/login`,
-        buttonText: 'Login'
-      },
-      text: `You've been invited to the wiki ${wiki.config.title}: ${wiki.config.host}/login`
-    })
+      data: { buttonLink: `${wiki.config.host}/login` }
+    } satisfies MailOptions)
   }
 
   /**
@@ -1502,18 +1473,10 @@ export default class User extends Model {
       if (verify && registration.verificationToken) {
         try {
           await wiki.mail.send({
-            template: 'accountVerify',
+            template: 'account-verify',
             to: email,
-            subject: 'Verify your account',
-            data: {
-              preheadertext: 'Verify your account in order to gain access to the wiki.',
-              title: 'Verify your account',
-              content: 'Click the button below in order to verify your account and gain access to the wiki.',
-              buttonLink: `${wiki.config.host}/verify/${registration.verificationToken}`,
-              buttonText: 'Verify'
-            },
-            text: `You must open the following link in your browser to verify your account and gain access to the wiki: ${wiki.config.host}/verify/${registration.verificationToken}`
-          })
+            data: { buttonLink: `${wiki.config.host}/verify/${registration.verificationToken}` }
+          } satisfies MailOptions)
         } catch (error) {
           await wiki.models.knex.transaction(async trx => {
             await wiki.models.userKeys.query(trx).delete().where('userId', registration.newUsr.id)

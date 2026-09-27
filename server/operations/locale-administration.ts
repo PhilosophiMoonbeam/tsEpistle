@@ -68,7 +68,6 @@ export type LocalePackageJobContext =
 export interface LocalePackageStore {
   jobContext(job: DurableJob): Promise<LocalePackageJobContext>
   publishJob(job: DurableJob, catalog: LocaleCatalogEntry[], strings?: LocaleStrings): Promise<LocaleWriteResult>
-  discardLocalFileReview(job: DurableJob): Promise<void>
 }
 interface Dependencies {
   db: Knex
@@ -252,7 +251,8 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
       return fail('This language-file review belongs to a different administrator.', 403)
     if (review.workspaceFingerprint !== saved.fingerprint)
       return fail('Locale settings or installed packages changed after this file was reviewed.', 409)
-    if (Date.parse(review.expiresAt) <= Date.now()) return fail('This language-file review expired. Review the file again.', 409)
+    if (!review.jobId && Date.parse(review.expiresAt) <= Date.now())
+      return fail('This language-file review expired. Review the file again.', 409)
   }
   const verifyLocalReviewBytes = (review: StoredLocalFileReview) => {
     const bytes = Buffer.from(review.exactBytes, 'base64')
@@ -294,18 +294,21 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
       return fail('The language catalog or installed package changed after this file was reviewed.', 409)
     return row
   }
-  const clearExpiredLocalReview = async (reviewId?: string, jobId?: string, force = false) => {
+  const clearExpiredLocalReview = async () => {
     await deps.db.transaction(async tx => {
       const row = await tx<Setting>('settings').where({ key: 'localeAdministration' }).forUpdate().first(),
         metadata = record(row?.value),
         review = storedLocalReview(metadata.localFileReview)
       if (!Object.hasOwn(metadata, 'localFileReview')) return
-      if (reviewId && review && review.id !== reviewId) return
-      if (jobId && review && review.jobId !== jobId) return
-      let shouldClear = force || !review || Date.parse(review.expiresAt) <= Date.now()
-      if (!shouldClear && review?.jobId) {
-        const job = await tx('durableJobs').where({ id: review.jobId, type: 'locale-package', version: 1 }).first('state')
+      let shouldClear = !review
+      if (review?.jobId) {
+        const job = await tx('durableJobs')
+          .where({ id: review.jobId, type: 'locale-package', version: 1 })
+          .forUpdate()
+          .first('state')
         shouldClear = !job || !['pending', 'running'].includes(job.state)
+      } else if (review) {
+        shouldClear = Date.parse(review.expiresAt) <= Date.now()
       }
       if (!shouldClear) return
       const next = { ...metadata }
@@ -659,10 +662,6 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
         await tx.rollback()
         throw error
       }
-    },
-    async discardLocalFileReview(job: DurableJob) {
-      const reviewId = typeof job.payload.reviewId === 'string' ? job.payload.reviewId : undefined
-      await clearExpiredLocalReview(reviewId, job.id, true)
     },
     async publishJob(job: DurableJob, catalog: LocaleCatalogEntry[], strings?: LocaleStrings) {
       await deps.db.transaction(async tx => {

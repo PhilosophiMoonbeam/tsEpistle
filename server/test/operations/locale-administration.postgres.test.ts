@@ -1,5 +1,5 @@
 import knexModule, { type Knex } from 'knex'
-import { beforeAll, afterAll, beforeEach, describe, it, expect } from '../bun-test.mts'
+import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from '../bun-test.mts'
 import { createLocaleAdministrationStore } from '../../operations/locale-administration.ts'
 import { DurableJobStore, runDurableJobBatch } from '../../core/durable-jobs.ts'
 import { publishLocaleSynchronization } from '../../operations/locale-synchronization.ts'
@@ -308,6 +308,62 @@ suite('PostgreSQL reviewed Locale administration', () => {
     await db('groups').where('id', 1).update('permissions', '["manage:navigation"]')
     await expect(store.inspect(api)).rejects.toThrow('System administration')
   })
+  it('rejects an uncommitted local review after its fifteen-minute deadline', async () => {
+    const reviewed = await store.reviewLocalFile(admin, {
+      code: 'fr',
+      fingerprint: (await read()).fingerprint,
+      reason: 'Review a French file',
+      bytes: new TextEncoder().encode('{"common:greeting":"Bonjour"}')
+    })
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(reviewed.expiresAt) + 1)
+    try {
+      await expect(store.enqueueLocalFile(admin, { reviewId: reviewed.id })).rejects.toThrow('Review the file again')
+      expect((await db('settings').where({ key: 'localeAdministration' }).first()).value.localFileReview).toBeUndefined()
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('retains an accepted local file through an expired review deadline until its durable job publishes', async () => {
+    const reviewed = await store.reviewLocalFile(admin, {
+      code: 'fr',
+      fingerprint: (await read()).fingerprint,
+      reason: 'Install reviewed French copy',
+      bytes: new TextEncoder().encode('{"common:greeting":"Bonjour après la file"}')
+    })
+    const { jobId } = await store.enqueueLocalFile(admin, { reviewId: reviewed.id })
+    const job = (await new DurableJobStore(db).claim({ workerId: 'local-worker', supportedIdentities: ['locale-package@1'] }))[0]!
+    const later = Date.now() + 16 * 60 * 1000
+    await db('durableJobs').where({ id: jobId }).update({ leaseExpiresAt: new Date(later + 60_000) })
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(later)
+    try {
+      expect(await store.jobContext(job)).toEqual({ kind: 'local', alreadyApplied: false })
+      await store.publishJob(job, [])
+    } finally {
+      clock.mockRestore()
+    }
+    expect((await db('locales').where({ code: 'fr' }).first()).strings).toEqual({ common: { greeting: 'Bonjour après la file' } })
+    expect((await read()).history[0].appliedAt).toBeTruthy()
+    expect((await db('settings').where({ key: 'localeAdministration' }).first()).value.localFileReview).toBeUndefined()
+  })
+
+  it('reclaims a terminal local job review without reusing its failed upload', async () => {
+    const request = {
+      code: 'fr',
+      fingerprint: (await read()).fingerprint,
+      reason: 'Install reviewed French copy',
+      bytes: new TextEncoder().encode('{"common:greeting":"Bonjour"}')
+    }
+    const reviewed = await store.reviewLocalFile(admin, request)
+    const { jobId } = await store.enqueueLocalFile(admin, { reviewId: reviewed.id })
+    await db('durableJobs').where({ id: jobId }).update({ state: 'failed' })
+    await read()
+    expect((await db('settings').where({ key: 'localeAdministration' }).first()).value.localFileReview).toBeUndefined()
+    await expect(store.enqueueLocalFile(admin, { reviewId: reviewed.id })).rejects.toThrow('Review the file again')
+    const fresh = await store.reviewLocalFile(admin, { ...request, fingerprint: (await read()).fingerprint })
+    expect(fresh.id).not.toBe(reviewed.id)
+  })
+
   it('rejects competing reviews and retains only the latest 50 administrative receipts', async () => {
     const current = await read(),
       payload = { policy: { ...current.policy, autoUpdate: false }, fingerprint: current.fingerprint, reason: 'Concurrent policy review' }

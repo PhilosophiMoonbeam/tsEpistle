@@ -34,13 +34,6 @@ export const createLocalePackageHandler =
       await store.publishJob(job, catalog, strings)
     } catch (error) {
       signal.throwIfAborted()
-      if (job.payload.kind === 'local' && job.attempts >= job.maxAttempts) {
-        try {
-          await store.discardLocalFileReview(job)
-        } catch {
-          /* The terminal durable-job receipt remains authoritative if cleanup cannot commit. */
-        }
-      }
       // Durable job errors are persisted; never retain remote response bodies or database details.
       const status = error && typeof error === 'object' ? Reflect.get(error, 'status') : undefined
       throw new Error(
