@@ -138,6 +138,40 @@
               is reachable or its certificate is valid.
             </p>
             <v-btn to="/a/ssl" variant="outlined" append-icon="mdi-arrow-right">HTTPS &amp; certificates</v-btn>
+            <section class="system-metrics-reference" aria-labelledby="system-metrics-title">
+              <div class="system-section-head">
+                <h3 id="system-metrics-title">Prometheus metrics</h3>
+                <span class="system-state" :class="{ 'system-warning': metricsEnabled !== true }" role="status">{{ metricsStatusLabel }}</span>
+              </div>
+              <p class="system-note">
+                Metrics enablement comes from this process. Scrape access requires an authenticated session with manage:system; the current-origin URL contains no credentials. The preview is an on-demand same-origin request shown as plain text.
+              </p>
+              <p v-if="metricsStateError" class="system-warning" role="status">{{ metricsStateError }}</p>
+              <dl class="system-facts">
+                <dt>Current-origin URL</dt>
+                <dd><code>{{ metricsUrl }}</code></dd>
+              </dl>
+              <div class="system-actions">
+                <v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyMetricsUrl">Copy endpoint URL</v-btn>
+                <v-btn
+                  variant="outlined"
+                  prepend-icon="mdi-text-box-search-outline"
+                  :disabled="metricsEnabled !== true || metricsPreviewLoading"
+                  :aria-busy="metricsPreviewLoading"
+                  @click="previewMetrics"
+                >
+                  {{ metricsPreview !== null ? 'Refresh text preview' : 'Preview scrape text' }}
+                </v-btn>
+                <v-btn v-if="metricsPreview !== null || metricsPreviewError" variant="text" @click="clearMetricsPreview">Hide preview</v-btn>
+              </div>
+              <p v-if="metricsCopyError" class="system-warning" role="alert">{{ metricsCopyError }}</p>
+              <p v-if="metricsPreviewError" class="system-warning" role="alert">{{ metricsPreviewError }}</p>
+              <p v-if="metricsPreviewLoading" role="status">Requesting a same-origin plain-text preview…</p>
+              <div v-if="metricsPreview !== null">
+                <h4>Scrape output · plain text</h4>
+                <pre class="system-report" tabindex="0" aria-label="Prometheus metrics preview in plain text">{{ metricsPreview }}</pre>
+              </div>
+            </section>
             <h3 class="system-section-title">Connected processes</h3>
             <div v-if="snapshot.database.connectedProcesses.status === 'unavailable'" class="system-empty">
               <v-icon icon="mdi-database-alert-outline" size="32" />
@@ -421,6 +455,7 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AsyncState from '../common/async-state.vue'
 import { fetchSystemWorkspace } from '../../helpers/system-workspace-api.ts'
+import { fetchSystemMetricsPreview, fetchSystemMetricsState } from '../../helpers/system-api.ts'
 import { systemJobDestination, systemSupportReport, type SystemWorkspace } from '../../../shared/system-workspace.ts'
 const sections = [
   { key: 'overview', title: 'Overview' },
@@ -438,9 +473,20 @@ const route = useRoute(),
   jobQuery = ref(''),
   includeDeployment = ref(false),
   copyError = ref('')
-let controller: AbortController | null = null
+const metricsEnabled = ref<boolean | null>(null),
+  metricsStateError = ref(''),
+  metricsCopyError = ref(''),
+  metricsPreview = ref<string | null>(null),
+  metricsPreviewError = ref(''),
+  metricsPreviewLoading = ref(false)
+let controller: AbortController | null = null,
+  metricsPreviewController: AbortController | null = null
 const section = computed<Section>(() => sections.find((tab) => tab.key === route.query.section)?.key ?? 'overview')
 const selectSection = (key: Section) => router.replace({ query: { ...route.query, section: key === 'overview' ? undefined : key } })
+const metricsUrl = computed(() => new URL('/metrics', window.location.origin).href)
+const metricsStatusLabel = computed(() =>
+  metricsEnabled.value === null ? 'Status unavailable' : metricsEnabled.value ? 'Enabled' : 'Disabled'
+)
 const dateTime = (value: string) => new Date(value).toLocaleString()
 const number = (value: number) => value.toLocaleString()
 const bytes = (value: number) => {
@@ -533,13 +579,28 @@ async function load() {
   controller?.abort()
   const current = new AbortController()
   controller = current
+  metricsPreviewController?.abort()
+  metricsPreviewController = null
+  metricsPreviewLoading.value = false
+  metricsEnabled.value = null
+  metricsStateError.value = ''
+  metricsPreview.value = null
+  metricsPreviewError.value = ''
+  metricsCopyError.value = ''
   loading.value = true
   error.value = ''
   notice.value = ''
   copyError.value = ''
   try {
     const result = await fetchSystemWorkspace(current.signal)
-    if (!current.signal.aborted) snapshot.value = result
+    if (current.signal.aborted) return
+    snapshot.value = result
+    try {
+      const metrics = await fetchSystemMetricsState(window.fetch.bind(window), current.signal)
+      if (!current.signal.aborted) metricsEnabled.value = metrics.enabled
+    } catch (e) {
+      if (!current.signal.aborted) metricsStateError.value = e instanceof Error ? e.message : 'Metrics status is unavailable.'
+    }
   } catch (e) {
     if (!current.signal.aborted) error.value = e instanceof Error ? e.message : 'System observations could not be collected.'
   } finally {
@@ -548,6 +609,43 @@ async function load() {
       controller = null
     }
   }
+}
+async function copyMetricsUrl() {
+  metricsCopyError.value = ''
+  try {
+    await navigator.clipboard.writeText(metricsUrl.value)
+    notice.value = 'Metrics endpoint URL copied.'
+  } catch {
+    metricsCopyError.value = 'Clipboard access is unavailable. Select the endpoint URL above to copy it.'
+  }
+}
+async function previewMetrics() {
+  if (metricsEnabled.value !== true) return
+  metricsPreviewController?.abort()
+  const current = new AbortController()
+  metricsPreviewController = current
+  metricsPreviewLoading.value = true
+  metricsPreviewError.value = ''
+  metricsPreview.value = null
+  try {
+    const output = await fetchSystemMetricsPreview(window.fetch.bind(window), current.signal)
+    if (!current.signal.aborted) metricsPreview.value = output
+  } catch (e) {
+    if (!current.signal.aborted)
+      metricsPreviewError.value = e instanceof Error ? e.message : 'The /metrics preview could not be retrieved.'
+  } finally {
+    if (metricsPreviewController === current) {
+      metricsPreviewLoading.value = false
+      metricsPreviewController = null
+    }
+  }
+}
+function clearMetricsPreview() {
+  metricsPreviewController?.abort()
+  metricsPreviewController = null
+  metricsPreviewLoading.value = false
+  metricsPreview.value = null
+  metricsPreviewError.value = ''
 }
 function downloadReport() {
   const url = URL.createObjectURL(new Blob([reportText.value + '\n'], { type: 'application/json' }))
@@ -568,7 +666,10 @@ async function copyReport() {
   }
 }
 onMounted(load)
-onBeforeUnmount(() => controller?.abort())
+onBeforeUnmount(() => {
+  controller?.abort()
+  metricsPreviewController?.abort()
+})
 </script>
 
 <style lang="scss">

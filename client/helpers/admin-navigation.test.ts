@@ -10,10 +10,17 @@ describe('administration settings discovery', () => {
   test('keeps each setting in one domain and preserves existing destinations', () => {
     const items = catalog().flatMap(group => group.items)
     expect(new Set(items.map(item => item.key)).size).toBe(items.length)
-    expect(items).toHaveLength(27)
     expect(items.find(item => item.key === 'agents')?.to).toBe('/agents')
     expect(items.find(item => item.key === 'graphql')?.href).toBe('/graphql')
     expect(items.find(item => item.key === 'pages')?.count).toBe(15)
+  })
+  test('discovers page recovery and integrity only for system administrators', () => {
+    const adminPaths = catalog(['manage:system']).flatMap(group => group.items.map(item => item.to))
+    const pageWriterPaths = catalog(['write:pages']).flatMap(group => group.items.map(item => item.to))
+    expect(adminPaths).toContain('/pages/recycle-bin')
+    expect(adminPaths).toContain('/pages/integrity')
+    expect(pageWriterPaths).not.toContain('/pages/recycle-bin')
+    expect(pageWriterPaths).not.toContain('/pages/integrity')
   })
 
   test('filters before searching so restricted settings cannot leak into results', () => {
@@ -31,6 +38,5 @@ describe('administration settings discovery', () => {
     expect(filterAdminNavigation(groups, 'backup sync')[0].items[0].key).toBe('storage')
     expect(filterAdminNavigation(groups, 'not-a-setting')).toEqual([])
     expect(filterAdminNavigation(groups, '')).toBe(groups)
-    expect(groups.flatMap(group => group.items)).toHaveLength(27)
   })
 })

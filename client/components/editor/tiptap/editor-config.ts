@@ -1,4 +1,4 @@
-import { Extension, type Editor, type Extensions } from '@tiptap/core'
+import { Extension, mergeAttributes, Node, type Editor, type Extensions } from '@tiptap/core'
 import CharacterCount from '@tiptap/extension-character-count'
 import Highlight from '@tiptap/extension-highlight'
 import Image from '@tiptap/extension-image'
@@ -14,6 +14,7 @@ import { html as beautify } from 'js-beautify'
 import {
   DefinitionDescription,
   DefinitionList,
+  DefinitionListKeyboard,
   DefinitionTerm,
   Keyboard,
   restoreTiptapHtmlSources,
@@ -22,6 +23,13 @@ import {
   WikiSubscript,
   WikiSuperscript
 } from './dialect.ts'
+import {
+  parseWikiLinkAt,
+  resolveWikiLinkHref,
+  serializeWikiLink,
+  WIKI_LINKS_DISABLED,
+  type WikiLinkOptions
+} from '../../../../shared/wikilinks.ts'
 
 export type VisualEditorFormat = 'html' | 'markdown'
 
@@ -89,6 +97,148 @@ const WikiLink = Link.extend({
   }
 })
 
+function parseCitationLinkAt (source: string) {
+  const match = /^\[\[(\d+)\]\]\((https?:\/\/[^)\s<>]+)\)/iu.exec(source)
+  if (!match?.[0] || !match[1] || !match[2]) return null
+
+  try {
+    const protocol = new URL(match[2]).protocol
+    if (protocol !== 'http:' && protocol !== 'https:') return null
+  } catch {
+    return null
+  }
+
+  return { raw: match[0], text: `[[${match[1]}]]`, href: match[2] }
+}
+
+function parseWikiLinkSourceAt (source: string) {
+  const parsed = parseWikiLinkAt(source)
+  if (parsed) return { raw: parsed.raw, parsed }
+
+  const raw = /^\[\[[^\[\]\r\n]+\]\]/u.exec(source)?.[0]
+  if (!raw) return null
+  const continuation = source[raw.length]
+  if (continuation === '(' || (continuation === '[' && source[raw.length + 1] !== '[')) return null
+  return { raw, parsed: null }
+}
+
+const WikiLinkNode = Node.create({
+  name: 'wikiLink',
+  inline: true,
+  group: 'inline',
+  content: 'text*',
+  selectable: false,
+  addAttributes () {
+    return {
+      href: {
+        default: null,
+        renderHTML: attributes => attributes.href ? { href: attributes.href } : {}
+      },
+      wikiLinkSource: { default: null, rendered: false },
+      wikiLinkHref: { default: null, rendered: false }
+    }
+  },
+  renderHTML ({ node, HTMLAttributes }) {
+    let containsLinkMark = false
+    node.descendants(child => {
+      if (child.marks.some(mark => mark.type.name === 'link')) containsLinkMark = true
+    })
+    return !node.attrs.href || containsLinkMark
+      ? ['span', {}, 0]
+      : ['a', mergeAttributes(HTMLAttributes, { href: node.attrs.href }), 0]
+  },
+  renderMarkdown (node, helpers) {
+    const attrs = node.attrs ?? {}
+    const content = node.content ?? []
+    const source = typeof attrs.wikiLinkSource === 'string' ? attrs.wikiLinkSource : null
+    const parsed = source ? parseWikiLinkAt(source) : null
+    const citation = source ? parseCitationLinkAt(source) : null
+    const unchangedText = source !== null &&
+      attrs.href === attrs.wikiLinkHref &&
+      content.length === 1 &&
+      content[0]?.type === 'text' &&
+      content[0]?.text === (citation?.text ?? (parsed && attrs.href ? parsed.text : source)) &&
+      !content[0]?.marks?.length
+
+    if (unchangedText && source !== null) {
+      return parsed ? serializeWikiLink(parsed) ?? source : source
+    }
+
+    const renderedContent = helpers.renderChildren(node)
+    const containsLinkMark = content.some(child => child.marks?.some(mark => mark.type === 'link'))
+    if (containsLinkMark || !attrs.href) return renderedContent
+    const href = typeof attrs.href === 'string' ? attrs.href : ''
+    return `[${renderedContent}](${href})`
+  }
+})
+
+const createWikiLinkSourceParser = (wikiLinks: WikiLinkOptions) => Extension.create({
+  name: 'wikiLinkSourceParser',
+  markdownTokenName: 'wikiLinkSource',
+  markdownTokenizer: {
+    name: 'wikiLinkSource',
+    level: 'inline',
+    start: source => source.indexOf('[['),
+    tokenize: source => {
+      const citation = parseCitationLinkAt(source)
+      if (citation) {
+        return {
+          type: 'wikiLinkSource',
+          raw: citation.raw,
+          text: citation.text,
+          tokens: [{ type: 'text', raw: citation.text, text: citation.text }]
+        }
+      }
+
+      const candidate = parseWikiLinkSourceAt(source)
+      if (!candidate) return undefined
+      const text = candidate.parsed?.text ?? candidate.raw
+      return {
+        type: 'wikiLinkSource',
+        raw: candidate.raw,
+        text,
+        tokens: [{ type: 'text', raw: text, text }]
+      }
+    }
+  },
+  parseMarkdown (token, helpers) {
+    const raw = token.raw
+    const citation = typeof raw === 'string' ? parseCitationLinkAt(raw) : null
+    if (citation) {
+      return helpers.createNode('wikiLink', {
+        href: citation.href,
+        wikiLinkSource: citation.raw,
+        wikiLinkHref: citation.href
+      }, helpers.parseInline([{ type: 'text', raw: citation.text, text: citation.text }]))
+    }
+
+    const candidate = typeof raw === 'string' ? parseWikiLinkSourceAt(raw) : null
+    if (!candidate) throw new TypeError('The wikilink tokenizer returned an invalid token.')
+    const parsed = candidate.parsed
+    if (!parsed || !wikiLinks.enabled) {
+      return helpers.createNode('wikiLink', {
+        href: null,
+        wikiLinkSource: candidate.raw,
+        wikiLinkHref: null
+      }, helpers.parseInline([{ type: 'text', raw: candidate.raw, text: candidate.raw }]))
+    }
+
+    const href = resolveWikiLinkHref(parsed, wikiLinks.context)
+    if (!href) {
+      return helpers.createNode('wikiLink', {
+        href: null,
+        wikiLinkSource: candidate.raw,
+        wikiLinkHref: null
+      }, helpers.parseInline([{ type: 'text', raw: candidate.raw, text: candidate.raw }]))
+    }
+    return helpers.createNode('wikiLink', {
+      href,
+      wikiLinkSource: candidate.raw,
+      wikiLinkHref: href
+    }, helpers.parseInline(token.tokens ?? []))
+  }
+})
+
 const WikiImage = Image.extend({
   addAttributes () {
     return {
@@ -111,7 +261,7 @@ export function getVisualEditorDefinition (format: VisualEditorFormat): VisualEd
   return DEFINITION_BY_FORMAT[format]
 }
 
-export function createTiptapExtensions (format: VisualEditorFormat): Extensions {
+export function createTiptapExtensions (format: VisualEditorFormat, wikiLinks: WikiLinkOptions = WIKI_LINKS_DISABLED): Extensions {
   const isMarkdown = format === 'markdown'
   return [
     StarterKit.configure({
@@ -140,6 +290,7 @@ export function createTiptapExtensions (format: VisualEditorFormat): Extensions 
       table: { resizable: true }
     }),
     DefinitionList,
+    DefinitionListKeyboard,
     DefinitionTerm,
     DefinitionDescription,
     WikiSourceBlock,
@@ -149,10 +300,14 @@ export function createTiptapExtensions (format: VisualEditorFormat): Extensions 
     CharacterCount,
     Placeholder.configure({ placeholder: 'Type the page content here' }),
     ...(isMarkdown
-      ? [Markdown.configure({
-          indentation: { style: 'space', size: 2 },
-          markedOptions: { gfm: true }
-        })]
+      ? [
+          WikiLinkNode,
+          createWikiLinkSourceParser(wikiLinks),
+          Markdown.configure({
+            indentation: { style: 'space', size: 2 },
+            markedOptions: { gfm: true }
+          })
+        ]
       : [])
   ]
 }

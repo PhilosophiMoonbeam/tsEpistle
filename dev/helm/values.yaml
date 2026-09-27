@@ -86,6 +86,24 @@ ingress:
   #    hosts:
   #      - chart-example.local
 
+httpRoute:
+  enabled: false
+  # Gateway API parent references are required when enabled.
+  parentRefs: []
+  hostnames: []
+  path:
+    type: PathPrefix
+    value: /
+  # Empty uses this release's Service and service.port. Custom backends require name and port.
+  backendRefs: []
+
+podDisruptionBudget:
+  enabled: false
+  # Set exactly one when enabled. Integers are pod counts; strings may use 0%-100%.
+  minAvailable: null
+  maxUnavailable: null
+
+
 resources: {}
   # We usually recommend not to specify default resources and to leave this as a conscious
   # choice for the user. This also increases chances charts run on environments with little
@@ -242,6 +260,7 @@ postgresql:
 
   ## PostgreSQL Resources Configuration
   resources: {}
+
     # We usually recommend not to specify default resources and to leave this as a conscious
     # choice for the user. This also increases chances charts run on environments with little
     # resources, such as Minikube. If you do want to specify resources, uncomment the following
@@ -252,6 +271,9 @@ postgresql:
     # requests:
     #   cpu: 100m
     #   memory: 128Mi
+  ## Pod and container security contexts are passed through without changing the image UID or PVC ownership.
+  podSecurityContext: {}
+  securityContext: {}
 
   ## PostgreSQL Node Selector, Tolerations and Affinity
   nodeSelector: {}

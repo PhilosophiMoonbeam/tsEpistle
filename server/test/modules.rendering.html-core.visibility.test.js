@@ -25,14 +25,14 @@ describe('HTML renderer private-link isolation', () => {
     else global.WIKI = originalWIKI
   })
 
-  const render = async ({ visibility, ownerId }) => {
-    const pageQuery = makePageQuery([{ id: 9, localeCode: 'en', path: 'secret' }])
+  const render = async ({ visibility, ownerId, localeCode = 'en' }) => {
+    const pageQuery = makePageQuery([{ id: 9, localeCode, path: 'secret' }])
     global.WIKI = {
       auth: { checkAccess: vi.fn().mockReturnValue(false) },
       config: {
         db: { type: 'postgres' },
         host: 'http://wiki.example.test',
-        lang: { code: 'en', namespacing: true }
+        lang: { code: localeCode, namespacing: true }
       },
       logger: { warn: vi.fn() },
       models: {
@@ -43,10 +43,10 @@ describe('HTML renderer private-link isolation', () => {
     const html = await plugin.render.call({
       children: [],
       config: { absoluteLinks: false, openExternalLinkNewTab: false, relAttributeExternalLink: '' },
-      input: '<a href="/en/secret">Secret</a>',
+      input: `<a href="/${localeCode}/secret">Secret</a>`,
       page: {
         id: 1,
-        localeCode: 'en',
+        localeCode,
         path: 'home',
         visibility,
         ownerId,
@@ -55,6 +55,12 @@ describe('HTML renderer private-link isolation', () => {
     return { html, ...pageQuery }
   }
 
+  it('preserves locale-prefixed routes for BCP-47 page locales', async () => {
+    const result = await render({ visibility: 'public', ownerId: null, localeCode: 'en-US' })
+
+    expect(result.html).toContain('href="/en-US/secret"')
+    expect(result.html).not.toContain('href="/en-US/en-US/secret"')
+  })
   it('resolves links from public pages against public destinations only', async () => {
     const result = await render({ visibility: 'public', ownerId: null })
 

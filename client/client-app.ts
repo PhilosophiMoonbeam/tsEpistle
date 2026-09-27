@@ -271,6 +271,17 @@ const registrations = [
 ]
 
 applyReaderLayout(siteConfig.readerLayout)
+const applyReadingPreferences = (): void => {
+  const root = document.documentElement
+  root.dataset.readerMotion = wikiStore.user.reduceMotion ? 'reduced' : 'default'
+  root.dataset.readerLinks = wikiStore.user.underlineLinks ? 'underlined' : 'default'
+  root.dataset.readerTextSize = wikiStore.user.contentTextSize
+}
+watch(
+  () => [wikiStore.user.reduceMotion, wikiStore.user.underlineLinks, wikiStore.user.contentTextSize],
+  applyReadingPreferences,
+  { immediate: true }
+)
 rememberOfflinePresentation()
 watch(
   () => wikiStore.user.appearance,

@@ -31,6 +31,7 @@ export type SiteConfig = {
   logoUrl: string
   logoEffect: LogoEffectDescriptor | null
   product: ProductMetadata
+  featurePageRatings: boolean
   availableEditors: PageEditorKey[]
   recommendedEditor?: PageEditorKey | null
   agentsEnabled: boolean

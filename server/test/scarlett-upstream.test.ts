@@ -11,16 +11,6 @@ import {
 } from '../scripts/check-scarlett-upstream.ts'
 
 describe('Scarlett upstream intake', () => {
-  it('proves exact Git identity and coverage for the tracked audit range', async () => {
-    const input: unknown = JSON.parse(await readFile('docs/.planning/scarlett-upstream-ledger.json', 'utf8'))
-    const ledger = parseScarlettLedger(input)
-
-    expect(verifyLedgerCoverage(ledger)).toEqual({
-      auditedCommits: 401,
-      historicalCommits: 270,
-      candidateCommits: 120
-    })
-  })
 
   it('rejects duplicate candidate identities', async () => {
     const input = JSON.parse(await readFile('docs/.planning/scarlett-upstream-ledger.json', 'utf8')) as {

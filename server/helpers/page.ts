@@ -42,10 +42,11 @@ interface WikiContext {
   data: { reservedPaths: string[] }
 }
 
-const wiki = WIKI as unknown as WikiContext
+const getWiki = (): WikiContext => WIKI as unknown as WikiContext
 
 const localeSegmentRegex = /^[A-Z]{2}(-[A-Z]{2})?$/i
 const localeSegment = (segment: string): string | undefined => {
+  const wiki = getWiki()
   const known = [...(wiki.lang?.localeCodes ?? []), wiki.config.lang.code, ...(wiki.config.lang.namespaces ?? [])]
   return known.find(code => code.toLowerCase() === segment.toLowerCase()) ?? (localeSegmentRegex.test(segment) ? segment : undefined)
 }
@@ -65,7 +66,7 @@ const pageHelper = {
    */
   parsePath (rawPath: string, opts: ParsePathOptions = {}): ParsedPath {
     const pathObj: ParsedPath = {
-      locale: wiki.config.lang.code,
+      locale: getWiki().config.lang.code,
       path: 'home',
       explicitLocale: false
     }
@@ -153,7 +154,7 @@ const pageHelper = {
     } else if (localeSegment(firstSection)) {
       return true
     } else if (
-      _.some(wiki.data.reservedPaths, p => {
+      _.some(getWiki().data.reservedPaths, p => {
         return p === firstSection
       })) {
       return true
@@ -183,7 +184,7 @@ const pageHelper = {
       fpath = filePath.replace(/\\/g, '/')
     }
     let meta = {
-      locale: wiki.config.lang.code,
+      locale: getWiki().config.lang.code,
       path: _.initial(fpath.split('.')).join('')
     }
     const [first, ...rest] = meta.path.split('/')

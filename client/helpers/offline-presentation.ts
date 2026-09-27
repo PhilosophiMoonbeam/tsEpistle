@@ -74,6 +74,7 @@ export function offlinePresentation(): { config: SiteConfig; appearance: string 
         sourceUrl: `${product.product.sourceRepository}/tree/${revision}`
       },
       availableEditors: [],
+      featurePageRatings: false,
       agentsEnabled: false,
       agentProviderEnabled: false,
       agentSkillsEnabled: false,

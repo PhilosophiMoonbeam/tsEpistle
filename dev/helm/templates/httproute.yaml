@@ -1,0 +1,105 @@
+{{- $httpRoute := .Values.httpRoute -}}
+{{- if not (kindIs "map" $httpRoute) -}}
+{{- fail "httpRoute must be an object" -}}
+{{- end -}}
+{{- if not (kindIs "bool" $httpRoute.enabled) -}}
+{{- fail "httpRoute.enabled must be a boolean" -}}
+{{- end -}}
+{{- if $httpRoute.enabled -}}
+{{- if not (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/HTTPRoute") -}}
+{{- fail "httpRoute.enabled requires the gateway.networking.k8s.io/v1/HTTPRoute API (install Gateway API CRDs first)" -}}
+{{- end -}}
+{{- $parentRefs := .Values.httpRoute.parentRefs -}}
+{{- if or (not (kindIs "slice" $parentRefs)) (eq (len $parentRefs) 0) -}}
+{{- fail "httpRoute.parentRefs must be a non-empty list when httpRoute.enabled is true" -}}
+{{- end -}}
+{{- range $index, $parentRef := $parentRefs -}}
+{{- if not (kindIs "map" $parentRef) -}}
+{{- fail (printf "httpRoute.parentRefs[%d] must be an object with a name" $index) -}}
+{{- end -}}
+{{- if not (hasKey $parentRef "name") -}}
+{{- fail (printf "httpRoute.parentRefs[%d].name is required" $index) -}}
+{{- end -}}
+{{- $parentName := get $parentRef "name" -}}
+{{- if or (not (kindIs "string" $parentName)) (eq (trim $parentName) "") -}}
+{{- fail (printf "httpRoute.parentRefs[%d].name must be a non-empty string" $index) -}}
+{{- end -}}
+{{- end -}}
+{{- $hostnames := .Values.httpRoute.hostnames -}}
+{{- if not (kindIs "slice" $hostnames) -}}
+{{- fail "httpRoute.hostnames must be a list of hostnames" -}}
+{{- end -}}
+{{- range $index, $hostname := $hostnames -}}
+{{- if or (not (kindIs "string" $hostname)) (eq (trim $hostname) "") -}}
+{{- fail (printf "httpRoute.hostnames[%d] must be a non-empty string" $index) -}}
+{{- end -}}
+{{- end -}}
+{{- $path := .Values.httpRoute.path -}}
+{{- if not (kindIs "map" $path) -}}
+{{- fail "httpRoute.path must be an object with type and value" -}}
+{{- end -}}
+{{- $pathType := get $path "type" -}}
+{{- $pathValue := get $path "value" -}}
+{{- if or (not (kindIs "string" $pathType)) (not (or (eq $pathType "Exact") (eq $pathType "PathPrefix") (eq $pathType "RegularExpression"))) -}}
+{{- fail "httpRoute.path.type must be Exact, PathPrefix, or RegularExpression" -}}
+{{- end -}}
+{{- if or (not (kindIs "string" $pathValue)) (eq (trim $pathValue) "") -}}
+{{- fail "httpRoute.path.value must be a non-empty string" -}}
+{{- end -}}
+{{- if and (ne $pathType "RegularExpression") (not (hasPrefix "/" $pathValue)) -}}
+{{- fail "httpRoute.path.value must begin with / for Exact and PathPrefix matches" -}}
+{{- end -}}
+{{- $backendRefs := .Values.httpRoute.backendRefs -}}
+{{- if not (kindIs "slice" $backendRefs) -}}
+{{- fail "httpRoute.backendRefs must be a list" -}}
+{{- end -}}
+{{- $renderBackendRefs := list -}}
+{{- if gt (len $backendRefs) 0 -}}
+{{- range $index, $backendRef := $backendRefs -}}
+{{- if not (kindIs "map" $backendRef) -}}
+{{- fail (printf "httpRoute.backendRefs[%d] must be an object with name and port" $index) -}}
+{{- end -}}
+{{- if or (not (hasKey $backendRef "name")) (not (hasKey $backendRef "port")) -}}
+{{- fail (printf "httpRoute.backendRefs[%d].name and .port are required" $index) -}}
+{{- end -}}
+{{- $backendName := get $backendRef "name" -}}
+{{- $backendPort := get $backendRef "port" -}}
+{{- $backendPortText := toString $backendPort -}}
+{{- if or (not (kindIs "string" $backendName)) (eq (trim $backendName) "") -}}
+{{- fail (printf "httpRoute.backendRefs[%d].name must be a non-empty string" $index) -}}
+{{- end -}}
+{{- if or (not (regexMatch "^[0-9]+$" $backendPortText)) (lt (int $backendPort) 1) (gt (int $backendPort) 65535) -}}
+{{- fail (printf "httpRoute.backendRefs[%d].port must be an integer from 1 to 65535" $index) -}}
+{{- end -}}
+{{- $renderBackendRef := deepCopy $backendRef -}}
+{{- $_ := set $renderBackendRef "port" (int $backendPort) -}}
+{{- $renderBackendRefs = append $renderBackendRefs $renderBackendRef -}}
+{{- end -}}
+{{- else -}}
+{{- $servicePort := toString .Values.service.port -}}
+{{- if or (not (regexMatch "^[0-9]+$" $servicePort)) (lt (int .Values.service.port) 1) (gt (int .Values.service.port) 65535) -}}
+{{- fail "service.port must be an integer from 1 to 65535 for the default HTTPRoute backend" -}}
+{{- end -}}
+{{- $renderBackendRefs = list (dict "name" (include "wiki.fullname" .) "port" (int .Values.service.port)) -}}
+{{- end -}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "wiki.fullname" . }}
+  labels:
+    {{- include "wiki.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    {{- toYaml $parentRefs | nindent 4 }}
+  {{- with $hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: {{ $pathType }}
+            value: {{ $pathValue | quote }}
+      backendRefs:
+        {{- toYaml $renderBackendRefs | nindent 8 }}
+{{- end }}

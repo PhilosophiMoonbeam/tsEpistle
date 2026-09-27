@@ -60,7 +60,7 @@ export const pageRuleRequesterBinding = (requester: unknown): PageRuleRequesterB
 export const pageRuleAuthorityMatchesRequester = (requester: unknown, authority: PageRuleAuthority): boolean =>
   Boolean(authority && typeof authority === 'object' && authority.requester === requester)
 
-const rank: Record<GroupRuleMatch, number> = { START: 0, END: 1, REGEX: 2, TAG: 3, EXACT: 4 }
+const rank: Record<GroupRuleMatch, number> = { START: 0, SUBTREE: 1, END: 2, REGEX: 3, TAG: 4, EXACT: 5 }
 
 export interface RuleState {
   deny: boolean
@@ -115,6 +115,8 @@ export const evaluateGroupAccess = (
         else if (!rule.roles.some(role => requested.includes(role))) outcome = 'permission'
         else {
           if (rule.match === 'START') matches = `/${page.path}`.startsWith(`/${rule.path}`)
+          if (rule.match === 'SUBTREE')
+            matches = rule.path === '' || page.path === rule.path || page.path.startsWith(`${rule.path}/`)
           if (rule.match === 'END') matches = page.path.endsWith(rule.path)
           if (rule.match === 'EXACT') matches = `/${page.path}` === `/${rule.path}`
           if (rule.match === 'REGEX') {

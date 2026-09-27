@@ -29,6 +29,12 @@ import Prism from '../../../libs/prism/setup.ts'
 import katexHelper from '../common/katex.ts'
 import plantuml from './plantuml.ts'
 import tabsetHelper from './tabset.ts'
+import {
+  parseWikiLinkAt,
+  resolveWikiLinkHref,
+  WIKI_LINKS_DISABLED,
+  type WikiLinkOptions
+} from '../../../../shared/wikilinks.ts'
 
 DOMPurify.addHook('uponSanitizeElement', node => {
   if (!(node instanceof Element)) return
@@ -38,7 +44,7 @@ DOMPurify.addHook('uponSanitizeElement', node => {
   })
 })
 
-export function createWikiMarkdownRenderer(): InstanceType<typeof MarkdownIt> {
+export function createWikiMarkdownRenderer(wikiLinks: WikiLinkOptions = WIKI_LINKS_DISABLED): InstanceType<typeof MarkdownIt> {
   const markdown = new MarkdownIt({
     html: true,
     breaks: true,
@@ -60,6 +66,33 @@ export function createWikiMarkdownRenderer(): InstanceType<typeof MarkdownIt> {
     .use(mdDeflist)
     .use(mdFootnote)
     .use(mdImsize)
+  if (wikiLinks.enabled) {
+    markdown.inline.ruler.after('html_inline', 'wiki_link', (state, silent) => {
+      const source = state.src.slice(state.pos)
+      const parsed = parseWikiLinkAt(source)
+      const href = parsed ? resolveWikiLinkHref(parsed, wikiLinks.context) : null
+      if (!parsed || !href) {
+        const raw = /^\[\[[^\[\]\r\n]+\]\]/u.exec(source)?.[0]
+        if (!raw || source[raw.length] === '(') return false
+        if (!silent) {
+          // Keep invalid wikilinks literal; linkify must not create a URL inside [[//host]].
+          const text = state.push('html_inline', '', 0)
+          text.content = markdown.utils.escapeHtml(raw)
+          state.pos += raw.length
+        }
+        return true
+      }
+      if (silent) return true
+
+      const open = state.push('link_open', 'a', 1)
+      open.attrSet('href', href)
+      const text = state.push('text', '', 0)
+      text.content = parsed.text
+      state.push('link_close', 'a', -1)
+      state.pos += parsed.raw.length
+      return true
+    })
+  }
 
   plantuml.init(markdown, {})
   markdown.renderer.rules.fence = (tokens, index) => {

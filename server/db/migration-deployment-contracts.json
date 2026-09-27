@@ -107,6 +107,21 @@
       "runtimePostconditions": [
         "agent-media-context-state-columns"
       ]
+    },
+    "tsepistle-000048-scarlett-native-adaptations.js": {
+      "persistentState": "stateful",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "native-page-ratings-and-recovery-schema"
+      ],
+      "runtimePostconditions": [
+        "native-page-ratings-and-recovery"
+      ]
     }
   }
 }

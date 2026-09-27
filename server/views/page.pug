@@ -13,6 +13,8 @@ block body
     const wikiPagePayload = {
       version: 1,
       spaNavigation,
+      pageFeatures,
+      ratingsSiteEnabled,
       props: {
         pageId: page.id,
         locale: page.localeCode,
@@ -23,8 +25,8 @@ block body
         createdAt: page.createdAt,
         updatedAt: page.updatedAt,
         sourceRevision: page.sourceRevision,
-        authorName: page.authorName,
-        authorId: page.authorId,
+        authorName: pageFeatures.lastEditorVisible ? page.authorName : 'Unknown',
+        authorId: pageFeatures.lastEditorVisible ? page.authorId : 0,
         editor: page.editorKey,
         isPublished: Boolean(page.isPublished),
         visibility: page.visibility,

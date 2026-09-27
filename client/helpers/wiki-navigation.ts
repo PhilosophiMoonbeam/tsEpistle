@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { PageBrandingViewSchema } from '../../shared/page-branding.ts'
+import { normalizePageFeatures } from '../../shared/page-features.ts'
 import { decodeBase64Json } from './base64'
 
 const WikiPagePropsSchema = z.object({
@@ -26,12 +27,14 @@ const WikiPagePropsSchema = z.object({
   commentsExternal: z.boolean(),
   editShortcuts: z.string(),
   filename: z.string(),
-  branding: PageBrandingViewSchema.nullable().default(null)
+  branding: PageBrandingViewSchema.nullable().default(null),
 })
 
 const WikiPagePayloadSchema = z.object({
   version: z.literal(1),
   spaNavigation: z.boolean(),
+  pageFeatures: z.unknown().optional().transform(normalizePageFeatures),
+  ratingsSiteEnabled: z.boolean().default(false),
   props: WikiPagePropsSchema
 })
 

@@ -341,6 +341,10 @@ router.get('/whoami', async (req, res, next) => {
         'dateFormat',
         'timeFormat',
         'appearance',
+        'reduceMotion',
+        'underlineLinks',
+        'contentTextSize',
+        'communicationLocale',
         'fontFamily',
         'permissions',
         'authVersion'
@@ -370,6 +374,10 @@ router.get('/profile', async (req, res, next) => {
         'dateFormat',
         'timeFormat',
         'appearance',
+        'reduceMotion',
+        'underlineLinks',
+        'contentTextSize',
+        'communicationLocale',
         'createdAt',
         'updatedAt',
         'lastLoginAt'

@@ -44,6 +44,11 @@ import { assertPageUnlocked, pageRequiresUnlock } from './page-protection.ts'
 import errors from './errors.ts'
 import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBrandingView } from '../../shared/page-branding.ts'
 import { resolveAssetBrandingView } from '../helpers/asset-branding.ts'
+import { normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
+import {
+  DeletedPageRecoverySecurityContextSchema,
+  type DeletedPageRecoverySecurityContext
+} from '../models/pages.ts'
 
 const { ApplicationError } = errors
 const propertyValue = (value: unknown, key: string): unknown => (typeof value === 'object' && value !== null ? Reflect.get(value, key) : undefined)
@@ -115,6 +120,7 @@ interface PageVersionProjection extends PageVersionRecord {
   brandingAssignment?: PageBrandingAssignment | null
 }
 interface PageDetail extends PageRecord {
+  pageFeatures: PageFeatures
   branding: PageBrandingView | null
   brandingAssignment?: PageBrandingAssignment | null
   editor: string
@@ -291,6 +297,17 @@ interface WikiPageOperations {
         user?: Express.User
       }): unknown
       transferOwnership(input: { id: number; ownerId: number; expectedSourceRevision?: string; user?: Express.User }): unknown
+      restoreDeletedPage(input: {
+        pageId: number
+        deletionVersionId: number
+        destination: { path: string; localeCode: string }
+        ownerId?: number
+        recoveringAdminId: number
+        securityContext: DeletedPageRecoverySecurityContext | null
+        legacyQuarantine: boolean
+        expectedDeletionRevision: string
+        user: Express.User
+      }): Promise<{ pageId: number; sourceRevision: string; quarantined: boolean }>
     }
     tags: {
       query(): {
@@ -688,6 +705,7 @@ const projectReaderPage = async <T extends PageRecord>(input: OperationInput, pa
   const branding = await resolveReaderBranding(input, page)
   const extra = _.isPlainObject(page.extra) ? { ...page.extra } : {}
   delete extra.branding
+  extra.pageFeatures = normalizePageFeatures(extra.pageFeatures)
   return { ...page, extra, branding }
 }
 
@@ -1151,6 +1169,7 @@ const get = async (input: OperationInput, suppliedAuthority?: PageRuleAuthority)
   return {
     ...page,
     ...(brandingAssignment === undefined ? {} : { brandingAssignment }),
+    pageFeatures: normalizePageFeatures(page.extra.pageFeatures),
     locale: page.localeCode,
     editor: page.editorKey,
     scriptJs: _.get(page, 'extra.js'),
@@ -1198,6 +1217,7 @@ const getSource = async (
   editor: string
   title: string
   isSearchable: boolean
+  pageFeatures: PageFeatures
   brandingAssignment?: PageBrandingAssignment | null
 }> => {
   const authority = await authorityForInput(input, suppliedAuthority)
@@ -1209,6 +1229,7 @@ const getSource = async (
     editor: page.editorKey,
     isSearchable: page.isSearchable,
     title: page.title,
+    pageFeatures: normalizePageFeatures(page.extra.pageFeatures),
     ...(brandingAssignment === undefined ? {} : { brandingAssignment })
   }
 }
@@ -2676,6 +2697,99 @@ const transferOwnership = async (input: OperationInput): Promise<unknown> => {
   return wiki.models.pages.transferOwnership(input.requester === undefined ? payload : { ...payload, user: input.requester })
 }
 
+const recoveryRevision = (value: unknown): bigint | null => {
+  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') return null
+  const revision = String(value)
+  if (!/^[1-9][0-9]*$/.test(revision)) return null
+  try {
+    return BigInt(revision)
+  } catch {
+    return null
+  }
+}
+const recoveryConflict = (): Error =>
+  new ApplicationError('The deleted page changed or is no longer recoverable. Reload the recovery record.', {
+    code: 'PAGE_RECOVERY_CONFLICT',
+    status: 409
+  })
+const restoreDeletedPage = async (
+  input: OperationInput
+): Promise<{ pageId: number; sourceRevision: string; quarantined: boolean }> => {
+  const requester = input.requester
+  if (!requester || isApiPrincipal(requester) || !managesSystem(requester)) {
+    throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
+  }
+  const recoveringAdminId = principalId(requester)
+  if (recoveringAdminId === null) throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
+  const pageId = positiveInteger(input.pageId, 'pageId')
+  const deletionVersionId = positiveInteger(input.deletionVersionId, 'deletionVersionId')
+  const destinationInput = recordValue(input.destination, 'destination')
+  const destination = {
+    path: stringValue(destinationInput.path, 'destination.path'),
+    localeCode: stringValue(destinationInput.localeCode, 'destination.localeCode')
+  }
+  const ownerId = input.ownerId === undefined ? undefined : positiveInteger(input.ownerId, 'ownerId')
+
+  const latestVersion = (await wiki.models.knex('pageHistory')
+    .select('id', 'action')
+    .where({ pageId })
+    .orderBy('versionDate', 'desc')
+    .orderBy('id', 'desc')
+    .first()) as { id: number; action: string } | undefined
+  if (!latestVersion || Number(latestVersion.id) !== deletionVersionId || latestVersion.action !== 'deleted') throw recoveryConflict()
+  const history = (await wiki.models.knex('pageHistory')
+    .select('id', 'pageId', 'sourceRevision')
+    .where({ id: deletionVersionId, pageId })
+    .first()) as { id: number; pageId: number; sourceRevision: string | number } | undefined
+  if (!history) throw recoveryConflict()
+
+  const recoveryRow = (await wiki.models.knex('deletedPageRecovery')
+    .select('deletionRevision', 'securityContext')
+    .where({ pageId, deletionVersionId })
+    .first()) as { deletionRevision: string | number; securityContext: unknown } | undefined
+  let storedSecurityContext: unknown = recoveryRow?.securityContext
+  if (typeof storedSecurityContext === 'string') {
+    try {
+      storedSecurityContext = JSON.parse(storedSecurityContext)
+    } catch {
+      storedSecurityContext = null
+    }
+  }
+  const parsedSecurityContext =
+    recoveryRow === undefined ? null : DeletedPageRecoverySecurityContextSchema.safeParse(storedSecurityContext)
+  const recordRevision = recoveryRow === undefined ? null : recoveryRevision(recoveryRow.deletionRevision)
+  const validRecoveryRecord = parsedSecurityContext?.success === true && recordRevision !== null
+  const legacyQuarantine = !validRecoveryRecord
+  let expectedDeletionRevision = recordRevision === null ? null : String(recordRevision)
+  if (expectedDeletionRevision === null) {
+    const historyRevision = recoveryRevision(history.sourceRevision)
+    if (historyRevision === null) throw recoveryConflict()
+    const effectMaximumRow = (await wiki.models.knex('pageMutationOutbox')
+      .where({ pageId })
+      .max({ maximumRevision: 'sourceRevision' })
+      .first()) as { maximumRevision: string | number | null } | undefined
+    const effectMaximum = effectMaximumRow?.maximumRevision == null ? null : recoveryRevision(effectMaximumRow.maximumRevision)
+    if (effectMaximumRow?.maximumRevision != null && effectMaximum === null) throw recoveryConflict()
+    expectedDeletionRevision = String(
+      [historyRevision, effectMaximum]
+        .filter((revision): revision is bigint => revision !== null)
+        .reduce((maximum, revision) => (revision > maximum ? revision : maximum))
+    )
+  }
+
+  return wiki.models.pages.restoreDeletedPage({
+    pageId,
+    deletionVersionId,
+    destination,
+    ...(ownerId === undefined ? {} : { ownerId }),
+    recoveringAdminId,
+    securityContext: validRecoveryRecord && parsedSecurityContext?.success ? parsedSecurityContext.data : null,
+    legacyQuarantine,
+    expectedDeletionRevision,
+    user: requester
+  })
+}
+
 const restore = async (input: OperationInput): Promise<void> => {
   const requester = input.requester
   const authority = await authorityFor(input)
@@ -2709,6 +2823,7 @@ const restore = async (input: OperationInput): Promise<void> => {
         editor: version.editor,
         tags: version.tags,
         isSearchable: normalizeDbBoolean(version.isSearchable, true),
+        pageFeatures: normalizePageFeatures(versionExtra.pageFeatures),
         action: 'restored',
         expectedUpdatedAt: page.updatedAt instanceof Date ? page.updatedAt.toISOString() : page.updatedAt,
         expectedSourceRevision: String(Reflect.get(page, 'sourceRevision')),
@@ -2755,6 +2870,7 @@ export default {
   move,
   remove,
   removeTag,
+  restoreDeletedPage,
   restore,
   search,
   searchTags,

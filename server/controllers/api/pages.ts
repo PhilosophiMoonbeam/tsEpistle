@@ -17,6 +17,14 @@ import { OkfDocumentError } from '../../okf/format.ts'
 import { buildPageOkfView } from '../../okf/page-view.ts'
 import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
 import { OFFLINE_PAGE_INELIGIBLE_CODE } from '../../helpers/offline-page.ts'
+import deletedPageRecovery from '../../operations/deleted-page-recovery.ts'
+import {
+  DeletedPageRecoveryInspectSchema,
+  DeletedPageRecoveryListRequestSchema,
+  DeletedPageRecoveryListSchema,
+  DeletedPageRecoveryResultSchema,
+  DeletedPageRecoveryRestoreRequestSchema
+} from '../../../shared/deleted-page-recovery.ts'
 
 const router = express.Router()
 
@@ -216,6 +224,40 @@ const requireSystemAccess = (req: Request, res: Response): boolean => {
   }
   return true
 }
+const requireDeletedPageRecoveryAccess = (req: Request, res: Response): boolean => {
+  if (getWikiAuth().checkAccess(req.user, ['manage:system'])) return true
+  res.status(404).json({ error: 'Not Found' })
+  return false
+}
+
+const parseDeletedPageRecoveryListRequest = (query: unknown) => {
+  if (typeof query !== 'object' || query === null || Array.isArray(query)) {
+    return DeletedPageRecoveryListRequestSchema.safeParse(null)
+  }
+  const normalized: Record<string, unknown> = { ...(query as Record<string, unknown>) }
+  for (const key of ['limit', 'beforeVersionId'] as const) {
+    const value = normalized[key]
+    if (value === undefined) continue
+    if (typeof value !== 'string' || !/^[1-9][0-9]*$/u.test(value)) return DeletedPageRecoveryListRequestSchema.safeParse(null)
+    const parsed = Number(value)
+    if (!Number.isSafeInteger(parsed)) return DeletedPageRecoveryListRequestSchema.safeParse(null)
+    normalized[key] = parsed
+  }
+  return DeletedPageRecoveryListRequestSchema.safeParse(normalized)
+}
+
+const sendDeletedPageRecoveryError = (res: Response, next: express.NextFunction, err: unknown): void => {
+  const status = errorStatus(err, 0)
+  if (status === 401 || status === 403 || status === 404) {
+    res.status(404).json({ error: 'Not Found' })
+    return
+  }
+  if (status >= 400 && status < 500) {
+    res.status(status).json({ error: errorMessage(err, 'Deleted page recovery failed') })
+    return
+  }
+  next(err)
+}
 
 const requirePageDeleteAccess = (req: Request, res: Response): boolean => {
   if (principalId(req.user) === null && !getWikiAuth().checkAccess(req.user, ['delete:pages', 'manage:system'])) {
@@ -400,6 +442,52 @@ const sendNotificationOperationError = (res: Response, next: express.NextFunctio
   }
   next(value)
 }
+
+router.get('/deleted', async (req, res, next) => {
+  setPrivatePageHeaders(res)
+  if (!requireDeletedPageRecoveryAccess(req, res)) return
+  const parsed = parseDeletedPageRecoveryListRequest(req.query)
+  if (!parsed.success) return res.status(400).json({ error: 'Deleted page recovery list request is invalid.' })
+  try {
+    res.json(DeletedPageRecoveryListSchema.parse(await deletedPageRecovery.list(req.user, parsed.data)))
+  } catch (err) {
+    sendDeletedPageRecoveryError(res, next, err)
+  }
+})
+
+router.get('/deleted/:pageId/:versionId', async (req, res, next) => {
+  setPrivatePageHeaders(res)
+  if (!requireDeletedPageRecoveryAccess(req, res)) return
+  const pageId = parsePositiveIntegerParam(req, res, 'pageId')
+  if (pageId === null) return
+  const versionId = parsePositiveIntegerParam(req, res, 'versionId')
+  if (versionId === null) return
+  try {
+    res.json(DeletedPageRecoveryInspectSchema.parse(await deletedPageRecovery.inspect(req.user, { pageId, versionId })))
+  } catch (err) {
+    sendDeletedPageRecoveryError(res, next, err)
+  }
+})
+
+router.post('/deleted/:pageId/:versionId/restore', async (req, res, next) => {
+  setPrivatePageHeaders(res)
+  if (!requireDeletedPageRecoveryAccess(req, res)) return
+  const pageId = parsePositiveIntegerParam(req, res, 'pageId')
+  if (pageId === null) return
+  const versionId = parsePositiveIntegerParam(req, res, 'versionId')
+  if (versionId === null) return
+  const parsed = DeletedPageRecoveryRestoreRequestSchema.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Deleted page restore request is invalid.' })
+  try {
+    res.status(201).json(
+      DeletedPageRecoveryResultSchema.parse(
+        await deletedPageRecovery.restore(req.user, { pageId, versionId, body: parsed.data })
+      )
+    )
+  } catch (err) {
+    sendDeletedPageRecoveryError(res, next, err)
+  }
+})
 
 router.get('/', async (req, res, next) => {
   res.set('Cache-Control', 'private, no-store')

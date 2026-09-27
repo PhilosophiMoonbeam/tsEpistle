@@ -88,14 +88,152 @@ export const mailConfigurationIssues = (policy: MailPolicy, secrets: MailSecretP
   return issues
 }
 
+export type MailPageWatchAction =
+  | 'created'
+  | 'updated'
+  | 'restored'
+  | 'moved'
+  | 'deleted'
+  | 'changed-visibility'
+  | 'transferred-ownership'
+  | 'changed'
+
+/** Non-translated values interpolated into a fixed template by the mail runtime. */
+export interface MailTemplateData {
+  buttonLink?: string
+  actorName?: string
+  action?: MailPageWatchAction
+  pageTitle?: string
+  url?: string
+}
+
 export const MAIL_TEMPLATES = [
-  { key: 'account-verify', title: 'Account verification', description: 'Confirm an email address during registration.' },
-  { key: 'account-reset-pwd', title: 'Password reset', description: 'Help an account holder reset their password.' },
-  { key: 'account-welcome', title: 'Account invitation', description: 'Invite a new account holder to sign in.' },
-  { key: 'page-watch', title: 'Watched page activity', description: 'Notify a subscriber about an accessible page change.' },
-  { key: 'test', title: 'Delivery test', description: 'Send an explicitly requested administration test message.' }
+  {
+    key: 'account-verify',
+    title: 'Account verification',
+    description: 'Confirm an email address during registration.',
+    translationKey: 'welcome.verify',
+    messageKeys: { preheader: 'body', content: 'body', buttonText: 'action' },
+    messages: {
+      subject: 'Confirm your email address — {{siteTitle}}',
+      preheader: 'An account was created for this address on {{siteTitle}}. Confirm that it is yours to finish signing up.',
+      kicker: '',
+      title: 'Confirm your email address',
+      content: 'An account was created for this address on {{siteTitle}}. Confirm that it is yours to finish signing up.',
+      buttonText: 'Confirm my email address',
+      expiry: 'This link is valid for 24 hours. If you did not create this account, you can ignore this message.',
+      footer: 'You are receiving this because an account was created for this address on {{siteTitle}}.'
+    },
+    htmlText: {
+      'Confirm your email': 'kicker',
+      'This link confirms your account email address. If you did not register, you can ignore this message.': 'footer'
+    }
+  },
+  {
+    key: 'account-reset-pwd',
+    title: 'Password reset',
+    description: 'Help an account holder reset their password.',
+    translationKey: 'resetPwd',
+    messageKeys: { preheader: 'body', content: 'body', buttonText: 'action' },
+    messages: {
+      subject: 'Reset your password — {{siteTitle}}',
+      preheader: 'Somebody asked to reset the password for your account on {{siteTitle}}.',
+      kicker: '',
+      title: 'Reset your password',
+      content: 'Somebody asked to reset the password for your account on {{siteTitle}}.',
+      buttonText: 'Choose a new password',
+      expiry: 'This link is valid for 24 hours and can only be used once. If you did not ask for this, nothing has changed and you can ignore this message.',
+      footer: 'You are receiving this because a password reset was requested for this address on {{siteTitle}}.'
+    },
+    htmlText: {
+      'Account recovery': 'kicker',
+      'If you did not request a password reset, you can ignore this message. Your password has not been changed.': 'footer'
+    }
+  },
+  {
+    key: 'account-welcome',
+    title: 'Account invitation',
+    description: 'Invite a new account holder to sign in.',
+    translationKey: 'welcome',
+    messageKeys: { preheader: 'body', title: 'subject', content: 'body', buttonText: 'action' },
+    messages: {
+      subject: 'Welcome to {{siteTitle}}',
+      preheader: 'Your account on {{siteTitle}} is ready. You can sign in at any time.',
+      kicker: '',
+      title: 'Welcome to {{siteTitle}}',
+      content: 'Your account on {{siteTitle}} is ready. You can sign in at any time.',
+      buttonText: 'Go to the wiki',
+      footer: 'You are receiving this because an account was created for this address on {{siteTitle}}.'
+    },
+    htmlText: {
+      'You are invited': 'kicker',
+      'Use your configured sign-in method to access the workspace. Your administrator can help if you have trouble signing in.': 'footer'
+    }
+  },
+  {
+    key: 'page-watch',
+    title: 'Watched page activity',
+    description: 'Notify a subscriber about an accessible page change.',
+    translationKey: 'pageWatch',
+    messages: {
+      subject: '{{event}} — {{pageTitle}} — {{siteTitle}}',
+      preheader: '{{event}}',
+      kicker: '',
+      content: '{{event}}',
+      buttonText: 'Open page',
+      footer: 'You receive these updates because you watch this page. Manage your notification preferences in the workspace.'
+    },
+    actions: {
+      created: { key: 'pageWatch.actions.created', english: '{{actor}} created this page' },
+      updated: { key: 'common.watchEventUpdated', english: '{{actor}} updated this page' },
+      restored: { key: 'common.watchEventRestored', english: '{{actor}} restored this page' },
+      moved: { key: 'common.watchEventMoved', english: '{{actor}} moved this page' },
+      deleted: { key: 'common.watchEventDeleted', english: '{{actor}} deleted this page' },
+      'changed-visibility': { key: 'common.watchEventVisibilityChanged', english: '{{actor}} changed visibility for this page' },
+      'transferred-ownership': { key: 'common.watchEventOwnershipTransferred', english: '{{actor}} transferred ownership of this page' },
+      changed: { key: 'common.watchEventChanged', english: '{{actor}} changed this page' }
+    },
+    htmlText: {
+      'Watched page activity': 'kicker',
+      '<strong><%- actorName %></strong> <%- action %> this page.': 'content',
+      'Open page': 'buttonText',
+      'You receive these updates because you watch this page. Manage your notification preferences in the workspace.': 'footer'
+    }
+  },
+  {
+    key: 'test',
+    title: 'Delivery test',
+    description: 'Send an explicitly requested administration test message.',
+    translationKey: 'test',
+    messageKeys: { preheader: 'body', introduction: 'body' },
+    messages: {
+      subject: 'Test email — {{siteTitle}}',
+      preheader: 'If you are reading it, {{siteName}} can send mail through the SMTP server it is configured with.',
+      kicker: '',
+      title: 'This is a test email',
+      introduction: 'If you are reading it, {{siteName}} can send mail through the SMTP server it is configured with.',
+      confirmation: 'Receiving this message confirms that this test reached your mailbox. Future messages may still be affected by provider policy, filtering, or changes to the configuration.',
+      footer: 'You are receiving this because somebody sent a test email from the administration area.'
+    },
+    htmlText: {
+      'Delivery check': 'kicker',
+      'A message from your workspace': 'title',
+      'An administrator requested this test of the mail configuration for <strong><%- siteTitle %></strong>.': 'introduction',
+      '<p style="margin:0;font-size:15px;line-height:1.75">Receiving this message confirms that this test reached your mailbox. Future messages may still be affected by provider policy, filtering, or changes to the configuration.</p>': 'confirmation',
+      'No account action is required.': 'footer'
+    }
+  }
 ] as const
 export type MailTemplateKey = (typeof MAIL_TEMPLATES)[number]['key']
+
+export interface MailTemplatePreview {
+  key: MailTemplateKey
+  title: string
+  description: string
+  html: string
+  text: string
+  subject: string
+}
 
 export const MailConfigurationEventSchema = z.object({
   id: z.string().uuid(),

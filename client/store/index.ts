@@ -11,8 +11,15 @@ import {
 import { openOfflineStorage, type OfflineStorage } from '../helpers/offline-storage.ts'
 import type { PageOkfView } from '../helpers/pages-api.ts'
 import type { SystemSummary } from '../helpers/system-api.ts'
-import { isUserTimeFormat, normalizeUserFontFamily, type UserTimeFormat } from '../../shared/user-presentation.ts'
+import {
+  isUserTimeFormat,
+  normalizeUserFontFamily,
+  normalizeUserProfilePreferences,
+  userProfilePreferenceDefaults,
+  type UserTimeFormat
+} from '../../shared/user-presentation.ts'
 import type { PageBrandingAssignment, PageBrandingView } from '../../shared/page-branding.ts'
+import { normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
 export type Notification = {
   message: string
   style: string
@@ -31,6 +38,7 @@ const defaultUser = () => ({
   dateFormat: '',
   timeFormat: 'locale' as UserTimeFormat,
   appearance: '',
+  ...userProfilePreferenceDefaults,
   fontFamily: normalizeUserFontFamily(undefined),
   permissions: [] as string[],
   authVersion: 0,
@@ -50,6 +58,7 @@ const defaultPageOkf = (): PageOkfView => ({
   authority: { state: 'invalid', metadata: null, trust: null },
   projection: { state: 'pending', value: null }
 })
+const defaultPageFeatures = (): PageFeatures => normalizePageFeatures(undefined)
 
 export const pinia = createPinia()
 type WhoAmIResponse = {
@@ -390,6 +399,7 @@ export const useWikiStore = defineStore('wiki', {
       },
       brandingAssignment: null as PageBrandingAssignment | null,
       brandingView: null as PageBrandingView | null,
+      pageFeatures: defaultPageFeatures(),
       okf: defaultPageOkf(),
       okfLoading: false,
       okfError: null as string | null
@@ -637,6 +647,7 @@ export const useWikiStore = defineStore('wiki', {
             return publishOutcome('unavailable', false) ? 'unavailable' : settleStale()
           }
           if (!isCurrentRefresh()) return settleStale()
+          const profilePreferences = normalizeUserProfilePreferences(profile)
           this.user = {
             ...defaultUser(),
             id,
@@ -649,6 +660,7 @@ export const useWikiStore = defineStore('wiki', {
             timeFormat: isUserTimeFormat(profile.timeFormat) ? profile.timeFormat : 'locale',
             dateFormat: typeof profile.dateFormat === 'string' ? profile.dateFormat : '',
             appearance: typeof profile.appearance === 'string' ? profile.appearance : '',
+            ...profilePreferences,
             fontFamily: normalizeUserFontFamily(profile.fontFamily),
             permissions: Array.isArray(profile.permissions)
               ? profile.permissions.filter((permission): permission is string => typeof permission === 'string')

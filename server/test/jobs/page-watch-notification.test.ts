@@ -147,24 +147,26 @@ const wiki = (pageResult: Record<string, unknown> | undefined): PageWatchWikiCon
 })
 
 describe('page watch notification handler', () => {
-  it('sends one stable-message-id email and records completion idempotently', async () => {
+  it('sends one stable-message-id page-watch template and records completion idempotently', async () => {
     const handler = createPageWatchNotificationHandler(wiki(page))
 
     await handler(job, { knex, signal: new AbortController().signal })
     await handler(job, { knex, signal: new AbortController().signal })
 
     expect(send).toHaveBeenCalledOnce()
-    expect(send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: 'reader@example.test',
-        messageId: '<page-watch-delivery-1@wiki.local>',
-        data: expect.objectContaining({ url: 'https://wiki.example.test/en/docs/start' })
-      })
-    )
+    const message = send.mock.calls[0]?.[0] as { template?: string; to?: string; messageId?: string; subject?: string; text?: string; data?: Record<string, unknown> }
+    expect(message).toMatchObject({
+      template: 'page-watch',
+      to: 'reader@example.test',
+      messageId: '<page-watch-delivery-1@wiki.local>',
+      data: { action: 'updated', actorName: 'Editor', pageTitle: 'Getting Started', url: 'https://wiki.example.test/en/docs/start' }
+    })
+    expect(message).not.toHaveProperty('subject')
+    expect(message).not.toHaveProperty('text')
     expect(await knex('pageWatchNotifications')).toEqual([expect.objectContaining({ eventId: 'event-1', userId: 7, title: 'Getting Started' })])
     expect(await knex('pageWatchDeliveries').where('id', 'delivery-1').first()).toMatchObject({ deliveredAt: expect.anything(), lastError: null })
   })
-  it('uses the encoded destination in both email href data and plain-text content', async () => {
+  it('uses the encoded destination in page-watch template data', async () => {
     const specialPage = {
       ...page,
       visibility: 'private',
@@ -177,11 +179,38 @@ describe('page watch notification handler', () => {
 
     await createPageWatchNotificationHandler(wiki(specialPage))(job, { knex, signal: new AbortController().signal })
 
-    const message = send.mock.calls[0]?.[0] as { text?: string; data?: { url?: string } }
+    const message = send.mock.calls[0]?.[0] as { data?: { url?: string }; subject?: string; text?: string }
     expect(message.data?.url).toBe(expectedUrl)
-    expect(message.text).toBe(`Editor updated “Getting Started”.\n\n${expectedUrl}`)
+    expect(message).not.toHaveProperty('subject')
+    expect(message).not.toHaveProperty('text')
     expect(message.data?.url).not.toContain('#')
     expect(message.data?.url).not.toContain('?')
+  })
+  it('maps every page event to a localized template action label', async () => {
+    const cases = [
+      ['page.created', 'created'],
+      ['page.updated', 'updated'],
+      ['page.restored', 'restored'],
+      ['page.moved', 'moved'],
+      ['page.deleted', 'deleted'],
+      ['page.visibility-changed', 'changed-visibility'],
+      ['page.ownership-transferred', 'transferred-ownership'],
+      ['page.unknown', 'changed']
+    ] as const
+    const handler = createPageWatchNotificationHandler(wiki(page))
+
+    for (const [index, [type, action]] of cases.entries()) {
+      const eventId = `action-event-${index}`,
+        deliveryId = `action-delivery-${index}`
+      await knex('outboxEvents').insert({
+        id: eventId,
+        type,
+        payload: JSON.stringify({ pageId: 42, actorId: 9, actorName: 'Editor', title: 'Getting Started', ownerId: null, tags: [], path: 'docs/start', localeCode: 'en', visibility: 'public' })
+      })
+      await knex('pageWatchDeliveries').insert({ id: deliveryId, eventId, userId: 7, deliveredAt: null, lastError: null })
+      await handler({ ...job, payload: { ...job.payload, eventId, deliveryId } }, { knex, signal: new AbortController().signal })
+      expect(send.mock.calls[index]?.[0].data.action).toBe(action)
+    }
   })
   it('uses the recipient authority snapshot before dispatching a notification', async () => {
     const deniedWiki = wiki(page)

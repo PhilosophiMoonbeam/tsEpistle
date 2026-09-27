@@ -1,11 +1,25 @@
 import express from 'express'
-import { type Request, type Response, getWikiAuth } from '../_types.ts'
+import { type Request, type Response, errorStatus, getTransportRuntime, getWikiAuth } from '../_types.ts'
+import type { Knex } from 'knex'
+import { PageIntegrityScanRequestSchema, PageIntegrityScanResponseSchema } from '../../../shared/page-integrity.ts'
+import { createPageIntegrityOperations } from '../../operations/page-integrity.ts'
+import type { PageIntegrityOperations } from '../../operations/page-integrity.ts'
 import { systemRequester } from '../../helpers/system-authority.ts'
 import { getExtensionsWorkspaceStore } from '../../operations/extensions-workspace.ts'
 import systemOperations from '../../operations/system.ts'
 import { getSystemWorkspaceStore } from '../../operations/system-workspace-runtime.ts'
 
 const router = express.Router()
+interface PageIntegrityApiRuntime {
+  models: { knex: Knex }
+}
+
+let pageIntegrityOperations: PageIntegrityOperations | undefined
+const getPageIntegrityOperations = () => {
+  if (pageIntegrityOperations) return pageIntegrityOperations
+  pageIntegrityOperations = createPageIntegrityOperations({ db: getTransportRuntime<PageIntegrityApiRuntime>().models.knex })
+  return pageIntegrityOperations
+}
 
 const authorized = (req: Request, res: Response, cacheControl = 'no-store'): boolean => {
   res.set('Cache-Control', cacheControl)
@@ -44,6 +58,32 @@ const retiredDeveloperFlags = (req: Request, res: Response) => {
   if (!authorized(req, res)) return
   res.status(410).json({ error: 'Developer flags now use reviewed workspace operations. Reload Administration or use /_api/developer-flags/workspace.' })
 }
+
+router.post('/page-integrity/scan', async (req, res, next) => {
+  if (!authorized(req, res)) return
+  const parsed = PageIntegrityScanRequestSchema.safeParse(req.body === undefined ? {} : req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Page integrity scan request is invalid.' })
+
+  const abortController = new AbortController()
+  const abortOnDisconnect = () => {
+    if (!res.writableEnded) abortController.abort()
+  }
+  res.once('close', abortOnDisconnect)
+  try {
+    const result = await getPageIntegrityOperations().scan(systemRequester(req), parsed.data, abortController.signal)
+    if (!res.destroyed && !res.writableEnded) res.json(PageIntegrityScanResponseSchema.parse(result))
+  } catch (error) {
+    if (res.destroyed || res.writableEnded) return
+    const status = errorStatus(error)
+    if (status !== undefined && status >= 400 && status < 500) {
+      res.status(status).json({ error: error instanceof Error ? error.message : 'Page integrity scan could not be completed.' })
+      return
+    }
+    next(error)
+  } finally {
+    res.off('close', abortOnDisconnect)
+  }
+})
 
 router.get('/workspace', async (req, res) => {
   if (!authorized(req, res)) return

@@ -37,7 +37,7 @@ interface PageVersionOptions {
   title: string
   action?: string
   versionDate: string
-  sourceRevision?: string | number
+  sourceRevision?: string | number | bigint
   transaction?: Knex.Transaction
 }
 
@@ -202,7 +202,7 @@ export default class PageHistory extends Model {
         contentType: { type: 'string' },
         extra: { type: 'object' },
 
-        sourceRevision: { type: 'integer' },
+        sourceRevision: { anyOf: [{ type: 'integer' }, { type: 'string' }] },
         createdAt: { type: 'string' }
       }
     }
@@ -283,7 +283,7 @@ export default class PageHistory extends Model {
       publishStartDate: opts.publishStartDate || '',
       title: opts.title,
       action: opts.action || 'updated',
-      sourceRevision: Number(opts.sourceRevision ?? 1),
+      sourceRevision: String(opts.sourceRevision ?? 1),
       versionDate: opts.versionDate
     })
     const knex = opts.transaction ?? wiki.models.knex

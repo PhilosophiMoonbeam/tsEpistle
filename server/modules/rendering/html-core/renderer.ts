@@ -166,7 +166,7 @@ const plugin = {
               } else {
                 href = this.page.path === 'home' ? `/${this.page.localeCode}/${href}` : `/${this.page.localeCode}/${this.page.path}/${href}`
               }
-            } else if (href.charAt(3) !== '/') {
+            } else if (!pageHelper.parsePath(href).explicitLocale) {
               href = `/${this.page.localeCode}${href}`
             }
 

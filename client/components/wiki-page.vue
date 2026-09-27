@@ -4,6 +4,9 @@
     :navigation-key='navigationKey'
     :navigation-pending='navigationPending'
     :active-view='activePageView'
+    :links-visible='linksVisible'
+    :ratings-visible='ratingsVisible'
+    :last-editor-visible='lastEditorVisible'
     @update:active-view='selectPageView'
   )
     template(v-slot:contents)
@@ -13,11 +16,17 @@
       slot(v-if='navigationKey === 0' name='comments')
       Comments(v-else-if='currentPage.props.commentsEnabled && !currentPage.props.commentsExternal')
       .wiki-page-rendered-comments(v-else-if='commentsHtml' v-html='commentsHtml')
+    template(v-slot:links='slotProps')
+      WikiPageLinks(v-bind='slotProps')
+    template(v-slot:ratings='slotProps')
+      WikiPageRatings(v-bind='slotProps')
 </template>
 
 <script lang="ts">
 import { defineComponent, markRaw, nextTick } from 'vue'
 import Comments from './comments.vue'
+import WikiPageLinks from './wiki-page-links.vue'
+import WikiPageRatings from './wiki-page-ratings.vue'
 import Page from '../themes/default/components/page.vue'
 import { loadingStart, loadingStop } from '../helpers/root-ui-store'
 import {
@@ -33,9 +42,10 @@ interface NavigationOptions {
   scrollY?: number
 }
 
-type PageView = 'article' | 'talk'
-const pageViewForUrl = (url: string | URL): PageView => {
+type PageView = 'article' | 'talk' | 'links'
+const pageViewForUrl = (url: string | URL, linksVisible = false): PageView => {
   const hash = new URL(url, window.location.href).hash
+  if (linksVisible && hash === '#page-links') return 'links'
   return hash === '#discussion' || hash.startsWith('#comment-post-id-') ? 'talk' : 'article'
 }
 const NAVIGATION_STATE_KEY = '__wikiPageNavigation'
@@ -55,7 +65,7 @@ const isTrustedWikiPageResponse = (response: Response, responseUrl: URL): boolea
 
 export default defineComponent({
   name: 'WikiPage',
-  components: { Comments, Page },
+  components: { Comments, Page, WikiPageLinks, WikiPageRatings },
   props: {
     payload: {
       type: String,
@@ -71,11 +81,22 @@ export default defineComponent({
       navigationKey: 0,
       navigationPending: false,
       currentUrl: window.location.href,
-      activePageView: pageViewForUrl(window.location.href),
+      activePageView: pageViewForUrl(window.location.href, currentPage.pageFeatures.linksVisible),
       previousScrollRestoration: null as History['scrollRestoration'] | null,
       navigationSequence: 0,
       navigationAbortController: null as AbortController | null,
       removeNavigationHandler: null as (() => void) | null
+    }
+  },
+  computed: {
+    linksVisible(): boolean {
+      return this.currentPage.pageFeatures.linksVisible
+    },
+    ratingsVisible(): boolean {
+      return this.currentPage.pageFeatures.ratingsAllowed && this.currentPage.ratingsSiteEnabled
+    },
+    lastEditorVisible(): boolean {
+      return this.currentPage.pageFeatures.lastEditorVisible
     }
   },
   mounted() {
@@ -101,16 +122,17 @@ export default defineComponent({
   },
   methods: {
     async selectPageView(view: PageView): Promise<void> {
-      if (view === this.activePageView) return
+      if (view === this.activePageView || (view === 'links' && !this.linksVisible)) return
       this.saveCurrentHistoryScroll()
       const destination = new URL(this.currentUrl)
       if (view === 'talk') destination.hash = 'discussion'
-      else if (destination.hash === '#discussion' || destination.hash.startsWith('#comment-post-id-')) destination.hash = ''
+      else if (view === 'links') destination.hash = 'page-links'
+      else if (destination.hash === '#discussion' || destination.hash.startsWith('#comment-post-id-') || destination.hash === '#page-links') destination.hash = ''
       window.history.pushState({ [NAVIGATION_STATE_KEY]: true, scrollY: window.scrollY }, '', destination)
       this.currentUrl = destination.href
       this.activePageView = view
       await nextTick()
-      if (view === 'talk') this.restoreScroll(destination)
+      if (view === 'talk' || view === 'links') this.restoreScroll(destination)
       else document.querySelector<HTMLElement>('.contents')?.focus({ preventScroll: true })
     },
     saveCurrentHistoryScroll(): void {
@@ -149,7 +171,7 @@ export default defineComponent({
 
       const current = new URL(this.currentUrl)
       if (destination.pathname === current.pathname && destination.search === current.search) {
-        this.activePageView = pageViewForUrl(destination)
+        this.activePageView = pageViewForUrl(destination, this.linksVisible)
         if (!options.popState) {
           this.saveCurrentHistoryScroll()
           window.history.pushState({ [NAVIGATION_STATE_KEY]: true, scrollY: window.scrollY }, '', destination)
@@ -199,7 +221,7 @@ export default defineComponent({
         this.contentHtml = parsed.contentHtml
         this.commentsHtml = parsed.commentsHtml
         this.currentUrl = parsed.url.href
-        this.activePageView = pageViewForUrl(parsed.url)
+        this.activePageView = pageViewForUrl(parsed.url, this.linksVisible)
         this.navigationKey += 1
         this.updateDocumentMetadata(parsed.documentTitle, parsed.description, parsed.url)
 

@@ -512,6 +512,74 @@
 
         v-card.mt-3
           v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
+            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:readingPreferences', { defaultValue: 'Reading preferences' })}}
+          v-list(lines="two", density="compact")
+            v-list-item
+              v-list-item-title {{$t('profile:reduceMotion', { defaultValue: 'Reduce motion' })}}
+              v-list-item-subtitle {{$t('profile:reduceMotionHint', { defaultValue: 'Reduce decorative motion; device accessibility settings are always respected.' })}}
+              template(v-slot:append)
+                v-switch(
+                  v-model='user.reduceMotion'
+                  :disabled='presentationSaveLoading'
+                  color='primary'
+                  hide-details
+                  :aria-label='$t(`profile:reduceMotion`, { defaultValue: `Reduce motion` })'
+                )
+            v-divider
+            v-list-item
+              v-list-item-title {{$t('profile:underlineLinks', { defaultValue: 'Underline article links' })}}
+              v-list-item-subtitle {{$t('profile:underlineLinksHint', { defaultValue: 'Keep article links underlined for easier recognition.' })}}
+              template(v-slot:append)
+                v-switch(
+                  v-model='user.underlineLinks'
+                  :disabled='presentationSaveLoading'
+                  color='primary'
+                  hide-details
+                  :aria-label='$t(`profile:underlineLinks`, { defaultValue: `Underline article links` })'
+                )
+            v-divider
+            v-list-item
+              v-list-item-title {{$t('profile:contentTextSize', { defaultValue: 'Article text size' })}}
+              v-list-item-subtitle {{$t('profile:contentTextSizeHint', { defaultValue: 'Change prose size without scaling application controls or code.' })}}
+              template(v-slot:append)
+                v-select(
+                  v-model='user.contentTextSize'
+                  :items='contentTextSizes'
+                  :label='$t(`profile:contentTextSize`, { defaultValue: `Article text size` })'
+                  :disabled='presentationSaveLoading'
+                  variant='outlined'
+                  density='compact'
+                  hide-details
+                  style='min-width: 170px'
+                )
+            v-divider
+            v-list-item
+              v-list-item-title {{$t('profile:communicationLocale', { defaultValue: 'Communication language' })}}
+              v-list-item-subtitle {{$t('profile:communicationLocaleHint', { defaultValue: 'Choose an installed language for account messages, or use the site language.' })}}
+              template(v-slot:append)
+                v-select(
+                  v-model='communicationLocaleSelection'
+                  :items='communicationLocaleOptions'
+                  :label='$t(`profile:communicationLocale`, { defaultValue: `Communication language` })'
+                  :disabled='presentationSaveLoading'
+                  variant='outlined'
+                  density='compact'
+                  hide-details
+                  style='min-width: 200px'
+                )
+          v-card-actions
+            v-spacer
+            v-btn(
+              color='primary'
+              variant='flat'
+              :loading='presentationSaveLoading'
+              :disabled='!profileReady'
+              @click='savePresentationPreferences'
+            )
+              v-icon(start) mdi-check
+              span {{$t('profile:saveReadingPreferences', { defaultValue: 'Save reading preferences' })}}
+        v-card.mt-3
+          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
             v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:groups.title')}}
           v-list(density="compact")
             template(v-if='user.groups.length')
@@ -545,12 +613,21 @@ import { newPasswordIssue } from '../../../shared/security-policy.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import PasswordStrength from '../common/password-strength.vue'
 import { wikiStore } from '@/store/index.ts'
-import { changeProfilePassword, fetchProfile, removeProfileAvatar, updateProfile, uploadProfileAvatar, type Profile } from '../../helpers/users-api.ts'
-import { getErrorMessage } from '../../helpers/root-ui-store'
+import {
+  changeProfilePassword,
+  fetchProfile,
+  removeProfileAvatar,
+  updateProfile,
+  updateProfilePreferences,
+  uploadProfileAvatar,
+  type Profile
+} from '../../helpers/users-api.ts'
+import { fetchLocales, type LocaleRow } from '../../helpers/locales-api.ts'
 import _ from 'lodash'
 import validateValues from '../../../shared/validation'
 import { resolveThemeName } from '../../helpers/theme.ts'
 import { applyUserPresentation } from '../../helpers/index.ts'
+import { getErrorMessage } from '../../helpers/root-ui-store.ts'
 
 type ProfileFieldRef =
   | 'iptDisplayName'
@@ -582,10 +659,12 @@ export default {
   data() {
     return {
       saveLoading: false,
+      presentationSaveLoading: false,
       changePassLoading: false,
       profileLoading: true,
       profileError: '',
       user: null as Profile | null,
+      installedCommunicationLocales: [] as LocaleRow[],
       avatarAction: '' as '' | 'upload' | 'remove',
       avatarError: '',
       avatarSuccess: '',
@@ -913,6 +992,33 @@ export default {
     currentTimeFormat () {
       return _.get(_.find(this.timeFormats, ['value', this.user?.timeFormat]), 'title', this.$t('profile:timeLocaleDefault', { defaultValue: 'Use locale default' }))
     },
+    contentTextSizes () {
+      return [
+        { title: this.$t('profile:contentTextSizeDefault', { defaultValue: 'Default' }), value: 'default' },
+        { title: this.$t('profile:contentTextSizeLarge', { defaultValue: 'Large' }), value: 'large' },
+        { title: this.$t('profile:contentTextSizeLarger', { defaultValue: 'Larger' }), value: 'larger' }
+      ]
+    },
+    communicationLocaleOptions () {
+      return [
+        {
+          title: this.$t('profile:communicationLocaleSiteDefault', { defaultValue: `Site language (${siteConfig.lang})` }),
+          value: '__site_default__'
+        },
+        ...this.installedCommunicationLocales.map(locale => ({
+          title: `${locale.nativeName} (${locale.code})`,
+          value: locale.code
+        }))
+      ]
+    },
+    communicationLocaleSelection: {
+      get (): string {
+        return this.user?.communicationLocale ?? '__site_default__'
+      },
+      set (value: string) {
+        if (this.user) this.user.communicationLocale = value === '__site_default__' ? null : value
+      }
+    },
     appearances () {
       return [
         { title: this.$t('profile:appearanceDefault'), value: '' },
@@ -952,7 +1058,9 @@ export default {
       this.profileError = ''
       wikiStore.startLoading('profile-refresh')
       try {
-        const profile = await fetchProfile(window.fetch.bind(window))
+        const fetchImpl = window.fetch.bind(window)
+        const [profile, locales] = await Promise.all([fetchProfile(fetchImpl), fetchLocales(fetchImpl).catch((): LocaleRow[] => [])])
+        this.installedCommunicationLocales = locales.filter(locale => locale.isInstalled)
         this.user = profile
         if (wikiStore.user.id === profile.id) wikiStore.user.pictureUrl = profile.pictureUrl ?? ''
         applyUserPresentation(profile)
@@ -1034,6 +1142,31 @@ export default {
           focusComponent(this.$refs[ipt])
         }, 200)
       })
+    },
+    async savePresentationPreferences () {
+      const profile = this.user
+      if (!profile || this.presentationSaveLoading) return
+      this.presentationSaveLoading = true
+      wikiStore.startLoading('profile-preferences-save')
+      try {
+        await updateProfilePreferences(window.fetch.bind(window), {
+          reduceMotion: profile.reduceMotion,
+          underlineLinks: profile.underlineLinks,
+          contentTextSize: profile.contentTextSize,
+          communicationLocale: profile.communicationLocale
+        })
+        await wikiStore.refreshAuth()
+        wikiStore.showNotification({
+          message: this.$t('profile:readingPreferencesSaved', { defaultValue: 'Reading preferences saved.' }),
+          style: 'success',
+          icon: 'check'
+        })
+      } catch (err) {
+        wikiStore.showError(err)
+      } finally {
+        wikiStore.stopLoading('profile-preferences-save')
+        this.presentationSaveLoading = false
+      }
     },
     /**
      * Save User Profile

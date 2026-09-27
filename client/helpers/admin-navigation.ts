@@ -32,6 +32,24 @@ export function buildAdminNavigation(translate: (key: string) => string, permiss
       description: 'Organize what your wiki knows.',
       items: [
         {
+          key: 'recycle-bin',
+          label: 'Recycle bin',
+          icon: 'mdi-delete-clock-outline',
+          to: '/pages/recycle-bin',
+          permission: 'manage:system',
+          description: 'Restore deleted pages',
+          keywords: 'deleted recovery restore'
+        },
+        {
+          key: 'page-integrity',
+          label: 'Page integrity',
+          icon: 'mdi-shield-search-outline',
+          to: '/pages/integrity',
+          permission: 'manage:system',
+          description: 'Inspect page integrity',
+          keywords: 'diagnostics scan consistency'
+        },
+        {
           key: 'pages',
           label: translate('admin:pages.title'),
           icon: 'mdi-file-document-multiple-outline',

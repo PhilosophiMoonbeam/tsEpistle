@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
-import { createDiscussionSettingsStore, type DiscussionDefinition } from '../../operations/discussion-settings.ts'
+import { createDiscussionSettingsStore, type DiscussionDefinition, writeDiscussionWorkspace } from '../../operations/discussion-settings.ts'
 import { createDiscussionModerationStore } from '../../operations/discussion-moderation.ts'
 import { createDiscussionPostingStore, type DiscussionPostInput } from '../../operations/discussion-posting.ts'
 import { up, down } from '../../db/migrations/tsepistle-000016-discussion-moderation.ts'
@@ -63,20 +63,36 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
   it('keeps claimed mention handles permanent across account deletion', async () => {
     await db('users').insert([{ id: 7, name: 'Alice', handle: 'alice' }, { id: 8, name: 'Other' }])
     await db('userHandleClaims').insert({ handle: 'alice', userId: 7 })
-    await expect(db('users').where('id', 8).update({ handle: 'Alice' })).rejects.toThrow()
+    await expect(Promise.resolve(db('users').where('id', 8).update({ handle: 'Alice' }))).rejects.toThrow()
     await db('users').where('id', 7).delete()
     expect(await db('userHandleClaims').where('handle', 'alice').first()).toMatchObject({ userId: null })
-    await expect(db('userHandleClaims').insert({ handle: 'alice', userId: 8 })).rejects.toThrow()
+    await expect(Promise.resolve(db('userHandleClaims').insert({ handle: 'alice', userId: 8 }))).rejects.toThrow()
     await expect(removeCommentMentions(db)).rejects.toThrow('permanent user mention handle claims')
   })
 
   it('masks credentials, preserves masked secrets and unrelated flags, and retains undeclared stored settings', async () => {
     const initial = await settings.read(); expect(initial.providers[1]?.config.akismet).toBe('********')
     await settings.patchFeatures({ featurePageRatings: false })
-    const result = await settings.write({ enabled: false, providers: [{ key: 'default', isEnabled: true, config: { akismet: '********', minDelay: 45 } }] }, initial.fingerprint)
+    const current = await settings.read(), result = await settings.write({ enabled: false, providers: [{ key: 'default', isEnabled: true, config: { akismet: '********', minDelay: 45 } }] }, current.fingerprint)
     expect(result.enabled).toBe(false)
     expect((await db('commentProviders').where('key', 'default').first()).config).toEqual({ akismet: 'saved-key', minDelay: 45, unknown: 'retained' })
     expect((await db('settings').where('key', 'features').first()).value).toMatchObject({ featurePageComments: false, featurePageRatings: false, custom: 'keep' })
+  })
+  it('persists a validated rating mode in the fingerprinted policy without changing provider settings', async () => {
+    const initial = await settings.read()
+    expect(initial).toMatchObject({ pageRatingsMode: 'thumbs', pageRatingsEnabled: false })
+    const result = await settings.write({ enabled: initial.enabled, pageRatingsMode: 'stars', providers: initial.providers }, initial.fingerprint)
+    expect(result).toMatchObject({ pageRatingsMode: 'stars', pageRatingsEnabled: false })
+    expect((await db('settings').where('key', 'features').first()).value).toMatchObject({ featurePageComments: true, pageRatingsMode: 'stars', custom: 'keep' })
+    expect((await db('commentProviders').where('key', 'default').first()).config).toEqual({ akismet: 'saved-key', minDelay: 30, unknown: 'retained' })
+    const changed = await settings.read()
+    expect(changed.fingerprint).not.toBe(initial.fingerprint)
+    await expect(settings.write({ enabled: changed.enabled, pageRatingsMode: 'hearts', providers: changed.providers }, changed.fingerprint)).rejects.toMatchObject({ status: 400 })
+    expect(await settings.read()).toMatchObject({ fingerprint: changed.fingerprint, pageRatingsMode: 'stars' })
+    await expect(settings.write({ enabled: changed.enabled, pageRatingsMode: 'thumbs', providers: changed.providers }, initial.fingerprint)).rejects.toMatchObject({ status: 409 })
+    await settings.patchFeatures({ featurePageRatings: true })
+    expect(await settings.read()).toMatchObject({ pageRatingsMode: 'stars', pageRatingsEnabled: true })
+    await expect(writeDiscussionWorkspace({ id: 7, permissions: ['read:pages'] } as never, { enabled: true, pageRatingsMode: 'stars', providers: changed.providers }, changed.fingerprint)).rejects.toMatchObject({ status: 403 })
   })
   it('keeps exactly one available provider and rejects unknown configuration without partial writes', async () => {
     const initial = await settings.read()

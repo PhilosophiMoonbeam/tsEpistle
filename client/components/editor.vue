@@ -179,6 +179,7 @@
           v-if='currentEditor'
           :key='editorInstanceKey'
           :save='save'
+          :wiki-link-options='currentEditor === `editorMarkdown` || currentEditor === `editorVisualMarkdown` ? wikiLinkOptions : undefined'
           @collaboration-state='handleCollaborationState'
           @editor-adapter='handleEditorAdapter'
           @editor-adapter-clear='handleEditorAdapterClear'
@@ -275,6 +276,8 @@ import {
   type PageBrandingAssignment,
   type PageBrandingView
 } from '../../shared/page-branding.ts'
+import { normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
+import type { WikiLinkOptions } from '../../shared/wikilinks.ts'
 
 
 const OFFLINE_CREATE_IDENTITY_KEY = 'tsepistle-offline-create-identity'
@@ -342,6 +345,15 @@ function normalizeEditorBrandingView (value: unknown, assignment: PageBrandingAs
   const result = PageBrandingViewSchema.safeParse(value)
   return result.success && result.data.assetId === assignment.assetId ? result.data : null
 }
+function normalizeEditorPageFeatures (value: string): PageFeatures {
+  if (value.length === 0) return normalizePageFeatures(undefined)
+  try {
+    return normalizePageFeatures(decodeBase64Json<unknown>(value))
+  } catch {
+    return normalizePageFeatures(null)
+  }
+}
+
 type EditorSaveCapture = {
   readonly pageInput: PageWriteInput
   readonly editVersion: number
@@ -360,6 +372,7 @@ type EditorSaveCapture = {
   readonly scriptCss: string
   readonly scriptJs: string
   readonly brandingAssignment: PageBrandingAssignment | null
+  readonly pageFeatures: PageFeatures
   readonly okf: unknown
 }
 type EditorEditableState = {
@@ -377,6 +390,7 @@ type EditorEditableState = {
   readonly scriptCss: unknown
   readonly scriptJs: unknown
   readonly brandingAssignment: unknown
+  readonly pageFeatures: PageFeatures
   readonly okf: unknown
 }
 
@@ -395,6 +409,7 @@ type EditableStateValue = {
   readonly scriptCss?: unknown
   readonly scriptJs?: unknown
   readonly brandingAssignment?: unknown
+  readonly pageFeatures?: unknown
   readonly okf?: unknown
 }
 
@@ -402,9 +417,11 @@ type EditableStateValue = {
 const freezePageInput = (input: PageWriteInput): PageWriteInput => {
   Object.freeze(input.tags)
   if (input.okfMetadata !== undefined) Object.freeze(input.okfMetadata)
+  if (input.pageFeatures !== undefined) Object.freeze(input.pageFeatures)
   if (input.branding !== undefined && input.branding !== null) Object.freeze(input.branding)
   return Object.freeze(input) as PageWriteInput
 }
+
 
 
 export default defineComponent({
@@ -517,6 +534,22 @@ export default defineComponent({
     brandingView: {
       type: Object as PropType<PageBrandingView | null>,
       default: null
+    },
+    wikiLinksEnabled: {
+      type: Boolean,
+      default: false
+    },
+    absoluteLinks: {
+      type: Boolean,
+      default: false
+    },
+    localeNamespaced: {
+      type: Boolean,
+      default: false
+    },
+    pageFeatures: {
+      type: String,
+      default: ''
     }
   },
   setup () {
@@ -602,6 +635,7 @@ export default defineComponent({
         scriptJs: '',
         brandingAssignment: null as PageBrandingAssignment | null,
         brandingView: null as PageBrandingView | null,
+        pageFeatures: normalizePageFeatures(undefined),
         okf: _.cloneDeep(wikiStore.page.okf)
       }
     }
@@ -627,6 +661,17 @@ export default defineComponent({
     checkoutDateActive: {
       get(): string { return wikiStore.editor.checkoutDateActive },
       set(value: string) { wikiStore.editor.checkoutDateActive = value }
+    },
+    wikiLinkOptions(): WikiLinkOptions {
+      return {
+        enabled: this.wikiLinksEnabled,
+        context: {
+          locale: wikiStore.page.locale,
+          pagePath: wikiStore.page.path,
+          namespaced: this.localeNamespaced,
+          absoluteLinks: this.absoluteLinks
+        }
+      }
     },
     currentStyling(): string { return wikiStore.page.scriptCss },
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
@@ -681,6 +726,7 @@ export default defineComponent({
         wikiStore.page.description,
         wikiStore.page.locale,
         wikiStore.page.path,
+        JSON.stringify(wikiStore.page.pageFeatures),
         wikiStore.editor.editorKey
       ]
     },
@@ -708,6 +754,7 @@ export default defineComponent({
         wikiStore.page.okf,
         wikiStore.page.id,
         wikiStore.page.sourceRevision,
+        wikiStore.page.pageFeatures,
         this.checkoutDateActive,
         this.currentEditor,
         this.activeModal,
@@ -793,6 +840,7 @@ export default defineComponent({
 
     this.checkoutDateActive = this.checkoutDate
 
+    wikiStore.page.pageFeatures = normalizeEditorPageFeatures(this.pageFeatures)
     if (this.effectivePermissions) {
       wikiStore.page.effectivePermissions = decodeBase64Json(this.effectivePermissions)
     }
@@ -878,6 +926,7 @@ export default defineComponent({
         scriptCss: wikiStore.page.scriptCss,
         scriptJs: wikiStore.page.scriptJs,
         brandingAssignment: wikiStore.page.brandingAssignment,
+        pageFeatures: wikiStore.page.pageFeatures,
         okf: wikiStore.page.okf
       }
     },
@@ -913,6 +962,7 @@ export default defineComponent({
         scriptCss: value.scriptCss,
         scriptJs: value.scriptJs,
         brandingAssignment: value.brandingAssignment,
+        pageFeatures: normalizePageFeatures(value.pageFeatures),
         okf: okfMetadata
       }
     },
@@ -1397,6 +1447,7 @@ export default defineComponent({
       wikiStore.page.scriptJs = ''
       wikiStore.page.sourceRevision = ''
       wikiStore.page.brandingAssignment = null
+      wikiStore.page.pageFeatures = normalizePageFeatures(undefined)
       wikiStore.page.brandingView = null
       this.offlineDraftStatus = 'locked'
       this.offlineDraftError = 'Your offline editor session was locked. Unsaved plaintext was cleared. Verify this account online, then reload the editor to recover any encrypted draft.'
@@ -1417,6 +1468,7 @@ export default defineComponent({
         scriptJs: '',
         brandingAssignment: null,
         brandingView: null,
+        pageFeatures: normalizePageFeatures(undefined),
         okf: _.cloneDeep(emptyOkf)
       }
       this.submissionCaptureValues = null
@@ -1487,6 +1539,11 @@ export default defineComponent({
         wikiStore.page.brandingView = normalizeEditorBrandingView(page.branding, wikiStore.page.brandingAssignment)
       }
     },
+    applyHydratedPageFeatures (page: PageDetails, expectedFeatures?: PageFeatures): boolean {
+      if (expectedFeatures !== undefined && !_.isEqual(expectedFeatures, wikiStore.page.pageFeatures)) return false
+      wikiStore.page.pageFeatures = normalizePageFeatures(page.pageFeatures)
+      return true
+    },
     async hydratePage() {
       if (this.mode === 'create' || this.pageId <= 0 || wikiStore.page.okfLoading) return
       const lifecycleGeneration = this.lifecycleGeneration
@@ -1496,6 +1553,7 @@ export default defineComponent({
       const expectedAuthenticated = this.isAuthenticated
       const expectedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
       const expectedBrandingAssignment = _.cloneDeep(wikiStore.page.brandingAssignment)
+      const expectedPageFeatures = _.cloneDeep(wikiStore.page.pageFeatures)
       wikiStore.page.okfLoading = true
       wikiStore.page.okfError = null
       try {
@@ -1510,11 +1568,13 @@ export default defineComponent({
           this.isDirty
         )
           return
+        const pageFeaturesWereCurrent = this.applyHydratedPageFeatures(page, expectedPageFeatures)
         this.applyHydratedBranding(page, expectedBrandingAssignment)
         wikiStore.page.okf = page.okf
         wikiStore.page.sourceRevision = page.sourceRevision
         wikiStore.page.isSearchable = page.isSearchable !== false
         this.setCurrentSavedState()
+        if (!pageFeaturesWereCurrent) this.savedState.pageFeatures = normalizePageFeatures(page.pageFeatures)
       } catch (err) {
         if (
           this.lifecycleGeneration === lifecycleGeneration &&
@@ -1527,13 +1587,17 @@ export default defineComponent({
         if (this.lifecycleGeneration === lifecycleGeneration && this.pageId === expectedPageId && this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)) wikiStore.page.okfLoading = false
       }
     },
-    async refreshOkfAfterSave(expectedBrandingAssignment: PageBrandingAssignment | null = wikiStore.page.brandingAssignment) {
+    async refreshOkfAfterSave(
+      expectedBrandingAssignment: PageBrandingAssignment | null = wikiStore.page.brandingAssignment,
+      expectedPageFeatures: PageFeatures = wikiStore.page.pageFeatures
+    ) {
       const lifecycleGeneration = this.lifecycleGeneration
       const expectedPageId = this.pageId
       const coordinator = this.offlineDraftCoordinator
       const expectedAccountId = this.accountId
       const expectedAuthenticated = this.isAuthenticated
       const expectedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
+      const pageFeaturesSnapshot = _.cloneDeep(expectedPageFeatures)
       wikiStore.page.okfLoading = true
       wikiStore.page.okfError = null
       try {
@@ -1547,6 +1611,7 @@ export default defineComponent({
         )
           return
         this.applyHydratedBranding(page, expectedBrandingAssignment)
+        this.applyHydratedPageFeatures(page, pageFeaturesSnapshot)
         wikiStore.page.okf = page.okf
         wikiStore.page.isSearchable = page.isSearchable !== false
         wikiStore.page.sourceRevision = page.sourceRevision
@@ -1803,7 +1868,7 @@ export default defineComponent({
             }
           }
           try {
-            await this.refreshOkfAfterSave(capture.brandingAssignment)
+            await this.refreshOkfAfterSave(capture.brandingAssignment, capture.pageFeatures)
             this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
           } catch (error) {
             this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
@@ -2098,6 +2163,7 @@ export default defineComponent({
         scriptCss: pageInput.scriptCss,
         scriptJs: pageInput.scriptJs,
         brandingAssignment: _.cloneDeep(wikiStore.page.brandingAssignment),
+        pageFeatures: normalizePageFeatures(pageInput.pageFeatures),
         okf: _.cloneDeep(wikiStore.page.okf)
       })
     },
@@ -2147,6 +2213,7 @@ export default defineComponent({
         scriptJs: wikiStore.page.scriptJs,
         tags: [...wikiStore.page.tags],
         title: wikiStore.page.title,
+        pageFeatures: normalizePageFeatures(wikiStore.page.pageFeatures),
         ...brandingInput,
         ...(okfMetadata === undefined ? {} : { okfMetadata: _.cloneDeep(okfMetadata) })
       }
@@ -2169,6 +2236,7 @@ export default defineComponent({
         scriptJs: wikiStore.page.scriptJs,
         brandingAssignment: _.cloneDeep(wikiStore.page.brandingAssignment),
         brandingView: _.cloneDeep(wikiStore.page.brandingView),
+        pageFeatures: normalizePageFeatures(wikiStore.page.pageFeatures),
         okf: _.cloneDeep(wikiStore.page.okf)
       }
     },
@@ -2188,6 +2256,7 @@ export default defineComponent({
       wikiStore.page.scriptJs = this.savedState.scriptJs
       wikiStore.page.brandingAssignment = _.cloneDeep(this.savedState.brandingAssignment)
       wikiStore.page.brandingView = _.cloneDeep(this.savedState.brandingView)
+      wikiStore.page.pageFeatures = _.cloneDeep(this.savedState.pageFeatures)
       wikiStore.page.okf = _.cloneDeep(this.savedState.okf)
     },
     injectCustomCss(css: string) {

@@ -12,7 +12,7 @@ type NavigationOptions = {
 type NavigationVm = {
   currentUrl: string
   navigationSequence: number
-  activePageView: 'article' | 'talk'
+  activePageView: 'article' | 'talk' | 'links'
   navigationAbortController: AbortController | null
   navigationPending: boolean
   currentPage: WikiPagePayload
@@ -26,6 +26,11 @@ type NavigationVm = {
 }
 
 type WikiPageComponentOptions = {
+  computed: {
+    linksVisible: (this: NavigationVm) => boolean
+    ratingsVisible: (this: NavigationVm) => boolean
+    lastEditorVisible: (this: NavigationVm) => boolean
+  }
   methods: {
     navigate: (this: NavigationVm, destination: URL, options?: NavigationOptions) => Promise<void>
   }
@@ -43,6 +48,8 @@ const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(
 const payload = (): WikiPagePayload => ({
   version: 1,
   spaNavigation: true,
+  pageFeatures: { schemaVersion: 1, linksVisible: false, ratingsAllowed: true, lastEditorVisible: false },
+  ratingsSiteEnabled: false,
   props: {
     pageId: 42,
     locale: 'en',
@@ -66,7 +73,8 @@ const payload = (): WikiPagePayload => ({
     effectivePermissions: 'e30=',
     commentsExternal: false,
     editShortcuts: 'e30=',
-    filename: 'guides/routing.md'
+    filename: 'guides/routing.md',
+    branding: null
   }
 })
 
@@ -91,6 +99,8 @@ const loadComponent = (fetchResponse: Response): WikiPageComponentOptions => {
     'nextTick',
     'Comments',
     'Page',
+    'WikiPageLinks',
+    'WikiPageRatings',
     'loadingStart',
     'loadingStop',
     'decodeWikiPagePayload',
@@ -107,6 +117,8 @@ const loadComponent = (fetchResponse: Response): WikiPageComponentOptions => {
     (options: WikiPageComponentOptions) => options,
     <Value>(value: Value): Value => value,
     () => Promise.resolve(),
+    {},
+    {},
     {},
     {},
     () => undefined,
@@ -164,6 +176,35 @@ const navigate = async (fetchResponse: Response): Promise<NavigationVm> => {
   await component.methods.navigate.call(vm, new URL('/en/requested', window.location.href), { popState: true })
   return vm
 }
+
+describe('wiki page feature visibility', () => {
+  test('visibility flags respect page policy and the rating site gate as pages change', () => {
+    const component = loadComponent(new Response())
+    const vm = navigationVm()
+    const enabledFeatures: WikiPagePayload['pageFeatures'] = {
+      schemaVersion: 1,
+      linksVisible: true,
+      ratingsAllowed: true,
+      lastEditorVisible: true
+    }
+    vm.currentPage = { ...payload(), pageFeatures: enabledFeatures, ratingsSiteEnabled: true }
+
+    expect(component.computed.linksVisible.call(vm)).toBe(true)
+    expect(component.computed.ratingsVisible.call(vm)).toBe(true)
+    expect(component.computed.lastEditorVisible.call(vm)).toBe(true)
+
+    vm.currentPage = {
+      ...vm.currentPage,
+      pageFeatures: { ...enabledFeatures, linksVisible: false, ratingsAllowed: false, lastEditorVisible: false }
+    }
+    expect(component.computed.linksVisible.call(vm)).toBe(false)
+    expect(component.computed.ratingsVisible.call(vm)).toBe(false)
+    expect(component.computed.lastEditorVisible.call(vm)).toBe(false)
+
+    vm.currentPage = { ...vm.currentPage, pageFeatures: enabledFeatures, ratingsSiteEnabled: false }
+    expect(component.computed.ratingsVisible.call(vm)).toBe(false)
+  })
+})
 
 describe('wiki page navigation response boundary', () => {
   test('keeps a marked same-origin HTML page in SPA navigation', async () => {

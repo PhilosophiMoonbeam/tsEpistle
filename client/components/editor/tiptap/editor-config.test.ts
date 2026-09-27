@@ -12,20 +12,49 @@ import {
   searchVisualMarkdownGlyphs,
   serializeVisualMarkdownAdmonition
 } from './visual-markdown-authoring.ts'
+import { parseWikiLinkAt, resolveWikiLinkHref, type WikiLinkOptions } from '../../../../shared/wikilinks.ts'
 
 const editors: Editor[] = []
+const enabledWikiLinks: WikiLinkOptions = {
+  enabled: true,
+  context: { locale: 'en', pagePath: 'guide', namespaced: true }
+}
 
-function createEditor(format: VisualEditorFormat, content: string): Editor {
+function createEditor (format: VisualEditorFormat, content: string, wikiLinks?: WikiLinkOptions): Editor {
   const element = document.createElement('div')
   document.body.appendChild(element)
   const editor = new Editor({
     element,
-    extensions: createTiptapExtensions(format),
+    extensions: createTiptapExtensions(format, wikiLinks),
     content: format === 'markdown' ? prepareTiptapMarkdown(content) : prepareTiptapHtml(content),
     contentType: format
   })
   editors.push(editor)
   return editor
+}
+
+function findTextblockEnd (editor: Editor, text: string, parentType: string): number | null {
+  let result: number | null = null
+  editor.state.doc.descendants((node, position, parent) => {
+    if (node.isTextblock && node.textContent === text && parent?.type.name === parentType) {
+      result = position + 1 + node.content.size
+    }
+  })
+  return result
+}
+
+function selectionHasAncestor (editor: Editor, name: string): boolean {
+  const $from = editor.state.selection.$from
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    if ($from.node(depth).type.name === name) return true
+  }
+  return false
+}
+
+function pressEnter (editor: Editor): boolean {
+  const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+  editor.view.dom.dispatchEvent(event)
+  return event.defaultPrevented
 }
 
 function findSourceNodes(node: JSONContent): JSONContent[] {
@@ -208,6 +237,135 @@ graph TD
     expect(visualRenderer.render(output)).toContain('class="katex"')
     expect(visualRenderer.render(output)).toContain('class="footnotes')
     expect(visualRenderer.render(output)).toContain('rowspan="2"')
+  })
+
+  it('round-trips enabled wikilinks as ordinary safe anchors in both Markdown surfaces', () => {
+    const source = '[[target]] [[target|label]] [[target#section]] [[#section]]'
+    const editor = createEditor('markdown', source, enabledWikiLinks)
+    const output = editor.getMarkdown()
+    const editorHtml = editor.getHTML()
+    const previewHtml = createWikiMarkdownRenderer(enabledWikiLinks).render(source)
+
+    expect(output).toBe(source)
+    expect(editorHtml).toContain('href="/en/guide/target"')
+    expect(editorHtml).toContain('href="/en/guide/target#section"')
+    expect(editorHtml).toContain('href="#section"')
+    expect(editorHtml).not.toContain('wikiLinkSource')
+    expect(previewHtml).toContain('href="/en/guide/target"')
+    expect(previewHtml).toContain('href="/en/guide/target#section"')
+    expect(previewHtml).toContain('href="#section"')
+    expect(resolveWikiLinkHref('[[target#section]]', enabledWikiLinks.context)).toBe('/en/guide/target#section')
+    expect(resolveWikiLinkHref('[[file.name]]', enabledWikiLinks.context)).toBe('/en/guide/file%2Ename')
+  })
+
+  it('renders wikilink labels as escaped text', () => {
+    const source = '[[target|<img src=x onerror=alert(1)> & text]]'
+    const editor = createEditor('markdown', source, enabledWikiLinks)
+    const preview = createWikiMarkdownRenderer(enabledWikiLinks).render(source)
+
+    expect(editor.getHTML()).not.toContain('<img')
+    expect(preview).not.toContain('<img')
+    expect(preview).toContain('&lt;img')
+    expect(preview).toContain('&amp;')
+  })
+
+  it('keeps wikilinks disabled by default', () => {
+    const source = '[[target]]'
+    const editor = createEditor('markdown', source)
+    const preview = createWikiMarkdownRenderer().render(source)
+
+    expect(editor.getMarkdown()).toBe(source)
+    expect(editor.getHTML()).not.toContain('<a')
+    expect(preview).not.toContain('<a')
+  })
+
+  it('leaves Markdown citations, code, HTML attributes, and unsafe malformed wikilinks untouched', () => {
+    const source = 'Citation [[1]](https://example.com), inline `[[target]]`.\n\n```md\n[[target]]\n```'
+    const editor = createEditor('markdown', source, enabledWikiLinks)
+    const preview = createWikiMarkdownRenderer(enabledWikiLinks).render(source)
+
+    expect(editor.getMarkdown()).toContain('[[1]](https://example.com)')
+    expect(editor.getMarkdown()).toContain('`[[target]]`')
+    expect(editor.getMarkdown()).toContain('[[target]]')
+    expect(preview).toContain('href="https://example.com"')
+    expect(preview).not.toContain('href="/en/guide/target"')
+    expect(preview).toContain('<code>[[target]]</code>')
+
+    const htmlAttribute = createWikiMarkdownRenderer(enabledWikiLinks).render('<span data-source="[[target]]">literal</span>')
+    expect(htmlAttribute).toContain('data-source="[[target]]"')
+    expect(htmlAttribute).not.toContain('href="/en/guide/target"')
+
+    const malformed = '[[javascript:alert(1)]] [[//evil.example]] [[target#]] [[target|one|two]]'
+    expect(parseWikiLinkAt('[[1]](https://example.com)')).toBeNull()
+    expect(parseWikiLinkAt('[[target]][reference]')).toBeNull()
+    expect(parseWikiLinkAt('[[target]][[next]]')?.raw).toBe('[[target]]')
+    for (const candidate of malformed.split(' ')) expect(parseWikiLinkAt(candidate)).toBeNull()
+    const malformedEditor = createEditor('markdown', malformed, enabledWikiLinks)
+    const malformedPreview = createWikiMarkdownRenderer(enabledWikiLinks).render(malformed)
+    expect(malformedEditor.getMarkdown()).toContain(malformed)
+    expect(malformedPreview).toContain(malformed)
+    expect(malformedPreview).not.toContain('href="javascript:')
+    expect(malformedPreview).not.toContain('href="//evil.example')
+  })
+
+  it('falls back to an ordinary Markdown link when a wikilink label is edited', () => {
+    const editor = createEditor('markdown', '[[target|label]]', enabledWikiLinks)
+
+    const link = editor.state.doc.firstChild?.firstChild
+    expect(link?.type.name).toBe('wikiLink')
+    editor.commands.setTextSelection({ from: 2, to: 2 + (link?.content.size ?? 0) })
+    editor.commands.insertContent('Changed label')
+
+    expect(editor.getMarkdown()).toContain('[Changed label](/en/guide/target)')
+    expect(editor.getMarkdown()).not.toContain('[[target|label]]')
+  })
+
+  it('progresses through definition terms and descriptions without dropping existing entries', () => {
+    const editor = createEditor('markdown', 'Term\n: Definition')
+    const termEnd = findTextblockEnd(editor, 'Term', 'definitionList')
+    expect(termEnd).not.toBeNull()
+    editor.commands.setTextSelection(termEnd!)
+    expect(pressEnter(editor)).toBe(true)
+    expect(selectionHasAncestor(editor, 'definitionDescription')).toBe(true)
+    expect(editor.state.selection.$from.parent.textContent).toBe('Definition')
+
+    const definitionEnd = findTextblockEnd(editor, 'Definition', 'definitionDescription')
+    expect(definitionEnd).not.toBeNull()
+    editor.commands.setTextSelection(definitionEnd!)
+    expect(pressEnter(editor)).toBe(true)
+    expect(editor.state.selection.$from.parent.type.name).toBe('definitionTerm')
+    expect(editor.state.selection.$from.parent.textContent).toBe('')
+
+    expect(pressEnter(editor)).toBe(true)
+    expect(selectionHasAncestor(editor, 'definitionDescription')).toBe(true)
+    expect(pressEnter(editor)).toBe(true)
+    expect(editor.state.selection.$from.parent.type.name).toBe('paragraph')
+    expect(selectionHasAncestor(editor, 'definitionList')).toBe(false)
+    expect(editor.getJSON().content?.[0]?.content?.[0]?.content?.[0]?.text).toBe('Term')
+    expect(editor.getJSON().content?.[0]?.content).toHaveLength(2)
+  })
+
+  it('moves to an existing next term and keeps nested, multi-paragraph definitions editable', () => {
+    const nextTermEditor = createEditor('markdown', 'Term\n: Definition\n\nNext\n: Explanation')
+    const definitionEnd = findTextblockEnd(nextTermEditor, 'Definition', 'definitionDescription')
+    expect(definitionEnd).not.toBeNull()
+    nextTermEditor.commands.setTextSelection(definitionEnd!)
+    expect(pressEnter(nextTermEditor)).toBe(true)
+    expect(nextTermEditor.state.selection.$from.parent.type.name).toBe('definitionTerm')
+    expect(nextTermEditor.state.selection.$from.parent.textContent).toBe('Next')
+
+    const source = '<dl><dt>Term</dt><dd><p>First paragraph</p><p>Second paragraph</p><ul><li><p>Nested item</p></li></ul></dd><dd><p>Alternate definition</p></dd></dl>'
+    const editor = createEditor('html', source)
+    const firstParagraphEnd = findTextblockEnd(editor, 'First paragraph', 'definitionDescription')
+    expect(firstParagraphEnd).not.toBeNull()
+    editor.commands.setTextSelection(firstParagraphEnd!)
+    expect(pressEnter(editor)).toBe(true)
+    expect(editor.getText()).toContain('First paragraph')
+    expect(editor.getText()).toContain('Second paragraph')
+    expect(editor.getText()).toContain('Nested item')
+    expect(editor.getText()).toContain('Alternate definition')
+    const list = editor.getJSON().content?.[0]
+    expect(list?.content?.filter(child => child.type === 'definitionDescription')).toHaveLength(2)
   })
 
   it('sanitizes the renderer shared by both Markdown previews', () => {

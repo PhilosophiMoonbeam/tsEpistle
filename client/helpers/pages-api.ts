@@ -2,6 +2,7 @@ import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards'
 import { parseCollaborationSession, type CollaborationSession } from '../../shared/collaboration'
 import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../shared/page-branding.ts'
+import { PageFeaturesSchema, normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
 import {
   OfflinePageSnapshotV1Schema,
   OfflinePrivateSnapshotResponseV1Schema,
@@ -391,6 +392,7 @@ export type PageDetails = {
     viewStewardContacts: boolean
   }
   okf: PageOkfView
+  pageFeatures: PageFeatures
   branding?: PageBrandingView | null
   brandingAssignment?: PageBrandingAssignment | null
 }
@@ -631,7 +633,7 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
   if (brandingAssignment !== null && branding !== null && brandingAssignment.assetId !== branding.assetId) {
     throw new Error(fallbackMessage)
   }
-
+  const pageFeatures = normalizePageFeatures(rawRow.pageFeatures)
   return {
     id: page.id!,
     locale: page.locale,
@@ -658,6 +660,7 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     ...(hasCreatorEmail ? { creatorEmail: rawRow.creatorEmail as string } : {}),
     capabilities: { viewStewardContacts },
     okf,
+    pageFeatures,
     ...(hasBranding ? { branding } : {}),
     ...(hasBrandingAssignment ? { brandingAssignment } : {})
   }
@@ -1001,6 +1004,7 @@ export type PageWriteInput = {
   tags: string[]
   title: string
   okfMetadata?: Record<string, unknown>
+  pageFeatures?: PageFeatures
   branding?: PageBrandingAssignment | null
 }
 
@@ -1050,12 +1054,22 @@ export type PageSearchResult = {
   suggestions: string[]
   totalHits: number
 }
+function normalizePageFeaturesWrite(value: unknown, fallbackMessage: string): PageFeatures {
+  const result = PageFeaturesSchema.safeParse(value)
+  if (!result.success) throw new Error(fallbackMessage)
+  return result.data
+}
+
 function normalizePageWriteInput(input: PageWriteInput, fallbackMessage: string): PageWriteInput {
   if (!isRecord(input)) throw new Error(fallbackMessage)
-  if (!Object.hasOwn(input, 'branding') || input.branding === undefined || input.branding === null) return input
+  let normalizedInput = input
+  if (input.pageFeatures !== undefined) {
+    normalizedInput = { ...normalizedInput, pageFeatures: normalizePageFeaturesWrite(input.pageFeatures, fallbackMessage) }
+  }
+  if (!Object.hasOwn(input, 'branding') || input.branding === undefined || input.branding === null) return normalizedInput
   const result = PageBrandingAssignmentSchema.safeParse(input.branding)
   if (!result.success) throw new Error(fallbackMessage)
-  return { ...input, branding: result.data }
+  return { ...normalizedInput, branding: result.data }
 }
 
 async function sendJson<T = unknown>(
@@ -1124,6 +1138,26 @@ export async function updatePage(
       ...normalizedInput,
       expectedSourceRevision,
       ...(expectedCollaborationGeneration === undefined ? {} : { expectedCollaborationGeneration })
+    },
+    fallbackMessage,
+    payload => normalizeWrittenPage(payload, fallbackMessage, false)
+  )
+}
+export async function updatePageFeatures(
+  fetchImpl: FetchImpl,
+  id: number,
+  pageFeatures: PageFeatures,
+  expectedSourceRevision: string,
+  fallbackMessage = 'Page feature update failed'
+): Promise<WrittenPage> {
+  if (!/^[1-9][0-9]*$/u.test(expectedSourceRevision)) throw new Error(fallbackMessage)
+  return sendJson(
+    fetchImpl,
+    `/_api/pages/${encodeURIComponent(id)}`,
+    'PUT',
+    {
+      pageFeatures: normalizePageFeaturesWrite(pageFeatures, fallbackMessage),
+      expectedSourceRevision
     },
     fallbackMessage,
     payload => normalizeWrittenPage(payload, fallbackMessage, false)

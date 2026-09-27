@@ -1,6 +1,8 @@
 import { describe, expect, it } from '../bun-test.mts'
 import { createApiPrincipal, isApiPrincipal } from '../../helpers/api-principal.ts'
 import { evaluateGroupAccess, pageRuleRequesterBinding, type AccessRule } from '../../helpers/group-access.ts'
+import { normalizeGroupPolicy } from '../../operations/group-administration.ts'
+
 const rule = (id: string, path: string, match: AccessRule['match'] = 'START', deny = false, values: Partial<AccessRule> = {}): AccessRule => ({
   id,
   path,
@@ -48,6 +50,60 @@ describe('Group access explanation and enforcement', () => {
     const result = evaluate([rule('prefix', 'guides/start', 'START', true), rule('exact', 'guides/start', 'EXACT')])
     expect(result.allowed).toBe(true)
     expect(result.rules.find(r => r.ruleId === 'exact')?.outcome).toBe('winner')
+  })
+
+  it('matches SUBTREE rules at slash boundaries and treats empty path as the root namespace', () => {
+    const subtree = rule('subtree', 'foo/bar', 'SUBTREE')
+    expect(evaluate([subtree], 'foo/bar').allowed).toBe(true)
+    expect(evaluate([subtree], 'foo/bar/child').allowed).toBe(true)
+    expect(evaluate([subtree], 'foo/barometer').allowed).toBe(false)
+    const root = rule('root', '', 'SUBTREE')
+    expect(evaluate([root], 'home').allowed).toBe(true)
+    expect(evaluate([root], 'guides/start').allowed).toBe(true)
+  })
+  it('normalizes trailing separators only for authored SUBTREE paths', () => {
+    const policy = normalizeGroupPolicy({
+      name: 'Readers',
+      description: '',
+      redirectOnLogin: '/',
+      permissions: ['read:pages'],
+      pageRules: [
+        { id: 'subtree', match: 'SUBTREE', path: 'foo/bar///', deny: false, roles: ['read:pages'], locales: [] },
+        { id: 'root', match: 'SUBTREE', path: '///', deny: false, roles: ['read:pages'], locales: [] },
+        { id: 'prefix', match: 'START', path: 'foo/bar/', deny: false, roles: ['read:pages'], locales: [] }
+      ]
+    })
+    expect(policy.pageRules.map(({ match, path }) => [match, path])).toEqual([
+      ['SUBTREE', 'foo/bar'],
+      ['SUBTREE', ''],
+      ['START', 'foo/bar/']
+    ])
+  })
+  it('gives SUBTREE the next equal-length priority above START while deny wins SUBTREE ties', () => {
+    const priority = evaluate(
+      [rule('start-deny', 'foo/bar', 'START', true), rule('subtree-allow', 'foo/bar', 'SUBTREE')],
+      'foo/bar'
+    )
+    expect(priority.allowed).toBe(true)
+    expect(priority.rules.find(item => item.outcome === 'winner')?.ruleId).toBe('subtree-allow')
+    for (const rules of [
+      [rule('allow', 'foo/bar', 'SUBTREE'), rule('deny', 'foo/bar', 'SUBTREE', true)],
+      [rule('deny', 'foo/bar', 'SUBTREE', true), rule('allow', 'foo/bar', 'SUBTREE')]
+    ]) {
+      const result = evaluate(rules, 'foo/bar/child')
+      expect(result.allowed).toBe(false)
+      expect(result.rules.find(item => item.outcome === 'winner')?.ruleId).toBe('deny')
+    }
+  })
+  it('applies SUBTREE locale restrictions before granting a path match', () => {
+    const result = evaluateGroupAccess(
+      ['read:pages'],
+      ['read:pages'],
+      [{ id: 3, name: 'Readers', pageRules: [rule('fr-subtree', 'foo/bar', 'SUBTREE', false, { locales: ['fr'] })] }],
+      { path: 'foo/bar', locale: 'en' }
+    )
+    expect(result.allowed).toBe(false)
+    expect(result.rules[0]?.outcome).toBe('locale')
   })
   it('explains locale, action and match exclusions without granting access', () => {
     const result = evaluate([

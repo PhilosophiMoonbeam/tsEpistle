@@ -16,8 +16,10 @@ import loggingRouter from './logging.ts'
 import mailRouter from './mail.ts'
 import tlsRouter from './tls.ts'
 import navigationRouter from './navigation.ts'
-import pagesRouter from './pages.ts'
 import renderingRouter from './rendering.ts'
+import pageLinksRouter from './page-links.ts'
+import pagesRouter from './pages.ts'
+import pageRatingsRouter from './page-ratings.ts'
 import searchRouter from './search.ts'
 import siteRouter from './site.ts'
 import siteLogoRouter from './site-logo.ts'
@@ -57,6 +59,8 @@ router.use('/locales', localesRouter)
 router.use('/groups', groupsRouter)
 router.use('/editors', editorsRouter)
 router.use('/users', usersRouter)
+router.use('/pages', pageLinksRouter)
+router.use('/page-ratings', pageRatingsRouter)
 router.use('/pages', pagesRouter)
 router.use('/auth', authRouter)
 router.use('/offline', offlineRouter)

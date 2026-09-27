@@ -1,4 +1,4 @@
-export type GroupRuleMatch = 'START' | 'END' | 'REGEX' | 'TAG' | 'EXACT'
+export type GroupRuleMatch = 'START' | 'SUBTREE' | 'END' | 'REGEX' | 'TAG' | 'EXACT'
 export interface GroupPageRule {
   id: string
   match: GroupRuleMatch
@@ -7,6 +7,10 @@ export interface GroupPageRule {
   roles: string[]
   locales: string[]
 }
+
+export const normalizeGroupRulePath = (match: GroupRuleMatch, path: string): string =>
+  match === 'SUBTREE' ? path.replace(/\/+$/, '') : path
+
 export interface GroupPolicyDraft {
   name: string
   description: string

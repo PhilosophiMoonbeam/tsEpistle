@@ -101,7 +101,7 @@ suite('Mail workspace diagnostics on PostgreSQL', () => {
     runtimeEnabled = true
     verify.mockReset().mockResolvedValue(true)
     send.mockReset().mockResolvedValue({ accepted: ['recipient@example.test'], rejected: [] })
-    render.mockReset().mockResolvedValue({ html: '<p>Actual renderer fixture</p>', subject: 'Sample' })
+    render.mockReset().mockResolvedValue({ html: '<p>Actual renderer fixture</p>', text: 'Actual renderer fixture', subject: 'Sample' })
     resolveTxt.mockReset()
     published.mockReset().mockImplementation(value => {
       runtimeKey = mailConfigurationKey(value)

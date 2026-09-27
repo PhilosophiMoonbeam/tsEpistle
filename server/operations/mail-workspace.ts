@@ -1,6 +1,6 @@
 import type { Knex } from 'knex'
 import { z } from 'zod'
-import { MAIL_TEMPLATES, MailCheckRequestSchema, mailRecord, type MailCheck, type MailWorkspace, type MailTemplateKey } from '../../shared/mail-workspace.ts'
+import { MAIL_TEMPLATES, MailCheckRequestSchema, mailRecord, type MailCheck, type MailWorkspace, type MailTemplateData, type MailTemplateKey, type MailTemplatePreview } from '../../shared/mail-workspace.ts'
 import type { MailRuntime } from '../core/mail.ts'
 import type { PagePrincipal } from '../helpers/page-access.ts'
 import { mailConfigurationKey, mailDkimPublicRecord } from '../repositories/mail-configuration.ts'
@@ -128,13 +128,7 @@ export const createMailWorkspaceStore = (deps: Dependencies) => {
       } else {
         startedEffect = true
         const sent = await deps.runtime().send(
-          {
-            template: 'test',
-            to: checked.row.recipient!,
-            subject: 'Mail delivery test',
-            text: 'This is the mail delivery test requested in your workspace administration.',
-            data: { preheadertext: 'Your requested workspace delivery test.' }
-          },
+          { template: 'test', to: checked.row.recipient! },
           mailConfigurationKey(checked.saved.raw)
         )
         outcome =
@@ -187,45 +181,39 @@ export const createMailWorkspaceStore = (deps: Dependencies) => {
     },
     save: (requester: PagePrincipal, input: unknown) => apply(requester, input, true),
     apply: (requester: PagePrincipal, input: unknown) => apply(requester, input, false),
-    async preview(requester: PagePrincipal, key: unknown) {
+    async preview(requester: PagePrincipal, key: unknown): Promise<MailTemplatePreview> {
       const saved = await configuration.inspect(requester)
       if (typeof key !== 'string' || !MAIL_TEMPLATES.some(row => row.key === key)) return fail('Choose a bundled mail template.', 404)
-      const template = MAIL_TEMPLATES.find(row => row.key === key)!,
-        publicUrl = /^https?:\/\//.test(saved.publicUrl) ? saved.publicUrl : 'https://wiki.example.test'
-      const samples: Record<MailTemplateKey, { title: string; content: string; buttonText: string }> = {
-        'account-verify': {
-          title: 'Verify your account',
-          content: 'Confirm your email address to gain access to the workspace.',
-          buttonText: 'Verify your account'
-        },
-        'account-reset-pwd': {
-          title: 'Reset your password',
-          content: 'A password reset was requested for your account. If you did not request it, you can ignore this email.',
-          buttonText: 'Reset password'
-        },
-        'account-welcome': {
-          title: 'You are invited',
-          content: 'Your team has invited you to its shared knowledge workspace. Sign in to start exploring.',
-          buttonText: 'Open your workspace'
-        },
-        'page-watch': { title: 'A page you follow has changed', content: '', buttonText: 'Read the page' },
-        test: { title: 'Your delivery test', content: '', buttonText: 'Open workspace' }
-      }
-      const rendered = await deps.runtime().render({
-        template: key,
-        to: 'preview@example.test',
-        subject: template.title,
-        data: {
-          ...samples[template.key],
-          preheadertext: 'Preview with sample content',
-          buttonLink: `${publicUrl}/login`,
-          actorName: 'Alex Rivera',
-          action: 'updated',
-          pageTitle: 'Writing knowledge that lasts',
-          url: `${publicUrl}/en/handbook`
+      const templateKey = key as MailTemplateKey,
+        template = MAIL_TEMPLATES.find(row => row.key === templateKey)!,
+        publicUrl = /^https?:\/\//.test(saved.publicUrl) ? saved.publicUrl : 'https://wiki.example.test',
+        samples: Record<MailTemplateKey, MailTemplateData> = {
+          'account-verify': { buttonLink: `${publicUrl}/verify/sample-token` },
+          'account-reset-pwd': { buttonLink: `${publicUrl}/login-reset/sample-token` },
+          'account-welcome': { buttonLink: `${publicUrl}/login` },
+          'page-watch': {
+            actorName: 'Alex Rivera',
+            action: 'updated',
+            pageTitle: 'Writing knowledge that lasts',
+            url: `${publicUrl}/en/handbook`
+          },
+          test: {}
         }
-      })
-      return { key, title: template.title, description: template.description, html: rendered.html, subject: rendered.subject }
+      let recipient = 'preview@example.test'
+      const requesterId = requester && typeof requester === 'object' ? Reflect.get(requester, 'id') : null
+      if (typeof requesterId === 'number' && Number.isSafeInteger(requesterId) && requesterId > 0) {
+        try {
+          const user: unknown = await deps.db('users').select('email').where({ id: requesterId }).first(),
+            email = typeof user === 'object' && user !== null ? Reflect.get(user, 'email') : null
+          if (typeof email === 'string') recipient = email
+        } catch {
+          /* Keep a site-language preview when the administrator account cannot be resolved. */
+        }
+      }
+      const rendered = await deps.runtime().render({ template: templateKey, to: recipient, data: samples[template.key] })
+      if (typeof rendered.html !== 'string' || typeof rendered.text !== 'string' || typeof rendered.subject !== 'string')
+        return fail('Mail template preview could not be rendered.', 500)
+      return { key: templateKey, title: template.title, description: template.description, html: rendered.html, text: rendered.text, subject: rendered.subject }
     },
     async startCheck(requester: PagePrincipal, input: unknown): Promise<MailCheck> {
       const parsed = MailCheckRequestSchema.safeParse(input)

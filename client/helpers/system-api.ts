@@ -59,12 +59,21 @@ const parseJsonResponse = async (response: Response, fallbackMessage: string): P
   return payload
 }
 
-const request = async (fetchImpl: FetchImpl, method: string, path: string, body: unknown, fallbackMessage: string, expectedStatus?: number) => {
+const request = async (
+  fetchImpl: FetchImpl,
+  method: string,
+  path: string,
+  body: unknown,
+  fallbackMessage: string,
+  expectedStatus?: number,
+  signal?: AbortSignal
+) => {
   const response = await sameOriginJsonFetch(fetchImpl, path, {
     method,
     credentials: 'same-origin',
     headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(signal === undefined ? {} : { signal })
   })
   const payload = await parseJsonResponse(response, fallbackMessage)
   if (expectedStatus !== undefined && typeof response.status === 'number' && response.status !== expectedStatus) throw new Error(fallbackMessage)
@@ -104,6 +113,35 @@ export const fetchSystemHost = async (fetchImpl: FetchImpl, fallbackMessage = 'S
   const payload = await request(fetchImpl, 'GET', '/_api/system/host', undefined, fallbackMessage)
   if (!isRecord(payload) || typeof payload.host !== 'string') throw new Error(fallbackMessage)
   return { host: payload.host }
+}
+export const fetchSystemMetricsState = async (
+  fetchImpl: FetchImpl,
+  signal?: AbortSignal,
+  fallbackMessage = 'Metrics status response is invalid'
+) => {
+  const payload = await request(fetchImpl, 'GET', '/metrics/status', undefined, fallbackMessage, undefined, signal)
+  if (!isRecord(payload) || typeof payload.enabled !== 'boolean') throw new Error(fallbackMessage)
+  return { enabled: payload.enabled }
+}
+
+export const fetchSystemMetricsPreview = async (fetchImpl: FetchImpl, signal?: AbortSignal): Promise<string> => {
+  const response = await sameOriginJsonFetch(fetchImpl, '/metrics', {
+    method: 'GET',
+    credentials: 'same-origin',
+    mode: 'same-origin',
+    redirect: 'error',
+    cache: 'no-store',
+    headers: { Accept: 'text/plain' },
+    ...(signal === undefined ? {} : { signal })
+  })
+  if (!response.ok) {
+    if (response.status === 403) throw new Error('Access to /metrics requires manage:system.')
+    if (response.status === 404) throw new Error('The /metrics endpoint is disabled or unavailable.')
+    throw new Error('The /metrics preview could not be retrieved.')
+  }
+  const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
+  if (mediaType !== 'text/plain') throw new Error('The /metrics endpoint did not return a plain-text response.')
+  return response.text()
 }
 
 export const renderPage = async (fetchImpl: FetchImpl, id: number, fallbackMessage = 'Page render failed'): Promise<RenderPageReceipt> => {

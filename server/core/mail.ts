@@ -6,7 +6,8 @@ import _ from 'lodash'
 import fs from 'fs-extra'
 import path from 'node:path'
 import { resolveActiveBranding } from '../helpers/site-logo-branding.ts'
-import { MAIL_TEMPLATES } from '../../shared/mail-workspace.ts'
+import { MAIL_TEMPLATES, type MailTemplateData, type MailTemplateKey } from '../../shared/mail-workspace.ts'
+import localization from './localization.ts'
 import {
   mailRuntimeConfiguration,
   mailConfigurationKey,
@@ -16,12 +17,10 @@ import {
 } from '../repositories/mail-configuration.ts'
 
 export interface MailOptions {
-  template: string
+  template: MailTemplateKey
   to: string
-  subject: string
-  text?: string
   messageId?: string
-  data?: Record<string, unknown>
+  data?: MailTemplateData
 }
 interface WikiContext {
   SERVERPATH: string
@@ -33,6 +32,7 @@ interface WikiContext {
 interface Dependencies {
   createTransport?(options: SMTPTransportOptions): Transporter
   resolveLogo?(): Promise<string>
+  localization?: Pick<typeof localization, 'resolveMailLocale' | 'translateMail'>
 }
 interface Entry {
   transport: Transporter
@@ -51,7 +51,7 @@ export interface MailRuntime {
   send(options: MailOptions, expectedConfiguration?: string): Promise<SentMessageInfo>
   verify(expectedConfiguration?: string): Promise<true>
   render(options: MailOptions): Promise<SendMailOptions>
-  loadTemplate(key: string): Promise<MailTemplate>
+  loadTemplate(key: MailTemplateKey): Promise<MailTemplate>
   /** Internal identities; administration must project only safe observations. */
   runtime(): { active: boolean; configurationKey: string; generation: string | null; paused: boolean; state: 'disabled' | 'invalid' | 'ready' }
 }
@@ -59,7 +59,8 @@ export const createMailRuntime = (wiki: WikiContext, deps: Dependencies = {}): M
   let current: Entry | null = null,
     observedKey = '',
     state: 'disabled' | 'invalid' | 'ready' = 'disabled'
-  const templates = new Map<string, Promise<MailTemplate>>()
+  const templates = new Map<MailTemplateKey, Promise<MailTemplate>>(),
+    mailLocalization = deps.localization ?? localization
   const closeIfIdle = (entry: Entry) => {
     if (entry.retired && !entry.users && !entry.closed) {
       entry.closed = true
@@ -84,27 +85,81 @@ export const createMailRuntime = (wiki: WikiContext, deps: Dependencies = {}): M
     closeIfIdle(entry)
   }
   const render = async (options: MailOptions, configuration: MailRuntimeConfiguration): Promise<SendMailOptions> => {
-    const input = { ...options, data: structuredClone(options.data ?? {}) },
-      brandingConfig = { ...wiki.config }
-    const template = await api.loadTemplate(input.template)
-    const logo = deps.resolveLogo ? await deps.resolveLogo() : (await resolveActiveBranding(wiki.models.knex, brandingConfig.logoUrl)).logoUrl
-    const url = logo ? new URL(logo, brandingConfig.host) : null
-    const html = template({
-      ...input.data,
-      preheadertext: input.data.preheadertext ?? '',
-      copyright: brandingConfig.company || 'Powered by tsEpistle',
-      logo: url && ['https:', 'http:'].includes(url.protocol) ? url.toString() : '',
-      siteTitle: brandingConfig.title
-    })
+    const input = structuredClone(options),
+      brandingConfig = { ...wiki.config },
+      definition = MAIL_TEMPLATES.find(template => template.key === input.template)
+    if (!definition) throw new wiki.Error.MailTemplateFailed()
+    const sourceData = input.data ?? {}
+    const recipient: unknown = await wiki.models.knex('users').select('communicationLocale').where({ email: input.to }).first()
+    const preferredLocale = typeof recipient === 'object' && recipient !== null
+      ? Reflect.get(recipient, 'communicationLocale') ?? null
+      : null
+    const mailLocale = await mailLocalization.resolveMailLocale(preferredLocale)
+    const parameters: Record<string, string> = { siteTitle: brandingConfig.title, siteName: brandingConfig.title }
+    const webUrl = (value: unknown): string => {
+      if (typeof value !== 'string') throw new wiki.Error.MailTemplateFailed()
+      try {
+        const parsed = new URL(value)
+        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Unsupported mail URL protocol.')
+        return parsed.toString()
+      } catch {
+        throw new wiki.Error.MailTemplateFailed()
+      }
+    }
+    if (input.template === 'account-verify' || input.template === 'account-reset-pwd' || input.template === 'account-welcome') {
+      parameters.link = webUrl(sourceData.buttonLink)
+    } else if (input.template === 'page-watch') {
+      if (!sourceData.action || !('actions' in definition)) throw new wiki.Error.MailTemplateFailed()
+      const action = definition.actions[sourceData.action]
+      if (!action || typeof sourceData.actorName !== 'string' || typeof sourceData.pageTitle !== 'string')
+        throw new wiki.Error.MailTemplateFailed()
+      parameters.actorName = sourceData.actorName
+      parameters.pageTitle = sourceData.pageTitle
+      parameters.url = webUrl(sourceData.url)
+      parameters.link = parameters.url
+      parameters.event = mailLocalization.translateMail(mailLocale, action.key, action.english, { ...parameters, actor: parameters.actorName })
+    }
+    const messages = definition.messages as Record<string, string>,
+      messageKeys = ('messageKeys' in definition ? definition.messageKeys : {}) as Record<string, string>,
+      copy: Record<string, string> = {}
+    for (const [key, english] of Object.entries(messages))
+      copy[key] = mailLocalization.translateMail(mailLocale, `${definition.translationKey}.${messageKeys[key] ?? key}`, english, parameters)
+    if (copy.expiry) copy.footer = [copy.expiry, copy.footer].filter(Boolean).join(' ')
+    const plainText = [
+      input.template === 'page-watch' ? parameters.pageTitle : copy.title,
+      input.template === 'test' ? copy.introduction : copy.content,
+      input.template === 'test' ? copy.confirmation : '',
+      parameters.link,
+      copy.footer
+    ]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .join('\n\n')
+    const template = await api.loadTemplate(input.template),
+      logo = deps.resolveLogo ? await deps.resolveLogo() : (await resolveActiveBranding(wiki.models.knex, brandingConfig.logoUrl)).logoUrl,
+      logoUrl = logo ? new URL(logo, brandingConfig.host) : null,
+      body = template({
+        ...parameters,
+        __mail: copy,
+        preheadertext: copy.preheader ?? '',
+        title: input.template === 'page-watch' ? parameters.pageTitle : copy.title,
+        content: copy.content ?? '',
+        buttonText: copy.buttonText ?? '',
+        buttonLink: parameters.link ?? '',
+        copyright: brandingConfig.company || 'Powered by tsEpistle',
+        logo: logoUrl && ['https:', 'http:'].includes(logoUrl.protocol) ? logoUrl.toString() : '',
+        siteTitle: brandingConfig.title,
+        lang: mailLocale.locale,
+        direction: mailLocale.direction
+      })
     return {
       headers: { 'x-mailer': 'tsEpistle' },
       from: { name: configuration.senderName.trim(), address: configuration.senderEmail.trim() },
       ...(configuration.replyTo ? { replyTo: configuration.replyTo.trim() } : {}),
       to: input.to,
-      subject: `${input.subject} - ${brandingConfig.title}`,
+      subject: (copy.subject ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim(),
       ...(input.messageId === undefined ? {} : { messageId: input.messageId }),
-      ...(input.text === undefined ? {} : { text: input.text }),
-      html
+      text: plainText,
+      html: body
     }
   }
   const api: MailRuntime = {
@@ -176,21 +231,30 @@ export const createMailRuntime = (wiki: WikiContext, deps: Dependencies = {}): M
       return render(options, mailRuntimeConfiguration(wiki.config.mail))
     },
     async loadTemplate(key) {
-      const canonical = _.kebabCase(key)
-      if (!MAIL_TEMPLATES.some(template => template.key === canonical)) throw new wiki.Error.MailTemplateFailed()
-      let template = templates.get(canonical)
+      const definition = MAIL_TEMPLATES.find(template => template.key === key)
+      if (!definition) throw new wiki.Error.MailTemplateFailed()
+      let template = templates.get(key)
       if (!template) {
-        template = Promise.all(['layout', canonical].map(name => fs.readFile(path.join(wiki.SERVERPATH, `templates/${name}.html`), 'utf8')))
+        template = Promise.all(['layout', key].map(name => fs.readFile(path.join(wiki.SERVERPATH, `templates/${name}.html`), 'utf8')))
           .then(([layout, body]) => {
-            const shell = _.template(layout!),
-              content = _.template(body!)
+            let localizedBody = body!
+            for (const [source, message] of Object.entries(definition.htmlText)) {
+              if (!localizedBody.includes(source)) throw new Error('Mail template text no longer matches its registry.')
+              localizedBody = localizedBody.replace(source, `<%- __mail.${message} %>`)
+            }
+            const localizedLayout = layout!
+              .replace('<html lang="en">', '<html lang="<%- lang %>" dir="<%- direction %>">')
+              .replace('</head>', '<style>body{text-align:start}</style>\n</head>')
+            if (localizedLayout === layout) throw new Error('Mail layout language markers are unavailable.')
+            const shell = _.template(localizedLayout),
+              content = _.template(localizedBody)
             return (data: object = {}) => shell({ ...data, body: content(data) })
           })
           .catch(() => {
-            templates.delete(canonical)
+            templates.delete(key)
             throw new wiki.Error.MailTemplateFailed()
           })
-        templates.set(canonical, template)
+        templates.set(key, template)
       }
       return template
     }

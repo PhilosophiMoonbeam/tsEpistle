@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
-import { DISCUSSION_SECRET_MASK, discussionIssues, type DiscussionPolicySnapshot, type DiscussionProperty, type DiscussionProvider, type DiscussionProviderSettings, type DiscussionWorkspace } from '../../shared/discussion-policy.ts'
+import { DEFAULT_PAGE_RATING_MODE, PageRatingModeSchema } from '../../shared/page-ratings.ts'
+import { DISCUSSION_SECRET_MASK, discussionIssues, discussionSettings, type DiscussionPolicySnapshot, type DiscussionProperty, type DiscussionProvider, type DiscussionProviderSettings, type DiscussionWorkspace } from '../../shared/discussion-policy.ts'
 import { managesSystem, type PagePrincipal } from '../helpers/page-access.ts'
 import errors from './errors.ts'
 const { ApplicationError } = errors
@@ -9,6 +10,13 @@ export const DISCUSSION_SETTINGS_LOCK = 72401640
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, stable(item)])) : value
 const fingerprint = (value: unknown): string => createHash('sha256').update(JSON.stringify(stable(value))).digest('hex')
+const pageRatingsMode = (flags: Record<string, unknown>) => {
+  const candidate = flags.pageRatingsMode
+  if (candidate === undefined) return DEFAULT_PAGE_RATING_MODE
+  const parsed = PageRatingModeSchema.safeParse(candidate)
+  if (!parsed.success) throw new ApplicationError('The saved page ratings mode is invalid. Repair the site setting before saving.', { status: 409 })
+  return parsed.data
+}
 const project = (rows: DiscussionProviderSettings[], definitions: DiscussionDefinition[], mask: boolean): DiscussionProvider[] => rows.map(row => {
   const definition = definitions.find(candidate => candidate.key === row.key)
   if (!definition) throw new ApplicationError(`Discussion provider ${row.key} is missing its installed definition. Restart or repair the deployment.`, { status: 409 })
@@ -20,8 +28,8 @@ export const createDiscussionSettingsStore = (deps: { db: Knex; definitions(): D
   const read = async (db: Knex | Knex.Transaction = deps.db) => {
     const rows = await db<DiscussionProviderSettings>('commentProviders').select('key', 'isEnabled', 'config').orderBy('key')
     const flags = await features(db), revision = await db('settings').where('key', 'discussionPolicyRevision').first('value'), definitions = deps.definitions()
-    const enabled = flags.featurePageComments === true
-    return { rows, flags, definitions, snapshot: { enabled, providers: project(rows, definitions, true), fingerprint: fingerprint({ rows, definitions, enabled, revision: revision?.value ?? null }) } satisfies DiscussionPolicySnapshot }
+    const enabled = flags.featurePageComments === true, pageRatingsEnabled = flags.featurePageRatings === true, mode = pageRatingsMode(flags)
+    return { rows, flags, definitions, snapshot: { enabled, pageRatingsEnabled, pageRatingsMode: mode, providers: project(rows, definitions, true), fingerprint: fingerprint({ rows, definitions, enabled, pageRatingsEnabled, pageRatingsMode: mode, revision: revision?.value ?? null }) } satisfies DiscussionPolicySnapshot }
   }
   const saveFlags = async (tx: Knex.Transaction, value: Record<string, unknown>) => {
     const updatedAt = new Date().toISOString(), json = JSON.stringify(value)
@@ -35,7 +43,8 @@ export const createDiscussionSettingsStore = (deps: { db: Knex; definitions(): D
   return {
     async read(): Promise<DiscussionPolicySnapshot> { return (await read()).snapshot },
     async write(input: unknown, expected?: unknown) {
-      const payload = record(input), providers = payload.providers
+      const payload = record(input), providers = payload.providers, requestedRatingsMode = payload.pageRatingsMode === undefined ? undefined : PageRatingModeSchema.safeParse(payload.pageRatingsMode)
+      if (requestedRatingsMode && !requestedRatingsMode.success) throw new ApplicationError('Choose a valid page ratings mode: thumbs or stars.', { status: 400 })
       if (!Array.isArray(providers) || !providers.length || providers.length > 100 || providers.some(row => !row || typeof row !== 'object' || typeof row.key !== 'string' || typeof row.isEnabled !== 'boolean' || !row.config || typeof row.config !== 'object' || Array.isArray(row.config)) || new Set(providers.map(row => row.key)).size !== providers.length || (payload.enabled !== undefined && typeof payload.enabled !== 'boolean')) throw new ApplicationError('Choose valid, unique discussion providers and configuration.', { status: 400 })
       if (expected !== undefined && (typeof expected !== 'string' || !/^[a-f0-9]{64}$/.test(expected))) throw new ApplicationError('Reload the saved discussion policy before saving.', { status: 400 })
       const snapshot = await deps.db.transaction(async tx => {
@@ -55,13 +64,18 @@ export const createDiscussionSettingsStore = (deps: { db: Knex; definitions(): D
             provider.config[key] = value
           }
         }
-        const issue = discussionIssues(next)[0]
+        // Validate exposed options; retained undeclared database settings are preserved but not newly accepted from callers.
+        const exposed = discussionSettings(next)
+        const issue = discussionIssues(next.map((provider, index) => ({ ...provider, config: exposed[index]!.config })))[0]
         if (issue) throw new ApplicationError(issue.message, { status: 400 })
         for (const update of providers as DiscussionProviderSettings[]) {
           const provider = next.find(row => row.key === update.key)!
           await tx('commentProviders').where('key', provider.key).update({ isEnabled: provider.isEnabled, config: JSON.stringify(provider.config) })
         }
-        if (payload.enabled !== undefined) await saveFlags(tx, { ...current.flags, featurePageComments: payload.enabled })
+        const nextFlags = { ...current.flags }
+        if (payload.enabled !== undefined) nextFlags.featurePageComments = payload.enabled
+        if (requestedRatingsMode) nextFlags.pageRatingsMode = requestedRatingsMode.data
+        if (payload.enabled !== undefined || requestedRatingsMode) await saveFlags(tx, nextFlags)
         await revise(tx)
         return (await read(tx)).snapshot
       })
@@ -75,7 +89,7 @@ export const createDiscussionSettingsStore = (deps: { db: Knex; definitions(): D
         await tx.raw('SELECT pg_advisory_xact_lock(?)', [DISCUSSION_SETTINGS_LOCK])
         await tx('settings').where('key', 'features').forUpdate().first()
         await saveFlags(tx, { ...await features(tx), ...input })
-        if (Object.hasOwn(input, 'featurePageComments')) await revise(tx)
+        if (Object.hasOwn(input, 'featurePageComments') || Object.hasOwn(input, 'featurePageRatings')) await revise(tx)
       })
       return activate(false)
     }
@@ -110,7 +124,7 @@ export const readDiscussionWorkspace = async (requester: PagePrincipal): Promise
 }
 export const writeDiscussionWorkspace = async (requester: PagePrincipal, input: unknown, expected: unknown) => {
   requireAdmin(requester)
-  if (expected === undefined || typeof record(input).enabled !== 'boolean') throw new ApplicationError('Load the saved policy and choose discussion availability before saving.', { status: 400 })
+  if (expected === undefined || typeof record(input).enabled !== 'boolean' || !PageRatingModeSchema.safeParse(record(input).pageRatingsMode).success) throw new ApplicationError('Load the saved policy and choose discussion availability and a valid page ratings mode before saving.', { status: 400 })
   return store().write(input, expected)
 }
 export const writeLegacyDiscussionProviders = (providers: DiscussionProviderSettings[]) => store().write({ providers })

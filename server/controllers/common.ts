@@ -16,6 +16,8 @@ import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../mod
 import { createAuthRateLimiter, setAuthRateLimitHeaders, type AuthRateLimiter } from '../helpers/auth-rate-limiter.ts'
 import { resolveAssetBrandingView } from '../helpers/asset-branding.ts'
 
+import { normalizePageFeatures } from '../../shared/page-features.ts'
+
 const tmplCreateRegex = /^[0-9]+(,[0-9]+)?$/
 const normalizeDbBoolean = (value: unknown, fallback = false): boolean => {
   if (value === true || value === 1) return true
@@ -39,6 +41,7 @@ interface PageExtraRecord extends Record<string, unknown> {
   css?: string
   js?: string
   branding?: PageBrandingAssignment
+  pageFeatures?: unknown
 }
 
 interface PageDocumentRecord {
@@ -134,7 +137,7 @@ export interface CommonWiki {
     lang: { namespacing: boolean }
     theming: { injectCSS: string; injectHead: string; injectBody: string }
     pageExtensions: string[]
-    features: { featurePageComments: boolean }
+    features: { featurePageComments: boolean; featurePageRatings?: boolean }
     host: string
   }
   metrics: { render(response: Response): unknown }
@@ -161,6 +164,9 @@ export interface CommonWiki {
       getTree(input: { cache: boolean; locale: string; groups: unknown[] }): Promise<NavigationItem[]>
     }
     assets: { getAsset(path: string, response: Response): Promise<unknown> }
+    renderers?: {
+      getRenderingPipeline(contentType: string): Promise<Array<{ key: string; config: unknown }>>
+    }
   }
   data: {
     commentProvider: { codeTemplate: string; head: string; body: string; main: string }
@@ -170,6 +176,35 @@ export interface CommonWiki {
 interface RequestI18n {
   changeLanguage(locale: string): void
   dir(): string
+}
+
+interface RenderingPipelineStage {
+  key: string
+  config: unknown
+}
+
+const rendererConfigBoolean = (
+  pipeline: readonly RenderingPipelineStage[],
+  rendererKey: string,
+  optionKey: string
+): boolean => {
+  const renderer = pipeline.find(stage => stage.key === rendererKey)
+  return typeof renderer?.config === 'object' && renderer.config !== null && Reflect.get(renderer.config, optionKey) === true
+}
+
+const getEditorWikiLinkSettings = async (
+  wiki: CommonWiki
+): Promise<{ wikiLinksEnabled: boolean; absoluteLinks: boolean }> => {
+  const getRenderingPipeline = wiki.models.renderers?.getRenderingPipeline
+  if (!getRenderingPipeline) return { wikiLinksEnabled: false, absoluteLinks: false }
+  const [markdownPipeline, htmlPipeline] = await Promise.all([
+    getRenderingPipeline('markdown'),
+    getRenderingPipeline('html')
+  ])
+  return {
+    wikiLinksEnabled: rendererConfigBoolean(markdownPipeline, 'markdownCore', 'wikilinks'),
+    absoluteLinks: rendererConfigBoolean(htmlPipeline, 'htmlCore', 'absoluteLinks')
+  }
 }
 
 export default function createCommonController(wiki: CommonWiki): express.Router {
@@ -357,6 +392,8 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     const branding = await resolvePageBranding(req, brandingAssignment)
     const commentsEnabled =
       wiki.config.features.featurePageComments && (!wiki.data.commentProvider.codeTemplate || (page.visibility === 'public' && !protectedPage))
+    const pageFeatures = normalizePageFeatures(page.extra?.pageFeatures)
+    const ratingsSiteEnabled = wiki.config.features.featurePageRatings === true
     const spaNavigation = await prepareReaderAnalytics(
       req,
       res,
@@ -397,6 +434,8 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       commentsEnabled,
       effectivePermissions,
       spaNavigation,
+      pageFeatures,
+      ratingsSiteEnabled,
       pageFilename,
       branding
     })
@@ -456,6 +495,16 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       res.status(200).json({ ok: true }).end()
     }
   })
+  router.get('/metrics/status', (req, res) => {
+    res.set('Cache-Control', 'private, no-store')
+    res.vary('Cookie')
+    if (!wiki.auth.checkAccess(req.user, ['manage:system'])) {
+      res.status(403).json({ error: 'manage:system is required' })
+      return
+    }
+    res.json({ enabled: wiki.config.metrics.isEnabled })
+  })
+
 
   /**
    * Metrics (Prometheus)
@@ -824,8 +873,21 @@ export default function createCommonController(wiki: CommonWiki): express.Router
         }
       }
     }
-
-    res.render('editor', { page, injectCode, effectivePermissions, brandingAssignment, branding })
+    if (page) {
+      page.extra ??= { css: '', js: '' }
+      page.extra.pageFeatures = normalizePageFeatures(page.extra.pageFeatures)
+    }
+    const { wikiLinksEnabled, absoluteLinks } = await getEditorWikiLinkSettings(wiki)
+    res.render('editor', {
+      page,
+      injectCode,
+      effectivePermissions,
+      brandingAssignment,
+      branding,
+      wikiLinksEnabled,
+      absoluteLinks,
+      localeNamespaced: wiki.config.lang.namespacing
+    })
   })
 
   /**

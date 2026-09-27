@@ -8,6 +8,7 @@ import { MigrationPreflightError, preflightMigrations } from '../../db/migration
 import { MIGRATION_LINEAGE_V1 } from '../../db/migration-contract.ts'
 import { up as createSiteLogoAuthority } from '../../db/migrations/tsepistle-000013-site-logo-authority.ts'
 import { up as upgradeSiteLogoRenditions } from '../../db/migrations/tsepistle-000040-site-logo-renditions.ts'
+import { down as downScarlettNativeAdaptations, up as upScarlettNativeAdaptations } from '../../db/migrations/tsepistle-000048-scarlett-native-adaptations.ts'
 import { cleanupSiteLogoRevisions } from '../../jobs/site-logo-process.ts'
 
 type MigrationSpec = { name: string }
@@ -1031,5 +1032,98 @@ siteLogoMigrationSuite('PostgreSQL managed site-logo migration contract', () => 
     await expect(Promise.resolve(postgres('siteLogoRevisions').where({ id: effectId }).update({ effectStaticPngHash: null }))).rejects.toMatchObject({
       code: '23514'
     })
+  })
+})
+
+describe('Scarlett native adaptations migration', () => {
+  let db: Knex
+
+  beforeEach(async () => {
+    db = createKnex({
+      client: 'better-sqlite3',
+      connection: { filename: ':memory:' },
+      pool: { max: 1, min: 1 },
+      useNullAsDefault: true
+    })
+    await db.raw('PRAGMA foreign_keys = ON')
+    await db.schema.createTable('users', table => {
+      table.increments('id').primary()
+      table.string('email').notNullable()
+    })
+    await db.schema.createTable('locales', table => {
+      table.string('code', 35).primary()
+    })
+    await db.schema.createTable('pages', table => {
+      table.increments('id').primary()
+    })
+    await db.schema.createTable('pageHistory', table => {
+      table.increments('id').primary()
+      table.integer('pageId').unsigned().notNullable()
+    })
+    await db('users').insert({ id: 7, email: 'reader@example.com' })
+    await db('locales').insert({ code: 'en' })
+    await db('pages').insert({ id: 11 })
+    await db('pageHistory').insert({ id: 31, pageId: 123 })
+  })
+
+  afterEach(async () => await db.destroy())
+
+  it('preserves users and ties recovery retention to history without requiring a live page', async () => {
+    await upScarlettNativeAdaptations(db)
+
+    const migratedUser = await db('users').where({ id: 7 }).first()
+    expect(migratedUser?.email).toBe('reader@example.com')
+    expect(Boolean(migratedUser?.reduceMotion)).toBe(false)
+    expect(Boolean(migratedUser?.underlineLinks)).toBe(false)
+    expect(migratedUser?.contentTextSize).toBe('default')
+    expect(migratedUser?.communicationLocale).toBeNull()
+
+    await db('locales').insert({ code: 'fr' })
+    await db('users').where({ id: 7 }).update({ communicationLocale: 'fr' })
+    await db('locales').where({ code: 'fr' }).delete()
+    expect((await db('users').where({ id: 7 }).first())?.communicationLocale).toBeNull()
+
+    await db('deletedPageRecovery').insert({
+      pageId: 123,
+      deletionVersionId: 31,
+      deletionRevision: '42',
+      securityContext: JSON.stringify({ version: 1 }),
+      createdAt: '2026-09-27T00:00:00.000Z'
+    })
+    expect(await db('pages').where({ id: 123 }).first()).toBeUndefined()
+    await expect(downScarlettNativeAdaptations(db)).rejects.toThrow('deleted-page recovery records exist')
+    expect(await db('deletedPageRecovery').where({ pageId: 123 }).first()).toBeDefined()
+
+    await db('pageHistory').where({ id: 31 }).delete()
+    expect(await db('deletedPageRecovery').where({ pageId: 123 }).first()).toBeUndefined()
+    await downScarlettNativeAdaptations(db)
+
+    expect(await db('users').where({ id: 7 }).first('email')).toEqual({ email: 'reader@example.com' })
+    expect(await db.schema.hasColumn('users', 'reduceMotion')).toBe(false)
+  })
+
+  it('enforces one vote per page and account and refuses rollback that would discard durable state', async () => {
+    await upScarlettNativeAdaptations(db)
+    const rating = {
+      pageId: 11,
+      userId: 7,
+      kind: 'thumbs',
+      value: 1,
+      createdAt: '2026-09-27T00:00:00.000Z',
+      updatedAt: '2026-09-27T00:00:00.000Z'
+    }
+    await db('pageRatings').insert(rating)
+    await expect(Promise.resolve(db('pageRatings').insert({ ...rating, value: -1 }))).rejects.toThrow()
+    await expect(downScarlettNativeAdaptations(db)).rejects.toThrow('page ratings exist')
+    expect(await db('pageRatings').where({ pageId: 11, userId: 7 }).select('value')).toEqual([{ value: 1 }])
+
+    await db('pageRatings').where({ pageId: 11, userId: 7 }).delete()
+    await db('users').where({ id: 7 }).update({ underlineLinks: true })
+    await expect(downScarlettNativeAdaptations(db)).rejects.toThrow('user preferences have been saved')
+    expect(Boolean((await db('users').where({ id: 7 }).first())?.underlineLinks)).toBe(true)
+
+    await db('users').where({ id: 7 }).update({ underlineLinks: false })
+    await downScarlettNativeAdaptations(db)
+    expect(await db('users').where({ id: 7 }).first('email')).toEqual({ email: 'reader@example.com' })
   })
 })

@@ -1,4 +1,4 @@
-import type { MailWorkspace, MailCheck, MailCheckRequest } from '../../shared/mail-workspace.ts'
+import type { MailWorkspace, MailCheck, MailCheckRequest, MailTemplatePreview } from '../../shared/mail-workspace.ts'
 import { MailPolicySchema, mailRecord } from '../../shared/mail-workspace.ts'
 import { sameOriginJsonFetch } from './json-transport.ts'
 const request = async (method: string, suffix: string, body?: unknown): Promise<Record<string, unknown>> => {
@@ -50,8 +50,16 @@ const check = (value: Record<string, unknown>, id: string): MailCheck => {
 }
 export const startMailCheck = async (input: MailCheckRequest) => check(await request('POST', '/checks', input), input.id)
 export const fetchMailCheck = async (id: string) => check(await request('GET', '/checks/' + encodeURIComponent(id)), id)
-export const fetchMailPreview = async (key: string) => {
+export const fetchMailPreview = async (key: string): Promise<MailTemplatePreview> => {
   const value = await request('GET', '/templates/' + encodeURIComponent(key))
-  if (value.key !== key || typeof value.html !== 'string' || typeof value.subject !== 'string') throw new Error('The email preview could not be loaded.')
-  return value as { key: string; html: string; subject: string }
+  if (
+    value.key !== key ||
+    typeof value.title !== 'string' ||
+    typeof value.description !== 'string' ||
+    typeof value.html !== 'string' ||
+    typeof value.text !== 'string' ||
+    typeof value.subject !== 'string'
+  )
+    throw new Error('The email preview could not be loaded.')
+  return value as unknown as MailTemplatePreview
 }

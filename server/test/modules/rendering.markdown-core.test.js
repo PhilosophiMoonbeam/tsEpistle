@@ -9,18 +9,64 @@ const baseConfig = {
   underline: false
 }
 
-const renderMarkdown = (input, { config = {}, children = [] } = {}) => {
+const renderMarkdown = (input, { config = {}, children = [], page = { localeCode: 'en', path: 'docs/setup' } } = {}) => {
   return renderer.render.call({
     input,
     config: {
       ...baseConfig,
       ...config
     },
-    children
+    children,
+    page
   })
 }
 
 describe('markdown core renderer plugin behavior', () => {
+  it('leaves wiki-link source literal and escaped when the optional prop is unset', async () => {
+    const html = await renderMarkdown('[[next-page|<img src=x onerror=alert(1)>]]')
+    expect(html).toContain('[[next-page|&lt;img src=x onerror=alert(1)&gt;]]')
+    expect(html).not.toContain('<img')
+    expect(html).not.toContain('<a ')
+  })
+
+  it('renders enabled wiki links as safe context-resolved anchors with escaped labels', async () => {
+    const originalWiki = global.WIKI
+    global.WIKI = { config: { lang: { namespacing: true } } }
+    try {
+      const html = await renderMarkdown('[[next-page|<img src=x onerror=alert(1)> & notes]]', {
+        config: { wikilinks: true },
+        page: { localeCode: 'en-US', path: 'docs/setup' }
+      })
+      expect(html).toBe('<p><a href="/en-US/docs/setup/next-page">&lt;img src=x onerror=alert(1)&gt; &amp; notes</a></p>\n')
+    } finally {
+      if (originalWiki === undefined) delete global.WIKI
+      else global.WIKI = originalWiki
+    }
+  })
+
+  it('does not link unsafe wiki targets and preserves code and reference links', async () => {
+    const originalWiki = global.WIKI
+    global.WIKI = { config: { lang: { namespacing: false } } }
+    try {
+      const unsafe = await renderMarkdown('[[javascript:alert(1)|<img src=x onerror=alert(1)>]]', {
+        config: { wikilinks: true }
+      })
+      expect(unsafe).not.toContain('href="javascript:')
+      expect(unsafe).not.toContain('<img')
+
+      const ordinary = await renderMarkdown(
+        '`[[inline]]`\n\n```txt\n[[fenced]]\n```\n\n[ordinary][destination]\n\n[destination]: /ordinary',
+        { config: { wikilinks: true } }
+      )
+      expect(ordinary).toContain('<code>[[inline]]</code>')
+      expect(ordinary).toContain('[[fenced]]')
+      expect(ordinary).toContain('<a href="/ordinary">ordinary</a>')
+      expect(ordinary).not.toContain('href="/docs/setup/inline"')
+    } finally {
+      if (originalWiki === undefined) delete global.WIKI
+      else global.WIKI = originalWiki
+    }
+  })
   it('pins core attrs allowlist and escapes raw HTML by default', async () => {
     expect(await renderMarkdown('# Title {#hero .lead target=_blank onclick=alert(1)}\n\n<strong>ok</strong>')).toBe('<h1 id="hero" class="lead" target="_blank">Title</h1>\n' +
     '<p>&lt;strong&gt;ok&lt;/strong&gt;</p>\n')
