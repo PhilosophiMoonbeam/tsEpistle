@@ -1017,7 +1017,7 @@
       ],
       "category": "editor",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/editor",
       "contract": "Implement native Tiptap definition-list Enter/caret progression; arbitrary executable block editor is rejected.",
       "lastReviewed": "2026-09-27"
@@ -1029,7 +1029,7 @@
       ],
       "category": "locale",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/locale",
       "contract": "Stage and review bounded local translation JSON for native durable offline publication; no filename-derived identity or direct upsert.",
       "lastReviewed": "2026-09-27"
@@ -1053,7 +1053,7 @@
       ],
       "category": "reader",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/reader",
       "contract": "Expose authorized incoming/outgoing current-revision graph neighborhoods; keep native graph and no hidden metadata.",
       "lastReviewed": "2026-09-27"
@@ -1065,7 +1065,7 @@
       ],
       "category": "reader",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/reader",
       "contract": "Show native banner only in Article; keep existing theme, navigation, focus and reduced-motion semantics; reject ornamental transitions.",
       "lastReviewed": "2026-09-27"
@@ -1077,7 +1077,7 @@
       ],
       "category": "authorization",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/authorization",
       "contract": "Add SUBTREE slash-boundary match across group policy, evaluator, API, authoring and explanation without changing START or deny ties.",
       "lastReviewed": "2026-09-27"
@@ -1221,7 +1221,7 @@
       ],
       "category": "mail",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/mail",
       "contract": "Persist private communication locale and translate fixed native mail templates per recipient with installed-site-English fallback; native client init supersedes translation startup race.",
       "lastReviewed": "2026-09-27"
@@ -1305,7 +1305,7 @@
       ],
       "category": "discussion",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/discussion",
       "contract": "Emit explicitly subscribed minimal public-comment events through native durable outbox with reauthorization before egress; imported settings refresh not applicable.",
       "lastReviewed": "2026-09-27"
@@ -1329,7 +1329,7 @@
       ],
       "category": "reader",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/reader",
       "contract": "Native per-human uncached thumbs/stars and restricted last-editor display; search authorization-before-limit is already stronger; preserve legacy totals.",
       "lastReviewed": "2026-09-27"
@@ -1341,7 +1341,7 @@
       ],
       "category": "operations",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/operations",
       "contract": "Bounded read-only scan of native source/render/OKF/graph/search/storage invariants; no Scarlett tree checks or cached rating rebuild.",
       "lastReviewed": "2026-09-27"
@@ -1353,7 +1353,7 @@
       ],
       "category": "editor",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/editor",
       "contract": "Shared optional wikilink grammar preserving canonical Markdown through preview, visual edit, server render and storage; existing ToC retained.",
       "lastReviewed": "2026-09-27"
@@ -1365,7 +1365,7 @@
       ],
       "category": "recovery",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/recovery",
       "contract": "Admin-only deletion snapshot recovery retaining protected state and source history; old snapshots quarantine; no FileManager folders-first preference.",
       "lastReviewed": "2026-09-27"
@@ -1377,7 +1377,7 @@
       ],
       "category": "assets",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/assets",
       "contract": "Bounded authorized image transform always saves new asset; reject in-place replacement and silent animation loss.",
       "lastReviewed": "2026-09-27"
@@ -1401,7 +1401,7 @@
       ],
       "category": "reader",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/reader",
       "contract": "Isolate page/version/preview content direction from interface RTL; code LTR, existing Vuetify direction retained.",
       "lastReviewed": "2026-09-27"
@@ -1413,7 +1413,7 @@
       ],
       "category": "operations",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/operations",
       "contract": "Expose actual protected metrics endpoint reference and plain-text preview in system workspace; MCP proposal and deleted-bin permission narrowing rejected.",
       "lastReviewed": "2026-09-27"
@@ -1425,7 +1425,7 @@
       ],
       "category": "accessibility",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/accessibility",
       "contract": "Persist reduced-motion override, content underlining and text scale in private profile; no admin palette/FileManager transplant.",
       "lastReviewed": "2026-09-27"
@@ -1437,7 +1437,7 @@
       ],
       "category": "deployment",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/deployment",
       "contract": "Opt-in HTTPRoute/PDB and PostgreSQL hardening without chart identity, claims, database role or layout changes; OCI publication not selected.",
       "lastReviewed": "2026-09-27"
