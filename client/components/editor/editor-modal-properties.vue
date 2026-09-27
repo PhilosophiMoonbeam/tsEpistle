@@ -115,6 +115,32 @@
               persistent-hint
               inset
             )
+            section.editor-properties-page-features(aria-labelledby='editor-properties-page-features-title')
+              .text-label-small#editor-properties-page-features-title Reader features
+              v-switch(
+                label='Show links'
+                v-model='draft.pageFeatures.linksVisible'
+                color='primary'
+                hint='Show the page’s link section to readers.'
+                persistent-hint
+                inset
+              )
+              v-switch(
+                label='Allow ratings'
+                v-model='draft.pageFeatures.ratingsAllowed'
+                color='primary'
+                hint='Allow readers to rate this page.'
+                persistent-hint
+                inset
+              )
+              v-switch(
+                label='Show last editor'
+                v-model='draft.pageFeatures.lastEditorVisible'
+                color='primary'
+                hint='Show who last edited this page to readers.'
+                persistent-hint
+                inset
+              )
           v-divider
           v-card-text.editor-properties-subsection.pt-5
             .text-label-small.pb-5 {{$t('editor:props.path')}}
@@ -464,6 +490,7 @@ import {
   type PageBrandingAssignment,
   type PageBrandingView
 } from '../../../shared/page-branding.ts'
+import type { PageFeatures } from '../../../shared/page-features.ts'
 import PageBrandingMark from '../common/page-branding-mark.vue'
 import { createAsyncComponent } from '../common/async-component-state.vue'
 
@@ -499,6 +526,7 @@ type PagePropertiesDraft = {
   scriptCss: string
   brandingAssignment: PageBrandingAssignment | null
   brandingView: PageBrandingView | null
+  pageFeatures: PageFeatures
 }
 
 function createPropertiesDraft (): PagePropertiesDraft {
@@ -516,6 +544,7 @@ function createPropertiesDraft (): PagePropertiesDraft {
     scriptJs: wikiStore.page.scriptJs,
     scriptCss: wikiStore.page.scriptCss,
     brandingAssignment: _.cloneDeep(wikiStore.page.brandingAssignment),
+    pageFeatures: _.cloneDeep(wikiStore.page.pageFeatures),
     brandingView: _.cloneDeep(wikiStore.page.brandingView)
   }
 }
@@ -899,6 +928,7 @@ export default defineComponent({
       wikiStore.page.publishEndDate = this.draft.publishEndDate
       wikiStore.page.scriptJs = this.draft.scriptJs
       wikiStore.page.scriptCss = this.draft.scriptCss
+      wikiStore.page.pageFeatures = _.cloneDeep(this.draft.pageFeatures)
       const brandingAssignment = normalizeBrandingAssignment(this.draft.brandingAssignment)
       wikiStore.page.brandingAssignment = brandingAssignment
       wikiStore.page.brandingView = normalizeBrandingView(this.draft.brandingView, brandingAssignment)

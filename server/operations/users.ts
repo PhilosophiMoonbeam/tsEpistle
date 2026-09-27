@@ -4,7 +4,16 @@ import _ from 'lodash'
 import errors from './errors.ts'
 import { accountAdministration } from './account-administration.ts'
 import commonHelper from '../helpers/common.ts'
-import { isUserDateFormat, isUserTimeFormat, isUserTimezone, ProfilePreferencesInputSchema, type UserTimeFormat } from '../../shared/user-presentation.ts'
+import {
+  isUserDateFormat,
+  isUserTimeFormat,
+  isUserTimezone,
+  normalizeUserProfilePreferences,
+  ProfilePreferencesInputSchema,
+  type UserCommunicationLocale,
+  type UserContentTextSize,
+  type UserTimeFormat
+} from '../../shared/user-presentation.ts'
 import { normalizeUserAvatar } from '../helpers/user-avatar-processing.ts'
 import { principalId } from '../helpers/page-access.ts'
 
@@ -33,6 +42,10 @@ interface UserRecord extends Record<string, unknown> {
   localeCode?: string
   defaultEditor?: unknown
   fontFamily?: string
+  reduceMotion?: boolean
+  underlineLinks?: boolean
+  contentTextSize?: UserContentTextSize
+  communicationLocale?: UserCommunicationLocale
   permissions?: string[]
   groups?: GroupRecord[]
   isSystem?: boolean | number
@@ -107,6 +120,10 @@ interface UpdateUserInput extends Record<string, unknown> {
   timeFormat?: UserTimeFormat | undefined
   appearance?: string | undefined
   timezone?: string | undefined
+  reduceMotion?: boolean | undefined
+  underlineLinks?: boolean | undefined
+  contentTextSize?: UserContentTextSize | undefined
+  communicationLocale?: UserCommunicationLocale | undefined
 }
 interface UserRequest {
   requester: Express.User | undefined
@@ -502,6 +519,7 @@ const getProfile = async (requester: Express.User | undefined): Promise<UserReco
   user.providerName = strategyFor(user.providerKey)?.displayName ?? 'Unknown'
   user.handle = user.handle || ''
   user.lastLoginAt = user.lastLoginAt || user.updatedAt
+  Object.assign(user, normalizeUserProfilePreferences(user))
   user.password = ''
   user.providerId = ''
   user.tfaSecret = ''

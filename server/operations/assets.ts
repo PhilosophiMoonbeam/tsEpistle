@@ -14,6 +14,15 @@ import type { PagePrincipal } from '../helpers/page-access.ts'
 import { AssetFolderHierarchyError } from '../models/assetFolders.ts'
 import { resolveAssetBrandingView, stripAssetBrandingMetadata } from '../helpers/asset-branding.ts'
 import type { PageBrandingView } from '../../shared/page-branding.ts'
+import {
+  AssetImageTransformError,
+  transformAssetImage,
+  type AssetImageAnimationPolicy,
+  type AssetImageAspectPolicy,
+  type AssetImageFormat,
+  type AssetImageTransformOptions,
+  type AssetImageTransformResult
+} from '../helpers/asset-image-transform.ts'
 import brandingErrors from './errors.ts'
 
 const { ApplicationError } = brandingErrors
@@ -30,7 +39,11 @@ interface Asset extends Record<string, unknown> {
   kind: string
   ext: string
   folderId: number | null
+  mime?: string
+  fileSize?: number
   metadata?: unknown
+  createdAt?: string | Date
+  updatedAt?: string | Date
   deleteAssetCache(): Promise<unknown>
   getAssetPath(): Promise<string>
 }
@@ -308,6 +321,343 @@ const relocationBytes = (data: unknown): Buffer => {
   if (typeof data === 'string') return Buffer.from(data, 'base64')
   throw new errors.AssetInvalid()
 }
+const imageResizeMime: Record<AssetImageFormat, string> = {
+  png: 'image/png',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif'
+}
+
+const imageResizeExtensions: Record<AssetImageFormat, readonly string[]> = {
+  png: ['.png'],
+  jpeg: ['.jpg', '.jpeg'],
+  webp: ['.webp'],
+  gif: ['.gif']
+}
+
+const imageResizeUnavailable = () =>
+  new ApplicationError('This asset does not exist or is not available for image transformation.', {
+    status: 404,
+    code: 'ASSET_IMAGE_SOURCE_UNAVAILABLE'
+  })
+const imageResizeDestinationForbidden = () =>
+  new ApplicationError('You are not authorized to write to the requested asset destination.', {
+    status: 403,
+    code: 'ASSET_IMAGE_DESTINATION_FORBIDDEN'
+  })
+const imageResizeConflict = () =>
+  new ApplicationError('An asset already exists at the requested destination.', {
+    status: 409,
+    code: 'ASSET_IMAGE_DESTINATION_CONFLICT'
+  })
+const imageResizeStale = () =>
+  new ApplicationError('The source asset changed during image transformation. Refresh and try again.', {
+    status: 409,
+    code: 'ASSET_IMAGE_SOURCE_STALE'
+  })
+const imageResizeInputError = (message: string) =>
+  new ApplicationError(message, { status: 400, code: 'ASSET_IMAGE_INPUT_INVALID' })
+
+const assetRowBytes = (value: unknown): Buffer => {
+  if (Buffer.isBuffer(value)) return value
+  if (value instanceof Uint8Array) return Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+  if (typeof value === 'string') return Buffer.from(value, 'base64')
+  throw imageResizeUnavailable()
+}
+
+const assetVersionTime = (value: unknown): string => {
+  if (value instanceof Date && Number.isFinite(value.getTime())) return value.toISOString()
+  return typeof value === 'string' ? value : ''
+}
+
+const assetFolderPath = async (folderId: number | null, transaction: Knex.Transaction): Promise<string> => {
+  const hierarchy = folderId === null ? [] : await models.assetFolders.getHierarchy(folderId, transaction)
+  if (folderId !== null) assertCompleteHierarchy(hierarchy, folderId)
+  await lockFolderChains(transaction, [hierarchy])
+  return hierarchy.map(folder => folder.slug).join('/')
+}
+
+type AssetImageResizeInput = {
+  requester: Requester
+  id: number
+  destination: { filename: string; folderId: number | null }
+  width: number
+  height: number
+  aspectPolicy: AssetImageAspectPolicy
+  format: AssetImageFormat
+  quality: number
+  animationPolicy: AssetImageAnimationPolicy
+}
+
+type AssetImageResizeReceipt = {
+  status: 'succeeded'
+  assetId: number
+  destinationPath: string
+  width: number
+  height: number
+  format: AssetImageFormat
+  frames: number
+  fileSize: number
+  sourceSha256: string
+}
+
+const resizeImage = async ({
+  requester,
+  id,
+  destination,
+  width,
+  height,
+  aspectPolicy,
+  format,
+  quality,
+  animationPolicy
+}: AssetImageResizeInput): Promise<AssetImageResizeReceipt> => {
+  if (!Number.isSafeInteger(id) || id < 1) throw imageResizeUnavailable()
+  if (
+    !destination ||
+    typeof destination.filename !== 'string' ||
+    (destination.folderId !== null && (!Number.isSafeInteger(destination.folderId) || destination.folderId < 0))
+  ) {
+    throw imageResizeInputError('A valid destination filename and folder are required.')
+  }
+  const filename = normalizeAssetFilename(destination.filename)
+  if (filename.length > 255) throw imageResizeInputError('The destination filename must be 255 characters or fewer.')
+  if (!imageResizeExtensions[format]?.includes(filename.slice(filename.lastIndexOf('.')).toLowerCase())) {
+    throw imageResizeInputError('The destination filename extension must match the selected output format.')
+  }
+  const folderId = destination.folderId === null || destination.folderId === 0 ? null : destination.folderId
+
+  const snapshot = await models.knex.transaction(async transaction => {
+    const asset = await models.assets.query(transaction).where({ id }).first()
+    if (!asset) throw imageResizeUnavailable()
+    let sourceFolderPath: string
+    try {
+      sourceFolderPath = await assetFolderPath(asset.folderId === null || asset.folderId === 0 ? null : asset.folderId, transaction)
+    } catch (error: unknown) {
+      if (error instanceof AssetFolderHierarchyError) throw imageResizeUnavailable()
+      throw error
+    }
+    const sourcePath = sourceFolderPath ? `${sourceFolderPath}/${asset.filename}` : asset.filename
+    const auth = getAuth()
+    const authority = await auth.loadPageRuleAuthority(requester, transaction)
+    if (!auth.checkPageAccess(requester, ['read:assets'], { path: sourcePath }, authority)) throw imageResizeUnavailable()
+    let destinationFolderPath: string
+    try {
+      destinationFolderPath = await assetFolderPath(folderId, transaction)
+    } catch (error: unknown) {
+      if (error instanceof AssetFolderHierarchyError) throw imageResizeDestinationForbidden()
+      throw error
+    }
+    const preflightDestinationPath = destinationFolderPath ? `${destinationFolderPath}/${filename}` : filename
+    if (preflightDestinationPath.length > 512) throw imageResizeInputError('The destination asset path is too long.')
+    if (!auth.checkPageAccess(requester, ['write:assets'], { path: preflightDestinationPath }, authority)) {
+      throw imageResizeDestinationForbidden()
+    }
+    await assertAssetLocationAssetSettled(transaction, asset.id)
+    const dataRow = await transaction<AssetDataRow>('assetData').where('id', id).first('data')
+    if (!dataRow) throw imageResizeUnavailable()
+    const bytes = assetRowBytes(dataRow.data)
+    return {
+      sourcePath,
+      asset: {
+        id: asset.id,
+        filename: asset.filename,
+        hash: asset.hash,
+        folderId: asset.folderId === 0 ? null : asset.folderId,
+        updatedAt: assetVersionTime(asset.updatedAt)
+      },
+      bytes,
+      sourceSha256: createHash('sha256').update(bytes).digest('hex')
+    }
+  })
+
+  let transformed: AssetImageTransformResult
+  try {
+    transformed = await transformAssetImage(snapshot.bytes, {
+      width,
+      height,
+      aspectPolicy,
+      format,
+      quality,
+      animationPolicy
+    } satisfies AssetImageTransformOptions)
+  } catch (error: unknown) {
+    if (!(error instanceof AssetImageTransformError)) throw error
+    const status =
+      error.code === 'ASSET_IMAGE_TOO_LARGE' || error.code === 'ASSET_IMAGE_OUTPUT_TOO_LARGE'
+        ? 413
+        : error.code === 'ASSET_IMAGE_UNSUPPORTED'
+          ? 415
+          : error.code === 'ASSET_IMAGE_PROCESSING_LIMIT'
+            ? 422
+            : 400
+    throw new ApplicationError(error.message, { status, code: error.code })
+  }
+
+  const filenameExtension = filename.slice(filename.lastIndexOf('.')).toLowerCase()
+
+  const published = await withAssetLocationLocks(
+    ['assets', snapshot.sourcePath],
+    async assertHeld => {
+      await assertHeld?.()
+      const asset = await models.knex.transaction(async transaction => {
+        const current = await models.assets.query(transaction).where({ id }).forUpdate().first()
+        if (!current) throw imageResizeStale()
+        let sourceFolderPath: string
+        try {
+          sourceFolderPath = await assetFolderPath(current.folderId === null || current.folderId === 0 ? null : current.folderId, transaction)
+        } catch (error: unknown) {
+          if (error instanceof AssetFolderHierarchyError) throw imageResizeStale()
+          throw error
+        }
+        const currentSourcePath = sourceFolderPath ? `${sourceFolderPath}/${current.filename}` : current.filename
+        let targetFolderPath: string
+        try {
+          targetFolderPath = await assetFolderPath(folderId, transaction)
+        } catch (error: unknown) {
+          if (error instanceof AssetFolderHierarchyError) throw imageResizeDestinationForbidden()
+          throw error
+        }
+        const destinationPath = targetFolderPath ? `${targetFolderPath}/${filename}` : filename
+        if (destinationPath.length > 512) throw imageResizeInputError('The destination asset path is too long.')
+        if (currentSourcePath !== snapshot.sourcePath) throw imageResizeStale()
+
+        const auth = getAuth()
+        const authority = await auth.loadPageRuleAuthority(requester, transaction)
+        if (!auth.checkPageAccess(requester, ['read:assets'], { path: currentSourcePath }, authority)) throw imageResizeUnavailable()
+        if (!auth.checkPageAccess(requester, ['write:assets'], { path: destinationPath }, authority)) {
+          throw imageResizeDestinationForbidden()
+        }
+
+        await lockAssetLocation(transaction, currentSourcePath)
+        await lockAssetLocation(transaction, destinationPath)
+        await lockFolderDestination(transaction, destinationPath)
+        await assertAssetLocationAssetSettled(transaction, current.id)
+        await assertAssetLocationReservations(transaction, [currentSourcePath, destinationPath])
+
+        const currentData = await transaction<AssetDataRow>('assetData').where('id', id).first('data')
+        if (!currentData) throw imageResizeStale()
+        const currentBytes = assetRowBytes(currentData.data)
+        if (
+          current.filename !== snapshot.asset.filename ||
+          current.hash !== snapshot.asset.hash ||
+          (current.folderId === 0 ? null : current.folderId) !== snapshot.asset.folderId ||
+          assetVersionTime(current.updatedAt) !== snapshot.asset.updatedAt ||
+          createHash('sha256').update(currentBytes).digest('hex') !== snapshot.sourceSha256
+        ) {
+          throw imageResizeStale()
+        }
+
+        const destinationHash = assetHelper.generateHash(destinationPath)
+        const collision = await transaction('assets').where({ hash: destinationHash }).first('id')
+        if (collision) throw imageResizeConflict()
+        const existing = folderId === null
+          ? await transaction('assets').where({ filename }).whereNull('folderId').first('id') ??
+            await transaction('assets').where({ filename, folderId: 0 }).first('id')
+          : await transaction('assets').where({ filename, folderId }).first('id')
+        if (existing) throw imageResizeConflict()
+
+        const now = new Date().toISOString()
+        const inserted = await transaction('assets')
+          .insert({
+            filename,
+            hash: destinationHash,
+            ext: filenameExtension,
+            kind: 'image',
+            mime: imageResizeMime[format],
+            fileSize: transformed.data.length,
+            metadata: JSON.stringify({}),
+            authorId: requester.id,
+            folderId,
+            createdAt: now,
+            updatedAt: now
+          })
+          .returning('*')
+        const row = Array.isArray(inserted) ? inserted[0] : inserted
+        const createdAssetId = Number(typeof row === 'object' && row !== null ? Reflect.get(row, 'id') : row)
+        if (!Number.isSafeInteger(createdAssetId) || createdAssetId < 1) {
+          throw new ApplicationError('The resized asset could not be persisted.', { status: 503, code: 'ASSET_IMAGE_PERSISTENCE_FAILED' })
+        }
+        await transaction('assetData').insert({ id: createdAssetId, data: transformed.data })
+        return {
+          id: createdAssetId,
+          filename,
+          hash: destinationHash,
+          ext: filenameExtension,
+          kind: 'image',
+          mime: imageResizeMime[format],
+          fileSize: transformed.data.length,
+          metadata: {},
+          authorId: requester.id,
+          createdAt: now,
+          updatedAt: now,
+          path: destinationPath
+        }
+      })
+
+      let publicationStarted = false
+      try {
+        await assertHeld?.()
+        if (models.assets.deleteAssetCaches) await models.assets.deleteAssetCaches([asset.hash])
+        publicationStarted = true
+        await models.storage.assetEvent({
+          event: 'uploaded',
+          asset: {
+            ...asset,
+            data: transformed.data,
+            authorName: requester.name,
+            authorEmail: requester.email
+          }
+        })
+        await assertHeld?.()
+      } catch {
+        if (publicationStarted) {
+          try {
+            await models.storage.assetEvent({
+              event: 'deleted',
+              asset: {
+                ...asset,
+                authorName: requester.name,
+                authorEmail: requester.email
+              }
+            })
+          } catch {
+            // Storage cleanup is best effort after a failed new-asset publication.
+          }
+        }
+        try {
+          if (models.assets.deleteAssetCaches) await models.assets.deleteAssetCaches([asset.hash])
+        } catch {
+          // Cache cleanup is retried independently from canonical-row rollback.
+        }
+        try {
+          await models.knex.transaction(async transaction => {
+            await transaction('assetData').where({ id: asset.id }).delete()
+            await transaction('assets').where({ id: asset.id, hash: asset.hash }).delete()
+          })
+        } catch {
+          // Keep the request unsuccessful if canonical-row rollback cannot complete.
+        }
+        throw new ApplicationError('The resized asset could not be published.', { status: 503, code: 'ASSET_IMAGE_PUBLICATION_FAILED' })
+      }
+
+      return {
+        status: 'succeeded' as const,
+        assetId: asset.id,
+        destinationPath: asset.path,
+        width: transformed.width,
+        height: transformed.height,
+        format: transformed.format,
+        frames: transformed.frames,
+        fileSize: transformed.data.length,
+        sourceSha256: snapshot.sourceSha256
+      }
+    },
+    models.knex
+  )
+  return published
+}
+
 const relocationNotFound = (): InstanceType<typeof ApplicationError> =>
   new ApplicationError('Asset relocation was not found.', { status: 404, code: 'ASSET_RELOCATION_NOT_FOUND' })
 const relocationFailureMessage = 'Storage target reconciliation failed.'
@@ -549,4 +899,4 @@ const remove = async ({ requester, id }: { requester: Requester; id: number }): 
 
 const flushTemporaryUploads = (): unknown => models.assets.flushTempUploads()
 
-export default { createFolder, flushTemporaryUploads, getBranding, list, listFolders, relocate, relocationStatus, remove }
+export default { createFolder, flushTemporaryUploads, getBranding, list, listFolders, relocate, relocationStatus, remove, resizeImage }

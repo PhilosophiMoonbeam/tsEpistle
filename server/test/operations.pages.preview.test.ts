@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from './bun-test.mts'
 const unlock = vi.fn(async () => {})
 const protectedAssetRequiresUnlock = vi.fn(async () => false)
-vi.mockModule('../operations/page-protection.ts', import.meta.url, () => ({ assertPageUnlocked: unlock, pageRequiresUnlock: vi.fn(async () => false), protectedAssetRequiresUnlock }))
+vi.mockModule('../operations/page-protection.ts', import.meta.url, () => ({
+  assertPageUnlocked: unlock,
+  pageRequiresUnlock: vi.fn(async () => false),
+  protectedAssetRequiresUnlock,
+  redactProtectedPageForSearch: (record: unknown) => record,
+  syncProtectedPageAssets: vi.fn(async () => {})
+}))
 const page = {
   id: 42,
   localeCode: 'en',

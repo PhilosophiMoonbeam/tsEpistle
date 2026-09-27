@@ -1376,5 +1376,10 @@
     "selectOneMoreTagsHint": "Select one or more tags on the left.",
     "retrievingResultsLoading": "Retrieving page results...",
     "searchWithinResultsPlaceholder": "Search within results..."
+  },
+  "mail": {
+    "test": {
+      "confirmation": "Receiving this message confirms that this test reached your mailbox. Future messages may still be affected by provider policy, filtering, or changes to the configuration."
+    }
   }
 }

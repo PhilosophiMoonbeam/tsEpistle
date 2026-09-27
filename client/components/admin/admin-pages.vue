@@ -1,7 +1,7 @@
 <template>
   <v-container fluid class="admin-pages">
     <admin-hero title="Pages" description="Care for the knowledge in your workspace." icon="mdi-file-document-multiple-outline">
-      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="loading || bulkOpen" @click="refresh">Refresh</v-btn><v-btn variant="outlined" prepend-icon="mdi-graph-outline" to="/pages/visualize">Explore structure</v-btn></template>
+      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="loading || bulkOpen" @click="refresh">Refresh</v-btn><v-btn variant="outlined" prepend-icon="mdi-graph-outline" to="/pages/visualize">Explore structure</v-btn><v-btn v-if="canManageSystem" variant="outlined" prepend-icon="mdi-delete-clock-outline" to="/pages/recycle-bin">Recycle bin</v-btn><v-btn v-if="canManageSystem" variant="outlined" prepend-icon="mdi-shield-search-outline" to="/pages/integrity">Page integrity</v-btn></template>
     </admin-hero>
     <section class="pages-overview"><div><span class="pages-kicker">Knowledge register</span><h2>A clear view of every page.</h2><p>Find what needs attention, understand who can read it, and manage publication with a review before each change.</p></div><dl class="pages-totals"><div><dt>Accessible pages</dt><dd>{{ pages.length }}</dd></div><div><dt>{{ pages.some(page => page.isPublished === undefined) ? 'Known drafts' : 'Drafts' }}</dt><dd>{{ pages.filter(page => page.isPublished === false).length }}</dd></div><div><dt>Publication unavailable</dt><dd>{{ pages.filter(page => page.isPublished === undefined).length }}</dd></div><div><dt>Private</dt><dd>{{ pages.filter(page => page.visibility === 'private').length }}</dd></div></dl></section>
     <div class="pages-quickviews" role="group" aria-label="Page views"><v-btn v-for="view in views" :key="view.value" :variant="view.value === currentView ? 'tonal' : 'text'" :aria-pressed="view.value === currentView" @click="setView(view.value)">{{ view.title }}</v-btn></div>
@@ -46,6 +46,7 @@ export default {
     publicationOptions: [{ title: 'All publication states', value: 'all' }, ...['Draft', 'Published', 'Scheduled', 'Window ended', 'Invalid schedule', 'Unavailable'].map(title => ({ title, value: title }))]
   } },
   computed: {
+    canManageSystem(): boolean { return wikiStore.user.permissions.includes('manage:system') },
     currentView(): string { return this.untagged ? 'untagged' : this.visibility === 'private' ? 'private' : this.publication === 'Draft' ? 'draft' : !this.hasActiveFilters ? 'all' : '' },
     hasActiveFilters(): boolean { return Boolean(this.search || this.selectedLang || this.tag || this.untagged || this.visibility !== 'all' || this.publication !== 'all') },
     langs() { return [{ title: 'All languages', value: null }, ...[...new Set(this.pages.map(page => page.locale))].sort().map(locale => ({ title: locale, value: locale }))] },

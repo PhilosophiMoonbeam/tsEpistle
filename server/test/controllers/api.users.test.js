@@ -122,6 +122,10 @@ describe('controllers/api users endpoints', () => {
               dateFormat: 'YYYY-MM-DD',
               timeFormat: '24h',
               appearance: 'dark',
+              reduceMotion: true,
+              underlineLinks: true,
+              contentTextSize: 'larger',
+              communicationLocale: 'fr-CA',
               isSystem: false,
               isActive: true,
               isVerified: true,
@@ -133,11 +137,15 @@ describe('controllers/api users endpoints', () => {
               password: 'secret',
               tfaSecret: 'hidden',
               permissions: ['manage:system'],
-              $relatedQuery: vi.fn().mockReturnValue({
-                select: vi.fn().mockResolvedValue([
+              $relatedQuery: vi.fn().mockImplementation(() => {
+                const groups = [
                   { id: 1, name: 'Administrators', isSystem: true },
                   { id: 3, name: 'Editors', description: 'hidden' }
-                ])
+                ]
+                return {
+                  select: vi.fn().mockResolvedValue(groups),
+                  then: (resolve, reject) => Promise.resolve(groups).then(resolve, reject)
+                }
               })
             })
           }))
@@ -164,6 +172,7 @@ describe('controllers/api users endpoints', () => {
       verification: express.__router.patch.mock.calls.find(([path]) => path === '/:id/verification')[1],
       tfa: express.__router.patch.mock.calls.find(([path]) => path === '/:id/tfa')[1],
       preferences: express.__router.patch.mock.calls.find(([path]) => path === '/profile/preferences')[1],
+      profile: express.__router.get.mock.calls.find(([path]) => path === '/profile')[1],
       detail: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1]
     }
   }
@@ -942,12 +951,39 @@ describe('controllers/api users endpoints', () => {
         dateFormat: 'YYYY-MM-DD',
         timeFormat: '24h',
         appearance: 'dark',
+        reduceMotion: true,
+        underlineLinks: true,
+        contentTextSize: 'larger',
+        communicationLocale: 'fr-CA',
         permissions: [],
         authVersion: 7
       }
     })
   })
+  it('returns persisted presentation and communication preferences in the private profile', async () => {
+    const { profile } = await loadHandler()
+    global.WIKI.models.pages.query.mockReturnValue({
+      count: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          first: vi.fn().mockResolvedValue({ total: 3 })
+        })
+      })
+    })
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
+    await profile({ user: { id: 42 } }, res, vi.fn())
+
+    expect(res.json.mock.calls[0][0]).toMatchObject({
+      reduceMotion: true,
+      underlineLinks: true,
+      contentTextSize: 'larger',
+      communicationLocale: 'fr-CA',
+      groups: ['Administrators', 'Editors'],
+      pagesTotal: 3
+    })
+    expect(res.json.mock.calls[0][0]).not.toHaveProperty('password')
+    expect(res.json.mock.calls[0][0]).not.toHaveProperty('tfaSecret')
+  })
   it('does not leak sensitive user fields', async () => {
     const { whoami } = await loadHandler()
     const req = {

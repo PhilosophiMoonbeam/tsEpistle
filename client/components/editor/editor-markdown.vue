@@ -317,6 +317,7 @@ import {
   sanitizeWikiMarkdownHtml
 } from './markdown/preview.ts'
 import { PreviewAlignmentScheduler, calculatePreviewAlignment, resolveVisiblePreviewTarget, stampDetailsSourceLine } from './markdown/preview-alignment'
+import { WIKI_LINKS_DISABLED, type WikiLinkOptions } from '../../../shared/wikilinks.ts'
 
 type MarkdownMarkerKind = 'diagram'
 
@@ -361,7 +362,6 @@ function requireEditor (editor: TextEditorHandle | null): TextEditorHandle {
 // INIT
 // ========================================
 
-const md = createWikiMarkdownRenderer()
 const markdownEditorInputTheme = EditorView.theme({
   '.cm-content': {
     fontSize: 'calc(.9rem + 1px)'
@@ -385,30 +385,33 @@ const injectSourceLine: MarkdownItRenderRule = (tokens, idx, options, env, rende
   }
   return renderer.renderToken(tokens, idx, options)
 }
-md.renderer.rules.paragraph_open = injectSourceLine
-md.renderer.rules.heading_open = injectSourceLine
-md.renderer.rules.blockquote_open = injectSourceLine
 
-md.renderer.rules.html_block = (tokens, idx, _options, env) => {
-  const token = tokens[idx]
-  const line = token?.map?.[0]
-  if (!token || line === undefined) return token?.content ?? ''
-  const stampedHtml = stampDetailsSourceLine(token.content, line)
-  if (stampedHtml === null) return token.content
-  const sourceLines = env?.sourceLines
-  if (Array.isArray(sourceLines)) sourceLines.push(line)
-  return stampedHtml
-}
-
-const renderFence = md.renderer.rules.fence
-if (!renderFence) throw new TypeError('Markdown fence renderer is unavailable.')
-md.renderer.rules.fence = (tokens, idx, options, env, renderer) => {
-  const line = tokens[idx]?.map?.[0]
-  const html = renderFence(tokens, idx, options, env, renderer)
-  if (line === undefined) return html
-  const sourceLines = env?.sourceLines
-  if (Array.isArray(sourceLines)) sourceLines.push(line)
-  return html.replace(/^<([a-z]+)/, `<$1 data-source-line="${line}"`)
+function createEditorMarkdownRenderer (wikiLinks: WikiLinkOptions) {
+  const markdown = createWikiMarkdownRenderer(wikiLinks)
+  markdown.renderer.rules.paragraph_open = injectSourceLine
+  markdown.renderer.rules.heading_open = injectSourceLine
+  markdown.renderer.rules.blockquote_open = injectSourceLine
+  markdown.renderer.rules.html_block = (tokens, idx, _options, env) => {
+    const token = tokens[idx]
+    const line = token?.map?.[0]
+    if (!token || line === undefined) return token?.content ?? ''
+    const stampedHtml = stampDetailsSourceLine(token.content, line)
+    if (stampedHtml === null) return token.content
+    const sourceLines = env?.sourceLines
+    if (Array.isArray(sourceLines)) sourceLines.push(line)
+    return stampedHtml
+  }
+  const renderFence = markdown.renderer.rules.fence
+  if (!renderFence) throw new TypeError('Markdown fence renderer is unavailable.')
+  markdown.renderer.rules.fence = (tokens, idx, options, env, renderer) => {
+    const line = tokens[idx]?.map?.[0]
+    const html = renderFence(tokens, idx, options, env, renderer)
+    if (line === undefined) return html
+    const sourceLines = env?.sourceLines
+    if (Array.isArray(sourceLines)) sourceLines.push(line)
+    return html.replace(/^<([a-z]+)/, `<$1 data-source-line="${line}"`)
+  }
+  return markdown
 }
 
 const collaborations = new WeakMap<object, MarkdownCollaboration>()
@@ -457,7 +460,11 @@ export default defineComponent({
     save: {
       type: Function as PropType<() => void>,
       default: () => {}
-    }
+    },
+    wikiLinkOptions: {
+      type: Object as PropType<WikiLinkOptions>,
+      default: () => WIKI_LINKS_DISABLED
+    },
   },
   setup() {
     const { mdAndUp } = useDisplay()
@@ -465,6 +472,7 @@ export default defineComponent({
   },
   data() {
     return {
+      markdownRenderer: markRaw(createEditorMarkdownRenderer(this.wikiLinkOptions)),
       cm: null as TextEditorHandle | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
       previewShown: this.mdAndUp,
@@ -529,6 +537,16 @@ export default defineComponent({
   watch: {
     '$vuetify.theme.current.dark' (newValue: boolean) {
       this.cm?.setDark(newValue)
+    },
+    wikiLinkOptions: {
+      deep: true,
+      handler () {
+        this.markdownRenderer = markRaw(createEditorMarkdownRenderer(this.wikiLinkOptions))
+        this.previewRevision += 1
+        this.previewDirty = true
+        stopPreviewAlignment(this)
+        if (this.cm) this.processContent(this.cm.getValue())
+      }
     },
     previewShown (newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) {
@@ -654,7 +672,7 @@ export default defineComponent({
       this.previewDirty = true
       this.previewError = ''
       try {
-        const previewHTML = sanitizeWikiMarkdownHtml(md.render(newContent, renderEnvironment))
+        const previewHTML = sanitizeWikiMarkdownHtml(this.markdownRenderer.render(newContent, renderEnvironment))
         if (this.editorDisposed || !this.previewShown || revision !== this.previewRevision) return
         this.previewHTML = previewHTML
       } catch {

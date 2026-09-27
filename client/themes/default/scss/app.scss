@@ -1912,6 +1912,30 @@
   }
 }
 
+// Account reading preferences affect article content, not application controls.
+html[data-reader-text-size='large'] .wiki-page {
+  --wiki-reader-text-size: 1.1875rem;
+}
+
+html[data-reader-text-size='larger'] .wiki-page {
+  --wiki-reader-text-size: 1.3125rem;
+}
+
+html[data-reader-links='underlined'] .wiki-page .contents a {
+  text-decoration-line: underline;
+  text-decoration-color: currentColor;
+}
+
+html[data-reader-motion='reduced'] .wiki-page {
+  --wiki-motion-fast: 0ms;
+
+  .contents * {
+    scroll-behavior: auto !important;
+    transition-duration: .001ms !important;
+    animation-duration: .001ms !important;
+  }
+}
+
 .content-extension-gallery-dialog {
   width: min(94vw, 1200px);
   max-width: none;

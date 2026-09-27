@@ -1,10 +1,10 @@
 <template lang="pug">
-  v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive }]')
-    a.page-skip-link(:href='talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='talkActive ? goToComments() : focusArticle()') Skip to content
+  v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive && !linksActive }]')
+    a.page-skip-link(:href='linksActive ? `#page-links` : talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='linksActive ? focusLinks() : talkActive ? goToComments() : focusArticle()') Skip to content
     nav-header(v-if='!printView', reserve-actions)
     .page-position(v-if='!printView', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100', :style='{ insetInlineStart: pagePositionInsetStart }')
       .page-position-fill(:style='{ transform: `scaleX(${readingProgress / 100})` }')
-    .page-reading-dock(v-if='readerFocus && !printView && !talkActive', role='region', :aria-label='$t(`common:page.focusReading`)', style='backdrop-filter: var(--wiki-chrome-blur);')
+    .page-reading-dock(v-if='readerFocus && !printView && !talkActive && !linksActive', role='region', :aria-label='$t(`common:page.focusReading`)', style='backdrop-filter: var(--wiki-chrome-blur);')
       v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
       span.page-reading-dock-title {{ title }}
       v-btn(variant='text', size='small', prepend-icon='mdi-arrow-collapse-horizontal', @click='toggleReaderFocus') {{$t('common:page.exitFocus')}}
@@ -29,7 +29,7 @@
           @navigate='sidebarNavigationStarted'
         )
 
-    v-fab-transition(v-if='navMode !== `NONE` && (!readerFocus || talkActive)')
+    v-fab-transition(v-if='navMode !== `NONE` && (!readerFocus || talkActive || linksActive)')
       v-btn.page-nav-toggle(
         ref='navToggle'
         :class='{ "page-nav-toggle--open": navShown }'
@@ -148,7 +148,7 @@
                   aria-atomic='true'
                   :class='[`page-header-offline-status--${offlineControlState}`, { "page-header-offline-status--quiet": !["stale", "sync-pending", "error", "unavailable", "ineligible"].includes(offlineControlState) }]'
                 ) {{ offlineStatusLabel }}
-              v-btn.page-focus-control(v-if='!printView && !readerFocus && !talkActive', variant='text', size='small', prepend-icon='mdi-book-open-page-variant-outline', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t('common:page.focusReading') }}
+              v-btn.page-focus-control(v-if='!printView && !readerFocus && !talkActive && !linksActive', variant='text', size='small', prepend-icon='mdi-book-open-page-variant-outline', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t('common:page.focusReading') }}
               .page-edit-shortcuts(
                 v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
                 :class='tocPosition === `right` ? `is-right` : ``'
@@ -183,18 +183,6 @@
             )
             #page-desktop-rail.page-desktop-rail(ref='desktopRail')
 
-            //- v-card.mb-5
-            //-   .pa-5
-            //-     .text-label-small.pb-2(:class='$vuetify.theme.current.dark ? `text-yellow-darken-3` : `text-yellow-darken-4`') Rating
-            //-     .text-center
-            //-       v-rating(
-            //-         v-model='rating'
-            //-         color='yellow-darken-3'
-            //-         bg-color='grey-lighten-1'
-            //-         half-increments
-            //-         hover
-            //-         )
-            //-       .text-body-small.text-grey 5 votes
 
 
           v-col.page-col-content(
@@ -232,18 +220,19 @@
                   v-list-item-title {{$t('common:header.delete')}}
             v-alert.page-page-context.mb-5(v-if='!isPublished', color='warning', variant="outlined", icon='mdi-minus-circle', density="compact")
               .text-body-small {{$t('common:page.unpublishedWarning')}}
-            site-banner.page-page-context(:banner='siteBanner')
+            site-banner.page-page-context(v-if='selectedPageView === `article` || printView', :banner='siteBanner')
             v-tabs.page-view-tabs(
-              v-if='commentsEnabled && commentsPerms.read && !commentsExternal && !printView'
-              :model-value='activeView'
+              v-if='showPageViewTabs'
+              :model-value='selectedPageView'
               color='primary'
               density='compact'
               aria-label='Page view'
               @update:model-value='selectPageView'
             )
               v-tab#page-view-article-tab(value='article' prepend-icon='mdi-file-document-outline') Article
-              v-tab#page-view-talk-tab(value='talk' prepend-icon='mdi-forum-outline') Talk
-            article.contents(ref='container', v-show='printView || commentsExternal || activeView === `article`', :id='pageArticleId', role='tabpanel', :aria-labelledby='commentsEnabled && commentsPerms.read && !commentsExternal && !printView ? `page-view-article-tab` : pageTitleId', tabindex='-1', :dir='$vuetify.locale.isRtl ? `rtl` : `ltr`')
+              v-tab#page-view-talk-tab(v-if='commentsEnabled && commentsPerms.read && !commentsExternal' value='talk' prepend-icon='mdi-forum-outline') Talk
+              v-tab#page-view-links-tab(v-if='linksVisible' value='links' prepend-icon='mdi-link-variant') Links
+            article.contents(ref='container', v-show='printView || selectedPageView === `article`', :id='pageArticleId', role='tabpanel', :aria-labelledby='showPageViewTabs ? `page-view-article-tab` : pageTitleId', tabindex='-1', :lang='locale', :dir='contentDirection')
               template(v-if='$slots.contents')
                 slot(name='contents')
               async-state(
@@ -251,7 +240,9 @@
                 state='empty'
                 :title='$t(`common:page.noContent`)'
               )
-            section.comments-container#discussion(v-if='commentsEnabled && commentsPerms.read && !printView && (commentsExternal || activeView === `talk`)' role='tabpanel' :aria-labelledby='commentsExternal ? `discussion-title` : `page-view-talk-tab`')
+            section.page-links-panel.contents#page-links(v-if='linksActive', role='tabpanel', aria-labelledby='page-view-links-tab', tabindex='-1')
+              slot(name='links', :page-id='pageId', :locale='locale', :source-revision='sourceRevision')
+            section.comments-container#discussion(v-if='!printView && ((commentsExternal && !linksActive) || (!commentsExternal && selectedPageView === `talk` && commentsEnabled && commentsPerms.read))' role='tabpanel' :aria-labelledby='commentsExternal ? `discussion-title` : `page-view-talk-tab`')
               .comments-header
                 .comments-header-icon
                   v-icon(size='20') mdi-comment-text-outline
@@ -555,6 +546,8 @@
                   :aria-label='$t(`common:page.tagsMatching`)'
                   )
                   v-icon(size='20') mdi-tag-multiple
+            template(v-if='ratingsVisible && !printView')
+              slot(name='ratings', :page-id='pageId')
             v-card.page-comments-card.mb-5(v-if='commentsEnabled && commentsPerms.read')
               .pa-5
                 .text-label-small.pb-2.d-flex.align-center.text-secondary
@@ -1509,8 +1502,20 @@ export default defineComponent({
       default: true
     },
     activeView: {
-      type: String as PropType<'article' | 'talk'>,
+      type: String as PropType<'article' | 'talk' | 'links'>,
       default: 'article'
+    },
+    linksVisible: {
+      type: Boolean,
+      default: false
+    },
+    ratingsVisible: {
+      type: Boolean,
+      default: false
+    },
+    lastEditorVisible: {
+      type: Boolean,
+      default: false
     },
     commentsEnabled: {
       type: Boolean,
@@ -1775,6 +1780,20 @@ export default defineComponent({
     talkActive (): boolean {
       return this.activeView === 'talk' && this.commentsEnabled && this.commentsPerms.read && !this.commentsExternal
     },
+    linksActive (): boolean {
+      return this.activeView === 'links' && this.linksVisible && !this.printView
+    },
+    selectedPageView (): 'article' | 'talk' | 'links' {
+      if (this.activeView === 'talk' && !this.talkActive) return 'article'
+      if (this.activeView === 'links' && !this.linksActive) return 'article'
+      return this.activeView
+    },
+    showPageViewTabs (): boolean {
+      return !this.printView && (this.linksVisible || (this.commentsEnabled && this.commentsPerms.read && !this.commentsExternal))
+    },
+    contentDirection (): 'ltr' | 'rtl' {
+      return i18next.dir(this.locale)
+    },
     editShortcutsObj () {
       return wikiStore.page.editShortcuts
     },
@@ -1980,7 +1999,7 @@ export default defineComponent({
       return typeof formatted === 'string' ? formatted : String(formatted ?? '')
     },
     hasAuthor (): boolean {
-      return Boolean(this.authorName && this.authorName.trim() && this.authorName.toLowerCase() !== 'unknown')
+      return this.lastEditorVisible && Boolean(this.authorName && this.authorName.trim() && this.authorName.toLowerCase() !== 'unknown')
     },
     canViewHistory (): boolean {
       return Boolean(this.isAuthenticated && this.hasReadHistoryPermission)
@@ -4049,7 +4068,10 @@ export default defineComponent({
       this.railAlignmentDirty = true
     },
     selectPageView(value: unknown): void {
-      if (value === 'article' || value === 'talk') this.$emit('update:activeView', value)
+      if (value === 'article' || value === 'talk' || (value === 'links' && this.linksVisible)) this.$emit('update:activeView', value)
+    },
+    focusLinks (): void {
+      this.$nextTick(() => document.querySelector<HTMLElement>('#page-links')?.focus({ preventScroll: true }))
     },
     goToComments (focusNewComment = false) {
       this.cancelScheduledScroll()
@@ -4733,7 +4755,7 @@ export default defineComponent({
   &.page-hero--accent-present::before {
     position: absolute;
     inset-block: 0;
-    right: 0;
+    inset-inline-end: 0;
     z-index: 0;
     width: 37.5%;
     pointer-events: none;
@@ -4843,8 +4865,8 @@ export default defineComponent({
       position: absolute;
       grid-column: 2;
       grid-row: 2 / span 2;
-      top: calc(var(--wiki-space-2) * -1);
-      right: 0;
+      inset-block-start: calc(var(--wiki-space-2) * -1);
+      inset-inline-end: 0;
       z-index: 2;
       max-inline-size: var(--page-branding-mark-size);
       max-block-size: 100%;
@@ -5028,7 +5050,7 @@ export default defineComponent({
 
 .page-col-sd {
   position: sticky;
-  top: calc(var(--v-layout-top, var(--wiki-grid-size)) + var(--wiki-space-4));
+  inset-block-start: calc(var(--v-layout-top, var(--wiki-grid-size)) + var(--wiki-space-4));
   align-self: flex-start;
   max-height: calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - max(var(--v-layout-bottom, 0px), var(--wiki-footer-height)) - var(--wiki-space-6));
   overflow-y: auto;
@@ -5725,10 +5747,15 @@ export default defineComponent({
   }
 
 }
+.page-col-content > .contents :where(pre, code) {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: start;
+}
 
 .page-view-tabs {
   width: fit-content;
-  margin-bottom: var(--wiki-space-5);
+  margin-block-end: var(--wiki-space-5);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-raised);
@@ -5736,12 +5763,12 @@ export default defineComponent({
 }
 
 .page-view-tabs ~ .comments-container {
-  margin-top: 0;
+  margin-block-start: 0;
 }
 
 .comments-container {
   overflow: hidden;
-  margin-top: var(--wiki-space-8);
+  margin-block-start: var(--wiki-space-8);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-hero-radius);
   background: rgb(var(--v-theme-surface));
@@ -5753,7 +5780,7 @@ export default defineComponent({
   gap: var(--wiki-space-3);
   align-items: center;
   padding: var(--wiki-space-5) var(--wiki-space-6);
-  border-bottom: 1px solid var(--wiki-surface-border);
+  border-block-end: 1px solid var(--wiki-surface-border);
   background:
     linear-gradient(
       135deg,
@@ -5783,7 +5810,7 @@ export default defineComponent({
 }
 
 .comments-subtitle {
-  margin-top: var(--wiki-space-1);
+  margin-block-start: var(--wiki-space-1);
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
   font-size: .8125rem;
 }
@@ -5924,7 +5951,7 @@ export default defineComponent({
     max-width: 100%;
     min-width: 0;
     flex: 0 0 auto;
-    margin-bottom: 0 !important;
+    margin-block-end: 0 !important;
   }
 
   .page-body > .v-row {
@@ -5986,7 +6013,7 @@ export default defineComponent({
     }
 
     .page-description {
-      margin-top: var(--wiki-space-1);
+      margin-block-start: var(--wiki-space-1);
       font-size: 1rem;
       line-height: 1.5;
     }
@@ -6039,7 +6066,7 @@ export default defineComponent({
     width: 100%;
     max-width: 100%;
     flex: 0 0 auto;
-    margin-bottom: 0 !important;
+    margin-block-end: 0 !important;
   }
 
   .page-mobile-tools > .page-tools-card,
@@ -6047,7 +6074,7 @@ export default defineComponent({
     width: 100%;
     max-width: 100%;
     flex: 0 0 auto;
-    margin-bottom: 0 !important;
+    margin-block-end: 0 !important;
   }
 
   .page-toc-heading {
@@ -6093,7 +6120,7 @@ export default defineComponent({
   }
 
   .comments-container {
-    margin-top: var(--wiki-space-4);
+    margin-block-start: var(--wiki-space-4);
     border-radius: var(--wiki-panel-radius);
   }
 
@@ -6461,7 +6488,7 @@ export default defineComponent({
   }
 
   .page-header-headings--branded > .page-branding-mark {
-    right: calc((min(100vw, var(--page-layout-shell-max)) - min(100vw, var(--page-reader-shell-max))) / -2);
+    inset-inline-end: calc((min(100vw, var(--page-layout-shell-max)) - min(100vw, var(--page-reader-shell-max))) / -2);
   }
 
   .page-col-content:not(.is-page-header) {

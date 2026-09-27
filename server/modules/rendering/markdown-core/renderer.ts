@@ -1,7 +1,8 @@
-import type { MarkdownIt, MarkdownItOptions } from 'markdown-it'
+import type { MarkdownIt, MarkdownItOptions, StateInline } from 'markdown-it'
 import type { RendererContext, UnknownRecord } from '../../types.ts'
 import * as markdownItModule from 'markdown-it'
 import * as mdAttrsModule from 'markdown-it-attrs'
+import { parseWikiLinkAt, resolveWikiLinkHref } from '../../../../shared/wikilinks.ts'
 import _ from 'lodash'
 import underline from './underline.ts'
 import {
@@ -18,10 +19,15 @@ interface MarkdownRendererConfig extends UnknownRecord {
   typographer: boolean
   quotes: string
   underline: boolean
+  wikilinks?: boolean
 }
 
 interface MarkdownRendererContext extends RendererContext<MarkdownRendererConfig> {
   input: string
+  page?: {
+    localeCode: string
+    path: string
+  }
 }
 
 interface ChildRenderer {
@@ -107,6 +113,44 @@ const plugin = {
 
     if (this.config.underline) {
       mkdown.use(underline)
+    }
+
+    if (this.config.wikilinks && this.page) {
+      const runtimeWiki: unknown = Reflect.get(globalThis, 'WIKI')
+      const runtimeConfig = typeof runtimeWiki === 'object' && runtimeWiki !== null && 'config' in runtimeWiki
+        ? runtimeWiki.config
+        : undefined
+      const runtimeLang = typeof runtimeConfig === 'object' && runtimeConfig !== null && 'lang' in runtimeConfig
+        ? runtimeConfig.lang
+        : undefined
+      const namespaced = typeof runtimeLang === 'object' && runtimeLang !== null &&
+        'namespacing' in runtimeLang && runtimeLang.namespacing === true
+      const wikiLinkContext = {
+        locale: this.page.localeCode,
+        pagePath: this.page.path,
+        namespaced
+      }
+      mkdown.inline.ruler.before('link', 'wiki_link', (state: StateInline, silent: boolean) => {
+        if (state.src.charCodeAt(state.pos) !== 0x5b || state.src.charCodeAt(state.pos + 1) !== 0x5b) {
+          return false
+        }
+        const wikiLink = parseWikiLinkAt(state.src.slice(state.pos, state.posMax))
+        if (!wikiLink) return false
+
+        const href = resolveWikiLinkHref(wikiLink, wikiLinkContext)
+        if (!silent) {
+          if (href === null) {
+            state.pending += wikiLink.raw
+          } else {
+            const linkOpen = state.push('link_open', 'a', 1)
+            linkOpen.attrSet('href', href)
+            state.push('text', '', 0).content = wikiLink.text
+            state.push('link_close', 'a', -1)
+          }
+        }
+        state.pos += wikiLink.raw.length
+        return true
+      })
     }
 
     mkdown.use(mdAttrs, {

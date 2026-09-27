@@ -1,3 +1,5 @@
+import type { PageRatingMode } from './page-ratings.ts'
+
 export const DISCUSSION_SECRET_MASK = '********'
 const hasUnsafeUrlCharacters = (value: string): boolean => [...value].some(character => character === '\\' || character.charCodeAt(0) <= 32)
 export interface DiscussionProperty {
@@ -19,7 +21,7 @@ export interface DiscussionProvider extends DiscussionProviderSettings {
   external: boolean
   props: Record<string, DiscussionProperty>
 }
-export interface DiscussionPolicySnapshot { enabled: boolean; providers: DiscussionProvider[]; fingerprint: string }
+export interface DiscussionPolicySnapshot { enabled: boolean; pageRatingsEnabled: boolean; pageRatingsMode: PageRatingMode; providers: DiscussionProvider[]; fingerprint: string }
 export interface DiscussionIssue { provider: string; field: string; message: string }
 export interface DiscussionWorkspace extends DiscussionPolicySnapshot {
   counts: { comments: number; visible: number; hidden: number; pages: number; closedPages: number }

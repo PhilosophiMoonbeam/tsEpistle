@@ -11,6 +11,8 @@ import {
 const payload = (spaNavigation = true): WikiPagePayload => ({
   version: 1,
   spaNavigation,
+  pageFeatures: { schemaVersion: 1, linksVisible: false, ratingsAllowed: true, lastEditorVisible: false },
+  ratingsSiteEnabled: false,
   props: {
     pageId: 42,
     locale: 'en',
@@ -34,7 +36,8 @@ const payload = (spaNavigation = true): WikiPagePayload => ({
     effectivePermissions: 'e30=',
     commentsExternal: false,
     editShortcuts: 'e30=',
-    filename: 'guides/routing.md'
+    filename: 'guides/routing.md',
+    branding: null
   }
 })
 
@@ -57,6 +60,53 @@ const pageDocument = (value: WikiPagePayload): string => `<!doctype html>
 describe('wiki page navigation payloads', () => {
   test('validates and decodes the server payload', () => {
     expect(decodeWikiPagePayload(encodePayload(payload())).props.path).toBe('guides/routing')
+  })
+
+  test('preserves server-normalized page features and rating site gate', () => {
+    const expectedFeatures: WikiPagePayload['pageFeatures'] = {
+      schemaVersion: 1,
+      linksVisible: true,
+      ratingsAllowed: false,
+      lastEditorVisible: true
+    }
+    const rawPayload = {
+      ...payload(),
+      pageFeatures: expectedFeatures,
+      ratingsSiteEnabled: true
+    }
+
+    const decoded = decodeWikiPagePayload(encodePayload(rawPayload))
+
+    expect(decoded.pageFeatures).toEqual(expectedFeatures)
+    expect(decoded.ratingsSiteEnabled).toBe(true)
+  })
+
+  test('defaults legacy feature metadata and fails closed for malformed settings', () => {
+    const current = payload()
+    const legacy = decodeWikiPagePayload(window.btoa(JSON.stringify({
+      version: current.version,
+      spaNavigation: current.spaNavigation,
+      props: current.props
+    })))
+    expect(legacy.pageFeatures).toEqual({
+      schemaVersion: 1,
+      linksVisible: false,
+      ratingsAllowed: true,
+      lastEditorVisible: false
+    })
+    expect(legacy.ratingsSiteEnabled).toBe(false)
+
+    const malformed = decodeWikiPagePayload(window.btoa(JSON.stringify({
+      ...current,
+      pageFeatures: null,
+      ratingsSiteEnabled: true
+    })))
+    expect(malformed.pageFeatures).toEqual({
+      schemaVersion: 1,
+      linksVisible: false,
+      ratingsAllowed: false,
+      lastEditorVisible: false
+    })
   })
 
   test('rejects malformed payloads at the document boundary', () => {

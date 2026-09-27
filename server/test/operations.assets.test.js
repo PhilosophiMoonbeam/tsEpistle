@@ -1,5 +1,6 @@
 import createKnex from 'knex'
 import { createHash } from 'node:crypto'
+import sharp from 'sharp'
 
 const assetHash = path => createHash('sha1').update(path).digest('hex')
 const namedError = name => class extends Error {
@@ -108,6 +109,99 @@ const createRelocationDatabase = async () => {
     table.dateTime('completedAt').nullable()
   })
   return db
+}
+const createImageResizeDatabase = async () => {
+  const db = createKnex({
+    client: 'better-sqlite3',
+    connection: { filename: ':memory:' },
+    pool: { min: 1, max: 1 },
+    useNullAsDefault: true
+  })
+  await db.schema.createTable('assets', table => {
+    table.increments('id').primary()
+    table.string('filename').notNullable()
+    table.string('hash').notNullable().unique()
+    table.string('ext').notNullable()
+    table.string('kind').notNullable()
+    table.string('mime').notNullable()
+    table.integer('fileSize').notNullable()
+    table.text('metadata').notNullable()
+    table.integer('authorId').notNullable()
+    table.integer('folderId').nullable()
+    table.string('createdAt').notNullable()
+    table.string('updatedAt').notNullable()
+  })
+  await db.schema.createTable('assetData', table => {
+    table.integer('id').primary()
+    table.binary('data').notNullable()
+  })
+  await db.schema.createTable('assetFolders', table => {
+    table.integer('id').primary()
+    table.string('slug').notNullable()
+    table.integer('parentId').nullable()
+  })
+  return db
+}
+
+const installImageResizeWiki = ({
+  db,
+  checkPageAccess = checkPageAccessFor,
+  loadPageRuleAuthority = async requester => authorityFor(requester)
+}) => {
+  const assetQuery = createAssetQuery(db)
+  const pageAccess = vi.fn(checkPageAccess)
+  const loadAuthority = vi.fn(loadPageRuleAuthority)
+  const storage = { assetEvent: vi.fn().mockResolvedValue(undefined) }
+  global.WIKI = {
+    config: { db: { type: 'sqlite' } },
+    Error: {
+      AssetDeleteForbidden: namedError('AssetDeleteForbidden'),
+      AssetFolderExists: namedError('AssetFolderExists'),
+      AssetInvalid: namedError('AssetInvalid'),
+      AssetRenameCollision: namedError('AssetRenameCollision'),
+      AssetRenameForbidden: namedError('AssetRenameForbidden'),
+      AssetRenameInvalid: namedError('AssetRenameInvalid'),
+      AssetRenameInvalidExt: namedError('AssetRenameInvalidExt'),
+      AssetRenameTargetForbidden: namedError('AssetRenameTargetForbidden')
+    },
+    auth: {
+      checkAccess: vi.fn(checkAccessFor),
+      checkPageAccess: pageAccess,
+      loadPageRuleAuthority: loadAuthority
+    },
+    models: {
+      assets: {
+        query: assetQuery,
+        flushTempUploads: vi.fn(),
+        deleteAssetCaches: vi.fn().mockResolvedValue(undefined)
+      },
+      assetFolders: { query: vi.fn(() => db('assetFolders')), getHierarchy: vi.fn(async () => []) },
+      knex: db,
+      storage
+    }
+  }
+  return { assetQuery, pageAccess, loadAuthority, storage }
+}
+
+const insertResizeSource = async (db, bytes, { id = 1, filename = 'source.png', folderId = null } = {}) => {
+  const now = new Date('2026-01-01T00:00:00.000Z').toISOString()
+  const asset = {
+    id,
+    filename,
+    hash: assetHash(filename),
+    ext: filename.slice(filename.lastIndexOf('.')),
+    kind: 'image',
+    mime: 'image/png',
+    fileSize: bytes.length,
+    metadata: JSON.stringify({}),
+    authorId: 7,
+    folderId,
+    createdAt: now,
+    updatedAt: now
+  }
+  await db('assets').insert(asset)
+  await db('assetData').insert({ id, data: bytes })
+  return asset
 }
 
 const installRelocationWiki = ({
@@ -1159,5 +1253,282 @@ describe('asset operations', () => {
     })
   })
 
+  it('normalizes EXIF orientation and keeps proportions unless distortion is explicitly unlocked', async () => {
+    const { transformAssetImage } = await vi.importFresh('../helpers/asset-image-transform.ts', import.meta.url)
+    const oriented = await sharp({ create: { width: 8, height: 4, channels: 3, background: 'red' } })
+      .jpeg()
+      .withMetadata({ orientation: 6 })
+      .toBuffer()
+    const normalized = await transformAssetImage(oriented, {
+      width: 8,
+      height: 8,
+      aspectPolicy: 'preserve',
+      format: 'png',
+      quality: 85,
+      animationPolicy: 'preserve'
+    })
+    expect(normalized).toMatchObject({ width: 4, height: 8, format: 'png', frames: 1 })
+    expect(await sharp(normalized.data).metadata()).toMatchObject({ width: 4, height: 8, format: 'png' })
+    expect((await sharp(normalized.data).metadata()).orientation).toBeUndefined()
+
+    const source = await sharp({ create: { width: 8, height: 4, channels: 3, background: 'blue' } }).png().toBuffer()
+    const preserved = await transformAssetImage(source, {
+      width: 4,
+      height: 4,
+      aspectPolicy: 'preserve',
+      format: 'webp',
+      quality: 80,
+      animationPolicy: 'preserve'
+    })
+    const stretched = await transformAssetImage(source, {
+      width: 4,
+      height: 4,
+      aspectPolicy: 'stretch',
+      format: 'jpeg',
+      quality: 80,
+      animationPolicy: 'preserve'
+    })
+    expect(preserved).toMatchObject({ width: 4, height: 2, format: 'webp' })
+    expect(stretched).toMatchObject({ width: 4, height: 4, format: 'jpeg' })
+    await expect(transformAssetImage(source, {
+      width: 8_193,
+      height: 1,
+      aspectPolicy: 'preserve',
+      format: 'png',
+      quality: 80,
+      animationPolicy: 'preserve'
+    })).rejects.toMatchObject({ name: 'ASSET_IMAGE_TOO_LARGE' })
+    await expect(transformAssetImage(Buffer.from('not an image'), {
+      width: 4,
+      height: 4,
+      aspectPolicy: 'preserve',
+      format: 'png',
+      quality: 80,
+      animationPolicy: 'preserve'
+    })).rejects.toMatchObject({ name: 'ASSET_IMAGE_INVALID' })
+  })
+
+  it('creates a new resized asset and leaves source identity and bytes unchanged', async () => {
+    const db = await createImageResizeDatabase()
+    try {
+      const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['read:assets', 'write:assets'] }
+      const sourceBytes = await sharp({ create: { width: 8, height: 4, channels: 3, background: 'red' } }).png().toBuffer()
+      const source = await insertResizeSource(db, sourceBytes)
+      const { pageAccess, storage } = installImageResizeWiki({ db })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+
+      const receipt = await operations.resizeImage({
+        requester,
+        id: source.id,
+        destination: { filename: 'copy.webp', folderId: 0 },
+        width: 4,
+        height: 4,
+        aspectPolicy: 'preserve',
+        format: 'webp',
+        quality: 80,
+        animationPolicy: 'preserve'
+      })
+
+      expect(receipt).toMatchObject({
+        status: 'succeeded',
+        assetId: 2,
+        destinationPath: 'copy.webp',
+        width: 4,
+        height: 2,
+        format: 'webp',
+        frames: 1
+      })
+      const rows = await db('assets').orderBy('id')
+      expect(rows).toHaveLength(2)
+      expect(rows[0]).toMatchObject({ id: source.id, filename: source.filename, hash: source.hash, fileSize: source.fileSize })
+      expect(rows[1]).toMatchObject({
+        id: receipt.assetId,
+        filename: 'copy.webp',
+        hash: assetHash('copy.webp'),
+        ext: '.webp',
+        kind: 'image',
+        mime: 'image/webp',
+        folderId: null
+      })
+      expect(Buffer.from((await db('assetData').where({ id: source.id }).first()).data)).toEqual(sourceBytes)
+      const output = Buffer.from((await db('assetData').where({ id: receipt.assetId }).first()).data)
+      expect(await sharp(output).metadata()).toMatchObject({ width: 4, height: 2, format: 'webp' })
+      expect(pageAccess.mock.calls.map(([, permissions, context]) => [permissions[0], context.path])).toEqual(
+        expect.arrayContaining([
+          ['read:assets', 'source.png'],
+          ['write:assets', 'copy.webp']
+        ])
+      )
+      expect(storage.assetEvent).toHaveBeenCalledWith(expect.objectContaining({
+        event: 'uploaded',
+        asset: expect.objectContaining({ id: receipt.assetId, path: 'copy.webp', data: output })
+      }))
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it('rejects unauthorized, colliding, and stale save-as requests without creating an output asset', async () => {
+    const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['read:assets', 'write:assets'] }
+    const sourceBytes = await sharp({ create: { width: 8, height: 4, channels: 3, background: 'red' } }).png().toBuffer()
+
+    {
+      const db = await createImageResizeDatabase()
+      try {
+        const source = await insertResizeSource(db, sourceBytes)
+        const { storage } = installImageResizeWiki({
+          db,
+          checkPageAccess: (_user, permissions) => permissions[0] !== 'write:assets'
+        })
+        const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+        await expect(operations.resizeImage({
+          requester,
+          id: source.id,
+          destination: { filename: 'denied.png', folderId: null },
+          width: 4,
+          height: 4,
+          aspectPolicy: 'preserve',
+          format: 'png',
+          quality: 80,
+          animationPolicy: 'preserve'
+        })).rejects.toMatchObject({ status: 403, name: 'ASSET_IMAGE_DESTINATION_FORBIDDEN' })
+        expect(await db('assets')).toHaveLength(1)
+        expect(storage.assetEvent).not.toHaveBeenCalled()
+      } finally {
+        await db.destroy()
+      }
+    }
+    {
+      const db = await createImageResizeDatabase()
+      try {
+        const source = await insertResizeSource(db, sourceBytes)
+        const { pageAccess, storage } = installImageResizeWiki({ db, checkPageAccess: () => false })
+        const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+        await expect(operations.resizeImage({
+          requester,
+          id: source.id,
+          destination: { filename: 'unreadable.png', folderId: null },
+          width: 4,
+          height: 4,
+          aspectPolicy: 'preserve',
+          format: 'png',
+          quality: 80,
+          animationPolicy: 'preserve'
+        })).rejects.toMatchObject({ status: 404, name: 'ASSET_IMAGE_SOURCE_UNAVAILABLE' })
+        expect(pageAccess).toHaveBeenCalledWith(
+          requester,
+          ['read:assets'],
+          { path: 'source.png' },
+          expect.any(Object)
+        )
+        expect(await db('assets')).toHaveLength(1)
+        expect(storage.assetEvent).not.toHaveBeenCalled()
+      } finally {
+        await db.destroy()
+      }
+    }
+
+
+    {
+      const db = await createImageResizeDatabase()
+      try {
+        const source = await insertResizeSource(db, sourceBytes)
+        await db('assets').insert({
+          ...source,
+          id: 2,
+          filename: 'copy.png',
+          hash: assetHash('copy.png'),
+          authorId: requester.id
+        })
+        const { storage } = installImageResizeWiki({ db })
+        const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+        await expect(operations.resizeImage({
+          requester,
+          id: source.id,
+          destination: { filename: 'copy.png', folderId: null },
+          width: 4,
+          height: 4,
+          aspectPolicy: 'preserve',
+          format: 'png',
+          quality: 80,
+          animationPolicy: 'preserve'
+        })).rejects.toMatchObject({ status: 409, name: 'ASSET_IMAGE_DESTINATION_CONFLICT' })
+        expect(await db('assets')).toHaveLength(2)
+        expect(Buffer.from((await db('assetData').where({ id: source.id }).first()).data)).toEqual(sourceBytes)
+        expect(storage.assetEvent).not.toHaveBeenCalled()
+      } finally {
+        await db.destroy()
+      }
+    }
+
+    {
+      const db = await createImageResizeDatabase()
+      try {
+        const source = await insertResizeSource(db, sourceBytes)
+        let authorityLoads = 0
+        const { loadAuthority, storage } = installImageResizeWiki({
+          db,
+          loadPageRuleAuthority: async (suppliedRequester, transaction) => {
+            authorityLoads += 1
+            if (authorityLoads === 2) {
+              await transaction('assetData').where({ id: source.id }).update({ data: Buffer.from('changed during transform') })
+            }
+            return authorityFor(suppliedRequester)
+          }
+        })
+        const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+        await expect(operations.resizeImage({
+          requester,
+          id: source.id,
+          destination: { filename: 'stale.png', folderId: null },
+          width: 4,
+          height: 4,
+          aspectPolicy: 'preserve',
+          format: 'png',
+          quality: 80,
+          animationPolicy: 'preserve'
+        })).rejects.toMatchObject({ status: 409, name: 'ASSET_IMAGE_SOURCE_STALE' })
+        expect(loadAuthority).toHaveBeenCalledTimes(2)
+        expect(await db('assets')).toHaveLength(1)
+        expect(Buffer.from((await db('assetData').where({ id: source.id }).first()).data)).toEqual(sourceBytes)
+        expect(storage.assetEvent).not.toHaveBeenCalled()
+      } finally {
+        await db.destroy()
+      }
+    }
+  })
+
+  it('rejects replace-mode fields in the resize API before invoking the operation', async () => {
+    assetRouter.post.mockReset()
+    const requester = { id: 7, name: 'Writer', email: 'writer@example.com' }
+    global.WIKI = { auth: { checkAccess: vi.fn(() => true) } }
+    const { default: controller } = await vi.importFresh('../controllers/api/assets.ts', import.meta.url)
+    expect(controller).toBeDefined()
+    const handler = assetRouter.post.mock.calls.find(([path]) => path === '/:id/resize')?.[1]
+    expect(handler).toBeInstanceOf(Function)
+    const response = { status: vi.fn().mockReturnThis(), json: vi.fn(), set: vi.fn().mockReturnThis() }
+    const next = vi.fn()
+    await handler(
+      {
+        user: requester,
+        params: { id: '1' },
+        body: {
+          destination: { filename: 'copy.png', folderId: 0 },
+          width: 10,
+          height: 10,
+          aspectPolicy: 'preserve',
+          format: 'png',
+          quality: 80,
+          animationPolicy: 'preserve',
+          replace: true
+        }
+      },
+      response,
+      next
+    )
+    expect(response.status).toHaveBeenCalledWith(400)
+    expect(response.json).toHaveBeenCalledWith({ error: 'The image resize request contains unsupported fields.' })
+    expect(next).not.toHaveBeenCalled()
+  })
 })
 

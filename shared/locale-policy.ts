@@ -32,6 +32,24 @@ export const LocaleCatalogEntrySchema = z.object({
   updatedAt: z.string().max(100).optional()
 })
 export type LocaleCatalogEntry = z.output<typeof LocaleCatalogEntrySchema>
+export const MAX_LOCALE_FILE_BYTES = 8 * 1024 * 1024
+export const LocaleFileChangesSchema = z.object({
+  added: z.array(z.string().max(500)).max(30_000),
+  changed: z.array(z.string().max(500)).max(30_000),
+  removed: z.array(z.string().max(500)).max(30_000)
+}).strict()
+export const LocaleFileReviewSchema = z.object({
+  id: z.string().uuid(),
+  code: LocaleCodeSchema,
+  name: z.string().min(1).max(160),
+  nativeName: z.string().min(1).max(160),
+  digest: z.string().regex(/^[a-f0-9]{64}$/),
+  reason: z.string().min(3).max(1000),
+  expiresAt: z.string().datetime(),
+  changes: LocaleFileChangesSchema
+}).strict()
+export type LocaleFileReview = z.output<typeof LocaleFileReviewSchema>
+
 export const LocaleCatalogSchema = z.array(LocaleCatalogEntrySchema).max(300).superRefine((rows, context) => {
   if (new Set(rows.map(row => row.code)).size !== rows.length) context.addIssue({ code: 'custom', message: 'The language catalog contains duplicate codes.' })
 })
@@ -50,14 +68,14 @@ export interface LocaleEvent {
   reason: string
   fields: string[]
   createdAt: string
-  kind: 'settings' | 'install' | 'catalog'
+  kind: 'settings' | 'install' | 'local' | 'catalog'
   jobId?: string
   code?: string
   appliedAt?: string
 }
 export interface LocaleOperation {
   id: string
-  kind: 'install' | 'catalog'
+  kind: 'install' | 'local' | 'catalog'
   code: string | null
   state: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
   attempts: number
@@ -73,6 +91,7 @@ export interface LocaleWorkspace {
   history: LocaleEvent[]
   operations: LocaleOperation[]
   catalog: { observedAt: string | null; source: string | null; offline: boolean }
+  localFileReview?: LocaleFileReview | null
   runtime: { state: 'applied' | 'needs-attention'; observedAt: string }
 }
 export interface LocaleWriteResult { activation: 'applied' | 'needs-attention' }

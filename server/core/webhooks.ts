@@ -4,6 +4,8 @@ import { lookup } from 'node:dns/promises'
 import { request } from 'node:https'
 import { BlockList, type LookupFunction } from 'node:net'
 
+import { COMMENT_WEBHOOK_ACTIONS, isCommentWebhookEventName } from '../../shared/webhook-events.ts'
+import type { CommentWebhookAction } from '../../shared/webhook-events.ts'
 const blockedAddresses = new BlockList()
 for (const [network, prefix] of [
   ['0.0.0.0', 8],
@@ -38,6 +40,60 @@ export interface ResolvedWebhookUrl {
   family: 4 | 6
 }
 
+
+export interface CommentWebhookPage {
+  visibility?: unknown
+  isPublished?: unknown
+  isSearchable?: unknown
+  publishStartDate?: unknown
+  publishEndDate?: unknown
+}
+
+const publicationBoundary = (value: unknown): number | null => {
+  if (value === undefined || value === null || value === '') return null
+  const timestamp = value instanceof Date ? value.getTime() : typeof value === 'number' ? value : Date.parse(String(value))
+  return Number.isFinite(timestamp) ? timestamp : Number.NaN
+}
+
+export const isCommentWebhookPageEligible = (
+  page: CommentWebhookPage,
+  protectedPage: boolean,
+  now = new Date()
+): boolean => {
+  if (page.visibility !== 'public' || (page.isPublished !== true && page.isPublished !== 1) ||
+    (page.isSearchable !== true && page.isSearchable !== 1) || protectedPage) return false
+  const start = publicationBoundary(page.publishStartDate)
+  const end = publicationBoundary(page.publishEndDate)
+  const timestamp = now.getTime()
+  return !Number.isNaN(start) && !Number.isNaN(end) &&
+    (start === null || start <= timestamp) && (end === null || end >= timestamp)
+}
+
+export interface CommentWebhookPayload extends Record<string, unknown> {
+  pageId: number
+  commentId: number
+  action: CommentWebhookAction
+}
+
+export const projectCommentWebhookPayload = (
+  eventType: `comment.${CommentWebhookAction}`,
+  payload: Record<string, unknown>
+): CommentWebhookPayload => {
+  const action = eventType.slice('comment.'.length) as CommentWebhookAction
+  if (!COMMENT_WEBHOOK_ACTIONS.includes(action) || payload.action !== action ||
+    !Number.isSafeInteger(payload.pageId) || Number(payload.pageId) < 1 ||
+    !Number.isSafeInteger(payload.commentId) || Number(payload.commentId) < 1) {
+    throw new TypeError('Comment webhook event payload is invalid')
+  }
+  return { pageId: Number(payload.pageId), commentId: Number(payload.commentId), action }
+}
+
+/**
+ * Comment events require a final anonymous-visibility check backed by current
+ * database state. False suppresses the HTTP request and completes the delivery.
+ */
+export type CommentWebhookEligibilityCheck = () => Promise<boolean>
+
 export interface WebhookDeliveryRequest {
   eventCreatedAt: Date
   deliveryId: string
@@ -45,6 +101,7 @@ export interface WebhookDeliveryRequest {
   eventType: string
   eventVersion: number
   payload: Record<string, unknown>
+  commentEligibility?: CommentWebhookEligibilityCheck
   secret: string
   target: ResolvedWebhookUrl
   timestamp?: Date
@@ -118,12 +175,22 @@ export const webhookSignature = (secret: string, timestamp: string, body: string
 export const sendSignedWebhook = async (input: WebhookDeliveryRequest): Promise<WebhookDeliveryResult> => {
   input.signal?.throwIfAborted()
   const timestamp = (input.timestamp ?? new Date()).toISOString()
+  const commentEventType = isCommentWebhookEventName(input.eventType) ? input.eventType : undefined
+  const payload = commentEventType !== undefined
+    ? projectCommentWebhookPayload(commentEventType, input.payload)
+    : input.payload
+  if (commentEventType !== undefined) {
+    if (!input.commentEligibility) throw new TypeError('Comment webhook delivery requires a current visibility check')
+    const eligible = await input.commentEligibility()
+    input.signal?.throwIfAborted()
+    if (!eligible) return { statusCode: 204, responseSnippet: 'Comment is no longer anonymously visible' }
+  }
   const body = JSON.stringify({
     id: input.eventId,
     type: input.eventType,
     version: input.eventVersion,
     createdAt: input.eventCreatedAt.toISOString(),
-    data: input.payload
+    data: payload
   })
   const signature = webhookSignature(input.secret, timestamp, body)
   const { promise, reject, resolve } = Promise.withResolvers<WebhookDeliveryResult>()

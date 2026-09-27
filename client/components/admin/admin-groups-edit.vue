@@ -35,7 +35,7 @@ import { getErrorMessage } from '../../helpers/root-ui-store.ts'
 import { wikiStore } from '@/store/index.ts'
 type Change = { key: string; title: string; before: string; after: string }
 const permissionTitle = (key: string) => groupPermissions.find(p => p.key === key)?.title ?? key
-const matches = { START: 'path starts with', END: 'path ends with', EXACT: 'exact path', TAG: 'tag matches', REGEX: 'regular expression' }
+const matches = { START: 'path starts with', END: 'path ends with', EXACT: 'exact path', SUBTREE: 'path or descendant', TAG: 'tag matches', REGEX: 'regular expression' }
 const ruleSummary = (rule: GroupPageRule) => `${rule.deny ? 'Deny' : 'Allow'} ${rule.roles.map(permissionTitle).join(', ')} · ${matches[rule.match]} ${rule.path || 'all paths'} · ${rule.locales.length ? rule.locales.join(', ') : 'any language'}`
 const titles: Record<string,string> = { name: 'Group name', description: 'Purpose', redirectOnLogin: 'Sign-in destination', permissions: 'Permissions', pageRules: 'Page rules' }
 export default {

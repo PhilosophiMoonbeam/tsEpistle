@@ -4,6 +4,7 @@ import { errorStatus, objectValue, type NextFunction, type Request, type Respons
 import groupOperations from '../../operations/groups.ts'
 import { getGroupAdministrationStore } from '../../operations/group-administration.ts'
 import { isValidPageRuleRegex } from '../../helpers/page-access.ts'
+import { normalizeGroupRulePath, type GroupRuleMatch } from '../../../shared/group-policy.ts'
 
 const router = express.Router()
 
@@ -71,7 +72,7 @@ const normalizeGroupUpdatePayload = (body: unknown, res: Response): GroupUpdateP
   const name = objectValue(body, 'name')
   const permissionsValue = objectValue(body, 'permissions')
   const pageRulesValue = objectValue(body, 'pageRules')
-  const validPageRuleMatches = ['START', 'EXACT', 'END', 'REGEX', 'TAG']
+  const validPageRuleMatches = ['START', 'SUBTREE', 'EXACT', 'END', 'REGEX', 'TAG']
 
   if (typeof name !== 'string' || name.length < 1) {
     res.status(400).json({ error: 'group name is required' })
@@ -115,7 +116,7 @@ const normalizeGroupUpdatePayload = (body: unknown, res: Response): GroupUpdateP
     }
     pageRules.push({
       id,
-      path,
+      path: normalizeGroupRulePath(match as GroupRuleMatch, path),
       match,
       deny,
       roles: rolesValue as string[],

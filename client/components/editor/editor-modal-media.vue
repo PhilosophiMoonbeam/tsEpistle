@@ -125,6 +125,13 @@
                         //-       v-avatar(size='24')
                         //-         v-icon(color='purple') mdi-flash-circle
                         //-     v-list-item-title {{$t('common:actions.optimize')}}
+                        v-list-item(
+                          v-if='!isBranding && isResizableAsset(props.item)'
+                          :disabled='!isAssetActionable(props.item.id)'
+                          prepend-icon='mdi-image-size-select-large'
+                          @click='openResizeDialog(props.item.id)'
+                        )
+                          v-list-item-title Save resized copy
                         v-list-item(:disabled='!isAssetActionable(props.item.id)', @click='openRenameDialog(props.item.id)')
                           template(v-slot:prepend)
                             v-avatar(size="24")
@@ -200,6 +207,14 @@
               color='primary'
               placeholder='None'
             )
+            v-btn.mt-2(
+              v-if='isResizableAsset(currentAsset)'
+              block
+              variant='tonal'
+              color='primary'
+              prepend-icon='mdi-image-size-select-large'
+              @click='openResizeDialog(currentAsset?.id ?? 0)'
+            ) Save resized copy
 
     //- RENAME OR MOVE DIALOG
 
@@ -264,6 +279,121 @@
           v-spacer
           v-btn(variant="text", @click='renameDialog = false', :disabled='renameAssetLoading') {{$t('common:actions.cancel')}}
           v-btn.px-3(color="warning", variant="flat", @click='relocateAsset', :loading='renameAssetLoading', :disabled='renameAssetLoading || !isRenameValid') {{$t(relocationMode === 'move' ? 'common:actions.move' : 'common:actions.rename')}}
+    //- IMAGE SAVE-AS RESIZE DIALOG
+    v-dialog(
+      v-model='resizeDialog'
+      max-width='650'
+      :persistent='resizeLoading'
+      content-class='editor-media-owned-overlay'
+      aria-labelledby='editor-media-resize-title'
+      @after-leave='restoreMediaDialogFocus'
+    )
+      v-card(:aria-busy='resizeLoading')
+        .dialog-header.is-short.is-orange
+          v-icon.mr-2(color='primary', aria-hidden='true') mdi-image-size-select-large
+          span#editor-media-resize-title Resize image — save as new asset
+        v-card-text.pt-5
+          .text-body-medium Create a new asset from {{resizeSourceName}}. The original asset and its page references will not change.
+          v-text-field.mt-4(
+            v-model='resizeDestinationName'
+            label='New asset filename'
+            variant='outlined'
+            maxlength='255'
+            :disabled='resizeLoading'
+          )
+          v-select(
+            v-model='resizeDestinationFolderId'
+            :items='resizeFolderItems'
+            item-title='title'
+            item-value='value'
+            label='Destination folder'
+            variant='outlined'
+            :disabled='resizeLoading'
+          )
+          .editor-media-resize-dimensions
+            v-text-field(
+              v-model.number='resizeWidth'
+              label='Maximum width (pixels)'
+              type='number'
+              min='1'
+              max='8192'
+              step='1'
+              variant='outlined'
+              :disabled='resizeLoading'
+            )
+            v-text-field(
+              v-model.number='resizeHeight'
+              label='Maximum height (pixels)'
+              type='number'
+              min='1'
+              max='8192'
+              step='1'
+              variant='outlined'
+              :disabled='resizeLoading'
+            )
+          v-checkbox(
+            v-model='resizeDistortionUnlocked'
+            label='Unlock aspect ratio (stretch/distort the image)'
+            color='primary'
+            density='compact'
+            hide-details
+            :disabled='resizeLoading'
+          )
+          v-select(
+            v-model='resizeFormat'
+            :items='resizeFormats'
+            item-title='title'
+            item-value='value'
+            label='Output format'
+            variant='outlined'
+            :disabled='resizeLoading'
+            @update:model-value='onResizeFormatChanged'
+          )
+          .text-body-small.text-medium-emphasis.mb-1 Quality: {{resizeQuality}} / 100
+          v-slider(
+            v-model='resizeQuality'
+            min='1'
+            max='100'
+            step='1'
+            color='primary'
+            thumb-label
+            :disabled='resizeLoading'
+          )
+          v-select(
+            v-model='resizeAnimationPolicy'
+            :items='resizeAnimationPolicies'
+            item-title='title'
+            item-value='value'
+            label='Animation policy'
+            variant='outlined'
+            :disabled='resizeLoading'
+          )
+          v-alert.mt-2(type='info', variant='tonal', density='compact')
+            .text-body-small {{resizePreview}}
+            .text-body-small Animated input is preserved only as GIF. To convert an animated image to another format, explicitly choose First frame.
+          v-alert.mt-2(type='warning', variant='tonal', density='compact')
+            .text-body-small This operation creates a new asset. It never replaces the original or updates existing page references.
+          v-alert.mt-2(
+            v-if='resizeReceipt'
+            type='success'
+            variant='tonal'
+            density='compact'
+            role='status'
+            aria-live='polite'
+          )
+            .text-body-small New asset #{{resizeReceipt.assetId}}: {{resizeReceipt.destinationPath}}
+            .text-caption {{resizeReceipt.width}} × {{resizeReceipt.height}} px · {{resizeReceipt.format.toUpperCase()}} · {{prettyBytes(resizeReceipt.fileSize)}}
+          v-alert.mt-2(v-if='resizeError', type='error', variant='tonal', density='compact', role='alert')
+            .text-body-small {{resizeError}}
+        v-card-chin
+          v-spacer
+          v-btn(variant='text', @click='resizeDialog = false', :disabled='resizeLoading') {{$t('common:actions.cancel')}}
+          v-btn.px-3(
+            color='primary'
+            @click='resizeSelectedAsset'
+            :loading='resizeLoading'
+            :disabled='resizeLoading || !isResizeValid || Boolean(resizeReceipt)'
+          ) Save copy
     //- DELETE DIALOG
 
     v-dialog(
@@ -293,6 +423,7 @@
 import { defineComponent, markRaw, type Component, type PropType } from 'vue'
 import _ from 'lodash'
 import { createAssetFolder, deleteAsset as deleteAssetRequest, fetchAssetBranding, fetchAssetFolders, fetchAssetRelocationStatus, fetchAssets, relocateAsset as relocateAssetRequest, type Asset, type AssetFolder, type AssetRelocationInput, type AssetRelocationReceipt } from '../../helpers/assets-api'
+import { sameOriginJsonFetch } from '../../helpers/json-transport.ts'
 import { wikiStore } from '@/store/index.ts'
 import vueFilePond from 'vue-filepond'
 import 'filepond/dist/filepond.min.css'
@@ -313,6 +444,86 @@ const IMAGE_ALIGNMENTS = markRaw([
   { title: 'Right', value: 'right' },
   { title: 'Absolute Top Right', value: 'abstopright' }
 ])
+type ResizeImageFormat = 'png' | 'jpeg' | 'webp' | 'gif'
+type ResizeAnimationPolicy = 'preserve' | 'first-frame'
+type ResizeImageRequest = {
+  destination: { filename: string; folderId: number }
+  width: number
+  height: number
+  aspectPolicy: 'preserve' | 'stretch'
+  format: ResizeImageFormat
+  quality: number
+  animationPolicy: ResizeAnimationPolicy
+}
+type ResizeImageReceipt = {
+  status: 'succeeded'
+  assetId: number
+  destinationPath: string
+  width: number
+  height: number
+  format: ResizeImageFormat
+  frames: number
+  fileSize: number
+  sourceSha256: string
+}
+
+const RESIZE_FORMATS: Readonly<Record<ResizeImageFormat, string>> = {
+  png: 'PNG',
+  jpeg: 'JPEG',
+  webp: 'WebP',
+  gif: 'GIF'
+}
+const RESIZE_EXTENSIONS: Readonly<Record<ResizeImageFormat, string>> = {
+  png: '.png',
+  jpeg: '.jpg',
+  webp: '.webp',
+  gif: '.gif'
+}
+const RESIZE_FORMAT_ITEMS = markRaw(Object.entries(RESIZE_FORMATS).map(([value, title]) => ({ value, title })))
+const RESIZE_ANIMATION_POLICIES = markRaw([
+  { title: 'Preserve animation', value: 'preserve' },
+  { title: 'First frame only (explicit conversion)', value: 'first-frame' }
+])
+const RESIZABLE_IMAGE_EXTENSIONS: Readonly<Record<string, true>> = {
+  '.png': true,
+  '.jpg': true,
+  '.jpeg': true,
+  '.webp': true,
+  '.gif': true
+}
+async function requestImageResize(
+  fetchImpl: (input: string, init?: RequestInit) => Promise<Response>,
+  id: number,
+  request: ResizeImageRequest
+): Promise<ResizeImageReceipt> {
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/assets/${encodeURIComponent(id)}/resize`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(request)
+  })
+  const payload: unknown = await response.json().catch(() => null)
+  if (!response.ok) {
+    throw new Error(isRecord(payload) && typeof payload.error === 'string' ? payload.error : 'Image resize failed.')
+  }
+  if (
+    !isRecord(payload) ||
+    payload.status !== 'succeeded' ||
+    !Number.isSafeInteger(payload.assetId) ||
+    typeof payload.destinationPath !== 'string' ||
+    !Number.isSafeInteger(payload.width) ||
+    !Number.isSafeInteger(payload.height) ||
+    !Object.hasOwn(RESIZE_FORMATS, String(payload.format)) ||
+    !Number.isSafeInteger(payload.frames) ||
+    !Number.isSafeInteger(payload.fileSize) ||
+    typeof payload.sourceSha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(payload.sourceSha256)
+  ) {
+    throw new Error('The image resize response did not contain a valid asset receipt.')
+  }
+  return payload as unknown as ResizeImageReceipt
+}
 const MEDIA_SORT_BY = markRaw([{ key: 'id', order: 'desc' as const }])
 const RENAME_ASSET_RULES = markRaw([
   (value: unknown) => !!String(value || '').trim() || 'A filename is required.',
@@ -372,6 +583,7 @@ function extractUploadAssetId (response: unknown): number | null {
   }
   return parseAssetId(payload)
 }
+
 
 function isAbortError (error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError'
@@ -441,6 +653,22 @@ export default defineComponent({
       relocationReceipt: null as AssetRelocationReceipt | null,
       renameAssetLoading: false,
       deleteAssetLoading: false,
+      resizeDialog: false,
+      resizeLoading: false,
+      resizeAssetId: null as number | null,
+      resizeSourceName: '',
+      resizeDestinationName: '',
+      resizeDestinationFolderId: 0,
+      resizeWidth: 1200,
+      resizeHeight: 900,
+      resizeDistortionUnlocked: false,
+      resizeFormat: 'webp' as ResizeImageFormat,
+      resizeQuality: 85,
+      resizeAnimationPolicy: 'preserve' as ResizeAnimationPolicy,
+      resizeReceipt: null as ResizeImageReceipt | null,
+      resizeError: '',
+      resizeFormats: RESIZE_FORMAT_ITEMS,
+      resizeAnimationPolicies: RESIZE_ANIMATION_POLICIES,
       mediaLoadError: '',
       staleAssetIds: [] as number[],
       brandingView: null as PageBrandingView | null,
@@ -526,6 +754,38 @@ export default defineComponent({
     currentAsset () {
       return _.find(this.displayedAssets, ['id', this.currentFileId])
     },
+    isResizeValid(): boolean {
+      const name = this.resizeDestinationName.trim()
+      const width = Number(this.resizeWidth)
+      const height = Number(this.resizeHeight)
+      const quality = Number(this.resizeQuality)
+      return Boolean(
+        this.resizeAssetId !== null &&
+        this.isAssetActionable(this.resizeAssetId) &&
+        this.currentAsset &&
+        Number.isSafeInteger(width) &&
+        Number.isSafeInteger(height) &&
+        width > 0 &&
+        height > 0 &&
+        width <= 8192 &&
+        height <= 8192 &&
+        width * height <= 25_000_000 &&
+        Number.isSafeInteger(quality) &&
+        quality >= 1 &&
+        quality <= 100 &&
+        name.length > 0 &&
+        name.length <= 255 &&
+        !/[\/\\]/.test(name) &&
+        name.toLowerCase().endsWith(RESIZE_EXTENSIONS[this.resizeFormat])
+      )
+    },
+    resizePreview(): string {
+      const dimensions = `${this.resizeWidth} × ${this.resizeHeight} px`
+      const format = RESIZE_FORMATS[this.resizeFormat]
+      return this.resizeDistortionUnlocked
+        ? `Output: exactly ${dimensions} as ${format}; aspect ratio unlocked.`
+        : `Output: ${format} fitted within ${dimensions} while preserving source proportions.`
+    },
     isRenameValid (): boolean {
       const current = this.currentAsset
       const name = this.renameAssetName.trim()
@@ -542,6 +802,19 @@ export default defineComponent({
       const currentPath = this.folderTree.map(folder => folder.name).join('/')
       for (const folder of this.folders) {
         if (folder.id === this.currentFolderId) continue
+        items.push({ title: currentPath ? `/${currentPath}/${folder.name}` : `/${folder.name}`, value: folder.id })
+      }
+      return items.filter((item, index, all) => all.findIndex(candidate => candidate.value === item.value) === index)
+    },
+    resizeFolderItems(): Array<{ title: string; value: number }> {
+      const items = [{ title: '/', value: 0 }]
+      let path = ''
+      for (const folder of this.folderTree as AssetFolder[]) {
+        path = path ? `${path}/${folder.name}` : folder.name
+        items.push({ title: `/${path}`, value: folder.id })
+      }
+      const currentPath = (this.folderTree as AssetFolder[]).map(folder => folder.name).join('/')
+      for (const folder of this.folders as AssetFolder[]) {
         items.push({ title: currentPath ? `/${currentPath}/${folder.name}` : `/${folder.name}`, value: folder.id })
       }
       return items.filter((item, index, all) => all.findIndex(candidate => candidate.value === item.value) === index)
@@ -708,6 +981,10 @@ export default defineComponent({
       }
       if (this.deleteDialog) {
         if (!this.deleteAssetLoading) this.deleteDialog = false
+        return
+      }
+      if (this.resizeDialog) {
+        if (!this.resizeLoading) this.resizeDialog = false
         return
       }
       this.cancel()
@@ -945,6 +1222,48 @@ export default defineComponent({
         wikiStore.stopLoading('editor-media-createfolder')
       }
     },
+    isResizableAsset(asset: Asset | undefined): boolean {
+      return Boolean(asset &&
+        asset.kind.toUpperCase() === 'IMAGE' &&
+        Object.hasOwn(RESIZABLE_IMAGE_EXTENSIONS, asset.ext.toLowerCase()))
+    },
+    openResizeDialog(id: number) {
+      if (!this.isAssetActionable(id)) return
+      const asset = _.find(this.assets, ['id', id])
+      if (!asset || !this.isResizableAsset(asset)) return
+      this.rememberMediaDialogFocus(id)
+      this.actionMenuAssetId = null
+      this.currentFileId = id
+      this.resizeAssetId = id
+      this.resizeSourceName = asset.filename
+      const sourceExtension = asset.ext.toLowerCase()
+      this.resizeFormat = sourceExtension === '.png'
+        ? 'png'
+        : sourceExtension === '.jpg' || sourceExtension === '.jpeg'
+          ? 'jpeg'
+          : sourceExtension === '.gif'
+            ? 'gif'
+            : 'webp'
+      const basename = asset.filename.slice(0, Math.max(0, asset.filename.length - asset.ext.length))
+      this.resizeDestinationName = `${basename}-resized${RESIZE_EXTENSIONS[this.resizeFormat]}`
+      this.resizeDestinationFolderId = asset.folderId ?? this.currentFolderId
+      this.resizeWidth = 1200
+      this.resizeHeight = 900
+      this.resizeDistortionUnlocked = false
+      this.resizeQuality = 85
+      this.resizeAnimationPolicy = 'preserve'
+      this.resizeReceipt = null
+      this.resizeError = ''
+      this.resizeDialog = true
+    },
+    onResizeFormatChanged(format: ResizeImageFormat) {
+      if (!Object.hasOwn(RESIZE_EXTENSIONS, format)) return
+      this.resizeFormat = format
+      const filename = this.resizeDestinationName.trim()
+      const dot = filename.lastIndexOf('.')
+      const basename = dot > 0 ? filename.slice(0, dot) : filename
+      this.resizeDestinationName = `${basename}${RESIZE_EXTENSIONS[format]}`
+    },
     openRelocationDialog(id: number, mode: 'rename' | 'move') {
       if (!this.isAssetActionable(id)) return
       this.rememberMediaDialogFocus(id)
@@ -970,6 +1289,43 @@ export default defineComponent({
       this.currentFileId = id
       if (!this.currentAsset) throw new Error('No asset selected for deletion.')
       this.deleteDialog = true
+    },
+    async resizeSelectedAsset() {
+      if (!this.isResizeValid || this.resizeLoading || this.resizeAssetId === null) return
+      const assetId = this.resizeAssetId
+      const destinationFolderId = Number(this.resizeDestinationFolderId)
+      const request: ResizeImageRequest = {
+        destination: { filename: this.resizeDestinationName.trim(), folderId: destinationFolderId },
+        width: Number(this.resizeWidth),
+        height: Number(this.resizeHeight),
+        aspectPolicy: this.resizeDistortionUnlocked ? 'stretch' : 'preserve',
+        format: this.resizeFormat,
+        quality: Number(this.resizeQuality),
+        animationPolicy: this.resizeAnimationPolicy
+      }
+      wikiStore.startLoading('editor-media-resizeasset')
+      this.resizeLoading = true
+      this.resizeError = ''
+      try {
+        const receipt = await requestImageResize(window.fetch.bind(window), assetId, request)
+        if (this.disposed) return
+        this.resizeReceipt = receipt
+        const refreshed = await this.loadMedia()
+        if (this.disposed) return
+        if (!refreshed) this.resizeError = 'The new asset was created, but the asset list could not be refreshed.'
+        wikiStore.showNotification({
+          message: `Saved ${receipt.destinationPath} as new asset #${receipt.assetId}; the original was not changed.`,
+          style: 'success',
+          icon: 'check'
+        })
+      } catch (error: unknown) {
+        if (this.disposed) return
+        this.resizeError = error instanceof Error ? error.message : 'Image resize failed.'
+        wikiStore.showError(error)
+      } finally {
+        if (!this.disposed) this.resizeLoading = false
+        wikiStore.stopLoading('editor-media-resizeasset')
+      }
     },
     relocationEffectMessage(status: string): string {
       switch (status) {
@@ -1239,6 +1595,15 @@ export default defineComponent({
     gap: var(--wiki-space-4);
     align-items: start;
     padding: clamp(.75rem, 1.4vw, 1.5rem);
+  }
+  .editor-media-resize-dimensions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--wiki-space-3);
+
+    @include until($tablet) {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
   @media (min-width: 1100px) {

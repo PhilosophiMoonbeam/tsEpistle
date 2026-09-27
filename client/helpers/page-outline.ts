@@ -313,6 +313,7 @@ export function trackPageOutline(
   const update = (): void => {
     frame = null
     if (disposed) return
+    if (container.style.display === 'none') return
     if (dirty) {
       headings = entries.flatMap(entry => {
         let id = entry.anchor.replace(/^#/, '')

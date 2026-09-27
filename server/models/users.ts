@@ -1,6 +1,7 @@
 import { assertSavedPassword } from '../helpers/password-policy.ts'
 import { newPasswordIssue } from '../../shared/security-policy.ts'
 import { loadEnrollmentPolicy } from '../helpers/authentication-provisioning.ts'
+import { resolveUserPresentation } from '../helpers/user-presentation.ts'
 /* global WIKI */
 
 import { randomUUID } from 'node:crypto'
@@ -25,13 +26,18 @@ import type UserKey from './userKeys.ts'
 import {
   DEFAULT_USER_FONT_FAMILY,
   USER_FONT_FAMILY_VALUES,
+  UserCommunicationLocaleSchema,
+  UserContentTextSizeSchema,
   UserTimeFormatSchema,
   isUserDateFormat,
   isUserTimezone,
+  normalizeUserProfilePreferences,
+  userProfilePreferenceDefaults,
+  type UserCommunicationLocale,
+  type UserContentTextSize,
   type UserFontFamily,
   type UserTimeFormat
 } from '../../shared/user-presentation.ts'
-import { resolveUserPresentation } from '../helpers/user-presentation.ts'
 
 interface AuthenticationInfo {
   key: string
@@ -230,6 +236,10 @@ interface UpdateUserOptions {
   timeFormat?: UserTimeFormat
   appearance?: string
   fontFamily?: UserFontFamily
+  reduceMotion?: boolean
+  underlineLinks?: boolean
+  contentTextSize?: UserContentTextSize
+  communicationLocale?: UserCommunicationLocale
 }
 
 interface UserPatch {
@@ -246,6 +256,10 @@ interface UserPatch {
   timeFormat?: UserTimeFormat
   appearance?: string
   fontFamily?: UserFontFamily
+  reduceMotion?: boolean
+  underlineLinks?: boolean
+  contentTextSize?: UserContentTextSize
+  communicationLocale?: UserCommunicationLocale
 }
 
 type AvatarOrigin = 'provider' | 'self-service'
@@ -269,7 +283,8 @@ const upsertAvatarData = async (trx: Knex.Transaction, userId: number, data: Buf
 
 const wiki = WIKI as UsersWikiContext
 const initialUserPresentation = () => ({
-  fontFamily: DEFAULT_USER_FONT_FAMILY
+  fontFamily: DEFAULT_USER_FONT_FAMILY,
+  ...userProfilePreferenceDefaults
 })
 
 const errorMessage = (value: unknown): string => (value instanceof Error ? value.message : String(value))
@@ -284,6 +299,7 @@ export default class User extends Model {
   declare email: string
   declare name: string
   declare handle: string | null
+  declare pictureUrl: string | null
   declare providerId: string | null
   declare providerKey: string
   declare provider: Authentication | string
@@ -292,12 +308,15 @@ export default class User extends Model {
   declare tfaSecret: string | null
   declare jobTitle: string
   declare location: string
-  declare pictureUrl: string | null
   declare timezone: string
   declare dateFormat: string
   declare timeFormat: UserTimeFormat
   declare appearance: string
   declare fontFamily: UserFontFamily
+  declare reduceMotion: boolean
+  declare underlineLinks: boolean
+  declare contentTextSize: UserContentTextSize
+  declare communicationLocale: UserCommunicationLocale
   declare isSystem: boolean
   declare isActive: boolean
   declare authVersion: number
@@ -338,6 +357,10 @@ export default class User extends Model {
         timeFormat: { type: 'string', enum: [...UserTimeFormatSchema.options] },
         appearance: { type: 'string' },
         fontFamily: { type: 'string', enum: [...USER_FONT_FAMILY_VALUES] },
+        reduceMotion: { type: 'boolean' },
+        underlineLinks: { type: 'boolean' },
+        contentTextSize: { type: 'string', enum: [...UserContentTextSizeSchema.options] },
+        communicationLocale: { type: ['string', 'null'], maxLength: 35 },
         isSystem: { type: 'boolean' },
         isActive: { type: 'boolean' },
         isVerified: { type: 'boolean' },
@@ -850,6 +873,7 @@ export default class User extends Model {
     const authVersion = sessionVersion(currentUser.authVersion)
     if (authVersion === null || (options.expectedAuthVersion !== undefined && options.expectedAuthVersion !== authVersion))
       throw new wiki.Error.AuthLoginFailed()
+    const presentation = normalizeUserProfilePreferences(currentUser)
 
     // Update Last Login Date
     // -> Bypass Objection.js to avoid updating the updatedAt field
@@ -869,6 +893,10 @@ export default class User extends Model {
           df: currentUser.dateFormat,
           ap: currentUser.appearance,
           ff: currentUser.fontFamily,
+          reduceMotion: presentation.reduceMotion,
+          underlineLinks: presentation.underlineLinks,
+          contentTextSize: presentation.contentTextSize,
+          communicationLocale: presentation.communicationLocale,
           // defaultEditor: currentUser.defaultEditor,
           permissions: currentUser.getGlobalPermissions(),
           groups: currentUser.getGroups()
@@ -1232,9 +1260,17 @@ export default class User extends Model {
     dateFormat,
     timeFormat,
     appearance,
-    fontFamily
+    fontFamily,
+    reduceMotion,
+    underlineLinks,
+    contentTextSize,
+    communicationLocale
   }: UpdateUserOptions): Promise<boolean> {
     if (timeFormat !== undefined && !UserTimeFormatSchema.safeParse(timeFormat).success) throw new wiki.Error.InputInvalid('Choose a supported time format.')
+    if (reduceMotion !== undefined && typeof reduceMotion !== 'boolean') throw new wiki.Error.InputInvalid()
+    if (underlineLinks !== undefined && typeof underlineLinks !== 'boolean') throw new wiki.Error.InputInvalid()
+    if (contentTextSize !== undefined && !UserContentTextSizeSchema.safeParse(contentTextSize).success) throw new wiki.Error.InputInvalid()
+    if (communicationLocale !== undefined && !UserCommunicationLocaleSchema.safeParse(communicationLocale).success) throw new wiki.Error.InputInvalid()
     return wiki.models.knex.transaction(async trx => {
       const usr = await wiki.models.users.query(trx).findById(id).forUpdate()
       if (!usr) {
@@ -1317,6 +1353,22 @@ export default class User extends Model {
       }
       if (fontFamily !== undefined && fontFamily !== usr.fontFamily) {
         usrData.fontFamily = fontFamily
+      }
+      if (reduceMotion !== undefined && reduceMotion !== usr.reduceMotion) {
+        usrData.reduceMotion = reduceMotion
+      }
+      if (underlineLinks !== undefined && underlineLinks !== usr.underlineLinks) {
+        usrData.underlineLinks = underlineLinks
+      }
+      if (contentTextSize !== undefined && contentTextSize !== usr.contentTextSize) {
+        usrData.contentTextSize = contentTextSize
+      }
+      if (communicationLocale !== undefined && communicationLocale !== usr.communicationLocale) {
+        if (communicationLocale !== null) {
+          const installedLocale = await trx('locales').where({ code: communicationLocale }).forShare().first('code')
+          if (!installedLocale) throw new wiki.Error.InputInvalid('Choose an installed communication language.')
+        }
+        usrData.communicationLocale = communicationLocale
       }
       if (authorizationChanged) {
         usrData.authVersion = (usr.authVersion ?? 0) + 1

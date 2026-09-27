@@ -1,11 +1,12 @@
 <template lang='pug'>
-  tiptap-editor(format='markdown', :save='save', @editor-adapter='forwardAdapter', @editor-adapter-clear='forwardAdapterClear')
+  tiptap-editor(:key='wikiLinkOptionsKey', format='markdown', :save='save', :wiki-link-options='wikiLinkOptions', @editor-adapter='forwardAdapter', @editor-adapter-clear='forwardAdapterClear')
 </template>
 
 <script lang='ts'>
 import { defineComponent, type PropType } from 'vue'
 import TiptapEditor from './tiptap/editor.vue'
 import type { EditorAdapter } from './common/editor-adapter'
+import { WIKI_LINKS_DISABLED, type WikiLinkOptions } from '../../../shared/wikilinks.ts'
 
 type EditorSaveOptions = {
   rethrow?: boolean
@@ -23,6 +24,15 @@ export default defineComponent({
     save: {
       type: Function as PropType<EditorSaveHandler>,
       default: () => {}
+    },
+    wikiLinkOptions: {
+      type: Object as PropType<WikiLinkOptions>,
+      default: () => WIKI_LINKS_DISABLED
+    }
+  },
+  computed: {
+    wikiLinkOptionsKey(): string {
+      return JSON.stringify(this.wikiLinkOptions)
     }
   },
   methods: {

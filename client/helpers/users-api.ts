@@ -1,5 +1,5 @@
-import { isUserDateFormat, isUserTimeFormat } from '../../shared/user-presentation.ts'
-import type { ProfilePreferencesInput, UserTimeFormat } from '../../shared/user-presentation.ts'
+import { isUserContentTextSize, isUserDateFormat, isUserTimeFormat, UserCommunicationLocaleSchema } from '../../shared/user-presentation.ts'
+import type { ProfilePreferencesInput, UserCommunicationLocale, UserContentTextSize, UserTimeFormat } from '../../shared/user-presentation.ts'
 import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards.ts'
 
@@ -557,6 +557,10 @@ export type Profile = {
   dateFormat: string
   timeFormat: UserTimeFormat
   appearance: string
+  reduceMotion: boolean
+  underlineLinks: boolean
+  contentTextSize: UserContentTextSize
+  communicationLocale: UserCommunicationLocale
   createdAt: string
   updatedAt: string
   lastLoginAt: string
@@ -580,6 +584,7 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 function normalizeProfile(payload: unknown, fallbackMessage: string): Profile {
+  const communicationLocale = UserCommunicationLocaleSchema.safeParse(isRecord(payload) ? payload.communicationLocale : undefined)
   if (
     !isRecord(payload) ||
     typeof payload.id !== 'number' ||
@@ -596,6 +601,10 @@ function normalizeProfile(payload: unknown, fallbackMessage: string): Profile {
     typeof payload.timezone !== 'string' ||
     typeof payload.dateFormat !== 'string' ||
     typeof payload.appearance !== 'string' ||
+    typeof payload.reduceMotion !== 'boolean' ||
+    typeof payload.underlineLinks !== 'boolean' ||
+    !isUserContentTextSize(payload.contentTextSize) ||
+    !communicationLocale.success ||
     typeof payload.createdAt !== 'string' ||
     typeof payload.updatedAt !== 'string' ||
     typeof payload.lastLoginAt !== 'string' ||
@@ -622,6 +631,10 @@ function normalizeProfile(payload: unknown, fallbackMessage: string): Profile {
     dateFormat: payload.dateFormat,
     timeFormat,
     appearance: payload.appearance,
+    reduceMotion: payload.reduceMotion,
+    underlineLinks: payload.underlineLinks,
+    contentTextSize: payload.contentTextSize,
+    communicationLocale: communicationLocale.data,
     createdAt: payload.createdAt,
     updatedAt: payload.updatedAt,
     lastLoginAt: payload.lastLoginAt,

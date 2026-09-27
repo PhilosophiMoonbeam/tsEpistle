@@ -1,3 +1,4 @@
+import type { PageFeatures } from '../../../shared/page-features.ts'
 import type { OkfMetadata } from '../../okf/format.ts'
 
 export type StoragePageDocumentFormat = 'okf_valid' | 'okf_invalid' | 'legacy_wiki' | 'legacy_v1' | 'plain_markdown'
@@ -6,6 +7,7 @@ export interface StoragePageFields {
   title?: string
   description?: string
   isPublished?: boolean
+  pageFeatures?: PageFeatures
   tags: string[]
 }
 
@@ -24,6 +26,7 @@ export interface StoragePageDocument {
   title?: string
   description?: string
   isPublished?: boolean
+  pageFeatures?: PageFeatures
   tags: string[]
   fields: StoragePageFields
   okfMetadata: OkfMetadata | null

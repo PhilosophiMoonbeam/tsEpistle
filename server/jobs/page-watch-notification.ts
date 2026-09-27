@@ -4,6 +4,7 @@ import type { DurableJobHandler } from '../core/durable-jobs.ts'
 import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import { canReadPage, pageRoute } from '../helpers/page-access.ts'
 import type { PageVisibilityRecord } from '../helpers/page-access.ts'
+import type { MailPageWatchAction } from '../../shared/mail-workspace.ts'
 
 interface PageWatchPayload {
   deliveryId: string
@@ -27,7 +28,14 @@ interface PageEventPayload {
 
 export interface PageWatchWikiContext {
   config: { host: string }
-  mail: { send(options: { template: string; to: string; subject: string; text: string; messageId: string; data: Record<string, unknown> }): Promise<unknown> }
+  mail: {
+    send(options: {
+      template: 'page-watch'
+      to: string
+      messageId: string
+      data: { action: MailPageWatchAction; actorName: string; pageTitle: string; url: string }
+    }): Promise<unknown>
+  }
   auth: {
     loadPageRuleAuthority(requester: Express.User | undefined): Promise<PageRuleAuthority>
   }
@@ -89,15 +97,16 @@ const parseEventPayload = (value: unknown): PageEventPayload => {
   }
 }
 
-const eventAction = (type: string): string => ({
+const PAGE_WATCH_ACTIONS: Record<string, MailPageWatchAction> = {
   'page.created': 'created',
   'page.updated': 'updated',
   'page.restored': 'restored',
   'page.moved': 'moved',
   'page.deleted': 'deleted',
-  'page.visibility-changed': 'changed visibility for',
-  'page.ownership-transferred': 'transferred ownership of'
-})[type] ?? 'changed'
+  'page.visibility-changed': 'changed-visibility',
+  'page.ownership-transferred': 'transferred-ownership'
+}
+const eventAction = (type: string): MailPageWatchAction => PAGE_WATCH_ACTIONS[type] ?? 'changed'
 
 const loadUser = async (wiki: PageWatchWikiContext, userId: number): Promise<Record<string, unknown> | undefined> => {
   if (userId === 1) return wiki.models.users.getRootUser()
@@ -180,7 +189,6 @@ export const createPageWatchNotificationHandler = (wiki: PageWatchWikiContext): 
   const action = eventAction(String(event.type))
   const route = pageRoute({ visibility: notificationVisibility, localeCode: notificationLocaleCode, path: notificationPath })
   const url = `${wiki.config.host.replace(/\/$/, '')}${route}`
-  const text = `${eventPayload.actorName} ${action} “${notificationTitle}”.\n\n${url}`
   try {
     signal.throwIfAborted()
     if (payload.inAppEnabled) {
@@ -211,8 +219,6 @@ export const createPageWatchNotificationHandler = (wiki: PageWatchWikiContext): 
       await wiki.mail.send({
         template: 'page-watch',
         to: email,
-        subject: `Page ${action}: ${notificationTitle}`,
-        text,
         messageId: `<page-watch-${payload.deliveryId}@wiki.local>`,
         data: { action, actorName: eventPayload.actorName, pageTitle: notificationTitle, url }
       })

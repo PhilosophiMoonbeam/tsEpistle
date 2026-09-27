@@ -246,6 +246,7 @@ import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../..
 import { onEditorLinkToPage, offEditorLinkToPage } from '../../../helpers/editor-link-events'
 import { contentExtensionFenceBody } from '../../../helpers/content-extension-insertion'
 import { EditorAdapterController } from '../common/editor-adapter'
+import { WIKI_LINKS_DISABLED, type WikiLinkOptions } from '../../../../shared/wikilinks.ts'
 
 /* global siteLangs */
 
@@ -300,6 +301,10 @@ export default defineComponent({
     save: {
       type: Function as PropType<EditorSaveHandler>,
       default: () => {}
+    },
+    wikiLinkOptions: {
+      type: Object as PropType<WikiLinkOptions>,
+      default: () => WIKI_LINKS_DISABLED
     }
   },
   data () {
@@ -577,7 +582,7 @@ export default defineComponent({
     const editor = new Editor({
       content: initialContent,
       contentType: this.format,
-      extensions: createTiptapExtensions(this.format),
+      extensions: createTiptapExtensions(this.format, this.wikiLinkOptions),
       autofocus: false,
       editorProps: {
         attributes: {

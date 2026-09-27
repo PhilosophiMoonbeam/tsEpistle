@@ -3,9 +3,9 @@
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "70331ecd63af6757c1c3c1a8b09ed9e1a3fd8e55",
-    "recordedAt": "2026-09-14T02:52:36.583Z",
-    "lastFetchedAt": "2026-09-14T02:52:36.583Z",
+    "recordedTip": "e4e5762032a038e4c5c63490f47e0a8fd2d545bf",
+    "recordedAt": "2026-09-27T20:04:32.704Z",
+    "lastFetchedAt": "2026-09-27T17:10:38.000Z",
     "auditBaseline": "b5b4b0880ae26f4b137242267b6674b51af8688c",
     "candidateBaseline": "249758e3f923a77e1b62d26a47e142c312642a5f",
     "historicalReview": {
@@ -997,6 +997,450 @@
       "workstream": "wave-1/policy",
       "contract": "Fork-native page authorization retains alias-aware tag matching, complete page contexts, atomic current-and-proposed tag checks, and the established path-length-first deny-tie precedence. Scarlett's multisite Fastify and Quasar changes are superseded; TAGALL and separate tag selectors require a future explicit policy revision.",
       "lastReviewed": "2026-09-14"
+    },
+    {
+      "id": "visual-editor-native",
+      "commits": [
+        "194e7d70e69f3abfde453a0d2e0375cf1218cee9"
+      ],
+      "category": "editor",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "scarlett-sync/editor",
+      "contract": "Native Tiptap/source-preserving conversion supersedes upstream WIP parser and route; collaborative page properties remain revision-checked, not implemented as Markdown Y.Text.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "definition-list-keyboard",
+      "commits": [
+        "54dd821aa0136621a31486d2fc9baeaef0f5dfda"
+      ],
+      "category": "editor",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/editor",
+      "contract": "Implement native Tiptap definition-list Enter/caret progression; arbitrary executable block editor is rejected.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "reviewed-local-locale-files",
+      "commits": [
+        "7b42568d8dc81ad88aea22b197886b06534a5b63"
+      ],
+      "category": "locale",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/locale",
+      "contract": "Stage and review bounded local translation JSON for native durable offline publication; no filename-derived identity or direct upsert.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "editor-ornamental-style",
+      "commits": [
+        "bf889ecfb250c8832344a48a243654af5bab5050"
+      ],
+      "category": "ux",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "scarlett-sync/ux",
+      "contract": "Separate striped transitions and editor palette provide no missing native behavior; retain current theme and save authority.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "reader-page-links",
+      "commits": [
+        "0385c375c9cd45ceb2051c37f9be7236e6a8529b"
+      ],
+      "category": "reader",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/reader",
+      "contract": "Expose authorized incoming/outgoing current-revision graph neighborhoods; keep native graph and no hidden metadata.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "article-banner-visibility",
+      "commits": [
+        "61b17b631f17d6a292aa8586b0d4ced8824eb92e"
+      ],
+      "category": "reader",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/reader",
+      "contract": "Show native banner only in Article; keep existing theme, navigation, focus and reduced-motion semantics; reject ornamental transitions.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "subtree-rule-authorization",
+      "commits": [
+        "8c729f802554ea7443debc767a2c88dada029bef"
+      ],
+      "category": "authorization",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/authorization",
+      "contract": "Add SUBTREE slash-boundary match across group policy, evaluator, API, authoring and explanation without changing START or deny ties.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "group-unassignment-native",
+      "commits": [
+        "50ba64591a23fc5a3a0499d5f7c5765201897192"
+      ],
+      "category": "accounts",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "scarlett-sync/accounts",
+      "contract": "Capability-checked complete selected-group draft has no inverted filter handler; retain unrelated group memberships.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "native-site-tag-storage-authority",
+      "commits": [
+        "7185f468f6b3bc3ebeb966d3a804bd6c638488cb"
+      ],
+      "category": "authorization",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "scarlett-sync/authorization",
+      "contract": "Native create/current-and-proposed tag checks, reviewed workspaces, system-only custom code and descriptor-constrained storage supersede upstream scope fixes; reject new grants and lexical path fence.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "global-permission-transplant",
+      "commits": [
+        "76845ab4626b52c2f33372998fa83dc435648c00"
+      ],
+      "category": "authorization",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "scarlett-sync/authorization",
+      "contract": "Global reviewed navigation and current storage/webhook/theme authority remain; page-owned navigation and permission renaming would strand existing grants.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "path-derived-blog-editor",
+      "commits": [
+        "11cba3577723972a5f3056c73a4ad4a8343c59dc"
+      ],
+      "category": "publishing",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "scarlett-sync/publishing",
+      "contract": "Do not reclassify existing wiki subtrees as blog posts by ancestor/path moves or add bodyless editor; retain explicit page publication model.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "new-page-permission-bootstrap",
+      "commits": [
+        "f2ca01a08d6728a3040916c7c9dbc3e86f1a19e5"
+      ],
+      "category": "authorization",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "scarlett-sync/authorization",
+      "contract": "Native create bootstrap computes proposed path/locale permissions and server rechecks final tags/scripts/styles.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "asciidoc-native-editor",
+      "commits": [
+        "a9940477df03c99c420a3d879167f00f4d3868f3"
+      ],
+      "category": "editor",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "scarlett-sync/editor",
+      "contract": "Existing AsciiDoc editor/server safe renderer remain canonical; no second parser or arbitrary block templates.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "server-owned-page-render",
+      "commits": [
+        "023711cd1a7953c8c8728341fbca0ac37fe705ee"
+      ],
+      "category": "rendering",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "scarlett-sync/rendering",
+      "contract": "Native server revision-fenced render refuses client HTML and typed extension properties bypass upstream sanitizer casing mismatch.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "executable-block-package",
+      "commits": [
+        "c2dc0a1fcb3d973648a5f29b2a8ce138d48095f6"
+      ],
+      "category": "extension",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "scarlett-sync/extension",
+      "contract": "Uploaded executable wkblock would bypass declarative static-registry and sanitized-output trust boundary.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "wkblock-asset-packager",
+      "commits": [
+        "45af5eb7fb2205bf5067a7b85f95f69e8ebc2b93"
+      ],
+      "category": "extension",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "scarlett-sync/extension",
+      "contract": "Files-in-archives packaging belongs to rejected uploaded executable block path; built-in assets ship with app.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "canvas-document-product",
+      "commits": [
+        "b87c236d4a073b61ccdd10d5185b5a045c727e12"
+      ],
+      "category": "editor",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "scarlett-sync/editor",
+      "contract": "Excalidraw scene document, CRDT, assets and rendering would establish another canonical document product, not a native diagram improvement.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "scim-external-ownership",
+      "commits": [
+        "b7dc7b83572fe0aa72d37d70b119716259d63269"
+      ],
+      "category": "identity",
+      "disposition": "conditional",
+      "state": "closed",
+      "workstream": "scarlett-sync/identity",
+      "contract": "SCIM account adoption, provisioning and deletion need independently chosen identity owner/deprovision policy; login-time federation is not SCIM.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "localized-native-mail",
+      "commits": [
+        "a0f47bc3bebb60079925043e35b46c5e3e3afbe8"
+      ],
+      "category": "mail",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/mail",
+      "contract": "Persist private communication locale and translate fixed native mail templates per recipient with installed-site-English fallback; native client init supersedes translation startup race.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "scheduler-poolifier-fix",
+      "commits": [
+        "0cfed7e65179506a0d0a0a452a0bbad92a8b3294"
+      ],
+      "category": "operations",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "scarlett-sync/operations",
+      "contract": "Native process-per-job scheduler has no Poolifier equal-min-max thread pool failure.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "wkblock-spec-cache",
+      "commits": [
+        "38839bc6678beb1a326b55eaaf55ad92e5914d9c"
+      ],
+      "category": "extension",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "scarlett-sync/extension",
+      "contract": "Uploaded package cache/spec has no native owner after rejecting executable package ingestion.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "wip-import-ui",
+      "commits": [
+        "0f58846bc21743147687871c8a78624a16e64452"
+      ],
+      "category": "migration",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "scarlett-sync/migration",
+      "contract": "No-op archive import UI is rejected; supported migration remains clone-first and actual archive importer assessed separately.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "wkbackup-external-import",
+      "commits": [
+        "7c6a3bb59087b7212b7d51d3dc86fcb92db33bd0"
+      ],
+      "category": "migration",
+      "disposition": "conditional",
+      "state": "closed",
+      "workstream": "scarlett-sync/migration",
+      "contract": "Portable credential-bearing archive import is not supported Wiki.js 2.5.314 PostgreSQL/data clone migration; requires explicit archive identity and overwrite policy.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "wkbackup-settings-mapping",
+      "commits": [
+        "bc405991aff34bd6eea66614c88cd88d19bfc0d3"
+      ],
+      "category": "migration",
+      "disposition": "conditional",
+      "state": "closed",
+      "workstream": "scarlett-sync/migration",
+      "contract": "Unsafe automatic archive settings/custom-code and icon conversion excluded with archive importer; native reviewed workspaces own settings.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "ckeditor-import-conversion",
+      "commits": [
+        "7808ccbbd30d43befc6f21253764fa3899180637"
+      ],
+      "category": "migration",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "scarlett-sync/migration",
+      "contract": "Direct migration retains CKEditor HTML/editor identity; authorized revision-fenced native conversion is explicit, not implicit archive rewrite.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "minimized-comment-webhooks",
+      "commits": [
+        "739cf9630bb6902a96f442e3b70e9be167cd998d"
+      ],
+      "category": "discussion",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/discussion",
+      "contract": "Emit explicitly subscribed minimal public-comment events through native durable outbox with reauthorization before egress; imported settings refresh not applicable.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "upstream-ui-hairlines",
+      "commits": [
+        "a7330974a2c548c3d290eca2231b2b75ec737b90"
+      ],
+      "category": "ux",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "scarlett-sync/ux",
+      "contract": "Native Vuetify locale rows do not label-forward install clicks; WBtn/WToggle/Tailwind hairline styling is not portable.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "page-ratings-last-editor",
+      "commits": [
+        "7e6fcc09c3559f718281ad94b1d93a0829a87dda"
+      ],
+      "category": "reader",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/reader",
+      "contract": "Native per-human uncached thumbs/stars and restricted last-editor display; search authorization-before-limit is already stronger; preserve legacy totals.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "native-page-diagnostics",
+      "commits": [
+        "7ca0c302f70dc480cf812cb4471b67ad0d3dc73b"
+      ],
+      "category": "operations",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/operations",
+      "contract": "Bounded read-only scan of native source/render/OKF/graph/search/storage invariants; no Scarlett tree checks or cached rating rebuild.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "native-wikilinks",
+      "commits": [
+        "f64d6431232c887f39b1e099c0c67e20984e2156"
+      ],
+      "category": "editor",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/editor",
+      "contract": "Shared optional wikilink grammar preserving canonical Markdown through preview, visual edit, server render and storage; existing ToC retained.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "protected-page-recovery",
+      "commits": [
+        "41b1e0e9b5a367a1d00212e103ed188d7c470f70"
+      ],
+      "category": "recovery",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/recovery",
+      "contract": "Admin-only deletion snapshot recovery retaining protected state and source history; old snapshots quarantine; no FileManager folders-first preference.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "safe-asset-save-as",
+      "commits": [
+        "2cf5b2569ee7005286bc3aab0f4cff4e32d6fd9c"
+      ],
+      "category": "assets",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/assets",
+      "contract": "Bounded authorized image transform always saves new asset; reject in-place replacement and silent animation loss.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "wiki-directory-proposal",
+      "commits": [
+        "45980cd286326a75fc052487284b174fc1f2b0f0"
+      ],
+      "category": "federation",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "scarlett-sync/federation",
+      "contract": "Upstream spec is an unimplemented proposal, not a runtime feature; no directory trust/product contract selected.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "content-locale-rtl",
+      "commits": [
+        "19edf633ae89b416c21529e5635664173894e344"
+      ],
+      "category": "reader",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/reader",
+      "contract": "Isolate page/version/preview content direction from interface RTL; code LTR, existing Vuetify direction retained.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "native-metrics-reference",
+      "commits": [
+        "860a74aa31c848c63cd44986dba0a891021dc901"
+      ],
+      "category": "operations",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/operations",
+      "contract": "Expose actual protected metrics endpoint reference and plain-text preview in system workspace; MCP proposal and deleted-bin permission narrowing rejected.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "accessible-content-preferences",
+      "commits": [
+        "44188e8f1067772185411b3a7b298671b3fb27e9"
+      ],
+      "category": "accessibility",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/accessibility",
+      "contract": "Persist reduced-motion override, content underlining and text scale in private profile; no admin palette/FileManager transplant.",
+      "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "additive-helm-options",
+      "commits": [
+        "e4e5762032a038e4c5c63490f47e0a8fd2d545bf"
+      ],
+      "category": "deployment",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/deployment",
+      "contract": "Opt-in HTTPRoute/PDB and PostgreSQL hardening without chart identity, claims, database role or layout changes; OCI publication not selected.",
+      "lastReviewed": "2026-09-27"
     }
   ],
   "coverage": [
@@ -3419,6 +3863,228 @@
       "commit": "70331ecd63af6757c1c3c1a8b09ed9e1a3fd8e55",
       "candidateIds": [
         "page-rule-tag-authorization-2026-09-14"
+      ]
+    },
+    {
+      "commit": "194e7d70e69f3abfde453a0d2e0375cf1218cee9",
+      "candidateIds": [
+        "visual-editor-native"
+      ]
+    },
+    {
+      "commit": "54dd821aa0136621a31486d2fc9baeaef0f5dfda",
+      "candidateIds": [
+        "definition-list-keyboard"
+      ]
+    },
+    {
+      "commit": "7b42568d8dc81ad88aea22b197886b06534a5b63",
+      "candidateIds": [
+        "reviewed-local-locale-files"
+      ]
+    },
+    {
+      "commit": "bf889ecfb250c8832344a48a243654af5bab5050",
+      "candidateIds": [
+        "editor-ornamental-style"
+      ]
+    },
+    {
+      "commit": "0385c375c9cd45ceb2051c37f9be7236e6a8529b",
+      "candidateIds": [
+        "reader-page-links"
+      ]
+    },
+    {
+      "commit": "61b17b631f17d6a292aa8586b0d4ced8824eb92e",
+      "candidateIds": [
+        "article-banner-visibility"
+      ]
+    },
+    {
+      "commit": "8c729f802554ea7443debc767a2c88dada029bef",
+      "candidateIds": [
+        "subtree-rule-authorization"
+      ]
+    },
+    {
+      "commit": "50ba64591a23fc5a3a0499d5f7c5765201897192",
+      "candidateIds": [
+        "group-unassignment-native"
+      ]
+    },
+    {
+      "commit": "7185f468f6b3bc3ebeb966d3a804bd6c638488cb",
+      "candidateIds": [
+        "native-site-tag-storage-authority"
+      ]
+    },
+    {
+      "commit": "76845ab4626b52c2f33372998fa83dc435648c00",
+      "candidateIds": [
+        "global-permission-transplant"
+      ]
+    },
+    {
+      "commit": "11cba3577723972a5f3056c73a4ad4a8343c59dc",
+      "candidateIds": [
+        "path-derived-blog-editor"
+      ]
+    },
+    {
+      "commit": "f2ca01a08d6728a3040916c7c9dbc3e86f1a19e5",
+      "candidateIds": [
+        "new-page-permission-bootstrap"
+      ]
+    },
+    {
+      "commit": "a9940477df03c99c420a3d879167f00f4d3868f3",
+      "candidateIds": [
+        "asciidoc-native-editor"
+      ]
+    },
+    {
+      "commit": "023711cd1a7953c8c8728341fbca0ac37fe705ee",
+      "candidateIds": [
+        "server-owned-page-render"
+      ]
+    },
+    {
+      "commit": "c2dc0a1fcb3d973648a5f29b2a8ce138d48095f6",
+      "candidateIds": [
+        "executable-block-package"
+      ]
+    },
+    {
+      "commit": "45af5eb7fb2205bf5067a7b85f95f69e8ebc2b93",
+      "candidateIds": [
+        "wkblock-asset-packager"
+      ]
+    },
+    {
+      "commit": "b87c236d4a073b61ccdd10d5185b5a045c727e12",
+      "candidateIds": [
+        "canvas-document-product"
+      ]
+    },
+    {
+      "commit": "b7dc7b83572fe0aa72d37d70b119716259d63269",
+      "candidateIds": [
+        "scim-external-ownership"
+      ]
+    },
+    {
+      "commit": "a0f47bc3bebb60079925043e35b46c5e3e3afbe8",
+      "candidateIds": [
+        "localized-native-mail"
+      ]
+    },
+    {
+      "commit": "0cfed7e65179506a0d0a0a452a0bbad92a8b3294",
+      "candidateIds": [
+        "scheduler-poolifier-fix"
+      ]
+    },
+    {
+      "commit": "38839bc6678beb1a326b55eaaf55ad92e5914d9c",
+      "candidateIds": [
+        "wkblock-spec-cache"
+      ]
+    },
+    {
+      "commit": "0f58846bc21743147687871c8a78624a16e64452",
+      "candidateIds": [
+        "wip-import-ui"
+      ]
+    },
+    {
+      "commit": "7c6a3bb59087b7212b7d51d3dc86fcb92db33bd0",
+      "candidateIds": [
+        "wkbackup-external-import"
+      ]
+    },
+    {
+      "commit": "bc405991aff34bd6eea66614c88cd88d19bfc0d3",
+      "candidateIds": [
+        "wkbackup-settings-mapping"
+      ]
+    },
+    {
+      "commit": "7808ccbbd30d43befc6f21253764fa3899180637",
+      "candidateIds": [
+        "ckeditor-import-conversion"
+      ]
+    },
+    {
+      "commit": "739cf9630bb6902a96f442e3b70e9be167cd998d",
+      "candidateIds": [
+        "minimized-comment-webhooks"
+      ]
+    },
+    {
+      "commit": "a7330974a2c548c3d290eca2231b2b75ec737b90",
+      "candidateIds": [
+        "upstream-ui-hairlines"
+      ]
+    },
+    {
+      "commit": "7e6fcc09c3559f718281ad94b1d93a0829a87dda",
+      "candidateIds": [
+        "page-ratings-last-editor"
+      ]
+    },
+    {
+      "commit": "7ca0c302f70dc480cf812cb4471b67ad0d3dc73b",
+      "candidateIds": [
+        "native-page-diagnostics"
+      ]
+    },
+    {
+      "commit": "f64d6431232c887f39b1e099c0c67e20984e2156",
+      "candidateIds": [
+        "native-wikilinks"
+      ]
+    },
+    {
+      "commit": "41b1e0e9b5a367a1d00212e103ed188d7c470f70",
+      "candidateIds": [
+        "protected-page-recovery"
+      ]
+    },
+    {
+      "commit": "2cf5b2569ee7005286bc3aab0f4cff4e32d6fd9c",
+      "candidateIds": [
+        "safe-asset-save-as"
+      ]
+    },
+    {
+      "commit": "45980cd286326a75fc052487284b174fc1f2b0f0",
+      "candidateIds": [
+        "wiki-directory-proposal"
+      ]
+    },
+    {
+      "commit": "19edf633ae89b416c21529e5635664173894e344",
+      "candidateIds": [
+        "content-locale-rtl"
+      ]
+    },
+    {
+      "commit": "860a74aa31c848c63cd44986dba0a891021dc901",
+      "candidateIds": [
+        "native-metrics-reference"
+      ]
+    },
+    {
+      "commit": "44188e8f1067772185411b3a7b298671b3fb27e9",
+      "candidateIds": [
+        "accessible-content-preferences"
+      ]
+    },
+    {
+      "commit": "e4e5762032a038e4c5c63490f47e0a8fd2d545bf",
+      "candidateIds": [
+        "additive-helm-options"
       ]
     }
   ]

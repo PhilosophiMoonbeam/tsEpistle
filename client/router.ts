@@ -13,6 +13,8 @@ const adminRoutes = (): RouteRecordRaw[] => [
   { path: '/locale', component: () => import('./components/admin/admin-locale.vue') },
   { path: '/navigation', component: () => import('./components/admin/admin-navigation.vue') },
   { path: '/pages', component: () => import('./components/admin/admin-pages.vue') },
+  { path: '/pages/recycle-bin', component: () => import('./components/admin/admin-pages-recycle-bin.vue') },
+  { path: '/pages/integrity', component: () => import('./components/admin/admin-page-integrity.vue') },
   { path: '/pages/:id(\\d+)', component: () => import('./components/admin/admin-pages-edit.vue') },
   { path: '/pages/visualize', component: () => import('./components/admin/admin-pages-visualize.vue') },
   { path: '/tags', component: () => import('./components/admin/admin-tags.vue') },

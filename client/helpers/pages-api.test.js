@@ -17,6 +17,7 @@ import {
   searchPages,
   unlinkPageLocaleRelation,
   updatePage,
+  updatePageFeatures,
   validateOkfMetadataPayload
 } from './pages-api.ts'
 
@@ -34,6 +35,8 @@ const missingOkf = {
   authority: { state: 'missing', metadata: null, trust: null },
   projection: { state: 'pending', value: null }
 }
+const defaultPageFeatures = { schemaVersion: 1, linksVisible: false, ratingsAllowed: true, lastEditorVisible: false }
+const customPageFeatures = { schemaVersion: 1, linksVisible: true, ratingsAllowed: false, lastEditorVisible: true }
 const validProjection = {
   schemaVersion: 2,
   sourceRevision: '8',
@@ -81,6 +84,7 @@ const pagePayload = (okf = missingOkf) => ({
   creatorName: 'Creator',
   creatorEmail: 'creator@example.com',
   capabilities: { viewStewardContacts: true },
+  pageFeatures: defaultPageFeatures,
   okf
 })
 
@@ -182,6 +186,7 @@ describe('pages api helper', () => {
       creatorId: 1,
       creatorName: 'Creator',
       creatorEmail: 'creator@example.com',
+      pageFeatures: defaultPageFeatures,
       capabilities: { viewStewardContacts: true },
       okf: missingOkf
     })
@@ -219,6 +224,25 @@ describe('pages api helper', () => {
     expect(page).not.toHaveProperty('publishStartDate')
     expect(page).not.toHaveProperty('authorEmail')
     expect(page).not.toHaveProperty('creatorEmail')
+  })
+  test('normalizes legacy and malformed page feature settings safely', async () => {
+    const legacyPayload = pagePayload()
+    delete legacyPayload.pageFeatures
+    await expect(fetchPage(vi.fn().mockResolvedValue(createJsonResponse(legacyPayload)), 7)).resolves.toMatchObject({
+      pageFeatures: defaultPageFeatures
+    })
+
+    const customPayload = pagePayload()
+    customPayload.pageFeatures = customPageFeatures
+    await expect(fetchPage(vi.fn().mockResolvedValue(createJsonResponse(customPayload)), 7)).resolves.toMatchObject({
+      pageFeatures: customPageFeatures
+    })
+
+    const malformedPayload = pagePayload()
+    malformedPayload.pageFeatures = { schemaVersion: 2, linksVisible: true, ratingsAllowed: true, lastEditorVisible: true }
+    await expect(fetchPage(vi.fn().mockResolvedValue(createJsonResponse(malformedPayload)), 7)).resolves.toMatchObject({
+      pageFeatures: { schemaVersion: 1, linksVisible: false, ratingsAllowed: false, lastEditorVisible: false }
+    })
   })
   test('treats a successful page response with missing OKF as invalid', async () => {
     const payload = pagePayload()
@@ -423,7 +447,8 @@ describe('pages api helper', () => {
         scriptJs: '',
         tags: [],
         title: 'Alpha',
-        okfMetadata: { type: 'Reference', status: 'stable' }
+        okfMetadata: { type: 'Reference', status: 'stable' },
+        pageFeatures: customPageFeatures
       },
       '8',
       4
@@ -431,10 +456,35 @@ describe('pages api helper', () => {
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
       expectedSourceRevision: '8',
       expectedCollaborationGeneration: 4,
-      okfMetadata: { type: 'Reference', status: 'stable' }
+      okfMetadata: { type: 'Reference', status: 'stable' },
+      pageFeatures: customPageFeatures
     })
+    await expect(updatePage(fetchImpl, 7, { pageFeatures: { schemaVersion: 1, linksVisible: true, ratingsAllowed: 'yes', lastEditorVisible: false } }, '8')).rejects.toThrow('Page update failed')
     await expect(updatePage(fetchImpl, 7, {}, '0')).rejects.toThrow('Page update failed')
     await expect(updatePage(fetchImpl, 7, {}, '8', 0)).rejects.toThrow('Page update failed')
+  })
+  test('updates only page features under the source-revision concurrency contract', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({ page: { id: 7, updatedAt: '2026-01-03T00:00:00.000Z', sourceRevision: 9 } })
+    )
+
+    await updatePageFeatures(fetchImpl, 7, customPageFeatures, '8')
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/7', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ pageFeatures: customPageFeatures, expectedSourceRevision: '8' })
+    })
+
+    const invalidFetch = vi.fn()
+    await expect(
+      updatePageFeatures(invalidFetch, 7, { ...customPageFeatures, retired: true }, '8')
+    ).rejects.toThrow('Page feature update failed')
+    expect(invalidFetch).not.toHaveBeenCalled()
   })
 
   test('rejects malformed page detail payloads', async () => {

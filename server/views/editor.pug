@@ -26,6 +26,10 @@ block body
       init-editor=page.editorKey
       init-content=page.content
       checkout-date=page.updatedAt
+      :wiki-links-enabled=wikiLinksEnabled
+      :absolute-links=absoluteLinks
+      :locale-namespaced=localeNamespaced
+      page-features=Buffer.from(JSON.stringify(page.extra.pageFeatures)).toString('base64')
       source-revision=page.sourceRevision
       :branding-assignment=brandingAssignment
       :branding-view=branding

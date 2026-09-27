@@ -41,6 +41,16 @@ flowchart LR
 
 See the [search architecture](docs/search-architecture.md), [agent deployment guide](docs/agents-deployment.md), and [API versioning policy](docs/api-versioning.md) for the executable boundaries behind this overview.
 
+## Native reader and administration features
+
+- Page administration can control reader links, ratings, and last-editor visibility per page. The links panel shows only current, published, searchable, unprotected pages the requester may read; ratings require an authenticated human with page access and any required unlock. Ratings are not served from a shared cache.
+- `/pages/recycle-bin` is an administrator-only recovery workspace for deletion snapshots. Restores retain the original history and protection verifier when available, reject stale or colliding destinations, and return unpublished; incomplete legacy protection restores into private quarantine. `/pages/integrity` is a bounded, read-only diagnostic scan, not an automatic repair.
+- The Markdown source and visual editor share optional `[[path|label]]` links; the visual editor supports definition-list keyboard progression without replacing source Markdown. Reader content direction follows the page locale independently of interface direction.
+- Administrators can review a local translation JSON file before queuing its offline installation, resize an image into a **new** asset without overwriting the original, and inspect the protected metrics endpoint. Profile preferences include a private communication language and content display controls; bundled mail templates use the recipient's installed language when available.
+- Built-in public-comment webhook events use a minimal payload and a final visibility check before delivery. New HTTPRoute and PodDisruptionBudget chart resources are opt-in; existing Helm installation identity and PostgreSQL claims remain unchanged.
+
+Migration `tsepistle-000048-scarlett-native-adaptations` adds user preferences, per-user page ratings, and retained deletion snapshots. Treat upgrade as a writer cutover: drain application writers and take a paired PostgreSQL and complete `/wiki/data`/configuration/secret recovery point before replacing the Wiki application. Do not roll back the schema after ratings, recovery snapshots, or saved preferences exist; the down migration refuses to discard them. See [local deployment and recovery](docs/agents-deployment.md).
+
 ## Current stack
 
 The versions below are the repository's declared runtime and package metadata; database support is the application's supported PostgreSQL range.

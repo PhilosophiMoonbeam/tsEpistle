@@ -3,6 +3,22 @@ import { objectValue, type Request, type Response, getWikiAuth } from '../_types
 import assetOperations from '../../operations/assets.ts'
 
 const router = express.Router()
+const imageResizeRequestFields: Readonly<Record<string, true>> = {
+  destination: true,
+  width: true,
+  height: true,
+  aspectPolicy: true,
+  format: true,
+  quality: true,
+  animationPolicy: true
+}
+const imageResizeDestinationFields: Readonly<Record<string, true>> = { filename: true, folderId: true }
+const imageResizeFormatFields: Readonly<Record<string, true>> = { png: true, jpeg: true, webp: true, gif: true }
+
+const imageResizeInteger = (value: unknown, name: string, minimum: number, maximum = Number.MAX_SAFE_INTEGER): number | null => {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum || value > maximum) return null
+  return value
+}
 
 interface AssetRequester extends Record<string, unknown> {
   id: number
@@ -53,6 +69,76 @@ router.get('/:id/branding', async (req, res, next) => {
     res.json(await assetOperations.getBranding({ requester: request.user, id, sessionId: request.sessionID ?? '', deriveIfMissing: true }))
   } catch (err) {
     next(err)
+  }
+})
+
+router.post('/:id/resize', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  if (!requireAccess(req, res, ['read:assets'])) return
+  const id = positiveInteger(req.params.id, res, 'id')
+  if (id === null) return
+  const body = req.body
+  const destination = objectValue(body, 'destination')
+  if (
+    body === null ||
+    typeof body !== 'object' ||
+    Array.isArray(body) ||
+    destination === null ||
+    typeof destination !== 'object' ||
+    Array.isArray(destination)
+  ) {
+    return res.status(400).json({ error: 'A valid image resize request is required.' })
+  }
+  if (
+    Object.keys(body).some(key => !Object.hasOwn(imageResizeRequestFields, key)) ||
+    Object.keys(destination).some(key => !Object.hasOwn(imageResizeDestinationFields, key))
+  ) {
+    return res.status(400).json({ error: 'The image resize request contains unsupported fields.' })
+  }
+  const filename = objectValue(destination, 'filename')
+  if (typeof filename !== 'string' || filename.length < 1 || filename.length > 255) {
+    return res.status(400).json({ error: 'destination.filename must be a filename of 1 to 255 characters.' })
+  }
+  const rawFolderId = objectValue(destination, 'folderId')
+  let folderId: number | null
+  if (rawFolderId === null) folderId = null
+  else {
+    folderId = imageResizeInteger(rawFolderId, 'destination.folderId', 0)
+    if (folderId === null) return res.status(400).json({ error: 'destination.folderId must be a non-negative integer or null.' })
+  }
+  const width = imageResizeInteger(objectValue(body, 'width'), 'width', 1)
+  if (width === null) return res.status(400).json({ error: 'width must be a positive integer.' })
+  const height = imageResizeInteger(objectValue(body, 'height'), 'height', 1)
+  if (height === null) return res.status(400).json({ error: 'height must be a positive integer.' })
+  const aspectPolicy = objectValue(body, 'aspectPolicy')
+  if (aspectPolicy !== 'preserve' && aspectPolicy !== 'stretch') {
+    return res.status(400).json({ error: 'aspectPolicy must be preserve or stretch.' })
+  }
+  const format = objectValue(body, 'format')
+  if (typeof format !== 'string' || !Object.hasOwn(imageResizeFormatFields, format)) {
+    return res.status(400).json({ error: 'format must be png, jpeg, webp, or gif.' })
+  }
+  const quality = imageResizeInteger(objectValue(body, 'quality'), 'quality', 1, 100)
+  if (quality === null) return res.status(400).json({ error: 'quality must be an integer from 1 to 100.' })
+  const animationPolicy = objectValue(body, 'animationPolicy')
+  if (animationPolicy !== 'preserve' && animationPolicy !== 'first-frame') {
+    return res.status(400).json({ error: 'animationPolicy must be preserve or first-frame.' })
+  }
+  try {
+    const receipt = await assetOperations.resizeImage({
+      requester: req.user,
+      id,
+      destination: { filename, folderId },
+      width,
+      height,
+      aspectPolicy,
+      format: format as 'png' | 'jpeg' | 'webp' | 'gif',
+      quality,
+      animationPolicy
+    })
+    res.status(201).json(receipt)
+  } catch (err) {
+    next(mapRelocationError(err))
   }
 })
 

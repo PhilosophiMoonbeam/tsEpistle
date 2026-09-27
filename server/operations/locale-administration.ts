@@ -1,18 +1,23 @@
-import { createHmac, randomUUID } from 'node:crypto'
+import { createHash, createHmac, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import {
   LocalePolicySchema,
   LocaleCatalogSchema,
+  LocaleCatalogEntrySchema,
   LocaleCodeSchema,
+  LocaleFileReviewSchema,
+  MAX_LOCALE_FILE_BYTES,
   localePolicyFromConfiguration,
   localeChangedFields,
   type LocaleCatalogEntry,
+  type LocaleFileReview,
   type LocaleWorkspace,
   type LocaleEvent,
   type LocaleOperation,
   type LocaleWriteResult
 } from '../../shared/locale-policy.ts'
-import { mergeLocaleCatalog, type LocaleStrings } from '../helpers/locale-package.ts'
+import { flattenLocaleStrings, mergeLocaleCatalog, type LocaleStrings } from '../helpers/locale-package.ts'
+import { parseLocaleFileBytes, type ParsedLocaleFile } from '../repositories/locale-packages.ts'
 import { accountSessionIsCurrent } from '../helpers/account-session.ts'
 import { principalId, type PagePrincipal } from '../helpers/page-access.ts'
 import { DurableJobStore, type DurableJob } from '../core/durable-jobs.ts'
@@ -45,6 +50,26 @@ interface InstalledLocale extends LocaleCatalogEntry {
   createdAt: string
   updatedAt: string
 }
+interface StoredLocalFileReview extends LocaleFileReview {
+  actorId: number | null
+  actorFingerprint: string
+  workspaceFingerprint: string
+  packageFingerprint: string | null
+  binding: string
+  exactBytes: string
+  normalizedStrings: string
+  locale: LocaleCatalogEntry
+  jobId?: string
+  eventId?: string
+}
+export type LocalePackageJobContext =
+  | { kind: 'local'; alreadyApplied: boolean }
+  | { kind: 'remote'; endpoint: string; alreadyApplied: boolean }
+export interface LocalePackageStore {
+  jobContext(job: DurableJob): Promise<LocalePackageJobContext>
+  publishJob(job: DurableJob, catalog: LocaleCatalogEntry[], strings?: LocaleStrings): Promise<LocaleWriteResult>
+  discardLocalFileReview(job: DurableJob): Promise<void>
+}
 interface Dependencies {
   db: Knex
   reviewKey: string
@@ -55,6 +80,25 @@ interface Dependencies {
 }
 export const createLocaleAdministrationStore = (deps: Dependencies) => {
   const fingerprint = (value: unknown) => createHmac('sha256', deps.reviewKey).update(stable(value)).digest('hex')
+  // The signed digest binds uploaded bytes; verifyLocalReviewBytes recomputes it before use.
+  const localReviewBinding = (review: Omit<StoredLocalFileReview, 'binding'>): string =>
+    fingerprint([
+      review.id,
+      review.code,
+      review.name,
+      review.nativeName,
+      review.digest,
+      review.reason,
+      review.expiresAt,
+      review.actorId,
+      review.actorFingerprint,
+      review.workspaceFingerprint,
+      review.packageFingerprint,
+      review.jobId ?? null,
+      review.eventId ?? null,
+      review.locale,
+      review.changes
+    ])
   const state = async (tx: Knex.Transaction, requester: PagePrincipal, lock = false) => {
     const groupQuery = tx<Group>('groups').select('id', 'permissions', 'adminRevision').orderBy('id'),
       groups = await (lock ? groupQuery.forUpdate() : groupQuery)
@@ -102,7 +146,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
       catalog,
       catalogData,
       actorId,
-      fingerprint: fingerprint([rows, policy, locales, catalog, groups, actorId, ids])
+      fingerprint: fingerprint([rows.filter(row => row.key !== 'localeAdministration'), policy, locales, catalog, groups, actorId, ids])
     }
   }
   type State = Awaited<ReturnType<typeof state>>
@@ -122,6 +166,153 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
     if (typeof value !== 'string' || value.trim().length < 3 || value.length > 1000) return fail('Provide an administrative reason of 3–1000 characters.')
     return value.trim()
   }
+  const localPackageFingerprint = (value: Record<string, unknown> | null) => {
+    if (!value) return null
+    let strings = value.strings
+    if (typeof strings === 'string') {
+      try {
+        strings = JSON.parse(strings) as unknown
+      } catch {
+        /* Preserve malformed stored bytes as a distinct package identity. */
+      }
+    }
+    return createHash('sha256')
+      .update(stable([value.code, value.name, value.nativeName, value.isRTL, value.availability, strings]))
+      .digest('hex')
+  }
+  const principalFingerprint = (actorId: number | null, requester: PagePrincipal) => {
+    if (!requester) return fail('An administrator sign-in is required.', 403)
+    return fingerprint([
+      actorId,
+      requester.id,
+      requester.ownershipUserId ?? null,
+      actorId === null && Array.isArray(requester.groups) ? [...requester.groups].sort((a, b) => a - b) : null
+    ])
+  }
+  const storedLocalReview = (value: unknown): StoredLocalFileReview | null => {
+    const data = record(value),
+      review = LocaleFileReviewSchema.safeParse({
+        id: data.id,
+        code: data.code,
+        name: data.name,
+        nativeName: data.nativeName,
+        digest: data.digest,
+        reason: data.reason,
+        expiresAt: data.expiresAt,
+        changes: data.changes
+      }),
+      locale = LocaleCatalogEntrySchema.safeParse(data.locale)
+    if (
+      !review.success ||
+      !locale.success ||
+      !(data.actorId === null || (typeof data.actorId === 'number' && Number.isInteger(data.actorId) && data.actorId > 0)) ||
+      typeof data.actorFingerprint !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(data.actorFingerprint) ||
+      typeof data.workspaceFingerprint !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(data.workspaceFingerprint) ||
+      !(data.packageFingerprint === null || (typeof data.packageFingerprint === 'string' && /^[a-f0-9]{64}$/.test(data.packageFingerprint))) ||
+      typeof data.binding !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(data.binding) ||
+      typeof data.exactBytes !== 'string' ||
+      data.exactBytes.length > Math.ceil(MAX_LOCALE_FILE_BYTES / 3) * 4 ||
+      typeof data.normalizedStrings !== 'string' ||
+      data.normalizedStrings.length > MAX_LOCALE_FILE_BYTES * 2 ||
+      (data.jobId !== undefined && typeof data.jobId !== 'string') ||
+      (data.eventId !== undefined && typeof data.eventId !== 'string')
+    )
+      return null
+    return {
+      ...review.data,
+      actorId: data.actorId as number | null,
+      actorFingerprint: data.actorFingerprint,
+      workspaceFingerprint: data.workspaceFingerprint,
+      packageFingerprint: data.packageFingerprint as string | null,
+      binding: data.binding,
+      exactBytes: data.exactBytes,
+      normalizedStrings: data.normalizedStrings,
+      locale: locale.data,
+      ...(typeof data.jobId === 'string' ? { jobId: data.jobId } : {}),
+      ...(typeof data.eventId === 'string' ? { eventId: data.eventId } : {})
+    }
+  }
+  const reviewView = (review: StoredLocalFileReview): LocaleFileReview =>
+    LocaleFileReviewSchema.parse({
+      id: review.id,
+      code: review.code,
+      name: review.locale.name,
+      nativeName: review.locale.nativeName,
+      digest: review.digest,
+      reason: review.reason,
+      expiresAt: review.expiresAt,
+      changes: review.changes
+    })
+  const assertLocalReviewBound = (saved: State, requester: PagePrincipal, review: StoredLocalFileReview) => {
+    if (review.binding !== localReviewBinding(review)) return fail('The staged language-file review was changed.', 409)
+    if (review.actorId !== saved.actorId || review.actorFingerprint !== principalFingerprint(saved.actorId, requester))
+      return fail('This language-file review belongs to a different administrator.', 403)
+    if (review.workspaceFingerprint !== saved.fingerprint)
+      return fail('Locale settings or installed packages changed after this file was reviewed.', 409)
+    if (Date.parse(review.expiresAt) <= Date.now()) return fail('This language-file review expired. Review the file again.', 409)
+  }
+  const verifyLocalReviewBytes = (review: StoredLocalFileReview) => {
+    const bytes = Buffer.from(review.exactBytes, 'base64')
+    if (!bytes.byteLength || bytes.byteLength > MAX_LOCALE_FILE_BYTES || bytes.toString('base64') !== review.exactBytes)
+      return fail('The staged language file changed after review.', 409)
+    let parsed: ParsedLocaleFile
+    try {
+      parsed = parseLocaleFileBytes(bytes)
+    } catch {
+      return fail('The staged language file changed after review.', 409)
+    }
+    if (parsed.digest !== review.digest || parsed.normalized !== review.normalizedStrings)
+      return fail('The staged language file changed after review.', 409)
+    return parsed
+  }
+  const localeForCode = (saved: State, code: string): LocaleCatalogEntry => {
+    if (code === 'en') return fail('Bundled English translations cannot be replaced.')
+    const entry = saved.locales.find(locale => locale.code === code) ?? saved.catalog.find(locale => locale.code === code),
+      parsed = LocaleCatalogEntrySchema.safeParse(entry)
+    if (!parsed.success) return fail('Choose a language present in the installed packages or current catalog.')
+    return parsed.data
+  }
+  const storedPackage = async (tx: Knex.Transaction, code: string, lock: boolean) => {
+    const query = tx('locales').where({ code })
+    return lock ? query.forUpdate().first() : query.first()
+  }
+  const assertLocalPackageCurrent = async (
+    tx: Knex.Transaction,
+    saved: State,
+    review: StoredLocalFileReview,
+    lock: boolean
+  ) => {
+    const current = record(await storedPackage(tx, review.code, lock)),
+      row = Object.keys(current).length ? current : null
+    if (localPackageFingerprint(row) !== review.packageFingerprint)
+      return fail('The installed package changed after this file was reviewed.', 409)
+    const currentLocale = localeForCode(saved, review.code)
+    if (stable(currentLocale) !== stable(review.locale))
+      return fail('The language catalog or installed package changed after this file was reviewed.', 409)
+    return row
+  }
+  const clearExpiredLocalReview = async (reviewId?: string, jobId?: string, force = false) => {
+    await deps.db.transaction(async tx => {
+      const row = await tx<Setting>('settings').where({ key: 'localeAdministration' }).forUpdate().first(),
+        metadata = record(row?.value),
+        review = storedLocalReview(metadata.localFileReview)
+      if (!Object.hasOwn(metadata, 'localFileReview')) return
+      if (reviewId && review && review.id !== reviewId) return
+      if (jobId && review && review.jobId !== jobId) return
+      let shouldClear = force || !review || Date.parse(review.expiresAt) <= Date.now()
+      if (!shouldClear && review?.jobId) {
+        const job = await tx('durableJobs').where({ id: review.jobId, type: 'locale-package', version: 1 }).first('state')
+        shouldClear = !job || !['pending', 'running'].includes(job.state)
+      }
+      if (!shouldClear) return
+      const next = { ...metadata }
+      delete next.localFileReview
+      await put(tx, 'localeAdministration', next, new Date().toISOString())
+    })
+  }
   const applied = (saved: State): boolean => {
     const runtime = deps.runtime(),
       lang = record(saved.configuration.lang)
@@ -135,6 +326,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
     }
   }
   const inspect = async (requester: PagePrincipal): Promise<LocaleWorkspace> => {
+    await clearExpiredLocalReview()
     const tx = await deps.db.transaction({ isolationLevel: 'repeatable read', readOnly: true })
     try {
       const saved = await state(tx, requester)
@@ -157,7 +349,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
         }
         return {
           id: job.id,
-          kind: payload.kind === 'catalog' ? 'catalog' : 'install',
+          kind: payload.kind === 'catalog' ? 'catalog' : payload.kind === 'local' ? 'local' : 'install',
           code: typeof payload.code === 'string' ? payload.code : null,
           state: job.state,
           attempts: job.attempts,
@@ -166,12 +358,26 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
           completedAt: job.completedAt ? new Date(job.completedAt).toISOString() : null,
           message:
             job.state === 'failed'
-              ? 'The operation did not complete. Reload the catalog and retry; the installed package remains intact unless Activity records publication.'
+              ? payload.kind === 'local'
+                ? 'The local package operation did not complete. The installed package remains unchanged unless Activity records publication.'
+                : 'The operation did not complete. Reload the catalog and retry; the installed package remains intact unless Activity records publication.'
               : job.state === 'pending' && job.attempts > 0
                 ? 'The worker will retry this operation.'
                 : null
         }
       })
+      let localFileReview: LocaleFileReview | null = null
+      const stagedReview = storedLocalReview(saved.metadata.localFileReview)
+      if (stagedReview && !stagedReview.jobId) {
+        try {
+          assertLocalReviewBound(saved, requester, stagedReview)
+          await assertLocalPackageCurrent(tx, saved, stagedReview, false)
+          verifyLocalReviewBytes(stagedReview)
+          localFileReview = reviewView(stagedReview)
+        } catch {
+          /* Stale, expired or corrupted staged reviews are not actionable in the workspace. */
+        }
+      }
       let source: string | null = null
       try {
         source = new URL(String(saved.configuration.graphEndpoint)).host
@@ -202,6 +408,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
           observedAt: typeof saved.catalogData.observedAt === 'string' ? saved.catalogData.observedAt : null,
           offline: saved.configuration.offline === true
         },
+        localFileReview,
         runtime: { state: applied(saved) ? 'applied' : 'needs-attention', observedAt: new Date().toISOString() }
       }
     } catch (error) {
@@ -284,28 +491,184 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
         return { jobId: job.id }
       })
     },
-    async jobContext(job: DurableJob) {
+    async reviewLocalFile(
+      requester: PagePrincipal,
+      input: { code: unknown; fingerprint: unknown; reason: unknown; bytes: unknown }
+    ): Promise<LocaleFileReview> {
+      const codeResult = LocaleCodeSchema.safeParse(input.code)
+      if (!codeResult.success || Intl.getCanonicalLocales(codeResult.data)[0] !== codeResult.data)
+        return fail('Choose an explicit canonical language code.')
+      const code = codeResult.data
+      if (code === 'en') return fail('Bundled English translations cannot be replaced.')
+      const why = reason(input.reason)
+      if (!(input.bytes instanceof Uint8Array)) return fail('Choose a JSON language file.')
+      if (!input.bytes.byteLength) return fail('Choose a nonempty JSON language file.')
+      if (input.bytes.byteLength > MAX_LOCALE_FILE_BYTES) return fail('Language files cannot exceed 8 MiB.', 413)
+      const fileBytes = Buffer.from(input.bytes)
+      let parsedFile: ParsedLocaleFile
+      try {
+        parsedFile = parseLocaleFileBytes(fileBytes)
+      } catch (error) {
+        return fail(error instanceof Error ? error.message : 'The language file is invalid.')
+      }
+      await clearExpiredLocalReview()
+      return deps.db.transaction(async tx => {
+        const saved = await state(tx, requester, true)
+        assertReview(saved, input.fingerprint)
+        const existingReview = storedLocalReview(saved.metadata.localFileReview)
+        if (
+          existingReview &&
+          !existingReview.jobId &&
+          Date.parse(existingReview.expiresAt) > Date.now() &&
+          existingReview.binding === localReviewBinding(existingReview) &&
+          (existingReview.actorId !== saved.actorId ||
+            existingReview.actorFingerprint !== principalFingerprint(saved.actorId, requester))
+        )
+          return fail('Another administrator has an active local-file review. Wait for it to expire before staging a new file.', 409)
+        const locale = localeForCode(saved, code)
+        const active = await tx('durableJobs').where({ type: 'locale-package', version: 1 }).whereIn('state', ['pending', 'running']).first('id')
+        if (active) return fail('A language operation is already queued or running. Wait for its result before reviewing a file.', 409)
+        const rowValue = record(await storedPackage(tx, code, true)),
+          row = Object.keys(rowValue).length ? rowValue : null
+        let previous: unknown = Object.create(null)
+        if (row) {
+          try {
+            previous = typeof row.strings === 'string' ? JSON.parse(row.strings) as unknown : row.strings
+          } catch {
+            return fail('The installed package cannot be safely compared with this file.', 409)
+          }
+          if (!previous || typeof previous !== 'object' || Array.isArray(previous))
+            return fail('The installed package cannot be safely compared with this file.', 409)
+        }
+        const before = flattenLocaleStrings(previous),
+          after = flattenLocaleStrings(parsedFile.strings),
+          changes = {
+            added: [...after.keys()].filter(key => !before.has(key)).sort(),
+            changed: [...after].filter(([key, value]) => before.has(key) && before.get(key) !== value).map(([key]) => key).sort(),
+            removed: [...before.keys()].filter(key => !after.has(key)).sort()
+          },
+          now = Date.now(),
+          unbound: Omit<StoredLocalFileReview, 'binding' | 'jobId' | 'eventId'> = {
+            id: randomUUID(),
+            code,
+            name: locale.name,
+            nativeName: locale.nativeName,
+            digest: parsedFile.digest,
+            reason: why,
+            expiresAt: new Date(now + 15 * 60 * 1000).toISOString(),
+            changes,
+            actorId: saved.actorId,
+            actorFingerprint: principalFingerprint(saved.actorId, requester),
+            workspaceFingerprint: saved.fingerprint,
+            packageFingerprint: localPackageFingerprint(row),
+            exactBytes: fileBytes.toString('base64'),
+            normalizedStrings: parsedFile.normalized,
+            locale
+          },
+          staged: StoredLocalFileReview = { ...unbound, binding: localReviewBinding(unbound) }
+        await put(tx, 'localeAdministration', { ...saved.metadata, localFileReview: staged }, new Date(now).toISOString())
+        return reviewView(staged)
+      })
+    },
+    async enqueueLocalFile(requester: PagePrincipal, input: { reviewId: unknown }): Promise<{ jobId: string }> {
+      await clearExpiredLocalReview()
+      return deps.db.transaction(async tx => {
+        const saved = await state(tx, requester, true),
+          staged = storedLocalReview(saved.metadata.localFileReview)
+        if (!staged || staged.id !== input.reviewId || staged.jobId)
+          return fail('The reviewed language file is unavailable. Review the file again.', 409)
+        assertLocalReviewBound(saved, requester, staged)
+        verifyLocalReviewBytes(staged)
+        await assertLocalPackageCurrent(tx, saved, staged, true)
+        const active = await tx('durableJobs').where({ type: 'locale-package', version: 1 }).whereIn('state', ['pending', 'running']).first('id')
+        if (active) return fail('A language operation is already queued or running. Wait for its result before committing this file.', 409)
+        const eventId = randomUUID(),
+          now = new Date().toISOString(),
+          principal =
+            saved.actorId === null
+              ? { id: 1, ownershipUserId: null, groups: requester!.groups }
+              : { id: saved.actorId, authVersion: requester!.authVersion },
+          job = await new DurableJobStore(tx).enqueue({
+            type: 'locale-package',
+            version: 1,
+            maxAttempts: 3,
+            payload: { eventId, kind: 'local', code: staged.code, reviewId: staged.id, requester: principal }
+          }),
+          event: LocaleEvent = {
+            id: eventId,
+            actorId: saved.actorId,
+            reason: staged.reason,
+            fields: [`package:${staged.code}`],
+            createdAt: now,
+            kind: 'local',
+            jobId: job.id,
+            code: staged.code
+          }
+        const boundReview = { ...staged, jobId: job.id, eventId },
+          queuedReview = { ...boundReview, binding: localReviewBinding(boundReview) }
+        await put(
+          tx,
+          'localeAdministration',
+          {
+            ...saved.metadata,
+            revision: eventId,
+            history: [event, ...events(saved)].slice(0, 50),
+            localFileReview: queuedReview
+          },
+          now
+        )
+        return { jobId: job.id }
+      })
+    },
+    async jobContext(job: DurableJob): Promise<LocalePackageJobContext> {
+      await clearExpiredLocalReview()
       const requester = record(job.payload.requester) as PagePrincipal
       const tx = await deps.db.transaction({ isolationLevel: 'repeatable read', readOnly: true })
       try {
-        const saved = await state(tx, requester)
+        const saved = await state(tx, requester),
+          event = events(saved).find(row => row.id === job.payload.eventId && row.jobId === job.id)
+        if (!event) return fail('This language operation no longer has an administrative receipt.')
+        if (job.payload.kind === 'local') {
+          if (event.kind !== 'local') return fail('This local language operation no longer has a matching receipt.', 409)
+          if (event.appliedAt) {
+            await tx.commit()
+            return { kind: 'local', alreadyApplied: true }
+          }
+          const review = storedLocalReview(saved.metadata.localFileReview)
+          if (
+            !review ||
+            review.id !== job.payload.reviewId ||
+            review.jobId !== job.id ||
+            review.eventId !== event.id ||
+            review.code !== event.code ||
+            review.code !== job.payload.code
+          )
+            return fail('The staged language file no longer matches this operation.', 409)
+          await tx.commit()
+          return { kind: 'local', alreadyApplied: false }
+        }
+        if (job.payload.kind !== 'install' && job.payload.kind !== 'catalog')
+          return fail('The language operation payload is invalid.')
+        if (event.kind !== job.payload.kind) return fail('This language operation no longer has a matching receipt.', 409)
         if (saved.configuration.offline === true) return fail('Language downloads are disabled in offline mode.')
         if (fingerprint(saved.configuration.graphEndpoint) !== job.payload.sourceFingerprint)
           return fail('The language source changed after this operation was queued.')
-        const event = events(saved).find(event => event.id === job.payload.eventId && event.jobId === job.id)
-        if (!event) return fail('This language operation no longer has an administrative receipt.')
         await tx.commit()
-        return { endpoint: String(saved.configuration.graphEndpoint), alreadyApplied: Boolean(event.appliedAt) }
+        return { kind: 'remote', endpoint: String(saved.configuration.graphEndpoint), alreadyApplied: Boolean(event.appliedAt) }
       } catch (error) {
         await tx.rollback()
         throw error
       }
     },
+    async discardLocalFileReview(job: DurableJob) {
+      const reviewId = typeof job.payload.reviewId === 'string' ? job.payload.reviewId : undefined
+      await clearExpiredLocalReview(reviewId, job.id, true)
+    },
     async publishJob(job: DurableJob, catalog: LocaleCatalogEntry[], strings?: LocaleStrings) {
       await deps.db.transaction(async tx => {
         // Authority/settings locks precede the job lease lock, consistently with enqueue.
-        const saved = await state(tx, record(job.payload.requester) as PagePrincipal, true)
-        const lease = await tx('durableJobs').where({ id: job.id, type: 'locale-package', version: 1 }).forUpdate().first()
+        const saved = await state(tx, record(job.payload.requester) as PagePrincipal, true),
+          lease = await tx('durableJobs').where({ id: job.id, type: 'locale-package', version: 1 }).forUpdate().first()
         if (
           !lease ||
           lease.state !== 'running' ||
@@ -314,12 +677,49 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
           new Date(lease.leaseExpiresAt).valueOf() <= Date.now()
         )
           return fail('This language worker no longer owns its lease.', 409)
-        if (saved.configuration.offline === true || fingerprint(saved.configuration.graphEndpoint) !== job.payload.sourceFingerprint)
-          return fail('The language source or offline policy changed during this operation.', 409)
-        const event = events(saved).find(event => event.id === job.payload.eventId && event.jobId === job.id)
+        const event = events(saved).find(row => row.id === job.payload.eventId && row.jobId === job.id)
         if (!event) return fail('This language operation no longer has an administrative receipt.')
         if (event.appliedAt) return
         const now = new Date().toISOString()
+        if (job.payload.kind === 'local') {
+          if (event.kind !== 'local') return fail('This local language operation no longer has a matching receipt.', 409)
+          const review = storedLocalReview(saved.metadata.localFileReview)
+          if (
+            !review ||
+            review.id !== job.payload.reviewId ||
+            review.jobId !== job.id ||
+            review.eventId !== event.id ||
+            review.code !== event.code ||
+            review.code !== job.payload.code
+          )
+            return fail('The staged language file no longer matches this operation.', 409)
+          assertLocalReviewBound(saved, record(job.payload.requester) as PagePrincipal, review)
+          const parsed = verifyLocalReviewBytes(review)
+          await assertLocalPackageCurrent(tx, saved, review, true)
+          const locale = localeForCode(saved, review.code),
+            data = {
+              code: locale.code,
+              name: locale.name,
+              nativeName: locale.nativeName,
+              isRTL: locale.isRTL,
+              availability: locale.availability,
+              strings: parsed.normalized,
+              createdAt: now,
+              updatedAt: now
+            }
+          await tx('locales').insert(data).onConflict('code').merge(['name', 'nativeName', 'isRTL', 'availability', 'strings', 'updatedAt'])
+          const lang = record(saved.configuration.lang),
+            metadata: Record<string, unknown> = { ...saved.metadata, history: events(saved).map(row => (row.id === event.id ? { ...row, appliedAt: now } : row)) }
+          delete metadata.localFileReview
+          await put(tx, 'lang', { ...lang, ...(lang.code === locale.code ? { rtl: locale.isRTL } : {}), revision: event.id }, now)
+          await put(tx, 'localeAdministration', metadata, now)
+          return
+        }
+        if (job.payload.kind !== 'install' && job.payload.kind !== 'catalog')
+          return fail('The language operation payload is invalid.')
+        if (event.kind !== job.payload.kind) return fail('This language operation no longer has a matching receipt.', 409)
+        if (saved.configuration.offline === true || fingerprint(saved.configuration.graphEndpoint) !== job.payload.sourceFingerprint)
+          return fail('The language source or offline policy changed during this operation.', 409)
         if (event.kind === 'install') {
           const locale = catalog.find(row => row.code === event.code)
           if (!locale || !strings) return fail('The language package is absent from the current source.')
@@ -346,7 +746,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
         )
       })
       return activate()
-    }
+    },
   }
 }
 let runtimeStore: ReturnType<typeof createLocaleAdministrationStore> | undefined, runtimeDatabase: Knex | undefined

@@ -191,8 +191,8 @@
               </p>
             </div>
             <v-alert v-if="saved.catalog.offline" type="info" variant="tonal" class="mb-5"
-              >Offline mode is active. Installed languages and bundled English remain available; remote package operations are
-              paused.</v-alert
+              >Offline mode pauses remote catalog and package requests. Reviewed local translation files remain available and do not make
+              network requests.</v-alert
             >
             <div class="locale-library-toolbar">
               <v-text-field
@@ -218,6 +218,101 @@
               {{ filteredPackages.length }} languages · {{ saved.catalog.source || 'Source unavailable' }} ·
               {{ saved.catalog.observedAt ? 'Catalog checked ' + date(saved.catalog.observedAt) : 'Cached catalog; refresh time unknown' }}
             </p>
+            <section class="locale-local-import" aria-labelledby="locale-local-import-title">
+              <div class="locale-local-import__heading">
+                <v-icon icon="mdi-file-upload-outline" size="23" />
+                <div>
+                  <span class="locale-kicker">Reviewed local package</span>
+                  <h3 id="locale-local-import-title">Install from a translation file</h3>
+                  <p>Choose a supported language, review its key changes, then queue publication through the locale worker.</p>
+                </div>
+              </div>
+              <div class="locale-local-import__form">
+                <label class="locale-local-import__file" for="locale-local-file">
+                  <span>Flat UTF-8 JSON file · maximum 8 MiB</span>
+                  <input
+                    id="locale-local-file"
+                    ref="localFileInput"
+                    type="file"
+                    accept=".json,application/json"
+                    :disabled="!canUploadLocalFile"
+                    @change="selectLocalFile"
+                  />
+                  <small v-if="localFile">{{ localFile.name }} · {{ byteSize(localFile.size) }}</small>
+                  <small v-else>Filename is only a label; it does not select the language.</small>
+                </label>
+                <v-select
+                  v-model="localCode"
+                  :items="uploadLocales"
+                  item-title="displayName"
+                  item-value="code"
+                  label="Target language"
+                  variant="outlined"
+                  density="comfortable"
+                  :disabled="!canUploadLocalFile || (localReview !== null && localFile === null)"
+                  @update:model-value="clearLocalReview"
+                />
+                <v-textarea
+                  v-model="localReason"
+                  label="Reason for installing this file"
+                  variant="outlined"
+                  rows="2"
+                  maxlength="1000"
+                  counter
+                  :disabled="!canUploadLocalFile || (localReview !== null && localFile === null)"
+                  @update:model-value="clearLocalReview"
+                />
+              </div>
+              <v-alert v-if="localUploadError" type="error" variant="tonal" class="mb-3">{{ localUploadError }}</v-alert>
+              <div class="locale-local-import__actions">
+                <span v-if="localReview" class="locale-muted">Review expires {{ date(localReview.expiresAt) }}</span>
+                <v-btn
+                  color="primary"
+                  variant="tonal"
+                  :disabled="!canReviewLocalFile"
+                  :loading="busy"
+                  @click="reviewLocalUpload"
+                  >Review file</v-btn
+                >
+              </div>
+              <div v-if="localReview" class="locale-local-import__review">
+                <div class="locale-local-import__identity">
+                  <span class="locale-code" aria-hidden="true">{{ localReview.code }}</span>
+                  <div>
+                    <h4>{{ localReview.nativeName }} <small>({{ localReview.code }})</small></h4>
+                    <p>{{ localReview.name }} · SHA-256 <code>{{ localReview.digest }}</code></p>
+                    <p>Reason: {{ localReview.reason }}</p>
+                  </div>
+                </div>
+                <div class="locale-local-import__counts" aria-label="Translation key changes">
+                  <span><strong>{{ localReview.changes.added.length }}</strong> added</span>
+                  <span><strong>{{ localReview.changes.changed.length }}</strong> changed</span>
+                  <span><strong>{{ localReview.changes.removed.length }}</strong> removed</span>
+                </div>
+                <details
+                  v-for="change in reviewChangeTypes"
+                  :key="change.key"
+                  class="locale-local-import__change-list"
+                  @toggle="toggleReviewChanges(change.key, $event)"
+                >
+                  <summary>{{ change.label }} · {{ localReview.changes[change.key].length }} keys</summary>
+                  <ul v-if="openReviewChange === change.key">
+                    <li v-for="key in localReview.changes[change.key]" :key="key"><code>{{ key }}</code></li>
+                  </ul>
+                </details>
+                <p class="locale-muted">The staged bytes, administrator, reason and installed-package fingerprint are bound to this review.</p>
+                <div class="locale-local-import__actions">
+                  <v-btn
+                    color="primary"
+                    variant="flat"
+                    :disabled="!canCommitLocalFile"
+                    :loading="busy"
+                    @click="commitLocalUpload"
+                    >Commit and queue publication</v-btn
+                  >
+                </div>
+              </div>
+            </section>
             <p v-if="dirty" class="locale-muted">Save or reset the language draft before starting a package operation.</p>
             <div v-if="filteredPackages.length" class="locale-package-list">
               <article v-for="locale in filteredPackages" :key="locale.code" class="locale-package-row">
@@ -268,7 +363,15 @@
               <article v-for="operation in saved.operations" :key="operation.id" class="locale-operation">
                 <v-icon :icon="operationIcon(operation.state)" size="22" />
                 <div>
-                  <h4>{{ operation.kind === 'catalog' ? 'Refresh language catalog' : 'Install / refresh ' + operation.code }}</h4>
+                  <h4>
+                    {{
+                      operation.kind === 'catalog'
+                        ? 'Refresh language catalog'
+                        : operation.kind === 'local'
+                          ? 'Install reviewed local file · ' + operation.code
+                          : 'Install / refresh ' + operation.code
+                    }}
+                  </h4>
                   <p>
                     {{ date(operation.createdAt) }} · Attempt {{ operation.attempts }}
                     <span v-if="operation.message">· {{ operation.message }}</span>
@@ -454,13 +557,23 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import AsyncState from '@/components/common/async-state.vue'
 import {
   LocalePolicySchema,
+  LocaleFileReviewSchema,
+  MAX_LOCALE_FILE_BYTES,
   localeChangedFields,
   localeReadingPath,
+  type LocaleFileReview,
   type LocalePackage,
   type LocalePolicy,
   type LocaleWorkspace,
 } from '../../../shared/locale-policy.ts'
-import { fetchLocaleWorkspace, queueLocaleOperation, retryLocaleRuntime, saveLocaleWorkspace } from '../../helpers/locale-workspace-api.ts'
+import {
+  commitLocaleFile,
+  fetchLocaleWorkspace,
+  queueLocaleOperation,
+  retryLocaleRuntime,
+  reviewLocaleFile,
+  saveLocaleWorkspace,
+} from '../../helpers/locale-workspace-api.ts'
 const route = useRoute(),
   router = useRouter(),
   sections = [
@@ -487,6 +600,18 @@ const reviewing = ref(false),
   operationReason = ref(''),
   operationKind = ref<'catalog' | 'install'>('catalog'),
   operationLocale = ref<LocalePackage | null>(null)
+const localFile = ref<File | null>(null),
+  localFileInput = ref<HTMLInputElement | null>(null),
+  localCode = ref<string | null>(null),
+  localReason = ref(''),
+  localReview = ref<LocaleFileReview | null>(null),
+  localUploadError = ref(''),
+  openReviewChange = ref<'added' | 'changed' | 'removed' | null>(null),
+  reviewChangeTypes = [
+    { key: 'added', label: 'Added keys' },
+    { key: 'changed', label: 'Changed keys' },
+    { key: 'removed', label: 'Removed keys' },
+  ] as const
 const search = ref(''),
   packageFilter = ref('all'),
   packageFilters = [
@@ -518,6 +643,39 @@ const readingLanguages = computed(() =>
 const activeOperation = computed(() => saved.value?.operations.find((operation) => ['pending', 'running'].includes(operation.state)))
 const canOperate = computed(() =>
   Boolean(saved.value && !locked.value && !dirty.value && !activeOperation.value && !saved.value.catalog.offline),
+)
+const uploadLocales = computed(() =>
+  (saved.value?.locales || [])
+    .filter((locale) => locale.code !== 'en')
+    .map((locale) => ({
+      code: locale.code,
+      displayName: `${locale.nativeName} (${locale.code}) · ${locale.isInstalled ? 'installed' : 'catalog'}`,
+    })),
+)
+const canUploadLocalFile = computed(() =>
+  Boolean(saved.value && !locked.value && !dirty.value && !activeOperation.value),
+)
+const canReviewLocalFile = computed(() =>
+  Boolean(
+    canUploadLocalFile.value &&
+    localFile.value &&
+    localFile.value.size <= MAX_LOCALE_FILE_BYTES &&
+    localCode.value &&
+    localReason.value.trim().length >= 3,
+  ),
+)
+const canCommitLocalFile = computed(() =>
+  Boolean(
+    saved.value &&
+    !locked.value &&
+    !dirty.value &&
+    !activeOperation.value &&
+    localReview.value &&
+    Date.parse(localReview.value.expiresAt) > Date.now(),
+  ),
+)
+const hasLocalDraft = computed(() =>
+  Boolean(localFile.value || localCode.value || localReason.value.trim() || localReview.value),
 )
 const updateAvailable = (locale: LocalePackage) =>
   locale.isInstalled && locale.updatedAt && locale.installDate && Date.parse(locale.updatedAt) > Date.parse(locale.installDate)
@@ -561,12 +719,21 @@ async function load(background = false) {
   try {
     const result = await fetchLocaleWorkspace()
     if (disposed || seq !== sequence) return
-    if (background && (dirty.value || reviewing.value || operationOpen.value) && saved.value) {
-      if (result.fingerprint !== saved.value.fingerprint) stale.value = true
+    const staged = result.localFileReview ? LocaleFileReviewSchema.safeParse(result.localFileReview) : null,
+      stagedReview = staged?.success ? staged.data : null
+    if (background && (dirty.value || reviewing.value || operationOpen.value || hasLocalDraft.value) && saved.value) {
+      if (
+        result.fingerprint !== saved.value.fingerprint ||
+        (localReview.value !== null && stagedReview?.id !== localReview.value.id)
+      )
+        stale.value = true
       saved.value = { ...result, policy: saved.value.policy, fingerprint: saved.value.fingerprint }
     } else {
       saved.value = result
       draft.value = copy(result.policy)
+      localReview.value = stagedReview
+      localCode.value = stagedReview?.code ?? null
+      localReason.value = stagedReview?.reason ?? ''
       stale.value = false
     }
     loadError.value = ''
@@ -580,9 +747,19 @@ async function load(background = false) {
   }
 }
 async function reload() {
-  if (busy.value || (dirty.value && !window.confirm('Discard the language draft and reload saved settings?'))) return
+  if (
+    busy.value ||
+    ((dirty.value || hasLocalDraft.value) &&
+      !window.confirm('Discard this draft and reload? An unexpired server-reviewed file remains available to commit.'))
+  )
+    return
   reviewing.value = false
   operationOpen.value = false
+  localFile.value = null
+  localReview.value = null
+  localCode.value = null
+  localReason.value = ''
+  if (localFileInput.value) localFileInput.value.value = ''
   await load()
 }
 function reset() {
@@ -663,6 +840,75 @@ async function startOperation() {
     if (!disposed) busy.value = false
   }
 }
+function clearLocalReview() {
+  localReview.value = null
+  openReviewChange.value = null
+}
+function selectLocalFile(event: Event) {
+  const input = event.currentTarget
+  if (!(input instanceof HTMLInputElement)) return
+  const file = input.files?.[0] ?? null
+  clearLocalReview()
+  localUploadError.value = ''
+  localFile.value = file
+  if (file && file.size > MAX_LOCALE_FILE_BYTES) {
+    localUploadError.value = 'The selected language file exceeds the 8 MiB limit.'
+    localFile.value = null
+    input.value = ''
+  }
+}
+function toggleReviewChanges(kind: 'added' | 'changed' | 'removed', event: Event) {
+  const details = event.currentTarget
+  if (details instanceof HTMLDetailsElement) openReviewChange.value = details.open ? kind : null
+}
+const byteSize = (size: number) =>
+  size < 1024 ? `${size} bytes` : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KiB` : `${(size / 1024 / 1024).toFixed(2)} MiB`
+function localWriteFailure(error: unknown) {
+  const status = error && typeof error === 'object' ? Number(Reflect.get(error, 'status')) : 0
+  localUploadError.value = errorMessage(error)
+  if (!status || status >= 500 || [401, 403, 409].includes(status)) stale.value = true
+}
+async function reviewLocalUpload() {
+  if (!canReviewLocalFile.value || !saved.value || !localFile.value || !localCode.value) return
+  busy.value = true
+  localUploadError.value = ''
+  try {
+    const result = await reviewLocaleFile(localFile.value, localCode.value, saved.value.fingerprint, localReason.value.trim())
+    if (disposed) return
+    localReview.value = LocaleFileReviewSchema.parse(result)
+    localCode.value = localReview.value.code
+    localReason.value = localReview.value.reason
+    openReviewChange.value = null
+  } catch (error) {
+    if (!disposed) localWriteFailure(error)
+  } finally {
+    if (!disposed) busy.value = false
+  }
+}
+async function commitLocalUpload() {
+  if (!canCommitLocalFile.value || !localReview.value) return
+  busy.value = true
+  localUploadError.value = ''
+  try {
+    await commitLocaleFile(localReview.value.id)
+    if (disposed) return
+    localFile.value = null
+    localReview.value = null
+    localCode.value = null
+    localReason.value = ''
+    if (localFileInput.value) localFileInput.value.value = ''
+    notice.value = 'Reviewed local language file queued for publication. Follow its result in Activity.'
+    attention.value = false
+    stale.value = true
+    busy.value = false
+    selectSection('activity')
+    await load()
+  } catch (error) {
+    if (!disposed) localWriteFailure(error)
+  } finally {
+    if (!disposed) busy.value = false
+  }
+}
 async function initialize() {
   if (locked.value || dirty.value || !saved.value) return
   busy.value = true
@@ -717,9 +963,12 @@ const operationIcon = (state: string) =>
     cancelled: 'mdi-cancel',
   })[state] || 'mdi-circle-outline'
 const preventUnload = (event: BeforeUnloadEvent) => {
-  if (dirty.value || busy.value) event.preventDefault()
+  if (dirty.value || busy.value || hasLocalDraft.value) event.preventDefault()
 }
-onBeforeRouteLeave(() => !(dirty.value || busy.value) || (!busy.value && window.confirm('Discard unsaved language changes?')))
+onBeforeRouteLeave(() =>
+  !(dirty.value || busy.value || hasLocalDraft.value) ||
+  (!busy.value && window.confirm('Discard unsaved language changes or the selected local file?'))
+)
 onMounted(() => {
   window.addEventListener('beforeunload', preventUnload)
   void load()
@@ -732,3 +981,143 @@ onBeforeUnmount(() => {
 })
 </script>
 <style src="./locale-workspace.scss" lang="scss"></style>
+<style scoped lang="scss">
+.locale-local-import {
+  margin-block: 24px 30px;
+  padding: 22px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.14);
+  border-radius: 16px;
+  background: rgba(var(--v-theme-surface), 0.62);
+}
+
+.locale-local-import__heading,
+.locale-local-import__identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 15px;
+}
+
+.locale-local-import__heading {
+  margin-bottom: 20px;
+
+  h3 {
+    margin: 5px 0 3px;
+  }
+
+  p,
+  small {
+    margin: 0;
+    color: rgba(var(--v-theme-on-surface), 0.68);
+  }
+}
+
+.locale-local-import__form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+
+  > :last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+.locale-local-import__file {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px dashed rgba(var(--v-theme-on-surface), 0.3);
+  border-radius: 10px;
+
+  span {
+    font-weight: 600;
+  }
+
+  small {
+    color: rgba(var(--v-theme-on-surface), 0.66);
+  }
+}
+
+.locale-local-import__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.locale-local-import__review {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(var(--v-theme-on-surface), 0.14);
+
+  h4,
+  p {
+    margin: 0 0 5px;
+  }
+
+  p,
+  small {
+    color: rgba(var(--v-theme-on-surface), 0.7);
+  }
+
+  code {
+    overflow-wrap: anywhere;
+  }
+}
+
+.locale-local-import__identity {
+  align-items: center;
+}
+
+.locale-local-import__counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 16px 12px;
+
+  span {
+    padding: 6px 10px;
+    border: 1px solid rgba(var(--v-theme-on-surface), 0.13);
+    border-radius: 999px;
+    color: rgba(var(--v-theme-on-surface), 0.74);
+  }
+}
+
+.locale-local-import__change-list {
+  border-top: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+
+  summary {
+    padding: 11px 2px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+
+  ul {
+    max-height: 230px;
+    margin: 0 0 14px;
+    padding-inline-start: 22px;
+    overflow: auto;
+  }
+
+  li {
+    margin-block: 3px;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 600px) {
+  .locale-local-import {
+    padding: 17px;
+  }
+
+  .locale-local-import__form {
+    grid-template-columns: minmax(0, 1fr);
+
+    > :last-child {
+      grid-column: auto;
+    }
+  }
+}
+</style>

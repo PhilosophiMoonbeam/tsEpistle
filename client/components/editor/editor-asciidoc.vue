@@ -157,7 +157,7 @@
         div(ref='cm')
       transition(name='editor-asciidoc-preview')
         .editor-asciidoc-preview(v-if='previewShown')
-          .editor-asciidoc-preview-content.editor-page-canvas.contents(ref='editorPreviewContainer', :aria-busy='previewLoading')
+          .editor-asciidoc-preview-content.editor-page-canvas.contents(ref='editorPreviewContainer', :aria-busy='previewLoading', :lang='locale', :dir='contentDirection')
             v-alert(v-if='previewError', type='error', variant='tonal', density='compact', role='alert')
               span {{previewError}}
               v-btn.ml-2(size='small', variant='text', @click='retryPreview') Retry
@@ -177,6 +177,7 @@
 <script lang='ts'>
 /* global siteLangs, siteConfig */
 import { defineComponent, markRaw } from 'vue'
+import i18next from 'i18next'
 import { useDisplay } from 'vuetify'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
@@ -242,6 +243,9 @@ export default defineComponent({
     },
     locale() {
       return wikiStore.page.locale
+    },
+    contentDirection() {
+      return i18next.dir(this.locale)
     },
     path() {
       return wikiStore.page.path
@@ -483,7 +487,7 @@ export default defineComponent({
       ariaLabel: 'AsciiDoc source',
       dark: this.$vuetify.theme.current.dark,
       value: wikiStore.editor.content,
-      direction: siteConfig.rtl ? 'rtl' : 'ltr',
+      direction: 'ltr',
       extensions: [
         keymap.of([
           { key: 'F11', run: () => { this.toggleFullscreen(); return true } },
@@ -573,6 +577,7 @@ $editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
 
     > div {
       height: 100%;
+      direction: ltr;
     }
   }
 
@@ -629,6 +634,11 @@ $editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
       > div {
         outline: none;
       }
+      :where(pre, code) {
+        direction: ltr;
+        unicode-bidi: isolate;
+        text-align: start;
+      }
 
       p.line {
         overflow-wrap: break-word;
@@ -640,7 +650,7 @@ $editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
         padding: 5px 12px;
         font-size: 14px;
         font-weight: 500;
-        border-radius: 5px 0 0 0;
+        border-start-start-radius: 5px;
         font-style: italic;
 
         &::after {
@@ -653,7 +663,7 @@ $editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
           padding: 5px 12px;
           font-size: 14px;
           font-weight: 500;
-          margin-top: 0 !important;
+          margin-block-start: 0 !important;
 
           &::after {
             display: none;
@@ -661,7 +671,7 @@ $editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
         }
 
         &-content {
-          border-left: 4px solid rgb(var(--v-theme-primary));
+          border-inline-start: 4px solid rgb(var(--v-theme-primary));
           background-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent);
           padding: 0 15px 15px;
           overflow: hidden;
@@ -672,14 +682,14 @@ $editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
 
   &-toolbar {
     background: var(--wiki-surface-raised);
-    border-bottom: 1px solid var(--wiki-surface-border);
+    border-block-end: 1px solid var(--wiki-surface-border);
     color: rgb(var(--v-theme-on-surface));
 
     .v-toolbar__content {
-      padding-left: 64px;
+      padding-inline-start: 64px;
 
       @include until($tablet) {
-        padding-left: 8px;
+        padding-inline-start: 8px;
       }
     }
   }
@@ -700,7 +710,7 @@ $editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
   }
 
   &-sysbar {
-    padding-left: 0;
+    padding-inline-start: 0;
 
     &-locale {
       background-color: rgba(255,255,255,.25);

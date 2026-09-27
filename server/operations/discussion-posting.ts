@@ -1,10 +1,13 @@
 import type { Knex } from 'knex'
-import { canReadPage, managesSystem, principalId, type PagePrincipal } from '../helpers/page-access.ts'
-import type { PageRuleAuthority } from '../helpers/group-access.ts'
+import { canReadPage, managesSystem, pageAuthorizationContext, principalId, type PagePrincipal, type PageVisibilityRecord } from '../helpers/page-access.ts'
+import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import { DISCUSSION_SETTINGS_LOCK } from './discussion-settings.ts'
 import { DISCUSSION_PAGE_LOCK } from './discussion-moderation.ts'
 import errors from './errors.ts'
 import { rejectApiPrincipalMutation } from '../helpers/api-principal.ts'
+import { isCommentWebhookPageEligible } from '../core/webhooks.ts'
+import type { CommentWebhookAction } from '../../shared/webhook-events.ts'
+import { writeOutboxEvent } from '../core/outbox.ts'
 const { ApplicationError } = errors
 const POST_IDENTITY_LOCK = 72401642
 export interface DiscussionPostInput { pageId: number; replyTo: number; content: string; render: string; user: { id: number; name: string; email: string; ip: string }; requester: PagePrincipal; sessionId: string }
@@ -14,6 +17,41 @@ interface Dependencies {
   loadPageRuleAuthority(requester: PagePrincipal, transaction: Knex.Transaction): Promise<PageRuleAuthority>
   canPost(requester: PagePrincipal, page: Record<string, unknown>, authority: PageRuleAuthority): boolean
   checkSpam(input: { page: Record<string, unknown>; comment: DiscussionPostInput; providerConfig: Record<string, unknown> }): Promise<void>
+}
+// User 2 with null ownership is the authorization identity used by the guest reader.
+const anonymousCommentReader = { id: 2, ownershipUserId: null } as unknown as PagePrincipal
+interface CommentPageAccessRuntime {
+  auth: {
+    checkPageAccess(requester: PagePrincipal, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority): boolean
+  }
+}
+// WIKI is installed before discussion operations are invoked; resolve it when a check runs, not at import time.
+const getCommentPageAccessRuntime = (): CommentPageAccessRuntime => WIKI as unknown as CommentPageAccessRuntime
+
+const anonymousCanReadDiscussion = async (
+  page: Record<string, unknown>,
+  protectedPage: boolean,
+  now: Date,
+  transaction: Knex.Transaction,
+  deps: Dependencies
+): Promise<boolean> => {
+  if (!isCommentWebhookPageEligible(page, protectedPage, now)) return false
+  const visibility = page.visibility
+  const ownerId = page.ownerId
+  const path = page.path
+  const localeCode = page.localeCode
+  if (
+    (visibility !== 'public' && visibility !== 'private') ||
+    (ownerId !== null && (typeof ownerId !== 'number' || !Number.isSafeInteger(ownerId) || ownerId < 1)) ||
+    typeof path !== 'string' ||
+    typeof localeCode !== 'string'
+  ) return false
+  const visibilityRecord: PageVisibilityRecord = { visibility, ownerId, path, localeCode, tags: page.tags }
+  const authority = await deps.loadPageRuleAuthority(anonymousCommentReader, transaction)
+  const context = pageAuthorizationContext(visibilityRecord)
+  return context !== null &&
+    canReadPage(anonymousCommentReader, visibilityRecord, authority) &&
+    getCommentPageAccessRuntime().auth.checkPageAccess(anonymousCommentReader, ['read:comments'], context, authority)
 }
 export const createDiscussionPostingStore = (deps: Dependencies) => ({
   async post(input: DiscussionPostInput): Promise<number> {
@@ -69,9 +107,25 @@ export const createDiscussionPostingStore = (deps: Dependencies) => ({
       // No third-party spam request for private or password-protected pages.
       // Page and policy locks remain held until the bounded check and insert finish.
       if (page.visibility === 'public' && !protection) await deps.checkSpam({ page, comment: input, providerConfig: enabled[0].config })
-      const now = new Date().toISOString()
-      const [row] = await tx('comments').insert({ content: input.content.trim(), render: input.render, replyTo: normalizedReplyTo, pageId: page.id, authorId: input.user.id, name: input.user.name, email: input.user.email, ip: input.user.ip, createdAt: now, updatedAt: now }).returning('id')
-      return Number(row.id)
+      const createdAt = new Date()
+      const timestamp = createdAt.toISOString()
+      const [row] = await tx('comments').insert({ content: input.content.trim(), render: input.render, replyTo: normalizedReplyTo, pageId: page.id, authorId: input.user.id, name: input.user.name, email: input.user.email, ip: input.user.ip, isHidden: false, createdAt: timestamp, updatedAt: timestamp }).returning(['id', 'isHidden'])
+      const commentId = Number(row.id)
+      const eligibilityProtection = await tx('pageAccessPasswords').where('pageId', page.id).first('pageId')
+      if ((row.isHidden === false || row.isHidden === 0) &&
+        (flags.featurePageComments === true || flags.featurePageComments === 1) &&
+        await anonymousCanReadDiscussion(page, Boolean(eligibilityProtection), createdAt, tx, deps)) {
+        const action: CommentWebhookAction = 'created'
+        await writeOutboxEvent(tx, {
+          type: `comment.${action}`,
+          version: 1,
+          aggregateType: 'comment',
+          aggregateId: commentId,
+          createdAt,
+          payload: { pageId: Number(page.id), commentId, action }
+        })
+      }
+      return commentId
     })
   }
 })

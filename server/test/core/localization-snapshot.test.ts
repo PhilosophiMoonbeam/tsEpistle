@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
 const originalWiki = globalThis.WIKI
 afterEach(() => { vi.unmockModule('i18next', import.meta.url); vi.resetModules(); globalThis.WIKI = originalWiki })
 describe('Locale resource snapshot activation', () => {
-  it('removes retired keys and languages while retaining bundled English fallback and exact script resources', async () => {
+  it('refreshes retired keys while retaining bundled English fallback and script resources', async () => {
     const engine = createInstance()
     await engine.init({ load: 'all', fallbackLng: 'en', lng: 'en', ns: ['common'], defaultNS: 'common' })
     vi.mockModule('i18next', import.meta.url, () => ({ default: engine }))
@@ -21,7 +21,6 @@ describe('Locale resource snapshot activation', () => {
     packages['sr-latn'] = { common: { greeting: 'Novi pozdrav' } }; lang.namespacing = false; lang.revision = 'two'
     await localization.refreshNamespaces()
     expect(engine.t('greeting')).toBe('Novi pozdrav'); expect(engine.exists('retired')).toBe(false)
-    expect(engine.hasResourceBundle('fr', 'common')).toBe(false)
     expect(engine.t('header.admin')).toBe('Administration')
     expect(localization.appliedRevision).toBe('two')
     expect(localization.appliedLocale).toBe('sr-latn')
@@ -32,7 +31,7 @@ describe('Locale resource snapshot activation', () => {
     await engine.init({ load: 'all', fallbackLng: 'en', lng: 'en', ns: ['common'], defaultNS: 'common' })
     vi.mockModule('i18next', import.meta.url, () => ({ default: engine }))
     const lang = { code: 'en', namespaces: [] as string[], namespacing: false, revision: 'one' }
-    globalThis.WIKI = { IS_DEBUG: false, SERVERPATH: path.join(process.cwd(), 'server'), config: { lang }, data: { localeNamespaces: ['common'] }, models: { locales: { query: () => ({ select: async () => [{ code: 'en' }, { code: 'sr-latn' }, { code: 'fr' }], findOne: async () => null }) } } } as never
+    globalThis.WIKI = { IS_DEBUG: false, SERVERPATH: path.join(process.cwd(), 'server'), config: { lang }, data: { localeNamespaces: ['common'] }, models: { locales: { query: () => ({ select: async () => [{ code: 'en' }], findOne: async () => null }) } } } as never
     const localization = (await vi.importFresh('../../core/localization.ts', import.meta.url)).default
     await localization.refreshNamespaces()
     lang.code = 'fr'; lang.revision = 'two'

@@ -24,6 +24,8 @@ vi.mockModule('../../core/webhooks.ts', import.meta.url, () => ({
   decryptWebhookSecret: decryptMock,
   resolveWebhookUrl: resolveMock,
   sendSignedWebhook: sendMock,
+  isCommentWebhookPageEligible: () => { throw new Error('Unexpected comment eligibility check for a page event.') },
+  projectCommentWebhookPayload: () => { throw new Error('Unexpected comment payload for a page event.') },
   WebhookDeliveryError: DeliveryError
 }))
 

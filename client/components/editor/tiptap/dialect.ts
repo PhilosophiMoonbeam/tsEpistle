@@ -2,12 +2,16 @@ import {
   createAtomBlockMarkdownSpec,
   createInlineMarkdownSpec,
   mergeAttributes,
+  Extension,
   Node,
+  type Editor,
   type JSONContent,
   type MarkdownParseHelpers,
   type MarkdownRendererHelpers,
   type MarkdownToken
 } from '@tiptap/core'
+import { Fragment, type Node as ProseMirrorNode, type ResolvedPos } from '@tiptap/pm/model'
+import { TextSelection } from '@tiptap/pm/state'
 import { Mark } from '@tiptap/core'
 import { Subscript } from '@tiptap/extension-subscript'
 import { Superscript } from '@tiptap/extension-superscript'
@@ -281,6 +285,139 @@ export const DefinitionDescription = Node.create({
   renderHTML: ({ HTMLAttributes }) => ['dd', mergeAttributes(HTMLAttributes), 0]
 })
 
+function definitionAncestorDepth (position: ResolvedPos, name: string): number {
+  for (let depth = position.depth; depth > 0; depth -= 1) {
+    if (position.node(depth).type.name === name) return depth
+  }
+  return -1
+}
+
+function definitionChildPosition (parent: ProseMirrorNode, parentPosition: number, index: number): number {
+  let position = parentPosition + 1
+  for (let childIndex = 0; childIndex < index; childIndex += 1) {
+    position += parent.child(childIndex).nodeSize
+  }
+  return position
+}
+
+function firstDefinitionTextblockPosition (node: ProseMirrorNode, nodePosition: number): number | null {
+  if (node.isTextblock) return nodePosition + 1
+
+  let position = nodePosition + 1
+  for (let index = 0; index < node.childCount; index += 1) {
+    const child = node.child(index)
+    if (child.isTextblock) return position + 1
+    const nestedPosition = firstDefinitionTextblockPosition(child, position)
+    if (nestedPosition !== null) return nestedPosition
+    position += child.nodeSize
+  }
+  return null
+}
+
+function setDefinitionCursor (editor: Editor, position: number): boolean {
+  const { state, view } = editor
+  if (position < 0 || position > state.doc.content.size) return false
+  const $position = state.doc.resolve(position)
+  if (!$position.parent.isTextblock) return false
+  view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, position)).scrollIntoView())
+  return true
+}
+
+function handleDefinitionListEnter (editor: Editor): boolean {
+  const { state, view } = editor
+  const { selection } = state
+  if (!selection.empty) return false
+
+  const $from = selection.$from
+  const listDepth = definitionAncestorDepth($from, 'definitionList')
+  if (listDepth < 0) return false
+  const list = $from.node(listDepth)
+  const listPosition = $from.before(listDepth)
+
+  const termDepth = definitionAncestorDepth($from, 'definitionTerm')
+  if (
+    termDepth === listDepth + 1 &&
+    $from.parent.type.name === 'definitionTerm' &&
+    $from.parentOffset === $from.parent.content.size
+  ) {
+    const termIndex = $from.index(listDepth)
+    if (termIndex + 1 >= list.childCount || list.child(termIndex + 1).type.name !== 'definitionDescription') return false
+    const description = list.child(termIndex + 1)
+    const descriptionPosition = definitionChildPosition(list, listPosition, termIndex + 1)
+    const cursorPosition = firstDefinitionTextblockPosition(description, descriptionPosition)
+    return cursorPosition === null ? false : setDefinitionCursor(editor, cursorPosition)
+  }
+
+  const descriptionDepth = definitionAncestorDepth($from, 'definitionDescription')
+  if (
+    descriptionDepth !== listDepth + 1 ||
+    $from.depth !== descriptionDepth + 1 ||
+    $from.parent.type.name !== 'paragraph' ||
+    $from.parentOffset !== $from.parent.content.size
+  ) return false
+
+  const description = $from.node(descriptionDepth)
+  if (description.lastChild !== $from.parent) return false
+  const descriptionIndex = $from.index(listDepth)
+  const nextIndex = descriptionIndex + 1
+  if (nextIndex < list.childCount) {
+    const next = list.child(nextIndex)
+    if (next.type.name !== 'definitionTerm') return false
+    const termPosition = definitionChildPosition(list, listPosition, nextIndex)
+    return setDefinitionCursor(editor, termPosition + 1)
+  }
+
+  const isEmptyFinalDescription = description.childCount === 1 &&
+    description.firstChild?.type.name === 'paragraph' &&
+    description.firstChild.content.size === 0
+  if (isEmptyFinalDescription) {
+    const paragraph = state.schema.nodes.paragraph.createAndFill()
+    if (!paragraph) return false
+    const afterList = $from.after(listDepth)
+    const previous = descriptionIndex > 0 ? list.child(descriptionIndex - 1) : null
+    if (previous?.type.name === 'definitionTerm' && previous.content.size === 0) {
+      const transaction = state.tr
+      let paragraphPosition: number
+      if (list.childCount > 2) {
+        const termPosition = definitionChildPosition(list, listPosition, descriptionIndex - 1)
+        const listContentEnd = listPosition + list.nodeSize - 1
+        transaction.delete(termPosition, listContentEnd)
+        paragraphPosition = transaction.mapping.map(afterList, -1)
+        transaction.insert(paragraphPosition, paragraph)
+      } else {
+        transaction.replaceWith(listPosition, afterList, paragraph)
+        paragraphPosition = listPosition
+      }
+      transaction.setSelection(TextSelection.create(transaction.doc, paragraphPosition + 1))
+      view.dispatch(transaction.scrollIntoView())
+      return true
+    }
+    const transaction = state.tr.insert(afterList, paragraph)
+    transaction.setSelection(TextSelection.create(transaction.doc, afterList + 1))
+    view.dispatch(transaction.scrollIntoView())
+    return true
+  }
+
+  const term = state.schema.nodes.definitionTerm.createAndFill()
+  const paragraph = state.schema.nodes.paragraph.createAndFill()
+  if (!term || !paragraph) return false
+  const nextDescription = state.schema.nodes.definitionDescription.createAndFill(null, paragraph)
+  if (!nextDescription) return false
+  const listContentEnd = listPosition + list.nodeSize - 1
+  const transaction = state.tr.insert(listContentEnd, Fragment.fromArray([term, nextDescription]))
+  transaction.setSelection(TextSelection.create(transaction.doc, listContentEnd + 1))
+  view.dispatch(transaction.scrollIntoView())
+  return true
+}
+
+export const DefinitionListKeyboard = Extension.create({
+  name: 'definitionListKeyboard',
+  priority: 1100,
+  addKeyboardShortcuts () {
+    return { Enter: () => handleDefinitionListEnter(this.editor) }
+  }
+})
+
 export const DefinitionList = Node.create({
   name: 'definitionList',
   group: 'block',
@@ -362,6 +499,14 @@ function protectInlineSource (line: string): string {
     }
 
     const source = line.slice(index)
+    if (source.startsWith('[[')) {
+      const wikiLink = /^\[\[[^\[\]\r\n]+\]\]/u.exec(source)?.[0]
+      if (wikiLink) {
+        result += wikiLink
+        index += wikiLink.length
+        continue
+      }
+    }
     const candidates: Array<{ kind: WikiSourceKind, match: RegExpMatchArray | null }> = [
       { kind: 'html', match: source.match(/^<!--[\s\S]*?-->/) },
       { kind: 'image-size', match: source.match(/^!\[[^\]\n]*\]\([^\n)]*(?:\s=\d*(?:x\d*)?|\s+\d+x\d+)[^\n)]*\)/) },

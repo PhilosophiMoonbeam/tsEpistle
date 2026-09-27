@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { Model, type StaticHookArguments } from 'objection'
 import type { Knex } from 'knex'
 import type { EventEmitter } from 'node:events'
@@ -38,11 +39,31 @@ import { enqueuePageMutationEffects, type PageProjectionPayload } from '../core/
 import { redactProtectedPageForSearch, syncProtectedPageAssets } from '../operations/page-protection.ts'
 import { mutateOkfMetadata, OkfDocumentError, type OkfMetadata } from '../okf/format.ts'
 import { PageBrandingAssignmentSchema, type PageBrandingAssignment } from '../../shared/page-branding.ts'
+import { DEFAULT_PAGE_FEATURES, PageFeaturesSchema, normalizePageFeatures, parsePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
 import { authorizePageBrandingAssignment } from '../helpers/asset-branding.ts'
 import { rejectApiPrincipalMutation } from '../helpers/api-principal.ts'
+import { assertAssetLocationReservations, lockAssetLocation } from '../helpers/asset-location-lock.ts'
+import { okfFilePath } from '../okf/format.ts'
 
 type UnknownRecord = Record<string, unknown>
 const isRecord = (value: unknown): value is UnknownRecord => value !== null && typeof value === 'object' && !Array.isArray(value)
+export const DeletedPageRecoverySecurityContextSchema = z.strictObject({
+  version: z.literal(1),
+  former: z.strictObject({
+    path: z.string().min(1),
+    localeCode: z.string().min(2),
+    visibility: z.enum(['public', 'private']),
+    ownerId: z.number().int().positive().safe().nullable(),
+    tags: z.array(z.string().min(1))
+  }),
+  protection: z.strictObject({
+    passwordHash: z.string().min(1).max(4096),
+    version: z.number().int().positive().safe(),
+    updatedBy: z.number().int().positive().safe().nullable(),
+    updatedAt: z.string().datetime({ offset: true })
+  }).nullable()
+})
+export type DeletedPageRecoverySecurityContext = z.infer<typeof DeletedPageRecoverySecurityContextSchema>
 type PageErrorConstructor = new () => Error
 
 interface PageUser extends Express.User {
@@ -56,6 +77,7 @@ interface PageExtra extends UnknownRecord {
   js?: string
   okf?: OkfMetadata
   branding?: PageBrandingAssignment
+  pageFeatures?: PageFeatures
 }
 
 interface CachedPage {
@@ -133,6 +155,7 @@ interface CreatePageOptions {
   scriptCss?: string
   scriptJs?: string
   tags?: unknown
+  pageFeatures?: PageFeatures
   okfMetadata?: OkfMetadata
   okfProducer?: string
   branding?: PageBrandingAssignment | null
@@ -164,6 +187,7 @@ interface UpdatePageOptions {
   publishStartDate?: string | null
   scriptCss?: string
   scriptJs?: string
+  pageFeatures?: PageFeatures
   okfMetadata?: OkfMetadata
   replaceOkfMetadata?: boolean
   okfProducer?: string
@@ -236,6 +260,44 @@ type DeletePageOptions = (
   skipStorage?: boolean
   expectedSourceRevision?: string
 }
+interface RestoreDeletedPageOptions {
+  pageId: number
+  deletionVersionId: number
+  destination: { path: string; localeCode: string }
+  ownerId?: number
+  recoveringAdminId: number
+  securityContext: DeletedPageRecoverySecurityContext | null
+  legacyQuarantine: boolean
+  expectedDeletionRevision: string
+  user: PageUser
+}
+interface DeletedPageHistoryRow {
+  id: number
+  pageId: number
+  authorId: number
+  content: string
+  contentType: string
+  description: string
+  editorKey: string
+  hash: string
+  visibility: PageVisibility
+  ownerId: number | null
+  isPublished: boolean | number
+  isSearchable: boolean | number
+  localeCode: string
+  path: string
+  publishEndDate: string | null
+  publishStartDate: string | null
+  title: string
+  extra: unknown
+  sourceRevision: string | number
+  versionDate: string | Date
+}
+
+interface DeletedPageRecoveryRow {
+  deletionRevision: string | number
+  securityContext: unknown
+}
 
 type ReconnectLinksOptions =
   | {
@@ -270,6 +332,8 @@ interface PageVersionOptions {
   title: string
   action?: string
   versionDate: string
+  isSearchable?: boolean | number
+  sourceRevision?: string | number | bigint
   transaction?: Knex.Transaction
 }
 
@@ -354,7 +418,7 @@ interface PagesWikiContext {
     comments: typeof Comment
     knex: Knex
     pageHistory: {
-      addVersion(options: PageVersionOptions): Promise<void>
+      addVersion(options: PageVersionOptions): Promise<{ id: number }>
     }
     pages: typeof Page
     storage: {
@@ -405,6 +469,87 @@ const invalidateOkfVerification = (metadata: OkfMetadata): OkfMetadata => {
   const unverified = { ...metadata }
   delete unverified.verified
   return unverified
+}
+const pageFeaturesFromOkfMetadata = (metadata: OkfMetadata | undefined): PageFeatures | undefined => {
+  const extension = metadata?.['x-wiki']
+  if (!isRecord(extension) || !Object.hasOwn(extension, 'page_features')) return undefined
+  const pageFeatures = parsePageFeatures(extension.page_features)
+  if (pageFeatures === null) throw new TypeError('OKF extension x-wiki.page_features must use the strict version 1 page feature schema')
+  return pageFeatures
+}
+const pageRecoveryConflict = (): Error =>
+  new errors.ApplicationError('The deleted page changed or is no longer recoverable. Reload the recovery record.', {
+    status: 409,
+    code: 'PAGE_RECOVERY_CONFLICT'
+  })
+
+const pageRecoveryCollision = (): Error =>
+  new errors.ApplicationError('The restore destination is already occupied.', { status: 409, code: 'PAGE_RECOVERY_COLLISION' })
+
+const pageRecoveryRevision = (value: unknown): bigint | null => {
+  const revision = String(value)
+  if (!/^[1-9][0-9]*$/.test(revision)) return null
+  try {
+    return BigInt(revision)
+  } catch {
+    return null
+  }
+}
+
+const parseStoredJson = (value: unknown): unknown => {
+  if (typeof value !== 'string') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+const assertNoStorageAssetCollision = async (transaction: Knex.Transaction, storagePath: string): Promise<void> => {
+  try {
+    await lockAssetLocation(transaction, storagePath)
+    await assertAssetLocationReservations(transaction, [storagePath])
+  } catch (error: unknown) {
+    if (isRecord(error) && Reflect.get(error, 'status') === 409) throw pageRecoveryCollision()
+    throw error
+  }
+
+  const pathParts = storagePath.split('/')
+  const filename = pathParts.pop()
+  if (!filename) throw pageRecoveryCollision()
+  let parentId: number | null = null
+  for (const slug of pathParts) {
+    const folderQuery = transaction('assetFolders').where({ slug })
+    if (parentId === null) folderQuery.whereNull('parentId')
+    else folderQuery.where({ parentId })
+    const folder = (await folderQuery.first('id')) as { id: number } | undefined
+    if (!folder) return
+    parentId = Number(folder.id)
+  }
+  const assetQuery = transaction('assets').where({ filename })
+  if (parentId === null) {
+    assetQuery.where((query: Knex.QueryBuilder) => query.whereNull('folderId').orWhere('folderId', 0))
+  } else {
+    assetQuery.where({ folderId: parentId })
+  }
+  if (await assetQuery.first('id')) throw pageRecoveryCollision()
+}
+
+const assertRecoveryPath = (value: unknown): string => {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.startsWith('/') ||
+    value.endsWith('/') ||
+    value.includes('.') ||
+    value.includes(' ') ||
+    value.includes('\\') ||
+    value.includes('//') ||
+    value.split('/').some(segment => segment.length === 0)
+  ) {
+    throw new errors.ApplicationError('The restore destination path is invalid.', { status: 400, code: 'INVALID_INPUT' })
+  }
+  return value
 }
 
 const loadPageTags = async (page: Page, transaction?: Knex.Transaction, reload = false): Promise<Tag[] | undefined> => {
@@ -998,6 +1143,9 @@ export default class Page extends Model {
       knowledgeChanged: true,
       at: new Date()
     })
+    const requestedPageFeatures =
+      opts.pageFeatures === undefined ? pageFeaturesFromOkfMetadata(opts.okfMetadata) : PageFeaturesSchema.parse(opts.pageFeatures)
+    const pageFeatures = requestedPageFeatures ?? DEFAULT_PAGE_FEATURES
     const branding = opts.branding === undefined ? undefined : opts.branding === null ? null : PageBrandingAssignmentSchema.parse(opts.branding)
     await authorizeBrandingAssignment(branding, opts)
 
@@ -1030,6 +1178,7 @@ export default class Page extends Model {
           js: scriptJs,
           css: scriptCss,
           okf: okfMetadata,
+          pageFeatures,
           ...(branding === undefined || branding === null ? {} : { branding })
         }
       })
@@ -1124,6 +1273,10 @@ export default class Page extends Model {
     // -> Format Extra Properties
     const pageExtra: PageExtra = _.isPlainObject(ogPage.extra) ? { ...ogPage.extra } : {}
     ogPage.extra = pageExtra
+    const requestedPageFeatures =
+      opts.pageFeatures === undefined ? pageFeaturesFromOkfMetadata(opts.okfMetadata) : PageFeaturesSchema.parse(opts.pageFeatures)
+    const pageFeaturesChanged =
+      requestedPageFeatures !== undefined && !_.isEqual(parsePageFeatures(pageExtra.pageFeatures), requestedPageFeatures)
     const hasBrandingMutation = Object.hasOwn(opts, 'branding') && opts.branding !== undefined
     const branding = hasBrandingMutation ? (opts.branding === null ? null : PageBrandingAssignmentSchema.parse(opts.branding)) : undefined
     const existingBranding = pageBrandingFromExtra(pageExtra)
@@ -1222,10 +1375,13 @@ export default class Page extends Model {
       opts.publishStartDate === undefined &&
       opts.scriptCss === undefined &&
       opts.scriptJs === undefined &&
-      opts.okfRestoreRevision === undefined
+      opts.okfRestoreRevision === undefined &&
+      !pageFeaturesChanged
     const metadataOnlyNoOp = opts.okfMetadata !== undefined && !okfAuthorityChanged && noNonBrandingMutation && !brandingChanged
     const brandingOnlyNoOp = hasBrandingMutation && !brandingChanged && opts.okfMetadata === undefined && noNonBrandingMutation
-    if (metadataOnlyNoOp || brandingOnlyNoOp) {
+    const pageFeaturesOnlyNoOp =
+      requestedPageFeatures !== undefined && noNonBrandingMutation && !brandingChanged && opts.okfMetadata === undefined
+    if (metadataOnlyNoOp || brandingOnlyNoOp || pageFeaturesOnlyNoOp) {
       const unchangedPage = await wiki.models.pages.getPageFromDb(ogPage.id)
       if (!unchangedPage) throw new wiki.Error.PageNotFound()
       return unchangedPage
@@ -1295,6 +1451,7 @@ export default class Page extends Model {
         js: scriptJs,
         css: scriptCss
       }
+      if (requestedPageFeatures !== undefined) extraForPatch.pageFeatures = requestedPageFeatures
       if (hasBrandingMutation) {
         if (branding === null) delete extraForPatch.branding
         else if (branding !== undefined) extraForPatch.branding = branding
@@ -2038,11 +2195,32 @@ export default class Page extends Model {
       if (authorizationTags === undefined) throw new wiki.Error.PageNotFound()
       const authority = await wiki.auth.loadPageRuleAuthority(user, transaction)
       if (!canDeletePage(user, { ...page, tags: authorizationTags }, authority)) throw new wiki.Error.PageDeleteForbidden()
-      await wiki.models.pageHistory.addVersion({
+      const deletionVersion = await wiki.models.pageHistory.addVersion({
         ...page,
         action: 'deleted',
         versionDate: page.updatedAt,
         transaction
+      })
+      const protection = (await transaction('pageAccessPasswords').where({ pageId: page.id }).forUpdate().first()) as
+        | { passwordHash: unknown; version: unknown; updatedBy: unknown; updatedAt: unknown }
+        | undefined
+      const securityContext = DeletedPageRecoverySecurityContextSchema.parse({
+        version: 1,
+        former: {
+          path: page.path,
+          localeCode: page.localeCode,
+          visibility: page.visibility,
+          ownerId: page.ownerId,
+          tags: authorizationTags.map(tag => tag.tag)
+        },
+        protection: protection
+          ? {
+              passwordHash: protection.passwordHash,
+              version: Number(protection.version),
+              updatedBy: protection.updatedBy === null ? null : Number(protection.updatedBy),
+              updatedAt: protection.updatedAt instanceof Date ? protection.updatedAt.toISOString() : String(protection.updatedAt)
+            }
+          : null
       })
       const bumpedRows = await transaction('pages')
         .where({ id: page.id, sourceRevision: page.sourceRevision })
@@ -2052,6 +2230,13 @@ export default class Page extends Model {
         | { sourceRevision: string | number }
         | undefined
       if (!deletionRevision) throw new wiki.Error.PageNotFound()
+      await transaction('deletedPageRecovery').insert({
+        pageId: page.id,
+        deletionVersionId: deletionVersion.id,
+        deletionRevision: String(deletionRevision.sourceRevision),
+        securityContext,
+        createdAt: new Date()
+      })
       await enqueuePageMutationEffects(transaction, {
         pageId: page.id,
         sourceRevision: deletionRevision.sourceRevision,
@@ -2080,6 +2265,323 @@ export default class Page extends Model {
       })
     }
   }
+
+  static async restoreDeletedPage(opts: RestoreDeletedPageOptions): Promise<{ pageId: number; sourceRevision: string; quarantined: boolean }> {
+    rejectApiPrincipalMutation(opts.user)
+    if (
+      !Number.isSafeInteger(opts.pageId) ||
+      opts.pageId <= 0 ||
+      !Number.isSafeInteger(opts.deletionVersionId) ||
+      opts.deletionVersionId <= 0 ||
+      !Number.isSafeInteger(opts.recoveringAdminId) ||
+      opts.recoveringAdminId <= 0 ||
+      principalId(opts.user) !== opts.recoveringAdminId ||
+      !managesSystem(opts.user) ||
+      typeof opts.legacyQuarantine !== 'boolean'
+    ) {
+      throw new errors.ApplicationError('The deleted page changed or is no longer recoverable.', { status: 404, code: 'PAGE_NOT_FOUND' })
+    }
+    const destinationPath = assertRecoveryPath(opts.destination?.path)
+    const destinationLocale = opts.destination?.localeCode
+    if (typeof destinationLocale !== 'string' || destinationLocale.length < 2) {
+      throw new errors.ApplicationError('The restore destination locale is invalid.', { status: 400, code: 'INVALID_INPUT' })
+    }
+    const suppliedSecurityContext =
+      opts.securityContext === null ? null : DeletedPageRecoverySecurityContextSchema.safeParse(opts.securityContext)
+    if (suppliedSecurityContext !== null && !suppliedSecurityContext.success) throw pageRecoveryConflict()
+    const expectedDeletionRevision = pageRecoveryRevision(opts.expectedDeletionRevision)
+    if (expectedDeletionRevision === null) throw pageRecoveryConflict()
+
+    let restoredSourceRevision = ''
+    let oldHash = ''
+    let restoredVisibility: PageVisibility = 'private'
+    let restoredOwnerId: number | null = null
+    try {
+      await wiki.models.knex.transaction(async transaction => {
+        if (transaction.client.config.client === 'pg') {
+          await transaction.raw('SELECT pg_advisory_xact_lock(?, hashtext(?))', [0x57505243, String(opts.pageId)])
+          await transaction.raw('SELECT pg_advisory_xact_lock(?, hashtext(?))', [
+            0x57505244,
+            JSON.stringify([destinationLocale, destinationPath])
+          ])
+        }
+        const recoveryAdmin = (await transaction('users')
+          .where({ id: opts.recoveringAdminId })
+          .forUpdate()
+          .first('id', 'isActive')) as { id: number; isActive: boolean | number } | undefined
+        if (!recoveryAdmin || (recoveryAdmin.isActive !== true && recoveryAdmin.isActive !== 1)) throw pageRecoveryConflict()
+
+        const existingPage = (await transaction('pages').where({ id: opts.pageId }).forUpdate().first('id')) as { id: number } | undefined
+        if (existingPage) throw pageRecoveryConflict()
+        const latestVersion = (await transaction('pageHistory')
+          .select('id', 'action')
+          .where('pageId', opts.pageId)
+          .orderBy('versionDate', 'desc')
+          .orderBy('id', 'desc')
+          .forUpdate()
+          .first()) as { id: number; action: string } | undefined
+        if (!latestVersion || Number(latestVersion.id) !== opts.deletionVersionId || latestVersion.action !== 'deleted') {
+          throw pageRecoveryConflict()
+        }
+        const history = (await transaction('pageHistory')
+          .where({ id: opts.deletionVersionId, pageId: opts.pageId })
+          .forUpdate()
+          .first()) as DeletedPageHistoryRow | undefined
+        if (!history) throw pageRecoveryConflict()
+        oldHash = history.hash
+
+        const recoveryRow = (await transaction('deletedPageRecovery')
+          .where({ pageId: opts.pageId, deletionVersionId: opts.deletionVersionId })
+          .forUpdate()
+          .first()) as DeletedPageRecoveryRow | undefined
+        const recordRevision = recoveryRow === undefined ? null : pageRecoveryRevision(recoveryRow.deletionRevision)
+        const storedSecurityContext =
+          recoveryRow === undefined ? null : DeletedPageRecoverySecurityContextSchema.safeParse(parseStoredJson(recoveryRow.securityContext))
+        const validStoredSecurityContext = storedSecurityContext?.success === true && recordRevision !== null
+        let securityContext: DeletedPageRecoverySecurityContext | null = null
+        if (opts.legacyQuarantine) {
+          if (validStoredSecurityContext || suppliedSecurityContext !== null) throw pageRecoveryConflict()
+        } else {
+          if (
+            storedSecurityContext === null ||
+            !storedSecurityContext.success ||
+            recordRevision === null ||
+            suppliedSecurityContext === null ||
+            !suppliedSecurityContext.success ||
+            JSON.stringify(suppliedSecurityContext.data) !== JSON.stringify(storedSecurityContext.data)
+          ) {
+            throw pageRecoveryConflict()
+          }
+          securityContext = storedSecurityContext.data
+          if (
+            securityContext.former.path !== history.path ||
+            securityContext.former.localeCode !== history.localeCode ||
+            securityContext.former.visibility !== history.visibility ||
+            securityContext.former.ownerId !== history.ownerId
+          ) {
+            throw pageRecoveryConflict()
+          }
+        }
+
+        const effectMaximumRow = (await transaction('pageMutationOutbox')
+          .where({ pageId: opts.pageId })
+          .max({ maximumRevision: 'sourceRevision' })
+          .first()) as { maximumRevision: string | number | null } | undefined
+        const historyRevision = pageRecoveryRevision(history.sourceRevision)
+        const effectMaximum = effectMaximumRow?.maximumRevision == null ? null : pageRecoveryRevision(effectMaximumRow.maximumRevision)
+        if (historyRevision === null || (effectMaximumRow?.maximumRevision != null && effectMaximum === null)) throw pageRecoveryConflict()
+        const fallbackFence = [historyRevision, effectMaximum]
+          .filter((revision): revision is bigint => revision !== null)
+          .reduce((max, revision) => (revision > max ? revision : max))
+        const expectedFence = recordRevision ?? fallbackFence
+        if (expectedDeletionRevision !== expectedFence || (recordRevision !== null && recordRevision < historyRevision)) throw pageRecoveryConflict()
+        const sourceRevision =
+          [historyRevision, recordRevision, effectMaximum]
+            .filter((revision): revision is bigint => revision !== null)
+            .reduce((max, revision) => (revision > max ? revision : max)) + 1n
+        restoredSourceRevision = String(sourceRevision)
+
+        const localeRow = (await transaction('locales').where({ code: destinationLocale }).forShare().first('code')) as { code: string } | undefined
+        if (!localeRow) throw new errors.ApplicationError('The restore destination locale is invalid.', { status: 400, code: 'INVALID_INPUT' })
+        const editor = wiki.data.editors.find(item => item.key === history.editorKey)
+        if (!editor || editor.contentType !== history.contentType) throw pageRecoveryConflict()
+        if (typeof history.content !== 'string' || typeof history.title !== 'string' || typeof history.description !== 'string') {
+          throw pageRecoveryConflict()
+        }
+
+        let visibility: PageVisibility
+        let ownerId: number | null
+        let recoveryTags: string[]
+        let explicitlySelectedOwner = false
+        if (securityContext !== null) {
+          visibility = securityContext.former.visibility
+          recoveryTags = securityContext.former.tags
+          if (visibility === 'public') {
+            if (opts.ownerId !== undefined) throw new errors.ApplicationError('A public page cannot have an owner.', { status: 400, code: 'INVALID_OWNER' })
+            ownerId = null
+          } else {
+            const formerOwnerId = securityContext.former.ownerId
+            const formerOwner = formerOwnerId === null ? undefined : await transaction('users').where({ id: formerOwnerId }).forShare().first('id')
+            if (formerOwner) {
+              if (opts.ownerId !== undefined && opts.ownerId !== formerOwnerId) {
+                throw new errors.ApplicationError('The former page owner is still available.', { status: 409, code: 'INVALID_OWNER' })
+              }
+              ownerId = formerOwnerId
+            } else {
+              if (opts.ownerId === undefined || !Number.isSafeInteger(opts.ownerId) || opts.ownerId <= 0) {
+                throw new errors.ApplicationError('Choose a valid owner for this private page.', { status: 400, code: 'INVALID_OWNER' })
+              }
+              ownerId = opts.ownerId
+              explicitlySelectedOwner = true
+            }
+          }
+        } else {
+          visibility = 'private'
+          ownerId = opts.recoveringAdminId
+          const archivedTags = (await transaction('pageHistoryTags')
+            .leftJoin('tags', 'tags.id', 'pageHistoryTags.tagId')
+            .select('tags.tag')
+            .where('pageHistoryTags.pageId', opts.deletionVersionId)
+            .orderBy('tags.id', 'asc')) as Array<{ tag: unknown }>
+          recoveryTags = archivedTags.map(row => row.tag).filter((tag): tag is string => typeof tag === 'string')
+        }
+
+        const ownerRow =
+          ownerId === null
+            ? undefined
+            : ((await transaction('users').where({ id: ownerId }).forShare().first('id', 'email', 'isActive', 'isSystem')) as
+                | { id: number; email: string; isActive: boolean | number; isSystem: boolean | number }
+                | undefined)
+        if (
+          ownerId !== null &&
+          (!ownerRow ||
+            ownerRow.email === 'api@localhost' ||
+            ownerRow.id === 2 ||
+            (explicitlySelectedOwner &&
+              ((ownerRow.isActive !== true && ownerRow.isActive !== 1) || ownerRow.isSystem === true || ownerRow.isSystem === 1)))
+        ) {
+          throw new errors.ApplicationError('Choose a valid owner for this private page.', { status: 400, code: 'INVALID_OWNER' })
+        }
+        if (securityContext === null && ownerId !== opts.recoveringAdminId) throw pageRecoveryConflict()
+
+        const accessContext = pageAuthorizationContext({
+          path: destinationPath,
+          localeCode: destinationLocale,
+          visibility,
+          ownerId,
+          tags: recoveryTags.map(tag => ({ tag }))
+        })
+        const authority = await wiki.auth.loadPageRuleAuthority(opts.user, transaction)
+        if (!accessContext || !canWritePage(opts.user, accessContext, authority)) {
+          throw new errors.ApplicationError('You do not have permission to restore this page.', { status: 403, code: 'PAGE_RECOVERY_FORBIDDEN' })
+        }
+
+        const pageCollision = (await transaction('pages')
+          .where({ path: destinationPath, localeCode: destinationLocale, visibility, ownerId })
+          .forUpdate()
+          .first('id')) as { id: number } | undefined
+        if (pageCollision) throw pageRecoveryCollision()
+        if (visibility === 'public') {
+          const storagePath =
+            history.contentType === 'markdown'
+              ? okfFilePath(destinationLocale, destinationPath)
+              : `${destinationLocale}/${destinationPath}${pageHelper.getFileExtension(history.contentType)}`
+          await assertNoStorageAssetCollision(transaction, storagePath)
+        }
+
+        const rawExtra = parseStoredJson(history.extra)
+        if (!isRecord(rawExtra)) throw pageRecoveryConflict()
+        const extra: PageExtra = {
+          ...rawExtra,
+          pageFeatures: normalizePageFeatures(rawExtra.pageFeatures)
+        }
+        const now = new Date()
+        const nowIso = now.toISOString()
+        const hash = pageHelper.generateHash({
+          path: destinationPath,
+          locale: destinationLocale,
+          visibility,
+          ownerId
+        })
+        const tags = [...new Set(recoveryTags)]
+        const restoredPage = await wiki.models.pages.query(transaction).insert({
+          id: opts.pageId,
+          authorId: opts.recoveringAdminId,
+          content: history.content,
+          creatorId: opts.recoveringAdminId,
+          contentType: history.contentType,
+          description: history.description,
+          editorKey: history.editorKey,
+          hash,
+          visibility,
+          ownerId,
+          isPublished: false,
+          isSearchable: history.isSearchable === true || history.isSearchable === 1,
+          localeCode: destinationLocale,
+          path: destinationPath,
+          publishEndDate: history.publishEndDate ?? '',
+          publishStartDate: history.publishStartDate ?? '',
+          title: history.title,
+          toc: '[]',
+          renderedSourceRevision: null,
+          sourceRevision: restoredSourceRevision,
+          extra
+        })
+        await wiki.models.tags.associateTags({ tags, page: restoredPage, transaction })
+
+        await transaction('pageUnlockGrants').where({ pageId: opts.pageId }).delete()
+        await transaction('pageAccessPasswords').where({ pageId: opts.pageId }).delete()
+        if (securityContext?.protection !== null && securityContext?.protection !== undefined) {
+          if (securityContext.protection.version >= Number.MAX_SAFE_INTEGER) throw pageRecoveryConflict()
+          await transaction('pageAccessPasswords').insert({
+            pageId: opts.pageId,
+            passwordHash: securityContext.protection.passwordHash,
+            version: securityContext.protection.version + 1,
+            updatedBy: opts.recoveringAdminId,
+            updatedAt: now
+          })
+        }
+
+        await wiki.models.pageHistory.addVersion({
+          id: opts.pageId,
+          authorId: opts.recoveringAdminId,
+          content: history.content,
+          contentType: history.contentType,
+          description: history.description,
+          editorKey: history.editorKey,
+          hash,
+          extra,
+          visibility,
+          ownerId,
+          isPublished: false,
+          isSearchable: history.isSearchable === true || history.isSearchable === 1,
+          localeCode: destinationLocale,
+          path: destinationPath,
+          publishEndDate: history.publishEndDate,
+          publishStartDate: history.publishStartDate,
+          title: history.title,
+          action: opts.legacyQuarantine ? 'recovered-quarantined' : 'restored',
+          versionDate: nowIso,
+          sourceRevision,
+          transaction
+        })
+        const restoredTags = (await transaction('tags')
+          .join('pageTags', 'pageTags.tagId', 'tags.id')
+          .select('tags.*')
+          .where('pageTags.pageId', opts.pageId)
+          .orderBy('tags.id', 'asc')) as Tag[]
+        restoredPage.tags = restoredTags
+        await enqueueCurrentPageProjections(transaction, opts.pageId, 'restore')
+        await writePageOutboxEvent(transaction, 'page.restored', restoredPage, opts.user)
+        restoredVisibility = visibility
+        restoredOwnerId = ownerId
+      })
+    } catch (error: unknown) {
+      if (isRecord(error) && Reflect.get(error, 'code') === '23505') throw pageRecoveryCollision()
+      throw error
+    }
+
+    const page = await wiki.models.pages.getPageFromDb({
+      path: destinationPath,
+      locale: destinationLocale,
+      visibility: restoredVisibility,
+      ownerId: restoredOwnerId
+    })
+    if (!page || page.id !== opts.pageId) throw pageRecoveryConflict()
+    await wiki.models.pages.renderPage(page)
+    await wiki.models.pages.deletePageFromCache(oldHash)
+    await wiki.models.pages.deletePageFromCache(page.hash)
+    wiki.events.outbound.emit('deletePageFromCache', oldHash)
+    wiki.events.outbound.emit('deletePageFromCache', page.hash)
+    await wiki.models.pages.rebuildTree()
+    if (page.visibility === 'public') {
+      await wiki.models.storage.pageEvent({ event: 'created', page })
+      await wiki.models.pages.reconnectLinks({ locale: page.localeCode, path: page.path, mode: 'create' })
+    }
+    await notifyCollaboration(page.id, true)
+    return { pageId: page.id, sourceRevision: restoredSourceRevision, quarantined: opts.legacyQuarantine }
+  }
+
 
   static async reconnectLinks(opts: ReconnectLinksOptions): Promise<void | false> {
     const pageHref = `/${opts.locale}/${opts.path}`

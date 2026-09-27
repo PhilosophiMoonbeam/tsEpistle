@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import type { Knex } from 'knex'
 import {
   groupPermissions,
+  normalizeGroupRulePath,
   type GroupPolicyDraft,
   type GroupPageRule,
   type GroupWorkspace,
@@ -68,11 +69,11 @@ export const normalizeGroupPolicy = (value: unknown, existingPermissions: string
   const pageRules = v.pageRules.map(candidate => {
     const r = recordValue(candidate),
       id = textValue(r.id, 'Rule identifier', 1, 64),
-      path = textValue(r.path, 'Rule path', 0, 500),
       match = String(r.match) as GroupPageRule['match'],
+      path = normalizeGroupRulePath(match, textValue(r.path, 'Rule path', 0, 500)),
       roles = strings(r.roles),
       locales = strings(r.locales ?? [])
-    if (!['START', 'END', 'REGEX', 'TAG', 'EXACT'].includes(match) || typeof r.deny !== 'boolean') return fail('Choose a rule match type and effect.')
+    if (!['START', 'SUBTREE', 'END', 'REGEX', 'TAG', 'EXACT'].includes(match) || typeof r.deny !== 'boolean') return fail('Choose a rule match type and effect.')
     if (!roles.length || roles.some(role => !groupPermissions.some(p => p.key === role && p.pageScoped)))
       return fail('Choose at least one page-scoped action for every rule.')
     if (locales.some(locale => !/^[a-zA-Z0-9_-]{1,24}$/.test(locale))) return fail('Choose valid language codes.')

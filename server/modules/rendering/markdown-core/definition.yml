@@ -61,3 +61,10 @@ props:
       - Spanish
       - Swedish
     public: true
+  wikilinks:
+    type: Boolean
+    default: false
+    title: Wiki links
+    hint: Convert [[page]] syntax to safe internal page links.
+    order: 7
+    public: true

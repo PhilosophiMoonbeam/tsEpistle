@@ -1,0 +1,55 @@
+{{- $pdb := .Values.podDisruptionBudget -}}
+{{- if not (kindIs "map" $pdb) -}}
+{{- fail "podDisruptionBudget must be an object" -}}
+{{- end -}}
+{{- if not (kindIs "bool" $pdb.enabled) -}}
+{{- fail "podDisruptionBudget.enabled must be a boolean" -}}
+{{- end -}}
+{{- if $pdb.enabled -}}
+{{- $minAvailable := $pdb.minAvailable -}}
+{{- $maxUnavailable := $pdb.maxUnavailable -}}
+{{- $minSet := not (kindIs "invalid" $minAvailable) -}}
+{{- $maxSet := not (kindIs "invalid" $maxUnavailable) -}}
+{{- if eq $minSet $maxSet -}}
+{{- fail "when podDisruptionBudget.enabled is true, set exactly one of minAvailable or maxUnavailable" -}}
+{{- end -}}
+{{- $replicaText := toString .Values.replicaCount -}}
+{{- if or (not (regexMatch "^[0-9]+$" $replicaText)) (lt (int .Values.replicaCount) 1) -}}
+{{- fail "replicaCount must be a positive integer when podDisruptionBudget.enabled is true" -}}
+{{- end -}}
+{{- $replicas := int .Values.replicaCount -}}
+{{- if $minSet -}}
+{{- $minText := toString $minAvailable -}}
+{{- if regexMatch "^(0|[1-9][0-9]*)$" $minText -}}
+{{- if gt (int $minAvailable) $replicas -}}
+{{- fail "podDisruptionBudget.minAvailable cannot exceed replicaCount" -}}
+{{- end -}}
+{{- else if not (regexMatch "^(0|[1-9][0-9]?|100)%$" $minText) -}}
+{{- fail "podDisruptionBudget.minAvailable must be a non-negative integer no greater than replicaCount or a percentage from 0% to 100%" -}}
+{{- end -}}
+{{- else -}}
+{{- $maxText := toString $maxUnavailable -}}
+{{- if regexMatch "^(0|[1-9][0-9]*)$" $maxText -}}
+{{- if gt (int $maxUnavailable) $replicas -}}
+{{- fail "podDisruptionBudget.maxUnavailable cannot exceed replicaCount" -}}
+{{- end -}}
+{{- else if not (regexMatch "^(0|[1-9][0-9]?|100)%$" $maxText) -}}
+{{- fail "podDisruptionBudget.maxUnavailable must be a non-negative integer no greater than replicaCount or a percentage from 0% to 100%" -}}
+{{- end -}}
+{{- end -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "wiki.fullname" . }}
+  labels:
+    {{- include "wiki.labels" . | nindent 4 }}
+spec:
+  {{- if $minSet }}
+  minAvailable: {{- if regexMatch "^(0|[1-9][0-9]*)$" (toString $minAvailable) }} {{ int $minAvailable }}{{- else }} {{ $minAvailable | quote }}{{- end }}
+  {{- else }}
+  maxUnavailable: {{- if regexMatch "^(0|[1-9][0-9]*)$" (toString $maxUnavailable) }} {{ int $maxUnavailable }}{{- else }} {{ $maxUnavailable | quote }}{{- end }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "wiki.selectorLabels" . | nindent 6 }}
+{{- end }}

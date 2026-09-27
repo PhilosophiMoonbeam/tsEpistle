@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import * as yaml from 'js-yaml'
+import { normalizePageFeatures, parsePageFeatures, type PageFeatures } from '../../../shared/page-features.ts'
 import {
   OKF_MAX_DOCUMENT_BYTES,
   exportOkfLinks,
@@ -36,7 +37,6 @@ export interface StoragePageEncodingInput {
   readonly editorKey: string
   readonly tags?: readonly (string | { readonly tag?: unknown })[]
 }
-
 const encodingTags = (tags: StoragePageEncodingInput['tags']): string[] =>
   (tags ?? []).flatMap(tag => {
     if (typeof tag === 'string') return tag.trim().length > 0 ? [tag.trim()] : []
@@ -62,7 +62,7 @@ export const encodeStoragePageDocument = (
 ): OkfPageDocument | string | Record<string, unknown> => {
   const tags = encodingTags(page.tags)
   if (page.contentType !== 'markdown') {
-    return pageHelper.injectPageMetadata({
+    const injected = pageHelper.injectPageMetadata({
       title: page.title,
       description: page.description,
       isPublished: page.isPublished === true || page.isPublished === 1,
@@ -73,28 +73,43 @@ export const encodeStoragePageDocument = (
       contentType: page.contentType,
       content: page.content
     })
+    const pageFeatures = normalizePageFeatures(page.extra?.pageFeatures)
+    if (page.contentType === 'json' && typeof injected === 'object' && injected !== null) {
+      const metadataValue = Reflect.get(injected, '_meta')
+      const metadata =
+        typeof metadataValue === 'object' && metadataValue !== null && !Array.isArray(metadataValue)
+          ? metadataValue as Record<string, unknown>
+          : {}
+      return { ...injected, _meta: { ...metadata, pageFeatures } }
+    }
+    if (page.contentType === 'html' && typeof injected === 'string') {
+      const metadataEnd = injected.indexOf('\n-->')
+      if (!injected.startsWith('<!--\n') || metadataEnd < 0) throw new TypeError('HTML page metadata comment is malformed')
+      return `${injected.slice(0, metadataEnd)}\npageFeatures: ${JSON.stringify(pageFeatures)}${injected.slice(metadataEnd)}`
+    }
+    return injected
   }
 
-  if (typeof page.content !== 'string') throw new TypeError('Markdown storage content must be a string')
-
-  let stored: ReturnType<typeof validateStoredOkfMetadata> = null
-  if (page.extra !== null && page.extra !== undefined && Object.hasOwn(page.extra, 'okf')) {
-    stored = validateStoredOkfMetadata(page.extra.okf)
-    if (stored === null) throw new TypeError('Storage page extra.okf must contain valid OKF metadata')
-  }
+  const hasStoredOkf = page.extra !== null && page.extra !== undefined && Object.hasOwn(page.extra, 'okf')
+  const stored = hasStoredOkf ? validateStoredOkfMetadata(page.extra?.okf) : null
+  if (hasStoredOkf && stored === null) throw new TypeError('Storage page extra.okf must contain valid OKF metadata')
+  const storedXWiki = stored?.metadata['x-wiki']
   const metadata: OkfMetadata = {
     ...(stored?.metadata ?? { type: 'Reference', status: 'stable' }),
     title: page.title,
     ...(page.description.trim().length > 0 ? { description: page.description } : {}),
     tags,
     'x-wiki': {
+      ...(typeof storedXWiki === 'object' && storedXWiki !== null && !Array.isArray(storedXWiki) ? storedXWiki as Record<string, unknown> : {}),
       published: page.isPublished === true || page.isPublished === 1,
       editor: page.editorKey,
       source_revision: String(page.sourceRevision),
       created_at: encodingDate(page.createdAt),
-      updated_at: encodingDate(page.updatedAt)
+      updated_at: encodingDate(page.updatedAt),
+      page_features: normalizePageFeatures(page.extra?.pageFeatures)
     }
   }
+  if (typeof page.content !== 'string') throw new TypeError('Markdown page content must be a string')
   const markdown = renderOkfDocument(metadata, exportOkfLinks(page.content))
   return {
     version: '0.2',
@@ -155,7 +170,6 @@ const tagsFrom = (value: unknown): string[] => {
   if (typeof value === 'string') return value.split(',').map(tag => tag.trim()).filter(Boolean)
   return []
 }
-
 const okfPublishedFrom = (metadata: OkfMetadata): boolean | undefined => {
   const extension = metadata['x-wiki']
   if (typeof extension !== 'object' || extension === null || Array.isArray(extension) || !Object.hasOwn(extension, 'published'))
@@ -166,10 +180,27 @@ const okfPublishedFrom = (metadata: OkfMetadata): boolean | undefined => {
   return published
 }
 
+const okfPageFeaturesFrom = (metadata: OkfMetadata): PageFeatures | undefined => {
+  const extension = metadata['x-wiki']
+  if (typeof extension !== 'object' || extension === null || Array.isArray(extension) || !Object.hasOwn(extension, 'page_features'))
+    return undefined
+  const pageFeatures = parsePageFeatures((extension as Record<string, unknown>).page_features)
+  if (pageFeatures === null) throw new TypeError('OKF extension x-wiki.page_features must be valid version 1 page features')
+  return pageFeatures
+}
+
+
+const pageFeaturesFrom = (value: unknown): PageFeatures => {
+  const pageFeatures = parsePageFeatures(value)
+  if (pageFeatures === null) throw new TypeError('Page feature metadata must use the strict version 1 schema')
+  return pageFeatures
+}
+
 const fieldsFrom = (metadata: Record<string, unknown> | null): StoragePageFields => ({
   ...(typeof metadata?.title === 'string' ? { title: metadata.title } : {}),
   ...(typeof metadata?.description === 'string' ? { description: metadata.description } : {}),
   ...(typeof metadata?.isPublished === 'boolean' ? { isPublished: metadata.isPublished } : {}),
+  ...(metadata?.pageFeatures === undefined ? {} : { pageFeatures: pageFeaturesFrom(metadata.pageFeatures) }),
   tags: tagsFrom(metadata?.tags)
 })
 
@@ -179,7 +210,8 @@ const defaultMetadata = (fields: StoragePageFields, importer: string, now: Date)
   ...(fields.title === undefined ? {} : { title: fields.title }),
   ...(fields.description === undefined || fields.description.trim().length === 0 ? {} : { description: fields.description }),
   tags: [...fields.tags],
-  generated: { by: importer, at: now.toISOString() }
+  generated: { by: importer, at: now.toISOString() },
+  ...(fields.pageFeatures === undefined ? {} : { 'x-wiki': { page_features: fields.pageFeatures } })
 })
 
 const result = (
@@ -251,10 +283,12 @@ export const classifyStoragePageDocument = (input: StoragePageDocumentInput): St
       const parsed = parseOkfDocument(text, now)
       const body = importOkfLinks(parsed.body, input.locale, input.pagePath)
       const published = okfPublishedFrom(parsed.metadata)
+      const pageFeatures = okfPageFeaturesFrom(parsed.metadata)
       const fields: StoragePageFields = {
         ...(parsed.metadata.title === undefined ? {} : { title: parsed.metadata.title }),
         ...(parsed.metadata.description === undefined ? {} : { description: parsed.metadata.description }),
         ...(published === undefined ? {} : { isPublished: published }),
+        ...(pageFeatures === undefined ? {} : { pageFeatures }),
         tags: parsed.metadata.tags === undefined ? [] : [...parsed.metadata.tags]
       }
       return result('okf_valid', source, body, fields, parsed.metadata, [])
@@ -264,9 +298,59 @@ export const classifyStoragePageDocument = (input: StoragePageDocumentInput): St
   }
 
   if (frontmatter !== null && frontmatterMetadata !== null) {
-    const fields = fieldsFrom(frontmatterMetadata)
-    const body = text.slice(frontmatter[0].length).replace(/^\r?\n/u, '').replaceAll('\r\n', '\n')
-    return result('legacy_wiki', source, body, fields, defaultMetadata(fields, importer, now), [])
+    try {
+      const fields = fieldsFrom(frontmatterMetadata)
+      const body = text.slice(frontmatter[0].length).replace(/^\r?\n/u, '').replaceAll('\r\n', '\n')
+      return result('legacy_wiki', source, body, fields, defaultMetadata(fields, importer, now), [])
+    } catch (error: unknown) {
+      return result('okf_invalid', source, text, { tags: [] }, null, [diagnostic(error)])
+    }
+  }
+
+  if (input.contentType === 'json') {
+    let parsedJson: unknown = null
+    try {
+      parsedJson = JSON.parse(text)
+    } catch {
+      parsedJson = null
+    }
+    if (typeof parsedJson === 'object' && parsedJson !== null && !Array.isArray(parsedJson)) {
+      const metadata = Reflect.get(parsedJson, '_meta')
+      if (
+        typeof metadata === 'object' &&
+        metadata !== null &&
+        !Array.isArray(metadata) &&
+        Object.hasOwn(metadata, 'pageFeatures')
+      ) {
+        try {
+          const fields: StoragePageFields = { pageFeatures: pageFeaturesFrom(Reflect.get(metadata, 'pageFeatures')), tags: [] }
+          return result('legacy_wiki', source, text, fields, defaultMetadata(fields, importer, now), [])
+        } catch (error: unknown) {
+          return result('okf_invalid', source, text, { tags: [] }, null, [diagnostic(error)])
+        }
+      }
+    }
+  }
+
+  if (input.contentType === 'html') {
+    const htmlMetadata = /^<!--\r?\n([\s\S]*?)\r?\n-->/u.exec(text)
+    const metadataText = htmlMetadata?.[1]
+    if (metadataText !== undefined && /^\s*pageFeatures\s*:/mu.test(metadataText)) {
+      const parsedHtmlMetadata = parseYaml(metadataText)
+      if (parsedHtmlMetadata.error !== null || parsedHtmlMetadata.metadata === null) {
+        const error = parsedHtmlMetadata.error ?? new TypeError('HTML page metadata must be an object')
+        return result('okf_invalid', source, text, { tags: [] }, null, [diagnostic(error)])
+      }
+      try {
+        const fields: StoragePageFields = {
+          pageFeatures: pageFeaturesFrom(parsedHtmlMetadata.metadata.pageFeatures),
+          tags: []
+        }
+        return result('legacy_wiki', source, text, fields, defaultMetadata(fields, importer, now), [])
+      } catch (error: unknown) {
+        return result('okf_invalid', source, text, { tags: [] }, null, [diagnostic(error)])
+      }
+    }
   }
 
   if (LEGACY_V1.test(text)) {

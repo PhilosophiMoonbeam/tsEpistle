@@ -1,21 +1,69 @@
 import { z } from 'zod'
+import { LocaleCodeSchema } from './locale-policy.ts'
 
 export const PROFILE_APPEARANCE_VALUES = ['system', 'light', 'dark'] as const
 export const USER_FONT_FAMILY_VALUES = ['blend', 'newsreader', 'roboto-flex'] as const
 export const USER_TIME_FORMAT_VALUES = ['locale', '12h', '24h'] as const
+export const USER_CONTENT_TEXT_SIZE_VALUES = ['default', 'large', 'larger'] as const
 
 export const DEFAULT_USER_FONT_FAMILY = 'blend' as const
 export const DEFAULT_USER_TIMEZONE = 'UTC' as const
 export const DEFAULT_USER_DATE_FORMAT = '' as const
 export const DEFAULT_USER_TIME_FORMAT = 'locale' as const
+export const DEFAULT_USER_REDUCE_MOTION = false as const
+export const DEFAULT_USER_UNDERLINE_LINKS = false as const
+export const DEFAULT_USER_CONTENT_TEXT_SIZE = 'default' as const
+export const DEFAULT_USER_COMMUNICATION_LOCALE = null
 
 export const ProfileAppearanceSchema = z.enum(PROFILE_APPEARANCE_VALUES)
 export const UserFontFamilySchema = z.enum(USER_FONT_FAMILY_VALUES)
 export const UserTimeFormatSchema = z.enum(USER_TIME_FORMAT_VALUES)
+export const UserContentTextSizeSchema = z.enum(USER_CONTENT_TEXT_SIZE_VALUES)
+
+const isCanonicalLocaleCode = (code: string): boolean => {
+  try {
+    return Intl.getCanonicalLocales(code)[0] === code
+  } catch {
+    return false
+  }
+}
+export const UserCommunicationLocaleSchema = z.union([
+  LocaleCodeSchema.refine(isCanonicalLocaleCode, 'Use a canonical language code.'),
+  z.null()
+])
 
 export type ProfileAppearance = z.infer<typeof ProfileAppearanceSchema>
 export type UserFontFamily = z.infer<typeof UserFontFamilySchema>
 export type UserTimeFormat = z.infer<typeof UserTimeFormatSchema>
+export type UserContentTextSize = z.infer<typeof UserContentTextSizeSchema>
+export type UserCommunicationLocale = z.infer<typeof UserCommunicationLocaleSchema>
+
+export interface UserProfilePreferences {
+  reduceMotion: boolean
+  underlineLinks: boolean
+  contentTextSize: UserContentTextSize
+  communicationLocale: UserCommunicationLocale
+}
+
+export const userProfilePreferenceDefaults: UserProfilePreferences = {
+  reduceMotion: DEFAULT_USER_REDUCE_MOTION,
+  underlineLinks: DEFAULT_USER_UNDERLINE_LINKS,
+  contentTextSize: DEFAULT_USER_CONTENT_TEXT_SIZE,
+  communicationLocale: DEFAULT_USER_COMMUNICATION_LOCALE
+}
+
+export const isUserContentTextSize = (value: unknown): value is UserContentTextSize => UserContentTextSizeSchema.safeParse(value).success
+
+export const normalizeUserProfilePreferences = (value: unknown): UserProfilePreferences => {
+  const record = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+  const communicationLocale = UserCommunicationLocaleSchema.safeParse(record.communicationLocale)
+  return {
+    reduceMotion: record.reduceMotion === true,
+    underlineLinks: record.underlineLinks === true,
+    contentTextSize: isUserContentTextSize(record.contentTextSize) ? record.contentTextSize : DEFAULT_USER_CONTENT_TEXT_SIZE,
+    communicationLocale: communicationLocale.success ? communicationLocale.data : DEFAULT_USER_COMMUNICATION_LOCALE
+  }
+}
 
 export interface UserPresentationDefaults {
   timezone: string
@@ -65,7 +113,11 @@ export const ProfilePreferencesInputSchema = z
   .object({
     appearance: ProfileAppearanceSchema,
     fontFamily: UserFontFamilySchema,
-    timeFormat: UserTimeFormatSchema
+    timeFormat: UserTimeFormatSchema,
+    reduceMotion: z.boolean(),
+    underlineLinks: z.boolean(),
+    contentTextSize: UserContentTextSizeSchema,
+    communicationLocale: UserCommunicationLocaleSchema
   })
   .strict()
   .partial()
