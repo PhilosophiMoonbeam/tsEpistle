@@ -17,7 +17,7 @@
             <v-alert v-if="pageFeatureConflict" type="warning" variant="tonal" class="mb-4">Page features changed on the server while this draft was open. Reset to review the saved values before editing again.</v-alert>
             <v-alert v-else-if="pageFeatureError" type="error" variant="tonal" class="mb-4">{{ pageFeatureError }}</v-alert>
             <v-switch v-model="pageFeaturesDraft.linksVisible" color="primary" label="Show links" hint="Show the page’s link section to readers." persistent-hint inset :disabled="pageFeatureControlsDisabled" />
-            <v-switch v-model="pageFeaturesDraft.ratingsAllowed" color="primary" label="Allow ratings" hint="Allow readers to rate this page." persistent-hint inset :disabled="pageFeatureControlsDisabled" />
+            <v-switch v-model="pageFeaturesDraft.ratingsAllowed" color="primary" label="Allow ratings" hint="OFF hides the ratings panel and blocks rating requests on this page. ON still requires site-wide availability." persistent-hint inset :disabled="pageFeatureControlsDisabled" />
             <v-switch v-model="pageFeaturesDraft.lastEditorVisible" color="primary" label="Show last editor" hint="Show who last edited this page to readers." persistent-hint inset :disabled="pageFeatureControlsDisabled" />
             <div class="page-feature-settings-actions">
               <span role="status">{{ pageFeatureConflict ? 'Saved settings changed; reset to review them.' : pageFeatureDirty ? 'Unsaved changes' : 'Matches the saved page' }}</span>

@@ -5101,6 +5101,19 @@ export default defineComponent({
   display: contents;
 }
 
+.page-desktop-rail > .wiki-page-ratings,
+.page-tablet-tools > .wiki-page-ratings,
+.page-mobile-metadata > .wiki-page-ratings {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.page-desktop-rail > .wiki-page-ratings {
+  margin-block-end: var(--wiki-space-5);
+}
+
 .page-col-sd--with-toc {
   margin-block-start: calc(
     (var(--page-toc-desktop-lift) * -1) +
@@ -5945,7 +5958,8 @@ export default defineComponent({
   .page-tablet-tools > .page-tools-card,
   .page-tablet-tools > .page-toc-card,
   .page-tablet-tools > .page-tags-card,
-  .page-tablet-tools > .page-comments-card {
+  .page-tablet-tools > .page-comments-card,
+  .page-tablet-tools > .wiki-page-ratings {
     order: initial;
     width: 100%;
     max-width: 100%;
@@ -6062,7 +6076,8 @@ export default defineComponent({
     gap: var(--wiki-space-3);
   }
 
-  .page-mobile-metadata > .v-card {
+  .page-mobile-metadata > .v-card,
+  .page-mobile-metadata > .wiki-page-ratings {
     width: 100%;
     max-width: 100%;
     flex: 0 0 auto;
