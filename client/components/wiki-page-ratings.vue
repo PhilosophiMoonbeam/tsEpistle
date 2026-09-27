@@ -1,89 +1,104 @@
 <template lang="pug">
 section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined" aria-labelledby="wiki-page-ratings-title")
-  .wiki-page-ratings__heading
+  header.wiki-page-ratings__heading
     h2#wiki-page-ratings-title Page rating
-    span.wiki-page-ratings__mode(v-if="view && !stale") {{ view.kind === 'thumbs' ? 'Thumbs' : 'Stars' }}
+    p.wiki-page-ratings__prompt(v-if="!ratingsEnabled") Ratings are not available on this site.
+    p.wiki-page-ratings__prompt(v-else-if="!isHuman") Sign in with a personal account to rate this page.
+    p.wiki-page-ratings__prompt(v-else-if="view && !stale") {{ view.kind === 'thumbs' ? 'Was this page useful?' : 'How would you rate this page?' }}
+    p.wiki-page-ratings__prompt(v-else-if="!stale") Reader feedback helps improve this page.
 
-  v-alert(v-if="!ratingsEnabled" type="info" variant="tonal" density="compact" role="status") Ratings are not available on this site.
-  v-alert(v-else-if="!isHuman" type="info" variant="tonal" density="compact" role="status") Sign in with a personal account to view or cast a rating.
+  template(v-if="ratingsEnabled && isHuman")
+    template(v-if="loading && !view")
+      .wiki-page-ratings__loading(role="status" aria-live="polite")
+        v-progress-circular(color="primary" :size="20" :width="2" indeterminate aria-hidden="true")
+        span Loading page rating…
 
-  async-state(v-else-if="loading && !view" state="loading" title="Loading page rating")
-  async-state(v-else-if="!view && error && !stale" state="error" title="Page rating could not be loaded" :message="error" retry-label="Try again" @retry="refresh")
+    template(v-else-if="!view && error && !stale")
+      .wiki-page-ratings__load-error
+        p.wiki-page-ratings__error(role="alert") {{ error }}
+        v-btn(type="button" size="small" variant="text" prepend-icon="mdi-refresh" @click="refresh") Try again
 
-  template(v-else-if="view && !stale")
-    v-alert(v-if="error" type="error" variant="tonal" density="compact" role="alert") {{ error }}
-    v-alert(v-if="view.count === 0" type="info" variant="tonal" density="compact" role="status") No ratings have been cast on this page yet.
-    .wiki-page-ratings__summary(aria-live="polite" aria-atomic="true")
-      strong {{ summary }}
-      span(v-if="view.ownVote !== null") Your rating: {{ view.kind === 'stars' ? `${view.ownVote} out of 5 stars` : (view.ownVote === 1 ? 'Helpful' : 'Not helpful') }}.
-      span(v-else-if="!isHuman") Sign in with a personal account to rate this page.
-    .wiki-page-ratings__controls(v-if="view.kind === 'thumbs'" role="group" aria-label="Rate this page")
-      v-btn(
-        type="button"
-        size="small"
-        :variant="view.ownVote === 1 ? 'tonal' : 'outlined'"
-        :color="view.ownVote === 1 ? 'primary' : undefined"
-        :disabled="!canVote"
-        :loading="submitting && pendingVote === 1"
-        :aria-pressed="view.ownVote === 1 ? 'true' : 'false'"
-        :aria-label="`Rate this page as helpful, ${view.distribution['1']} votes`"
-        @click="saveVote(1)"
-      )
-        v-icon(start aria-hidden="true") mdi-thumb-up-outline
-        | Helpful · {{ view.distribution['1'] }}
-      v-btn(
-        type="button"
-        size="small"
-        :variant="view.ownVote === -1 ? 'tonal' : 'outlined'"
-        :color="view.ownVote === -1 ? 'primary' : undefined"
-        :disabled="!canVote"
-        :loading="submitting && pendingVote === -1"
-        :aria-pressed="view.ownVote === -1 ? 'true' : 'false'"
-        :aria-label="`Rate this page as not helpful, ${view.distribution['-1']} votes`"
-        @click="saveVote(-1)"
-      )
-        v-icon(start aria-hidden="true") mdi-thumb-down-outline
-        | Not helpful · {{ view.distribution['-1'] }}
+    template(v-else-if="view && !stale")
+      p.wiki-page-ratings__error(v-if="error" role="alert") {{ error }}
+      p.wiki-page-ratings__empty(v-if="view.count === 0") No ratings yet. Your response can be the first.
 
-    .wiki-page-ratings__controls(v-else role="group" aria-label="Choose your star rating")
-      v-btn(
-        v-for="value in starValues"
-        :key="value"
-        type="button"
-        icon
-        size="small"
-        variant="text"
-        :color="view.ownVote !== null && value <= view.ownVote ? 'primary' : undefined"
-        :loading="submitting && pendingVote === value"
-        :aria-pressed="view.ownVote === value ? 'true' : 'false'"
-        :aria-label="`Rate this page ${value} out of 5 stars`"
-        @click="saveVote(value)"
-      )
-        v-icon(aria-hidden="true") {{ view.ownVote !== null && value <= view.ownVote ? 'mdi-star' : 'mdi-star-outline' }}
-      span.wiki-page-ratings__score(v-if="view.score !== null") Average {{ view.score.toFixed(1) }} / 5
+      .wiki-page-ratings__controls.wiki-page-ratings__controls--thumbs(v-if="view.kind === 'thumbs'" role="group" aria-label="Rate this page")
+        v-btn(
+          class="wiki-page-ratings__choice"
+          type="button"
+          size="small"
+          :variant="view.ownVote === 1 ? 'tonal' : 'outlined'"
+          :color="view.ownVote === 1 ? 'primary' : undefined"
+          :disabled="!canVote"
+          :loading="submitting && pendingVote === 1"
+          :aria-pressed="view.ownVote === 1 ? 'true' : 'false'"
+          :aria-label="`Rate this page as helpful, ${view.distribution['1']} votes`"
+          @click="saveVote(1)"
+        )
+          v-icon(start aria-hidden="true") mdi-thumb-up-outline
+          span.wiki-page-ratings__choice-label Helpful
+          span.wiki-page-ratings__choice-count(aria-hidden="true") {{ view.distribution['1'] }}
+        v-btn(
+          class="wiki-page-ratings__choice"
+          type="button"
+          size="small"
+          :variant="view.ownVote === -1 ? 'tonal' : 'outlined'"
+          :color="view.ownVote === -1 ? 'primary' : undefined"
+          :disabled="!canVote"
+          :loading="submitting && pendingVote === -1"
+          :aria-pressed="view.ownVote === -1 ? 'true' : 'false'"
+          :aria-label="`Rate this page as not helpful, ${view.distribution['-1']} votes`"
+          @click="saveVote(-1)"
+        )
+          v-icon(start aria-hidden="true") mdi-thumb-down-outline
+          span.wiki-page-ratings__choice-label Not helpful
+          span.wiki-page-ratings__choice-count(aria-hidden="true") {{ view.distribution['-1'] }}
 
-    .wiki-page-ratings__footer
-      span(v-if="isHuman && loading") Refreshing current rating totals…
-      v-btn(
-        v-if="view.ownVote !== null"
-        type="button"
-        size="small"
-        variant="text"
-        :disabled="!canVote"
-        :loading="submitting && pendingVote === null"
-        @click="removeVote"
-      ) Remove my rating
-    p.wiki-page-ratings__feedback(v-if="feedback" role="status" aria-live="polite" aria-atomic="true") {{ feedback }}
+      .wiki-page-ratings__controls.wiki-page-ratings__controls--stars(v-else role="group" aria-label="Choose your star rating")
+        v-btn(
+          v-for="value in starValues"
+          :key="value"
+          class="wiki-page-ratings__star"
+          type="button"
+          icon
+          size="small"
+          variant="text"
+          :color="view.ownVote !== null && value <= view.ownVote ? 'primary' : undefined"
+          :disabled="!canVote"
+          :loading="submitting && pendingVote === value"
+          :aria-pressed="view.ownVote === value ? 'true' : 'false'"
+          :aria-label="`Rate this page ${value} out of 5 stars`"
+          @click="saveVote(value)"
+        )
+          v-icon(aria-hidden="true") {{ view.ownVote !== null && value <= view.ownVote ? 'mdi-star' : 'mdi-star-outline' }}
 
-  .wiki-page-ratings__stale(v-else-if="stale" role="status" aria-live="polite")
-    p {{ staleMessage }}
-    v-alert(v-if="error" type="error" variant="tonal" density="compact" role="alert") {{ error }}
-    v-btn(type="button" size="small" variant="outlined" prepend-icon="mdi-refresh" :loading="loading" :disabled="loading || submitting" @click="refresh") Refresh rating
+      .wiki-page-ratings__aggregate(aria-live="polite" aria-atomic="true")
+        strong(v-if="view.kind === 'thumbs'") {{ view.count }} {{ view.count === 1 ? 'vote' : 'votes' }}
+        strong(v-else) {{ summary }}
+        span.wiki-page-ratings__own-vote(v-if="view.ownVote !== null") Your rating: {{ view.kind === 'stars' ? `${view.ownVote} out of 5 stars` : (view.ownVote === 1 ? 'Helpful' : 'Not helpful') }}.
+
+      .wiki-page-ratings__footer
+        span(v-if="isHuman && loading") Refreshing current rating totals…
+        v-btn(
+          v-if="view.ownVote !== null"
+          class="wiki-page-ratings__remove"
+          type="button"
+          size="small"
+          variant="text"
+          :disabled="!canVote"
+          :loading="submitting && pendingVote === null"
+          @click="removeVote"
+        ) Remove my rating
+      p.wiki-page-ratings__feedback(v-if="feedback" role="status" aria-live="polite" aria-atomic="true") {{ feedback }}
+
+    .wiki-page-ratings__stale(v-else-if="stale" role="status" aria-live="polite")
+      p {{ staleMessage }}
+      p.wiki-page-ratings__error(v-if="error" role="alert") {{ error }}
+      v-btn(type="button" size="small" variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="loading || submitting" @click="refresh") Refresh rating
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import AsyncState from './common/async-state.vue'
 import { fetchPageRating, PageRatingApiError, putPageRating, removePageRating } from '../helpers/page-ratings-api.ts'
 import type { PageRatingView, PageRatingVote } from '../../shared/page-ratings.ts'
 import { wikiStore } from '../store/index.ts'
@@ -285,98 +300,238 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .wiki-page-ratings {
+  box-sizing: border-box;
   display: grid;
-  gap: .75rem;
+  gap: var(--wiki-space-3);
+  width: 100%;
   min-width: 0;
+  padding: var(--wiki-space-4);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs);
+  color: rgb(var(--v-theme-on-surface));
 }
 
-.wiki-page-ratings__heading,
-.wiki-page-ratings__footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: .75rem;
+.wiki-page-ratings__heading {
+  display: grid;
+  min-width: 0;
+  gap: .25rem;
 }
 
 .wiki-page-ratings__heading h2 {
   margin: 0;
-  color: rgb(var(--v-theme-on-surface));
-  font-size: .95rem;
-  font-weight: 650;
-  letter-spacing: -.015em;
+  font-family: var(--wiki-font-display);
+  font-size: 1.05rem;
+  font-weight: 560;
+  letter-spacing: -.02em;
+  line-height: 1.2;
 }
 
-.wiki-page-ratings__mode {
-  color: rgb(var(--v-theme-on-surface-variant));
-  font-size: .72rem;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-
-.wiki-page-ratings__summary,
-.wiki-page-ratings__controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: .5rem;
-}
-
-.wiki-page-ratings__summary {
-  color: rgb(var(--v-theme-on-surface-variant));
-  flex-direction: column;
-  align-items: flex-start;
+.wiki-page-ratings__prompt {
+  margin: 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
   font-size: .82rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
-.wiki-page-ratings__summary strong {
-  color: rgb(var(--v-theme-on-surface));
-  font-size: .9rem;
-  font-weight: 600;
-}
-
-.wiki-page-ratings__score {
-  color: rgb(var(--v-theme-on-surface-variant));
+.wiki-page-ratings__loading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
   font-size: .8rem;
-  margin-inline-start: .25rem;
+}
+
+.wiki-page-ratings__load-error {
+  display: grid;
+  justify-items: start;
+  gap: var(--wiki-space-1);
+}
+
+.wiki-page-ratings__error {
+  margin: 0;
+  color: rgb(var(--v-theme-error));
+  font-size: .8rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.wiki-page-ratings__empty,
+.wiki-page-ratings__own-vote,
+.wiki-page-ratings__feedback {
+  margin: 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  font-size: .78rem;
+  line-height: 1.4;
+}
+
+.wiki-page-ratings__controls {
+  display: grid;
+  min-width: 0;
+}
+
+.wiki-page-ratings__controls--thumbs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--wiki-space-2);
+}
+
+.wiki-page-ratings__controls--thumbs :deep(.v-btn) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding-inline: .35rem;
+}
+
+.wiki-page-ratings__controls--thumbs :deep(.v-btn__content) {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: .12rem .25rem;
+  line-height: 1.15;
+  white-space: normal;
+}
+
+.wiki-page-ratings__choice-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.wiki-page-ratings__choice-count {
+  color: color-mix(in srgb, currentColor 72%, transparent);
+  font-size: .75em;
+  font-variant-numeric: tabular-nums;
+}
+
+.wiki-page-ratings__controls--stars {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: .25rem;
+}
+
+.wiki-page-ratings__controls--stars :deep(.v-btn) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.75rem;
+  aspect-ratio: 1;
+  padding: 0;
+}
+
+.wiki-page-ratings__controls--stars :deep(.v-icon) {
+  font-size: 1.25rem;
+}
+
+.wiki-page-ratings :deep(.v-btn) {
+  letter-spacing: normal;
+  text-transform: none;
+}
+.wiki-page-ratings :deep(.v-btn:focus-visible) {
+  outline: 2px solid var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
+  outline-offset: 2px;
+}
+
+.wiki-page-ratings__aggregate {
+  display: grid;
+  min-width: 0;
+  gap: .15rem;
+  padding-block-start: var(--wiki-space-2);
+  border-block-start: 1px solid var(--wiki-surface-border);
+}
+
+.wiki-page-ratings__aggregate strong {
+  font-size: .82rem;
+  font-weight: 650;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .wiki-page-ratings__footer {
-  color: rgb(var(--v-theme-on-surface-variant));
-  font-size: .78rem;
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wiki-space-1);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  font-size: .75rem;
+}
+
+.wiki-page-ratings__footer :deep(.v-btn) {
+  min-width: 0;
+  min-height: 2.75rem;
+  margin-inline-start: auto;
+  padding-inline: var(--wiki-space-2);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 76%, transparent);
 }
 
 .wiki-page-ratings__feedback {
-  margin: 0;
-  color: rgb(var(--v-theme-on-surface-variant));
-  font-size: .8rem;
+  color: rgb(var(--v-theme-success));
 }
 
 .wiki-page-ratings__stale {
   display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: .75rem;
-  padding: .75rem;
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 32%, transparent);
-  border-radius: var(--wiki-control-radius, .875rem);
-  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 7%, rgb(var(--v-theme-surface)));
+  gap: var(--wiki-space-2);
+  padding-block-start: var(--wiki-space-3);
+  border-block-start: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 38%, var(--wiki-surface-border));
 }
 
-.wiki-page-ratings__stale p {
+.wiki-page-ratings__stale > p:first-child {
+  flex: 1 1 11rem;
+  min-width: 0;
   margin: 0;
-  font-size: .82rem;
+  font-size: .8rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
-@media (max-width: 599.98px) {
+.wiki-page-ratings__stale :deep(.v-btn) {
+  min-width: 0;
+  min-height: 2.75rem;
+  padding-inline: var(--wiki-space-2);
+}
+
+@media (max-width: 20rem) {
+  .wiki-page-ratings {
+    gap: var(--wiki-space-2);
+    padding: var(--wiki-space-2);
+  }
+
+  .wiki-page-ratings__controls--thumbs {
+    gap: var(--wiki-space-1);
+  }
+
+  .wiki-page-ratings__controls--stars {
+    gap: .125rem;
+  }
+
   .wiki-page-ratings__stale {
-    align-items: stretch;
+    align-items: flex-start;
     flex-direction: column;
   }
 }
 
 @media (forced-colors: active) {
-  .wiki-page-ratings__stale {
+  .wiki-page-ratings {
     border-color: CanvasText;
+    box-shadow: none;
+  }
+
+  .wiki-page-ratings__stale {
+    border-block-start-color: CanvasText;
+  }
+
+  .wiki-page-ratings :deep(.v-btn:focus-visible) {
+    outline-color: Highlight;
+  }
+
+  .wiki-page-ratings__controls--thumbs :deep(.v-btn--variant-outlined) {
+    border-color: ButtonText;
   }
 }
 </style>
