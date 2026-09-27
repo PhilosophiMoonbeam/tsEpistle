@@ -1,31 +1,32 @@
 import { randomUUID } from 'node:crypto'
-import express, { type NextFunction, type Request, type RequestHandler, type Response } from 'express'
-import type { Knex } from 'knex'
-import { z } from 'zod'
+import { hostHeaderValidation, originValidation } from '@modelcontextprotocol/express'
+import { toNodeHandler } from '@modelcontextprotocol/node'
 import {
-  McpServer,
-  ResourceTemplate,
+  type AuthInfo,
   acceptedContent,
   createMcpHandler,
   createRequestStateCodec,
   inputRequired,
-  type AuthInfo,
+  McpServer,
+  PROTOCOL_VERSION_META_KEY,
+  ResourceTemplate,
   type ServerContext
 } from '@modelcontextprotocol/server'
-import { hostHeaderValidation, originValidation } from '@modelcontextprotocol/express'
-import { toNodeHandler } from '@modelcontextprotocol/node'
+import express, { type NextFunction, type Request, type RequestHandler, type Response } from 'express'
+import type { Knex } from 'knex'
+import { z } from 'zod'
 
 import { AGENT_TOOL_NAMES, type AgentActionName, type AgentFeatureFlags } from '../../shared/agents/contracts.ts'
+import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
 import { ACTION_CATALOG, actionDefinition } from './actions/catalog.ts'
-import { ActionKernel, ActionKernelError, toMcpAction, type ActionAdmissionSnapshot, type ActionAuthority } from './actions/kernel.ts'
-import { registerPageReadActions, type PageReadActionDependencies } from './actions/page-reads.ts'
-import { registerPageProposalActions, type PageProposalActionDependencies } from './actions/page-proposals.ts'
+import { type ActionAdmissionSnapshot, type ActionAuthority, ActionKernel, ActionKernelError, toMcpAction } from './actions/kernel.ts'
+import { type PageProposalActionDependencies, registerPageProposalActions } from './actions/page-proposals.ts'
+import { type PageReadActionDependencies, registerPageReadActions } from './actions/page-reads.ts'
 import { registerSkillReadActions } from './actions/skill-reads.ts'
-import { getMcpProposal } from './proposals/repository.ts'
 import { canonicalMcpResource } from './origins.ts'
+import { getMcpProposal } from './proposals/repository.ts'
 import { SkillRuntime } from './skills/runtime.ts'
 import { validateSkillVirtualPath } from './skills/virtual-path.ts'
-import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
 
 const UUIDSchema = z.uuid()
 const IdentitySchema = z.strictObject({ apiKeyId: z.number().int().positive(), groupId: z.number().int().positive() })
@@ -506,6 +507,21 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
       return res.status(401).json({ error: 'API key MCP resource claim is invalid' })
     }
     if (claimed.href !== resourceUrl.href) return res.status(403).json({ error: 'API key is bound to a different MCP resource' })
+    // SDK 2.1 accepts a modern body claim without its required HTTP version header.
+    const body: unknown = req.body
+    if (req.method === 'POST' && req.get('MCP-Protocol-Version') === undefined && body && typeof body === 'object' && !Array.isArray(body)) {
+      const request = body as Record<string, unknown>
+      const params = request.params
+      const meta = request._meta ?? (params && typeof params === 'object' && !Array.isArray(params) ? (params as Record<string, unknown>)._meta : undefined)
+      if (meta && typeof meta === 'object' && !Array.isArray(meta) && Object.hasOwn(meta, PROTOCOL_VERSION_META_KEY)) {
+        const id = request.id
+        return res.status(400).json({
+          jsonrpc: '2.0',
+          error: { code: -32020, message: 'MCP-Protocol-Version header is required for modern requests' },
+          id: typeof id === 'string' || typeof id === 'number' ? id : null
+        })
+      }
+    }
     const authInfo: AuthInfo = {
       token,
       clientId: `wiki-api-key:${req.authContext.apiKeyId}`,
