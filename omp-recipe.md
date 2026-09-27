@@ -31,35 +31,37 @@ Use exact provider-qualified selectors. The assessed installation registers the 
 
 | Function | Agent / routing | Starting model and effort | Use |
 |---|---|---|---|
-| Main | `modelRoles.default` | `openai-codex/gpt-6-sol:medium` | Own requirements, decomposition, integration, and delivery; implement small cohesive changes directly |
+| Main | `modelRoles.default` | `openai-codex/gpt-6-sol:medium` | Own requirements, decomposition, integration, and delivery; consult Architecture when a decision crosses or might cross the boundary in section 6; implement small cohesive changes directly |
 | Implementation | Existing `task`; `modelRoles.task` | `openai-codex/gpt-6-luna:max` | Decompose substantial work into bounded independent code-writing units, implement concurrently in isolated worktrees, and integrate the combined result |
-| Architecture | Custom `planner` defined below; `modelRoles.plan` | `openai-codex/gpt-6-astra:high` | Material architecture, shared contracts, schema/data transitions, or trust-boundary decisions |
+| Architecture | Custom `planner` defined below; `modelRoles.plan` | `openai-codex/gpt-6-astra:xhigh` | Material architecture, shared contracts, schema/data transitions, or trust-boundary decisions |
 | Discovery | Existing `scout` | `openai-codex/gpt-6-luna:medium` | Unmapped subsystems, independent research, exact source/tool evidence |
 | Mechanical work | Existing `sonic` | `openai-codex/gpt-6-luna:medium` | Substantial mechanical batches; run already-known commands directly without an extra agent |
-| Debug escalation | Existing implementation owner; `modelRoles.slow` if used | `openai-codex/gpt-6-astra:low` | Semantic failures, contradictory evidence, or a concrete failed hypothesis requiring deeper reasoning |
-| Test specialist | Optional `tester` | `openai-codex/gpt-5.6-sol:high` | Difficult behavioral test design or failure analysis; routine tests remain with the implementer |
-| Documentation | Optional `docwriter` | `openai-codex/gpt-6-sol:low` | Large independent documentation work; small updates remain with the implementer |
+| Debug escalation | Existing implementation owner; `modelRoles.slow` if used | `openai-codex/gpt-6-astra:medium` | Semantic failures, contradictory evidence, or a concrete failed hypothesis requiring deeper reasoning |
+| Test specialist | Custom `tester`; `modelRoles.tester` | `openai-codex/gpt-6-sol:high` | Difficult behavioral test design or failure analysis; routine tests remain with the implementer |
+| Documentation | Custom `docwriter`; `modelRoles.docwriter` | `openai-codex/gpt-6-sol:medium` | Large independent documentation work; small updates remain with the implementer |
 | Independent review | Existing `reviewer` / `security-reviewer` | `openai-codex/gpt-6-sol:high` | Risk-selected correctness/security review; use `xhigh` for genuinely difficult high-risk changes |
 
-These are starting assignments, not mandatory participants in every task. Implementation uses Luna at `max`; reserve `gpt-6-astra:low` for **Debug escalation**, not routine implementation or the optional tester. Raise other roles' effort when evidence warrants it; do not automatically run every reviewer at maximum effort. The optional tester's existing `gpt-5.6-sol:high` assignment is unchanged. Difficult semantic diagnosis can still require escalation despite Luna's maximum effort.
+These are starting assignments, not mandatory participants in every task. Implementation uses Luna at `max`; reserve `gpt-6-astra:medium` for **Debug escalation**, not routine implementation or the test specialist. Raise other roles' effort when evidence warrants it; do not automatically run every reviewer at maximum effort. Difficult semantic diagnosis can still require escalation despite Luna's maximum effort.
 
 - Reuse bundled agents and intentionally maintained custom definitions. `planner` is **not bundled**: install the definition below on a fresh setup. Keep that name as the recipe's stable dispatch identifier; its description and instructions narrow it to architectural decisions, while Main owns ordinary planning. Do not also create an `architect` alias or force every project to maintain six custom agents.
 - Keep routing centralized through `modelRoles` and quoted aliases such as `"@plan"`, referenced by agent frontmatter or `task.agentModelOverrides`. Model roles alone do not create agents or guarantee that bundled agents use those roles.
 - Align agent thinking settings with the intended selector; remove conflicting effort overrides when intentionally changing that assignment. Verify actual resolution rather than assuming a role suffix wins every precedence layer.
-- The assessed GPT-6 models and the retained optional tester model advertise `low`, `medium`, `high`, `xhigh`, and `max`; their lowest advertised level is `low`. Do not treat `off`, `none`, and `minimal` as interchangeable.
+- The assessed GPT-6 models advertise `low`, `medium`, `high`, `xhigh`, and `max`; their lowest advertised level is `low`. Do not treat `off`, `none`, and `minimal` as interchangeable.
 - Do not silently substitute unavailable models. Check startup/auth fallback, retry fallback, and prewalk handoffs as well as initial selection. Permit only explicitly approved fallback routes; if exact routing cannot be enforced, retain the working assignment and report the limitation.
 - Preserve unrelated roles such as vision, commit, and tiny. A new advisor model is unnecessary when automatic advice is disabled.
 
-For the current recipe assignments, merge these role and dispatch routes into the active scope; keep unrelated provider-qualified roles (commit, vision, tiny, smol, judge) and other user settings unless they conflict with the requested single-provider routing. An optional tester or docwriter is not installed merely by adding a model role.
+For the current recipe assignments, merge these role and dispatch routes into the active scope; keep unrelated provider-qualified roles (commit, vision, tiny, smol, judge) and other user settings unless they conflict with the requested single-provider routing. `tester` and `docwriter` are custom agents: install their definitions below; model roles alone do not install them.
 
 ```yaml
 modelRoles:
   default: openai-codex/gpt-6-sol:medium
   task: openai-codex/gpt-6-luna:max
-  plan: openai-codex/gpt-6-astra:high
+  plan: openai-codex/gpt-6-astra:xhigh
   discovery: openai-codex/gpt-6-luna:medium
-  slow: openai-codex/gpt-6-astra:low
+  slow: openai-codex/gpt-6-astra:medium
   review: openai-codex/gpt-6-sol:high
+  tester: openai-codex/gpt-6-sol:high
+  docwriter: openai-codex/gpt-6-sol:medium
 task:
   agentModelOverrides:
     task: "@task"
@@ -68,9 +70,11 @@ task:
     sonic: "@discovery"
     reviewer: "@review"
     security-reviewer: "@review"
+    tester: "@tester"
+    docwriter: "@docwriter"
 ```
 
-Preserve `task.agentAdvisor` and `task.agentPrewalk` opt-outs for all discovered agents. A bare provider/model override without its effort suffix is not equivalent to the intended review assignment. Do not invent a `tester` or `docwriter` alias in place of a missing agent.
+Preserve `task.agentAdvisor` and `task.agentPrewalk` opt-outs for all discovered agents, including `tester` and `docwriter`. A bare provider/model override without its effort suffix is not equivalent to the intended assignment. Do not invent an alias in place of a missing agent definition.
 
 ### Reproducible custom `planner`
 
@@ -168,7 +172,7 @@ Merge the following routing into the chosen configuration scope; preserve other 
 
 ```yaml
 modelRoles:
-  plan: openai-codex/gpt-6-astra:high
+  plan: openai-codex/gpt-6-astra:xhigh
 task:
   agentModelOverrides:
     planner: "@plan"
@@ -183,6 +187,38 @@ There is deliberately no separate `thinking-level`, `read-summarize: false`, or 
 Dispatch with `agent: "planner"` and `schemaMode: "strict"`; omit invocation `outputSchema` to use the file's `output` schema. Supply one concrete decision, applicable repository rules, relevant source/evidence, constraints/non-goals, and the question blocking implementation. Main does the initial scoping and owns the work packets; do not delegate top-level orchestration to the planner. Resume dependent work when the decision is settled, not after an additional ceremonial approval pass.
 
 The declared built-in tools omit shell, eval, writing, LSP mutation, and delegation. This is capability minimization, not a sandbox: inspect custom/MCP tools and effective permissions as described in section 5. Main can supply indexed/LSP evidence collected with tools the planner lacks; do not grant arbitrary execution merely to let a read-only consultant gather it.
+
+### Focused `tester` and `docwriter`
+
+Install these definitions at `<active agent directory>/agents/tester.md` and `agents/docwriter.md` when these specialist routes are requested. Both are available for explicit dispatch, not automatic participants in every task. Keep their `model` aliases and the `task.agentModelOverrides` entries above aligned; disable `task.agentAdvisor` and `task.agentPrewalk` for both.
+
+`tester.md`:
+
+````markdown
+---
+name: tester
+description: Design and implement difficult behavioral tests or analyze test failures in an explicitly assigned scope.
+model: "@tester"
+advisor: false
+prewalk: false
+---
+
+You are a test specialist. Work only within the assigned ownership and repository rules. Focus on observable behavior, boundaries, state transitions, and plausible regressions; do not add wiring, wording, or mock-echo tests. Coordinate the expected contract with Main, which owns integration and validation of the combined candidate. Do not run formatters, linters, builds, or test suites while concurrent editing is in flight. Report actual checks separately from proposed checks; never claim unrun verification.
+````
+
+`docwriter.md`:
+
+````markdown
+---
+name: docwriter
+description: Update substantial independent documentation in an explicitly assigned scope; small doc changes stay with the implementer.
+model: "@docwriter"
+advisor: false
+prewalk: false
+---
+
+You are a documentation specialist. Follow the supplied repository rules and actual implementation contract. Own only the assigned documentation paths; preserve unrelated prose and avoid speculative claims or release records. Keep examples and operational instructions accurate to the integrated behavior. Main owns integration and combined validation. Do not run formatters, linters, builds, or test suites while concurrent editing is in flight. Report only checks actually run.
+````
 
 ## 3. Keep full concurrency; control ownership, not arbitrary fan-out
 
@@ -280,7 +316,7 @@ Reject schema-invalid results, but preserve evidence for recovery. Schema validi
 ## 6. Execute the shortest sufficient development path
 
 1. **Scope and decompose inline.** Main identifies the affected surface, governing mode, acceptance criteria, and independent implementation units. Keep small cohesive changes with Main; for substantial work, define shared interfaces and an integration owner before dispatch.
-2. **Consult only at material decision points.** Use the custom planner defined in section 2 for architecture, shared-contract, schema/data, trust-boundary, or substantial ownership decisions. Reconsult only when evidence invalidates that decision, not for implementation-local failures.
+2. **Consult at the architecture boundary, including uncertainty.** Before implementation, use the custom planner defined in section 2 when a choice introduces or materially changes architecture, establishes or changes a shared interface or ownership boundary, changes schema/persistence behavior or a trust boundary, or sets a design assumption shared by multiple workers. If unsure whether a choice crosses that boundary, consult rather than guess. Main still owns ordinary local implementation, sequencing, debugging, and verification choices; reconsult only when evidence invalidates the decision, not for implementation-local failures.
 3. **Implement concurrently where useful.** Dispatch independent code-writing units together in isolated worktrees; let implementers investigate and edit their own slices in one pass. Budget an integration pass rather than serializing separable slices to avoid one. Add scouts only for genuinely unmapped or separately useful research. Do not require a scout → coder → tester → docwriter chain.
 4. **Keep the queue moving.** Dispatch ready work up to full capacity, integrate completed dependencies, and continue useful Main work. Do not poll agents or repeatedly request status when completion is delivered automatically.
 5. **Debug from evidence.** The owner reproduces the failure, tests a concrete hypothesis, and changes course or escalates when it fails. Do not repeat the same attempt with more ceremony or a new agent name.
@@ -304,6 +340,8 @@ Retain native shell execution and useful context maintenance. Not every external
 - If activation fails, restore only the recipe's changes from the retained copies and remove only its own newly created files. If another actor has edited a touched file since backup, reconcile the specific changes instead of blindly restoring over their work.
 - Report changed files, effective routing/capacity, focused check results, limitations, and the recovery location/procedure in a short factual response. No standalone evidence document is required.
 
-**Recovery:** original setup copies of `config.yml`, `agents/planner.md`, and `AGENTS.md` are in `~/.omp/recipe-backups/2026-09-20T02-22-47-807Z/`. Pre-routing-repair `config.yml` is in `~/.omp/recipe-backups/2026-09-24-routing/`; the pre-plan/review-adjustment copy is in `~/.omp/recipe-backups/2026-09-24-plan-review/`. The planner definition immediately before this schema validation is in `~/.omp/recipe-backups/2026-09-24-validation/planner.md`. Pre-Luna implementation copies of `config.yml`, `AGENTS.md`, and `omp-recipe.md` are in `~/.omp/recipe-backups/2026-09-24-luna-implementation/`. Restore only the affected file if routing fails, reconciling any intervening edits first.
+**Recovery:** original setup copies of `config.yml`, `agents/planner.md`, and `AGENTS.md` are in `~/.omp/recipe-backups/2026-09-20T02-22-47-807Z/`. Pre-routing-repair `config.yml` is in `~/.omp/recipe-backups/2026-09-24-routing/`; the pre-plan/review-adjustment copy is in `~/.omp/recipe-backups/2026-09-24-plan-review/`. The planner definition immediately before this schema validation is in `~/.omp/recipe-backups/2026-09-24-validation/planner.md`. Pre-Luna implementation copies of `config.yml`, `AGENTS.md`, and `omp-recipe.md` are in `~/.omp/recipe-backups/2026-09-24-luna-implementation/`. Pre-specialist-routing copies of those same files and `agents/planner.md` are in `~/.omp/recipe-backups/2026-09-27-specialist-routing/` (directory mode 700, copies mode 600). To revert this routing, reconcile intervening edits before restoring only affected files, and remove the newly created `agents/tester.md` and `agents/docwriter.md` only if they have not gained other changes.
+
+The pre-Main-guidance copies of global `AGENTS.md`, project `AGENTS.md`, and this recipe are in `~/.omp/recipe-backups/2026-09-27-main-consultation/`. Reconcile intervening edits before restoring any one file.
 
 During normal development, compare accepted-change quality, end-to-end latency, total model usage/cost, rework, conflicts, budget stops, and human interventions. Tune routing or effort when repeated evidence warrants it; change one policy dimension at a time when attribution matters. Keep **32-worker capacity** while improving packet sizing and scheduling. Optimize for reliable completed work per unit time and cost—not the fewest tokens, the most agents, or the most process steps.
