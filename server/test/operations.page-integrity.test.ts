@@ -187,6 +187,20 @@ describe('page integrity diagnostics', () => {
     expect(PageIntegrityScanResponseSchema.safeParse(first).success).toBe(true)
   })
 
+  it('recognizes public and per-owner private identities sharing the same route', async () => {
+    const records = [
+      page(1, { path: 'guide/shared' }),
+      page(2, { path: 'guide/shared', visibility: 'private', ownerId: 7 }),
+      page(3, { path: 'guide/shared', visibility: 'private', ownerId: 8 }),
+      page(4, { path: 'guide/invalid-owner', ownerId: 7 })
+    ]
+    const { db } = makeDatabase({ pages: records })
+    const result = await createPageIntegrityOperations({ db: db as never }).scan(requester, { limit: 4 })
+    const identities = result.checks.filter(check => check.checkCode === 'PAGE_IDENTITY')
+    expect(identities.filter(check => check.outcome === 'healthy').map(check => check.pageId)).toEqual([1, 2, 3])
+    expect(identities.find(check => check.pageId === 4)?.outcome).toBe('finding')
+  })
+
   it('marks every page observation stale when its revision changes during the scan', async () => {
     const records = [page(1)]
     const { db } = makeDatabase({ pages: records, afterFirstTransaction: () => { records[0]!.sourceRevision = '5' } })

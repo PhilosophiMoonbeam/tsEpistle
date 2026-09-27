@@ -33,6 +33,7 @@ type WikiPageComponentOptions = {
   }
   methods: {
     navigate: (this: NavigationVm, destination: URL, options?: NavigationOptions) => Promise<void>
+    handleHashChange: (this: NavigationVm) => void
   }
 }
 
@@ -241,6 +242,32 @@ describe('wiki page navigation response boundary', () => {
     expect(vm.activePageView).toBe('talk')
     expect(vm.currentUrl).toBe(destination.href)
     expect(vm.restoreScroll).toHaveBeenCalledWith(destination, undefined)
+  })
+
+  test('opens the Links view when an article fragment changes without a network request', async () => {
+    const original = window.location.href
+    const articleUrl = new URL(original)
+    articleUrl.hash = ''
+    window.history.replaceState({}, '', articleUrl)
+    const { value, readBody } = response({ url: articleUrl.href })
+    const component = loadComponent(value)
+    const vm = navigationVm() as NavigationVm & { navigate: WikiPageComponentOptions['methods']['navigate'] }
+    vm.navigate = (destination, options) => component.methods.navigate.call(vm, destination, options)
+    vm.currentPage.pageFeatures.linksVisible = true
+    Object.defineProperty(vm, 'linksVisible', { get: () => component.computed.linksVisible.call(vm) })
+    try {
+      window.history.replaceState({}, '', '#page-links')
+      component.methods.handleHashChange.call(vm)
+      await vi.waitFor(() => expect(vm.activePageView).toBe('links'))
+      expect(vm.currentUrl).toBe(window.location.href)
+      expect(readBody).not.toHaveBeenCalled()
+
+      window.history.replaceState({}, '', articleUrl)
+      component.methods.handleHashChange.call(vm)
+      await vi.waitFor(() => expect(vm.activePageView).toBe('article'))
+    } finally {
+      window.history.replaceState({}, '', original)
+    }
   })
 
   const rejectedResponses: Array<[string, string, HeadersInit]> = [

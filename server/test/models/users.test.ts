@@ -1,3 +1,4 @@
+import path from 'node:path'
 import bcrypt from 'bcryptjs-then'
 import { newPasswordIssue } from '../../../shared/security-policy.ts'
 import { beforeEach, describe, expect, mock, test } from 'bun:test'
@@ -918,5 +919,87 @@ describe('User.refreshToken', () => {
     })
     expect(claims).not.toHaveProperty('rg')
     expect(updateLastLogin).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('User account mail delivery', () => {
+  test('delivers reset and invitation links through the active localized templates', async () => {
+    const sent: Array<{ subject: string; text?: string; html?: string }> = []
+    Object.assign(wiki, {
+      SERVERPATH: path.resolve('server'),
+      config: {
+        host: 'https://wiki.example.test',
+        title: 'Example Wiki',
+        company: 'Example',
+        logoUrl: '',
+        offline: false,
+        mail: {
+          enabled: true,
+          host: 'smtp.example.test',
+          port: 587,
+          senderName: 'Wiki team',
+          senderEmail: 'wiki@example.test',
+          tlsMode: 'starttls',
+          verifySSL: true,
+          user: '',
+          useDKIM: false
+        }
+      },
+      logger: { warn: () => {}, debug: () => {}, error: () => {} }
+    })
+    Object.assign(wiki.Error, {
+      MailNotConfigured: class extends Error {},
+      MailTemplateFailed: class extends Error {}
+    })
+    wiki.models = {
+      knex: (_table: string) => {
+        const query = {
+          select: () => query,
+          where: () => query,
+          first: async () => ({ communicationLocale: 'en' })
+        }
+        return query
+      },
+      users: {
+        query: () => {
+          const query = {
+            where: () => query,
+            first: async () => ({ id: 10, isActive: true, authVersion: 0 }),
+            findById: async () => ({ id: 10, email: 'user@example.test' })
+          }
+          return query
+        }
+      },
+      userKeys: { generateToken: async () => 'reset-token' }
+    }
+    // Localization captures WIKI at module load; import only after this isolated mail runtime is configured.
+    const { createMailRuntime } = await import('../../core/mail.ts')
+    const mail = createMailRuntime(wiki as never, {
+      createTransport: () => ({
+        sendMail: async (message: { subject: string; text?: string; html?: string }) => {
+          sent.push(message)
+          return { accepted: ['user@example.test'] }
+        },
+        close: () => {}
+      }) as never,
+      resolveLogo: async () => '',
+      localization: {
+        resolveMailLocale: async () => ({ locale: 'en', siteLocale: 'en', direction: 'ltr' }),
+        translateMail: (_context, _key, english, values = {}) =>
+          Object.entries(values).reduce((result, [key, value]) => result.replaceAll(`{{${key}}}`, String(value)), english)
+      } as never
+    }).init()
+    Object.assign(wiki, { mail })
+    try {
+      await User.loginForgotPassword({ email: 'user@example.test' }, {} as never)
+      await User.sendWelcomeEmail({ id: 10, expectedEmail: 'user@example.test' })
+      expect(sent).toHaveLength(2)
+      expect(sent[0]?.subject).toContain('password')
+      expect(sent[0]?.text).toContain('https://wiki.example.test/login-reset/reset-token')
+      expect(sent[1]?.subject).toContain('Welcome')
+      expect(sent[1]?.html).toContain('https://wiki.example.test/login')
+    } finally {
+      mail.close()
+    }
   })
 })

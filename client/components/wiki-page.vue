@@ -100,6 +100,7 @@ export default defineComponent({
     }
   },
   mounted() {
+    window.addEventListener('hashchange', this.handleHashChange)
     if (!this.currentPage.spaNavigation) return
 
     this.removeNavigationHandler = installWikiNavigationHandler(this.navigate)
@@ -115,6 +116,7 @@ export default defineComponent({
     this.navigationAbortController?.abort()
     this.removeNavigationHandler?.()
     document.removeEventListener('click', this.handleDocumentClick)
+    window.removeEventListener('hashchange', this.handleHashChange)
     window.removeEventListener('popstate', this.handlePopState)
     if (this.previousScrollRestoration !== null && 'scrollRestoration' in window.history) {
       window.history.scrollRestoration = this.previousScrollRestoration
@@ -153,6 +155,12 @@ export default defineComponent({
       event.preventDefault()
       void this.navigate(new URL(anchor.href, window.location.href))
     },
+    handleHashChange(): void {
+      const destination = new URL(window.location.href)
+      const current = new URL(this.currentUrl)
+      if (destination.pathname !== current.pathname || destination.search !== current.search) return
+      void this.navigate(destination, { popState: true, scrollY: window.scrollY })
+    },
     handlePopState(event: PopStateEvent): void {
       const state = typeof event.state === 'object' && event.state !== null
         ? event.state as Record<string, unknown>
@@ -177,6 +185,7 @@ export default defineComponent({
           window.history.pushState({ [NAVIGATION_STATE_KEY]: true, scrollY: window.scrollY }, '', destination)
         }
         this.currentUrl = destination.href
+        await nextTick()
         this.restoreScroll(destination, options.scrollY)
         return
       }
