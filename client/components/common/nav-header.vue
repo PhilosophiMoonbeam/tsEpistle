@@ -113,16 +113,19 @@
             v-icon(icon='mdi-creation-outline')
             ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
           template(v-if='hasWritePagesPermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
-            v-btn.nav-header-edit-btn(
-              icon
-              rounded='lg'
-              :disabled='!onlineActionReady'
-              :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
-              @click='pageEdit'
-              :aria-label='$t(`common:header.edit`)'
-            )
-              v-icon(icon='mdi-pencil')
-
+            v-tooltip(location='bottom')
+              template(v-slot:activator='{ props }')
+                v-btn.nav-header-edit-btn(
+                  v-bind='props'
+                  icon
+                  rounded='lg'
+                  :disabled='!onlineActionReady'
+                  :title='!onlineActionReady ? onlineActionUnavailableReason : undefined'
+                  @click='pageEdit'
+                  :aria-label='$t(`common:header.edit`)'
+                )
+                  v-icon(icon='mdi-pencil')
+              span Edit Page
           v-btn.nav-header-agent(
             v-if='canEnterAgent && $vuetify.display.smAndDown'
             icon
@@ -1368,7 +1371,8 @@ export default defineComponent({
 
 .nav-header {
   --nav-header-agent-icon-color: #00bfff;
-  --nav-header-edit-icon-color: #ffd700;
+  --nav-header-edit-icon-color: #fdb600;
+  --nav-header-edit-eraser-color: #dbb7bb;
   --nav-header-tint: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent));
   --nav-header-surface: var(--wiki-chrome-surface);
   isolation: isolate;
@@ -1737,9 +1741,9 @@ export default defineComponent({
     transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
   }
 
-  // Fixed, theme-independent icon accents: the Agent spark stays soft neo blue and the
-  // Edit pencil stays soft gold in every theme, while labels and button chrome keep
-  // inheriting the surrounding accent-ink color.
+  // Fixed, theme-independent icon accents: the Agent spark stays soft neo blue
+  // and the Edit pencil stays pencil yellow with a pink eraser in every theme.
+  // Labels and button chrome keep inheriting the surrounding accent-ink color.
   .nav-header-inner .nav-header-agent .v-icon {
     color: var(--nav-header-agent-icon-color) !important;
     animation: nav-header-agent-spark-shimmer 7s ease-in-out infinite;
@@ -1767,6 +1771,13 @@ export default defineComponent({
 
   .nav-header-inner .nav-header-edit-btn .v-icon {
     color: var(--nav-header-edit-icon-color) !important;
+  }
+  // The MDI pencil points toward the upper right; a hard stop across its
+  // diagonal separates its eraser cap without changing the icon silhouette.
+  .nav-header-inner .nav-header-edit-btn .v-icon::before {
+    background: linear-gradient(45deg, var(--nav-header-edit-icon-color) 67%, var(--nav-header-edit-eraser-color) 67%);
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
   }
 
   @media (hover: hover) {
@@ -2277,6 +2288,10 @@ export default defineComponent({
     color: ButtonText !important;
     transform: none !important;
     transition: none !important;
+  }
+  .nav-header .nav-header-inner .nav-header-edit-btn .v-icon::before {
+    background: none;
+    -webkit-text-fill-color: ButtonText;
   }
 
   .account-menu__connectivity-indicator {
