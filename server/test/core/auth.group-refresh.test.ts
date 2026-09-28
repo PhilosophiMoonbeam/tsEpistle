@@ -9,13 +9,18 @@ afterAll(() => {
   Object.assign(auth, original)
 })
 describe('group authorization cache refresh', () => {
-  it('removes stale presentation policy and expires the Guest cache when a refresh fails, without changing enforcement authority', async () => {
+  it('clears caches after a failed refresh, rebuilds them on success, and preserves snapshotted authority', async () => {
     const group = {
       id: 3,
       permissions: ['read:pages'],
       pageRules: [{ match: 'START' as const, path: '', roles: ['read:pages'], deny: false, locales: [] }]
     }
-    const query = vi.fn().mockRejectedValueOnce(new Error('Database unavailable')).mockResolvedValue([group])
+    const refreshedGroup = { ...group, name: 'Refreshed', permissions: ['read:pages', 'write:pages'] }
+    const tags = [
+      { id: 8, tag: 'legacy', redirectToId: 9 },
+      { id: 9, tag: 'current' }
+    ]
+    const query = vi.fn().mockRejectedValueOnce(new Error('Database unavailable')).mockResolvedValue([refreshedGroup])
     globalThis.WIKI = {
       config: {},
       configSvc: {},
@@ -23,7 +28,7 @@ describe('group authorization cache refresh', () => {
       lang: {},
       logger: {},
       startedAt: {},
-      models: { groups: { query }, tags: { query: async () => [] } }
+      models: { groups: { query }, tags: { query: async () => tags } }
     } as never
     auth.groups = { '3': group } as never
     auth.tagAliases = { old: 'new' }
@@ -48,6 +53,8 @@ describe('group authorization cache refresh', () => {
     expect(auth.guest.cacheExpiration < DateTime.utc()).toBe(true)
     expect(auth.checkPageAccess(person, ['read:pages'], page, authority)).toBe(true)
     await auth.reloadGroups()
+    expect(auth.groups).toEqual({ '3': refreshedGroup })
+    expect(auth.tagAliases).toEqual({ legacy: 'current', current: 'current' })
     expect(auth.checkPageAccess(person, ['read:pages'], page, authority)).toBe(true)
   })
 })

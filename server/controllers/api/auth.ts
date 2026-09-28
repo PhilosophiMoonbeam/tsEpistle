@@ -10,6 +10,10 @@ import { describeApiConnections } from '../../operations/api-connections.ts'
 import authenticationOperations from '../../operations/authentication.ts'
 import { getAuthenticationAdministrationStore } from '../../operations/authentication-administration.ts'
 import { systemRequester } from '../../helpers/system-authority.ts'
+import legacyErrors from '../../helpers/error.ts'
+import operationErrors from '../../operations/errors.ts'
+
+const { ApplicationError } = operationErrors
 
 const router = express.Router()
 
@@ -52,32 +56,44 @@ const resetAfterTerminalAuthentication = async (req: Request, result: unknown): 
   if (objectValue(result, 'authenticated') === true) await getBruteforce().reset(req)
 }
 
-const authErrorStatus = (value: unknown): number | null => {
-  const status = errorStatus(value)
-  if (status !== undefined) return status
-  switch (objectValue(value, 'code')) {
-    case 1002:
-    case 1005:
-    case 1006:
-    case 1013:
-    case 1014:
-    case 1015:
-    case 1016:
-      return 401
-    case 1003:
-    case 1012:
-      return 400
-    default:
-      return null
-  }
+const legacyAuthErrorStatus = (err: unknown): number | null => {
+  if (
+    err instanceof legacyErrors.AuthLoginFailed ||
+    err instanceof legacyErrors.AuthTFAFailed ||
+    err instanceof legacyErrors.AuthTFAInvalid ||
+    err instanceof legacyErrors.AuthAccountBanned ||
+    err instanceof legacyErrors.AuthAccountNotVerified ||
+    err instanceof legacyErrors.UserNotFound ||
+    err instanceof legacyErrors.AuthValidationTokenInvalid
+  )
+    return 401
+  if (err instanceof legacyErrors.AuthProviderInvalid || err instanceof legacyErrors.InputInvalid) return 400
+  return null
 }
 
 const handleExpectedAuthError = (err: unknown, res: Response): boolean => {
-  const status = authErrorStatus(err)
-  if (!status) return false
-  const message = err instanceof Error ? err.message : String(err)
-  res.status(status).json({ error: message })
-  return true
+  const status = errorStatus(err)
+  if (status !== undefined && status >= 500 && status <= 599) {
+    res.status(status).json({ error: 'Authentication failed' })
+    return true
+  }
+
+  if (err instanceof ApplicationError && status !== undefined && status >= 400 && status <= 499) {
+    res.status(status).json({ error: err.message })
+    return true
+  }
+
+  const legacyStatus = legacyAuthErrorStatus(err)
+  if (legacyStatus !== null && err instanceof Error) {
+    res.status(status !== undefined && status >= 400 && status <= 499 ? status : legacyStatus).json({ error: err.message })
+    return true
+  }
+
+  if (status !== undefined && status >= 400 && status <= 499) {
+    res.status(status).json({ error: 'Authentication failed' })
+    return true
+  }
+  return false
 }
 const handleRegistrationLimitError = (err: unknown, res: Response): boolean => {
   const retryAfterMilliseconds = objectValue(err, 'retryAfterMilliseconds')
@@ -245,8 +261,10 @@ router.post('/api/keys', async (req, res) => {
     })
     res.json({ key, message: 'API Key created successfully' })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    res.status(errorStatus(err) ?? 500).json({ error: message || 'API key creation failed' })
+    const errorCode = errorStatus(err)
+    const status = errorCode !== undefined && errorCode >= 400 && errorCode <= 599 ? errorCode : 500
+    const publicMessage = err instanceof ApplicationError && status >= 400 && status <= 499 ? err.message : 'API key creation failed'
+    res.status(status).json({ error: publicMessage })
   }
 })
 
@@ -256,8 +274,10 @@ router.post('/api/keys/:id/revoke', async (req, res) => {
     await apiOperations.revokeKey(systemRequester(req), Number(req.params.id))
     res.json({ message: 'API Key revoked successfully' })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    res.status(errorStatus(err) ?? 500).json({ error: message || 'API key revoke failed' })
+    const errorCode = errorStatus(err)
+    const status = errorCode !== undefined && errorCode >= 400 && errorCode <= 599 ? errorCode : 500
+    const publicMessage = err instanceof ApplicationError && status >= 400 && status <= 499 ? err.message : 'API key revoke failed'
+    res.status(status).json({ error: publicMessage })
   }
 })
 

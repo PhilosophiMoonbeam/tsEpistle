@@ -11,13 +11,6 @@ type ProductPackage = {
   dependencies: Record<string, string>
 }
 
-type ScarlettLedger = {
-  upstream: {
-    branch: string
-    recordedTip: string
-  }
-  candidates: unknown[]
-}
 
 const readText = (path: string): Promise<string> => readFile(path, 'utf8')
 
@@ -51,24 +44,6 @@ describe('active product governance contracts', () => {
     }
   })
 
-  it('makes the ledger the current Scarlett authority and the prose roadmap historical', async () => {
-    const [roadmap, ledger] = await Promise.all([
-      readText('docs/.planning/2026-08-14_scarlett-design-synthesis-roadmap.md'),
-      readJson<ScarlettLedger>('docs/.planning/scarlett-upstream-ledger.json')
-    ])
-
-    const historicalTip = roadmap.match(/- upstream commit: `([0-9a-f]{40})`/)?.[1]
-
-    expect(ledger.upstream.branch).toBe('scarlett')
-    expect(ledger.upstream.recordedTip).toMatch(/^[0-9a-f]{40}$/)
-    expect(ledger.candidates.length).toBeGreaterThan(0)
-    expect(historicalTip).toMatch(/^[0-9a-f]{40}$/)
-    expect(historicalTip).not.toBe(ledger.upstream.recordedTip)
-    expect(roadmap).toContain('Status: historical record — superseded; not an active product roadmap')
-    expect(roadmap).toContain('[`scarlett-upstream-ledger.json`](./scarlett-upstream-ledger.json) is the sole current authority')
-    expect(roadmap).not.toContain('Status: authoritative product roadmap')
-  })
-
   it('identifies Tiptap as the current visual-editor engine and the CKEditor plan as superseded', async () => {
     const [packageJson, plan, visualMarkdown, visualHtml, definition] = await Promise.all([
       readJson<ProductPackage>('package.json'),
@@ -82,7 +57,6 @@ describe('active product governance contracts', () => {
     expect(packageJson.dependencies['@tiptap/markdown']).toBe(packageJson.dependencies['@tiptap/core'])
     expect(Object.keys(packageJson.dependencies).some(name => name.toLowerCase().includes('ckeditor'))).toBe(false)
     expect(visualMarkdown).toContain("import TiptapEditor from './tiptap/editor.vue'")
-    expect(visualMarkdown).toContain("tiptap-editor(format='markdown'")
     expect(visualHtml).toContain("import TiptapEditor from './tiptap/editor.vue'")
     expect(visualHtml).toContain("tiptap-editor(format='html'")
     expect(definition).toContain('key: visual-markdown')

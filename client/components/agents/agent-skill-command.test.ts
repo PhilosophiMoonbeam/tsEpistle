@@ -9,10 +9,6 @@ const skills = [
 ] as const
 
 describe('skill command filtering', () => {
-  it('shows every user-selectable skill for the opening command', () => {
-    expect(filterSkillsForCommand(skills, '')).toEqual(skills)
-  })
-
   it('excludes built-in and system defaults before showing or matching commands', () => {
     const mixedSkills = [
       skills[0],

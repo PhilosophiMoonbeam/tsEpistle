@@ -102,6 +102,10 @@ The admitted action session applies the frozen source scope separately from live
 
 The current-attempt correction phase is derived from persisted `model.turn` and `evidence.provenance` events; the client shows it without exposing the rejected draft. Numeric `model.turn.performance` and `usage.updated.performance` fields measure local monotonic stages; `tool.completed.actionElapsedMs` covers action invocation. `dispatchToFirstChunkMs` is null for buffered responses; `firstPersistedDeltaAfterAcceptanceMs` measures durable publication, not arrival at the browser. Provider-reported tokens are separate from conservative reserved exposure and are null for estimated-usage providers. Review latency and cost against a fixed corpus/profile before changing concurrency or context caps.
 
+### Administrative API failure responses
+
+API-key create/revoke and search-engine save responses preserve valid HTTP error statuses, but expose detailed validation messages only from application-owned 4xx errors. Backend exceptions, including statusful 4xx and all 5xx errors, receive fixed route-specific messages. Search-index rebuild failures return a fixed 500 message. Authentication responses retain genuine application validation and legacy login messages; unexpected 4xx and all 5xx failures use a fixed authentication-failure message. Controller tests exercise both backend-secret redaction and useful public validation errors.
+
 ### Development Sprint local-tailnet deployment and rollback
 
 Use this path for routine code-only feature and fix deployment to the maintained local tailnet:

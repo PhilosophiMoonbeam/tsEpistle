@@ -4758,7 +4758,7 @@ export default defineComponent({
       grid-column: 2;
       grid-row: 2 / span 2;
       inset-block-start: calc(var(--wiki-space-2) * -1);
-      inset-inline-end: 0;
+      right: 0;
       z-index: 2;
       max-inline-size: var(--page-branding-mark-size);
       max-block-size: 100%;

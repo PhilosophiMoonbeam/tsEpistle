@@ -15,7 +15,7 @@ describe('frozen agent contracts', () => {
     expect(new Set(AGENT_ACTION_NAMES).size).toBe(AGENT_ACTION_NAMES.length)
     expect(new Set(AGENT_EVENT_TYPES).size).toBe(AGENT_EVENT_TYPES.length)
     expect(new Set(AGENT_FEATURE_FLAG_KEYS).size).toBe(AGENT_FEATURE_FLAG_KEYS.length)
-    expect(AGENT_ACTION_NAMES).not.toEqual(expect.arrayContaining(['pages.getOkf', 'pages.prepareImportOkf']))
+    expect(AGENT_ACTION_NAMES).not.toContain('pages.prepareImportOkf')
     expect(AGENT_FEATURE_FLAG_KEYS).toContain('agents.orchestration.enabled')
     expect(AGENT_EVENT_TYPES).toEqual(expect.arrayContaining(['task.planCreated', 'task.created', 'subagent.started', 'subagent.completed', 'run.partial']))
     expect(AGENT_TASK_KINDS).toEqual(['source_scout', 'fact_check', 'conflict_check'])
@@ -33,7 +33,7 @@ describe('frozen agent contracts', () => {
       'pages.prepareCreate': 'wiki_prepare_page_create',
       'memory.manage': 'wiki_manage_memory'
     })
-    expect(toolNames).not.toEqual(expect.arrayContaining(['wiki_get_page_okf', 'wiki_prepare_okf_import']))
+    expect(toolNames).not.toContain('wiki_prepare_okf_import')
   })
 
   it('freezes least-privileged admission permissions', () => {

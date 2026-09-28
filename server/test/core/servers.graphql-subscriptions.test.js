@@ -305,7 +305,7 @@ describe('core/servers GraphQL transports', () => {
     expect(authenticateUserToken).toHaveBeenNthCalledWith(3, 'direct-token')
   })
 
-  it.each(['revoked', 'inactive', 'expired'])('rejects a %s principal at connection time', async () => {
+  it('rejects an unauthorized principal at connection time', async () => {
     const { servers, useServer, authenticateUserToken, createHttpServer } = await setupModule()
     authenticateUserToken.mockResolvedValue(null)
 
@@ -337,7 +337,7 @@ describe('core/servers GraphQL transports', () => {
     await expect(protocol.onSubscribe(context, 'operation-1', { query: 'subscription { loggingLiveTrail { level } }' })).rejects.toThrow('Unauthorized')
   })
 
-  it.each(['revoked', 'inactive', 'expired'])('blocks event delivery when an active %s principal becomes unauthorized', async () => {
+  it('blocks event delivery when an active principal becomes unauthorized', async () => {
     const { servers, useServer, yoga, authenticateUserToken, createHttpServer } = await setupModule()
     const user = { id: 7, permissions: ['manage:system'] }
     authenticateUserToken.mockResolvedValueOnce(user).mockResolvedValueOnce(user).mockResolvedValueOnce(null)

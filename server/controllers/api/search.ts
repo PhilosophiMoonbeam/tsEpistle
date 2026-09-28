@@ -1,6 +1,7 @@
 import express from 'express'
-import { type Request, type Response, getWikiAuth } from '../_types.ts'
+import { errorStatus, type Request, type Response, getWikiAuth } from '../_types.ts'
 
+import errors from '../../operations/errors.ts'
 import searchOperations from '../../operations/search.ts'
 
 const router = express.Router()
@@ -47,9 +48,12 @@ router.post('/engines', async (req, res) => {
     await searchOperations.updateEngines(engines)
     res.json({ message: 'Search Engines updated successfully' })
   } catch (err) {
-    const status = typeof err === 'object' && err !== null && 'status' in err && typeof err.status === 'number' ? err.status : 500
-    const message = err instanceof Error ? err.message : String(err)
-    res.status(status).json({ error: message || 'Search Engines update failed' })
+    const errorCode = errorStatus(err)
+    const status = errorCode !== undefined && errorCode >= 400 && errorCode <= 599 ? errorCode : 500
+    const message = err instanceof errors.ApplicationError && status >= 400 && status < 500 && err.message
+      ? err.message
+      : 'Search Engines update failed'
+    res.status(status).json({ error: message })
   }
 })
 
@@ -58,9 +62,8 @@ router.post('/rebuild-index', async (req, res) => {
   try {
     await searchOperations.rebuildIndex()
     res.json({ message: 'Index rebuilt successfully' })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    res.status(500).json({ error: message || 'Index rebuild failed' })
+  } catch {
+    res.status(500).json({ error: 'Index rebuild failed' })
   }
 })
 

@@ -1,12 +1,19 @@
 import { type AccessPage, evaluateGroupAccess, type PageRuleAuthority } from '../../helpers/group-access.ts'
 import { afterAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
-
 const assertPageUnlocked = vi.fn(async () => {})
 const protectedAssetRequiresUnlock = vi.fn(async () => false)
+const redactProtectedPageForSearch = vi.fn(() => {
+  throw new Error('Unexpected call to redactProtectedPageForSearch in offline snapshot test')
+})
+const syncProtectedPageAssets = vi.fn(() => {
+  throw new Error('Unexpected call to syncProtectedPageAssets in offline snapshot test')
+})
 vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({
   assertPageUnlocked,
   pageRequiresUnlock: vi.fn(async () => false),
-  protectedAssetRequiresUnlock
+  protectedAssetRequiresUnlock,
+  redactProtectedPageForSearch,
+  syncProtectedPageAssets
 }))
 
 type SnapshotOperations = {

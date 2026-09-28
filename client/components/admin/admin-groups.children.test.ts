@@ -1,5 +1,5 @@
 import fs from 'node:fs'
-import { groupPermissions } from '../../../shared/group-policy.ts'
+import { groupPermissions, normalizeGroupRulePath } from '../../../shared/group-policy.ts'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 function arrange(name: string, dependencies: Record<string, unknown> = {}, props: Record<string, unknown> = {}) {
   const source = fs.readFileSync(`client/components/admin/${name}.vue`, 'utf8')
@@ -10,6 +10,7 @@ function arrange(name: string, dependencies: Record<string, unknown> = {}, props
     AsyncState: {},
     GroupCreate: {},
     groupPermissions,
+    normalizeGroupRulePath,
     window,
     getErrorMessage: (error: Error) => error.message,
     groupRequestStatus: (error: { status?: number }) => error.status ?? 0,
@@ -135,11 +136,11 @@ describe('group page-rule and membership drafts', () => {
     const policy = {
       name: 'Research',
       permissions: ['read:pages'],
-      pageRules: [{ id: 'r', path: 'docs', match: 'START', deny: false, roles: ['read:pages'], locales: [] }]
+      pageRules: [{ id: 'r', path: 'docs', match: 'SUBTREE', deny: false, roles: ['read:pages'], locales: [] }]
     }
     const { state } = arrange('admin-groups-edit-rules', {}, { modelValue: structuredClone(policy), disabled: false })
     state.open(state.modelValue.pageRules[0])
-    state.draft.path = ' reference '
+    state.draft.path = ' reference/// '
     state.draft.locales = ['en', 'en']
     state.apply()
     expect(state.modelValue).toEqual(policy)

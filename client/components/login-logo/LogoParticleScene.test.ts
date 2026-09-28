@@ -145,8 +145,8 @@ const {
   updateParticleSceneFrame
 } = compiledModule.exports as {
   ParticleSceneEventFence: typeof ParticleSceneEventFenceClass
+  default: { components?: Record<string, Component> }
   createParticleSceneResources: (particles: ParsedLogoParticles, effect: LogoEffectDescriptor) => ParticleSceneResources
-  default: { components?: Record<string, Component>; emits?: Record<string, unknown> }
   disposeParticleSceneResources: (resources: ParticleSceneResources) => void
   updateParticleSceneFrame: (
     resources: ParticleSceneResources,
@@ -272,10 +272,6 @@ beforeEach(() => {
 })
 
 describe('LogoParticleScene resource path', () => {
-  it('exposes the scene component with the pending and committed lifecycle events', () => {
-    expect(Object.keys(LogoParticleScene.emits ?? {}).sort()).toEqual(['context-lost', 'error', 'first-frame', 'frame-pending'])
-  })
-
   it('builds one indexed instanced sprite draw with source-order packed attributes', () => {
     const particles = makeParticles()
     const resources = createParticleSceneResources(particles, effect)

@@ -105,38 +105,6 @@ describe('GraphQL external compatibility', () => {
       sortedSchema.getMutationType(),
       sortedSchema.getSubscriptionType()
     ].map(rootType => printType(rootType)).join('\n\n')).toMatchSnapshot('root operation contract')
-    expect(Object.keys(schema.getQueryType().getFields()).sort()).toEqual([
-      'analytics',
-      'assets',
-      'authentication',
-      'comments',
-      'contribute',
-      'groups',
-      'localization',
-      'logging',
-      'pages',
-      'rendering',
-      'search',
-      'site',
-      'system',
-      'theming',
-      'users'
-    ])
-    expect(Object.keys(schema.getMutationType().getFields()).sort()).toEqual([
-      'analytics',
-      'assets',
-      'authentication',
-      'comments',
-      'groups',
-      'logging',
-      'pages',
-      'rendering',
-      'search',
-      'system',
-      'theming',
-      'users'
-    ])
-    expect(Object.keys(schema.getSubscriptionType().getFields())).toEqual(['loggingLiveTrail'])
   })
   it('executes the searchable page contract through the production schema', async () => {
     const { createGraphQLArtifacts } = await import('../../graph/index.ts')

@@ -22,6 +22,7 @@ import {
   SITE_LOGO_ICON_PNG_BYTE_LIMIT,
   SITE_LOGO_ICON_SIZES,
   SITE_LOGO_MAX_INPUT_DIMENSION,
+  SITE_LOGO_PARTICLE_GZIP_BYTE_LIMIT,
   SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT,
   SITE_LOGO_PIPELINE_VERSION,
   SITE_LOGO_PNG_BYTE_LIMIT,
@@ -685,22 +686,45 @@ describe('site logo source processing and v7 publication contract', () => {
     GENERATED_CORPUS_TIMEOUT_MS
   )
 
-  it('enforces mandatory icon/ordinary budgets and optional enhancement budgets', async () => {
-    const source = await onePixelFixture()
+  it('enforces mandatory and ready enhancement artifact budgets', async () => {
+    const source = await lowResolutionDetailedEmblemFixture()
     const valid = await processSiteLogoSource(source, sha256(source))
+    expect(valid.enhancement.status).toBe('ready')
+    const enhancement = valid.enhancement as Extract<typeof valid.enhancement, { status: 'ready' }>
+
     expect(() => assertArtifactBudgets({ ...valid, icons: { ...valid.icons, favicon16: Buffer.alloc(SITE_LOGO_ICON_PNG_BYTE_LIMIT + 1) } })).toThrow(
       'ARTIFACT_TOO_LARGE'
     )
     expect(() => assertArtifactBudgets({ ...valid, logoPng: Buffer.alloc(SITE_LOGO_PNG_BYTE_LIMIT + 1) })).toThrow('ARTIFACT_TOO_LARGE')
     expect(() => assertArtifactBudgets({ ...valid, faviconIco: Buffer.alloc(SITE_LOGO_FAVICON_ICO_BYTE_LIMIT + 1) })).toThrow('ARTIFACT_TOO_LARGE')
-    if (valid.enhancement.status === 'ready') {
-      expect(() =>
-        assertArtifactBudgets({
-          ...valid,
-          enhancement: { ...valid.enhancement, effectStaticPng: Buffer.alloc(SITE_LOGO_STATIC_PNG_BYTE_LIMIT + 1) }
-        })
-      ).toThrow('ARTIFACT_TOO_LARGE')
-      expect(valid.enhancement.particleV1.length).toBeLessThanOrEqual(SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT)
+
+    expect(enhancement.particleV1.length).toBeLessThanOrEqual(SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT)
+    expect(() =>
+      assertArtifactBudgets({
+        ...valid,
+        enhancement: { ...enhancement, particleV1: Buffer.alloc(SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT + 1) }
+      })
+    ).toThrow('ARTIFACT_TOO_LARGE')
+
+    const gzipOversizedParticleV1 = Buffer.allocUnsafe(SITE_LOGO_PARTICLE_GZIP_BYTE_LIMIT + 1)
+    let state = 0x6d2b79f5
+    for (let index = 0; index < gzipOversizedParticleV1.length; index++) {
+      state ^= state << 13
+      state ^= state >>> 17
+      state ^= state << 5
+      gzipOversizedParticleV1[index] = state & 0xff
     }
+    expect(() =>
+      assertArtifactBudgets({
+        ...valid,
+        enhancement: { ...enhancement, particleV1: gzipOversizedParticleV1 }
+      })
+    ).toThrow('ARTIFACT_TOO_LARGE')
+    expect(() =>
+      assertArtifactBudgets({
+        ...valid,
+        enhancement: { ...enhancement, effectStaticPng: Buffer.alloc(SITE_LOGO_STATIC_PNG_BYTE_LIMIT + 1) }
+      })
+    ).toThrow('ARTIFACT_TOO_LARGE')
   })
 })
