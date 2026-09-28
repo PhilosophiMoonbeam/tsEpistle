@@ -235,17 +235,7 @@ test.describe('release accessibility profiles', () => {
     const fixture = await installEnabledAgentFixture(page, { mode: 'success' })
     try {
       await page.emulateMedia({ reducedMotion: 'no-preference' })
-      // This visual check uses public page content and browser-local Agent fixtures.
-      await page.route('**/_api/users/whoami', route =>
-        route.fulfill({
-          json: {
-            authenticated: true,
-            user: { id: 1, authVersion: 1, name: 'Visual test', email: 'visual@example.test', permissions: ['use:agents'] }
-          }
-        })
-      )
-      await page.goto('/', { waitUntil: 'domcontentloaded' })
-      await expect(page.locator('.page-header-section')).toBeVisible({ timeout: 15_000 })
+      await openAuthenticatedPage(page, '/', '.page-header-section')
       await page.getByRole('button', { name: 'Open Wiki Agent' }).click()
       const agent = page.locator('.inline-agent--contextual')
       await expect(agent).toBeVisible()
