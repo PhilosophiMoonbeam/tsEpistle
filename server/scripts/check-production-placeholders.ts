@@ -32,6 +32,8 @@ const failures: string[] = []
 for (const file of files) {
   const lines = (await readFile(file, 'utf8')).split('\n')
   for (const [index, line] of lines.entries()) {
+    // Gemini's "unimplemented" is a protocol error code, not unfinished application code.
+    if (file === 'server/agents/providers/gemini-interactions.ts' && /^\s*unimplemented:\s*501,\s*$/.test(line)) continue
     placeholderPattern.lastIndex = 0
     const matches = [...line.matchAll(placeholderPattern)]
     if (matches.length > 0) {

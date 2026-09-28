@@ -262,13 +262,15 @@ test.describe('critical post-install workflows', () => {
     await authenticateAsAdmin(page)
     await openClientPage(page, '/en/home', '.page-header-section')
 
-    await page.emulateMedia({ colorScheme: 'light' })
-    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--dark/)
     await page.getByRole('button', { name: 'Account' }).click()
-    const appearanceSelector = page.locator('.v-overlay--active').getByRole('group', { name: 'Appearance' })
-    await expect(appearanceSelector.getByRole('button', { name: 'System', exact: true })).toHaveAttribute('aria-pressed', 'true')
-
-    await appearanceSelector.getByRole('button', { name: 'Light', exact: true }).click()
+    await page.locator('.v-overlay--active').getByRole('button', { name: 'Appearance', exact: true }).click()
+    const appearanceSelector = page.locator('.v-overlay--active').getByRole('region', { name: 'Appearance settings' })
+    const appearanceToggle = appearanceSelector.getByRole('button')
+    await expect(appearanceToggle).toHaveAttribute('aria-pressed', 'false')
+    await appearanceToggle.click()
+    await expect(appearanceToggle).toHaveAttribute('aria-pressed', 'true')
     await expect
       .poll(async () =>
         page.evaluate(async () => {
@@ -277,15 +279,18 @@ test.describe('critical post-install workflows', () => {
         })
       )
       .toMatchObject({ appearance: 'light' })
+    await expect(appearanceToggle).toBeEnabled()
 
     // A saved light preference must win on the first frame, not only after whoami.
+    await page.emulateMedia({ colorScheme: 'light' })
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
     await page.emulateMedia({ colorScheme: 'dark' })
     await page.route('**/_api/users/whoami', async route => {
       const { promise, resolve } = Promise.withResolvers<void>()
       setTimeout(resolve, 1200)
       await promise
       await route.continue()
-    })
+    }, { times: 1 })
     await page.addInitScript(() => {
       const modes: string[] = []
       Reflect.set(window, '__appearanceFrames', modes)
@@ -309,7 +314,6 @@ test.describe('critical post-install workflows', () => {
     await expect(page.locator('.admin-main')).toBeVisible()
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
     await expectLightFromFirstFrame()
-    await page.emulateMedia({ colorScheme: 'dark' })
     await page.reload()
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
     await expectLightFromFirstFrame()
@@ -318,8 +322,11 @@ test.describe('critical post-install workflows', () => {
     await expectLightFromFirstFrame()
     await page.unroute('**/_api/users/whoami')
     await page.getByRole('button', { name: 'Account' }).click()
-    const restoredAppearanceSelector = page.locator('.v-overlay--active').getByRole('group', { name: 'Appearance' })
-    await restoredAppearanceSelector.getByRole('button', { name: 'System', exact: true }).click()
+    await page.locator('.v-overlay--active').getByRole('button', { name: 'Appearance', exact: true }).click()
+    const restoredAppearanceToggle = page.locator('.v-overlay--active').getByRole('region', { name: 'Appearance settings' }).getByRole('button')
+    await expect(restoredAppearanceToggle).toHaveAttribute('aria-pressed', 'true')
+    await restoredAppearanceToggle.click()
+    await expect(restoredAppearanceToggle).toHaveAttribute('aria-pressed', 'false')
     await expect
       .poll(async () =>
         page.evaluate(async () => {

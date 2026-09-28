@@ -104,7 +104,7 @@
         )
         template(v-if='currentParent.id > 0')
           .nav-sidebar-ancestor-trail
-            v-list-item.nav-sidebar-ancestor(v-for='(item, idx) of parents', :key='`parent-` + item.id', @click='fetchBrowseItems(item)')
+            v-list-item.nav-sidebar-ancestor(v-for='(item, idx) of parents', :key='`parent-` + item.id', link, role='button', tabindex='0', @click='fetchBrowseItems(item)')
               template(v-slot:prepend)
                 v-avatar.nav-sidebar-ancestor-icon(size='20', variant='text', :style='{ "--nav-depth": idx }')
                   v-icon(size="small") mdi-folder-open
@@ -134,7 +134,7 @@
               v-icon(size="small") mdi-pencil
           v-list-subheader.nav-sidebar-subheader.nav-sidebar-directory-label {{$t('common:sidebar.currentDirectory')}}
         template(v-for='item of currentItems', :key='item.id')
-          v-list-item.nav-sidebar-folder(v-if='item.isFolder', @click='fetchBrowseItems(item)')
+          v-list-item.nav-sidebar-folder(v-if='item.isFolder', link, role='button', tabindex='0', @click='fetchBrowseItems(item)')
             template(v-slot:prepend)
               v-avatar(size='24', variant='text')
                 v-icon mdi-folder
