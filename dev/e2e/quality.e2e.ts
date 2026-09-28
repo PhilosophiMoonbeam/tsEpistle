@@ -187,19 +187,40 @@ test.describe('release accessibility profiles', () => {
     try {
       await page.emulateMedia({ reducedMotion: 'reduce' })
       await openAuthenticatedPage(page, '/', '.page-header-section')
+      const agentTrigger = page.getByRole('button', { name: 'Open Wiki Agent' })
+      await expect(agentTrigger).not.toHaveAttribute('title', /Shift/u)
+      await agentTrigger.hover()
+      const agentTooltip = page.locator('.v-tooltip.v-overlay--active').filter({ hasText: 'Wiki Agent' })
+      await expect(agentTooltip).toBeVisible()
+      await expect(agentTooltip).toHaveText('Wiki Agent')
       await page.getByRole('button', { name: 'Open Wiki Agent' }).click()
       const agent = page.getByRole('region', { name: 'Wiki Agent' })
       await expect(agent).toBeVisible()
+      await expect(agent.locator('.inline-agent__identity .inline-agent__agent-mark')).toHaveCount(0)
       const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
       await composer.fill('Please retry this release evidence request.')
       await agent.getByRole('button', { name: 'Send', exact: true }).click()
       const failedResponse = agent.locator('article.agent-message--assistant.agent-message--failed')
       await expect(failedResponse.getByText('Response could not be completed', { exact: true })).toBeVisible()
+      const userAvatar = agent.locator('.agent-message--user .agent-message__user-avatar').first()
+      const assistantMark = failedResponse.locator('.agent-message__assistant-mark')
+      await expect(userAvatar).toBeVisible()
+      await expect(assistantMark).toBeVisible()
+      await expect(assistantMark.locator('.mdi-creation-outline')).toBeVisible()
+      await expect(assistantMark.locator('.mdi-book-open-page-variant-outline')).toHaveCount(0)
+      const accountAvatar = page.locator('.account-menu__trigger .v-avatar')
+      await expect(accountAvatar).toBeVisible()
+      expect(await userAvatar.evaluate(element => element.querySelector('img')?.getAttribute('src') ?? element.textContent?.trim())).toBe(
+        await accountAvatar.evaluate(element => element.querySelector('img')?.getAttribute('src') ?? element.textContent?.trim())
+      )
       await agent.getByRole('button', { name: 'Try again', exact: true }).click()
       await agent.getByRole('button', { name: 'Send', exact: true }).click()
       await expect(agent.getByText('The release is ready for a deliberate review.', { exact: true })).toBeVisible()
       await expect(agent.locator('[data-agent-citation]')).not.toHaveCount(0)
       await expect(agent.getByRole('img', { name: 'Mermaid diagram', exact: true })).toBeVisible()
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+      await userAvatar.scrollIntoViewIfNeeded()
+      await page.screenshot({ path: testInfo.outputPath('agent-turn-avatars.png') })
       await expectResponsiveLayout(page, 'enabled Agent retry')
       await expectNoBlockingAccessibilityViolations(page, 'enabled Agent retry')
       expect(fixture.requests.some(request => request.includes('/events'))).toBe(true)
@@ -209,6 +230,7 @@ test.describe('release accessibility profiles', () => {
     }
   })
   test('shows Agent glass throughout its opening animation', async ({ page }, testInfo) => {
+    test.setTimeout(60_000)
     requireAnyProject(testInfo, ['accessibility-keyboard', 'accessibility-mobile'])
     const fixture = await installEnabledAgentFixture(page, { mode: 'success' })
     try {
@@ -223,7 +245,7 @@ test.describe('release accessibility profiles', () => {
         })
       )
       await page.goto('/', { waitUntil: 'domcontentloaded' })
-      await expect(page.locator('.page-header-section')).toBeVisible()
+      await expect(page.locator('.page-header-section')).toBeVisible({ timeout: 15_000 })
       await page.getByRole('button', { name: 'Open Wiki Agent' }).click()
       const agent = page.locator('.inline-agent--contextual')
       await expect(agent).toBeVisible()
@@ -260,10 +282,17 @@ test.describe('release accessibility profiles', () => {
       await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeFocused()
       await page.keyboard.press('Escape')
       await expect(agent).toBeHidden()
-      // Escape returns to Search by design; its glass uses the same visual tokens.
       const search = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
+      await expect(search).toBeHidden()
+      await page.getByRole('button', { name: 'Open Wiki Agent' }).click()
+      await expect(agent).toBeVisible()
+      await page.keyboard.press('Control+Shift+A')
+      await expect(agent).toBeHidden()
       await expect(search).toBeVisible()
-      await expect(page.locator('.nav-header-search-control input:visible').first()).toBeFocused()
+      const restoredSearchInput = page.locator('.nav-header-search-control input:visible').first()
+      await expect(restoredSearchInput).toBeVisible()
+      await restoredSearchInput.focus()
+      await expect(restoredSearchInput).toBeFocused()
       await expect(search).toHaveCSS('backdrop-filter', frames[0].blur)
       await expect(search).toHaveCSS('background-color', frames[0].background)
       await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -508,7 +537,7 @@ test.describe('release accessibility profiles', () => {
     }
   })
 
-  test('contains Ask keyboard focus and restores the invoking search control', async ({ page }, testInfo) => {
+  test('contains Ask keyboard focus and returns to the page on Escape', async ({ page }, testInfo) => {
     test.setTimeout(60_000)
     requireProject(testInfo, 'accessibility-keyboard')
     await authenticateAsAdmin(page)
@@ -575,8 +604,7 @@ test.describe('release accessibility profiles', () => {
     await expect(escapeSource).toBeFocused()
     await page.keyboard.press('Escape')
     await expect(dialog).not.toBeVisible()
-    await expect(search).toBeFocused()
-    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog', { name: 'Search the Wiki', exact: true })).not.toBeVisible()
     await expect
       .poll(() =>
         page

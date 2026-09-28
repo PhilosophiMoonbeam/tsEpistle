@@ -618,7 +618,7 @@ watch(
 }
 
 .agent-message__time {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 52%, transparent);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent);
   font-family: var(--wiki-font-mono);
   font-size: var(--wiki-label-size);
   line-height: 1.35;
