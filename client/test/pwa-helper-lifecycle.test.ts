@@ -66,7 +66,9 @@ class TestPort {
   postMessage(data: unknown): void {
     if (!this.closed && !this.peer.closed) this.peer.onmessage?.({ data })
   }
-  close(): void { this.closed = true }
+  close(): void {
+    this.closed = true
+  }
 }
 
 class TestMessageChannel {
@@ -82,9 +84,15 @@ class TestBroadcastChannel {
   static instances = new Set<TestBroadcastChannel>()
   onmessage: ((event: { data: unknown }) => void) | null = null
   sent: unknown[] = []
-  constructor(readonly name: string) { TestBroadcastChannel.instances.add(this) }
-  postMessage(data: unknown): void { this.sent.push(data) }
-  close(): void { TestBroadcastChannel.instances.delete(this) }
+  constructor(readonly name: string) {
+    TestBroadcastChannel.instances.add(this)
+  }
+  postMessage(data: unknown): void {
+    this.sent.push(data)
+  }
+  close(): void {
+    TestBroadcastChannel.instances.delete(this)
+  }
 }
 
 type WorkerLike = {
@@ -147,9 +155,10 @@ const defineGlobal = (name: string, value: unknown, originals: Map<string, Prope
   Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
 }
 
-const shell = (release: string): Response => new Response(`<!doctype html><head><meta name="tsepistle-pwa-release" content="${release}"></head>`, {
-  headers: { 'Content-Type': 'text/html' }
-})
+const shell = (release: string): Response =>
+  new Response(`<!doctype html><head><meta name="tsepistle-pwa-release" content="${release}"></head>`, {
+    headers: { 'Content-Type': 'text/html' }
+  })
 
 const createWorker = (hub: EventHub): WorkerLike => {
   const worker: WorkerLike = {
@@ -249,17 +258,25 @@ const createHarness = async (mode: 'feature' | 'retirement' = 'feature', online 
     getRegistrationCalls,
     updateCalls,
     reloadCalls,
-    setFetchImplementation(implementation) { fetchImplementation = implementation },
-    setGetRegistrationImplementation(implementation) { getRegistrationImplementation = implementation },
+    setFetchImplementation(implementation) {
+      fetchImplementation = implementation
+    },
+    setGetRegistrationImplementation(implementation) {
+      getRegistrationImplementation = implementation
+    },
     setRegisterImplementation(implementation) {
       registerImplementation = implementation
     },
-    setUpdateImplementation(implementation) { updateImplementation = implementation },
-    setOnline(online) { navigator.onLine = online },
+    setUpdateImplementation(implementation) {
+      updateImplementation = implementation
+    },
+    setOnline(online) {
+      navigator.onLine = online
+    },
     sendWorkerMessage(data, source = activeWorker) {
       const readiness = (data as { type: string }).type.startsWith('PWA_OFFLINE_')
-      const matches = (reply: { type: string; port: TestPort }) => !reply.port.peer.closed &&
-        (readiness ? reply.type === 'PWA_OFFLINE_READY_REQUEST' : reply.type === 'PWA_CONNECT')
+      const matches = (reply: { type: string; port: TestPort }) =>
+        !reply.port.peer.closed && (readiness ? reply.type === 'PWA_OFFLINE_READY_REQUEST' : reply.type === 'PWA_CONNECT')
       if (!source.replies.some(matches) && (source === registration.active || source === container.controller || source === registration.waiting)) {
         const waiting = registration.waiting
         registration.waiting = source
@@ -320,7 +337,6 @@ const activateWaitingWorker = (
   }
 }
 
-
 describe('PWA pre-mount release gate', () => {
   for (const order of ['message-first', 'controllerchange-first'] as const) {
     it(`keeps a fresh B navigation mounted after B activates (${order})`, async () => {
@@ -333,7 +349,9 @@ describe('PWA pre-mount release gate', () => {
         harness.registration.waiting = nextWorker
         const startup = harness.module.preparePwaStartup(RELEASE_B, { onNeedReload })
         let settled = false
-        void startup.then(() => { settled = true })
+        void startup.then(() => {
+          settled = true
+        })
         await vi.waitFor(() => expect(harness.activeWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
         harness.sendWorkerMessage(notReadyMessage(RELEASE_A))
         await vi.waitFor(() => expect(nextWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
@@ -353,7 +371,9 @@ describe('PWA pre-mount release gate', () => {
         expect(harness.reloadCalls).not.toHaveBeenCalled()
         expect(await harness.module.preparePwaStartup(RELEASE_B, { onNeedReload })).toBe('continue')
         expect(harness.updateCalls).toHaveLength(0)
-      } finally { harness.restore() }
+      } finally {
+        harness.restore()
+      }
     })
   }
 
@@ -390,7 +410,9 @@ describe('PWA pre-mount release gate', () => {
       expect(harness.reloadCalls).toHaveBeenCalledTimes(1)
       expect(harness.updateCalls).toHaveLength(1)
       expect(harness.module.startupRefreshDeferred.value).toBe(false)
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   it('updates a stale A waiting worker rather than accepting it for a B navigation', async () => {
@@ -420,13 +442,23 @@ describe('PWA pre-mount release gate', () => {
       await vi.waitFor(() => expect(nextWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
       harness.sendWorkerMessage(notReadyMessage(RELEASE_B), nextWorker)
       await vi.waitFor(() => expect(nextWorker.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(true))
-      activateWaitingWorker(harness, nextWorker, nextWorkerHub, {
-        workerId: 'worker-b', release: RELEASE_B, roundNonce: 'stale-round'
-      }, 'message-first')
+      activateWaitingWorker(
+        harness,
+        nextWorker,
+        nextWorkerHub,
+        {
+          workerId: 'worker-b',
+          release: RELEASE_B,
+          roundNonce: 'stale-round'
+        },
+        'message-first'
+      )
       expect(await startup).toBe('reloading')
       expect(onNeedReload).toHaveBeenCalledTimes(1)
       expect(harness.updateCalls).toHaveLength(1)
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   it('bounds an unresolved mismatch, then requires explicit refresh instead of a late automatic reload', async () => {
@@ -445,14 +477,25 @@ describe('PWA pre-mount release gate', () => {
       await vi.advanceTimersByTimeAsync(1)
       expect(await startup).toBe('continue')
       expect(harness.module.startupRefreshDeferred.value).toBe(true)
-      activateWaitingWorker(harness, waiting, waitingHub, {
-        workerId: 'worker-b', release: RELEASE_B, roundNonce: 'late-round'
-      }, 'message-first')
+      activateWaitingWorker(
+        harness,
+        waiting,
+        waitingHub,
+        {
+          workerId: 'worker-b',
+          release: RELEASE_B,
+          roundNonce: 'late-round'
+        },
+        'message-first'
+      )
       await vi.advanceTimersByTimeAsync(1)
       expect(onNeedReload).not.toHaveBeenCalled()
       expect(harness.reloadCalls).not.toHaveBeenCalled()
       expect(harness.module.startupRefreshDeferred.value).toBe(true)
-    } finally { harness.restore(); vi.useRealTimers() }
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
   })
 
   it('keeps an online B document with bundle B when the B controller is already active', async () => {
@@ -467,7 +510,9 @@ describe('PWA pre-mount release gate', () => {
       expect(onNeedReload).not.toHaveBeenCalled()
       expect(harness.reloadCalls).not.toHaveBeenCalled()
       expect(harness.module.startupRefreshDeferred.value).toBe(false)
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   it('mounts a matching first install before its installing worker finishes and keeps the page after activation', async () => {
@@ -482,7 +527,9 @@ describe('PWA pre-mount release gate', () => {
       harness.registration.installing = installing
       const onNeedReload = vi.fn(() => harness.reloadCalls())
       let result: 'continue' | 'reloading' | null = null
-      void harness.module.preparePwaStartup(RELEASE_B, { onNeedReload }).then(value => { result = value })
+      void harness.module.preparePwaStartup(RELEASE_B, { onNeedReload }).then(value => {
+        result = value
+      })
       await vi.advanceTimersByTimeAsync(1)
       expect(result).toBe('continue')
       expect(harness.module.startupRefreshDeferred.value).toBe(false)
@@ -498,7 +545,10 @@ describe('PWA pre-mount release gate', () => {
       expect(harness.module.pwaState.controlled).toBe(true)
       expect(onNeedReload).not.toHaveBeenCalled()
       expect(harness.reloadCalls).not.toHaveBeenCalled()
-    } finally { harness.restore(); vi.useRealTimers() }
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
   })
 
   it('keeps a fresh B controller mounted without preparing a stale waiting A worker', async () => {
@@ -521,7 +571,9 @@ describe('PWA pre-mount release gate', () => {
       expect(onNeedReload).not.toHaveBeenCalled()
       expect(harness.reloadCalls).not.toHaveBeenCalled()
       expect(harness.module.startupRefreshDeferred.value).toBe(false)
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   it('refreshes a deferred stale bundle explicitly after the matching controller is already active', async () => {
@@ -544,12 +596,17 @@ describe('PWA pre-mount release gate', () => {
       expect(onNeedReload).toHaveBeenCalledTimes(1)
       expect(harness.reloadCalls).toHaveBeenCalledTimes(1)
       expect(harness.updateCalls).toHaveLength(0)
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   for (const [documentRelease, bundleRelease] of [
-    [null, RELEASE_A], ['not-a-release', RELEASE_A], ['a'.repeat(39), RELEASE_A],
-    [RELEASE_B.toUpperCase(), RELEASE_A], [RELEASE_B, '__TSEPISTLE_PWA_RELEASE__']
+    [null, RELEASE_A],
+    ['not-a-release', RELEASE_A],
+    ['a'.repeat(39), RELEASE_A],
+    [RELEASE_B.toUpperCase(), RELEASE_A],
+    [RELEASE_B, '__TSEPISTLE_PWA_RELEASE__']
   ] as const) {
     it(`fails open when release identity is unavailable (${String(documentRelease)}, ${bundleRelease})`, async () => {
       const harness = await createHarness('feature', true, documentRelease)
@@ -558,7 +615,9 @@ describe('PWA pre-mount release gate', () => {
         expect(harness.module.startupRefreshDeferred.value).toBe(false)
         expect(harness.updateCalls).toHaveLength(0)
         expect(harness.reloadCalls).not.toHaveBeenCalled()
-      } finally { harness.restore() }
+      } finally {
+        harness.restore()
+      }
     })
   }
 
@@ -572,7 +631,9 @@ describe('PWA pre-mount release gate', () => {
       expect(harness.module.startupRefreshDeferred.value).toBe(true)
       expect(onNeedReload).not.toHaveBeenCalled()
       expect(harness.reloadCalls).not.toHaveBeenCalled()
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   for (const stalled of ['getRegistration', 'register'] as const) {
@@ -584,9 +645,16 @@ describe('PWA pre-mount release gate', () => {
         const markerB = `${SHELL_URL}?__tsepistle_pwa_complete=${encodeURIComponent(RELEASE_B)}-${DIGEST}`
         const cache = await harness.caches.open(CACHE_NAME)
         await cache.put(SHELL_URL, shell(RELEASE_B))
-        await cache.put(markerB, new Response(JSON.stringify({
-          release: RELEASE_B, manifestDigest: DIGEST, cacheName: CACHE_NAME
-        })))
+        await cache.put(
+          markerB,
+          new Response(
+            JSON.stringify({
+              release: RELEASE_B,
+              manifestDigest: DIGEST,
+              cacheName: CACHE_NAME
+            })
+          )
+        )
         if (stalled === 'getRegistration') harness.setGetRegistrationImplementation(() => discovered.promise)
         else {
           harness.setGetRegistrationImplementation(async () => null)
@@ -595,7 +663,9 @@ describe('PWA pre-mount release gate', () => {
         const previouslyRegistering = stalled === 'register' ? harness.module.registerPwa() : null
         const onNeedReload = vi.fn(() => harness.reloadCalls())
         let result: 'continue' | 'reloading' | null = null
-        void harness.module.preparePwaStartup(RELEASE_B, { onNeedReload }).then(value => { result = value })
+        void harness.module.preparePwaStartup(RELEASE_B, { onNeedReload }).then(value => {
+          result = value
+        })
         await vi.advanceTimersByTimeAsync(1)
         expect(result).toBe('continue')
         expect(harness.module.startupRefreshDeferred.value).toBe(false)
@@ -621,7 +691,10 @@ describe('PWA pre-mount release gate', () => {
         expect(harness.module.pwaState.updateReady).toBe(true)
         expect(onNeedReload).not.toHaveBeenCalled()
         expect(harness.reloadCalls).not.toHaveBeenCalled()
-      } finally { harness.restore(); vi.useRealTimers() }
+      } finally {
+        harness.restore()
+        vi.useRealTimers()
+      }
     })
   }
 
@@ -633,7 +706,9 @@ describe('PWA pre-mount release gate', () => {
       expect(harness.updateCalls).toHaveLength(0)
       expect(harness.module.startupRefreshDeferred.value).toBe(false)
       expect(harness.module.pwaState.registrationState).toBe('unsupported')
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 })
 
@@ -647,7 +722,9 @@ describe('PWA helper lifecycle', () => {
       await harness.module.registerPwa()
       await vi.waitFor(() => expect(waiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(true))
       expect(waiting.replies.filter(reply => reply.type === 'PWA_PREPARE_UPDATE')).toHaveLength(1)
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   it('restarts preparation after a page resumes with its previous reply port closed', async () => {
@@ -663,7 +740,9 @@ describe('PWA helper lifecycle', () => {
       expect(previousPort.peer.closed).toBe(true)
       harness.windowHub.emit('pageshow', { persisted: true })
       await vi.waitFor(() => expect(waiting.replies.filter(reply => reply.type === 'PWA_PREPARE_UPDATE')).toHaveLength(2))
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   it('starts preparation automatically when a new worker is waiting', async () => {
@@ -678,14 +757,14 @@ describe('PWA helper lifecycle', () => {
       waiting.state = 'installed'
       harness.registration.waiting = waiting
       waitingHub.emit('statechange')
-      await vi.waitFor(() => expect(waiting.messages.some(message =>
-        (message as { message: { type: string } }).message.type === 'PWA_PREPARE_UPDATE'
-      )).toBe(true))
+      await vi.waitFor(() =>
+        expect(waiting.messages.some(message => (message as { message: { type: string } }).message.type === 'PWA_PREPARE_UPDATE')).toBe(true)
+      )
       expect(harness.module.pwaState.updateReady).toBe(true)
-      expect(waiting.messages.filter(message =>
-        (message as { message: { type: string } }).message.type === 'PWA_PREPARE_UPDATE'
-      )).toHaveLength(1)
-    } finally { harness.restore() }
+      expect(waiting.messages.filter(message => (message as { message: { type: string } }).message.type === 'PWA_PREPARE_UPDATE')).toHaveLength(1)
+    } finally {
+      harness.restore()
+    }
   })
 
   it('retries a deferred automatic update after unsafe editor work becomes safe', async () => {
@@ -703,16 +782,32 @@ describe('PWA helper lifecycle', () => {
       await vi.waitFor(() => expect(waiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(true))
 
       harness.module.setReloadSafetyProvider(() => ({ safe: false, revision: 'editor-dirty' }))
-      waiting.replies.findLast(reply => reply.type === 'PWA_PREPARE_UPDATE')!.port.postMessage({
-        type: 'PWA_RELOAD_SAFETY_REQUEST', workerId: 'worker', release: RELEASE, roundNonce: 'round'
-      })
-      await vi.waitFor(() => expect(waiting.messages.some(message =>
-        (message as { message: { type: string; safe?: boolean } }).message.type === 'PWA_RELOAD_SAFETY' &&
-        (message as { message: { safe?: boolean } }).message.safe === false
-      )).toBe(true))
-      waiting.replies.findLast(reply => reply.type === 'PWA_PREPARE_UPDATE')!.port.postMessage({
-        type: 'PWA_UPDATE_DEFERRED', workerId: 'worker', release: RELEASE, roundNonce: 'round', reason: 'preparation-deadline'
-      })
+      waiting.replies
+        .findLast(reply => reply.type === 'PWA_PREPARE_UPDATE')!
+        .port.postMessage({
+          type: 'PWA_RELOAD_SAFETY_REQUEST',
+          workerId: 'worker',
+          release: RELEASE,
+          roundNonce: 'round'
+        })
+      await vi.waitFor(() =>
+        expect(
+          waiting.messages.some(
+            message =>
+              (message as { message: { type: string; safe?: boolean } }).message.type === 'PWA_RELOAD_SAFETY' &&
+              (message as { message: { safe?: boolean } }).message.safe === false
+          )
+        ).toBe(true)
+      )
+      waiting.replies
+        .findLast(reply => reply.type === 'PWA_PREPARE_UPDATE')!
+        .port.postMessage({
+          type: 'PWA_UPDATE_DEFERRED',
+          workerId: 'worker',
+          release: RELEASE,
+          roundNonce: 'round',
+          reason: 'preparation-deadline'
+        })
       expect(harness.module.pwaState.preparation).toBe('deferred')
       const firstAttempts = waiting.replies.filter(reply => reply.type === 'PWA_PREPARE_UPDATE').length
       await Promise.resolve()
@@ -720,7 +815,9 @@ describe('PWA helper lifecycle', () => {
 
       harness.module.setReloadSafetyProvider(() => ({ safe: true, revision: 'editor-saved' }))
       await vi.waitFor(() => expect(waiting.replies.filter(reply => reply.type === 'PWA_PREPARE_UPDATE')).toHaveLength(firstAttempts + 1))
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   it('uses the new envelope and drops pending replies across pagehide and BFCache restoration', async () => {
@@ -744,7 +841,9 @@ describe('PWA helper lifecycle', () => {
       expect(TestBroadcastChannel.instances.size).toBe(1)
       harness.sendWorkerMessage(readyMessage())
       await vi.waitFor(() => expect(harness.module.pwaState.offlineReady).toBe(true))
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   it('uses wakeups only to reconnect the known waiting worker and bounds an unanswered preparation', async () => {
@@ -766,7 +865,10 @@ describe('PWA helper lifecycle', () => {
       await vi.advanceTimersByTimeAsync(20_001)
       expect(harness.module.pwaState.preparation).toBe('deferred')
       expect(harness.module.pwaState.preparationReason).toContain('Retry')
-    } finally { harness.restore(); vi.useRealTimers() }
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
   })
 
   it('cancels an old async safety response when its update port is replaced', async () => {
@@ -776,7 +878,9 @@ describe('PWA helper lifecycle', () => {
       const waiting = createWorker(new EventHub())
       harness.registration.waiting = waiting
       let finish!: (value: { safe: boolean; revision: string }) => void
-      const pending = new Promise<{ safe: boolean; revision: string }>(resolve => { finish = resolve })
+      const pending = new Promise<{ safe: boolean; revision: string }>(resolve => {
+        finish = resolve
+      })
       harness.module.setReloadSafetyProvider(() => pending)
       harness.windowHub.emit('pageshow')
       const old = waiting.replies.findLast(reply => reply.type === 'PWA_CONNECT')!.port
@@ -787,7 +891,9 @@ describe('PWA helper lifecycle', () => {
       await Promise.resolve()
       expect(waiting.messages.some(message => (message as { message: { type: string } }).message.type === 'PWA_RELOAD_SAFETY')).toBe(false)
       expect(old.peer.closed).toBe(true)
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   it('probes an initially online server during registration without browser online events or explicit Retry', async () => {
@@ -929,7 +1035,6 @@ describe('PWA helper lifecycle', () => {
       await vi.waitFor(() => expect(onNeedReload).toHaveBeenCalledTimes(1))
       expect(harness.module.pwaState.reloadSafe).toBe(true)
       expect(harness.module.pwaState.safetyRevision).toBe('clean-revision')
-
     } finally {
       harness.restore()
     }
@@ -1040,13 +1145,14 @@ describe('PWA helper lifecycle', () => {
   })
 })
 
-
 describe('foreground connection recovery', () => {
   it('recovers from an unavailable server without requiring another browser online event', async () => {
     vi.useFakeTimers()
     const harness = await createHarness()
     try {
-      harness.setFetchImplementation(async () => { throw new Error('Network transition') })
+      harness.setFetchImplementation(async () => {
+        throw new Error('Network transition')
+      })
       await harness.module.registerPwa()
       await vi.advanceTimersByTimeAsync(1)
       expect(harness.module.pwaState.connectionState).toBe('server-unavailable')
@@ -1057,7 +1163,10 @@ describe('foreground connection recovery', () => {
       expect(harness.module.pwaState.connectionState).toBe('online')
       await vi.advanceTimersByTimeAsync(60_000)
       expect(harness.fetchCalls).toHaveLength(3)
-    } finally { harness.restore(); vi.useRealTimers() }
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
   })
 
   it('recovers while the browser still reports offline and keeps the offline UI during the probe', async () => {
@@ -1065,12 +1174,19 @@ describe('foreground connection recovery', () => {
     const harness = await createHarness()
     try {
       Object.defineProperty(navigator, 'onLine', { value: false, configurable: true })
-      harness.setFetchImplementation(async () => { throw new Error('Disconnected') })
+      harness.setFetchImplementation(async () => {
+        throw new Error('Disconnected')
+      })
       await harness.module.registerPwa()
       await vi.advanceTimersByTimeAsync(1)
       expect(harness.module.pwaState.connectionState).toBe('offline')
       let finishProbe = (_response: Response): void => {}
-      harness.setFetchImplementation(() => new Promise(resolve => { finishProbe = resolve }))
+      harness.setFetchImplementation(
+        () =>
+          new Promise(resolve => {
+            finishProbe = resolve
+          })
+      )
       await vi.advanceTimersByTimeAsync(3_000)
       expect(harness.fetchCalls).toHaveLength(2)
       expect(harness.module.pwaState.connectionState).toBe('offline')
@@ -1080,7 +1196,10 @@ describe('foreground connection recovery', () => {
       expect(harness.module.pwaState.connectionState).toBe('online')
       await vi.advanceTimersByTimeAsync(60_000)
       expect(harness.fetchCalls).toHaveLength(3)
-    } finally { harness.restore(); vi.useRealTimers() }
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
   })
 
   it('backs off unsuccessful offline probes to a thirty-second cap without showing checking', async () => {
@@ -1104,7 +1223,10 @@ describe('foreground connection recovery', () => {
         expect(harness.module.pwaState.connectionState).toBe('offline')
       }
       expect(observedStates.slice(1)).toEqual(Array(6).fill('offline'))
-    } finally { harness.restore(); vi.useRealTimers() }
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
   })
 
   it('allows immediate manual retry without switching the unavailable UI to checking', async () => {
@@ -1115,7 +1237,12 @@ describe('foreground connection recovery', () => {
       await harness.module.registerPwa()
       await vi.advanceTimersByTimeAsync(1)
       let finishProbe = (_response: Response): void => {}
-      harness.setFetchImplementation(() => new Promise(resolve => { finishProbe = resolve }))
+      harness.setFetchImplementation(
+        () =>
+          new Promise(resolve => {
+            finishProbe = resolve
+          })
+      )
       const retry = harness.module.retryServerConnection()
       expect(harness.fetchCalls).toHaveLength(2)
       expect(harness.module.pwaState.connectionState).toBe('server-unavailable')
@@ -1124,7 +1251,10 @@ describe('foreground connection recovery', () => {
       expect(harness.module.pwaState.connectionState).toBe('online')
       await vi.advanceTimersByTimeAsync(60_000)
       expect(harness.fetchCalls).toHaveLength(3)
-    } finally { harness.restore(); vi.useRealTimers() }
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
   })
 
   it('suspends recovery while hidden or leaving the document and resumes when visible', async () => {
@@ -1150,18 +1280,28 @@ describe('foreground connection recovery', () => {
       harness.windowHub.emit('pageshow')
       await vi.advanceTimersByTimeAsync(6_000)
       expect(harness.fetchCalls).toHaveLength(3)
-    } finally { harness.restore(); vi.useRealTimers() }
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
   })
 
   it('fences a pending probe on suspension so its late success cannot restore a hidden app', async () => {
     vi.useFakeTimers()
     const harness = await createHarness()
     try {
-      harness.setFetchImplementation(async () => { throw new Error('Disconnected') })
+      harness.setFetchImplementation(async () => {
+        throw new Error('Disconnected')
+      })
       await harness.module.registerPwa()
       await vi.advanceTimersByTimeAsync(1)
       let finishProbe = (_response: Response): void => {}
-      harness.setFetchImplementation(() => new Promise(resolve => { finishProbe = resolve }))
+      harness.setFetchImplementation(
+        () =>
+          new Promise(resolve => {
+            finishProbe = resolve
+          })
+      )
       await vi.advanceTimersByTimeAsync(3_000)
       harness.windowHub.emit('pagehide')
       finishProbe(new Response('{}', { status: 200 }))
@@ -1173,10 +1313,12 @@ describe('foreground connection recovery', () => {
       await vi.advanceTimersByTimeAsync(6_000)
       expect(harness.module.pwaState.connectionState).toBe('online')
       expect(harness.fetchCalls).toHaveLength(3)
-    } finally { harness.restore(); vi.useRealTimers() }
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
   })
 })
-
 
 describe('connection loss without a browser event', () => {
   it('starts offline before registration or probing when the browser is already disconnected', async () => {
@@ -1184,7 +1326,9 @@ describe('connection loss without a browser event', () => {
     try {
       expect(harness.module.pwaState.connectionState).toBe('offline')
       expect(harness.fetchCalls).toHaveLength(0)
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   it('quietly detects a lost connection in a foreground online tab', async () => {
@@ -1200,7 +1344,10 @@ describe('connection loss without a browser event', () => {
       })
       await vi.advanceTimersByTimeAsync(30_000)
       expect(harness.module.pwaState.connectionState).toBe('server-unavailable')
-    } finally { harness.restore(); vi.useRealTimers() }
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
   })
 
   for (const event of ['focus', 'pageshow', 'visibilitychange']) {
@@ -1210,12 +1357,17 @@ describe('connection loss without a browser event', () => {
       try {
         await harness.module.registerPwa()
         await vi.advanceTimersByTimeAsync(1)
-        harness.setFetchImplementation(async () => { throw new TypeError('Failed to fetch') })
+        harness.setFetchImplementation(async () => {
+          throw new TypeError('Failed to fetch')
+        })
         harness.windowHub.emit(event)
         await vi.advanceTimersByTimeAsync(1)
         expect(harness.fetchCalls).toHaveLength(2)
         expect(harness.module.pwaState.connectionState).toBe('server-unavailable')
-      } finally { harness.restore(); vi.useRealTimers() }
+      } finally {
+        harness.restore()
+        vi.useRealTimers()
+      }
     })
   }
 
@@ -1231,7 +1383,9 @@ describe('connection loss without a browser event', () => {
       await harness.module.retryServerConnection()
       harness.module.observeBrowserConnection()
       expect(harness.module.pwaState.connectionState).toBe('online')
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   it('reuses a pending quiet check when Browse is activated', async () => {
@@ -1241,7 +1395,12 @@ describe('connection loss without a browser event', () => {
       await harness.module.retryServerConnection()
       const before = harness.fetchCalls.length
       let finish = (_response: Response): void => {}
-      harness.setFetchImplementation(() => new Promise(resolve => { finish = resolve }))
+      harness.setFetchImplementation(
+        () =>
+          new Promise(resolve => {
+            finish = resolve
+          })
+      )
       const first = harness.module.retryServerConnection({ quiet: true })
       const second = harness.module.retryServerConnection({ quiet: true, reusePending: true })
       expect(harness.fetchCalls).toHaveLength(before + 1)
@@ -1249,7 +1408,9 @@ describe('connection loss without a browser event', () => {
       finish(new Response('{}', { status: 200 }))
       expect(await first).toBe(true)
       expect(await second).toBe(true)
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 
   it('switches immediately to saved-page state when a navigation transport fails', async () => {
@@ -1260,6 +1421,8 @@ describe('connection loss without a browser event', () => {
       harness.module.reportServerConnectionFailure()
       expect(harness.module.pwaState.connectionState).toBe('server-unavailable')
       expect(harness.module.pwaState.serverReachable).toBe(false)
-    } finally { harness.restore() }
+    } finally {
+      harness.restore()
+    }
   })
 })

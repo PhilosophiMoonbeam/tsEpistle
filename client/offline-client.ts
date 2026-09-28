@@ -15,17 +15,24 @@ import { preparePwaStartup, setReloadSafetyProvider } from './helpers/pwa.ts'
 
 export async function mountOfflineApp(appearance: string): Promise<void> {
   setReloadSafetyProvider(() => ({ safe: true, revision: 'offline-reader', actorEpoch: 'neutral' }))
-  if (await preparePwaStartup('__TSEPISTLE_PWA_RELEASE__', {
-    onNeedReload: () => window.location.reload()
-  }) === 'reloading') return
+  if (
+    (await preparePwaStartup('__TSEPISTLE_PWA_RELEASE__', {
+      onNeedReload: () => window.location.reload()
+    })) === 'reloading'
+  )
+    return
   // Bundled labels let the shared shell mount immediately without a locale API.
-  await i18next.init({ lng: siteConfig.lang, fallbackLng: 'en', resources: {},
-    parseMissingKeyHandler: (key, fallback) => fallback ?? fallbackLocalizationLabel(key) })
+  await i18next.init({
+    lng: siteConfig.lang,
+    fallbackLng: 'en',
+    resources: {},
+    parseMissingKeyHandler: (key, fallback) => fallback ?? fallbackLocalizationLabel(key)
+  })
   const app = createApp(OfflineApp)
   const vuetify = createAppVuetify(appearance)
   app.use(pinia).use(vuetify).use(helpersPlugin)
   app.config.globalProperties.$i18n = i18next
-  app.config.globalProperties.$t = (key, options) => typeof options?.defaultValue === 'string' ? options.defaultValue : fallbackLocalizationLabel(key)
+  app.config.globalProperties.$t = (key, options) => (typeof options?.defaultValue === 'string' ? options.defaultValue : fallbackLocalizationLabel(key))
   app.component('NavHeader', NavHeader)
   app.component('SearchResults', SearchResults)
   app.component('PageSelector', PageSelector)
