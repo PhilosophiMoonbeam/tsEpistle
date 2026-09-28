@@ -5,6 +5,7 @@ import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { calculateComposerSizing, caretBoundsFromMirror, scrollTopForCaret } from './agent-composer-sizing.ts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
+import { resolveUserPicture } from '../../helpers/user-picture.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/inline-agent-chat.vue')
 const componentSource = fs.readFileSync(componentPath, 'utf8')
@@ -20,7 +21,6 @@ const composerStyles = composerDescriptor.styles.map(style => style.content).joi
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 
 resetBody()
-
 
 // Vuetify snapshots browser capabilities during module evaluation, so the DOM must exist before loading it here.
 const Vue = await import('vue')
@@ -538,6 +538,7 @@ const mountInlineAgent = (
     goalsEnabled: true,
     pageId: page?.id ?? 0,
     pageLocale: page?.locale ?? '',
+    userPicture: resolveUserPicture({ id: 2, name: 'Test User', pictureUrl: '' }),
     pagePath: page?.path ?? '',
     pageUpdatedAt: page?.observedUpdatedAt ?? '',
     loading: false,
@@ -611,7 +612,8 @@ const mountInlineAgent = (
     connectionLabel: lockState?.connectionLabel.value ?? 'Ready',
     connectionTone: lockState?.connectionTone.value ?? 'ready',
     welcomeGreeting: lockState?.welcomeGreeting ?? { first: 'Stacks of possibilities.', second: 'Zero overdue fees.' },
-    starters: startersList,    startersMarqueeActive: Vue.ref(false),
+    starters: startersList,
+    startersMarqueeActive: Vue.ref(false),
     startersMarqueePeriod: Vue.ref(0),
     startersMarqueeList: Vue.computed(() => startersList),
     onStartersPointerDown: () => undefined,
@@ -750,15 +752,7 @@ const mountInlineAgent = (
   })
   const app = Vue.createApp(inlineHarness)
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
-  for (const name of [
-    'AgentGoalStatus',
-    'AgentHistoryPanel',
-    'AgentMcpApproval',
-    'AgentMemoryManager',
-    'AgentPersonalSkills',
-    'AgentThread',
-    'ControlBorderBeam'
-  ])
+  for (const name of ['AgentGoalStatus', 'AgentHistoryPanel', 'AgentMcpApproval', 'AgentMemoryManager', 'AgentPersonalSkills', 'AgentThread'])
     app.component(name, componentStub)
   app.component(
     'AgentContextPicker',
@@ -852,9 +846,7 @@ afterEach(() => {
 
 describe('Inline Agent mobile panel controls', () => {
   it('keeps both History and Memory pointer-activatable and closes the menu', async () => {
-    for (const [index, panel] of [
-      [0, 'memory']
-    ] as const) {
+    for (const [index, panel] of [[0, 'memory']] as const) {
       const mounted = mountInlineAgent()
       const items = await openPanelMenu(mounted)
       const item = items[index]
@@ -997,7 +989,6 @@ describe('Inline Agent workspace actions', () => {
     ])
     expect(mounted.root.querySelector('.inline-agent__welcome-mark')).toBeNull()
     expect(mounted.root.querySelector('.inline-agent__welcome-index')).toBeNull()
-    expect(mounted.root.querySelector('.inline-agent__agent-mark .mdi-creation-outline')).not.toBeNull()
     expect(starters.every(starter => !starter.querySelector('.inline-agent__starter-arrow'))).toBe(true)
   })
   it('keeps the selected two-line greeting stable for one visit', async () => {
@@ -1278,7 +1269,8 @@ describe('Agent workspace action semantics', () => {
 
   it('disables the pin action only while workspace selection is unsettled', async () => {
     const unsettled = mountInlineAgent(loadGoalLockState(null, false, null, false))
-    const disabled = (item?: HTMLElement): boolean => Boolean(item?.hasAttribute('disabled') || item?.getAttribute('aria-disabled') === 'true' || item?.classList.contains('v-list-item--disabled'))
+    const disabled = (item?: HTMLElement): boolean =>
+      Boolean(item?.hasAttribute('disabled') || item?.getAttribute('aria-disabled') === 'true' || item?.classList.contains('v-list-item--disabled'))
     const unsettledItems = await openPanelMenu(unsettled)
     expect(disabled(unsettledItems[1])).toBe(true)
     unsettled.unmount()

@@ -714,7 +714,7 @@ export default defineComponent({
         root,
         restoreTarget: this.restoreTargetFor(agentOpener),
         additionalRoots: () => activeOwnedOverlayRoots('.agent-owned-overlay'),
-        onEscape: this.returnToSearch
+        onEscape: this.closeSearch
       })
       this.pendingAskRestoreTarget = null
       this.modalFocusScope = focusScope
@@ -893,20 +893,6 @@ export default defineComponent({
       this.offlinePrivateSearchCorpusSessionGeneration = null
       this.offlinePrivateSearchEnabled = typeof currentOfflineReadingHandle === 'function' && Boolean(currentOfflineReadingHandle())
       this.search = ''
-    },
-    async returnToSearch(): Promise<void> {
-      this.captureAgentExcursion()
-      this.pendingAskRestoreTarget = null
-      const returnId = ++this.directPromptHandoffId
-      this.deactivateAgentModal(false)
-      this.searchMode = 'search'
-      this.searchIsFocused = true
-      await this.$nextTick()
-      if (returnId !== this.directPromptHandoffId || this.isAgentOpen || !this.searchIsFocused) return
-      this.deactivateAgentModal(false)
-      await this.$nextTick()
-      if (returnId !== this.directPromptHandoffId || this.isAgentOpen || !this.searchIsFocused) return
-      emitSearchFocus()
     },
     selectSearchScope(scope: SearchScope): void {
       this.searchScope = scope
