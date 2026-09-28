@@ -286,6 +286,14 @@ Outbound share uses `navigator.share`/`canShare` from a user gesture and handles
 
 Registration is single-instance and exposes explicit callbacks for ready, offline-ready, update-ready, reload-needed, and registration error. Updates are prompted. The app does not rely on a stale library helper argument to suppress reload; it owns `onNeedReload` behavior. Reduced-motion users receive no decorative transition; forced-colors, keyboard focus, screen-reader live regions, 44px touch targets, RTL, dark mode, safe-area insets, compact mobile layout, and landscape are acceptance requirements.
 
+### First-load release check
+
+Online documents expose `siteConfig.product.revision` as `tsepistle-pwa-release`, and the client bundle carries the matching build-stamped release identity. Before creating and mounting the interactive app, startup compares those identities with a source-bound active or waiting worker release. A matching fresh document proceeds without waiting for worker activation. Registration does not poll `registration.update()` on every navigation.
+
+A source-bound `READY`/`NOT_READY` worker reply can identify its release, but release identity alone does not establish offline readiness; the worker must also verify that its complete offline cache is available.
+
+Only a real release mismatch may trigger one explicit `registration.update()` check if needed within the bounded startup gate, which has an approximately eight-second deadline. If startup cannot safely confirm or complete the refresh by that deadline, the app mounts and presents an explicit refresh action in Connection and offline access; late worker activation does not reload the page automatically. Any requested reload still requires the existing safe-vote consensus. The neutral cached offline bootstrap uses the same startup API but takes its local fast path without waiting for network access. Retirement mode continues to suppress feature-worker registration.
+
 ## 10. Implementation phases and ownership
 
 ### Phase A — contracts and admission

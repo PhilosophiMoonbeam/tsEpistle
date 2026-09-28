@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import type { PwaLifecycleCallbacks, PwaState, ReloadSafetyProvider } from '../helpers/pwa.ts'
 
 const ORIGIN = 'https://wiki.example.test'
-const RELEASE = 'release-a'
+const RELEASE_A = 'a'.repeat(40)
+const RELEASE_B = 'b'.repeat(40)
+const RELEASE = RELEASE_A
 const DIGEST = '0123456789abcdef'
 const CACHE_NAME = 'tsepistle-pwa-precache-v1-abcdef0123456789'
 const SHELL_URL = `${ORIGIN}/_offline`
@@ -89,6 +91,7 @@ type WorkerLike = {
   state: string
   messages: unknown[]
   addEventListener: (type: string, listener: Listener) => void
+  removeEventListener: (type: string, listener: Listener) => void
   replies: { type: string; port: TestPort }[]
   postMessage: (message: unknown, ports?: TestPort[]) => void
 }
@@ -98,12 +101,15 @@ type RegistrationLike = {
   active: WorkerLike | null
   waiting: WorkerLike | null
   installing: WorkerLike | null
+  update: () => Promise<void>
   addEventListener: (type: string, listener: Listener) => void
   removeEventListener: (type: string, listener: Listener) => void
 }
 
 type PwaModule = {
   readonly pwaState: PwaState
+  preparePwaStartup(bundleRelease: string, callbacks?: PwaLifecycleCallbacks): Promise<'continue' | 'reloading'>
+  readonly startupRefreshDeferred: { readonly value: boolean }
   registerPwa(callbacks?: PwaLifecycleCallbacks): Promise<RegistrationLike | null>
   setReloadSafetyProvider(provider: ReloadSafetyProvider | null): void
   requestPwaUpdate(): Promise<boolean>
@@ -121,9 +127,15 @@ type PwaHarness = {
   readonly registration: RegistrationLike
   readonly container: { controller: WorkerLike | null }
   readonly registerCalls: unknown[][]
+  readonly getRegistrationCalls: unknown[][]
+  readonly updateCalls: unknown[][]
+  readonly reloadCalls: () => void
   readonly fetchCalls: string[]
   setRegisterImplementation(implementation: () => Promise<RegistrationLike>): void
+  setGetRegistrationImplementation(implementation: () => Promise<RegistrationLike | null>): void
+  setUpdateImplementation(implementation: () => Promise<void>): void
   setFetchImplementation(implementation: () => Promise<Response>): void
+  setOnline(online: boolean): void
   sendWorkerMessage(data: unknown, source?: WorkerLike): void
   restore(): void
 }
@@ -145,6 +157,7 @@ const createWorker = (hub: EventHub): WorkerLike => {
     messages: [],
     replies: [],
     addEventListener: hub.addEventListener.bind(hub),
+    removeEventListener: hub.removeEventListener.bind(hub),
     postMessage(message: unknown, ports: TestPort[] = []) {
       worker.messages.push(message)
       const envelope = message as { message: { type: string } }
@@ -154,11 +167,15 @@ const createWorker = (hub: EventHub): WorkerLike => {
   return worker
 }
 
-const createHarness = async (mode: 'feature' | 'retirement' = 'feature', online = true): Promise<PwaHarness> => {
+const createHarness = async (mode: 'feature' | 'retirement' = 'feature', online = true, documentRelease: string | null = null): Promise<PwaHarness> => {
   const originals = new Map<string, PropertyDescriptor | undefined>()
   const windowHub = new EventHub()
   const workerHub = new EventHub()
   const caches = new MemoryCaches()
+  const getRegistrationCalls: unknown[][] = []
+  const updateCalls: unknown[][] = []
+  const reloadCalls = vi.fn()
+  let updateImplementation = async (): Promise<void> => {}
   const activeWorker = createWorker(new EventHub())
   const registration: RegistrationLike = {
     scope: `${ORIGIN}/`,
@@ -166,14 +183,23 @@ const createHarness = async (mode: 'feature' | 'retirement' = 'feature', online 
     waiting: null,
     installing: null,
     addEventListener: workerHub.addEventListener.bind(workerHub),
-    removeEventListener: workerHub.removeEventListener.bind(workerHub)
+    removeEventListener: workerHub.removeEventListener.bind(workerHub),
+    async update() {
+      updateCalls.push([])
+      await updateImplementation()
+    }
   }
   const registerCalls: unknown[][] = []
   const fetchCalls: string[] = []
   let fetchImplementation = async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+  let getRegistrationImplementation = async (): Promise<RegistrationLike | null> => registration
   let registerImplementation = async (): Promise<RegistrationLike> => registration
   const container = {
     controller: activeWorker as WorkerLike | null,
+    getRegistration: async (...args: unknown[]) => {
+      getRegistrationCalls.push(args)
+      return await getRegistrationImplementation()
+    },
     register: async (...args: unknown[]) => {
       registerCalls.push(args)
       return await registerImplementation()
@@ -184,15 +210,16 @@ const createHarness = async (mode: 'feature' | 'retirement' = 'feature', online 
   const document = {
     createElement: () => ({}),
     readyState: 'complete',
-    querySelector: (selector: string) =>
-      mode === 'retirement' && selector === 'meta[name="tsepistle-pwa-mode"]'
-        ? { getAttribute: () => 'retirement' }
-        : null,
+    querySelector: (selector: string) => {
+      if (selector === 'meta[name="tsepistle-pwa-mode"]' && mode === 'retirement') return { getAttribute: () => 'retirement' }
+      if (selector === 'meta[name="tsepistle-pwa-release"]' && documentRelease !== null) return { getAttribute: () => documentRelease }
+      return null
+    },
     addEventListener: (_type: string, _listener: Listener) => undefined,
     removeEventListener: (_type: string, _listener: Listener) => undefined
   }
   const window = {
-    location: { origin: ORIGIN, href: `${ORIGIN}/` },
+    location: { origin: ORIGIN, href: `${ORIGIN}/`, reload: reloadCalls },
     matchMedia: () => ({ matches: false, addEventListener: () => undefined, removeEventListener: () => undefined }),
     fetch: async (input: string) => {
       fetchCalls.push(input)
@@ -219,10 +246,16 @@ const createHarness = async (mode: 'feature' | 'retirement' = 'feature', online 
     container,
     registerCalls,
     fetchCalls,
+    getRegistrationCalls,
+    updateCalls,
+    reloadCalls,
     setFetchImplementation(implementation) { fetchImplementation = implementation },
+    setGetRegistrationImplementation(implementation) { getRegistrationImplementation = implementation },
     setRegisterImplementation(implementation) {
       registerImplementation = implementation
     },
+    setUpdateImplementation(implementation) { updateImplementation = implementation },
+    setOnline(online) { navigator.onLine = online },
     sendWorkerMessage(data, source = activeWorker) {
       const readiness = (data as { type: string }).type.startsWith('PWA_OFFLINE_')
       const matches = (reply: { type: string; port: TestPort }) => !reply.port.peer.closed &&
@@ -254,6 +287,354 @@ const readyMessage = (overrides: Record<string, unknown> = {}): Record<string, u
   shellPath: '/_offline',
   markerURL: MARKER_URL,
   ...overrides
+})
+
+const notReadyMessage = (release: string): Record<string, unknown> => ({
+  type: 'PWA_OFFLINE_NOT_READY',
+  release
+})
+const activateWaitingWorker = (
+  harness: PwaHarness,
+  worker: WorkerLike,
+  workerHub: EventHub,
+  activation: { workerId: string; release: string; roundNonce: string },
+  order: 'message-first' | 'controllerchange-first'
+): void => {
+  harness.sendWorkerMessage({ type: 'PWA_UPDATE_ACTIVATING', ...activation }, worker)
+  worker.state = 'activated'
+  workerHub.emit('statechange')
+  const message = () => harness.sendWorkerMessage({ type: 'PWA_UPDATE_ACTIVATED', ...activation }, worker)
+  const controllerChange = () => {
+    harness.registration.active = worker
+    harness.registration.waiting = null
+    harness.registration.installing = null
+    harness.container.controller = worker
+    harness.workerHub.emit('controllerchange')
+  }
+  if (order === 'message-first') {
+    message()
+    controllerChange()
+  } else {
+    controllerChange()
+    message()
+  }
+}
+
+
+describe('PWA pre-mount release gate', () => {
+  for (const order of ['message-first', 'controllerchange-first'] as const) {
+    it(`keeps a fresh B navigation mounted after B activates (${order})`, async () => {
+      const harness = await createHarness('feature', true, RELEASE_B)
+      try {
+        const onNeedReload = vi.fn(() => harness.reloadCalls())
+        const nextWorkerHub = new EventHub()
+        const nextWorker = createWorker(nextWorkerHub)
+        nextWorker.state = 'installed'
+        harness.registration.waiting = nextWorker
+        const startup = harness.module.preparePwaStartup(RELEASE_B, { onNeedReload })
+        let settled = false
+        void startup.then(() => { settled = true })
+        await vi.waitFor(() => expect(harness.activeWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
+        harness.sendWorkerMessage(notReadyMessage(RELEASE_A))
+        await vi.waitFor(() => expect(nextWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
+        harness.sendWorkerMessage(notReadyMessage(RELEASE_B), nextWorker)
+        await vi.waitFor(() => expect(nextWorker.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(true))
+        expect(harness.reloadCalls).not.toHaveBeenCalled()
+        expect(harness.updateCalls).toHaveLength(0)
+        expect(settled).toBe(false)
+
+        const activation = { workerId: 'worker-b', release: RELEASE_B, roundNonce: `round-${order}` }
+        activateWaitingWorker(harness, nextWorker, nextWorkerHub, activation, order)
+        expect(await startup).toBe('continue')
+        harness.sendWorkerMessage({ type: 'PWA_UPDATE_ACTIVATED', ...activation }, nextWorker)
+        await Promise.resolve()
+        expect(harness.module.startupRefreshDeferred.value).toBe(false)
+        expect(onNeedReload).not.toHaveBeenCalled()
+        expect(harness.reloadCalls).not.toHaveBeenCalled()
+        expect(await harness.module.preparePwaStartup(RELEASE_B, { onNeedReload })).toBe('continue')
+        expect(harness.updateCalls).toHaveLength(0)
+      } finally { harness.restore() }
+    })
+  }
+
+  it('checks for B once when online HTML B arrives with bundle A, then reloads before mounting on B activation', async () => {
+    const harness = await createHarness('feature', true, RELEASE_B)
+    try {
+      const onNeedReload = vi.fn(() => harness.reloadCalls())
+      const nextWorkerHub = new EventHub()
+      const nextWorker = createWorker(nextWorkerHub)
+      nextWorker.state = 'installing'
+      harness.setUpdateImplementation(async () => {
+        harness.registration.installing = nextWorker
+        harness.workerHub.emit('updatefound')
+        nextWorker.state = 'installed'
+        harness.registration.installing = null
+        harness.registration.waiting = nextWorker
+        nextWorkerHub.emit('statechange')
+      })
+      const startup = harness.module.preparePwaStartup(RELEASE_A, { onNeedReload })
+      await vi.waitFor(() => expect(harness.activeWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
+      harness.sendWorkerMessage(notReadyMessage(RELEASE_A))
+      await vi.waitFor(() => expect(harness.updateCalls).toHaveLength(1))
+      await vi.waitFor(() => expect(nextWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
+      harness.sendWorkerMessage(notReadyMessage(RELEASE_B), nextWorker)
+      expect(onNeedReload).not.toHaveBeenCalled()
+      expect(harness.reloadCalls).not.toHaveBeenCalled()
+      await vi.waitFor(() => expect(nextWorker.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(true))
+      const activation = { workerId: 'worker-b', release: RELEASE_B, roundNonce: 'round-new' }
+      activateWaitingWorker(harness, nextWorker, nextWorkerHub, activation, 'controllerchange-first')
+      expect(await startup).toBe('reloading')
+      harness.sendWorkerMessage({ type: 'PWA_UPDATE_ACTIVATED', ...activation }, nextWorker)
+      await Promise.resolve()
+      expect(onNeedReload).toHaveBeenCalledTimes(1)
+      expect(harness.reloadCalls).toHaveBeenCalledTimes(1)
+      expect(harness.updateCalls).toHaveLength(1)
+      expect(harness.module.startupRefreshDeferred.value).toBe(false)
+    } finally { harness.restore() }
+  })
+
+  it('updates a stale A waiting worker rather than accepting it for a B navigation', async () => {
+    const harness = await createHarness('feature', true, RELEASE_B)
+    try {
+      const staleWorker = createWorker(new EventHub())
+      staleWorker.state = 'installed'
+      harness.registration.waiting = staleWorker
+      const nextWorkerHub = new EventHub()
+      const nextWorker = createWorker(nextWorkerHub)
+      nextWorker.state = 'installing'
+      harness.setUpdateImplementation(async () => {
+        harness.registration.installing = nextWorker
+        harness.workerHub.emit('updatefound')
+        nextWorker.state = 'installed'
+        harness.registration.installing = null
+        harness.registration.waiting = nextWorker
+        nextWorkerHub.emit('statechange')
+      })
+      const onNeedReload = vi.fn(() => harness.reloadCalls())
+      const startup = harness.module.preparePwaStartup(RELEASE_A, { onNeedReload })
+      await vi.waitFor(() => expect(staleWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
+      harness.sendWorkerMessage(notReadyMessage(RELEASE_A), staleWorker)
+      await vi.waitFor(() => expect(harness.activeWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
+      harness.sendWorkerMessage(notReadyMessage(RELEASE_A), harness.activeWorker)
+      await vi.waitFor(() => expect(harness.updateCalls).toHaveLength(1))
+      await vi.waitFor(() => expect(nextWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
+      harness.sendWorkerMessage(notReadyMessage(RELEASE_B), nextWorker)
+      await vi.waitFor(() => expect(nextWorker.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(true))
+      activateWaitingWorker(harness, nextWorker, nextWorkerHub, {
+        workerId: 'worker-b', release: RELEASE_B, roundNonce: 'stale-round'
+      }, 'message-first')
+      expect(await startup).toBe('reloading')
+      expect(onNeedReload).toHaveBeenCalledTimes(1)
+      expect(harness.updateCalls).toHaveLength(1)
+    } finally { harness.restore() }
+  })
+
+  it('bounds an unresolved mismatch, then requires explicit refresh instead of a late automatic reload', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness('feature', true, RELEASE_B)
+    try {
+      const onNeedReload = vi.fn(() => harness.reloadCalls())
+      const waitingHub = new EventHub()
+      const waiting = createWorker(waitingHub)
+      waiting.state = 'installed'
+      harness.registration.waiting = waiting
+      const startup = harness.module.preparePwaStartup(RELEASE_A, { onNeedReload })
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(7_999)
+      expect(onNeedReload).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(await startup).toBe('continue')
+      expect(harness.module.startupRefreshDeferred.value).toBe(true)
+      activateWaitingWorker(harness, waiting, waitingHub, {
+        workerId: 'worker-b', release: RELEASE_B, roundNonce: 'late-round'
+      }, 'message-first')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(onNeedReload).not.toHaveBeenCalled()
+      expect(harness.reloadCalls).not.toHaveBeenCalled()
+      expect(harness.module.startupRefreshDeferred.value).toBe(true)
+    } finally { harness.restore(); vi.useRealTimers() }
+  })
+
+  it('keeps an online B document with bundle B when the B controller is already active', async () => {
+    const harness = await createHarness('feature', true, RELEASE_B)
+    try {
+      const onNeedReload = vi.fn(() => harness.reloadCalls())
+      const startup = harness.module.preparePwaStartup(RELEASE_B, { onNeedReload })
+      await vi.waitFor(() => expect(harness.activeWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
+      harness.sendWorkerMessage(notReadyMessage(RELEASE_B))
+      expect(await startup).toBe('continue')
+      expect(harness.updateCalls).toHaveLength(0)
+      expect(onNeedReload).not.toHaveBeenCalled()
+      expect(harness.reloadCalls).not.toHaveBeenCalled()
+      expect(harness.module.startupRefreshDeferred.value).toBe(false)
+    } finally { harness.restore() }
+  })
+
+  it('mounts a matching first install before its installing worker finishes and keeps the page after activation', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness('feature', true, RELEASE_B)
+    try {
+      const installingHub = new EventHub()
+      const installing = createWorker(installingHub)
+      installing.state = 'installing'
+      harness.container.controller = null
+      harness.registration.active = null
+      harness.registration.installing = installing
+      const onNeedReload = vi.fn(() => harness.reloadCalls())
+      let result: 'continue' | 'reloading' | null = null
+      void harness.module.preparePwaStartup(RELEASE_B, { onNeedReload }).then(value => { result = value })
+      await vi.advanceTimersByTimeAsync(1)
+      expect(result).toBe('continue')
+      expect(harness.module.startupRefreshDeferred.value).toBe(false)
+      expect(harness.updateCalls).toHaveLength(0)
+
+      installing.state = 'activated'
+      harness.registration.installing = null
+      harness.registration.active = installing
+      harness.container.controller = installing
+      installingHub.emit('statechange')
+      harness.workerHub.emit('controllerchange')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(harness.module.pwaState.controlled).toBe(true)
+      expect(onNeedReload).not.toHaveBeenCalled()
+      expect(harness.reloadCalls).not.toHaveBeenCalled()
+    } finally { harness.restore(); vi.useRealTimers() }
+  })
+
+  it('keeps a fresh B controller mounted without preparing a stale waiting A worker', async () => {
+    const harness = await createHarness('feature', true, RELEASE_B)
+    try {
+      const staleWaiting = createWorker(new EventHub())
+      staleWaiting.state = 'installed'
+      harness.registration.waiting = staleWaiting
+      const onNeedReload = vi.fn(() => harness.reloadCalls())
+      const startup = harness.module.preparePwaStartup(RELEASE_B, { onNeedReload })
+      await vi.waitFor(() => expect(staleWaiting.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
+      harness.sendWorkerMessage(notReadyMessage(RELEASE_A), staleWaiting)
+      await vi.waitFor(() => expect(harness.activeWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
+      harness.sendWorkerMessage(notReadyMessage(RELEASE_B))
+
+      expect(await startup).toBe('continue')
+      await Promise.resolve()
+      expect(staleWaiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(false)
+      expect(harness.updateCalls).toHaveLength(0)
+      expect(onNeedReload).not.toHaveBeenCalled()
+      expect(harness.reloadCalls).not.toHaveBeenCalled()
+      expect(harness.module.startupRefreshDeferred.value).toBe(false)
+    } finally { harness.restore() }
+  })
+
+  it('refreshes a deferred stale bundle explicitly after the matching controller is already active', async () => {
+    const harness = await createHarness('feature', true, RELEASE_B)
+    try {
+      const onNeedReload = vi.fn(() => harness.reloadCalls())
+      harness.module.setReloadSafetyProvider(() => ({ safe: false, revision: 'unsaved-work' }))
+      const startup = harness.module.preparePwaStartup(RELEASE_A, { onNeedReload })
+      await vi.waitFor(() => expect(harness.activeWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true))
+      harness.sendWorkerMessage(notReadyMessage(RELEASE_B))
+      expect(await startup).toBe('continue')
+      expect(harness.module.startupRefreshDeferred.value).toBe(true)
+      expect(onNeedReload).not.toHaveBeenCalled()
+      expect(harness.updateCalls).toHaveLength(0)
+
+      harness.module.setReloadSafetyProvider(() => ({ safe: true, revision: 'saved-work' }))
+      await Promise.resolve()
+      expect(onNeedReload).not.toHaveBeenCalled()
+      expect(await harness.module.requestPwaUpdate()).toBe(true)
+      expect(onNeedReload).toHaveBeenCalledTimes(1)
+      expect(harness.reloadCalls).toHaveBeenCalledTimes(1)
+      expect(harness.updateCalls).toHaveLength(0)
+    } finally { harness.restore() }
+  })
+
+  for (const [documentRelease, bundleRelease] of [
+    [null, RELEASE_A], ['not-a-release', RELEASE_A], ['a'.repeat(39), RELEASE_A],
+    [RELEASE_B.toUpperCase(), RELEASE_A], [RELEASE_B, '__TSEPISTLE_PWA_RELEASE__']
+  ] as const) {
+    it(`fails open when release identity is unavailable (${String(documentRelease)}, ${bundleRelease})`, async () => {
+      const harness = await createHarness('feature', true, documentRelease)
+      try {
+        expect(await harness.module.preparePwaStartup(bundleRelease)).toBe('continue')
+        expect(harness.module.startupRefreshDeferred.value).toBe(false)
+        expect(harness.updateCalls).toHaveLength(0)
+        expect(harness.reloadCalls).not.toHaveBeenCalled()
+      } finally { harness.restore() }
+    })
+  }
+
+  it('opens an offline saved page without waiting on a worker update', async () => {
+    const harness = await createHarness('feature', false, RELEASE_B)
+    try {
+      const onNeedReload = vi.fn(() => harness.reloadCalls())
+      expect(await harness.module.preparePwaStartup(RELEASE_A, { onNeedReload })).toBe('continue')
+      expect(harness.updateCalls).toHaveLength(0)
+      expect(harness.fetchCalls.every(url => url === '/healthz')).toBe(true)
+      expect(harness.module.startupRefreshDeferred.value).toBe(true)
+      expect(onNeedReload).not.toHaveBeenCalled()
+      expect(harness.reloadCalls).not.toHaveBeenCalled()
+    } finally { harness.restore() }
+  })
+
+  for (const stalled of ['getRegistration', 'register'] as const) {
+    it(`opens a matching offline shell while ${stalled} stalls, then prepares a waiting worker after reconnecting`, async () => {
+      vi.useFakeTimers()
+      const harness = await createHarness('feature', false, RELEASE_B)
+      try {
+        const discovered = Promise.withResolvers<RegistrationLike>()
+        const markerB = `${SHELL_URL}?__tsepistle_pwa_complete=${encodeURIComponent(RELEASE_B)}-${DIGEST}`
+        const cache = await harness.caches.open(CACHE_NAME)
+        await cache.put(SHELL_URL, shell(RELEASE_B))
+        await cache.put(markerB, new Response(JSON.stringify({
+          release: RELEASE_B, manifestDigest: DIGEST, cacheName: CACHE_NAME
+        })))
+        if (stalled === 'getRegistration') harness.setGetRegistrationImplementation(() => discovered.promise)
+        else {
+          harness.setGetRegistrationImplementation(async () => null)
+          harness.setRegisterImplementation(() => discovered.promise)
+        }
+        const previouslyRegistering = stalled === 'register' ? harness.module.registerPwa() : null
+        const onNeedReload = vi.fn(() => harness.reloadCalls())
+        let result: 'continue' | 'reloading' | null = null
+        void harness.module.preparePwaStartup(RELEASE_B, { onNeedReload }).then(value => { result = value })
+        await vi.advanceTimersByTimeAsync(1)
+        expect(result).toBe('continue')
+        expect(harness.module.startupRefreshDeferred.value).toBe(false)
+        expect(harness.updateCalls).toHaveLength(0)
+        expect(onNeedReload).not.toHaveBeenCalled()
+        expect(harness.reloadCalls).not.toHaveBeenCalled()
+
+        harness.setOnline(true)
+        harness.windowHub.emit('online')
+        const waiting = createWorker(new EventHub())
+        waiting.state = 'installed'
+        harness.registration.waiting = waiting
+        const registered = harness.module.registerPwa()
+        discovered.resolve(harness.registration)
+        expect(await registered).toBe(harness.registration)
+        if (previouslyRegistering) expect(await previouslyRegistering).toBe(harness.registration)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(waiting.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true)
+        expect(waiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(false)
+        harness.sendWorkerMessage(readyMessage({ release: RELEASE_B, markerURL: markerB }), waiting)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(waiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(true)
+        expect(harness.module.pwaState.updateReady).toBe(true)
+        expect(onNeedReload).not.toHaveBeenCalled()
+        expect(harness.reloadCalls).not.toHaveBeenCalled()
+      } finally { harness.restore(); vi.useRealTimers() }
+    })
+  }
+
+  it('does not register or update a worker during retirement startup', async () => {
+    const harness = await createHarness('retirement', true, RELEASE_B)
+    try {
+      expect(await harness.module.preparePwaStartup(RELEASE_A)).toBe('continue')
+      expect(harness.registerCalls).toHaveLength(0)
+      expect(harness.updateCalls).toHaveLength(0)
+      expect(harness.module.startupRefreshDeferred.value).toBe(false)
+      expect(harness.module.pwaState.registrationState).toBe('unsupported')
+    } finally { harness.restore() }
+  })
 })
 
 describe('PWA helper lifecycle', () => {

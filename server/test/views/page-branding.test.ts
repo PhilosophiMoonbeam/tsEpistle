@@ -6,6 +6,7 @@ import { describe, expect, it } from '../bun-test.mts'
 
 const viewsPath = path.resolve('server/views')
 
+const RELEASE = 'b'.repeat(40)
 const brandingAssignment = { assetId: 42 }
 const sourceSha256 = 'a'.repeat(64)
 const brandingView = {
@@ -16,9 +17,17 @@ const brandingView = {
   height: 180,
   accent: '#AABBCC'
 }
+const pageFeatures = { schemaVersion: 1, linksVisible: true, ratingsAllowed: false, lastEditorVisible: true }
 
 const baseLocals = {
-  siteConfig: { lang: 'en' },
+  siteConfig: { lang: 'en', product: { revision: RELEASE } },
+  pageFeatures,
+  ratingsSiteEnabled: false,
+  wikiLinksEnabled: false,
+  absoluteLinks: false,
+  localeNamespaced: false,
+  brandingAssignment: null,
+  branding: null,
   pageMeta: {
     title: 'Template test page',
     description: 'Template test description',
@@ -44,7 +53,6 @@ const baseLocals = {
   effectivePermissions: {},
   pageFilename: 'en/template-test.md'
 }
-
 const page = {
   id: 7,
   localeCode: 'en',
@@ -59,13 +67,14 @@ const page = {
   authorId: 9,
   editorKey: 'markdown',
   isPublished: true,
+  isSearchable: true,
   visibility: 'public',
   toc: '[]',
   render: '<p>Rendered page</p>',
   ownerId: 9,
   publishStartDate: null,
   publishEndDate: null,
-  extra: { css: '', js: '' },
+  extra: { css: '', js: '', pageFeatures },
   mode: 'edit',
   content: 'VGVzdCBjb250ZW50',
   pageFilename: 'en/template-test.md'
@@ -94,7 +103,7 @@ describe('page and editor branding template mounts', () => {
       ['system', false, 'light']
     ] as const) {
       const themeColors = { light: { background: '#FAFAFA' }, dark: { background: '#121212' } }
-      const html = renderView('page', { siteConfig: { lang: 'en', initialAppearance, themeColors } })
+      const html = renderView('page', { siteConfig: { ...baseLocals.siteConfig, initialAppearance, themeColors } })
       const style: Record<string, string> = {}
       const context = {
         document: { documentElement: { style } },
@@ -105,6 +114,13 @@ describe('page and editor branding template mounts', () => {
       })
       expect(style.colorScheme).toBe(expected)
       expect(style.backgroundColor).toBe(themeColors[expected].background)
+    }
+  })
+
+  it('publishes the rendered document release to page and editor navigations', () => {
+    for (const name of ['page', 'editor'] as const) {
+      const $ = cheerio.load(renderView(name))
+      expect($('head meta[name="tsepistle-pwa-release"]').map((_index, meta) => $(meta).attr('content')).get()).toEqual([RELEASE])
     }
   })
 

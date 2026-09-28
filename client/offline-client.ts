@@ -11,9 +11,13 @@ import { installThemeSwitchGuard } from './helpers/theme.ts'
 import helpersPlugin from './helpers/index.ts'
 import { fallbackLocalizationLabel } from './modules/localization.ts'
 import { applyReaderLayout } from './helpers/reader-layout.ts'
-import { registerPwa, setReloadSafetyProvider } from './helpers/pwa.ts'
+import { preparePwaStartup, setReloadSafetyProvider } from './helpers/pwa.ts'
 
 export async function mountOfflineApp(appearance: string): Promise<void> {
+  setReloadSafetyProvider(() => ({ safe: true, revision: 'offline-reader', actorEpoch: 'neutral' }))
+  if (await preparePwaStartup('__TSEPISTLE_PWA_RELEASE__', {
+    onNeedReload: () => window.location.reload()
+  }) === 'reloading') return
   // Bundled labels let the shared shell mount immediately without a locale API.
   await i18next.init({ lng: siteConfig.lang, fallbackLng: 'en', resources: {},
     parseMissingKeyHandler: (key, fallback) => fallback ?? fallbackLocalizationLabel(key) })
@@ -29,7 +33,5 @@ export async function mountOfflineApp(appearance: string): Promise<void> {
   app.onUnmount(installThemeSwitchGuard(vuetify.theme))
   applyReaderLayout(siteConfig.readerLayout)
   window.WIKI = app
-  setReloadSafetyProvider(() => ({ safe: true, revision: 'offline-reader', actorEpoch: 'neutral' }))
   app.mount('#offline-app')
-  void registerPwa({ onNeedReload: () => window.location.reload() })
 }

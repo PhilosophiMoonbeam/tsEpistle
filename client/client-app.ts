@@ -10,7 +10,7 @@ import boot from './modules/boot.ts'
 import localization from './modules/localization.ts'
 import { pinia, wikiStore } from './store/index.ts'
 import { router } from './router'
-import { registerPwa, setReloadSafetyProvider, pwaState } from './helpers/pwa.ts'
+import { preparePwaStartup, setReloadSafetyProvider, pwaState } from './helpers/pwa.ts'
 import { installThemeSwitchGuard, resolveThemeName } from './helpers/theme.ts'
 import { createAsyncComponent } from './components/common/async-component-state.vue'
 import { openOfflineStorage, type OfflineStorage } from './helpers/offline-storage.ts'
@@ -270,70 +270,68 @@ const registrations = [
   asyncComponent('NavFooter', () => import('./themes/default/components/nav-footer.vue'))
 ]
 
-applyReaderLayout(siteConfig.readerLayout)
-const applyReadingPreferences = (): void => {
-  const root = document.documentElement
-  root.dataset.readerMotion = wikiStore.user.reduceMotion ? 'reduced' : 'default'
-  root.dataset.readerLinks = wikiStore.user.underlineLinks ? 'underlined' : 'default'
-  root.dataset.readerTextSize = wikiStore.user.contentTextSize
-}
-watch(
-  () => [wikiStore.user.reduceMotion, wikiStore.user.underlineLinks, wikiStore.user.contentTextSize],
-  applyReadingPreferences,
-  { immediate: true }
-)
-rememberOfflinePresentation()
-watch(
-  () => wikiStore.user.appearance,
-  appearance => rememberOfflinePresentation(appearance)
-)
-// Auth is fail-closed in the store and must not prevent the neutral shell from
-// mounting when the server is slow or unavailable.
-const authRefresh = wikiStore.refreshAuth()
+const initializeClientApp = async (): Promise<void> => {
+  setReloadSafetyProvider(() => ({ safe: true, revision: 'client-app-ready', actorEpoch: 'client' }))
+  if (await preparePwaStartup('__TSEPISTLE_PWA_RELEASE__', {
+    onNeedReload: () => window.location.reload()
+  }) === 'reloading') return
 
-const vuetify = createAppVuetify(siteConfig.initialAppearance ?? wikiStore.user.appearance)
-
-const i18n = await localization.init()
-const app = createApp({})
-
-for (const [name, component] of registrations) app.component(name, component)
-
-app.use(pinia)
-app.use(router)
-app.use(vuetify)
-app.use(i18n)
-app.use(helpersPlugin)
-app.provide(OFFLINE_SYNC_COORDINATOR_KEY, offlineSyncService)
-
-const removeThemeSwitchGuard = installThemeSwitchGuard(vuetify.theme)
-app.onUnmount(removeThemeSwitchGuard)
-
-window.Hammer = Hammer
-window.WIKI = app
-window.boot = boot
-
-moment.locale(siteConfig.lang)
-applyUserPresentation(wikiStore.user)
-
-// Mutable screens replace this default during mount with their safety snapshot.
-setReloadSafetyProvider(() => ({ safe: true, revision: 'client-app-ready', actorEpoch: 'client' }))
-app.mount('#root')
-// Vuetify now owns the live canvas, including later system/preference changes.
-document.documentElement.style.removeProperty('color-scheme')
-document.documentElement.style.backgroundColor = 'rgb(var(--v-theme-background))'
-void startOfflineSync()
-void authRefresh.then(outcome => {
-  if (outcome === 'authenticated') {
-    applyUserPresentation(wikiStore.user)
-    rememberOfflinePresentation(wikiStore.user.appearance)
-    void vuetify.theme.change(resolveThemeName(wikiStore.user.appearance, siteConfig.darkMode), false)
+  applyReaderLayout(siteConfig.readerLayout)
+  const applyReadingPreferences = (): void => {
+    const root = document.documentElement
+    root.dataset.readerMotion = wikiStore.user.reduceMotion ? 'reduced' : 'default'
+    root.dataset.readerLinks = wikiStore.user.underlineLinks ? 'underlined' : 'default'
+    root.dataset.readerTextSize = wikiStore.user.contentTextSize
   }
-})
+  watch(
+    () => [wikiStore.user.reduceMotion, wikiStore.user.underlineLinks, wikiStore.user.contentTextSize],
+    applyReadingPreferences,
+    { immediate: true }
+  )
+  rememberOfflinePresentation()
+  watch(
+    () => wikiStore.user.appearance,
+    appearance => rememberOfflinePresentation(appearance)
+  )
+  // Auth is fail-closed in the store and must not prevent the neutral shell from
+  // mounting when the server is slow or unavailable.
+  const authRefresh = wikiStore.refreshAuth()
 
-boot.onDOMReady(() => {
-  void registerPwa({
-    onNeedReload: () => {
-      window.location.reload()
+  const vuetify = createAppVuetify(siteConfig.initialAppearance ?? wikiStore.user.appearance)
+
+  const i18n = await localization.init()
+  const app = createApp({})
+
+  for (const [name, component] of registrations) app.component(name, component)
+
+  app.use(pinia)
+  app.use(router)
+  app.use(vuetify)
+  app.use(i18n)
+  app.use(helpersPlugin)
+  app.provide(OFFLINE_SYNC_COORDINATOR_KEY, offlineSyncService)
+
+  const removeThemeSwitchGuard = installThemeSwitchGuard(vuetify.theme)
+  app.onUnmount(removeThemeSwitchGuard)
+
+  window.Hammer = Hammer
+  window.WIKI = app
+  window.boot = boot
+
+  moment.locale(siteConfig.lang)
+  applyUserPresentation(wikiStore.user)
+
+  app.mount('#root')
+  // Vuetify now owns the live canvas, including later system/preference changes.
+  document.documentElement.style.removeProperty('color-scheme')
+  document.documentElement.style.backgroundColor = 'rgb(var(--v-theme-background))'
+  void startOfflineSync()
+  void authRefresh.then(outcome => {
+    if (outcome === 'authenticated') {
+      applyUserPresentation(wikiStore.user)
+      rememberOfflinePresentation(wikiStore.user.appearance)
+      void vuetify.theme.change(resolveThemeName(wikiStore.user.appearance, siteConfig.darkMode), false)
     }
   })
-})
+}
+void initializeClientApp()
