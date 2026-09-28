@@ -3,6 +3,11 @@ import { PageBrandingViewSchema } from '../../shared/page-branding.ts'
 import { normalizePageFeatures } from '../../shared/page-features.ts'
 import { decodeBase64Json } from './base64'
 
+const WikiPageTagSchema = z.object({
+  tag: z.string(),
+  title: z.string().nullable()
+})
+
 const WikiPagePropsSchema = z.object({
   pageId: z.number().int().positive(),
   locale: z.string(),
@@ -12,7 +17,7 @@ const WikiPagePropsSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   sourceRevision: z.string(),
-  tags: z.array(z.unknown()),
+  tags: z.array(WikiPageTagSchema),
   authorName: z.string(),
   authorId: z.number().int().nonnegative(),
   editor: z.string(),
@@ -27,7 +32,7 @@ const WikiPagePropsSchema = z.object({
   commentsExternal: z.boolean(),
   editShortcuts: z.string(),
   filename: z.string(),
-  branding: PageBrandingViewSchema.nullable().default(null),
+  branding: PageBrandingViewSchema.nullable().default(null)
 })
 
 const WikiPagePayloadSchema = z.object({

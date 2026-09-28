@@ -449,7 +449,6 @@
                   icon
                   rounded='lg'
                   size='small'
-                  v-bind='undefined'
                   @click='print'
                   :aria-label='$t(`common:page.printFormat`)'
                 )

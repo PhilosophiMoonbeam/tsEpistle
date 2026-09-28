@@ -30,14 +30,12 @@
             variant='outlined'
             color='error'
             size='small'
-            :disabled='loadState === `loading`'
-            :loading='loadState === `loading`'
             @click='loadLatestVersion'
             ) Retry
         template(v-else-if='loadState === `success`')
           i18next.text-body-medium(tag='div', path='editor:conflict.infoGeneric')
             strong(place='authorName') {{latest.authorName}}
-            span(place='date', :title='$helpers.formatMoment(latest.updatedAt, `LLL`)') {{ $helpers.formatMoment(latest.updatedAt, 'from') }}.
+            span(place='date', :title='String($helpers.formatMoment(latest.updatedAt, `LLL`))') {{ $helpers.formatMoment(latest.updatedAt, 'from') }}.
           v-btn.mt-2(variant="outlined", color='indigo', size="small", :href='`/` + latest.locale + `/` + latest.path', target='_blank', rel='noopener', :disabled='!hasLatestVersion')
             v-icon(start) mdi-open-in-new
             span {{$t('editor:conflict.viewLatestVersion')}}

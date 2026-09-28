@@ -114,6 +114,25 @@ describe('wiki page navigation payloads', () => {
     expect(() => decodeWikiPagePayload(malformed)).toThrow()
   })
 
+  test('rejects malformed page tags before client navigation', () => {
+    const current = payload()
+    const invalid = window.btoa(
+      JSON.stringify({
+        ...current,
+        props: { ...current.props, tags: [{ tag: 12, title: 'Guide' }] }
+      })
+    )
+    expect(() => decodeWikiPagePayload(invalid)).toThrow()
+
+    const untitled = window.btoa(
+      JSON.stringify({
+        ...current,
+        props: { ...current.props, tags: [{ tag: 'guide', title: null }] }
+      })
+    )
+    expect(decodeWikiPagePayload(untitled).props.tags).toEqual([{ tag: 'guide', title: null }])
+  })
+
   test('extracts page content, metadata, and comments from a full HTML response', () => {
     const parsed = parseWikiNavigationDocument(pageDocument(payload()), 'https://wiki.test/en/guides/routing')
 

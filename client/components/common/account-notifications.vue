@@ -152,8 +152,8 @@ const approvalSummary = (item: PageApprovalInboxItem, t: Translate): string => {
   return `${t(`common:page.approvalStatus.${item.status}`)}${stale}`
 }
 
-const isOrdinaryActivation = (event: MouseEvent): boolean => {
-  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false
+const isOrdinaryActivation = (event: MouseEvent | KeyboardEvent): boolean => {
+  if (event.defaultPrevented || ('button' in event && event.button !== 0) || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false
   const currentTarget = event.currentTarget
   if (currentTarget && typeof currentTarget === 'object' && 'target' in currentTarget) {
     const target = String(Reflect.get(currentTarget, 'target') || '')
@@ -162,7 +162,7 @@ const isOrdinaryActivation = (event: MouseEvent): boolean => {
   return true
 }
 
-const openWatchPage = (event: MouseEvent, item: PageWatchNotification): void => {
+const openWatchPage = (event: MouseEvent | KeyboardEvent, item: PageWatchNotification): void => {
   if (!isOrdinaryActivation(event)) return
   event.preventDefault()
 
@@ -188,7 +188,7 @@ const openWatchPage = (event: MouseEvent, item: PageWatchNotification): void => 
   })()
 }
 
-const openApprovalPage = (event: MouseEvent, item: PageApprovalInboxItem): void => {
+const openApprovalPage = (event: MouseEvent | KeyboardEvent, item: PageApprovalInboxItem): void => {
   if (!isOrdinaryActivation(event)) return
   event.preventDefault()
   if (!notificationIdentityReady()) return

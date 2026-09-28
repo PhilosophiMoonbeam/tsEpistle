@@ -170,7 +170,7 @@
             span {{filteredGlyphs.length}} of {{glyphs.length}}
             span Fuzzy search
     .editor-tiptap-page-canvas.editor-page-canvas
-      editor-content.contents(:editor='editor')
+      editor-content.contents(:editor='editor ?? undefined')
     .v-system-bar.editor-status-bar.editor-tiptap-sysbar
       .text-body-small.editor-tiptap-sysbar-locale {{locale.toUpperCase()}}
       .text-body-small.editor-tiptap-sysbar-path.px-3(:title='`/${path}`') /{{path}}

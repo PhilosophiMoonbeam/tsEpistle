@@ -14,7 +14,7 @@
       :retry-label='$t("common:actions.retry", { defaultValue: "Try again" })'
       @retry='loadProfile'
     )
-    v-row(v-else)
+    v-row(v-else-if='user')
       v-col(cols='12')
         .profile-header
           .profile-header-avatar

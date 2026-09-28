@@ -117,7 +117,7 @@
             span {{$t('editor:markup.toggleSpellcheck')}}
           v-tooltip(location="bottom", color='primary')
             template(v-slot:activator='{ props }')
-              v-btn.animated.fadeIn.wait-p2s.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.togglePreviewPane`)', :aria-pressed='previewShown', @click='previewShown = !previewShown').mx-0
+              v-btn.animated.fadeIn.wait-p2s.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.togglePreviewPane`)', :aria-pressed='previewShown', @click='togglePreview').mx-0
                 v-icon mdi-book-open-outline
             span {{$t('editor:markup.togglePreviewPane')}}
         template(v-else)
@@ -134,7 +134,7 @@
                 rounded='md'
                 v-bind='props'
                 data-purpose='info'
-                @click='previewShown = !previewShown'
+                @click='togglePreview'
                 :aria-label='previewShown ? `Show editor` : `Show preview`'
               )
                 v-icon {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
@@ -278,7 +278,6 @@
 
 <script lang='ts'>
 import { defineComponent, markRaw, type PropType } from 'vue'
-import { useDisplay } from 'vuetify'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
@@ -466,16 +465,12 @@ export default defineComponent({
       default: () => WIKI_LINKS_DISABLED
     },
   },
-  setup() {
-    const { mdAndUp } = useDisplay()
-    return { mdAndUp }
-  },
   data() {
     return {
       markdownRenderer: markRaw(createEditorMarkdownRenderer(this.wikiLinkOptions)),
       cm: null as TextEditorHandle | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
-      previewShown: this.mdAndUp,
+      previewShown: this.$vuetify.display.mdAndUp,
       previewAlignmentEnabled: true,
       previewHTML: '',
       previewDirty: true,
@@ -579,6 +574,9 @@ export default defineComponent({
     }
   },
   methods: {
+    togglePreview () {
+      this.previewShown = !this.previewShown
+    },
     destroyMarkdownCollaboration() {
       collaborations.get(this)?.destroy()
       collaborations.delete(this)

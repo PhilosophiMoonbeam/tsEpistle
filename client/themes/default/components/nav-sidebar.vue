@@ -112,7 +112,7 @@
               template(v-slot:append)
                 v-icon.nav-sidebar-folder-chevron(size='16', aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
           v-divider.nav-sidebar-section-divider.mt-2
-          .nav-sidebar-current.d-flex.align-center.mt-2(v-if='currentParent.pageId > 0')
+          .nav-sidebar-current.d-flex.align-center.mt-2(v-if='typeof currentParent.pageId === "number" && currentParent.pageId > 0')
             v-list-item.nav-sidebar-current-page(
               :href='pagePath(currentParent)'
               :key='`directorypage-` + currentParent.id'
@@ -265,9 +265,9 @@ export default defineComponent({
       this.currentItems = []
       this.loadedCache = []
     },
-    sidebarLinkClicked (event: MouseEvent) {
+    sidebarLinkClicked (event: MouseEvent | KeyboardEvent) {
       const target = event.currentTarget
-      if (target instanceof HTMLAnchorElement && isWikiNavigationClick(event, target)) this.$emit('navigate')
+      if ('button' in event && target instanceof HTMLAnchorElement && isWikiNavigationClick(event, target)) this.$emit('navigate')
     },
     switchMode (mode: NavigationMode) {
       observeBrowserConnection()
