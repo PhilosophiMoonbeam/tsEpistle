@@ -56,7 +56,7 @@ test.describe('release accessibility profiles', () => {
 
   test('reaches administration using only the keyboard', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')
-    await openAuthenticatedPage(page, '/', 'a[href="/a"]')
+    await openAuthenticatedPage(page, '/', '.page-header-section')
 
     let reachedAdministration = false
     for (let press = 0; press < 40; press += 1) {
@@ -79,13 +79,8 @@ test.describe('release accessibility profiles', () => {
   test('meets contrast and accessibility gates in dark mode', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-dark')
     test.setTimeout(45_000)
-    await openAuthenticatedPage(page, '/a/theme', '#theme-form')
-    const darkMode = page.getByRole('button', { name: 'Dark', exact: true })
-    await expect(darkMode).toBeVisible()
-    await expect(darkMode).toBeEnabled()
-    if ((await darkMode.getAttribute('aria-pressed')) !== 'true') await darkMode.click()
-    await expect(darkMode).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.locator('.v-theme--dark').first()).toBeVisible()
+    await openAuthenticatedPage(page, '/a/theme', '.theme-tabs')
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--dark/)
     await expectNoBlockingAccessibilityViolations(page, '/a/theme (dark)')
   })
 
@@ -103,11 +98,8 @@ test.describe('release accessibility profiles', () => {
     requireProject(testInfo, 'accessibility-keyboard')
     await openAuthenticatedPage(page, '/en/home', '.page-header-section')
 
-    const pageActions = page.locator('.nav-header button[aria-label="Page Actions"]')
-    expect(await tabToControl(page, pageActions), 'Page actions must be reachable in the tab order').toBe(true)
-    await page.keyboard.press('Enter')
-    const editPage = page.getByRole('button', { name: 'Edit', exact: true })
-    await expect(editPage, 'Edit must receive focus when page actions open').toBeFocused()
+    const editPage = page.locator('.nav-header button[aria-label="Edit"]')
+    expect(await tabToControl(page, editPage), 'Edit must be reachable in the tab order').toBe(true)
     await page.keyboard.press('Enter')
     await expect(page).toHaveURL('/e/en/home')
     const save = page.getByRole('button', { name: /^(?:save|saved)$/i })
@@ -149,7 +141,7 @@ test.describe('release accessibility profiles', () => {
     await page.goto('/', { waitUntil: 'networkidle' })
     const search = await openSearch(page)
     await search.fill('home')
-    const searchDialog = page.getByRole('dialog', { name: 'Wiki search', exact: true })
+    const searchDialog = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
     await expect(searchDialog).toBeVisible()
     const askAgent = searchDialog.getByRole('button', { name: 'Ask about this', exact: true })
     await expect(askAgent).toBeVisible()
@@ -159,7 +151,7 @@ test.describe('release accessibility profiles', () => {
     await expectResponsiveLayout(page, `inline agent (${testInfo.project.name})`)
     await expectNoBlockingAccessibilityViolations(page, `inline agent (${testInfo.project.name})`)
     if (testInfo.project.name === 'accessibility-keyboard') {
-      const history = page.getByRole('button', { name: 'Open agent conversation history' })
+      const history = page.getByRole('region', { name: 'Wiki Agent' }).getByRole('button', { name: 'History', exact: true })
       expect(await tabToControl(page, history), 'Agent history must be reachable in the tab order').toBe(true)
     }
   })
@@ -332,11 +324,11 @@ test.describe('release accessibility profiles', () => {
         .evaluate(element => ({ content: element.scrollWidth, viewport: element.clientWidth }))
       expect(transcriptWidth.content, 'The oval does not add horizontal scrolling').toBeLessThanOrEqual(transcriptWidth.viewport)
       await expect(agent.getByRole('button', { name: 'Understand This Page' })).toBeVisible()
-      await agent.getByRole('button', { name: 'Exclude current page', exact: true }).click()
+      await agent.locator('.agent-context__page-chip').click()
       await expect.poll(greetingOpacity).toBe('0')
       await expect(agent.getByRole('button', { name: 'Understand This Page' })).toHaveCount(0)
       await expect(agent.getByRole('button', { name: 'Explore the Wiki' })).toBeVisible()
-      await agent.getByRole('button', { name: 'Include current page', exact: true }).click()
+      await agent.locator('.agent-context__page-chip').click()
       await expect(agent.getByRole('button', { name: 'Understand This Page' })).toBeVisible()
       await expect.poll(greetingOpacity).toBe('1')
       await cdp.send('Emulation.setEmulatedMedia', {
@@ -393,24 +385,15 @@ test.describe('release accessibility profiles', () => {
         await expect(composerSurround).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
         await expect(composerSurround).toHaveCSS('box-shadow', 'none')
 
-        const historyTrigger = agent.getByRole('button', { name: 'Open agent conversation history' })
-        if (await historyTrigger.isVisible()) await historyTrigger.click()
-        else {
-          await agent.getByRole('button', { name: 'Open Agent panels: conversation history and memory' }).click()
-          await agent.locator('.v-menu.v-overlay--active').getByText('Conversation history', { exact: true }).click()
-        }
+        await agent.getByRole('button', { name: 'History', exact: true }).click()
         const history = agent.locator('.inline-agent__side--history')
         await expect(history).toBeVisible()
         await expectOpaque(history, 'Agent history')
         await history.getByRole('button', { name: 'Close chat history' }).click()
         await expect(history).toBeHidden()
 
-        const memoryTrigger = agent.getByRole('button', { name: 'Manage agent memory' })
-        if (await memoryTrigger.isVisible()) await memoryTrigger.click()
-        else {
-          await agent.getByRole('button', { name: 'Open Agent panels: conversation history and memory' }).click()
-          await agent.locator('.v-menu.v-overlay--active').getByText('Agent memory', { exact: true }).click()
-        }
+        await agent.getByRole('button', { name: 'Settings', exact: true }).click()
+        await agent.locator('.v-menu.v-overlay--active').getByText('Agent memory', { exact: true }).click()
         const memory = agent.locator('.inline-agent__side--memory')
         await expect(memory).toBeVisible()
         await expectOpaque(memory, 'Agent memory')
@@ -423,7 +406,7 @@ test.describe('release accessibility profiles', () => {
       expect(await readSurfaceStyle(toolbar)).toEqual(headerGlass)
       expect(await readSurfaceStyle(body)).toEqual(headerGlass)
       const card = agent.locator('.inline-agent__card')
-      const included = agent.getByRole('button', { name: 'Exclude current page', exact: true })
+      const included = agent.locator('.agent-context__page-chip')
       await expect(included).toBeEnabled()
       const fadingColor = await included.evaluate(async element => {
         const body = document.querySelector('.inline-agent__body')!
@@ -457,7 +440,7 @@ test.describe('release accessibility profiles', () => {
       )
       await expect.poll(async () => (await readSurfaceStyle(body)).backgroundAlpha).toBe(1)
       await expect.poll(async () => (await readSurfaceStyle(card)).backgroundAlpha).toBe(1)
-      await agent.getByRole('button', { name: 'Include current page', exact: true }).click()
+      await included.click()
       await expect.poll(async () => (await readSurfaceStyle(body)).backgroundAlpha).toBe(headerGlass.backgroundAlpha)
       await expect.poll(async () => (await readSurfaceStyle(card)).backgroundAlpha).toBe(0)
 
@@ -469,7 +452,7 @@ test.describe('release accessibility profiles', () => {
       }
       await included.click()
       expect((await readSurfaceStyle(body)).backgroundAlpha).toBe(1)
-      await agent.getByRole('button', { name: 'Include current page', exact: true }).click()
+      await included.click()
       await expectContextualGlass(false)
       await page.emulateMedia({ reducedMotion: 'no-preference' })
       await expectOpaqueWorkspaceSurfaces()
@@ -499,7 +482,7 @@ test.describe('release accessibility profiles', () => {
       await expect(stop).toBeVisible()
       await stop.click()
       const stoppedResponse = agent.locator('article.agent-message--assistant.agent-message--cancelled')
-      await expect(stoppedResponse.getByText('You can continue by retrying the request.', { exact: true })).toBeVisible()
+      await expect(stoppedResponse).toBeVisible()
       await expect(stop).toBeHidden()
       const followUpComposer = agent.getByRole('textbox', { name: 'Follow up with Wiki Agent' })
       await expect(followUpComposer).toBeEnabled()

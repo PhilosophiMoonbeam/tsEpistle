@@ -129,13 +129,13 @@ test('keeps representative content and administration surfaces within runtime bu
   const surfaces = {
     content: await measureSurface(page, '/en/home', '.page-header-section'),
     dashboard: await measureSurface(page, '/a/dashboard', '.admin-main'),
-    pages: await measureSurface(page, '/a/pages', '.admin-responsive-table')
+    pages: await measureSurface(page, '/a/pages', '.pages-register')
   }
 
   await page.goto('/en/home', { waitUntil: 'networkidle' })
   const startedAt = Date.now()
-  await page.getByRole('button', { name: /edit page/i }).click()
-  await page.getByRole('button', { name: /save|saved/i }).waitFor({ state: 'visible' })
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await page.getByRole('button', { name: /^(?:Save|Saved)$/i }).waitFor({ state: 'visible' })
   const interactionReadyMilliseconds = Date.now() - startedAt
 
   const violatedInvariants = violatedRuntimeInvariants(surfaces, interactionReadyMilliseconds)
