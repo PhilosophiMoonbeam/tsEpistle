@@ -41,6 +41,7 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     await db.schema.createTable('pageUnlockGrants', table => { table.string('id'); table.integer('pageId'); table.string('sessionId'); table.integer('userId'); table.integer('passwordVersion'); table.timestamp('expiresAt') })
     await db.schema.createTable('comments', table => { table.increments('id'); table.integer('pageId').references('id').inTable('pages'); table.integer('authorId'); table.text('content'); table.text('render'); table.string('name'); table.string('email'); table.string('ip'); table.integer('replyTo').defaultTo(0); table.string('createdAt'); table.string('updatedAt') })
     await db.schema.createTable('users', table => { table.integer('id').primary(); table.string('name') })
+    await db.schema.createTable('pageRatings', table => { table.integer('pageId').notNullable().references('id').inTable('pages').onDelete('CASCADE'); table.integer('userId').notNullable().references('id').inTable('users').onDelete('CASCADE'); table.string('kind', 8).notNullable(); table.integer('value').notNullable(); table.timestamp('createdAt', { useTz: true }).notNullable(); table.timestamp('updatedAt', { useTz: true }).notNullable(); table.unique(['pageId', 'userId']) })
     await addCommentMentions(db)
     await up(db)
     settings = createDiscussionSettingsStore({ db, definitions: () => definitions, fallbackFeatures: () => ({ featurePageComments: true, custom: 'keep' }), async activate() { if (failActivation) throw new Error('runtime unavailable'); return [] } })
@@ -54,12 +55,12 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     })
   })
   beforeEach(async () => {
-    for (const table of ['discussionModerationHistory', 'pageDiscussionPolicy', 'comments', 'userHandleClaims', 'users', 'pageAccessPasswords', 'pageUnlockGrants', 'pageTags', 'tags', 'pages', 'commentProviders', 'settings']) await db(table).delete()
+    for (const table of ['discussionModerationHistory', 'pageDiscussionPolicy', 'comments', 'pageRatings', 'userHandleClaims', 'users', 'pageAccessPasswords', 'pageUnlockGrants', 'pageTags', 'tags', 'pages', 'commentProviders', 'settings']) await db(table).delete()
     await db('pages').insert([{ id: 1, title: 'Public guide', path: 'guide', localeCode: 'en', visibility: 'public', ownerId: null }, { id: 2, title: 'Private notes', path: 'private', localeCode: 'en', visibility: 'private', ownerId: 7 }])
     await db('commentProviders').insert([{ key: 'default', isEnabled: true, config: JSON.stringify({ akismet: 'saved-key', minDelay: 30, unknown: 'retained' }) }, { key: 'commento', isEnabled: false, config: JSON.stringify({ instanceUrl: 'https://comments.example.invalid' }) }])
     failActivation = false; spamChecks = []
   })
-  afterAll(async () => { if (db) { await removeCommentMentions(db); for (const table of ['discussionModerationHistory', 'pageDiscussionPolicy', 'comments', 'users', 'pageUnlockGrants', 'pageAccessPasswords', 'pageTags', 'tags', 'pages', 'commentProviders', 'settings']) await db.schema.dropTableIfExists(table); await db.destroy() }; globalThis.WIKI = oldWiki as never })
+  afterAll(async () => { if (db) { await removeCommentMentions(db); for (const table of ['discussionModerationHistory', 'pageDiscussionPolicy', 'comments', 'pageRatings', 'users', 'pageUnlockGrants', 'pageAccessPasswords', 'pageTags', 'tags', 'pages', 'commentProviders', 'settings']) await db.schema.dropTableIfExists(table); await db.destroy() }; globalThis.WIKI = oldWiki as never })
   it('keeps claimed mention handles permanent across account deletion', async () => {
     await db('users').insert([{ id: 7, name: 'Alice', handle: 'alice' }, { id: 8, name: 'Other' }])
     await db('userHandleClaims').insert({ handle: 'alice', userId: 7 })
@@ -94,6 +95,44 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     expect(await settings.read()).toMatchObject({ pageRatingsMode: 'stars', pageRatingsEnabled: true })
     await expect(writeDiscussionWorkspace({ id: 7, permissions: ['read:pages'] } as never, { enabled: true, pageRatingsMode: 'stars', providers: changed.providers }, changed.fingerprint)).rejects.toMatchObject({ status: 403 })
   })
+  it('persists rating availability independently from comments and preserves existing votes', async () => {
+    await settings.patchFeatures({ featurePageRatings: true })
+    await db('users').insert({ id: 7, name: 'Reader' })
+    const vote = { pageId: 1, userId: 7, kind: 'thumbs', value: 1, createdAt: new Date('2025-01-01T00:00:00.000Z'), updatedAt: new Date('2025-01-01T00:00:00.000Z') }
+    await db('pageRatings').insert(vote)
+    const preservedVote = await db('pageRatings').where({ pageId: 1, userId: 7 }).first(), initial = await settings.read()
+    const input = { enabled: false, pageRatingsEnabled: true, pageRatingsMode: 'stars', providers: initial.providers }
+    const result = await settings.write(input, initial.fingerprint)
+    expect(result).toMatchObject({ enabled: false, pageRatingsEnabled: true, pageRatingsMode: 'stars' })
+    expect((await db('settings').where('key', 'features').first()).value).toMatchObject({ featurePageComments: false, featurePageRatings: true, pageRatingsMode: 'stars', custom: 'keep' })
+    expect(await db('pageRatings').where({ pageId: 1, userId: 7 }).first()).toEqual(preservedVote)
+
+    const current = await settings.read()
+    await expect(settings.write({ ...input, pageRatingsEnabled: false }, initial.fingerprint)).rejects.toMatchObject({ status: 409 })
+    expect(await settings.read()).toMatchObject({ fingerprint: current.fingerprint, enabled: false, pageRatingsEnabled: true, pageRatingsMode: 'stars' })
+
+    const disabled = await settings.write({ ...input, pageRatingsEnabled: false, providers: current.providers }, current.fingerprint)
+    expect(disabled).toMatchObject({ enabled: false, pageRatingsEnabled: false, pageRatingsMode: 'stars' })
+    expect(await db('pageRatings').where({ pageId: 1, userId: 7 }).first()).toEqual(preservedVote)
+  })
+  it('rejects missing or malformed public rating gates without mutating saved settings', async () => {
+    const initial = await settings.read()
+    const providers = [{ key: 'default', isEnabled: true, config: { minDelay: 45 } }]
+    const input = { enabled: false, pageRatingsMode: 'stars', providers }
+    await expect(writeDiscussionWorkspace(admin, input, initial.fingerprint)).rejects.toMatchObject({ status: 400 })
+    for (const pageRatingsEnabled of [null, 'true', 1]) {
+      const invalid = { ...input, pageRatingsEnabled }
+      await expect(writeDiscussionWorkspace(admin, invalid, initial.fingerprint)).rejects.toMatchObject({ status: 400 })
+      await expect(settings.write(invalid, initial.fingerprint)).rejects.toMatchObject({ status: 400 })
+    }
+    expect(await settings.read()).toMatchObject({ fingerprint: initial.fingerprint, pageRatingsEnabled: false, pageRatingsMode: 'thumbs' })
+    expect((await db('commentProviders').where('key', 'default').first()).config).toMatchObject({ minDelay: 30 })
+
+    const invalidFingerprint = initial.fingerprint.slice(0, -1) + (initial.fingerprint.endsWith('0') ? '1' : '0')
+    await expect(settings.write({ ...input, pageRatingsEnabled: true }, invalidFingerprint)).rejects.toMatchObject({ status: 409 })
+    expect(await settings.read()).toMatchObject({ fingerprint: initial.fingerprint, pageRatingsEnabled: false, pageRatingsMode: 'thumbs' })
+    expect((await db('commentProviders').where('key', 'default').first()).config).toMatchObject({ minDelay: 30 })
+  })
   it('keeps exactly one available provider and rejects unknown configuration without partial writes', async () => {
     const initial = await settings.read()
     await expect(settings.write({ providers: [{ key: 'commento', isEnabled: true, config: {} }] }, initial.fingerprint)).rejects.toMatchObject({ status: 400 })
@@ -107,15 +146,25 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     const current = await settings.read(); await settings.write({ ...input, enabled: true }, current.fingerprint)
     await expect(settings.write(input, initial.fingerprint)).rejects.toMatchObject({ status: 409 })
   })
-  it('reports committed settings if runtime activation fails and permits explicit credential removal', async () => {
+  it('reports committed settings if runtime activation fails and preserves an omitted internal rating gate', async () => {
+    await settings.patchFeatures({ featurePageRatings: true })
     failActivation = true
     const initial = await settings.read(), result = await settings.write({ providers: [{ key: 'default', isEnabled: true, config: { akismet: '' } }] }, initial.fingerprint)
-    expect(result.warnings).toHaveLength(1); expect((await settings.read()).providers.find(row => row.key === 'default')?.config.akismet).toBe('')
+    expect(result.warnings).toHaveLength(1)
+    expect(result.pageRatingsEnabled).toBe(true)
+    expect((await settings.read()).providers.find(row => row.key === 'default')?.config.akismet).toBe('')
+    expect((await settings.read()).pageRatingsEnabled).toBe(true)
   })
-  it('rolls back every provider when a later row violates persistence', async () => {
+  it('rolls back provider, rating-gate and mode changes when feature persistence fails', async () => {
     const initial = await settings.read()
-    await db.raw(`ALTER TABLE "commentProviders" ADD CONSTRAINT discussion_test_failure CHECK (NOT ("key" = 'default' AND "isEnabled" = false))`)
-    try { await expect(settings.write({ providers: [{ key: 'commento', isEnabled: true, config: { instanceUrl: 'https://changed.example.invalid' } }, { key: 'default', isEnabled: false, config: {} }] }, initial.fingerprint)).rejects.toThrow(); expect((await settings.read()).fingerprint).toBe(initial.fingerprint) } finally { await db.raw('ALTER TABLE "commentProviders" DROP CONSTRAINT discussion_test_failure') }
+    await db.raw(`ALTER TABLE "settings" ADD CONSTRAINT discussion_test_failure CHECK ("key" <> 'features')`)
+    try {
+      await expect(settings.write({ enabled: false, pageRatingsEnabled: true, pageRatingsMode: 'stars', providers: [{ key: 'commento', isEnabled: true, config: { instanceUrl: 'https://changed.example.invalid' } }, { key: 'default', isEnabled: false, config: {} }] }, initial.fingerprint)).rejects.toThrow()
+      expect(await settings.read()).toMatchObject({ fingerprint: initial.fingerprint, enabled: true, pageRatingsEnabled: false, pageRatingsMode: 'thumbs' })
+      expect((await db('commentProviders').where('key', 'default').first())).toMatchObject({ isEnabled: true, config: { akismet: 'saved-key', minDelay: 30, unknown: 'retained' } })
+      expect((await db('commentProviders').where('key', 'commento').first())).toMatchObject({ isEnabled: false, config: { instanceUrl: 'https://comments.example.invalid' } })
+      expect((await db('settings').where('key', 'features').first())).toBeUndefined()
+    } finally { await db.raw('ALTER TABLE "settings" DROP CONSTRAINT discussion_test_failure') }
   })
   it('hides/restores without altering source or edit timestamp and records an administrative reason', async () => {
     const id = await posts.post(post()), initial = await moderation.inspect(admin, id)

@@ -45,6 +45,7 @@ export const createDiscussionSettingsStore = (deps: { db: Knex; definitions(): D
     async write(input: unknown, expected?: unknown) {
       const payload = record(input), providers = payload.providers, requestedRatingsMode = payload.pageRatingsMode === undefined ? undefined : PageRatingModeSchema.safeParse(payload.pageRatingsMode)
       if (requestedRatingsMode && !requestedRatingsMode.success) throw new ApplicationError('Choose a valid page ratings mode: thumbs or stars.', { status: 400 })
+      if (payload.pageRatingsEnabled !== undefined && typeof payload.pageRatingsEnabled !== 'boolean') throw new ApplicationError('Choose whether page ratings are enabled.', { status: 400 })
       if (!Array.isArray(providers) || !providers.length || providers.length > 100 || providers.some(row => !row || typeof row !== 'object' || typeof row.key !== 'string' || typeof row.isEnabled !== 'boolean' || !row.config || typeof row.config !== 'object' || Array.isArray(row.config)) || new Set(providers.map(row => row.key)).size !== providers.length || (payload.enabled !== undefined && typeof payload.enabled !== 'boolean')) throw new ApplicationError('Choose valid, unique discussion providers and configuration.', { status: 400 })
       if (expected !== undefined && (typeof expected !== 'string' || !/^[a-f0-9]{64}$/.test(expected))) throw new ApplicationError('Reload the saved discussion policy before saving.', { status: 400 })
       const snapshot = await deps.db.transaction(async tx => {
@@ -74,8 +75,9 @@ export const createDiscussionSettingsStore = (deps: { db: Knex; definitions(): D
         }
         const nextFlags = { ...current.flags }
         if (payload.enabled !== undefined) nextFlags.featurePageComments = payload.enabled
+        if (payload.pageRatingsEnabled !== undefined) nextFlags.featurePageRatings = payload.pageRatingsEnabled
         if (requestedRatingsMode) nextFlags.pageRatingsMode = requestedRatingsMode.data
-        if (payload.enabled !== undefined || requestedRatingsMode) await saveFlags(tx, nextFlags)
+        if (payload.enabled !== undefined || payload.pageRatingsEnabled !== undefined || requestedRatingsMode) await saveFlags(tx, nextFlags)
         await revise(tx)
         return (await read(tx)).snapshot
       })
@@ -124,7 +126,8 @@ export const readDiscussionWorkspace = async (requester: PagePrincipal): Promise
 }
 export const writeDiscussionWorkspace = async (requester: PagePrincipal, input: unknown, expected: unknown) => {
   requireAdmin(requester)
-  if (expected === undefined || typeof record(input).enabled !== 'boolean' || !PageRatingModeSchema.safeParse(record(input).pageRatingsMode).success) throw new ApplicationError('Load the saved policy and choose discussion availability and a valid page ratings mode before saving.', { status: 400 })
+  const payload = record(input)
+  if (expected === undefined || typeof payload.enabled !== 'boolean' || typeof payload.pageRatingsEnabled !== 'boolean' || !PageRatingModeSchema.safeParse(payload.pageRatingsMode).success) throw new ApplicationError('Load the saved policy and choose discussion availability, page-ratings availability and a valid page ratings mode before saving.', { status: 400 })
   return store().write(input, expected)
 }
 export const writeLegacyDiscussionProviders = (providers: DiscussionProviderSettings[]) => store().write({ providers })
