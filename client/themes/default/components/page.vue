@@ -218,146 +218,57 @@
             :disabled='printView'
           )
             v-card.page-tools-card.mb-4(flat, role='group', :aria-label='$t(`common:page.pageTools`)')
-              .page-tools-card__utilities(v-if='!isTocMobile')
-                v-toolbar(color='transparent', flat, density='compact')
-                  v-menu(location='bottom', min-width='300')
-                    template(v-slot:activator='{ props: menuProps }')
-                      v-tooltip(location='bottom')
-                        template(v-slot:activator='{ props: tooltipProps }')
-                          v-btn(icon, rounded='lg', v-bind='mergeProps(menuProps, tooltipProps)', :aria-label='$t(`common:page.share`)'): v-icon mdi-share-variant
-                        span {{$t('common:page.share')}}
-                    social-sharing(
-                      :url='pageUrl'
-                      :title='title'
-                      :description='description'
-                    )
-                  v-tooltip(location='bottom', v-if='isAuthenticated')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        rounded='lg'
-                        v-bind='props'
-                        :loading='pageWatchLoading'
-                        :disabled='pageWatchLoading || !pageOnlineActionReady || !pageWatchAuthorityReady'
-                        :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : !pageWatchAuthorityReady ? `Refresh page watch state before changing it.` : undefined'
-                        :aria-pressed='pageWatched'
-                        @click='togglePageWatch'
-                        :aria-label='pageWatched ? $t(`common:page.stopWatchingPage`) : $t(`common:page.watchPage`)'
-                      )
-                        v-icon {{ pageWatched ? 'mdi-bell-ring' : 'mdi-bell-outline' }}
-                    span {{ pageWatched ? $t('common:page.stopWatchingPage') : $t('common:page.watchPage') }}
-                  v-menu(v-if='pageWatched', location='bottom', :close-on-content-click='false', min-width='260')
-                    template(v-slot:activator='{ props: menuProps }')
-                      v-tooltip(location='bottom')
-                        template(v-slot:activator='{ props: tooltipProps }')
-                          v-btn(
-                            icon
-                            rounded='lg'
-                            v-bind='mergeProps(menuProps, tooltipProps)'
-                            :aria-label='$t(`common:page.watchSettings`)'
-                          )
-                            v-icon mdi-tune
-                        span {{$t('common:page.watchSettings')}}
-                    v-card
-                      v-card-title.text-body-large {{$t('common:page.watchSettings')}}
-                      v-card-text
-                        v-switch(
-                          v-model='pageWatchEmailEnabled'
-                          :label='$t(`common:page.emailNotifications`)'
-                          color='primary'
-                          density='compact'
-                          hide-details
-                          :disabled='pageWatchLoading || !pageWatchActionReady'
-                          :title='!pageWatchActionReady ? pageOnlineActionUnavailableReason || `Refresh page watch state before changing it.` : undefined'
-                          @update:model-value='savePageWatchSettings'
-                        )
-                        v-switch(
-                          v-model='pageWatchInAppEnabled'
-                          :label='$t(`common:page.inAppNotifications`)'
-                          color='primary'
-                          density='compact'
-                          hide-details
-                          :disabled='pageWatchLoading || !pageWatchActionReady'
-                          :title='!pageWatchActionReady ? pageOnlineActionUnavailableReason || `Refresh page watch state before changing it.` : undefined'
-                          @update:model-value='savePageWatchSettings'
-                        )
-                  v-tooltip(location='bottom', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        rounded='lg'
-                        v-bind='props'
-                        :disabled='!pageOnlineActionReady'
-                        :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : undefined'
-                        @click='openApprovalWorkflow'
-                        :aria-label='$t(`common:page.approvalWorkflow`)'
-                        :aria-pressed='Boolean(pageApproval)'
-                      )
-                        v-icon {{ pageApproval ? 'mdi-check-decagram' : 'mdi-check-decagram-outline' }}
-                    span {{$t('common:page.approvalWorkflow')}}
-                  v-tooltip(location='bottom', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        rounded='lg'
-                        v-bind='props'
-                        :disabled='!pageProtectionActionReady || protectionInitialLoading'
-                        :title='!pageProtectionActionReady ? pageOnlineActionUnavailableReason || `Refresh page protection before changing it.` : undefined'
-                        @click='openPageProtection'
-                        :aria-label='$t(`common:page.pagePasswordProtection`)'
-                        :aria-pressed='pageProtection.protected'
-                      )
-                        v-icon {{ pageProtection.protected ? 'mdi-lock' : 'mdi-lock-open-outline' }}
-                    span {{$t('common:page.pagePasswordProtection')}}
-                  v-tooltip(location='bottom')
-                    template(v-slot:activator='{ props }')
-                      v-btn(icon, rounded='lg', v-bind='props', @click='print', :aria-label='$t(`common:page.printFormat`)')
-                        v-icon mdi-printer
-                    span {{$t('common:page.printFormat')}}
-              //- Mobile mirrors the desktop utilities as an inline icon row so
-              //- Share/Print/etc. are one tap away instead of buried in a
-              //- second "Page actions" three-dot menu below the header's own.
-              .page-tools-card__utilities.page-tools-card__utilities--inline(v-else)
-                v-menu(location='top end', min-width='300')
+              .page-tools-card__utilities(v-if='!printView')
+                v-menu(:location='isTocMobile ? `top end` : `bottom`', min-width='300')
                   template(v-slot:activator='{ props: menuProps }')
-                    v-btn(
-                      icon
-                      rounded='lg'
-                      size='small'
-                      variant='text'
-                      v-bind='menuProps'
-                      :aria-label='$t(`common:page.share`)'
-                    ): v-icon mdi-share-variant
+                    v-tooltip(location='bottom')
+                      template(v-slot:activator='{ props: tooltipProps }')
+                        v-btn(
+                          icon
+                          rounded='lg'
+                          size='small'
+                          variant='text'
+                          v-bind='mergeProps(menuProps, tooltipProps)'
+                          :aria-label='$t(`common:page.share`)'
+                        )
+                          v-icon mdi-share-variant
+                      span {{$t('common:page.share')}}
                   social-sharing(
                     :url='pageUrl'
                     :title='title'
                     :description='description'
                   )
-                v-btn(
-                  icon
-                  rounded='lg'
-                  size='small'
-                  variant='text'
-                  v-if='isAuthenticated'
-                  :loading='pageWatchLoading'
-                  :disabled='pageWatchLoading || !pageOnlineActionReady || !pageWatchAuthorityReady'
-                  :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : !pageWatchAuthorityReady ? `Refresh page watch state before changing it.` : undefined'
-                  :aria-pressed='pageWatched'
-                  :aria-label='pageWatched ? $t(`common:page.stopWatchingPage`) : $t(`common:page.watchPage`)'
-                  @click='togglePageWatch'
-                )
-                  v-icon {{ pageWatched ? 'mdi-bell-ring' : 'mdi-bell-outline' }}
-                v-menu(v-if='pageWatched', location='top end', :close-on-content-click='false', min-width='260')
-                  template(v-slot:activator='{ props: menuProps }')
+                v-tooltip(location='bottom', v-if='isAuthenticated')
+                  template(v-slot:activator='{ props }')
                     v-btn(
                       icon
                       rounded='lg'
                       size='small'
                       variant='text'
-                      v-bind='menuProps'
-                      :aria-label='$t(`common:page.watchSettings`)'
+                      v-bind='props'
+                      :loading='pageWatchLoading'
+                      :disabled='pageWatchLoading || !pageOnlineActionReady || !pageWatchAuthorityReady'
+                      :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : !pageWatchAuthorityReady ? `Refresh page watch state before changing it.` : undefined'
+                      :aria-pressed='pageWatched'
+                      @click='togglePageWatch'
+                      :aria-label='pageWatched ? $t(`common:page.stopWatchingPage`) : $t(`common:page.watchPage`)'
                     )
-                      v-icon mdi-tune
+                      v-icon {{ pageWatched ? 'mdi-bell-ring' : 'mdi-bell-outline' }}
+                  span {{ pageWatched ? $t('common:page.stopWatchingPage') : $t('common:page.watchPage') }}
+                v-menu(v-if='pageWatched', :location='isTocMobile ? `top end` : `bottom`', :close-on-content-click='false', min-width='260')
+                  template(v-slot:activator='{ props: menuProps }')
+                    v-tooltip(location='bottom')
+                      template(v-slot:activator='{ props: tooltipProps }')
+                        v-btn(
+                          icon
+                          rounded='lg'
+                          size='small'
+                          variant='text'
+                          v-bind='mergeProps(menuProps, tooltipProps)'
+                          :aria-label='$t(`common:page.watchSettings`)'
+                        )
+                          v-icon mdi-tune
+                      span {{$t('common:page.watchSettings')}}
                   v-card
                     v-card-title.text-body-large {{$t('common:page.watchSettings')}}
                     v-card-text
@@ -381,42 +292,51 @@
                         :title='!pageWatchActionReady ? pageOnlineActionUnavailableReason || `Refresh page watch state before changing it.` : undefined'
                         @update:model-value='savePageWatchSettings'
                       )
-                v-btn(
-                  icon
-                  rounded='lg'
-                  size='small'
-                  variant='text'
-                  v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)'
-                  :disabled='!pageOnlineActionReady'
-                  :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : undefined'
-                  @click='openApprovalWorkflow'
-                  :aria-label='$t(`common:page.approvalWorkflow`)'
-                  :aria-pressed='Boolean(pageApproval)'
-                )
-                  v-icon {{ pageApproval ? 'mdi-check-decagram' : 'mdi-check-decagram-outline' }}
-                v-btn(
-                  icon
-                  rounded='lg'
-                  size='small'
-                  variant='text'
-                  v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)'
-                  :disabled='!pageProtectionActionReady || protectionInitialLoading'
-                  :title='!pageProtectionActionReady ? pageOnlineActionUnavailableReason || `Refresh page protection before changing it.` : undefined'
-                  @click='openPageProtection'
-                  :aria-label='$t(`common:page.pagePasswordProtection`)'
-                  :aria-pressed='pageProtection.protected'
-                )
-                  v-icon {{ pageProtection.protected ? 'mdi-lock' : 'mdi-lock-open-outline' }}
-                v-btn(
-                  icon
-                  rounded='lg'
-                  size='small'
-                  variant='text'
-                  @click='print'
-                  :aria-label='$t(`common:page.printFormat`)'
-                )
-                  v-icon mdi-printer
-              .page-tools-card__utilities.page-tools-card__utilities--shared(v-if='!printView')
+                v-tooltip(location='bottom', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(
+                      icon
+                      rounded='lg'
+                      size='small'
+                      variant='text'
+                      v-bind='props'
+                      :disabled='!pageOnlineActionReady'
+                      :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : undefined'
+                      @click='openApprovalWorkflow'
+                      :aria-label='$t(`common:page.approvalWorkflow`)'
+                      :aria-pressed='Boolean(pageApproval)'
+                    )
+                      v-icon {{ pageApproval ? 'mdi-check-decagram' : 'mdi-check-decagram-outline' }}
+                  span {{$t('common:page.approvalWorkflow')}}
+                v-tooltip(location='bottom', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
+                  template(v-slot:activator='{ props }')
+                    v-btn(
+                      icon
+                      rounded='lg'
+                      size='small'
+                      variant='text'
+                      v-bind='props'
+                      :disabled='!pageProtectionActionReady || protectionInitialLoading'
+                      :title='!pageProtectionActionReady ? pageOnlineActionUnavailableReason || `Refresh page protection before changing it.` : undefined'
+                      @click='openPageProtection'
+                      :aria-label='$t(`common:page.pagePasswordProtection`)'
+                      :aria-pressed='pageProtection.protected'
+                    )
+                      v-icon {{ pageProtection.protected ? 'mdi-lock' : 'mdi-lock-open-outline' }}
+                  span {{$t('common:page.pagePasswordProtection')}}
+                v-tooltip(location='bottom')
+                  template(v-slot:activator='{ props }')
+                    v-btn(
+                      icon
+                      rounded='lg'
+                      size='small'
+                      variant='text'
+                      v-bind='props'
+                      @click='print'
+                      :aria-label='$t(`common:page.printFormat`)'
+                    )
+                      v-icon mdi-printer
+                  span {{$t('common:page.printFormat')}}
                 v-tooltip(location='bottom')
                   template(v-slot:activator='{ props }')
                     v-btn.page-offline-control(
@@ -469,13 +389,14 @@
                     )
                       v-icon(aria-hidden='true') mdi-book-open-page-variant-outline
                   span {{$t('common:page.focusReading')}}
-                span.page-offline-status(
-                  :id='offlineStatusId'
-                  role='status'
-                  aria-live='polite'
-                  aria-atomic='true'
-                  :class='[`page-offline-status--${offlineControlState}`, { "page-offline-status--quiet": !["stale", "sync-pending", "error", "unavailable", "ineligible"].includes(offlineControlState) }]'
-                ) {{ offlineStatusLabel }}
+              span.page-offline-status(
+                v-if='!printView'
+                :id='offlineStatusId'
+                role='status'
+                aria-live='polite'
+                aria-atomic='true'
+                :class='[`page-offline-status--${offlineControlState}`, { "page-offline-status--quiet": !["stale", "sync-pending", "error", "unavailable", "ineligible"].includes(offlineControlState) }]'
+              ) {{ offlineStatusLabel }}
               v-divider.page-tools-card__divider(v-if='updatedAt || hasAuthor || canViewHistory')
               .page-tools-card__provenance(v-if='updatedAt || hasAuthor || canViewHistory')
                 .page-document-provenance
@@ -4336,7 +4257,8 @@ export default defineComponent({
   --page-toc-desktop-lift: calc(var(--page-toc-empty-height) + var(--wiki-space-6));
   --page-layout-shell-max: 132rem;
   --page-reader-shell-max: var(--page-layout-shell-max);
-  --page-metadata-rail-width: clamp(15rem, 18vw, 17rem);
+  --page-shortcut-target: 36px;
+  --page-metadata-rail-width: calc(8 * var(--page-shortcut-target) + 9 * var(--wiki-space-1) + 2px);
   --page-reader-column-gap: var(--wiki-space-6);
   --page-reader-copy-max: var(--wiki-reader-copy-width, 74ch);
 
@@ -5488,7 +5410,6 @@ export default defineComponent({
   }
 }
 .page-tools-card {
-  --page-shortcut-target: 36px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -5519,82 +5440,30 @@ export default defineComponent({
 
   &__utilities {
     display: flex;
-    flex: 0 1 auto;
+    flex: 0 0 100%;
     min-width: 0;
     max-width: 100%;
-
-    .v-toolbar {
-      width: fit-content;
-      max-width: 100%;
-      flex: 0 1 auto;
-      height: auto !important;
-      min-height: var(--page-shortcut-target);
-      background: transparent !important;
-      overflow: visible !important;
-      padding: var(--wiki-space-1) 0 var(--wiki-space-1) var(--wiki-space-1);
-    }
-
-    .v-toolbar__content {
-      display: flex;
-      width: 100%;
-      height: auto !important;
-      min-height: var(--page-shortcut-target);
-      flex-wrap: wrap;
-      column-gap: var(--wiki-space-1);
-      row-gap: var(--wiki-space-1);
-      justify-content: flex-start;
-      align-items: center;
-      padding: 0 !important;
-      overflow: visible !important;
-
-      > :not(.v-spacer) {
-        display: flex;
-        min-width: 0;
-        flex: 0 0 var(--page-shortcut-target);
-        justify-content: center;
-      }
-
-      > :last-child {
-        margin-inline-end: 0;
-      }
-    }
-
-    .v-badge {
-      display: inline-flex;
-      flex: 0 0 auto;
-      overflow: visible;
-
-      .v-badge__wrapper {
-        overflow: visible;
-      }
-    }
-  }
-
-  &__utilities--menu {
-    padding: var(--wiki-space-1) var(--wiki-space-2);
-  }
-
-  &__utilities--shared {
-    display: flex;
-    flex: 0 1 auto;
-    min-width: 0;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: flex-start;
-    flex-wrap: wrap;
     gap: var(--wiki-space-1);
-    padding: var(--wiki-space-1) var(--wiki-space-1) var(--wiki-space-1) 0;
-
-    .page-offline-status {
-      flex: 0 1 100%;
-    }
+    padding: var(--wiki-space-1);
   }
+
+  &__utilities .v-btn[aria-pressed='true']:not(.page-offline-control) {
+    color: rgb(var(--v-theme-primary));
+  }
+
+  > .page-offline-status:not(.page-offline-status--quiet) {
+    flex: 0 0 100%;
+    padding: 0 var(--wiki-space-1) var(--wiki-space-1);
+  }
+
   &__divider {
     flex: 0 0 100%;
     opacity: 1;
     border-color: var(--wiki-surface-border);
   }
-
-
   &__provenance {
     display: flex;
     flex: 0 0 100%;
@@ -5637,36 +5506,6 @@ export default defineComponent({
       box-shadow: var(--wiki-focus-ring);
     }
   }
-
-  /* Mobile keeps the same compact, start-aligned icon cluster as desktop. */
-  .page-tools-card__utilities--inline {
-    display: flex;
-    flex: 0 1 auto;
-    min-width: 0;
-    max-width: 100%;
-    flex-wrap: wrap;
-    justify-content: flex-start;
-    gap: var(--wiki-space-1);
-    padding-inline: var(--wiki-space-1) 0;
-
-    .v-btn--icon.v-btn--size-small {
-      width: 36px;
-      height: 36px;
-      min-width: 36px;
-      min-height: 36px;
-      border-radius: var(--wiki-control-radius, .75rem);
-      color: var(--wiki-accent-ink);
-
-      .v-icon {
-        font-size: 20px;
-      }
-
-      &[aria-pressed='true'] {
-        color: rgb(var(--v-theme-primary));
-      }
-    }
-  }
-
   .page-document-provenance {
     display: flex;
     flex: 0 1 auto;
