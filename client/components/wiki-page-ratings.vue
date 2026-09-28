@@ -387,10 +387,11 @@ onBeforeUnmount(() => {
 .wiki-page-ratings__controls--thumbs :deep(.v-btn) {
   box-sizing: border-box;
   width: 100%;
-  min-width: 44px;
-  min-height: 44px;
+  min-width: 30px;
+  min-height: 30px;
   height: auto;
-  padding: 4px 3px;
+  padding: 2px 3px;
+  font-size: .75rem;
 }
 
 .wiki-page-ratings__controls--thumbs :deep(.v-btn__content) {
@@ -399,6 +400,11 @@ onBeforeUnmount(() => {
   gap: .12rem .25rem;
   line-height: 1.15;
   white-space: normal;
+}
+
+.wiki-page-ratings__controls--thumbs :deep(.v-icon) {
+  margin-inline-end: 0;
+  font-size: 1rem;
 }
 
 .wiki-page-ratings__choice-label {
@@ -418,19 +424,20 @@ onBeforeUnmount(() => {
 
 .wiki-page-ratings__controls--stars {
   display: flex;
-  width: fit-content;
+  width: 220px;
   max-width: 100%;
   flex-wrap: wrap;
-  gap: 0;
+  justify-content: space-between;
+  gap: 4px;
 }
 
 .wiki-page-ratings__controls--stars :deep(.v-btn) {
   box-sizing: border-box;
-  flex: 0 0 44px;
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
-  min-height: 44px;
+  flex: 0 0 30px;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
   padding: 0;
   border: 1px solid transparent;
 }
@@ -486,8 +493,9 @@ onBeforeUnmount(() => {
 }
 
 .wiki-page-ratings__remove {
-  min-width: 44px;
-  min-height: 44px;
+  min-width: 30px;
+  min-height: 30px;
+  height: 30px;
   margin-inline-start: auto;
   padding-inline: 10px;
 }
@@ -511,8 +519,9 @@ onBeforeUnmount(() => {
 
 .wiki-page-ratings__stale :deep(.v-btn),
 .wiki-page-ratings__load-error :deep(.v-btn) {
-  min-width: 44px;
-  min-height: 44px;
+  min-width: 30px;
+  min-height: 30px;
+  height: 30px;
 }
 
 @media (forced-colors: active) {
