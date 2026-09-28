@@ -14,6 +14,8 @@ In chat, use **Attach** to choose files, or paste/drop supported files into the 
 
 **Dictate** requests microphone access only when the circular microphone button beside Send is clicked. Tap it again to stop, transcribe, and insert the transcript for review, or press Send while recording to stop, transcribe, and send the transcript together with any typed text in one message. Cancel discards only the recording; the typed draft is kept. Recording stops after 60 seconds in the browser and inserts the transcript for review without sending. The microphone is released on cancellation, navigation, a profile change, or loss of connection. Review the transcript before sending.
 
+The recording waveform exaggerates quieter changes in height so syllables remain visible; it is visual feedback, not a calibrated amplitude meter. Its neutral/green/yellow/red colors still reflect the unadjusted microphone level and dBFS thresholds. Reduced-motion preference shows static neutral bars.
+
 ## Storage and limits
 
 Attachments are private to their owner and conversation; they do not become public Wiki assets. Downloads require the authenticated owner. The limits are four files per message, 10 MiB per file, and 100 MiB / 200 media items per owner. Server-side byte and token limits also apply to recordings; the 60-second recording limit is a browser control.
