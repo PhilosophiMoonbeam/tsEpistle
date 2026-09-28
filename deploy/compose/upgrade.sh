@@ -238,7 +238,7 @@ make_plan() {
     local probe
     while IFS= read -r probe; do
       case "$probe" in
-        site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection|agent-google-search-grounding-columns|agent-google-search-consent-admission|agent-media-context-state-columns) ;;
+        site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection|agent-google-search-grounding-columns|agent-google-search-consent-admission|agent-media-context-state-columns|native-page-ratings-and-recovery-schema|native-page-ratings-and-recovery) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
       esac
     done < <(jq -r '.rehearsalPostconditions[],.runtimePostconditions[]' <<< "$contract")
@@ -404,6 +404,68 @@ rehearse_migrations() {
   cleanup_temp; TEMP_ROOT=""; TEST_APP=""; TEST_DB=""; TEST_NETWORK=""
 }
 
+verify_native_page_schema() {
+  local container="$1" user="$2" database="$3" result
+  result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+    WITH expected(table_name, column_name, data_type, max_length, nullable, default_kind) AS (VALUES
+      ('users','reduceMotion','boolean',NULL,'NO','false'),
+      ('users','underlineLinks','boolean',NULL,'NO','false'),
+      ('users','contentTextSize','character varying',16,'NO','default'),
+      ('users','communicationLocale','character varying',35,'YES','none'),
+      ('pageRatings','pageId','integer',NULL,'NO','none'),
+      ('pageRatings','userId','integer',NULL,'NO','none'),
+      ('pageRatings','kind','character varying',8,'NO','none'),
+      ('pageRatings','value','integer',NULL,'NO','none'),
+      ('pageRatings','createdAt','timestamp with time zone',NULL,'NO','none'),
+      ('pageRatings','updatedAt','timestamp with time zone',NULL,'NO','none'),
+      ('deletedPageRecovery','pageId','integer',NULL,'NO','none'),
+      ('deletedPageRecovery','deletionVersionId','integer',NULL,'NO','none'),
+      ('deletedPageRecovery','deletionRevision','bigint',NULL,'NO','none'),
+      ('deletedPageRecovery','securityContext','jsonb',NULL,'NO','none'),
+      ('deletedPageRecovery','createdAt','timestamp with time zone',NULL,'NO','none')
+    )
+    SELECT count(*) FROM expected e JOIN information_schema.columns c
+      ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+    WHERE c.data_type=e.data_type AND c.character_maximum_length IS NOT DISTINCT FROM e.max_length
+      AND c.is_nullable=e.nullable AND (
+        (e.default_kind='none' AND c.column_default IS NULL) OR
+        (e.default_kind='false' AND c.column_default='false') OR
+        (e.default_kind='default' AND c.column_default LIKE '''default''%')
+      );")"
+  [[ "$result" == 15 ]] || die "Postcondition failed: native-page-ratings-and-recovery-schema ($result/15 columns)"
+
+  result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+    WITH expected(name, table_name, kind, target_table, delete_mode) AS (VALUES
+      ('users_content_text_size_check','users','c',NULL,NULL),
+      ('users_communication_locale_fk','users','f','locales','n'),
+      ('page_ratings_page_fk','pageRatings','f','pages','c'),
+      ('page_ratings_user_fk','pageRatings','f','users','c'),
+      ('page_ratings_page_user_unique','pageRatings','u',NULL,NULL),
+      ('page_ratings_kind_value_check','pageRatings','c',NULL,NULL),
+      ('deleted_page_recovery_pkey','deletedPageRecovery','p',NULL,NULL),
+      ('deleted_page_recovery_history_fk','deletedPageRecovery','f','pageHistory','c')
+    )
+    SELECT count(*) FROM expected e JOIN pg_constraint c ON c.conname=e.name
+      JOIN pg_class t ON t.oid=c.conrelid AND t.relname=e.table_name
+    WHERE t.relnamespace=current_schema()::regnamespace AND c.contype::text=e.kind
+      AND (e.target_table IS NULL OR c.confrelid=to_regclass(format('%I',e.target_table)))
+      AND (e.delete_mode IS NULL OR c.confdeltype::text=e.delete_mode);")"
+  [[ "$result" == 8 ]] || die "Postcondition failed: native-page-ratings-and-recovery-schema ($result/8 constraints)"
+
+  result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+    SELECT count(*) FROM pg_class t JOIN pg_index i ON i.indrelid=t.oid
+      JOIN pg_class idx ON idx.oid=i.indexrelid
+    WHERE t.relnamespace=current_schema()::regnamespace AND (
+      (t.relname='pageRatings' AND idx.relname='page_ratings_page_kind_idx'
+        AND replace(pg_get_indexdef(idx.oid,1,true),'\"','')='pageId'
+        AND replace(pg_get_indexdef(idx.oid,2,true),'\"','')='kind') OR
+      (t.relname='deletedPageRecovery' AND idx.relname='deleted_page_recovery_version_idx'
+        AND replace(pg_get_indexdef(idx.oid,1,true),'\"','')='deletionVersionId'
+        AND i.indnkeyatts=1)
+    );")"
+  [[ "$result" == 2 ]] || die "Postcondition failed: native-page-ratings-and-recovery-schema ($result/2 indexes)"
+}
+
 verify_postconditions() {
   local phase="$1" container="$2" user="$3" database="$4" probe result
   while IFS= read -r probe; do
@@ -437,6 +499,14 @@ verify_postconditions() {
       agent-media-context-state-columns)
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='agentMedia' AND ((column_name='promptTokens' AND data_type='integer' AND is_nullable='YES') OR (column_name='detachedAt' AND data_type='timestamp with time zone' AND is_nullable='YES'));")"
         [[ "$result" == 2 ]] || die "Postcondition failed: $probe ($result/2 columns)"
+        ;;
+      native-page-ratings-and-recovery-schema)
+        verify_native_page_schema "$container" "$user" "$database"
+        ;;
+      native-page-ratings-and-recovery)
+        verify_native_page_schema "$container" "$user" "$database"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT count(*) FROM "deletedPageRecovery" r LEFT JOIN "pageHistory" h ON h.id=r."deletionVersionId" WHERE h.id IS NULL OR h."pageId"<>r."pageId" OR h.action<> '\''deleted'\'' OR jsonb_typeof(r."securityContext")<> '\''object'\'';')"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid recovery records)"
         ;;
       *) die "Unsupported named migration postcondition: $probe" ;;
     esac

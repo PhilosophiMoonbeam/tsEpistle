@@ -30,6 +30,9 @@ describe('Compose upgrade command', () => {
     expect(script).toContain("A committed migration cannot be rolled back by image alone")
     expect(script).toContain('agent-goal-budget-columns)')
     expect(script).toContain('agent-goal-budget-tier-selection)')
+    expect(script).toContain('native-page-ratings-and-recovery-schema)')
+    expect(script).toContain('native-page-ratings-and-recovery)')
+    expect(script).toContain('verify_native_page_schema "$container" "$user" "$database"')
   })
 
   it('ships a secret-free operator profile template', async () => {
