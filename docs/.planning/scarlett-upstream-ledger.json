@@ -3,9 +3,9 @@
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "e4e5762032a038e4c5c63490f47e0a8fd2d545bf",
-    "recordedAt": "2026-09-27T20:04:32.704Z",
-    "lastFetchedAt": "2026-09-27T17:10:38.000Z",
+    "recordedTip": "6dc3c3b10fce4bd745396dce89ef122b09fd3bc4",
+    "recordedAt": "2026-09-28T23:53:30.000Z",
+    "lastFetchedAt": "2026-09-28T23:36:57Z",
     "auditBaseline": "b5b4b0880ae26f4b137242267b6674b51af8688c",
     "candidateBaseline": "249758e3f923a77e1b62d26a47e142c312642a5f",
     "historicalReview": {
@@ -1441,6 +1441,66 @@
       "workstream": "scarlett-sync/deployment",
       "contract": "Opt-in HTTPRoute/PDB and PostgreSQL hardening without chart identity, claims, database role or layout changes; OCI publication not selected.",
       "lastReviewed": "2026-09-27"
+    },
+    {
+      "id": "split-native-git-browser-and-timeout",
+      "commits": [
+        "e428aea1606aaf3d9b7fdb82f5a8580b847643ac"
+      ],
+      "category": "operations",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "scarlett-sync/operations",
+      "contract": "Fork-native Git reconciliation and the existing storage queue supersede per-target queues/import propagation; pinned Playwright in the separate browser-worker image supersedes Puppeteer and source-page rendering. Preserve the cooperative in-process job contract: a never-settling handler can retain its lease and block the batch; scheduler execution is not bounded or fixed by this disposition.",
+      "lastReviewed": "2026-09-28"
+    },
+    {
+      "id": "browser-worker-image-architecture-check",
+      "commits": [
+        "f15180608a17caf6ba4f5517502418e2a9c30f61"
+      ],
+      "category": "operations",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/browser-image",
+      "contract": "Adapt only build-time architecture validation of the installed Chromium and headless-shell binaries in the browser-worker image. Pending Main's integration verification; this does not launch a browser, prove rendering or CDP compatibility, validate operator executable overrides, or change runtime identity or launch behavior.",
+      "lastReviewed": "2026-09-28"
+    },
+    {
+      "id": "split-locale-cache-and-helm-workflow",
+      "commits": [
+        "55e325d2a7d18d6d07cd6550419a38135e59c009"
+      ],
+      "category": "localization",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "scarlett-sync/locale",
+      "contract": "The existing guarded optional localStorage translation cache and profile-backed appearance remain authoritative; no preference authority is added. Retain the fork's Helm validation, packaging, and artifact workflow; reject upstream CI deletion/replacement, setup-helm@v5, and OCI publication changes.",
+      "lastReviewed": "2026-09-28"
+    },
+    {
+      "id": "native-admin-atlas",
+      "commits": [
+        "50e615db9aaee1b0be258156449dc1b74e046ce9"
+      ],
+      "category": "admin",
+      "disposition": "supersede",
+      "state": "completed",
+      "workstream": "scarlett-sync/admin",
+      "contract": "Supersede with the current administration atlas for the selected fork product: it retains folder, radial, and relational views and includes only public, published, searchable, authorized pages, drawing edges within that dataset. It does not reproduce upstream's editor-visible draft nodes, redirect/relation edge taxonomy, far-locale expansion, custom graph engine, or larger-estate scale; no reader atlas endpoint is added.",
+      "lastReviewed": "2026-09-28"
+    },
+    {
+      "id": "split-broken-link-rendering-and-source-rewrite",
+      "commits": [
+        "6dc3c3b10fce4bd745396dce89ef122b09fd3bc4"
+      ],
+      "category": "reader",
+      "disposition": "split",
+      "state": "completed",
+      "workstream": "scarlett-sync/reader",
+      "contract": "Existing broken-link presentation and attempted move invalidation/reconnection remain; the presentation is not an authorization-aware availability service, and a target omitted from an authorized Links response is not thereby known missing. Render-only move repair changes stored HTML, not canonical source or history, and is not durable across later source rendering. Reject automatic cross-page canonical rewriting: moving a target does not grant write authority over referrers; authors continue through ordinary revision-fenced editor updates. No automatic relinking or new UI is added.",
+      "lastReviewed": "2026-09-28"
     }
   ],
   "coverage": [
@@ -4085,6 +4145,36 @@
       "commit": "e4e5762032a038e4c5c63490f47e0a8fd2d545bf",
       "candidateIds": [
         "additive-helm-options"
+      ]
+    },
+    {
+      "commit": "e428aea1606aaf3d9b7fdb82f5a8580b847643ac",
+      "candidateIds": [
+        "split-native-git-browser-and-timeout"
+      ]
+    },
+    {
+      "commit": "f15180608a17caf6ba4f5517502418e2a9c30f61",
+      "candidateIds": [
+        "browser-worker-image-architecture-check"
+      ]
+    },
+    {
+      "commit": "55e325d2a7d18d6d07cd6550419a38135e59c009",
+      "candidateIds": [
+        "split-locale-cache-and-helm-workflow"
+      ]
+    },
+    {
+      "commit": "50e615db9aaee1b0be258156449dc1b74e046ce9",
+      "candidateIds": [
+        "native-admin-atlas"
+      ]
+    },
+    {
+      "commit": "6dc3c3b10fce4bd745396dce89ef122b09fd3bc4",
+      "candidateIds": [
+        "split-broken-link-rendering-and-source-rewrite"
       ]
     }
   ]

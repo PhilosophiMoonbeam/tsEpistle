@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895
 
+ARG TARGETARCH
 ARG WIKI_BUILD_REVISION=unknown
 LABEL org.opencontainers.image.title="tsEpistle isolated agent browser worker" \
       org.opencontainers.image.revision="$WIKI_BUILD_REVISION" \
@@ -23,5 +24,6 @@ COPY --chown=bun:bun shared ./shared
 COPY --chown=bun:bun tsconfig.server.json tsconfig.shared.json ./
 
 USER bun
+RUN bun server/scripts/check-agent-browser-install.ts "$TARGETARCH"
 EXPOSE 9443
 ENTRYPOINT ["bun", "server/agents/browser/worker.ts"]
