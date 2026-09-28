@@ -35,6 +35,7 @@ describe('Compose upgrade command', () => {
     expect(script).toContain('verify_native_page_schema "$container" "$user" "$database"')
     expect(script).toContain("to_jsonb(t) - ARRAY['reduceMotion','underlineLinks','contentTextSize','communicationLocale']")
     expect(script).toContain('Healthy candidate was reconnected to the public proxy after verification failed.')
+    expect(script).toContain('proxyAliasPresent:(.value.Aliases|index($proxyAlias) != null)')
   })
 
   it('ships a secret-free operator profile template', async () => {
