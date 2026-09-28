@@ -686,12 +686,15 @@ watch(
 .agent-message__assistant-mark {
   position: relative;
   isolation: isolate;
+  box-sizing: border-box;
   display: inline-flex;
   width: 28px;
   height: 28px;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent);
+  --wiki-control-radius: 50%;
   border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 72%, transparent);
   --wiki-beam-violet: #00bfff;
