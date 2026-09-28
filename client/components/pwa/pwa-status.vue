@@ -62,16 +62,18 @@ section.pwa-status-panel(
         @click='retryConnection'
       ) {{ isRetrying ? `Checking…` : `Check connection` }}
       v-btn(
-        v-if='pwaState.updateReady && (pwaState.preparation === `deferred` || pwaState.preparation === `error`)'
+        v-if='startupRefreshDeferred || (pwaState.updateReady && (pwaState.preparation === `deferred` || pwaState.preparation === `error`))'
         color='primary'
         variant='tonal'
         prepend-icon='mdi-update'
         :loading='isUpdating'
         :disabled='isUpdating || pwaState.reloadSafe === false'
         @click='applyUpdate'
-      ) {{ isUpdating ? `Retrying…` : `Retry app update` }}
+      ) {{ isUpdating ? (startupRefreshDeferred ? `Checking…` : `Retrying…`) : (startupRefreshDeferred ? `Check and refresh app` : `Retry app update`) }}
 
-    p.pwa-status-panel__note(v-if='pwaState.reloadNeeded', role='status')
+    p.pwa-status-panel__note(v-if='startupRefreshDeferred', role='status')
+      | The startup update check was deferred. This page will not reload automatically. {{ pwaState.reloadSafe === false ? 'Refresh is unavailable until all open pages are safe.' : 'Choose Check and refresh when you’re ready.' }}
+    p.pwa-status-panel__note(v-else-if='pwaState.reloadNeeded', role='status')
       | The app has updated. This page will reload when your current work is safe.
     p.pwa-status-panel__note(v-else-if='pwaState.updateReady && pwaState.reloadSafe === false', role='status')
       | Update ready. It will apply automatically after your current work is safe.
@@ -116,7 +118,7 @@ section.pwa-status-panel(
 
 <script setup lang='ts'>
 import { computed, ref } from 'vue'
-import { pwaConnectionPresentation, pwaState, promptPwaInstall, requestPwaUpdate, retryServerConnection } from '../../helpers/pwa'
+import { pwaConnectionPresentation, pwaState, promptPwaInstall, requestPwaUpdate, retryServerConnection, startupRefreshDeferred } from '../../helpers/pwa'
 
 const { showLinks = true } = defineProps<{ showLinks?: boolean }>()
 
@@ -209,7 +211,7 @@ const installApplication = async (): Promise<void> => {
 }
 
 const applyUpdate = async (): Promise<void> => {
-  if (!pwaState.updateReady || pwaState.reloadSafe === false || isUpdating.value) return
+  if ((!startupRefreshDeferred.value && !pwaState.updateReady) || pwaState.reloadSafe === false || isUpdating.value) return
   isUpdating.value = true
   try {
     await requestPwaUpdate()
