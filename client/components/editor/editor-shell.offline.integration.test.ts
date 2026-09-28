@@ -4,19 +4,10 @@ import { parse } from '@vue/compiler-sfc'
 import _ from 'lodash'
 import * as ts from 'typescript'
 import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
-import { PageBrandingAssignmentSchema, type PageBrandingAssignment } from '../../../shared/page-branding.ts'
+import { type DraftKeyContext, OFFLINE_DRAFT_KEY_MAGIC, OFFLINE_KEY_VERSION, type OfflineDraftEnvelopeV1 } from '../../../shared/offline.ts'
+import { type PageBrandingAssignment, PageBrandingAssignmentSchema } from '../../../shared/page-branding.ts'
 import { normalizePageFeatures } from '../../../shared/page-features.ts'
-import {
-  OFFLINE_DRAFT_KEY_MAGIC,
-  OFFLINE_KEY_VERSION,
-  type DraftKeyContext,
-  type OfflineDraftEnvelopeV1
-} from '../../../shared/offline.ts'
-import {
-  decryptOfflineDraft,
-  requestDraftKey,
-  type OfflineDraftKeyHandle
-} from '../../helpers/offline-crypto.ts'
+import { decryptOfflineDraft, type OfflineDraftKeyHandle, requestDraftKey } from '../../helpers/offline-crypto.ts'
 import {
   OfflineEditorDraftCoordinator,
   type OfflineEditorDraftIdentity,
@@ -24,10 +15,6 @@ import {
   type OfflineEditorDraftView
 } from '../../helpers/offline-editor-drafts.ts'
 import { invalidateOfflineSession } from '../../helpers/offline-session.ts'
-import {
-  updatePage,
-  type PageWriteInput
-} from '../../helpers/pages-api.ts'
 import type {
   OfflineDraftDeleteOptions,
   OfflineDraftWriteOptions,
@@ -36,6 +23,7 @@ import type {
   OfflineSubmissionFinalizationOptions,
   OfflineSubmissionFinalizationResult
 } from '../../helpers/offline-storage.ts'
+import { type PageWriteInput, updatePage } from '../../helpers/pages-api.ts'
 
 const ORIGIN = 'https://wiki.example.test'
 const ACCOUNT_ID = 42
@@ -186,7 +174,11 @@ type ShellContext = {
   save: (options?: { rethrow?: boolean; overwrite?: boolean }) => Promise<boolean>
 }
 
-const evaluateShellBehavior = (store: EditorStore, testWindow: TestWindow, fetchPage: (fetcher: typeof fetch, id: number, fallback: string) => Promise<unknown>): ShellBehavior => {
+const evaluateShellBehavior = (
+  store: EditorStore,
+  testWindow: TestWindow,
+  fetchPage: (fetcher: typeof fetch, id: number, fallback: string) => Promise<unknown>
+): ShellBehavior => {
   const freezePageInput = (input: PageWriteInput): PageWriteInput => {
     Object.freeze(input.tags)
     if (input.okfMetadata !== undefined) Object.freeze(input.okfMetadata)
@@ -208,6 +200,7 @@ const evaluateShellBehavior = (store: EditorStore, testWindow: TestWindow, fetch
     'updatePage',
     'notifyReloadSafetyChanged',
     'requestOfflineIdentityBoundary',
+    'normalizePageFeatures',
     'emitEditorSaveConflict',
     'getErrorMessage',
     'removeEditorPageCss',
@@ -278,9 +271,11 @@ class ComposedDraftStorage {
     this.assertGeneration(options)
     const existing = this.records.get(envelope.recordId)
     if (options.expectedDraftRevision !== undefined) {
-      if (options.expectedDraftRevision === null ? existing !== undefined : existing?.draftRevision !== options.expectedDraftRevision) throw new Error('draft revision conflict')
+      if (options.expectedDraftRevision === null ? existing !== undefined : existing?.draftRevision !== options.expectedDraftRevision)
+        throw new Error('draft revision conflict')
     }
-    if (options.expectedSubmissionId !== undefined && (existing?.submissionId ?? null) !== options.expectedSubmissionId) throw new Error('submission selector conflict')
+    if (options.expectedSubmissionId !== undefined && (existing?.submissionId ?? null) !== options.expectedSubmissionId)
+      throw new Error('submission selector conflict')
     if (existing && existing.submissionId !== null && !sameEnvelope(existing, envelope)) throw new Error('immutable submission overwrite')
     const saved = cloneEnvelope(envelope)
     this.records.set(saved.recordId, saved)
@@ -307,10 +302,13 @@ class ComposedDraftStorage {
     if (options.expectedSurvivingFork && (!oldFork || !sameEnvelope(oldFork, options.expectedSurvivingFork))) throw new Error('fork conflict')
     if (options.expectedSurvivingFork && !options.survivingFork) throw new Error('fork replacement missing')
     if (options.survivingFork && (!source || options.survivingFork.draftRevision <= source.draftRevision)) throw new Error('fork conflict')
-    if (options.survivingFork && options.expectedSurvivingFork && (
-      options.survivingFork.recordId !== options.expectedSurvivingFork.recordId ||
-      options.survivingFork.draftRevision <= options.expectedSurvivingFork.draftRevision
-    )) throw new Error('fork replacement conflict')
+    if (
+      options.survivingFork &&
+      options.expectedSurvivingFork &&
+      (options.survivingFork.recordId !== options.expectedSurvivingFork.recordId ||
+        options.survivingFork.draftRevision <= options.expectedSurvivingFork.draftRevision)
+    )
+      throw new Error('fork replacement conflict')
     if (options.survivingFork && !options.expectedSurvivingFork && this.records.has(options.survivingFork.recordId)) throw new Error('fork record conflict')
 
     this.records.delete(receipt.recordId)
@@ -371,10 +369,11 @@ const keyContext: DraftKeyContext = {
   authVersion: 0,
   keyVersion: OFFLINE_KEY_VERSION
 }
-const keyFetch = async (): Promise<Response> => new Response(encodeKeyFrame(keyContext) as unknown as BodyInit, {
-  status: 200,
-  headers: { 'content-type': 'application/octet-stream' }
-})
+const keyFetch = async (): Promise<Response> =>
+  new Response(encodeKeyFrame(keyContext) as unknown as BodyInit, {
+    status: 200,
+    headers: { 'content-type': 'application/octet-stream' }
+  })
 const keyFetchImpl = keyFetch as unknown as typeof fetch
 const identity = (baseSourceRevision = '1', baseUpdatedAt = '2026-09-03T11:00:00.000Z'): OfflineEditorDraftIdentity => ({
   editorKey: 'markdown',
@@ -443,15 +442,21 @@ const createTestWindow = (fetchImpl: typeof fetch): TestWindow => {
     origin: ORIGIN,
     assigned: [] as string[],
     replaced: [] as string[],
-    assign(url: string) { this.assigned.push(url) },
-    replace(url: string) { this.replaced.push(url) },
+    assign(url: string) {
+      this.assigned.push(url)
+    },
+    replace(url: string) {
+      this.replaced.push(url)
+    },
     reload() {}
   }
   return {
     fetch: fetchImpl,
     location,
     clearTimeout() {},
-    setTimeout() { return 1 }
+    setTimeout() {
+      return 1
+    }
   }
 }
 
@@ -572,8 +577,12 @@ describe('composed editor offline submission boundary', () => {
     let requestBody: Record<string, unknown> | undefined
     let releaseNetwork: (() => void) | undefined
     let networkStarted: (() => void) | undefined
-    const networkStartedPromise = new Promise<void>(resolve => { networkStarted = resolve })
-    const networkRelease = new Promise<void>(resolve => { releaseNetwork = resolve })
+    const networkStartedPromise = new Promise<void>(resolve => {
+      networkStarted = resolve
+    })
+    const networkRelease = new Promise<void>(resolve => {
+      releaseNetwork = resolve
+    })
     const pageFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = String(input)
       if (url.endsWith('/_api/pages/12') && init?.method === 'PUT') {
@@ -610,12 +619,11 @@ describe('composed editor offline submission boundary', () => {
       debounceMs: 0,
       onChange: view => changes.push(view)
     })
-    const context = createShellContext(
-      store,
-      testWindow,
-      coordinator,
-      async () => ({ okf: _.cloneDeep(store.page.okf), sourceRevision: store.page.sourceRevision, isSearchable: true })
-    )
+    const context = createShellContext(store, testWindow, coordinator, async () => ({
+      okf: _.cloneDeep(store.page.okf),
+      sourceRevision: store.page.sourceRevision,
+      isSearchable: true
+    }))
     const savePromise = context.save()
     await networkStartedPromise
 
@@ -651,7 +659,9 @@ describe('composed editor offline submission boundary', () => {
       getValues: () => values('server A'),
       isOnline: () => false,
       storage: storage as unknown as OfflineStorage,
-      detachedApply: payload => { recoveredContent = payload.content },
+      detachedApply: payload => {
+        recoveredContent = payload.content
+      },
       onChange: () => undefined
     })
     const recoveredView = await fresh.initialize()
@@ -678,7 +688,7 @@ describe('composed editor offline submission boundary', () => {
     installWindow(testWindow)
     const store = createStore()
     let context: ShellContext | null = null
-    const changes: OfflineDraftView[] = []
+    const changes: OfflineEditorDraftView[] = []
     const coordinator = new OfflineEditorDraftCoordinator({
       fetchImpl: keyFetchImpl,
       isAuthenticated: () => store.user.authenticated,
@@ -700,12 +710,11 @@ describe('composed editor offline submission boundary', () => {
         }
       }
     })
-    const shell = createShellContext(
-      store,
-      testWindow,
-      coordinator,
-      async () => ({ okf: _.cloneDeep(store.page.okf), sourceRevision: store.page.sourceRevision, isSearchable: true })
-    )
+    const shell = createShellContext(store, testWindow, coordinator, async () => ({
+      okf: _.cloneDeep(store.page.okf),
+      sourceRevision: store.page.sourceRevision,
+      isSearchable: true
+    }))
     context = shell
 
     expect(await shell.save()).toBe(false)
@@ -716,10 +725,14 @@ describe('composed editor offline submission boundary', () => {
     expect(await shell.save()).toBe(false)
     expect(updateCalls).toBe(1)
     expect(store.notifications).toHaveLength(2)
-    expect(store.notifications.some(notification =>
-      notification.message === 'Publishing is unavailable because the page may have been deleted or access may have been denied, but the local draft could not be retained.' &&
-      notification.style === 'error'
-    )).toBe(true)
+    expect(
+      store.notifications.some(
+        notification =>
+          notification.message ===
+            'Publishing is unavailable because the page may have been deleted or access may have been denied, but the local draft could not be retained.' &&
+          notification.style === 'error'
+      )
+    ).toBe(true)
     expect(store.notifications.some(notification => notification.style === 'warning')).toBe(true)
   })
 })
