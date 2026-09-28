@@ -322,7 +322,7 @@
                       :aria-label='$t(`common:page.pagePasswordProtection`)'
                       :aria-pressed='pageProtection.protected'
                     )
-                      v-icon {{ pageProtection.protected ? 'mdi-lock' : 'mdi-lock-open-outline' }}
+                      v-icon mdi-form-textbox-password
                   span {{$t('common:page.pagePasswordProtection')}}
                 v-tooltip(location='bottom')
                   template(v-slot:activator='{ props }')
