@@ -441,7 +441,7 @@ Use `WIKI_AGENT_BROWSER_IMAGE` as the final image argument to the hardened brows
 
 For a packaged release, deploy the application and browser worker using the immutable `containerImage.reference` and `agentBrowserImage.reference` values in `release-manifest.json`; do not resolve the release tags independently.
 
-Build `dev/build/Dockerfile.agent-browser`. It pins Playwright/Chromium, runs as `pwuser`, launches Chromium with its sandbox enabled, and executes outside the Wiki application process.
+Build `dev/build/Dockerfile.agent-browser`. It pins Playwright/Chromium, runs as the non-root `bun` user, launches Chromium with its sandbox enabled, and executes outside the Wiki application process.
 
 ```sh
 docker buildx build \
@@ -451,6 +451,8 @@ docker buildx build \
   --provenance=mode=max --sbom=true --push \
   --tag registry.example.com/wiki-agent-browser:"$WIKI_BUILD_REVISION" .
 ```
+
+The BuildKit target-platform check reads only the installed regular Chromium and default headless-shell ELF headers; it does not launch Chromium, including for emulated builds. This verifies architecture packaging, not a native worker smoke, CDP compatibility, or an operator-supplied `AGENT_BROWSER_CHROMIUM_PATH` override.
 
 Run it with a read-only root filesystem, writable temporary storage only, no application/database/provider secrets, bounded memory/PIDs/CPU, and ingress only from Wiki replicas over mTLS. Worker variables:
 
