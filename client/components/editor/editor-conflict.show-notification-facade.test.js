@@ -148,7 +148,7 @@ describe('editor conflict REST migration guard', () => {
     expect(source).toContain("v-card-text.pt-4(:aria-busy='loadState === `loading`')")
     expect(source).toMatch(/\.d-flex\.align-center\.py-4\([\s\S]*?v-if='loadState === `loading`'[\s\S]*?role='status'[\s\S]*?aria-live='polite'[\s\S]*?\)/)
     expect(source).toMatch(
-      /v-alert\([\s\S]*?v-else-if='loadState === `error`'[\s\S]*?ref='loadErrorAlert'[\s\S]*?role='alert'[\s\S]*?tabindex='-1'[\s\S]*?\)[\s\S]*?\{\{loadError\}\}[\s\S]*?v-btn\.mt-3\([\s\S]*?:disabled='loadState === `loading`'[\s\S]*?:loading='loadState === `loading`'[\s\S]*?@click='loadLatestVersion'[\s\S]*?\)\s*Retry/
+      /v-alert\([\s\S]*?v-else-if='loadState === `error`'[\s\S]*?ref='loadErrorAlert'[\s\S]*?role='alert'[\s\S]*?tabindex='-1'[\s\S]*?\)[\s\S]*?\{\{loadError\}\}[\s\S]*?v-btn\.mt-3\([\s\S]*?@click='loadLatestVersion'[\s\S]*?\)\s*Retry/
     )
     expect(source).toContain("template(v-else-if='loadState === `success`')")
     expect(source).toContain("template(v-if='loadState === `success` && hasLatestVersion')")

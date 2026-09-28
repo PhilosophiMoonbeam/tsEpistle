@@ -5,6 +5,7 @@ import _ from 'lodash'
 import * as ts from 'typescript'
 import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
 import { PageBrandingAssignmentSchema, type PageBrandingAssignment } from '../../../shared/page-branding.ts'
+import { normalizePageFeatures } from '../../../shared/page-features.ts'
 import {
   OFFLINE_DRAFT_KEY_MAGIC,
   OFFLINE_KEY_VERSION,
@@ -229,6 +230,7 @@ const evaluateShellBehavior = (store: EditorStore, testWindow: TestWindow, fetch
     updatePage,
     () => undefined,
     () => true,
+    normalizePageFeatures,
     () => undefined,
     (error: unknown) => (error instanceof Error ? error.message : String(error)),
     () => undefined,
