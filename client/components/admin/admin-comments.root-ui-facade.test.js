@@ -31,15 +31,27 @@ describe('discussion workspace drafts and action recovery', () => {
     expect(state.saved.providers[0].config.minDelay).toBe(30); expect(state.dirty).toBe(true); expect(state.current.config.akismet).toBe('********')
     state.current.config.akismet = ''; expect(state.savedSecret('default', 'akismet')).toBe(true); state.resetPolicy(); expect(state.dirty).toBe(false)
   })
+  it('tracks page-rating availability through reset and workspace reload', async () => {
+    const { state, transport } = arrange(); await state.reload()
+    state.pageRatingsEnabled = true
+    expect(state.dirty).toBe(true)
+    state.resetPolicy()
+    expect(state.pageRatingsEnabled).toBe(false)
+    expect(state.dirty).toBe(false)
+    transport.fetchDiscussionWorkspace.mockResolvedValueOnce({ ...snapshot, pageRatingsEnabled: true, fingerprint: 'second' })
+    await state.reload()
+    expect(state.pageRatingsEnabled).toBe(true)
+    expect(state.dirty).toBe(false)
+  })
   it('retains the review and baseline after a conflicting save', async () => {
-    const { state, transport } = arrange(); await state.reload(); state.enabled = false; state.reviewOpen = true
+    const { state, transport } = arrange(); await state.reload(); state.pageRatingsEnabled = true; state.reviewOpen = true
     transport.saveDiscussionWorkspace.mockRejectedValue(new Error('Settings changed. Reload.')); await state.savePolicy()
-    expect(state.dirty).toBe(true); expect(state.saved.enabled).toBe(true); expect(state.reviewOpen).toBe(true); expect(state.saveError).toBe('Settings changed. Reload.'); expect(state.busy).toBe(false)
+    expect(state.dirty).toBe(true); expect(state.saved.pageRatingsEnabled).toBe(false); expect(state.pageRatingsEnabled).toBe(true); expect(state.reviewOpen).toBe(true); expect(state.saveError).toBe('Settings changed. Reload.'); expect(state.busy).toBe(false)
   })
   it('keeps a committed save distinct from a failed runtime refresh', async () => {
-    const { state, transport } = arrange(); await state.reload(); state.enabled = false
-    transport.saveDiscussionWorkspace.mockResolvedValue({ ...snapshot, enabled: false, fingerprint: 'second', warnings: [] }); transport.fetchDiscussionWorkspace.mockRejectedValue(new Error('Unavailable'))
-    await state.savePolicy(); expect(state.dirty).toBe(false); expect(state.saved.enabled).toBe(false); expect(state.notice).toContain('saved.'); expect(state.notice).toContain('could not be refreshed'); expect(state.saveError).toBe('')
+    const { state, transport } = arrange(); await state.reload(); state.enabled = false; state.pageRatingsEnabled = true
+    transport.saveDiscussionWorkspace.mockResolvedValue({ ...snapshot, enabled: false, pageRatingsEnabled: true, fingerprint: 'second', warnings: [] }); transport.fetchDiscussionWorkspace.mockRejectedValue(new Error('Unavailable'))
+    await state.savePolicy(); expect(state.dirty).toBe(false); expect(state.saved.enabled).toBe(false); expect(state.saved.pageRatingsEnabled).toBe(true); expect(state.pageRatingsEnabled).toBe(true); expect(state.notice).toContain('saved.'); expect(state.notice).toContain('could not be refreshed'); expect(state.saveError).toBe('')
   })
   it('ignores a late comment inspection when another comment is selected', async () => {
     let release
