@@ -101,17 +101,20 @@
           v-spacer
           .navHeaderLoading(v-show='isLoading')
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2', aria-label='Page loading')
-          v-btn.nav-header-agent(
-            v-if='canEnterAgent && $vuetify.display.mdAndUp'
-            icon
-            rounded='lg'
-            aria-label='Open Wiki Agent'
-            title='Wiki Agent · Ctrl/⌘ + Shift + A'
-            data-search-modal-action
-            @click='openAgent'
-          )
-            v-icon(icon='mdi-creation-outline')
-            ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
+          v-tooltip(location='bottom')
+            template(v-slot:activator='{ props }')
+              v-btn.nav-header-agent(
+                v-bind='props'
+                v-if='canEnterAgent && $vuetify.display.mdAndUp'
+                icon
+                rounded='lg'
+                aria-label='Open Wiki Agent'
+                data-search-modal-action
+                @click='openAgent'
+              )
+                v-icon(icon='mdi-creation-outline')
+                ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
+            span Wiki Agent
           template(v-if='hasWritePagesPermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
             v-tooltip(location='bottom')
               template(v-slot:activator='{ props }')
@@ -126,17 +129,20 @@
                 )
                   v-icon(icon='mdi-pencil')
               span Edit Page
-          v-btn.nav-header-agent(
-            v-if='canEnterAgent && $vuetify.display.smAndDown'
-            icon
-            rounded='lg'
-            aria-label='Open Wiki Agent'
-            title='Wiki Agent · Ctrl/⌘ + Shift + A'
-            data-search-modal-action
-            @click='openAgent'
-          )
-            v-icon(icon='mdi-creation-outline')
-            ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
+          v-tooltip(location='bottom')
+            template(v-slot:activator='{ props }')
+              v-btn.nav-header-agent(
+                v-bind='props'
+                v-if='canEnterAgent && $vuetify.display.smAndDown'
+                icon
+                rounded='lg'
+                aria-label='Open Wiki Agent'
+                data-search-modal-action
+                @click='openAgent'
+              )
+                v-icon(icon='mdi-creation-outline')
+                ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
+            span Wiki Agent
 
           //- (mobile) SEARCH TOGGLE
 
@@ -601,13 +607,12 @@ import {
   onPageSource
 } from '../../helpers/page-action-events'
 import { emitSearchEnter, emitSearchExit, emitSearchMove, onSearchFocus, offSearchFocus } from '../../helpers/search-navigation-events'
+import { resolveUserPicture } from '../../helpers/user-picture.ts'
+import type { UserPicture } from '../../helpers/user-picture.ts'
 import * as pwa from '../../helpers/pwa.ts'
 
 type PageLocation = { path: string, locale: string }
 type SiteLocale = { code: string, name: string }
-type UserPicture =
-  | { kind: 'image', url: string }
-  | { kind: 'initials', initials: string }
 
 const ADMIN_PERMISSION_NAMES = new Set([
   'manage:system',
@@ -730,7 +735,6 @@ export default defineComponent({
     locale(): string { return wikiStore.page.locale },
     name(): string { return wikiStore.user.name },
     email(): string { return wikiStore.user.email },
-    pictureUrl(): string { return wikiStore.user.pictureUrl },
     transportVerified(): boolean {
       return pwa.pwaState?.connectionState === 'online' &&
         pwa.pwaState?.serverReachable === true &&
@@ -817,15 +821,7 @@ export default defineComponent({
     searchShortcutLabel(): string { return /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K' },
     searchInputIcon(): string { return this.searchMode === 'ask' ? 'mdi-auto-fix' : 'mdi-magnify' },
     picture (): UserPicture {
-      const pictureUrl = typeof this.pictureUrl === 'string' ? this.pictureUrl : ''
-      if (pictureUrl.length > 1) {
-        return { kind: 'image', url: (pictureUrl === 'internal') ? `/_userav/${wikiStore.user.id}` : pictureUrl }
-      }
-      const name = typeof this.name === 'string' ? this.name : ''
-      const nameParts = name.toUpperCase().split(' ').filter(Boolean)
-      let initials = nameParts[0]?.charAt(0) ?? ''
-      if (nameParts.length > 1) initials += nameParts[nameParts.length - 1]?.charAt(0) ?? ''
-      return { kind: 'initials', initials }
+      return resolveUserPicture(wikiStore.user)
     },
     isAdmin (): boolean {
       return this.permissions.some(permission => ADMIN_PERMISSION_NAMES.has(permission))

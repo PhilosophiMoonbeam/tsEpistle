@@ -16,6 +16,7 @@ import type {
 import { agentLiveAnnouncement, buildAgentThreadPresentation } from './agent-thread-presentation.ts'
 import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import { wikiSourceSelectorFromHref } from '../../../shared/wiki-source.ts'
+import { resolveUserPicture, type UserPicture } from '../../helpers/user-picture.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/agent-thread.vue')
 const componentSource = fs.readFileSync(componentPath, 'utf8')
@@ -27,7 +28,6 @@ import { browserWindow, setLocation, resetBody } from '../../test/browser-dom.mt
 setLocation('https://wiki.test/')
 
 resetBody()
-
 
 // Vue must load after JSDOM so runtime-dom captures the test document.
 const Vue = await import('vue')
@@ -58,6 +58,62 @@ return { emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelecto
 const NullStub = Vue.defineComponent({
   inheritAttrs: false,
   setup: () => () => null
+})
+const AvatarStub = Vue.defineComponent({
+  inheritAttrs: false,
+  props: {
+    size: { type: [Number, String], default: 28 },
+    color: String,
+    variant: String
+  },
+  setup(props, { attrs, slots }) {
+    return () =>
+      Vue.h(
+        'div',
+        {
+          ...attrs,
+          class: ['v-avatar', attrs.class],
+          'data-size': props.size,
+          style: { height: `${props.size}px`, width: `${props.size}px` }
+        },
+        slots.default?.()
+      )
+  }
+})
+const ImageStub = Vue.defineComponent({
+  inheritAttrs: false,
+  props: {
+    src: { type: String, required: true },
+    alt: { type: String, default: '' },
+    cover: Boolean
+  },
+  setup(props, { attrs }) {
+    return () => Vue.h('img', { ...attrs, class: ['v-img', attrs.class], src: props.src, alt: props.alt })
+  }
+})
+const IconStub = Vue.defineComponent({
+  inheritAttrs: false,
+  props: { icon: String, size: [Number, String] },
+  setup(props, { attrs }) {
+    return () => Vue.h('i', { ...attrs, class: ['v-icon', attrs.class], 'data-icon': props.icon })
+  }
+})
+const BeamStub = Vue.defineComponent({
+  inheritAttrs: false,
+  props: { enabled: Boolean, phaseOffsetMs: Number },
+  setup(props) {
+    return () =>
+      props.enabled
+        ? Vue.h('svg', {
+            class: 'control-border-beam',
+            'aria-hidden': 'true',
+            focusable: 'false',
+            tabindex: '-1',
+            role: 'presentation',
+            'data-phase-offset-ms': props.phaseOffsetMs
+          })
+        : null
+  }
 })
 const ButtonStub = Vue.defineComponent({
   inheritAttrs: false,
@@ -205,6 +261,7 @@ interface MountedThread {
   readonly host: HTMLElement
   readonly thread: { value: AgentThreadState }
   readonly connection: { value: string }
+  readonly userPicture: { value: UserPicture }
   readonly emittedDecisions: unknown[][]
   readonly unmount: () => void
 }
@@ -215,10 +272,15 @@ const settle = async (): Promise<void> => {
   await Vue.nextTick()
 }
 
-const mountThread = async (initialThread: AgentThreadState, initialConnection = 'connected'): Promise<MountedThread> => {
+const mountThread = async (
+  initialThread: AgentThreadState,
+  initialConnection = 'connected',
+  initialUserPicture: UserPicture = resolveUserPicture({ id: 42, name: 'Ada Lovelace', pictureUrl: '' })
+): Promise<MountedThread> => {
   const host = document.createElement('div')
   document.body.append(host)
   const thread = Vue.shallowRef(initialThread)
+  const userPicture = Vue.shallowRef(initialUserPicture)
   const connection = Vue.ref(initialConnection)
   const emittedDecisions: unknown[][] = []
   const emittedReattachments: unknown[][] = []
@@ -227,6 +289,7 @@ const mountThread = async (initialThread: AgentThreadState, initialConnection = 
     props: {
       thread: { type: Object, required: true },
       connection: { type: String, required: true },
+      userPicture: { type: Object, required: true },
       decidingApprovalId: { type: String, default: null },
       canSubmit: { type: Boolean, default: true },
       networkBlocked: { type: Boolean, default: false }
@@ -248,17 +311,22 @@ const mountThread = async (initialThread: AgentThreadState, initialConnection = 
     render: renderAgentThread
   })
   const harness = Vue.defineComponent({
-    setup: () => ({ thread, connection }),
+    setup: () => ({ thread, connection, userPicture }),
     render: () =>
       Vue.h(agentThread, {
         thread: thread.value,
         connection: connection.value,
+        userPicture: userPicture.value,
         onDecision: (...args: unknown[]) => emittedDecisions.push(args),
         onReattach: (...args: unknown[]) => emittedReattachments.push(args)
       })
   })
   const app = Vue.createApp(harness)
-  for (const name of ['AgentAnswerActions', 'AgentMarkdown', 'AgentTaskProgress', 'StatusIndicator', 'v-avatar', 'v-icon']) app.component(name, NullStub)
+  for (const name of ['AgentAnswerActions', 'AgentMarkdown', 'AgentTaskProgress', 'StatusIndicator']) app.component(name, NullStub)
+  app.component('v-avatar', AvatarStub)
+  app.component('v-icon', IconStub)
+  app.component('v-img', ImageStub)
+  app.component('ControlBorderBeam', BeamStub)
   app.component('v-btn', ButtonStub)
   app.component('AgentToolCard', ApprovalStub)
   app.component('WikiSourcePreview', PreviewStub)
@@ -269,12 +337,61 @@ const mountThread = async (initialThread: AgentThreadState, initialConnection = 
     host.remove()
   }
   mountedApps.push(unmount)
-  return { host, thread, connection, emittedDecisions, emittedReattachments, unmount }
+  return { host, thread, connection, userPicture, emittedDecisions, emittedReattachments, unmount }
 }
 
 afterEach(() => {
   for (const unmount of mountedApps.splice(0)) unmount()
   document.body.replaceChildren()
+})
+
+describe('AgentThread identity presentation', () => {
+  it('keeps the assistant mark decorative and updates the user avatar when the account picture changes', async () => {
+    const mounted = await mountThread(
+      makeThread('session-identities', {
+        messages: [
+          makeMessage({ id: 'assistant-identity', status: 'complete' }),
+          makeMessage({ id: 'user-identity', role: 'user', status: 'failed', ordinal: 2, content: 'An account update' })
+        ]
+      })
+    )
+
+    const assistantIdentity = mounted.host.querySelector<HTMLElement>('.agent-message--assistant .agent-message__identity')
+    const assistantSpark = assistantIdentity?.querySelector<HTMLElement>('.agent-message__assistant-spark')
+    const assistantBeam = assistantIdentity?.querySelector<HTMLElement>('.control-border-beam')
+    expect(assistantIdentity?.getAttribute('aria-hidden')).toBe('true')
+    expect(assistantSpark?.getAttribute('data-icon')).toBe('mdi-creation-outline')
+    expect(assistantBeam?.getAttribute('aria-hidden')).toBe('true')
+    expect(assistantBeam?.getAttribute('focusable')).toBe('false')
+    expect(assistantBeam?.getAttribute('tabindex')).toBe('-1')
+    expect(assistantIdentity?.querySelectorAll('button, a, input, [tabindex="0"]')).toHaveLength(0)
+
+    const userIdentity = mounted.host.querySelector<HTMLElement>('.agent-message--user .agent-message__identity--user')
+    const userDetails = userIdentity?.querySelector<HTMLElement>('.agent-message__user-details')
+    const userAvatar = userIdentity?.querySelector<HTMLElement>('.agent-message__user-avatar')
+    expect(userDetails?.querySelector('.agent-message__role')?.textContent).toBe('You')
+    expect(userDetails?.querySelector('time')?.getAttribute('datetime')).toBe('2026-09-03T10:00:00.000Z')
+    expect(userDetails?.querySelector('.agent-message__status')?.textContent?.trim()).toBe('Send failed')
+    expect(userAvatar?.getAttribute('data-size')).toBe('28')
+    expect(userAvatar?.getAttribute('aria-hidden')).toBe('true')
+    expect(userAvatar?.textContent?.trim()).toBe('AL')
+
+    mounted.userPicture.value = resolveUserPicture({ id: 42, name: 'Ada Lovelace', pictureUrl: 'internal' })
+    await settle()
+    const internalImage = userIdentity?.querySelector<HTMLImageElement>('.agent-message__user-avatar img')
+    expect(internalImage?.getAttribute('src')).toBe('/_userav/42')
+    expect(internalImage?.getAttribute('alt')).toBe('')
+
+    mounted.userPicture.value = resolveUserPicture({ id: 42, name: 'Ada Lovelace', pictureUrl: '/uploads/ada.webp' })
+    await settle()
+    expect(userIdentity?.querySelector<HTMLImageElement>('.agent-message__user-avatar img')?.getAttribute('src')).toBe('/uploads/ada.webp')
+
+    mounted.userPicture.value = resolveUserPicture({ id: 43, name: 'Grace Hopper', pictureUrl: '' })
+    await settle()
+    expect(userIdentity?.querySelector('.agent-message__user-avatar img')).toBeNull()
+    expect(userIdentity?.querySelector('.agent-message__user-avatar')?.textContent?.trim()).toBe('GH')
+    expect(userIdentity?.querySelectorAll('button, a, input, [tabindex="0"]')).toHaveLength(0)
+  })
 })
 
 describe('AgentThread live status and interaction behavior', () => {
@@ -349,7 +466,10 @@ describe('AgentThread live status and interaction behavior', () => {
     for (const modifier of ['ctrlKey', 'metaKey', 'shiftKey', 'altKey'] as const) {
       const modifiedClick = new browserWindow.MouseEvent('click', { bubbles: true, cancelable: true, [modifier]: true })
       let wasIntercepted = true
-      const finish = (event: Event): void => { wasIntercepted = event.defaultPrevented; event.preventDefault() }
+      const finish = (event: Event): void => {
+        wasIntercepted = event.defaultPrevented
+        event.preventDefault()
+      }
       mounted.host.addEventListener('click', finish, { once: true })
       hashLink.dispatchEvent(modifiedClick)
       expect(wasIntercepted).toBe(false)

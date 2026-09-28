@@ -2,8 +2,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import * as ts from 'typescript'
 import { JSDOM } from 'jsdom'
+import { activeOwnedOverlayRoots, createModalFocusScope } from './modal-focus-scope.ts'
 
-const compileSearchMethods = (source, names) => {
+const compileSearchMethods = (source, names, dependencies = {}) => {
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
   if (!script) throw new Error('Search component script was not found.')
 
@@ -28,7 +29,7 @@ const compileSearchMethods = (source, names) => {
       module: ts.ModuleKind.None
     }
   }).outputText
-  return new Function(`${compiled}\nreturn methods`)()
+  return new Function(...Object.keys(dependencies), `${compiled}\nreturn methods`)(...Object.values(dependencies))
 }
 
 describe('Ask modal accessibility contract', () => {
@@ -124,6 +125,144 @@ describe('Ask modal accessibility contract', () => {
       if (originalElement) Object.defineProperty(globalThis, 'Element', originalElement)
       else delete globalThis.Element
       dom.window.close()
+    }
+  })
+  test('Escape from Agent dismisses both modal layers and restores the current page', async () => {
+    const agentStore = {
+      closeWorkspaceCalls: 0,
+      closeWorkspace() {
+        this.closeWorkspaceCalls += 1
+      }
+    }
+    const methods = compileSearchMethods(
+      search,
+      ['activateAgentModal', 'activateSearchModal', 'closeSearch', 'finishSearchFocus', 'deactivateModalLayers', 'deactivateAgentModal'],
+      {
+        activeOwnedOverlayRoots,
+        createModalFocusScope,
+        useAgentsStore: () => agentStore
+      }
+    )
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+      pretendToBeVisual: true,
+      url: 'https://wiki.test/current/page?keep=1&agentApproval=approval-id#section'
+    })
+    const fixtureWindow = dom.window
+    const fixtureDocument = fixtureWindow.document
+    const originalGlobals = Object.fromEntries(['document', 'window', 'HTMLElement'].map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]))
+    const pageOpener = fixtureDocument.createElement('button')
+    const root = fixtureDocument.createElement('section')
+    const agentComposer = fixtureDocument.createElement('textarea')
+    const nestedOverlay = fixtureDocument.createElement('div')
+    const nestedOverlayControl = fixtureDocument.createElement('button')
+    let state
+
+    root.tabIndex = -1
+    nestedOverlay.className = 'v-overlay--active'
+    nestedOverlayControl.className = 'agent-owned-overlay'
+    nestedOverlay.append(nestedOverlayControl)
+    root.append(agentComposer, nestedOverlay)
+    fixtureDocument.body.append(pageOpener, root)
+    Object.defineProperty(fixtureWindow, 'matchMedia', {
+      configurable: true,
+      value: () => ({ matches: true })
+    })
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      writable: true,
+      value: fixtureDocument
+    })
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      writable: true,
+      value: fixtureWindow
+    })
+    Object.defineProperty(globalThis, 'HTMLElement', {
+      configurable: true,
+      writable: true,
+      value: fixtureWindow.HTMLElement
+    })
+
+    try {
+      state = {
+        $el: root,
+        $nextTick: async () => undefined,
+        $refs: {},
+        canAsk: true,
+        searchMode: 'ask',
+        searchIsFocused: true,
+        search: 'where is the current page?',
+        approvalId: 'approval-id',
+        agentResumeSessionId: null,
+        agentOpeningPage: { id: 17, locale: 'en', path: 'current/page', observedUpdatedAt: '2026-09-28T00:00:00.000Z' },
+        agentOpeningPageCaptured: true,
+        pendingAskRestoreTarget: null,
+        searchRestoreTarget: pageOpener,
+        directPromptHandoffId: 0,
+        modalFocusScope: null,
+        searchModalFocusScope: null,
+        get isAgentOpen() {
+          return this.canAsk && this.searchMode === 'ask'
+        },
+        activeModalOpener: () => agentComposer,
+        isSearchControl: () => false,
+        restoreTargetFor: target => () => target,
+        searchModalAdditionalRoots: () => [],
+        syncSearchInputA11y: () => [],
+        retireResumeAfterSelection: () => undefined,
+        findSearchTrigger: () => pageOpener
+      }
+      for (const name of ['activateSearchModal', 'closeSearch', 'finishSearchFocus', 'deactivateModalLayers', 'deactivateAgentModal']) {
+        state[name] = (...args) => methods[name].call(state, ...args)
+      }
+
+      pageOpener.focus()
+      methods.activateSearchModal.call(state, pageOpener)
+      await methods.activateAgentModal.call(state)
+      agentComposer.focus()
+
+      const nestedEscape = new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      nestedOverlayControl.dispatchEvent(nestedEscape)
+      expect(nestedEscape.defaultPrevented).toBe(false)
+      expect(state.isAgentOpen).toBe(true)
+      expect(state.searchIsFocused).toBe(true)
+      expect(agentStore.closeWorkspaceCalls).toBe(0)
+
+      nestedOverlay.classList.remove('v-overlay--active')
+      const agentEscape = new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      agentComposer.dispatchEvent(agentEscape)
+      expect(agentEscape.defaultPrevented).toBe(true)
+      expect(state.isAgentOpen).toBe(false)
+      expect(state.searchIsFocused).toBe(false)
+      expect(state.searchMode).toBe('search')
+      expect(state.search).toBe('')
+      expect(state.approvalId).toBe('')
+      expect(state.modalFocusScope).toBeNull()
+      expect(state.searchModalFocusScope).toBeNull()
+      expect(fixtureDocument.activeElement).toBe(pageOpener)
+      expect(agentStore.closeWorkspaceCalls).toBe(1)
+      expect(fixtureWindow.location.pathname).toBe('/current/page')
+      expect(fixtureWindow.location.search).toBe('?keep=1')
+      state.searchIsFocused = true
+      state.search = 'search again'
+      methods.activateSearchModal.call(state, pageOpener)
+      agentComposer.focus()
+      const searchEscape = new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      agentComposer.dispatchEvent(searchEscape)
+      expect(searchEscape.defaultPrevented).toBe(true)
+      expect(state.searchIsFocused).toBe(false)
+      expect(state.search).toBe('')
+      expect(state.searchModalFocusScope).toBeNull()
+      expect(fixtureDocument.activeElement).toBe(pageOpener)
+      expect(agentStore.closeWorkspaceCalls).toBe(1)
+      expect(fixtureWindow.location.hash).toBe('#section')
+    } finally {
+      state?.deactivateModalLayers(false)
+      for (const [name, descriptor] of Object.entries(originalGlobals)) {
+        if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+        else delete globalThis[name]
+      }
+      fixtureWindow.close()
     }
   })
 })

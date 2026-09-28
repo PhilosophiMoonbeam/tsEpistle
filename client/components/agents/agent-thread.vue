@@ -9,32 +9,52 @@
         :aria-label="entry.ariaLabel"
       >
         <div v-if="entry.message.role === 'assistant'" class="agent-message__identity" aria-hidden="true">
-          <v-avatar color="primary" size="28" variant="tonal">
-            <v-icon icon="mdi-book-open-page-variant-outline" size="16" />
-          </v-avatar>
+          <span class="agent-message__assistant-mark">
+            <v-icon class="agent-message__assistant-spark" icon="mdi-creation-outline" size="18" aria-hidden="true" />
+            <ControlBorderBeam :enabled="true" :phase-offset-ms="0" />
+          </span>
         </div>
         <header v-else class="agent-message__identity agent-message__identity--user">
-          <span class="agent-message__role">You</span>
-          <time
-            class="agent-message__time"
-            :datetime="entry.message.createdAt"
-            :title="entry.temporal.timestamp"
-          >{{ entry.temporal.time }}</time>
-          <span
-            v-if="entry.statusLabel"
-            class="agent-message__status"
-            :class="`agent-message__status--${entry.message.status}`"
+          <div class="agent-message__user-details">
+            <span class="agent-message__role">You</span>
+            <time
+              class="agent-message__time"
+              :datetime="entry.message.createdAt"
+              :title="entry.temporal.timestamp"
+            >{{ entry.temporal.time }}</time>
+            <span
+              v-if="entry.statusLabel"
+              class="agent-message__status"
+              :class="`agent-message__status--${entry.message.status}`"
+            >
+              <StatusIndicator
+                aria-hidden="true"
+                :active="entry.message.status === 'streaming'"
+                :intermediary="entry.message.status === 'pending'"
+                :negative="entry.message.status === 'failed'"
+                :pulse="entry.message.status === 'pending' || entry.message.status === 'streaming'"
+                :label="entry.statusLabel"
+              />
+              {{ entry.statusLabel }}
+            </span>
+          </div>
+          <v-avatar
+            v-if="userPicture.kind === 'image'"
+            class="agent-message__user-avatar"
+            size="28"
+            aria-hidden="true"
           >
-            <StatusIndicator
-              aria-hidden="true"
-              :active="entry.message.status === 'streaming'"
-              :intermediary="entry.message.status === 'pending'"
-              :negative="entry.message.status === 'failed'"
-              :pulse="entry.message.status === 'pending' || entry.message.status === 'streaming'"
-              :label="entry.statusLabel"
-            />
-            {{ entry.statusLabel }}
-          </span>
+            <v-img :src="userPicture.url" alt="" />
+          </v-avatar>
+          <v-avatar
+            v-else
+            class="agent-message__user-avatar"
+            color="primary"
+            size="28"
+            aria-hidden="true"
+          >
+            <span class="agent-message__user-initials">{{ userPicture.initials }}</span>
+          </v-avatar>
         </header>
         <div class="agent-message__content">
           <header v-if="entry.message.role === 'assistant'" class="agent-message__meta text-body-small">
@@ -308,6 +328,8 @@
 import type { AgentGoogleSearchCitation, AgentMediaView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import { computed, ref, watch } from 'vue'
+import type { UserPicture } from '../../helpers/user-picture.ts'
+import ControlBorderBeam from '../common/control-border-beam.vue'
 import StatusIndicator from '../common/status-indicator.vue'
 import AgentMarkdown from './agent-markdown.vue'
 import AgentAnswerActions from './agent-answer-actions.vue'
@@ -329,6 +351,7 @@ import {
 const props = defineProps<{
   thread: AgentThreadState
   connection: string
+  userPicture: UserPicture
   decidingApprovalId?: string | null
   canSubmit?: boolean
   imageEditingEnabled?: boolean
@@ -624,6 +647,24 @@ watch(
   color: rgb(var(--v-theme-error));
 }
 
+@keyframes agent-message-spark-shimmer {
+  0%, 84%, 100% {
+    filter: none;
+    opacity: 1;
+  }
+  88% {
+    filter: brightness(1.35) drop-shadow(0 0 7px color-mix(in srgb, #00bfff 70%, transparent));
+    opacity: 1;
+  }
+  91% {
+    opacity: .6;
+  }
+  95% {
+    filter: brightness(1.15) drop-shadow(0 0 3px color-mix(in srgb, #00bfff 45%, transparent));
+    opacity: 1;
+  }
+}
+
 
 
 .agent-message--assistant {
@@ -642,10 +683,38 @@ watch(
   min-width: 0;
 }
 
-.agent-message__identity :deep(.v-avatar) {
-  background: color-mix(in srgb, var(--wiki-accent-warm) 9%, var(--wiki-surface-raised)) !important;
-  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
+.agent-message__assistant-mark {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent);
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 72%, transparent);
+  --wiki-beam-violet: #00bfff;
+  --wiki-beam-cool: color-mix(in srgb, #00bfff 62%, white);
+}
+
+.agent-message__assistant-spark {
+  position: relative;
+  z-index: 1;
+  color: #00bfff !important;
+  animation: agent-message-spark-shimmer 7s ease-in-out infinite;
+}
+
+.agent-message__user-avatar {
+  flex: 0 0 28px;
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 24%, var(--wiki-surface-border));
   box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+}
+
+.agent-message__user-initials {
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .02em;
 }
 
 .agent-message__surface {
@@ -701,13 +770,19 @@ watch(
 }
 
 .agent-message__identity--user {
-  align-items: end;
-  display: grid;
+  align-items: flex-start;
+  display: flex;
   flex: 0 0 auto;
-  gap: var(--wiki-space-1);
+  gap: var(--wiki-space-2);
   order: 1;
   padding-block-start: var(--wiki-space-3);
   text-align: end;
+}
+
+.agent-message__user-details {
+  display: grid;
+  gap: var(--wiki-space-1);
+  justify-items: end;
 }
 
 .agent-message__identity--user .agent-message__time::before {
@@ -1160,13 +1235,7 @@ watch(
 
   .agent-message--assistant {
     gap: var(--wiki-space-2);
-    grid-template-columns: var(--wiki-space-6) minmax(0, 1fr);
-  }
-
-  .agent-message__identity :deep(.v-avatar) {
-    height: var(--wiki-space-6) !important;
-    min-width: var(--wiki-space-6) !important;
-    width: var(--wiki-space-6) !important;
+    grid-template-columns: 28px minmax(0, 1fr);
   }
 
   .agent-message--assistant .agent-message__surface {
@@ -1192,6 +1261,13 @@ watch(
     gap: var(--wiki-space-2);
     order: 1;
     padding-block-start: 0;
+  }
+
+  .agent-message__user-details {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wiki-space-2);
   }
 
   .agent-message__identity--user .agent-message__time::before {
@@ -1241,10 +1317,15 @@ watch(
   .agent-message__waiting-dots > span {
     animation: none !important;
   }
+  .agent-message__assistant-spark {
+    animation: none !important;
+    filter: none !important;
+  }
 }
 
 @media (forced-colors: active) {
-  .agent-message__identity :deep(.v-avatar),
+  .agent-message__user-avatar,
+  .agent-message__assistant-mark,
   .agent-message__surface,
   .agent-message__recovery,
   .agent-sources,
@@ -1253,6 +1334,11 @@ watch(
     background: Canvas;
     border-color: CanvasText;
     color: CanvasText;
+  }
+  .agent-message__assistant-spark {
+    animation: none !important;
+    filter: none !important;
+    color: CanvasText !important;
   }
 
   .agent-message--user .agent-message__surface {
