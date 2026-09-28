@@ -156,6 +156,7 @@ export const createMailRuntime = (wiki: WikiContext, deps: Dependencies = {}): M
       from: { name: configuration.senderName.trim(), address: configuration.senderEmail.trim() },
       ...(configuration.replyTo ? { replyTo: configuration.replyTo.trim() } : {}),
       to: input.to,
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: Email subjects must strip C0 and DEL header controls.
       subject: (copy.subject ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim(),
       ...(input.messageId === undefined ? {} : { messageId: input.messageId }),
       text: plainText,

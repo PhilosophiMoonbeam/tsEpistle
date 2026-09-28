@@ -115,7 +115,7 @@ function parseWikiLinkSourceAt (source: string) {
   const parsed = parseWikiLinkAt(source)
   if (parsed) return { raw: parsed.raw, parsed }
 
-  const raw = /^\[\[[^\[\]\r\n]+\]\]/u.exec(source)?.[0]
+  const raw = /^\[\[[^[\]\r\n]+\]\]/u.exec(source)?.[0]
   if (!raw) return null
   const continuation = source[raw.length]
   if (continuation === '(' || (continuation === '[' && source[raw.length + 1] !== '[')) return null

@@ -72,7 +72,7 @@ export function createWikiMarkdownRenderer(wikiLinks: WikiLinkOptions = WIKI_LIN
       const parsed = parseWikiLinkAt(source)
       const href = parsed ? resolveWikiLinkHref(parsed, wikiLinks.context) : null
       if (!parsed || !href) {
-        const raw = /^\[\[[^\[\]\r\n]+\]\]/u.exec(source)?.[0]
+        const raw = /^\[\[[^[\]\r\n]+\]\]/u.exec(source)?.[0]
         if (!raw || source[raw.length] === '(') return false
         if (!silent) {
           // Keep invalid wikilinks literal; linkify must not create a URL inside [[//host]].

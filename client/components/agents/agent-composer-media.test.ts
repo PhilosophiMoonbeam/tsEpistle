@@ -76,8 +76,6 @@ const mountAudio = (level: { value: number }) => {
 
 const withTimeOffset = (run: () => Promise<void>) => {
   const realNow = Date.now
-  let offset = 0
-  Date.now = () => realNow() + offset
   return run().finally(() => { Date.now = realNow })
 }
 

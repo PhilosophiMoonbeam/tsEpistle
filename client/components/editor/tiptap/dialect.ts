@@ -500,7 +500,7 @@ function protectInlineSource (line: string): string {
 
     const source = line.slice(index)
     if (source.startsWith('[[')) {
-      const wikiLink = /^\[\[[^\[\]\r\n]+\]\]/u.exec(source)?.[0]
+      const wikiLink = /^\[\[[^[\]\r\n]+\]\]/u.exec(source)?.[0]
       if (wikiLink) {
         result += wikiLink
         index += wikiLink.length
