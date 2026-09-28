@@ -33,6 +33,8 @@ describe('Compose upgrade command', () => {
     expect(script).toContain('native-page-ratings-and-recovery-schema)')
     expect(script).toContain('native-page-ratings-and-recovery)')
     expect(script).toContain('verify_native_page_schema "$container" "$user" "$database"')
+    expect(script).toContain("to_jsonb(t) - ARRAY['reduceMotion','underlineLinks','contentTextSize','communicationLocale']")
+    expect(script).toContain('Healthy candidate was reconnected to the public proxy after verification failed.')
   })
 
   it('ships a secret-free operator profile template', async () => {
