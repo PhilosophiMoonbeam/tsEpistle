@@ -1,7 +1,4 @@
 {
   "extends": "../tsconfig.client.json",
-  "references": [{ "path": "../tsconfig.shared.json" }],
-  "vueCompilerOptions": {
-    "plugins": ["@vue/language-plugin-pug"]
-  }
+  "references": [{ "path": "../tsconfig.shared.json" }]
 }

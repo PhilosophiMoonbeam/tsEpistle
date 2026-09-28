@@ -1,6 +1,6 @@
 <template lang="pug">
 span.page-branding-mark(
-  v-if='safeBranding && !failed'
+  v-if='safeBranding && identity !== null && !failed'
   :key='identity'
   aria-hidden='true'
 )

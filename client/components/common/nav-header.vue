@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-app-bar.nav-header(:height='dense ? 48 : 52', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', :style='{ "--v-toolbar-height": dense ? \'48px\' : \'52px\', "backdrop-filter": "var(--wiki-chrome-blur)" }')
+  v-app-bar.nav-header(:height='dense ? 48 : 52', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', :style='{ "--v-toolbar-height": dense ? "48px" : "52px", "backdrop-filter": "var(--wiki-chrome-blur)" }')
     template(v-slot:extension)
       v-toolbar.nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search', flat, style='backdrop-filter: var(--wiki-chrome-blur);')
         v-text-field.nav-header-search-control(
@@ -690,6 +690,8 @@ export default defineComponent({
       get(): boolean { return wikiStore.site.searchIsFocused },
       set(value: boolean) { wikiStore.site.searchIsFocused = value }
     },
+    searchIsLoading(): boolean { return wikiStore.site.searchIsLoading },
+    isLoading(): boolean { return wikiStore.isLoading },
     connectionPresentation(): pwa.PwaConnectionPresentation {
       return pwa.pwaConnectionPresentation(pwa.pwaState)
     },

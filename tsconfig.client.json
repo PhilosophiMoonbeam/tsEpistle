@@ -23,6 +23,9 @@
   "references": [
     { "path": "./tsconfig.shared.json" }
   ],
+  "vueCompilerOptions": {
+    "plugins": ["@vue/language-plugin-pug"]
+  },
   "include": [
     "client/**/*.ts",
     "client/**/*.vue",

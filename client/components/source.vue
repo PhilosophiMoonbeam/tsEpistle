@@ -6,7 +6,7 @@
         .source-toolbar-copy
           .source-eyebrow {{$t('common:header.viewSource')}}
           i18next#source-title.source-toolbar-title(v-if='versionId > 0', path='common:page.viewingSourceVersion', tag='h1')
-            strong(place='date', :title='$helpers.formatMoment(versionDate, `LLL`)') {{ $helpers.formatMoment(versionDate, 'lll') }}
+            strong(place='date', :title='String($helpers.formatMoment(versionDate, `LLL`))') {{ $helpers.formatMoment(versionDate, 'lll') }}
             strong(place='path') /{{path}}
           i18next#source-title.source-toolbar-title(v-else, path='common:page.viewingSource', tag='h1')
             strong(place='path') /{{path}}

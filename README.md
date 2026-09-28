@@ -99,7 +99,7 @@ bun run ci
 
 OMP uses a standalone language-server path for editor features. The project pins `@vue/language-server` to `2.2.12` because `3.3.9` requires a custom tsserver bridge that OMP does not provide. This editor pin remains separate from the production `vue` `3.5.41`, `vue-tsc` `3.3.9`, and `typescript` `6.0.2` versions.
 
-`client/tsconfig.json`, `server/tsconfig.json`, and `shared/tsconfig.json` are editor-discovery entry points only. They inherit the authoritative root `tsconfig.client.json`, `tsconfig.server.json`, and `tsconfig.shared.json`, respectively. The client wrapper additionally activates Pug semantics through `@vue/language-plugin-pug`; production typecheck CLI commands continue to use the authoritative root configs. The Vue language server owns `.vue`; the TypeScript language server owns `.ts` and `.js`.
+`client/tsconfig.json`, `server/tsconfig.json`, and `shared/tsconfig.json` are editor-discovery entry points only. They inherit the authoritative root `tsconfig.client.json`, `tsconfig.server.json`, and `tsconfig.shared.json`, respectively. The root client config activates Pug template checking for both the CLI and editor through `@vue/language-plugin-pug`. Its `2.2.12` pin uses plugin API 2.1, accepted by the editor's `2.2.12` core and the CLI's `3.3.9` core; do not upgrade the plugin alone. The Vue language server owns `.vue`; the TypeScript language server owns `.ts` and `.js`.
 
 After changing the Vue language-server dependency or its initialization options, restart the supervised `omp.lsp.mux` before reloading workspace LSP. The shared mux can retain a child or cache keyed by command, arguments, and working directory, so a workspace reload alone can leave stale state.
 

@@ -76,7 +76,7 @@
           v-spacer
           v-tooltip(location="bottom", color='primary')
             template(v-slot:activator='{ props }')
-              v-btn.animated.fadeIn.wait-p2s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.togglePreviewPane`)', :aria-pressed='previewShown', @click='previewShown = !previewShown').mx-0
+              v-btn.animated.fadeIn.wait-p2s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.togglePreviewPane`)', :aria-pressed='previewShown', @click='togglePreview').mx-0
                 v-icon {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
             span {{$t('editor:markup.togglePreviewPane')}}
         template(v-else)
@@ -89,7 +89,7 @@
                 v-bind='props'
                 :aria-label='previewShown ? `Show editor` : `Show preview`'
                 :aria-pressed='previewShown'
-                @click='previewShown = !previewShown'
+                @click='togglePreview'
               )
                 v-icon {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
             span {{ previewShown ? 'Show editor' : $t('editor:markup.togglePreviewPane') }}
@@ -178,7 +178,6 @@
 /* global siteLangs, siteConfig */
 import { defineComponent, markRaw } from 'vue'
 import i18next from 'i18next'
-import { useDisplay } from 'vuetify'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
@@ -218,17 +217,13 @@ interface MarkerOptions {
 
 export default defineComponent({
   emits: ['editor-adapter', 'editor-adapter-clear'],
-  setup() {
-    const { mdAndUp } = useDisplay()
-    return { mdAndUp }
-  },
   data() {
     return {
       cm: null as TextEditorHandle | null,
       editorAdapter: null as EditorAdapterController | null,
       debouncedProcessContent: null as ReturnType<typeof _.debounce> | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
-      previewShown: this.mdAndUp,
+      previewShown: this.$vuetify.display.mdAndUp,
       insertLinkDialog: false,
       previewHTML: '',
       previewDirty: true,
@@ -280,6 +275,9 @@ export default defineComponent({
     }
   },
   methods: {
+    togglePreview () {
+      this.previewShown = !this.previewShown
+    },
     flushEligibleEditorText() {
       const editor = this.cm
       if (!editor) return
