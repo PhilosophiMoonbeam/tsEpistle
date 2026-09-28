@@ -32,7 +32,7 @@ function hasControlCharacters (value: string): boolean {
 }
 
 const parseWikiLinkPrefix = (source: string): WikiLink | null => {
-  const match = /^\[\[([^\[\]\r\n]+)\]\]/u.exec(source)
+  const match = /^\[\[([^[\]\r\n]+)\]\]/u.exec(source)
   if (!match) return null
 
   const payload = match[1] ?? ''
