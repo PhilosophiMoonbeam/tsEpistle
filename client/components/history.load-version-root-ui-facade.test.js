@@ -195,12 +195,54 @@ describe('history revision list and comparison behavior', () => {
     expect(trailEl.scrollTop).toBe(120)
   })
 
-  test('resolves component refs through their actual DOM elements', () => {
-    const element = { scrollTop: 20, getBoundingClientRect: () => ({ top: 10, height: 30 }) }
-    const { instance } = createHistoryInstance()
+  test('scrolls mobile revision selections to the comparison and preserves the trail position', () => {
+    const originalWindow = global.window
+    const originalDocument = global.document
+    let scrolledTo = null
+    let focusedWith = null
 
-    expect(instance.resolveElementRef({ $el: element })).toBe(element)
-    expect(instance.resolveElementRef(element)).toBe(element)
+    try {
+      global.window = {
+        scrollY: 150,
+        innerWidth: 600,
+        scrollTo: options => {
+          scrolledTo = options
+        },
+        matchMedia: () => ({ matches: false }),
+        getComputedStyle: () => ({
+          getPropertyValue: property => (property === '--v-layout-top' ? '48px' : '0px')
+        })
+      }
+      global.document = { documentElement: {} }
+
+      const trailEl = { scrollTop: 60 }
+      const headingEl = {
+        getBoundingClientRect: () => ({ top: 450 }),
+        focus: options => {
+          focusedWith = options
+        }
+      }
+      const { instance } = createHistoryInstance({
+        $refs: { trailContainer: trailEl, comparisonHeading: headingEl }
+      })
+
+      instance.trailScrollTop = 60
+      instance.selectVersion(0)
+
+      expect(instance.diffTarget).toBe(0)
+      expect(instance.diffSource).toBe(2)
+      expect(scrolledTo).toEqual({ top: 540, behavior: 'smooth' })
+      expect(focusedWith).toEqual({ preventScroll: true })
+      expect(trailEl.scrollTop).toBe(60)
+
+      scrolledTo = null
+      global.window.innerWidth = 1200
+      instance.selectVersion(1)
+      expect(scrolledTo).toBeNull()
+    } finally {
+      global.window = originalWindow
+      global.document = originalDocument
+    }
   })
 
   test('keeps the latest source selection when responses resolve out of order and balances version loading', async () => {
@@ -323,12 +365,20 @@ describe('history revision list and comparison behavior', () => {
   })
 
   test('allows consecutive history pages after a successful load', async () => {
-    const fetchPageHistory = vi.fn()
+    const fetchPageHistory = vi
+      .fn()
       .mockResolvedValueOnce({ total: 3, trail: [trailItem(2)] })
       .mockResolvedValueOnce({ total: 3, trail: [trailItem(1, 'initial')] })
-    const { instance } = createHistoryInstance({
-      trailLoaded: true, trailLoading: false, total: 3, trail: [trailItem(3)], offsetPage: 0
-    }, { fetchPageHistory })
+    const { instance } = createHistoryInstance(
+      {
+        trailLoaded: true,
+        trailLoading: false,
+        total: 3,
+        trail: [trailItem(3)],
+        offsetPage: 0
+      },
+      { fetchPageHistory }
+    )
 
     expect(await instance.loadMore()).toBe(true)
     expect(instance.loadingMore).toBe(false)
@@ -492,19 +542,24 @@ describe('history revision list and comparison behavior', () => {
     expect(instance.trail.map(item => item.versionId)).toEqual([3, 2])
   })
 
-  test('keeps a failed revision read out of the comparison and exposes a side-specific retry state', async () => {
-    const fetchPageVersion = vi.fn().mockRejectedValue(new Error('Revision was removed'))
-    const { component, instance } = createHistoryInstance({ cache: [] }, { fetchPageVersion })
-    const stop = watchSelections(component, instance)
+  test('keeps failed revisions out of comparison and reports the error on either side', async () => {
+    for (const side of ['source', 'target']) {
+      const fetchPageVersion = vi.fn().mockRejectedValue(new Error('Revision was removed'))
+      const overrides = side === 'target' ? { cache: [], source: page(2), sourceReady: true, diffSource: 2 } : { cache: [] }
+      const { component, instance } = createHistoryInstance(overrides, { fetchPageVersion })
+      const stop = watchSelections(component, instance)
 
-    instance.diffSource = 1
-    await flushPendingWatch()
+      instance[side === 'source' ? 'diffSource' : 'diffTarget'] = 1
+      await flushPendingWatch()
 
-    expect(instance.sourceReady).toBe(false)
-    expect(instance.sourceError).toBe('Revision was removed')
-    expect(component.computed.comparisonReady.call(instance)).toBe(false)
-    expect(component.computed.diffHTML.call(instance)).toBe('')
-    stop()
+      expect(instance[`${side}Ready`]).toBe(false)
+      expect(instance[`${side}Error`]).toBe('Revision was removed')
+      expect(instance[side === 'source' ? 'targetError' : 'sourceError']).toBe('')
+      expect(component.computed.comparisonLoading.call(instance)).toBe(false)
+      expect(component.computed.comparisonReady.call(instance)).toBe(false)
+      expect(component.computed.diffHTML.call(instance)).toBe('')
+      stop()
+    }
   })
 
   test('reports oversized comparisons instead of invoking the diff renderer', () => {
@@ -528,14 +583,17 @@ describe('history revision list and comparison behavior', () => {
 
   test('bounds wholly changed revisions below the input size limits', () => {
     const Diff2Html = { html: vi.fn() }
-    const { instance } = createHistoryInstance({
-      source: { ...page(1), content: Array.from({ length: 18_000 }, (_, index) => `old${index}\n`).join('') },
-      target: { ...page(2), content: Array.from({ length: 18_000 }, (_, index) => `new${index}\n`).join('') },
-      sourceReady: true,
-      targetReady: true,
-      diffSource: 1,
-      diffTarget: 2
-    }, { createPatch: createRealPatch, Diff2Html })
+    const { instance } = createHistoryInstance(
+      {
+        source: { ...page(1), content: Array.from({ length: 18_000 }, (_, index) => `old${index}\n`).join('') },
+        target: { ...page(2), content: Array.from({ length: 18_000 }, (_, index) => `new${index}\n`).join('') },
+        sourceReady: true,
+        targetReady: true,
+        diffSource: 1,
+        diffTarget: 2
+      },
+      { createPatch: createRealPatch, Diff2Html }
+    )
 
     const started = performance.now()
     const result = instance.diffResult
@@ -547,9 +605,17 @@ describe('history revision list and comparison behavior', () => {
 
   test('caps rendered patch rows before building a large DOM', () => {
     const Diff2Html = { html: vi.fn() }
-    const { instance } = createHistoryInstance({
-      source: page(1), target: page(2), sourceReady: true, targetReady: true, diffSource: 1, diffTarget: 2
-    }, { createPatch: () => '+changed\n'.repeat(4_001), Diff2Html })
+    const { instance } = createHistoryInstance(
+      {
+        source: page(1),
+        target: page(2),
+        sourceReady: true,
+        targetReady: true,
+        diffSource: 1,
+        diffTarget: 2
+      },
+      { createPatch: () => '+changed\n'.repeat(4_001), Diff2Html }
+    )
 
     expect(instance.diffResult.error).toContain('too large')
     expect(Diff2Html.html).not.toHaveBeenCalled()
@@ -557,11 +623,17 @@ describe('history revision list and comparison behavior', () => {
 
   test('renders ordinary revisions and limits expensive line matching for larger patches', () => {
     const html = vi.fn(RealDiff2Html.html)
-    const { instance } = createHistoryInstance({
-      source: { ...page(1), content: 'Original paragraph\n' },
-      target: { ...page(2), content: 'Updated paragraph\n' },
-      sourceReady: true, targetReady: true, diffSource: 1, diffTarget: 2
-    }, { createPatch: createRealPatch, Diff2Html: { html } })
+    const { instance } = createHistoryInstance(
+      {
+        source: { ...page(1), content: 'Original paragraph\n' },
+        target: { ...page(2), content: 'Updated paragraph\n' },
+        sourceReady: true,
+        targetReady: true,
+        diffSource: 1,
+        diffTarget: 2
+      },
+      { createPatch: createRealPatch, Diff2Html: { html } }
+    )
 
     expect(instance.diffResult.html).toContain('d2h-ins')
     expect(html.mock.calls[0][1].matching).toBe('lines')
@@ -572,11 +644,17 @@ describe('history revision list and comparison behavior', () => {
   })
 
   test('avoids unbounded word comparisons within long changed lines', () => {
-    const { instance } = createHistoryInstance({
-      source: { ...page(1), content: 'old '.repeat(2_000) },
-      target: { ...page(2), content: 'new '.repeat(2_000) },
-      sourceReady: true, targetReady: true, diffSource: 1, diffTarget: 2
-    }, { createPatch: createRealPatch, Diff2Html: RealDiff2Html })
+    const { instance } = createHistoryInstance(
+      {
+        source: { ...page(1), content: 'old '.repeat(2_000) },
+        target: { ...page(2), content: 'new '.repeat(2_000) },
+        sourceReady: true,
+        targetReady: true,
+        diffSource: 1,
+        diffTarget: 2
+      },
+      { createPatch: createRealPatch, Diff2Html: RealDiff2Html }
+    )
 
     const started = performance.now()
     const result = instance.diffResult

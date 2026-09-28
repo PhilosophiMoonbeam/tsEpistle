@@ -105,60 +105,307 @@ const createConflictHarness = ({
   return { component, context, Editor, Element, fetchCalls, mergeOptions, notifications, wikiStore }
 }
 
-describe('editor conflict REST migration guard', () => {
-  test('Tiptap conflict keeps fetch failures inline and retryable while guarding request generations and resolution', () => {
-    const relativePath = 'client/components/editor/tiptap/conflict.vue'
-    const source = fs.readFileSync(path.join(process.cwd(), relativePath), 'utf8')
-    const script = readScript(relativePath)
+const loadTiptapConflictComponent = dependencies => {
+  const script = readScript('client/components/editor/tiptap/conflict.vue')
+    .replace(/^import[^\n]*(?:\n|$)/gm, '')
+    .replace('export default defineComponent(', 'const component = defineComponent(')
+  const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script)
+  return new Function(...Object.keys(dependencies), `${executable}\nreturn component`)(...Object.values(dependencies))
+}
 
-    expect(script).toMatch(/import\s*\{(?=[^}]*\bdefineComponent\b)(?=[^}]*\bmarkRaw\b)[^}]*\}\s*from\s*['"]vue['"]/)
-    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
-    expect(script).toContain("import { fetchPageConflictLatest, type PageConflictLatest } from '../../../helpers/pages-api'")
-    expect(script).toMatch(
-      /requestController:\s*null\s+as\s+AbortController\s*\|\s*null[\s\S]*?loadState:\s*['"]loading['"]\s+as\s+['"]loading['"]\s*\|\s*['"]error['"]\s*\|\s*['"]success['"][\s\S]*?loadError:\s*['"]{2}[\s\S]*?requestGeneration:\s*0/
-    )
-    expect(script).toMatch(
-      /const\s+requestController\s*=\s*markRaw\s*\(\s*new\s+AbortController\s*\(\s*\)\s*\)[\s\S]*?this\.requestController\s*=\s*requestController/
-    )
-    expect(script).toMatch(
-      /fetchPageConflictLatest\s*\(\s*\(\s*url\s*,\s*init\s*\)\s*=>\s*window\.fetch\s*\(\s*url\s*,\s*\{\s*\.\.\.init\s*,\s*signal:\s*requestController\.signal\s*\}\s*\)\s*,\s*wikiStore\.page\.id\s*\)/
-    )
-    expect(script).toMatch(
-      /catch\s*\{[\s\S]*?if\s*\(\s*requestController\.signal\.aborted\s*\)\s*return[\s\S]*?\}\s*if\s*\(\s*requestController\.signal\.aborted\s*\)\s*return[\s\S]*?if\s*\(\s*requestGeneration\s*!==\s*this\.requestGeneration\s*\)\s*return[\s\S]*?this\.requestController\s*=\s*null/
-    )
-    expect(script.match(/if\s*\(\s*requestController\.signal\.aborted\s*\)\s*return/g)).toHaveLength(2)
-    expect(script).not.toMatch(/AbortError|(?:error|err)\.name/)
-    expect(script).toMatch(
-      /if\s*\(\s*this\.loadState\s*===\s*['"]loading['"]\s*&&\s*this\.requestController\s*\)\s*return[\s\S]*?this\.requestController\?\.abort\s*\(\s*\)[\s\S]*?const\s+requestGeneration\s*=\s*\+\+this\.requestGeneration[\s\S]*?this\.loadState\s*=\s*['"]loading['"][\s\S]*?this\.loadError\s*=\s*['"]{2}[\s\S]*?this\.hasLatestVersion\s*=\s*false/
-    )
-    expect(script).toMatch(
-      /if\s*\(\s*!resp\s*\)\s*\{[\s\S]*?this\.loadError\s*=\s*['"]Failed to fetch latest version\.['"][\s\S]*?this\.loadState\s*=\s*['"]error['"][\s\S]*?await\s+this\.\$nextTick\s*\(\s*\)[\s\S]*?if\s*\(\s*requestGeneration\s*===\s*this\.requestGeneration\s*&&\s*this\.loadState\s*===\s*['"]error['"]\s*\)\s*\{[\s\S]*?this\.focusLoadError\s*\(\s*\)[\s\S]*?\}[\s\S]*?return\s*\}[\s\S]*?this\.latest\s*=\s*resp[\s\S]*?this\.hasLatestVersion\s*=\s*true[\s\S]*?this\.loadState\s*=\s*['"]success['"]/
-    )
-    expect(script).not.toMatch(/\bshowNotification\s*\(/)
-    expect(script).toMatch(
-      /beforeUnmount\s*\(\s*\)\s*\{[\s\S]*?this\.requestGeneration\s*\+=\s*1[\s\S]*?this\.requestController\?\.abort\s*\(\s*\)[\s\S]*?this\.requestController\s*=\s*null\s*\}/
-    )
-    expect(script).not.toMatch(/graphql-tag|\$apollo/)
-    expect(script).toMatch(
-      /useLocal\s*\(\s*\)\s*\{\s*if\s*\(\s*!this\.hasLatestVersion\s*\)\s*return[\s\S]*?wikiStore\.editor\.checkoutDateActive\s*=\s*this\.latest\.updatedAt[\s\S]*?emitEditorConflictReset\s*\(\s*\)[\s\S]*?this\.close\s*\(\s*\)/
-    )
-    expect(script).toMatch(
-      /useRemote\s*\(\s*\)\s*\{\s*if\s*\(\s*!this\.hasLatestVersion\s*\)\s*return[\s\S]*?wikiStore\.editor\.content\s*=\s*this\.latest\.content[\s\S]*?emitEditorConflictResolved\s*\(\s*\)/
-    )
-    expect(source).toContain("v-card-text.pt-4(:aria-busy='loadState === `loading`')")
-    expect(source).toMatch(/\.d-flex\.align-center\.py-4\([\s\S]*?v-if='loadState === `loading`'[\s\S]*?role='status'[\s\S]*?aria-live='polite'[\s\S]*?\)/)
-    expect(source).toMatch(
-      /v-alert\([\s\S]*?v-else-if='loadState === `error`'[\s\S]*?ref='loadErrorAlert'[\s\S]*?role='alert'[\s\S]*?tabindex='-1'[\s\S]*?\)[\s\S]*?\{\{loadError\}\}[\s\S]*?v-btn\.mt-3\([\s\S]*?@click='loadLatestVersion'[\s\S]*?\)\s*Retry/
-    )
-    expect(source).toContain("template(v-else-if='loadState === `success`')")
-    expect(source).toContain("template(v-if='loadState === `success` && hasLatestVersion')")
-    expect(source).toContain("aria-labelledby='editor-conflict-title'")
-    expect(source).toContain("span#editor-conflict-title {{$t('editor:conflict.title')}}")
-    expect(source).toContain("aria-labelledby='editor-conflict-overwrite-title'")
-    expect(source).toContain("span#editor-conflict-overwrite-title {{$t('editor:conflict.overwrite.title')}}")
-    expect(source).toMatch(/v-btn\.mt-2\([^)]*:href='`\/` \+ latest\.locale \+ `\/` \+ latest\.path'[^)]*target='_blank'[^)]*rel='noopener'/)
+const createDeferred = () => {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+const createTiptapConflictHarness = ({ fetchPageConflictLatest, nextTick = async () => {}, modelValue = true } = {}) => {
+  const wikiStore = {
+    editor: {
+      checkoutDateActive: 'local-checkout-date',
+      content: 'local draft'
+    },
+    page: { id: 42 }
+  }
+  const fetchLatestCalls = []
+  const windowFetchCalls = []
+  const window = {
+    fetch: (...args) => {
+      windowFetchCalls.push(args)
+      return Promise.resolve({})
+    }
+  }
+  const notifications = []
+  const resolutionEvents = []
+  const emitted = []
+  const focusCalls = []
+  const fetchLatestImplementation = fetchPageConflictLatest
+  const component = loadTiptapConflictComponent({
+    HTMLElement: class {},
+    AbortController,
+    defineComponent: value => value,
+    emitEditorConflictReset: () => resolutionEvents.push('reset'),
+    emitEditorConflictResolved: () => resolutionEvents.push('resolved'),
+    fetchPageConflictLatest: (fetcher, pageId) => {
+      fetchLatestCalls.push({ fetcher, pageId })
+      return fetchLatestImplementation(fetcher, pageId)
+    },
+    markRaw: value => value,
+    showNotification: (...args) => notifications.push(args),
+    wikiStore,
+    window
+  })
+  const context = {
+    ...component.data(),
+    modelValue,
+    $emit: (...args) => {
+      emitted.push(args)
+      if (args[0] === 'update:modelValue') context.modelValue = args[1]
+    },
+    $nextTick: nextTick,
+    $refs: { loadErrorAlert: { $el: { focus: () => focusCalls.push(true) } } },
+    ...component.methods
+  }
+  Object.defineProperty(context, 'isShown', {
+    get: () => component.computed.isShown.get.call(context),
+    set: value => component.computed.isShown.set.call(context, value)
   })
 
+  return { component, context, emitted, fetchLatestCalls, focusCalls, notifications, resolutionEvents, wikiStore, windowFetchCalls }
+}
+
+const createLatestConflict = (overrides = {}) => ({
+  updatedAt: '2026-09-01T12:00:00.000Z',
+  authorName: 'Remote author',
+  content: '# Remote draft',
+  locale: 'en',
+  path: 'remote-page',
+  title: 'Remote title',
+  description: 'Remote description',
+  sourceRevision: '17',
+  ...overrides
+})
+
+describe('Tiptap conflict component behavior', () => {
+  test('Tiptap conflict shows fetch failures inline, retries, and resolves using the latest data', async () => {
+    const failedFetch = createDeferred()
+    const retriedFetch = createDeferred()
+    const attempts = [failedFetch, retriedFetch]
+    const latest = createLatestConflict()
+    const harness = createTiptapConflictHarness({
+      fetchPageConflictLatest: () => attempts.shift().promise
+    })
+
+    const initialLoad = harness.component.mounted.call(harness.context)
+    failedFetch.reject(new Error('offline'))
+    await initialLoad
+
+    expect(harness.context.loadState).toBe('error')
+    expect(harness.context.loadError).toBe('Failed to fetch latest version.')
+    expect(harness.context.hasLatestVersion).toBe(false)
+    expect(harness.context.requestController).toBeNull()
+    expect(harness.focusCalls).toHaveLength(1)
+    expect(harness.notifications).toEqual([])
+    expect(harness.fetchLatestCalls).toHaveLength(1)
+    expect(harness.fetchLatestCalls[0].fetcher).toEqual(expect.any(Function))
+    expect(harness.fetchLatestCalls[0].pageId).toBe(42)
+    const retry = harness.context.loadLatestVersion()
+    expect(harness.context.loadState).toBe('loading')
+    expect(harness.context.loadError).toBe('')
+    expect(harness.context.hasLatestVersion).toBe(false)
+    expect(harness.fetchLatestCalls.map(({ pageId }) => pageId)).toEqual([42, 42])
+    expect(harness.fetchLatestCalls.every(({ fetcher }) => typeof fetcher === 'function')).toBe(true)
+
+    retriedFetch.resolve(latest)
+    await retry
+
+    expect(harness.context.loadState).toBe('success')
+    expect(harness.context.latest).toEqual(latest)
+    expect(harness.context.hasLatestVersion).toBe(true)
+    expect(harness.context.requestController).toBeNull()
+    expect(harness.notifications).toEqual([])
+
+    harness.context.useRemote()
+
+    expect(harness.wikiStore.editor.content).toBe(latest.content)
+    expect(harness.wikiStore.editor.checkoutDateActive).toBe(latest.updatedAt)
+    expect(harness.resolutionEvents).toEqual(['resolved'])
+    expect(harness.emitted).toEqual([['update:modelValue', false]])
+  })
+  test('Tiptap conflict ignores local and remote resolutions until latest data loads', async () => {
+    const failedFetch = createDeferred()
+    const harness = createTiptapConflictHarness({
+      fetchPageConflictLatest: () => failedFetch.promise
+    })
+
+    const pendingLoad = harness.component.mounted.call(harness.context)
+    const expectResolutionsIgnored = () => {
+      harness.context.useLocal()
+      harness.context.useRemote()
+      expect(harness.wikiStore.editor.content).toBe('local draft')
+      expect(harness.wikiStore.editor.checkoutDateActive).toBe('local-checkout-date')
+      expect(harness.resolutionEvents).toEqual([])
+      expect(harness.emitted).toEqual([])
+    }
+
+    expect(harness.context.loadState).toBe('loading')
+    expect(harness.context.hasLatestVersion).toBe(false)
+    expectResolutionsIgnored()
+
+    failedFetch.reject(new Error('offline'))
+    await pendingLoad
+
+    expect(harness.context.loadState).toBe('error')
+    expect(harness.context.hasLatestVersion).toBe(false)
+    expectResolutionsIgnored()
+  })
+
+  test('Tiptap conflict resolves locally using the latest timestamp without replacing the draft', async () => {
+    const latest = createLatestConflict()
+    const harness = createTiptapConflictHarness({
+      fetchPageConflictLatest: async () => latest
+    })
+
+    await harness.component.mounted.call(harness.context)
+    harness.context.useLocal()
+
+    expect(harness.wikiStore.editor.content).toBe('local draft')
+    expect(harness.wikiStore.editor.checkoutDateActive).toBe(latest.updatedAt)
+    expect(harness.resolutionEvents).toEqual(['reset'])
+    expect(harness.emitted).toEqual([['update:modelValue', false]])
+  })
+
+  test('Tiptap conflict aborts the request on unmount and ignores a late response', async () => {
+    const lateFetch = createDeferred()
+    const harness = createTiptapConflictHarness({
+      fetchPageConflictLatest: fetcher => {
+        fetcher('/inert-request', {})
+        return lateFetch.promise
+      }
+    })
+
+    const pendingLoad = harness.component.mounted.call(harness.context)
+
+    const requestController = harness.context.requestController
+    const requestInit = harness.windowFetchCalls[0][1]
+
+    expect(requestController).toBeInstanceOf(AbortController)
+    expect(requestController.signal.aborted).toBe(false)
+    expect(harness.windowFetchCalls).toHaveLength(1)
+    expect(requestInit.signal).toBe(requestController.signal)
+
+    harness.component.beforeUnmount.call(harness.context)
+
+    expect(requestController.signal.aborted).toBe(true)
+    expect(requestInit.signal.aborted).toBe(true)
+    expect(harness.context.requestController).toBeNull()
+
+    lateFetch.resolve(createLatestConflict({ content: '# Stale response' }))
+    await pendingLoad
+
+    expect(harness.context.loadState).toBe('loading')
+    expect(harness.context.latest.content).toBe('')
+    expect(harness.context.hasLatestVersion).toBe(false)
+    expect(harness.context.requestController).toBeNull()
+    expect(harness.notifications).toEqual([])
+  })
+
+  test('stale fetch-error continuation does not steal focus after retry starts', async () => {
+    const focusTick = createDeferred()
+    const focusTickRequested = createDeferred()
+    const retriedFetch = createDeferred()
+    const latest = createLatestConflict()
+    let attemptCount = 0
+    let nextTickCount = 0
+    const harness = createTiptapConflictHarness({
+      fetchPageConflictLatest: () => {
+        attemptCount += 1
+        return attemptCount === 1 ? Promise.reject(new Error('offline')) : retriedFetch.promise
+      },
+      nextTick: () => {
+        if (nextTickCount++ === 0) {
+          focusTickRequested.resolve()
+          return focusTick.promise
+        }
+        return Promise.resolve()
+      }
+    })
+
+    const failedLoad = harness.component.mounted.call(harness.context)
+    await focusTickRequested.promise
+    expect(harness.context.loadState).toBe('error')
+
+    const retry = harness.context.loadLatestVersion()
+    expect(harness.context.loadState).toBe('loading')
+    focusTick.resolve()
+    await failedLoad
+
+    expect(harness.focusCalls).toEqual([])
+
+    retriedFetch.resolve(latest)
+    await retry
+    expect(harness.context.latest).toEqual(latest)
+    expect(harness.context.loadState).toBe('success')
+  })
+
+  test('conflict template retains loading, error, dialog-label, and noopener contracts', () => {
+    const source = fs.readFileSync(path.join(process.cwd(), 'client/components/editor/tiptap/conflict.vue'), 'utf8')
+    const template = source.match(/<template lang=['"]pug['"]>([\s\S]*?)<\/template>/)?.[1]
+
+    expect(template).toBeDefined()
+    const lines = template.split('\n')
+    const gatedBlock = expression => {
+      const gateIndex = lines.findIndex(line => line.includes(expression) && /\bv-(?:if|else-if)\s*=/.test(line))
+      expect(gateIndex).toBeGreaterThanOrEqual(0)
+      if (gateIndex < 0) return ''
+
+      let startIndex = gateIndex
+      if (/^\s+v-(?:if|else-if)\s*=/.test(lines[gateIndex])) {
+        const conditionIndent = lines[gateIndex].match(/^\s*/)[0].length
+        for (let index = gateIndex - 1; index >= 0; index--) {
+          if (lines[index].trimEnd().endsWith('(') && lines[index].match(/^\s*/)[0].length < conditionIndent) {
+            startIndex = index
+            break
+          }
+        }
+      }
+
+      const blockIndent = lines[startIndex].match(/^\s*/)[0].length
+      let endIndex = startIndex + 1
+      while (endIndex < lines.length) {
+        if (lines[endIndex].trim() && lines[endIndex].match(/^\s*/)[0].length <= blockIndent) break
+        endIndex++
+      }
+      return lines.slice(startIndex, endIndex).join('\n')
+    }
+    const expectOnlyInGate = (expression, markers) => {
+      const block = gatedBlock(expression)
+      for (const marker of markers) {
+        const occurrences = text => text.split(marker).length - 1
+        expect(occurrences(block)).toBeGreaterThan(0)
+        expect(occurrences(block)).toBe(occurrences(template))
+      }
+    }
+
+    expectOnlyInGate('loadState === `loading`', ["role='status'"])
+    expectOnlyInGate('loadState === `error`', ["role='alert'", "@click='loadLatestVersion'", 'Retry'])
+    expectOnlyInGate('loadState === `success` && hasLatestVersion', ["@click='useLocal'", "@click='useRemote'"])
+    expect(template).toContain("role='status'\n          aria-live='polite'")
+    expect(template).toContain("role='alert'\n          tabindex='-1'")
+    expect(template).toContain("@click='loadLatestVersion'")
+    expect(template).toContain("aria-labelledby='editor-conflict-title'")
+    expect(template).toContain('span#editor-conflict-title')
+    expect(template).toContain("aria-labelledby='editor-conflict-overwrite-title'")
+    expect(template).toContain('span#editor-conflict-overwrite-title')
+    expect(template).toContain("target='_blank', rel='noopener'")
+  })
+})
+
+describe('editor conflict REST migration guard', () => {
   test('reports a failed REST load, destroys the stale editor, and releases its request', async () => {
     const rawValues = []
     const harness = createConflictHarness({

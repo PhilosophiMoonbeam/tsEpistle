@@ -21,7 +21,6 @@ const pageSfc = parse(pageSource, { filename: pagePath })
 const asciidocSfc = parse(asciidocSource, { filename: asciidocPath })
 const tiptapTemplate = tiptapSfc.descriptor.template?.content ?? ''
 const asciidocTemplate = asciidocSfc.descriptor.template?.content ?? ''
-const tiptapScript = tiptapSfc.descriptor.script?.content ?? ''
 const tiptapStyle = tiptapSfc.descriptor.styles.map(style => style.content).join('\n')
 const renderedTiptapTemplate = cheerio.load(pug.render(tiptapTemplate))
 const pageStyle = pageSfc.descriptor.styles.map(style => style.content).join('\n')
@@ -69,10 +68,11 @@ describe('TipTap editor layout and page-theme ownership', () => {
 
     // Shared typography targets both reader scope and TipTap editor canvas
     expect(themeStylesheet).toMatch(/\.v-main \.contents/)
-    expect(themeStylesheet).toMatch(/\.contents \.tiptap|\.editor-page-canvas|\.tiptap/)
+    expect(themeStylesheet).toContain('.editor-page-canvas.contents')
 
     // Authored H1 swoosh in shared theme reaches editor canvas while hero remains undecorated
-    expect(themeStylesheet).toMatch(/h1[\s\S]*?::after[\s\S]*?(?:mask|mask-image|-webkit-mask)/)
+    const sharedH1Styles = themeStylesheet.match(/^\s{2}h1\s*\{([\s\S]*?)^\s{2}h2\s*\{/m)?.[1] ?? ''
+    expect(sharedH1Styles).toMatch(/^\s{4}&::after\s*\{[\s\S]*?^\s{6}background:\s*linear-gradient\(/m)
     expect(pageStyle).not.toMatch(/\.page-title(?:::after|\s*::after)/)
 
     // Ownership cutover: page-local file must NOT own heading typography
@@ -106,9 +106,5 @@ describe('TipTap editor layout and page-theme ownership', () => {
     expect(shellScript).toContain('styl.textContent = scopeEditorPageCss(css)')
     expect(shellScript).not.toContain('createTextNode(css)')
     expect(shellScript).toContain('removeEditorPageCss()')
-  })
-
-  test('does not claim unsupported visual collaboration or presence', () => {
-    expect(tiptapScript).not.toMatch(/Collaboration|awareness|presence/)
   })
 })

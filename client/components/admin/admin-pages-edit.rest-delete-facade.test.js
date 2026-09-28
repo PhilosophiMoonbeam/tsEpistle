@@ -24,7 +24,20 @@ const deferred = () => {
 const createComponentOptions = ({ fetchPage, deletePageById, wikiStore }) => {
   const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, '').replace('export default', 'return'))
 
-  return new Function('_', 'AsyncState', 'getErrorMessage', 'AdminPagePublicationSettings', 'AdminPageAccess', 'pageHref', 'publicationState', 'deletePageById', 'fetchPage', 'wikiStore', 'window', executableScript)(
+  return new Function(
+    '_',
+    'AsyncState',
+    'getErrorMessage',
+    'AdminPagePublicationSettings',
+    'AdminPageAccess',
+    'pageHref',
+    'publicationState',
+    'deletePageById',
+    'fetchPage',
+    'wikiStore',
+    'window',
+    executableScript
+  )(
     { toSafeInteger: Number },
     {},
     err => (err instanceof Error ? err.message : String(err)),
@@ -62,24 +75,103 @@ describe('admin pages edit REST delete facade', () => {
     expect(script).toContain("import { deletePage as deletePageById, fetchPage, type PageDetails } from '../../helpers/pages-api'")
     expect(script).not.toContain('common-pages-mutation-delete.gql')
     expect(script).not.toContain('deletePageMutation')
-    expect(deletePageBody).toContain('await deletePageById(')
     expect(deletePageBody).toContain('window.fetch.bind(window)')
-    expect(deletePageBody).toContain('page.id')
     expect(deletePageBody).not.toContain('this.$apollo.mutate')
     expect(deletePageBody).not.toContain('data.pages.delete.responseResult')
   })
 
-  it('preserves page delete loading, notification, navigation, and graph error behavior', () => {
-    expect(deletePageBody).toContain('this.loading = true')
-    expect(deletePageBody).toContain('this.loading = false')
-    expect(deletePageBody).toContain('this.deletePageDialog = false')
-    expect(deletePageBody).toContain("wikiStore.startLoading('page-delete')")
-    expect(deletePageBody).toContain("wikiStore.stopLoading('page-delete')")
-    expect(deletePageBody).toContain("style: 'green'")
-    expect(deletePageBody).toContain('message: `Page deleted successfully.`')
-    expect(deletePageBody).toContain("icon: 'check'")
-    expect(deletePageBody).toContain("this.$router.replace('/pages')")
-    expect(deletePageBody).toContain('wikiStore.showError(err)')
+  it('notifies and navigates after deleting the current page', async () => {
+    const page = {
+      id: 1,
+      sourceRevision: '8',
+      pageFeatures: { schemaVersion: 1, linksVisible: false, ratingsAllowed: true, lastEditorVisible: false }
+    }
+    const deletion = deferred()
+    const calls = []
+    const loadingEvents = []
+    const notifications = []
+    const errors = []
+    const redirects = []
+    const options = createComponentOptions({
+      fetchPage: async () => page,
+      deletePageById: (_fetch, pageId, sourceRevision) => {
+        calls.push({ pageId, sourceRevision })
+        return deletion.promise
+      },
+      wikiStore: {
+        startLoading: loadingId => loadingEvents.push(['start', loadingId]),
+        stopLoading: loadingId => loadingEvents.push(['stop', loadingId]),
+        showError: error => errors.push(error),
+        showNotification: notification => notifications.push(notification)
+      }
+    })
+    const viewModel = createViewModel(options)
+    viewModel.$router.replace = route => redirects.push(route)
+    await viewModel.loadPage()
+    viewModel.deletePageDialog = true
+
+    const pendingDelete = viewModel.deletePage()
+    expect(calls).toEqual([{ pageId: 1, sourceRevision: '8' }])
+    expect(viewModel.loading).toBe(true)
+
+    deletion.resolve()
+    await pendingDelete
+
+    expect(viewModel.loading).toBe(false)
+    expect(viewModel.deletePageDialog).toBe(false)
+    expect(viewModel.mutationError).toBe('')
+    expect(notifications).toEqual([{ style: 'green', message: 'Page deleted successfully.', icon: 'check' }])
+    expect(errors).toEqual([])
+    expect(redirects).toEqual(['/pages'])
+    expect(loadingEvents).toEqual([
+      ['start', 'admin-pages-refresh'],
+      ['stop', 'admin-pages-refresh'],
+      ['start', 'page-delete'],
+      ['stop', 'page-delete']
+    ])
+  })
+
+  it('surfaces a current delete failure without navigating or notifying', async () => {
+    const failure = new Error('Page changed since review')
+    const loadingEvents = []
+    const notifications = []
+    const errors = []
+    const redirects = []
+    const options = createComponentOptions({
+      fetchPage: async (_fetch, pageId) => ({
+        id: pageId,
+        sourceRevision: '8',
+        pageFeatures: { schemaVersion: 1, linksVisible: false, ratingsAllowed: true, lastEditorVisible: false }
+      }),
+      deletePageById: async () => {
+        throw failure
+      },
+      wikiStore: {
+        startLoading: loadingId => loadingEvents.push(['start', loadingId]),
+        stopLoading: loadingId => loadingEvents.push(['stop', loadingId]),
+        showError: error => errors.push(error),
+        showNotification: notification => notifications.push(notification)
+      }
+    })
+    const viewModel = createViewModel(options)
+    viewModel.$router.replace = route => redirects.push(route)
+    await viewModel.loadPage()
+    viewModel.deletePageDialog = true
+
+    await viewModel.deletePage()
+
+    expect(viewModel.mutationError).toBe('Page changed since review')
+    expect(viewModel.deletePageDialog).toBe(true)
+    expect(viewModel.loading).toBe(false)
+    expect(errors).toEqual([failure])
+    expect(notifications).toEqual([])
+    expect(redirects).toEqual([])
+    expect(loadingEvents).toEqual([
+      ['start', 'admin-pages-refresh'],
+      ['stop', 'admin-pages-refresh'],
+      ['start', 'page-delete'],
+      ['stop', 'page-delete']
+    ])
   })
 
   it('deletes only the current route page after routed responses resolve in reverse', async () => {
