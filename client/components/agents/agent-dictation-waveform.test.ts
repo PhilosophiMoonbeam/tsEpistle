@@ -29,18 +29,17 @@ const compiledComponent = `${compiledScript.content}\n${compiledTemplate.code}\n
 // The SFC imports the shared tone helper relatively; a data-URL module cannot
 // resolve that, so the helper is transpiled and spliced in as its own data URL.
 const toneModulePath = path.join(process.cwd(), 'client/components/agents/agent-dictation-tone.ts')
-const toneUrl = 'data:text/javascript;base64,' + Buffer.from(
-  new Bun.Transpiler({ loader: 'ts' }).transformSync(fs.readFileSync(toneModulePath, 'utf8'))
-).toString('base64')
-const inlinedComponent = compiledComponent.replace(
-  /(['"])\.\/agent-dictation-tone\.ts\1/g,
-  () => JSON.stringify(toneUrl)
-)
+const toneUrl =
+  'data:text/javascript;base64,' + Buffer.from(new Bun.Transpiler({ loader: 'ts' }).transformSync(fs.readFileSync(toneModulePath, 'utf8'))).toString('base64')
+const inlinedComponent = compiledComponent.replace(/(['"])\.\/agent-dictation-tone\.ts\1/g, () => JSON.stringify(toneUrl))
 const transpiled = new Bun.Transpiler({ loader: 'ts' }).transformSync(inlinedComponent)
 const mod = await import('data:text/javascript;base64,' + Buffer.from(transpiled).toString('base64'))
 const DictationWaveform = mod.default
 
-interface ScheduledFrame { id: number; callback: (time: number) => void }
+interface ScheduledFrame {
+  id: number
+  callback: (time: number) => void
+}
 
 let scheduledFrames: ScheduledFrame[] = []
 let frameIdSequence = 0
@@ -113,11 +112,12 @@ afterEach(() => {
 const pumpFrames = (frames: number, step = 80): void => {
   for (let i = 0; i < frames; i += 1) {
     currentTime += step
-    for (const frame of [...scheduledFrames]) frame.callback(currentTime)
+    const pending = scheduledFrames.splice(0)
+    for (const frame of pending) frame.callback(currentTime)
   }
 }
 
-const mountWaveform = async (props: { active?: boolean; source?: () => number }) => {
+const mountWaveform = async (props: { active?: boolean; source?: () => number; dbSource?: () => number }) => {
   const propsRef = Vue.reactive({ ...props })
   const Harness = Vue.defineComponent({
     setup() {
@@ -140,10 +140,73 @@ const mountWaveform = async (props: { active?: boolean; source?: () => number })
   }
 }
 
+it('expands quiet and moderate bars without changing their raw-level tone thresholds', async () => {
+  const canvasPrototype = Object.getPrototypeOf(browserWindow.document.createElement('canvas')) as HTMLCanvasElement
+  const originalContext = Object.getOwnPropertyDescriptor(canvasPrototype, 'getContext')
+  const originalWidth = Object.getOwnPropertyDescriptor(canvasPrototype, 'clientWidth')
+  const originalHeight = Object.getOwnPropertyDescriptor(canvasPrototype, 'clientHeight')
+  const rects: Array<{ height: number; y: number; color: string }> = []
+  const context = {
+    fillStyle: '',
+    setTransform: () => {},
+    clearRect: () => {},
+    fillRect(_x: number, y: number, _width: number, height: number) {
+      rects.push({ height, y, color: this.fillStyle })
+    }
+  }
+  Object.defineProperties(canvasPrototype, {
+    getContext: { configurable: true, value: () => context },
+    clientWidth: { configurable: true, get: () => 24 },
+    clientHeight: { configurable: true, get: () => 24 }
+  })
+  try {
+    let level = 0
+    let db = -40
+    const harness = await mountWaveform({ active: true, source: () => level, dbSource: () => db })
+    const newest = () => rects.at(-1)!
+    const sample = (value: number, dbfs: number) => {
+      level = value
+      db = dbfs
+      rects.length = 0
+      pumpFrames(2)
+      return newest()
+    }
+    expect(sample(0, -96).height).toBe(2)
+    const quiet = sample(0.05, -7)
+    expect(quiet.height).toBe(4)
+    expect(quiet.y).toBe(10)
+    expect(quiet.color).toBe(sample(0, -96).color)
+    const safe = sample(0.25, -20.01)
+    const warn = sample(0.25, -20)
+    const almostLoud = sample(0.25, -8.01)
+    const loud = sample(0.25, -8)
+    expect([safe.height, warn.height, almostLoud.height, loud.height]).toEqual([10, 10, 10, 10])
+    expect([safe.y, warn.y, loud.y]).toEqual([7, 7, 7])
+    expect(almostLoud.color).toBe(warn.color)
+    expect(new Set([safe.color, warn.color, loud.color]).size).toBe(3)
+    expect(sample(0.2, Number.NaN).color).toBe(safe.color)
+    expect(sample(0.35, Number.NaN).color).toBe(warn.color)
+    expect(sample(0.95, Number.NaN).color).toBe(loud.color)
+    expect(sample(1, 0).height).toBe(20)
+    expect(sample(0, -96).height).toBe(2)
+    expect(harness.canvas()?.height).toBe(24)
+  } finally {
+    if (originalContext) Object.defineProperty(canvasPrototype, 'getContext', originalContext)
+    if (originalWidth) Object.defineProperty(canvasPrototype, 'clientWidth', originalWidth)
+    if (originalHeight) Object.defineProperty(canvasPrototype, 'clientHeight', originalHeight)
+  }
+})
+
 describe('agent dictation waveform', () => {
   it('samples the live level only after the sample interval and stops on unmount', async () => {
     let reads = 0
-    const harness = await mountWaveform({ active: true, source: () => { reads += 1; return 0.5 } })
+    const harness = await mountWaveform({
+      active: true,
+      source: () => {
+        reads += 1
+        return 0.5
+      }
+    })
     expect(scheduledFrames.length).toBe(1)
     // jsdom canvases have no 2D context: the component must survive drawing.
     pumpFrames(3)
@@ -159,7 +222,13 @@ describe('agent dictation waveform', () => {
   it('does not animate when reduced motion is preferred', async () => {
     reducedMotionActive = true
     let reads = 0
-    await mountWaveform({ active: true, source: () => { reads += 1; return 1 } })
+    await mountWaveform({
+      active: true,
+      source: () => {
+        reads += 1
+        return 1
+      }
+    })
     expect(scheduledFrames.length).toBe(0)
     pumpFrames(5)
     expect(reads).toBe(0)

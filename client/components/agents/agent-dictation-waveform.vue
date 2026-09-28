@@ -123,7 +123,7 @@ const draw = (time = Number.POSITIVE_INFINITY): void => {
     const x = width - (age + frac) * BAR_PITCH
     if (x + BAR_PITCH <= 0) continue
     const sample = reducedMotion.value ? { level: REDUCED_LEVEL, tone: 'neutral' as const } : history[index]
-    const barHeight = reducedMotion.value ? Math.round(REDUCED_LEVEL * (height - 4)) : Math.max(2, Math.round(sample.level * (height - 4)))
+    const barHeight = reducedMotion.value ? Math.round(REDUCED_LEVEL * (height - 4)) : Math.max(2, Math.round(Math.sqrt(sample.level) * (height - 4)))
     if (barHeight <= baseline) {
       context.fillStyle = tones.neutral
       context.fillRect(x, (height - barHeight) / 2, BAR_PITCH - 1.2, barHeight)
