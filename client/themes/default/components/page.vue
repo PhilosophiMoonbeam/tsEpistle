@@ -5445,7 +5445,7 @@ export default defineComponent({
     max-width: 100%;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: space-between;
     gap: var(--wiki-space-1);
     padding: var(--wiki-space-1);
   }
