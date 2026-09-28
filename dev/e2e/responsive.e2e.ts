@@ -3109,6 +3109,8 @@ test.describe('reader metadata rendering', () => {
 
   test('renders enabled page author metadata on initial and SPA reader loads', async ({ page }) => {
     test.setTimeout(60_000)
+    const initialViewport = page.viewportSize()
+    if (!initialViewport) throw new Error('The reader metadata test requires a configured viewport.')
     const authorName = '<strong data-e2e-author-markup="true">Ada</strong> & "quoted"'
     await authenticateAsAdmin(page)
     await installReaderMetadataFixture(
@@ -3124,6 +3126,61 @@ test.describe('reader metadata rendering', () => {
     await page.goto('/home', { waitUntil: 'networkidle' })
     await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
     await expectReaderMetadata(page, { authorName, historyHref })
+    const historyLink = page.locator('.page-tools-history-link')
+    await expect(historyLink).toHaveAccessibleName('View history')
+    const assertHistoryLayout = async (width: number): Promise<void> => {
+      await page.setViewportSize({ width, height: initialViewport.height })
+      const geometry = await page.evaluate(() => {
+        const card = document.querySelector<HTMLElement>('.page-tools-card')
+        const date = card?.querySelector<HTMLElement>('.page-document-row--date')
+        const history = card?.querySelector<HTMLElement>('.page-tools-history-link')
+        const focus = card?.querySelector<HTMLElement>('.page-focus-control')
+        if (!date || !history || !focus) throw new Error('Reader tools are missing the date, history link, or Focus utility.')
+        const historyIcon = history.querySelector<HTMLElement>('.v-icon')
+        const focusIcon = focus.querySelector<HTMLElement>('.v-icon')
+        const dateBounds = date.getBoundingClientRect()
+        const historyBounds = history.getBoundingClientRect()
+        const focusBounds = focus.getBoundingClientRect()
+        return {
+          dateTop: dateBounds.top,
+          historyTop: historyBounds.top,
+          historyRight: historyBounds.right,
+          focusRight: focusBounds.right,
+          historyWidth: historyBounds.width,
+          historyHeight: historyBounds.height,
+          historyText: history.innerText.trim(),
+          hasIcon: historyIcon !== null,
+          historyIconWidth: historyIcon?.getBoundingClientRect().width ?? 0,
+          historyIconHeight: historyIcon?.getBoundingClientRect().height ?? 0,
+          focusIconWidth: focusIcon?.getBoundingClientRect().width ?? 0,
+          focusIconHeight: focusIcon?.getBoundingClientRect().height ?? 0,
+          finePointer: window.matchMedia('(pointer: fine)').matches
+        }
+      })
+      expect(Math.abs(geometry.dateTop - geometry.historyTop), `The date and history utility share the top row at ${width}px`).toBeLessThanOrEqual(1)
+      expect(Math.abs(geometry.historyRight - geometry.focusRight), `The history utility aligns with Focus at ${width}px`).toBeLessThanOrEqual(1)
+      expect(geometry.historyText, `The history utility is icon-only at ${width}px`).toBe('')
+      expect(geometry.hasIcon, `The history utility exposes its icon at ${width}px`).toBe(true)
+      expect(geometry.historyIconWidth, `The history icon renders at ${width}px`).toBeGreaterThan(0)
+      expect(geometry.historyIconHeight, `The history icon renders at ${width}px`).toBeGreaterThan(0)
+      expect(Math.abs(geometry.historyIconWidth - geometry.focusIconWidth), `The history icon matches Focus width at ${width}px`).toBeLessThanOrEqual(1)
+      expect(Math.abs(geometry.historyIconHeight - geometry.focusIconHeight), `The history icon matches Focus height at ${width}px`).toBeLessThanOrEqual(1)
+      if (geometry.finePointer) {
+        expect(Math.abs(geometry.historyWidth - 36), `The fine-pointer history target is 36px wide at ${width}px`).toBeLessThanOrEqual(1)
+        expect(Math.abs(geometry.historyHeight - 36), `The fine-pointer history target is 36px tall at ${width}px`).toBeLessThanOrEqual(1)
+      }
+    }
+
+    for (const width of [1440, 320, 375]) await assertHistoryLayout(width)
+
+    await historyLink.hover()
+    const historyTooltip = page.getByRole('tooltip')
+    await expect(historyTooltip).toHaveText('View history')
+    await page.mouse.move(0, 0)
+    await expect(historyTooltip).toBeHidden()
+    await historyLink.focus()
+    await expect(historyTooltip).toBeVisible()
+    await page.setViewportSize(initialViewport)
 
     const logo = page.locator('.nav-header-logo:visible').first()
     await expect(logo).toBeVisible()
@@ -3164,6 +3221,8 @@ test.describe('reader metadata rendering', () => {
     expect(navigationUrl).toBe(destination.href)
     await expect(page).toHaveURL(destination.href)
     await expectReaderMetadata(page, { authorName, historyHref })
+    await historyLink.click()
+    await expect.poll(() => new URL(page.url()).pathname).toBe(historyHref)
   })
 
   for (const featureCase of [
@@ -3187,7 +3246,7 @@ test.describe('reader metadata rendering', () => {
     })
   }
 
-  test('keeps a normal enabled author beside the date in a wide reader card', async ({ page }) => {
+  test('places a normal enabled author below the date in smaller type in a wide reader card', async ({ page }) => {
     const viewport = page.viewportSize()
     test.skip(!viewport || viewport.width < 1280, 'This assertion requires the configured wide reader layout.')
 
@@ -3220,12 +3279,17 @@ test.describe('reader metadata rendering', () => {
       return {
         cardWidth: card.clientWidth,
         provenanceWidth: provenance.clientWidth,
-        rowsShareVerticalSpace: dateBounds.top < authorBounds.bottom && authorBounds.top < dateBounds.bottom
+        authorBelowDate: authorBounds.top >= dateBounds.bottom,
+        authorText: author.innerText.trim(),
+        dateFontSize: Number.parseFloat(window.getComputedStyle(date).fontSize),
+        authorFontSize: Number.parseFloat(window.getComputedStyle(author).fontSize)
       }
     })
     expect(geometry.cardWidth, 'The desktop reader card has usable width').toBeGreaterThan(0)
     expect(geometry.provenanceWidth, 'The desktop provenance region has usable width').toBeGreaterThan(0)
-    expect(geometry.rowsShareVerticalSpace, 'A normal author and update date share one metadata row when the card has room').toBe(true)
+    expect(geometry.authorBelowDate, 'The author is visually below the update date').toBe(true)
+    expect(geometry.authorText, 'The author line identifies its value as the last editor').toMatch(/^by\s+Ada Lovelace$/i)
+    expect(geometry.authorFontSize, 'The author line uses smaller type than the update date').toBeLessThan(geometry.dateFontSize)
   })
 
   test('keeps a long enabled author inside the narrow reader card without exposing unauthorized history', async ({ page }) => {

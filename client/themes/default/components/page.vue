@@ -406,15 +406,20 @@
                     span.page-document-author
                       | {{ $t('common:page.byAuthor', { author: '' }) }}
                       bdi.page-provenance-author(:title='hasAuthor ? authorName : undefined') {{ authorName }}
-                a.page-tools-history-link(
-                  v-if='canViewHistory'
-                  :href='pageHistoryUrl'
-                  @click='historyLinkClicked($event)'
-                  :aria-label='$t(`common:page.viewHistory`)'
-                )
-                  span {{$t('common:page.view')}}
-                  svg.page-tools-history-link__icon(viewBox='0 0 24 24', aria-hidden='true')
-                    path(fill='currentColor', d='M9 4v1.38c-.83-.33-1.72-.5-2.61-.5-1.79 0-3.58.68-4.95 2.05l3.33 3.33h1.11v1.11c.86.86 1.98 1.31 3.11 1.36V15H6v3c0 1.1.9 2 2 2h10c1.66 0 3-1.34 3-3V4zm-1.11 6.41V8.26H5.61L4.57 7.22a5.07 5.07 0 0 1 1.82-.34c1.34 0 2.59.52 3.54 1.46l1.41 1.41-.2.2c-.51.51-1.19.8-1.92.8-.47 0-.93-.12-1.33-.34M19 17c0 .55-.45 1-1 1s-1-.45-1-1v-2h-6v-2.59c.57-.23 1.1-.57 1.56-1.03l.2-.2L15.59 14H17v-1.41l-6-5.97V6h8z')
+                v-tooltip(location='bottom', v-if='canViewHistory')
+                  template(v-slot:activator='{ props }')
+                    v-btn.page-tools-history-link(
+                      icon
+                      rounded='lg'
+                      size='small'
+                      variant='text'
+                      v-bind='props'
+                      :href='pageHistoryUrl'
+                      @click='historyLinkClicked($event)'
+                      :aria-label='$t(`common:page.viewHistory`)'
+                    )
+                      v-icon(aria-hidden='true') mdi-history
+                  span {{$t('common:page.viewHistory')}}
             v-card.page-toc-card.mb-4(v-if='tocPosition !== `off` && !talkActive', tag='nav', :aria-label='$t(`common:page.toc`)')
               v-btn.page-toc-toggle.text-none(
                 variant='text'
@@ -4370,6 +4375,8 @@ export default defineComponent({
   min-width: 0;
   max-width: 100%;
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  font-size: .6875rem;
+  line-height: 1.35;
 }
 
 .page-document-author {
@@ -4382,18 +4389,6 @@ export default defineComponent({
 
 .page-provenance-author {
   overflow-wrap: anywhere;
-}
-
-.page-tools-history-link {
-  padding: 2px 4px;
-  min-height: 32px;
-}
-
-@media (pointer: coarse) {
-  .page-tools-history-link {
-    min-width: 44px !important;
-    min-height: 44px !important;
-  }
 }
 
 .page-toc-heading {
@@ -5483,12 +5478,11 @@ export default defineComponent({
     display: flex;
     flex: 0 0 100%;
     min-width: 0;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     column-gap: var(--wiki-space-2);
-    row-gap: var(--wiki-space-1);
-    flex-wrap: wrap;
-    padding: var(--wiki-space-2) var(--wiki-space-3);
+    flex-wrap: nowrap;
+    padding: var(--wiki-space-2) var(--wiki-space-1);
   }
 
   // Neutral resting icons at a readable contrast; active toggles stay amber
@@ -5527,46 +5521,15 @@ export default defineComponent({
     flex: 0 1 auto;
     min-width: 0;
     max-width: 100%;
-    flex-wrap: wrap;
+    flex-direction: column;
+    flex-wrap: nowrap;
     align-items: flex-start;
     row-gap: 2px;
-    column-gap: var(--wiki-space-2);
     font-size: .75rem;
     line-height: 1.35;
     text-align: start;
   }
 
-  .page-tools-history-link {
-    flex: 0 0 auto;
-  }
-
-  .page-tools-history-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    border-radius: var(--wiki-radius-xs);
-    color: var(--wiki-accent-ink);
-    font-size: .75rem;
-    font-weight: 550;
-    text-decoration: none;
-
-    &:hover span {
-      text-decoration: underline;
-      text-underline-offset: 2px;
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--wiki-focus-color, var(--wiki-accent-ink));
-      outline-offset: 2px;
-    }
-
-    &__icon {
-      flex: 0 0 auto;
-      width: .875rem;
-      height: .875rem;
-      color: var(--wiki-accent-ink);
-    }
-  }
 }
 
 .v-theme--dark .page-tools-card {
