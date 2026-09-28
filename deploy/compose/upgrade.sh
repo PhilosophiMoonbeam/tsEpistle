@@ -336,6 +336,14 @@ on_exit() {
       if [[ "$PROXY_GATED" == true ]]; then docker network connect --alias "$PROXY_ALIAS" "$PROXY_NETWORK" "$OLD_APP_CONTAINER" >/dev/null 2>&1 || true; fi
     elif [[ "$RECREATE_BEGUN" == true ]]; then
       if [[ "$(ledger_summary | cut -d'|' -f1)" -gt "$(jq -r '.migrationLedger.count' "$PLAN_FILE")" ]]; then MIGRATION_COMMITTED=true; fi
+      if [[ "$PROXY_GATED" == true && -n "$APP_CONTAINER" ]] &&
+        [[ "$(docker inspect "$APP_CONTAINER" --format '{{.State.Health.Status}}' 2>/dev/null || true)" == healthy ]]; then
+        if docker network connect --alias "$PROXY_ALIAS" "$PROXY_NETWORK" "$APP_CONTAINER" >/dev/null 2>&1; then
+          warn 'Healthy candidate was reconnected to the public proxy after verification failed.'
+        else
+          warn 'Healthy candidate could not be reconnected to the public proxy after verification failed.'
+        fi
+      fi
       warn 'Candidate recreation began; no automatic rollback was attempted.'
       [[ "$MIGRATION_COMMITTED" == false ]] || warn 'A migration committed. Never start the old image against this database.'
       [[ -z "$RECOVERY_PATH" ]] || warn "Recovery point: $RECOVERY_PATH"
@@ -516,6 +524,10 @@ verify_postconditions() {
 
 table_hash() {
   local table="$1" sql_table="$1"; [[ "$table" == pageHistory ]] && sql_table='"pageHistory"'
+  if [[ "$table" == users ]] && jq -e '.pendingMigrations | index("tsepistle-000048-scarlett-native-adaptations.js") != null' "$PLAN_FILE" >/dev/null; then
+    psql_live -Atc "COPY (SELECT (to_jsonb(t) - ARRAY['reduceMotion','underlineLinks','contentTextSize','communicationLocale'])::text FROM users t ORDER BY id) TO STDOUT" | sha256sum | cut -d' ' -f1
+    return
+  fi
   psql_live -Atc "COPY (SELECT row_to_json(t)::text FROM $sql_table t ORDER BY id) TO STDOUT" | sha256sum | cut -d' ' -f1
 }
 
