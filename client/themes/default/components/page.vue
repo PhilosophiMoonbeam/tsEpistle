@@ -405,7 +405,7 @@
                   .page-document-row.page-document-row--author(v-if='hasAuthor')
                     span.page-document-author
                       | {{ $t('common:page.byAuthor', { author: '' }) }}
-                      bdi.page-provenance-author {{ authorName }}
+                      bdi.page-provenance-author(:title='hasAuthor ? authorName : undefined') {{ authorName }}
                 a.page-tools-history-link(
                   v-if='canViewHistory'
                   :href='pageHistoryUrl'
@@ -4356,6 +4356,7 @@ export default defineComponent({
 
 .page-document-row {
   display: inline-flex;
+  min-width: 0;
   align-items: center;
   gap: 4px;
 }
@@ -4366,7 +4367,21 @@ export default defineComponent({
 }
 
 .page-document-row--author {
+  min-width: 0;
+  max-width: 100%;
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+}
+
+.page-document-author {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-provenance-author {
+  overflow-wrap: anywhere;
 }
 
 .page-tools-history-link {
@@ -5467,6 +5482,7 @@ export default defineComponent({
   &__provenance {
     display: flex;
     flex: 0 0 100%;
+    min-width: 0;
     align-items: center;
     justify-content: space-between;
     column-gap: var(--wiki-space-2);
@@ -5510,10 +5526,11 @@ export default defineComponent({
     display: flex;
     flex: 0 1 auto;
     min-width: 0;
-    flex-direction: column;
+    max-width: 100%;
+    flex-wrap: wrap;
     align-items: flex-start;
     row-gap: 2px;
-    column-gap: var(--wiki-space-3);
+    column-gap: var(--wiki-space-2);
     font-size: .75rem;
     line-height: 1.35;
     text-align: start;
@@ -6101,8 +6118,15 @@ export default defineComponent({
 
   .page-tools-card .page-document-row--date,
   .page-tools-card .page-document-row--author,
-  .page-tools-card .page-document-author,
   .page-tools-card time {
+    color: CanvasText;
+  }
+
+  .page-tools-card .page-document-author {
+    max-width: 100%;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
     color: CanvasText;
   }
 

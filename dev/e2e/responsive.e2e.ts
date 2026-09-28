@@ -1,15 +1,15 @@
-import { expect, type Dialog, type Locator, type Page } from '@playwright/test'
+import { type Dialog, expect, type Locator, type Page } from '@playwright/test'
+import { decodeWikiPagePayload, type WikiPagePayload } from '../../client/helpers/wiki-navigation.ts'
+import { installEnabledAgentFixture } from './agent-fixture.ts'
 import {
   authenticateAsAdmin,
   expectLocatorWithinViewport,
   expectResponsiveLayout,
   openAuthenticatedPage,
   openSearch,
-  responsiveTest as test,
-  sameOriginHeaders
+  sameOriginHeaders,
+  responsiveTest as test
 } from './helpers.ts'
-import { installEnabledAgentFixture } from './agent-fixture.ts'
-import { decodeWikiPagePayload, type WikiPagePayload } from '../../client/helpers/wiki-navigation.ts'
 
 async function openFixtureAgentFromSearch(page: Page): Promise<Locator> {
   await openAuthenticatedPage(page, '/', '.page-header-section')
@@ -2974,58 +2974,86 @@ test.describe('responsive UI quality matrix', () => {
 
 test.describe('reader metadata rendering', () => {
   test.use({ locale: 'en-US', timezoneId: 'UTC' })
-  test('renders deterministic dates and literal authors on initial and SPA reader loads', async ({ page }) => {
-    test.setTimeout(60_000)
-    const updatedAt = '2000-02-03T12:00:00.000Z'
-    const expectedDateText = 'Updated 02/03/2000'
-    const expectedDateTitle = 'Thursday, February 3, 2000 12:00 PM'
-    const authorName = '<strong data-e2e-author-markup="true">Ada</strong> & "quoted"'
-    const encoded = (value: unknown): string => Buffer.from(JSON.stringify(value), 'utf8').toString('base64')
-    const fixturePayload = {
-      version: 1,
-      spaNavigation: true,
-      props: {
-        pageId: 9001,
-        locale: 'en',
-        path: 'reader-metadata-fixture',
-        title: 'Reader metadata fixture',
-        description: 'A deterministic reader metadata fixture.',
-        createdAt: updatedAt,
-        updatedAt,
-        sourceRevision: 'reader-metadata-fixture',
-        tags: [],
-        authorName,
-        authorId: 42,
-        editor: 'markdown',
-        isPublished: true,
-        visibility: 'public',
-        toc: encoded([]),
-        sidebar: encoded([]),
-        navMode: 'NONE',
-        navExpandParent: true,
-        commentsEnabled: false,
-        effectivePermissions: encoded({
-          comments: { read: false, write: false, manage: false },
-          history: { read: true },
-          source: { read: false },
-          pages: { write: false, manage: false, delete: false, script: false, style: false },
-          system: { manage: false }
-        }),
-        commentsExternal: false,
-        editShortcuts: encoded({
-          editFab: false,
-          editMenuBar: false,
-          editMenuBtn: false,
-          editMenuExternalBtn: false,
-          editMenuExternalName: '',
-          editMenuExternalIcon: '',
-          editMenuExternalUrl: ''
-        }),
-        filename: 'en/reader-metadata-fixture.md',
-        branding: null
-      }
-    }
 
+  const updatedAt = '2000-02-03T12:00:00.000Z'
+  const expectedDateText = 'Updated 02/03/2000'
+  const expectedDateTitle = 'Thursday, February 3, 2000 12:00 PM'
+  const historyHref = '/h/en/reader-metadata-fixture'
+  const encoded = (value: unknown): string => Buffer.from(JSON.stringify(value), 'utf8').toString('base64')
+
+  type ReaderMetadataFixturePayload = {
+    version: 1
+    spaNavigation: true
+    pageFeatures?: {
+      schemaVersion: 1
+      linksVisible: false
+      ratingsAllowed: true
+      lastEditorVisible: boolean
+    }
+    props: Record<string, unknown>
+  }
+
+  const makeFixturePayload = (options: {
+    authorName: string
+    authorId: number
+    lastEditorVisible: boolean | undefined
+    historyRead: boolean
+  }): ReaderMetadataFixturePayload => ({
+    version: 1,
+    spaNavigation: true,
+    ...(options.lastEditorVisible === undefined
+      ? {}
+      : {
+          pageFeatures: {
+            schemaVersion: 1,
+            linksVisible: false,
+            ratingsAllowed: true,
+            lastEditorVisible: options.lastEditorVisible
+          }
+        }),
+    props: {
+      pageId: 9001,
+      locale: 'en',
+      path: 'reader-metadata-fixture',
+      title: 'Reader metadata fixture',
+      description: 'A deterministic reader metadata fixture.',
+      createdAt: updatedAt,
+      updatedAt,
+      sourceRevision: 'reader-metadata-fixture',
+      tags: [],
+      authorName: options.authorName,
+      authorId: options.authorId,
+      editor: 'markdown',
+      isPublished: true,
+      visibility: 'public',
+      toc: encoded([]),
+      sidebar: encoded([]),
+      navMode: 'NONE',
+      navExpandParent: true,
+      commentsEnabled: false,
+      effectivePermissions: encoded({
+        comments: { read: false, write: false, manage: false },
+        history: { read: options.historyRead },
+        source: { read: false },
+        pages: { write: false, manage: false, delete: false, script: false, style: false },
+        system: { manage: false }
+      }),
+      commentsExternal: false,
+      editShortcuts: encoded({
+        editFab: false,
+        editMenuBar: false,
+        editMenuBtn: false,
+        editMenuExternalBtn: false,
+        editMenuExternalName: '',
+        editMenuExternalIcon: '',
+        editMenuExternalUrl: ''
+      }),
+      filename: 'en/reader-metadata-fixture.md',
+      branding: null
+    }
+  })
+
+  const installReaderMetadataFixture = async (page: Page, fixturePayload: ReaderMetadataFixturePayload): Promise<void> => {
     await page.route('**/*', async route => {
       const request = route.request()
       const isDocumentNavigation = request.resourceType() === 'document' && request.isNavigationRequest()
@@ -3048,26 +3076,54 @@ test.describe('reader metadata rendering', () => {
       const patchedDocument = document.slice(0, match.index) + `${match[1]}${match[2]}${fixture}${match[2]}` + document.slice(match.index + match[0].length)
       await route.fulfill({ response, body: patchedDocument })
     })
+  }
 
-    const expectReaderMetadata = async (): Promise<void> => {
-      const date = page.locator('.page-document-row--date time')
-      await expect(date).toHaveText(new RegExp(`^${expectedDateText}$`))
-      await expect(date).toHaveAttribute('datetime', updatedAt)
-      await expect(date).toHaveAttribute('title', expectedDateTitle)
+  const expectReaderMetadata = async (page: Page, expected: { authorName?: string; historyHref?: string }): Promise<void> => {
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en')
 
-      const provenance = page.locator('.page-provenance-card')
-      await expect(provenance.locator('.page-provenance-card__icon')).toHaveCount(0)
-      expect(await provenance.locator('.page-history-btn').count()).toBeLessThanOrEqual(1)
+    const provenance = page.locator('.page-tools-card__provenance')
+    await expect(provenance).toHaveCount(1)
+    const date = provenance.locator('.page-document-row--date time')
+    await expect(date).toHaveText(expectedDateText)
+    await expect(date).toHaveAttribute('datetime', updatedAt)
+    await expect(date).toHaveAttribute('title', expectedDateTitle)
 
-      const author = page.locator('bdi.page-provenance-author')
-      await expect(author).toHaveText(new RegExp(`^${authorName}$`))
+    const author = provenance.locator('.page-provenance-author')
+    if (expected.authorName === undefined) {
+      await expect(provenance.locator('.page-document-row--author')).toHaveCount(0)
+      await expect(author).toHaveCount(0)
+    } else {
+      await expect(author).toHaveText(expected.authorName)
+      await expect(author).toHaveAttribute('title', expected.authorName)
       await expect(author.locator('*')).toHaveCount(0)
     }
 
+    const historyLink = page.locator('.page-tools-history-link')
+    if (expected.historyHref === undefined) {
+      await expect(historyLink).toHaveCount(0)
+    } else {
+      await expect(historyLink).toBeVisible()
+      await expect(historyLink).toHaveAttribute('href', expected.historyHref)
+    }
+  }
+
+  test('renders enabled page author metadata on initial and SPA reader loads', async ({ page }) => {
+    test.setTimeout(60_000)
+    const authorName = '<strong data-e2e-author-markup="true">Ada</strong> & "quoted"'
+    await authenticateAsAdmin(page)
+    await installReaderMetadataFixture(
+      page,
+      makeFixturePayload({
+        authorName,
+        authorId: 42,
+        lastEditorVisible: true,
+        historyRead: true
+      })
+    )
+
     await page.goto('/home', { waitUntil: 'networkidle' })
     await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
-    await expect(page.locator('html')).toHaveAttribute('lang', 'en')
-    await expectReaderMetadata()
+    await expectReaderMetadata(page, { authorName, historyHref })
 
     const logo = page.locator('.nav-header-logo:visible').first()
     await expect(logo).toBeVisible()
@@ -3107,7 +3163,137 @@ test.describe('reader metadata rendering', () => {
     const navigationUrl = await navigationEvent
     expect(navigationUrl).toBe(destination.href)
     await expect(page).toHaveURL(destination.href)
-    await expectReaderMetadata()
+    await expectReaderMetadata(page, { authorName, historyHref })
+  })
+
+  for (const featureCase of [
+    { name: 'explicitly disabled', lastEditorVisible: false },
+    { name: 'omitted', lastEditorVisible: undefined }
+  ]) {
+    test(`preserves the update date and withholds server-redacted author metadata when last editor is ${featureCase.name}`, async ({ page }) => {
+      await installReaderMetadataFixture(
+        page,
+        makeFixturePayload({
+          authorName: 'Unknown',
+          authorId: 0,
+          lastEditorVisible: featureCase.lastEditorVisible,
+          historyRead: false
+        })
+      )
+
+      await page.goto('/home', { waitUntil: 'networkidle' })
+      await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
+      await expectReaderMetadata(page, {})
+    })
+  }
+
+  test('keeps a normal enabled author beside the date in a wide reader card', async ({ page }) => {
+    const viewport = page.viewportSize()
+    test.skip(!viewport || viewport.width < 1280, 'This assertion requires the configured wide reader layout.')
+
+    const authorName = 'Ada Lovelace'
+    await installReaderMetadataFixture(
+      page,
+      makeFixturePayload({
+        authorName,
+        authorId: 42,
+        lastEditorVisible: true,
+        historyRead: false
+      })
+    )
+
+    await page.goto('/home', { waitUntil: 'networkidle' })
+    await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
+    await expectReaderMetadata(page, { authorName })
+
+    const toolsCard = page.locator('.page-tools-card')
+    await expect(toolsCard).toBeVisible()
+    const geometry = await toolsCard.evaluate(card => {
+      const provenance = card.querySelector<HTMLElement>('.page-tools-card__provenance')
+      const date = provenance?.querySelector<HTMLElement>('.page-document-row--date')
+      const author = provenance?.querySelector<HTMLElement>('.page-document-row--author')
+      if (!provenance || !date || !author) {
+        throw new Error('Reader tools card is missing its date or author provenance row.')
+      }
+      const dateBounds = date.getBoundingClientRect()
+      const authorBounds = author.getBoundingClientRect()
+      return {
+        cardWidth: card.clientWidth,
+        provenanceWidth: provenance.clientWidth,
+        rowsShareVerticalSpace: dateBounds.top < authorBounds.bottom && authorBounds.top < dateBounds.bottom
+      }
+    })
+    expect(geometry.cardWidth, 'The desktop reader card has usable width').toBeGreaterThan(0)
+    expect(geometry.provenanceWidth, 'The desktop provenance region has usable width').toBeGreaterThan(0)
+    expect(geometry.rowsShareVerticalSpace, 'A normal author and update date share one metadata row when the card has room').toBe(true)
+  })
+
+  test('keeps a long enabled author inside the narrow reader card without exposing unauthorized history', async ({ page }) => {
+    const authorName = 'VeryLongEditorName'.repeat(16)
+    const viewport = page.viewportSize()
+    if (!viewport) throw new Error('The reader metadata test requires a configured viewport.')
+    await page.setViewportSize({ width: Math.min(320, viewport.width), height: viewport.height })
+    await installReaderMetadataFixture(
+      page,
+      makeFixturePayload({
+        authorName,
+        authorId: 42,
+        lastEditorVisible: true,
+        historyRead: false
+      })
+    )
+
+    await page.goto('/home', { waitUntil: 'networkidle' })
+    await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
+    await expectReaderMetadata(page, { authorName })
+
+    const toolsCard = page.locator('.page-tools-card')
+    await expect(toolsCard).toBeVisible()
+    await expect(toolsCard.locator('.page-document-row--date time')).toBeVisible()
+    const overflow = await toolsCard.evaluate(card => {
+      const provenance = card.querySelector<HTMLElement>('.page-tools-card__provenance')
+      const author = provenance?.querySelector<HTMLElement>('.page-provenance-author')
+      const authorContainer = provenance?.querySelector<HTMLElement>('.page-document-author')
+      const date = provenance?.querySelector<HTMLElement>('.page-document-row--date')
+      if (!provenance || !author || !authorContainer || !date) {
+        throw new Error('Reader tools card is missing its author or date provenance row.')
+      }
+      const authorStyle = window.getComputedStyle(authorContainer)
+      const authorBounds = authorContainer.getBoundingClientRect()
+      const provenanceBounds = provenance.getBoundingClientRect()
+      const dateBounds = date.getBoundingClientRect()
+      return {
+        document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        card: card.scrollWidth - card.clientWidth,
+        provenance: provenance.scrollWidth - provenance.clientWidth,
+        authorHeight: authorBounds.height,
+        authorLineHeight: Number.parseFloat(authorStyle.lineHeight),
+        authorWidth: authorContainer.clientWidth,
+        authorScrollWidth: authorContainer.scrollWidth,
+        authorWhiteSpace: authorStyle.whiteSpace,
+        authorTextOverflow: authorStyle.textOverflow,
+        authorOverflowX: authorStyle.overflowX,
+        dateWidth: date.clientWidth,
+        dateScrollWidth: date.scrollWidth,
+        dateFitsProvenance: dateBounds.left >= provenanceBounds.left - 1 && dateBounds.right <= provenanceBounds.right + 1
+      }
+    })
+    expect(overflow.document, 'A long author does not widen the reader document').toBeLessThanOrEqual(1)
+    expect(overflow.card, 'A long author does not overflow the reader tools card').toBeLessThanOrEqual(1)
+    expect(overflow.provenance, 'A long author does not overflow the metadata region').toBeLessThanOrEqual(1)
+    expect(overflow.authorHeight, 'The visible author ellipsis container has a rendered line box').toBeGreaterThan(0)
+    expect(
+      Math.abs(overflow.authorHeight - overflow.authorLineHeight),
+      'A long author occupies one computed line-height in the ellipsis container'
+    ).toBeLessThanOrEqual(1)
+    expect(overflow.authorWidth, 'The bounded author retains visible space for its ellipsis').toBeGreaterThan(0)
+    expect(overflow.authorScrollWidth, 'The full author text remains longer than the narrow visible line').toBeGreaterThan(overflow.authorWidth)
+    expect(overflow.authorWhiteSpace, 'A long author is kept on one line').toBe('nowrap')
+    expect(overflow.authorTextOverflow, 'A long author is visually ellipsized').toBe('ellipsis')
+    expect(['hidden', 'clip']).toContain(overflow.authorOverflowX)
+    expect(overflow.dateWidth, 'The update date remains readable at the narrow width').toBeGreaterThan(0)
+    expect(overflow.dateScrollWidth - overflow.dateWidth, 'The update date is not clipped').toBeLessThanOrEqual(1)
+    expect(overflow.dateFitsProvenance, 'The update date remains inside the metadata region').toBe(true)
   })
 })
 
