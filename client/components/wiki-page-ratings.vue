@@ -22,7 +22,12 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
     template(v-else-if="view")
       p.wiki-page-ratings__error(v-if="error" role="alert") {{ error }}
 
-      .wiki-page-ratings__controls.wiki-page-ratings__controls--thumbs(v-if="view.kind === 'thumbs'" role="group" aria-label="Rate this page")
+      .wiki-page-ratings__controls.wiki-page-ratings__controls--thumbs(
+        v-if="view.kind === 'thumbs'"
+        :class="{ 'wiki-page-ratings__controls--voted': view.ownVote !== null }"
+        role="group"
+        aria-label="Rate this page"
+      )
         v-btn(
           class="wiki-page-ratings__choice"
           :class="{ 'wiki-page-ratings__choice--selected': view.ownVote === 1 }"
@@ -36,9 +41,7 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
           :aria-label="`Rate this page as helpful, ${view.distribution['1']} votes`"
           @click="saveVote(1)"
         )
-          v-icon(start aria-hidden="true") {{ view.ownVote === 1 ? 'mdi-thumb-up' : 'mdi-thumb-up-outline' }}
-          span.wiki-page-ratings__choice-label Helpful
-          span.wiki-page-ratings__choice-count(aria-hidden="true") {{ view.distribution['1'] }}
+          v-icon(aria-hidden="true") {{ view.ownVote === 1 ? 'mdi-thumb-up' : 'mdi-thumb-up-outline' }}
         v-btn(
           class="wiki-page-ratings__choice"
           :class="{ 'wiki-page-ratings__choice--selected': view.ownVote === -1 }"
@@ -52,11 +55,28 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
           :aria-label="`Rate this page as not helpful, ${view.distribution['-1']} votes`"
           @click="saveVote(-1)"
         )
-          v-icon(start aria-hidden="true") {{ view.ownVote === -1 ? 'mdi-thumb-down' : 'mdi-thumb-down-outline' }}
-          span.wiki-page-ratings__choice-label Not helpful
-          span.wiki-page-ratings__choice-count(aria-hidden="true") {{ view.distribution['-1'] }}
+          v-icon(aria-hidden="true") {{ view.ownVote === -1 ? 'mdi-thumb-down' : 'mdi-thumb-down-outline' }}
+        v-btn(
+          v-if="view.ownVote !== null"
+          class="wiki-page-ratings__remove"
+          type="button"
+          size="small"
+          variant="outlined"
+          :disabled="!canVote"
+          :loading="submitting && pendingVote === null"
+          aria-label="Remove my rating"
+          @click="removeVote"
+        )
+          v-icon(aria-hidden="true") mdi-close-circle-outline
+      .wiki-page-ratings__balance(
+        v-if="view.kind === 'thumbs' && view.ownVote !== null && view.count > 0"
+        role="img"
+        :aria-label="`${view.distribution['1']} helpful and ${view.distribution['-1']} not helpful votes`"
+      )
+        .wiki-page-ratings__balance-positive(:style="{ flexGrow: view.distribution['1'] }" aria-hidden="true")
+        .wiki-page-ratings__balance-negative(:style="{ flexGrow: view.distribution['-1'] }" aria-hidden="true")
 
-      .wiki-page-ratings__controls.wiki-page-ratings__controls--stars(v-else role="group" aria-label="Choose your star rating")
+      .wiki-page-ratings__controls.wiki-page-ratings__controls--stars(v-if="view.kind === 'stars'" role="group" aria-label="Choose your star rating")
         v-btn(
           v-for="value in starValues"
           :key="value"
@@ -75,13 +95,13 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
         )
           v-icon(aria-hidden="true") {{ view.ownVote !== null && value <= view.ownVote ? 'mdi-star' : 'mdi-star-outline' }}
 
-      .wiki-page-ratings__personal(v-if="view.ownVote !== null || submitting || loading || feedback")
-        p.wiki-page-ratings__own-vote(v-if="view.ownVote !== null") Yours: {{ view.kind === 'stars' ? `${view.ownVote}/5` : (view.ownVote === 1 ? 'Helpful' : 'Not helpful') }}
+      .wiki-page-ratings__personal(v-if="(view.kind === 'stars' && view.ownVote !== null) || submitting || loading || feedback")
+        p.wiki-page-ratings__own-vote(v-if="view.kind === 'stars' && view.ownVote !== null") Yours: {{ view.ownVote }}/5
         span.wiki-page-ratings__feedback(v-if="submitting || loading || feedback" role="status" aria-live="polite" aria-atomic="true")
           v-progress-circular(v-if="submitting || loading" color="primary" :size="16" :width="2" indeterminate aria-hidden="true")
           | {{ submitting ? 'Saving your rating…' : (loading ? 'Refreshing rating totals…' : feedback) }}
         v-btn(
-          v-if="view.ownVote !== null"
+          v-if="view.kind === 'stars' && view.ownVote !== null"
           class="wiki-page-ratings__remove"
           type="button"
           size="small"
@@ -319,7 +339,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   margin: 0;
   font-family: var(--wiki-font-display);
-  font-size: 1.05rem;
+  font-size: .875rem;
   font-weight: 560;
   letter-spacing: -.02em;
   line-height: 1.2;
@@ -384,6 +404,10 @@ onBeforeUnmount(() => {
   gap: 4px;
 }
 
+.wiki-page-ratings__controls--voted {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .wiki-page-ratings__controls--thumbs :deep(.v-btn) {
   box-sizing: border-box;
   width: 100%;
@@ -395,27 +419,37 @@ onBeforeUnmount(() => {
 }
 
 .wiki-page-ratings__controls--thumbs :deep(.v-btn__content) {
-  flex-wrap: wrap;
   justify-content: center;
-  gap: .12rem .25rem;
-  line-height: 1.15;
-  white-space: normal;
 }
 
 .wiki-page-ratings__controls--thumbs :deep(.v-icon) {
-  margin-inline-end: 0;
   font-size: 1rem;
 }
 
-.wiki-page-ratings__choice-label {
-  min-width: 0;
-  overflow-wrap: anywhere;
+.wiki-page-ratings__controls--thumbs .wiki-page-ratings__remove {
+  margin-inline-start: 0;
+  padding: 2px 3px;
 }
 
-.wiki-page-ratings__choice-count {
-  color: color-mix(in srgb, currentColor 78%, transparent);
-  font-size: .75em;
-  font-variant-numeric: tabular-nums;
+.wiki-page-ratings__balance {
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+.wiki-page-ratings__balance-positive,
+.wiki-page-ratings__balance-negative {
+  flex-basis: 0;
+  min-width: 0;
+}
+
+.wiki-page-ratings__balance-positive {
+  background: rgb(var(--v-theme-success));
+}
+
+.wiki-page-ratings__balance-negative {
+  background: rgb(var(--v-theme-error));
 }
 
 .wiki-page-ratings__choice--selected {
@@ -542,6 +576,14 @@ onBeforeUnmount(() => {
     border-color: Highlight !important;
     background: Highlight;
     color: HighlightText !important;
+  }
+
+  .wiki-page-ratings__balance-positive {
+    background: Highlight;
+  }
+
+  .wiki-page-ratings__balance-negative {
+    background: CanvasText;
   }
 
   .wiki-page-ratings :deep(.v-btn--variant-outlined) {
