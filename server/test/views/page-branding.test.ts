@@ -109,9 +109,11 @@ describe('page and editor branding template mounts', () => {
         document: { documentElement: { style } },
         window: { matchMedia: () => ({ matches: systemDark }) }
       }
-      cheerio.load(html)('head script:not([src])').each((_index, element) => {
-        runInNewContext(cheerio.load(element).text(), context)
-      })
+      cheerio
+        .load(html)('head script:not([src])')
+        .each((_index, element) => {
+          runInNewContext(cheerio.load(element).text(), context)
+        })
       expect(style.colorScheme).toBe(expected)
       expect(style.backgroundColor).toBe(themeColors[expected].background)
     }
@@ -120,7 +122,11 @@ describe('page and editor branding template mounts', () => {
   it('publishes the rendered document release to page and editor navigations', () => {
     for (const name of ['page', 'editor'] as const) {
       const $ = cheerio.load(renderView(name))
-      expect($('head meta[name="tsepistle-pwa-release"]').map((_index, meta) => $(meta).attr('content')).get()).toEqual([RELEASE])
+      expect(
+        $('head meta[name="tsepistle-pwa-release"]')
+          .map((_index, meta) => $(meta).attr('content'))
+          .get()
+      ).toEqual([RELEASE])
     }
   })
 

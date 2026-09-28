@@ -118,7 +118,8 @@ const state = reactive<MutablePwaState>({
   retirement: configuredMode === 'retirement',
   retirementNotice: configuredMode === 'retirement',
   connection: configuredMode === 'retirement' ? 'server-unavailable' : typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'checking',
-  connectionState: configuredMode === 'retirement' ? 'server-unavailable' : typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'checking',
+  connectionState:
+    configuredMode === 'retirement' ? 'server-unavailable' : typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'checking',
   onlineHint: typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean' ? navigator.onLine : null,
   serverReachable: null,
   serverHealthy: null,
@@ -203,9 +204,7 @@ type StartupGateContext = {
   cancelled: boolean
 }
 
-type StartupWait<T> =
-  | { readonly kind: 'value'; readonly value: T }
-  | { readonly kind: 'timeout' | 'cancelled' | 'error' }
+type StartupWait<T> = { readonly kind: 'value'; readonly value: T } | { readonly kind: 'timeout' | 'cancelled' | 'error' }
 
 type SafetyRequestContext = {
   workerId?: string
@@ -289,12 +288,15 @@ const scheduleConnectionRetry = (): void => {
   clearConnectionRetry()
   if (state.mode === 'retirement' || !connectionProbeAllowed() || activeProbe || state.connectionState === 'checking') return
   const online = state.connectionState === 'online'
-  connectionRetryTimer = setTimeout(() => {
-    connectionRetryTimer = null
-    if (!connectionProbeAllowed()) return
-    if (!online) connectionRetryDelay = Math.min(connectionRetryDelay * 2, 30_000)
-    void retryServerConnection({ quiet: true })
-  }, online ? 30_000 : connectionRetryDelay)
+  connectionRetryTimer = setTimeout(
+    () => {
+      connectionRetryTimer = null
+      if (!connectionProbeAllowed()) return
+      if (!online) connectionRetryDelay = Math.min(connectionRetryDelay * 2, 30_000)
+      void retryServerConnection({ quiet: true })
+    },
+    online ? 30_000 : connectionRetryDelay
+  )
 }
 
 const errorMessage = (error: unknown, fallback: string): string => {
@@ -374,7 +376,11 @@ const postToWorker = (worker: ServiceWorkerMessageTarget | null | undefined, mes
   // Votes retain the browser-provided source identity and the round's existing
   // subscription. Readiness uses independent, short-lived reply channels.
   if (type === RELOAD_SAFETY_MESSAGE) {
-    try { worker.postMessage(envelope) } catch { /* The worker became redundant. */ }
+    try {
+      worker.postMessage(envelope)
+    } catch {
+      /* The worker became redundant. */
+    }
     return
   }
   if (typeof MessageChannel === 'undefined') return
@@ -418,7 +424,9 @@ const attachUpdateWakeups = (): void => {
       const waiting = registrationReference?.waiting
       if (event.data === 'connect' && waiting && !pageSuspended) postToWorker(waiting, { type: 'PWA_CONNECT' })
     }
-  } catch { /* Without a wakeup, unresponsive peers make update voting defer. */ }
+  } catch {
+    /* Without a wakeup, unresponsive peers make update voting defer. */
+  }
 }
 
 const clearPreparationTimer = (): void => {
@@ -446,35 +454,32 @@ const knownWorker = (candidate: ServiceWorker | null, registration = registratio
 const validRelease = (release: unknown): release is string => typeof release === 'string' && RELEASE_PATTERN.test(release)
 
 const readDocumentRelease = (): string | null => {
-  const release = typeof document !== 'undefined'
-    ? document.querySelector('meta[name="tsepistle-pwa-release"]')?.getAttribute('content')?.trim()
-    : null
+  const release = typeof document !== 'undefined' ? document.querySelector('meta[name="tsepistle-pwa-release"]')?.getAttribute('content')?.trim() : null
   return validRelease(release) ? release : null
 }
 
 const startupContextIsCurrent = (context: StartupGateContext): boolean =>
   activeStartupGate === context && !context.cancelled && !pageSuspended && context.epoch === startupGateEpoch
 
-const startupNow = (): number => typeof performance !== 'undefined' ? performance.now() : Date.now()
+const startupNow = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now())
 
-const awaitStartup = <T>(
-  context: StartupGateContext,
-  pending: Promise<T>,
-  cancelPending?: () => void
-): Promise<StartupWait<T>> => {
+const awaitStartup = <T>(context: StartupGateContext, pending: Promise<T>, cancelPending?: () => void): Promise<StartupWait<T>> => {
   const { promise, resolve } = Promise.withResolvers<StartupWait<T>>()
   let settled = false
   let timer: ReturnType<typeof setTimeout> | null = null
   const finish = (result: StartupWait<T>): void => {
     if (settled) return
-    const finalResult: StartupWait<T> =
-      result.kind === 'value' && startupNow() >= context.deadline ? { kind: 'timeout' } : result
+    const finalResult: StartupWait<T> = result.kind === 'value' && startupNow() >= context.deadline ? { kind: 'timeout' } : result
     settled = true
     clearTimeout(timer ?? undefined)
     timer = null
     context.cancellations.delete(cancelForPagehide)
     if (finalResult.kind !== 'value') {
-      try { cancelPending?.() } catch { /* Cancellation is best-effort. */ }
+      try {
+        cancelPending?.()
+      } catch {
+        /* Cancellation is best-effort. */
+      }
     }
     resolve(finalResult)
   }
@@ -496,11 +501,7 @@ const awaitStartup = <T>(
   )
   return promise
 }
-const awaitStartupOrDetached = <T>(
-  context: StartupGateContext | null,
-  pending: Promise<T>,
-  cancelPending?: () => void
-): Promise<StartupWait<T>> => {
+const awaitStartupOrDetached = <T>(context: StartupGateContext | null, pending: Promise<T>, cancelPending?: () => void): Promise<StartupWait<T>> => {
   if (context) return awaitStartup(context, pending, cancelPending)
   const { promise, resolve } = Promise.withResolvers<StartupWait<T>>()
   let settled = false
@@ -510,7 +511,11 @@ const awaitStartupOrDetached = <T>(
     settled = true
     clearTimeout(timer)
     if (result.kind !== 'value') {
-      try { cancelPending?.() } catch { /* Cancellation is best-effort. */ }
+      try {
+        cancelPending?.()
+      } catch {
+        /* Cancellation is best-effort. */
+      }
     }
     resolve(result)
   }
@@ -556,11 +561,15 @@ const requestExplicitRefreshForAcceptedWorker = async (): Promise<boolean> => {
   const accepted = acceptedActivation
   const activation = controller && accepted && (accepted.worker === controller || accepted.activatedWorker === controller) ? accepted : null
   const release = activation?.release ?? (controller ? startupWorkerReleases.get(controller) : undefined)
-  if ((!startupRefreshDeferred.value && !state.reloadNeeded) || !controller || controller.state !== 'activated' || !validRelease(release) || startupReloadIssued) return false
   if (
-    startupDocumentRelease === startupBundleRelease &&
-    startupDocumentRelease === release
-  ) {
+    (!startupRefreshDeferred.value && !state.reloadNeeded) ||
+    !controller ||
+    controller.state !== 'activated' ||
+    !validRelease(release) ||
+    startupReloadIssued
+  )
+    return false
+  if (startupDocumentRelease === startupBundleRelease && startupDocumentRelease === release) {
     startupRefreshDeferred.value = false
     startupAutomaticRefreshDisabled = false
     startupExplicitRefreshAllowed = false
@@ -572,10 +581,10 @@ const requestExplicitRefreshForAcceptedWorker = async (): Promise<boolean> => {
   const snapshot = await readSafetySnapshot()
   if (
     sequence !== safetySequence ||
-    activation && acceptedActivation !== activation ||
+    (activation && acceptedActivation !== activation) ||
     pageSuspended ||
     currentServiceWorkerContainer()?.controller !== controller ||
-    startupWorkerReleases.get(controller) !== release && !activation
+    (startupWorkerReleases.get(controller) !== release && !activation)
   )
     return false
   state.reloadSafe = snapshot.safe
@@ -609,7 +618,7 @@ const maybeReloadAcceptedWorker = async (worker: ServiceWorker): Promise<void> =
     startupExplicitRefreshAllowed = false
     return
   }
-  if (startupGateActive || startupAutomaticRefreshDisabled && !startupExplicitRefreshAllowed) {
+  if (startupGateActive || (startupAutomaticRefreshDisabled && !startupExplicitRefreshAllowed)) {
     deferredReloadWorker = worker
     state.reloadNeeded = true
     return
@@ -620,7 +629,7 @@ const maybeReloadAcceptedWorker = async (worker: ServiceWorker): Promise<void> =
   if (
     sequence !== safetySequence ||
     acceptedActivation !== activation ||
-    startupAutomaticRefreshDisabled && !startupExplicitRefreshAllowed ||
+    (startupAutomaticRefreshDisabled && !startupExplicitRefreshAllowed) ||
     startupActivationMatchesCurrentRelease(activation)
   ) {
     if (startupActivationMatchesCurrentRelease(activation)) {
@@ -692,7 +701,6 @@ const noteAcceptedActivation = (
   state.updateState = 'activating'
   notifyStartupActivationObservers()
 }
-
 
 const retryDeferredReload = (): void => {
   if (deferredReloadWorker) void maybeReloadAcceptedWorker(deferredReloadWorker)
@@ -928,7 +936,16 @@ const handleUpdateDeferred = (
 const retryDeferredPreparationWhenSafe = (): void => {
   if (pageSuspended || state.mode === 'retirement' || state.preparation !== 'deferred') return
   void reportReloadSafety().then(safe => {
-    if (safe && !pageSuspended && !startupGateActive && !startupRefreshDeferred.value && !startupAutomaticRefreshDisabled && state.preparation === 'deferred' && registrationReference?.waiting) void requestPwaUpdateAutomatically()
+    if (
+      safe &&
+      !pageSuspended &&
+      !startupGateActive &&
+      !startupRefreshDeferred.value &&
+      !startupAutomaticRefreshDisabled &&
+      state.preparation === 'deferred' &&
+      registrationReference?.waiting
+    )
+      void requestPwaUpdateAutomatically()
   })
 }
 
@@ -989,7 +1006,15 @@ const markUpdateReady = (registration: ServiceWorkerRegistration): void => {
   // worker still requires a current safe vote from every open page before it
   // calls skipWaiting(), so starting preparation cannot discard editor work.
   queueMicrotask(() => {
-    if (!pageSuspended && !startupGateActive && !startupRefreshDeferred.value && !startupAutomaticRefreshDisabled && registrationReference === registration && registration.waiting === waiting) void requestPwaUpdateAutomatically()
+    if (
+      !pageSuspended &&
+      !startupGateActive &&
+      !startupRefreshDeferred.value &&
+      !startupAutomaticRefreshDisabled &&
+      registrationReference === registration &&
+      registration.waiting === waiting
+    )
+      void requestPwaUpdateAutomatically()
   })
 }
 
@@ -1244,7 +1269,10 @@ const attachWindowListeners = (): void => {
   window.addEventListener('focus', resumeConnection)
   window.addEventListener('visibilitychange', () => {
     updateStandaloneState()
-    if (document.visibilityState === 'hidden') { suspendConnectionProbe(); return }
+    if (document.visibilityState === 'hidden') {
+      suspendConnectionProbe()
+      return
+    }
     resumeConnection()
     requestOfflineReadiness()
     retryDeferredReload()
@@ -1437,7 +1465,16 @@ export function notifyReloadSafetyChanged(): void {
     activeSafetyRequest = null
   }
   void safetyReport.then(safe => {
-    if (safe && !pageSuspended && !startupGateActive && !startupRefreshDeferred.value && !startupAutomaticRefreshDisabled && state.preparation === 'deferred' && registrationReference?.waiting) void requestPwaUpdateAutomatically()
+    if (
+      safe &&
+      !pageSuspended &&
+      !startupGateActive &&
+      !startupRefreshDeferred.value &&
+      !startupAutomaticRefreshDisabled &&
+      state.preparation === 'deferred' &&
+      registrationReference?.waiting
+    )
+      void requestPwaUpdateAutomatically()
   })
   retryDeferredReload()
 }
@@ -1525,8 +1562,7 @@ const probeStartupWorker = (
   registration: ServiceWorkerRegistration,
   worker: ServiceWorker
 ): Promise<StartupWait<StartupWorkerIdentity | null>> => {
-  if (!knownWorker(worker, registration) || typeof MessageChannel === 'undefined')
-    return Promise.resolve({ kind: 'value', value: null })
+  if (!knownWorker(worker, registration) || typeof MessageChannel === 'undefined') return Promise.resolve({ kind: 'value', value: null })
   const channel = new MessageChannel()
   const { promise, resolve } = Promise.withResolvers<StartupWorkerIdentity | null>()
   let settled = false
@@ -1662,11 +1698,7 @@ const waitForStartupActivation = (
   return awaitStartup(context, promise, () => finish(null))
 }
 
-const waitForStartupController = (
-  context: StartupGateContext,
-  container: ServiceWorkerContainer,
-  worker: ServiceWorker
-): Promise<StartupWait<boolean>> => {
+const waitForStartupController = (context: StartupGateContext, container: ServiceWorkerContainer, worker: ServiceWorker): Promise<StartupWait<boolean>> => {
   const { promise, resolve } = Promise.withResolvers<boolean>()
   let settled = false
   const cleanup = (): void => {
@@ -1694,7 +1726,6 @@ const waitForStartupController = (
     resolve(false)
   })
 }
-
 
 const adoptStartupRegistration = (container: ServiceWorkerContainer, registration: ServiceWorkerRegistration): void => {
   registrationReference = registration
@@ -1735,12 +1766,7 @@ const watchOfflineStartupRegistration = (registration: ServiceWorkerRegistration
       offlineStartupProbing.add(worker)
       void probeStartupWorker(null, registration, worker).then(result => {
         offlineStartupProbing.delete(worker)
-        if (
-          result.kind === 'value' &&
-          result.value?.release &&
-          registrationReference === registration &&
-          workerTargets(registration).includes(worker)
-        )
+        if (result.kind === 'value' && result.value?.release && registrationReference === registration && workerTargets(registration).includes(worker))
           checkStartupWorkers()
       })
     }
@@ -1774,8 +1800,7 @@ const watchOfflineStartupRegistration = (registration: ServiceWorkerRegistration
     if (offlineStartupInstallations.has(installing)) return
     offlineStartupInstallations.add(installing)
     installing.addEventListener?.('statechange', () => {
-      if (installing.state === 'installed' || installing.state === 'redundant')
-        checkStartupWorkers()
+      if (installing.state === 'installed' || installing.state === 'redundant') checkStartupWorkers()
     })
   }
   offlineStartupRegistrationChecks.set(registration, checkStartupWorkers)
@@ -1832,7 +1857,6 @@ const attachOfflineStartupRegistration = (): void => {
     .catch(notifyError)
 }
 
-
 const deferStartupRefresh = (reason: string): 'continue' => {
   startupAutomaticRefreshDisabled = true
   startupExplicitRefreshAllowed = false
@@ -1863,12 +1887,8 @@ const reloadStaleBundleBeforeMount = async (
     if (safety.kind === 'cancelled') return 'continue'
     return deferStartupRefresh('The startup refresh safety check did not complete.')
   }
-  if (startupNow() >= context.deadline)
-    return deferStartupRefresh('The startup refresh check completed after the deadline.')
-  if (
-    worker.state !== 'activated' ||
-    (currentServiceWorkerContainer()?.controller !== worker && registration.active !== worker)
-  )
+  if (startupNow() >= context.deadline) return deferStartupRefresh('The startup refresh check completed after the deadline.')
+  if (worker.state !== 'activated' || (currentServiceWorkerContainer()?.controller !== worker && registration.active !== worker))
     return deferStartupRefresh('The active worker changed during the startup refresh check.')
   state.reloadSafe = safety.value.safe
   state.safetyRevision = safety.value.revision
@@ -1888,10 +1908,7 @@ const reloadStaleBundleBeforeMount = async (
   return 'reloading'
 }
 
-const finishStartupAfterActivation = (
-  context: StartupGateContext,
-  activation: AcceptedActivation
-): 'continue' | 'reloading' => {
+const finishStartupAfterActivation = (context: StartupGateContext, activation: AcceptedActivation): 'continue' | 'reloading' => {
   if (!startupContextIsCurrent(context)) return 'continue'
   if (startupActivationMatchesCurrentRelease(activation)) {
     startupRefreshDeferred.value = false
@@ -1901,14 +1918,8 @@ const finishStartupAfterActivation = (
     state.reloadNeeded = false
     return 'continue'
   }
-  if (startupNow() >= context.deadline)
-    return deferStartupRefresh('The matching worker activated after the startup deadline.')
-  if (
-    !startupDocumentRelease ||
-    activation.release !== startupDocumentRelease ||
-    !validRelease(startupBundleRelease) ||
-    startupReloadIssued
-  )
+  if (startupNow() >= context.deadline) return deferStartupRefresh('The matching worker activated after the startup deadline.')
+  if (!startupDocumentRelease || activation.release !== startupDocumentRelease || !validRelease(startupBundleRelease) || startupReloadIssued)
     return deferStartupRefresh('The active service worker or document release could not be verified safely.')
   startupReloadIssued = true
   startupAutomaticRefreshDisabled = true
@@ -1923,10 +1934,7 @@ const finishStartupAfterActivation = (
   return 'reloading'
 }
 
-const runPwaStartupGate = async (
-  bundleRelease: string,
-  callbacks: PwaLifecycleCallbacks
-): Promise<'continue' | 'reloading'> => {
+const runPwaStartupGate = async (bundleRelease: string, callbacks: PwaLifecycleCallbacks): Promise<'continue' | 'reloading'> => {
   callbackSet = { ...callbackSet, ...callbacks }
   attachWindowListeners()
   observeBrowserConnection()
@@ -1980,12 +1988,7 @@ const runPwaStartupGate = async (
         return leave(continueDeferred('The service worker is unavailable while the document and application releases differ.'))
       return leave('continue')
     }
-    if (
-      releaseEvidenceValid &&
-      startupDocumentRelease === startupBundleRelease &&
-      hasNavigator() &&
-      navigator.onLine === false
-    ) {
+    if (releaseEvidenceValid && startupDocumentRelease === startupBundleRelease && hasNavigator() && navigator.onLine === false) {
       attachOfflineStartupRegistration()
       return leave('continue')
     }
@@ -2024,19 +2027,13 @@ const runPwaStartupGate = async (
       return leave('continue')
     }
     if (hasNavigator() && navigator.onLine === false) {
-      if (startupDocumentRelease !== startupBundleRelease)
-        return leave(continueDeferred('The document and application releases differ while offline.'))
+      if (startupDocumentRelease !== startupBundleRelease) return leave(continueDeferred('The document and application releases differ while offline.'))
       watchOfflineStartupRegistration(registration)
       return leave('continue')
     }
     const documentRelease = startupDocumentRelease as string
     const currentController = container.controller
-    if (
-      !currentController &&
-      documentRelease === startupBundleRelease &&
-      !registration.active &&
-      !registration.waiting
-    ) {
+    if (!currentController && documentRelease === startupBundleRelease && !registration.active && !registration.waiting) {
       startupAutomaticRefreshDisabled = false
       return leave('continue')
     }
@@ -2046,17 +2043,18 @@ const runPwaStartupGate = async (
       const waiting = registration.waiting
       startupAutomaticRefreshDisabled = Boolean(waiting && identities.get(waiting)?.release !== documentRelease)
     }
-    const workers = [...new Set([currentController, registration.active, registration.waiting]
-      .filter((worker): worker is ServiceWorker => Boolean(worker)))]
+    const workers = [...new Set([currentController, registration.active, registration.waiting].filter((worker): worker is ServiceWorker => Boolean(worker)))]
     const pendingProbes = workers.map(worker => ({
       worker,
       promise: probeStartupWorker(context, registration, worker)
     }))
     while (pendingProbes.length) {
-      const completed = await Promise.race(pendingProbes.map(async pending => ({
-        pending,
-        result: await pending.promise
-      })))
+      const completed = await Promise.race(
+        pendingProbes.map(async pending => ({
+          pending,
+          result: await pending.promise
+        }))
+      )
       const pendingIndex = pendingProbes.indexOf(completed.pending)
       if (pendingIndex >= 0) pendingProbes.splice(pendingIndex, 1)
       if (!startupContextIsCurrent(context)) return leave('continue')
@@ -2064,11 +2062,7 @@ const runPwaStartupGate = async (
       const identity = completed.result.value
       identities.set(identity.worker, identity)
       if (identity.release !== documentRelease) continue
-      if (
-        identity.worker === currentController &&
-        documentRelease === startupBundleRelease &&
-        container.controller === currentController
-      ) {
+      if (identity.worker === currentController && documentRelease === startupBundleRelease && container.controller === currentController) {
         disableAutomaticRefreshForUnverifiedWaitingWorker()
         return leave('continue')
       }
@@ -2084,21 +2078,19 @@ const runPwaStartupGate = async (
           disableAutomaticRefreshForUnverifiedWaitingWorker()
           return leave('continue')
         }
-        if (identity.worker.state === 'activated')
-          return leave(await reloadStaleBundleBeforeMount(context, registration, identity.worker))
+        if (identity.worker.state === 'activated') return leave(await reloadStaleBundleBeforeMount(context, registration, identity.worker))
       }
       if (identity.worker === registration.waiting) break
     }
 
     const activeWorker = registration.active
-    const activeIdentity = activeWorker ? identities.get(activeWorker) ?? null : null
+    const activeIdentity = activeWorker ? (identities.get(activeWorker) ?? null) : null
     if (activeWorker && activeIdentity?.release === documentRelease) {
       if (documentRelease === startupBundleRelease) {
         disableAutomaticRefreshForUnverifiedWaitingWorker()
         return leave('continue')
       }
-      if (activeWorker.state === 'activated')
-        return leave(await reloadStaleBundleBeforeMount(context, registration, activeWorker))
+      if (activeWorker.state === 'activated') return leave(await reloadStaleBundleBeforeMount(context, registration, activeWorker))
       const activation = acceptedActivation
       if (
         container.controller === activeWorker &&
@@ -2109,23 +2101,19 @@ const runPwaStartupGate = async (
       if (activation?.release === documentRelease && (activation.worker === activeWorker || activation.activatedWorker === activeWorker)) {
         const activated = await waitForStartupActivation(context, container, registration, activeWorker, documentRelease)
         if (!startupContextIsCurrent(context)) return leave('continue')
-        if (activated.kind === 'value' && activated.value)
-          return leave(finishStartupAfterActivation(context, activated.value))
+        if (activated.kind === 'value' && activated.value) return leave(finishStartupAfterActivation(context, activated.value))
         if (activated.kind === 'cancelled') return leave('continue')
       }
-      const controlling = container.controller === activeWorker
-        ? { kind: 'value' as const, value: true }
-        : await waitForStartupController(context, container, activeWorker)
+      const controlling =
+        container.controller === activeWorker ? { kind: 'value' as const, value: true } : await waitForStartupController(context, container, activeWorker)
       if (!startupContextIsCurrent(context)) return leave('continue')
       if (controlling.kind === 'cancelled') return leave('continue')
-      if (controlling.kind === 'value' && controlling.value)
-        return leave(await reloadStaleBundleBeforeMount(context, registration, activeWorker))
+      if (controlling.kind === 'value' && controlling.value) return leave(await reloadStaleBundleBeforeMount(context, registration, activeWorker))
       return leave(continueDeferred('The matching active worker did not control this document before startup.'))
     }
 
-
     let targetWaiting = registration.waiting
-    let targetIdentity = targetWaiting ? identities.get(targetWaiting) ?? null : null
+    let targetIdentity = targetWaiting ? (identities.get(targetWaiting) ?? null) : null
     if (targetWaiting && (!targetIdentity || targetIdentity.release !== documentRelease)) {
       const previousWaiting = targetWaiting
       if (startupNow() >= context.deadline)
@@ -2199,12 +2187,10 @@ const runPwaStartupGate = async (
 
     if (!targetWaiting || !targetIdentity || targetIdentity.release !== documentRelease)
       return leave(continueDeferred('The waiting worker does not match the current document release.'))
-    if (startupNow() >= context.deadline)
-      return leave(continueDeferred('The matching worker was found after the startup deadline.'))
+    if (startupNow() >= context.deadline) return leave(continueDeferred('The matching worker was found after the startup deadline.'))
 
     const prepared = prepareWaitingWorker(registration, targetWaiting)
-    if (!prepared)
-      return leave(continueDeferred('The matching worker was replaced before it could receive safe votes.'))
+    if (!prepared) return leave(continueDeferred('The matching worker was replaced before it could receive safe votes.'))
     const activated = await waitForStartupActivation(context, container, registration, targetWaiting, documentRelease)
     if (!startupContextIsCurrent(context)) return leave('continue')
     if (activated.kind !== 'value' || !activated.value) {
@@ -2224,10 +2210,7 @@ const runPwaStartupGate = async (
 }
 
 /** Reconcile document, Vite bundle, and service-worker releases before mounting. */
-export function preparePwaStartup(
-  bundleRelease: string,
-  callbacks: PwaLifecycleCallbacks = {}
-): Promise<'continue' | 'reloading'> {
+export function preparePwaStartup(bundleRelease: string, callbacks: PwaLifecycleCallbacks = {}): Promise<'continue' | 'reloading'> {
   callbackSet = { ...callbackSet, ...callbacks }
   if (!startupGatePromise) startupGatePromise = runPwaStartupGate(bundleRelease, callbacks)
   return startupGatePromise

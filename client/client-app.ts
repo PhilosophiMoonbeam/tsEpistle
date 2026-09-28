@@ -272,9 +272,12 @@ const registrations = [
 
 const initializeClientApp = async (): Promise<void> => {
   setReloadSafetyProvider(() => ({ safe: true, revision: 'client-app-ready', actorEpoch: 'client' }))
-  if (await preparePwaStartup('__TSEPISTLE_PWA_RELEASE__', {
-    onNeedReload: () => window.location.reload()
-  }) === 'reloading') return
+  if (
+    (await preparePwaStartup('__TSEPISTLE_PWA_RELEASE__', {
+      onNeedReload: () => window.location.reload()
+    })) === 'reloading'
+  )
+    return
 
   applyReaderLayout(siteConfig.readerLayout)
   const applyReadingPreferences = (): void => {
@@ -283,11 +286,7 @@ const initializeClientApp = async (): Promise<void> => {
     root.dataset.readerLinks = wikiStore.user.underlineLinks ? 'underlined' : 'default'
     root.dataset.readerTextSize = wikiStore.user.contentTextSize
   }
-  watch(
-    () => [wikiStore.user.reduceMotion, wikiStore.user.underlineLinks, wikiStore.user.contentTextSize],
-    applyReadingPreferences,
-    { immediate: true }
-  )
+  watch(() => [wikiStore.user.reduceMotion, wikiStore.user.underlineLinks, wikiStore.user.contentTextSize], applyReadingPreferences, { immediate: true })
   rememberOfflinePresentation()
   watch(
     () => wikiStore.user.appearance,
