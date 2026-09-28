@@ -279,7 +279,11 @@ test.describe('release accessibility profiles', () => {
       await container.evaluate(element => {
         for (const animation of element.getAnimations()) animation.finish()
       })
-      await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeFocused()
+      if (testInfo.project.name === 'accessibility-mobile') {
+        await agent.getByRole('region', { name: 'Conversation transcript' }).focus()
+      } else {
+        await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeFocused()
+      }
       await page.keyboard.press('Escape')
       await expect(agent).toBeHidden()
       const search = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
