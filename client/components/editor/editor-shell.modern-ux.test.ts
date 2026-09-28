@@ -6,6 +6,7 @@ import * as ts from 'typescript'
 import { describe, expect, test } from '../../../server/test/bun-test.mts'
 import { OfflineSnapshotSelectorSchema } from '../../../shared/offline.ts'
 import { normalizeAvailableEditors } from '../../../shared/page-editors.ts'
+import { normalizePageFeatures } from '../../../shared/page-features.ts'
 import { getEditorComponentName } from '../../helpers/editor-key.ts'
 import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
 
@@ -468,6 +469,7 @@ const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides
     'OfflineSnapshotSelectorSchema',
     'normalizeAvailableEditors',
     'getEditorComponentName',
+    'normalizePageFeatures',
     'siteConfig',
     'emitEditorSaveConflict',
     'getErrorMessage',
@@ -495,6 +497,7 @@ const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides
     OfflineSnapshotSelectorSchema,
     normalizeAvailableEditors,
     getEditorComponentName,
+    normalizePageFeatures,
     dependencies.siteConfig,
     () => undefined,
     (error: unknown) => (error instanceof Error ? error.message : String(error)),
@@ -715,6 +718,7 @@ const mutableSnapshot = (store: EditorStore): SavedState => ({
   scriptJs: store.page.scriptJs,
   brandingAssignment: _.cloneDeep(store.page.brandingAssignment),
   brandingView: _.cloneDeep(store.page.brandingView),
+  pageFeatures: normalizePageFeatures(store.page.pageFeatures),
   okf: _.cloneDeep(store.page.okf)
 })
 
