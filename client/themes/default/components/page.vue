@@ -74,103 +74,60 @@
                 :failed='brandingFailureIdentity === pageBrandingIdentity'
                 @error='pageBrandingImageError'
               )
-            .page-header-summary
-              p.page-description(v-if='description') {{description}}
-            .page-header-control-pair(
-              v-if='!printView || (editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn))'
+            .page-header-summary(v-if='description')
+              p.page-description {{description}}
+            nav.page-header-path(
+              v-if='!printView && path !== `home`'
+              role='navigation'
+              :aria-label='$t(`common:header.breadcrumb`)'
             )
-              nav.page-header-path(
-                v-if='!printView && path !== `home`'
-                role='navigation'
-                :aria-label='$t(`common:header.breadcrumb`)'
+              v-breadcrumbs.breadcrumbs-nav.breadcrumbs-nav--inline.pl-0(
+                :items='breadcrumbs'
+                divider='/'
               )
-                v-breadcrumbs.breadcrumbs-nav.breadcrumbs-nav--inline.pl-0(
-                  :items='breadcrumbs'
-                  divider='/'
-                )
-                  template(v-slot:item='props')
-                    v-btn.ma-0(
-                      v-if='props.item.href === "/"'
-                      :href='props.item.href'
-                      size="small"
-                      variant="text"
-                      :aria-label='$t(`common:header.home`)'
-                    )
-                      v-icon(aria-hidden='true', size="small") mdi-home
-                    v-btn.ma-0(
-                      v-else
-                      :href='props.item.href'
-                      size="small"
-                      variant="text"
-                      :aria-current='props.item.href === breadcrumbs[breadcrumbs.length - 1].href ? `page` : undefined'
-                    ) {{props.item.title}}
-              template(v-if='!isPublished')
-                .text-body-small.text-warning.page-header-unpublished {{$t('common:page.unpublished')}}
-                status-indicator.ml-3(negative, pulse)
-              .page-header-offline(v-if='!printView')
-                v-tooltip(location="bottom")
-                  template(v-slot:activator='{ props }')
-                    v-btn.page-offline-control(
-                      v-bind='props'
-                      icon
-                      rounded='lg'
-                      :class='`page-offline-control--${offlineControlState}`'
-                      :color='offlineControlColor'
-                      :loading='offlineActionLoading'
-                      :disabled='offlineControlDisabled'
-                      :aria-label='offlineControlLabel'
-                      :aria-pressed='offlineSelected ? `true` : `false`'
-                      :aria-describedby='offlineStatusId'
-                      :title='offlineControlTitle'
-                      :data-offline-state='offlineControlState'
-                      @click='toggleOfflinePage'
-                    )
-                      v-icon(aria-hidden='true') {{ offlineControlIcon }}
-                  span.page-offline-tooltip {{ offlineControlTitle }}
-                v-tooltip(location="bottom", v-if='offlineCanRetry')
-                  template(v-slot:activator='{ props }')
-                    v-btn.page-offline-retry-control(
-                      v-bind='props'
-                      icon
-                      rounded='lg'
-                      :loading='offlineActionLoading'
-                      :disabled='offlineActionLoading || offlineOwnedOperationId !== null'
-                      :aria-label='offlineRetryLabel'
-                      :title='offlineRetryLabel'
-                      @click='retryOfflinePage'
-                    )
-                      v-icon(aria-hidden='true') mdi-refresh
-                  span.page-offline-tooltip {{ offlineRetryLabel }}
-                span.page-offline-status.page-header-offline-status(
-                  :id='offlineStatusId'
-                  role='status'
-                  aria-live='polite'
-                  aria-atomic='true'
-                  :class='[`page-header-offline-status--${offlineControlState}`, { "page-header-offline-status--quiet": !["stale", "sync-pending", "error", "unavailable", "ineligible"].includes(offlineControlState) }]'
-                ) {{ offlineStatusLabel }}
-              v-btn.page-focus-control(v-if='!printView && !readerFocus && !talkActive && !linksActive', variant='text', size='small', prepend-icon='mdi-book-open-page-variant-outline', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t('common:page.focusReading') }}
-              .page-edit-shortcuts(
-                v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
-                :class='tocPosition === `right` ? `is-right` : ``'
-                )
-                  v-btn(
-                    v-if='editShortcutsObj.editMenuBtn && (!hasWritePagesPermission || $vuetify.display.smAndDown)'
-                    @click='pageEdit'
-                    variant="flat"
+                template(v-slot:item='props')
+                  v-btn.ma-0(
+                    v-if='props.item.href === "/"'
+                    :href='props.item.href'
                     size="small"
-                    )
-                    v-icon.mr-2(size="small") mdi-pencil
-                    span.text-none {{$t(`common:actions.edit`)}}
-                  v-btn(
-                    v-if='editShortcutsObj.editMenuExternalBtn && editMenuExternalUrl'
-                    :href='editMenuExternalUrl'
-                    target='_blank'
-                    rel='noopener'
-                    variant="flat"
+                    variant="text"
+                    :aria-label='$t(`common:header.home`)'
+                  )
+                    v-icon(aria-hidden='true', size="small") mdi-home
+                  v-btn.ma-0(
+                    v-else
+                    :href='props.item.href'
                     size="small"
-                    )
-                    v-icon.mr-2(size="small") {{ editShortcutsObj.editMenuExternalIcon }}
-                    span.text-none {{$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })}}
+                    variant="text"
+                    :aria-current='props.item.href === breadcrumbs[breadcrumbs.length - 1].href ? `page` : undefined'
+                  ) {{props.item.title}}
+            .page-header-unpublished(
+              v-if='!isPublished && (!printView || (editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)))'
+            )
+              span.text-body-small.text-warning {{$t('common:page.unpublished')}}
+              status-indicator(negative, pulse)
+            .page-edit-shortcuts(
+              v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
+              :class='tocPosition === `right` ? `is-right` : ``'
+            )
+              v-btn(
+                v-if='editShortcutsObj.editMenuBtn && (!hasWritePagesPermission || $vuetify.display.smAndDown)'
+                @click='pageEdit'
+                variant="flat"
+                size="small"
+              )
+                v-icon.mr-2(size="small") mdi-pencil
+                span.text-none {{$t(`common:actions.edit`)}}
+              v-btn(
+                v-if='editShortcutsObj.editMenuExternalBtn && editMenuExternalUrl'
+                :href='editMenuExternalUrl'
+                target='_blank'
+                rel='noopener'
+                variant="flat"
+                size="small"
+              )
+                v-icon.mr-2(size="small") {{ editShortcutsObj.editMenuExternalIcon }}
+                span.text-none {{$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })}}
       v-container.page-body(fluid)
         v-row
           #page-mobile-tools.page-mobile-tools
@@ -453,6 +410,63 @@
                   :aria-label='$t(`common:page.printFormat`)'
                 )
                   v-icon mdi-printer
+              .page-tools-card__utilities.page-tools-card__utilities--shared(v-if='!printView')
+                v-tooltip(location='bottom')
+                  template(v-slot:activator='{ props }')
+                    v-btn.page-offline-control(
+                      v-bind='props'
+                      icon
+                      rounded='lg'
+                      size='small'
+                      :class='`page-offline-control--${offlineControlState}`'
+                      :color='offlineControlColor'
+                      :loading='offlineActionLoading'
+                      :disabled='offlineControlDisabled'
+                      :aria-label='offlineControlLabel'
+                      :aria-pressed='offlineSelected ? `true` : `false`'
+                      :aria-describedby='offlineStatusId'
+                      :title='offlineControlTitle'
+                      :data-offline-state='offlineControlState'
+                      @click='toggleOfflinePage'
+                    )
+                      v-icon(aria-hidden='true') {{ offlineControlIcon }}
+                  span.page-offline-tooltip {{ offlineControlTitle }}
+                v-tooltip(location='bottom', v-if='offlineCanRetry')
+                  template(v-slot:activator='{ props }')
+                    v-btn.page-offline-retry-control(
+                      v-bind='props'
+                      icon
+                      rounded='lg'
+                      size='small'
+                      :loading='offlineActionLoading'
+                      :disabled='offlineActionLoading || offlineOwnedOperationId !== null'
+                      :aria-label='offlineRetryLabel'
+                      :title='offlineRetryLabel'
+                      @click='retryOfflinePage'
+                    )
+                      v-icon(aria-hidden='true') mdi-refresh
+                  span.page-offline-tooltip {{ offlineRetryLabel }}
+                v-tooltip(location='bottom')
+                  template(v-slot:activator='{ props }')
+                    v-btn.page-focus-control(
+                      v-bind='props'
+                      icon
+                      rounded='lg'
+                      size='small'
+                      :aria-label='$t(`common:page.focusReading`)'
+                      :aria-pressed='readerFocus'
+                      v-if='!readerFocus && !talkActive && !linksActive'
+                      @click='toggleReaderFocus'
+                    )
+                      v-icon(aria-hidden='true') mdi-book-open-page-variant-outline
+                  span {{$t('common:page.focusReading')}}
+                span.page-offline-status(
+                  :id='offlineStatusId'
+                  role='status'
+                  aria-live='polite'
+                  aria-atomic='true'
+                  :class='[`page-offline-status--${offlineControlState}`, { "page-offline-status--quiet": !["stale", "sync-pending", "error", "unavailable", "ineligible"].includes(offlineControlState) }]'
+                ) {{ offlineStatusLabel }}
               v-divider.page-tools-card__divider(v-if='updatedAt || hasAuthor || canViewHistory')
               .page-tools-card__provenance(v-if='updatedAt || hasAuthor || canViewHistory')
                 .page-document-provenance
@@ -4355,29 +4369,8 @@ export default defineComponent({
 }
 
 
-.page-header-control-pair {
-  display: flex;
-  min-width: 0;
-  max-width: 100%;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--wiki-space-2);
-  margin-inline-start: auto;
-  margin-block-start: calc(var(--wiki-space-1) - 2px);
-}
 
-.page-header-offline {
-  display: flex;
-  min-width: 0;
-  max-width: min(100%, 34rem);
-  flex: 0 1 auto;
-  align-items: center;
-  gap: var(--wiki-space-2);
-}
-
-.page-header-offline-status {
+.page-offline-status {
   min-width: 0;
   overflow-wrap: anywhere;
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
@@ -4385,12 +4378,12 @@ export default defineComponent({
   line-height: 1.35;
 }
 
-.page-header-offline-status--saved,
-.page-header-offline-status--expiring {
+.page-offline-status--saved,
+.page-offline-status--expiring {
   color: var(--wiki-accent-warm);
 }
 
-.page-header-offline-status--quiet {
+.page-offline-status--quiet {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -4401,28 +4394,22 @@ export default defineComponent({
   white-space: nowrap;
 }
 
-.page-header-offline-status--stale,
-.page-header-offline-status--sync-pending,
-.page-header-offline-status--ineligible {
+.page-offline-status--stale,
+.page-offline-status--sync-pending,
+.page-offline-status--ineligible {
   color: rgb(var(--v-theme-warning));
 }
 
-.page-header-offline-status--error,
-.page-header-offline-status--unavailable {
+.page-offline-status--error,
+.page-offline-status--unavailable {
   color: rgb(var(--v-theme-error));
 }
-
 .page-offline-control,
 .page-offline-retry-control {
   flex: 0 0 auto;
 }
 
 .page-offline-control {
-  width: 26px !important;
-  height: 26px !important;
-  min-width: 26px !important;
-  min-height: 26px !important;
-  padding: 0 !important;
   border: 1px solid color-mix(in srgb, var(--wiki-accent-ink) 24%, var(--wiki-surface-border)) !important;
   background: color-mix(in srgb, var(--wiki-accent-ink) 8%, transparent) !important;
   color: var(--wiki-accent-ink) !important;
@@ -4434,10 +4421,6 @@ export default defineComponent({
   &:hover:not(:disabled) {
     border-color: color-mix(in srgb, var(--wiki-accent-ink) 44%, var(--wiki-surface-border)) !important;
     background: color-mix(in srgb, var(--wiki-accent-ink) 14%, transparent) !important;
-  }
-
-  .v-icon {
-    font-size: .875rem !important;
   }
 
   &--saved,
@@ -4455,18 +4438,6 @@ export default defineComponent({
     border-color: color-mix(in srgb, var(--wiki-accent-warm) 46%, var(--wiki-surface-border)) !important;
     background: color-mix(in srgb, var(--wiki-accent-warm) 9%, transparent) !important;
     color: var(--wiki-accent-warm) !important;
-  }
-}
-
-.page-offline-retry-control {
-  width: 26px !important;
-  height: 26px !important;
-  min-width: 26px !important;
-  min-height: 26px !important;
-  padding: 0 !important;
-
-  .v-icon {
-    font-size: .875rem !important;
   }
 }
 
@@ -4494,25 +4465,6 @@ export default defineComponent({
   .page-tools-history-link {
     min-width: 44px !important;
     min-height: 44px !important;
-  }
-
-  .page-offline-control,
-  .page-offline-retry-control,
-  .page-focus-control {
-    height: 32px !important;
-    min-height: 32px !important;
-  }
-
-  .page-offline-control,
-  .page-offline-retry-control {
-    width: 32px !important;
-    min-width: 32px !important;
-  }
-
-  .page-focus-control {
-    min-width: 32px !important;
-    padding-inline-end: var(--wiki-space-2);
-    padding-block-end: 0 !important;
   }
 }
 
@@ -4776,6 +4728,13 @@ export default defineComponent({
   min-height: 0;
 }
 
+.page-header-unpublished {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--wiki-space-2);
+}
+
 .page-header-section {
   position: relative;
   z-index: 2;
@@ -4790,7 +4749,7 @@ export default defineComponent({
     display: grid;
     min-width: 0;
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: auto auto;
+    grid-template-rows: auto auto auto auto auto;
     column-gap: var(--wiki-space-4);
     row-gap: 0;
     align-items: start;
@@ -4810,12 +4769,23 @@ export default defineComponent({
     grid-row: 2;
   }
 
-  > .is-page-header > .page-header-control-pair {
+  > .is-page-header > .page-header-path {
     grid-column: 1 / -1;
     grid-row: 3;
-    margin-inline-start: 0;
-    margin-block-start: calc(var(--wiki-space-1) - 2px);
   }
+
+  > .is-page-header > .page-header-unpublished {
+    grid-column: 1 / -1;
+    grid-row: 4;
+    justify-self: start;
+  }
+
+  > .is-page-header > .page-edit-shortcuts {
+    grid-column: 1 / -1;
+    grid-row: 5;
+    justify-self: end;
+  }
+
 
   .page-header-summary {
     display: flex;
@@ -4979,7 +4949,21 @@ export default defineComponent({
 
   .page-header-section {
     > .is-page-header {
-      grid-template-columns: minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr) max-content;
+
+      > .page-header-headings {
+        grid-column: 1 / -1;
+      }
+
+      > .page-header-unpublished {
+        grid-column: 1;
+        grid-row: 4;
+      }
+
+      > .page-edit-shortcuts {
+        grid-column: 2;
+        grid-row: 4;
+      }
     }
 
     .page-edit-shortcuts { max-width: 100%; flex-wrap: wrap; }
@@ -5018,15 +5002,38 @@ export default defineComponent({
     }
 
 
-    > .page-header--toc-left > .page-header-summary,
-    > .page-header--toc-left > .page-header-control-pair {
+    > .page-header--toc-left > .page-header-summary {
       padding-inline-start: var(--wiki-space-4);
       grid-column: 2 / -1;
     }
 
-    > .page-header--toc-right > .page-header-summary,
-    > .page-header--toc-right > .page-header-control-pair {
+    > .page-header--toc-right > .page-header-summary {
       grid-column: 1 / -2;
+    }
+
+    > .page-header--toc-left > .page-header-path,
+    > .page-header--toc-left > .page-header-unpublished {
+      padding-inline-start: var(--wiki-space-4);
+      grid-column: 2 / -1;
+    }
+
+    > .page-header--toc-left > .page-edit-shortcuts {
+      grid-column: 2 / -1;
+    }
+
+    > .page-header--toc-right > .page-header-path,
+    > .page-header--toc-right > .page-header-unpublished,
+    > .page-header--toc-right > .page-edit-shortcuts {
+      grid-column: 1 / -2;
+    }
+    > .page-header--toc-right > .page-header-headings {
+      grid-column: 1;
+    }
+
+
+    > .is-page-header > .page-header-unpublished,
+    > .is-page-header > .page-edit-shortcuts {
+      grid-row: 4;
     }
   }
 }
@@ -5491,6 +5498,10 @@ export default defineComponent({
 }
 .page-tools-card {
   --page-shortcut-target: 36px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--wiki-space-1);
 
   border: 1px solid var(--wiki-surface-border) !important;
   overflow: hidden !important;
@@ -5516,31 +5527,41 @@ export default defineComponent({
   }
 
   &__utilities {
+    display: flex;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+
     .v-toolbar {
+      width: fit-content;
+      max-width: 100%;
+      flex: 0 1 auto;
       height: auto !important;
       min-height: var(--page-shortcut-target);
       background: transparent !important;
       overflow: visible !important;
-      padding: var(--wiki-space-1) var(--wiki-space-2) !important;
+      padding: var(--wiki-space-1);
     }
 
     .v-toolbar__content {
       display: flex;
+      width: 100%;
       height: auto !important;
       min-height: var(--page-shortcut-target);
       flex-wrap: wrap;
       column-gap: var(--wiki-space-1);
       row-gap: var(--wiki-space-1);
-      justify-content: space-between;
-      > :not(.v-spacer) {
-        display: flex;
-        min-width: 0;
-        flex: 1 1 0;
-        justify-content: center;
-      }
+      justify-content: flex-start;
       align-items: center;
       padding: 0 !important;
       overflow: visible !important;
+
+      > :not(.v-spacer) {
+        display: flex;
+        min-width: 0;
+        flex: 0 0 var(--page-shortcut-target);
+        justify-content: center;
+      }
     }
 
     .v-badge {
@@ -5558,13 +5579,30 @@ export default defineComponent({
     padding: var(--wiki-space-1) var(--wiki-space-2);
   }
 
+  &__utilities--shared {
+    display: flex;
+    flex: 0 1 auto;
+    min-width: 0;
+    align-items: center;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: var(--wiki-space-1);
+    padding: var(--wiki-space-1);
+
+    .page-offline-status {
+      flex: 0 1 100%;
+    }
+  }
   &__divider {
+    flex: 0 0 100%;
     opacity: 1;
     border-color: var(--wiki-surface-border);
   }
 
+
   &__provenance {
     display: flex;
+    flex: 0 0 100%;
     align-items: center;
     justify-content: space-between;
     column-gap: var(--wiki-space-2);
@@ -5605,14 +5643,15 @@ export default defineComponent({
     }
   }
 
-  /* Mobile utilities: same icon row as desktop, sized for a narrow card.
-     Buttons distribute across the full row (first at the start, last at the
-     end, the rest evenly between) like the desktop rail toolbar. */
+  /* Mobile keeps the same compact, start-aligned icon cluster as desktop. */
   .page-tools-card__utilities--inline {
     display: flex;
-    flex: 1 1 auto;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
     flex-wrap: wrap;
-    justify-content: space-between;
+    justify-content: flex-start;
+    gap: var(--wiki-space-1);
     padding-inline: var(--wiki-space-1);
 
     .v-btn--icon.v-btn--size-small {
@@ -6002,9 +6041,6 @@ export default defineComponent({
     margin-inline-end: 0;
   }
 
-  .page-header-unpublished {
-    flex: 0 0 auto;
-  }
 
   .page-hero,
   .page-header-section {
@@ -6034,15 +6070,6 @@ export default defineComponent({
     .page-edit-shortcuts {
       display: none;
     }
-  }
-  .page-header-control-pair {
-    justify-content: flex-start;
-    margin-inline-start: 0;
-  }
-
-  .page-header-offline {
-    max-width: 100%;
-    flex-basis: auto;
   }
 
 
@@ -6191,7 +6218,6 @@ export default defineComponent({
   .page-edit-shortcuts,
   .page-edit-fab,
   .page-return-top,
-  .page-header-offline,
   .page-mobile-tools,
   .page-tablet-tools,
   .page-mobile-metadata,
@@ -6204,6 +6230,21 @@ export default defineComponent({
   .page-comments-card,
   .comments-container {
     display: none !important;
+  }
+
+  .page-header-section > .is-page-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-header-section > .is-page-header > .page-header-headings {
+    grid-column: 1;
+    padding-inline-start: 0;
+  }
+
+  .page-header-section > .is-page-header > .page-header-summary,
+  .page-header-section > .is-page-header > .page-header-unpublished {
+    grid-column: 1;
+    padding-inline-start: 0;
   }
   .page-tools-card {
     width: 100%;
@@ -6405,21 +6446,6 @@ export default defineComponent({
   background: linear-gradient(270deg, color-mix(in srgb, var(--wiki-accent-ink) 25%, transparent), color-mix(in srgb, var(--wiki-accent-ink) 85%, transparent));
 }
 
-.page-focus-control {
-  /* Match the offline cloud control so both header actions read as one row. */
-  height: 1.625rem;
-  min-height: 1.625rem;
-  margin-inline-start: var(--wiki-space-1);
-  border-inline-start: 1px solid var(--wiki-surface-border);
-  padding-inline-start: var(--wiki-space-2);
-  border-radius: 0;
-  color: var(--wiki-accent-ink);
-  letter-spacing: 0;
-
-  .v-icon {
-    font-size: .875rem !important;
-  }
-}
 
 
 .page-reading-dock {
@@ -6520,8 +6546,7 @@ export default defineComponent({
     > div { margin-inline: auto; }
   }
 
-  .page-header-section > .is-page-header > .page-header-summary,
-  .page-header-section > .is-page-header > .page-header-control-pair {
+  .page-header-section > .is-page-header > .page-header-summary {
     grid-column: 1;
     padding-inline-start: 0;
   }

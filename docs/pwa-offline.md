@@ -245,7 +245,9 @@ Before service-worker update reload, every active client reports whether it has 
 
 The visual direction is a **resilient field notebook**: a quiet, editorial extension of the current reader chrome, not a dashboard replacement. Reuse theme surface, glass, typography, focus, and motion tokens.
 
-The page tools surface gains **Save offline copy** only when an admission endpoint allows the page and the required private key is unlocked. States include checking, updating, saved, locked, expiring, stale/error, unavailable, remove, and explicit exclusion. The reader status is source-aware: it reports whether the page is selected or excluded and names every active source—**Manual**, **Automatic**, and each followed tag—alongside whether a readable offline copy is present, pending, stale, locked, or unavailable.
+The page tools surface shows **Save offline copy** with a disabled or explanatory state until page admission and any required private key permit the action. States include checking, updating, saved, locked, expiring, stale/error, unavailable, remove, and explicit exclusion. The reader status is source-aware: it reports whether the page is selected or excluded and names every active source—**Manual**, **Automatic**, and each followed tag—alongside whether a readable offline copy is present, pending, stale, locked, or unavailable.
+
+In the reader, the icon-only offline action sits with the other page utilities above Page Contents on desktop and mobile rather than in the page title/description header. The nearby Focus reader icon has a tooltip. The offline retry action remains conditional, and the live status continues to describe the current saved-copy state without relying on the button icon alone.
 
 ### 8.1 Foreground snapshot synchronization
 

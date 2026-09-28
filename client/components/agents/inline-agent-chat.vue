@@ -252,7 +252,12 @@
                       @click="sendPrompt(starter.prompt)"
                     >
                       <span class="inline-agent__starter-heading">
-                        <v-icon :icon="starter.icon" size="20" aria-hidden="true" />
+                        <v-icon
+                          :icon="starter.icon"
+                          size="20"
+                          :class="`inline-agent__starter-icon--${starterIndex % starters.length}`"
+                          aria-hidden="true"
+                        />
                         <strong>{{ starter.label }}</strong>
                       </span>
                       <span class="inline-agent__starter-copy"><small>{{ starter.description }}</small></span>
@@ -2013,6 +2018,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   flex: 0 0 auto;
   min-width: var(--wiki-control-height);
   min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+  --agent-history-hover-tint: #673ab7;
+  --agent-history-hover-surface: rgb(103 58 183 / 14%);
+}
+
+.v-theme--dark .inline-agent__history-toggle {
+  --agent-history-hover-tint: #b39ddb;
+  --agent-history-hover-surface: rgb(179 157 219 / 20%);
 }
 
 .inline-agent__mobile-navigation {
@@ -2106,9 +2118,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     color: var(--agent-new-hover-tint) !important;
   }
 
-  .inline-agent__history-toggle:not(.v-btn--disabled):hover,
+  .inline-agent__history-toggle:not(.v-btn--disabled):hover {
+    color: var(--agent-history-hover-tint) !important;
+    background-color: var(--agent-history-hover-surface) !important;
+  }
+
   .inline-agent__history-toggle:not(.v-btn--disabled):hover :deep(.v-icon) {
-    color: #7c3aed !important;
+    color: var(--agent-history-hover-tint) !important;
   }
 }
 .inline-agent__session-line {
@@ -2557,10 +2573,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   padding-inline: 1.25rem;
 }
 
-.inline-agent__starter-heading > :deep(.v-icon:first-child) {
-  flex: 0 0 auto;
-  font-size: 1.25rem;
-}
+.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--0) { color: #6d9f9a; }
+.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--1) { color: #b18b63; }
+.inline-agent__starter-heading > :deep(.inline-agent__starter-icon--2) { color: #8496b8; }
+
+.v-theme--dark .inline-agent__starter-heading > :deep(.inline-agent__starter-icon--0) { color: #a6d2ce; }
+.v-theme--dark .inline-agent__starter-heading > :deep(.inline-agent__starter-icon--1) { color: #e6c99f; }
+.v-theme--dark .inline-agent__starter-heading > :deep(.inline-agent__starter-icon--2) { color: #c2cde7; }
 
 .inline-agent__starter-heading strong {
   min-width: 0;
