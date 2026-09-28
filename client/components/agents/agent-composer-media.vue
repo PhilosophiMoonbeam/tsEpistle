@@ -83,10 +83,15 @@ let wakeLock: WakeLockSentinelLike | null = null
 let wakeLockPending = false
 const acquireWakeLock = async () => {
   const manager = (navigator as Navigator & { wakeLock?: WakeLockManager }).wakeLock
-  if (wakeLockPending || wakeLock !== null || disposed || !recording.value) return
+  if (wakeLockPending || wakeLock !== null || disposed || !recording.value || !manager) return
+  const current = generation
   wakeLockPending = true
   try {
     const sentinel = await manager.request('screen')
+    if (disposed || !recording.value || current !== generation) {
+      void sentinel.release().catch(() => {})
+      return
+    }
     wakeLock = sentinel
     // The browser releases the lock on its own when the page hides; clear the
     // handle so the visibilitychange listener can re-acquire when visible again.
@@ -108,9 +113,11 @@ let transcriptionRunId: string | null = null
 // Live microphone feedback for the recording waveform. Created per capture;
 // never connected to the output destination.
 let levelContext: AudioContext | null = null
+let levelSource: MediaStreamAudioSourceNode | null = null
 let levelAnalyser: AnalyserNode | null = null
 let levelData: Float32Array<ArrayBuffer> | null = null
-
+let analysisUnavailable = false
+let fallbackTimer: ReturnType<typeof setTimeout> | null = null
 // Speech-activity endpointing: the 60s countdown starts when sustained voice
 // is first detected (pre-roll does not consume the timer), sustained silence
 // after speech auto-stops into the review path, and a pre-roll with no
@@ -134,12 +141,17 @@ const releaseMicrophone = () => {
   if (timer !== null) clearInterval(timer)
   timer = null
   if (speechMonitor !== null) clearInterval(speechMonitor)
+  if (fallbackTimer !== null) clearTimeout(fallbackTimer)
+  fallbackTimer = null
+  analysisUnavailable = false
   speechMonitor = null
   speechDetected.value = false
   speechVotes = 0
   lastVoiceAt = 0
   stream?.getTracks().forEach(track => track.stop())
   stream = null
+  levelSource?.disconnect()
+  levelSource = null
   levelAnalyser = null
   levelData = null
   if (levelContext) {
@@ -152,15 +164,15 @@ const releaseMicrophone = () => {
  * One read of the live microphone: `level` is the visual amplitude from 0
  * (silence) to 1 (loudest) for the recording waveform, and `db` is the same
  * RMS expressed in dBFS (0 = digital full scale) for tone thresholds.
- * Returns honest zeros whenever capture is inactive or the audio graph is
- * unavailable; the waveform treats that as a flat line.
+ * Analysis failure returns null, distinct from actual silence. The waveform
+ * treats unavailable analysis as a flat line; endpointing uses manual stop.
  */
-const readAudioSample = (): { level: number; db: number } => {
-  if (!levelAnalyser || !levelData || typeof levelAnalyser.getFloatTimeDomainData !== 'function') return { level: 0, db: -96 }
+const readAudioSample = (): { level: number; db: number } | null => {
+  if (!levelAnalyser || !levelData || (levelContext?.state && levelContext.state !== 'running') || typeof levelAnalyser.getFloatTimeDomainData !== 'function') return null
   try {
     levelAnalyser.getFloatTimeDomainData(levelData)
   } catch {
-    return { level: 0, db: -96 }
+    return null
   }
   let sum = 0
   for (let index = 0; index < levelData.length; index += 1) sum += levelData[index] ** 2
@@ -168,26 +180,35 @@ const readAudioSample = (): { level: number; db: number } => {
   return { level: Math.min(1, rms * 3), db: rms > 0 ? 20 * Math.log10(rms) : -96 }
 }
 
-const getAudioLevel = (): number => readAudioSample().level
+const getAudioLevel = (): number => readAudioSample()?.level ?? 0
 
-const getAudioLevelDb = (): number => readAudioSample().db
+const getAudioLevelDb = (): number => readAudioSample()?.db ?? -96
 /** Attaches an analyser to the live stream so the waveform can show real input. */
 const startAudioFeedback = (microphone: MediaStream): void => {
   try {
     const contextCtor = window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (typeof contextCtor !== 'function') return
     const context = new contextCtor()
+    levelContext = context
     const source = context.createMediaStreamSource(microphone)
+    levelSource = source
     const analyser = context.createAnalyser()
     analyser.fftSize = 512
     source.connect(analyser)
-    levelContext = context
     levelAnalyser = analyser
     levelData = new Float32Array(analyser.fftSize)
+    if (context.state === 'suspended') void context.resume().catch(() => {})
   } catch {
-    // Waveform feedback is decorative; capture continues without it.
+    // Analysis is optional; the recording and manual stop still work without it.
+    levelSource?.disconnect()
+    levelSource = null
     levelAnalyser = null
     levelData = null
+    if (levelContext) {
+      const context = levelContext
+      levelContext = null
+      void context.close().catch(() => {})
+    }
   }
 }
 const cancelDictation = () => {
@@ -197,11 +218,13 @@ const cancelDictation = () => {
   if (recorder) {
     recorder.onstop = null
     recorder.ondataavailable = null
+    recorder.onerror = null
     if (recorder.state !== 'inactive') recorder.stop()
   }
   recorder = null
   releaseMicrophone()
   recording.value = false
+  requesting.value = false
   transcribing.value = false
   dictationIntent.value = 'insert'
   dictationSendResolve?.(null)
@@ -355,6 +378,7 @@ const chooseFiles = (event: Event) => {
 // Stop capture and settle through the pipeline. When intent is 'send' the
 // caller is awaiting the transcript through waitForDictationTranscript.
 const stopRecording = () => {
+  if (requesting.value) { cancelDictation(); return }
   if (recorder?.state === 'recording') recorder.stop()
   releaseMicrophone()
 }
@@ -382,7 +406,15 @@ const beginDictationSubmit = (): boolean => {
 const monitorSpeech = () => {
   if (!recording.value || recorder === null) return
   const now = Date.now()
-  const level = getAudioLevel()
+  const sample = analysisUnavailable ? null : readAudioSample()
+  if (!sample) {
+    if (fallbackTimer === null) {
+      analysisUnavailable = true
+      fallbackTimer = setTimeout(stopRecording, Math.max(0, 60_000 - (now - preRollStartedAt)))
+    }
+    return
+  }
+  const level = sample.level
   if (!speechDetected.value) {
     if (level >= SPEECH_ONSET_LEVEL) {
       speechVotes += 1
@@ -425,7 +457,7 @@ const startRecording = async () => {
   let chunks: Blob[] = []
   let byteLength = 0
   try {
-    const microphone = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const microphone = await navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true, channelCount: { ideal: 1 } }, video: false })
     if (disposed || current !== generation || props.networkBlocked) {
       microphone.getTracks().forEach(track => track.stop())
       if (current === generation) {
@@ -438,31 +470,38 @@ const startRecording = async () => {
     stream = microphone
     startAudioFeedback(microphone)
     const mimeType = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus'].find(type => MediaRecorder.isTypeSupported(type))
-    recorder = mimeType ? new MediaRecorder(microphone, { mimeType }) : new MediaRecorder(microphone)
-    recorder.ondataavailable = event => {
+    const captureRecorder = mimeType ? new MediaRecorder(microphone, { mimeType }) : new MediaRecorder(microphone)
+    recorder = captureRecorder
+    captureRecorder.ondataavailable = event => {
+      if (current !== generation) return
       byteLength += event.data.size
       if (byteLength > 10 * 1024 * 1024) { dictationError.value = 'Recording exceeded 10 MB. Please record a shorter message.'; cancelDictation(); return }
       chunks.push(event.data)
     }
-    recorder.onerror = () => { dictationError.value = 'Recording failed. Please try again.'; cancelDictation() }
-    recorder.onstop = () => {
-      const type = recorder?.mimeType || 'audio/webm'
-      recorder = null
+    captureRecorder.onerror = () => { if (current !== generation) return; cancelDictation(); dictationError.value = 'Recording failed. Please try again.' }
+    captureRecorder.onstop = () => {
+      if (current !== generation || disposed) return
+      const type = captureRecorder.mimeType || 'audio/webm'
+      captureRecorder.onstop = null
+      captureRecorder.ondataavailable = null
+      captureRecorder.onerror = null
+      if (recorder === captureRecorder) recorder = null
       releaseMicrophone()
       recording.value = false
-      if (current !== generation || disposed) return
       const file = new File(chunks, type.includes('mp4') ? 'dictation.m4a' : type.includes('ogg') ? 'dictation.ogg' : 'dictation.webm', { type: type.split(';')[0] })
       chunks = []
       void transcribe(file, session, csrfToken, current)
     }
-    recorder.start(1000)
+    captureRecorder.start(1000)
     preRollStartedAt = Date.now()
     speechMonitor = setInterval(monitorSpeech, SPEECH_TICK_MS)
     document.addEventListener('visibilitychange', handleWakeLockVisibility)
     void acquireWakeLock()
   } catch (value) {
-    requesting.value = false
-    if (current === generation && !disposed) { error.value = value instanceof Error ? value.message : 'Microphone access was not available.'; cancelDictation() }
+    if (current === generation && !disposed) {
+      cancelDictation()
+      dictationError.value = value instanceof Error ? value.message : 'Microphone access was not available.'
+    }
   }
 }
 const transcribe = async (file: File, session: AgentThreadState['session'], csrfToken: string, current: number) => {

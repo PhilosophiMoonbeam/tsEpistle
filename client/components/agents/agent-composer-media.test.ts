@@ -7,7 +7,7 @@ const source = fs.readFileSync(new URL('./agent-composer-media.vue', import.meta
 const script = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1]
 if (!script) throw new Error('Media composer script is missing')
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
-const evaluate = new Function('dependencies', `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window, document } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, recording, transcribing, error, dictationError, dictationIntent, seconds, speechDetected }`)
+const evaluate = new Function('dependencies', `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window, document } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, recording, transcribing, error, dictationError, dictationIntent, seconds, speechDetected, getAudioLevel }`)
 interface WakeLockSentinelStub {
   release: () => Promise<void>
   addEventListener?: (type: 'release', listener: () => void) => void
@@ -68,7 +68,7 @@ const mountAudio = (level: { value: number }) => {
     getFloatTimeDomainData(target: Float32Array): void { target.fill(level.value) }
   }
   return class {
-    createMediaStreamSource() { return { connect: () => undefined } }
+    createMediaStreamSource() { return { connect: () => undefined, disconnect: () => undefined } }
     createAnalyser() { return new Analyser() }
     close() { return Promise.resolve() }
   }
@@ -94,7 +94,7 @@ const makeDocumentStub = () => {
   }
 }
 
-const mount = (options: { media?: { attachments: boolean; imageGeneration: boolean; videoGeneration?: boolean; musicGeneration?: boolean; transcription: boolean }; fetch?: typeof fetch; microphone?: () => Promise<unknown>; focus?: () => void; generationToolsEnabled?: boolean; level?: { value: number }; wakeLock?: WakeLockManagerStub } = {}) => {
+const mount = (options: { media?: { attachments: boolean; imageGeneration: boolean; videoGeneration?: boolean; musicGeneration?: boolean; transcription: boolean }; fetch?: typeof fetch; microphone?: (constraints: MediaStreamConstraints) => Promise<unknown>; recorder?: typeof Recorder; focus?: () => void; generationToolsEnabled?: boolean; level?: { value: number }; wakeLock?: WakeLockManagerStub } = {}) => {
   const props = reactive({ csrfToken: 'csrf', session: { id: sessionId, version: 3, profileResolutionToken: 'resolved' }, capabilities: options.media, generationToolsEnabled: options.generationToolsEnabled, disabled: false, networkBlocked: false })
   const events: Array<[string, unknown]> = []
   const cleanup: Array<() => void> = []
@@ -102,7 +102,7 @@ const mount = (options: { media?: { attachments: boolean; imageGeneration: boole
   let microphoneCalls = 0
   const documentStub = makeDocumentStub()
   const scope = effectScope()
-  const api = scope.run(() => evaluate({ computed, nextTick, ref, watch, useTemplateRef: (key: string) => ref(key === 'mediaControls' && options.focus ? { querySelector: () => ({ focus: options.focus, isConnected: true, disabled: false }) } : null), onBeforeUnmount: (fn: () => void) => cleanup.push(fn), defineProps: () => props, defineEmits: () => (event: string, value: unknown) => events.push([event, value]), defineExpose: () => {}, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator: { mediaDevices: { getUserMedia: async () => { microphoneCalls++; return options.microphone ? options.microphone() : { getTracks: () => [{ stop: () => { stopped++ } }] } } }, wakeLock: options.wakeLock }, MediaRecorder: Recorder, document: documentStub.stub, window: { requestAnimationFrame: (callback: () => void) => callback(), fetch: options.fetch ?? (async () => response({ media })), AudioContext: options.level ? mountAudio(options.level) : undefined } }))
+  const api = scope.run(() => evaluate({ computed, nextTick, ref, watch, useTemplateRef: (key: string) => ref(key === 'mediaControls' && options.focus ? { querySelector: () => ({ focus: options.focus, isConnected: true, disabled: false }) } : null), onBeforeUnmount: (fn: () => void) => cleanup.push(fn), defineProps: () => props, defineEmits: () => (event: string, value: unknown) => events.push([event, value]), defineExpose: () => {}, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator: { mediaDevices: { getUserMedia: async (constraints: MediaStreamConstraints) => { microphoneCalls++; return options.microphone ? options.microphone(constraints) : { getTracks: () => [{ stop: () => { stopped++ } }] } } }, wakeLock: options.wakeLock }, MediaRecorder: options.recorder ?? Recorder, document: documentStub.stub, window: { requestAnimationFrame: (callback: () => void) => callback(), fetch: options.fetch ?? (async () => response({ media })), AudioContext: options.level ? mountAudio(options.level) : undefined } }))
   return { api, props, events, stopped: () => stopped, microphoneCalls: () => microphoneCalls, visibility: documentStub.visibility, unmount: () => { cleanup.forEach(fn => { fn() }); scope.stop() } }
 }
 describe('Agent media composer lifecycle', () => {
@@ -125,6 +125,88 @@ describe('Agent media composer lifecycle', () => {
     await starting
     expect(stopped).toBe(1)
     expect(harness.events.some(([event]) => event === 'dictation')).toBe(false)
+  })
+  it('requests native voice processing on the stream recorded and analysed for dictation', async () => {
+    let requested: MediaStreamConstraints | undefined
+    const level = { value: 0.2 }
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, level, microphone: async constraints => {
+      requested = constraints
+      return { getTracks: () => [{ stop: () => {} }] }
+    } })
+    await harness.api.startRecording()
+    expect(requested?.audio).toEqual({ noiseSuppression: true, echoCancellation: true, autoGainControl: true, channelCount: { ideal: 1 } })
+    expect(harness.api.getAudioLevel()).toBeGreaterThan(0)
+    harness.api.cancelDictation()
+    harness.unmount()
+  })
+  it('keeps capture usable without an analyser and preserves the recording past the pre-roll limit', async () => {
+    const paths: string[] = []
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, fetch: async input => {
+      const path = String(input); paths.push(path)
+      if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+      if (path.endsWith('/transcriptions')) return response({ runId })
+      if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Still recording.' })
+      throw new Error(`Unexpected request ${path}`)
+    } })
+    await harness.api.startRecording()
+    await withTimeOffset(async () => {
+      const realNow = Date.now
+      Date.now = () => realNow() + 11_000
+      await sleep(250)
+    })
+    expect(harness.api.recording.value).toBe(true)
+    harness.api.stopRecording()
+    await settle()
+    expect(harness.events).toContainEqual(['dictation', 'Still recording.'])
+    expect(paths.some(path => path.endsWith('/media'))).toBe(true)
+    harness.unmount()
+  })
+  it('does not start capture after Stop while microphone permission is pending', async () => {
+    const { promise, resolve } = Promise.withResolvers<unknown>()
+    let stopped = 0
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, microphone: () => promise })
+    const starting = harness.api.startRecording()
+    harness.api.stopRecording()
+    resolve({ getTracks: () => [{ stop: () => { stopped++ } }] })
+    await starting
+    expect(stopped).toBe(1)
+    expect(harness.api.recording.value).toBe(false)
+    expect(harness.events.some(([event]) => event === 'dictation')).toBe(false)
+    harness.unmount()
+  })
+  it('uploads the final asynchronous recorder chunk once and ignores late events after cancel', async () => {
+    class AsyncRecorder extends Recorder {
+      stop() {
+        this.state = 'inactive'
+        queueMicrotask(() => {
+          this.ondataavailable?.({ data: new Blob(['final voice'], { type: this.mimeType }) })
+          this.onstop?.()
+        })
+      }
+    }
+    const recorded: string[] = []
+    const harness = mount({ media: { attachments: false, imageGeneration: false, transcription: true }, recorder: AsyncRecorder, fetch: async (input, init) => {
+      const path = String(input)
+      if (path.endsWith('/media')) {
+        const file = (init?.body as FormData | undefined)?.get('file')
+        if (!(file instanceof File)) throw new Error('Missing dictation recording')
+        recorded.push(await file.text())
+        return response({ media: { ...media, mimeType: 'audio/webm' } })
+      }
+      if (path.endsWith('/transcriptions')) return response({ runId })
+      if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Final chunk.' })
+      throw new Error(`Unexpected request ${path}`)
+    } })
+    await harness.api.startRecording()
+    harness.api.stopRecording()
+    await settle()
+    expect(recorded).toEqual(['final voice'])
+    expect(harness.events).toContainEqual(['dictation', 'Final chunk.'])
+    await harness.api.startRecording()
+    harness.api.cancelDictation()
+    await settle()
+    expect(recorded).toEqual(['final voice'])
+    harness.unmount()
   })
   it('transcribes into an editable draft without sending a chat message and releases the microphone', async () => {
     const paths: string[] = []
