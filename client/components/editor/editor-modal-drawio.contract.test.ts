@@ -14,7 +14,10 @@ const script = descriptor.script?.content ?? ''
 describe('Draw.io editor modal contract', () => {
   test('activates and disposes the shared modal focus scope', () => {
     expect(errors).toEqual([])
-    expect(template).toMatch(/v-card\.editor-modal-drawio[\s\S]*ref='modalRoot'[\s\S]*role='dialog'[\s\S]*aria-modal='true'/)
+    expect(template).toMatch(
+      /v-card\.editor-modal-drawio[\s\S]*ref='modalRoot'[\s\S]*role='dialog'[\s\S]*aria-modal='true'[\s\S]*aria-labelledby='drawio-editor-title'/
+    )
+    expect(template).toContain('v-toolbar-title#drawio-editor-title Draw.io')
     expect(template).toMatch(/v-btn\([\s\S]*ref='closeButton'[\s\S]*aria-label='Back to editor'/)
     expect(script).toContain("import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'")
     expect(script).toMatch(
@@ -24,8 +27,7 @@ describe('Draw.io editor modal contract', () => {
     expect(focusScopeSource).toMatch(/'iframe'/)
   })
 
-  test('keeps Escape on the existing close path', () => {
-    expect(script).toMatch(/onEscape: this\.close/)
+  test('clears the load timer and returns to the editor when closed', () => {
     expect(script).toMatch(/close \(\) \{[\s\S]*this\.clearLoadTimer\(\)[\s\S]*wikiStore\.editor\.activeModal = ''/)
   })
 

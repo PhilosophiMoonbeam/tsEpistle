@@ -101,8 +101,6 @@ describe('self-hosted typography contracts', () => {
     expect(rootTokens['--wiki-font-mono']).toBe("'Roboto Mono', 'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace")
     expect(base).not.toMatch(/font-feature-settings\s*:/)
     expect(base).not.toMatch(/data-wiki-font/)
-    expect(extractBlocks(base, "html[data-wiki-font='newsreader']")).toHaveLength(0)
-    expect(extractBlocks(base, "html[data-wiki-font='roboto-flex']")).toHaveLength(0)
 
     expect(read('client/themes/default/components/page.vue')).toMatch(/\.page-title \{\s*font-family: var\(--wiki-font-display\)/)
     expect(read('client/components/agents/inline-agent-chat.vue')).toMatch(/\.inline-agent__welcome h2 \{[^}]*font-family: var\(--wiki-font-display\)/)

@@ -49,20 +49,25 @@ describe('discussion workspace drafts and action recovery', () => {
     expect(state.dirty).toBe(true); expect(state.saved.pageRatingsEnabled).toBe(false); expect(state.pageRatingsEnabled).toBe(true); expect(state.reviewOpen).toBe(true); expect(state.saveError).toBe('Settings changed. Reload.'); expect(state.busy).toBe(false)
   })
   it('keeps a committed save distinct from a failed runtime refresh', async () => {
-    const { state, transport } = arrange(); await state.reload(); state.enabled = false; state.pageRatingsEnabled = true
-    transport.saveDiscussionWorkspace.mockResolvedValue({ ...snapshot, enabled: false, pageRatingsEnabled: true, fingerprint: 'second', warnings: [] }); transport.fetchDiscussionWorkspace.mockRejectedValue(new Error('Unavailable'))
-    await state.savePolicy(); expect(state.dirty).toBe(false); expect(state.saved.enabled).toBe(false); expect(state.saved.pageRatingsEnabled).toBe(true); expect(state.pageRatingsEnabled).toBe(true); expect(state.notice).toContain('saved.'); expect(state.notice).toContain('could not be refreshed'); expect(state.saveError).toBe('')
+    const { state, transport } = arrange(); await state.reload(); state.enabled = false; state.pageRatingsEnabled = true; state.current.config.minDelay = 45
+    transport.saveDiscussionWorkspace.mockResolvedValue({ ...snapshot, providers: [{ ...provider, config: { ...provider.config, minDelay: 45 } }], enabled: false, pageRatingsEnabled: true, fingerprint: 'second', warnings: [] }); transport.fetchDiscussionWorkspace.mockRejectedValue(new Error('Unavailable'))
+    await state.savePolicy(); expect(state.dirty).toBe(false); expect(state.saved.enabled).toBe(false); expect(state.saved.pageRatingsEnabled).toBe(true); expect(state.pageRatingsEnabled).toBe(true); expect(state.current.config.minDelay).toBe(45); expect(state.notice).toContain('saved.'); expect(state.notice).toContain('could not be refreshed'); expect(state.saveError).toBe('')
+    expect(transport.saveDiscussionWorkspace).toHaveBeenCalledTimes(1)
+    expect(transport.saveDiscussionWorkspace).toHaveBeenCalledWith(false, [{ key: 'default', isEnabled: true, config: { akismet: '********', minDelay: 45 } }], 'first', 'thumbs', true)
   })
   it('ignores a late comment inspection when another comment is selected', async () => {
     let release
     const { state, transport } = arrange({ inspectDiscussion: vi.fn().mockImplementationOnce(() => new Promise(resolve => { release = resolve })).mockResolvedValueOnce({ id: 2 }) })
     const pending = state.openComment(1); await state.openComment(2); release({ id: 1 }); await pending
     expect(state.detail.id).toBe(2); expect(transport.inspectDiscussion).toHaveBeenCalledTimes(2)
+    expect(transport.inspectDiscussion).toHaveBeenNthCalledWith(1, 1)
+    expect(transport.inspectDiscussion).toHaveBeenNthCalledWith(2, 2)
   })
   it('does not replace an unsaved policy when moderation refreshes workspace counts', async () => {
     const { state, transport } = arrange(); await state.reload(); state.current.config.minDelay = 60
-    state.detail = { id: 1, isHidden: false, fingerprint: 'before' }; state.reason = 'Needs context'
+    state.detail = { id: 1, isHidden: false, fingerprint: 'before' }; state.reason = '  Needs context  '
     transport.moderateDiscussion.mockResolvedValue({ id: 1, isHidden: true, fingerprint: 'after' }); await state.moderate()
+    expect(transport.moderateDiscussion).toHaveBeenCalledWith(1, true, 'Needs context', 'before')
     expect(state.detail.isHidden).toBe(true); expect(state.reason).toBe(''); expect(state.current.config.minDelay).toBe(60); expect(state.saved.providers[0].config.minDelay).toBe(30)
   })
   it('retains a failed moderation reason and does not flip visibility', async () => {

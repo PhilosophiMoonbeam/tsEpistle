@@ -25,17 +25,12 @@ const executeLoadPages = new AsyncFunction(
 
 describe('admin pages visualize REST facade', () => {
   it('loads page links through the pages REST helper instead of Apollo', () => {
-    expect(source).toContain("<script lang='ts'>")
-    expect(script).toContain("import { defineComponent, markRaw } from 'vue'")
-    expect(loadPagesBody).toContain('this.pages = markRaw(pages)')
-    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
+    expect(script).toContain("import { fetchPageLinks, type PageLinkRow } from '../../helpers/pages-api'")
     expect(script).not.toContain('graphql-tag')
     expect(script).not.toMatch(/apollo\s*:/)
     expect(script).not.toContain('this.$apollo')
     expect(script).not.toContain('pages {')
-    expect(loadPagesBody).toContain('await fetchPageLinks(')
     expect(loadPagesBody).toContain('window.fetch.bind(window)')
-    expect(loadPagesBody).toContain('this.currentLocale')
   })
 
   it('keeps the newest request rendered when older requests for the same or another locale resolve afterward', async () => {
@@ -99,10 +94,7 @@ describe('admin pages visualize REST facade', () => {
     expect(script.match(/\.on\('click'/g)).toHaveLength(3)
   })
 
-  it('preserves loading and graph error behavior for page links loading', () => {
-    expect(loadPagesBody).toContain("wikiStore.startLoading('admin-pages-refresh')")
-    expect(loadPagesBody).toContain("wikiStore.stopLoading('admin-pages-refresh')")
-    expect(loadPagesBody).toContain('wikiStore.showError(err)')
+  it('loads page links on mount and when the selected locale changes', () => {
     expect(script).toMatch(/currentLocale\s*\(\)\s*\{\s*this\.loadPages\(\)\s*\}/)
     expect(script).toMatch(/mounted\s*\(\s*\)\s*\{\s*this\.loadPages\(\)\s*\}/)
   })

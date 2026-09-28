@@ -10,9 +10,8 @@ const template = descriptor.template?.content ?? ''
 const script = descriptor.script?.content ?? ''
 const styles = descriptor.styles.map(style => style.content).join('\n')
 const providerStart = template.indexOf('v-toolbar.profile-auth-provider(')
-const providerEnd = template.indexOf('//- v-divider.mt-3', providerStart)
-const providerTemplate = template.slice(providerStart, providerEnd)
 const passwordStart = template.indexOf("template(v-if='user.providerKey === `local`')")
+const providerTemplate = template.slice(providerStart, passwordStart).replace(/^\s*\/\/-.*$/gm, '')
 const passwordEnd = template.indexOf("v-col(lg='6' cols='12')", passwordStart)
 const passwordTemplate = template.slice(passwordStart, passwordEnd)
 
@@ -50,6 +49,8 @@ describe('profile authentication provider card contract', () => {
     for (const field of ['displayName', 'location', 'jobTitle', 'timezone', 'dateFormat', 'appearance']) {
       expect(template).toContain(`:aria-label='$t(\`common:actions.edit\`) + \` \` + $t(\`profile:${field}\`)'`)
     }
+    expect(template).toContain(":aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:mentionHandle`, { defaultValue: `Mention handle` })'")
+    expect(template).toContain(":aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:timeFormat`, { defaultValue: `Time format` })'")
     expect(template).not.toMatch(/aria-label=['"]Edit(?:\s|['"])/)
   })
 

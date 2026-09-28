@@ -177,7 +177,6 @@ describe('Agent memory manager rendered contract', () => {
     const { host } = await mountManager()
     const buttons = Array.from(host.querySelectorAll<HTMLButtonElement>('.agent-memory__target .v-btn'))
     expect(buttons.map(button => button.textContent?.trim())).toEqual(['You', 'Agent'])
-    expect(buttons).toHaveLength(2)
     expect(buttons[0]?.classList.contains('v-btn--active')).toBe(true)
 
     const editorLabel = () => host.querySelector('.agent-memory__editor .v-field-label')?.textContent?.trim()

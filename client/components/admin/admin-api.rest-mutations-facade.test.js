@@ -87,6 +87,7 @@ describe('admin-api REST mutation migration guard', () => {
 
   test('globalSwitch serializes toggles and refreshes before reporting REST success', async () => {
     const mutation = deferred()
+    const refreshResult = deferred()
     const mutationCalls = []
     const refreshCalls = []
     const wiki = createWikiStore()
@@ -105,7 +106,7 @@ describe('admin-api REST mutation migration guard', () => {
       loadState: 'success',
       refresh: async notify => {
         refreshCalls.push(notify)
-        return true
+        return refreshResult.promise
       },
       $t: key => key
     }
@@ -118,6 +119,11 @@ describe('admin-api REST mutation migration guard', () => {
     expect(typeof mutationCalls[0].fetchImplementation).toBe('function')
     expect(viewModel.isToggleLoading).toBe(true)
     mutation.resolve()
+    await Promise.resolve()
+    expect(refreshCalls).toEqual([false])
+    expect(wiki.notifications).toEqual([])
+    expect(viewModel.isToggleLoading).toBe(true)
+    refreshResult.resolve(true)
     await firstToggle
 
     expect(refreshCalls).toEqual([false])
@@ -179,6 +185,7 @@ describe('admin-api REST mutation migration guard', () => {
 
   test('revokeConfirm guards missing and concurrent selections, then refreshes before notifying', async () => {
     const mutation = deferred()
+    const refreshResult = deferred()
     const revokeCalls = []
     const refreshCalls = []
     const wiki = createWikiStore()
@@ -196,7 +203,7 @@ describe('admin-api REST mutation migration guard', () => {
       isRevokeConfirmDialogShown: true,
       refresh: async notify => {
         refreshCalls.push(notify)
-        return true
+        return refreshResult.promise
       },
       $t: key => key
     }
@@ -214,6 +221,12 @@ describe('admin-api REST mutation migration guard', () => {
     expect(viewModel.revokeLoading).toBe(true)
 
     mutation.resolve()
+    await Promise.resolve()
+    expect(refreshCalls).toEqual([false])
+    expect(wiki.notifications).toEqual([])
+    expect(viewModel.revokeLoading).toBe(true)
+    expect(viewModel.isRevokeConfirmDialogShown).toBe(true)
+    refreshResult.resolve(true)
     await firstRevoke
 
     expect(refreshCalls).toEqual([false])

@@ -24,7 +24,20 @@ const deferred = () => {
 const createComponentOptions = ({ fetchPage, wikiStore }) => {
   const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, '').replace('export default', 'return'))
 
-  return new Function('_', 'AsyncState', 'getErrorMessage', 'AdminPagePublicationSettings', 'AdminPageAccess', 'pageHref', 'publicationState', 'deletePageById', 'fetchPage', 'wikiStore', 'window', executableScript)(
+  return new Function(
+    '_',
+    'AsyncState',
+    'getErrorMessage',
+    'AdminPagePublicationSettings',
+    'AdminPageAccess',
+    'pageHref',
+    'publicationState',
+    'deletePageById',
+    'fetchPage',
+    'wikiStore',
+    'window',
+    executableScript
+  )(
     { toSafeInteger: Number },
     {},
     err => (err instanceof Error ? err.message : String(err)),
@@ -62,19 +75,43 @@ describe('admin pages edit REST single facade', () => {
     expect(script).not.toContain('pageQuery')
     expect(script).not.toMatch(/apollo\s*:/)
     expect(script).not.toContain('this.$apollo')
-    expect(loadPageBody).toContain('await fetchPage(')
     expect(loadPageBody).toContain('window.fetch.bind(window)')
-    expect(loadPageBody).toContain('const routePageId = _.toSafeInteger(this.$route.params.id)')
-    expect(loadPageBody).toContain('routePageId,')
   })
 
-  it('preserves page detail loading and graph error behavior', () => {
-    expect(loadPageBody).toContain('this.loading = true')
-    expect(loadPageBody).toContain("wikiStore.startLoading('admin-pages-refresh')")
-    expect(loadPageBody).toContain("wikiStore.stopLoading('admin-pages-refresh')")
-    expect(loadPageBody).toContain('wikiStore.showError(err)')
-    const options = createComponentOptions({ fetchPage: async () => ({}), wikiStore: {} })
+  it('surfaces current page detail errors and releases loading', async () => {
+    const failure = new Error('Page details failed')
+    const details = deferred()
+    const requestedPageIds = []
+    const errors = []
+    const loadingEvents = []
+    const options = createComponentOptions({
+      fetchPage: (_fetch, pageId) => {
+        requestedPageIds.push(pageId)
+        return details.promise
+      },
+      wikiStore: {
+        startLoading: loadingId => loadingEvents.push(['start', loadingId]),
+        stopLoading: loadingId => loadingEvents.push(['stop', loadingId]),
+        showError: error => errors.push(error)
+      }
+    })
+    const viewModel = createViewModel(options)
+
     expect(options.watch['$route.params.id'].immediate).toBe(true)
+    const pendingLoad = loadRoutedPage(options, viewModel)
+    expect(requestedPageIds).toEqual([1])
+    expect(viewModel.loading).toBe(true)
+
+    details.reject(failure)
+    await pendingLoad
+
+    expect(viewModel.errorMessage).toBe('Page details failed')
+    expect(viewModel.loading).toBe(false)
+    expect(errors).toEqual([failure])
+    expect(loadingEvents).toEqual([
+      ['start', 'admin-pages-refresh'],
+      ['stop', 'admin-pages-refresh']
+    ])
   })
 
   it('keeps only the latest routed page response and error while releasing every loading owner', async () => {
