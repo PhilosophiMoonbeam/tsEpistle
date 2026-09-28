@@ -174,11 +174,11 @@ source_migrations_json() {
 }
 
 normalized_app_contract() {
-  docker inspect "$APP_CONTAINER" | jq -S '.[0] | {
+  docker inspect "$APP_CONTAINER" | jq -S --arg proxyAlias "$PROXY_ALIAS" '.[0] | {
     name:.Name,user:.Config.User,restart:.HostConfig.RestartPolicy,readonly:.HostConfig.ReadonlyRootfs,
     portBindings:.HostConfig.PortBindings,exposedPorts:.Config.ExposedPorts,
     mounts:([.Mounts[]|{type:.Type,source:.Source,destination:.Destination,rw:.RW}]|sort_by(.destination)),
-    networks:(.NetworkSettings.Networks|to_entries|map({name:.key,aliases:(.value.Aliases|sort)})|sort_by(.name)),
+    networks:(.NetworkSettings.Networks|to_entries|map({name:.key,proxyAliasPresent:(.value.Aliases|index($proxyAlias) != null)})|sort_by(.name)),
     service:(.Config.Labels["com.docker.compose.service"]),project:(.Config.Labels["com.docker.compose.project"])
   }'
 }
