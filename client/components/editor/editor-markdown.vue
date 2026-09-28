@@ -278,6 +278,7 @@
 
 <script lang='ts'>
 import { defineComponent, markRaw, type PropType } from 'vue'
+import { useDisplay } from 'vuetify'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
@@ -465,12 +466,16 @@ export default defineComponent({
       default: () => WIKI_LINKS_DISABLED
     },
   },
+  setup() {
+    const { mdAndUp } = useDisplay()
+    return { mdAndUp }
+  },
   data() {
     return {
       markdownRenderer: markRaw(createEditorMarkdownRenderer(this.wikiLinkOptions)),
       cm: null as TextEditorHandle | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
-      previewShown: this.$vuetify.display.mdAndUp,
+      previewShown: Boolean(this.mdAndUp),
       previewAlignmentEnabled: true,
       previewHTML: '',
       previewDirty: true,
