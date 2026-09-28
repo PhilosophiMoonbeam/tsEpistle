@@ -324,6 +324,7 @@
                       icon
                       rounded='lg'
                       size='small'
+                      variant='text'
                       v-bind='menuProps'
                       :aria-label='$t(`common:page.share`)'
                     ): v-icon mdi-share-variant
@@ -336,6 +337,7 @@
                   icon
                   rounded='lg'
                   size='small'
+                  variant='text'
                   v-if='isAuthenticated'
                   :loading='pageWatchLoading'
                   :disabled='pageWatchLoading || !pageOnlineActionReady || !pageWatchAuthorityReady'
@@ -351,6 +353,7 @@
                       icon
                       rounded='lg'
                       size='small'
+                      variant='text'
                       v-bind='menuProps'
                       :aria-label='$t(`common:page.watchSettings`)'
                     )
@@ -382,6 +385,7 @@
                   icon
                   rounded='lg'
                   size='small'
+                  variant='text'
                   v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)'
                   :disabled='!pageOnlineActionReady'
                   :title='!pageOnlineActionReady ? pageOnlineActionUnavailableReason : undefined'
@@ -394,6 +398,7 @@
                   icon
                   rounded='lg'
                   size='small'
+                  variant='text'
                   v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)'
                   :disabled='!pageProtectionActionReady || protectionInitialLoading'
                   :title='!pageProtectionActionReady ? pageOnlineActionUnavailableReason || `Refresh page protection before changing it.` : undefined'
@@ -406,6 +411,7 @@
                   icon
                   rounded='lg'
                   size='small'
+                  variant='text'
                   @click='print'
                   :aria-label='$t(`common:page.printFormat`)'
                 )
@@ -418,6 +424,7 @@
                       icon
                       rounded='lg'
                       size='small'
+                      variant='text'
                       :class='`page-offline-control--${offlineControlState}`'
                       :color='offlineControlColor'
                       :loading='offlineActionLoading'
@@ -437,6 +444,7 @@
                       v-bind='props'
                       icon
                       rounded='lg'
+                      variant='text'
                       size='small'
                       :loading='offlineActionLoading'
                       :disabled='offlineActionLoading || offlineOwnedOperationId !== null'
@@ -453,6 +461,7 @@
                       icon
                       rounded='lg'
                       size='small'
+                      variant='text'
                       :aria-label='$t(`common:page.focusReading`)'
                       :aria-pressed='readerFocus'
                       v-if='!readerFocus && !talkActive && !linksActive'
@@ -4410,33 +4419,15 @@ export default defineComponent({
 }
 
 .page-offline-control {
-  border: 1px solid color-mix(in srgb, var(--wiki-accent-ink) 24%, var(--wiki-surface-border)) !important;
-  background: color-mix(in srgb, var(--wiki-accent-ink) 8%, transparent) !important;
-  color: var(--wiki-accent-ink) !important;
-  transition:
-    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-    background var(--wiki-motion-fast) var(--wiki-motion-ease),
-    color var(--wiki-motion-fast) var(--wiki-motion-ease);
-
-  &:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--wiki-accent-ink) 44%, var(--wiki-surface-border)) !important;
-    background: color-mix(in srgb, var(--wiki-accent-ink) 14%, transparent) !important;
-  }
+  transition: color var(--wiki-motion-fast) var(--wiki-motion-ease);
 
   &--saved,
-  &--expiring {
-    border-color: color-mix(in srgb, var(--wiki-accent-warm) 44%, var(--wiki-surface-border)) !important;
-    background: color-mix(in srgb, var(--wiki-accent-warm) 13%, transparent) !important;
-    color: var(--wiki-accent-warm) !important;
-  }
-
+  &--expiring,
   &--stale,
   &--sync-pending,
   &--error,
   &--unavailable,
   &--ineligible {
-    border-color: color-mix(in srgb, var(--wiki-accent-warm) 46%, var(--wiki-surface-border)) !important;
-    background: color-mix(in srgb, var(--wiki-accent-warm) 9%, transparent) !important;
     color: var(--wiki-accent-warm) !important;
   }
 }
@@ -5540,7 +5531,7 @@ export default defineComponent({
       min-height: var(--page-shortcut-target);
       background: transparent !important;
       overflow: visible !important;
-      padding: var(--wiki-space-1);
+      padding: var(--wiki-space-1) 0 var(--wiki-space-1) var(--wiki-space-1);
     }
 
     .v-toolbar__content {
@@ -5561,6 +5552,10 @@ export default defineComponent({
         min-width: 0;
         flex: 0 0 var(--page-shortcut-target);
         justify-content: center;
+      }
+
+      > :last-child {
+        margin-inline-end: 0;
       }
     }
 
@@ -5587,7 +5582,7 @@ export default defineComponent({
     justify-content: flex-start;
     flex-wrap: wrap;
     gap: var(--wiki-space-1);
-    padding: var(--wiki-space-1);
+    padding: var(--wiki-space-1) var(--wiki-space-1) var(--wiki-space-1) 0;
 
     .page-offline-status {
       flex: 0 1 100%;
@@ -5652,7 +5647,7 @@ export default defineComponent({
     flex-wrap: wrap;
     justify-content: flex-start;
     gap: var(--wiki-space-1);
-    padding-inline: var(--wiki-space-1);
+    padding-inline: var(--wiki-space-1) 0;
 
     .v-btn--icon.v-btn--size-small {
       width: 36px;
