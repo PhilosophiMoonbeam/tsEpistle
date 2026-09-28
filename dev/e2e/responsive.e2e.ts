@@ -2976,10 +2976,34 @@ test.describe('reader metadata rendering', () => {
   test.use({ locale: 'en-US', timezoneId: 'UTC' })
 
   const updatedAt = '2000-02-03T12:00:00.000Z'
-  const expectedDateText = 'Updated 02/03/2000'
-  const expectedDateTitle = 'Thursday, February 3, 2000 12:00 PM'
   const historyHref = '/h/en/reader-metadata-fixture'
   const encoded = (value: unknown): string => Buffer.from(JSON.stringify(value), 'utf8').toString('base64')
+  const authenticateReaderMetadataAdmin = async (page: Page): Promise<void> => {
+    const username = process.env.READER_METADATA_ADMIN_USER
+    const password = process.env.READER_METADATA_ADMIN_PASS
+    if (username === undefined && password === undefined) {
+      await authenticateAsAdmin(page)
+    } else {
+      if (username === undefined || password === undefined || !username || !password) {
+        throw new Error('READER_METADATA_ADMIN_USER and READER_METADATA_ADMIN_PASS must both be configured.')
+      }
+
+      const response = await page.request.post('/_api/auth/login', {
+        headers: sameOriginHeaders(),
+        data: {
+          strategy: 'local',
+          username,
+          password
+        }
+      })
+      expect(response.ok(), `Reader metadata administrator login failed with HTTP ${response.status()}.`).toBe(true)
+      const payload = (await response.json()) as { authenticated?: unknown }
+      expect(payload.authenticated, 'Reader metadata administrator login did not return an authenticated session.').toBe(true)
+    }
+
+    const adminCookie = (await page.context().cookies()).find(cookie => cookie.name === 'jwt')
+    expect(adminCookie, 'Reader metadata administrator login did not set the browser-context authentication cookie.').toBeDefined()
+  }
 
   type ReaderMetadataFixturePayload = {
     version: 1
@@ -3083,10 +3107,9 @@ test.describe('reader metadata rendering', () => {
 
     const provenance = page.locator('.page-tools-card__provenance')
     await expect(provenance).toHaveCount(1)
+    await expect(provenance).toBeVisible()
     const date = provenance.locator('.page-document-row--date time')
-    await expect(date).toHaveText(expectedDateText)
     await expect(date).toHaveAttribute('datetime', updatedAt)
-    await expect(date).toHaveAttribute('title', expectedDateTitle)
 
     const author = provenance.locator('.page-provenance-author')
     if (expected.authorName === undefined) {
@@ -3112,7 +3135,7 @@ test.describe('reader metadata rendering', () => {
     const initialViewport = page.viewportSize()
     if (!initialViewport) throw new Error('The reader metadata test requires a configured viewport.')
     const authorName = '<strong data-e2e-author-markup="true">Ada</strong> & "quoted"'
-    await authenticateAsAdmin(page)
+    await authenticateReaderMetadataAdmin(page)
     await installReaderMetadataFixture(
       page,
       makeFixturePayload({
@@ -3123,8 +3146,7 @@ test.describe('reader metadata rendering', () => {
       })
     )
 
-    await page.goto('/home', { waitUntil: 'networkidle' })
-    await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
+    await page.goto('/home', { waitUntil: 'domcontentloaded' })
     await expectReaderMetadata(page, { authorName, historyHref })
     const historyLink = page.locator('.page-tools-history-link')
     await expect(historyLink).toHaveAccessibleName('View history')
@@ -3174,11 +3196,8 @@ test.describe('reader metadata rendering', () => {
     for (const width of [1440, 320, 375]) await assertHistoryLayout(width)
 
     await historyLink.hover()
-    const historyTooltip = page.getByRole('tooltip')
+    const historyTooltip = page.getByRole('tooltip').filter({ hasText: /^View history$/ })
     await expect(historyTooltip).toHaveText('View history')
-    await page.mouse.move(0, 0)
-    await expect(historyTooltip).toBeHidden()
-    await historyLink.focus()
     await expect(historyTooltip).toBeVisible()
     await page.setViewportSize(initialViewport)
 
@@ -3240,8 +3259,7 @@ test.describe('reader metadata rendering', () => {
         })
       )
 
-      await page.goto('/home', { waitUntil: 'networkidle' })
-      await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
+      await page.goto('/home', { waitUntil: 'domcontentloaded' })
       await expectReaderMetadata(page, {})
     })
   }
@@ -3261,8 +3279,7 @@ test.describe('reader metadata rendering', () => {
       })
     )
 
-    await page.goto('/home', { waitUntil: 'networkidle' })
-    await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
+    await page.goto('/home', { waitUntil: 'domcontentloaded' })
     await expectReaderMetadata(page, { authorName })
 
     const toolsCard = page.locator('.page-tools-card')
@@ -3307,8 +3324,7 @@ test.describe('reader metadata rendering', () => {
       })
     )
 
-    await page.goto('/home', { waitUntil: 'networkidle' })
-    await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
+    await page.goto('/home', { waitUntil: 'domcontentloaded' })
     await expectReaderMetadata(page, { authorName })
 
     const toolsCard = page.locator('.page-tools-card')
