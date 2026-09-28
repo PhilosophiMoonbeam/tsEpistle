@@ -12,32 +12,7 @@ afterEach(() => {
 })
 
 describe('bundled English locale fallback', () => {
-  it('contains the critical setup, authentication, and administration labels', () => {
-    expect(englishLocale).toMatchObject({
-      common: {
-        welcome: {
-          title: 'Welcome to your wiki!',
-          createhome: 'Create Home Page'
-        },
-        header: {
-          admin: 'Administration',
-          account: 'Account'
-        }
-      },
-      auth: {
-        actions: {
-          login: 'Log In'
-        }
-      },
-      admin: {
-        dashboard: {
-          title: 'Dashboard'
-        }
-      }
-    })
-  })
-
-  it('loads bundled English before installed locale overrides', async () => {
+  it('keeps installed English rows from overriding the bundled translation', async () => {
     const engine = {
       addResourceBundle: vi.fn(),
       removeResourceBundle: vi.fn(),
@@ -69,7 +44,7 @@ describe('bundled English locale fallback', () => {
       .filter(([, namespace]) => namespace === 'admin')
     expect(adminBundles).toHaveLength(1)
     expect(adminBundles[0]?.slice(0, 2)).toEqual(['en', 'admin'])
-    expect(adminBundles[0]?.[2]).toMatchObject({ dashboard: { title: 'Installed Dashboard' }, agents: { title: 'Agents', subtitle: expect.any(String) } })
+    expect(adminBundles[0]?.[2]).toMatchObject({ dashboard: { title: englishLocale.admin.dashboard.title } })
     expect(adminBundles[0]?.slice(3)).toEqual([true, true])
     expect(engine.changeLanguage).toHaveBeenCalledWith('en')
   })

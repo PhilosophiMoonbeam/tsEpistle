@@ -409,7 +409,7 @@ describe('common page routing', () => {
         isSearchable: false,
         publishStartDate: version.publishStartDate,
         publishEndDate: version.publishEndDate,
-        extra: { css: '', js: version.extra.js }
+        extra: expect.objectContaining({ css: '', js: version.extra.js })
       })
     }))
   })

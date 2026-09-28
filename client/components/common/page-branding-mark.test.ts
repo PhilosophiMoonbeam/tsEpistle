@@ -139,6 +139,7 @@ interface BrandingHeaderFixture {
   headings: HTMLElement
   label: HTMLElement
   title: HTMLElement
+  summary: HTMLElement
   description: HTMLElement
   mark: HTMLElement
 }
@@ -160,18 +161,21 @@ const mountBrandingHeader = (direction: TextDirection): BrandingHeaderFixture =>
   label.className = 'page-document-label'
   const title = browserWindow.document.createElement('div')
   title.className = 'page-title-row'
+  const summary = browserWindow.document.createElement('div')
+  summary.className = 'page-header-summary'
   const description = browserWindow.document.createElement('p')
   description.className = 'page-description'
   const mark = browserWindow.document.createElement('span')
   mark.className = 'page-branding-mark'
 
-  headings.append(label, title, description, mark)
-  pageHeader.append(headings)
+  headings.append(label, title, mark)
+  summary.append(description)
+  pageHeader.append(headings, summary)
   section.append(pageHeader)
   root.append(section)
   browserWindow.document.body.append(root)
 
-  return { root, headings, label, title, description, mark }
+  return { root, headings, label, title, summary, description, mark }
 }
 
 const physicalInlineSide = (container: HTMLElement, item: HTMLElement): 'left' | 'right' => {
@@ -264,11 +268,15 @@ describe('page branding mark', () => {
       expect(markStyle.gridColumn).toBe(expectedMarkColumn)
       expect(physicalInlineSide(fixture.headings, fixture.mark)).toBe('right')
 
-      for (const textElement of [fixture.label, fixture.title, fixture.description]) {
+      for (const textElement of [fixture.label, fixture.title]) {
         const textStyle = browserWindow.getComputedStyle(textElement)
+        expect(textStyle.direction).toBe(direction)
         expect(textStyle.gridColumn).toBe(expectedTextColumn)
         expect(physicalInlineSide(fixture.headings, textElement)).toBe('left')
       }
+
+      expect(fixture.description.parentElement).toBe(fixture.summary)
+      expect(browserWindow.getComputedStyle(fixture.description).direction).toBe(direction)
     }
   })
 

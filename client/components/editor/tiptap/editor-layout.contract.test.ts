@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from '@vue/compiler-sfc'
+import * as cheerio from 'cheerio'
+import pug from 'pug'
 import { describe, expect, test } from '../../../../server/test/bun-test.mts'
 
 const tiptapPath = join(process.cwd(), 'client/components/editor/tiptap/editor.vue')
@@ -21,6 +23,7 @@ const tiptapTemplate = tiptapSfc.descriptor.template?.content ?? ''
 const asciidocTemplate = asciidocSfc.descriptor.template?.content ?? ''
 const tiptapScript = tiptapSfc.descriptor.script?.content ?? ''
 const tiptapStyle = tiptapSfc.descriptor.styles.map(style => style.content).join('\n')
+const renderedTiptapTemplate = cheerio.load(pug.render(tiptapTemplate))
 const pageStyle = pageSfc.descriptor.styles.map(style => style.content).join('\n')
 const shellScript = shellSfc.descriptor.script?.content ?? ''
 
@@ -45,7 +48,9 @@ describe('TipTap editor layout and page-theme ownership', () => {
   })
 
   test('lets the shared contents theme own live canvas typography and headings', () => {
-    expect(tiptapTemplate).toContain(`.editor-tiptap-page-canvas.editor-page-canvas\n    editor-content.contents(:editor='editor')`)
+    const canvas = renderedTiptapTemplate('.editor-tiptap-page-canvas.editor-page-canvas')
+    expect(canvas.length).toBe(1)
+    expect(canvas.children('editor-content.contents').length).toBe(1)
     expect(tiptapStyle).not.toMatch(/^\s*h[1-6](?:\s*,|\s*\{)/m)
 
     const canvasStart = tiptapStyle.indexOf('> .editor-tiptap-page-canvas {')

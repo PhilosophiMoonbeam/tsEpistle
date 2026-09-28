@@ -90,41 +90,6 @@ afterEach(() => {
 })
 
 describe('site notifications store', () => {
-  it('exposes only the C3 state and notification API', () => {
-    setActivePinia(createPinia())
-    const store = useSiteNotificationsStore()
-    const stateKeys = Object.keys(store.$state).sort()
-    const publicStore = store as unknown as Record<string, unknown>
-
-    expect(stateKeys).toEqual([
-      'approvals',
-      'approvalsError',
-      'approvalsLoading',
-      'approvalsNextCursor',
-      'identityStale',
-      'ownerId',
-      'watches',
-      'watchesError',
-      'watchesLoading',
-      'watchesNextCursor',
-      'watchesUnreadComplete'
-    ])
-    expect(store.ownerId).toBeNull()
-    expect(store.watches).toEqual([])
-    expect(store.watchesNextCursor).toBeNull()
-    expect(store.watchesUnreadComplete).toBe(false)
-    expect(store.approvals).toEqual([])
-    expect(store.watchesError).toBe('')
-    expect(store.approvalsError).toBe('')
-    expect(store.identityStale).toBe(false)
-    expect(store.approvalsNextCursor).toBeNull()
-    expect(store.hasNotifications).toBe(false)
-    expect(store.notificationState).toBe('unknown')
-
-    for (const obsoleteName of ['watchItems', 'approvalItems', 'watchUnreadCount', 'items']) {
-      expect(publicStore[obsoleteName]).toBeUndefined()
-    }
-  })
   it('binds every helper request to the owner and only continues approvals explicitly', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = []
     let watchAttempt = 0

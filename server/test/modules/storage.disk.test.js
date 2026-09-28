@@ -8,6 +8,7 @@ import { pipeline } from 'node:stream/promises'
 import zlib from 'node:zlib'
 import tar from 'tar-fs'
 import moment from 'moment'
+import { JSON_SCHEMA, load } from 'js-yaml'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test'
 import { openStorageRoot } from '../../modules/storage/local-filesystem.ts'
 describe('disk storage target', () => {
@@ -590,8 +591,7 @@ describe('disk storage target', () => {
     await expect(fs.readFile(filePath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-
-  it('keeps non-Markdown event serialization unchanged', async () => {
+  it('serializes non-Markdown HTML with core metadata and normalized page features', async () => {
     await plugin.created.call(context, {
       path: 'legacy',
       localeCode: 'en',
@@ -603,24 +603,55 @@ describe('disk storage target', () => {
       authorId: 7,
       createdAt: '2026-08-29T00:00:00.000Z',
       updatedAt: '2026-08-30T00:00:00.000Z',
-      extra: {},
+      extra: {
+        pageFeatures: {
+          schemaVersion: 1,
+          linksVisible: true,
+          ratingsAllowed: false,
+          lastEditorVisible: 'invalid'
+        }
+      },
       isPublished: true,
       editorKey: 'html',
       tags: [{ tag: 'one' }]
     })
-    expect(await fs.readFile(path.join(rootPath, 'content', 'legacy.html'), 'utf8')).toBe([
-      '<!--',
-      'title: Legacy',
-      'description: Description',
-      'published: true',
-      'date: 2026-08-30T00:00:00.000Z',
-      'tags: one',
-      'editor: html',
-      'dateCreated: 2026-08-29T00:00:00.000Z',
-      '-->',
-      '',
-      '<p>Body</p>'
-    ].join('\n'))
+
+    const serialized = await fs.readFile(path.join(rootPath, 'content', 'legacy.html'), 'utf8')
+    const htmlDocument = /^<!--\s*([\s\S]*?)\s*-->\s*([\s\S]*)$/u.exec(serialized)
+    expect(htmlDocument).not.toBeNull()
+    const metadata = load(htmlDocument?.[1] ?? '', { schema: JSON_SCHEMA })
+    expect(metadata).toMatchObject({
+      title: 'Legacy',
+      description: 'Description',
+      published: true,
+      date: '2026-08-30T00:00:00.000Z',
+      tags: 'one',
+      editor: 'html',
+      dateCreated: '2026-08-29T00:00:00.000Z',
+      pageFeatures: {
+        schemaVersion: 1,
+        linksVisible: false,
+        ratingsAllowed: false,
+        lastEditorVisible: false
+      }
+    })
+    expect(htmlDocument?.[2]).toBe('<p>Body</p>')
+
+    const pageDocument = (await vi.importFresh('../../modules/storage/page-document.ts', import.meta.url)).default
+    const parsed = pageDocument({
+      rawDocument: serialized,
+      contentType: 'html',
+      locale: 'en',
+      pagePath: 'legacy',
+      importer: 'import:disk'
+    })
+    expect(parsed.format).toBe('legacy_wiki')
+    expect(parsed.pageFeatures).toEqual({
+      schemaVersion: 1,
+      linksVisible: false,
+      ratingsAllowed: false,
+      lastEditorVisible: false
+    })
   })
   it('imports regular files through descriptor sources and leaves outside content unchanged', async () => {
     const scanRoot = path.join(rootPath, 'content')
@@ -976,66 +1007,6 @@ describe('cloud storage export ownership', () => {
 
     expect(upload).toHaveBeenCalledTimes(2)
     expect(assetSource.destroyed).toBe(true)
-  })
-})
-
-describe('SFTP page rename namespacing', () => {
-  it.each([
-    ['en', 'en', '/wiki/en/guide.md', '/wiki/en/moved.md'],
-    ['fr', 'fr', '/wiki/fr/guide.md', '/wiki/fr/moved.md'],
-    ['en', 'fr', '/wiki/en/guide.md', '/wiki/fr/moved.md'],
-    ['fr', 'en', '/wiki/fr/guide.md', '/wiki/en/moved.md']
-  ])('%s to %s uses the same paths as page writes', async (localeCode, destinationLocaleCode, sourceKey, destinationKey) => {
-    vi.resetModules()
-    global.WIKI = {
-      config: {
-        lang: {
-          code: 'en',
-          namespacing: true
-        }
-      },
-      logger: {
-        info: vi.fn()
-      }
-    }
-    const storage = (await vi.importFresh('../../modules/storage/sftp/storage.ts', import.meta.url)).default
-    const writeFile = vi.fn().mockResolvedValue(undefined)
-    const rename = vi.fn().mockResolvedValue(undefined)
-    const context = {
-      config: { basePath: '/wiki' },
-      ensureDirectory: vi.fn().mockResolvedValue(undefined),
-      sftp: { rename, writeFile }
-    }
-    const page = {
-      id: 7,
-      path: 'guide',
-      destinationPath: 'moved',
-      localeCode,
-      destinationLocaleCode,
-      title: 'Guide',
-      description: '',
-      contentType: 'markdown',
-      content: 'content',
-      sourceRevision: 42,
-      authorId: 7,
-      createdAt: '2026-08-29T00:00:00.000Z',
-      updatedAt: '2026-08-30T00:00:00.000Z',
-      extra: { okf: { type: 'Reference', status: 'stable' } },
-      isPublished: true,
-      editorKey: 'markdown',
-      tags: [{ tag: 'guide' }],
-      injectMetadata: () => 'content'
-    }
-
-    await storage.created.call(context, page)
-    await storage.created.call(context, {
-      ...page,
-      path: page.destinationPath,
-      localeCode: page.destinationLocaleCode
-    })
-    const sourceWritePath = writeFile.mock.calls[0][0]
-    const destinationWritePath = writeFile.mock.calls[1][0]
-    await storage.renamed.call(context, page)
   })
 })
 

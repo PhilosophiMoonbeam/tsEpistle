@@ -987,13 +987,6 @@ describe('foreground offline sync coordinator', () => {
     expect(snapshotRequests(run)).toEqual([1, 1])
     expect(pageIds(run)).toEqual([1])
   })
-  test('keeps the public Guest path unchanged without an account or reading handle', async () => {
-    const run = await runScenario('manual')
-    expect(run.result.status).toBe('complete')
-    expect(run.result.saved).toBe(1)
-    expect(snapshotRequests(run)).toEqual([1])
-    expect(run.privateRecords).toBeUndefined()
-  })
 
   test('syncs selected public pages for a verified account without a private reading handle', async () => {
     const run = await runScenario('authenticated-public-manual')

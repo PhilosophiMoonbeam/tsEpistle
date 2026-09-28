@@ -92,7 +92,11 @@ interface LockState {
   newSession: () => Promise<void>
   newTemporarySession: () => Promise<void>
   openClearUnfiledHistory: () => void
-  recoverClearUnfiledHistory: () => Promise<void>
+  historyOpen: ValueRef<boolean>
+  memoryOpen: ValueRef<boolean>
+  panelMenuOpen: ValueRef<boolean>
+  toggleHistory: () => void
+  toggleMemory: () => void
   thread: ValueRef<Record<string, unknown> | null>
   sendPrompt: (content: string) => Promise<boolean>
   currentPage: ValueRef<TestPageHint | null>
@@ -406,7 +410,7 @@ const loadGoalLockState = (
   const clearedStartersFrameIds: number[] = []
   const evaluate = new Function(
     '{ computed, nextTick, onBeforeUnmount, onMounted, ref, setTimeout, requestAnimationFrame, cancelAnimationFrame, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection }',
-    `${executableScript}\nreturn { SESSION_NOTICE_VISIBLE_MS, STARTERS_MARQUEE_SPEED, activeRun, canPinCurrentChat, canSubmit, clearSessionNotice, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, composerLockVisible, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleTranscriptEngagement, invocationLimit, mutationLockMessageVisible, newSession, newTemporarySession, onStartersClickCapture, onStartersPointerCancel, onStartersPointerDown, onStartersPointerMove, onStartersPointerUp, onStartersWheel, openGoal, openClearUnfiledHistory, pauseStartersMarquee, recoverClearUnfiledHistory, retryInitialization, resumeStartersMarquee, sendPrompt, sessionMutationBusy, sessionNotice, setSessionNotice, startersMarqueeActive, startersMarqueePeriod, startersMarqueeState, startersRow, startersStrip, startStartersMarquee, startTemporaryChat, stepStartersMarquee, stopStartersMarquee, measureStartersPeriod, applyStartersTransform, submitUnavailableReason, thread, welcomeGreeting }`
+    `${executableScript}\nreturn { SESSION_NOTICE_VISIBLE_MS, STARTERS_MARQUEE_SPEED, activeRun, canPinCurrentChat, canSubmit, clearSessionNotice, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, composerFocused, composerLockVisible, connectionLabel, connectionTone, currentPage, ensureInitialized, goalSubmitUnavailableReason, handleComposerFocusIn, handleComposerFocusOut, handleTranscriptEngagement, historyOpen, invocationLimit, memoryOpen, mutationLockMessageVisible, newSession, newTemporarySession, onStartersClickCapture, onStartersPointerCancel, onStartersPointerDown, onStartersPointerMove, onStartersPointerUp, onStartersWheel, openGoal, openClearUnfiledHistory, panelMenuOpen, pauseStartersMarquee, recoverClearUnfiledHistory, retryInitialization, resumeStartersMarquee, sendPrompt, sessionMutationBusy, sessionNotice, setSessionNotice, startersMarqueeActive, startersMarqueePeriod, startersMarqueeState, startersRow, startersStrip, startStartersMarquee, startTemporaryChat, stepStartersMarquee, stopStartersMarquee, measureStartersPeriod, applyStartersTransform, submitUnavailableReason, thread, toggleHistory, toggleMemory, welcomeGreeting }`
   ) as (dependencies: Record<string, unknown>) => LockState
 
   const state = evaluate({
@@ -474,9 +478,9 @@ const mountInlineAgent = (
 ): MountedInlineAgent => {
   const host = document.createElement('div')
   document.body.append(host)
-  const historyOpen = Vue.ref(false)
-  const memoryOpen = Vue.ref(false)
-  const panelMenuOpen = Vue.ref(false)
+  const historyOpen = lockState?.historyOpen ?? Vue.ref(false)
+  const memoryOpen = lockState?.memoryOpen ?? Vue.ref(false)
+  const panelMenuOpen = lockState?.panelMenuOpen ?? Vue.ref(false)
   const temporaryCalls: string[] = []
   const composerFocused = lockState?.composerFocused ?? Vue.ref(false)
   const handleComposerFocusIn =
@@ -640,16 +644,20 @@ const mountInlineAgent = (
     closeHistory: () => {
       historyOpen.value = false
     },
-    toggleHistory: () => {
-      panelMenuOpen.value = false
-      historyOpen.value = !historyOpen.value
-      memoryOpen.value = false
-    },
-    toggleMemory: () => {
-      panelMenuOpen.value = false
-      memoryOpen.value = !memoryOpen.value
-      historyOpen.value = false
-    }
+    toggleHistory:
+      lockState?.toggleHistory ??
+      (() => {
+        panelMenuOpen.value = false
+        historyOpen.value = !historyOpen.value
+        memoryOpen.value = false
+      }),
+    toggleMemory:
+      lockState?.toggleMemory ??
+      (() => {
+        panelMenuOpen.value = false
+        memoryOpen.value = !memoryOpen.value
+        historyOpen.value = false
+      })
   }
   for (const method of [
     'clearUnfiledHistory',
@@ -845,22 +853,37 @@ afterEach(() => {
 })
 
 describe('Inline Agent mobile panel controls', () => {
-  it('keeps both History and Memory pointer-activatable and closes the menu', async () => {
-    for (const [index, panel] of [[0, 'memory']] as const) {
-      const mounted = mountInlineAgent()
-      const items = await openPanelMenu(mounted)
-      const item = items[index]
-      if (!item) throw new Error(`Panel menu item ${index} did not render`)
+  it('opens History from its header when the workspace is ready', async () => {
+    const mounted = mountInlineAgent(loadGoalLockState(null))
+    const historyToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__history-toggle')
+    if (!historyToggle) throw new Error('History toggle did not render')
 
-      item.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-      await settle()
+    historyToggle.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await settle()
 
-      expect(mounted.historyOpen.value).toBe(panel === 'history')
-      expect(mounted.memoryOpen.value).toBe(panel === 'memory')
-      expect(mounted.activator.getAttribute('aria-expanded')).toBe('false')
-      mounted.unmount()
-      mountedApps.pop()
-    }
+    expect(historyToggle.getAttribute('aria-expanded')).toBe('true')
+    expect(mounted.root.querySelector('.inline-agent__side--history')).not.toBeNull()
+  })
+
+  it('keeps History closed when the workspace is unavailable', async () => {
+    const mounted = mountInlineAgent(loadGoalLockState(null, false, null, true, true))
+    const historyToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__history-toggle')
+    if (!historyToggle) throw new Error('History toggle did not render')
+
+    historyToggle.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await settle()
+
+    expect(historyToggle.getAttribute('aria-expanded')).toBe('false')
+    expect(mounted.root.querySelector('.inline-agent__side--history')).toBeNull()
+  })
+
+  it('shows Memory in the More menu', async () => {
+    const mounted = mountInlineAgent()
+    const items = await openPanelMenu(mounted)
+    const memoryItem = items[0]
+    if (!memoryItem) throw new Error('Memory menu item did not render')
+
+    expect(memoryItem.querySelector<HTMLElement>('.v-list-item-title')?.textContent?.trim()).toBe('Agent memory')
   })
 })
 
@@ -1282,7 +1305,9 @@ describe('Agent workspace action semantics', () => {
 
     const activeGoal = mountInlineAgent(loadGoalLockState('active', false, 'running', true))
     const activeGoalItems = await openPanelMenu(activeGoal)
-    expect(disabled(activeGoalItems[3])).toBe(false)
+    const activeGoalPin = activeGoalItems[1]
+    expect(activeGoalPin).toBeDefined()
+    expect(disabled(activeGoalPin)).toBe(false)
     activeGoal.unmount()
   })
 

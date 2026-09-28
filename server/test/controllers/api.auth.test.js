@@ -272,6 +272,8 @@ describe('controllers/api auth endpoints', () => {
 
   const loadHandlers = async () => {
     await vi.importFresh('../../controllers/api/auth.ts', import.meta.url)
+    const { default: legacyErrors } = await import('../../helpers/error.ts')
+    const { default: operationErrors } = await import('../../operations/errors.ts')
     const withRuntime = handler => (req, ...args) => {
       req.app ??= { locals: {} }
       req.app.locals.runtime = global.WIKI
@@ -283,6 +285,8 @@ describe('controllers/api auth endpoints', () => {
       return withRuntime(call[call.length - 1])
     }
     return {
+      legacyErrors,
+      ApplicationError: operationErrors.ApplicationError,
       adminStrategies: getRouteHandler('/admin/strategies'),
       adminActiveStrategies: getRouteHandler('/admin/active-strategies'),
       strategies: getRouteHandler('/strategies'),
@@ -883,8 +887,14 @@ describe('controllers/api auth endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'fullAccess must be a boolean' })
   })
 
-  it('returns JSON errors when admin API key creation fails', async () => {
-    global.WIKI.models.knex.transaction.mockRejectedValueOnce(new Error('key backend failed'))
+  it.each([
+    ['plain error', () => new Error('db-secret-create-plain'), 500],
+    ['explicit 500 error', () => Object.assign(new Error('db-secret-create-500'), { status: 500 }), 500],
+    ['statusful error', () => Object.assign(new Error('db-secret-create-status'), { status: 503 }), 503],
+    ['non-Error rejection', () => 'db-secret-create-string', 500]
+  ])('redacts %s from failed admin API key creation', async (_kind, failure, status) => {
+    const secret = failure()
+    global.WIKI.models.knex.transaction.mockRejectedValueOnce(secret)
     const { createApiKey } = await loadHandlers()
     const req = {
       user: adminUser(),
@@ -899,8 +909,35 @@ describe('controllers/api auth endpoints', () => {
 
     await createApiKey(req, res)
 
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'key backend failed' })
+    expect(global.WIKI.models.knex.transaction).toHaveBeenCalledTimes(1)
+    expect(res.status).toHaveBeenCalledWith(status)
+    expect(res.json).toHaveBeenCalledTimes(1)
+    expect(res.json).toHaveBeenCalledWith({ error: 'API key creation failed' })
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain(secret instanceof Error ? secret.message : secret)
+    expect(global.WIKI.models.apiKeys.createNewKey).not.toHaveBeenCalled()
+  })
+  it.each([
+    ['create', 'createApiKey', () => ({ user: adminUser(), body: { name: 'Deploy', expiration: '1y', fullAccess: true, group: null } })],
+    ['revoke', 'revokeApiKey', () => ({ user: adminUser(), params: { id: '42' } })]
+  ])('redacts ordinary statusful, lookalike, and 5xx ApplicationError messages for %s persistence failures', async (_label, handlerName, makeRequest) => {
+    const handlers = await loadHandlers()
+    const failures = [
+      Object.assign(new Error('ordinary statusful persistence details'), { status: 422 }),
+      Object.assign(new Error('lookalike persistence details'), { name: 'APPLICATION_ERROR', code: 'APPLICATION_ERROR', status: 422 }),
+      { name: 'APPLICATION_ERROR', code: 'APPLICATION_ERROR', status: 422, message: 'plain-object persistence details' },
+      new handlers.ApplicationError('private persistence diagnostics', { status: 503, code: 'PERSISTENCE_FAILURE' })
+    ]
+    for (const [index, failure] of failures.entries()) {
+      global.WIKI.models.knex.transaction.mockRejectedValueOnce(failure)
+      const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+      await handlers[handlerName](makeRequest(), res)
+
+      expect(global.WIKI.models.knex.transaction).toHaveBeenCalledTimes(index + 1)
+      expect(res.status).toHaveBeenCalledWith(failure.status)
+      expect(res.json).toHaveBeenCalledWith({ error: handlerName === 'createApiKey' ? 'API key creation failed' : 'API key revoke failed' })
+      expect(JSON.stringify(res.json.mock.calls)).not.toContain(failure.message)
+    }
   })
 
   it('rejects invalid lifetimes, missing groups and disabled MCP before key issuance', async () => {
@@ -972,16 +1009,37 @@ describe('controllers/api auth endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
   })
 
-  it('returns JSON errors when admin API key revoke fails', async () => {
-    global.WIKI.models.knex.transaction.mockRejectedValueOnce(new Error('revoke backend failed'))
+  it('retains a public 404 when an admin API key no longer exists', async () => {
+    const { revokeApiKey } = await loadHandlers()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await revokeApiKey({ user: adminUser(), params: { id: '42' } }, res)
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'API key no longer exists' })
+    expect(global.WIKI.auth.reloadApiKeys).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['plain error', () => new Error('db-secret-revoke-plain'), 500],
+    ['explicit 500 error', () => Object.assign(new Error('db-secret-revoke-500'), { status: 500 }), 500],
+    ['statusful error', () => Object.assign(new Error('db-secret-revoke-status'), { status: 503 }), 503],
+    ['non-Error rejection', () => 'db-secret-revoke-string', 500]
+  ])('redacts %s from failed admin API key revocation', async (_kind, failure, status) => {
+    const secret = failure()
+    global.WIKI.models.knex.transaction.mockRejectedValueOnce(secret)
     const { revokeApiKey } = await loadHandlers()
     const req = { user: adminUser(), params: { id: '42' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await revokeApiKey(req, res)
 
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'revoke backend failed' })
+    expect(global.WIKI.models.knex.transaction).toHaveBeenCalledTimes(1)
+    expect(res.status).toHaveBeenCalledWith(status)
+    expect(res.json).toHaveBeenCalledTimes(1)
+    expect(res.json).toHaveBeenCalledWith({ error: 'API key revoke failed' })
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain(secret instanceof Error ? secret.message : secret)
+    expect(global.WIKI.auth.reloadApiKeys).not.toHaveBeenCalled()
   })
 
   it('returns 403 for unauthorized admin API mutation requests', async () => {
@@ -1430,53 +1488,86 @@ describe('controllers/api auth endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'continuationToken and newPassword must be strings' })
   })
 
-  it('maps expected auth errors to client-safe status codes', async () => {
-    global.WIKI.models.users.login.mockRejectedValueOnce(Object.assign(new Error('Invalid email / username or password.'), { code: 1002 }))
-    global.WIKI.models.users.loginTFA.mockRejectedValueOnce(Object.assign(new Error('Invalid TFA Security Code or Login Token.'), { code: 1006 }))
-    global.WIKI.models.users.loginChangePassword.mockRejectedValueOnce(Object.assign(new Error('Password must be at least 6 characters!'), { code: 1012 }))
-    global.WIKI.models.users.loginTFA.mockRejectedValueOnce(Object.assign(new Error('Invalid validation token.'), { code: 1015 }))
-    global.WIKI.models.users.loginChangePassword.mockRejectedValueOnce(Object.assign(new Error('This user does not exist.'), { code: 1016 }))
-    const { login, loginTFA, loginChangePassword } = await loadHandlers()
-
-    const loginReq = {
-      body: { strategy: 'local', username: 'alice@example.com', password: 'bad' },
-      login: vi.fn(),
-      logIn: vi.fn(),
+  it.each([
+    ['AuthLoginFailed', 'login', 'login', 'AuthLoginFailed', 401],
+    ['AuthTFAFailed', 'loginTFA', 'loginTFA', 'AuthTFAFailed', 401],
+    ['AuthTFAInvalid', 'loginTFA', 'loginTFA', 'AuthTFAInvalid', 401],
+    ['AuthAccountBanned', 'login', 'login', 'AuthAccountBanned', 401],
+    ['AuthAccountNotVerified', 'login', 'login', 'AuthAccountNotVerified', 401],
+    ['UserNotFound', 'loginChangePassword', 'loginChangePassword', 'UserNotFound', 401],
+    ['AuthValidationTokenInvalid', 'verifyEmail', 'verifyEmail', 'AuthValidationTokenInvalid', 401],
+    ['AuthProviderInvalid', 'login', 'login', 'AuthProviderInvalid', 400],
+    ['InputInvalid', 'resetPassword', 'resetPassword', 'InputInvalid', 400]
+  ])('maps genuine %s errors from the backend to their legacy status', async (_label, handlerName, operationName, errorName, status) => {
+    const { [handlerName]: handler, legacyErrors } = await loadHandlers()
+    const error = new legacyErrors[errorName]()
+    global.WIKI.models.users[operationName].mockRejectedValueOnce(error)
+    const req = {
+      body: {
+        strategy: 'local',
+        username: 'alice@example.com',
+        password: 'secret',
+        securityCode: '123456',
+        continuationToken: 'valid-continuation',
+        token: 'valid-token',
+        newPassword: 'new-secret'
+      }
     }
-    const tfaReq = {
-      body: { securityCode: '123456', continuationToken: 'bad-token', setup: false },
-      login: vi.fn(),
-      logIn: vi.fn(),
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const next = vi.fn()
+
+    await handler(req, res, next)
+
+    expect(global.WIKI.models.users[operationName]).toHaveBeenCalledTimes(1)
+    expect(res.status).toHaveBeenCalledWith(status)
+    expect(res.json).toHaveBeenCalledWith({ error: error.message })
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('publishes genuine ApplicationError 4xx messages without accepting forged auth codes', async () => {
+    const { loginChangePassword, login, ApplicationError } = await loadHandlers()
+    const appError = new ApplicationError('Password must be at least 6 characters!', { status: 422 })
+    global.WIKI.models.users.loginChangePassword.mockRejectedValueOnce(appError)
+    const appErrorRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await loginChangePassword({ body: { continuationToken: 'pwd-token', newPassword: 'short' } }, appErrorRes, vi.fn())
+
+    expect(global.WIKI.models.users.loginChangePassword).toHaveBeenCalledTimes(1)
+    expect(appErrorRes.status).toHaveBeenCalledWith(422)
+    expect(appErrorRes.json).toHaveBeenCalledWith({ error: appError.message })
+
+    const forged = Object.assign(new Error('forged auth details'), { code: 1002 })
+    global.WIKI.models.users.login.mockRejectedValueOnce(forged)
+    const forgedRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    const next = vi.fn()
+    await login({ body: { strategy: 'local', username: 'alice@example.com', password: 'secret' } }, forgedRes, next)
+
+    expect(global.WIKI.models.users.login).toHaveBeenCalledTimes(1)
+    expect(forgedRes.json).not.toHaveBeenCalled()
+    expect(next).toHaveBeenCalledWith(forged)
+  })
+
+  it('uses a generic error for statusful untrusted 4xx and lets explicit 5xx override a genuine legacy code', async () => {
+    const { login, ApplicationError, legacyErrors } = await loadHandlers()
+    const invalidRequest = Object.assign(new Error('private 422 diagnostic'), { status: 422, code: 1002 })
+    const outage = Object.assign(new legacyErrors.AuthLoginFailed(), { message: 'secret database diagnostic', status: 503 })
+    const genericFailure = new ApplicationError('private application diagnostics', { status: 503, code: 'AUTH_BACKEND_FAILURE' })
+    global.WIKI.models.users.login
+      .mockRejectedValueOnce(invalidRequest)
+      .mockRejectedValueOnce(outage)
+      .mockRejectedValueOnce(genericFailure)
+    const next = vi.fn()
+
+    for (const failure of [invalidRequest, outage, genericFailure]) {
+      const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+      await login({ body: { strategy: 'local', username: 'alice@example.com', password: 'secret' } }, res, next)
+      expect(global.WIKI.models.users.login).toHaveBeenCalled()
+      expect(res.status).toHaveBeenCalledWith(failure.status)
+      expect(res.json).toHaveBeenCalledWith({ error: 'Authentication failed' })
+      expect(JSON.stringify(res.json.mock.calls)).not.toContain(failure.message)
     }
-    const changeReq = {
-      body: { continuationToken: 'pwd-token', newPassword: 'short' },
-      login: vi.fn(),
-      logIn: vi.fn(),
-    }
-    const loginRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-    const tfaRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-    const changeRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-
-    await login(loginReq, loginRes, vi.fn())
-    await loginTFA(tfaReq, tfaRes, vi.fn())
-    await loginChangePassword(changeReq, changeRes, vi.fn())
-
-    expect(loginRes.status).toHaveBeenCalledWith(401)
-    expect(loginRes.json).toHaveBeenCalledWith({ error: 'Invalid email / username or password.' })
-    expect(tfaRes.status).toHaveBeenCalledWith(401)
-    expect(tfaRes.json).toHaveBeenCalledWith({ error: 'Invalid TFA Security Code or Login Token.' })
-    expect(changeRes.status).toHaveBeenCalledWith(400)
-    expect(changeRes.json).toHaveBeenCalledWith({ error: 'Password must be at least 6 characters!' })
-
-    const invalidTokenRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-    const missingUserRes = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-    await loginTFA(tfaReq, invalidTokenRes, vi.fn())
-    await loginChangePassword(changeReq, missingUserRes, vi.fn())
-
-    expect(invalidTokenRes.status).toHaveBeenCalledWith(401)
-    expect(invalidTokenRes.json).toHaveBeenCalledWith({ error: 'Invalid validation token.' })
-    expect(missingUserRes.status).toHaveBeenCalledWith(401)
-    expect(missingUserRes.json).toHaveBeenCalledWith({ error: 'This user does not exist.' })
+    expect(global.WIKI.models.users.login).toHaveBeenCalledTimes(3)
+    expect(next).not.toHaveBeenCalled()
   })
 
   it('confirms email only through the explicit POST and resets brute-force state', async () => {

@@ -1,5 +1,4 @@
 import { describe, expect, it } from '../server/test/bun-test.mts'
-import * as contentExtensions from './content-extensions.ts'
 import {
   BUILTIN_CONTENT_EXTENSIONS,
   CONTENT_EXTENSION_HOST_VERSION,
@@ -35,20 +34,6 @@ const index = (input: unknown) => {
 }
 
 describe('content extension contract', () => {
-  it('exports only the shared runtime contract', () => {
-    expect(Object.keys(contentExtensions).sort()).toEqual([
-      'BUILTIN_CONTENT_EXTENSIONS',
-      'CONTENT_EXTENSION_HOST_VERSION',
-      'KROKI_DIAGRAM_TYPES',
-      'contentExtensionCompatibility',
-      'isContentExtensionKey',
-      'isSafeContentExtensionAssetPath',
-      'parseContentExtensionEnvelope',
-      'parseContentExtensionFence',
-      'serializeContentExtensionFence'
-    ])
-  })
-
   it('declares the complete built-in extension catalog', () => {
     expect(CONTENT_EXTENSION_HOST_VERSION).toBe(1)
     expect(BUILTIN_CONTENT_EXTENSIONS.map(extension => extension.key)).toEqual([

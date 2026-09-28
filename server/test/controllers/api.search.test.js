@@ -430,11 +430,20 @@ describe('controllers/api search endpoints', () => {
     expect(WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
   })
 
-  it('returns JSON 500 for unexpected engine save failures', async () => {
+  it.each([
+    ['plain persistence error', () => new Error('db-secret-search-plain'), 500],
+    ['explicit 500 persistence error', () => Object.assign(new Error('db-secret-search-500'), { status: 500 }), 500],
+    ['statusful persistence error', () => Object.assign(new Error('db-secret-search-status'), { status: 503 }), 503],
+    ['statusful 422 persistence error', () => Object.assign(new Error('db-secret-search-422'), { status: 422 }), 422],
+    ['statusful plain-object lookalike', () => ({ name: 'APPLICATION_ERROR', status: 422, message: 'db-secret-search-object' }), 422],
+    ['non-Error persistence rejection', () => 'db-secret-search-string', 500]
+  ])('redacts %s during search engine saves', async (_kind, failure, status) => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const secret = failure()
+    const secretMessage = typeof secret === 'string' ? secret : secret.message
     const query = {
       patch: vi.fn().mockReturnThis(),
-      where: vi.fn().mockRejectedValue(new Error('save failed'))
+      where: vi.fn().mockRejectedValueOnce(secret)
     }
     global.WIKI.models.searchEngines.query.mockReturnValue(query)
     const { saveEngines } = await loadHandlers()
@@ -442,8 +451,32 @@ describe('controllers/api search endpoints', () => {
 
     await saveEngines(createSavePayload(), res)
 
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'save failed' })
+    expect(query.where).toHaveBeenCalledTimes(1)
+    expect(res.status).toHaveBeenCalledWith(status)
+    expect(res.json).toHaveBeenCalledTimes(1)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Search Engines update failed' })
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain(secretMessage)
+    expect(global.WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
+  })
+
+  it('redacts 5xx ApplicationError messages from search engine saves', async () => {
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const { saveEngines } = await loadHandlers()
+    const { default: errors } = await import('../../operations/errors.ts')
+    const secret = new errors.ApplicationError('db-secret-search-application', { status: 503 })
+    const query = {
+      patch: vi.fn().mockReturnThis(),
+      where: vi.fn().mockRejectedValueOnce(secret)
+    }
+    global.WIKI.models.searchEngines.query.mockReturnValue(query)
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await saveEngines(createSavePayload(), res)
+
+    expect(query.where).toHaveBeenCalledTimes(1)
+    expect(res.status).toHaveBeenCalledWith(503)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Search Engines update failed' })
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain(secret.message)
     expect(global.WIKI.models.searchEngines.initEngine).not.toHaveBeenCalled()
   })
 
@@ -473,16 +506,24 @@ describe('controllers/api search endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ message: 'Index rebuilt successfully' })
   })
 
-  it('returns JSON error messages for search index rebuild failures', async () => {
+  it.each([
+    ['plain error', () => new Error('db-secret-rebuild-plain')],
+    ['statusful error', () => Object.assign(new Error('db-secret-rebuild-status'), { status: 503 })],
+    ['non-Error rejection', () => 'db-secret-rebuild-string']
+  ])('redacts %s from search index rebuild failures and always returns 500', async (_kind, failure) => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
-    global.WIKI.data.searchEngine.rebuild.mockRejectedValueOnce(new Error('index failed'))
+    const secret = failure()
+    global.WIKI.data.searchEngine.rebuild.mockRejectedValueOnce(secret)
     const { rebuildIndex } = await loadHandlers()
     const res = { sendStatus: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await rebuildIndex({ user: { permissions: ['manage:system'] } }, res)
 
+    expect(global.WIKI.data.searchEngine.rebuild).toHaveBeenCalledTimes(1)
     expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'index failed' })
+    expect(res.json).toHaveBeenCalledTimes(1)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Index rebuild failed' })
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain(secret instanceof Error ? secret.message : secret)
   })
   it('is mounted by the API index router', async () => {
     const modulePaths = [

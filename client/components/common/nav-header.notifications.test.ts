@@ -298,6 +298,9 @@ const bundle = await Bun.build({
           resolveDir: path.dirname(componentPath)
         }))
         build.onResolve({ filter: /^vue$/ }, () => ({ path: 'vue', external: true }))
+        build.onResolve({ filter: /^\.\.\/\.\.\/helpers\/user-picture\.ts$/ }, () => ({
+          path: path.resolve(path.dirname(componentPath), '../../helpers/user-picture.ts')
+        }))
         build.onResolve({ filter: /^.*$/ }, args => ({ path: args.path, namespace: 'header-notifications-stub' }))
         build.onLoad({ filter: /.*/, namespace: 'header-notifications-stub' }, args => {
           if (args.path === '@/store/index.ts') {
