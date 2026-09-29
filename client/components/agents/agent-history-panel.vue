@@ -48,13 +48,13 @@
     <v-alert v-if="sessionsRefreshError" class="mx-3 mb-3" density="compact" type="warning" variant="tonal">
       <div class="agent-history__refresh-error">
         <span>{{ sessionsRefreshError }}</span>
-        <v-btn size="small" variant="text" :loading="refreshingSessions" :disabled="refreshingSessions || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="refreshSessions">Retry conversations</v-btn>
+        <v-btn size="small" variant="text" :loading="refreshingSessions" :disabled="refreshingSessions || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="refreshSessions()">Retry conversations</v-btn>
       </div>
     </v-alert>
     <v-alert v-if="foldersRefreshError" class="mx-3 mb-3" density="compact" type="warning" variant="tonal">
       <div class="agent-history__refresh-error">
         <span>{{ foldersRefreshError }}</span>
-        <v-btn size="small" variant="text" :loading="refreshingFolders" :disabled="refreshingFolders || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="refreshFolders">Retry folders</v-btn>
+        <v-btn size="small" variant="text" :loading="refreshingFolders" :disabled="refreshingFolders || networkBlocked" :title="networkBlocked ? networkRequiredMessage : undefined" @click="refreshFolders()">Retry folders</v-btn>
       </div>
     </v-alert>
 
