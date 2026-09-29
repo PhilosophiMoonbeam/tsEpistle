@@ -64,13 +64,15 @@ jobs:
     - name: Validate Helm Source Contract
       if: steps.chart-changes.outputs.changed == 'true'
       run: server/test/scripts/check-helm-lifecycle-contract.sh
-    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+    - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       with:
-        python-version: '3.12'
+        version: '0.12.13'
     - name: Install PDF Test Dependencies
       run: |
-        python -m venv "$RUNNER_TEMP/wiki-pdf"
-        "$RUNNER_TEMP/wiki-pdf/bin/python" -m pip install --disable-pip-version-check --only-binary=:all: pikepdf==9.5.2
+        uv python install 3.12
+        uv venv --no-project --managed-python --python 3.12 "$RUNNER_TEMP/wiki-pdf"
+        uv pip install --python "$RUNNER_TEMP/wiki-pdf/bin/python" --only-binary :all: pikepdf==9.5.2
+        env -i PATH="$RUNNER_TEMP/wiki-pdf/bin:/usr/bin:/bin" LANG=C.UTF-8 python3 -I -B -c 'import pikepdf'
         echo "$RUNNER_TEMP/wiki-pdf/bin" >> "$GITHUB_PATH"
     - name: Build Vite Assets
       run: bun run build
@@ -112,13 +114,15 @@ jobs:
         retention-days: 30
 
 
-    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+    - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       with:
-        python-version: '3.12'
+        version: '0.12.13'
     - name: Install PDF Test Dependencies
       run: |
-        python -m venv "$RUNNER_TEMP/wiki-pdf"
-        "$RUNNER_TEMP/wiki-pdf/bin/python" -m pip install --disable-pip-version-check --only-binary=:all: pikepdf==9.5.2
+        uv python install 3.12
+        uv venv --no-project --managed-python --python 3.12 "$RUNNER_TEMP/wiki-pdf"
+        uv pip install --python "$RUNNER_TEMP/wiki-pdf/bin/python" --only-binary :all: pikepdf==9.5.2
+        env -i PATH="$RUNNER_TEMP/wiki-pdf/bin:/usr/bin:/bin" LANG=C.UTF-8 python3 -I -B -c 'import pikepdf'
         echo "$RUNNER_TEMP/wiki-pdf/bin" >> "$GITHUB_PATH"
     - name: Build Vite Assets
       run: bun run build
