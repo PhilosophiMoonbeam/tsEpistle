@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "49a0e706345f0c30868791e8c7d2a3da160de1ba6c93908c9af8e203ed1000a7",
+    "sha256": "a70a2e9f5fce20a6f3a3d43807a57190f3ee58985891e5e1e654a455d42aad0a",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -10,17 +10,143 @@
     }
   },
   "licenseMetadataOverrides": {
+    "@emnapi/runtime@1.11.3": {
+      "license": "MIT",
+      "author": "toyobayashi",
+      "homepage": "https://github.com/toyobayashi/emnapi#readme",
+      "source": "https://registry.npmjs.org/@emnapi%2fruntime/1.11.3"
+    },
+    "@img/sharp-darwin-arm64@0.35.4": {
+      "license": "Apache-2.0",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-darwin-arm64/0.35.4"
+    },
+    "@img/sharp-darwin-x64@0.35.4": {
+      "license": "Apache-2.0",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-darwin-x64/0.35.4"
+    },
+    "@img/sharp-freebsd-wasm32@0.35.4": {
+      "license": "Apache-2.0",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-freebsd-wasm32/0.35.4"
+    },
+    "@img/sharp-libvips-darwin-arm64@1.3.3": {
+      "license": "LGPL-3.0-or-later",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-libvips-darwin-arm64/1.3.3"
+    },
+    "@img/sharp-libvips-darwin-x64@1.3.3": {
+      "license": "LGPL-3.0-or-later",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-libvips-darwin-x64/1.3.3"
+    },
+    "@img/sharp-libvips-linux-arm@1.3.3": {
+      "license": "LGPL-3.0-or-later",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-libvips-linux-arm/1.3.3"
+    },
+    "@img/sharp-libvips-linux-arm64@1.3.3": {
+      "license": "LGPL-3.0-or-later",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-libvips-linux-arm64/1.3.3"
+    },
+    "@img/sharp-libvips-linux-ppc64@1.3.3": {
+      "license": "LGPL-3.0-or-later",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-libvips-linux-ppc64/1.3.3"
+    },
     "@img/sharp-libvips-linux-riscv64@1.3.3": {
       "license": "LGPL-3.0-or-later",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
       "source": "https://registry.npmjs.org/@img%2fsharp-libvips-linux-riscv64/1.3.3"
+    },
+    "@img/sharp-libvips-linux-s390x@1.3.3": {
+      "license": "LGPL-3.0-or-later",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-libvips-linux-s390x/1.3.3"
+    },
+    "@img/sharp-libvips-linuxmusl-arm64@1.3.3": {
+      "license": "LGPL-3.0-or-later",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-libvips-linuxmusl-arm64/1.3.3"
+    },
+    "@img/sharp-linux-arm@0.35.4": {
+      "license": "Apache-2.0",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-linux-arm/0.35.4"
+    },
+    "@img/sharp-linux-arm64@0.35.4": {
+      "license": "Apache-2.0",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-linux-arm64/0.35.4"
+    },
+    "@img/sharp-linux-ppc64@0.35.4": {
+      "license": "Apache-2.0",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-linux-ppc64/0.35.4"
     },
     "@img/sharp-linux-riscv64@0.35.4": {
       "license": "Apache-2.0",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
       "source": "https://registry.npmjs.org/@img%2fsharp-linux-riscv64/0.35.4"
+    },
+    "@img/sharp-linux-s390x@0.35.4": {
+      "license": "Apache-2.0",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-linux-s390x/0.35.4"
+    },
+    "@img/sharp-linuxmusl-arm64@0.35.4": {
+      "license": "Apache-2.0",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-linuxmusl-arm64/0.35.4"
+    },
+    "@img/sharp-wasm32@0.35.4": {
+      "license": "Apache-2.0 AND LGPL-3.0-or-later AND MIT",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-wasm32/0.35.4"
     },
     "@img/sharp-webcontainers-wasm32@0.35.4": {
       "license": "Apache-2.0",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
       "source": "https://registry.npmjs.org/@img%2fsharp-webcontainers-wasm32/0.35.4"
+    },
+    "@img/sharp-win32-arm64@0.35.4": {
+      "license": "Apache-2.0 AND LGPL-3.0-or-later",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-win32-arm64/0.35.4"
+    },
+    "@img/sharp-win32-ia32@0.35.4": {
+      "license": "Apache-2.0 AND LGPL-3.0-or-later",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-win32-ia32/0.35.4"
+    },
+    "@img/sharp-win32-x64@0.35.4": {
+      "license": "Apache-2.0 AND LGPL-3.0-or-later",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
+      "source": "https://registry.npmjs.org/@img%2fsharp-win32-x64/0.35.4"
     },
     "@pmndrs/pointer-events@6.6.30": {
       "license": "MIT",
@@ -604,7 +730,8 @@
       ],
       "license": "MIT",
       "author": "toyobayashi",
-      "homepage": "https://github.com/toyobayashi/emnapi#readme"
+      "homepage": "https://github.com/toyobayashi/emnapi#readme",
+      "licenseMetadataSource": "https://registry.npmjs.org/@emnapi%2fruntime/1.11.3"
     },
     {
       "name": "@envelop/core",
@@ -921,7 +1048,8 @@
       ],
       "license": "Apache-2.0",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-darwin-arm64/0.35.4"
     },
     {
       "name": "@img/sharp-darwin-x64",
@@ -930,7 +1058,8 @@
       ],
       "license": "Apache-2.0",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-darwin-x64/0.35.4"
     },
     {
       "name": "@img/sharp-freebsd-wasm32",
@@ -939,7 +1068,8 @@
       ],
       "license": "Apache-2.0",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-freebsd-wasm32/0.35.4"
     },
     {
       "name": "@img/sharp-libvips-darwin-arm64",
@@ -948,7 +1078,8 @@
       ],
       "license": "LGPL-3.0-or-later",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-libvips-darwin-arm64/1.3.3"
     },
     {
       "name": "@img/sharp-libvips-darwin-x64",
@@ -957,7 +1088,8 @@
       ],
       "license": "LGPL-3.0-or-later",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-libvips-darwin-x64/1.3.3"
     },
     {
       "name": "@img/sharp-libvips-linux-arm",
@@ -966,7 +1098,8 @@
       ],
       "license": "LGPL-3.0-or-later",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-libvips-linux-arm/1.3.3"
     },
     {
       "name": "@img/sharp-libvips-linux-arm64",
@@ -975,7 +1108,8 @@
       ],
       "license": "LGPL-3.0-or-later",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-libvips-linux-arm64/1.3.3"
     },
     {
       "name": "@img/sharp-libvips-linux-ppc64",
@@ -984,7 +1118,8 @@
       ],
       "license": "LGPL-3.0-or-later",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-libvips-linux-ppc64/1.3.3"
     },
     {
       "name": "@img/sharp-libvips-linux-riscv64",
@@ -992,6 +1127,8 @@
         "1.3.3"
       ],
       "license": "LGPL-3.0-or-later",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
       "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-libvips-linux-riscv64/1.3.3"
     },
     {
@@ -1001,7 +1138,8 @@
       ],
       "license": "LGPL-3.0-or-later",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-libvips-linux-s390x/1.3.3"
     },
     {
       "name": "@img/sharp-libvips-linux-x64",
@@ -1019,7 +1157,8 @@
       ],
       "license": "LGPL-3.0-or-later",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-libvips-linuxmusl-arm64/1.3.3"
     },
     {
       "name": "@img/sharp-libvips-linuxmusl-x64",
@@ -1037,7 +1176,8 @@
       ],
       "license": "Apache-2.0",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-linux-arm/0.35.4"
     },
     {
       "name": "@img/sharp-linux-arm64",
@@ -1046,7 +1186,8 @@
       ],
       "license": "Apache-2.0",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-linux-arm64/0.35.4"
     },
     {
       "name": "@img/sharp-linux-ppc64",
@@ -1055,7 +1196,8 @@
       ],
       "license": "Apache-2.0",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-linux-ppc64/0.35.4"
     },
     {
       "name": "@img/sharp-linux-riscv64",
@@ -1063,6 +1205,8 @@
         "0.35.4"
       ],
       "license": "Apache-2.0",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
       "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-linux-riscv64/0.35.4"
     },
     {
@@ -1072,7 +1216,8 @@
       ],
       "license": "Apache-2.0",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-linux-s390x/0.35.4"
     },
     {
       "name": "@img/sharp-linux-x64",
@@ -1090,7 +1235,8 @@
       ],
       "license": "Apache-2.0",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-linuxmusl-arm64/0.35.4"
     },
     {
       "name": "@img/sharp-linuxmusl-x64",
@@ -1108,7 +1254,8 @@
       ],
       "license": "Apache-2.0 AND LGPL-3.0-or-later AND MIT",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-wasm32/0.35.4"
     },
     {
       "name": "@img/sharp-webcontainers-wasm32",
@@ -1116,6 +1263,8 @@
         "0.35.4"
       ],
       "license": "Apache-2.0",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "homepage": "https://sharp.pixelplumbing.com",
       "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-webcontainers-wasm32/0.35.4"
     },
     {
@@ -1125,7 +1274,8 @@
       ],
       "license": "Apache-2.0 AND LGPL-3.0-or-later",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-win32-arm64/0.35.4"
     },
     {
       "name": "@img/sharp-win32-ia32",
@@ -1134,7 +1284,8 @@
       ],
       "license": "Apache-2.0 AND LGPL-3.0-or-later",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-win32-ia32/0.35.4"
     },
     {
       "name": "@img/sharp-win32-x64",
@@ -1143,7 +1294,8 @@
       ],
       "license": "Apache-2.0 AND LGPL-3.0-or-later",
       "author": "Lovell Fuller <npm@lovell.info>",
-      "homepage": "https://sharp.pixelplumbing.com"
+      "homepage": "https://sharp.pixelplumbing.com",
+      "licenseMetadataSource": "https://registry.npmjs.org/@img%2fsharp-win32-x64/0.35.4"
     },
     {
       "name": "@internationalized/date",
@@ -2694,13 +2846,6 @@
       "author": "GoInstant Inc., a salesforce.com company"
     },
     {
-      "name": "buffer-from",
-      "versions": [
-        "1.1.2"
-      ],
-      "license": "MIT"
-    },
-    {
       "name": "buildcheck",
       "versions": [
         "0.0.7"
@@ -2914,14 +3059,6 @@
         "1.8.1"
       ],
       "license": "MIT"
-    },
-    {
-      "name": "concat-stream",
-      "versions": [
-        "2.0.0"
-      ],
-      "license": "MIT",
-      "author": "Max Ogden <max@maxogden.com>"
     },
     {
       "name": "connect-session-knex",
@@ -3954,7 +4091,7 @@
     {
       "name": "ip-address",
       "versions": [
-        "10.3.1"
+        "10.5.1"
       ],
       "license": "MIT",
       "author": "Beau Gunderson <beau@beaugunderson.com> (https://beaugunderson.com/)"
@@ -4654,7 +4791,7 @@
     {
       "name": "multer",
       "versions": [
-        "2.3.0"
+        "2.4.0"
       ],
       "license": "MIT"
     },
@@ -4721,7 +4858,7 @@
     {
       "name": "nodemailer",
       "versions": [
-        "9.1.1"
+        "10.0.2"
       ],
       "license": "MIT-0",
       "author": "Andris Reinman",
@@ -6261,15 +6398,6 @@
       "license": "MIT"
     },
     {
-      "name": "typedarray",
-      "versions": [
-        "0.0.6"
-      ],
-      "license": "MIT",
-      "author": "James Halliday",
-      "homepage": "https://github.com/substack/typedarray"
-    },
-    {
       "name": "uc.micro",
       "versions": [
         "2.1.0",
@@ -6296,8 +6424,8 @@
     {
       "name": "undici",
       "versions": [
-        "7.29.0",
-        "8.10.0"
+        "7.29.1",
+        "8.10.2"
       ],
       "license": "MIT",
       "homepage": "https://undici.nodejs.org"

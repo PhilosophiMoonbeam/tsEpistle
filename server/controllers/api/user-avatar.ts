@@ -36,8 +36,7 @@ const parseImage = multer({
     fieldNameSize: 64,
     fieldSize: 1,
     headerPairs: 32,
-    // Busboy counts the closing boundary when enforcing the part limit.
-    parts: 2
+    parts: 1
   }
 }).single('image')
 

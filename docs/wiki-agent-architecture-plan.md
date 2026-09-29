@@ -21,6 +21,8 @@ The deferred Gemini chat transport assessment, including Ax-native `generateCont
 
 The split inbound MCP SDK now pins server/node/client **2.1.0** and express **2.0.1** (`package.json`, `bun.lock`). `server/agents/mcp.ts` retains split SDK registration and request-scoped admitted tools; official-client negotiation, API-key authority, Host/Origin rejection, approval and revocation checks pass against this family. The modern protocol rejects a POST without `MCP-Protocol-Version`. SDK currency does not establish outbound MCP connectivity or Ax/provider compatibility. Official SDK documentation: https://github.com/modelcontextprotocol/typescript-sdk . An outbound remote-MCP capability requires its own per-user authorization, egress/credential policy and client lifecycle decision; it is not established by the current inbound server.
 
+`server/scripts/check-agent-release.ts` independently checks the exact runtime Ax/MCP family above and keeps the MCP client development-only; update those reviewed expectations deliberately when the pinned family changes. Frozen installation still checks manifest-to-lock consistency, while the protocol and permission suites establish behavior.
+
 ## Ordered work
 
 | Priority | Retain / update / remove | Implementation and dependency | Acceptance gate |
