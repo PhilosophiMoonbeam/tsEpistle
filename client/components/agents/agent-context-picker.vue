@@ -119,6 +119,7 @@
             class="agent-context__search"
             variant="outlined"
             placeholder="Search pages (select up to 8)"
+            aria-label="Search pages"
             prepend-inner-icon="mdi-magnify"
             clearable
             hide-details="auto"

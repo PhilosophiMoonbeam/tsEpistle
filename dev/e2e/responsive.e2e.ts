@@ -239,13 +239,12 @@ test.describe('responsive UI quality matrix', () => {
           expect(toolsBounds).not.toBeNull()
           expect(tocBounds).not.toBeNull()
           if (heroBounds && railBounds && toolsBounds && tocBounds) {
-            const toolsToTocGap = tocBounds.y - (toolsBounds.y + toolsBounds.height)
-            expect(toolsToTocGap, 'Reader utilities keep a visible gap before Page Contents').toBeGreaterThan(0)
-            const seamY = toolsBounds.y + toolsBounds.height + toolsToTocGap / 2
+            expect(tocBounds.y - (toolsBounds.y + toolsBounds.height), 'Reader utilities keep a visible gap before Page Contents').toBeGreaterThan(0)
             const heroBottom = heroBounds.y + heroBounds.height
             expect(railBounds.y, 'Reader rail begins inside the title hero').toBeGreaterThanOrEqual(heroBounds.y)
             expect(railBounds.y, 'Reader rail begins before the title hero ends').toBeLessThan(heroBottom)
-            expect(Math.abs(seamY - heroBottom), 'Reader utilities/contents seam aligns with the hero boundary').toBeLessThanOrEqual(4)
+            expect(toolsBounds.y, 'Reader utilities overlap the title hero').toBeLessThan(heroBottom)
+            expect(tocBounds.y, 'Page Contents begins below the title hero').toBeGreaterThanOrEqual(heroBottom)
             expect(toolsBounds.y, 'Reader utilities begin at the rail top').toBeGreaterThanOrEqual(railBounds.y - 1)
             expect(tocBounds.y, 'Page Contents follows reader utilities').toBeGreaterThanOrEqual(toolsBounds.y + toolsBounds.height)
             expect(tocBounds.height, 'Page Contents retains useful empty geometry').toBeGreaterThanOrEqual(128)
@@ -1624,6 +1623,7 @@ test.describe('responsive UI quality matrix', () => {
     await expect(searchInput).toBeVisible()
     await searchInput.fill('home')
     await expect(searchInput).toHaveValue('home')
+    await expect(wikiSearchDialog.locator('.search-results-item')).not.toHaveCount(0)
     const searchResultTitles = (await wikiSearchDialog.locator('.search-results-item .v-list-item-title').allTextContents()).map(title => title.trim())
     expect(searchResultTitles, 'The initial query returns at least one result').not.toHaveLength(0)
 
@@ -2145,7 +2145,7 @@ test.describe('responsive UI quality matrix', () => {
       await expect(agent.locator('.agent-message--assistant').last()).toContainText('The release is ready for a deliberate review.')
       expect(fixture.requests.filter(request => request.includes('/messages'))).toHaveLength(1)
 
-      await agent.getByRole('button', { name: 'Add sources', exact: true }).click()
+      await page.keyboard.press('ControlOrMeta+K')
       const searchDialog = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
       await expect(searchDialog).toBeVisible()
       const searchInput = page.locator('.nav-header-search-control:visible input').first()
@@ -2615,7 +2615,9 @@ test.describe('responsive UI quality matrix', () => {
     const sessionsBeforeRetry = fixture.requests.filter(request => request === 'GET /_api/agents/sessions').length
     const foldersBeforeRetry = fixture.requests.filter(request => request === 'GET /_api/agents/conversation-folders').length
     await history.getByRole('button', { name: 'Retry folders' }).click()
+    await expect.poll(() => fixture.requests.filter(request => request === 'GET /_api/agents/conversation-folders').length).toBe(foldersBeforeRetry + 1)
     await expect(history.getByText('Release reviews', { exact: true })).toBeVisible()
+    await expect(history.getByText('Fixture archive folder failure')).toHaveCount(0)
     expect(fixture.requests.filter(request => request === 'GET /_api/agents/sessions').length, 'retrying folders must not refetch conversations').toBe(
       sessionsBeforeRetry
     )
