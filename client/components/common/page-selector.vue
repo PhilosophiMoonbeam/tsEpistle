@@ -6,7 +6,7 @@
     scrim='surface'
     style='--v-overlay-opacity: .7'
     :aria-labelledby='titleId'
-    :persistent='isSubmitting'
+    :persistent='isSubmitting || moveReviewLoading || moveReceipt !== null || moveOutcomeUncertain'
     @after-enter='focusPath'
   )
     v-card.page-selector
@@ -65,6 +65,7 @@
                 v-model:opened='openNodes'
                 :items='tree'
                 :load-children='fetchFolders'
+                :disabled='isSubmitting || moveReceipt !== null'
                 :aria-labelledby='foldersId'
                 density='compact'
                 expand-icon='mdi-menu-down-outline'
@@ -102,6 +103,7 @@
               v-model:activated='currentPageIds'
               density='compact'
               activatable
+              :disabled='isSubmitting || moveReceipt !== null'
               :aria-labelledby='pagesId'
               mandatory
             )
@@ -128,6 +130,114 @@
               :title='$t(`common:pageSelector.folderEmptyWarning`)'
               :message='$t(`common:pageSelector.pages`)'
             )
+      .page-selector__repair-option(v-if='mode === `move`')
+        label.page-selector__repair-toggle
+          input(
+            v-model='updateIncomingLinks'
+            type='checkbox'
+            :aria-describedby='moveLinkHelpId'
+            :disabled='sourceVisibility !== `public` || !canReviewIncomingLinks || isSubmitting || moveReceipt !== null || moveOutcomeUncertain'
+          )
+          span Update supported incoming links
+        p.page-selector__repair-help(:id='moveLinkHelpId')
+          | Review exact source edits first. Supported Markdown inline links, enabled wikilinks, and quoted HTML anchor hrefs only. Selected supported occurrences on public-namespace pages are updated; other links may need manual repair. Public pages need not be published or searchable. At most 20 referrer pages can be selected.
+        p.page-selector__repair-help(v-if='sourceVisibility === `private`')
+          | Incoming-link repair is available only for public-namespace pages. You can still move this private page without repair.
+        p.page-selector__repair-help(v-else-if='!canReviewIncomingLinks')
+          | Incoming-link review is unavailable until this page identity and source revision are ready. You can still move it without repair.
+      section.page-selector__link-review(
+        v-if='mode === `move` && updateIncomingLinks && moveReviewStage === `candidates`'
+        :aria-labelledby='moveCandidatesId'
+        :aria-busy='moveReviewLoading ? `true` : undefined'
+      )
+        h3(:id='moveCandidatesId' tabindex='-1') Incoming-link candidates
+        p.page-selector__repair-help
+          | This is a bounded review, not an exhaustive inventory. Unselected pages and unsupported link syntax remain unchanged. Pages with active collaboration drafts or approval workflows require manual handling.
+        p.page-selector__coverage(v-if='moveReviewCoverageNotice' role='note') {{moveReviewCoverageNotice}}
+        v-alert(v-if='moveReviewError' type='error' variant='tonal' density='compact' role='alert') {{moveReviewError}}
+        async-state(
+          v-if='moveReviewLoading && moveReviewItems.length === 0'
+          state='loading'
+          title='Loading incoming-link candidates'
+          message='Only pages whose source you can read are included.'
+        )
+        p.page-selector__selection-count(v-else role='status' aria-live='polite') {{selectedMovePageIds.length}} of 20 referrer pages selected
+        .page-selector__candidate-list(v-if='moveReviewItems.length')
+          article.page-selector__candidate(v-for='item in moveReviewItems' :key='item.id')
+            label.page-selector__candidate-heading
+              input(
+                v-if='item.eligible && item.id !== sourcePageId'
+                type='checkbox'
+                :checked='isMovePageSelected(item.id)'
+                :disabled='!isMovePageSelected(item.id) && selectedMovePageIds.length >= 20 || moveReviewLoading || moveReviewNeedsRefresh'
+                :aria-label='`Select ${item.title}, ${item.locale}/${item.path}`'
+                @change='setMovePageSelected(item.id, $event)'
+              )
+              span.page-selector__candidate-title {{item.title}}
+              span.page-selector__candidate-location {{item.locale}} / {{item.path}} · revision {{item.sourceRevision}}
+            p.page-selector__candidate-reason(v-if='item.id === sourcePageId') Automatically included self-link changes are bundled with this move and are not a separately selected page.
+            p.page-selector__candidate-reason(v-if='!item.eligible && item.reason') {{item.reason}}
+            p.page-selector__candidate-reason(v-if='!item.eligible && !item.reason') This page requires manual repair.
+            dl.page-selector__diff(v-if='(isMovePageSelected(item.id) || item.id === sourcePageId) && item.changes.length')
+              template(v-for='(change, index) in item.changes' :key='`${item.id}-${index}`')
+                dt Before
+                dd: code {{change.before}}
+                dt After
+                dd: code {{change.after}}
+            p.page-selector__candidate-reason(v-else-if='item.eligible && (isMovePageSelected(item.id) || item.id === sourcePageId)') No supported source occurrence is available to change.
+        p.page-selector__empty(v-else-if='!moveReviewLoading && !moveReviewError') No candidates were returned for this review window. This does not mean that no incoming links exist.
+        p.page-selector__candidate-reason(v-if='hasAutomaticSelfLinkChanges') Moved-page self-link changes are included automatically and do not use a referrer-page selection.
+        .page-selector__review-actions
+          v-btn(
+            v-if='moveReviewNextCursor'
+            variant='text'
+            :disabled='moveReviewLoading || moveReviewNeedsRefresh'
+            :loading='moveReviewLoading'
+            @click='loadMoreMoveCandidates'
+          ) Load more candidates
+          v-btn(
+            variant='text'
+            :disabled='moveReviewLoading'
+            @click='refreshMoveCandidates'
+          ) Refresh candidates
+      section.page-selector__link-review(
+        v-if='mode === `move` && updateIncomingLinks && moveReviewStage === `confirm` && selectedMoveReview'
+        :aria-labelledby='moveConfirmId'
+      )
+        h3(:id='moveConfirmId' tabindex='-1') Review exact source edits
+        p.page-selector__repair-help Only these selected, reviewed edits will be committed atomically with the move. The candidate inventory is not exhaustive; unselected pages and unsupported occurrences remain unchanged.
+        p.page-selector__coverage(role='note') {{selectedMoveReview.coverageNotice}}
+        v-alert(v-if='moveReviewError' type='error' variant='tonal' density='compact' role='alert') {{moveReviewError}}
+        article.page-selector__candidate(v-for='item in selectedMoveReview.items' :key='item.id')
+          h4.page-selector__candidate-title {{item.title}}
+          p.page-selector__candidate-location {{item.locale}} / {{item.path}} · revision {{item.sourceRevision}}
+          p.page-selector__candidate-reason(v-if='item.id === sourcePageId') Automatically included self-link changes are bundled with this move and are not a separately selected page.
+          p.page-selector__candidate-reason(v-if='!item.eligible') {{item.reason || 'This page requires manual repair.'}}
+          dl.page-selector__diff(v-if='item.changes.length')
+            template(v-for='(change, index) in item.changes' :key='`${item.id}-${index}`')
+              dt Before
+              dd: code {{change.before}}
+              dt After
+              dd: code {{change.after}}
+        p.page-selector__candidate-reason(v-if='selectedReviewHasNoChanges') Selected pages with no supported edits will not receive a source update.
+        .page-selector__review-actions
+          v-btn(variant='text' :disabled='moveReviewLoading || isSubmitting' @click='refreshMoveCandidates') Refresh review
+      section.page-selector__link-review.page-selector__move-result(
+        v-if='mode === `move` && moveReviewStage === `result` && moveReceipt'
+        :aria-labelledby='moveResultId'
+        role='status'
+        aria-live='polite'
+      )
+        h3(:id='moveResultId' tabindex='-1') Canonical move and selected source updates committed
+        p Page {{moveReceipt.pageId}} is now at source revision {{moveReceipt.sourceRevision}}.
+        ul(v-if='moveReceipt.updated.length')
+          li(v-for='updated in moveReceipt.updated' :key='updated.id')
+            | {{moveItemTitle(updated.id)}} · committed source revision {{updated.sourceRevision}}
+        p.page-selector__projection-notice Rendering, search, and knowledge projections are pending. This receipt does not confirm that every storage mirror has synchronized.
+      section.page-selector__link-review(v-if='mode === `move` && moveOutcomeUncertain' :aria-labelledby='moveUncertainId' role='alert')
+        h3(:id='moveUncertainId' tabindex='-1') Move outcome could not be confirmed
+        p The request may have committed. Refresh to verify the canonical page state; do not automatically retry this move or link repair.
+        v-btn(variant='outlined' @click='refreshCurrentPage') Refresh page
       v-card-actions.page-selector__options.pa-2(v-if='!mustExist || allowLocaleChange')
         v-select(
           v-model='currentLocale'
@@ -139,7 +249,7 @@
           :items='namespaces'
           label='Locale'
           aria-label='Page locale'
-          :disabled='isSubmitting'
+          :disabled='isSubmitting || moveReceipt !== null'
         )
         v-text-field(
           ref='pathIpt'
@@ -152,26 +262,82 @@
           flat
           :readonly='mustExist'
           clearable
-          :disabled='isSubmitting'
+          :disabled='isSubmitting || moveReceipt !== null'
         )
       v-card-chin.page-selector__chin
         v-alert.page-selector__submission-error(v-if='submissionError' type='error' variant='tonal' density='compact' role='alert') {{ submissionError }}
         v-spacer
-        v-btn(variant='text' :disabled='isSubmitting' @click='close') {{$t('common:actions.cancel')}}
-        v-btn.px-4(color='primary' prepend-icon='mdi-check' :loading='isSubmitting' @click='open' :disabled='!isValidPath || isSubmitting') {{$t('common:actions.select')}}
+        v-btn(
+          variant='text'
+          :disabled='isSubmitting || moveReviewLoading || moveReceipt !== null || moveOutcomeUncertain'
+          @click='close'
+        ) {{$t('common:actions.cancel')}}
+        v-btn(
+          v-if='mode === `move` && updateIncomingLinks && moveReviewStage === `candidates`'
+          color='primary'
+          :disabled='(selectedMovePageIds.length === 0 && !hasAutomaticSelfLinkChanges) || moveReviewLoading || moveReviewNeedsRefresh'
+          :loading='moveReviewLoading'
+          @click='reviewSelectedMovePages'
+        ) {{selectedMovePageIds.length === 0 ? 'Review self-link changes' : 'Review selected changes'}}
+        v-btn(
+          v-else-if='mode === `move` && updateIncomingLinks && moveReviewStage === `confirm`'
+          color='primary'
+          :disabled='!selectedMoveReview || moveReviewLoading || isSubmitting'
+          :loading='isSubmitting'
+          @click='confirmReviewedMove'
+        ) Move and update selected links
+        v-btn(
+          v-else-if='mode === `move` && moveReceipt'
+          color='primary'
+          @click='acknowledgeMove'
+        ) Done
+        v-btn(
+          v-else-if='mode === `move` && moveOutcomeUncertain'
+          color='primary'
+          @click='refreshCurrentPage'
+        ) Refresh page
+        v-btn(
+          v-else
+          color='primary'
+          prepend-icon='mdi-check'
+          :loading='isSubmitting || moveReviewLoading'
+          @click='open'
+          :disabled='!isValidPath || isSubmitting || moveReviewLoading || !canReviewIncomingLinks && mode === `move` && updateIncomingLinks'
+        ) {{mode === `move` && updateIncomingLinks ? 'Find incoming links' : $t('common:actions.select')}}
+        v-btn(
+          v-if='mode === `move` && updateIncomingLinks && moveReceipt === null && !moveOutcomeUncertain'
+          variant='outlined'
+          :disabled='isSubmitting || moveReviewLoading'
+          @click='moveWithoutRepair'
+        ) Move without link repair
 </template>
 
 <script lang='ts'>
 import { defineComponent, markRaw, type PropType, useId } from 'vue'
-import { fetchPageTree, type PageTreeRow } from '../../helpers/pages-api'
+import {
+  fetchMoveLinkReview,
+  fetchPageTree,
+  type MoveLinkReviewItem,
+  type MoveLinkReviewResponse,
+  type MovePageReceipt,
+  type PageTreeRow
+} from '../../helpers/pages-api'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import AsyncState from './async-state.vue'
 
 const localeSegmentRegex = /^[A-Z]{2}(-[A-Z]{2})?$/i
 
 type PageSelectorMode = 'create' | 'move' | 'select'
-type PageSelection = { locale: string, path: string, id: number, visibility?: 'public' | 'private' }
-type OpenHandler = (selection: PageSelection) => boolean | void | Promise<boolean | void>
+type PageSelection = {
+  locale: string
+  path: string
+  id: number
+  visibility?: 'public' | 'private'
+  sourcePageId?: number
+  expectedSourceRevision?: string
+  reviewToken?: string
+}
+type OpenHandler = (selection: PageSelection) => boolean | void | MovePageReceipt | Promise<boolean | void | MovePageReceipt>
 type PageTreeItem = PageTreeRow & { treeId: number, children?: PageTreeItem[] }
 type PageEntry = PageTreeRow & { pageId: number }
 type FolderLoadFailure = { key: string, item: PageTreeItem, message: string, requestId: number }
@@ -217,11 +383,31 @@ function appendUniqueById<T extends { id: number }> (current: T[], additions: T[
   }))
 }
 
+function isMovePageReceipt(value: unknown): value is MovePageReceipt {
+  if (typeof value !== 'object' || value === null) return false
+  const receipt = value as Partial<MovePageReceipt>
+  return receipt.message === 'Page has been moved.' &&
+    typeof receipt.pageId === 'number' &&
+    Number.isSafeInteger(receipt.pageId) &&
+    receipt.pageId > 0 &&
+    typeof receipt.sourceRevision === 'string' &&
+    receipt.sourceRevision.length > 0 &&
+    receipt.projections === 'pending' &&
+    Array.isArray(receipt.updated) &&
+    receipt.updated.every(item =>
+      typeof item.id === 'number' &&
+      Number.isSafeInteger(item.id) &&
+      item.id > 0 &&
+      typeof item.sourceRevision === 'string' &&
+      item.sourceRevision.length > 0
+    )
+}
+
 /* global siteLangs, siteConfig */
 
 export default defineComponent({
   components: { AsyncState },
-  emits: ['update:modelValue'],
+  emits: ['update:modelValue', 'move-acknowledged'],
   props: {
     modelValue: { type: Boolean, default: false },
     path: { type: String, default: 'new-page' },
@@ -229,14 +415,22 @@ export default defineComponent({
     mode: { type: String as PropType<PageSelectorMode>, default: 'create' },
     openHandler: { type: Function as PropType<OpenHandler>, default: () => undefined },
     mustExist: { type: Boolean, default: false },
-    allowLocaleChange: { type: Boolean, default: false }
+    allowLocaleChange: { type: Boolean, default: false },
+    sourcePageId: { type: Number, default: 0 },
+    sourceSourceRevision: { type: String, default: '' },
+    sourceVisibility: { type: String as PropType<'public' | 'private'>, default: 'public' }
   },
   setup() {
     const id = useId()
     return {
+      titleId: `${id}-title`,
       foldersId: `${id}-folders`,
       pagesId: `${id}-pages`,
-      titleId: `${id}-title`
+      moveLinkHelpId: `${id}-move-link-help`,
+      moveCandidatesId: `${id}-move-link-candidates`,
+      moveConfirmId: `${id}-move-link-confirm`,
+      moveResultId: `${id}-move-result`,
+      moveUncertainId: `${id}-move-uncertain`
     }
   },
   data() {
@@ -247,6 +441,20 @@ export default defineComponent({
       folderRequestIds: {} as Record<string, number>,
       folderPendingRequestIds: {} as Record<string, number>,
       folderRequestSequence: 0,
+      moveReviewRequestId: 0,
+      updateIncomingLinks: false,
+      moveReviewLoading: false,
+      moveReviewStage: 'idle' as 'idle' | 'candidates' | 'confirm' | 'result',
+      moveReviewItems: [] as MoveLinkReviewItem[],
+      moveReviewNextCursor: null as string | null,
+      moveReviewCoverageNotice: '',
+      selectedMovePageIds: [] as number[],
+      selectedMoveReview: null as MoveLinkReviewResponse | null,
+      moveReviewNeedsRefresh: false,
+      moveReviewError: '',
+      moveReceipt: null as MovePageReceipt | null,
+      committedMoveDestination: null as Readonly<{ locale: string, path: string }> | null,
+      moveOutcomeUncertain: false,
       submissionError: '',
       isSubmitting: false,
       currentLocale: siteConfig.lang,
@@ -271,6 +479,15 @@ export default defineComponent({
       set(val: boolean) { this.$emit('update:modelValue', val) }
     },
     searchLoading(): boolean { return this.pendingRequests > 0 },
+    canReviewIncomingLinks(): boolean {
+      return this.sourceVisibility === 'public' &&
+        Number.isSafeInteger(this.sourcePageId) &&
+        this.sourcePageId > 0 &&
+        this.sourceSourceRevision.length > 0
+    },
+    hasAutomaticSelfLinkChanges(): boolean {
+      return this.moveReviewItems.some(item => item.id === this.sourcePageId && item.changes.length > 0)
+    },
     folderLoadFailureList(): FolderLoadFailure[] {
       return Object.values(this.folderLoadFailures)
     },
@@ -294,6 +511,9 @@ export default defineComponent({
         this.currentPage = this.currentPages.find(page => page.id === value[0]) ?? null
       }
     },
+    selectedReviewHasNoChanges(): boolean {
+      return Boolean(this.selectedMoveReview?.items.some(item => item.id !== this.sourcePageId && item.changes.length === 0))
+    },
     isValidPath (): boolean {
       if (!this.currentPath || (this.mustExist && !this.currentPage)) return false
       const firstSection = this.currentPath.split('/')[0]
@@ -306,8 +526,15 @@ export default defineComponent({
       immediate: true,
       handler(newValue: boolean, oldValue: boolean | undefined) {
         if (newValue && !oldValue) {
-          this.currentPath = this.path
+          this.moveReceipt = null
+          this.committedMoveDestination = null
+          this.resetMoveLinkReview()
+          this.updateIncomingLinks = false
+          this.moveOutcomeUncertain = false
+          this.moveReviewNeedsRefresh = false
           this.submissionError = ''
+          this.moveReviewError = ''
+          this.currentPath = this.path
           const localeChanged = this.currentLocale !== this.locale
           this.currentLocale = this.locale
           if (!localeChanged) void this.reloadTree(this.locale)
@@ -316,10 +543,13 @@ export default defineComponent({
           this.treeAbortController?.abort()
           this.treeAbortController = null
           this.pendingRequests = 0
+          this.moveReviewRequestId += 1
+          this.moveReviewLoading = false
         }
       }
     },
     currentNode (newValue: number[], oldValue: number[]) {
+      if (this.moveReceipt !== null) return
       const nodeId = newValue[0]
       if (nodeId === undefined) {
         void this.$nextTick(() => { this.currentNode = oldValue })
@@ -335,14 +565,42 @@ export default defineComponent({
       this.currentPath = [current?.path ?? '', pathParts[pathParts.length - 1] ?? ''].filter(Boolean).join('/')
     },
     currentPage (newValue: PageEntry | null) {
+      if (this.moveReceipt !== null) return
       if (newValue) this.currentPath = newValue.path
     },
-    currentLocale (newValue: string) {
+    currentLocale(newValue: string) {
+      if (this.moveReceipt !== null && this.committedMoveDestination !== null) {
+        if (newValue !== this.committedMoveDestination.locale)
+          this.currentLocale = this.committedMoveDestination.locale
+        return
+      }
+      this.resetMoveLinkReview()
       void this.reloadTree(newValue)
+    },
+    currentPath(newValue: string | null) {
+      if (this.moveReceipt !== null && this.committedMoveDestination !== null) {
+        if (newValue !== this.committedMoveDestination.path)
+          this.currentPath = this.committedMoveDestination.path
+        return
+      }
+      if (this.mode === 'move') this.resetMoveLinkReview()
+    },
+    updateIncomingLinks() {
+      this.resetMoveLinkReview()
+    },
+    sourcePageId() {
+      this.resetMoveLinkReview()
+    },
+    sourceSourceRevision() {
+      this.resetMoveLinkReview()
+    },
+    sourceVisibility() {
+      this.resetMoveLinkReview()
     }
   },
   beforeUnmount() {
     this.submissionRequestId += 1
+    this.moveReviewRequestId += 1
     this.treeViewCacheId += 1
     this.treeAbortController?.abort()
     this.treeAbortController = null
@@ -357,29 +615,281 @@ export default defineComponent({
       const title = this.$refs.dialogTitle
       if (title instanceof HTMLElement) title.focus()
     },
+    focusMoveReviewHeading(id: string): void {
+      void this.$nextTick(() => {
+        const heading = document.getElementById(id)
+        if (heading instanceof HTMLElement) heading.focus()
+      })
+    },
     close(): void {
-      if (!this.isSubmitting) this.isShown = false
+      if (!this.isSubmitting && !this.moveReviewLoading && this.moveReceipt === null && !this.moveOutcomeUncertain)
+        this.isShown = false
     },
     async open(): Promise<void> {
+      if (!this.currentPath || !this.isValidPath || this.isSubmitting || this.moveReviewLoading) return
+      if (this.mode === 'move' && this.updateIncomingLinks) {
+        await this.loadMoveCandidates(null, true)
+        return
+      }
+      await this.submitSelection()
+    },
+    async moveWithoutRepair(): Promise<void> {
+      if (this.mode !== 'move' || this.isSubmitting || this.moveReviewLoading || this.moveReceipt || this.moveOutcomeUncertain) return
+      this.updateIncomingLinks = false
+      await this.submitSelection()
+    },
+    async submitSelection(reviewToken?: string): Promise<void> {
       if (!this.currentPath || !this.isValidPath || this.isSubmitting) return
       const requestId = ++this.submissionRequestId
+      const destinationLocale = this.currentLocale
+      const destinationPath = this.currentPath
       this.submissionError = ''
       this.isSubmitting = true
       try {
-        const exit = await this.openHandler?.({
-          locale: this.currentLocale,
-          path: this.currentPath,
+        const result = await this.openHandler?.({
+          locale: destinationLocale,
+          path: destinationPath,
           id: (this.mustExist && this.currentPage) ? this.currentPage.pageId : 0,
-          ...(this.currentPage ? { visibility: this.currentPage.visibility } : {})
+          ...(this.currentPage ? { visibility: this.currentPage.visibility } : {}),
+          ...(this.mode === 'move'
+            ? { sourcePageId: this.sourcePageId, expectedSourceRevision: this.sourceSourceRevision }
+            : {}),
+          ...(reviewToken === undefined ? {} : { reviewToken })
         })
-        if (requestId === this.submissionRequestId && exit !== false) this.isShown = false
-      } catch (err) {
-        if (requestId === this.submissionRequestId) {
-          this.submissionError = getErrorMessage(err) || 'The page selection could not be completed.'
+        if (requestId !== this.submissionRequestId) return
+        if (result === false) {
+          if (this.mode === 'move') {
+            if (reviewToken !== undefined) {
+              this.selectedMoveReview = null
+              this.moveReviewStage = 'candidates'
+              this.moveReviewNeedsRefresh = true
+              this.moveReviewError = 'The move was not started. Refresh candidates before reopening the review.'
+              this.focusMoveReviewHeading(this.moveCandidatesId)
+            } else {
+              this.submissionError = 'The move was not started. Refresh authorization and try again.'
+            }
+          }
+          return
+        }
+        if (reviewToken !== undefined) {
+          if (!isMovePageReceipt(result) || result.pageId !== this.sourcePageId)
+            throw new Error('The move receipt could not be verified.')
+          this.moveReceipt = result
+          this.committedMoveDestination = Object.freeze({
+            locale: destinationLocale,
+            path: destinationPath
+          })
+          this.currentLocale = destinationLocale
+          this.currentPath = destinationPath
+          this.moveReviewStage = 'result'
+          this.moveReviewError = ''
+          this.focusMoveReviewHeading(this.moveResultId)
+          return
+        }
+        this.isShown = false
+      } catch (error) {
+        if (requestId !== this.submissionRequestId) return
+        const status = error && typeof error === 'object' ? Reflect.get(error, 'status') : undefined
+        const knownRejection =
+          typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429
+        if (this.mode === 'move' && !knownRejection) {
+          this.moveOutcomeUncertain = true
+          this.moveReviewStage = 'idle'
+          this.selectedMoveReview = null
+          this.submissionError = ''
+          this.moveReviewError = ''
+          this.focusMoveReviewHeading(this.moveUncertainId)
+        } else if (reviewToken !== undefined) {
+          this.selectedMoveReview = null
+          this.moveReviewStage = 'candidates'
+          this.moveReviewNeedsRefresh = true
+          this.moveReviewError = 'This review is stale or no longer eligible. Refresh the candidates before reviewing again.'
+          this.focusMoveReviewHeading(this.moveCandidatesId)
+        } else {
+          this.submissionError = getErrorMessage(error) || 'The page selection could not be completed.'
         }
       } finally {
         if (requestId === this.submissionRequestId) this.isSubmitting = false
       }
+    },
+    async loadMoveCandidates(cursor: string | null, refresh: boolean): Promise<void> {
+      if (
+        !this.canReviewIncomingLinks ||
+        !this.currentPath ||
+        this.moveReviewLoading ||
+        this.isSubmitting ||
+        this.moveReceipt ||
+        this.moveOutcomeUncertain
+      )
+        return
+      if (refresh) this.resetMoveLinkReview()
+      const requestId = ++this.moveReviewRequestId
+      const destinationLocale = this.currentLocale
+      const destinationPath = this.currentPath
+      const sourceRevision = this.sourceSourceRevision
+      this.moveReviewLoading = true
+      this.moveReviewStage = 'candidates'
+      this.moveReviewError = ''
+      if (refresh) this.moveReviewCoverageNotice = ''
+      try {
+        const response = await fetchMoveLinkReview(
+          window.fetch.bind(window),
+          this.sourcePageId,
+          {
+            destinationLocale,
+            destinationPath,
+            expectedSourceRevision: sourceRevision,
+            ...(cursor === null ? {} : { cursor })
+          },
+          'Incoming-link review is unavailable'
+        )
+        if (
+          requestId !== this.moveReviewRequestId ||
+          !this.isShown ||
+          destinationLocale !== this.currentLocale ||
+          destinationPath !== this.currentPath ||
+          sourceRevision !== this.sourceSourceRevision
+        )
+          return
+        this.moveReviewItems = cursor === null ? response.items : appendUniqueById(this.moveReviewItems, response.items)
+        this.moveReviewNextCursor = response.nextCursor
+        this.moveReviewCoverageNotice = response.coverageNotice
+        this.moveReviewNeedsRefresh = false
+        this.focusMoveReviewHeading(this.moveCandidatesId)
+      } catch {
+        if (requestId === this.moveReviewRequestId) {
+          this.moveReviewError = 'Unable to load the incoming-link review. Refresh candidates or continue with a normal move.'
+          this.focusMoveReviewHeading(this.moveCandidatesId)
+        }
+      } finally {
+        if (requestId === this.moveReviewRequestId) this.moveReviewLoading = false
+      }
+    },
+    loadMoreMoveCandidates(): void {
+      if (this.moveReviewNextCursor) void this.loadMoveCandidates(this.moveReviewNextCursor, false)
+    },
+    refreshMoveCandidates(): void {
+      void this.loadMoveCandidates(null, true)
+    },
+    isMovePageSelected(pageId: number): boolean {
+      return this.selectedMovePageIds.includes(pageId)
+    },
+    setMovePageSelected(pageId: number, event: Event): void {
+      if (pageId === this.sourcePageId || this.moveReviewLoading || this.moveReviewNeedsRefresh) return
+      const checked = (event.target as HTMLInputElement | null)?.checked === true
+      if (checked) {
+        if (!this.selectedMovePageIds.includes(pageId) && this.selectedMovePageIds.length < 20) {
+          this.selectedMovePageIds = [...this.selectedMovePageIds, pageId]
+          this.selectedMoveReview = null
+          this.moveReviewError = ''
+        }
+      } else {
+        this.selectedMovePageIds = this.selectedMovePageIds.filter(id => id !== pageId)
+        this.selectedMoveReview = null
+      }
+    },
+    async reviewSelectedMovePages(): Promise<void> {
+      if (
+        !this.canReviewIncomingLinks ||
+        !this.currentPath ||
+        (this.selectedMovePageIds.length === 0 && !this.hasAutomaticSelfLinkChanges) ||
+        this.selectedMovePageIds.length > 20 ||
+        this.moveReviewLoading ||
+        this.isSubmitting ||
+        this.moveReviewNeedsRefresh
+      )
+        return
+      const requestId = ++this.moveReviewRequestId
+      const selectedIds = [...this.selectedMovePageIds]
+      const expectedIds = new Set(selectedIds)
+      const destinationLocale = this.currentLocale
+      const destinationPath = this.currentPath
+      const sourceRevision = this.sourceSourceRevision
+      this.moveReviewLoading = true
+      this.moveReviewError = ''
+      try {
+        const response = await fetchMoveLinkReview(
+          window.fetch.bind(window),
+          this.sourcePageId,
+          {
+            destinationLocale,
+            destinationPath,
+            expectedSourceRevision: sourceRevision,
+            selectedPageIds: selectedIds
+          },
+          'Selected incoming-link review is unavailable'
+        )
+        if (
+          requestId !== this.moveReviewRequestId ||
+          !this.isShown ||
+          destinationLocale !== this.currentLocale ||
+          destinationPath !== this.currentPath ||
+          sourceRevision !== this.sourceSourceRevision
+        )
+          return
+        const reviewedReferrers = response.items.filter(item => item.id !== this.sourcePageId)
+        if (
+          reviewedReferrers.length !== selectedIds.length ||
+          selectedIds.some(id => !reviewedReferrers.some(item => item.id === id && item.eligible)) ||
+          reviewedReferrers.some(item => !expectedIds.has(item.id)) ||
+          response.items.some(item => item.id === this.sourcePageId && item.changes.length > 0 && !item.eligible)
+        )
+          throw new Error('Selected review changed.')
+        if (
+          selectedIds.length === 0 &&
+          !response.items.some(item => item.id === this.sourcePageId && item.changes.length > 0)
+        )
+          throw new Error('No reviewed self-link change.')
+        this.selectedMoveReview = response
+        this.moveReviewCoverageNotice = response.coverageNotice
+        this.focusMoveReviewHeading(this.moveConfirmId)
+        this.moveReviewStage = 'confirm'
+      } catch {
+        if (requestId === this.moveReviewRequestId) {
+          this.selectedMoveReview = null
+          this.moveReviewStage = 'candidates'
+          this.moveReviewNeedsRefresh = true
+          this.moveReviewError = 'This review is stale or no longer eligible. Refresh the candidates before continuing.'
+          this.focusMoveReviewHeading(this.moveCandidatesId)
+        }
+      } finally {
+        if (requestId === this.moveReviewRequestId) this.moveReviewLoading = false
+      }
+    },
+    confirmReviewedMove(): void {
+      const token = this.selectedMoveReview?.reviewToken
+      if (!token || this.moveReviewNeedsRefresh || this.isSubmitting || this.moveReviewLoading) return
+      void this.submitSelection(token)
+    },
+    moveItemTitle(pageId: number): string {
+      const item = this.selectedMoveReview?.items.find(candidate => candidate.id === pageId) ??
+        this.moveReviewItems.find(candidate => candidate.id === pageId)
+      return item?.title ?? (pageId === this.sourcePageId ? 'Moved page' : `Page ${pageId}`)
+    },
+    resetMoveLinkReview(): void {
+      if (this.moveReceipt !== null) return
+      this.moveReviewRequestId += 1
+      this.moveReviewLoading = false
+      this.moveReviewStage = 'idle'
+      this.moveReviewItems = []
+      this.moveReviewNextCursor = null
+      this.moveReviewCoverageNotice = ''
+      this.selectedMovePageIds = []
+      this.selectedMoveReview = null
+      this.moveReviewNeedsRefresh = false
+      this.moveReviewError = ''
+    },
+    acknowledgeMove(): void {
+      if (!this.moveReceipt || !this.committedMoveDestination) return
+      this.$emit('move-acknowledged', {
+        locale: this.committedMoveDestination.locale,
+        path: this.committedMoveDestination.path,
+        receipt: this.moveReceipt
+      })
+      this.isShown = false
+    },
+    refreshCurrentPage(): void {
+      window.location.reload()
     },
     async reloadTree (locale: string): Promise<void> {
       this.treeAbortController?.abort()
@@ -639,6 +1149,135 @@ export default defineComponent({
     gap: var(--wiki-space-2);
   }
 
+  &__repair-option {
+    padding: var(--wiki-space-3);
+    border-block-end: 1px solid var(--wiki-surface-border);
+  }
+
+  &__repair-toggle {
+    display: flex;
+    min-height: 2.5rem;
+    align-items: center;
+    gap: var(--wiki-space-2);
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  &__repair-toggle input {
+    width: 1.15rem;
+    height: 1.15rem;
+    flex: 0 0 auto;
+    accent-color: var(--wiki-accent-ink);
+  }
+
+  &__repair-help,
+  &__coverage {
+    margin: var(--wiki-space-2) 0 0;
+    color: rgb(var(--v-theme-on-surface-variant));
+    font-size: .82rem;
+    line-height: 1.45;
+  }
+
+  &__link-review {
+    display: grid;
+    gap: var(--wiki-space-2);
+    max-height: min(38dvh, 30rem);
+    overflow-y: auto;
+    padding: var(--wiki-space-3);
+    border-block-end: 1px solid var(--wiki-surface-border);
+  }
+
+  &__link-review h3,
+  &__link-review h4 {
+    margin: 0;
+    color: rgb(var(--v-theme-on-surface));
+    font-size: .95rem;
+    font-weight: 650;
+  }
+
+  &__candidate-list {
+    display: grid;
+    gap: var(--wiki-space-2);
+  }
+
+  &__candidate {
+    min-width: 0;
+    padding: var(--wiki-space-3);
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-control-radius);
+    background: var(--wiki-surface-sunken, rgb(var(--v-theme-background)));
+  }
+
+  &__candidate-heading {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--wiki-space-2);
+    flex-wrap: wrap;
+    cursor: pointer;
+  }
+
+  &__candidate-heading input {
+    width: 1.15rem;
+    height: 1.15rem;
+    flex: 0 0 auto;
+    accent-color: var(--wiki-accent-ink);
+  }
+
+  &__candidate-title {
+    min-width: 0;
+    color: rgb(var(--v-theme-on-surface));
+    font-weight: 650;
+    overflow-wrap: anywhere;
+  }
+
+  &__candidate-location,
+  &__candidate-reason,
+  &__selection-count,
+  &__empty {
+    margin: 0;
+    color: rgb(var(--v-theme-on-surface-variant));
+    font-size: .8rem;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+
+  &__diff {
+    display: grid;
+    grid-template-columns: 4rem minmax(0, 1fr);
+    gap: .25rem var(--wiki-space-2);
+    margin: var(--wiki-space-2) 0 0;
+  }
+
+  &__diff dt {
+    color: rgb(var(--v-theme-on-surface-variant));
+    font-size: .75rem;
+    font-weight: 600;
+  }
+
+  &__diff dd {
+    min-width: 0;
+    margin: 0;
+  }
+
+  &__diff code {
+    display: block;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  &__review-actions {
+    display: flex;
+    gap: var(--wiki-space-2);
+    flex-wrap: wrap;
+  }
+
+  &__projection-notice {
+    padding: var(--wiki-space-2);
+    border-inline-start: .2rem solid var(--wiki-accent-ink);
+    background: color-mix(in srgb, var(--wiki-accent-ink) 8%, transparent);
+  }
   &__options .v-select {
     flex: 0 1 10rem;
     min-width: 7rem;
@@ -688,6 +1327,22 @@ export default defineComponent({
 
   .page-selector__options .v-select,
   .page-selector__options .v-text-field {
+    flex: 1 1 100%;
+  }
+  .page-selector__link-review {
+    max-height: 42dvh;
+    padding-inline: var(--wiki-space-2);
+  }
+
+  .page-selector__candidate-location {
+    flex-basis: 100%;
+  }
+
+  .page-selector__chin {
+    align-items: stretch;
+  }
+
+  .page-selector__chin > .v-btn {
     flex: 1 1 100%;
   }
 }

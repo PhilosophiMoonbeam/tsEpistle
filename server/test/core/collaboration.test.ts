@@ -56,10 +56,19 @@ beforeEach(async () => {
   await knex.schema.createTable('users', table => table.integer('id').primary())
   await knex.schema.createTable('pages', table => {
     table.integer('id').primary()
+    table.text('content').notNullable()
+    table.string('editorKey').notNullable()
+    table.string('updatedAt').notNullable()
     table.string('sourceRevision').notNullable()
   })
   await knex('users').insert({ id: 1 })
-  await knex('pages').insert({ id: 42, sourceRevision: '1' })
+  await knex('pages').insert({
+    id: 42,
+    content: '# Shared\n',
+    editorKey: 'markdown',
+    updatedAt: '2026-08-15T12:00:00.000Z',
+    sourceRevision: '1'
+  })
   await upCollaboration(knex)
   await upDiscardFencing(knex)
 

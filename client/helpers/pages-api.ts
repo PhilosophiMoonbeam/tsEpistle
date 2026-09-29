@@ -1192,21 +1192,188 @@ export async function convertPage(
   await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/convert`, 'POST', { editor, expectedSourceRevision }, fallbackMessage)
 }
 
+export type MoveLinkReviewChange = { before: string, after: string }
+export type MoveLinkReviewItem = {
+  id: number
+  title: string
+  locale: string
+  path: string
+  sourceRevision: string
+  eligible: boolean
+  reason?: string
+  changes: MoveLinkReviewChange[]
+}
+export type MoveLinkReviewResponse = {
+  schemaVersion: 1
+  items: MoveLinkReviewItem[]
+  nextCursor: string | null
+  coverageNotice: string
+  reviewToken?: string
+}
+export type MoveLinkReviewInput = {
+  destinationLocale: string
+  destinationPath: string
+  expectedSourceRevision: string
+  cursor?: string
+  selectedPageIds?: number[]
+}
+export type MovePageReceipt = {
+  message: 'Page has been moved.'
+  pageId: number
+  sourceRevision: string
+  updated: Array<{ id: number, sourceRevision: string }>
+  projections: 'pending'
+}
+
+function normalizeMoveLinkReviewItem(value: unknown, fallbackMessage: string): MoveLinkReviewItem {
+  if (
+    !isRecord(value) ||
+    !isPositiveSafeInteger(value.id) ||
+    typeof value.title !== 'string' ||
+    typeof value.locale !== 'string' ||
+    typeof value.path !== 'string' ||
+    typeof value.sourceRevision !== 'string' ||
+    value.sourceRevision.length < 1 ||
+    typeof value.eligible !== 'boolean' ||
+    !Array.isArray(value.changes) ||
+    (value.reason !== undefined && typeof value.reason !== 'string')
+  )
+    throw new Error(fallbackMessage)
+  const changes = value.changes.map(change => {
+    if (!isRecord(change) || typeof change.before !== 'string' || typeof change.after !== 'string') throw new Error(fallbackMessage)
+    return { before: change.before, after: change.after }
+  })
+  return {
+    id: value.id,
+    title: value.title,
+    locale: value.locale,
+    path: value.path,
+    sourceRevision: value.sourceRevision,
+    eligible: value.eligible,
+    ...(typeof value.reason === 'string' ? { reason: value.reason } : {}),
+    changes
+  }
+}
+
+function normalizeMoveLinkReview(payload: unknown, fallbackMessage: string, requireToken: boolean): MoveLinkReviewResponse {
+  if (
+    !isRecord(payload) ||
+    payload.schemaVersion !== 1 ||
+    !Array.isArray(payload.items) ||
+    (payload.nextCursor !== null && typeof payload.nextCursor !== 'string') ||
+    typeof payload.coverageNotice !== 'string' ||
+    (payload.reviewToken !== undefined && typeof payload.reviewToken !== 'string') ||
+    (requireToken && (typeof payload.reviewToken !== 'string' || payload.reviewToken.length < 1)) ||
+    (!requireToken && payload.reviewToken !== undefined)
+  )
+    throw new Error(fallbackMessage)
+  const items = payload.items.map(item => normalizeMoveLinkReviewItem(item, fallbackMessage))
+  const ids = new Set<number>()
+  for (const item of items) {
+    if (ids.has(item.id)) throw new Error(fallbackMessage)
+    ids.add(item.id)
+  }
+  return {
+    schemaVersion: 1,
+    items,
+    nextCursor: payload.nextCursor as string | null,
+    coverageNotice: payload.coverageNotice,
+    ...(typeof payload.reviewToken === 'string' ? { reviewToken: payload.reviewToken } : {})
+  }
+}
+
+function normalizeMovePageReceipt(payload: unknown, expectedPageId: number, fallbackMessage: string): MovePageReceipt {
+  if (
+    !isRecord(payload) ||
+    payload.message !== 'Page has been moved.' ||
+    payload.pageId !== expectedPageId ||
+    !isPositiveSafeInteger(payload.pageId) ||
+    typeof payload.sourceRevision !== 'string' ||
+    payload.sourceRevision.length < 1 ||
+    !Array.isArray(payload.updated) ||
+    payload.projections !== 'pending'
+  )
+    throw new Error(fallbackMessage)
+  const updated = payload.updated.map(item => {
+    if (!isRecord(item) || !isPositiveSafeInteger(item.id) || typeof item.sourceRevision !== 'string' || item.sourceRevision.length < 1)
+      throw new Error(fallbackMessage)
+    return { id: item.id, sourceRevision: item.sourceRevision }
+  })
+  const ids = new Set<number>()
+  for (const item of updated) {
+    if (ids.has(item.id)) throw new Error(fallbackMessage)
+    ids.add(item.id)
+  }
+  if (updated.some(item => item.id === expectedPageId)) throw new Error(fallbackMessage)
+  return {
+    message: 'Page has been moved.',
+    pageId: payload.pageId,
+    sourceRevision: payload.sourceRevision,
+    updated,
+    projections: 'pending'
+  }
+}
+
+export async function fetchMoveLinkReview(
+  fetchImpl: FetchImpl,
+  id: number,
+  input: MoveLinkReviewInput,
+  fallbackMessage = 'Incoming-link review could not be loaded'
+): Promise<MoveLinkReviewResponse> {
+  const selectedPageIds = input.selectedPageIds
+  if (
+    !isPositiveSafeInteger(id) ||
+    (typeof input.expectedSourceRevision !== 'string' || input.expectedSourceRevision.length < 1) ||
+    (selectedPageIds !== undefined &&
+      (selectedPageIds.length > 20 ||
+        new Set(selectedPageIds).size !== selectedPageIds.length ||
+        selectedPageIds.some(pageId => !isPositiveSafeInteger(pageId))))
+  )
+    throw new Error(fallbackMessage)
+  const body = {
+    destinationLocale: input.destinationLocale,
+    destinationPath: input.destinationPath,
+    expectedSourceRevision: input.expectedSourceRevision,
+    ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    ...(selectedPageIds === undefined ? {} : { selectedPageIds })
+  }
+  return sendJson(
+    fetchImpl,
+    `/_api/pages/${encodeURIComponent(id)}/move/review`,
+    'POST',
+    body,
+    fallbackMessage,
+    payload => normalizeMoveLinkReview(payload, fallbackMessage, selectedPageIds !== undefined)
+  )
+}
+
 export async function movePage(
   fetchImpl: FetchImpl,
   id: number,
   destinationLocale: string,
   destinationPath: string,
   expectedSourceRevision: string,
-  fallbackMessage = 'Page move failed'
-): Promise<void> {
-  await sendJson(
-    fetchImpl,
-    `/_api/pages/${encodeURIComponent(id)}/move`,
-    'POST',
-    { destinationLocale, destinationPath, expectedSourceRevision },
-    fallbackMessage
-  )
+  fallbackMessage = 'Page move failed',
+  reviewToken?: string
+): Promise<void | MovePageReceipt> {
+  const body = {
+    destinationLocale,
+    destinationPath,
+    expectedSourceRevision,
+    ...(reviewToken === undefined ? {} : { reviewToken, updateLinks: true })
+  }
+  if (reviewToken !== undefined) {
+    if (!reviewToken) throw new Error(fallbackMessage)
+    return sendJson(
+      fetchImpl,
+      `/_api/pages/${encodeURIComponent(id)}/move`,
+      'POST',
+      body,
+      fallbackMessage,
+      payload => normalizeMovePageReceipt(payload, id, fallbackMessage)
+    )
+  }
+  await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/move`, 'POST', body, fallbackMessage)
 }
 
 export async function fetchPageLocaleRelations(
