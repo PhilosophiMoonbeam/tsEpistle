@@ -2577,7 +2577,7 @@ test.describe('responsive UI quality matrix', () => {
     }
 
     await page.setViewportSize({ width: 640, height: 420 })
-    const settingsButton = agent.getByRole('button', { name: 'Settings', exact: true })
+    const settingsButton = agent.locator('.inline-agent__more-menu')
     await settingsButton.focus()
     await settingsButton.press('Enter')
     const settingsMenu = agent.locator('.v-menu.v-overlay--active')
