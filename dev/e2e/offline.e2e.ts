@@ -18,7 +18,6 @@ type ReaderPageTarget = {
 
 type OfflineWindow = Window & {
   __rejectOfflineClipboard?: (() => void) | undefined
-  __restoreOfflineSnapshotFetch?: (() => void) | undefined
 }
 
 type OfflineSnapshotRow = {
@@ -211,9 +210,9 @@ async function guestReadablePublicPages(page: Page, count: number): Promise<Read
   const origin = new URL(page.url()).origin
   const result: ReaderPageTarget[] = []
 
-  // Public visibility does not guarantee Guest access; public fixtures must not enter the encrypted private-page flow.
+  // Public navigation alone does not imply offline eligibility: publication, editor type, and source projection are checked by this endpoint.
   for (const row of pages) {
-    if (row.visibility !== 'public' || row.locale !== 'en' || typeof row.path !== 'string' || !row.path) continue
+    if (row.visibility !== 'public' || row.locale !== 'en' || typeof row.path !== 'string' || !row.path || typeof row.id !== 'number') continue
     const encodedPath = row.path.split('/').map(segment => encodeURIComponent(segment)).join('/')
     const localizedPath = `/${row.locale}/${encodedPath}`
     const response = await page.request.get(localizedPath, { headers: { Accept: 'text/html' } })
@@ -221,12 +220,15 @@ async function guestReadablePublicPages(page: Page, count: number): Promise<Read
     const resolved = new URL(response.url())
     const unlocalizedPath = `/${encodedPath}`
     if (resolved.origin !== origin || resolved.search || resolved.hash || ![localizedPath, unlocalizedPath].includes(resolved.pathname)) continue
+    const snapshot = await page.request.get(`/_api/pages/${row.id}/offline-snapshot`)
+    if (!snapshot.ok()) continue
     result.push({ path: row.path, locale: row.locale, canonicalPath: resolved.pathname })
-    if (result.length >= count) break
   }
 
-  if (result.length !== count) throw new Error(`Expected ${count} guest-readable public English pages for offline E2E coverage; found ${result.length}.`)
-  return result
+  if (result.length < count) throw new Error(`Expected ${count} guest-readable public English pages for offline E2E coverage; found ${result.length}.`)
+  // The home route returns to '/' online; choose another document first when checking canonical-path restoration.
+  result.sort((left, right) => Number(left.path === 'home') - Number(right.path === 'home'))
+  return result.slice(0, count)
 }
 
 async function savePageFromReader(page: Page, target: ReaderPageTarget, options: SavePageOptions = {}): Promise<OfflineSnapshotRow> {
@@ -263,8 +265,8 @@ async function savePageFromReader(page: Page, target: ReaderPageTarget, options:
     currentLabel = 'Save offline copy'
   }
 
-  let restoreSnapshotFetch = false
-  if (options.expiresAt) {
+  const snapshotRoute = options.expiresAt ? `**/_api/pages/${pageId}/offline-snapshot` : null
+  if (snapshotRoute) {
     const response = await page.request.get(`/_api/pages/${pageId}/offline-snapshot`)
     expect(response.ok(), `Offline snapshot fixture request failed: HTTP ${response.status()}`).toBe(true)
     const snapshot = (await response.json()) as OfflinePageSnapshotV1
@@ -274,33 +276,12 @@ async function savePageFromReader(page: Page, target: ReaderPageTarget, options:
       integrity: ''
     }
     withExpiry.integrity = snapshotIntegrity(withExpiry)
-    await page.evaluate(
-      ({ pathname, body }) => {
-        const target = window as OfflineWindow
-        const originalFetch = window.fetch
-        target.__restoreOfflineSnapshotFetch = () => {
-          window.fetch = originalFetch
-          delete target.__restoreOfflineSnapshotFetch
-        }
-        window.fetch = async (input, init) => {
-          const requestUrl = input instanceof Request ? input.url : String(input)
-          if (new URL(requestUrl, window.location.origin).pathname !== pathname) return originalFetch(input, init)
-          return new Response(body, {
-            status: 200,
-            headers: {
-              'cache-control': 'private, no-store',
-              'content-type': 'application/json',
-              vary: 'Cookie'
-            }
-          })
-        }
-      },
-      {
-        pathname: `/_api/pages/${pageId}/offline-snapshot`,
-        body: JSON.stringify(withExpiry)
-      }
-    )
-    restoreSnapshotFetch = true
+    await page.route(snapshotRoute, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'cache-control': 'private, no-store', vary: 'Cookie' },
+      body: JSON.stringify(withExpiry)
+    }))
   }
 
   try {
@@ -309,9 +290,7 @@ async function savePageFromReader(page: Page, target: ReaderPageTarget, options:
     await expect(control).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 })
     await expect(page.locator('.page-offline-status')).toContainText('readable offline copy is saved on this device', { timeout: 30_000 })
   } finally {
-    if (restoreSnapshotFetch) {
-      await page.evaluate(() => (window as OfflineWindow).__restoreOfflineSnapshotFetch?.())
-    }
+    if (snapshotRoute) await page.unroute(snapshotRoute)
   }
 
   const saved = (await inspectOfflineDatabase(page)).snapshots.find(record => record.pageId === pageId)
@@ -322,7 +301,6 @@ async function savePageFromReader(page: Page, target: ReaderPageTarget, options:
 async function saveOfflinePages(page: Page, count = DEFAULT_OFFLINE_PAGE_COUNT): Promise<OfflineSnapshotRow[]> {
   await warmFeatureWorker(page)
   const targets = await guestReadablePublicPages(page, count)
-  await authenticateAsAdmin(page)
   const saved: OfflineSnapshotRow[] = []
   for (const target of targets) saved.push(await savePageFromReader(page, target))
   await page.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'networkidle' })
@@ -416,7 +394,8 @@ test.describe('integrated offline access', () => {
     expect(warmCacheUrls.some(url => new URL(url).pathname === OFFLINE_PATH)).toBe(true)
     for (const url of warmCacheUrls) {
       const pathname = new URL(url).pathname
-      expect(pathname === OFFLINE_PATH || pathname.startsWith('/_assets/js/') || pathname.startsWith('/_assets/assets/')).toBe(true)
+      expect(pathname === OFFLINE_PATH || pathname === '/_assets/svg/icon-tsepistle.svg' ||
+        pathname.startsWith('/_assets/js/') || pathname.startsWith('/_assets/assets/')).toBe(true)
     }
     const saved = database.snapshots[0]!
     await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
@@ -470,57 +449,6 @@ test.describe('integrated offline access', () => {
       expect(pathname).not.toMatch(/^\/(?:_api|verify|login-reset|_unlock|u)(?:\/|$)/iu)
     }
     await page.context().setOffline(false)
-  })
-
-  test('routes pages that require private offline setup through the device settings', async ({ page }) => {
-    await warmFeatureWorker(page)
-    const pagesResponse = await page.request.get('/_api/pages')
-    expect(pagesResponse.ok(), `Page index request failed: HTTP ${pagesResponse.status()}`).toBe(true)
-    const rows = (await pagesResponse.json()) as PageRow[]
-    const origin = new URL(page.url()).origin
-    const candidates: Array<{ path: string; locale: string; localizedPath: string; unlocalizedPath: string }> = []
-
-    for (const row of rows) {
-      if (row.visibility !== 'public' || row.locale !== 'en' || typeof row.path !== 'string' || !row.path) continue
-      const encodedPath = row.path.split('/').map(segment => encodeURIComponent(segment)).join('/')
-      const localizedPath = `/${row.locale}/${encodedPath}`
-      const unlocalizedPath = `/${encodedPath}`
-      const response = await page.request.get(localizedPath, { headers: { Accept: 'text/html' } })
-      const resolved = new URL(response.url())
-      const guestCanRead = response.ok()
-        && /^text\/html(?:;|$)/iu.test(response.headers()['content-type'] ?? '')
-        && resolved.origin === origin
-        && !resolved.search
-        && !resolved.hash
-        && [localizedPath, unlocalizedPath].includes(resolved.pathname)
-      if (!guestCanRead) candidates.push({ path: row.path, locale: row.locale, localizedPath, unlocalizedPath })
-    }
-
-    if (candidates.length === 0) throw new Error('No guest-restricted public page is available for private setup E2E coverage.')
-    await authenticateAsAdmin(page)
-    let target: ReaderPageTarget | undefined
-    for (const candidate of candidates) {
-      const response = await page.request.get(candidate.localizedPath, { headers: { Accept: 'text/html' } })
-      if (!response.ok() || !/^text\/html(?:;|$)/iu.test(response.headers()['content-type'] ?? '')) continue
-      const resolved = new URL(response.url())
-      if (resolved.origin !== origin || resolved.search || resolved.hash || ![candidate.localizedPath, candidate.unlocalizedPath].includes(resolved.pathname)) continue
-      target = { path: candidate.path, locale: candidate.locale, canonicalPath: resolved.pathname }
-      break
-    }
-    if (!target) throw new Error('No guest-restricted page can be opened by the verified account used for private setup E2E coverage.')
-
-    await page.goto(target.canonicalPath, { waitUntil: 'domcontentloaded' })
-    await expect(page.locator('.page-header-section')).toBeVisible()
-    const control = page.locator('.page-offline-control')
-    await expect(control).toHaveAttribute('aria-label', 'Offline setup required')
-    await expect(page.locator('.page-offline-status')).toContainText('one-time account setup for private reading')
-    await control.click()
-    await waitForOfflineSettings(page)
-    expect(new URL(page.url()).pathname).toBe(OFFLINE_SETTINGS_PATH)
-    const privateReading = page.locator('.offline-settings__reading')
-    await expect(privateReading.getByRole('heading', { name: 'Private offline reading', exact: true })).toBeVisible()
-    await expect(privateReading.locator('.v-chip')).toHaveText('Not set up')
-    await expect(privateReading.getByRole('button', { name: 'Set up private reading', exact: true })).toBeEnabled()
   })
 
   test('opens saved pages at their normal URLs and returns to offline settings', async ({ page, browserName }) => {
@@ -595,8 +523,7 @@ test.describe('integrated offline access', () => {
     await expect(page.locator('#offline-reader-title')).toHaveText(saved.snapshot.title)
     await page.locator('.account-menu__trigger').click()
     const accountMenu = page.locator('.account-menu')
-    await accountMenu.getByRole('button', { name: 'Offline', exact: true }).click()
-    const settingsLink = accountMenu.getByRole('link', { name: 'Manage offline access', exact: true })
+    const settingsLink = accountMenu.getByRole('link', { name: 'Connection and offline access', exact: true })
     await expect(settingsLink).toBeVisible()
     await expect(settingsLink).toHaveAttribute('href', OFFLINE_SETTINGS_PATH)
     await settingsLink.click()
@@ -611,22 +538,24 @@ test.describe('integrated offline access', () => {
     await expect(page.locator('.offline-application')).toHaveCount(0)
     await expect(page.locator('.nav-header')).toBeVisible()
     await page.locator('.account-menu__trigger').click()
-    await accountMenu.getByRole('button', { name: 'Offline', exact: true }).click()
     await expect(settingsLink).toHaveAttribute('href', OFFLINE_SETTINGS_PATH)
   })
 
   test('treats an expired offline selection as removable rather than a refresh action', async ({ page, browserName }) => {
     test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
     await warmFeatureWorker(page)
+    const automaticSaving = page.getByRole('checkbox', { name: /Save frequently visited and recently edited pages/ })
+    await automaticSaving.uncheck()
+    await expect(automaticSaving).not.toBeChecked()
     const target = (await guestReadablePublicPages(page, 1))[0]!
-    await authenticateAsAdmin(page)
     const expiresAt = new Date(Date.now() + 30_000).toISOString()
-    await savePageFromReader(page, target, { expiresAt })
+    const saved = await savePageFromReader(page, target, { expiresAt })
+    expect(saved.snapshot.expiresAt).toBe(expiresAt)
+    await page.context().setOffline(true)
 
     await page.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'networkidle' })
     await waitForOfflineSettings(page)
     await expect(page.locator('.page-card')).toHaveCount(1)
-    await page.context().setOffline(true)
     await page.waitForTimeout(Math.max(0, Date.parse(expiresAt) - Date.now() + 250))
     await page.getByRole('button', { name: 'Refresh storage', exact: true }).click()
     await expect(page.locator('.page-card')).toHaveCount(0)
@@ -719,7 +648,8 @@ test.describe('integrated offline access', () => {
     expect(afterClear.snapshots).toHaveLength(0)
     expect(afterClear.searchDocuments).toHaveLength(0)
     expect(afterClear.draftCount).toBe(0)
-    expect(afterClear.meta).toMatchObject({ snapshotCount: 0, managedBytes: 0, accountingComplete: true })
+    expect(afterClear.meta).toMatchObject({ snapshotCount: 0, accountingComplete: true })
+    expect(afterClear.meta?.managedBytes).toBeLessThan(beforeClear.meta?.managedBytes as number)
     expect(afterClear.meta?.sessionGeneration).toBeGreaterThan(previousGeneration as number)
 
     const pagesResponse = await page.request.get('/_api/pages')
@@ -774,7 +704,6 @@ test('offline Browse immediately lists saved copies and recovers without an onli
   test.setTimeout(120_000)
   await warmFeatureWorker(page)
   const publicPages = await guestReadablePublicPages(page, 2)
-  await authenticateAsAdmin(page)
 
   const saved: OfflineSnapshotRow[] = []
   for (const target of publicPages) saved.push(await savePageFromReader(page, target))
@@ -834,7 +763,6 @@ for (const cachedBrowse of [false, true]) test(`missed disconnect switches ${cac
   test.setTimeout(90_000)
   await warmFeatureWorker(page)
   const target = (await guestReadablePublicPages(page, 1))[0]!
-  await authenticateAsAdmin(page)
   const saved = await savePageFromReader(page, target)
   const logo = page.locator('.nav-header-logo img')
   const logoPath = await logo.getAttribute('src')

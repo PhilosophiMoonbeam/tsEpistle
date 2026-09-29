@@ -596,7 +596,7 @@ const restoreReaderFocus = async (key: string | null, opener: HTMLElement | null
 }
 
 const clearOfflineSelector = (): void => {
-  if (typeof window === 'undefined' || props.navigateOnOpen) return
+  if (typeof window === 'undefined' || props.navigateOnOpen || window.location.pathname === '/p/offline') return
   window.history.replaceState(window.history.state, '', '/?saved=1')
 }
 
