@@ -30,6 +30,10 @@ It is also always helpful to have some context for your pull request. What was t
 
 For the complete isolated Bun suite, build the application assets first (`bun run build`) and provide qpdf CLI 11.9.1 or newer on `PATH` for the PDF worker tests. The TypeScript worker launches qpdf with a minimal environment, so keep the executable's runtime libraries available without relying on inherited loader settings or Python. Both quality jobs fetch the official qpdf 11.9.1 Linux x86_64 bundle, verify its SHA-256, and make it available after the static check; they also build assets before tests. Targeted tests that do not load setup assets or PDFs can run without these prerequisites.
 
+### Local Docker-backed CI smokes
+
+`dev/e2e/ci-run.sh`, `dev/e2e/upgrade-smoke.sh`, and `dev/e2e/multi-instance-smoke.sh` require a fresh `WIKI_TEST_NAMESPACE` beginning with `tsepistle-ci-` (lowercase letters, digits, hyphens). CI assigns a distinct namespace per run attempt, job, and PostgreSQL version; local callers should choose a new one for each invocation. These scripts refuse to reuse existing Docker resources. The application binds a Docker-assigned loopback port, and `ci-run.sh` passes the discovered URL to Playwright. Do not assume port 3000 is free or delete another run's containers, networks, or volumes during local cleanup.
+
 ## Enterprise Release — security review and attestation workflow
 This workflow applies only when a maintainer explicitly activates **Enterprise Release** for a named official beta, production release, or compliance milestone as defined in `AGENTS.md`. Development Sprint is the default: routine development and maintained local-tailnet deployment do not require an immutable source/attestation pair, review record, evidence document, manifest update, release tag, provenance record, or certification artifact.
 

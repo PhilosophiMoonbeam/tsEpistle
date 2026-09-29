@@ -2189,7 +2189,7 @@ export default defineComponent({
   }
 }
 
-@media (min-width: 960px) and (max-width: 1279px) {
+@media (min-width: 960px) and (max-width: 1319px) {
   .nav-header {
     .nav-header-brand {
       padding-inline: var(--wiki-space-3) var(--wiki-space-2);
