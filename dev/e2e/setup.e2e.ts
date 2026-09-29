@@ -213,8 +213,8 @@ test.describe('critical post-install workflows', () => {
     await openAuthenticatedHome(page)
 
     await page.getByRole('link', { name: 'Administration' }).click()
-    await expect(page).toHaveURL('/a/dashboard')
     await expect(page.locator('.admin-dashboard')).toBeVisible({ timeout: 15_000 })
+    await expect(page).toHaveURL('/a/dashboard')
   })
 
   test('creates and publishes the home page with the Markdown editor', async ({ page }) => {

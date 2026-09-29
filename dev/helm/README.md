@@ -137,7 +137,7 @@ Then use that same file when upgrading to the `tsepistle` chart (replace
 
 ```console
 helm upgrade wiki ./tsepistle-0.1.0-alpha.1.tgz \
-  -f values.yaml --atomic --wait --timeout 15m
+  -f values.yaml --wait --timeout 15m
 ```
 
 If editing the values file is not possible, pass the equivalent override
@@ -146,7 +146,7 @@ explicitly on every upgrade:
 ```console
 helm upgrade wiki ./tsepistle-0.1.0-alpha.1.tgz \
   -f values.yaml --set nameOverride=tsfranki \
-  --atomic --wait --timeout 15m
+  --wait --timeout 15m
 ```
 
 Keeping `nameOverride: tsfranki` preserves the existing `wiki-tsfranki`
@@ -161,8 +161,8 @@ the `wiki-tsepistle` names shown in the install and access examples above.
 
 
 1. Record the current chart version, values, image digest, and database server version.
-2. Stop writes or schedule a maintenance window.
-3. Create and verify a database backup. For bundled PostgreSQL, also snapshot the PVC if the storage provider supports consistent snapshots.
+2. Stop all application writers for a maintenance window before the recovery point.
+3. Back up and verify **both** PostgreSQL and `/wiki/data` while writers are stopped; keep the paired archives outside the claims being upgraded. For bundled PostgreSQL, a consistent PVC snapshot can supplement the database backup.
 4. Render and inspect the new manifests:
 
    ```console
@@ -173,14 +173,14 @@ the `wiki-tsepistle` names shown in the install and access examples above.
 5. Upgrade with an explicit chart and values file:
 
    ```console
-   helm upgrade wiki ./tsepistle-0.1.0-alpha.1.tgz -f values.yaml --atomic --wait --timeout 15m
+   helm upgrade wiki ./tsepistle-0.1.0-alpha.1.tgz -f values.yaml --wait --timeout 15m
    ```
 
 6. Confirm the Deployment is available, `/healthz` returns HTTP 200, login works, and a read/write page check succeeds.
 
-tsEpistle runs database migrations during startup, so the Deployment intentionally uses the `Recreate` strategy to prevent old and new application versions from sharing one database during an upgrade. Kubernetes stops the old application pods before starting the new version; this avoids mixed-version operation at the cost of application downtime while the replacement pod migrates and becomes ready. Plan every upgrade as a maintenance window.
+tsEpistle runs database migrations during startup, so the Deployment intentionally uses the `Recreate` strategy to prevent old and new application versions from sharing one database during an upgrade. Kubernetes stops the old application pods before starting the new version; this avoids mixed-version operation at the cost of application downtime while the replacement pod migrates and becomes ready. Plan every upgrade as a maintenance window. Do not use `--atomic` or `--rollback-on-failure` for this path: neither restores persistent data, and the old image may fail against a migrated schema.
 
-The Helm lifecycle CI installs the supported previous release from an explicit `repository:tag@sha256:digest` reference before upgrading to the candidate. The smoke gate refuses a missing, mutable, unresolved, or same-image previous release and records each distinct Docker image revision in its Helm revision values before testing upgrade and rollback. Keep this input pinned to an immutable application release that remains inside the supported upgrade window; never create the initial revision by retagging the candidate.
+The Helm lifecycle CI installs the supported previous release from an explicit `repository:tag@sha256:digest` reference before upgrading to the candidate. The smoke gate refuses a missing, mutable, unresolved, or same-image previous release and records each distinct Docker image revision in its Helm revision values before testing upgrade and paired-state recovery followed by rollback. Keep this input pinned to an immutable application release that remains inside the supported upgrade window; never create the initial revision by retagging the candidate.
 
 The Linux x64 lifecycle gate pulls that pinned previous-release image directly into each kind node; CI nodes need HTTPS access to the image registry. The installed and rolled-back image reference remains the same immutable digest.
 
@@ -203,16 +203,16 @@ Use a dedicated restore-check database on a non-production server. Back up or sn
 
 `helm rollback` restores Kubernetes resources, not database or `/wiki/data` contents. If the new application has migrated the database, rolling back only the Deployment can start old code against a newer schema and is unsafe.
 
-1. Stop all tsEpistle pods.
-2. Restore the pre-upgrade database backup or volume snapshot.
-3. Roll back the Helm release:
+1. Stop all tsEpistle pods and other writers; wait until they terminate.
+2. Verify the paired recovery-point checksums. Restore the pre-upgrade PostgreSQL database **and** the complete `/wiki/data` contents, removing post-checkpoint files before extraction. Verify both restores while old application pods remain stopped. Writes accepted after the recovery point will not survive this rollback.
+3. Only after both restores succeed, roll back the Helm release:
 
    ```console
    helm history wiki
    helm rollback wiki REVISION --wait --timeout 15m
    ```
 
-4. Confirm `/healthz`, login, and read/write page behavior before reopening traffic.
+4. Confirm `/healthz`, login, and read/write page behavior before reopening traffic. If either restore fails, keep application writers stopped rather than starting the old image against mixed state.
 
 ## Uninstall
 

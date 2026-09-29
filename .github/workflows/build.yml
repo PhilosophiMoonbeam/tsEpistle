@@ -629,6 +629,8 @@ jobs:
     runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 25
     needs: [build]
+    env:
+      KIND_CLUSTER_NAME: wiki-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}
     permissions:
       contents: read
 
@@ -675,11 +677,10 @@ jobs:
 
     - name: Create Lifecycle Cluster
       run: |
-        kind delete cluster --name wiki-lifecycle || true
-        kind create cluster --name wiki-lifecycle --image kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+        kind create cluster --name "$KIND_CLUSTER_NAME" --image kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
         docker pull postgres@sha256:a2c20749c564b4eb73a77bfda626f8a3cde1bbfae020fb97c616a00cdc1a2181
         docker tag postgres@sha256:a2c20749c564b4eb73a77bfda626f8a3cde1bbfae020fb97c616a00cdc1a2181 wiki-postgres-test:15
-        kind load docker-image --name wiki-lifecycle \
+        kind load docker-image --name "$KIND_CLUSTER_NAME" \
           "tsepistle:test-${WIKI_BUILD_REVISION}" \
           wiki-postgres-test:15
 
@@ -694,7 +695,7 @@ jobs:
 
     - name: Delete Lifecycle Cluster
       if: always()
-      run: kind delete cluster --name wiki-lifecycle
+      run: kind delete cluster --name "$KIND_CLUSTER_NAME"
 
 
   publish-amd64:
