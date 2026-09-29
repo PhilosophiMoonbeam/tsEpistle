@@ -153,7 +153,7 @@ suite('PostgreSQL private-page schema migration', () => {
       ownerId: null
     }))).rejects.toMatchObject({ code: '23514' })
 
-    await expect(Promise.resolve(db('users').where({ id: 7 }).delete())).rejects.toMatchObject({ code: '23503' })
+    await expect(Promise.resolve(db('users').where({ id: 7 }).delete())).rejects.toMatchObject({ code: '23001' })
     expect(await db('pages').where({ localeCode: 'en', path: 'same/path' }).count<{ count: string }[]>({ count: '*' }).first())
       .toEqual({ count: '3' })
   })
@@ -260,7 +260,7 @@ suite('PostgreSQL private-page schema migration', () => {
     const secondConnection = knexModule({ client: 'pg', connection })
     try {
       expect(await secondConnection('pages').where({ id: 4, visibility: 'private', ownerId: 7 }).first()).toBeTruthy()
-      await expect(Promise.resolve(secondConnection('users').where({ id: 7 }).delete())).rejects.toMatchObject({ code: '23503' })
+      await expect(Promise.resolve(secondConnection('users').where({ id: 7 }).delete())).rejects.toMatchObject({ code: '23001' })
     } finally {
       await secondConnection.destroy()
     }
