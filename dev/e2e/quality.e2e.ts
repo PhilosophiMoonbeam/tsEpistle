@@ -486,7 +486,7 @@ test.describe('release accessibility profiles', () => {
       await expect(stop).toBeHidden()
       const followUpComposer = agent.getByRole('textbox', { name: 'Follow up with Wiki Agent' })
       await expect(followUpComposer).toBeEnabled()
-      await expect(agent.getByRole('status', { name: 'Ready', exact: true })).toBeVisible()
+      await expect(agent.getByRole('status').filter({ hasText: /^Ready$/ })).toBeVisible()
       fixture.assertNoUnexpectedRequests()
     } finally {
       await fixture.dispose()
