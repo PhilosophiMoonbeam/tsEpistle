@@ -10,20 +10,30 @@ interface DataFile {
 }
 
 const requiredVersions = {
-  '@ax-llm/ax': '24.0.12',
-  '@modelcontextprotocol/server': '2.0.0',
-  '@modelcontextprotocol/node': '2.0.0',
-  '@modelcontextprotocol/express': '2.0.0',
+  '@ax-llm/ax': '24.0.24',
+  '@modelcontextprotocol/server': '2.1.0',
+  '@modelcontextprotocol/node': '2.1.0',
+  '@modelcontextprotocol/express': '2.0.1',
   'playwright-core': '1.62.1'
 } as const
-const manifest = JSON.parse(await readFile('package.json', 'utf8')) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
-const dependencies = { ...manifest.dependencies, ...manifest.devDependencies }
+const manifest = JSON.parse(await readFile('package.json', 'utf8')) as {
+  dependencies?: Record<string, string>
+  devDependencies?: Record<string, string>
+  optionalDependencies?: Record<string, string>
+}
 const failures: string[] = []
 for (const [name, version] of Object.entries(requiredVersions)) {
-  if (dependencies[name] !== version) failures.push(`${name} must be exactly ${version}, found ${dependencies[name] ?? 'missing'}`)
+  if (manifest.dependencies?.[name] !== version) {
+    failures.push(`${name} must be an exact ${version} runtime dependency, found ${manifest.dependencies?.[name] ?? 'missing'}`)
+  }
+  if (manifest.devDependencies?.[name] !== undefined || manifest.optionalDependencies?.[name] !== undefined)
+    failures.push(`${name} must not be duplicated outside runtime dependencies`)
 }
-if (manifest.devDependencies?.['@modelcontextprotocol/client'] !== '2.0.0')
-  failures.push('@modelcontextprotocol/client must remain a test-only exact 2.0.0 dependency')
+const mcpClient = '@modelcontextprotocol/client'
+if (manifest.devDependencies?.[mcpClient] !== '2.1.0')
+  failures.push(`${mcpClient} must remain a test-only exact 2.1.0 dependency`)
+if (manifest.dependencies?.[mcpClient] !== undefined || manifest.optionalDependencies?.[mcpClient] !== undefined)
+  failures.push(`${mcpClient} must not be a runtime dependency`)
 
 const data = loadYaml(await readFile('server/app/data.yml', 'utf8')) as DataFile
 const agents = data.defaults?.config?.agents

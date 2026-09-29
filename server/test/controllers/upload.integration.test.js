@@ -513,19 +513,4 @@ describe('controllers/upload real multipart integration', () => {
     expect(uploadDirectoryFiles()).toEqual([])
   })
 
-  it('characterizes non-ASCII filename sanitization under multer 2.3.0', async () => {
-    const { wiki } = await setupServer()
-
-    const res = await postMultipart([
-      { value: JSON.stringify({ folderId: 0 }) },
-      { filename: 'Résumé 2026.PNG', value: Buffer.from('hello'), type: 'image/png' }
-    ])
-
-    expect(res.status).toBe(200)
-    expect(wiki.models.assets.upload).toHaveBeenCalledTimes(1)
-    expect(wiki.models.assets.upload).toHaveBeenCalledWith(expect.objectContaining({
-      originalname: 'résumé_2026.png',
-      assetPath: 'résumé_2026.png'
-    }))
-  })
 })

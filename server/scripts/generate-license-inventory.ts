@@ -19,7 +19,7 @@ interface BunLockfile {
       optionalDependencies?: Record<string, string>
     }
   >
-  overrides?: Record<string, string>
+  overrides?: Record<string, string | { '.': string }>
   packages: Record<string, [string, string, BunLockPackageMetadata?]>
 }
 
@@ -139,8 +139,9 @@ for (const [dependencyName, reviewedVersion] of Object.entries(reviewedRendererR
 
 while (pending.length > 0) {
   const [dependencyName, range] = pending.pop() as [string, string]
+  const override = lockfile.overrides?.[dependencyName]
   const candidates = (packagesByName.get(dependencyName) ?? []).filter(
-    candidate => matchesRange(candidate.version, range) || lockfile.overrides?.[dependencyName] === candidate.version
+    candidate => matchesRange(candidate.version, range) || (typeof override === 'string' && override === candidate.version)
   )
   if (candidates.length === 0) {
     throw new Error(`bun.lock cannot resolve tracked dependency ${dependencyName}@${range}`)
@@ -216,21 +217,53 @@ const collectInstalledPackages = (nodeModulesPath: string): void => {
 }
 collectInstalledPackages(path.join(rootPath, 'node_modules'))
 
-// These exact manifests either omit license metadata or cannot be installed on
-// the inventory host. Their published metadata/license files were reviewed.
+// Published, exact-version metadata for optional platform packages skipped by
+// a normal Linux install. Keep their attribution identical with or without an
+// installed manifest; fail if an installed license contradicts the review.
+const sharpPlatformMetadata = (identity: string, license: string): PackageMetadata & { source: string } => {
+  const { name, version } = parsePackageDescriptor(identity)
+  return {
+    license,
+    author: 'Lovell Fuller <npm@lovell.info>',
+    homepage: 'https://sharp.pixelplumbing.com',
+    source: `https://registry.npmjs.org/${name.replace('/', '%2f')}/${version}`
+  }
+}
+
+const publishedPlatformMetadata: Record<string, PackageMetadata & { source: string }> = {
+  '@emnapi/runtime@1.11.3': {
+    license: 'MIT',
+    author: 'toyobayashi',
+    homepage: 'https://github.com/toyobayashi/emnapi#readme',
+    source: 'https://registry.npmjs.org/@emnapi%2fruntime/1.11.3'
+  },
+  '@img/sharp-darwin-arm64@0.35.4': sharpPlatformMetadata('@img/sharp-darwin-arm64@0.35.4', 'Apache-2.0'),
+  '@img/sharp-darwin-x64@0.35.4': sharpPlatformMetadata('@img/sharp-darwin-x64@0.35.4', 'Apache-2.0'),
+  '@img/sharp-freebsd-wasm32@0.35.4': sharpPlatformMetadata('@img/sharp-freebsd-wasm32@0.35.4', 'Apache-2.0'),
+  '@img/sharp-linux-arm@0.35.4': sharpPlatformMetadata('@img/sharp-linux-arm@0.35.4', 'Apache-2.0'),
+  '@img/sharp-linux-arm64@0.35.4': sharpPlatformMetadata('@img/sharp-linux-arm64@0.35.4', 'Apache-2.0'),
+  '@img/sharp-linux-ppc64@0.35.4': sharpPlatformMetadata('@img/sharp-linux-ppc64@0.35.4', 'Apache-2.0'),
+  '@img/sharp-linux-s390x@0.35.4': sharpPlatformMetadata('@img/sharp-linux-s390x@0.35.4', 'Apache-2.0'),
+  '@img/sharp-linuxmusl-arm64@0.35.4': sharpPlatformMetadata('@img/sharp-linuxmusl-arm64@0.35.4', 'Apache-2.0'),
+  '@img/sharp-libvips-darwin-arm64@1.3.3': sharpPlatformMetadata('@img/sharp-libvips-darwin-arm64@1.3.3', 'LGPL-3.0-or-later'),
+  '@img/sharp-libvips-darwin-x64@1.3.3': sharpPlatformMetadata('@img/sharp-libvips-darwin-x64@1.3.3', 'LGPL-3.0-or-later'),
+  '@img/sharp-libvips-linux-arm@1.3.3': sharpPlatformMetadata('@img/sharp-libvips-linux-arm@1.3.3', 'LGPL-3.0-or-later'),
+  '@img/sharp-libvips-linux-arm64@1.3.3': sharpPlatformMetadata('@img/sharp-libvips-linux-arm64@1.3.3', 'LGPL-3.0-or-later'),
+  '@img/sharp-libvips-linux-ppc64@1.3.3': sharpPlatformMetadata('@img/sharp-libvips-linux-ppc64@1.3.3', 'LGPL-3.0-or-later'),
+  '@img/sharp-libvips-linux-s390x@1.3.3': sharpPlatformMetadata('@img/sharp-libvips-linux-s390x@1.3.3', 'LGPL-3.0-or-later'),
+  '@img/sharp-libvips-linuxmusl-arm64@1.3.3': sharpPlatformMetadata('@img/sharp-libvips-linuxmusl-arm64@1.3.3', 'LGPL-3.0-or-later'),
+  '@img/sharp-win32-arm64@0.35.4': sharpPlatformMetadata('@img/sharp-win32-arm64@0.35.4', 'Apache-2.0 AND LGPL-3.0-or-later'),
+  '@img/sharp-win32-ia32@0.35.4': sharpPlatformMetadata('@img/sharp-win32-ia32@0.35.4', 'Apache-2.0 AND LGPL-3.0-or-later'),
+  '@img/sharp-win32-x64@0.35.4': sharpPlatformMetadata('@img/sharp-win32-x64@0.35.4', 'Apache-2.0 AND LGPL-3.0-or-later'),
+  '@img/sharp-wasm32@0.35.4': sharpPlatformMetadata('@img/sharp-wasm32@0.35.4', 'Apache-2.0 AND LGPL-3.0-or-later AND MIT'),
+  '@img/sharp-libvips-linux-riscv64@1.3.3': sharpPlatformMetadata('@img/sharp-libvips-linux-riscv64@1.3.3', 'LGPL-3.0-or-later'),
+  '@img/sharp-linux-riscv64@0.35.4': sharpPlatformMetadata('@img/sharp-linux-riscv64@0.35.4', 'Apache-2.0'),
+  '@img/sharp-webcontainers-wasm32@0.35.4': sharpPlatformMetadata('@img/sharp-webcontainers-wasm32@0.35.4', 'Apache-2.0')
+}
+
+// These installed manifests omit usable license declarations. Their published
+// metadata or license files were reviewed at the exact locked versions.
 const licenseMetadataOverrides: Record<string, { license: string; source: string }> = {
-  '@img/sharp-libvips-linux-riscv64@1.3.3': {
-    license: 'LGPL-3.0-or-later',
-    source: 'https://registry.npmjs.org/@img%2fsharp-libvips-linux-riscv64/1.3.3'
-  },
-  '@img/sharp-linux-riscv64@0.35.4': {
-    license: 'Apache-2.0',
-    source: 'https://registry.npmjs.org/@img%2fsharp-linux-riscv64/0.35.4'
-  },
-  '@img/sharp-webcontainers-wasm32@0.35.4': {
-    license: 'Apache-2.0',
-    source: 'https://registry.npmjs.org/@img%2fsharp-webcontainers-wasm32/0.35.4'
-  },
   '@pmndrs/pointer-events@6.6.30': {
     license: 'MIT',
     source: 'https://github.com/pmndrs/xr/blob/main/packages/pointer-events/LICENSE'
@@ -263,32 +296,39 @@ const missingMetadata: string[] = []
 const unknownMetadata: string[] = []
 for (const identity of [...trackedPackages.keys()].sort()) {
   const metadata = packageMetadata.get(identity)
+  const published = publishedPlatformMetadata[identity]
   const override = licenseMetadataOverrides[identity]
-  if (!metadata && !override) {
+  if (!metadata && !published && !override) {
     missingMetadata.push(identity)
     continue
   }
-  const license = override?.license ?? metadata?.license ?? 'Unknown'
+  if (published && metadata && metadata.license !== 'Unknown' && metadata.license !== published.license) {
+    throw new Error(`Installed license disagrees with reviewed package metadata: ${identity}`)
+  }
+  const license = published?.license ?? override?.license ?? metadata?.license ?? 'Unknown'
   resolvedLicenses.set(identity, license)
   if (license === 'Unknown') unknownMetadata.push(identity)
   const separator = identity.lastIndexOf('@')
   const name = identity.slice(0, separator)
   const version = identity.slice(separator + 1)
   const groupIdentity = `${name}\0${license}`
+  const source = published?.source ?? override?.source
+  const author = published?.author ?? metadata?.author
+  const homepage = published?.homepage ?? metadata?.homepage
   const existing = groupedPackages.get(groupIdentity)
   if (existing) {
     existing.versions.push(version)
-    if (override?.source) {
-      existing.licenseMetadataSource = [...new Set([...(existing.licenseMetadataSource?.split(', ') ?? []), override.source])].sort().join(', ')
+    if (source) {
+      existing.licenseMetadataSource = [...new Set([...(existing.licenseMetadataSource?.split(', ') ?? []), source])].sort().join(', ')
     }
   } else {
     groupedPackages.set(groupIdentity, {
       name,
       versions: [version],
       license,
-      ...(metadata?.author ? { author: metadata.author } : {}),
-      ...(metadata?.homepage ? { homepage: metadata.homepage } : {}),
-      ...(override?.source ? { licenseMetadataSource: override.source } : {})
+      ...(author ? { author } : {}),
+      ...(homepage ? { homepage } : {}),
+      ...(source ? { licenseMetadataSource: source } : {})
     })
   }
 }
@@ -356,7 +396,9 @@ const inventory = {
       sha256: createHash('sha256').update(fs.readFileSync(policyPath)).digest('hex')
     }
   },
-  licenseMetadataOverrides: Object.fromEntries(Object.entries(licenseMetadataOverrides).sort(([left], [right]) => left.localeCompare(right))),
+  licenseMetadataOverrides: Object.fromEntries(
+    Object.entries({ ...publishedPlatformMetadata, ...licenseMetadataOverrides }).sort(([left], [right]) => left.localeCompare(right))
+  ),
   packages
 }
 

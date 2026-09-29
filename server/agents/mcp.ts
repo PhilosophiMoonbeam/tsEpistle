@@ -507,7 +507,7 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
       return res.status(401).json({ error: 'API key MCP resource claim is invalid' })
     }
     if (claimed.href !== resourceUrl.href) return res.status(403).json({ error: 'API key is bound to a different MCP resource' })
-    // SDK 2.1 accepts a modern body claim without its required HTTP version header.
+    // Reject modern body claims without their required HTTP version header before SDK dispatch.
     const body: unknown = req.body
     if (req.method === 'POST' && req.get('MCP-Protocol-Version') === undefined && body && typeof body === 'object' && !Array.isArray(body)) {
       const request = body as Record<string, unknown>

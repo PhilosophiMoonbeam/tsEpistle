@@ -24,12 +24,10 @@ const requireSystemAccess = (req: Request, res: Response, next: NextFunction): v
 const parseImage = multer({
   storage: multer.memoryStorage(),
   limits: {
-    // Busboy marks a file truncated when its size reaches (not exceeds) this limit.
-    fileSize: SITE_LOGO_SOURCE_LIMIT + 1,
+    fileSize: SITE_LOGO_SOURCE_LIMIT,
     files: 1,
     fields: 0,
-    // Busboy counts the closing boundary when enforcing the part limit.
-    parts: 2
+    parts: 1
   }
 }).single('image')
 

@@ -26,7 +26,7 @@ const parseLocalLocaleFile = multer({
     fileSize: LOCAL_LOCALE_FILE_LIMIT,
     files: 1,
     fields: 3,
-    parts: 5,
+    parts: 4,
     fieldNameSize: 32,
     fieldSize: 8 * 1024,
     headerPairs: 32

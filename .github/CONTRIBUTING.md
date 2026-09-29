@@ -19,6 +19,10 @@ Working on your first Pull Request? You can learn how from this *free* course, [
 
 Any code change should be submitted as a pull request. The description should explain what the code does, give steps to exercise it, and report the checks run. Add permanent tests when they defend a meaningful behavior, boundary, invariant, or regression; otherwise provide a focused runtime smoke result.
 
+The license inventory includes the lockfile's optional dependencies for every platform, not just packages installed on the current host. When a pinned platform package is skipped by Bun, review its exact published version metadata and add an exact-version entry in `server/scripts/generate-license-inventory.ts`; do not infer a license from `license-policy.json` or the generated inventory. Regenerate with `bun run licenses:inventory` and verify with `bun run licenses:check` after a frozen install.
+
+The Bun 1.4.2 lock keeps the direct Undici 8.x transport and Cheerio's scoped Undici 7.x copy on separately reviewed security versions. Preserve the `undici@7` scoped override and the exact Undici 8.x Bun compatibility patch when updating either line; regenerate the lockfile and license inventory, then run `bun audit --production` and provider-transport checks.
+
 ## Code review process
 
 The bigger the pull request, the longer it will take to review and merge. Try to break down large pull requests in smaller chunks that are easier to review and merge.

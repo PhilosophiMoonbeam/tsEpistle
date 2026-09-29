@@ -108,7 +108,7 @@ export default function createUploadController(wiki: UploadWiki): express.Router
       fileSize: wiki.config.uploads.maxFileSize,
       files: 1,
       fields: 1,
-      parts: 3,
+      parts: 2,
       fieldSize: 1024,
       fieldNameSize: 11,
       fieldNestingDepth: 0,

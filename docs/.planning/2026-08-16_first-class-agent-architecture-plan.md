@@ -7,7 +7,7 @@
 - **Historical MCP assessment:** `@modelcontextprotocol/server`, `@modelcontextprotocol/node`, `@modelcontextprotocol/express`, and test-client `@modelcontextprotocol/client` `2.0.0`, source revision `03842cd9cae9a9b142c77d2fb65e829fc4e03eab`, MCP specification `2026-07-28`.
 - **Historical harness references:** Codex source revision `c8ddb210d2429cacacf86593e157114b00634f13`; Oh My Pi source revision `37eee71978951fccf66b21f7e3e2b74596ac9d74`; Agent Skills specification retrieved 2026-08-17.
 - **CopilotKit pattern reference:** source revision `ea9ccff81fa46bf6d732d92a499735fbdc8ab169`
-- **Current authorities:** The maintained recovery uses exact `@ax-llm/ax` `24.0.12` pinned by `package.json` and `bun.lock`, with Bun `1.4.2` selected by the repository workflow. Normative security and release eligibility follow `docs/security/threat-model.md`, `.github/CONTRIBUTING.md`, and `docs/security/review-attestations.json`; artifact/platform support follows `.github/workflows/build.yml` and `README.md`. The operator cutover and rollback procedure is maintained in [`docs/agents-deployment.md`](../agents-deployment.md); this architecture plan does not duplicate its commands.
+- **Current authorities:** The maintained recovery uses exact `@ax-llm/ax` `24.0.24`, `@modelcontextprotocol/server`, `@modelcontextprotocol/node`, and test-client `@modelcontextprotocol/client` `2.1.0`, and `@modelcontextprotocol/express` `2.0.1` pinned by `package.json` and `bun.lock`, with Bun `1.4.2` selected by the repository workflow. Normative security and release eligibility follow `docs/security/threat-model.md`, `.github/CONTRIBUTING.md`, and `docs/security/review-attestations.json`; artifact/platform support follows `.github/workflows/build.yml` and `README.md`. The operator cutover and rollback procedure is maintained in [`docs/agents-deployment.md`](../agents-deployment.md); this architecture plan does not duplicate its commands.
 
 ## Implementation progress
 
@@ -107,7 +107,7 @@ The assessed Ax version supplies the required primitives:
 Decision details:
 
 - Create `server/agents/engines/ax-agent-engine.ts`; the rest of the product depends on `AgentEngine`, not Ax classes.
-- **Historical initial-delivery pin:** The assessment pinned `@ax-llm/ax` to `23.0.15`; the maintained recovery uses exact `@ax-llm/ax` `24.0.12` from `package.json`/`bun.lock`. Adapter contracts and release evidence follow the current authorities above, not the historical snapshot.
+- **Historical initial-delivery pin:** The assessment pinned `@ax-llm/ax` to `23.0.15`; the maintained recovery uses exact `@ax-llm/ax` `24.0.24` from `package.json`/`bun.lock`. Adapter contracts and release evidence follow the current authorities above, not the historical snapshot.
 - Instantiate `AxJSRuntime` with no filesystem, network, child-process, or unsafe host permission; dynamic import remains blocked; memory/stack limits and a run timeout are explicit.
 - Treat the runtime sandbox as defense in depth. The authoritative boundary is the small set of host callbacks registered from the action kernel.
 - Use Ax citations and validate cited evidence IDs against host-provided page/result IDs. Citation existence does not prove entailment, so UI wording must not claim it does.
