@@ -324,6 +324,13 @@ describe('release gate wiring', () => {
     expect(releaseFailures.some(f => f.includes('docs/security/review-attestations.json'))).toBe(true)
   })
 
+  it('accepts a cited generated build-metadata path before the build in both modes', async () => {
+    const { rootPath } = createRepository({ releaseEligible: true, extraEvidence: ', `server/.build-metadata.json`' })
+
+    expect(await checkThreatModel(rootPath)).toEqual([])
+    expect(await checkThreatModel(rootPath, { release: true })).toEqual([])
+  })
+
   it('rejects a symlinked canonical threat-model file in both modes', async () => {
     const { rootPath } = createRepository()
     const outside = mkdtempSync(path.join(tmpdir(), 'threat-model-target-'))
