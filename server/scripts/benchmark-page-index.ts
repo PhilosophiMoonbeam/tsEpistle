@@ -39,6 +39,8 @@ const prepareDataset = async (): Promise<void> => {
     table.string('title', 255).notNullable()
     table.text('description').nullable()
     table.string('visibility', 16).notNullable()
+    table.boolean('isPublished').notNullable().defaultTo(true)
+    table.boolean('isSearchable').notNullable().defaultTo(true)
     table.integer('ownerId').nullable()
     table.timestamp('updatedAt').notNullable()
     table.index(['localeCode', 'path'], 'page_index_benchmark_locale_path')
