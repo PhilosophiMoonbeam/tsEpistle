@@ -7,8 +7,10 @@ const input = (overrides: Partial<PageMoveLinkRewriteInput> = {}): PageMoveLinkR
   oldTarget: { locale: 'en', path: 'old' },
   newTarget: { locale: 'en', path: 'new' },
   sourcePage: { locale: 'en', path: 'guide' },
+  defaultLocale: 'en',
   namespaced: true,
   absoluteLinks: false,
+  markdownAllowHTML: true,
   wikiLinksEnabled: false,
   ...overrides
 })
@@ -82,6 +84,34 @@ describe('page move source-link rewrite', () => {
     }))
 
     expect(result.source).toBe('[Old](/new)')
+  })
+
+  it('keeps non-default locale identity in rooted Markdown, HTML, and wikilink repairs', () => {
+    const route = {
+      oldTarget: { locale: 'fr', path: 'old' },
+      newTarget: { locale: 'fr', path: 'new' },
+      sourcePage: { locale: 'fr', path: 'guide' },
+      namespaced: false
+    }
+    const markdown = rewriteMovedPageLinks(input({ ...route, source: '[Old](/fr/old)' }))
+    expect(markdown.source).toBe('[Old](/fr/new)')
+
+    const html = rewriteMovedPageLinks(input({ ...route, editor: 'ckeditor', source: '<a href="/fr/old">Old</a>' }))
+    expect(html.source).toBe('<a href="/fr/new">Old</a>')
+
+    const wiki = rewriteMovedPageLinks(input({
+      ...route,
+      source: '[[/fr/old|Old]]',
+      wikiLinksEnabled: true
+    }))
+    expect(wiki.source).toBe('[Old](</fr/new>)')
+  })
+
+  it('matches rendered Markdown links inside HTML-looking blocks when HTML is disabled', () => {
+    const source = '<div>\n[old](/en/old)\n</div>'
+    expect(rewriteMovedPageLinks(input({ source, markdownAllowHTML: false })).source)
+      .toBe('<div>\n[old](/en/new)\n</div>')
+    expect(rewriteMovedPageLinks(input({ source, markdownAllowHTML: true })).source).toBe(source)
   })
 
   it('keeps code, images, raw HTML, external links, prose, and fenced examples unchanged', () => {
