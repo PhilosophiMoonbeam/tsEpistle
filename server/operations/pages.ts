@@ -101,41 +101,49 @@ const normalizedMoveDestination = (pathValue: string): string => {
 }
 
 const moveRendererConfiguration = async (): Promise<{
+  defaultLocale: string
   namespaced: boolean
   absoluteLinks: boolean
+  markdownAllowHTML: boolean
   wikiLinksEnabled: boolean
   digest: string
 }> => {
   const getPipeline = wiki.models.renderers?.getRenderingPipeline
   let absoluteLinks = false
+  let markdownAllowHTML = true
   let wikiLinksEnabled = false
   if (getPipeline) {
     const [markdown, html] = await Promise.all([getPipeline('markdown'), getPipeline('html')])
     const markdownConfig = markdown.find(stage => stage.key === 'markdownCore')?.config
     const htmlConfig = html.find(stage => stage.key === 'htmlCore')?.config
+    markdownAllowHTML =
+      typeof markdownConfig !== 'object' || markdownConfig === null || Reflect.get(markdownConfig, 'allowHTML') !== false
     wikiLinksEnabled =
       typeof markdownConfig === 'object' && markdownConfig !== null && Reflect.get(markdownConfig, 'wikilinks') === true
     absoluteLinks =
       typeof htmlConfig === 'object' && htmlConfig !== null && Reflect.get(htmlConfig, 'absoluteLinks') === true
   }
+  const defaultLocale = wiki.config.lang.code
   const namespaced = wiki.config.lang.namespacing === true
-  const digest = moveSourceDigest(JSON.stringify({ version: MOVE_LINK_REWRITE_VERSION, namespaced, absoluteLinks, wikiLinksEnabled }))
-  return { namespaced, absoluteLinks, wikiLinksEnabled, digest }
+  const digest = moveSourceDigest(JSON.stringify({ version: MOVE_LINK_REWRITE_VERSION, defaultLocale, namespaced, absoluteLinks, markdownAllowHTML, wikiLinksEnabled }))
+  return { defaultLocale, namespaced, absoluteLinks, markdownAllowHTML, wikiLinksEnabled, digest }
 }
 
 const moveRewrite = (
   page: PageSourceRecord,
   oldTarget: { locale: string; path: string },
   newTarget: { locale: string; path: string },
-  config: { namespaced: boolean; absoluteLinks: boolean; wikiLinksEnabled: boolean }
+  config: { defaultLocale: string; namespaced: boolean; absoluteLinks: boolean; markdownAllowHTML: boolean; wikiLinksEnabled: boolean }
 ) => rewriteMovedPageLinks({
   source: page.content,
   editor: page.editorKey,
   oldTarget,
   newTarget,
   sourcePage: { locale: page.localeCode, path: page.path },
+  defaultLocale: config.defaultLocale,
   namespaced: config.namespaced,
   absoluteLinks: config.absoluteLinks,
+  markdownAllowHTML: config.markdownAllowHTML,
   wikiLinksEnabled: config.wikiLinksEnabled
 })
 
@@ -159,7 +167,7 @@ const evaluateMoveCandidate = async (input: {
   sessionId: string
   oldTarget: { locale: string; path: string }
   newTarget: { locale: string; path: string }
-  config: { namespaced: boolean; absoluteLinks: boolean; wikiLinksEnabled: boolean }
+  config: { defaultLocale: string; namespaced: boolean; absoluteLinks: boolean; markdownAllowHTML: boolean; wikiLinksEnabled: boolean }
   candidateConfirmedByIndex: boolean
   allowUnindexedSource?: boolean
 }): Promise<MoveReviewEvaluation | null> => {
@@ -206,7 +214,7 @@ const evaluateMoveCandidate = async (input: {
       : 'No supported incoming links were found in this source.'
   } else if (!canWritePage(input.requester, page, input.authority)) {
     item.reason = 'You do not have permission to repair links in this source.'
-  } else if (!indexIsCurrent) {
+  } else if (!indexIsCurrent && !input.allowUnindexedSource) {
     item.reason = 'The current link index is pending; refresh after indexing completes.'
   } else if (byteLength > MOVE_LINK_SOURCE_LIMIT || outputByteLength > MOVE_LINK_SOURCE_LIMIT) {
     item.reason = 'This source exceeds the automatic repair size limit.'
@@ -266,6 +274,9 @@ const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
       status: 409
     })
   }
+  if (page.localeCode === destinationLocale && page.path === destinationPath) {
+    throw new wiki.Error.PagePathCollision()
+  }
   await assertUnlocked(input, id)
   const destinationContext = pageAuthorizationContext({
     ...page,
@@ -281,7 +292,13 @@ const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
   const oldTarget = { locale: page.localeCode, path: page.path }
   const newTarget = { locale: destinationLocale, path: destinationPath }
   const config = await moveRendererConfiguration()
-  const moveConfig = { namespaced: config.namespaced, absoluteLinks: config.absoluteLinks, wikiLinksEnabled: config.wikiLinksEnabled }
+  const moveConfig = {
+    defaultLocale: config.defaultLocale,
+    namespaced: config.namespaced,
+    absoluteLinks: config.absoluteLinks,
+    markdownAllowHTML: config.markdownAllowHTML,
+    wikiLinksEnabled: config.wikiLinksEnabled
+  }
   const sessionDigest = pageMoveSessionDigest(wiki.config.sessionSecret, sessionId)
   const now = Date.now()
   let afterId = 0
@@ -301,9 +318,6 @@ const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
     afterId = cursor.afterId
   }
 
-  const linkedTarget = await wiki.models.knex('pageLinks')
-    .where({ pageId: id, localeCode: page.localeCode, path: page.path })
-    .first('pageId')
   const targetRevision = currentSourceRevision(page.sourceRevision) ?? revision
   const targetEvaluation = await evaluateMoveCandidate({
     page,
@@ -313,7 +327,7 @@ const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
     oldTarget,
     newTarget,
     config: moveConfig,
-    candidateConfirmedByIndex: linkedTarget !== undefined,
+    candidateConfirmedByIndex: false,
     allowUnindexedSource: true
   })
   if (!targetEvaluation) throw new ApplicationError('This page cannot be reviewed for incoming-link repair.', { code: 'MOVE_REVIEW_UNAVAILABLE', status: 404 })
@@ -706,6 +720,7 @@ interface WikiPageOperations {
     PageRestoreForbidden: new () => Error
     PageDeleteForbidden: new () => Error
     PageMoveForbidden: new () => Error
+    PagePathCollision: new () => Error
   }
 
   auth: {

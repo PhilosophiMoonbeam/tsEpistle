@@ -8,8 +8,10 @@ export interface PageMoveLinkRewriteInput {
   readonly oldTarget: { readonly locale: string; readonly path: string }
   readonly newTarget: { readonly locale: string; readonly path: string }
   readonly sourcePage: { readonly locale: string; readonly path: string }
+  readonly defaultLocale: string
   readonly namespaced: boolean
   readonly absoluteLinks: boolean
+  readonly markdownAllowHTML: boolean
   readonly wikiLinksEnabled: boolean
 }
 
@@ -124,13 +126,13 @@ const encodedPagePath = (path: string): string | null => {
 
 const canonicalTargetRoute = (
   target: { readonly locale: string; readonly path: string },
-  sourceLocale: string,
+  defaultLocale: string,
   namespaced: boolean
 ): string | null => {
   if (!targetIsUsable(target)) return null
   const encodedPath = encodedPagePath(target.path)
   if (encodedPath === null) return null
-  const localePrefix = namespaced || !equalLocale(target.locale, sourceLocale)
+  const localePrefix = namespaced || !equalLocale(target.locale, defaultLocale)
     ? `/${encodeURIComponent(target.locale)}`
     : ''
   return `${localePrefix}/${encodedPath}`
@@ -407,10 +409,11 @@ const rewriteWikiLink = (
   const movedPageIsSource = equalLocale(sourcePage.locale, input.oldTarget.locale) && sourcePage.path === input.oldTarget.path
   const newSourceLocale = movedPageIsSource ? input.newTarget.locale : sourcePage.locale
   const fragment = wiki.fragment === null ? '' : `#${wiki.fragment}`
-  const destination = canonicalTargetRoute(input.newTarget, newSourceLocale, input.namespaced)
+  const destination = canonicalTargetRoute(input.newTarget, input.defaultLocale, input.namespaced)
   if (destination === null) return null
 
-  if (equalLocale(input.newTarget.locale, newSourceLocale)) {
+  if (equalLocale(input.newTarget.locale, newSourceLocale) &&
+    (input.namespaced || equalLocale(input.newTarget.locale, input.defaultLocale))) {
     const newAuthoredTarget = `/${input.newTarget.path}${fragment}`
     const newWikiSource = wiki.label === null
       ? `[[${newAuthoredTarget}|${wiki.text}]]`
@@ -447,7 +450,7 @@ const markdownRewrite = (input: PageMoveLinkRewriteInput): PageMoveLinkRewriteRe
   const source = input.source
   if (!source.includes('[')) return unchanged(source)
 
-  const markdown = new MarkdownIt({ html: true, linkify: false, typographer: false })
+  const markdown = new MarkdownIt({ html: input.markdownAllowHTML, linkify: false, typographer: false })
   const env: Record<string, unknown> = {}
   const blockTokens: Token[] = []
   markdown.block.parse(source, markdown, env, blockTokens)
@@ -592,7 +595,7 @@ const markdownRewrite = (input: PageMoveLinkRewriteInput): PageMoveLinkRewriteRe
       }
       if (capture.kind === 'markdown') {
         const beforeInInline = inlineToken.content.slice(capture.start, capture.end)
-        const afterRoute = canonicalTargetRoute(input.newTarget, input.sourcePage.locale, input.namespaced)
+        const afterRoute = canonicalTargetRoute(input.newTarget, input.defaultLocale, input.namespaced)
         if (afterRoute === null) {
           unsupported += 1
           continue
@@ -862,7 +865,7 @@ const htmlRewrite = (input: PageMoveLinkRewriteInput): PageMoveLinkRewriteResult
       if (status === 'match') unsupported += 1
       continue
     }
-    const afterRoute = canonicalTargetRoute(input.newTarget, input.sourcePage.locale, input.namespaced)
+    const afterRoute = canonicalTargetRoute(input.newTarget, input.defaultLocale, input.namespaced)
     if (afterRoute === null) {
       unsupported += 1
       continue

@@ -1,6 +1,7 @@
 /// <reference types="bun" />
 
 import fs from 'node:fs'
+import { EventEmitter } from 'node:events'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from './bun-test.mts'
 import { evaluateGroupAccess, type PageRuleAuthority } from '../helpers/group-access.ts'
@@ -43,6 +44,7 @@ interface MoveOperations {
 
 suite('PostgreSQL reviewed page move authorization', () => {
   let db: Knex
+  let PageModel: typeof import('../models/pages.ts').default
   let operations: MoveOperations
   const originalWiki = globalThis.WIKI
   const secret = 'move-review-test-secret'
@@ -99,13 +101,13 @@ suite('PostgreSQL reviewed page move authorization', () => {
     await db('pageLinks').insert({ pageId: id, localeCode: 'en', path: 'docs/old' })
     await db('pageMutationOutbox').insert({ pageId: id, sourceRevision: 1, effectKind: 'links', desiredState: 'present', status: 'succeeded' })
   }
-  const review = (selectedPageIds?: number[], requester: Express.User = reviewer, sessionId = 'reviewer-session') =>
+  const review = (selectedPageIds?: number[], requester: Express.User = reviewer, sessionId = 'reviewer-session', revision = '1') =>
     operations.reviewMoveLinks({
       requester,
       sessionId,
       input: {
         id: 1,
-        expectedSourceRevision: '1',
+        expectedSourceRevision: revision,
         destinationLocale: 'en',
         destinationPath: 'docs/new',
         ...(selectedPageIds === undefined ? {} : { selectedPageIds })
@@ -114,7 +116,7 @@ suite('PostgreSQL reviewed page move authorization', () => {
 
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection, pool: { min: 0, max: 8 } })
-    await db.raw('DROP TABLE IF EXISTS "pageCollaborationRooms", "pageUnlockGrants", "pageAccessPasswords", "pageApprovalRequests", "pageMutationOutbox", "pageLinks", "pageTags", tags, pages, users CASCADE')
+    await db.raw('DROP TABLE IF EXISTS "testPageHistory", "outboxEvents", locales, "pageCollaborationRooms", "pageUnlockGrants", "pageAccessPasswords", "pageApprovalRequests", "pageMutationOutbox", "pageLinks", "pageTags", tags, pages, users CASCADE')
     await db.raw(`
       CREATE TABLE users (id integer PRIMARY KEY, name text NOT NULL, email text NOT NULL);
       CREATE TABLE pages (
@@ -131,9 +133,12 @@ suite('PostgreSQL reviewed page move authorization', () => {
       CREATE TABLE "pageTags" ("pageId" integer NOT NULL, "tagId" integer NOT NULL);
       CREATE TABLE "pageLinks" ("pageId" integer NOT NULL, "localeCode" text NOT NULL, path text NOT NULL);
       CREATE TABLE "pageMutationOutbox" (
-        id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, "pageId" integer NOT NULL,
-        "sourceRevision" integer NOT NULL, "effectKind" text NOT NULL,
-        "desiredState" text NOT NULL, status text NOT NULL
+        id text PRIMARY KEY DEFAULT gen_random_uuid()::text, "pageId" integer NOT NULL,
+        "sourceRevision" integer NOT NULL, "effectKind" text NOT NULL, "effectKey" text,
+        "desiredState" text NOT NULL, "payloadSha256" text, payload text,
+        status text NOT NULL, attempts integer, "availableAt" timestamptz,
+        "createdAt" timestamptz, "updatedAt" timestamptz,
+        UNIQUE ("pageId", "sourceRevision", "effectKind")
       );
       CREATE TABLE "pageApprovalRequests" (id integer PRIMARY KEY, "pageId" integer, status text);
       CREATE TABLE "pageAccessPasswords" ("pageId" integer PRIMARY KEY, version integer NOT NULL);
@@ -141,12 +146,36 @@ suite('PostgreSQL reviewed page move authorization', () => {
         "pageId" integer, "sessionId" text, "userId" integer, "passwordVersion" integer, "expiresAt" timestamptz
       );
       CREATE TABLE "pageCollaborationRooms" ("pageId" integer PRIMARY KEY);
+      CREATE TABLE locales (code text PRIMARY KEY);
+      CREATE TABLE "outboxEvents" (
+        id uuid PRIMARY KEY, type text NOT NULL, version integer NOT NULL,
+        "aggregateType" text NOT NULL, "aggregateId" text NOT NULL,
+        payload text NOT NULL, "createdAt" timestamptz NOT NULL, "publishedAt" timestamptz
+      );
+      CREATE TABLE "testPageHistory" ("pageId" integer NOT NULL, action text NOT NULL, content text NOT NULL);
+      CREATE OR REPLACE FUNCTION test_increment_page_source_revision() RETURNS trigger AS $$
+      BEGIN
+        IF ROW(NEW.path, NEW.content, NEW.extra::text) IS DISTINCT FROM ROW(OLD.path, OLD.content, OLD.extra::text) THEN
+          NEW."sourceRevision" := OLD."sourceRevision" + 1;
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER test_pages_source_revision BEFORE UPDATE ON pages
+        FOR EACH ROW EXECUTE FUNCTION test_increment_page_source_revision();
     `)
     await db('users').insert({ id: 7, name: 'Reviewer', email: 'reviewer@example.test' })
+    await db('locales').insert({ code: 'en' })
     const wiki = {
-      config: { db: { type: 'postgres' }, lang: { code: 'en', namespacing: false }, sessionSecret: secret },
-      Error: { PageMoveForbidden: class PageMoveForbidden extends Error {} },
+      config: { db: { type: 'postgres' }, lang: { code: 'en', namespacing: false }, sessionSecret: secret, dataPath: '/tmp' },
+      Error: {
+        PageMoveForbidden: class PageMoveForbidden extends Error {},
+        PagePathCollision: class PagePathCollision extends Error {},
+        PageNotFound: class PageNotFound extends Error {},
+        PageIllegalPath: class PageIllegalPath extends Error {}
+      },
       logger: { warn: () => {} },
+      events: { outbound: new EventEmitter() },
       auth: {
         checkAccess: (requester: Express.User | undefined, permissions: string[]) =>
           permissions.some(permission => authorityFor(requester).permissions.includes(permission)),
@@ -154,18 +183,26 @@ suite('PostgreSQL reviewed page move authorization', () => {
           authority.requester === requester && evaluateGroupAccess(authority.permissions, permissions, authority.groups, context, authority.tagAliases, false).allowed,
         loadPageRuleAuthority: async (requester: Express.User | undefined) => authorityFor(requester)
       },
-      models: { knex: db, pages: {} as unknown }
+      models: {
+        knex: db,
+        pages: {} as unknown,
+        pageHistory: {
+          addVersion: async (page: { id: number; action: string; content: string; transaction: Knex.Transaction }) =>
+            page.transaction('testPageHistory').insert({ pageId: page.id, action: page.action, content: page.content })
+        }
+      }
     }
     globalThis.WIKI = wiki as never
     // Page and Tag capture WIKI at module initialization; load only after installing this isolated database.
     const [{ default: Page }, { default: Tag }] = await Promise.all([import('../models/pages.ts'), import('../models/tags.ts')])
     Page.knex(db)
+    PageModel = Page
     Tag.knex(db)
     wiki.models.pages = Page
     operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default as MoveOperations
   })
   beforeEach(async () => {
-    for (const table of ['pageCollaborationRooms', 'pageUnlockGrants', 'pageAccessPasswords', 'pageApprovalRequests', 'pageMutationOutbox', 'pageLinks', 'pageTags', 'pages']) {
+    for (const table of ['testPageHistory', 'outboxEvents', 'pageCollaborationRooms', 'pageUnlockGrants', 'pageAccessPasswords', 'pageApprovalRequests', 'pageMutationOutbox', 'pageLinks', 'pageTags', 'pages']) {
       await db(table).delete()
     }
     readable.clear()
@@ -177,7 +214,8 @@ suite('PostgreSQL reviewed page move authorization', () => {
   afterAll(async () => {
     globalThis.WIKI = originalWiki as never
     if (db) {
-      await db.raw('DROP TABLE IF EXISTS "pageCollaborationRooms", "pageUnlockGrants", "pageAccessPasswords", "pageApprovalRequests", "pageMutationOutbox", "pageLinks", "pageTags", tags, pages, users CASCADE')
+      await db.raw('DROP TABLE IF EXISTS "testPageHistory", "outboxEvents", locales, "pageCollaborationRooms", "pageUnlockGrants", "pageAccessPasswords", "pageApprovalRequests", "pageMutationOutbox", "pageLinks", "pageTags", tags, pages, users CASCADE')
+      await db.raw('DROP FUNCTION IF EXISTS test_increment_page_source_revision()')
       await db.destroy()
     }
   })
@@ -190,6 +228,114 @@ suite('PostgreSQL reviewed page move authorization', () => {
     await expect(review()).rejects.toBeInstanceOf(globalThis.WIKI.Error.PageMoveForbidden)
     writable.add('docs/new')
     expect((await review()).items.map(item => item.id)).toEqual([2])
+  })
+
+  it('rejects a reviewed move to the page’s existing location', async () => {
+    await expect(operations.reviewMoveLinks({
+      requester: reviewer,
+      sessionId: 'reviewer-session',
+      input: {
+        id: 1,
+        expectedSourceRevision: '1',
+        destinationLocale: 'en',
+        destinationPath: 'docs/old',
+        selectedPageIds: []
+      }
+    })).rejects.toBeInstanceOf(globalThis.WIKI.Error.PagePathCollision)
+  })
+
+  it('reviews automatic self-links directly from canonical source without target index evidence', async () => {
+    await db('pages').where({ id: 1 }).update({ content: '[Self](/docs/old)' })
+    await db('pageLinks').where({ pageId: 1 }).delete()
+    await db('pageMutationOutbox').where({ pageId: 1 }).delete()
+
+    const result = await review([], reviewer, 'reviewer-session', '2')
+    expect(result.items).toEqual([expect.objectContaining({
+      id: 1,
+      eligible: true,
+      changes: [{ before: '/docs/old', after: '/docs/new' }]
+    })])
+    expect(verifyPageMoveReviewToken({
+      token: result.reviewToken,
+      secret,
+      requesterId: 7,
+      sessionId: 'reviewer-session'
+    })).toMatchObject({ targetId: 1, selected: [] })
+
+    await seedPage(2, 'docs/editable', { content: '[Referrer](/docs/old)' })
+    const selected = await review([2], reviewer, 'reviewer-session', '2')
+    const receipt = await PageModel.movePage({
+      id: 1,
+      user: reviewer as Parameters<typeof PageModel.movePage>[0]['user'],
+      destinationLocale: 'en',
+      destinationPath: 'docs/new',
+      expectedSourceRevision: '2',
+      updateLinks: true,
+      reviewToken: selected.reviewToken,
+      sessionId: 'reviewer-session',
+      skipStorage: true
+    })
+    expect(receipt).toMatchObject({
+      pageId: 1,
+      sourceRevision: '3',
+      updated: [{ id: 2, sourceRevision: '2' }],
+      projections: 'pending'
+    })
+    expect(await db('pages').whereIn('id', [1, 2]).orderBy('id').select('id', 'path', 'content', 'sourceRevision'))
+      .toMatchObject([
+        { id: 1, path: 'docs/new', content: '[Self](/docs/new)', sourceRevision: 3 },
+        { id: 2, path: 'docs/editable', content: '[Referrer](/docs/new)', sourceRevision: 2 }
+      ])
+    expect(await db('testPageHistory').orderBy('pageId').select('pageId', 'action', 'content'))
+      .toEqual([
+        { pageId: 1, action: 'moved', content: '[Self](/docs/old)' },
+        { pageId: 2, action: 'updated', content: '[Referrer](/docs/old)' }
+      ])
+    expect(await db('pageMutationOutbox').where({ status: 'pending' })
+      .orderBy(['pageId', 'effectKind']).select('pageId', 'sourceRevision', 'effectKind', 'desiredState'))
+      .toEqual([
+        { pageId: 1, sourceRevision: 3, effectKind: 'knowledge', desiredState: 'present' },
+        { pageId: 1, sourceRevision: 3, effectKind: 'links', desiredState: 'present' },
+        { pageId: 1, sourceRevision: 3, effectKind: 'render', desiredState: 'present' },
+        { pageId: 1, sourceRevision: 3, effectKind: 'search', desiredState: 'present' },
+        { pageId: 2, sourceRevision: 2, effectKind: 'knowledge', desiredState: 'present' },
+        { pageId: 2, sourceRevision: 2, effectKind: 'links', desiredState: 'present' },
+        { pageId: 2, sourceRevision: 2, effectKind: 'render', desiredState: 'present' },
+        { pageId: 2, sourceRevision: 2, effectKind: 'search', desiredState: 'present' }
+      ])
+    expect(await db('outboxEvents').orderBy('type').select('type', 'aggregateId'))
+      .toEqual([
+        { type: 'page.moved', aggregateId: '1' },
+        { type: 'page.updated', aggregateId: '2' }
+      ])
+  })
+
+  it('rolls back the target move if a selected referrer loses its current index receipt', async () => {
+    await db('pages').where({ id: 1 }).update({ content: '[Self](/docs/old)' })
+    await db('pageLinks').where({ pageId: 1 }).delete()
+    await db('pageMutationOutbox').where({ pageId: 1 }).delete()
+    await seedPage(2, 'docs/editable', { content: '[Referrer](/docs/old)' })
+    const selected = await review([2], reviewer, 'reviewer-session', '2')
+    await db('pageMutationOutbox').where({ pageId: 2 }).delete()
+
+    await expect(PageModel.movePage({
+      id: 1,
+      user: reviewer as Parameters<typeof PageModel.movePage>[0]['user'],
+      destinationLocale: 'en',
+      destinationPath: 'docs/new',
+      expectedSourceRevision: '2',
+      updateLinks: true,
+      reviewToken: selected.reviewToken,
+      sessionId: 'reviewer-session',
+      skipStorage: true
+    })).rejects.toMatchObject({ status: 409, name: 'MOVE_REVIEW_STALE' })
+    expect(await db('pages').whereIn('id', [1, 2]).orderBy('id').select('id', 'path', 'content', 'sourceRevision'))
+      .toMatchObject([
+        { id: 1, path: 'docs/old', content: '[Self](/docs/old)', sourceRevision: 2 },
+        { id: 2, path: 'docs/editable', content: '[Referrer](/docs/old)', sourceRevision: 1 }
+      ])
+    expect(await db('testPageHistory').select('pageId')).toEqual([])
+    expect(await db('outboxEvents').select('id')).toEqual([])
   })
 
   it('does not disclose draft source or metadata to a reader who cannot edit unpublished referrers', async () => {

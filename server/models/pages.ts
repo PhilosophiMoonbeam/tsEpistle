@@ -408,7 +408,7 @@ interface PagesWikiContext {
   config: {
     dataPath: string
     sessionSecret: string
-    lang: { namespacing?: boolean }
+    lang: { code: string; namespacing?: boolean }
     db: {
       type: string
     }
@@ -3096,8 +3096,10 @@ export default class Page extends Model {
   }
 }
 interface PageMoveRendererConfiguration {
+  defaultLocale: string
   namespaced: boolean
   absoluteLinks: boolean
+  markdownAllowHTML: boolean
   wikiLinksEnabled: boolean
   digest: string
 }
@@ -3105,21 +3107,25 @@ interface PageMoveRendererConfiguration {
 const pageMoveRendererConfiguration = async (): Promise<PageMoveRendererConfiguration> => {
   const getPipeline = wiki.models.renderers?.getRenderingPipeline
   let absoluteLinks = false
+  let markdownAllowHTML = true
   let wikiLinksEnabled = false
   if (getPipeline) {
     const [markdown, html] = await Promise.all([getPipeline('markdown'), getPipeline('html')])
     const markdownConfig = markdown.find(stage => stage.key === 'markdownCore')?.config
     const htmlConfig = html.find(stage => stage.key === 'htmlCore')?.config
+    markdownAllowHTML =
+      typeof markdownConfig !== 'object' || markdownConfig === null || Reflect.get(markdownConfig, 'allowHTML') !== false
     wikiLinksEnabled =
       typeof markdownConfig === 'object' && markdownConfig !== null && Reflect.get(markdownConfig, 'wikilinks') === true
     absoluteLinks =
       typeof htmlConfig === 'object' && htmlConfig !== null && Reflect.get(htmlConfig, 'absoluteLinks') === true
   }
+  const defaultLocale = wiki.config.lang.code
   const namespaced = wiki.config.lang.namespacing === true
   const digest = createHash('sha256')
-    .update(JSON.stringify({ version: 1, namespaced, absoluteLinks, wikiLinksEnabled }), 'utf8')
+    .update(JSON.stringify({ version: 1, defaultLocale, namespaced, absoluteLinks, markdownAllowHTML, wikiLinksEnabled }), 'utf8')
     .digest('hex')
-  return { namespaced, absoluteLinks, wikiLinksEnabled, digest }
+  return { defaultLocale, namespaced, absoluteLinks, markdownAllowHTML, wikiLinksEnabled, digest }
 }
 
 const moveLinkRewrite = (
@@ -3134,8 +3140,10 @@ const moveLinkRewrite = (
     oldTarget,
     newTarget,
     sourcePage: { locale: page.localeCode, path: page.path },
+    defaultLocale: config.defaultLocale,
     namespaced: config.namespaced,
     absoluteLinks: config.absoluteLinks,
+    markdownAllowHTML: config.markdownAllowHTML,
     wikiLinksEnabled: config.wikiLinksEnabled
   })
 
@@ -3264,27 +3272,13 @@ const commitReviewedMovePage = async (opts: MovePageOptions): Promise<PageMoveRe
       visibility: currentTarget.visibility,
       ownerId: currentTarget.ownerId
     })
-    if (collision && collision.id !== currentTarget.id) throw new wiki.Error.PagePathCollision()
+    if (collision) throw new wiki.Error.PagePathCollision()
 
     const targetBeforeDigest = createHash('sha256').update(currentTarget.content, 'utf8').digest('hex')
     if (targetBeforeDigest !== token.targetBeforeDigest) throw pageMoveReviewStale()
-    const targetIndexRow = await transaction('pageLinks')
-      .where({ pageId: currentTarget.id, localeCode: oldTarget.locale, path: oldTarget.path })
-      .first('pageId')
-    const targetIndexReceipt = await transaction('pageMutationOutbox')
-      .where({
-        pageId: currentTarget.id,
-        sourceRevision: token.expectedSourceRevision,
-        effectKind: 'links',
-        desiredState: 'present',
-        status: 'succeeded'
-      })
-      .first('id')
     let targetSource = currentTarget.content
     const targetApprovalActive = await pageHasActiveApproval(transaction, currentTarget.id)
     if (
-      targetIndexRow &&
-      targetIndexReceipt &&
       !targetApprovalActive &&
       Buffer.byteLength(currentTarget.content, 'utf8') <= 1024 * 1024
     ) {
