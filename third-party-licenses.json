@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "896e79a6c43d304502fa7c3fed562770e5540614614e291b01ad2da52ea65e10",
+    "sha256": "d8fe8386d4654dd494a8ba0a1e05cff8d789194117fffa53f10d433a4ac591d4",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -4260,7 +4260,7 @@
     {
       "name": "js-yaml",
       "versions": [
-        "5.2.3"
+        "5.4.1"
       ],
       "license": "MIT",
       "author": "Vladimir Zapparov <dervus.grim@gmail.com>"
@@ -4542,7 +4542,7 @@
       "name": "markdown-it",
       "versions": [
         "14.3.1",
-        "15.0.0"
+        "15.0.1"
       ],
       "license": "MIT"
     },
