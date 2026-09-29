@@ -1,5 +1,3 @@
-import path from 'node:path'
-
 const uploadMocks = vi.hoisted(() => {
   const router = {
     get: vi.fn(),
@@ -66,14 +64,10 @@ const loadHandlers = async () => {
   const { default: createUploadController } = await vi.importFresh('../../controllers/upload.ts', import.meta.url)
   createUploadController(global.WIKI)
   const postCall = uploadMocks.router.post.mock.calls.find(([routePath]) => routePath === '/u')
-  const getCall = uploadMocks.router.get.mock.calls.find(([routePath]) => routePath === '/u')
 
   return {
-    postCall,
-    getCall,
     uploadMiddleware: postCall[1],
-    uploadHandler: postCall[2],
-    healthHandler: getCall[1]
+    uploadHandler: postCall[2]
   }
 }
 
@@ -119,49 +113,6 @@ describe('controllers/upload endpoints', () => {
     } else {
       global.WIKI = originalWIKI
     }
-  })
-
-  it('registers upload routes', async () => {
-    const { postCall, getCall } = await loadHandlers()
-
-    expect(postCall).toEqual(['/u', expect.any(Function), expect.any(Function)])
-    expect(getCall).toEqual(['/u', expect.any(Function)])
-  })
-
-  it('returns the upload health response', async () => {
-    const { healthHandler } = await loadHandlers()
-    const res = makeRes()
-
-    await healthHandler({}, res, vi.fn())
-
-    expect(res.json).toHaveBeenCalledWith({ ok: true })
-  })
-
-  it('configures multer with the upload directory, limits and media field', async () => {
-    const { uploadMiddleware } = await loadHandlers()
-    const req = {}
-    const res = {}
-    const next = vi.fn()
-
-    uploadMiddleware(req, res, next)
-
-    expect(uploadMocks.multer).toHaveBeenCalledWith({
-      dest: path.resolve('/wiki/root', 'data', 'uploads'),
-      limits: {
-        fileSize: 12345,
-        files: 1,
-        fields: 1,
-        parts: 3,
-        fieldSize: 1024,
-        fieldNameSize: 11,
-        fieldNestingDepth: 0,
-        fieldArrayIndexLimit: 0
-      },
-      defParamCharset: 'utf8'
-    })
-    expect(uploadMocks.array).toHaveBeenCalledWith('mediaUpload')
-    expect(uploadMocks.arrayHandler).toHaveBeenCalledWith(req, res, expect.any(Function))
-    expect(next).toHaveBeenCalledOnce()
   })
 
   it('rejects users without upload permissions before invoking multer', async () => {

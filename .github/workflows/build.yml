@@ -91,6 +91,9 @@ jobs:
 
     - name: Run Static Contract
       run: bun run ci:static
+    - name: Verify Official Release Review
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: bun server/scripts/check-threat-model.ts --release
 
     - name: Upload License Inventory
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

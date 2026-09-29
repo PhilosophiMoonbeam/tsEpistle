@@ -512,16 +512,8 @@ async function validateContainedPaths(
   }
 }
 
-export async function checkThreatModel(rootPath = process.cwd(), options: ThreatModelCheckOptions = {}): Promise<string[]> {
+async function checkReviewAttestations(rootPath: string, realRoot: string, threatModelRaw: string | undefined): Promise<string[]> {
   const failures: string[] = []
-
-  let realRoot: string
-  try {
-    realRoot = await realpath(rootPath)
-  } catch (error) {
-    return [`Cannot resolve repository root realpath: ${error instanceof Error ? error.message : String(error)}`]
-  }
-
   const manifestRel = 'docs/security/review-attestations.json'
   const manifestPath = path.resolve(rootPath, manifestRel)
 
@@ -587,7 +579,6 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
     return failures
   }
 
-  const manifestThreatModelPath = typeof manifestParsed.threatModelPath === 'string' ? manifestParsed.threatModelPath.trim() : ''
   const manifestActiveReviewId = typeof manifestParsed.activeReviewId === 'string' ? manifestParsed.activeReviewId.trim() : ''
 
   const recordIds = new Set<string>()
@@ -638,35 +629,6 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
 
   if (manifestActiveReviewId && !recordIds.has(manifestActiveReviewId)) {
     failures.push(`Active review ID "${manifestActiveReviewId}" is not present in manifest records`)
-  }
-
-  let threatModelRaw: string | undefined
-  if (manifestThreatModelPath === CANONICAL_THREAT_MODEL_PATH && isRepoRelativePath(manifestThreatModelPath)) {
-    const resolvedThreatModel = path.resolve(rootPath, manifestThreatModelPath)
-    const tmFileErr = await checkRegularFile(resolvedThreatModel, manifestThreatModelPath, 'Threat model file')
-    if (tmFileErr) {
-      failures.push(tmFileErr)
-    } else {
-      const tmEscapeErr = await checkRealpathContained(realRoot, resolvedThreatModel, manifestThreatModelPath, 'Threat model file')
-      if (tmEscapeErr) {
-        failures.push(tmEscapeErr)
-      } else {
-        try {
-          threatModelRaw = await readFile(resolvedThreatModel, 'utf8')
-        } catch (error) {
-          failures.push(`Cannot read threat model at ${manifestThreatModelPath}: ${error instanceof Error ? error.message : String(error)}`)
-        }
-      }
-    }
-  }
-
-  let threatModelContract: ThreatModelContract | undefined
-  if (threatModelRaw !== undefined) {
-    try {
-      threatModelContract = parseThreatModel(threatModelRaw)
-    } catch (error) {
-      failures.push(`Threat model parsing failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
   }
 
   const recordsById = new Map<string, ReviewRecord>()
@@ -946,14 +908,120 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
       failures.push(`Threat-model content digest does not match active review record: expected ${activeRecord.threatModelDigest}, computed ${computedDigest}`)
     }
   }
-
-  if (threatModelContract) {
-    await validateContainedPaths(rootPath, realRoot, threatModelContract.citedPaths, 'Cited path', 'existing-path', failures)
-  }
-
   await validateContainedPaths(rootPath, realRoot, activeRecord.evidencePaths, 'Active record evidence path', 'regular-file', failures)
   for (const finding of activeRecord.findings) {
     await validateContainedPaths(rootPath, realRoot, finding.evidencePaths, `Finding ${finding.id} evidence path`, 'regular-file', failures)
+  }
+  const { revision, baseRevision, coveredTreeDigest } = activeRecord.source
+
+  const exists = runGit(rootPath, ['cat-file', '-e', `${revision}^{commit}`])
+  if (exists.status !== 0) {
+    failures.push(`Reviewed revision does not exist in this repository: ${revision}`)
+    return failures
+  }
+
+  const baseExists = runGit(rootPath, ['cat-file', '-e', `${baseRevision}^{commit}`])
+  if (baseExists.status !== 0) {
+    failures.push(`Base revision does not exist in this repository: ${baseRevision}`)
+    return failures
+  }
+
+  const baseAncestor = runGit(rootPath, ['merge-base', '--is-ancestor', baseRevision, revision])
+  if (baseAncestor.status !== 0) {
+    failures.push(`Base revision is not an ancestor of reviewed revision: ${baseRevision}`)
+    return failures
+  }
+
+  const ancestor = runGit(rootPath, ['merge-base', '--is-ancestor', revision, 'HEAD'])
+  if (ancestor.status !== 0) {
+    failures.push(`Reviewed revision is not an ancestor of HEAD: ${revision}`)
+    return failures
+  }
+
+  let revisionComputedDigest = ''
+  try {
+    revisionComputedDigest = computeCoveredTreeDigest(rootPath, revision)
+  } catch (error) {
+    failures.push(`Failed to compute covered-tree digest for reviewed revision ${revision}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (revisionComputedDigest && revisionComputedDigest !== coveredTreeDigest) {
+    failures.push(
+      `Active review record coveredTreeDigest does not match reviewed revision tree: declared ${coveredTreeDigest}, computed ${revisionComputedDigest}`
+    )
+  }
+
+  const revisionDiff = runGit(rootPath, ['diff', '--name-only', '--no-renames', '-z', '--ignore-submodules=none', revision, 'HEAD'])
+  if (revisionDiff.status !== 0) {
+    failures.push(`Git diff between reviewed revision ${revision} and HEAD failed: ${String(revisionDiff.stderr).trim()}`)
+  } else {
+    const boundaryChanges = String(revisionDiff.stdout).split('\0').filter(Boolean).filter(isSecurityBoundaryPath)
+    if (boundaryChanges.length > 0) {
+      failures.push(`Security-boundary source changed after the reviewed revision:\n- ${boundaryChanges.join('\n- ')}`)
+    }
+  }
+
+  let headDigest = ''
+  try {
+    headDigest = computeCoveredTreeDigest(rootPath, 'HEAD')
+  } catch (error) {
+    failures.push(`Failed to compute covered-tree digest for HEAD: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  if (headDigest && headDigest !== coveredTreeDigest) {
+    failures.push(`Covered-tree digest of HEAD does not match active review record: expected ${coveredTreeDigest}, computed ${headDigest}`)
+  }
+  if (!activeRecord.releaseEligible) {
+    failures.push('Active review record is not marked releaseEligible')
+  }
+  const blockingFindings = activeRecord.findings.filter(finding => finding.disposition === 'blocking')
+  if (blockingFindings.length > 0) {
+    failures.push(`Release blocked by unresolved findings: ${blockingFindings.map(f => f.id).join(', ')}`)
+  }
+  return failures
+}
+
+export async function checkThreatModel(rootPath = process.cwd(), options: ThreatModelCheckOptions = {}): Promise<string[]> {
+  const failures: string[] = []
+
+  let realRoot: string
+  try {
+    realRoot = await realpath(rootPath)
+  } catch (error) {
+    return [`Cannot resolve repository root realpath: ${error instanceof Error ? error.message : String(error)}`]
+  }
+
+  let threatModelRaw: string | undefined
+  const resolvedThreatModel = path.resolve(rootPath, CANONICAL_THREAT_MODEL_PATH)
+  const tmFileErr = await checkRegularFile(resolvedThreatModel, CANONICAL_THREAT_MODEL_PATH, 'Threat model file')
+  if (tmFileErr) {
+    failures.push(tmFileErr)
+  } else {
+    const tmEscapeErr = await checkRealpathContained(realRoot, resolvedThreatModel, CANONICAL_THREAT_MODEL_PATH, 'Threat model file')
+    if (tmEscapeErr) {
+      failures.push(tmEscapeErr)
+    } else {
+      try {
+        threatModelRaw = await readFile(resolvedThreatModel, 'utf8')
+      } catch (error) {
+        failures.push(`Cannot read threat model at ${CANONICAL_THREAT_MODEL_PATH}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+  }
+
+  let threatModelContract: ThreatModelContract | undefined
+  if (threatModelRaw !== undefined) {
+    try {
+      threatModelContract = parseThreatModel(threatModelRaw)
+    } catch (error) {
+      failures.push(`Threat model parsing failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  if (threatModelContract) {
+    const citedPaths = options.release
+      ? threatModelContract.citedPaths
+      : threatModelContract.citedPaths.filter(p => p !== 'docs/security/review-attestations.json' && !p.startsWith('docs/security/review-attestations/'))
+    await validateContainedPaths(rootPath, realRoot, citedPaths, 'Cited path', 'existing-path', failures)
   }
 
   let packageManifest: PackageManifest | undefined
@@ -1018,64 +1086,6 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
     }
   }
 
-  const { revision, baseRevision, coveredTreeDigest } = activeRecord.source
-
-  const exists = runGit(rootPath, ['cat-file', '-e', `${revision}^{commit}`])
-  if (exists.status !== 0) {
-    failures.push(`Reviewed revision does not exist in this repository: ${revision}`)
-    return failures
-  }
-
-  const baseExists = runGit(rootPath, ['cat-file', '-e', `${baseRevision}^{commit}`])
-  if (baseExists.status !== 0) {
-    failures.push(`Base revision does not exist in this repository: ${baseRevision}`)
-    return failures
-  }
-
-  const baseAncestor = runGit(rootPath, ['merge-base', '--is-ancestor', baseRevision, revision])
-  if (baseAncestor.status !== 0) {
-    failures.push(`Base revision is not an ancestor of reviewed revision: ${baseRevision}`)
-    return failures
-  }
-
-  const ancestor = runGit(rootPath, ['merge-base', '--is-ancestor', revision, 'HEAD'])
-  if (ancestor.status !== 0) {
-    failures.push(`Reviewed revision is not an ancestor of HEAD: ${revision}`)
-    return failures
-  }
-
-  let revisionComputedDigest = ''
-  try {
-    revisionComputedDigest = computeCoveredTreeDigest(rootPath, revision)
-  } catch (error) {
-    failures.push(`Failed to compute covered-tree digest for reviewed revision ${revision}: ${error instanceof Error ? error.message : String(error)}`)
-  }
-  if (revisionComputedDigest && revisionComputedDigest !== coveredTreeDigest) {
-    failures.push(
-      `Active review record coveredTreeDigest does not match reviewed revision tree: declared ${coveredTreeDigest}, computed ${revisionComputedDigest}`
-    )
-  }
-
-  const revisionDiff = runGit(rootPath, ['diff', '--name-only', '--no-renames', '-z', '--ignore-submodules=none', revision, 'HEAD'])
-  if (revisionDiff.status !== 0) {
-    failures.push(`Git diff between reviewed revision ${revision} and HEAD failed: ${String(revisionDiff.stderr).trim()}`)
-  } else {
-    const boundaryChanges = String(revisionDiff.stdout).split('\0').filter(Boolean).filter(isSecurityBoundaryPath)
-    if (boundaryChanges.length > 0) {
-      failures.push(`Security-boundary source changed after the reviewed revision:\n- ${boundaryChanges.join('\n- ')}`)
-    }
-  }
-
-  let headDigest = ''
-  try {
-    headDigest = computeCoveredTreeDigest(rootPath, 'HEAD')
-  } catch (error) {
-    failures.push(`Failed to compute covered-tree digest for HEAD: ${error instanceof Error ? error.message : String(error)}`)
-  }
-
-  if (headDigest && headDigest !== coveredTreeDigest) {
-    failures.push(`Covered-tree digest of HEAD does not match active review record: expected ${coveredTreeDigest}, computed ${headDigest}`)
-  }
 
   const stagedRaw = runGit(rootPath, ['diff', '--cached', '--name-only', '--no-renames', '-z', '--ignore-submodules=none'])
   if (stagedRaw.status !== 0) {
@@ -1232,7 +1242,6 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
     failures.push(`Working tree has dirty security-boundary drift:\n${boundaryDriftSections.join('\n')}`)
   }
 
-
   if (options.release) {
     const allDirtySections: string[] = []
     if (stagedPaths.length > 0) {
@@ -1250,14 +1259,7 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
     if (allDirtySections.length > 0) {
       failures.push(`Release check requires a clean repository, but dirty paths were found:\n${allDirtySections.join('\n')}`)
     }
-    if (!activeRecord.releaseEligible) {
-      failures.push('Active review record is not marked releaseEligible')
-    }
-
-    const blockingFindings = activeRecord.findings.filter(finding => finding.disposition === 'blocking')
-    if (blockingFindings.length > 0) {
-      failures.push(`Release blocked by unresolved findings: ${blockingFindings.map(f => f.id).join(', ')}`)
-    }
+    failures.push(...await checkReviewAttestations(rootPath, realRoot, threatModelRaw))
   }
 
   return failures
@@ -1265,11 +1267,14 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
 
 async function main() {
   const args = process.argv.slice(2)
-  if (args.includes('--digest')) {
+  const release = args.length === 1 && args[0] === '--release'
+  const digest = args[0] === '--digest' && args.length <= 2 && (args.length === 1 || !args[1]?.startsWith('--'))
+  if (args.length !== 0 && !release && !digest) {
+    throw new Error('Usage: bun server/scripts/check-threat-model.ts [--release] [--digest [revision]]')
+  }
+  if (digest) {
     const rootPath = process.cwd()
-    const digestIdx = args.indexOf('--digest')
-    const revArg = args[digestIdx + 1]
-    const revision = revArg && !revArg.startsWith('--') ? revArg : 'HEAD'
+    const revision = args[1] ?? 'HEAD'
     const treeDigest = computeCoveredTreeDigest(rootPath, revision)
     console.log(`Covered-tree digest (${revision}): ${treeDigest}`)
     try {
@@ -1282,13 +1287,9 @@ async function main() {
     return
   }
 
-  if (args.some(argument => argument !== '--release') || args.length > 1) {
-    throw new Error('Usage: bun server/scripts/check-threat-model.ts [--release] [--digest [revision]]')
-  }
-  const release = args[0] === '--release'
   const failures = await checkThreatModel(process.cwd(), { release })
   if (failures.length > 0) throw new Error(`Threat-model contract failed:\n- ${failures.join('\n- ')}`)
-  console.log(release ? 'Threat-model release state is valid' : 'Threat-model revision, evidence, and successor paths are valid')
+  console.log(release ? 'Threat-model release state is valid' : 'Threat-model structural and current-checkout state is valid; release attestation was not evaluated')
 }
 
 if (import.meta.main) await main()

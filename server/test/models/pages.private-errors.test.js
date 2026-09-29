@@ -191,21 +191,25 @@ describe('private page mutation existence isolation', () => {
       isPublished: true,
       publishEndDate: '2030-01-01T00:00:00.000Z',
       publishStartDate: '2026-01-01T00:00:00.000Z',
+      sourceRevision: '2',
       title: 'Original title',
       updatedAt: '2026-08-14T00:00:00.000Z'
     }
     const updatedPage = {
       ...originalPage,
       content: 'changed content',
-      title: 'Changed title',
+      sourceRevision: '3',
+      title: 'Changed title'
     }
-    const patch = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(1) })
+    const patchBuilder = { where: vi.fn(), then: resolve => resolve(1) }
+    patchBuilder.where.mockReturnValue(patchBuilder)
+    const patch = vi.fn().mockReturnValue(patchBuilder)
     const query = vi.fn()
       .mockReturnValueOnce({ findById: vi.fn().mockResolvedValue(originalPage) })
       .mockReturnValueOnce({ patch })
       .mockReturnValueOnce({
         findById: vi.fn().mockReturnValue({
-          select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:01:00.000Z' })
+          select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:01:00.000Z', sourceRevision: '3' })
         })
       })
     const associateTags = vi.fn()
@@ -336,7 +340,7 @@ describe('private page mutation existence isolation', () => {
       .mockReturnValueOnce({ patch })
       .mockReturnValueOnce({
         findById: vi.fn().mockReturnValue({
-          select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:01:00.000Z' })
+          select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:01:00.000Z', sourceRevision: '3' })
         })
       })
     global.WIKI.models.pages = Page
@@ -427,7 +431,7 @@ describe('private page mutation existence isolation', () => {
       .mockReturnValueOnce({ patch })
       .mockReturnValueOnce({
         findById: vi.fn().mockReturnValue({
-          select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:01:00.000Z' })
+          select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:01:00.000Z', sourceRevision: '3' })
         })
       })
     global.WIKI.models.pages = Page
@@ -485,7 +489,7 @@ describe('private page mutation existence isolation', () => {
       .mockReturnValueOnce({ patch })
       .mockReturnValueOnce({
         findById: vi.fn().mockReturnValue({
-          select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:01:00.000Z' })
+          select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:01:00.000Z', sourceRevision: '3' })
         })
       })
     const updatedPage = {

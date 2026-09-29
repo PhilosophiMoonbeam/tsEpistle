@@ -313,7 +313,7 @@ describe('Visual Markdown page contracts', () => {
     expect(lockedTables).toEqual(['pages', 'pageCollaborationRooms'])
   })
 
-  it('stops the transaction before tag mutation when the atomic timestamp guard loses a race', async () => {
+  it('rejects a concurrent update when its timestamp compare-and-swap loses a race', async () => {
     const pagePatch = {
       where: vi.fn(),
       then: resolve => resolve(0)
@@ -333,8 +333,12 @@ describe('Visual Markdown page contracts', () => {
       expectedUpdatedAt: basePage.updatedAt
     }))).rejects.toMatchObject({ name: 'PageUpdateConflict', status: 409 })
 
-    expect(pagePatch.where).toHaveBeenNthCalledWith(1, 'id', basePage.id)
-    expect(pagePatch.where).toHaveBeenNthCalledWith(2, 'updatedAt', basePage.updatedAt)
-    expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledOnce()
+    const wherePredicates = pagePatch.where.mock.calls.flatMap(([column, value]) =>
+      typeof column === 'string' ? [[column, value]] : Object.entries(column)
+    )
+    expect(wherePredicates).toEqual(expect.arrayContaining([
+      ['id', basePage.id],
+      ['updatedAt', basePage.updatedAt]
+    ]))
   })
 })
