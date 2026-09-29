@@ -64,16 +64,18 @@ jobs:
     - name: Validate Helm Source Contract
       if: steps.chart-changes.outputs.changed == 'true'
       run: server/test/scripts/check-helm-lifecycle-contract.sh
-    - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-      with:
-        version: '0.12.13'
-    - name: Install PDF Test Dependencies
+    - name: Install Pinned qpdf
+      shell: bash
       run: |
-        uv python install 3.12
-        uv venv --no-project --managed-python --python 3.12 "$RUNNER_TEMP/wiki-pdf"
-        uv pip install --python "$RUNNER_TEMP/wiki-pdf/bin/python" --only-binary :all: pikepdf==9.5.2
-        env -i PATH="$RUNNER_TEMP/wiki-pdf/bin:/usr/bin:/bin" LANG=C.UTF-8 python3 -I -B -c 'import pikepdf'
-        echo "$RUNNER_TEMP/wiki-pdf/bin" >> "$GITHUB_PATH"
+        archive="$RUNNER_TEMP/qpdf-11.9.1-bin-linux-x86_64.zip"
+        install_dir="$RUNNER_TEMP/qpdf-11.9.1"
+        curl --fail --silent --show-error --location --output "$archive" https://github.com/qpdf/qpdf/releases/download/v11.9.1/qpdf-11.9.1-bin-linux-x86_64.zip
+        printf '%s  %s\n' '64eb765a32f41a79d881cc41b867cc23916c3b444f80cc1de6c02ed9547db8e4' "$archive" | sha256sum --check
+        mkdir -p "$install_dir"
+        unzip -q "$archive" -d "$install_dir"
+        version="$(env -i PATH="$install_dir/bin:/usr/bin:/bin" LANG=C.UTF-8 qpdf --version)"
+        test "${version%%$'\n'*}" = 'qpdf version 11.9.1'
+        echo "$install_dir/bin" >> "$GITHUB_PATH"
     - name: Build Vite Assets
       run: bun run build
     - name: Run Unit Tests
@@ -114,16 +116,18 @@ jobs:
         retention-days: 30
 
 
-    - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-      with:
-        version: '0.12.13'
-    - name: Install PDF Test Dependencies
+    - name: Install Pinned qpdf
+      shell: bash
       run: |
-        uv python install 3.12
-        uv venv --no-project --managed-python --python 3.12 "$RUNNER_TEMP/wiki-pdf"
-        uv pip install --python "$RUNNER_TEMP/wiki-pdf/bin/python" --only-binary :all: pikepdf==9.5.2
-        env -i PATH="$RUNNER_TEMP/wiki-pdf/bin:/usr/bin:/bin" LANG=C.UTF-8 python3 -I -B -c 'import pikepdf'
-        echo "$RUNNER_TEMP/wiki-pdf/bin" >> "$GITHUB_PATH"
+        archive="$RUNNER_TEMP/qpdf-11.9.1-bin-linux-x86_64.zip"
+        install_dir="$RUNNER_TEMP/qpdf-11.9.1"
+        curl --fail --silent --show-error --location --output "$archive" https://github.com/qpdf/qpdf/releases/download/v11.9.1/qpdf-11.9.1-bin-linux-x86_64.zip
+        printf '%s  %s\n' '64eb765a32f41a79d881cc41b867cc23916c3b444f80cc1de6c02ed9547db8e4' "$archive" | sha256sum --check
+        mkdir -p "$install_dir"
+        unzip -q "$archive" -d "$install_dir"
+        version="$(env -i PATH="$install_dir/bin:/usr/bin:/bin" LANG=C.UTF-8 qpdf --version)"
+        test "${version%%$'\n'*}" = 'qpdf version 11.9.1'
+        echo "$install_dir/bin" >> "$GITHUB_PATH"
     - name: Build Vite Assets
       run: bun run build
     - name: Run Bun Tests

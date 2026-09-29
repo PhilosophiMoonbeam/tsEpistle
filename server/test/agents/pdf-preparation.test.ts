@@ -1,60 +1,192 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { dirname, join, resolve } from 'node:path'
+import { inflateSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from '../bun-test.mts'
-import { AGENT_PDF_MAX_BYTES, AGENT_PDF_PART_MAX_BYTES, prepareAgentPdf, prepareAgentPdfFromPath } from '../../agents/pdf-preparation.ts'
+import { AGENT_PDF_MAX_BYTES, AGENT_PDF_PART_MAX_BYTES, prepareAgentPdf, prepareAgentPdfFromPath, type PreparedAgentPdf } from '../../agents/pdf-preparation.ts'
+import { preparePdfWorker } from '../../agents/pdf-worker.ts'
+import { PdfFixtureDocument, repeatedPdfStream, type PdfStreamData } from './pdf-fixture.ts'
 
-const worker = fileURLToPath(new URL('../../agents/pdf-worker.py', import.meta.url))
 const directories: string[] = []
-const prepared: Awaited<ReturnType<typeof prepareAgentPdf>>[] = []
-const python = (code: string, args: string[] = []) => {
-  const result = spawnSync('python3', ['-I', '-B', '-c', code, ...args], { encoding: 'utf8', timeout: 30_000, maxBuffer: 256 * 1024 })
-  if (result.status !== 0) throw new Error(`PDF fixture failed: ${result.error?.message ?? result.stderr}`)
-  return result.stdout.trim()
+const prepared: PreparedAgentPdf[] = []
+const qpdfMaxBuffer = 4 * 1024 * 1024
+
+interface ImageFixture {
+  data: Buffer | PdfStreamData
+  filter?: string
+  width?: number
+  height?: number
 }
-const fixture = async (kind: 'plain' | 'empty' | 'encrypted' | 'compressible' | 'images' | 'many', pages = 4) => {
+
+interface PageFixture {
+  content?: Buffer | PdfStreamData
+  image?: ImageFixture
+}
+
+interface PdfFixtureOptions {
+  inheritedImage?: ImageFixture
+  inheritMediaBox?: boolean
+  sharedThumbnail?: Buffer
+}
+
+const makePdf = (pageFixtures: PageFixture[], options: PdfFixtureOptions = {}) => {
+  const pdf = new PdfFixtureDocument()
+  const catalogId = pdf.reserveObject()
+  const pagesId = pdf.reserveObject()
+  const pageIds = pageFixtures.map(() => pdf.reserveObject())
+  const imageObject = (image: ImageFixture): number => pdf.addStream(
+    `/Type /XObject /Subtype /Image /Width ${image.width ?? 100} /Height ${image.height ?? 100} /ColorSpace /DeviceRGB /BitsPerComponent 8${image.filter ? ` /Filter ${image.filter}` : ''}`,
+    image.data
+  )
+  const inheritedImageId = options.inheritedImage ? imageObject(options.inheritedImage) : undefined
+  const sharedThumbnailId = options.sharedThumbnail
+    ? pdf.addStream('/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8', options.sharedThumbnail)
+    : undefined
+
+  pageFixtures.forEach((page, index) => {
+    const contentId = pdf.addStream('', page.content ?? Buffer.alloc(0))
+    const imageId = page.image ? imageObject(page.image) : undefined
+    const thumbnailId = sharedThumbnailId
+    const resources = imageId === undefined ? '' : ` /Resources << /XObject << /Im ${imageId} 0 R >> >>`
+    const mediaBox = options.inheritMediaBox ? '' : ' /MediaBox [0 0 612 792]'
+    const thumbnail = thumbnailId === undefined ? '' : ` /Thumb ${thumbnailId} 0 R`
+    pdf.setObject(
+      pageIds[index]!,
+      `<< /Type /Page /Parent ${pagesId} 0 R${mediaBox}${resources} /Contents ${contentId} 0 R /TestPageIndex ${index + 1}${thumbnail}${page.entries ? ` ${page.entries}` : ''} >>`
+    )
+  })
+
+  const inheritedEntries = [
+    options.inheritMediaBox ? '/MediaBox [0 0 612 792]' : '',
+    inheritedImageId === undefined ? '' : `/Resources << /XObject << /Im ${inheritedImageId} 0 R >> >>`
+  ].filter(Boolean).join(' ')
+  pdf.setObject(pagesId, `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(' ')}] /Count ${pageIds.length}${inheritedEntries ? ` ${inheritedEntries}` : ''} >>`)
+  pdf.setObject(catalogId, `<< /Type /Catalog /Pages ${pagesId} 0 R >>`)
+  return { pdf, root: catalogId }
+}
+
+const newDirectory = async (): Promise<string> => {
   const directory = await mkdtemp(join(tmpdir(), 'wiki-pdf-test-'))
   directories.push(directory)
-  const path = join(directory, 'input.pdf')
-  python(`
-import pikepdf, sys, random
-kind, path, count = sys.argv[1], sys.argv[2], int(sys.argv[3])
-pdf = pikepdf.Pdf.new()
-for index in range(0 if kind == 'empty' else 1001 if kind == 'many' else count):
-    page = pdf.add_blank_page()
-    page.obj['/TestPageIndex'] = index + 1
-    if kind == 'compressible':
-        page.Contents = pdf.make_stream(b'0 0 m\\n' * 20000)
-        page.obj['/Thumb'] = pdf.make_stream(b'unneeded thumbnail')
-    if kind == 'images':
-        image = pdf.make_stream(random.Random(index).randbytes(30000))
-        image.Type = pikepdf.Name('/XObject')
-        image.Subtype = pikepdf.Name('/Image')
-        image.Width, image.Height = 100, 100
-        image.ColorSpace = pikepdf.Name('/DeviceRGB')
-        image.BitsPerComponent = 8
-        page.Resources = pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im=image))
-        page.Contents = pdf.make_stream(b'q 100 0 0 100 0 0 cm /Im Do Q\\n')
-options = {'compress_streams': False}
-if kind == 'encrypted':
-    options['encryption'] = pikepdf.Encryption(owner='owner-password', user='user-password')
-pdf.save(path, **options)
-`, [kind, path, String(pages)])
-  return { directory, path, payload: await readFile(path) }
+  return directory
 }
-const workerWithSmallParts = (path: string, threshold: number, outputLimit = 128 * 1024 * 1024) => JSON.parse(python(`
-import importlib.util, json, sys
-spec = importlib.util.spec_from_file_location('pdf_worker', sys.argv[1])
-worker = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(worker)
-worker.OUTPUT_BYTES = int(sys.argv[4])
-try:
-    print(json.dumps(worker.prepare(sys.argv[2], int(sys.argv[3]))))
-except worker.PreparationError as error:
-    print(json.dumps({'error': str(error)}))
-`, [worker, path, String(threshold), String(outputLimit)])) as { error?: string; pageCount: number; parts: { filename: string; startPage: number; endPage: number; byteLength: number }[] }
+
+const fixture = async (pages: PageFixture[], options: PdfFixtureOptions = {}) => {
+  const directory = await newDirectory()
+  const path = join(directory, 'input.pdf')
+  const document = makePdf(pages, options)
+  const payload = document.pdf.toBuffer(document.root)
+  await writeFile(path, payload, { mode: 0o600 })
+  return { directory, path, payload }
+}
+
+const deterministicBytes = (length: number, seed: number): Buffer => {
+  const bytes = Buffer.allocUnsafe(length)
+  let state = seed >>> 0
+  for (let index = 0; index < length; index++) {
+    state ^= state << 13
+    state ^= state >>> 17
+    state ^= state << 5
+    bytes[index] = state & 0xff
+  }
+  return bytes
+}
+
+const runQpdf = (args: string[], maxBuffer = qpdfMaxBuffer): Buffer => {
+  const result = spawnSync('qpdf', args, { encoding: null, timeout: 30_000, maxBuffer })
+  if (result.error) throw result.error
+  if (result.status !== 0 && result.status !== 3) {
+    const stderr = Buffer.from(result.stderr ?? '').toString('utf8')
+    throw new Error(`qpdf command failed (${result.status}): ${stderr}`)
+  }
+  return Buffer.from(result.stdout ?? '')
+}
+
+const inspectPdf = (path: string): QpdfDocument => JSON.parse(
+  runQpdf(['--json', '--json-stream-data=inline', path]).toString('utf8')
+) as QpdfDocument
+
+const qpdfPageCount = (path: string): number => Number(runQpdf(['--show-npages', path], 64 * 1024).toString('ascii').trim())
+
+interface QpdfIndirectObject {
+  value?: unknown
+  stream?: { dict: Record<string, unknown>; data?: string }
+}
+
+interface QpdfDocument {
+  pages: { object: string }[]
+  qpdf: [Record<string, unknown>, Record<string, QpdfIndirectObject>]
+}
+
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Unexpected qpdf JSON object')
+  return value as Record<string, unknown>
+}
+
+const indirectObject = (document: QpdfDocument, reference: string): QpdfIndirectObject => {
+  const object = document.qpdf[1][`obj:${reference}`]
+  if (!object) throw new Error(`qpdf JSON omitted ${reference}`)
+  return object
+}
+
+const resolveValue = (document: QpdfDocument, value: unknown): unknown => {
+  if (typeof value !== 'string' || !/^\d+ \d+ R$/.test(value)) return value
+  const object = indirectObject(document, value)
+  if (object.value === undefined) throw new Error(`${value} is not a dictionary object`)
+  return object.value
+}
+
+const pageDictionary = (document: QpdfDocument, index: number): Record<string, unknown> => {
+  const page = document.pages[index]
+  if (!page) throw new Error(`PDF is missing page ${index + 1}`)
+  return asRecord(resolveValue(document, page.object))
+}
+
+const inheritedValue = (document: QpdfDocument, pageIndex: number, key: string): unknown => {
+  let dictionary = pageDictionary(document, pageIndex)
+  for (let depth = 0; depth < 100; depth++) {
+    if (dictionary[key] !== undefined) return dictionary[key]
+    const parent = dictionary['/Parent']
+    if (typeof parent !== 'string') break
+    dictionary = asRecord(resolveValue(document, parent))
+  }
+  return undefined
+}
+
+const streamBytes = (document: QpdfDocument, reference: string): Buffer => {
+  const stream = indirectObject(document, reference).stream
+  if (stream?.data === undefined) throw new Error(`${reference} is not an inline qpdf stream`)
+  let data = Buffer.from(stream.data, 'base64')
+  const filter = stream.dict['/Filter']
+  const filters = Array.isArray(filter) ? filter : filter === undefined ? [] : [filter]
+  for (const item of filters) {
+    if (item === '/FlateDecode') data = inflateSync(data)
+    else if (item !== '/DCTDecode') throw new Error(`Unsupported fixture inspection filter ${String(item)}`)
+  }
+  return data
+}
+
+const pageContents = (document: QpdfDocument, index: number): Buffer => {
+  const contents = pageDictionary(document, index)['/Contents']
+  const references = Array.isArray(contents) ? contents : [contents]
+  return Buffer.concat(references.map(reference => {
+    if (typeof reference !== 'string') throw new Error('Page content is not an indirect stream')
+    return streamBytes(document, reference)
+  }))
+}
+
+const pageImageBytes = (document: QpdfDocument, index: number): Buffer => {
+  const resources = asRecord(resolveValue(document, inheritedValue(document, index, '/Resources')))
+  const xobjects = asRecord(resolveValue(document, resources['/XObject']))
+  const image = xobjects['/Im']
+  if (typeof image !== 'string') throw new Error(`Page ${index + 1} has no /Im image`)
+  return streamBytes(document, image)
+}
+
+const expectWorkerCode = async (promise: Promise<unknown>, code: string): Promise<void> => {
+  await expect(promise).rejects.toMatchObject({ code })
+}
 
 afterEach(async () => {
   await Promise.all(prepared.splice(0).map(result => result.cleanup()))
@@ -62,8 +194,8 @@ afterEach(async () => {
 })
 
 describe('Agent PDF preparation with the real parser', () => {
-  it('structurally parses a normal PDF while retaining its exact bytes and private file permissions', async () => {
-    const input = await fixture('plain', 3)
+  it('passes through a structurally parsed PDF byte-for-byte with private temporary files', async () => {
+    const input = await fixture([{}, {}, {}])
     const result = await prepareAgentPdf(input.payload, new AbortController().signal)
     prepared.push(result)
     expect(AGENT_PDF_PART_MAX_BYTES).toBe(48_000_000)
@@ -71,161 +203,177 @@ describe('Agent PDF preparation with the real parser', () => {
     expect(result.parts).toHaveLength(1)
     expect(result.parts[0]).toMatchObject({ startPage: 1, endPage: 3, byteLength: input.payload.length })
     expect(await readFile(result.parts[0]!.path)).toEqual(input.payload)
+    expect(qpdfPageCount(result.parts[0]!.path)).toBe(3)
     expect((await stat(result.parts[0]!.path)).mode & 0o777).toBe(0o600)
-    expect((await stat(join(result.parts[0]!.path, '..'))).mode & 0o777).toBe(0o700)
+    expect((await stat(dirname(result.parts[0]!.path))).mode & 0o777).toBe(0o700)
     await result.cleanup()
     await result.cleanup()
     expect(await stat(result.parts[0]!.path).catch(() => null)).toBeNull()
   })
 
-  it('prepares a real near-250 MiB original from disk within the bounded worker without an application payload buffer', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'wiki-pdf-large-test-'))
-    directories.push(directory)
+  it('prepares a real near-249-MiB disk input without constructing an application-sized payload buffer', async () => {
+    const directory = await newDirectory()
     const path = join(directory, 'large.pdf')
-    python(`
-import pikepdf, sys
-with pikepdf.Pdf.new() as pdf:
-    page = pdf.add_blank_page()
-    image = pdf.make_stream(b'\\0' * (249 * 1024 * 1024))
-    image.Type = pikepdf.Name('/XObject')
-    image.Subtype = pikepdf.Name('/Image')
-    image.Width, image.Height = 1000, 87031
-    image.ColorSpace = pikepdf.Name('/DeviceRGB')
-    image.BitsPerComponent = 8
-    page.Resources = pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im=image))
-    page.Contents = pdf.make_stream(b'q 100 0 0 100 0 0 cm /Im Do Q\\n')
-    pdf.save(sys.argv[1], compress_streams=False)
-`, [path])
-    expect((await stat(path)).size).toBeGreaterThan(249 * 1024 * 1024)
-    expect((await stat(path)).size).toBeLessThanOrEqual(AGENT_PDF_MAX_BYTES)
+    const input = makePdf([{
+      content: Buffer.from('q 1024 0 0 84992 0 0 cm /Im Do Q\n'),
+      image: {
+        data: repeatedPdfStream(249 * 1024 * 1024),
+        width: 1024,
+        height: 84992
+      }
+    }])
+    await input.pdf.writeTo(path, input.root)
+    const inputBytes = (await stat(path)).size
+    expect(inputBytes).toBeGreaterThan(249 * 1024 * 1024)
+    expect(inputBytes).toBeLessThanOrEqual(AGENT_PDF_MAX_BYTES)
     const result = await prepareAgentPdfFromPath(path, new AbortController().signal)
     prepared.push(result)
     expect(result.pageCount).toBe(1)
     expect(result.parts).toHaveLength(1)
-    expect(result.parts[0]!.byteLength).toBeLessThan(48_000_000)
+    expect(result.parts[0]!.byteLength).toBeLessThan(AGENT_PDF_PART_MAX_BYTES)
+    expect(qpdfPageCount(result.parts[0]!.path)).toBe(1)
   }, 60_000)
 
-  it('rejects malformed PDFs including plausible PDF headers', async () => {
-    await expect(prepareAgentPdf(Buffer.from('%PDF-1.7\nnot a PDF\n%%EOF'), new AbortController().signal)).rejects.toMatchObject({ code: 'PDF_INVALID', status: 400 })
+  it('rejects malformed PDFs and xref corruption instead of recovering their structure', async () => {
+    const directory = await newDirectory()
+    const malformedPath = join(directory, 'malformed.pdf')
+    await writeFile(malformedPath, Buffer.from('%PDF-1.7\nnot a PDF\n%%EOF\n'), { mode: 0o600 })
+    await expectWorkerCode(preparePdfWorker(malformedPath, new AbortController().signal), 'PDF_INVALID')
+
+    const valid = await fixture([{}])
+    const corrupted = Buffer.from(valid.payload)
+    const xrefStart = corrupted.lastIndexOf(Buffer.from('\nxref\n')) + 1
+    const subsectionLineEnd = corrupted.indexOf(0x0a, xrefStart + Buffer.byteLength('xref\n'))
+    const freeEntryLineEnd = corrupted.indexOf(0x0a, subsectionLineEnd + 1)
+    const firstObjectEntry = freeEntryLineEnd + 1
+    corrupted.write('0000000000', firstObjectEntry, 10, 'ascii')
+    const corruptedPath = join(valid.directory, 'corrupt-xref.pdf')
+    await writeFile(corruptedPath, corrupted, { mode: 0o600 })
+    await expectWorkerCode(preparePdfWorker(corruptedPath, new AbortController().signal), 'PDF_INVALID')
   })
 
-  it('prepares a structurally valid PDF whose image stream data is undecodable, like exported real-world documents', async () => {
-    const input = await fixture('plain', 2)
-    python(`
-import pikepdf, sys
-with pikepdf.open(sys.argv[1], allow_overwriting_input=True) as pdf:
-    image = pdf.make_stream(b'\\xff\\xd8 not a decodable JPEG \\xff\\xd9')
-    image.Type = pikepdf.Name('/XObject')
-    image.Subtype = pikepdf.Name('/Image')
-    image.Filter = pikepdf.Name('/DCTDecode')
-    image.Width, image.Height = 100, 100
-    image.ColorSpace = pikepdf.Name('/DeviceRGB')
-    image.BitsPerComponent = 8
-    pdf.pages[0].Resources = pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im=image))
-    pdf.pages[0].Contents = pdf.make_stream(b'q 100 0 0 100 0 0 cm /Im Do Q\\n')
-    pdf.save(sys.argv[1])
-`, [input.path])
-    const check = JSON.parse(python(`
-import pikepdf, json, sys
-with pikepdf.open(sys.argv[1], attempt_recovery=False) as pdf:
-    print(json.dumps({'pages': len(pdf.pages), 'checkWarnings': len(pdf.check())}))
-`, [input.path]))
-    expect(check.pages).toBe(2)
-    expect(check.checkWarnings).toBeGreaterThan(0)
+  it('retains exact bytes for a structurally valid PDF with undecodable DCT data', async () => {
+    const dctBytes = Buffer.from([0xff, 0xd8, 0x00, 0x19, 0xff, 0x00, 0x3a, 0xd9])
+    const input = await fixture([
+      { content: Buffer.from('q 100 0 0 100 0 0 cm /Im Do Q\n'), image: { data: dctBytes, filter: '/DCTDecode' } },
+      {}
+    ])
+    const independentlyParsed = inspectPdf(input.path)
+    expect(qpdfPageCount(input.path)).toBe(2)
+    expect(pageImageBytes(independentlyParsed, 0)).toEqual(dctBytes)
+
     const result = await prepareAgentPdf(input.payload, new AbortController().signal)
     prepared.push(result)
     expect(result.pageCount).toBe(2)
     expect(result.parts).toHaveLength(1)
     expect(result.parts[0]!.byteLength).toBe(input.payload.length)
-    await result.cleanup()
+    expect(await readFile(result.parts[0]!.path)).toEqual(input.payload)
   })
 
-  it('rejects encrypted, empty and over-1000-page PDFs before provider upload', async () => {
-    for (const [kind, code] of [['encrypted', 'PDF_ENCRYPTED'], ['empty', 'PDF_EMPTY'], ['many', 'PDF_TOO_MANY_PAGES']] as const) {
-      const input = await fixture(kind)
-      await expect(prepareAgentPdf(input.payload, new AbortController().signal)).rejects.toMatchObject({ code })
+  it('rejects encrypted, empty, and over-1000-page inputs before they can be uploaded', async () => {
+    const encryptedSource = await fixture([{}])
+    const encryptedPath = join(encryptedSource.directory, 'encrypted.pdf')
+    runQpdf(['--encrypt', 'user-password', 'owner-password', '256', '--', encryptedSource.path, encryptedPath], 64 * 1024)
+    await expectWorkerCode(preparePdfWorker(encryptedPath, new AbortController().signal), 'PDF_ENCRYPTED')
+
+    const empty = await fixture([])
+    await expectWorkerCode(preparePdfWorker(empty.path, new AbortController().signal), 'PDF_EMPTY')
+
+    const tooMany = await fixture(Array.from({ length: 1001 }, () => ({})))
+    await expectWorkerCode(preparePdfWorker(tooMany.path, new AbortController().signal), 'PDF_TOO_MANY_PAGES')
+  })
+
+  it('losslessly compresses page content and removes a shared thumbnail before sizing output', async () => {
+    const content = Buffer.from('0 0 m\n'.repeat(20_000))
+    const thumbnail = deterministicBytes(64_000, 0x5a5a)
+    const input = await fixture([{ content }, { content }], { sharedThumbnail: thumbnail })
+    const original = inspectPdf(input.path)
+    const originalThumbnails = [0, 1].map(index => pageDictionary(original, index)['/Thumb'])
+    expect(originalThumbnails[0]).toBe(originalThumbnails[1])
+    expect((await stat(input.path)).size).toBeGreaterThan(40_000)
+
+    const result = await preparePdfWorker(input.path, new AbortController().signal, { partLimitBytes: 40_000 })
+    expect(result.pageCount).toBe(2)
+    expect(result.parts.map(part => [part.startPage, part.endPage])).toEqual([[1, 2]])
+    const outputPath = join(input.directory, result.parts[0]!.filename)
+    expect(result.parts[0]!.byteLength).toBeLessThan(40_000)
+    const optimized = inspectPdf(outputPath)
+    expect(optimized.pages).toHaveLength(2)
+    for (const index of [0, 1]) {
+      expect(pageContents(optimized, index)).toEqual(content)
+      expect(pageDictionary(optimized, index)['/Thumb']).toBeUndefined()
+      expect(pageDictionary(optimized, index)['/TestPageIndex']).toBe(index + 1)
     }
   })
 
-  it('losslessly compresses oversized streams and removes thumbnails before deciding to split', async () => {
-    const input = await fixture('compressible', 2)
-    expect(input.payload.length).toBeGreaterThan(40_000)
-    const result = workerWithSmallParts(input.path, 40_000)
-    expect(result.error).toBeUndefined()
-    expect(result.parts).toHaveLength(1)
-    expect(result.parts[0]!.byteLength).toBeLessThan(40_000)
-    const details = JSON.parse(python(`
-import pikepdf, json, sys
-with pikepdf.open(sys.argv[1]) as pdf:
-    print(json.dumps({'pages': len(pdf.pages), 'contentBytes': [len(p.Contents.read_bytes()) for p in pdf.pages], 'thumbnails': any('/Thumb' in p.obj for p in pdf.pages)}))
-`, [join(input.directory, result.parts[0]!.filename)]))
-    expect(details).toEqual({ pages: 2, contentBytes: [120000, 120000], thumbnails: false })
-  })
-
-  it('splits image-heavy pages into contiguous bounded parts without changing image bytes', async () => {
-    const input = await fixture('images', 4)
-    const result = workerWithSmallParts(input.path, 40_000)
-    expect(result.error).toBeUndefined()
+  it('splits at page boundaries while preserving inherited resources, high-precision content, and image bytes', async () => {
+    const image = { data: deterministicBytes(2_048, 0x12345678) }
+    const pageContentsExpected = Array.from({ length: 4 }, (_, index) => Buffer.from(
+      `0.12345678901234567890123456789 0 0 1 0 0 cm /Im Do Q\n% ${deterministicBytes(28_000, index + 1).toString('base64')}\n`
+    ))
+    const input = await fixture(
+      pageContentsExpected.map(content => ({ content })),
+      { inheritedImage: image, inheritMediaBox: true }
+    )
+    const originalBytes = await readFile(input.path)
+    const result = await preparePdfWorker(input.path, new AbortController().signal, { partLimitBytes: 40_000 })
     expect(result.pageCount).toBe(4)
     expect(result.parts.map(part => [part.startPage, part.endPage])).toEqual([[1, 1], [2, 2], [3, 3], [4, 4]])
+
     for (const part of result.parts) {
+      const outputPath = join(input.directory, part.filename)
       expect(part.byteLength).toBeLessThanOrEqual(40_000)
-      const verified = python(`
-import pikepdf, sys
-with pikepdf.open(sys.argv[1]) as original, pikepdf.open(sys.argv[2]) as partial:
-    offset = int(sys.argv[3]) - 1
-    assert partial.pages[0].obj['/TestPageIndex'] == offset + 1
-    assert partial.pages[0].Resources.XObject.Im.read_bytes() == original.pages[offset].Resources.XObject.Im.read_bytes()
-    print('verified')
-`, [input.path, join(input.directory, part.filename), String(part.startPage)])
-      expect(verified).toBe('verified')
+      expect((await stat(outputPath)).size).toBe(part.byteLength)
+      expect(dirname(resolve(outputPath))).toBe(resolve(input.directory))
+      const output = inspectPdf(outputPath)
+      expect(output.pages).toHaveLength(1)
+      const pageIndex = part.startPage - 1
+      expect(pageDictionary(output, 0)['/TestPageIndex']).toBe(pageIndex + 1)
+      expect(pageContents(output, 0)).toEqual(pageContentsExpected[pageIndex])
+      expect(pageImageBytes(output, 0)).toEqual(image.data)
     }
+    expect(await readFile(input.path)).toEqual(originalBytes)
   })
 
-  it('rejects a single oversized page and documents requiring more than eight parts', async () => {
-    const single = await fixture('images', 1)
-    expect(workerWithSmallParts(single.path, 20_000).error).toBe('PDF_PAGE_TOO_LARGE')
-    const many = await fixture('images', 9)
-    expect(workerWithSmallParts(many.path, 40_000).error).toBe('PDF_TOO_MANY_PARTS')
+  it('rejects an oversized single page, a ninth output part, and excessive cumulative output', async () => {
+    const imagePages = (count: number) => Array.from({ length: count }, (_, index) => ({
+      content: Buffer.from(`q 100 0 0 100 0 0 cm /Im Do Q\n% ${index}\n`),
+      image: { data: deterministicBytes(30_000, index + 100) }
+    }))
+    const single = await fixture(imagePages(1))
+    await expectWorkerCode(
+      preparePdfWorker(single.path, new AbortController().signal, { partLimitBytes: 20_000 }),
+      'PDF_PAGE_TOO_LARGE'
+    )
+
+    const nine = await fixture(imagePages(9))
+    await expectWorkerCode(
+      preparePdfWorker(nine.path, new AbortController().signal, { partLimitBytes: 40_000 }),
+      'PDF_TOO_MANY_PARTS'
+    )
+
+    const four = await fixture(imagePages(4))
+    await expectWorkerCode(
+      preparePdfWorker(four.path, new AbortController().signal, { partLimitBytes: 40_000, outputLimitBytes: 80_000 }),
+      'PDF_OUTPUT_TOO_LARGE'
+    )
   })
 
-  it('bounds the cumulative size of split outputs', async () => {
-    const input = await fixture('images', 4)
-    expect(workerWithSmallParts(input.path, 40_000, 80_000).error).toBe('PDF_OUTPUT_TOO_LARGE')
-  })
+  it('rejects oversized disk inputs and observes cancellation before starting work', async () => {
+    const directory = await newDirectory()
+    const oversizedPath = join(directory, 'oversized.pdf')
+    const oversizedFile = await open(oversizedPath, 'w', 0o600)
+    await oversizedFile.truncate(AGENT_PDF_MAX_BYTES + 1)
+    await oversizedFile.close()
+    await expect(prepareAgentPdfFromPath(oversizedPath, new AbortController().signal)).rejects.toMatchObject({ code: 'PDF_TOO_LARGE', status: 413 })
 
-  it('independently rejects worker path traversal and noncontiguous page manifests', async () => {
-    const input = await fixture('plain', 3)
-    const binaryDirectory = await mkdtemp(join(tmpdir(), 'wiki-pdf-worker-test-'))
-    directories.push(binaryDirectory)
-    const previousPath = process.env.PATH
-    try {
-      process.env.PATH = `${binaryDirectory}:${previousPath}`
-      for (const part of [
-        { filename: '../input.pdf', startPage: 1, endPage: 3, byteLength: input.payload.length },
-        { filename: 'input.pdf', startPage: 2, endPage: 3, byteLength: input.payload.length },
-        { filename: 'input.pdf', startPage: 1, endPage: 2, byteLength: input.payload.length },
-        { filename: 'input.pdf', startPage: 1, endPage: 3, byteLength: input.payload.length + 1 }
-      ]) {
-        const manifest = JSON.stringify({ pageCount: 3, parts: [part] })
-        await writeFile(join(binaryDirectory, 'python3'), `#!/bin/sh\nprintf '%s' '${manifest}'\n`, { mode: 0o700 })
-        await expect(prepareAgentPdf(input.payload, new AbortController().signal)).rejects.toMatchObject({ code: 'PDF_PREPARATION_FAILED' })
-      }
-    } finally {
-      if (previousPath === undefined) delete process.env.PATH
-      else process.env.PATH = previousPath
-    }
-  })
-
-  it('rejects oversized input and aborts before allocation', async () => {
-    await expect(prepareAgentPdf(Buffer.alloc(AGENT_PDF_MAX_BYTES + 1), new AbortController().signal)).rejects.toMatchObject({ code: 'PDF_TOO_LARGE', status: 413 })
     const controller = new AbortController()
     controller.abort()
-    await expect(prepareAgentPdf(Buffer.from('pdf'), controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(preparePdfWorker(oversizedPath, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
   })
 
-  it('bounds concurrency and releases the worker slot and temporary files after cancellation', async () => {
-    const input = await fixture('plain', 3)
+  it('bounds public preparation concurrency and releases the worker slot and temporary files after cancellation', async () => {
+    const input = await fixture([{}, {}, {}])
     const before = (await readdir(tmpdir())).filter(name => name.startsWith('wiki-agent-pdf-')).sort()
     const controller = new AbortController()
     const first = prepareAgentPdf(input.payload, controller.signal)

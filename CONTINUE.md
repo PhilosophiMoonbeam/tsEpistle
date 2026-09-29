@@ -191,9 +191,7 @@ On current uncommitted candidate:
 - Actual feedback measurements above completed.
 - **No full test/typecheck/formatter run yet. Two reviewer counterexamples not executed or fixed.**
 
-Agent PDF tests require the existing temporary Python environment:
-`PATH=/tmp/wiki-homepage-pdf-313/bin:/home/bbferko/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
-Python 3.13 + pikepdf 9.5.2. Without it six PDF cases fail for environment.
+Agent PDF tests require qpdf 11.9.1 or newer on `PATH`; no Python or pikepdf runtime is needed. The TypeScript worker invokes qpdf with strict parsing, resource limits, and private temporary files.
 
 Runner detail: `bun run test server/test/agents shared/markdown-code-fence.test.ts` counts as two entries, not 59 isolated files. Enumerate the 58 Agent test paths plus shared fence file to reproduce actual isolation. Rebuild shared declarations with `bun run typecheck:shared` before server typecheck when shared exports change.
 
