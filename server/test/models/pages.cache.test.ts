@@ -20,6 +20,7 @@ vi.mockModule('../../core/page-mutation-outbox.ts', import.meta.url, () => ({ en
 vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({
   redactProtectedPageForSearch,
   syncProtectedPageAssets,
+  pageRequiresUnlock: vi.fn(async () => false),
   protectedAssetRequiresUnlock
 }))
 
@@ -31,8 +32,6 @@ let transactionPageProjection: Record<string, unknown> | undefined
 let cacheIdentityMarker:
   | { id: number; hash: string; sourceRevision: string | number; path: string; localeCode: string; visibility: 'public' | 'private'; ownerId: number | null; isSearchable: boolean }
   | undefined
-
-
 
 beforeEach(async () => {
   tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-page-cache-'))
@@ -121,7 +120,7 @@ afterEach(async () => {
 })
 
 describe('models/pages.updatePage cache invalidation', () => {
-  it('removes the writer cache for the old path without deleting the newly rendered cache', async () => {
+  it('evicts the old location and serves a later renderer cache at the committed location', async () => {
     // page.ts captures WIKI at module evaluation, so load it after installing the isolated test global.
     const pageHelper = (await import('../../helpers/page.ts')).default
     const oldPath = 'guides/old-location'
@@ -195,7 +194,7 @@ describe('models/pages.updatePage cache invalidation', () => {
       if (readQueryCount === 2) {
         return {
           findById: vi.fn(() => ({
-            select: vi.fn(async () => ({ updatedAt: movedPage.updatedAt }))
+            select: vi.fn(async () => ({ updatedAt: movedPage.updatedAt, sourceRevision: movedPage.sourceRevision }))
           }))
         }
       }
@@ -208,7 +207,6 @@ describe('models/pages.updatePage cache invalidation', () => {
     })
     vi.spyOn(Page, 'rebuildTree').mockResolvedValue(undefined)
 
-
     await Page.updatePage({
       id: oldPage.id,
       path: newPath,
@@ -220,7 +218,7 @@ describe('models/pages.updatePage cache invalidation', () => {
       } as Express.User & { id: number; name: string; email: string }
     })
 
-
+    await Page.renderPage(movedPage as never)
     expect(await Page.getPageFromCache(newLookup)).toMatchObject({
       path: newPath,
       render: '<p>fresh new-path render</p>'

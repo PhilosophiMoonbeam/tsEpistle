@@ -14,6 +14,7 @@ vi.mockModule('../core/outbox.ts', import.meta.url, () => ({ writeOutboxEvent })
 vi.mockModule('../operations/page-protection.ts', import.meta.url, () => ({
   redactProtectedPageForSearch,
   syncProtectedPageAssets,
+  pageRequiresUnlock: vi.fn(async () => false),
   protectedAssetRequiresUnlock
 }))
 
