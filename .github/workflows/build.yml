@@ -671,7 +671,7 @@ jobs:
         echo "$tools_dir" >> "$GITHUB_PATH"
 
     - name: Resolve Supported Previous Helm Release
-      run: docker pull "$WIKI_HELM_PREVIOUS_IMAGE"
+      run: docker pull --platform linux/amd64 "$WIKI_HELM_PREVIOUS_IMAGE"
 
     - name: Create Lifecycle Cluster
       run: |

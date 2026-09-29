@@ -5,7 +5,12 @@ set -euo pipefail
 ADMIN_EMAIL=multi-instance-smoke@example.com
 ADMIN_PASSWORD=MultiInstanceSmoke123!
 DB_PASSWORD=Password123!
+SITE_ORIGIN=http://127.0.0.1:3000
+SITE_HOST=127.0.0.1:3000
 POSTGRES_TEST_IMAGE=${POSTGRES_TEST_IMAGE:-postgres:15-alpine@sha256:4006528dcbdd9be8c1aaa50389caea4e93c46d6f54c3533bcd3253725e526e23}
+COOKIE_DIR=$(mktemp -d)
+COOKIE_A=$COOKIE_DIR/wiki-a.cookies
+COOKIE_B=$COOKIE_DIR/wiki-b.cookies
 
 cleanup() {
   if [ "${smoke_succeeded:-false}" != true ]; then
@@ -15,6 +20,7 @@ cleanup() {
   fi
   docker rm -f wiki-a wiki-b lock-holder db >/dev/null 2>&1 || true
   docker network rm wiki-multi-instance >/dev/null 2>&1 || true
+  rm -rf "$COOKIE_DIR"
 }
 trap cleanup EXIT
 
@@ -45,17 +51,21 @@ start_wiki() {
 
 login() {
   local port=$1
+  local cookie_file=$2
   local response
-  local jwt
+  # The configured site origin stays on :3000; route it to the selected instance's local port.
   response=$(curl --silent --show-error \
+    --connect-to "127.0.0.1:3000:127.0.0.1:$port" \
+    --cookie-jar "$cookie_file" \
+    --header "Host: $SITE_HOST" \
+    --header "Origin: $SITE_ORIGIN" \
     --header 'Content-Type: application/json' \
     --data "{\"username\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\",\"strategy\":\"local\"}" \
-    "http://127.0.0.1:$port/_api/auth/login")
-  if ! jwt=$(printf '%s' "$response" | jq --exit-status --raw-output '.jwt | select(type == "string" and length > 0)' 2>/dev/null); then
+    "$SITE_ORIGIN/_api/auth/login")
+  if ! printf '%s' "$response" | jq --exit-status '.authenticated == true and (has("jwt") | not)' >/dev/null; then
     echo "Authentication through instance on port $port failed: $response" >&2
     return 1
   fi
-  printf '%s\n' "$jwt"
 }
 
 docker rm --force wiki-a wiki-b lock-holder db >/dev/null 2>&1 || true
@@ -78,19 +88,23 @@ done
 start_wiki wiki-a 3000
 wait_for_url http://127.0.0.1:3000/
 setup_response=$(curl --fail --silent --show-error \
+  --header "Host: $SITE_HOST" \
+  --header "Origin: $SITE_ORIGIN" \
   --header 'Content-Type: application/json' \
-  --data "{\"siteUrl\":\"http://127.0.0.1:3000\",\"adminEmail\":\"$ADMIN_EMAIL\",\"adminPassword\":\"$ADMIN_PASSWORD\",\"telemetry\":false}" \
-  http://127.0.0.1:3000/finalize)
+  --data "{\"siteUrl\":\"$SITE_ORIGIN\",\"adminEmail\":\"$ADMIN_EMAIL\",\"adminPassword\":\"$ADMIN_PASSWORD\",\"telemetry\":false}" \
+  "$SITE_ORIGIN/finalize")
 printf '%s' "$setup_response" | jq --exit-status '.ok == true' >/dev/null
 wait_for_url http://127.0.0.1:3000/login
 sleep 3
-jwt_a=$(login 3000)
+login 3000 "$COOKIE_A"
 
 create_response=$(curl --fail --silent --show-error \
-  --header "Authorization: Bearer $jwt_a" \
+  --header "Host: $SITE_HOST" \
+  --header "Origin: $SITE_ORIGIN" \
+  --cookie "$COOKIE_A" \
   --header 'Content-Type: application/json' \
   --data '{"content":"# Multi-instance page","description":"release recovery smoke","editor":"markdown","visibility":"public","isPublished":true,"locale":"en","path":"multi-instance-smoke","publishEndDate":"","publishStartDate":"","scriptCss":"","scriptJs":"","tags":[],"title":"Multi-instance smoke"}' \
-  http://127.0.0.1:3000/_api/pages)
+  "$SITE_ORIGIN/_api/pages")
 page_id=$(printf '%s' "$create_response" | jq --exit-status --raw-output '.page.id')
 
 docker run -d --name lock-holder --network=wiki-multi-instance \
@@ -160,7 +174,7 @@ docker rm -f lock-holder >/dev/null
 start_wiki wiki-b 3001
 wait_for_url http://127.0.0.1:3001/login
 sleep 3
-jwt_b=$(login 3001)
+login 3001 "$COOKIE_B"
 
 for attempt in {1..45}; do
   recovery_state=$(docker exec db psql --username wiki --dbname wiki --tuples-only --no-align --command "
@@ -179,7 +193,7 @@ for attempt in {1..45}; do
 done
 
 read_response=$(curl --fail --silent --show-error \
-  --header "Authorization: Bearer $jwt_b" \
+  --cookie "$COOKIE_B" \
   "http://127.0.0.1:3001/_api/pages/$page_id")
 printf '%s' "$read_response" | jq --exit-status '.path == "multi-instance-smoke"' >/dev/null
 
@@ -188,7 +202,7 @@ wait_for_url http://127.0.0.1:3001/healthz
 start_wiki wiki-a 3000
 wait_for_url http://127.0.0.1:3000/login
 sleep 3
-login 3000 >/dev/null
+login 3000 "$COOKIE_A"
 
 smoke_succeeded=true
 echo 'Shared PostgreSQL state survived instance loss, the remaining instance recovered an expired durable-job lease exactly once, and the stopped instance rejoined.'

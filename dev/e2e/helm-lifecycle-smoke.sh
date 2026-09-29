@@ -187,8 +187,29 @@ assert_application_revision() {
     "$stage" "$helm_revision" "$actual_image" "$actual_application_revision"
 }
 
+if ! kind_nodes=$(kind get nodes --name "$KIND_CLUSTER_NAME"); then
+  echo "Unable to list nodes in kind cluster '$KIND_CLUSTER_NAME'." >&2
+  exit 1
+fi
+if [[ -z "$kind_nodes" ]]; then
+  echo "No nodes found in kind cluster '$KIND_CLUSTER_NAME'." >&2
+  exit 1
+fi
 
-kind load docker-image --name "$KIND_CLUSTER_NAME" "$WIKI_TEST_PREVIOUS_IMAGE"
+node_count=0
+while IFS= read -r node; do
+  [[ -n "$node" ]] || continue
+  node_count=$((node_count + 1))
+  if ! docker exec "$node" ctr --namespace=k8s.io images pull --platform linux/amd64 "$INITIAL_IMAGE"; then
+    echo "Unable to pull previous-release image '$INITIAL_IMAGE' into kind node '$node'." >&2
+    exit 1
+  fi
+done <<< "$kind_nodes"
+
+if (( node_count == 0 )); then
+  echo "No nodes found in kind cluster '$KIND_CLUSTER_NAME'." >&2
+  exit 1
+fi
 
 helm install "$RELEASE" dev/helm \
   --namespace "$NAMESPACE" \

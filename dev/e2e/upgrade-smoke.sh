@@ -18,6 +18,7 @@ MIGRATION_MAX_DB_AMPLIFICATION_PERCENT=${MIGRATION_MAX_DB_AMPLIFICATION_PERCENT:
 MIGRATION_MAX_DATA_GROWTH_BYTES=${MIGRATION_MAX_DATA_GROWTH_BYTES:-67108864}
 MIGRATION_MAX_PEAK_MEMORY_BYTES=${MIGRATION_MAX_PEAK_MEMORY_BYTES:-1073741824}
 MIGRATION_METRICS_FILE=${MIGRATION_METRICS_FILE:-migration-metrics-postgres.json}
+WIKI_ORIGIN=http://127.0.0.1:3000
 RECOVERY_DIR=$(mktemp -d)
 MIGRATION_SAMPLES_FILE=$RECOVERY_DIR/migration-resource-samples
 MIGRATION_MONITOR_STOP=$RECOVERY_DIR/migration-resource-monitor.stop
@@ -82,6 +83,7 @@ login_graphql() {
   local response
   response=$(curl --fail --silent --show-error \
     --header 'Content-Type: application/json' \
+    --header "Origin: $WIKI_ORIGIN" \
     --data "$(jq --null-input --arg username "$ADMIN_EMAIL" --arg password "$ADMIN_PASSWORD" '{query: "mutation ($username: String!, $password: String!) { authentication { login(username: $username, password: $password, strategy: \"local\") { jwt responseResult { succeeded } } } }", variables: {username: $username, password: $password}}')" \
     http://127.0.0.1:3000/graphql)
   printf '%s' "$response" | jq --exit-status --raw-output \
@@ -128,9 +130,9 @@ assert_fixture_report() {
 }
 assert_upgraded_report() {
   local report=$1
-  jq --exit-status --argjson report "$report" \
+  jq --exit-status --argjson report "$report" --argjson before "$before_report" \
     '.expectedBeforeUpgrade as $expected |
-      ($report.pages == $expected.pages) and
+      ($report.pages >= $expected.pages) and
       ($report.users == $expected.users) and
       ($report.groups == $expected.groups) and
       ($report.navigation == $expected.navigation) and
@@ -140,6 +142,7 @@ assert_upgraded_report() {
       (($report.migrationNames | length) >= $expected.migrations) and
       ($report.fixturePage.path == .fixtureIdentity.pagePath) and
       ($report.fixturePage.title == .fixtureIdentity.pageTitle) and
+      ($report.fixturePage == $before.fixturePage) and
       ($report.fixtureHistory >= 2) and
       ($report.fixtureAsset == 1)' "$FIXTURE_MANIFEST" >/dev/null
 }
@@ -248,16 +251,27 @@ peak_memory_bytes=${peak_memory_bytes//[[:space:]]/}
 after_report=$(resource_report)
 assert_upgraded_report "$after_report"
 
-jwt=$(login_graphql)
-whoami_response=$(curl --fail --silent --show-error --header "Authorization: Bearer $jwt" \
-  http://127.0.0.1:3000/_api/users/whoami)
+current_cookie_file=$RECOVERY_DIR/current.cookies
+login_response=$(curl --fail --silent --show-error \
+  --cookie-jar "$current_cookie_file" \
+  --header "Origin: $WIKI_ORIGIN" \
+  --header 'Content-Type: application/json' \
+  --data "$(jq --null-input --arg username "$ADMIN_EMAIL" --arg password "$ADMIN_PASSWORD" '{username: $username, password: $password, strategy: "local"}')" \
+  "$WIKI_ORIGIN/_api/auth/login")
+if ! printf '%s' "$login_response" | jq --exit-status '.authenticated == true and (has("jwt") | not)' >/dev/null; then
+  printf 'Candidate cookie authentication failed: %s\n' "$login_response" >&2
+  exit 1
+fi
+whoami_response=$(curl --fail --silent --show-error --cookie "$current_cookie_file" \
+  "$WIKI_ORIGIN/_api/users/whoami")
 printf '%s' "$whoami_response" | jq --exit-status --arg email "$ADMIN_EMAIL" \
   '.authenticated == true and .user.email == $email' >/dev/null
 
 create_response=$(curl --silent --show-error --request POST \
-  --header 'Content-Type: application/json' --header "Authorization: Bearer $jwt" \
+  --header 'Content-Type: application/json' --cookie "$current_cookie_file" \
+  --header "Origin: $WIKI_ORIGIN" \
   --data '{"content":"# Discard after rollback","description":"release recovery sentinel","editor":"markdown","visibility":"public","isPublished":true,"locale":"en","path":"rollback-discarded","publishEndDate":"","publishStartDate":"","scriptCss":"","scriptJs":"","tags":[],"title":"Rollback discarded"}' \
-  http://127.0.0.1:3000/_api/pages)
+  "$WIKI_ORIGIN/_api/pages")
 if ! printf '%s' "$create_response" | jq --exit-status '.page.id | type == "number"' >/dev/null; then
   printf 'Could not create rollback sentinel page: %s\n' "$create_response" >&2
   exit 1

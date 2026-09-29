@@ -182,6 +182,8 @@ tsEpistle runs database migrations during startup, so the Deployment intentional
 
 The Helm lifecycle CI installs the supported previous release from an explicit `repository:tag@sha256:digest` reference before upgrading to the candidate. The smoke gate refuses a missing, mutable, unresolved, or same-image previous release and records each distinct Docker image revision in its Helm revision values before testing upgrade and rollback. Keep this input pinned to an immutable application release that remains inside the supported upgrade window; never create the initial revision by retagging the candidate.
 
+The Linux x64 lifecycle gate pulls that pinned previous-release image directly into each kind node; CI nodes need HTTPS access to the image registry. The installed and rolled-back image reference remains the same immutable digest.
+
 ## Backup verification
 
 Back up PostgreSQL in custom format and prove that the archive can restore before changing the application:
