@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+: "${WIKI_TEST_NAMESPACE:?WIKI_TEST_NAMESPACE is required}"
+if [[ ! "$WIKI_TEST_NAMESPACE" =~ ^tsepistle-ci-[a-z0-9][a-z0-9-]*$ ]]; then
+  printf 'WIKI_TEST_NAMESPACE must be a Docker-safe tsepistle-ci- namespace\n' >&2
+  exit 2
+fi
 : "${WIKI_TEST_IMAGE:?WIKI_TEST_IMAGE is required}"
 : "${POSTGRES_TEST_IMAGE:?POSTGRES_TEST_IMAGE is required}"
+
+WIKI_CONTAINER=${WIKI_TEST_NAMESPACE}-wiki
+DB_CONTAINER=${WIKI_TEST_NAMESPACE}-db
+DATA_VOLUME=${WIKI_TEST_NAMESPACE}-data
+TEST_NETWORK=${WIKI_TEST_NAMESPACE}-network
 
 FIXTURE_DIR=${FIXTURE_DIR:-dev/e2e/fixtures}
 FIXTURE_DIR=$(realpath "$FIXTURE_DIR")
@@ -20,9 +30,16 @@ MIGRATION_MAX_PEAK_MEMORY_BYTES=${MIGRATION_MAX_PEAK_MEMORY_BYTES:-1073741824}
 MIGRATION_METRICS_FILE=${MIGRATION_METRICS_FILE:-migration-metrics-postgres.json}
 WIKI_ORIGIN=http://127.0.0.1:3000
 RECOVERY_DIR=$(mktemp -d)
+VOLUME_OWNER=$RECOVERY_DIR
 MIGRATION_SAMPLES_FILE=$RECOVERY_DIR/migration-resource-samples
 MIGRATION_MONITOR_STOP=$RECOVERY_DIR/migration-resource-monitor.stop
 migration_monitor_pid=
+WIKI_HOST_PORT=
+wiki_container_owned=false
+db_container_owned=false
+data_volume_owned=false
+test_network_id=
+recovery_succeeded=false
 stop_migration_monitor() {
   if [ -n "$migration_monitor_pid" ]; then
     touch "$MIGRATION_MONITOR_STOP"
@@ -33,22 +50,69 @@ stop_migration_monitor() {
 
 
 cleanup() {
+  local volume_owner
   stop_migration_monitor
-  if [ "${recovery_succeeded:-false}" != true ]; then
-    docker logs wiki 2>/dev/null || true
-    docker logs db 2>/dev/null || true
+  if [ "$recovery_succeeded" != true ]; then
+    if [ "$wiki_container_owned" = true ]; then
+      docker logs "$WIKI_CONTAINER" 2>/dev/null || true
+    fi
+    if [ "$db_container_owned" = true ]; then
+      docker logs "$DB_CONTAINER" 2>/dev/null || true
+    fi
   fi
-  docker rm -f wiki db >/dev/null 2>&1 || true
-  docker volume rm wiki-data >/dev/null 2>&1 || true
-  docker network rm wiki-e2e >/dev/null 2>&1 || true
+  if [ "$wiki_container_owned" = true ]; then
+    docker rm -f "$WIKI_CONTAINER" >/dev/null 2>&1 || true
+  fi
+  if [ "$db_container_owned" = true ]; then
+    docker rm -f "$DB_CONTAINER" >/dev/null 2>&1 || true
+  fi
+  if [ "$data_volume_owned" = true ]; then
+    volume_owner=$(docker volume inspect --format '{{ index .Labels "tsepistle-ci.owner" }}' "$DATA_VOLUME" 2>/dev/null || true)
+    if [ "$volume_owner" = "$VOLUME_OWNER" ]; then
+      docker volume rm "$DATA_VOLUME" >/dev/null 2>&1 || true
+    fi
+  fi
+  if [ -n "$test_network_id" ]; then
+    docker network rm "$test_network_id" >/dev/null 2>&1 || true
+  fi
   rm -rf "$RECOVERY_DIR"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+assert_resources_available() {
+  if docker container inspect "$WIKI_CONTAINER" >/dev/null 2>&1; then
+    printf 'Refusing to reuse existing Docker container %s\n' "$WIKI_CONTAINER" >&2
+    return 1
+  fi
+  if docker container inspect "$DB_CONTAINER" >/dev/null 2>&1; then
+    printf 'Refusing to reuse existing Docker container %s\n' "$DB_CONTAINER" >&2
+    return 1
+  fi
+  if docker volume inspect "$DATA_VOLUME" >/dev/null 2>&1; then
+    printf 'Refusing to reuse existing Docker volume %s\n' "$DATA_VOLUME" >&2
+    return 1
+  fi
+  if docker network inspect "$TEST_NETWORK" >/dev/null 2>&1; then
+    printf 'Refusing to reuse existing Docker network %s\n' "$TEST_NETWORK" >&2
+    return 1
+  fi
+}
 
+create_data_volume() {
+  local volume_owner
+  docker volume create --label "tsepistle-ci.owner=$VOLUME_OWNER" "$DATA_VOLUME" >/dev/null
+  volume_owner=$(docker volume inspect --format '{{ index .Labels "tsepistle-ci.owner" }}' "$DATA_VOLUME")
+  if [ "$volume_owner" != "$VOLUME_OWNER" ]; then
+    printf 'Refusing to use Docker volume %s owned by another run\n' "$DATA_VOLUME" >&2
+    return 1
+  fi
+  data_volume_owned=true
+}
 wait_for_url() {
   local url=$1
   for attempt in {1..90}; do
-    if curl --fail --silent --show-error --output /dev/null "$url"; then
+    if wiki_curl --fail --silent --show-error --output /dev/null "$url"; then
       return
     fi
     if [ "$attempt" -eq 90 ]; then
@@ -58,10 +122,9 @@ wait_for_url() {
     sleep 1
   done
 }
-
 wait_for_postgres() {
   for attempt in {1..90}; do
-    if docker exec db psql --username=wiki --dbname=wiki --command='SELECT 1' >/dev/null 2>&1; then
+    if docker exec "$DB_CONTAINER" psql --username=wiki --dbname=wiki --command='SELECT 1' >/dev/null 2>&1; then
       return
     fi
     if [ "$attempt" -eq 90 ]; then
@@ -74,18 +137,40 @@ wait_for_postgres() {
 
 start_wiki() {
   local image=$1
-  docker run -d -p 3000:3000 --name wiki --network=wiki-e2e -v wiki-data:/wiki/data \
+  local port_mapping
+  WIKI_HOST_PORT=
+  docker run -d -p 127.0.0.1:0:3000 --name "$WIKI_CONTAINER" --network "$TEST_NETWORK" -v "$DATA_VOLUME":/wiki/data \
     -e DB_TYPE=postgres -e DB_HOST=db -e DB_PORT=5432 -e DB_NAME=wiki \
     -e DB_USER=wiki -e 'DB_PASS=Password123!' "$image" >/dev/null
+  wiki_container_owned=true
+  port_mapping=$(docker port "$WIKI_CONTAINER" 3000/tcp)
+  if [[ ! "$port_mapping" =~ ^127\.0\.0\.1:([0-9]+)$ ]]; then
+    printf 'Expected a Docker-assigned loopback port for %s, got %s\n' "$WIKI_CONTAINER" "$port_mapping" >&2
+    return 1
+  fi
+  WIKI_HOST_PORT=${BASH_REMATCH[1]}
+  if [ "$WIKI_HOST_PORT" -eq 0 ]; then
+    printf 'Docker did not assign a host port for %s\n' "$WIKI_CONTAINER" >&2
+    return 1
+  fi
+}
+remove_wiki() {
+  docker rm -f "$WIKI_CONTAINER" >/dev/null
+  wiki_container_owned=false
+  WIKI_HOST_PORT=
+}
+
+wiki_curl() {
+  curl --connect-to "127.0.0.1:3000:127.0.0.1:$WIKI_HOST_PORT" "$@"
 }
 
 login_graphql() {
   local response
-  response=$(curl --fail --silent --show-error \
+  response=$(wiki_curl --fail --silent --show-error \
     --header 'Content-Type: application/json' \
     --header "Origin: $WIKI_ORIGIN" \
     --data "$(jq --null-input --arg username "$ADMIN_EMAIL" --arg password "$ADMIN_PASSWORD" '{query: "mutation ($username: String!, $password: String!) { authentication { login(username: $username, password: $password, strategy: \"local\") { jwt responseResult { succeeded } } } }", variables: {username: $username, password: $password}}')" \
-    http://127.0.0.1:3000/graphql)
+    "$WIKI_ORIGIN/graphql")
   printf '%s' "$response" | jq --exit-status --raw-output \
     '.data.authentication.login | select(.responseResult.succeeded == true) | .jwt | select(type == "string" and length > 0)'
 }
@@ -95,7 +180,7 @@ verify_legacy_login() {
 }
 
 resource_report() {
-  docker exec db psql --username=wiki --dbname=wiki --tuples-only --no-align --command="
+  docker exec "$DB_CONTAINER" psql --username=wiki --dbname=wiki --tuples-only --no-align --command="
     SELECT json_build_object(
       'pages', (SELECT COUNT(*) FROM pages),
       'users', (SELECT COUNT(*) FROM users),
@@ -149,12 +234,12 @@ assert_upgraded_report() {
 
 
 database_size_bytes() {
-  docker exec db psql --username=wiki --dbname=wiki --tuples-only --no-align \
+  docker exec "$DB_CONTAINER" psql --username=wiki --dbname=wiki --tuples-only --no-align \
     --command="SELECT pg_database_size('wiki')"
 }
 
 data_volume_size_bytes() {
-  docker run --rm --user 0 --entrypoint sh -v wiki-data:/data:ro "$WIKI_TEST_IMAGE" \
+  docker run --rm --user 0 --entrypoint sh -v "$DATA_VOLUME":/data:ro "$WIKI_TEST_IMAGE" \
     -c 'set -- $(du -sk /data); echo $(( $1 * 1024 ))'
 }
 monitor_migration_resources() {
@@ -175,15 +260,22 @@ monitor_migration_resources() {
 
 snapshot_data_volume() {
   docker run --rm --user 0 --entrypoint tar \
-    -v wiki-data:/source:ro -v "$RECOVERY_DIR":/backup "$WIKI_TEST_IMAGE" \
+    -v "$DATA_VOLUME":/source:ro -v "$RECOVERY_DIR":/backup "$WIKI_TEST_IMAGE" \
     -C /source -czf /backup/wiki-data.tar.gz .
 }
 
 restore_data_volume() {
-  docker volume rm wiki-data >/dev/null
-  docker volume create wiki-data >/dev/null
+  local volume_owner
+  volume_owner=$(docker volume inspect --format '{{ index .Labels "tsepistle-ci.owner" }}' "$DATA_VOLUME")
+  if [ "$volume_owner" != "$VOLUME_OWNER" ]; then
+    printf 'Refusing to replace Docker volume %s owned by another run\n' "$DATA_VOLUME" >&2
+    return 1
+  fi
+  docker volume rm "$DATA_VOLUME" >/dev/null
+  data_volume_owned=false
+  create_data_volume
   docker run --rm --user 0 --entrypoint tar \
-    -v wiki-data:/target -v "$RECOVERY_DIR":/backup:ro "$WIKI_TEST_IMAGE" \
+    -v "$DATA_VOLUME":/target -v "$RECOVERY_DIR":/backup:ro "$WIKI_TEST_IMAGE" \
     -C /target -xzf /backup/wiki-data.tar.gz
 }
 
@@ -192,34 +284,32 @@ expected_data_sha=$(jq -r '.dataArtifact.sha256' "$FIXTURE_MANIFEST")
 printf '%s  %s\n' "$expected_database_sha" "$DATABASE_FIXTURE" | sha256sum --check --status
 printf '%s  %s\n' "$expected_data_sha" "$DATA_FIXTURE" | sha256sum --check --status
 
-docker rm --force wiki db >/dev/null 2>&1 || true
-docker volume rm wiki-data >/dev/null 2>&1 || true
-docker network rm wiki-e2e >/dev/null 2>&1 || true
-
-docker volume create wiki-data >/dev/null
-docker network create wiki-e2e >/dev/null
-docker run -d --name db --network=wiki-e2e \
+assert_resources_available
+create_data_volume
+test_network_id=$(docker network create --label "tsepistle-ci.owner=$VOLUME_OWNER" "$TEST_NETWORK")
+docker run -d --name "$DB_CONTAINER" --network "$TEST_NETWORK" --network-alias db \
   -e POSTGRES_PASSWORD='Password123!' -e POSTGRES_USER=wiki -e POSTGRES_DB=wiki \
   "$POSTGRES_TEST_IMAGE" >/dev/null
+db_container_owned=true
 wait_for_postgres
-postgres_version=$(docker exec db psql --username=wiki --dbname=wiki --tuples-only --no-align --command='SHOW server_version')
-postgres_version_num=$(docker exec db psql --username=wiki --dbname=wiki --tuples-only --no-align --command='SHOW server_version_num')
+postgres_version=$(docker exec "$DB_CONTAINER" psql --username=wiki --dbname=wiki --tuples-only --no-align --command='SHOW server_version')
+postgres_version_num=$(docker exec "$DB_CONTAINER" psql --username=wiki --dbname=wiki --tuples-only --no-align --command='SHOW server_version_num')
 
-docker cp "$DATABASE_FIXTURE" db:/tmp/source.dump >/dev/null
-docker exec db pg_restore --username=wiki --dbname=wiki /tmp/source.dump
+docker cp "$DATABASE_FIXTURE" "$DB_CONTAINER":/tmp/source.dump >/dev/null
+docker exec "$DB_CONTAINER" pg_restore --username=wiki --dbname=wiki /tmp/source.dump
 docker run --rm --user 0 --entrypoint tar \
-  -v wiki-data:/target -v "$FIXTURE_DIR":/fixtures:ro "$WIKI_TEST_IMAGE" \
+  -v "$DATA_VOLUME":/target -v "$FIXTURE_DIR":/fixtures:ro "$WIKI_TEST_IMAGE" \
   -C /target -xzf "/fixtures/$(basename "$DATA_FIXTURE")"
 
 before_report=$(resource_report)
 assert_fixture_report "$before_report"
 start_wiki "$SOURCE_IMAGE"
-wait_for_url http://127.0.0.1:3000/login
+wait_for_url "$WIKI_ORIGIN/login"
 verify_legacy_login
-docker rm -f wiki >/dev/null
+remove_wiki
 
-docker exec db pg_dump --username=wiki --format=custom --compress=9 --file=/tmp/pre-upgrade.dump wiki
-backup_sha=$(docker exec db sha256sum /tmp/pre-upgrade.dump | cut -d ' ' -f 1)
+docker exec "$DB_CONTAINER" pg_dump --username=wiki --format=custom --compress=9 --file=/tmp/pre-upgrade.dump wiki
+backup_sha=$(docker exec "$DB_CONTAINER" sha256sum /tmp/pre-upgrade.dump | cut -d ' ' -f 1)
 snapshot_data_volume
 database_bytes_before=$(database_size_bytes)
 database_bytes_before=${database_bytes_before//[[:space:]]/}
@@ -232,7 +322,7 @@ monitor_migration_resources &
 migration_monitor_pid=$!
 migration_started_at=$(date +%s)
 start_wiki "$WIKI_TEST_IMAGE"
-wait_for_url http://127.0.0.1:3000/healthz
+wait_for_url "$WIKI_ORIGIN/healthz"
 migration_seconds=$(($(date +%s) - migration_started_at))
 stop_migration_monitor
 database_bytes_after=$(database_size_bytes)
@@ -245,14 +335,14 @@ while read -r sampled_database_bytes sampled_data_bytes; do
   if [ "$sampled_database_bytes" -gt "$database_bytes_peak" ]; then database_bytes_peak=$sampled_database_bytes; fi
   if [ "$sampled_data_bytes" -gt "$data_bytes_peak" ]; then data_bytes_peak=$sampled_data_bytes; fi
 done < "$MIGRATION_SAMPLES_FILE"
-peak_memory_bytes=$(docker exec wiki cat /sys/fs/cgroup/memory.peak)
+peak_memory_bytes=$(docker exec "$WIKI_CONTAINER" cat /sys/fs/cgroup/memory.peak)
 peak_memory_bytes=${peak_memory_bytes//[[:space:]]/}
 [[ "$peak_memory_bytes" =~ ^[0-9]+$ ]]
 after_report=$(resource_report)
 assert_upgraded_report "$after_report"
 
 current_cookie_file=$RECOVERY_DIR/current.cookies
-login_response=$(curl --fail --silent --show-error \
+login_response=$(wiki_curl --fail --silent --show-error \
   --cookie-jar "$current_cookie_file" \
   --header "Origin: $WIKI_ORIGIN" \
   --header 'Content-Type: application/json' \
@@ -262,12 +352,12 @@ if ! printf '%s' "$login_response" | jq --exit-status '.authenticated == true an
   printf 'Candidate cookie authentication failed: %s\n' "$login_response" >&2
   exit 1
 fi
-whoami_response=$(curl --fail --silent --show-error --cookie "$current_cookie_file" \
+whoami_response=$(wiki_curl --fail --silent --show-error --cookie "$current_cookie_file" \
   "$WIKI_ORIGIN/_api/users/whoami")
 printf '%s' "$whoami_response" | jq --exit-status --arg email "$ADMIN_EMAIL" \
   '.authenticated == true and .user.email == $email' >/dev/null
 
-create_response=$(curl --silent --show-error --request POST \
+create_response=$(wiki_curl --silent --show-error --request POST \
   --header 'Content-Type: application/json' --cookie "$current_cookie_file" \
   --header "Origin: $WIKI_ORIGIN" \
   --data '{"content":"# Discard after rollback","description":"release recovery sentinel","editor":"markdown","visibility":"public","isPublished":true,"locale":"en","path":"rollback-discarded","publishEndDate":"","publishStartDate":"","scriptCss":"","scriptJs":"","tags":[],"title":"Rollback discarded"}' \
@@ -292,18 +382,18 @@ database_peak_amplification_percent=$(((database_bytes_peak * 100 + database_byt
 [ "$data_peak_growth" -le "$MIGRATION_MAX_DATA_GROWTH_BYTES" ]
 [ "$peak_memory_bytes" -le "$MIGRATION_MAX_PEAK_MEMORY_BYTES" ]
 
-docker rm -f wiki >/dev/null
-docker exec db dropdb --username=wiki --force wiki
-docker exec db createdb --username=wiki --owner=wiki wiki
-docker exec db pg_restore --username=wiki --dbname=wiki /tmp/pre-upgrade.dump
+remove_wiki
+docker exec "$DB_CONTAINER" dropdb --username=wiki --force wiki
+docker exec "$DB_CONTAINER" createdb --username=wiki --owner=wiki wiki
+docker exec "$DB_CONTAINER" pg_restore --username=wiki --dbname=wiki /tmp/pre-upgrade.dump
 restore_data_volume
 rollback_report=$(resource_report)
 [ "$rollback_report" = "$before_report" ]
-rollback_discarded=$(docker exec db psql --username=wiki --dbname=wiki --tuples-only --no-align \
+rollback_discarded=$(docker exec "$DB_CONTAINER" psql --username=wiki --dbname=wiki --tuples-only --no-align \
   --command="SELECT COUNT(*) FROM pages WHERE path = 'rollback-discarded'")
 [ "${rollback_discarded//[[:space:]]/}" = 0 ]
 start_wiki "$SOURCE_IMAGE"
-wait_for_url http://127.0.0.1:3000/login
+wait_for_url "$WIKI_ORIGIN/login"
 verify_legacy_login
 
 jq --null-input \

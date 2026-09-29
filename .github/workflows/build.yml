@@ -457,6 +457,8 @@ jobs:
     name: Playwright (PostgreSQL 18)
     runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 45
+    env:
+      WIKI_TEST_NAMESPACE: tsepistle-ci-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}-e2e-pg18
     needs: [build]
     permissions:
       contents: read
@@ -492,7 +494,6 @@ jobs:
       env:
         POSTGRES_TEST_IMAGE: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
         WIKI_TEST_IMAGE: tsepistle:test-${{ env.WIKI_BUILD_REVISION }}
-        PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
         POSTGRES_MAJOR: 18
         RUNTIME_PERFORMANCE_FILE: runtime-performance-postgres-18.json
       run: dev/e2e/ci-run.sh
@@ -500,9 +501,13 @@ jobs:
     - name: Clean Playwright Services
       if: always()
       run: |
-        docker rm --force wiki db >/dev/null 2>&1 || true
-        docker volume rm wiki-data >/dev/null 2>&1 || true
-        docker network rm wiki-e2e >/dev/null 2>&1 || true
+        if [[ ! "$WIKI_TEST_NAMESPACE" =~ ^tsepistle-ci-[a-z0-9][a-z0-9-]*$ ]]; then
+          echo 'Invalid Playwright Docker namespace; refusing cleanup.' >&2
+          exit 1
+        fi
+        docker rm --force --volumes "${WIKI_TEST_NAMESPACE}-wiki" "${WIKI_TEST_NAMESPACE}-db" >/dev/null 2>&1 || true
+        docker volume rm "${WIKI_TEST_NAMESPACE}-data" >/dev/null 2>&1 || true
+        docker network rm "${WIKI_TEST_NAMESPACE}-network" >/dev/null 2>&1 || true
 
     - name: Upload Playwright Failure Artifacts
       if: failure()
@@ -526,6 +531,8 @@ jobs:
     name: Upgrade Wiki.js 2 (PostgreSQL ${{ matrix.pgversion }})
     runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 30
+    env:
+      WIKI_TEST_NAMESPACE: tsepistle-ci-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}-upgrade-pg${{ matrix.pgversion }}
     needs: [build]
     permissions:
       contents: read
@@ -570,6 +577,17 @@ jobs:
         WIKI_TEST_IMAGE: tsepistle:test-${{ env.WIKI_BUILD_REVISION }}
         MIGRATION_METRICS_FILE: migration-metrics-postgres-${{ matrix.pgversion }}.json
       run: dev/e2e/upgrade-smoke.sh
+    - name: Clean Upgrade Services
+      if: always()
+      run: |
+        if [[ ! "$WIKI_TEST_NAMESPACE" =~ ^tsepistle-ci-[a-z0-9][a-z0-9-]*$ ]]; then
+          echo 'Invalid upgrade Docker namespace; refusing cleanup.' >&2
+          exit 1
+        fi
+        docker rm --force --volumes "${WIKI_TEST_NAMESPACE}-wiki" "${WIKI_TEST_NAMESPACE}-db" >/dev/null 2>&1 || true
+        docker volume rm "${WIKI_TEST_NAMESPACE}-data" >/dev/null 2>&1 || true
+        docker network rm "${WIKI_TEST_NAMESPACE}-network" >/dev/null 2>&1 || true
+
 
     - name: Upload Migration Metrics
       if: always()
@@ -585,6 +603,8 @@ jobs:
     runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 20
     needs: [build]
+    env:
+      WIKI_TEST_NAMESPACE: tsepistle-ci-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}-multi-pg${{ matrix.pgversion }}
     permissions:
       contents: read
     strategy:
@@ -623,6 +643,16 @@ jobs:
         POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
         WIKI_TEST_IMAGE: tsepistle:test-${{ env.WIKI_BUILD_REVISION }}
       run: dev/e2e/multi-instance-smoke.sh
+    - name: Clean Multi-instance Services
+      if: always()
+      run: |
+        if [[ ! "$WIKI_TEST_NAMESPACE" =~ ^tsepistle-ci-[a-z0-9][a-z0-9-]*$ ]]; then
+          echo 'Invalid multi-instance Docker namespace; refusing cleanup.' >&2
+          exit 1
+        fi
+        docker rm --force --volumes "${WIKI_TEST_NAMESPACE}-wiki-a" "${WIKI_TEST_NAMESPACE}-wiki-b" "${WIKI_TEST_NAMESPACE}-lock-holder" "${WIKI_TEST_NAMESPACE}-db" >/dev/null 2>&1 || true
+        docker network rm "${WIKI_TEST_NAMESPACE}-network" >/dev/null 2>&1 || true
+
 
   helm-lifecycle:
     name: Helm Install Upgrade Rollback
