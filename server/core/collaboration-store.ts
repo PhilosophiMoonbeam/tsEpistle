@@ -41,7 +41,7 @@ export type CollaborationPageSyncResult =
   | { kind: 'missing' }
   | { kind: 'saved', room: CollaborationRoomRecord }
   | { kind: 'reset', room: CollaborationRoomRecord }
-
+  | { kind: 'conflict', room: CollaborationRoomRecord }
 export type CollaborationDiscardResult =
   | { kind: 'reset', room: CollaborationRoomRecord }
   | { kind: 'stale-page' }
@@ -127,12 +127,17 @@ export class CollaborationRoomStore {
   }
 
   async open(page: CollaborationPageRecord): Promise<CollaborationRoomRecord> {
-    if (page.editorKey !== COLLABORATION_FORMAT) throw new TypeError('Only Markdown source pages support collaboration')
-    const baseUpdatedAt = timestamp(page.updatedAt)
-    const baseSourceRevision = sourceRevision(page.sourceRevision)
     for (let attempt = 0; attempt < MAX_CREATE_ATTEMPTS; attempt += 1) {
       try {
         return await this.knex.transaction(async transaction => {
+          const canonicalPage = await transaction<CollaborationPageRecord>(PAGE_TABLE)
+            .where({ id: page.id })
+            .forUpdate()
+            .first('id', 'content', 'editorKey', 'updatedAt', 'sourceRevision')
+          if (!canonicalPage) throw new Error('Page no longer exists')
+          if (canonicalPage.editorKey !== COLLABORATION_FORMAT) throw new TypeError('Only Markdown source pages support collaboration')
+          const baseUpdatedAt = timestamp(canonicalPage.updatedAt)
+          const baseSourceRevision = sourceRevision(String(canonicalPage.sourceRevision))
           const existing = await lockedRoom(transaction, page.id)
           if (!existing) {
             const created: CollaborationRoomRecord = {
@@ -142,7 +147,7 @@ export class CollaborationRoomStore {
               updateVersion: COLLABORATION_UPDATE_VERSION,
               generation: 1,
               revision: 0,
-              state: encodeCollaborationUpdate(documentState(page.content)),
+              state: encodeCollaborationUpdate(documentState(canonicalPage.content)),
               baseUpdatedAt,
               baseSourceRevision,
               updatedAt: new Date(),
@@ -153,10 +158,17 @@ export class CollaborationRoomStore {
           }
           if (timestamp(existing.baseUpdatedAt) === baseUpdatedAt && existing.baseSourceRevision === baseSourceRevision) return existing
 
-          const sameContent = collaborationStateContent(existing.state) === page.content
+          const sameContent = collaborationStateContent(existing.state) === canonicalPage.content
+          if (!sameContent) {
+            const active = await transaction(CONNECTION_TABLE)
+              .where({ pageId: page.id, generation: existing.generation })
+              .where('expiresAt', '>', new Date())
+              .first('id')
+            if (active) return existing
+          }
           const next = {
             ...(sameContent ? {} : {
-              state: encodeCollaborationUpdate(documentState(page.content)),
+              state: encodeCollaborationUpdate(documentState(canonicalPage.content)),
               generation: existing.generation + 1
             }),
             baseUpdatedAt,
@@ -175,8 +187,14 @@ export class CollaborationRoomStore {
         })
       } catch (error) {
         const concurrent = await this.get(page.id)
-        if (concurrent && timestamp(concurrent.baseUpdatedAt) === baseUpdatedAt &&
-          concurrent.baseSourceRevision === baseSourceRevision) return concurrent
+        if (concurrent) {
+          const canonicalPage = await this.knex<CollaborationPageRecord>(PAGE_TABLE)
+            .select('id', 'content', 'editorKey', 'updatedAt', 'sourceRevision')
+            .where({ id: page.id })
+            .first()
+          if (canonicalPage && timestamp(concurrent.baseUpdatedAt) === timestamp(canonicalPage.updatedAt) &&
+            concurrent.baseSourceRevision === String(canonicalPage.sourceRevision)) return concurrent
+        }
         if (attempt + 1 >= MAX_CREATE_ATTEMPTS) throw error
       }
     }
@@ -305,19 +323,102 @@ export class CollaborationRoomStore {
     })
   }
 
+  async inspectSourceRepair(pageId: number, currentSourceRevision: string, currentSource: string): Promise<'ready' | 'active' | 'dirty'> {
+    const existing = await this.get(pageId)
+    if (!existing) return 'ready'
+    if (existing.baseSourceRevision !== currentSourceRevision || collaborationStateContent(existing.state) !== currentSource) return 'dirty'
+    const active = await this.knex(CONNECTION_TABLE)
+      .where({ pageId, generation: existing.generation })
+      .where('expiresAt', '>', new Date())
+      .first('id')
+    return active ? 'active' : 'ready'
+  }
+
+  async resetForSourceRepairInTransaction(input: {
+    transaction: Knex.Transaction
+    pageId: number
+    previousSourceRevision: string
+    previousSource: string
+    nextSource: string
+    userId: number
+  }): Promise<void> {
+    const canonicalPage = await input.transaction<{ sourceRevision: string | number; updatedAt: string | Date; content: string }>(PAGE_TABLE)
+      .where('id', input.pageId)
+      .forUpdate()
+      .first('sourceRevision', 'updatedAt', 'content')
+    if (!canonicalPage || canonicalPage.content !== input.nextSource) {
+      throw Object.assign(new Error('Canonical source changed after link review. Refresh the review.'), {
+        status: 409,
+        code: 'MOVE_REVIEW_STALE'
+      })
+    }
+    const existing = await lockedRoom(input.transaction, input.pageId)
+    if (!existing) return
+    if (
+      existing.baseSourceRevision !== input.previousSourceRevision ||
+      collaborationStateContent(existing.state) !== input.previousSource
+    ) {
+      throw Object.assign(new Error('Collaboration state changed after link review. Refresh the review.'), {
+        status: 409,
+        code: 'MOVE_REVIEW_STALE'
+      })
+    }
+    const now = new Date()
+    await input.transaction(CONNECTION_TABLE).where('expiresAt', '<=', now).delete()
+    const active = await input.transaction(CONNECTION_TABLE)
+      .where({ pageId: input.pageId, generation: existing.generation })
+      .where('expiresAt', '>', now)
+      .first('id')
+    if (active) {
+      throw Object.assign(new Error('Collaboration state changed after link review. Refresh the review.'), {
+        status: 409,
+        code: 'MOVE_REVIEW_STALE'
+      })
+    }
+    const next = {
+      state: encodeCollaborationUpdate(documentState(input.nextSource)),
+      baseUpdatedAt: timestamp(canonicalPage.updatedAt),
+      baseSourceRevision: String(canonicalPage.sourceRevision),
+      generation: existing.generation + 1,
+      revision: existing.revision + 1,
+      updatedAt: now,
+      updatedBy: input.userId
+    }
+    const changed = await input.transaction<CollaborationRoomRecord>(ROOM_TABLE)
+      .where({ pageId: input.pageId, generation: existing.generation, revision: existing.revision })
+      .update(next)
+    if (changed !== 1) throw Object.assign(new Error('Collaboration state changed after link review. Refresh the review.'), {
+      status: 409,
+      code: 'MOVE_REVIEW_STALE'
+    })
+    await clearGenerationState(input.transaction, input.pageId)
+  }
+
   async synchronizePage(page: CollaborationPageRecord, userId: number): Promise<CollaborationPageSyncResult> {
-    const baseUpdatedAt = timestamp(page.updatedAt)
-    const baseSourceRevision = sourceRevision(page.sourceRevision)
     return this.knex.transaction(async transaction => {
+      const canonicalPage = await transaction<CollaborationPageRecord>(PAGE_TABLE)
+        .where({ id: page.id })
+        .forUpdate()
+        .first('id', 'content', 'editorKey', 'updatedAt', 'sourceRevision')
+      if (!canonicalPage) return { kind: 'missing' }
+      const baseUpdatedAt = timestamp(canonicalPage.updatedAt)
+      const baseSourceRevision = sourceRevision(String(canonicalPage.sourceRevision))
       const existing = await lockedRoom(transaction, page.id)
       if (!existing) return { kind: 'missing' }
-      const sameContent = collaborationStateContent(existing.state) === page.content
+      const sameContent = collaborationStateContent(existing.state) === canonicalPage.content
       if (sameContent && timestamp(existing.baseUpdatedAt) === baseUpdatedAt &&
         existing.baseSourceRevision === baseSourceRevision) return { kind: 'saved', room: existing }
+      if (!sameContent) {
+        const active = await transaction(CONNECTION_TABLE)
+          .where({ pageId: page.id, generation: existing.generation })
+          .where('expiresAt', '>', new Date())
+          .first('id')
+        if (active) return { kind: 'conflict', room: existing }
+      }
       const next = sameContent
         ? { baseUpdatedAt, baseSourceRevision, revision: existing.revision + 1, updatedAt: new Date(), updatedBy: userId }
         : {
-            state: encodeCollaborationUpdate(documentState(page.content)),
+            state: encodeCollaborationUpdate(documentState(canonicalPage.content)),
             baseUpdatedAt,
             baseSourceRevision,
             generation: existing.generation + 1,

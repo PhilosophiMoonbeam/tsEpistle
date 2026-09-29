@@ -1,3 +1,13 @@
+import { createHash } from 'node:crypto'
+import { CollaborationRoomStore } from '../core/collaboration-store.ts'
+import {
+  openPageMoveReviewCursor,
+  pageMoveSessionDigest,
+  sealPageMoveReviewCursor,
+  signPageMoveReviewToken,
+  type PageMoveReviewTokenPayload
+} from '../helpers/page-move-review-token.ts'
+import { rewriteMovedPageLinks, type PageMoveLinkRewriteResult } from '../helpers/page-move-link-rewrite.ts'
 import taxonomy from './taxonomy.ts'
 import { resolveTagName } from '../helpers/tag-aliases.ts'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
@@ -9,7 +19,7 @@ import { PageKnowledgeRepository, type KnowledgeDiscoveryFilter } from '../knowl
 import type { KnowledgeProjectionView } from '../knowledge/projection.ts'
 import type { WikiSource } from '../../shared/wiki-source.ts'
 import type { Knex } from 'knex'
-import type { SearchResult as ProviderSearchResult } from '../modules/types.ts'
+import type { SearchOptions, SearchResult as ProviderSearchResult } from '../modules/types.ts'
 import {
   buildOfflinePageSnapshot,
   canonicalOfflineOrigin,
@@ -49,6 +59,436 @@ import {
   DeletedPageRecoverySecurityContextSchema,
   type DeletedPageRecoverySecurityContext
 } from '../models/pages.ts'
+const MOVE_REVIEW_PAGE_SIZE = 20
+const MOVE_REVIEW_CANDIDATE_BATCH = 100
+const MOVE_REVIEW_SCAN_LIMIT = 10_000
+const MOVE_REVIEW_CURSOR_TTL = 15 * 60_000
+const MOVE_LINK_SOURCE_LIMIT = 1024 * 1024
+const MOVE_LINK_TOTAL_LIMIT = 4 * 1024 * 1024
+const MOVE_LINK_REWRITE_VERSION = 1
+
+interface MoveReviewItem {
+  id: number
+  title: string
+  locale: string
+  path: string
+  sourceRevision: string
+  eligible: boolean
+  reason?: string
+  changes: PageMoveLinkRewriteResult['changes']
+}
+
+interface MoveReviewEvaluation {
+  page: PageSourceRecord
+  item: MoveReviewItem
+  outputSource: string
+  beforeDigest: string
+  afterDigest: string
+  sourceReviewComplete: boolean
+  hasSourceLinks: boolean
+}
+
+const moveSourceDigest = (source: string): string => createHash('sha256').update(source, 'utf8').digest('hex')
+
+const normalizedMoveDestination = (pathValue: string): string => {
+  if (pathValue.includes('.') || pathValue.includes(' ') || pathValue.includes('\\') || pathValue.includes('//')) {
+    throw new ApplicationError('The destination path is invalid.', { code: 'INVALID_INPUT', status: 400 })
+  }
+  let value = pathValue.endsWith('/') ? pathValue.slice(0, -1) : pathValue
+  if (value.startsWith('/')) value = value.slice(1)
+  if (value.length === 0) throw new ApplicationError('The destination path is invalid.', { code: 'INVALID_INPUT', status: 400 })
+  return value
+}
+
+const moveRendererConfiguration = async (): Promise<{
+  namespaced: boolean
+  absoluteLinks: boolean
+  wikiLinksEnabled: boolean
+  digest: string
+}> => {
+  const getPipeline = wiki.models.renderers?.getRenderingPipeline
+  let absoluteLinks = false
+  let wikiLinksEnabled = false
+  if (getPipeline) {
+    const [markdown, html] = await Promise.all([getPipeline('markdown'), getPipeline('html')])
+    const markdownConfig = markdown.find(stage => stage.key === 'markdownCore')?.config
+    const htmlConfig = html.find(stage => stage.key === 'htmlCore')?.config
+    wikiLinksEnabled =
+      typeof markdownConfig === 'object' && markdownConfig !== null && Reflect.get(markdownConfig, 'wikilinks') === true
+    absoluteLinks =
+      typeof htmlConfig === 'object' && htmlConfig !== null && Reflect.get(htmlConfig, 'absoluteLinks') === true
+  }
+  const namespaced = wiki.config.lang.namespacing === true
+  const digest = moveSourceDigest(JSON.stringify({ version: MOVE_LINK_REWRITE_VERSION, namespaced, absoluteLinks, wikiLinksEnabled }))
+  return { namespaced, absoluteLinks, wikiLinksEnabled, digest }
+}
+
+const moveRewrite = (
+  page: PageSourceRecord,
+  oldTarget: { locale: string; path: string },
+  newTarget: { locale: string; path: string },
+  config: { namespaced: boolean; absoluteLinks: boolean; wikiLinksEnabled: boolean }
+) => rewriteMovedPageLinks({
+  source: page.content,
+  editor: page.editorKey,
+  oldTarget,
+  newTarget,
+  sourcePage: { locale: page.localeCode, path: page.path },
+  namespaced: config.namespaced,
+  absoluteLinks: config.absoluteLinks,
+  wikiLinksEnabled: config.wikiLinksEnabled
+})
+
+const currentLinkReceipt = async (pageId: number, revision: string): Promise<boolean> => {
+  const receipt = await wiki.models.knex('pageMutationOutbox')
+    .where({ pageId, sourceRevision: revision, effectKind: 'links', desiredState: 'present', status: 'succeeded' })
+    .first('id')
+  return receipt !== undefined
+}
+
+const hasActiveApproval = async (pageId: number, transaction?: Knex.Transaction): Promise<boolean> =>
+  (await (transaction ?? wiki.models.knex)('pageApprovalRequests')
+    .where({ pageId })
+    .whereIn('status', ['submitted', 'approved', 'changes-requested'])
+    .first('id')) !== undefined
+
+const evaluateMoveCandidate = async (input: {
+  page: PageSourceRecord
+  requester: Express.User | undefined
+  authority: PageRuleAuthority
+  sessionId: string
+  oldTarget: { locale: string; path: string }
+  newTarget: { locale: string; path: string }
+  config: { namespaced: boolean; absoluteLinks: boolean; wikiLinksEnabled: boolean }
+  candidateConfirmedByIndex: boolean
+  allowUnindexedSource?: boolean
+}): Promise<MoveReviewEvaluation | null> => {
+  const { page } = input
+  if (
+    page.visibility !== 'public' ||
+    page.ownerId !== null ||
+    !canAccessCurrentPageSource(input.requester, page, input.authority) ||
+    await pageRequiresUnlock({ requester: input.requester as Express.User, pageId: page.id, sessionId: input.sessionId })
+  ) return null
+
+  const revision = currentSourceRevision(page.sourceRevision)
+  if (revision === undefined) return null
+  const item: MoveReviewItem = {
+    id: page.id,
+    title: page.title,
+    locale: page.localeCode,
+    path: page.path,
+    sourceRevision: revision,
+    eligible: false,
+    changes: []
+  }
+  const beforeDigest = moveSourceDigest(page.content)
+  const indexIsCurrent = input.candidateConfirmedByIndex && await currentLinkReceipt(page.id, revision)
+  if (!indexIsCurrent && !input.allowUnindexedSource) {
+    item.reason = 'The current link index is pending; refresh after indexing completes.'
+    return { page, item, outputSource: page.content, beforeDigest, afterDigest: beforeDigest, sourceReviewComplete: false, hasSourceLinks: false }
+  }
+
+  let rewritten: PageMoveLinkRewriteResult
+  try {
+    rewritten = moveRewrite(page, input.oldTarget, input.newTarget, input.config)
+  } catch {
+    item.reason = 'Source links could not be reviewed; manual repair may be required.'
+    return { page, item, outputSource: page.content, beforeDigest, afterDigest: beforeDigest, sourceReviewComplete: false, hasSourceLinks: false }
+  }
+  item.changes = rewritten.changes
+  const afterDigest = moveSourceDigest(rewritten.source)
+  const byteLength = Buffer.byteLength(page.content, 'utf8')
+  const outputByteLength = Buffer.byteLength(rewritten.source, 'utf8')
+  if (rewritten.changes.length === 0) {
+    item.reason = rewritten.unsupported > 0
+      ? 'This source has links that require manual repair.'
+      : 'No supported incoming links were found in this source.'
+  } else if (!canWritePage(input.requester, page, input.authority)) {
+    item.reason = 'You do not have permission to repair links in this source.'
+  } else if (!indexIsCurrent) {
+    item.reason = 'The current link index is pending; refresh after indexing completes.'
+  } else if (byteLength > MOVE_LINK_SOURCE_LIMIT || outputByteLength > MOVE_LINK_SOURCE_LIMIT) {
+    item.reason = 'This source exceeds the automatic repair size limit.'
+  } else if (await hasActiveApproval(page.id)) {
+    item.reason = 'This source has an active approval request.'
+  } else {
+    const collaboration = await new CollaborationRoomStore(wiki.models.knex).inspectSourceRepair(page.id, revision, page.content)
+    if (collaboration === 'active') item.reason = 'This source has an active collaboration session.'
+    else if (collaboration === 'dirty') item.reason = 'This source has an unsaved or stale collaboration draft.'
+    else {
+      item.eligible = true
+      if (rewritten.unsupported > 0) item.reason = 'Only supported occurrences will change; manual repair may still be required.'
+    }
+  }
+  return {
+    page,
+    item,
+    outputSource: rewritten.source,
+    beforeDigest,
+    afterDigest,
+    sourceReviewComplete: true,
+    hasSourceLinks: rewritten.changes.length > 0 || rewritten.unsupported > 0
+  }
+}
+
+const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
+  const raw = recordValue(input.input, 'input')
+  const id = positiveInteger(raw.id, 'id')
+  const revision = expectedSourceRevision(raw.expectedSourceRevision)
+  const destinationLocale = stringValue(raw.destinationLocale, 'destinationLocale')
+  const destinationPath = normalizedMoveDestination(stringValue(raw.destinationPath, 'destinationPath'))
+  const cursorValue = raw.cursor
+  const hasSelection = Object.hasOwn(raw, 'selectedPageIds')
+  let selectedPageIds: number[] | undefined
+  if (hasSelection) {
+    if (!Array.isArray(raw.selectedPageIds) || raw.selectedPageIds.length > 20 ||
+      raw.selectedPageIds.some(value => typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) ||
+      new Set(raw.selectedPageIds).size !== raw.selectedPageIds.length) {
+      throw new ApplicationError('selectedPageIds must contain at most 20 distinct positive page IDs.', { code: 'INVALID_INPUT', status: 400 })
+    }
+    selectedPageIds = raw.selectedPageIds as number[]
+  }
+  const requester = input.requester
+  const requesterId = principalId(requester)
+  const sessionId = typeof input.sessionId === 'string' ? input.sessionId : ''
+  if (requesterId === null || isApiPrincipal(requester) || sessionId.length === 0) {
+    throw new ApplicationError('A current interactive session is required for link review.', { code: 'MOVE_REVIEW_UNAVAILABLE', status: 403 })
+  }
+  const page = await loadPageFromDb(id)
+  const authority = await authorityFor(input)
+  if (!page || page.visibility !== 'public' || page.ownerId !== null || !canWritePage(requester, page, authority)) {
+    throw new ApplicationError('This page cannot be reviewed for incoming-link repair.', { code: 'MOVE_REVIEW_UNAVAILABLE', status: 404 })
+  }
+  if (revision === undefined || currentSourceRevision(page.sourceRevision) !== revision) {
+    throw new ApplicationError('The reviewed pages changed or are no longer eligible. Refresh the link review.', {
+      code: 'MOVE_REVIEW_STALE',
+      status: 409
+    })
+  }
+  await assertUnlocked(input, id)
+  const destinationContext = pageAuthorizationContext({
+    ...page,
+    path: destinationPath,
+    localeCode: destinationLocale
+  })
+  if (
+    destinationContext === null ||
+    !canWritePage(requester, destinationContext, authority) ||
+    !wiki.auth.checkPageAccess(requester, ['write:pages'], destinationContext, authority)
+  ) throw new wiki.Error.PageMoveForbidden()
+
+  const oldTarget = { locale: page.localeCode, path: page.path }
+  const newTarget = { locale: destinationLocale, path: destinationPath }
+  const config = await moveRendererConfiguration()
+  const moveConfig = { namespaced: config.namespaced, absoluteLinks: config.absoluteLinks, wikiLinksEnabled: config.wikiLinksEnabled }
+  const sessionDigest = pageMoveSessionDigest(wiki.config.sessionSecret, sessionId)
+  const now = Date.now()
+  let afterId = 0
+  if (cursorValue !== undefined) {
+    const cursor = openPageMoveReviewCursor(cursorValue, wiki.config.sessionSecret)
+    if (
+      !cursor ||
+      cursor.targetId !== id ||
+      cursor.expectedSourceRevision !== revision ||
+      cursor.destinationLocale !== destinationLocale ||
+      cursor.destinationPath !== destinationPath ||
+      cursor.requesterId !== requesterId ||
+      cursor.sessionDigest !== sessionDigest ||
+      cursor.issuedAt > now + 60_000 ||
+      now - cursor.issuedAt > MOVE_REVIEW_CURSOR_TTL
+    ) throw new ApplicationError('The link-review page cursor is invalid or expired.', { code: 'MOVE_REVIEW_CURSOR_INVALID', status: 400 })
+    afterId = cursor.afterId
+  }
+
+  const linkedTarget = await wiki.models.knex('pageLinks')
+    .where({ pageId: id, localeCode: page.localeCode, path: page.path })
+    .first('pageId')
+  const targetRevision = currentSourceRevision(page.sourceRevision) ?? revision
+  const targetEvaluation = await evaluateMoveCandidate({
+    page,
+    requester,
+    authority,
+    sessionId,
+    oldTarget,
+    newTarget,
+    config: moveConfig,
+    candidateConfirmedByIndex: linkedTarget !== undefined,
+    allowUnindexedSource: true
+  })
+  if (!targetEvaluation) throw new ApplicationError('This page cannot be reviewed for incoming-link repair.', { code: 'MOVE_REVIEW_UNAVAILABLE', status: 404 })
+  const automaticItem: MoveReviewItem = {
+    ...targetEvaluation.item,
+    reason: targetEvaluation.item.reason
+      ? `Automatically included with the moved page; ${targetEvaluation.item.reason.charAt(0).toLowerCase()}${targetEvaluation.item.reason.slice(1)}`
+      : 'Automatically included with the moved page.'
+  }
+  let targetOutput = page.content
+  if (automaticItem.changes.length > 0 && automaticItem.eligible) {
+    const targetCollaboration = await new CollaborationRoomStore(wiki.models.knex).inspectSourceRepair(id, targetRevision, page.content)
+    if (targetCollaboration !== 'ready') {
+      automaticItem.eligible = false
+      automaticItem.reason = targetCollaboration === 'active'
+        ? 'Automatically included with the moved page; its collaboration session must be inactive.'
+        : 'Automatically included with the moved page; its collaboration draft must match the current source.'
+    } else {
+      targetOutput = targetEvaluation.outputSource
+    }
+  }
+
+  const getCandidateIds = async (fromId: number, limit: number): Promise<number[]> => {
+    const rows = await wiki.models.knex('pageLinks as link')
+      .join('pages as source', 'source.id', 'link.pageId')
+      .where({ 'link.localeCode': page.localeCode, 'link.path': page.path, 'source.visibility': 'public' })
+      .whereNull('source.ownerId')
+      .where('source.id', '>', fromId)
+      .distinct({ id: 'source.id' })
+      .orderBy('source.id', 'asc')
+      .limit(limit) as Array<{ id: number | string }>
+    return rows.flatMap(row => {
+      const candidateId = Number(row.id)
+      return Number.isSafeInteger(candidateId) && candidateId > 0 ? [candidateId] : []
+    })
+  }
+
+  const evaluateId = async (candidateId: number): Promise<MoveReviewEvaluation | null> => {
+    const candidate = await loadPageFromDb(candidateId)
+    if (!candidate || candidate.visibility !== 'public' || candidate.ownerId !== null) return null
+    return evaluateMoveCandidate({
+      page: candidate,
+      requester,
+      authority,
+      sessionId,
+      oldTarget,
+      newTarget,
+      config: moveConfig,
+      candidateConfirmedByIndex: true
+    })
+  }
+
+  const coverageNotice = 'The incoming-link index is not exhaustive. Only reviewed supported source occurrences on selected public pages are repaired; other links may require manual repair.'
+  if (selectedPageIds !== undefined) {
+    if (!targetEvaluation.sourceReviewComplete) {
+      throw new ApplicationError('The moved page source could not be trusted for link review. Refresh after indexing completes.', {
+        code: 'MOVE_REVIEW_INELIGIBLE',
+        status: 409
+      })
+    }
+    if (automaticItem.changes.length > 0 && !automaticItem.eligible) {
+      throw new ApplicationError('The moved page has supported links that cannot be repaired in this review. Refresh the review or move without repair.', {
+        code: 'MOVE_REVIEW_INELIGIBLE',
+        status: 409
+      })
+    }
+    if (targetOutput !== page.content) {
+      const targetCollaboration = await new CollaborationRoomStore(wiki.models.knex).inspectSourceRepair(id, targetRevision, page.content)
+      if (targetCollaboration !== 'ready') {
+        throw new ApplicationError('The moved page collaboration state is not clean and inactive. Refresh the review or move without repair.', {
+          code: 'MOVE_REVIEW_INELIGIBLE',
+          status: 409
+        })
+      }
+    }
+    const selectedEvaluations: MoveReviewEvaluation[] = []
+    let aggregateBytes = targetOutput === page.content ? 0 : Buffer.byteLength(targetOutput, 'utf8')
+    for (const selectedId of selectedPageIds) {
+      if (selectedId === id) throw new ApplicationError('The moved page is included automatically and cannot be selected as a referrer.', { code: 'INVALID_INPUT', status: 400 })
+      const indexed = await wiki.models.knex('pageLinks').where({
+        pageId: selectedId,
+        localeCode: page.localeCode,
+        path: page.path
+      }).first('pageId')
+      const evaluation = indexed ? await evaluateId(selectedId) : null
+      if (!evaluation) throw new ApplicationError('The selection is no longer available for review. Refresh the review.', { code: 'MOVE_REVIEW_STALE', status: 409 })
+      if (!evaluation.item.eligible) {
+        throw new ApplicationError('One or more selected pages are no longer eligible. Refresh the review.', {
+          code: 'MOVE_REVIEW_INELIGIBLE',
+          status: 409
+        })
+      }
+      aggregateBytes += Buffer.byteLength(evaluation.outputSource, 'utf8')
+      if (aggregateBytes > MOVE_LINK_TOTAL_LIMIT) {
+        throw new ApplicationError('The selected sources exceed the automatic repair size limit.', { code: 'MOVE_REVIEW_SIZE_LIMIT', status: 413 })
+      }
+      selectedEvaluations.push(evaluation)
+    }
+    const selected = selectedEvaluations.map(evaluation => ({
+      id: evaluation.page.id,
+      sourceRevision: evaluation.item.sourceRevision,
+      beforeDigest: evaluation.beforeDigest,
+      afterDigest: evaluation.afterDigest
+    }))
+    const issuedAt = Date.now()
+    const reviewTokenPayload: PageMoveReviewTokenPayload = {
+      version: 1,
+      issuedAt,
+      expiresAt: issuedAt + 5 * 60_000,
+      requesterId,
+      sessionDigest,
+      targetId: id,
+      expectedSourceRevision: revision,
+      oldTarget,
+      newTarget,
+      targetBeforeDigest: moveSourceDigest(page.content),
+      targetAfterDigest: moveSourceDigest(targetOutput),
+      selected,
+      configDigest: config.digest
+    }
+    return {
+      schemaVersion: 1,
+      items: [
+        ...(!targetEvaluation.sourceReviewComplete || targetEvaluation.hasSourceLinks ? [automaticItem] : []),
+        ...selectedEvaluations.map(evaluation => evaluation.item)
+      ],
+      nextCursor: null,
+      coverageNotice,
+      reviewToken: signPageMoveReviewToken(reviewTokenPayload, wiki.config.sessionSecret)
+    }
+  }
+
+  const items: MoveReviewItem[] =
+    !targetEvaluation.sourceReviewComplete || targetEvaluation.hasSourceLinks ? [automaticItem] : []
+  let scanId = afterId
+  let lastVisibleId = afterId
+  let scanned = 0
+  let hasAuthorizedLookahead = false
+  let visibleReferrers = 0
+  while (scanned < MOVE_REVIEW_SCAN_LIMIT && visibleReferrers <= MOVE_REVIEW_PAGE_SIZE) {
+    const batchLimit = Math.min(MOVE_REVIEW_CANDIDATE_BATCH, MOVE_REVIEW_SCAN_LIMIT - scanned)
+    const ids = await getCandidateIds(scanId, batchLimit)
+    if (ids.length === 0) break
+    for (const candidateId of ids) {
+      scanId = candidateId
+      scanned += 1
+      if (candidateId === id) continue
+      const evaluation = await evaluateId(candidateId)
+      if (!evaluation) continue
+      if (visibleReferrers === MOVE_REVIEW_PAGE_SIZE) {
+        hasAuthorizedLookahead = true
+        break
+      }
+      items.push(evaluation.item)
+      visibleReferrers += 1
+      lastVisibleId = candidateId
+    }
+    if (hasAuthorizedLookahead || ids.length < batchLimit) break
+  }
+  const nextCursor = hasAuthorizedLookahead
+    ? sealPageMoveReviewCursor({
+        version: 1,
+        targetId: id,
+        expectedSourceRevision: revision,
+        destinationLocale,
+        destinationPath,
+        requesterId,
+        sessionDigest,
+        issuedAt: now,
+        afterId: lastVisibleId
+      }, wiki.config.sessionSecret)
+    : null
+  return { schemaVersion: 1, items, nextCursor, coverageNotice }
+}
+
 
 const { ApplicationError } = errors
 const propertyValue = (value: unknown, key: string): unknown => (typeof value === 'object' && value !== null ? Reflect.get(value, key) : undefined)
@@ -253,6 +693,11 @@ interface PrivateSearchRankRow {
   metadataOnly?: boolean
 }
 interface WikiPageOperations {
+  data: {
+    searchEngine?: {
+      query(query: string, options: SearchOptions): Promise<SearchResponse>
+    } | null
+  }
   Error: {
     PageNotFound: new () => Error
     PageHistoryForbidden: new () => Error
@@ -267,9 +712,16 @@ interface WikiPageOperations {
     checkPageAccess(user: Express.User | undefined, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority): boolean
     loadPageRuleAuthority(requester: Express.User | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
   }
-  config: { db: { type: string }; editors?: { available?: unknown }; host: string; lang: { code: string }; search?: { maxHits?: number } }
-  data: { searchEngine?: { supportsPageFilters?: boolean; query(query: string, options: Record<string, unknown>): Promise<SearchResponse> } }
+  config: {
+    db: { type: string }
+    editors?: { available?: unknown }
+    host: string
+    lang: { code: string; namespacing?: boolean }
+    search?: { maxHits?: number }
+    sessionSecret: string
+  }
   models: {
+    renderers?: { getRenderingPipeline(contentType: string): Promise<Array<{ key: string; config: unknown }>> }
     knex: Knex
     users: { query(transaction?: Knex.Transaction): unknown }
     pages: {
@@ -2598,9 +3050,24 @@ const convert = async (input: OperationInput): Promise<unknown> => {
   return wiki.models.pages.convertPage(withRequester(payload, input.requester))
 }
 const move = async (input: OperationInput): Promise<unknown> => {
-  const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS'])
-  await assertUnlocked(input, positiveInteger(payload.id, 'id'))
-  return wiki.models.pages.movePage(withRequester(payload, input.requester))
+  const raw = recordValue(input.input, 'input')
+  if (raw.updateLinks !== undefined && typeof raw.updateLinks !== 'boolean') {
+    throw new ApplicationError('updateLinks must be a boolean.', { code: 'INVALID_INPUT', status: 400 })
+  }
+  if (raw.updateLinks === true && typeof raw.reviewToken !== 'string') {
+    throw new ApplicationError('A valid reviewed link-repair token is required.', { code: 'MOVE_REVIEW_REQUIRED', status: 400 })
+  }
+  if (raw.reviewToken !== undefined && raw.updateLinks !== true) {
+    throw new ApplicationError('A reviewed link-repair token requires explicit link-repair opt-in.', { code: 'INVALID_INPUT', status: 400 })
+  }
+  const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS', 'updateLinks', 'selectedPageIds', 'cursor'])
+  const id = positiveInteger(payload.id, 'id')
+  await assertUnlocked(input, id)
+  return wiki.models.pages.movePage(withRequester({
+    ...payload,
+    ...(raw.updateLinks === true ? { updateLinks: true } : {}),
+    sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
+  }, input.requester))
 }
 const authorizeMutation = async (input: OperationInput): Promise<void> => {
   const requester = input.requester
@@ -2843,6 +3310,7 @@ const restore = async (input: OperationInput): Promise<void> => {
 
 const getPageTags = (value: unknown): RelatedTagQuery => wiki.models.pages.relatedQuery('tags').for(positiveInteger(value, 'pageId'))
 export default {
+  reviewMoveLinks,
   setPublication,
   preview,
   authorizeMutation,

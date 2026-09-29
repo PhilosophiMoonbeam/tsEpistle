@@ -75,6 +75,8 @@ interface CollaborationSocket {
   pageId: number
   userId: number
   generation: number
+  baseSourceRevision: string
+  baseUpdatedAt: string
   connectionId: string
   queue: Promise<void>
   pendingMessages: number
@@ -254,6 +256,10 @@ class CollaborationServiceImpl implements CollaborationService {
       throw new ApplicationError('The page changed before collaboration started.', { code: 'COLLABORATION_CONFLICT', status: 409 })
     }
     const room = await this.roomStore().open(authorization.page)
+    if (room.baseUpdatedAt !== timestamp(expectedUpdatedAt) ||
+      room.baseSourceRevision !== String(authorization.page.sourceRevision)) {
+      throw new ApplicationError('The page changed before collaboration started.', { code: 'COLLABORATION_CONFLICT', status: 409 })
+    }
     const wiki = getWiki()
     const token = jwt.sign({
       kind: 'collaboration',
@@ -362,6 +368,8 @@ class CollaborationServiceImpl implements CollaborationService {
       pageId: claims.pageId,
       userId: claims.userId,
       generation: claims.generation,
+      baseSourceRevision: claims.baseSourceRevision,
+      baseUpdatedAt: claims.baseUpdatedAt,
       connectionId: randomUUID(),
       queue: Promise.resolve(),
       pendingMessages: 0,
@@ -458,7 +466,7 @@ class CollaborationServiceImpl implements CollaborationService {
       if (!room || timestamp(room.baseUpdatedAt) !== timestamp(authorization.page.updatedAt) ||
         room.baseSourceRevision !== String(authorization.page.sourceRevision)) {
         await this.pageChanged(client.pageId)
-        this.conflict(client, 'page-changed')
+        if (client.acceptingUpdates) this.conflict(client, 'page-changed')
         return
       }
       const result = await this.roomStore().apply(
@@ -539,7 +547,17 @@ class CollaborationServiceImpl implements CollaborationService {
       for (const client of [...roomClients]) this.conflict(client, 'page-changed')
       return
     }
+    if (timestamp(room.baseUpdatedAt) !== timestamp(page.updatedAt) ||
+      room.baseSourceRevision !== String(page.sourceRevision)) {
+      for (const client of [...roomClients]) this.conflict(client, 'page-changed')
+      return
+    }
     for (const client of [...roomClients]) {
+      if (timestamp(client.baseUpdatedAt) !== timestamp(page.updatedAt) ||
+        client.baseSourceRevision !== String(page.sourceRevision)) {
+        this.conflict(client, 'page-changed')
+        continue
+      }
       if (client.generation !== room.generation) {
         this.conflict(client, 'draft-discarded')
         continue
@@ -551,6 +569,8 @@ class CollaborationServiceImpl implements CollaborationService {
         this.conflict(client, 'permission-revoked')
         continue
       }
+      client.baseUpdatedAt = room.baseUpdatedAt
+      client.baseSourceRevision = room.baseSourceRevision
       send(client.socket, {
         type: 'sync',
         protocolVersion: COLLABORATION_PROTOCOL_VERSION,
@@ -690,15 +710,28 @@ class CollaborationServiceImpl implements CollaborationService {
     }
     const result = await this.roomStore().synchronizePage(page, isPositiveInteger(page.authorId) ? page.authorId : 1)
     const roomClients = this.clients.get(pageId)
-    if (forceConflict || result.kind === 'reset') {
-      if (roomClients) for (const client of [...roomClients]) this.conflict(client, 'page-changed')
+    if (result.kind !== 'missing' && (result.kind === 'conflict' || result.kind === 'reset' || forceConflict)) {
+      if (roomClients) {
+        for (const client of [...roomClients]) {
+          const baseChanged = timestamp(client.baseUpdatedAt) !== timestamp(result.room.baseUpdatedAt) ||
+            client.baseSourceRevision !== result.room.baseSourceRevision
+          const generationChanged = client.generation !== result.room.generation
+          if (result.kind === 'conflict' || baseChanged || generationChanged) {
+            this.conflict(client, 'page-changed')
+          }
+        }
+      }
     } else if (result.kind === 'saved') {
       if (roomClients) {
-        for (const client of roomClients) send(client.socket, {
-          type: 'saved',
-          baseUpdatedAt: result.room.baseUpdatedAt,
-          baseSourceRevision: result.room.baseSourceRevision
-        })
+        for (const client of roomClients) {
+          client.baseUpdatedAt = result.room.baseUpdatedAt
+          client.baseSourceRevision = result.room.baseSourceRevision
+          send(client.socket, {
+            type: 'saved',
+            baseUpdatedAt: result.room.baseUpdatedAt,
+            baseSourceRevision: result.room.baseSourceRevision
+          })
+        }
       }
     }
     if (result.kind !== 'missing') {

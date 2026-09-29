@@ -60,10 +60,13 @@ beforeEach(async () => {
   await knex.schema.createTable('users', table => table.integer('id').primary())
   await knex.schema.createTable('pages', table => {
     table.integer('id').primary()
+    table.text('content').notNullable()
+    table.string('editorKey').notNullable()
+    table.string('updatedAt').notNullable()
     table.string('sourceRevision').notNullable()
   })
   await knex('users').insert([{ id: 7 }, { id: 8 }])
-  await knex('pages').insert({ id: basePage.id, sourceRevision: basePage.sourceRevision })
+  await knex('pages').insert(basePage)
   await upCollaboration(knex)
   await upDiscardFencing(knex)
   store = new CollaborationRoomStore(knex)
@@ -188,6 +191,11 @@ describe('collaboration room store', () => {
       7
     )
     if (!changed) throw new Error('Expected collaboration update')
+    await knex('pages').where({ id: basePage.id }).update({
+      content: '# Shared\nsaved',
+      updatedAt: '2026-08-15T12:01:00.000Z',
+      sourceRevision: '2'
+    })
     const saved = await store.synchronizePage({
       ...basePage,
       content: '# Shared\nsaved',
@@ -195,6 +203,12 @@ describe('collaboration room store', () => {
       sourceRevision: '2'
     }, 7)
     expect(saved.kind).toBe('saved')
+    await store.leave('author')
+    await knex('pages').where({ id: basePage.id }).update({
+      content: '# External\n',
+      updatedAt: '2026-08-15T12:02:00.000Z',
+      sourceRevision: '3'
+    })
 
     const reset = await store.synchronizePage({
       ...basePage,

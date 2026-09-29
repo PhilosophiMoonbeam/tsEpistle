@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
 import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
-import type { ComponentOptions, PropType, RenderFunction } from 'vue'
-import type { PageTreeRow } from '../../helpers/pages-api.ts'
+import type { App, ComponentOptions, PropType, RenderFunction } from 'vue'
+import type { MoveLinkReviewInput, MoveLinkReviewResponse, PageTreeRow } from '../../helpers/pages-api.ts'
 
 const filename = join(process.cwd(), 'client/components/common/page-selector.vue')
 const parsed = parse(readFileSync(filename, 'utf8'), { filename })
@@ -34,7 +34,7 @@ const compiled = compileTemplate({
 if (compiled.errors.length > 0) throw new Error(`Cannot compile page-selector.vue: ${compiled.errors.join(', ')}`)
 const render = new Function('Vue', compiled.code)(Vue) as RenderFunction
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(
-  parsed.descriptor.script.content.replace(/^import .*$/gm, '').replace('export default', 'return')
+  parsed.descriptor.script.content.replace(/^import[\s\S]*?from ['"][^'"]+[''];?\s*$/gm, '').replace('export default', 'return')
 )
 
 const passthrough = (tag = 'div') =>
@@ -96,11 +96,24 @@ const VListItem = Vue.defineComponent({
   }
 })
 
-let app: ReturnType<typeof Vue.createApp> | undefined
+
+let app: App | undefined
 let rows: PageTreeRow[] = []
+let moveReviewHandler: (pageId: number, input: MoveLinkReviewInput) => Promise<MoveLinkReviewResponse> = async () => ({
+  schemaVersion: 1,
+  items: [],
+  nextCursor: null,
+  coverageNotice: 'Only currently source-readable candidates are listed.'
+})
 afterEach(() => {
   app?.unmount()
   app = undefined
+  moveReviewHandler = async () => ({
+    schemaVersion: 1,
+    items: [],
+    nextCursor: null,
+    coverageNotice: 'Only currently source-readable candidates are listed.'
+  })
   document.body.replaceChildren()
 })
 
@@ -111,15 +124,27 @@ const settle = async (): Promise<void> => {
   await Vue.nextTick()
 }
 
-const mountSelector = async (initialRows: PageTreeRow[]) => {
+const mountSelector = async (initialRows: PageTreeRow[], selectorProps: Record<string, unknown> = {}) => {
   rows = initialRows
   const fetchPageTree = async (): Promise<PageTreeRow[]> => rows
+  const fetchMoveLinkReview = (_fetchImpl: unknown, pageId: number, input: MoveLinkReviewInput): Promise<MoveLinkReviewResponse> =>
+    moveReviewHandler(pageId, input)
   const getErrorMessage = (error: unknown): string => String(error)
-  const mountedSelector = new Function('defineComponent', 'markRaw', 'useId', 'fetchPageTree', 'getErrorMessage', 'AsyncState', executableScript)(
+  const mountedSelector = new Function(
+    'defineComponent',
+    'markRaw',
+    'useId',
+    'fetchPageTree',
+    'fetchMoveLinkReview',
+    'getErrorMessage',
+    'AsyncState',
+    executableScript
+  )(
     Vue.defineComponent,
     Vue.markRaw,
     Vue.useId,
     fetchPageTree,
+    fetchMoveLinkReview,
     getErrorMessage,
     AsyncState
   ) as ComponentOptions
@@ -131,7 +156,8 @@ const mountSelector = async (initialRows: PageTreeRow[]) => {
     mode: 'select',
     mustExist: true,
     path: 'docs/current',
-    locale: 'en'
+    locale: 'en',
+    ...selectorProps
   })
   for (const name of ['v-card', 'v-col', 'v-icon', 'v-progress-circular', 'v-row', 'v-select', 'v-spacer', 'v-text-field', 'v-toolbar', 'vue-scroll'])
     app.component(name, passthrough())
@@ -147,6 +173,8 @@ const mountSelector = async (initialRows: PageTreeRow[]) => {
   app.component('v-treeview', passthrough())
   app.config.globalProperties.$t = (key: string): string =>
     ({
+      'common:actions.cancel': 'Cancel',
+      'common:actions.select': 'Select',
       'common:pageSelector.createTitle': 'Select New Page Location',
       'common:pageSelector.moveTitle': 'Move / Rename Page Location',
       'common:pageSelector.pages': 'Pages',
@@ -155,7 +183,10 @@ const mountSelector = async (initialRows: PageTreeRow[]) => {
       'common:pageSelector.folderEmptyWarning': 'This folder is empty.'
     })[key] ?? key
   app.config.globalProperties.$vuetify = { display: { smAndDown: false } }
-  const instance = app.mount(host) as unknown as { currentLocale: string }
+  const instance = app.mount(host) as unknown as {
+    currentLocale: string
+    currentPath: string | null
+  }
   await settle()
   return { host, instance }
 }
@@ -175,6 +206,16 @@ const page = (id: number, path: string, title: string): PageTreeRow => ({
 describe('Browse page selector presentation', () => {
   test('keeps current and selected pages distinct and gives an empty folder a visible state', async () => {
     const { host, instance } = await mountSelector([page(11, 'docs/current', 'Current page'), page(12, 'docs/other', 'Another page')])
+    const foldersHeading = host.querySelector<HTMLElement>('.page-selector__folders-label')
+    const foldersRegion = host.querySelector<HTMLElement>('.page-selector__tree-pane [role="region"]')
+    const pagesHeading = host.querySelector<HTMLElement>('.page-selector__pages-pane h3')
+    const pagesRegion = host.querySelector<HTMLElement>('.page-selector__pages-pane [role="region"]')
+    expect(foldersHeading?.id).toBeTruthy()
+    expect(foldersRegion?.getAttribute('aria-labelledby')).toBe(foldersHeading?.id)
+    expect(host.querySelector('.page-selector__tree')?.getAttribute('aria-labelledby')).toBe(foldersHeading?.id)
+    expect(pagesHeading?.id).toBeTruthy()
+    expect(pagesRegion?.getAttribute('aria-labelledby')).toBe(pagesHeading?.id)
+    expect(host.querySelector('.page-selector__pages-list')?.getAttribute('aria-labelledby')).toBe(pagesHeading?.id)
 
     const current = host.querySelector<HTMLElement>('.page-selector__page--current')
     expect(current?.textContent).toContain('Current page')
@@ -198,5 +239,198 @@ describe('Browse page selector presentation', () => {
     await settle()
     expect(host.querySelector('.async-state--empty')?.getAttribute('data-state')).toBe('empty')
     expect(host.querySelector('[data-selection-state]')).toBeNull()
+  })
+  test('reviews selected source diffs before moving and keeps the committed receipt until acknowledged', async () => {
+    const item = {
+      id: 21,
+      title: 'Referrer page',
+      locale: 'en',
+      path: 'docs/referrer',
+      sourceRevision: '7',
+      eligible: true,
+      changes: [{ before: '[Release notes](/en/docs/current)', after: '[Release notes](/en/docs/archive)' }]
+    }
+    const selfLink = {
+      id: 10,
+      title: 'Moved page',
+      locale: 'en',
+      path: 'docs/current',
+      sourceRevision: '5',
+      eligible: true,
+      reason: 'Automatically included with the moved page.',
+      changes: [{ before: '[Current](/en/docs/current)', after: '[Current](/en/docs/archive)' }]
+    }
+    const requests: Array<{ pageId: number, input: MoveLinkReviewInput }> = []
+    moveReviewHandler = async (pageId, input) => {
+      requests.push({ pageId, input })
+      return {
+        schemaVersion: 1,
+        items: input.selectedPageIds === undefined ? [selfLink, item] : [item, selfLink],
+        nextCursor: null,
+        coverageNotice: 'Only currently source-readable candidates are listed.',
+        ...(input.selectedPageIds === undefined ? {} : { reviewToken: 'signed-review-token' })
+      }
+    }
+    const receipt = {
+      message: 'Page has been moved.' as const,
+      pageId: 10,
+      sourceRevision: '6',
+      updated: [{ id: 21, sourceRevision: '8' }],
+      projections: 'pending' as const
+    }
+    let submittedMove: {
+      locale: string
+      path: string
+      sourcePageId?: number
+      expectedSourceRevision?: string
+      reviewToken?: string
+    } | null = null
+    let acknowledgement: unknown
+    const { host, instance } = await mountSelector([page(22, 'docs/other', 'Another page')], {
+      mode: 'move',
+      mustExist: false,
+      path: 'docs/archive',
+      locale: 'en',
+      sourcePageId: 10,
+      sourceSourceRevision: '5',
+      sourceVisibility: 'public',
+      openHandler: (selection: {
+        locale: string
+        path: string
+        sourcePageId?: number
+        expectedSourceRevision?: string
+        reviewToken?: string
+      }) => {
+        submittedMove = {
+          locale: selection.locale,
+          path: selection.path,
+          sourcePageId: selection.sourcePageId,
+          expectedSourceRevision: selection.expectedSourceRevision,
+          reviewToken: selection.reviewToken
+        }
+        return selection.reviewToken ? receipt : undefined
+      },
+      onMoveAcknowledged: (value: unknown) => { acknowledgement = value }
+    })
+    const clickButton = async (label: string): Promise<void> => {
+      const button = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+        .find(candidate => candidate.textContent?.trim() === label)
+      if (!button) throw new Error(`Button "${label}" did not render`)
+      button.click()
+      await settle()
+    }
+    const option = host.querySelector<HTMLInputElement>('.page-selector__repair-toggle input')
+    expect(option?.checked).toBe(false)
+    expect(option?.getAttribute('aria-describedby')).toBeTruthy()
+    option!.checked = true
+    option!.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+    await settle()
+
+    await clickButton('Find incoming links')
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.pageId).toBe(10)
+    expect(requests[0]?.input).toEqual({
+      destinationLocale: 'en',
+      destinationPath: 'docs/archive',
+      expectedSourceRevision: '5'
+    })
+    const candidate = host.querySelector<HTMLInputElement>('.page-selector__candidate input[aria-label^="Select Referrer page"]')
+    expect(candidate).not.toBeNull()
+    candidate!.checked = true
+    candidate!.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+    await settle()
+    expect(host.querySelector('.page-selector__candidate-reason')?.textContent).toContain('Automatically included self-link changes')
+    const referrerCard = Array.from(host.querySelectorAll('.page-selector__candidate'))
+      .find(card => card.querySelector('.page-selector__candidate-title')?.textContent === 'Referrer page')
+    expect(referrerCard?.querySelector('.page-selector__diff')?.textContent).toContain('[Release notes](/en/docs/current)')
+    expect(referrerCard?.querySelector('.page-selector__diff')?.textContent).toContain('[Release notes](/en/docs/archive)')
+    const selfLinkCard = Array.from(host.querySelectorAll('.page-selector__candidate'))
+      .find(card => card.querySelector('.page-selector__candidate-title')?.textContent === 'Moved page')
+    expect(selfLinkCard?.querySelector('.page-selector__diff')?.textContent).toContain('[Current](/en/docs/current)')
+
+    await clickButton('Review selected changes')
+    expect(requests[1]?.input.selectedPageIds).toEqual([21])
+    expect(host.querySelector('.page-selector__link-review h3')?.textContent).toBe('Review exact source edits')
+    expect(host.querySelectorAll('.page-selector__diff code')).toHaveLength(4)
+
+    await clickButton('Move and update selected links')
+    expect(submittedMove).toEqual({
+      locale: 'en',
+      path: 'docs/archive',
+      sourcePageId: 10,
+      expectedSourceRevision: '5',
+      reviewToken: 'signed-review-token'
+    })
+    expect(host.querySelector('.page-selector__move-result')?.textContent).toContain('source revision 6')
+    expect(host.querySelector('.page-selector__projection-notice')?.textContent).toContain('pending')
+    expect(acknowledgement).toBeUndefined()
+    expect(browserWindow.location.pathname).toBe('/en/docs/current')
+    instance.currentLocale = 'fr'
+    instance.currentPath = 'docs/another-destination'
+    await settle()
+    expect(instance.currentLocale).toBe('en')
+    expect(instance.currentPath).toBe('docs/archive')
+    expect(host.querySelector('.page-selector__tree')?.hasAttribute('disabled')).toBe(true)
+    expect(host.querySelector('.page-selector__move-result')?.textContent).toContain('source revision 6')
+
+    await clickButton('Done')
+    expect(acknowledgement).toEqual({
+      locale: 'en',
+      path: 'docs/archive',
+      receipt
+    })
+  })
+
+  test('shows a rejected ordinary move as an error instead of closing as if it succeeded', async () => {
+    const moveError = Object.assign(new Error('Move conflict'), { status: 409 })
+    const { host } = await mountSelector([], {
+      mode: 'move',
+      mustExist: false,
+      path: 'docs/archive',
+      locale: 'en',
+      sourcePageId: 10,
+      sourceSourceRevision: '5',
+      sourceVisibility: 'public',
+      openHandler: async () => { throw moveError }
+    })
+    const option = host.querySelector<HTMLInputElement>('.page-selector__repair-toggle input')
+    expect(option?.checked).toBe(false)
+    const button = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+      .find(candidate => candidate.textContent?.trim() === 'Select')
+    expect(button).not.toBeNull()
+    button!.click()
+    await settle()
+
+    expect(host.querySelector('.page-selector__submission-error')?.textContent).toContain('Move conflict')
+    expect(host.querySelector('.page-selector__move-result')).toBeNull()
+    expect(host.querySelector('.page-selector')).not.toBeNull()
+  })
+
+  test('requires a refresh after an uncertain move and does not retry automatically', async () => {
+    let submissions = 0
+    const { host } = await mountSelector([], {
+      mode: 'move',
+      mustExist: false,
+      path: 'docs/archive',
+      locale: 'en',
+      sourcePageId: 10,
+      sourceSourceRevision: '5',
+      sourceVisibility: 'public',
+      openHandler: async () => {
+        submissions += 1
+        throw new Error('Connection lost')
+      }
+    })
+    const submit = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+      .find(candidate => candidate.textContent?.trim() === 'Select')
+    if (!submit) throw new Error('Move action did not render')
+    submit.click()
+    await settle()
+
+    expect(submissions).toBe(1)
+    expect(host.querySelector('.page-selector__link-review h3')?.textContent).toBe('Move outcome could not be confirmed')
+    expect(host.querySelector('.page-selector__move-result')).toBeNull()
+    expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Refresh page')).toBe(true)
+    expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Select')).toBe(false)
   })
 })

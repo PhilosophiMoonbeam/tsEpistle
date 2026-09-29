@@ -1461,9 +1461,9 @@
       ],
       "category": "operations",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/browser-image",
-      "contract": "Adapt only build-time architecture validation of the installed Chromium and headless-shell binaries in the browser-worker image. Pending Main's integration verification; this does not launch a browser, prove rendering or CDP compatibility, validate operator executable overrides, or change runtime identity or launch behavior.",
+      "contract": "Adapt build-time ELF architecture validation of the installed Chromium and headless-shell binaries in the browser-worker image. Both executable paths were verified in a native linux/amd64 image build; deterministic ELF fixtures covered amd64 and arm64 headers plus wrong-machine and malformed/missing binaries. A sandboxed native amd64 browser launch passed. No native arm64 worker build or smoke was available; this check does not prove rendering/CDP compatibility on arm64, validate executable overrides, or change runtime identity or launch behavior.",
       "lastReviewed": "2026-09-28"
     },
     {
@@ -1499,7 +1499,7 @@
       "disposition": "split",
       "state": "completed",
       "workstream": "scarlett-sync/reader",
-      "contract": "Existing broken-link presentation and attempted move invalidation/reconnection remain; the presentation is not an authorization-aware availability service, and a target omitted from an authorized Links response is not thereby known missing. Render-only move repair changes stored HTML, not canonical source or history, and is not durable across later source rendering. Reject automatic cross-page canonical rewriting: moving a target does not grant write authority over referrers; authors continue through ordinary revision-fenced editor updates. No automatic relinking or new UI is added.",
+      "contract": "Supersede upstream's render-only relink with an explicitly opted-in, bounded canonical-source repair: the move dialog reviews exact source edits for supported Markdown inline links, enabled wikilinks and quoted HTML anchors on at most 20 selected public-namespace referrers whose current source the requester may read and edit. A short-lived session-bound review token fences original and destination identity, revisions, source digests, rendering settings and selection; the moved page's supported self-links are included. Commit rechecks authority, unlocks, current link-index receipts, approval and collaboration state under one target/referrer transaction, writing canonical revisions, history and durable projection events. Ordinary unchecked moves do not rewrite referrer source. The incoming-link index is not exhaustive, and unsupported or unselected links remain for manual repair; existing reader broken-link presentation is not an authorization-aware missing-page oracle.",
       "lastReviewed": "2026-09-28"
     }
   ],

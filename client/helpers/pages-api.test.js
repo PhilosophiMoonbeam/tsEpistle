@@ -2,6 +2,7 @@ import {
   buildOkfMetadataPayload,
   deletePage,
   discardCollaborationDraft,
+  fetchMoveLinkReview,
   fetchPage,
   fetchPageHistory,
   fetchPageLinks,
@@ -13,6 +14,7 @@ import {
   fetchPageVersion,
   fetchRecentPages,
   linkPageLocaleRelation,
+  movePage,
   restorePageVersion,
   searchPages,
   unlinkPageLocaleRelation,
@@ -1073,5 +1075,32 @@ describe('pages api helper', () => {
         }
       ]
     ])
+  })
+
+  test('requires reviewed selections to carry a token and verifies move receipt identity', async () => {
+    const reviewFetch = vi.fn().mockResolvedValue(createJsonResponse({
+      schemaVersion: 1,
+      items: [{ id: 21, title: 'Referrer', locale: 'en', path: 'docs/referrer', sourceRevision: '7', eligible: true, changes: [] }],
+      nextCursor: null,
+      coverageNotice: 'Review coverage is bounded.'
+    }))
+    await expect(
+      fetchMoveLinkReview(
+        reviewFetch,
+        7,
+        { destinationLocale: 'en', destinationPath: 'docs/new', expectedSourceRevision: 'revision-5', selectedPageIds: [21] },
+        'Invalid move review'
+      )
+    ).rejects.toThrow('Invalid move review')
+
+    const receiptFetch = vi.fn().mockResolvedValue(createJsonResponse({
+      message: 'Page has been moved.',
+      pageId: 8,
+      sourceRevision: '9',
+      updated: [],
+      projections: 'pending'
+    }))
+    await expect(movePage(receiptFetch, 7, 'en', 'docs/new', 'revision-5', 'Invalid move receipt', 'signed-review-token'))
+      .rejects.toThrow('Invalid move receipt')
   })
 })

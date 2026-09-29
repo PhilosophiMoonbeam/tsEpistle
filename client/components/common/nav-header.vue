@@ -564,7 +564,17 @@
                   v-list-item-title {{ accountVerificationTitle }}
                   v-list-item-subtitle {{ accountVerificationDetail }}
     page-selector(mode='create', v-model='newPageModal', :open-handler='pageNewCreate', :locale='locale')
-    page-selector(mode='move', v-model='movePageModal', :open-handler='pageMoveRename', :path='path', :locale='locale')
+    page-selector(
+      mode='move'
+      v-model='movePageModal'
+      :open-handler='pageMoveRename'
+      :path='path'
+      :locale='locale'
+      :source-page-id='sourcePageId'
+      :source-source-revision='sourceSourceRevision'
+      :source-visibility='sourceVisibility'
+      @move-acknowledged='pageMoveAcknowledged'
+    )
     page-selector(mode='create', v-model='duplicateOpts.modal', :open-handler='pageDuplicateHandle', :path='duplicateOpts.path', :locale='duplicateOpts.locale')
     page-delete(v-model='deletePageModal', v-if='path && path.length')
     page-convert(v-model='convertPageModal', v-if='path && path.length')
@@ -587,7 +597,7 @@ import {
 import AccountNotifications from './account-notifications.vue'
 import AccountOfflineSummary from './account-offline-summary.vue'
 import ControlBorderBeam from './control-border-beam.vue'
-import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
+import { fetchPageLocaleRelations, movePage, type MovePageReceipt } from '../../helpers/pages-api'
 import { useAgentsStore } from '../../store/agents.ts'
 import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
 import {
@@ -613,6 +623,12 @@ import * as pwa from '../../helpers/pwa.ts'
 
 type PageLocation = { path: string, locale: string }
 type SiteLocale = { code: string, name: string }
+type PageMoveSelection = PageLocation & {
+  sourcePageId?: number
+  expectedSourceRevision?: string
+  reviewToken?: string
+}
+type PageMoveAcknowledgement = { locale: string, path: string, receipt: MovePageReceipt }
 
 const ADMIN_PERMISSION_NAMES = new Set([
   'manage:system',
@@ -733,6 +749,9 @@ export default defineComponent({
     path(): string { return wikiStore.page.path },
     mode(): string { return wikiStore.page.mode },
     locale(): string { return wikiStore.page.locale },
+    sourcePageId(): number { return wikiStore.page.id },
+    sourceSourceRevision(): string { return wikiStore.page.sourceRevision },
+    sourceVisibility(): 'public' | 'private' { return wikiStore.page.visibility },
     name(): string { return wikiStore.user.name },
     email(): string { return wikiStore.user.email },
     transportVerified(): boolean {
@@ -1280,29 +1299,55 @@ export default defineComponent({
       if (!this.onlineActionReady || !this.pageResourceReady) return
       this.movePageModal = true
     },
-    async pageMoveRename ({ path, locale }: PageLocation): Promise<void> {
-      if (!this.onlineActionReady || !this.pageResourceReady) return
+    async pageMoveRename({
+      path,
+      locale,
+      sourcePageId,
+      expectedSourceRevision,
+      reviewToken
+    }: PageMoveSelection): Promise<boolean | void | MovePageReceipt> {
+      if (!this.onlineActionReady || !this.pageResourceReady) return false
+      if (
+        typeof sourcePageId !== 'number' ||
+        !Number.isSafeInteger(sourcePageId) ||
+        sourcePageId < 1 ||
+        typeof expectedSourceRevision !== 'string' ||
+        expectedSourceRevision.length < 1 ||
+        sourcePageId !== this.sourcePageId ||
+        expectedSourceRevision !== this.sourceSourceRevision
+      ) {
+        const staleError = new Error('The page changed before this move could be confirmed.') as Error & { status: number }
+        staleError.status = 409
+        throw staleError
+      }
       const generation = this.headerActionGeneration
       wikiStore.startLoading('page-move')
       try {
-        await movePage(
+        const receipt = await movePage(
           window.fetch.bind(window),
-          wikiStore.page.id,
+          sourcePageId,
           locale,
           path,
-          wikiStore.page.sourceRevision
+          expectedSourceRevision,
+          'Page move failed',
+          reviewToken
         )
-        if (generation !== this.headerActionGeneration || !this.onlineActionReady) {
-          wikiStore.stopLoading('page-move')
-          return
+        if (generation !== this.headerActionGeneration)
+          throw new Error('The move response could not be confirmed.')
+        if (reviewToken !== undefined) {
+          if (!receipt) throw new Error('The move receipt could not be verified.')
+          return receipt
         }
-        const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
+        const scope = this.sourceVisibility === 'private' ? '/_private' : ''
         window.location.replace(`${scope}/${locale}/${path}`)
-      } catch (err) {
-        if (generation !== this.headerActionGeneration) return
-        wikiStore.showError(err)
+      } finally {
         wikiStore.stopLoading('page-move')
       }
+    },
+    pageMoveAcknowledged({ locale, path, receipt }: PageMoveAcknowledgement): void {
+      if (receipt.pageId !== this.sourcePageId) return
+      const scope = this.sourceVisibility === 'private' ? '/_private' : ''
+      window.location.replace(`${scope}/${locale}/${path}`)
     },
     pageDelete () {
       if (!this.onlineActionReady || !this.pageResourceReady) return

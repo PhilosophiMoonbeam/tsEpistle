@@ -1027,22 +1027,66 @@ router.post('/:id/convert', async (req, res, next) => {
   }
 })
 
+router.post('/:id/move/review', async (req, res, next) => {
+  setPrivatePageHeaders(res)
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  const expectedSourceRevision = requiredSourceRevision(req, res)
+  if (expectedSourceRevision === null) return
+  const body = requestBody(req)
+  if (typeof body.destinationLocale !== 'string' || typeof body.destinationPath !== 'string') {
+    return res.status(400).json({ error: 'destinationLocale and destinationPath must be strings' })
+  }
+  if (body.cursor !== undefined && typeof body.cursor !== 'string') {
+    return res.status(400).json({ error: 'cursor must be a string' })
+  }
+  try {
+    const review = await pageOperations.reviewMoveLinks({
+      ...pageOperationContext(req),
+      input: {
+        id,
+        destinationLocale: body.destinationLocale,
+        destinationPath: body.destinationPath,
+        expectedSourceRevision,
+        ...(typeof body.cursor === 'string' ? { cursor: body.cursor } : {}),
+        ...(Object.hasOwn(body, 'selectedPageIds') ? { selectedPageIds: body.selectedPageIds } : {})
+      }
+    })
+    return res.json(review)
+  } catch (err) {
+    return sendOperationError(res, next, err, 'Page move link review failed')
+  }
+})
+
 router.post('/:id/move', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   const expectedSourceRevision = requiredSourceRevision(req, res)
   if (expectedSourceRevision === null) return
+  const body = requestBody(req)
+  const destinationLocale = body.destinationLocale
+  const destinationPath = body.destinationPath
+  if (typeof destinationLocale !== 'string' || typeof destinationPath !== 'string') {
+    return res.status(400).json({ error: 'destinationLocale and destinationPath must be strings' })
+  }
+  if (body.reviewToken !== undefined && (typeof body.reviewToken !== 'string' || body.reviewToken.length > 8192)) {
+    return res.status(400).json({ error: 'reviewToken must be a valid string' })
+  }
   try {
-    const destinationLocale = _.get(req, 'body.destinationLocale')
-    const destinationPath = _.get(req, 'body.destinationPath')
-    if (typeof destinationLocale !== 'string' || typeof destinationPath !== 'string') {
-      return res.status(400).json({ error: 'destinationLocale and destinationPath must be strings' })
-    }
-    await pageOperations.move({
+    const result = await pageOperations.move({
       ...pageOperationContext(req),
-      input: { id, destinationLocale, destinationPath, expectedSourceRevision }
+      input: {
+        id,
+        destinationLocale,
+        destinationPath,
+        expectedSourceRevision,
+        ...(typeof body.reviewToken === 'string' ? { reviewToken: body.reviewToken } : {}),
+        ...(Object.hasOwn(body, 'updateLinks') ? { updateLinks: body.updateLinks } : {})
+      }
     })
-    res.json({ message: 'Page has been moved.' })
+    setPrivatePageHeaders(res)
+    if (typeof body.reviewToken === 'string') return res.json(result)
+    return res.json({ message: 'Page has been moved.' })
   } catch (err) {
     sendOperationError(res, next, err, 'Page move failed')
   }
