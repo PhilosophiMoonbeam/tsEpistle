@@ -6,6 +6,14 @@ import { OFFLINE_DB_NAME, type OfflinePageSnapshotV1 } from '../../shared/offlin
 type PageRow = {
   id?: unknown
   path?: unknown
+  locale?: unknown
+  visibility?: unknown
+}
+
+type ReaderPageTarget = {
+  path: string
+  locale: string
+  canonicalPath: string
 }
 
 type OfflineWindow = Window & {
@@ -52,7 +60,7 @@ type SavePageOptions = {
 
 const OFFLINE_PATH = '/_offline' // Immutable cached bootstrap, not an application destination.
 const OFFLINE_SETTINGS_PATH = '/p/offline'
-const SEEDED_PAGE_PATHS = ['visual-markdown-browser', 'visual-html-browser'] as const
+const DEFAULT_OFFLINE_PAGE_COUNT = 2
 const OWNED_CACHE_NAME_PATTERN = /^tsepistle-pwa-precache-v1-[0-9a-f]{16}(?:-candidate-[0-9a-z-]+)?$/u
 
 async function waitForOfflineSettings(page: Page): Promise<void> {
@@ -187,20 +195,45 @@ function snapshotIntegrity(snapshot: OfflinePageSnapshotV1): string {
   return createHash('sha256').update(`tsepistle/offline-snapshot-v1\u0000${payload}`).digest('hex')
 }
 
-async function pageIdForPath(page: Page, path: string): Promise<number> {
+async function pageIdForPath(page: Page, path: string, locale: string): Promise<number> {
   const pagesResponse = await page.request.get('/_api/pages')
   expect(pagesResponse.ok(), `Page index request failed: HTTP ${pagesResponse.status()}`).toBe(true)
   const pages = (await pagesResponse.json()) as PageRow[]
-  const row = pages.find(candidate => candidate.path === path)
-  if (!row || typeof row.id !== 'number') throw new Error(`The setup fixture page ${path} was not found.`)
+  const row = pages.find(candidate => candidate.path === path && candidate.locale === locale)
+  if (!row || typeof row.id !== 'number') throw new Error(`The setup fixture page ${locale}/${path} was not found.`)
   return row.id
 }
 
-async function savePageFromReader(page: Page, path: string, options: SavePageOptions = {}): Promise<OfflineSnapshotRow> {
-  const pageId = await pageIdForPath(page, path)
+async function guestReadablePublicPages(page: Page, count: number): Promise<ReaderPageTarget[]> {
+  const pagesResponse = await page.request.get('/_api/pages')
+  expect(pagesResponse.ok(), `Page index request failed: HTTP ${pagesResponse.status()}`).toBe(true)
+  const pages = (await pagesResponse.json()) as PageRow[]
+  const origin = new URL(page.url()).origin
+  const result: ReaderPageTarget[] = []
+
+  // Public visibility does not guarantee Guest access; public fixtures must not enter the encrypted private-page flow.
+  for (const row of pages) {
+    if (row.visibility !== 'public' || row.locale !== 'en' || typeof row.path !== 'string' || !row.path) continue
+    const encodedPath = row.path.split('/').map(segment => encodeURIComponent(segment)).join('/')
+    const localizedPath = `/${row.locale}/${encodedPath}`
+    const response = await page.request.get(localizedPath, { headers: { Accept: 'text/html' } })
+    if (!response.ok() || !/^text\/html(?:;|$)/iu.test(response.headers()['content-type'] ?? '')) continue
+    const resolved = new URL(response.url())
+    const unlocalizedPath = `/${encodedPath}`
+    if (resolved.origin !== origin || resolved.search || resolved.hash || ![localizedPath, unlocalizedPath].includes(resolved.pathname)) continue
+    result.push({ path: row.path, locale: row.locale, canonicalPath: resolved.pathname })
+    if (result.length >= count) break
+  }
+
+  if (result.length !== count) throw new Error(`Expected ${count} guest-readable public English pages for offline E2E coverage; found ${result.length}.`)
+  return result
+}
+
+async function savePageFromReader(page: Page, target: ReaderPageTarget, options: SavePageOptions = {}): Promise<OfflineSnapshotRow> {
+  const pageId = await pageIdForPath(page, target.path, target.locale)
   const header = page.locator('.page-header-section')
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    await page.goto(`/en/${path}`, { waitUntil: 'domcontentloaded' })
+    await page.goto(target.canonicalPath, { waitUntil: 'domcontentloaded' })
     try {
       await header.waitFor({ state: 'visible', timeout: 30_000 })
       break
@@ -219,7 +252,7 @@ async function savePageFromReader(page: Page, path: string, options: SavePageOpt
   if (currentLabel === 'Remove offline copy' && !options.expiresAt) {
     await expect(control).toHaveAttribute('aria-pressed', 'true')
     const current = (await inspectOfflineDatabase(page)).snapshots.find(record => record.pageId === pageId)
-    if (!current) throw new Error(`The saved snapshot for ${path} was not found.`)
+    if (!current) throw new Error(`The saved snapshot for ${target.path} was not found.`)
     return current
   }
 
@@ -282,17 +315,20 @@ async function savePageFromReader(page: Page, path: string, options: SavePageOpt
   }
 
   const saved = (await inspectOfflineDatabase(page)).snapshots.find(record => record.pageId === pageId)
-  if (!saved) throw new Error(`The saved snapshot for ${path} was not found after the product save action.`)
+  if (!saved) throw new Error(`The saved snapshot for ${target.path} was not found after the product save action.`)
   return saved
 }
 
-async function saveOfflinePages(page: Page, paths: readonly string[] = SEEDED_PAGE_PATHS): Promise<void> {
+async function saveOfflinePages(page: Page, count = DEFAULT_OFFLINE_PAGE_COUNT): Promise<OfflineSnapshotRow[]> {
   await warmFeatureWorker(page)
+  const targets = await guestReadablePublicPages(page, count)
   await authenticateAsAdmin(page)
-  for (const path of paths) await savePageFromReader(page, path)
+  const saved: OfflineSnapshotRow[] = []
+  for (const target of targets) saved.push(await savePageFromReader(page, target))
   await page.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'networkidle' })
   await waitForOfflineSettings(page)
-  await expect(page.locator('.page-card')).toHaveCount(paths.length, { timeout: 30_000 })
+  await expect(page.locator('.page-card')).toHaveCount(saved.length, { timeout: 30_000 })
+  return saved
 }
 
 async function installClipboardRejection(page: Page): Promise<boolean> {
@@ -336,8 +372,8 @@ test.describe('integrated offline access', () => {
 
     const search = page.getByRole('searchbox', { name: 'Search saved pages', exact: true })
     await expectLocatorWithinViewport(search, 'Saved-page search at 390px')
-    await expectResponsiveLayout(page, 'Offline profile settings at 390px')
-    await expect(page.getByText('No saved pages yet.', { exact: true })).toBeVisible()
+    await expectResponsiveLayout(page, 'Offline access settings at 390px')
+    await expect(page.getByRole('heading', { name: 'No saved pages yet', exact: true })).toBeVisible()
 
     const removeDownloadedPages = page.getByRole('button', { name: 'Remove saved pages', exact: true })
     const clearOfflineData = page.getByRole('button', { name: 'Clear offline data on this device', exact: true })
@@ -348,16 +384,16 @@ test.describe('integrated offline access', () => {
 
   test('downloads through the product control, warms the feature worker, and falls back to local search and reading offline', async ({ page, browserName }) => {
     test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
-    await saveOfflinePages(page)
+    const savedPages = await saveOfflinePages(page)
     const origin = new URL(page.url()).origin
     const database = await inspectOfflineDatabase(page)
     expect(database.databaseVersion).toBeGreaterThanOrEqual(2)
     expect(database.storeNames).toEqual(expect.arrayContaining(['meta', 'snapshots', 'drafts', 'searchDocuments']))
-    expect(database.snapshots).toHaveLength(2)
-    expect(database.searchDocuments).toHaveLength(2)
+    expect(database.snapshots).toHaveLength(savedPages.length)
+    expect(database.searchDocuments).toHaveLength(savedPages.length)
     expect(database.meta).toMatchObject({
       schemaVersion: 1,
-      snapshotCount: 2,
+      snapshotCount: savedPages.length,
       accountingComplete: true
     })
     expect(database.meta?.managedBytes).toEqual(expect.any(Number))
@@ -382,6 +418,11 @@ test.describe('integrated offline access', () => {
       const pathname = new URL(url).pathname
       expect(pathname === OFFLINE_PATH || pathname.startsWith('/_assets/js/') || pathname.startsWith('/_assets/assets/')).toBe(true)
     }
+    const saved = database.snapshots[0]!
+    await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
+    const article = page.locator('article.contents')
+    await expect(article).toBeVisible()
+    const onlinePageText = await article.innerText()
 
     await page.context().setOffline(true)
     const sensitiveResults = await page.evaluate(
@@ -404,22 +445,22 @@ test.describe('integrated offline access', () => {
       JSON.stringify(sensitiveResults)
     ).toBe(true)
 
-    const saved = database.snapshots.find(row => row.snapshot.path === SEEDED_PAGE_PATHS[0])!
     await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
     await expect(page.locator('.nav-header')).toBeVisible()
     const reader = page.locator('.offline-reader')
     await expect(reader).toBeVisible()
     await expect(reader.getByRole('heading', { name: saved.snapshot.title, level: 1, exact: true })).toBeFocused()
-    await expect(reader.locator('.offline-page-body')).toContainText('Visual Markdown browser')
+    await expect(reader.locator('.offline-page-body')).toHaveText(onlinePageText)
     expect(new URL(page.url()).pathname).toBe(saved.snapshot.canonicalPath)
 
     await reader.getByRole('button', { name: 'Back to saved pages', exact: true }).click()
     await expect(page).toHaveURL(new URL(`${OFFLINE_SETTINGS_PATH}#downloaded-pages-title`, origin).href)
     await waitForOfflineSettings(page)
+
     const search = page.getByRole('searchbox', { name: 'Search saved pages', exact: true })
-    await search.fill('Visual Markdown')
+    await search.fill(saved.snapshot.title)
     await expect(page.locator('.page-card')).toHaveCount(1)
-    await page.getByRole('button', { name: 'Open saved page Visual Markdown Browser', exact: true }).click()
+    await page.getByRole('button', { name: `Open saved page ${saved.snapshot.title}`, exact: true }).click()
     await expect(page.locator('#offline-reader-title')).toHaveText(saved.snapshot.title)
     expect(new URL(page.url()).pathname).toBe(saved.snapshot.canonicalPath)
 
@@ -431,16 +472,66 @@ test.describe('integrated offline access', () => {
     await page.context().setOffline(false)
   })
 
-  test('opens saved pages at their normal URLs and returns to profile settings', async ({ page, browserName }) => {
+  test('routes pages that require private offline setup through the device settings', async ({ page }) => {
+    await warmFeatureWorker(page)
+    const pagesResponse = await page.request.get('/_api/pages')
+    expect(pagesResponse.ok(), `Page index request failed: HTTP ${pagesResponse.status()}`).toBe(true)
+    const rows = (await pagesResponse.json()) as PageRow[]
+    const origin = new URL(page.url()).origin
+    const candidates: Array<{ path: string; locale: string; localizedPath: string; unlocalizedPath: string }> = []
+
+    for (const row of rows) {
+      if (row.visibility !== 'public' || row.locale !== 'en' || typeof row.path !== 'string' || !row.path) continue
+      const encodedPath = row.path.split('/').map(segment => encodeURIComponent(segment)).join('/')
+      const localizedPath = `/${row.locale}/${encodedPath}`
+      const unlocalizedPath = `/${encodedPath}`
+      const response = await page.request.get(localizedPath, { headers: { Accept: 'text/html' } })
+      const resolved = new URL(response.url())
+      const guestCanRead = response.ok()
+        && /^text\/html(?:;|$)/iu.test(response.headers()['content-type'] ?? '')
+        && resolved.origin === origin
+        && !resolved.search
+        && !resolved.hash
+        && [localizedPath, unlocalizedPath].includes(resolved.pathname)
+      if (!guestCanRead) candidates.push({ path: row.path, locale: row.locale, localizedPath, unlocalizedPath })
+    }
+
+    if (candidates.length === 0) throw new Error('No guest-restricted public page is available for private setup E2E coverage.')
+    await authenticateAsAdmin(page)
+    let target: ReaderPageTarget | undefined
+    for (const candidate of candidates) {
+      const response = await page.request.get(candidate.localizedPath, { headers: { Accept: 'text/html' } })
+      if (!response.ok() || !/^text\/html(?:;|$)/iu.test(response.headers()['content-type'] ?? '')) continue
+      const resolved = new URL(response.url())
+      if (resolved.origin !== origin || resolved.search || resolved.hash || ![candidate.localizedPath, candidate.unlocalizedPath].includes(resolved.pathname)) continue
+      target = { path: candidate.path, locale: candidate.locale, canonicalPath: resolved.pathname }
+      break
+    }
+    if (!target) throw new Error('No guest-restricted page can be opened by the verified account used for private setup E2E coverage.')
+
+    await page.goto(target.canonicalPath, { waitUntil: 'domcontentloaded' })
+    await expect(page.locator('.page-header-section')).toBeVisible()
+    const control = page.locator('.page-offline-control')
+    await expect(control).toHaveAttribute('aria-label', 'Offline setup required')
+    await expect(page.locator('.page-offline-status')).toContainText('one-time account setup for private reading')
+    await control.click()
+    await waitForOfflineSettings(page)
+    expect(new URL(page.url()).pathname).toBe(OFFLINE_SETTINGS_PATH)
+    const privateReading = page.locator('.offline-settings__reading')
+    await expect(privateReading.getByRole('heading', { name: 'Private offline reading', exact: true })).toBeVisible()
+    await expect(privateReading.locator('.v-chip')).toHaveText('Not set up')
+    await expect(privateReading.getByRole('button', { name: 'Set up private reading', exact: true })).toBeEnabled()
+  })
+
+  test('opens saved pages at their normal URLs and returns to offline settings', async ({ page, browserName }) => {
     test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
-    await saveOfflinePages(page)
-    const savedPages = (await inspectOfflineDatabase(page)).snapshots
+    const savedPages = await saveOfflinePages(page)
     await page.context().setOffline(true)
     await page.goto(`${OFFLINE_SETTINGS_PATH}#downloaded-pages-title`, { waitUntil: 'domcontentloaded' })
     await waitForOfflineSettings(page)
     const search = page.getByRole('searchbox', { name: 'Search saved pages', exact: true })
-    await search.fill('Visual')
-    await expect(page.locator('.page-card')).toHaveCount(2)
+    await search.fill(savedPages[0]!.snapshot.title)
+    await expect(page.locator('.page-card')).toHaveCount(1)
 
     const firstCard = page.locator('.page-card').first()
     const title = (await firstCard.locator('.page-card-title').textContent())!.trim()
@@ -465,10 +556,10 @@ test.describe('integrated offline access', () => {
     await page.context().setOffline(false)
   })
 
-  test('offers the current saved page text when clipboard access is denied', async ({ page, browserName }) => {
+  test('offers current saved page text after clipboard denial without leaking the fallback between readers', async ({ page, browserName }) => {
     test.skip(browserName !== 'chromium', 'Clipboard rejection control is covered only where Chromium exposes a controllable clipboard surface.')
-    await saveOfflinePages(page)
-    const saved = (await inspectOfflineDatabase(page)).snapshots[0]!
+    const savedPages = await saveOfflinePages(page)
+    const saved = savedPages[0]!
     await page.context().setOffline(true)
     await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
     const reader = page.locator('.offline-reader')
@@ -485,26 +576,28 @@ test.describe('integrated offline access', () => {
     const copiedText = await fallback.inputValue()
     expect(await fallback.evaluate((element: HTMLTextAreaElement) => element.selectionEnd - element.selectionStart)).toBe(copiedText.length)
 
-    // Leaving the document cannot carry its clipboard fallback into another page.
+    // A fresh reader cannot inherit clipboard fallback state from the prior document.
     await reader.getByRole('button', { name: 'Back to saved pages', exact: true }).click()
     await waitForOfflineSettings(page)
     await expect(fallback).toHaveCount(0)
-    const other = (await inspectOfflineDatabase(page)).snapshots.find(row => row.pageId !== saved.pageId)!
-    await page.goto(other.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
-    await expect(page.locator('#offline-reader-title')).toHaveText(other.snapshot.title)
+    const next = savedPages.find(row => row.pageId !== saved.pageId)!
+    await page.goto(next.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
+    await expect(page.locator('#offline-reader-title')).toHaveText(next.snapshot.title)
     await expect(fallback).toHaveCount(0)
     await page.context().setOffline(false)
   })
 
-  test('keeps the canonical page on reconnect and offers offline preferences in the account menu', async ({ page, browserName }) => {
+  test('keeps the canonical page on reconnect and offers offline access in the account menu', async ({ page, browserName }) => {
     test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
-    await saveOfflinePages(page, [SEEDED_PAGE_PATHS[0]])
-    const saved = (await inspectOfflineDatabase(page)).snapshots[0]!
+    const saved = (await saveOfflinePages(page, 1))[0]!
     await page.context().setOffline(true)
     await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
     await expect(page.locator('#offline-reader-title')).toHaveText(saved.snapshot.title)
     await page.locator('.account-menu__trigger').click()
-    const settingsLink = page.locator('.account-menu').getByRole('link', { name: 'Offline preferences', exact: true })
+    const accountMenu = page.locator('.account-menu')
+    await accountMenu.getByRole('button', { name: 'Offline', exact: true }).click()
+    const settingsLink = accountMenu.getByRole('link', { name: 'Manage offline access', exact: true })
+    await expect(settingsLink).toBeVisible()
     await expect(settingsLink).toHaveAttribute('href', OFFLINE_SETTINGS_PATH)
     await settingsLink.click()
     await waitForOfflineSettings(page)
@@ -518,16 +611,17 @@ test.describe('integrated offline access', () => {
     await expect(page.locator('.offline-application')).toHaveCount(0)
     await expect(page.locator('.nav-header')).toBeVisible()
     await page.locator('.account-menu__trigger').click()
+    await accountMenu.getByRole('button', { name: 'Offline', exact: true }).click()
     await expect(settingsLink).toHaveAttribute('href', OFFLINE_SETTINGS_PATH)
   })
 
   test('treats an expired offline selection as removable rather than a refresh action', async ({ page, browserName }) => {
     test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
     await warmFeatureWorker(page)
+    const target = (await guestReadablePublicPages(page, 1))[0]!
     await authenticateAsAdmin(page)
     const expiresAt = new Date(Date.now() + 30_000).toISOString()
-    const saved = await savePageFromReader(page, SEEDED_PAGE_PATHS[0], { expiresAt })
-    expect(saved.snapshot.expiresAt).toBe(expiresAt)
+    await savePageFromReader(page, target, { expiresAt })
 
     await page.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'networkidle' })
     await waitForOfflineSettings(page)
@@ -541,7 +635,7 @@ test.describe('integrated offline access', () => {
     expect(expiredDatabase.snapshots[0]?.snapshot.expiresAt).toBe(expiresAt)
 
     await page.context().setOffline(false)
-    await page.goto(`/en/${SEEDED_PAGE_PATHS[0]}`, { waitUntil: 'domcontentloaded' })
+    await page.goto(target.canonicalPath, { waitUntil: 'domcontentloaded' })
     const control = page.locator('.page-offline-control')
     await expect(control).toBeVisible()
     await expect(control).toHaveAttribute('aria-label', 'Remove offline copy', { timeout: 30_000 })
@@ -555,7 +649,7 @@ test.describe('integrated offline access', () => {
   })
 
   test('invalidates a second offline tab after a committed product removal', async ({ page, context }) => {
-    await saveOfflinePages(page, [SEEDED_PAGE_PATHS[0]])
+    await saveOfflinePages(page, 1)
     const secondPage = await context.newPage()
     try {
       await secondPage.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'networkidle' })
@@ -573,21 +667,20 @@ test.describe('integrated offline access', () => {
     }
   })
 
-  test('returns focus to the adjacent saved page and then to search after removal', async ({ page }) => {
-    await saveOfflinePages(page)
+  test('returns focus to the next saved page when present and then to search after removal', async ({ page }) => {
+    const savedPages = await saveOfflinePages(page)
     const cards = page.locator('.page-card')
     const titles = await cards.locator('.page-card-title').allTextContents()
     expect(titles).toHaveLength(2)
     const search = page.getByRole('searchbox', { name: 'Search saved pages', exact: true })
 
-    const firstCard = cards.filter({ hasText: titles[0] })
-    const secondCard = cards.filter({ hasText: titles[1] })
+    const firstCard = cards.filter({ hasText: titles[0]! })
     await firstCard.getByRole('button', { name: 'Remove page', exact: true }).click()
     await expect(cards).toHaveCount(1)
-    const secondOpen = secondCard.getByRole('button', { name: /^Open saved page / })
-    await expect(secondOpen).toBeFocused()
-
-    await secondCard.getByRole('button', { name: 'Remove page', exact: true }).click()
+    const nextCard = cards.filter({ hasText: titles[1]! })
+    const nextOpen = nextCard.getByRole('button', { name: /^Open saved page / })
+    await expect(nextOpen).toBeFocused()
+    await nextCard.getByRole('button', { name: 'Remove page', exact: true }).click()
     await expect(cards).toHaveCount(0)
     await expect(search).toBeFocused()
     await expect(page.getByRole('heading', { name: 'No saved pages yet', exact: true })).toBeVisible()
@@ -597,9 +690,9 @@ test.describe('integrated offline access', () => {
   })
 
   test('keeps whole-device clear cancelable, server-preserving, and truthful after confirmation', async ({ page }) => {
-    await saveOfflinePages(page)
+    const savedPages = await saveOfflinePages(page)
     const cards = page.locator('.page-card')
-    await expect(cards).toHaveCount(2)
+    await expect(cards).toHaveCount(savedPages.length)
     const clearOfflineData = page.getByRole('button', { name: 'Clear offline data on this device', exact: true })
     const removeDownloadedPages = page.getByRole('button', { name: 'Remove saved pages', exact: true })
     await expect(removeDownloadedPages).toBeEnabled()
@@ -612,7 +705,7 @@ test.describe('integrated offline access', () => {
     await expect(dialog).toContainText('It does not delete anything from the server.')
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(dialog).not.toBeVisible()
-    await expect(cards).toHaveCount(2)
+    await expect(cards).toHaveCount(savedPages.length)
 
     await clearOfflineData.click()
     await dialog.getByRole('button', { name: 'Clear offline data', exact: true }).click()
@@ -632,7 +725,7 @@ test.describe('integrated offline access', () => {
     const pagesResponse = await page.request.get('/_api/pages')
     expect(pagesResponse.ok()).toBe(true)
     const pages = (await pagesResponse.json()) as PageRow[]
-    expect(pages.some(candidate => candidate.path === SEEDED_PAGE_PATHS[0])).toBe(true)
+    expect(pages.some(candidate => candidate.path === savedPages[0]!.snapshot.path)).toBe(true)
   })
 })
 
@@ -680,13 +773,11 @@ test('offline Browse immediately lists saved copies and recovers without an onli
   test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
   test.setTimeout(120_000)
   await warmFeatureWorker(page)
-  const response = await page.request.get('/_api/pages')
-  expect(response.ok()).toBe(true)
-  const publicPages = (await response.json() as Array<{ path: string; locale: string; visibility: string }>)
-    .filter(row => row.visibility === 'public' && row.locale === 'en').slice(0, 2)
-  expect(publicPages).toHaveLength(2)
-  const saved = [] as OfflineSnapshotRow[]
-  for (const row of publicPages) saved.push(await savePageFromReader(page, row.path))
+  const publicPages = await guestReadablePublicPages(page, 2)
+  await authenticateAsAdmin(page)
+
+  const saved: OfflineSnapshotRow[] = []
+  for (const target of publicPages) saved.push(await savePageFromReader(page, target))
   await page.evaluate(() => localStorage.setItem('navPref', 'custom'))
   await page.reload({ waitUntil: 'networkidle' })
   await expect(page.locator('.page-header-section')).toBeVisible({ timeout: 30_000 })
@@ -696,7 +787,7 @@ test('offline Browse immediately lists saved copies and recovers without an onli
   if ((page.viewportSize()?.width ?? 1280) < 960) await page.getByRole('button', { name: /open navigation/i }).click()
   const navigation = page.getByRole('navigation', { name: 'Browse saved pages', exact: true })
   await expect(navigation).toBeVisible()
-  await expect(navigation.locator('.offline-navigation__pages a')).toHaveCount(2)
+  await expect(navigation.locator('.offline-navigation__pages a')).toHaveCount(saved.length)
   await expect(page.locator('.nav-sidebar-modes')).toHaveCount(0)
   await expect(page.locator('.nav-sidebar-loading-status')).toHaveCount(0)
   await expect(page.locator('.page-offline-status')).not.toContainText(/stale|out.of.date/i)
@@ -708,21 +799,23 @@ test('offline Browse immediately lists saved copies and recovers without an onli
   await expect(page.locator('.offline-application')).toBeVisible({ timeout: 30_000 })
   await expect(page).toHaveURL(first.snapshot.canonicalPath)
   if ((page.viewportSize()?.width ?? 1280) < 960) await page.getByRole('button', { name: /open navigation/i }).click()
-  await expect(navigation.locator('.offline-navigation__pages a')).toHaveCount(2)
+  await expect(navigation.locator('.offline-navigation__pages a')).toHaveCount(saved.length)
   await expect(navigation.locator('a[aria-current="page"]')).toHaveAttribute('href', first.snapshot.canonicalPath)
   // Visibility precedes the end of the mobile drawer's slide transition.
   await expect.poll(async () => (await navigation.boundingBox())?.x ?? -1).toBeGreaterThanOrEqual(0)
   await expectResponsiveLayout(page, 'saved-only offline Browse')
 
-  const settings = await page.context().newPage()
-  await settings.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'domcontentloaded' })
-  await waitForOfflineSettings(settings)
-  await settings.locator('.page-card').filter({ hasText: saved[1]!.snapshot.title }).getByRole('button', { name: 'Remove page', exact: true }).click()
-  await expect(settings.locator('.page-card')).toHaveCount(1)
-  await page.bringToFront()
-  await expect(navigation.locator('.offline-navigation__pages a')).toHaveCount(1)
-  await expect(navigation.locator(`a[href="${saved[1]!.snapshot.canonicalPath}"]`)).toHaveCount(0)
-  await settings.close()
+  if (saved.length > 1) {
+    const settings = await page.context().newPage()
+    await settings.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'domcontentloaded' })
+    await waitForOfflineSettings(settings)
+    await settings.locator('.page-card').filter({ hasText: saved[1]!.snapshot.title }).getByRole('button', { name: 'Remove page', exact: true }).click()
+    await expect(settings.locator('.page-card')).toHaveCount(saved.length - 1)
+    await page.bringToFront()
+    await expect(navigation.locator('.offline-navigation__pages a')).toHaveCount(saved.length - 1)
+    await expect(navigation.locator(`a[href="${saved[1]!.snapshot.canonicalPath}"]`)).toHaveCount(0)
+    await settings.close()
+  }
 
   // A restored network is useful even if the browser never sends an online hint.
   await page.evaluate(() => {
@@ -740,12 +833,9 @@ for (const cachedBrowse of [false, true]) test(`missed disconnect switches ${cac
   test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
   test.setTimeout(90_000)
   await warmFeatureWorker(page)
-  const response = await page.request.get('/_api/pages')
-  expect(response.ok()).toBe(true)
-  const row = (await response.json() as Array<{ path: string; locale: string; visibility: string }>)
-    .find(row => row.visibility === 'public' && row.locale === 'en')
-  expect(row).toBeDefined()
-  const saved = await savePageFromReader(page, row!.path)
+  const target = (await guestReadablePublicPages(page, 1))[0]!
+  await authenticateAsAdmin(page)
+  const saved = await savePageFromReader(page, target)
   const logo = page.locator('.nav-header-logo img')
   const logoPath = await logo.getAttribute('src')
   expect(logoPath).toBeTruthy()

@@ -2160,7 +2160,7 @@ export default defineComponent({
 
     .nav-header-command {
       display: grid;
-      grid-template-columns: 36px minmax(0, 1fr);
+      grid-template-columns: 36px minmax(0, 1fr) 36px;
       gap: var(--wiki-space-1);
     }
 
@@ -2172,7 +2172,7 @@ export default defineComponent({
 
     .nav-header-command > .nav-header-search-control {
       grid-column: 2;
-      justify-self: stretch;
+      justify-self: center;
       width: 100%;
     }
 

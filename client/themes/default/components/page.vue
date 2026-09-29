@@ -5138,6 +5138,15 @@ export default defineComponent({
     order: 2;
   }
 
+  // When TOC is off, keep the primary article before the full-width metadata.
+  .page-col-content--toc-off {
+    order: 1;
+  }
+
+  .page-col-sd--toc-off {
+    order: 2;
+  }
+
   .page-col-sd--with-toc {
     flex: 0 0 var(--page-metadata-rail-width);
     max-width: var(--page-metadata-rail-width);

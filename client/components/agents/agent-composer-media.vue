@@ -31,7 +31,7 @@ const props = defineProps<{
   disabled: boolean
   networkBlocked: boolean
 }>()
-const emit = defineEmits<{ change: [value: AgentMediaSubmission]; busy: [value: boolean]; dictation: [text: string]; dictationFailed: [message: string]; settled: [] }>()
+const emit = defineEmits<{ change: [value: AgentMediaSubmission]; busy: [value: boolean]; dictation: [text: string]; dictationFailed: [message: string]; settled: []; assetPickerClosed: [] }>()
 const fileInput = useTemplateRef<HTMLInputElement>('fileInput')
 const assetPickerOpen = ref(false)
 const attachments = ref<AgentMediaView[]>([])
@@ -291,10 +291,11 @@ const browseAssets = () => {
   error.value = ''
   assetPickerOpen.value = true
 }
-const closeAssetPicker = () => {
+const closeAssetPicker = (restoreFocus = true) => {
   if (!assetPickerOpen.value) return
   assetPickerOpen.value = false
   uploadController?.abort()
+  if (restoreFocus && !disposed) emit('assetPickerClosed')
 }
 const attachAsset = async (asset: Asset) => {
   if (!assetPickerOpen.value || locked.value || !props.session || attachments.value.length >= 4 || !props.capabilities?.attachments) return
@@ -570,17 +571,17 @@ const transcribe = async (file: File, session: AgentThreadState['session'], csrf
     }
   }
 }
-watch(() => [props.disabled, props.networkBlocked] as const, ([disabled, blocked]) => { if (disabled || blocked) { closeAssetPicker(); uploadController?.abort(); if (blocked) cancelDictation() } }, { flush: 'sync' })
+watch(() => [props.disabled, props.networkBlocked] as const, ([disabled, blocked]) => { if (disabled || blocked) { closeAssetPicker(false); uploadController?.abort(); if (blocked) cancelDictation() } }, { flush: 'sync' })
 watch(() => props.session?.id, (id, previous) => {
   if (id === previous) return
-  closeAssetPicker()
+  closeAssetPicker(false)
   uploadController?.abort()
   cancelDictation()
   for (const item of attachments.value) void deleteAgentMedia(fetcher, props.csrfToken, item.id).catch(() => {})
   clear()
 }, { flush: 'sync' })
 watch(() => props.capabilities, () => {
-  closeAssetPicker()
+  closeAssetPicker(false)
   uploadController?.abort()
   if (!props.capabilities?.transcription) cancelDictation()
   if (!props.capabilities?.attachments && attachments.value.length) {

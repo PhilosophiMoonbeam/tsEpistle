@@ -156,6 +156,7 @@
       @dictation="appendDictation"
       @dictation-failed="receiveDictationFailure"
       @settled="emit('mediaSettled')"
+      @asset-picker-closed="focusAttachmentTrigger"
     >
       <template #attachments="{ attachments, uploading, locked, removeAttachment }">
         <ul v-if="attachments.length" class="agent-composer__media-attachments" aria-label="Attachments for the next message">
@@ -219,6 +220,7 @@
           <template #activator="{ props: activatorProps }">
             <v-btn
               v-bind="activatorProps"
+              ref="attachmentTrigger"
               class="agent-composer__attach wiki-purpose-control"
               variant="text"
               rounded="pill"
@@ -579,6 +581,18 @@ const openAssetBrowser = (): void => {
   attachmentMenuOpen.value = false
   if (!attachDisabled.value) mediaComposer.value?.browseAssets()
 }
+const focusAttachmentTrigger = async (): Promise<void> => {
+  const trigger = attachmentTrigger.value
+  const sessionId = props.mediaSession?.id
+  await nextTick()
+  if (!mounted || attachmentTrigger.value !== trigger || props.mediaSession?.id !== sessionId ||
+      !attachmentsAvailable.value || attachDisabled.value) return
+  const element = trigger instanceof HTMLElement ? trigger : trigger?.$el
+  if (!(element instanceof HTMLButtonElement) || !element.isConnected || !element.getClientRects().length ||
+      element.disabled || element.getAttribute('aria-disabled') === 'true' ||
+      element.closest('[inert], [aria-hidden="true"]')) return
+  element.focus({ preventScroll: true })
+}
 const toggleGenerationTool = (tool: 'image' | 'video' | 'music'): void => {
   if (attachDisabled.value) return
   mediaComposer.value?.toggleGenerationTool(tool)
@@ -661,6 +675,7 @@ watch(() => [props.initialMode, props.initialSkillVersionIds] as const, ([mode, 
 })
 const composerRoot = useTemplateRef<{ $el?: HTMLElement } | HTMLElement>('composerRoot')
 const controlsGroup = useTemplateRef<HTMLElement | null>('controlsGroup')
+const attachmentTrigger = useTemplateRef<{ $el?: HTMLElement } | HTMLElement>('attachmentTrigger')
 const messageInput = useTemplateRef<{ focus: () => void; $el?: HTMLElement }>('messageInput')
 const dismissedCommandToken = ref<{ start: number; prefix: string } | null>(null)
 const activeCommandIndex = ref(0)
