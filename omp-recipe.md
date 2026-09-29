@@ -1,6 +1,6 @@
 # OMP Robust-Rapid Development Recipe
 
-Configure OMP for fast, reliable development across small and very large projects. Keep **32-worker capacity**, actively decompose substantial implementation into concurrently runnable ownership units, and budget an integration pass for their combined result. Spend reasoning and verification where they reduce defects or rework. This is an evidence-based starting configuration, not a claim that one model/effort combination is optimal for every project.
+Configure the global OMP harness for fast, reliable development across repositories. Keep **32-worker capacity**, actively decompose substantial implementation into concurrently runnable ownership units, and budget an integration pass for their combined result. Spend reasoning and verification where they reduce defects or rework. This is a starting configuration, not a claim that one model and effort combination is optimal for every project. Project, CLI, and runtime overrides can supersede global settings; keep those selections within the GPT-6/6.1 policy.
 
 **This recipe configures the harness; it does not authorize application changes, credential changes, dependency installation, OMP upgrades, commits, deployment, or remote Git operations.** Subsequent development follows the user's task authorization and the repository's active operating mode.
 
@@ -8,10 +8,10 @@ Configure OMP for fast, reliable development across small and very large project
 
 - Identify the installed OMP version, effective settings, active configuration layers, discovered agents, and registered provider/model selectors. Reuse current evidence instead of repeatedly auditing the same configuration.
 - Read applicable repository rules. Preserve user changes, unrelated settings, existing hard spending/time/request limits, and security/data-preservation boundaries.
-- Verify keys and model effort levels against the installed schema/source or matching documentation. The mappings below were assessed against OMP 18.2.6 and the implementation routing against 18.3.0; another version must be checked for relevant differences.
+- Verify keys and model effort levels against the installed schema/source or matching documentation. The mappings below were initially assessed against OMP 18.2.6 and implementation routing against 18.3.0; the Sol 6.1 selectors and effort levels were checked in the OMP 18.4.4 catalog. Another version must be checked for relevant differences.
 - Before editing configuration, retain a recoverable copy of only the files being changed and record any newly created paths. No release records, attestation packages, or broad backup ceremony for ordinary configuration edits.
-- Prefer the narrowest appropriate configuration scope. `omp config set` normally writes global settings; project settings and CLI/runtime overrides can take precedence. Never dump credentials into reports or backups with permissive access.
-- Apply supported improvements independently. A missing optional agent or model should leave that assignment unchanged, not block unrelated work or trigger an unapproved substitution.
+- Apply these role assignments to OMP's global configuration so they serve as the default across repositories. Project settings and CLI/runtime overrides take precedence and must be checked for compliance. Never dump credentials into reports or backups with permissive access.
+- If a required GPT-6/6.1 model is unavailable, report the affected role and leave its working assignment intact until the route is resolved. Do not claim the all-GPT-6/6.1 policy is active or silently substitute another model; unrelated assignments can proceed independently.
 
 Useful read-only inspection commands:
 
@@ -20,48 +20,58 @@ omp --version
 omp config path
 omp config list --json
 omp models find gpt-6 --json
-omp models find gpt-5.6-sol --json
+omp models find gpt-6.1-sol --json
 ```
 
 Inspect output privately and report only relevant, non-secret fields.
 
 ## 2. Use a strong coordinator and economical workers
 
-Use exact provider-qualified selectors. The assessed installation registers the assigned models under **`openai-codex/`**, not `openai/` or `openrouter/`. Confirm availability and the resolved model; a catalog entry is not proof of successful inference or account billing.
+Use exact provider-qualified selectors for every role, including utility roles. The assessed installation registers these GPT-6/6.1 models under **`openai-codex/`**, not `openai/` or `openrouter/`. Confirm availability and the resolved model; a catalog entry is not proof of successful inference or account billing.
 
 | Function | Agent / routing | Starting model and effort | Use |
 |---|---|---|---|
-| Main | `modelRoles.default` | `openai-codex/gpt-6-sol:medium` | Own requirements, decomposition, integration, and delivery; consult Architecture when a decision crosses or might cross the boundary in section 6; implement small cohesive changes directly |
-| Implementation | Existing `task`; `modelRoles.task` | `openai-codex/gpt-6-luna:max` | Decompose substantial work into bounded independent code-writing units, implement concurrently in isolated worktrees, and integrate the combined result |
+| Main | `modelRoles.default` | `openai-codex/gpt-6.1-sol:medium` | Own requirements, decomposition, integration, and delivery; consult Architecture when a decision crosses or might cross the boundary in section 6; implement small cohesive changes directly |
+| Implementation | Existing `task`; `modelRoles.task` | `openai-codex/gpt-6.1-sol:high` | Primary delegated coding route for substantial, independently writable units; Main integrates combined results and handles small cohesive changes directly |
 | Architecture | Custom `planner` defined below; `modelRoles.plan` | `openai-codex/gpt-6-astra:xhigh` | Material architecture, shared contracts, schema/data transitions, or trust-boundary decisions |
 | Discovery | Existing `scout` | `openai-codex/gpt-6-luna:medium` | Unmapped subsystems, independent research, exact source/tool evidence |
-| Mechanical work | Existing `sonic` | `openai-codex/gpt-6-luna:medium` | Substantial mechanical batches; run already-known commands directly without an extra agent |
-| Debug escalation | Existing implementation owner; `modelRoles.slow` if used | `openai-codex/gpt-6-astra:medium` | Semantic failures, contradictory evidence, or a concrete failed hypothesis requiring deeper reasoning |
-| Test specialist | Custom `tester`; `modelRoles.tester` | `openai-codex/gpt-6-sol:high` | Difficult behavioral test design or failure analysis; routine tests remain with the implementer |
-| Documentation | Custom `docwriter`; `modelRoles.docwriter` | `openai-codex/gpt-6-sol:medium` | Large independent documentation work; small updates remain with the implementer |
-| Independent review | Existing `reviewer` / `security-reviewer` | `openai-codex/gpt-6-sol:high` | Risk-selected correctness/security review; use `xhigh` for genuinely difficult high-risk changes |
+| Mechanical work | Existing `sonic` | `openai-codex/gpt-6-luna:medium` | Lowest-complexity, strictly mechanical low-risk batches; Main runs already-known simple commands directly when a worker adds no value |
+| Breakthrough escalation | Main selects `modelRoles.slow` explicitly for a bounded diagnostic assignment | `openai-codex/gpt-6-astra:high` | Concrete failed hypotheses, contradictory evidence, or a semantic impasse requiring breakthrough reasoning; hand the finding back to the implementation owner |
+| Test specialist | Custom `tester`; `modelRoles.tester` | `openai-codex/gpt-6.1-sol:high` | Difficult behavioral test design or failure analysis; routine tests remain with the implementer |
+| Documentation | Custom `docwriter`; `modelRoles.docwriter` | `openai-codex/gpt-6.1-sol:medium` | Large independent documentation work; small updates remain with the implementer |
+| Independent review | Existing `reviewer` / `security-reviewer` | `openai-codex/gpt-6.1-sol:high` | Risk-selected correctness/security review; use `xhigh` for genuinely difficult high-risk changes |
+| Commit utility | `modelRoles.commit` | `openai-codex/gpt-6-luna:low` | Lightweight commit-message generation when that facility is used |
+| Vision utility | `modelRoles.vision` | `openai-codex/gpt-6.1-sol:medium` | Image-capable model for vision tasks; verify actual image inference before depending on it |
+| Tiny utility | `modelRoles.tiny` | `openai-codex/gpt-6-luna:low` | Lowest-supported-effort utility route; not a coding worker |
+| Smol utility | `modelRoles.smol` | `openai-codex/gpt-6.1-sol:high` | Auxiliary model for selected limited-scope tasks; the role name does not create an agent |
+| Judge utility | `modelRoles.judge` | `openai-codex/gpt-6-astra:medium` | Classification route; retain its existing assignment |
 
-These are starting assignments, not mandatory participants in every task. Implementation uses Luna at `max`; reserve `gpt-6-astra:medium` for **Debug escalation**, not routine implementation or the test specialist. Raise other roles' effort when evidence warrants it; do not automatically run every reviewer at maximum effort. Difficult semantic diagnosis can still require escalation despite Luna's maximum effort.
+Sol 6.1 at `high` is the primary delegated implementation model. Main handles small cohesive changes directly and delegates substantial independent work when useful. Luna remains available for discovery and strictly mechanical Sonic work. Reserve Astra at `high` for explicit, bounded breakthrough diagnosis after a failed hypothesis, contradictory evidence, or a semantic impasse. `task` remains bound to `@task`; Main selects `@slow` through a supported model-selection path, verifies the resolved model and effort, and returns routine implementation to `@task`. Preserve the implementation context in the handoff. Do not enable automatic fallback or prewalk or create a new agent alias.
 
 - Reuse bundled agents and intentionally maintained custom definitions. `planner` is **not bundled**: install the definition below on a fresh setup. Keep that name as the recipe's stable dispatch identifier; its description and instructions narrow it to architectural decisions, while Main owns ordinary planning. Do not also create an `architect` alias or force every project to maintain six custom agents.
 - Keep routing centralized through `modelRoles` and quoted aliases such as `"@plan"`, referenced by agent frontmatter or `task.agentModelOverrides`. Model roles alone do not create agents or guarantee that bundled agents use those roles.
 - Align agent thinking settings with the intended selector; remove conflicting effort overrides when intentionally changing that assignment. Verify actual resolution rather than assuming a role suffix wins every precedence layer.
 - The assessed GPT-6 models advertise `low`, `medium`, `high`, `xhigh`, and `max`; their lowest advertised level is `low`. Do not treat `off`, `none`, and `minimal` as interchangeable.
 - Do not silently substitute unavailable models. Check startup/auth fallback, retry fallback, and prewalk handoffs as well as initial selection. Permit only explicitly approved fallback routes; if exact routing cannot be enforced, retain the working assignment and report the limitation.
-- Preserve unrelated roles such as vision, commit, and tiny. A new advisor model is unnecessary when automatic advice is disabled.
+- Keep commit, vision, tiny, smol, and judge as model roles, not additional task agents. Use GPT-6/6.1 selectors for them and for every other configured role. A new advisor model is unnecessary when automatic advice is disabled.
 
-For the current recipe assignments, merge these role and dispatch routes into the active scope; keep unrelated provider-qualified roles (commit, vision, tiny, smol, judge) and other user settings unless they conflict with the requested single-provider routing. `tester` and `docwriter` are custom agents: install their definitions below; model roles alone do not install them.
+Merge the following assignments into the global configuration for all repositories. Keep other user settings and existing agent definitions intact. Ensure project, CLI, and runtime overrides follow the same GPT-6/6.1 policy; a global file does not override higher-precedence selections. `tester` and `docwriter` are custom agents: install their definitions below; model roles alone do not install them.
 
 ```yaml
 modelRoles:
-  default: openai-codex/gpt-6-sol:medium
-  task: openai-codex/gpt-6-luna:max
+  commit: openai-codex/gpt-6-luna:low
+  vision: openai-codex/gpt-6.1-sol:medium
+  tiny: openai-codex/gpt-6-luna:low
+  smol: openai-codex/gpt-6.1-sol:high
+  default: openai-codex/gpt-6.1-sol:medium
+  task: openai-codex/gpt-6.1-sol:high
   plan: openai-codex/gpt-6-astra:xhigh
   discovery: openai-codex/gpt-6-luna:medium
-  slow: openai-codex/gpt-6-astra:medium
-  review: openai-codex/gpt-6-sol:high
-  tester: openai-codex/gpt-6-sol:high
-  docwriter: openai-codex/gpt-6-sol:medium
+  slow: openai-codex/gpt-6-astra:high
+  review: openai-codex/gpt-6.1-sol:high
+  tester: openai-codex/gpt-6.1-sol:high
+  docwriter: openai-codex/gpt-6.1-sol:medium
+  judge: openai-codex/gpt-6-astra:medium
 task:
   agentModelOverrides:
     task: "@task"
@@ -343,5 +353,9 @@ Retain native shell execution and useful context maintenance. Not every external
 **Recovery:** original setup copies of `config.yml`, `agents/planner.md`, and `AGENTS.md` are in `~/.omp/recipe-backups/2026-09-20T02-22-47-807Z/`. Pre-routing-repair `config.yml` is in `~/.omp/recipe-backups/2026-09-24-routing/`; the pre-plan/review-adjustment copy is in `~/.omp/recipe-backups/2026-09-24-plan-review/`. The planner definition immediately before this schema validation is in `~/.omp/recipe-backups/2026-09-24-validation/planner.md`. Pre-Luna implementation copies of `config.yml`, `AGENTS.md`, and `omp-recipe.md` are in `~/.omp/recipe-backups/2026-09-24-luna-implementation/`. Pre-specialist-routing copies of those same files and `agents/planner.md` are in `~/.omp/recipe-backups/2026-09-27-specialist-routing/` (directory mode 700, copies mode 600). To revert this routing, reconcile intervening edits before restoring only affected files, and remove the newly created `agents/tester.md` and `agents/docwriter.md` only if they have not gained other changes.
 
 The pre-Main-guidance copies of global `AGENTS.md`, project `AGENTS.md`, and this recipe are in `~/.omp/recipe-backups/2026-09-27-main-consultation/`. Reconcile intervening edits before restoring any one file.
+
+Pre-Sol-6.1 routing copies of global `config.yml`, global `AGENTS.md`, and this recipe are in `~/.omp/recipe-backups/2026-09-29-sol61-routing/` (directory mode 700, copies mode 600). Reconcile intervening edits before restoring any file.
+
+Pre-GPT-6-family utility-role copies of global `config.yml`, global `AGENTS.md`, and this recipe are in `~/.omp/recipe-backups/2026-09-29-gpt6-family/` (directory mode 700, copies mode 600). Reconcile intervening edits before restoring any file.
 
 During normal development, compare accepted-change quality, end-to-end latency, total model usage/cost, rework, conflicts, budget stops, and human interventions. Tune routing or effort when repeated evidence warrants it; change one policy dimension at a time when attribution matters. Keep **32-worker capacity** while improving packet sizing and scheduling. Optimize for reliable completed work per unit time and cost—not the fewest tokens, the most agents, or the most process steps.
