@@ -1018,9 +1018,11 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
   }
 
   if (threatModelContract) {
-    const citedPaths = options.release
-      ? threatModelContract.citedPaths
-      : threatModelContract.citedPaths.filter(p => p !== 'docs/security/review-attestations.json' && !p.startsWith('docs/security/review-attestations/'))
+    const citedPaths = threatModelContract.citedPaths.filter(
+      p =>
+        p !== CANONICAL_IGNORED_BUILD_METADATA_PATH &&
+        (options.release || (p !== 'docs/security/review-attestations.json' && !p.startsWith('docs/security/review-attestations/')))
+    )
     await validateContainedPaths(rootPath, realRoot, citedPaths, 'Cited path', 'existing-path', failures)
   }
 
