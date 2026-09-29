@@ -125,7 +125,8 @@
       border-radius: var(--wiki-radius-pill);
     }
 
-    &:dir(rtl)::after {
+    &[dir='rtl']::after,
+    [dir='rtl'] &::after {
       background: linear-gradient(to left, color-mix(in srgb, rgb(var(--v-theme-primary)) 60%, transparent), transparent);
     }
 

@@ -112,6 +112,8 @@ export async function expectResponsiveLayout(page: Page, surface: string) {
     const isInInactiveLayer = (element: HTMLElement) =>
       Boolean(element.closest('.v-navigation-drawer:not(.v-navigation-drawer--active), .v-overlay:not(.v-overlay--active), [aria-hidden="true"]'))
     const isInHorizontalScroller = (element: HTMLElement) => {
+      // The Agent starter marquee is a clipped, draggable track rather than a native scrollport.
+      if (element.closest('.inline-agent__starters--marquee')) return true
       for (let parent = element.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
         const style = window.getComputedStyle(parent)
         if (/auto|scroll/.test(style.overflowX) && parent.scrollWidth > parent.clientWidth + 1) return true
