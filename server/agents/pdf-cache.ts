@@ -10,7 +10,7 @@ import { AGENT_PDF_MAX_PAGES, AGENT_PDF_PART_MAX_BYTES, type PreparedAgentPdf } 
 
 export const AGENT_PDF_CACHE_TTL_MS = 6 * 3600_000
 const ENTRY_BYTES = 300 * 1024 * 1024
-const VERSION = 'pdf-v2-pikepdf9-250m-48m'
+const VERSION = 'pdf-v3-qpdf-250m-48m'
 const sourceSchema = z.object({
   id: z.string().uuid(),
   sessionId: z.string().uuid(),

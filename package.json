@@ -155,6 +155,7 @@
     "ldapts": "9.0.0",
     "lodash": "4.18.1",
     "logform": "2.7.0",
+    "lossless-json": "4.3.1",
     "luxon": "3.7.2",
     "markdown-it": "15.0.0",
     "markdown-it-abbr": "2.0.0",

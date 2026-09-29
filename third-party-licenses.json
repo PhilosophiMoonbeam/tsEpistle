@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "a70a2e9f5fce20a6f3a3d43807a57190f3ee58985891e5e1e654a455d42aad0a",
+    "sha256": "896e79a6c43d304502fa7c3fed562770e5540614614e291b01ad2da52ea65e10",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -4497,6 +4497,14 @@
       "license": "MIT",
       "author": "Charlie Robbins <charlie.robbins@gmail.com>",
       "homepage": "https://github.com/winstonjs/logform#readme"
+    },
+    {
+      "name": "lossless-json",
+      "versions": [
+        "4.3.1"
+      ],
+      "license": "MIT",
+      "author": "Jos de Jong"
     },
     {
       "name": "lru-cache",

@@ -1,16 +1,13 @@
-import { spawn } from 'node:child_process'
 import { chmod, copyFile, lstat, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import { PdfWorkerError, preparePdfWorker } from './pdf-worker.ts'
 
 export const AGENT_PDF_PART_MAX_BYTES = 48_000_000
 export const AGENT_PDF_MAX_BYTES = 250 * 1024 * 1024
 export const AGENT_PDF_MAX_PAGES = 1000
 const MAX_OUTPUT_BYTES = 300 * 1024 * 1024
-const WORKER_TIMEOUT_MS = 45_000
-const workerPath = fileURLToPath(new URL('./pdf-worker.py', import.meta.url))
 let workerBusy = false
 
 export const AGENT_PDF_ERRORS = {
@@ -53,48 +50,6 @@ export interface PreparedAgentPdf {
 }
 const abortError = (): DOMException => new DOMException('PDF preparation was cancelled.', 'AbortError')
 
-const runWorker = (inputPath: string, signal: AbortSignal): Promise<unknown> => new Promise((complete, fail) => {
-  if (signal.aborted) { fail(abortError()); return }
-  const child = spawn('python3', ['-I', '-B', workerPath, inputPath], {
-    shell: false,
-    cwd: tmpdir(),
-    env: { PATH: process.env.PATH ?? '/usr/bin:/bin', LANG: 'C.UTF-8' },
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
-  let stdout = ''
-  let stderrBytes = 0
-  let stopped = false
-  let aborted = false
-  const stop = () => { stopped = true; child.kill('SIGKILL') }
-  const onAbort = () => { aborted = true; stop() }
-  signal.addEventListener('abort', onAbort, { once: true })
-  if (signal.aborted) onAbort()
-  const timeout = setTimeout(stop, WORKER_TIMEOUT_MS)
-  timeout.unref()
-  const release = () => { clearTimeout(timeout); signal.removeEventListener('abort', onAbort) }
-  child.stdout.on('data', (chunk: Buffer) => {
-    if (stopped) return
-    if (Buffer.byteLength(stdout) + chunk.byteLength > 32 * 1024) { stop(); return }
-    stdout += chunk.toString('utf8')
-  })
-  child.stderr.on('data', (chunk: Buffer) => { stderrBytes += chunk.byteLength; if (stderrBytes > 8 * 1024) stop() })
-  child.once('error', () => { release(); fail(new AgentPdfPreparationError('PDF_PREPARATION_FAILED')) })
-  // 'close' waits for exit and closed stdio: callers never remove a live worker's files.
-  child.once('close', code => {
-    release()
-    if (aborted) { fail(abortError()); return }
-    if (stopped) { fail(new AgentPdfPreparationError('PDF_PREPARATION_FAILED')); return }
-    try {
-      const value: unknown = JSON.parse(stdout)
-      if (code !== 0) {
-        const error = z.strictObject({ error: z.string() }).safeParse(value)
-        throw new AgentPdfPreparationError(error.success && Object.hasOwn(AGENT_PDF_ERRORS, error.data.error) ? error.data.error as AgentPdfErrorCode : 'PDF_PREPARATION_FAILED')
-      }
-      complete(value)
-    } catch (error) { fail(error instanceof AgentPdfPreparationError ? error : new AgentPdfPreparationError('PDF_PREPARATION_FAILED')) }
-  })
-})
-
 const preparePdfInput = async (writeInput: (path: string) => Promise<void>, signal: AbortSignal): Promise<PreparedAgentPdf> => {
   if (signal.aborted) throw abortError()
   if (workerBusy) throw new AgentPdfPreparationError('PDF_PREPARATION_BUSY')
@@ -108,7 +63,7 @@ const preparePdfInput = async (writeInput: (path: string) => Promise<void>, sign
     const inputPath = join(directory, 'input.pdf')
     await writeInput(inputPath)
     await chmod(inputPath, 0o600)
-    const raw = await runWorker(inputPath, signal)
+    const raw = await preparePdfWorker(inputPath, signal, { ownedInput: true })
     if (signal.aborted) throw abortError()
     const parsed = manifestSchema.safeParse(raw)
     if (!parsed.success) throw new AgentPdfPreparationError('PDF_PREPARATION_FAILED')
@@ -140,7 +95,11 @@ const preparePdfInput = async (writeInput: (path: string) => Promise<void>, sign
     return { pageCount: manifest.pageCount, parts, cleanup }
   } catch (error) {
     await cleanup()
-    throw error instanceof AgentPdfPreparationError || signal.aborted ? (signal.aborted ? abortError() : error) : new AgentPdfPreparationError('PDF_PREPARATION_FAILED')
+    throw error instanceof PdfWorkerError
+      ? new AgentPdfPreparationError(error.code)
+      : error instanceof AgentPdfPreparationError || signal.aborted
+        ? (signal.aborted ? abortError() : error)
+        : new AgentPdfPreparationError('PDF_PREPARATION_FAILED')
   } finally {
     workerBusy = false
   }
