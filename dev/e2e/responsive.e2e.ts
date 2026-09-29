@@ -2573,7 +2573,7 @@ test.describe('responsive UI quality matrix', () => {
         await panel.getByRole('button', { name: 'Close chat history' }).click()
       }
       await expect(panel).toBeHidden()
-      if (expectedMode === 'modal') await expect(historyToggle).toBeFocused()
+      if (expectedMode === 'modal') await expect(width < 640 ? agent.getByRole('button', { name: 'Settings', exact: true }) : historyToggle).toBeFocused()
     }
 
     await page.setViewportSize({ width: 640, height: 420 })
