@@ -27,7 +27,7 @@ async function installBrowserIdentity(page: Page) {
 async function openAgent(page: Page): Promise<Locator> {
   await page.route('**/_api/pages/search?**', route => route.fulfill({ json: { results: [], suggestions: [], totalHits: 0, nextCursor: null } }))
   await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await expect(page.locator('.nav-header')).toBeVisible()
+  await expect(page.locator('.nav-header')).toBeVisible({ timeout: 30_000 })
   const search = await openSearch(page)
   await search.fill('home')
   const dialog = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })

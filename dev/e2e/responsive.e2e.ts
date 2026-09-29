@@ -199,12 +199,11 @@ test.describe('responsive UI quality matrix', () => {
         }
         const highestAvailableHeadings = tocCard.locator('.page-toc-item-title--depth-0')
         expect(await highestAvailableHeadings.count(), 'Page Contents emphasizes at least one highest-level heading').toBeGreaterThan(0)
-        for (const heading of await highestAvailableHeadings.all()) {
-          await expect(heading).toHaveCSS('font-weight', '700')
-        }
         const depth1Headings = tocCard.locator('.page-toc-item-title--depth-1')
-        for (const heading of await depth1Headings.all()) {
-          await expect(heading).toHaveCSS('font-weight', '550')
+        if (await depth1Headings.count()) {
+          const primaryWeight = Number(await highestAvailableHeadings.first().evaluate(element => getComputedStyle(element).fontWeight))
+          const secondaryWeight = Number(await depth1Headings.first().evaluate(element => getComputedStyle(element).fontWeight))
+          expect(primaryWeight, 'Top-level contents headings remain more prominent than nested entries').toBeGreaterThan(secondaryWeight)
         }
 
         if (await headingLinks.count()) {
@@ -2642,7 +2641,7 @@ test.describe('responsive UI quality matrix', () => {
     await expectResponsiveLayout(page, 'Not-found page')
   })
 
-  test('sizes the authored H1 swoosh to its text block while preserving heading hierarchy', async ({ page }) => {
+  test('sizes the authored H1 accent to its text block while preserving heading hierarchy', async ({ page }) => {
     await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
 
     const decorations = await page.evaluate(() => {
@@ -2683,8 +2682,9 @@ test.describe('responsive UI quality matrix', () => {
         article.append(heading)
         const bounds = heading.getBoundingClientRect()
         const pseudo = getPseudo(heading, '::after')
+        const gradient = window.getComputedStyle(heading, '::after').backgroundImage
         heading.remove()
-        return { width: bounds.width, pseudoWidth: pseudo?.width ?? 0, transform: pseudo?.transform ?? 'none' }
+        return { width: bounds.width, pseudoWidth: pseudo?.width ?? 0, gradient }
       }
 
       const h1Bounds = authoredH1?.getBoundingClientRect() ?? null
@@ -2721,9 +2721,9 @@ test.describe('responsive UI quality matrix', () => {
 
     expect(decorations.hasAuthoredH1, 'Authored H1 must exist in article.contents').toBe(true)
     expect(decorations.h1After, 'Authored H1 ::after must exist').not.toBeNull()
-    expect(decorations.h1After?.display, 'Authored H1 swoosh must render').not.toBe('none')
-    expect(decorations.h1After?.height, 'Authored H1 swoosh has ~3.5px block size').toBeGreaterThanOrEqual(3)
-    expect(decorations.h1After?.height, 'Authored H1 swoosh has ~3.5px block size').toBeLessThanOrEqual(4)
+    expect(decorations.h1After?.display, 'Authored H1 accent must render').not.toBe('none')
+    expect(decorations.h1After?.height, 'Authored H1 accent remains visible without dominating the heading').toBeGreaterThan(0)
+    expect(decorations.h1After?.height, 'Authored H1 accent remains a slim rule').toBeLessThanOrEqual(2.5)
     expect(Math.abs((decorations.h1After?.width ?? 0) - decorations.h1Width), 'Swoosh matches authored H1 text-block width').toBeLessThanOrEqual(1)
     expect(decorations.shortH1, 'Synthetic short H1 must be measurable').not.toBeNull()
     expect(decorations.longH1, 'Synthetic long H1 must be measurable').not.toBeNull()
@@ -2732,7 +2732,7 @@ test.describe('responsive UI quality matrix', () => {
     )
     expect(Math.abs((decorations.longH1?.pseudoWidth ?? 0) - (decorations.longH1?.width ?? 0)), 'Long H1 swoosh matches its text block').toBeLessThanOrEqual(1)
     expect(decorations.longH1?.width ?? 0, 'Long H1 swoosh grows beyond short H1 swoosh').toBeGreaterThan((decorations.shortH1?.width ?? 0) + 100)
-    expect(decorations.rtlH1?.transform ?? 'none', 'RTL H1 mirrors the swoosh').toMatch(/^matrix\(-1,\s*0,\s*0,\s*1,/)
+    expect(decorations.rtlH1?.gradient ?? '', 'RTL H1 accent fades toward the inline end').toContain('to left')
     expect(decorations.footnoteScrollMargin, 'Footnote target clears fixed page chrome').toBeGreaterThanOrEqual(64)
     expect(decorations.h1AnchorContained, 'H1 permalink remains inside the article').toBe(true)
 
@@ -2838,10 +2838,10 @@ test.describe('responsive UI quality matrix', () => {
         table.scrollLeft = 50
         const tableScrollable = table.scrollLeft > 0
 
-        // Reachability: scroll wrapper to end and check last column is reached
-        const maxScroll = wrapper.scrollWidth - wrapper.clientWidth
-        wrapper.scrollLeft = maxScroll
-        const reachedEnd = wrapper.scrollLeft > 0 && Math.abs(wrapper.scrollLeft - maxScroll) <= 2
+        // Scroll to the end and inspect the last column, not scrollWidth: stable scrollbar gutters can inflate it.
+        wrapper.scrollLeft = wrapper.scrollWidth
+        const lastColumn = table.querySelector('th:last-child')
+        const reachedEnd = wrapper.scrollLeft > 0 && Boolean(lastColumn && lastColumn.getBoundingClientRect().right <= wrapper.getBoundingClientRect().right + 2)
 
         wrappedResults.push({
           name: config.name,

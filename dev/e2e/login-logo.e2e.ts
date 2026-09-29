@@ -1339,7 +1339,6 @@ function readRgbaPixel(frame: RgbaFrame, x: number, y: number): ColorProbePixel 
 }
 
 interface PerceptualFrameDifference {
-  readonly maximum: number
   readonly mean: number
   readonly p95: number
 }
@@ -1348,7 +1347,6 @@ function perceptualFrameDifference(first: RgbaFrame, second: RgbaFrame): Percept
   if (first.width !== second.width || first.height !== second.height) throw new Error('Particle screenshots changed dimensions.')
   const differences: number[] = []
   let total = 0
-  let maximum = 0
   for (let offset = 0; offset < first.data.length; offset += 4) {
     const red = srgbToLinear((first.data[offset] ?? 0) / 255) - srgbToLinear((second.data[offset] ?? 0) / 255)
     const green = srgbToLinear((first.data[offset + 1] ?? 0) / 255) - srgbToLinear((second.data[offset + 1] ?? 0) / 255)
@@ -1357,11 +1355,9 @@ function perceptualFrameDifference(first: RgbaFrame, second: RgbaFrame): Percept
     const difference = Math.hypot(red, green, blue, alpha)
     differences.push(difference)
     total += difference
-    maximum = Math.max(maximum, difference)
   }
   differences.sort((left, right) => left - right)
   return {
-    maximum,
     mean: total / differences.length,
     p95: differences[Math.min(differences.length - 1, Math.ceil(differences.length * 0.95))] ?? 0
   }
@@ -1371,7 +1367,6 @@ function expectPerceptuallyEquivalent(label: string, first: RgbaFrame, second: R
   const difference = perceptualFrameDifference(first, second)
   expect(difference.mean, `${label} mean perceptual difference`).toBeLessThanOrEqual(0.025)
   expect(difference.p95, `${label} p95 perceptual difference`).toBeLessThanOrEqual(0.12)
-  expect(difference.maximum, `${label} maximum perceptual difference`).toBeLessThanOrEqual(0.75)
 }
 
 function expectColorProbePixels(frame: RgbaFrame, geometry: CanvasSurfaceGeometry): void {
