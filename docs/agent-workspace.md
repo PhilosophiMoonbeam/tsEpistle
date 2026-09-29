@@ -16,11 +16,15 @@ Search results show available match fields (for example, title, tags, or page te
 
 Welcome starters use compact two-line cards: an icon and bold title on the first line, with the description on the second. Each workspace visit samples one of ten two-line greeting pairs, and the selected pair stays stable for that visit. In a page context they are **Understand This Page**, **Connect the Dots**, and **Catch Up**; without page context the first card is **Explore the Wiki**. Selecting **Catch Up** asks for the ten most recently updated accessible pages, with one brief sourced summary per page. Selecting any starter submits it immediately through the same one-send path, while a user-authored custom message still uses the ordinary editable composer and **Send** action. Source and Search handoffs remain editable drafts until the user submits them. The empty workspace starts at the top on every visit.
 
+On narrow screens, available starters can drift and be dragged through the repeating strip. When inference is unavailable, disabled starters remain in a stationary, keyboard-scrollable row instead of animating controls that cannot be used.
+
 History changes its icon and background to a restrained purple near `#673AB7` on pointer hover; New and Close retain their distinct feedback. Only the three welcome-starter icons use separate pastel hues, including the repeating mobile strip; starter text and prompts are unchanged.
 
 **Catch Up** is one bounded current-source read, not eleven redundant activities. The recent-page action selects up to ten accessible pages in stable update order, reauthorizes every page, and supplies an exact bounded opening excerpt from each selected revision. Those excerpts are page-level evidence, so the Agent can cite and summarize every returned page without fetching all ten pages again. When a source is longer than its excerpt, the answer discloses that its recap is based on bounded opening excerpts; it must not claim to have checked the unread suffix or compared revisions.
 
 Generic capacity behavior remains explicit. If the complete recent-evidence packet itself cannot fit the selected provider's context, an executed result is **Result omitted** and later calls prevented by that condition are **Not executed**; neither is a genuine action failure. **Failed** remains reserved for actual action errors. Reconnecting restores every recorded activity and terminal label without replaying or converting it.
+
+**Stop response** remains actionable while the event stream reconnects, provided the workspace itself is online. Stopping refreshes the authoritative conversation, marks the interrupted response as stopped, and restores the follow-up composer; a reconnecting stream alone does not block cancellation.
 Mermaid diagrams render with their source disclosure closed by default. Rerendering preserves each user's open/closed source state (along with the existing focus, scroll, and copy feedback state).
 
 ## Token usage and provider completion

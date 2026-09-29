@@ -229,6 +229,7 @@
                   :class="{ 'inline-agent__starters--marquee': startersMarqueeActive && startersMarqueePeriod > 0 }"
                   role="group"
                   aria-label="Conversation starters"
+                  :tabindex="!canSubmit ? 0 : undefined"
                   @pointerdown="onStartersPointerDown"
                   @pointermove="onStartersPointerMove"
                   @pointerup="onStartersPointerUp"
@@ -711,6 +712,7 @@ const startersMarqueeList = computed(() =>
 const startersMarqueeWanted = (): boolean =>
   startersRow.value !== null &&
   startersStrip.value !== null &&
+  providerAvailable.value &&
   (startersMobileMedia ??= window.matchMedia('(max-width: 639.98px)')).matches &&
   !(startersMotionMedia ??= window.matchMedia('(prefers-reduced-motion: reduce)')).matches
 
@@ -948,6 +950,7 @@ const refreshAfterMedia = async () => {
   try { await agents.refreshThread() } finally { mediaRefreshing.value = false }
 }
 const providerAvailable = computed(() => props.providerEnabled && profiles.value.length > 0)
+watch(providerAvailable, syncStartersMarquee, { flush: 'post' })
 const workspaceReady = computed(() => agents.isWorkspaceReady())
 const serverConnectionUnavailable = computed(() =>
   pwaState.connectionState === 'offline' ||
@@ -1297,7 +1300,7 @@ const cancelGoal = (): void => {
   if (networkActionAllowed()) void agents.cancelGoal()
 }
 const stopRun = (): void => {
-  if (networkActionAllowed()) void agents.stop()
+  if (!disposed && !connectionBlocked.value && agents.isWorkspaceMutationReady()) void agents.stop()
 }
 const focusConversation = async (): Promise<void> => {
   composerFocused.value = false

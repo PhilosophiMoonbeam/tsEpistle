@@ -1188,7 +1188,7 @@ export const useAgentsStore = defineStore('agents', {
       }
     },
     async stop() {
-      if (!this.isWorkspaceReady()) return
+      if (!this.isWorkspaceMutationReady()) return
       const goal = this.thread?.goal
       if (goal?.status === 'active' || goal?.status === 'blocked') {
         await this.pauseGoal()

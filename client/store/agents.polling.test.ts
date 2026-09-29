@@ -2166,6 +2166,7 @@ describe('Agent session mutation transitions', () => {
     const cancellation = deferred<Response>()
     store.thread = active
     markWorkspaceReady(store)
+    store.connection = 'reconnecting'
     const fetcher = vi
       .spyOn(window, 'fetch')
       .mockImplementationOnce(() => cancellation.promise)
