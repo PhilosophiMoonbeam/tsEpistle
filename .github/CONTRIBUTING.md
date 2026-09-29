@@ -28,6 +28,8 @@ The Bun 1.4.2 lock keeps the direct Undici 8.x transport and Cheerio's scoped Un
 The bigger the pull request, the longer it will take to review and merge. Try to break down large pull requests in smaller chunks that are easier to review and merge.
 It is also always helpful to have some context for your pull request. What was the purpose? Why does it matter to you?
 
+For the complete isolated Bun suite, build the application assets first (`bun run build`) and provide Python 3.12 with `pikepdf==9.5.2` on `PATH` for the PDF worker tests. Both quality workflows provision those prerequisites after the static check; targeted tests that do not load setup assets or PDFs can run without them.
+
 ## Enterprise Release — security review and attestation workflow
 This workflow applies only when a maintainer explicitly activates **Enterprise Release** for a named official beta, production release, or compliance milestone as defined in `AGENTS.md`. Development Sprint is the default: routine development and maintained local-tailnet deployment do not require an immutable source/attestation pair, review record, evidence document, manifest update, release tag, provenance record, or certification artifact.
 
