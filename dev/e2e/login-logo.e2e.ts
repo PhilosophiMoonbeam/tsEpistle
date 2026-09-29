@@ -1637,10 +1637,12 @@ async function expectFieldGeometry(page: Page, effect: ManagedEffect): Promise<v
   const report = await page.locator('.login-particle-logo').evaluate((field, descriptor) => {
     const image = field.querySelector('.login-particle-logo__image')
     const card = document.querySelector('main.login-sd')
-    if (!(image instanceof HTMLImageElement) || !(card instanceof HTMLElement)) return null
+    const login = field.parentElement
+    if (!(image instanceof HTMLImageElement) || !(card instanceof HTMLElement) || !(login instanceof HTMLElement)) return null
     const fieldRect = field.getBoundingClientRect()
     const imageRect = image.getBoundingClientRect()
     const cardRect = card.getBoundingClientRect()
+    const style = getComputedStyle(login)
     return {
       aspectError: Math.abs(imageRect.width / imageRect.height / descriptor.aspect - 1),
       clearBottom: fieldRect.bottom - imageRect.bottom,
@@ -1649,6 +1651,9 @@ async function expectFieldGeometry(page: Page, effect: ManagedEffect): Promise<v
       clearTop: imageRect.top - fieldRect.top,
       fieldHeight: fieldRect.height,
       fieldWidth: fieldRect.width,
+      paddingBottom: Number.parseFloat(style.paddingBottom) || 0,
+      paddingRight: Number.parseFloat(style.paddingRight) || 0,
+      paddingTop: Number.parseFloat(style.paddingTop) || 0,
       intersectsCard: !(
         fieldRect.right <= cardRect.left ||
         fieldRect.left >= cardRect.right ||
@@ -1659,10 +1664,12 @@ async function expectFieldGeometry(page: Page, effect: ManagedEffect): Promise<v
   }, effect)
   expect(report).not.toBeNull()
   expect(report?.aspectError).toBeLessThan(0.005)
-  expect(report?.clearLeft).toBeGreaterThanOrEqual((report?.fieldWidth ?? 0) * 0.08 - 1)
-  expect(report?.clearRight).toBeGreaterThanOrEqual((report?.fieldWidth ?? 0) * 0.08 - 1)
-  expect(report?.clearTop).toBeGreaterThanOrEqual((report?.fieldHeight ?? 0) * 0.08 - 1)
-  expect(report?.clearBottom).toBeGreaterThanOrEqual((report?.fieldHeight ?? 0) * 0.08 - 1)
+  const paddedWidth = (report?.fieldWidth ?? 0) - (report?.paddingRight ?? 0)
+  const paddedHeight = (report?.fieldHeight ?? 0) - (report?.paddingTop ?? 0) - (report?.paddingBottom ?? 0)
+  expect(report?.clearLeft).toBeGreaterThanOrEqual(paddedWidth * 0.08 - 1)
+  expect(report?.clearRight).toBeGreaterThanOrEqual(paddedWidth * 0.08 + (report?.paddingRight ?? 0) - 1)
+  expect(report?.clearTop).toBeGreaterThanOrEqual(paddedHeight * 0.08 + (report?.paddingTop ?? 0) - 1)
+  expect(report?.clearBottom).toBeGreaterThanOrEqual(paddedHeight * 0.08 + (report?.paddingBottom ?? 0) - 1)
   expect(report?.intersectsCard).toBe(false)
 }
 
