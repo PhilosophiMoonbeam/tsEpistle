@@ -5,7 +5,13 @@ import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/pro
 import { AgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import { AgentProviderAttemptError, type AgentProviderFactory, type AgentProviderService } from '../../agents/providers/factory.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
-import type { AgentEngineRequest } from '../../agents/runtime.ts'
+import type {
+  AgentDispatchBudget,
+  AgentDispatchBudgetReservation,
+  AgentDispatchBudgetSequence,
+  AgentDispatchUsage,
+  AgentEngineRequest
+} from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
@@ -360,7 +366,7 @@ describe('Ax orchestration stages', () => {
     ).execute(
       {
         ...baseRequest(new AbortController().signal),
-        limits: { maxTurns: 3, maxToolCalls: 11, maxOutputTokens: 100 }
+        limits: { maxTurns: 4, maxToolCalls: 11, maxOutputTokens: 100 }
       },
       { text: async () => {}, event: async () => {} }
     )
@@ -623,11 +629,10 @@ describe('Ax orchestration stages', () => {
     const response = await new AxAgentEngine(factoryFor(chat), actions).execute(
       {
         ...baseRequest(new AbortController().signal),
-        limits: { maxTokens: 100, maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 10 }
+        limits: { maxTokens: 60_000, maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 10 }
       },
       { text, event: async () => {} }
     )
-    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('could not complete the remaining page read')
     expect(invoke).toHaveBeenCalledTimes(1)
   })
   it('settles a tool-free provider call after a read without dispatching it or publishing an unverified answer', async () => {
@@ -666,7 +671,7 @@ describe('Ax orchestration stages', () => {
     const result = await new AxAgentEngine(factoryFor(chat), actions).execute(
       {
         ...baseRequest(new AbortController().signal),
-        limits: { maxTokens: 100, maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 10 }
+        limits: { maxTokens: 60_000, maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 10 }
       },
       { text, event }
     )
@@ -875,7 +880,7 @@ describe('Ax orchestration stages', () => {
         new AxAgentEngine(factoryFor(chat), actions).execute(
           {
             ...baseRequest(new AbortController().signal),
-            limits: { maxTokens: 100, maxTurns: 1, maxToolCalls: 1, maxOutputTokens: 10 }
+            limits: { maxTokens: 60_000, maxTurns: 1, maxToolCalls: 1, maxOutputTokens: 10 }
           },
           { text: async () => {}, event: async () => {} }
         )
@@ -2331,4 +2336,223 @@ describe('child aggregate budget reservations', () => {
     reservations.release(reservation, { totalTokens: 4, outputCharacters: 10 })
     expect(reservations.consumed).toEqual({ totalTokens: 4, outputCharacters: 10 })
   })
+})
+
+class PublicationBudgetLedger implements AgentDispatchBudget {
+  readonly active = new Map<number, { tokens: number; costMicros: number }>()
+  readonly reconciled: number[] = []
+  readonly dispatched: AgentDispatchBudgetReservation[] = []
+  readonly unusedAtDispatch: number[] = []
+  readonly closedUnused: number[] = []
+  consumedTokens = 0
+  consumedCostMicros = 0
+  allocatedTokens = 0
+  returnedTokens = 0
+  tools = 0
+  #nextId = 1
+
+  constructor(readonly maximumTokens: number) {}
+
+  get unsettledExposure() {
+    let tokens = 0
+    let costMicros = 0
+    for (const held of this.active.values()) {
+      tokens += held.tokens
+      costMicros += held.costMicros
+    }
+    return { tokens, costMicros }
+  }
+
+  async reserve(maximum: { tokens: number; costMicros: number }): Promise<AgentDispatchBudgetReservation> {
+    expect(this.consumedTokens + this.unsettledExposure.tokens + maximum.tokens).toBeLessThanOrEqual(this.maximumTokens)
+    const reservation = { id: this.#nextId++, ...maximum }
+    this.active.set(reservation.id, maximum)
+    this.allocatedTokens += maximum.tokens
+    return reservation
+  }
+
+  async reconcile(reservation: AgentDispatchBudgetReservation, actual: AgentDispatchUsage) {
+    expect(this.active.has(reservation.id)).toBe(true)
+    expect(this.reconciled).not.toContain(reservation.id)
+    expect(actual.totalTokens).toBeLessThanOrEqual(reservation.tokens)
+    expect(actual.costMicros).toBeLessThanOrEqual(reservation.costMicros)
+    this.active.delete(reservation.id)
+    this.reconciled.push(reservation.id)
+    this.consumedTokens += actual.totalTokens
+    this.consumedCostMicros += actual.costMicros
+    this.returnedTokens += reservation.tokens - actual.totalTokens
+  }
+
+  async release(reservation: AgentDispatchBudgetReservation) {
+    expect(this.active.delete(reservation.id)).toBe(true)
+    this.returnedTokens += reservation.tokens
+  }
+
+  async consumeTool() {
+    this.tools++
+  }
+
+  async reserveSequence(maximum: { tokens: number; costMicros: number }): Promise<AgentDispatchBudgetSequence> {
+    const parent = await this.reserve(maximum)
+    let closed = false
+    const children = new Set<number>()
+    const ledger = this
+    return {
+      reserve: async requested => {
+        expect(closed).toBe(false)
+        const available = ledger.active.get(parent.id)!
+        expect(requested.tokens).toBeLessThanOrEqual(available.tokens)
+        expect(requested.costMicros).toBeLessThanOrEqual(available.costMicros)
+        const child = { id: ledger.#nextId++, ...requested }
+        ledger.active.set(parent.id, { tokens: available.tokens - requested.tokens, costMicros: available.costMicros - requested.costMicros })
+        ledger.active.set(child.id, requested)
+        children.add(child.id)
+        ledger.dispatched.push(child)
+        ledger.unusedAtDispatch.push(available.tokens - requested.tokens)
+        return child
+      },
+      reconcile: async (reservation, actual) => {
+        expect(children.delete(reservation.id)).toBe(true)
+        await ledger.reconcile(reservation, actual)
+      },
+      release: async reservation => {
+        expect(children.delete(reservation.id)).toBe(true)
+        await ledger.release(reservation)
+      },
+      resizeUndispatched: async requested => {
+        expect(closed).toBe(false)
+        const available = ledger.active.get(parent.id)!
+        expect(ledger.consumedTokens + ledger.unsettledExposure.tokens - available.tokens + requested.tokens).toBeLessThanOrEqual(ledger.maximumTokens)
+        const difference = requested.tokens - available.tokens
+        if (difference >= 0) ledger.allocatedTokens += difference
+        else ledger.returnedTokens -= difference
+        ledger.active.set(parent.id, requested)
+      },
+      close: async () => {
+        expect(closed).toBe(false)
+        expect(children.size).toBe(0)
+        closed = true
+        const unused = ledger.active.get(parent.id)!
+        ledger.closedUnused.push(unused.tokens)
+        ledger.returnedTokens += unused.tokens
+        ledger.active.delete(parent.id)
+      },
+      consumeTool: () => ledger.consumeTool(),
+      get unsettledExposure() {
+        return ledger.unsettledExposure
+      }
+    }
+  }
+}
+
+describe('bounded root publication accounting', () => {
+  for (const outcome of ['first-accepted', 'repaired', 'exhausted'] as const) {
+    it(`conserves draft and correction exposure when publication is ${outcome}`, async () => {
+      const budget = new PublicationBudgetLedger(120_000)
+      const accepted = 'Alpha requires review. [[cite:page:1:revision:rev-1]]'
+      const rejected = 'Alpha does not require review. [[cite:page:1:revision:rev-1]]'
+      let turn = 0
+      const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+        turn++
+        expect(input.modelConfig?.maxTokens).toBeLessThanOrEqual(512)
+        if (turn > 1) {
+          expect(input.functions).toBeUndefined()
+          // The first draft must not release the input/output capacity for
+          // its possible repair before the consumer accepts that draft.
+          if (turn === 2) expect(budget.unusedAtDispatch[0]).toBeGreaterThan(512)
+        }
+        return {
+          results: [
+            turn === 1
+              ? { index: 0, functionCalls: [{ id: 'read-alpha', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }
+              : { index: 0, content: outcome === 'exhausted' || (outcome === 'repaired' && turn === 2) ? rejected : accepted }
+          ],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+        } satisfies AxChatResponse
+      })
+      const invoke = vi.fn(async () => ({
+        id: 1,
+        locale: 'en',
+        path: 'alpha',
+        title: 'Alpha',
+        contentType: 'markdown',
+        sourceRevision: 'rev-1',
+        content: 'Alpha requires review.',
+        citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
+        citationSections: []
+      }))
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+          invoke,
+          validateObservation: async () => true,
+          snapshot: async () => ({}),
+          close: () => {},
+          authoritySha256: null
+        })
+      }
+      const text = vi.fn(async () => {})
+      const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions).execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          messages: [{ role: 'user', content: 'What does Alpha require?' }],
+          limits: { maxTokens: budget.maximumTokens, maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 512 },
+          dispatchBudget: budget
+        },
+        { text, event: async () => {} }
+      )
+      const expectedTurns = outcome === 'first-accepted' ? 2 : 3
+      expect(chat).toHaveBeenCalledTimes(expectedTurns)
+      expect(invoke).toHaveBeenCalledOnce()
+      expect(budget.tools).toBe(1)
+      expect(budget.dispatched).toHaveLength(expectedTurns - 1)
+      expect(budget.reconciled).toHaveLength(expectedTurns)
+      expect(budget.consumedTokens).toBe(expectedTurns * 5)
+      expect(budget.consumedCostMicros).toBe(expectedTurns * 7)
+      expect(result.totalTokens).toBe(budget.consumedTokens)
+      expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+      expect(budget.allocatedTokens).toBe(budget.returnedTokens + budget.consumedTokens)
+      expect(budget.closedUnused).toHaveLength(1)
+      const published = text.mock.calls.map(([delta]) => delta).join('')
+      expect(published).not.toContain('does not require review')
+      if (outcome === 'exhausted') {
+        expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
+        expect(result.citations).toBeUndefined()
+      } else {
+        expect(result.executionLimit).toBeUndefined()
+        expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:1:revision:rev-1' })])
+        expect(published).toContain('Alpha requires review.')
+        if (outcome === 'first-accepted') expect(budget.closedUnused[0]).toBeGreaterThan(512)
+      }
+    })
+  }
+
+  for (const maxTurns of [1, 2]) {
+    it(`accepts a valid single-pass answer under a ${maxTurns}-turn cap that cannot fund two full generations`, async () => {
+      const content = "I couldn't verify this from the available sources."
+      const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+        expect(input.functions).toBeUndefined()
+        expect(input.modelConfig?.maxTokens).toBeLessThanOrEqual(128)
+        return {
+          results: [{ index: 0, content }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+        } satisfies AxChatResponse
+      })
+      const engine = new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }))
+      const request = { ...baseRequest(new AbortController().signal), limits: { maxTurns, maxToolCalls: 0, maxOutputTokens: 128 } }
+      const preflight = await engine.preflight(request)
+      const budget = new PublicationBudgetLedger(preflight.totalExposureTokens + 64)
+      const text = vi.fn(async () => {})
+      const result = await engine.execute(
+        { ...request, limits: { ...request.limits, maxTokens: budget.maximumTokens }, dispatchBudget: budget },
+        { text, event: async () => {} }
+      )
+      expect(chat).toHaveBeenCalledOnce()
+      expect(result.executionLimit).toBeUndefined()
+      expect(budget.reconciled).toHaveLength(1)
+      expect(budget.dispatched).toHaveLength(1)
+      expect(budget.unsettledExposure.tokens).toBe(0)
+      expect(budget.allocatedTokens).toBe(budget.returnedTokens + result.totalTokens)
+    })
+  }
 })

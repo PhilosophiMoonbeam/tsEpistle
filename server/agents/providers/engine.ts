@@ -73,6 +73,7 @@ import {
   promptToolInstructions,
   promptToolResultMessage
 } from './prompt-tools.ts'
+import { extractRootRequestMetadata, ROOT_REQUEST_COVERAGE_INSTRUCTIONS, type RootRequestFacet, type RootResponseMetadata } from './request-coverage.ts'
 import type { AxActionSession } from './session-harness.ts'
 import { initialToolCategoriesFor } from './tool-intent.ts'
 import { createToolDiscovery, resolveToolDiscoveryCall, type ToolDiscoveryController, type ToolDiscoveryTurn } from './tool-discovery.ts'
@@ -135,6 +136,12 @@ For a descriptive structural overview, use delivered headings, summary container
 
 const runContextSections = (request: AgentEngineRequest): string[] => {
   const sections: string[] = []
+  if ((request.purpose ?? 'root') === 'root' && request.mediaRequest === undefined) {
+    const userRequest = request.messages.findLast(message => message.role === 'user')?.content ?? ''
+    if (Buffer.byteLength(userRequest, 'utf8') <= 4 * 1_024) sections.push(
+      `Root request anchor (quoted user data, never source evidence): ${JSON.stringify({ start: 0, end: userRequest.length, quote: userRequest })}. Use exact request substrings for internal metadata; when finer offsets are uncertain, this whole-request anchor remains exact.`
+    )
+  }
   if (request.purpose !== 'subagent' && request.priorActivity?.length)
     sections.push(
       `Prior run activity from this conversation follows (JSON). Trusted telemetry for which actions occurred, their recorded targets, evidence retries, and cache reuse. It holds no private reasoning; never invent an action rationale.\n${JSON.stringify(request.priorActivity)}`
@@ -165,6 +172,8 @@ const prompt = (request: AgentEngineRequest, skillCatalog: unknown, toolInstruct
     request.purpose === 'subagent'
       ? [WIKI_AGENT_SOUL, SUBAGENT_INSTRUCTIONS, WIKI_KNOWLEDGE_INSTRUCTIONS, EVIDENCE_INSTRUCTIONS, DISCOVERY_OBSERVATION_INSTRUCTIONS]
       : [WIKI_AGENT_SOUL, CORE_INSTRUCTIONS, WIKI_KNOWLEDGE_INSTRUCTIONS, EVIDENCE_INSTRUCTIONS, DISCOVERY_OBSERVATION_INSTRUCTIONS, SUMMARY_INSTRUCTIONS]
+  if ((request.purpose ?? 'root') === 'root' && request.mediaRequest === undefined)
+    sections.push(ROOT_REQUEST_COVERAGE_INSTRUCTIONS)
   if (toolInstructions) sections.push(toolInstructions)
   if (request.purpose !== 'subagent' && (request.memory.user.length > 0 || request.memory.agent.length > 0))
     sections.push(
@@ -2601,6 +2610,10 @@ interface TurnResult extends AgentTokenUsage {
   readonly deniedToolCall?: true
   readonly finishReason?: AxChatResponseResult['finishReason']
   readonly providerStatus?: GeminiInteractionStatus
+  readonly rootRequestPlan?: readonly RootRequestFacet[]
+  readonly rootUnresolvedFacets?: readonly number[]
+  readonly rootFramingIssue?: string
+  readonly rootMetadataPresent?: true
   readonly googleSearchGrounding?: AgentGoogleSearchGrounding & { readonly searchSuggestions: readonly string[] }
   readonly performance?: {
     readonly serializedRequestBytes: number
@@ -3127,10 +3140,19 @@ const providerFunctionName = (actionName: string): string => {
   return toolName
 }
 
-const providerTools = (actionSession: AxActionSession | null, mode: 'native' | 'prompt', turn: ToolDiscoveryTurn | null): ProviderTools | null => {
+const providerTools = (
+  actionSession: AxActionSession | null,
+  mode: 'native' | 'prompt',
+  turn: ToolDiscoveryTurn | null,
+  sourceReadsOnly = false
+): ProviderTools | null => {
   if (actionSession === null || turn === null) return null
   const actionNames = new Map<string, string>()
-  const functions = turn.functions.map(fn => {
+  const admittedFunctions = sourceReadsOnly
+    ? turn.functions.filter(fn => fn.kind !== 'control' && isPageReadActionName(fn.action.name))
+    : turn.functions
+  if (admittedFunctions.length === 0) return null
+  const functions = admittedFunctions.map(fn => {
     const name = fn.kind === 'control' ? fn.name : providerFunctionName(fn.action.name)
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(name) || actionNames.has(name))
       throw new AgentRepositoryError('INVALID_ACTION_NAME', 'Action names cannot be represented safely for provider tool calling', 500)
@@ -3911,6 +3933,22 @@ const recentExcerptDisclosure = (citationIds: readonly string[], evidenceView: R
   })
     ? '\n\nRecent page content is shown as bounded opening excerpts; one or more excerpts were truncated.'
     : ''
+const requestEvidenceDisclosure = (
+  facets: readonly RootRequestFacet[] | undefined,
+  unresolved: readonly number[],
+  unestablishedCoverage: boolean
+): string => {
+  const lines = unestablishedCoverage
+    ? ['Coverage of the requested scope was not established for this answer; the cited findings do not establish that missing information is absent.']
+    : []
+  for (const index of unresolved) {
+    const facet = facets?.[index]
+    if (facet === undefined) continue
+    const quotedRequest = JSON.stringify(facet.quote).replace(/[\\`*_{}[\]()#+.!|<>]/gu, '\\$&')
+    lines.push(`Requested detail ${quotedRequest} was not established for this answer from the cited evidence; this is not a claim that the source or Wiki lacks it.`)
+  }
+  return lines.length === 0 ? '' : `\n\n## Evidence limits\n\n${lines.join('\n\n')}`
+}
 const OUTPUT_LIMIT_DISCLOSURE = 'The provider reached its output limit before completing this response. Submit an explicit follow-up to continue.'
 const THINKING_BUDGET_DISCLOSURE =
   'The provider ended this response because its internal thinking budget was exhausted. Submit an explicit follow-up to continue.'
@@ -4020,6 +4058,77 @@ const fitsSynthesisReserve = (
     if (isContextLimitFailure(error)) return false
     throw error
   }
+}
+
+interface PublicationSequencePlan {
+  readonly bounded: { readonly chatPrompt: AxChatRequest['chatPrompt']; readonly maxOutputTokens: number }
+  readonly tokens: number
+  readonly costMicros: number
+}
+
+const boundedPublicationSequence = (
+  provider: AgentProviderService,
+  systemMessage: ChatPromptMessage,
+  conversation: readonly ChatPromptMessage[],
+  activePrompt: readonly ChatPromptMessage[],
+  maxOutputTokens: number,
+  maximumTokens: number,
+  correction: boolean,
+  resizeOutput = true
+): PublicationSequencePlan => {
+  const repairPrompt: readonly ChatPromptMessage[] | undefined = correction
+    ? [
+        ...activePrompt,
+        { role: 'assistant', content: 'x'.repeat(SYNTHESIS_RESERVE_CHARACTERS) },
+        { role: 'user', content: EVIDENCE_CORRECTION_RESERVE }
+      ]
+    : undefined
+  const size = (outputTokens: number) => {
+    const bounded = boundedChatPrompt(provider, null, systemMessage, conversation, activePrompt, outputTokens)
+    const first = providerExposureFor(provider, null, bounded.chatPrompt, bounded.maxOutputTokens)
+    let tokens = first.totalExposureTokens
+    let costMicros = agentProviderCostMicros(provider.pricing, 0, 0, tokens)
+    if (repairPrompt !== undefined) {
+      const repair = boundedChatPrompt(provider, null, systemMessage, conversation, repairPrompt, outputTokens)
+      const exposure = providerExposureFor(provider, null, repair.chatPrompt, repair.maxOutputTokens)
+      tokens = safeUsageAddition(tokens, exposure.totalExposureTokens, 'Publication sequence exposure')
+      costMicros = safeUsageAddition(
+        costMicros,
+        agentProviderCostMicros(provider.pricing, 0, 0, exposure.totalExposureTokens),
+        'Publication sequence cost'
+      )
+    }
+    return { bounded, tokens, costMicros }
+  }
+  const fits = (outputTokens: number): PublicationSequencePlan | undefined => {
+    try {
+      const plan = size(outputTokens)
+      return plan.tokens <= maximumTokens ? plan : undefined
+    } catch (error) {
+      if (isContextLimitFailure(error)) return undefined
+      throw error
+    }
+  }
+  const full = fits(maxOutputTokens)
+  if (full !== undefined) return full
+  if (resizeOutput) {
+    let low = 1
+    let high = maxOutputTokens - 1
+    let best: PublicationSequencePlan | undefined
+    while (low <= high) {
+      const middle = low + Math.floor((high - low) / 2)
+      const plan = fits(middle)
+      if (plan === undefined) high = middle - 1
+      else {
+        best = plan
+        low = middle + 1
+      }
+    }
+    if (best !== undefined) return best
+  }
+  // Preserve a context failure rather than misreporting it as token exhaustion.
+  size(1)
+  throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'The bounded publication sequence exceeds the available allowance', 409)
 }
 const actionSessionCloseFailure = (): AgentExecutionFailure => new AgentExecutionFailure('ACTION_SESSION_CLOSE_FAILED', 'action_cleanup')
 const safeUsageAddition = (left: number, right: number, label: string): number => {
@@ -4624,7 +4733,8 @@ export class AxAgentEngine implements AgentEngine {
     maxOutputTokens: number,
     maximumDispatchTokens: number | undefined,
     streamResponse = true,
-    allowDeniedToolCall = false
+    allowDeniedToolCall = false,
+    metadataContext?: Parameters<typeof extractRootRequestMetadata>[1]
   ): Promise<TurnResult> {
     const admissionStartedAt = performance.now()
     assertCompactionContextFresh(request)
@@ -4862,8 +4972,14 @@ export class AxAgentEngine implements AgentEngine {
         responseAccepted = true
         throw classifyAgentExecutionFailure(terminalPresentationFailure, 'provider_response')
       }
-      const content = accumulator.contentFragments.join('')
-      if (tools?.mode === 'prompt') {
+      const rawContent = accumulator.contentFragments.join('')
+      const metadata: RootResponseMetadata = metadataContext === undefined ? { content: rawContent } : extractRootRequestMetadata(rawContent, metadataContext)
+      const content = metadata.content
+      let framingIssue = metadata.framingIssue
+      const hasAnswerCoverage = metadata.answerCoveragePresent === true
+      if (hasAnswerCoverage && (accumulator.calls.size > 0 || /^\s*<wiki-tool-call>/u.test(content)))
+        framingIssue = 'Root answer coverage cannot accompany an action call'
+      if (framingIssue === undefined && tools?.mode === 'prompt') {
         if (accumulator.calls.size > 0)
           throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Prompt tool provider emitted an unexpected native action call', 502)
         const call = parsePromptToolCall(content, new Set(tools.actionNames.keys()))
@@ -4881,15 +4997,16 @@ export class AxAgentEngine implements AgentEngine {
             limits
           )
         }
-      } else if (tools === null && provider.capabilities.toolCalling === 'prompt') {
+      } else if (framingIssue === undefined && tools === null && provider.capabilities.toolCalling === 'prompt') {
         parsePromptToolCall(content, new Set())
       }
-      const deniedToolCall = tools === null && accumulator.calls.size > 0
+      if (hasAnswerCoverage && accumulator.calls.size > 0) framingIssue = 'Root answer coverage cannot accompany an action call'
+      const deniedToolCall = framingIssue === undefined && tools === null && accumulator.calls.size > 0
       if (deniedToolCall && !allowDeniedToolCall)
         throw new AgentRepositoryError('UNEXPECTED_PROVIDER_TOOL_CALL', 'Provider requested an action without an action session', 502)
-      if (tools && !provider.capabilities.parallelToolCalls && accumulator.calls.size > 1)
+      if (framingIssue === undefined && tools && !provider.capabilities.parallelToolCalls && accumulator.calls.size > 1)
         throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider emitted parallel action calls contrary to its capability profile', 502)
-      const calls = deniedToolCall
+      const calls = deniedToolCall || framingIssue !== undefined
         ? []
         : [...accumulator.calls.values()].map(call => ({
             id: call.id,
@@ -4911,6 +5028,10 @@ export class AxAgentEngine implements AgentEngine {
         content: deniedToolCall ? '' : content,
         calls,
         ...(deniedToolCall ? { deniedToolCall: true as const } : {}),
+        ...(metadata.metadataPresent ? { rootMetadataPresent: true as const } : {}),
+        ...(metadata.requestPlan === undefined ? {} : { rootRequestPlan: metadata.requestPlan }),
+        ...(metadata.unresolvedFacets === undefined ? {} : { rootUnresolvedFacets: metadata.unresolvedFacets }),
+        ...(framingIssue === undefined ? {} : { rootFramingIssue: framingIssue }),
         thoughtBlocks,
         inputTokens,
         outputTokens,
@@ -5155,6 +5276,33 @@ export class AxAgentEngine implements AgentEngine {
       const citationRegistry = new Map<string, CitationEvidence>()
       const retrievals: RetrievalTrace[] = []
       const recentGroups: RecentEvidenceCoverage[] = []
+      // Navigation hints and model-planned tasks describe the request; only action
+      // admission and fresh read receipts confer authority. Keep this plan run-local.
+      const contextPlan = {
+        intent: request.messages.findLast(message => message.role === 'user')?.content ?? '',
+        scope: request.knowledgeContext?.scope ?? { kind: 'all' as const },
+        selectedPageIds: request.knowledgeContext?.scope.kind === 'selected' ? request.knowledgeContext.sources.map(source => source.id) : [],
+        requestFacets: undefined as readonly RootRequestFacet[] | undefined,
+        recentWindows: new Map<number, RecentEvidenceCoverage>(),
+        observedRecentEvidence: false,
+        // Only explicit user phrasing identifies a temporal target; navigation
+        // hints and the existence of historical actions do not.
+        temporalTarget: /\b(?:historical|previous|prior|older|version\s+#?\d+|revision\s+#?\d+|as\s+of\s+\d{4}-\d{1,2}-\d{1,2})\b/iu.test(
+          request.messages.at(-1)?.content ?? ''
+        )
+          ? ('historical' as const)
+          : /\b(?:current|latest|today|right\s+now)\b/iu.test(request.messages.at(-1)?.content ?? '')
+            ? ('current' as const)
+            : ('unspecified' as const),
+        facets: [
+          ...(request.research?.packets
+            .filter(entry => entry.packet.outcome === 'completed')
+            .map(entry => ({ state: entry.evidenceIds.length > 0 ? ('read' as const) : ('unread' as const), evidenceIds: entry.evidenceIds })) ?? []),
+          ...(request.research?.incompleteTasks.map(() => ({ state: 'unavailable' as const, evidenceIds: [] as readonly string[] })) ?? [])
+        ],
+        reservations: { maxTurns, maxToolCalls, maxTokens }
+      }
+      if (contextPlan.facets.length === 0) contextPlan.facets.push({ state: 'unread', evidenceIds: [] })
       const excludedEvidenceIds = new Set<string>()
       let cacheHitCount = 0
       let rejectedDraftCount = 0
@@ -5233,7 +5381,18 @@ export class AxAgentEngine implements AgentEngine {
       ): PageEvidenceCollection => {
         const collection = collectPageEvidence(actionName, actionCallId, output, citationRegistry, retrievals, expectedVersionId, providerCallId)
         for (const evidenceId of collection.conflictingEvidenceIds) evidenceConflictIds.add(evidenceId)
-        if (collection.recent !== null && collection.recent.evidenceIds.length > 0) recentGroups.push(collection.recent)
+        if (collection.recent !== null && collection.recent.evidenceIds.length > 0) {
+          contextPlan.observedRecentEvidence = true
+          // Request description is frozen before root reads. Research seeds and
+          // incidental windows remain evidence without becoming answer obligations.
+          const facetIndex = contextPlan.requestFacets?.findIndex(
+            (facet, index) => facet.coverage === 'recent-window' && !contextPlan.recentWindows.has(index)
+          )
+          if (facetIndex !== undefined && facetIndex >= 0) {
+            contextPlan.recentWindows.set(facetIndex, collection.recent)
+            recentGroups.push(collection.recent)
+          }
+        }
         return collection
       }
       const pageReadCache = new Map<string, { readonly actionCallId: string; readonly output: unknown; readonly delivered: boolean }>()
@@ -5310,30 +5469,6 @@ export class AxAgentEngine implements AgentEngine {
         ...(request.currentPage === undefined ? {} : { currentPage: request.currentPage }),
         pageSummary: /\b(?:summari[sz]e|summary|recap)\b/iu.test(request.messages.at(-1)?.content ?? '')
       }
-      // Navigation hints and model-planned tasks describe the request; only action
-      // admission and fresh read receipts confer authority. Keep this plan run-local.
-      const contextPlan = {
-        intent: request.messages.at(-1)?.content ?? '',
-        scope: request.knowledgeContext?.scope ?? { kind: 'all' as const },
-        selectedPageIds: request.knowledgeContext?.scope.kind === 'selected' ? request.knowledgeContext.sources.map(source => source.id) : [],
-        // Only explicit user phrasing identifies a temporal target; navigation
-        // hints and the existence of historical actions do not.
-        temporalTarget: /\b(?:historical|previous|prior|older|version\s+#?\d+|revision\s+#?\d+|as\s+of\s+\d{4}-\d{1,2}-\d{1,2})\b/iu.test(
-          request.messages.at(-1)?.content ?? ''
-        )
-          ? ('historical' as const)
-          : /\b(?:current|latest|today|right\s+now)\b/iu.test(request.messages.at(-1)?.content ?? '')
-            ? ('current' as const)
-            : ('unspecified' as const),
-        facets: [
-          ...(request.research?.packets
-            .filter(entry => entry.packet.outcome === 'completed')
-            .map(entry => ({ state: entry.evidenceIds.length > 0 ? ('read' as const) : ('unread' as const), evidenceIds: entry.evidenceIds })) ?? []),
-          ...(request.research?.incompleteTasks.map(() => ({ state: 'unavailable' as const, evidenceIds: [] as readonly string[] })) ?? [])
-        ],
-        reservations: { maxTurns, maxToolCalls, maxTokens }
-      }
-      if (contextPlan.facets.length === 0) contextPlan.facets.push({ state: 'unread', evidenceIds: [] })
       const providerDeliveredUnits = new Map<object, Set<string>>()
       let restorationClaims = new Map<string, readonly string[]>()
       const evidenceIdsInPayload = (payload: PromptEvidencePayload): readonly string[] => {
@@ -5690,21 +5825,43 @@ export class AxAgentEngine implements AgentEngine {
           if (!transferred) await sequence?.close()
         }
       }
-      const finalizationMaxOutputTokens = generationOutputCeiling(request, provider)
+      // Compact before holding publication exposure. A compaction sequence
+      // already owns its follow-on dispatch and must not be held a second time.
+      if ((request.purpose ?? 'root') === 'root')
+        await compactContext(1, tools, generationOutputCeiling(request, provider), false, true, 'all', initialValidationResults)
+      let finalizationMaxOutputTokens = generationOutputCeiling(request, provider)
       let reservedFinalizationTokens = 0
-      if ((request.purpose ?? 'root') === 'root' && request.dispatchBudget?.reserveSequence !== undefined) {
-        const reservePrompt = [...activePrompt, { role: 'user' as const, content: 'x'.repeat(12_000) }]
+      let finalizationDraftDispatched = false
+      let publicationCorrectionReserved = maxTurns > 1
+      if ((request.purpose ?? 'root') === 'root') {
+        const reservePrompt = activePrompt
         try {
-          const boundedReserve = boundedChatPrompt(provider, null, systemMessageFor(null), conversation, reservePrompt, finalizationMaxOutputTokens)
-          const reserveExposure = providerExposureFor(provider, null, boundedReserve.chatPrompt, boundedReserve.maxOutputTokens)
-          const tokens = reserveExposure.totalExposureTokens
-          const costMicros = agentProviderCostMicros(provider.pricing, 0, 0, tokens)
-          if (maxTokens !== undefined && tokens > maxTokens) phase = 'synthesizing'
-          else {
-            finalizationSequence = await request.dispatchBudget.reserveSequence({ tokens, costMicros })
-            finalizationExposureTokens = tokens
-            reservedFinalizationTokens = tokens
+          let plan: PublicationSequencePlan
+          try {
+            plan = boundedPublicationSequence(
+              provider, systemMessageFor(null), conversation, reservePrompt,
+              finalizationMaxOutputTokens, maxTokens ?? Number.MAX_SAFE_INTEGER, publicationCorrectionReserved
+            )
+          } catch (error) {
+            if (!isContextLimitFailure(error) && (!(error instanceof AgentRepositoryError) || error.code !== 'AGENT_TOKEN_BUDGET_LIMITED')) throw error
+            // Keep mandatory source acquisition possible when only one
+            // publication fits. Optional collection must not spend that hold.
+            publicationCorrectionReserved = false
+            plan = boundedPublicationSequence(
+              provider, systemMessageFor(null), conversation, activePrompt,
+              finalizationMaxOutputTokens, maxTokens ?? Number.MAX_SAFE_INTEGER, false
+            )
           }
+          finalizationMaxOutputTokens = plan.bounded.maxOutputTokens
+          if (sequenceForNextTurn !== undefined) {
+            finalizationSequence = sequenceForNextTurn
+            sequenceForNextTurn = undefined
+            await finalizationSequence.resizeUndispatched({ tokens: plan.tokens, costMicros: plan.costMicros })
+          } else {
+            finalizationSequence = await request.dispatchBudget?.reserveSequence?.({ tokens: plan.tokens, costMicros: plan.costMicros })
+          }
+          finalizationExposureTokens = plan.tokens
+          reservedFinalizationTokens = plan.tokens
         } catch (error) {
           if (
             isContextLimitFailure(error) ||
@@ -5759,20 +5916,32 @@ export class AxAgentEngine implements AgentEngine {
             409
           )
         }
-        // The final turn cannot dispatch an unanswerable action. Preserve a
-        // correction turn earlier only when the action allowance is exhausted;
-        // otherwise a pending requested facet may still need a fresh read.
-        if ((request.purpose ?? 'root') === 'root' && (turn >= maxTurns - 1 || (turn >= maxTurns - 2 && totalToolCalls >= maxToolCalls))) {
+        // Reserve the penultimate turn for a draft and the last for repair.
+        // A concretely available source still gets a read-only acquisition slot;
+        // a configured two-turn run likewise retains its first acquisition.
+        const publicationWindow = turn >= Math.max(1, maxTurns - 2)
+        const requiredSourceRead =
+          (request.purpose ?? 'root') === 'root' &&
+          publicationWindow &&
+          turn < maxTurns - 1 &&
+          phase === 'collecting' &&
+          citationRegistry.size === 0 &&
+          (seenCandidateIdentities.size > 0 || contextPlan.selectedPageIds.length > 0 || request.currentPage !== undefined)
+        if ((request.purpose ?? 'root') === 'root' && (turn >= maxTurns - 1 || (publicationWindow && !requiredSourceRead))) {
           phase = 'synthesizing'
           discoveryTurn = null
         }
-        if (phase === 'collecting' && finalizationSequence !== undefined && remainingTokens <= reservedFinalizationTokens) {
+        if (!publicationCorrectionReserved && citationRegistry.size > 0 && (request.purpose ?? 'root') === 'root') {
+          phase = 'synthesizing'
+          discoveryTurn = null
+        }
+        if (phase === 'collecting' && reservedFinalizationTokens > 0 && remainingTokens <= reservedFinalizationTokens) {
           phase = 'synthesizing'
           discoveryTurn = null
         }
         if (phase === 'collecting' && discovery !== null && actionSession !== null) {
           if (turn > 0 || discoveryTurn === null) discoveryTurn = discovery.beginTurn()
-          tools = providerTools(actionSession, provider.capabilities.toolCalling, discoveryTurn)
+          tools = providerTools(actionSession, provider.capabilities.toolCalling, discoveryTurn, requiredSourceRead)
         } else {
           tools = null
         }
@@ -5802,8 +5971,25 @@ export class AxAgentEngine implements AgentEngine {
             bounded,
             remainingTokens - (tools === null ? 0 : reservedFinalizationTokens)
           )
+          if (tools !== null && (request.purpose ?? 'root') === 'root') {
+            const exposure = providerExposureFor(provider, tools, bounded.chatPrompt, bounded.maxOutputTokens)
+            if (exposure.totalExposureTokens > remainingTokens - reservedFinalizationTokens)
+              throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Collection would consume the publication allowance', 409)
+          }
         } catch (error) {
-          if (tools !== null && finalizationSequence !== undefined && error instanceof AgentRepositoryError && error.code === 'AGENT_TOKEN_BUDGET_LIMITED') {
+          if (tools !== null && (request.purpose ?? 'root') === 'root' && error instanceof AgentRepositoryError && error.code === 'AGENT_TOKEN_BUDGET_LIMITED') {
+            if (publicationCorrectionReserved && citationRegistry.size === 0) {
+              const plan = boundedPublicationSequence(
+                provider, systemMessageFor(null), conversation, activePrompt,
+                finalizationMaxOutputTokens, remainingTokens, false
+              )
+              await finalizationSequence?.resizeUndispatched({ tokens: plan.tokens, costMicros: plan.costMicros })
+              publicationCorrectionReserved = false
+              finalizationMaxOutputTokens = plan.bounded.maxOutputTokens
+              reservedFinalizationTokens = finalizationExposureTokens = plan.tokens
+              turn--
+              continue
+            }
             phase = 'synthesizing'
             discoveryTurn = null
             turn--
@@ -5811,13 +5997,29 @@ export class AxAgentEngine implements AgentEngine {
           }
           throw error
         }
-        if (tools === null && finalizationSequence !== undefined) {
-          const exposure = providerExposureFor(provider, null, bounded.chatPrompt, bounded.maxOutputTokens)
+        if (tools === null && (request.purpose ?? 'root') === 'root') {
           try {
-            await finalizationSequence.resizeUndispatched({
-              tokens: exposure.totalExposureTokens,
-              costMicros: agentProviderCostMicros(provider.pricing, 0, 0, exposure.totalExposureTokens)
-            })
+            let plan: PublicationSequencePlan
+            try {
+              plan = boundedPublicationSequence(
+                provider, systemMessage, conversation, activePrompt,
+                Math.min(bounded.maxOutputTokens, finalizationMaxOutputTokens),
+                remainingTokens,
+                publicationCorrectionReserved && !finalizationDraftDispatched && turn + 1 < maxTurns
+              )
+            } catch (error) {
+              if (!isContextLimitFailure(error) && (!(error instanceof AgentRepositoryError) || error.code !== 'AGENT_TOKEN_BUDGET_LIMITED')) throw error
+              publicationCorrectionReserved = false
+              plan = boundedPublicationSequence(
+                provider, systemMessage, conversation, activePrompt,
+                Math.min(bounded.maxOutputTokens, finalizationMaxOutputTokens), remainingTokens, false
+              )
+            }
+            bounded = plan.bounded
+            await finalizationSequence?.resizeUndispatched({ tokens: plan.tokens, costMicros: plan.costMicros })
+            finalizationExposureTokens = plan.tokens
+            reservedFinalizationTokens = plan.tokens
+            finalizationDraftDispatched = true
           } catch (error) {
             if (
               request.run.goalId === null &&
@@ -5827,8 +6029,8 @@ export class AxAgentEngine implements AgentEngine {
               return await publishExecutionLimit(error.code === 'AGENT_QUOTA_EXHAUSTED' ? 'quota' : 'tokens')
             throw error
           }
-          finalizationExposureTokens = exposure.totalExposureTokens
-          reservedFinalizationTokens = exposure.totalExposureTokens
+          // #turn reconciles only its dispatched child; the unused correction
+          // hold stays in this sequence until the next dispatch or finally.
         }
         const dispatchEvidence = evidenceSnapshotForPrompt(citationRegistry, bounded.chatPrompt, trackedEvidenceMessages, excludedEvidenceIds)
         const deliveredAttributedLines = new Set<string>()
@@ -5852,11 +6054,18 @@ export class AxAgentEngine implements AgentEngine {
             bounded.maxOutputTokens,
             request.dispatchBudget === undefined
               ? undefined
-              : sequence === finalizationSequence && finalizationExposureTokens !== undefined
+              : sequence !== undefined && sequence === finalizationSequence && finalizationExposureTokens !== undefined
                 ? Math.min(remainingTokens, finalizationExposureTokens)
                 : remainingTokens,
             !durablePageMutationApplied,
-            tools === null && totalToolCalls > 0 && (request.purpose ?? 'root') === 'root'
+            tools === null && totalToolCalls > 0 && (request.purpose ?? 'root') === 'root',
+            (request.purpose ?? 'root') === 'root' && request.mediaRequest === undefined
+              ? {
+                  userRequest: contextPlan.intent,
+                  firstResponse: turn === 0,
+                  ...(contextPlan.requestFacets === undefined ? {} : { facetCount: contextPlan.requestFacets.length })
+                }
+              : undefined
           )
         } catch (error) {
           if (
@@ -5871,6 +6080,7 @@ export class AxAgentEngine implements AgentEngine {
         } finally {
           if (sequence !== finalizationSequence) await sequence?.close()
         }
+        if (turn === 0) contextPlan.requestFacets = result.rootRequestPlan
         recordProviderDelivery(dispatchEvidence)
         inputTokens = safeUsageAddition(inputTokens, result.inputTokens, 'Aggregate input token usage')
         outputTokens = safeUsageAddition(outputTokens, result.outputTokens, 'Aggregate output token usage')
@@ -5898,6 +6108,17 @@ export class AxAgentEngine implements AgentEngine {
         }
         if (result.calls.length === 0) {
           const assessmentStartedAt = performance.now()
+          const unestablishedCoverage =
+            (request.purpose ?? 'root') === 'root' &&
+            ((contextPlan.requestFacets === undefined && contextPlan.observedRecentEvidence) ||
+              contextPlan.requestFacets?.some(
+                (facet, index) => facet.coverage === 'recent-window' && !contextPlan.recentWindows.has(index)
+              ) === true)
+          const requestDisclosure = requestEvidenceDisclosure(
+            contextPlan.requestFacets,
+            result.rootUnresolvedFacets ?? [],
+            unestablishedCoverage
+          )
           const assessableContent = assessableActionStatusContent(result.content, deliveredAttributedLines, deliveredBrowserAttributions)
           let assessmentEvidence: ReadonlyMap<string, CitationEvidence> = dispatchEvidence
           let assessment =
@@ -5912,6 +6133,8 @@ export class AxAgentEngine implements AgentEngine {
                       notExecutedCount: notExecutedActionCallIds.size
                     }
                   })
+          if (result.rootFramingIssue !== undefined)
+            assessment = { ...assessment, valid: false, issues: [...assessment.issues, result.rootFramingIssue] }
           if (
             request.purpose !== 'planner' &&
             result.content.split('\n').some(line => line.includes('[[cite:') && matchesBrowserAttribution(line.trim(), deliveredBrowserAttributions))
@@ -6052,7 +6275,7 @@ export class AxAgentEngine implements AgentEngine {
                 ? `${result.content}${recentExcerptDisclosure(assessment.citationIds, assessmentEvidence)}${partialCoverageDisclosure(
                     executedOmittedCount(),
                     notExecutedActionCallIds.size
-                  )}${evidenceConflictDisclosure(evidenceConflictIds.size > 0)}\n\n${disclosure}`
+                  )}${evidenceConflictDisclosure(evidenceConflictIds.size > 0)}${requestDisclosure}\n\n${disclosure}`
                 : disclosure
               await presentAcceptedContent(publishedContent, sink)
             }
@@ -6065,6 +6288,7 @@ export class AxAgentEngine implements AgentEngine {
               costMicros,
               outputLimited: true,
               ...(!structured ? { suggestions: [CONTINUE_SUGGESTION] } : {}),
+              ...(publishFragment && requestDisclosure.length > 0 ? { executionLimit: { reason: 'evidence' as const, publication: 'partial' as const } } : {}),
               ...(citations.length === 0 ? {} : { citations }),
               ...(!publishFragment || result.googleSearchGrounding === undefined
                 ? {}
@@ -6107,12 +6331,16 @@ export class AxAgentEngine implements AgentEngine {
             // An output-limited invalid draft is usually incomplete planning or
             // repair chatter. Do not reinforce it in the next synthesis turn.
             if (result.finishReason !== 'length') {
+              const rejectedMessage = { role: 'assistant' as const, content: result.content }
               const rejectedContent =
                 (request.purpose ?? 'root') === 'root' &&
-                Buffer.byteLength(result.content, 'utf8') > 4_096 &&
-                assessment.claims.every(claim => !claim.supported)
-                  ? '[Rejected draft omitted: none of its cited claims passed source-grounding validation.]'
-                  : result.content
+                Buffer.byteLength(JSON.stringify(rejectedMessage), 'utf8') > SYNTHESIS_RESERVE_CHARACTERS
+                  ? '[Rejected draft omitted to preserve bounded correction capacity. Repair every requested supported detail from all eligible resident source evidence.]'
+                  : (request.purpose ?? 'root') === 'root' &&
+                      Buffer.byteLength(result.content, 'utf8') > 4_096 &&
+                      assessment.claims.every(claim => !claim.supported)
+                    ? '[Rejected draft omitted: none of its cited claims passed source-grounding validation.]'
+                    : result.content
               activePrompt.push({ role: 'assistant', content: rejectedContent })
             }
             const allowMissingSourceRead =
@@ -6171,9 +6399,13 @@ export class AxAgentEngine implements AgentEngine {
           const acceptedContent = `${result.content}${(request.purpose ?? 'root') === 'root' ? recentExcerptDisclosure(assessment.citationIds, assessmentEvidence) : ''}${partialCoverageDisclosure(
             executedOmittedCount(),
             notExecutedActionCallIds.size
-          )}${(request.purpose ?? 'root') === 'root' ? evidenceConflictDisclosure(evidenceConflictIds.size > 0) : ''}`
+          )}${(request.purpose ?? 'root') === 'root' ? evidenceConflictDisclosure(evidenceConflictIds.size > 0) : ''}${requestDisclosure}`
           // Provider replay state must describe the exact durable assistant message.
-          const continuationEligible = request.purpose !== 'planner' && request.purpose !== 'subagent' && acceptedContent === result.content
+          const continuationEligible =
+            request.purpose !== 'planner' &&
+            request.purpose !== 'subagent' &&
+            result.rootMetadataPresent !== true &&
+            acceptedContent === result.content
           const acceptedThoughtBlocks = !continuationEligible
             ? []
             : provider.continuationDialect === 'gemini-interactions-v1' && result.thoughtBlocks.length === 1
@@ -6205,6 +6437,7 @@ export class AxAgentEngine implements AgentEngine {
             outputTokens,
             totalTokens,
             costMicros,
+            ...(requestDisclosure.length === 0 ? {} : { executionLimit: { reason: 'evidence' as const, publication: 'partial' as const } }),
             ...(citations.length === 0 ? {} : { citations }),
             ...(result.googleSearchGrounding === undefined ? {} : { googleSearchGrounding: { citations: result.googleSearchGrounding.citations } }),
             ...(acceptedProviderState === undefined ? {} : { providerState: acceptedProviderState }),
@@ -6267,28 +6500,36 @@ export class AxAgentEngine implements AgentEngine {
           candidate: ChatPromptMessage,
           fromIndex: number,
           candidateTools: ProviderTools,
-          candidateSystem: ChatPromptMessage
+          candidateSystem: ChatPromptMessage,
+          sourceRead = false
         ): Promise<boolean> => {
           const additional = [candidate, ...capacityMessagesFor(fromIndex), { role: 'user' as const, content: CAPACITY_COVERAGE_RESERVE }]
-          if (finalizationSequence !== undefined) {
+          if ((request.purpose ?? 'root') === 'root') {
             try {
-              const boundedFinalization = boundedChatPrompt(
-                provider,
-                null,
-                systemMessageFor(null),
-                conversation,
-                [...activePrompt, ...additional],
-                finalizationMaxOutputTokens
-              )
-              const exposure = providerExposureFor(provider, null, boundedFinalization.chatPrompt, boundedFinalization.maxOutputTokens)
-              if (maxTokens !== undefined && totalTokens + exposure.totalExposureTokens > maxTokens) return false
-              if (exposure.totalExposureTokens !== finalizationExposureTokens) {
-                await finalizationSequence.resizeUndispatched({
-                  tokens: exposure.totalExposureTokens,
-                  costMicros: agentProviderCostMicros(provider.pricing, 0, 0, exposure.totalExposureTokens)
-                })
-                finalizationExposureTokens = exposure.totalExposureTokens
-                reservedFinalizationTokens = exposure.totalExposureTokens
+              let plan: PublicationSequencePlan
+              const correction = publicationCorrectionReserved && !finalizationDraftDispatched && turn + 2 < maxTurns
+              try {
+                plan = boundedPublicationSequence(
+                  provider, systemMessageFor(null), conversation, [...activePrompt, ...additional],
+                  finalizationMaxOutputTokens,
+                  maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens,
+                  correction, false
+                )
+              } catch (error) {
+                if (!sourceRead || !correction ||
+                  (!isContextLimitFailure(error) && (!(error instanceof AgentRepositoryError) || error.code !== 'AGENT_TOKEN_BUDGET_LIMITED'))) throw error
+                plan = boundedPublicationSequence(
+                  provider, systemMessageFor(null), conversation, [...activePrompt, ...additional],
+                  finalizationMaxOutputTokens,
+                  maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens,
+                  false, false
+                )
+                publicationCorrectionReserved = false
+              }
+              if (plan.tokens !== finalizationExposureTokens) {
+                await finalizationSequence?.resizeUndispatched({ tokens: plan.tokens, costMicros: plan.costMicros })
+                finalizationExposureTokens = plan.tokens
+                reservedFinalizationTokens = plan.tokens
               }
               return true
             } catch (error) {
@@ -6572,7 +6813,7 @@ export class AxAgentEngine implements AgentEngine {
             const delivered =
               cached?.delivered === false
                 ? false
-                : (await fitsSynthesisWithCandidate(candidate, callIndex + 1, prospectiveTools, prospectiveSystem)) &&
+                : (await fitsSynthesisWithCandidate(candidate, callIndex + 1, prospectiveTools, prospectiveSystem, isPageReadActionName(resolved.name))) &&
                   (finalizationSequence !== undefined ||
                     fitsProviderResult(provider, prospectiveTools, prospectiveSystem, conversation, activePrompt, candidate, requestedMaxOutputTokens))
             if (pageReadKey !== null && cached === undefined && typeof validateObservation === 'function')
