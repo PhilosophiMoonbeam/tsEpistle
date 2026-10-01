@@ -92,6 +92,7 @@ type QuestionActionName =
   | 'pages.related'
   | 'pages.listRecent'
   | 'pages.get'
+  | 'pages.getOkf'
   | 'pages.getVersion'
   | 'pages.prepareCreate'
   | 'memory.manage'
@@ -1395,16 +1396,445 @@ describe('Ax agent engine', () => {
     return { chat, correctionIssues, correctionRequest, event, rejectedIssues, result, settledUsage, text }
   }
 
-  const contactRow = '**Account Manager/Customer Service questions:** Maya Quinn | [maya@example.test](mailto:maya@example.test) | ☎️ [555.010.1000 ext.142](tel:+15550101000) | Cell: [555.010.2000](tel:+15550102000)'
+  it('adaptable grounding cannot assign a repeated name the neighboring container’s phone', async () => {
+    const citation = 'page:42:revision:1:section:1'
+    const corrected = `Region: North; Name: Maya Quinn; Phone: 555-0100 x42 [[cite:${citation}]]`
+    const run = await runEvidenceCorrection({
+      title: 'Contacts',
+      path: 'contacts',
+      question: 'What is the North contact phone?',
+      content: '# Contacts\n\n## Directory\n\nRegion | Name | Phone\n--- | --- | ---\nNorth | Maya Quinn | 555-0100 x42\nSouth | Maya Quinn | 555-0200 x18',
+      citationSections: [{ evidenceId: citation, label: 'Contacts › Directory', href: '/en/contacts#directory' }],
+      rejectedDraft: `Region: North; Name: Maya Quinn; Phone: 555-0200 x18 [[cite:${citation}]]`,
+      correctedDraft: corrected
+    })
+    expect(run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+  })
+
+  it('adaptable grounding leaves conflicting duplicate field associations unestablished', async () => {
+    const citation = 'page:42:revision:1:section:1'
+    const fact = 'Name: Maya Quinn; Phone: 555-0100 x42'
+    const fixture = questionFixture(
+      'native',
+      [{ calls: [{ id: 'read-conflicting-fields', name: 'pages.get', arguments: { id: 42 } }] }, { answer: `${fact} [[cite:${citation}]]` }],
+      () => questionReadPage(42, '1', 'Contacts', 'contacts', 'Directory', 'directory', '- Name: Maya Quinn\n  - Phone: 555-0100 x42\n  - Phone: 555-0200 x18')
+    )
+    const result = await fixture.execute('What is Maya Quinn’s phone?', { maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 4_000 })
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(fact)
+    expect(result.citations ?? []).toEqual([])
+  })
+
+  it('adaptable grounding preserves a causal restriction instead of matching its remaining vocabulary', async () => {
+    const citation = 'page:42:revision:1:section:1'
+    const fact = 'Maya Quinn may approve release only because the audit passed.'
+    const run = await runEvidenceCorrection({
+      title: 'Release Rules',
+      path: 'release-rules',
+      content: `# Release Rules\n\n## Approval\n${fact}`,
+      citationSections: [{ evidenceId: citation, label: 'Release Rules › Approval', href: '/en/release-rules#approval' }],
+      rejectedDraft: `Maya Quinn may approve release. [[cite:${citation}]]`,
+      correctedDraft: `${fact} [[cite:${citation}]]`
+    })
+    expect(run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(`${fact} [[cite:${citation}]]`)
+  })
+
+  it.each(['html', 'asciidoc'] as const)('adaptable grounding does not admit a plain %s page as Markdown evidence', async contentType => {
+    const citation = 'page:42:revision:1'
+    const fact = 'Maya Quinn handles northern orders.'
+    const fixture = questionFixture(
+      'native',
+      [{ calls: [{ id: 'read-ineligible-format', name: 'pages.get', arguments: { id: 42 } }] }, { answer: `${fact} [[cite:${citation}]]` }],
+      () => ({ ...questionReadPage(42, '1', 'Guide', 'guide', 'Contacts', 'contacts', fact), contentType })
+    )
+    const result = await fixture.execute('Who handles northern orders?', { maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 4_000 })
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(fact)
+    expect(result.citations ?? []).toEqual([])
+  })
+
+  it('adaptable grounding uses canonical OKF body but never frontmatter or derived knowledge', async () => {
+    const citation = 'page:42:revision:1'
+    const fact = 'Maya Quinn handles northern orders.'
+    const corrected = `${fact} [[cite:${citation}]]`
+    const fixture = questionFixture(
+      'native',
+      [
+        { calls: [{ id: 'read-okf-body', name: 'pages.getOkf', arguments: { id: 42 } }] },
+        { answer: `Zephyr dispatch handles southern orders. [[cite:${citation}]]` },
+        { answer: corrected }
+      ],
+      () => ({
+        pageId: 42,
+        versionId: null,
+        sourceRevision: '1',
+        mediaType: 'text/markdown',
+        resourceUri: 'wiki://pages/42/versions/current/revisions/1/okf',
+        filePath: 'en/guide.md',
+        document: `---\ntype: Procedure\ntitle: Guide\ndescription: Zephyr dispatch handles southern orders.\n---\n# Guide\n\n${fact}`,
+        authority: { state: 'valid', metadata: { type: 'Procedure', title: 'Guide' } },
+        knowledge: { summary: 'Zephyr dispatch handles southern orders.' },
+        citation: { evidenceId: citation, label: 'Guide', href: '/en/guide' }
+      }),
+      [
+        {
+          name: 'pages.getOkf',
+          title: 'Read canonical OKF',
+          description: 'Read canonical document',
+          parameters: { type: 'object', properties: {} },
+          risk: 'read',
+          group: 'core'
+        }
+      ]
+    )
+    const result = await fixture.execute('Who handles northern orders?')
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+    expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
+  })
+
+  it.each([
+    ['cut field', '- Name: Maya Quinn\n  - Phone: 555-0100', 'Maya Quinn has phone 555-0100.'],
+    ['unseen suffix condition', 'Maya Quinn may approve release', 'Maya Quinn may approve release.']
+  ] as const)('adaptable grounding rejects a recent EOF %s while keeping earlier bounded facts usable', async (_case, terminal, rejected) => {
+    const citation = 'page:42:revision:1'
+    const fact = 'The northern office opens at 09:00.'
+    const content = `# Guide\n\n${fact}\n\n${terminal}`
+    const corrected = `${fact} [[cite:${citation}]]`
+    const fixture = questionFixture(
+      'native',
+      [
+        { calls: [{ id: 'read-recent-cut', name: 'pages.listRecent', arguments: { limit: 1 } }] },
+        { answer: `${rejected} [[cite:${citation}]]` },
+        { answer: corrected }
+      ],
+      () => ({
+        kind: 'recent-page-evidence',
+        requestedLimit: 1,
+        exhausted: true,
+        pages: [
+          {
+            id: 42,
+            locale: 'en',
+            path: 'guide',
+            title: 'Guide',
+            sourceRevision: '1',
+            contentType: 'markdown',
+            updatedAt: '2026-09-01T00:00:00.000Z',
+            content,
+            sourceContentCharacters: content.length + 500,
+            contentTruncated: true,
+            citation: { evidenceId: citation, label: 'Guide', href: '/en/guide' }
+          }
+        ]
+      })
+    )
+    const result = await fixture.execute('What does the recent Guide excerpt say?')
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
+    const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
+    expect(published).toContain(corrected)
+    expect(published).not.toContain(rejected)
+    expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
+  })
+
+  it.each([
+    ['autolink', '<https://example.test/manual>'],
+    ['linkified URL', 'https://example.test/manual']
+  ] as const)('adaptable grounding preserves a source-local %s without importing URL vocabulary', async (_case, reference) => {
+    const citation = 'page:42:revision:1:section:1'
+    const fact = `The recovery manual at ${reference} documents the rollback sequence.`
+    const answer = `${fact} [[cite:${citation}]]`
+    const fixture = questionFixture('native', [{ calls: [{ id: 'read-autolink', name: 'pages.get', arguments: { id: 42 } }] }, { answer }], () =>
+      questionReadPage(42, '1', 'Guide', 'guide', 'Recovery', 'recovery', fact)
+    )
+    const result = await fixture.execute('What documents the rollback sequence?')
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
+    expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
+  })
+
+  it.each([
+    ['ATX', '# Guide\n\n## **North**\n\n#### Contact\nMaya Quinn handles northern orders.', 'Guide › North › Contact'],
+    ['setext', 'Guide\n=====\n\n**North**\n-----\n\n#### Contact\nMaya Quinn handles northern orders.', 'Guide › North › Contact'],
+    [
+      'duplicate leaf under unique parent',
+      '# Guide\n\n## South\n\n### Contact\nNoah Bell handles southern orders.\n\n## North\n\n### Contact\nMaya Quinn handles northern orders.',
+      'Guide › North › Contact'
+    ],
+    ['parent includes descendant', '# Guide\n\n## North\n\n#### Contact\nMaya Quinn handles northern orders.', 'Guide › North'],
+    ['HTML heading', '# Guide\n\n<h2><em>North</em></h2>\n<p>Maya Quinn handles northern orders.</p>', 'Guide › North'],
+    [
+      'disclosure restores outer heading',
+      '# Guide\n\n## North\n<details><summary>Internal notes</summary>\n### South\nNoah Bell handles southern orders.\n</details>\nMaya Quinn handles northern orders.',
+      'Guide › North'
+    ]
+  ] as const)('adaptable grounding resolves complete unique ancestry for %s', async (_case, content, label) => {
+    const citation = 'page:42:revision:1:section:7'
+    const answer = `Maya Quinn handles northern orders. [[cite:${citation}]]`
+    const fixture = questionFixture('native', [{ calls: [{ id: 'read-heading', name: 'pages.get', arguments: { id: 42 } }] }, { answer }], () => ({
+      ...questionReadPage(42, '1', 'Guide', 'guide', 'North', 'north', ''),
+      content,
+      citationSections: [{ evidenceId: citation, label, href: '/en/guide#canonical-north' }]
+    }))
+    const result = await fixture.execute('Who handles northern orders?')
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
+    expect(result.citations).toEqual([{ evidenceId: citation, kind: 'page', label, href: '/en/guide#canonical-north' }])
+  })
+
+  it.each([
+    [
+      'duplicate complete ancestry',
+      '# Guide\n\n## North\n\n### Contact\nMaya Quinn handles northern orders.\n\n## North\n\n### Contact\nNoah Bell handles southern orders.',
+      'Guide › North › Contact'
+    ],
+    [
+      'ambiguous leaf',
+      '# Guide\n\n## North\n\n### Contact\nMaya Quinn handles northern orders.\n\n## South\n\n### Contact\nNoah Bell handles southern orders.',
+      'Guide › Contact'
+    ],
+    ['truncated label', '# Guide\n\n## Northern Operations\nMaya Quinn handles northern orders.', 'Guide › Northern…'],
+    [
+      'child borrowing parent body',
+      '# Guide\n\n## North\nMaya Quinn handles northern orders.\n\n### Contact\nNoah Bell handles southern orders.',
+      'Guide › North › Contact'
+    ],
+    [
+      'disclosure-internal heading',
+      '# Guide\n\n## North\n<details><summary>Internal notes</summary>\n### Contact\nMaya Quinn handles northern orders.\n</details>',
+      'Guide › North › Contact'
+    ]
+  ] as const)('adaptable grounding leaves %s unavailable rather than widening citation scope', async (_case, content, label) => {
+    const citation = 'page:42:revision:1:section:7'
+    const answer = `Maya Quinn handles northern orders. [[cite:${citation}]]`
+    const fixture = questionFixture('native', [{ calls: [{ id: 'read-ambiguous-heading', name: 'pages.get', arguments: { id: 42 } }] }, { answer }], () => ({
+      ...questionReadPage(42, '1', 'Guide', 'guide', 'North', 'north', ''),
+      content,
+      citationSections: [{ evidenceId: citation, label, href: '/en/guide#canonical-contact' }]
+    }))
+    const result = await fixture.execute('Who handles northern orders?', { maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 4_000 })
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Maya Quinn handles northern orders.')
+    expect(result.citations ?? []).toEqual([])
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
+  })
+
+  it.each([
+    [
+      'reference outside section',
+      '[manual]: https://example.test/manual(v2)\n\n# Guide\n\n## Recovery\nThe [recovery manual][manual] documents the rollback sequence.'
+    ],
+    ['inline nested parentheses', '# Guide\n\n## Recovery\nThe [recovery manual](https://example.test/manual(v2)) documents the rollback sequence.'],
+    ['HTML anchor', '# Guide\n\n## Recovery\n<p>The <a href="https://example.test/manual(v2)">recovery manual</a> documents the rollback sequence.</p>']
+  ] as const)('adaptable grounding accepts a local rendered link via %s', async (_case, content) => {
+    const citation = 'page:42:revision:1:section:1'
+    const answer = `The [recovery manual](https://example.test/manual(v2)) documents the rollback sequence. [[cite:${citation}]]`
+    const fixture = questionFixture('native', [{ calls: [{ id: 'read-link', name: 'pages.get', arguments: { id: 42 } }] }, { answer }], () => ({
+      ...questionReadPage(42, '1', 'Guide', 'guide', 'Recovery', 'recovery', ''),
+      content
+    }))
+    const result = await fixture.execute('What documents the rollback sequence?')
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
+    expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
+  })
+
+  it.each([
+    ['borrowed neighboring destination', 'The [recovery manual](https://example.test/inspection) documents the rollback sequence.'],
+    ['changed rendered label', 'The [inspection manual](https://example.test/manual(v2)) documents the rollback sequence.'],
+    ['URL vocabulary as a predicate', 'The recovery manual guarantees free rollback.']
+  ] as const)('adaptable grounding rejects %s without page-wide link pooling', async (_case, rejected) => {
+    const citation = 'page:42:revision:1:section:1'
+    const corrected = `The [recovery manual](https://example.test/manual(v2)) documents the rollback sequence. [[cite:${citation}]]`
+    const run = await runEvidenceCorrection({
+      title: 'Guide',
+      path: 'guide',
+      content:
+        '# Guide\n\n## Recovery\nThe [recovery manual][manual] documents the rollback sequence.\n\nThe [inspection manual](https://example.test/inspection) documents equipment inspection.\n\n[manual]: https://example.test/manual(v2) "guarantees free rollback"',
+      citationSections: [{ evidenceId: citation, label: 'Guide › Recovery', href: '/en/guide#recovery' }],
+      rejectedDraft: `${rejected} [[cite:${citation}]]`,
+      correctedDraft: corrected
+    })
+    expect(run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+  })
+
+  it.each([
+    ['long backtick fence and short non-closer', '````md\n```\n## Forged\nMaya Quinn handles northern orders.\n````'],
+    ['tilde fence CRLF', '~~~~md\r\n~~~\r\n## Forged\r\nMaya Quinn handles northern orders.\r\n~~~~'],
+    ['indented code', '    ## Forged\n    Maya Quinn handles northern orders.'],
+    ['code inside list', '- Example:\n\n      ## Forged\n      Maya Quinn handles northern orders.'],
+    ['HTML literal code', '<pre><code>## Forged\nMaya Quinn handles northern orders.</code></pre>']
+  ] as const)('adaptable grounding never manufactures a section from %s', async (_case, literal) => {
+    const citation = 'page:42:revision:1:section:2'
+    const answer = `Maya Quinn handles northern orders. [[cite:${citation}]]`
+    const fixture = questionFixture('native', [{ calls: [{ id: 'read-code-heading', name: 'pages.get', arguments: { id: 42 } }] }, { answer }], () => ({
+      ...questionReadPage(42, '1', 'Guide', 'guide', 'Examples', 'examples', literal),
+      citationSections: [{ evidenceId: citation, label: 'Guide › Examples › Forged', href: '/en/guide#forged' }]
+    }))
+    const result = await fixture.execute('Who handles northern orders?', { maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 4_000 })
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Maya Quinn handles northern orders.')
+    expect(result.citations ?? []).toEqual([])
+  })
+
+  it('adaptable grounding keeps inline code punctuation and fake links literal', async () => {
+    const citation = 'page:42:revision:1:section:1'
+    const fact = 'The diagnostic token is `Maya. [manual](https://example.test/private)`.'
+    const run = await runEvidenceCorrection({
+      title: 'Guide',
+      path: 'guide',
+      content: `# Guide\n\n## Diagnostics\n${fact}`,
+      citationSections: [{ evidenceId: citation, label: 'Guide › Diagnostics', href: '/en/guide#diagnostics' }],
+      rejectedDraft: `The diagnostic token is [manual](https://example.test/private). [[cite:${citation}]]`,
+      correctedDraft: `${fact} [[cite:${citation}]]`
+    })
+    expect(run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(`${fact} [[cite:${citation}]]`)
+  })
+
+  const adaptableCitation = 'page:42:revision:1:section:1'
+  const adaptableContact = 'Name: Maya Quinn; Email: [maya@example.test](mailto:maya@example.test); Phone: 555-0100 x42'
+  const adaptableContactLayouts = [
+    ['prose', 'Maya Quinn has email [maya@example.test](mailto:maya@example.test) and phone 555-0100 x42.'],
+    ['plain labeled row', 'Name: Maya Quinn | Email: [maya@example.test](mailto:maya@example.test) | Phone: 555-0100 x42'],
+    ['bold labeled row', '**Name:** Maya Quinn | **Email:** [maya@example.test](mailto:maya@example.test) | **Phone:** 555-0100 x42'],
+    ['wrapped list', '- Name: Maya Quinn; Email: [maya@example.test](mailto:maya@example.test);\n  Phone: 555-0100 x42'],
+    ['ordered list', '1. Name: Maya Quinn\n   - Email: [maya@example.test](mailto:maya@example.test)\n   - Phone: 555-0100 x42'],
+    ['hard line breaks', 'Name: Maya Quinn  \nEmail: [maya@example.test](mailto:maya@example.test)  \nPhone: 555-0100 x42'],
+    ['lazy list continuation', '- Name: Maya Quinn; Email: [maya@example.test](mailto:maya@example.test);\nPhone: 555-0100 x42'],
+    ['loose list continuation', '- Name: Maya Quinn\n\n  Email: [maya@example.test](mailto:maya@example.test)\n\n  Phone: 555-0100 x42'],
+    ['nested labeled fields', '- Name: Maya Quinn\n  - Email: [maya@example.test](mailto:maya@example.test)\n  - Phone: 555-0100 x42'],
+    ['table with outer pipes', '| Name | Email | Phone |\n| --- | --- | --- |\n| Maya Quinn | [maya@example.test](mailto:maya@example.test) | 555-0100 x42 |'],
+    ['table without outer pipes', 'Name | Email | Phone\n--- | --- | ---\nMaya Quinn | [maya@example.test](mailto:maya@example.test) | 555-0100 x42'],
+    [
+      'HTML paragraph and anchor',
+      '<p><strong>Name:</strong> Maya Quinn<br>Email: <a href="mailto:maya@example.test">maya@example.test</a><br>Phone: 555-0100 x42</p>'
+    ],
+    [
+      'HTML nested list',
+      '<ul><li>Name: Maya Quinn<ul><li>Email: <a href="mailto:maya@example.test">maya@example.test</a></li><li>Phone: 555-0100 x42</li></ul></li></ul>'
+    ],
+    [
+      'HTML table',
+      '<table><tr><th>Name</th><th>Email</th><th>Phone</th></tr><tr><td>Maya Quinn</td><td><a href="mailto:maya@example.test">maya@example.test</a></td><td>555-0100 x42</td></tr></table>'
+    ]
+  ] as const
+
+  it.each(adaptableContactLayouts)('adaptable grounding publishes one contact association from %s', async (_layout, source) => {
+    const answer = `${_layout === 'prose' ? source : adaptableContact} [[cite:${adaptableCitation}]]`
+    const page = questionReadPage(42, '1', 'Supplier Contacts', 'supplier-contacts', 'Contacts', 'contacts', source)
+    const fixture = questionFixture('native', [{ calls: [{ id: 'read-adaptable-contact', name: 'pages.get', arguments: { id: 42 } }] }, { answer }], () => page)
+    const result = await fixture.execute('What are Maya Quinn’s name, email and phone?')
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
+    expect(result.citations).toEqual([
+      { evidenceId: adaptableCitation, kind: 'page', label: 'Supplier Contacts › Contacts', href: '/en/supplier-contacts#contacts' }
+    ])
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({
+      accepted: true,
+      claims: expect.arrayContaining([expect.objectContaining({ evidenceId: adaptableCitation, supported: true })])
+    })
+  })
+
+  it.each([
+    ['changed identity', adaptableContact.replace('Maya Quinn', 'Noah Bell')],
+    ['changed numeric value', adaptableContact.replace('555-0100 x42', '555-0100 x43')],
+    ['neighbor email destination', adaptableContact.replace('mailto:maya@example.test', 'mailto:noah@example.test')],
+    ['neighbor phone assignment', adaptableContact.replace('555-0100 x42', '555-0200 x18')],
+    ['reversed columns', 'Name: Maya Quinn; Email: 555-0100 x42; Phone: [maya@example.test](mailto:maya@example.test)'],
+    ['high-overlap invented relationship', 'Maya Quinn guarantees email [maya@example.test](mailto:maya@example.test) and phone 555-0100 x42 availability.']
+  ] as const)('adaptable grounding rejects %s despite same-page vocabulary', async (_case, rejected) => {
+    const corrected = `${adaptableContact} [[cite:${adaptableCitation}]]`
+    const run = await runEvidenceCorrection({
+      title: 'Supplier Contacts',
+      path: 'supplier-contacts',
+      question: 'What are Maya Quinn’s email and phone?',
+      content:
+        '# Supplier Contacts\n\n## Contacts\n\nName | Email | Phone\n--- | --- | ---\nMaya Quinn | [maya@example.test](mailto:maya@example.test) | 555-0100 x42\nNoah Bell | [noah@example.test](mailto:noah@example.test) | 555-0200 x18',
+      citationSections: [{ evidenceId: adaptableCitation, label: 'Supplier Contacts › Contacts', href: '/en/supplier-contacts#contacts' }],
+      rejectedDraft: `${rejected} [[cite:${adaptableCitation}]]`,
+      correctedDraft: corrected
+    })
+    expect(run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ accepted: false, finalCitationIds: [] }),
+      expect.objectContaining({ accepted: true, finalCitationIds: [adaptableCitation] })
+    ])
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+  })
+
+  const qualifiedFact = 'Maya Quinn may approve release only after audit before 2026-10-15.'
+  it.each([
+    ['prose', qualifiedFact],
+    ['wrapped item', '- Maya Quinn may approve release only after audit\n  before 2026-10-15.'],
+    ['lazy item', '- Maya Quinn may approve release only after audit\nbefore 2026-10-15.'],
+    ['loose item', '- Maya Quinn may approve release only after audit\n\n  before 2026-10-15.'],
+    ['inherited condition', '- Only after audit before 2026-10-15:\n  - Maya Quinn may approve release.'],
+    ['disclosure', '<details>\n<summary>Only after audit before 2026-10-15</summary>\n- Maya Quinn may approve release.\n</details>'],
+    ['same-line disclosure', '<details><summary>Only after audit before 2026-10-15</summary><p>Maya Quinn may approve release.</p></details>'],
+    ['same-line Markdown disclosure', '<details><summary>Only after audit before 2026-10-15</summary>- Maya Quinn may approve release.\n</details>'],
+    [
+      'nested disclosure',
+      '<details><summary>Release</summary><details><summary>Only after audit before 2026-10-15</summary>\n- Maya Quinn may approve release.\n</details></details>'
+    ]
+  ] as const)('adaptable grounding preserves qualified approval from %s', async (_layout, source) => {
+    const answer = `${qualifiedFact} [[cite:${adaptableCitation}]]`
+    const fixture = questionFixture('native', [{ calls: [{ id: 'read-qualified', name: 'pages.get', arguments: { id: 42 } }] }, { answer }], () =>
+      questionReadPage(42, '1', 'Release Rules', 'release-rules', 'Approval', 'approval', source)
+    )
+    const result = await fixture.execute('When may Maya Quinn approve release?')
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
+    expect(result.citations?.map(citation => citation.evidenceId)).toEqual([adaptableCitation])
+  })
+
+  it.each([
+    ['dropped only', 'Maya Quinn may approve release after audit before 2026-10-15.'],
+    ['dropped condition', 'Maya Quinn may approve release before 2026-10-15.'],
+    ['strengthened modal', 'Maya Quinn must approve release only after audit before 2026-10-15.'],
+    ['borrowed date', 'Maya Quinn may approve release only after audit before 2026-11-20.'],
+    ['negated approval', 'Maya Quinn may not approve release only after audit before 2026-10-15.']
+  ] as const)('adaptable grounding rejects %s on an inherited approval condition', async (_case, rejected) => {
+    const corrected = `${qualifiedFact} [[cite:${adaptableCitation}]]`
+    const run = await runEvidenceCorrection({
+      title: 'Release Rules',
+      path: 'release-rules',
+      question: 'When may Maya Quinn approve release?',
+      content:
+        '# Release Rules\n\n## Approval\n\n- Only after audit before 2026-10-15:\n  - Maya Quinn may approve release.\n- Only after inspection before 2026-11-20:\n  - Noah Bell may approve release.',
+      citationSections: [{ evidenceId: adaptableCitation, label: 'Release Rules › Approval', href: '/en/release-rules#approval' }],
+      rejectedDraft: `${rejected} [[cite:${adaptableCitation}]]`,
+      correctedDraft: corrected
+    })
+    expect(run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+  })
+
+  it.each([
+    [
+      'adjacent disclosure with repeated name',
+      '<details><summary>Only after audit before 2026-10-15</summary>\n- Maya Quinn may approve release.\n</details><details><summary>Only after inspection before 2026-11-20</summary>\n- Maya Quinn may approve shipment.\n</details>'
+    ],
+    [
+      'nested disclosure scope restoration',
+      '<details><summary>Only after audit before 2026-10-15</summary><details><summary>Only after inspection before 2026-11-20</summary>\n- Maya Quinn may approve shipment.\n</details>\n- Maya Quinn may approve release.\n</details>'
+    ],
+    ['independent same-name sentences', `${qualifiedFact}\n\nMaya Quinn may approve shipment only after inspection before 2026-11-20.`]
+  ] as const)('adaptable grounding cannot relocate a condition across %s', async (_case, source) => {
+    const corrected = `${qualifiedFact} [[cite:${adaptableCitation}]]`
+    const run = await runEvidenceCorrection({
+      title: 'Release Rules',
+      path: 'release-rules',
+      content: `# Release Rules\n\n## Approval\n\n${source}`,
+      citationSections: [{ evidenceId: adaptableCitation, label: 'Release Rules › Approval', href: '/en/release-rules#approval' }],
+      rejectedDraft: `Maya Quinn may approve release only after inspection before 2026-11-20. [[cite:${adaptableCitation}]]`,
+      correctedDraft: corrected
+    })
+    expect(run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
+    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+  })
+
+  const contactRow =
+    '**Account Manager/Customer Service questions:** Maya Quinn | [maya@example.test](mailto:maya@example.test) | ☎️ [555.010.1000 ext.142](tel:+15550101000) | Cell: [555.010.2000](tel:+15550102000)'
 
   it('accepts an intact formatted contact row with several numeric fields and a later colon', async () => {
     const citation = 'page:42:revision:1:section:1'
     const answer = `- ${contactRow} [[cite:${citation}]]`
     const page = questionReadPage(42, '1', 'Supplier Contacts', 'supplier-contacts', 'Contacts', 'contacts', `* ${contactRow}`)
-    const fixture = questionFixture('native', [
-      { calls: [{ id: 'read-contact', name: 'pages.get', arguments: { id: 42 } }] },
-      { answer }
-    ], () => page)
+    const fixture = questionFixture('native', [{ calls: [{ id: 'read-contact', name: 'pages.get', arguments: { id: 42 } }] }, { answer }], () => page)
     const result = await fixture.execute('Who is our supplier contact?')
     expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
     expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
@@ -1420,10 +1850,13 @@ describe('Ax agent engine', () => {
     const citation = 'page:42:revision:1:section:1'
     const corrected = `- ${contactRow} [[cite:${citation}]]`
     const run = await runEvidenceCorrection({
-      title: 'Supplier Contacts', path: 'supplier-contacts', question: 'Who is our supplier contact?',
+      title: 'Supplier Contacts',
+      path: 'supplier-contacts',
+      question: 'Who is our supplier contact?',
       content: `# Supplier Contacts\n\n## Contacts\n\n* ${contactRow}\n* **Warehouse:** [555.010.3000](tel:+15550103000)`,
       citationSections: [{ evidenceId: citation, label: 'Supplier Contacts › Contacts', href: '/en/supplier-contacts#contacts' }],
-      rejectedDraft: `- ${rejectedRow} [[cite:${citation}]]`, correctedDraft: corrected
+      rejectedDraft: `- ${rejectedRow} [[cite:${citation}]]`,
+      correctedDraft: corrected
     })
     expect(run.rejectedIssues.length).toBeGreaterThan(0)
     expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
@@ -1438,8 +1871,11 @@ describe('Ax agent engine', () => {
       `  - **Direct Phone:** 555-0100 x42 [[cite:${citation}]]`
     ].join('\n')
     const run = await runEvidenceCorrection({
-      title: 'Supplier Contacts', path: 'supplier-contacts', question: 'Who is our supplier contact?',
-      content: '# Supplier Contacts\n\n## Contacts\n\n- **Customer Service Rep:** Maya Quinn\n  - **Email:** [maya@example.test](mailto:maya@example.test)\n  - **Direct Phone:** 555-0100 x42\n\n- **Order Processing Contact:**\n  - **Name:** Noah Bell\n  - **Email:** noah@example.test',
+      title: 'Supplier Contacts',
+      path: 'supplier-contacts',
+      question: 'Who is our supplier contact?',
+      content:
+        '# Supplier Contacts\n\n## Contacts\n\n- **Customer Service Rep:** Maya Quinn\n  - **Email:** [maya@example.test](mailto:maya@example.test)\n  - **Direct Phone:** 555-0100 x42\n\n- **Order Processing Contact:**\n  - **Name:** Noah Bell\n  - **Email:** noah@example.test',
       citationSections: [{ evidenceId: citation, label: 'Supplier Contacts › Contacts', href: '/en/supplier-contacts#contacts' }],
       rejectedDraft: `The only supplier contact is Maya Quinn for every department. [[cite:${citation}]]`,
       correctedDraft: corrected
@@ -1456,12 +1892,16 @@ describe('Ax agent engine', () => {
     const candidate = questionCandidate(42, '1', 'Supplier Contacts', { path: 'supplier-contacts' })
     const page = questionReadPage(42, '1', 'Supplier Contacts', 'supplier-contacts', 'Contacts', 'contacts', 'Customer Service Rep: Maya Quinn')
     const answer = `Customer Service Rep: Maya Quinn [[cite:${citation}]]`
-    const fixture = questionFixture('native', [
-      { calls: [{ id: 'search-contact', name: 'pages.search', arguments: { query: 'supplier contact' } }] },
-      { answer },
-      { calls: [{ id: 'read-contact', name: 'pages.get', arguments: { id: 42 } }] },
-      { answer }
-    ], name => name === 'pages.search' ? { results: [candidate] } : page)
+    const fixture = questionFixture(
+      'native',
+      [
+        { calls: [{ id: 'search-contact', name: 'pages.search', arguments: { query: 'supplier contact' } }] },
+        { answer },
+        { calls: [{ id: 'read-contact', name: 'pages.get', arguments: { id: 42 } }] },
+        { answer }
+      ],
+      name => (name === 'pages.search' ? { results: [candidate] } : page)
+    )
     const result = await fixture.execute('Who is our supplier contact?')
     const repair = fixture.providerCalls[2]!
     expect(repair.functions?.some(fn => fn.name === AGENT_TOOL_NAMES['pages.get'])).toBe(true)
@@ -1881,7 +2321,10 @@ describe('Ax agent engine', () => {
     ['fenced', '```md\n## Recommendations\n```'],
     ['blockquote', '> ## Recommendations'],
     ['list item', '- ## Recommendations'],
-    ['inline code', '`## Recommendations`']
+    ['inline code', '`## Recommendations`'],
+    ['setext', 'Recommendations\n---------------'],
+    ['HTML', '<h2>Recommendations</h2>'],
+    ['unequal tilde fence', '~~~~md\n~~~\n## Recommendations\n~~~~']
   ] as const)('does not let a %s fake heading exempt an uncited factual ending', async (_shape, fakeHeading) => {
     const evidenceId = 'page:42:revision:1:section:2'
     const citedFact = 'Amber Falcon is a synthetic incident.'
@@ -2233,11 +2676,6 @@ describe('Ax agent engine', () => {
       { text, event }
     )
 
-    const correctionText = String(calls[2]?.chatPrompt.at(-1)?.content)
-    expect(correctionText).toContain('[[cite:page:1:revision:9:section:1]]')
-    expect(correctionText).toContain('#### [Discounts Chart](/discounts) | [UPS/USPS/FedEx](/shipping) | [Spec/CET](/cet)')
-    expect(correctionText).toContain('[[cite:page:1:revision:9:section:4]]')
-    expect(correctionText).toContain('Indiana orders route through the "Midwest" contact.')
     expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
     expect(result.citations).toEqual([
       expect.objectContaining({ evidenceId: 'page:1:revision:9' }),
@@ -2356,14 +2794,6 @@ describe('Ax agent engine', () => {
 
     expect(chat).toHaveBeenCalledTimes(3)
     expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
-    const correctionPrompt = String(calls[2]?.chatPrompt.at(-1)?.content)
-    const planningContext = `General Info › ${longSection} › ${longSubsection}`
-    expect(correctionPrompt).toContain('[[cite:page:1:revision:1:section:1]]')
-    expect(correctionPrompt).toContain('[[cite:page:1:revision:1:section:5]]')
-    expect(correctionPrompt).toContain(planningContext)
-    expect(correctionPrompt).toContain(planningFact)
-    expect(correctionPrompt).toContain('MFG Directory › Acme')
-    expect(correctionPrompt).toContain(indianaFact)
 
     const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
     expect(provenance).toHaveLength(2)
@@ -4197,8 +4627,8 @@ describe('Ax agent engine', () => {
         filePath: 'en/guide.md',
         sha256: 'b'.repeat(64),
         mediaType: 'text/markdown',
-        document: '---\ntitle: Guide\n---\n# Guide\n\nQuartz migration was approved.',
-        authority: { state: 'valid', metadata: { title: 'Guide' }, trust: { verified: true } },
+        document: '---\ntype: Reference\ntitle: Guide\n---\n# Guide\n\nQuartz migration was approved.',
+        authority: { state: 'valid', metadata: { type: 'Reference', title: 'Guide' }, trust: { verified: true } },
         knowledge: null,
         citation: { evidenceId: 'page:42:version:20:revision:20', label: 'Guide', href: '/en/guide?v=20' }
       }
@@ -6248,7 +6678,7 @@ describe('Ax agent engine', () => {
     )
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
       expect.objectContaining({
-        accepted: false,
+        accepted: false
       }),
       expect.objectContaining({ accepted: true, finalCitationIds: rows.map(row => row.citation.evidenceId) })
     ])
@@ -6615,7 +7045,7 @@ describe('Ax agent engine', () => {
           resourceUri: 'wiki://pages/42/current/revision/30/okf',
           filePath: 'en/guide.md',
           mediaType: 'text/markdown',
-          document: '---\ntitle: Guide\n---\n\n## Emergency\nEmergency route is closed.',
+          document: '---\ntype: Reference\ntitle: Guide\n---\n\n## Emergency\nEmergency route is closed.',
           citation: currentCitation
         }
       ],
@@ -7871,9 +8301,7 @@ describe('request-derived evidence coverage', () => {
             },
             { answer: `${scenario.fact} [[cite:page:42:revision:3:section:1]]` }
           ],
-          name => name === 'pages.listRecent'
-            ? { kind: 'recent-page-evidence', requestedLimit: 2, exhausted: true, pages: recentRows }
-            : page
+          name => (name === 'pages.listRecent' ? { kind: 'recent-page-evidence', requestedLimit: 2, exhausted: true, pages: recentRows } : page)
         )
         const result = await fixture.execute(scenario.question, { maxTurns: 4, maxToolCalls: 2, maxOutputTokens: 1_024 })
         expect(result.executionLimit).toBeUndefined()
@@ -7897,9 +8325,7 @@ describe('request-derived evidence coverage', () => {
         },
         { answer: `${fact} [[cite:page:42:revision:3:section:1]]` }
       ],
-      name => name === 'pages.listRecent'
-        ? { kind: 'recent-page-evidence', requestedLimit: 2, exhausted: true, pages: recentRows }
-        : page
+      name => (name === 'pages.listRecent' ? { kind: 'recent-page-evidence', requestedLimit: 2, exhausted: true, pages: recentRows } : page)
     )
     const result = await fixture.execute('Explain calibration.', { maxTurns: 3, maxToolCalls: 2, maxOutputTokens: 1_024 })
     expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
@@ -7941,7 +8367,7 @@ describe('request-derived evidence coverage', () => {
     expect(
       fixture.event.mock.calls
         .filter(([type]) => type === 'evidence.provenance')
-        .map(([, data]) => typeof data === 'object' && data !== null && 'accepted' in data ? data.accepted : undefined)
+        .map(([, data]) => (typeof data === 'object' && data !== null && 'accepted' in data ? data.accepted : undefined))
     ).toEqual([false, true])
   })
 
@@ -7954,7 +8380,10 @@ describe('request-derived evidence coverage', () => {
       'native',
       [
         { metadata: sourcePlan(userRequest), calls: [{ id: 'pilot', name: 'pages.get', arguments: { id: 42 } }] },
-        { answer: 'Mira Sen completed the pilot on 2026-09-19, subject to lab approval. [[cite:page:42:revision:3:section:1]]\n\nNoah Patel joined the pilot before safety review. [[cite:page:42:revision:3:section:1]]' },
+        {
+          answer:
+            'Mira Sen completed the pilot on 2026-09-19, subject to lab approval. [[cite:page:42:revision:3:section:1]]\n\nNoah Patel joined the pilot before safety review. [[cite:page:42:revision:3:section:1]]'
+        },
         { answer: `${firstFact} [[cite:page:42:revision:3:section:1]]\n\n${secondFact} [[cite:page:42:revision:3:section:1]]` }
       ],
       () => page
@@ -7968,7 +8397,7 @@ describe('request-derived evidence coverage', () => {
     expect(
       fixture.event.mock.calls
         .filter(([type]) => type === 'evidence.provenance')
-        .map(([, data]) => typeof data === 'object' && data !== null && 'accepted' in data ? data.accepted : undefined)
+        .map(([, data]) => (typeof data === 'object' && data !== null && 'accepted' in data ? data.accepted : undefined))
     ).toEqual([false, true])
   })
   it('preserves Gemini native text binding across a metadata-bearing read without persisting stripped control state', async () => {
@@ -7987,19 +8416,29 @@ describe('request-derived evidence coverage', () => {
           model: 'gemini-3.8-flash',
           status: dispatches === 1 ? 'requires_action' : 'completed',
           usage: { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5 },
-          steps: dispatches === 1
-            ? [
-                { type: 'model_output', content: [{ type: 'text', text: sourcePlan(userRequest) }] },
-                { type: 'function_call', id: 'read-alpha', name: 'wiki_get_page', arguments: { id: 42 } }
-              ]
-            : [{ type: 'model_output', content: [{ type: 'text', text: `${fact} [[cite:page:42:revision:3:section:1]]` }] }]
+          steps:
+            dispatches === 1
+              ? [
+                  { type: 'model_output', content: [{ type: 'text', text: sourcePlan(userRequest) }] },
+                  { type: 'function_call', id: 'read-alpha', name: 'wiki_get_page', arguments: { id: 42 } }
+                ]
+              : [{ type: 'model_output', content: [{ type: 'text', text: `${fact} [[cite:page:42:revision:3:section:1]]` }] }]
         })
       }) as typeof fetch
     })
     const factory = {
       create: async () => ({
         service: native,
-        capabilities: { streaming: false, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 512 },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 512
+        },
         transportKind: 'gemini-api',
         model: 'gemini-3.8-flash',
         continuationDialect: 'gemini-interactions-v1',
@@ -8019,7 +8458,11 @@ describe('request-derived evidence coverage', () => {
     }
     const text = vi.fn(async (_delta: string) => {})
     const result = await new AxAgentEngine(factory, actions).execute(
-      { ...request(new AbortController().signal), messages: [{ role: 'user', content: userRequest }], limits: { maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 512 } },
+      {
+        ...request(new AbortController().signal),
+        messages: [{ role: 'user', content: userRequest }],
+        limits: { maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 512 }
+      },
       { text, event: async () => {} }
     )
     expect(dispatches).toBe(2)

@@ -377,10 +377,7 @@ describe('Ax agent engine context compaction', () => {
         performance: { cachedInputTokensReported: 2, cacheCreationInputTokensReported: null }
       })
     )
-    expect(event).toHaveBeenCalledWith(
-      'model.turn',
-      expect.objectContaining({ performance: expect.objectContaining({ cachedInputTokensReported: 3 }) })
-    )
+    expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ performance: expect.objectContaining({ cachedInputTokensReported: 3 }) }))
     expect(result).toMatchObject({ totalTokens: 12, costMicros: 16 })
   })
   it('delivers only relevant exact child page units instead of oversized background', async () => {
@@ -485,6 +482,118 @@ describe('Ax agent engine context compaction', () => {
     expect(text).toHaveBeenCalledWith(`${sourceUnit} [[cite:${alphaEvidenceId}]]`)
     expect(result.citations).toEqual([{ evidenceId: alphaEvidenceId, kind: 'page', label: 'Alpha', href: '/en/alpha' }])
     expect(validateObservation).toHaveBeenCalledWith('pages.get', evidenceSeeds[0]!.output, expect.any(AbortSignal))
+  })
+
+  it.each([
+    ['parent identity', '- Name: Maya Quinn{{padding}}\n  - Phone: 555-0100 x42', 'Name: Maya Quinn; Phone: 555-0100 x42'],
+    [
+      'required condition',
+      '- Only after audit before 2026-10-15{{padding}}:\n  - Maya Quinn may approve release.',
+      'Maya Quinn may approve release only after audit before 2026-10-15.'
+    ],
+    [
+      'sibling field',
+      '- Name: Maya Quinn\n  - Email: [maya@example.test](mailto:maya@example.test){{padding}}\n  - Phone: 555-0100 x42',
+      'Name: Maya Quinn; Email: [maya@example.test](mailto:maya@example.test); Phone: 555-0100 x42'
+    ],
+    ['table header', 'Name{{padding}} | Phone\n--- | ---\nMaya Quinn | 555-0100 x42', 'Name: Maya Quinn; Phone: 555-0100 x42'],
+    [
+      'reference definition',
+      '[maya]: mailto:maya@example.test "{{title}}"\n\n- Name: Maya Quinn\n  - Email: [maya@example.test][maya]',
+      'Name: Maya Quinn; Email: [maya@example.test](mailto:maya@example.test)'
+    ]
+  ] as const)('adaptable compaction reentry preserves complete %s closures without borrowing omitted dependencies', async (_dependency, template, fact) => {
+    for (const complete of [true, false]) {
+      const history = canonicalMessages([
+        { role: 'user', content: `OLD_CONTACT_CONSTRAINT:${'a'.repeat(40_000)}` },
+        { role: 'assistant', content: `OLD_CONTACT_DECISION:${'b'.repeat(40_000)}` },
+        { role: 'user', content: `TAIL_CONTEXT:${'c'.repeat(8_000)}` },
+        { role: 'assistant', content: `TAIL_DECISION:${'d'.repeat(8_000)}` },
+        { role: 'user', content: `Contact office lookup: what does the contact record establish about ${fact}?` }
+      ])
+      const citation = 'page:1:revision:rev-1'
+      const answer = `${fact} [[cite:${citation}]]`
+      const independentFact = 'The contact office opens at 09:00.'
+      const independentAnswer = `${independentFact} [[cite:${citation}]]`
+      const content = `# Contacts\n\n${independentFact}\n\n${template.replace('{{padding}}', complete ? '' : ` <!--${'presentational padding '.repeat(700)}-->`).replace('{{title}}', complete ? 'Contact' : 'presentational padding '.repeat(700))}\n\n${'Neutral office background. '.repeat(900)}`
+      const calls: Readonly<AxChatRequest<unknown>>[] = []
+      const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+        calls.push(input)
+        if (calls.length === 1) return response('Keep the contact lookup and exact source restrictions.', 100, 10)
+        if (calls.length === 2) return response(answer, 100, 10)
+        return response(independentAnswer, 100, 10)
+      })
+      const { factory } = factoryFor(chat)
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [
+            {
+              name: 'pages.get',
+              title: 'Read page',
+              description: 'Read canonical page',
+              parameters: { type: 'object', properties: {} },
+              risk: 'read',
+              group: 'core'
+            }
+          ],
+          invoke: async () => {
+            throw new Error('No direct page read was expected')
+          },
+          snapshot: async () => ({}),
+          close: () => undefined,
+          validateObservation: async () => true
+        })
+      }
+      const text = vi.fn(async (_delta: string) => {})
+      const event = vi.fn(async (..._args: [string, unknown]) => {})
+      const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
+      const base = engineRequest(history.messages)
+      const result = await new AxAgentEngine(factory, actions).execute(
+        {
+          ...base,
+          run: { ...base.run, executionMode: 'agent' },
+          googleSearchEnabled: false,
+          compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null },
+          research: {
+            packets: [],
+            incompleteTasks: [],
+            evidenceSeeds: [
+              {
+                taskId: '00000000-0000-4000-8000-000000000021',
+                subagentRunId: '00000000-0000-4000-8000-000000000031',
+                actionCallId: 'child-contact-read',
+                actionName: 'pages.get',
+                output: {
+                  id: 1,
+                  locale: 'en',
+                  path: 'contacts',
+                  sourceRevision: 'rev-1',
+                  title: 'Contacts',
+                  contentType: 'markdown',
+                  content,
+                  citation: { evidenceId: citation, label: 'Contacts', href: '/en/contacts' },
+                  citationSections: []
+                }
+              }
+            ]
+          }
+        },
+        { text, event, commitCompaction }
+      )
+      expect(commitCompaction).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'context_compacted' }))
+      const published = text.mock.calls.map(([delta]) => delta).join('')
+      if (complete) {
+        expect(published).toBe(answer)
+        expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
+        expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
+      } else {
+        expect(published).not.toContain(fact)
+        expect(published).toBe(independentAnswer)
+        expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
+        expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
+        expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
+      }
+    }
   })
 
   it('revalidates rejected page evidence before replaying it to the provider', async () => {
