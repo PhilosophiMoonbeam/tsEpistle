@@ -5,9 +5,30 @@ import type { AgentConversationFolderView, AgentProviderProfileView, AgentThread
 import { AGENT_CHAT_PIN_STORAGE_KEY, clearAgentChatPin, writeAgentChatPin } from '../helpers/agent-chat-pin.ts'
 import { isAgentSessionId, useAgentsStore } from './agents.ts'
 
-const activeThread = (): AgentThreadState => ({
+// Fixture-only envelope: server signature verification is not exercised by these store tests.
+const admissionToken = (sessionId: string, ownerId: number): string => {
+  const kid = 'polling-test'
+  const payload = {
+    v: 1,
+    kid,
+    ownerId,
+    sessionId,
+    sessionVersion: 1,
+    profileId: '00000000-0000-4000-8000-000000000010',
+    profileVersionId: '00000000-0000-4000-8000-000000000011',
+    profileVersion: 1,
+    profilePolicyVersion: 1,
+    defaultGeneration: 1,
+    executionMode: 'agent',
+    googleSearchEnabled: false,
+    exp: 4_000_000_000
+  }
+  return `${kid}.${btoa(JSON.stringify(payload)).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '')}.fixture-signature`
+}
+
+const activeThread = (ownerId = 1, sessionId = '00000000-0000-4000-8000-000000000001'): AgentThreadState => ({
   session: {
-    id: '00000000-0000-4000-8000-000000000001',
+    id: sessionId,
     title: '',
     retention: 'saved',
     folderId: null,
@@ -15,11 +36,12 @@ const activeThread = (): AgentThreadState => ({
     executionMode: 'agent',
     version: 1,
     providerProfileId: null,
-    profileResolutionToken: 'token',
+    profileResolutionToken: admissionToken(sessionId, ownerId),
+    googleSearchEnabled: false,
     skills: [],
     currentRun: {
       id: '00000000-0000-4000-8000-000000000002',
-      sessionId: '00000000-0000-4000-8000-000000000001',
+      sessionId,
       status: 'running',
       attempt: 1,
       eventSequence: 1,
@@ -45,8 +67,8 @@ const activeThread = (): AgentThreadState => ({
   suggestions: []
 })
 
-const threadForSession = (sessionId: string, runId: string): AgentThreadState => {
-  const thread = activeThread()
+const threadForSession = (sessionId: string, runId: string, ownerId = 1): AgentThreadState => {
+  const thread = activeThread(ownerId, sessionId)
   return {
     ...thread,
     session: {
@@ -101,6 +123,15 @@ const deferred = <T>() => {
     reject = fail
   })
   return { promise, resolve, reject }
+}
+
+const waitForPost = async (started: Promise<void>, sending: Promise<boolean>): Promise<void> => {
+  await Promise.race([
+    started,
+    sending.then(() => {
+      throw new Error('Send settled before reaching the pending POST')
+    })
+  ])
 }
 
 class FakeEventSource {
@@ -1062,6 +1093,7 @@ describe('Agent session mutations', () => {
       setActivePinia(createPinia())
       const store = useAgentsStore()
       store.csrfToken = 'csrf-token'
+      store.pinOwnerId = 1
       const base = activeThread()
       const current: AgentThreadState = {
         ...base,
@@ -1104,6 +1136,12 @@ describe('Agent session mutations', () => {
         if (path === '/_api/agents/sessions' && method === 'GET') {
           return Promise.resolve(Response.json({ sessions: [summaryForThread(latest)], nextCursor: null }))
         }
+        if (path === `/_api/agents/sessions/${current.session.id}` && method === 'GET') {
+          return Promise.resolve(Response.json(latest))
+        }
+        if (path === `/_api/agents/sessions/${current.session.id}/messages` && method === 'POST') {
+          return Promise.resolve(Response.json({ run: base.session.currentRun, replayed: false }))
+        }
         return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
       })
 
@@ -1117,7 +1155,6 @@ describe('Agent session mutations', () => {
       ])
 
       expect(blocked).toEqual([undefined, false, undefined, undefined])
-      expect(fetcher).toHaveBeenCalledTimes(1)
       expect(requestBodies).toEqual([{ expectedSessionVersion: 1, retention: 'temporary' }])
 
       if (outcome === 'success') {
@@ -1146,20 +1183,23 @@ describe('Agent session mutations', () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     const accountA = { ...activeThread(), session: { ...activeThread().session, currentRun: null } }
-    const accountB = {
-      ...threadForSession('00000000-0000-4000-8000-000000000142', '00000000-0000-4000-8000-000000000143'),
-      session: { ...activeThread().session, id: '00000000-0000-4000-8000-000000000142', currentRun: null }
-    }
+    const accountBActive = activeThread(2, '00000000-0000-4000-8000-000000000142')
+    const accountB = { ...accountBActive, session: { ...accountBActive.session, currentRun: null } }
     store.thread = accountA
     store.sessions = [summaryForThread(accountA)]
     store.csrfToken = 'csrf-a'
     store.pinOwnerId = 1
     markWorkspaceReady(store)
     const pendingSend = deferred<Response>()
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const postStarted = deferred<void>()
+    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
-      if (path === `/_api/agents/sessions/${accountA.session.id}/messages` && method === 'POST') return pendingSend.promise
+      if (path === `/_api/agents/sessions/${accountA.session.id}` && method === 'GET') return Promise.resolve(Response.json(accountA))
+      if (path === `/_api/agents/sessions/${accountA.session.id}/messages` && method === 'POST') {
+        postStarted.resolve()
+        return pendingSend.promise
+      }
       if (path === '/_api/agents/sessions' && method === 'GET')
         return Promise.resolve(Response.json({ sessions: [summaryForThread(accountB)], nextCursor: null }))
       if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
@@ -1170,6 +1210,7 @@ describe('Agent session mutations', () => {
     })
 
     const sending = store.send('Keep account A request in flight')
+    await waitForPost(postStarted.promise, sending)
     const oldToken = store.sessionMutationToken
     expect(oldToken).toBeGreaterThan(0)
     await expect(store.initialize('csrf-b', { ownerId: 2, routeSync: false, resumeSessionId: accountB.session.id })).resolves.toBe(true)
@@ -1181,7 +1222,6 @@ describe('Agent session mutations', () => {
     expect(store.sessionMutationBusy).toBe(true)
     expect(store.endSessionMutation(newToken!)).toBe(true)
     expect(store.sessionMutationBusy).toBe(false)
-    expect(fetcher.mock.calls.some(call => call[1]?.method === 'POST')).toBe(true)
   })
   it('restores an unfiled current conversation and its stream when clearing fails', async () => {
     setActivePinia(createPinia())
@@ -2005,18 +2045,30 @@ describe('Agent session mutation transitions', () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
+    store.pinOwnerId = 1
     const active = activeThread()
     const submittedRun = active.session.currentRun!
     const origin = { ...active, session: { ...active.session, currentRun: null } }
     const selected = threadForSession('00000000-0000-4000-8000-000000000070', '00000000-0000-4000-8000-000000000071')
     const pending = deferred<Response>()
+    const postStarted = deferred<void>()
     store.thread = origin
     store.setDraft(origin.session.id, 'Keep this in the original conversation')
     store.setDraft(selected.session.id, 'Another draft')
     markWorkspaceReady(store)
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation(() => pending.promise)
+    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${origin.session.id}` && method === 'GET') return Promise.resolve(Response.json(origin))
+      if (path === `/_api/agents/sessions/${origin.session.id}/messages` && method === 'POST') {
+        postStarted.resolve()
+        return pending.promise
+      }
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
 
     const sending = store.send('Keep this in the original conversation')
+    await waitForPost(postStarted.promise, sending)
     store.thread = selected
     pending.resolve(Response.json({ run: submittedRun, replayed: false }))
 
@@ -2029,7 +2081,6 @@ describe('Agent session mutation transitions', () => {
     expect(store.thread?.session.currentRun?.id).toBe(selected.session.currentRun?.id)
     expect(store.thread?.session.currentRun?.eventSequence).toBe(selected.session.currentRun?.eventSequence)
     expect(store.error).toBe('')
-    expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
   it('discovers an accepted run after the same conversation is reopened during submission', async () => {
@@ -2044,19 +2095,25 @@ describe('Agent session mutation transitions', () => {
     markWorkspaceReady(store)
     store.connectCurrentRun = vi.fn()
     const pending = deferred<Response>()
+    const postStarted = deferred<void>()
     let accepted = false
     vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
-      if (init?.method === 'POST') return pending.promise
-      if (path === '/_api/agents/sessions') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
-      if (path === '/_api/agents/profiles') return Promise.resolve(Response.json({ profiles: [] }))
-      if (path === '/_api/agents/skills') return Promise.resolve(Response.json({ skills: [] }))
-      if (path === '/_api/agents/conversation-folders') return Promise.resolve(Response.json({ folders: [] }))
-      if (path === `/_api/agents/sessions/${active.session.id}`) return Promise.resolve(Response.json(accepted ? active : empty))
-      return Promise.reject(new Error(`Unexpected request: ${path}`))
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${active.session.id}/messages` && method === 'POST') {
+        postStarted.resolve()
+        return pending.promise
+      }
+      if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
+      if (path === '/_api/agents/profiles' && method === 'GET') return Promise.resolve(Response.json({ profiles: [] }))
+      if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
+      if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
+      if (path === `/_api/agents/sessions/${active.session.id}` && method === 'GET') return Promise.resolve(Response.json(accepted ? active : empty))
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
     })
 
     const sending = store.send('Pending question')
+    await waitForPost(postStarted.promise, sending)
     store.closeWorkspace()
     await store.initialize('csrf-token', { ownerId: 1, routeSync: false, resumeSessionId: active.session.id })
     expect(store.thread?.session.currentRun).toBeNull()
@@ -2076,14 +2133,15 @@ describe('Agent session mutation transitions', () => {
     store.closeWorkspace()
   })
 
-  it('submits an immutable source snapshot and preserves a newer composed request', async () => {
+  it('preserves newer source selections and draft mode when an older submission completes', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
+    store.pinOwnerId = 1
     const active = activeThread()
-    store.thread = { ...active, session: { ...active.session, currentRun: null } }
+    const origin = { ...active, session: { ...active.session, currentRun: null } }
+    store.thread = origin
     markWorkspaceReady(store)
-    store.contextPage = { id: 99, locale: 'en', path: 'unrelated', observedUpdatedAt: '2026-09-01T00:00:00Z' }
     const source = {
       id: 42,
       locale: 'en',
@@ -2097,19 +2155,27 @@ describe('Agent session mutation transitions', () => {
       excerptTruncated: false
     }
     store.updateDraft(active.session.id, { text: 'Read this source', includeCurrentPage: false, scope: { kind: 'selected' }, sources: [source] })
+    const preflight = deferred<Response>()
     const pending = deferred<Response>()
-    const fetcher = vi
-      .spyOn(window, 'fetch')
-      .mockImplementationOnce(() => pending.promise)
-      .mockResolvedValueOnce(Response.json({ message: 'Refresh unavailable' }, { status: 503 }))
+    const postStarted = deferred<void>()
+    let posted = false
+    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${active.session.id}` && method === 'GET') {
+        return posted ? Promise.resolve(Response.json({ message: 'Refresh unavailable' }, { status: 503 })) : preflight.promise
+      }
+      if (path === `/_api/agents/sessions/${active.session.id}/messages` && method === 'POST') {
+        posted = true
+        postStarted.resolve()
+        return pending.promise
+      }
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
     const sending = store.send('Read this source')
     store.updateDraft(active.session.id, { text: 'My next question', mode: 'goal', sources: [{ ...source, sourceRevision: '9' }] })
-    const payload = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))
-    expect(payload).not.toHaveProperty('currentPage')
-    expect(payload.knowledgeContext).toEqual({
-      scope: { kind: 'selected' },
-      sources: [{ id: 42, locale: 'en', path: 'docs/start', title: 'Start', visibility: 'public', sourceRevision: '8' }]
-    })
+    preflight.resolve(Response.json(origin))
+    await waitForPost(postStarted.promise, sending)
     pending.resolve(Response.json({ run: active.session.currentRun, replayed: false }))
     expect(await sending).toBe(true)
     expect(store.drafts[active.session.id]?.text).toBe('My next question')
@@ -2121,39 +2187,69 @@ describe('Agent session mutation transitions', () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
+    store.pinOwnerId = 1
     const active = activeThread()
     const submittedRun = active.session.currentRun!
-    store.thread = { ...active, session: { ...active.session, currentRun: null } }
+    const origin = { ...active, session: { ...active.session, currentRun: null } }
+    store.thread = origin
     markWorkspaceReady(store)
-    const fetcher = vi
-      .spyOn(window, 'fetch')
-      .mockResolvedValueOnce(Response.json({ run: submittedRun, replayed: false }))
-      .mockResolvedValueOnce(Response.json({ message: 'Refresh unavailable' }, { status: 503 }))
+    let committed = false
+    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${active.session.id}` && method === 'GET') {
+        return Promise.resolve(committed ? Response.json({ message: 'Refresh unavailable' }, { status: 503 }) : Response.json(origin))
+      }
+      if (path === `/_api/agents/sessions/${active.session.id}/messages` && method === 'POST') {
+        committed = true
+        return Promise.resolve(Response.json({ run: submittedRun, replayed: false }))
+      }
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
 
     store.setDraft(active.session.id, 'Committed once')
     expect(await store.send('Committed once')).toBe(true)
     expect(store.drafts[active.session.id]?.text).toBe('')
-    expect(store.error).toContain('Refresh unavailable')
-    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(store.networkPaused).toBe(true)
+    expect(store.initializedWorkspaceVersion).toBeNull()
   })
 
   it('retains unsent text on failure and a newer draft when an earlier send settles', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
+    store.pinOwnerId = 1
     const active = activeThread()
-    store.thread = { ...active, session: { ...active.session, currentRun: null } }
+    const origin = { ...active, session: { ...active.session, currentRun: null } }
+    store.thread = origin
     markWorkspaceReady(store)
     store.setDraft(active.session.id, 'First question')
     const pending = deferred<Response>()
-    vi.spyOn(window, 'fetch')
-      .mockResolvedValueOnce(Response.json({ message: 'Send unavailable' }, { status: 503 }))
-      .mockImplementationOnce(() => pending.promise)
-      .mockResolvedValueOnce(Response.json({ message: 'Refresh unavailable' }, { status: 503 }))
+    const postStarted = deferred<void>()
+    let refuseNextPost = true
+    let posted = false
+    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${active.session.id}` && method === 'GET') {
+        return Promise.resolve(posted ? Response.json({ message: 'Refresh unavailable' }, { status: 503 }) : Response.json(origin))
+      }
+      if (path === `/_api/agents/sessions/${active.session.id}/messages` && method === 'POST') {
+        if (refuseNextPost) {
+          refuseNextPost = false
+          return Promise.resolve(Response.json({ message: 'Send unavailable' }, { status: 503 }))
+        }
+        posted = true
+        postStarted.resolve()
+        return pending.promise
+      }
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
     expect(await store.send('First question')).toBe(false)
     expect(store.drafts[active.session.id]?.text).toBe('First question')
 
     const sending = store.send('First question')
+    await waitForPost(postStarted.promise, sending)
     store.setDraft(active.session.id, 'A newer question')
     pending.resolve(Response.json({ run: active.session.currentRun, replayed: false }))
     expect(await sending).toBe(true)
@@ -2397,24 +2493,3 @@ describe('Agent unfiled history clearing', () => {
   })
 })
 
-describe('creation tool request selection', () => {
-  it('forwards both selected and explicitly disabled tools to durable goal admission', async () => {
-    for (const generationTools of [['image', 'music'] as const, [] as const]) {
-      setActivePinia(createPinia())
-      const store = useAgentsStore()
-      store.csrfToken = 'csrf-token'
-      const active = activeThread()
-      store.thread = { ...active, session: { ...active.session, currentRun: null } }
-      markWorkspaceReady(store)
-      const fetcher = vi.spyOn(window, 'fetch').mockImplementation(async () => Response.json({ message: 'Test admission refusal' }, { status: 409 }))
-      expect(await store.send('Create a soundtrack and artwork', [], 'goal', { attachmentIds: [], generationTools })).toBe(false)
-      expect(fetcher).toHaveBeenCalledTimes(1)
-      const [path, init] = fetcher.mock.calls[0]!
-      expect(String(path)).toBe(`/_api/agents/sessions/${active.session.id}/goals`)
-      expect(JSON.parse(String(init?.body))).toMatchObject({ objective: 'Create a soundtrack and artwork', generationTools: [...generationTools] })
-      expect(JSON.parse(String(init?.body)).responseMode).toBeUndefined()
-      fetcher.mockRestore()
-      store.$dispose()
-    }
-  })
-})

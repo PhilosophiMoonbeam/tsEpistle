@@ -1,5 +1,5 @@
-import type { Page, Route } from '@playwright/test'
-import type { AgentProviderProfileView, AgentProposalView } from '../../shared/agents/contracts.ts'
+import type { Page, Response, Route } from '@playwright/test'
+import type { AgentProviderProfileView, AgentProposalView, AgentThreadState } from '../../shared/agents/contracts.ts'
 export type AgentFixtureMode = 'success' | 'failure' | 'retry' | 'stop' | 'approval' | 'partial' | 'focus' | 'security' | 'cap' | 'latest' | 'pin'
 
 export interface AgentFixtureOptions {
@@ -72,8 +72,8 @@ type AgentSession = {
   status: 'active'
   executionMode: 'agent'
   version: number
-  providerProfileId: string
-  profileResolutionToken: string
+  providerProfileId: string | null
+  googleSearchEnabled: boolean
   skills: never[]
   currentRun: AgentRun | null
   createdAt: string
@@ -97,6 +97,10 @@ const NOW = '2026-09-01T12:00:00.000Z'
 const LATER = '2026-09-01T12:00:01.000Z'
 const SESSION_ID = '00000000-0000-4000-8000-000000000101'
 const PROFILE_ID = '00000000-0000-4000-8000-000000000102'
+const PROFILE_VERSION_ID = '00000000-0000-4000-8000-000000000105'
+const PROFILE_VERSION = 1
+const PROFILE_POLICY_VERSION = 1
+const DEFAULT_GENERATION = 1
 const FOLDER_ID = '00000000-0000-4000-8000-000000000103'
 const MEMORY_ID = '00000000-0000-4000-8000-000000000104'
 const RUN_ID_BASE = '00000000-0000-4000-8000-000000000110'
@@ -140,26 +144,63 @@ const profile = () => ({
     maxOutputTokens: 4_096
   },
   capabilityRevision: 'fixture-capabilities-v1',
-  policyVersion: 1,
+  policyVersion: PROFILE_POLICY_VERSION,
   isGlobalDefault: true
 })
-const sessionFor = (sessionId: string, currentRun: AgentRun | null = null, version = 1): AgentSession => ({
+const sessionFor = (sessionId: string): AgentSession => ({
   id: sessionId,
   title: 'Release evidence review',
   retention: 'saved',
   folderId: null,
   status: 'active',
   executionMode: 'agent',
-  version,
+  version: 1,
   providerProfileId: PROFILE_ID,
-  profileResolutionToken: 'fixture-profile-resolution-token',
+  googleSearchEnabled: false,
   skills: [],
-  currentRun,
+  currentRun: null,
   createdAt: NOW,
-  updatedAt: currentRun ? LATER : NOW,
-  lastActivityAt: currentRun ? LATER : NOW,
+  updatedAt: NOW,
+  lastActivityAt: NOW,
   expiresAt: null
 })
+
+// Test-only continuity metadata, not a production signature or admission authority.
+const issueFixtureResolutionToken = (ownerId: number, session: Pick<AgentSession, 'id' | 'version' | 'providerProfileId' | 'googleSearchEnabled' | 'executionMode'>): string => {
+  const kid = 'fixture'
+  const payload = {
+    v: 1,
+    kid,
+    ownerId,
+    sessionId: session.id,
+    sessionVersion: session.version,
+    profileId: session.providerProfileId ?? PROFILE_ID,
+    profileVersionId: PROFILE_VERSION_ID,
+    profileVersion: PROFILE_VERSION,
+    profilePolicyVersion: PROFILE_POLICY_VERSION,
+    defaultGeneration: DEFAULT_GENERATION,
+    executionMode: session.executionMode,
+    ...(session.googleSearchEnabled ? { googleSearchEnabled: true } : {}),
+    exp: Math.floor(Date.now() / 1000) + 300
+  }
+  return `${kid}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.fixture-signature`
+}
+
+export const renewFixtureThreadResolution = (thread: AgentThreadState): AgentThreadState => {
+  const payload = JSON.parse(Buffer.from(thread.session.profileResolutionToken.split('.')[1]!, 'base64url').toString('utf8')) as { ownerId?: unknown }
+  if (!isPositiveVersion(payload.ownerId) || thread.session.executionMode !== 'agent') throw new Error('Invalid Agent fixture admission identity or mode.')
+  return {
+    ...thread,
+    session: {
+      ...thread.session,
+      profileResolutionToken: issueFixtureResolutionToken(payload.ownerId, {
+        ...thread.session,
+        executionMode: 'agent',
+        googleSearchEnabled: thread.session.googleSearchEnabled === true
+      })
+    }
+  }
+}
 
 const runFor = (runId: string, sessionId = SESSION_ID, status: AgentRunStatus = 'running', eventSequence = 1): AgentRun => ({
   id: runId,
@@ -317,8 +358,13 @@ const setActiveThread = (state: FixtureState, prompt: string): string => {
   state.activeRunId = runId
   state.eventReads = 0
   state.sessionVersion += 1
-  const folderId = state.thread.session.folderId
-  state.thread.session = { ...sessionFor(state.thread.session.id, run, state.sessionVersion), folderId }
+  state.thread.session = {
+    ...state.thread.session,
+    version: state.sessionVersion,
+    currentRun: run,
+    updatedAt: LATER,
+    lastActivityAt: LATER
+  }
   state.thread.messages.push({
     id: userId,
     runId: null,
@@ -457,6 +503,26 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
     finalizedRuns: new Set(),
     approvalRequestedAt,
     approvalExpiresAt
+  }
+
+  // Observe the identity the application actually received, including routed identities.
+  let ownerResolution: Promise<number | null> = Promise.resolve(null)
+  const observeIdentity = (response: Response): void => {
+    if (new URL(response.url()).pathname !== '/_api/users/whoami') return
+    ownerResolution = response.json().then((payload: { authenticated?: unknown; user?: { id?: unknown } }) => {
+      const id = payload?.user?.id
+      return response.ok() && payload?.authenticated === true && isPositiveVersion(id) ? id : null
+    }).catch(() => null)
+  }
+  page.on('response', observeIdentity)
+  const threadView = async () => {
+    const ownerId = await ownerResolution
+    if (ownerId === null) throw new Error('Agent fixture has not observed an authenticated browser identity.')
+    const thread = copy(state.thread)
+    return {
+      ...thread,
+      session: { ...thread.session, profileResolutionToken: issueFixtureResolutionToken(ownerId, thread.session) }
+    }
   }
 
   await page.addInitScript(({ skillsEnabled, goalsEnabled }) => {
@@ -600,15 +666,16 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
       return json(route, { changed: true, message: 'Memory removed.', target: 'user', entries: [], characters: 0, limit: 1_375 })
     }
     if (path === '/_api/agents/sessions' && request.method() === 'POST') {
-      const body = (request.postDataJSON() ?? {}) as { retention?: 'saved' | 'temporary' }
+      const body = (request.postDataJSON() ?? {}) as { retention?: 'saved' | 'temporary'; providerProfileId?: string | null }
       state.sessionVersion = 1
       state.sessionCreates += 1
       const sessionId = state.distinctSessionIds ? uuidAt(SESSION_ID, state.sessionCreates) : SESSION_ID
       state.thread = threadFor(sessionId)
+      if (Object.hasOwn(body, 'providerProfileId')) state.thread.session.providerProfileId = body.providerProfileId ?? null
       state.thread.session.retention = body.retention === 'temporary' ? 'temporary' : 'saved'
       state.thread.session.expiresAt = body.retention === 'temporary' ? '2026-09-02T12:00:00.000Z' : null
       state.activeRunId = null
-      return json(route, { ...copy(state.thread), launchPage: null }, 201)
+      return json(route, { ...await threadView(), launchPage: null }, 201)
     }
     const sessionFolderMatch = path.match(/^\/_api\/agents\/sessions\/([^/]+)\/folder$/)
     if (sessionFolderMatch && request.method() === 'PUT') {
@@ -629,22 +696,23 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
       state.thread.session.version = state.sessionVersion
       state.thread.session.updatedAt = LATER
       state.thread.session.lastActivityAt = LATER
-      return json(route, copy(state.thread))
+      return json(route, await threadView())
     }
     const sessionMatch = path.match(/^\/_api\/agents\/sessions\/([^/]+)$/)
     if (sessionMatch && request.method() === 'GET') {
       if (sessionMatch[1] !== state.thread.session.id) return json(route, { error: 'Session not found.' }, 404)
-      return json(route, copy(state.thread))
+      return json(route, await threadView())
     }
     if (sessionMatch && request.method() === 'PATCH') {
-      const body = (request.postDataJSON() ?? {}) as { title?: string; retention?: 'saved' | 'temporary' }
+      const body = (request.postDataJSON() ?? {}) as { title?: string; retention?: 'saved' | 'temporary'; googleSearchEnabled?: boolean }
       state.sessionVersion += 1
       if (typeof body.title === 'string' && body.title.trim()) state.thread.session.title = body.title.trim()
       if (body.retention) state.thread.session.retention = body.retention
+      if (typeof body.googleSearchEnabled === 'boolean') state.thread.session.googleSearchEnabled = body.googleSearchEnabled
       state.thread.session.version = state.sessionVersion
-      return json(route, copy(state.thread))
+      return json(route, await threadView())
     }
-    if (sessionMatch && request.method() === 'PUT') return json(route, copy(state.thread))
+    if (sessionMatch && request.method() === 'PUT') return json(route, await threadView())
     if (sessionMatch && request.method() === 'DELETE') {
       if (sessionMatch[1] === state.thread.session.id) state.thread = threadFor()
       return route.fulfill({ status: 204 })
@@ -736,6 +804,7 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
       if (unexpectedRequests.length) throw new Error(`Unexpected Agent fixture requests: ${unexpectedRequests.join(', ')}`)
     },
     async dispose() {
+      page.off('response', observeIdentity)
       releaseResponse?.()
       releaseResponse = null
       responseGate = null
