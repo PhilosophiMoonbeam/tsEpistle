@@ -7899,4 +7899,63 @@ describe('request-derived evidence coverage', () => {
         .map(([, data]) => typeof data === 'object' && data !== null && 'accepted' in data ? data.accepted : undefined)
     ).toEqual([false, true])
   })
+  it('preserves Gemini native text binding across a metadata-bearing read without persisting stripped control state', async () => {
+    const userRequest = 'Explain Alpha’s publication requirement.'
+    const fact = 'Alpha requires review before publication.'
+    const page = questionReadPage(42, '3', 'Alpha', 'alpha', 'Rules', 'rules', fact)
+    let dispatches = 0
+    const native = createGeminiInteractionsService({
+      apiKey: 'fixture-key',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      model: 'gemini-3.8-flash',
+      timeoutMs: 10_000,
+      fetch: (async () => {
+        dispatches++
+        return Response.json({
+          model: 'gemini-3.8-flash',
+          status: dispatches === 1 ? 'requires_action' : 'completed',
+          usage: { total_input_tokens: 3, total_output_tokens: 2, total_tokens: 5 },
+          steps: dispatches === 1
+            ? [
+                { type: 'model_output', content: [{ type: 'text', text: sourcePlan(userRequest) }] },
+                { type: 'function_call', id: 'read-alpha', name: 'wiki_get_page', arguments: { id: 42 } }
+              ]
+            : [{ type: 'model_output', content: [{ type: 'text', text: `${fact} [[cite:page:42:revision:3:section:1]]` }] }]
+        })
+      }) as typeof fetch
+    })
+    const factory = {
+      create: async () => ({
+        service: native,
+        capabilities: { streaming: false, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 512 },
+        transportKind: 'gemini-api',
+        model: 'gemini-3.8-flash',
+        continuationDialect: 'gemini-interactions-v1',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read exact source', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke: async () => page,
+        validateObservation: async () => true,
+        snapshot: async () => ({}),
+        close: () => {}
+      })
+    }
+    const text = vi.fn(async (_delta: string) => {})
+    const result = await new AxAgentEngine(factory, actions).execute(
+      { ...request(new AbortController().signal), messages: [{ role: 'user', content: userRequest }], limits: { maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 512 } },
+      { text, event: async () => {} }
+    )
+    expect(dispatches).toBe(2)
+    expect(result.totalTokens).toBe(10)
+    expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:3:section:1'])
+    expect(result.providerState).toBeUndefined()
+    const published = text.mock.calls.map(([delta]) => delta).join('')
+    expect(published).toContain('requires review before publication')
+    expect(published).not.toContain('wiki-request-plan')
+  })
 })
